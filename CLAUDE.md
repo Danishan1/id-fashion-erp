@@ -9,7 +9,7 @@ This file is the living architecture and roadmap for this project. It is read au
 | Phase | Name | Status |
 |---|---|---|
 | 1 | Architecture (this document) | ✅ Done |
-| 2 | Foundation | ⬜ Not started |
+| 2 | Foundation | ✅ Done |
 | 3 | Masters | ⬜ Not started |
 | 4 | Sampling | ⬜ Not started |
 | 5 | Orders + Production | ⬜ Not started |
@@ -21,6 +21,12 @@ This file is the living architecture and roadmap for this project. It is read au
 | 11 | Hardening | ⬜ Not started |
 
 Update the status column and add a short dated note under the relevant phase section below whenever a phase completes or deviates from plan.
+
+### Phase 2 notes (2026-08-16)
+- Next.js 16 scaffold, Prisma 7 schema (Organization/Auth + Masters + System, 24 models), NextAuth v5 Credentials auth (JWT sessions), RBAC `PermissionService`, document numbering, audit logging, local file storage, `BusinessRuleError`, sidebar/topbar shell, login page, DB-backed dashboard placeholder, and full seed data (roles/permissions/Super Admin) are all in place and verified end-to-end in the browser (login → dashboard showing real DB counts).
+- Prisma 7 deviation from the original plan: `datasource.url` in `schema.prisma` is no longer supported — connection config now lives in `prisma.config.ts`, and `PrismaClient` is instantiated with a `@prisma/adapter-pg` driver adapter (see `src/core/db/client.ts`). Keep this in mind for any future Prisma schema changes.
+- Middleware must live at `src/middleware.ts` (not project root) when using a `src/` directory — Next.js silently ignores it otherwise. Auth config is split into an edge-safe `auth.config.ts` (no providers, used by middleware) and the full `auth.ts` (Credentials provider + Prisma, used in route handlers/server components), since Credentials + Prisma can't run in the Edge runtime.
+- Dev environment: Node.js LTS and PostgreSQL 16 installed locally via winget. Local dev DB: `fashion_erp`, connected as the `postgres` role (see `.env`, not committed). Seeded Super Admin login: `admin@indradhar.com` / `ChangeMe123!` — change immediately outside of dev.
 
 ---
 
