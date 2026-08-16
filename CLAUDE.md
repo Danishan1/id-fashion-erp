@@ -4,13 +4,40 @@ This file is the living architecture and roadmap for this project. It is read au
 
 **Repo**: https://github.com/TeamsIndradhar/fashion-erp.git
 
+## Domain Reference — Lessons from the User's Existing Systems
+
+The user has two real, manually-coded PHP/Laravel garment systems already in production use: an **Inventory** app and **Royal Jeans** (a denim manufacturing/production system). Both were analyzed for domain patterns worth carrying into this build (not code — different stack). Apply these when building the relevant phase below; don't retrofit them into Phases 1–3 unless noted.
+
+**Vocabulary to match** (real factory usage, prefer over generic textbook terms): **Lot No.** (not "batch"), **Slip** / Production Slip (the physical/digital work-order ticket that moves a lot between stages, often with a scanned/QR file and a per-stage SLA deadline), **Set** (a size-assortment order unit, e.g. an S/M/L bundle sold as one line — not just flat qty), **Godam** (finished-goods store/warehouse — real term, offer as a label option), **Roll** / Roll No. (fabric issued and tracked by physical roll with QR + meterage, not just a generic "material requirement" line), **Stage** / **Sub-stage** (not "process"/"operation").
+
+**Adopt for Phase 5 (Production):**
+- A `production_stages` lookup table + generic stage-transition ledger (uniform `from_stage → to_stage`, `lot_no`, `quantity`, `remaining_quantity`, `processed_by`, timestamp, size-split detail rows) *alongside* the existing explicit `cutting_plans`/`sewing_production`/`finishing_records` tables — gives audit-trail flexibility (reordering/inserting stages like embroidery or printing) without new migrations, while keeping the explicit tables for query ergonomics.
+- Roll-level fabric issuance to cutting: `fabric_rolls`/`stock_expends`-style tables (roll number, meterage, QR code, batch no., remaining qty per roll) rather than a generic BOM line — ties consumption to physical rolls.
+- Per-lot planned-vs-actual timestamp per stage (one row per stage, not a wide fixed-column table — the reference app's `stage_id_1..12` columns are a hardcoded anti-pattern to avoid) feeding an `isDelayed` flag and an order/lot tracking report with a "not yet allocated to a lot" bucket.
+- Consider per-line/station login for shop-floor kiosks (not just per-user role auth) if floor-level data entry is in scope.
+- Confirmed gap in both reference systems: **no QC/defect/rework tracking exists in either** (grep-confirmed absent in Royal Jeans) and **no SAM/efficiency-% calculation exists**. Our `qc_inspections`/`qc_defects` design and any efficiency reporting are net-new capability, not something to match against existing vocabulary — expect to invent this UX from scratch.
+
+**Adopt for Phase 6 (Inventory):**
+- Keep the denormalized `stock_balances` cache in sync with the ledger in the *same transaction* as each `inventory_transactions` insert (confirmed pattern in the reference Inventory app, just done there without a true ledger backing it — we already do this correctly, keep it).
+- A real `reorder_level` field per item/variant — the reference app hardcodes a magic "stock < 10" threshold everywhere; make sure ours is a configurable column from the start.
+- Per-line `received_quantity` accumulator on `purchase_order_items` with a "cannot over-receive" guard, supporting partial/multi-shipment receipt against one PO, auto-flipping the PO to received only once every line is fully received. **Adopt as-is** — clean, battle-tested pattern.
+- A goods-receipt **returns** workflow (`goods_receipt_returns`-style): scoped to a specific receipt (not the PO), running "already-returned" cap per line, reversing ledger entry on return, receipt auto-marked returned once every line is fully reversed. We don't have this as a first-class flow yet — add it.
+- BOM-driven multi-material consumption **at order completion** (not at dispatch): loop each BOM line, compute `neededQty = bomQty × orderQty`, hard-block with "insufficient stock" if `available < neededQty`, inside the same DB transaction — plus a live "material requirements preview" endpoint used before completing an order. This is the standout garment-specific pattern from the reference app; maps onto our `material_requirements` + `bom_items`.
+- Never do manual stock arithmetic on edit/delete (the reference app's biggest flaw: increments/decrements `current_stock` directly and deletes+recreates ledger rows on edits, which is fragile under a crash mid-edit). Always insert compensating/reversing ledger entries instead — this validates our existing `inventory_transactions`-as-source-of-truth design; do not weaken it.
+
+**Adopt for Phase 8 (Dispatch):**
+- Carton→box→item packing hierarchy with a barcode per carton, feeding a dispatch record — more realistic than a single "finished goods stock" bucket. Maps onto our `cartons`/`carton_items`, consider adding a `packing_boxes` intermediate level if cartons are sub-divided.
+- Rack-level location tracking specifically for **packed** finished goods (distinct from raw-material warehouse locations) — consider extending `warehouse_locations` usage to packed-carton racking explicitly.
+
+**Explicitly rejected patterns** (real limitations observed in the reference systems, do not replicate): no warehouse/location concept at all in the Inventory app (single global stock number per item); no UOM conversion (flat unit labels only, no purchase-unit vs stock-unit distinction); EAV-style color/size "attributes" that are purely descriptive tags with no per-variant stock (our `product_variants` + variant-level stock is strictly better); hardcoded stage-count wide tables.
+
 ## Status
 
 | Phase | Name | Status |
 |---|---|---|
 | 1 | Architecture (this document) | ✅ Done |
 | 2 | Foundation | ✅ Done |
-| 3 | Masters | ⬜ Not started |
+| 3 | Masters | ✅ Done |
 | 4 | Sampling | ⬜ Not started |
 | 5 | Orders + Production | ⬜ Not started |
 | 6 | Inventory | ⬜ Not started |
@@ -27,6 +54,13 @@ Update the status column and add a short dated note under the relevant phase sec
 - Prisma 7 deviation from the original plan: `datasource.url` in `schema.prisma` is no longer supported — connection config now lives in `prisma.config.ts`, and `PrismaClient` is instantiated with a `@prisma/adapter-pg` driver adapter (see `src/core/db/client.ts`). Keep this in mind for any future Prisma schema changes.
 - Middleware must live at `src/middleware.ts` (not project root) when using a `src/` directory — Next.js silently ignores it otherwise. Auth config is split into an edge-safe `auth.config.ts` (no providers, used by middleware) and the full `auth.ts` (Credentials provider + Prisma, used in route handlers/server components), since Credentials + Prisma can't run in the Edge runtime.
 - Dev environment: Node.js LTS and PostgreSQL 16 installed locally via winget. Local dev DB: `fashion_erp`, connected as the `postgres` role (see `.env`, not committed). Seeded Super Admin login: `admin@indradhar.com` / `ChangeMe123!` — change immediately outside of dev.
+
+### Phase 3 notes (2026-08-16)
+- Full CRUD built and verified end-to-end in the browser for all Masters entities: Customers (with nested Buyers), Suppliers, Employees + Departments, Colors/Sizes/Units (combined tabbed "Lookups" page), Warehouses (with nested Locations), and Products/Styles (with Color×Size Variant generation).
+- Shared infrastructure added for reuse by every future module: `src/lib/list-query.ts` (pagination/search/sort parsing), `src/lib/api-route.ts` (`requireSession`/`handleApiError`), `src/components/ui/DataTable.tsx` (paginated searchable table), `src/components/ui/SimpleLookupManager.tsx` (inline add/edit for small lookup tables), `src/components/ui/FormField.tsx`. `BusinessRuleError`'s `toErrorResponse` now also maps Zod validation errors to the structured `VALIDATION_ERROR` response.
+- Deliberate scope simplification: Buyers, Warehouse Locations, and Product Variants are managed inline on their parent's detail page rather than as separate full CRUD stacks (they're genuinely child records of Customer/Warehouse/Product). Departments/Colors/Sizes/Units use the single-page `SimpleLookupManager` (list + inline add/edit) rather than separate list/new/[id] routes, since they're small, low-churn lookup tables — this is a UI-density choice, not reduced functionality; every one of these supports real create/edit backed by the database.
+- Deviated from the strict schema/service/**repository** three-layer convention stated in Phase 1 for these simple-CRUD masters: services call Prisma directly (no pass-through repository file) since there's no business logic to separate out at this level. Revisit the repository layer when a module has real query complexity worth isolating (e.g. Inventory's stock ledger, Accounts' journal engine).
+- tsconfig: added `allowImportingTsExtensions: true` (harmless since `noEmit` is already true) so `prisma/seed.ts` can import `../src/config/rbac.ts` with an explicit extension — required because `node --experimental-strip-types` uses strict Node ESM resolution.
 
 ---
 

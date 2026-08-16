@@ -1,0 +1,36 @@
+import { notFound } from "next/navigation";
+import { auth } from "@/core/auth/auth";
+import { getWarehouseById } from "@/modules/warehouses/warehouse.service";
+import { WarehouseForm } from "../WarehouseForm";
+import { LocationsSection } from "../LocationsSection";
+
+export default async function EditWarehousePage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const session = await auth();
+
+  const warehouse = await getWarehouseById(session!.user.companyId, id).catch(() => null);
+  if (!warehouse) notFound();
+
+  return (
+    <div className="space-y-8">
+      <div>
+        <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">{warehouse.name}</h1>
+        <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">Code: {warehouse.code}</p>
+      </div>
+
+      <WarehouseForm
+        submitUrl={`/api/v1/warehouses/${id}`}
+        method="PATCH"
+        redirectTo="/masters/warehouses"
+        initialValues={{
+          code: warehouse.code,
+          name: warehouse.name,
+          type: warehouse.type,
+          isActive: warehouse.isActive,
+        }}
+      />
+
+      <LocationsSection warehouseId={id} initialLocations={warehouse.locations} />
+    </div>
+  );
+}

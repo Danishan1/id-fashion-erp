@@ -60,6 +60,21 @@ export function toErrorResponse(error: unknown): { status: number; body: unknown
     return { status: error.httpStatus, body: error.toResponseBody() };
   }
 
+  if (error && typeof error === "object" && "issues" in error && Array.isArray((error as { issues: unknown }).issues)) {
+    const zodError = error as { issues: { path: (string | number)[]; message: string }[] };
+    const firstIssue = zodError.issues[0];
+    return {
+      status: 400,
+      body: {
+        error: {
+          code: "VALIDATION_ERROR",
+          message: firstIssue ? `${firstIssue.path.join(".")}: ${firstIssue.message}` : "Invalid input.",
+          details: { issues: zodError.issues },
+        },
+      },
+    };
+  }
+
   console.error("Unhandled error:", error);
   return {
     status: 500,

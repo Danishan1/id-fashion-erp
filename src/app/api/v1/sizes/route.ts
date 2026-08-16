@@ -1,0 +1,28 @@
+import { NextRequest, NextResponse } from "next/server";
+import { requireSession, handleApiError } from "@/lib/api-route";
+import { PermissionService } from "@/core/rbac/PermissionService";
+import { sizeSchema } from "@/modules/lookups/lookup.schema";
+import { listSizes, createSize } from "@/modules/lookups/lookup.service";
+
+export async function GET() {
+  try {
+    const session = await requireSession();
+    await PermissionService.assert(session.user.id, "masters", "view");
+    return NextResponse.json({ data: await listSizes(session.user.companyId) });
+  } catch (error) {
+    return handleApiError(error);
+  }
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    const session = await requireSession();
+    await PermissionService.assert(session.user.id, "masters", "create");
+
+    const input = sizeSchema.parse(await req.json());
+    const size = await createSize({ companyId: session.user.companyId }, input);
+    return NextResponse.json({ data: size }, { status: 201 });
+  } catch (error) {
+    return handleApiError(error);
+  }
+}
