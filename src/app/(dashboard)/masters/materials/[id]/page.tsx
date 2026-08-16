@@ -1,0 +1,41 @@
+import { notFound } from "next/navigation";
+import { auth } from "@/core/auth/auth";
+import { getMaterialById } from "@/modules/products/product.service";
+import { MaterialForm } from "../MaterialForm";
+
+export default async function EditMaterialPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const session = await auth();
+
+  const material = await getMaterialById(session!.user.companyId, id).catch(() => null);
+  if (!material) notFound();
+
+  return (
+    <div className="space-y-8">
+      <div>
+        <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">{material.styleName}</h1>
+        <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">Item Code: {material.styleCode}</p>
+      </div>
+
+      <MaterialForm
+        submitUrl={`/api/v1/materials/${id}`}
+        method="PATCH"
+        redirectTo="/masters/materials"
+        initialValues={{
+          styleCode: material.styleCode,
+          styleName: material.styleName,
+          materialCategory: (material.materialCategory ?? "OTHER") as MaterialFormValuesCategory,
+          baseUomId: material.baseUomId ?? "",
+          defaultSupplierId: material.defaultSupplierId ?? "",
+          reorderLevel: material.reorderLevel?.toString() ?? "",
+          unitCost: material.unitCost?.toString() ?? "",
+          description: material.description ?? "",
+          hsnSacCode: material.hsnSacCode ?? "",
+          isActive: material.isActive,
+        }}
+      />
+    </div>
+  );
+}
+
+type MaterialFormValuesCategory = "FABRIC" | "TRIMS" | "ACCESSORIES" | "PACKAGING" | "OTHER";

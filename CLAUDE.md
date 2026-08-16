@@ -62,6 +62,15 @@ Update the status column and add a short dated note under the relevant phase sec
 - Deviated from the strict schema/service/**repository** three-layer convention stated in Phase 1 for these simple-CRUD masters: services call Prisma directly (no pass-through repository file) since there's no business logic to separate out at this level. Revisit the repository layer when a module has real query complexity worth isolating (e.g. Inventory's stock ledger, Accounts' journal engine).
 - tsconfig: added `allowImportingTsExtensions: true` (harmless since `noEmit` is already true) so `prisma/seed.ts` can import `../src/config/rbac.ts` with an explicit extension — required because `node --experimental-strip-types` uses strict Node ESM resolution.
 
+### Phase 3 extension — masters completed against reference systems (2026-08-16)
+After analyzing the user's two existing systems (see Domain Reference section above), added the master data entities they revealed as gaps:
+- **Raw Materials** (`/masters/materials`) — reuses the `products` table via a new `itemType` enum (`STYLE` | `RAW_MATERIAL`) rather than a parallel table, so BOM lines can FK to one `products` table regardless of item type (matches the Phase 1 BOM design intent). Adds `materialCategory` (fabric/trims/accessories/packaging/other), `defaultSupplierId`, `reorderLevel`, `unitCost`. `listProducts`/`getProductById` (Styles) now explicitly filter `itemType: STYLE`; `listMaterials`/`getMaterialById` filter `itemType: RAW_MATERIAL` — same table, disjoint views. Style and material item codes share one `(companyId, styleCode)` uniqueness constraint (one namespace), which is intentional.
+- **Production Stages** (`/masters/production-config`, Stages tab) — configurable stage lookup (code/name/sequence) with self-referencing `parentStageId` in the schema for future sub-stages (not yet exposed in the simple UI). Feeds the Phase 5 stage-transition ledger design noted above.
+- **Production Lines** (`/masters/production-config`, Lines tab) — factory line/work-center master (code/name/capacityPerDay); `branchId`/`departmentId` exist on the model for future use but aren't wired into this simple UI yet.
+- **Sales Agents** (`/masters/sales-agents`) — domestic/retail channel agents, distinct from export Buyers, with a commission percentage — matches the reference systems' agent-based domestic sales channel.
+- All four verified end-to-end in the browser (create + list, including dropdowns populated from real data — e.g. Material's Default Supplier dropdown showing a previously-created Supplier).
+- Gotcha hit twice this session: after `prisma migrate dev`/`prisma generate`, the **running** Next.js dev server process keeps the old `@prisma/client` module cached in memory — schema/client changes require a full dev-server restart (stop + start), not just a file save, or you'll get `Unknown argument` Prisma validation errors even though `npx prisma generate` succeeded.
+
 ---
 
 ## Recommended Stack
@@ -116,8 +125,8 @@ PostgreSQL + Prisma, ~70 tables across 9 domains.
 ### Organization / Auth (7 tables)
 `companies`, `branches`, `users`, `roles`, `permissions`, `role_permissions`, `user_branch_roles` — company-scoped RBAC with per-branch role assignment.
 
-### Masters (14 tables)
-`currencies`, `customers`, `buyers`, `suppliers`, `departments`, `employees`, `products` (style master), `product_variants` (style×color×size join — required so every stock/production/dispatch/invoice line has one concrete SKU FK), `colors`, `sizes`, `units_of_measure`, `warehouses`, `warehouse_locations`.
+### Masters (18 tables)
+`currencies`, `customers`, `buyers`, `suppliers`, `departments`, `employees`, `products` (styles **and** raw materials, disambiguated by `item_type`: `STYLE` | `RAW_MATERIAL` — one table so BOM lines FK to a single `products` table regardless of item type; materials add `material_category`, `default_supplier_id`, `reorder_level`, `unit_cost`), `product_variants` (style×color×size join — required so every stock/production/dispatch/invoice line has one concrete SKU FK), `colors`, `sizes`, `units_of_measure`, `warehouses`, `warehouse_locations`, `production_stages` (configurable stage lookup, self-referencing `parent_stage_id` for sub-stages), `production_lines` (factory line/work-center master), `sales_agents` (domestic/retail channel, distinct from export `buyers`).
 
 ### Sampling (5 tables)
 `sample_requests` (immutable header, `SAM-2026-00001`), `sample_versions` (**append-only** — revisions never overwrite, unique `(sample_request_id, version_number)`), `sample_materials`, `sample_approvals`, `sample_comments`.

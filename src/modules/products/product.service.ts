@@ -2,7 +2,7 @@ import { prisma } from "@/core/db/client";
 import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import type { ListQuery } from "@/lib/list-query";
-import type { GenerateVariantsInput, ProductInput } from "./product.schema";
+import type { GenerateVariantsInput, MaterialInput, ProductInput } from "./product.schema";
 
 interface ActorContext {
   companyId: string;
@@ -12,6 +12,7 @@ interface ActorContext {
 export async function listProducts(companyId: string, query: ListQuery) {
   const where = {
     companyId,
+    itemType: "STYLE" as const,
     deletedAt: null,
     ...(query.search
       ? {
@@ -39,7 +40,7 @@ export async function listProducts(companyId: string, query: ListQuery) {
 
 export async function getProductById(companyId: string, id: string) {
   const product = await prisma.product.findFirst({
-    where: { id, companyId, deletedAt: null },
+    where: { id, companyId, itemType: "STYLE", deletedAt: null },
     include: {
       variants: {
         include: { color: true, size: true },
@@ -53,6 +54,7 @@ export async function getProductById(companyId: string, id: string) {
 
 function toData(input: ProductInput) {
   return {
+    itemType: "STYLE" as const,
     styleCode: input.styleCode,
     styleName: input.styleName,
     category: input.category || null,
@@ -61,6 +63,22 @@ function toData(input: ProductInput) {
     description: input.description || null,
     hsnSacCode: input.hsnSacCode || null,
     customerId: input.customerId || null,
+    isActive: input.isActive,
+  };
+}
+
+function toMaterialData(input: MaterialInput) {
+  return {
+    itemType: "RAW_MATERIAL" as const,
+    styleCode: input.styleCode,
+    styleName: input.styleName,
+    materialCategory: input.materialCategory,
+    baseUomId: input.baseUomId || null,
+    defaultSupplierId: input.defaultSupplierId || null,
+    reorderLevel: input.reorderLevel ?? null,
+    unitCost: input.unitCost ?? null,
+    description: input.description || null,
+    hsnSacCode: input.hsnSacCode || null,
     isActive: input.isActive,
   };
 }
@@ -100,6 +118,93 @@ export async function updateProduct(actor: ActorContext, id: string, input: Prod
   }
 
   const updated = await prisma.product.update({ where: { id }, data: toData(input) });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "products",
+    recordId: id,
+    action: "UPDATE",
+    oldValues: before,
+    newValues: updated,
+  });
+
+  return updated;
+}
+
+export async function listMaterials(companyId: string, query: ListQuery) {
+  const where = {
+    companyId,
+    itemType: "RAW_MATERIAL" as const,
+    deletedAt: null,
+    ...(query.search
+      ? {
+          OR: [
+            { styleName: { contains: query.search, mode: "insensitive" as const } },
+            { styleCode: { contains: query.search, mode: "insensitive" as const } },
+          ],
+        }
+      : {}),
+  };
+
+  const [data, totalCount] = await Promise.all([
+    prisma.product.findMany({
+      where,
+      include: { baseUom: true, defaultSupplier: true },
+      orderBy: { [query.sortBy]: query.sortOrder },
+      skip: query.skip,
+      take: query.take,
+    }),
+    prisma.product.count({ where }),
+  ]);
+
+  return { data, totalCount };
+}
+
+export async function getMaterialById(companyId: string, id: string) {
+  const material = await prisma.product.findFirst({
+    where: { id, companyId, itemType: "RAW_MATERIAL", deletedAt: null },
+    include: { baseUom: true, defaultSupplier: true },
+  });
+  if (!material) throw new BusinessRuleError("NOT_FOUND", "Material not found.", { id });
+  return material;
+}
+
+export async function createMaterial(actor: ActorContext, input: MaterialInput) {
+  const existing = await prisma.product.findFirst({
+    where: { companyId: actor.companyId, styleCode: input.styleCode, deletedAt: null },
+  });
+  if (existing) {
+    throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Item code "${input.styleCode}" is already in use.`);
+  }
+
+  const material = await prisma.product.create({ data: { companyId: actor.companyId, ...toMaterialData(input) } });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "products",
+    recordId: material.id,
+    action: "CREATE",
+    newValues: material,
+  });
+
+  return material;
+}
+
+export async function updateMaterial(actor: ActorContext, id: string, input: MaterialInput) {
+  const before = await getMaterialById(actor.companyId, id);
+
+  if (input.styleCode !== before.styleCode) {
+    const codeInUse = await prisma.product.findFirst({
+      where: { companyId: actor.companyId, styleCode: input.styleCode, deletedAt: null, id: { not: id } },
+    });
+    if (codeInUse) {
+      throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Item code "${input.styleCode}" is already in use.`);
+    }
+  }
+
+  const updated = await prisma.product.update({ where: { id }, data: toMaterialData(input) });
 
   await writeAuditLog({
     companyId: actor.companyId,

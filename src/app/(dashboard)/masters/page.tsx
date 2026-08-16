@@ -5,8 +5,15 @@ const MASTER_SECTIONS = [
   { href: "/masters/suppliers", label: "Suppliers", description: "Fabric, trims, packaging, and service vendors" },
   { href: "/masters/employees", label: "Employees", description: "Staff records and departments" },
   { href: "/masters/products", label: "Styles", description: "Product styles with color/size variants" },
+  { href: "/masters/materials", label: "Raw Materials", description: "Fabric, trims, accessories, and packaging items" },
   { href: "/masters/lookups", label: "Colors, Sizes & Units", description: "Shared lookup values" },
   { href: "/masters/warehouses", label: "Warehouses", description: "Warehouses and storage locations" },
+  {
+    href: "/masters/production-config",
+    label: "Production Stages & Lines",
+    description: "Configurable production stages and factory lines",
+  },
+  { href: "/masters/sales-agents", label: "Sales Agents", description: "Domestic/retail sales channel agents" },
 ];
 
 export default function MastersIndexPage() {

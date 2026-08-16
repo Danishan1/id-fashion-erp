@@ -15,33 +15,36 @@ datasource db {
 // ─────────────────────────────────────────────────────────────
 
 model Company {
-  id                 String   @id @default(uuid()) @db.Uuid
-  name               String
-  legalName          String?  @map("legal_name")
-  taxRegistrationNo  String?  @unique @map("tax_registration_no")
-  baseCurrencyCode   String   @map("base_currency_code") @db.Char(3)
-  fiscalYearStartMonth Int    @default(1) @map("fiscal_year_start_month")
-  addressJson        Json?    @map("address_json")
-  isActive           Boolean  @default(true) @map("is_active")
-  createdAt          DateTime @default(now()) @map("created_at")
-  updatedAt          DateTime @updatedAt @map("updated_at")
+  id                   String   @id @default(uuid()) @db.Uuid
+  name                 String
+  legalName            String?  @map("legal_name")
+  taxRegistrationNo    String?  @unique @map("tax_registration_no")
+  baseCurrencyCode     String   @map("base_currency_code") @db.Char(3)
+  fiscalYearStartMonth Int      @default(1) @map("fiscal_year_start_month")
+  addressJson          Json?    @map("address_json")
+  isActive             Boolean  @default(true) @map("is_active")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
 
-  baseCurrency       Currency @relation(fields: [baseCurrencyCode], references: [code])
-  branches           Branch[]
-  users              User[]
-  roles              Role[]
-  customers          Customer[]
-  suppliers          Supplier[]
-  departments        Department[]
-  employees          Employee[]
-  products           Product[]
-  colors             Color[]
-  sizes              Size[]
-  warehouses         Warehouse[]
-  documentSequences  DocumentSequence[]
-  auditLogs          AuditLog[]
-  notifications      Notification[]
-  attachments        Attachment[]
+  baseCurrency      Currency           @relation(fields: [baseCurrencyCode], references: [code])
+  branches          Branch[]
+  users             User[]
+  roles             Role[]
+  customers         Customer[]
+  suppliers         Supplier[]
+  departments       Department[]
+  employees         Employee[]
+  products          Product[]
+  colors            Color[]
+  sizes             Size[]
+  warehouses        Warehouse[]
+  productionStages  ProductionStage[]
+  productionLines   ProductionLine[]
+  salesAgents       SalesAgent[]
+  documentSequences DocumentSequence[]
+  auditLogs         AuditLog[]
+  notifications     Notification[]
+  attachments       Attachment[]
 
   @@map("companies")
 }
@@ -53,15 +56,15 @@ enum BranchType {
 }
 
 model Branch {
-  id        String     @id @default(uuid()) @db.Uuid
-  companyId String     @map("company_id") @db.Uuid
-  code      String
-  name      String
-  type      BranchType
-  addressJson Json?    @map("address_json")
-  isActive  Boolean    @default(true) @map("is_active")
-  createdAt DateTime   @default(now()) @map("created_at")
-  updatedAt DateTime   @updatedAt @map("updated_at")
+  id          String     @id @default(uuid()) @db.Uuid
+  companyId   String     @map("company_id") @db.Uuid
+  code        String
+  name        String
+  type        BranchType
+  addressJson Json?      @map("address_json")
+  isActive    Boolean    @default(true) @map("is_active")
+  createdAt   DateTime   @default(now()) @map("created_at")
+  updatedAt   DateTime   @updatedAt @map("updated_at")
 
   company           Company            @relation(fields: [companyId], references: [id])
   usersDefault      User[]             @relation("UserDefaultBranch")
@@ -69,6 +72,7 @@ model Branch {
   employees         Employee[]
   departments       Department[]
   warehouses        Warehouse[]
+  productionLines   ProductionLine[]
   documentSequences DocumentSequence[]
 
   @@unique([companyId, code])
@@ -82,27 +86,27 @@ enum UserStatus {
 }
 
 model User {
-  id               String     @id @default(uuid()) @db.Uuid
-  companyId        String     @map("company_id") @db.Uuid
-  defaultBranchId  String?    @map("default_branch_id") @db.Uuid
-  employeeId       String?    @unique @map("employee_id") @db.Uuid
-  email            String     @unique
-  passwordHash     String     @map("password_hash")
-  fullName         String     @map("full_name")
-  phone            String?
-  mfaSecret        String?    @map("mfa_secret")
-  lastLoginAt      DateTime?  @map("last_login_at")
-  status           UserStatus @default(ACTIVE)
-  createdAt        DateTime   @default(now()) @map("created_at")
-  updatedAt        DateTime   @updatedAt @map("updated_at")
+  id              String     @id @default(uuid()) @db.Uuid
+  companyId       String     @map("company_id") @db.Uuid
+  defaultBranchId String?    @map("default_branch_id") @db.Uuid
+  employeeId      String?    @unique @map("employee_id") @db.Uuid
+  email           String     @unique
+  passwordHash    String     @map("password_hash")
+  fullName        String     @map("full_name")
+  phone           String?
+  mfaSecret       String?    @map("mfa_secret")
+  lastLoginAt     DateTime?  @map("last_login_at")
+  status          UserStatus @default(ACTIVE)
+  createdAt       DateTime   @default(now()) @map("created_at")
+  updatedAt       DateTime   @updatedAt @map("updated_at")
 
-  company          Company          @relation(fields: [companyId], references: [id])
-  defaultBranch    Branch?          @relation("UserDefaultBranch", fields: [defaultBranchId], references: [id])
-  employee         Employee?        @relation(fields: [employeeId], references: [id])
-  branchRoles      UserBranchRole[]
-  auditLogs        AuditLog[]
-  notifications    Notification[]
-  uploadedFiles    Attachment[]
+  company       Company          @relation(fields: [companyId], references: [id])
+  defaultBranch Branch?          @relation("UserDefaultBranch", fields: [defaultBranchId], references: [id])
+  employee      Employee?        @relation(fields: [employeeId], references: [id])
+  branchRoles   UserBranchRole[]
+  auditLogs     AuditLog[]
+  notifications Notification[]
+  uploadedFiles Attachment[]
 
   @@map("users")
 }
@@ -116,9 +120,9 @@ model Role {
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
-  company          Company          @relation(fields: [companyId], references: [id])
-  rolePermissions  RolePermission[]
-  userBranchRoles  UserBranchRole[]
+  company         Company          @relation(fields: [companyId], references: [id])
+  rolePermissions RolePermission[]
+  userBranchRoles UserBranchRole[]
 
   @@unique([companyId, name])
   @@map("roles")
@@ -181,40 +185,40 @@ model Currency {
 }
 
 model Customer {
-  id                 String   @id @default(uuid()) @db.Uuid
-  companyId          String   @map("company_id") @db.Uuid
-  code               String
-  name               String
-  type               String   @default("CUSTOMER")
-  country            String?
-  paymentTermsDays   Int?     @map("payment_terms_days")
-  creditLimit        Decimal? @map("credit_limit") @db.Decimal(18, 2)
-  defaultCurrencyCode String? @map("default_currency_code") @db.Char(3)
-  isActive           Boolean  @default(true) @map("is_active")
-  deletedAt          DateTime? @map("deleted_at")
-  createdAt          DateTime @default(now()) @map("created_at")
-  updatedAt          DateTime @updatedAt @map("updated_at")
+  id                  String    @id @default(uuid()) @db.Uuid
+  companyId           String    @map("company_id") @db.Uuid
+  code                String
+  name                String
+  type                String    @default("CUSTOMER")
+  country             String?
+  paymentTermsDays    Int?      @map("payment_terms_days")
+  creditLimit         Decimal?  @map("credit_limit") @db.Decimal(18, 2)
+  defaultCurrencyCode String?   @map("default_currency_code") @db.Char(3)
+  isActive            Boolean   @default(true) @map("is_active")
+  deletedAt           DateTime? @map("deleted_at")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
 
-  company   Company    @relation(fields: [companyId], references: [id])
-  buyers    Buyer[]
-  products  Product[]
+  company  Company   @relation(fields: [companyId], references: [id])
+  buyers   Buyer[]
+  products Product[]
 
   @@unique([companyId, code])
   @@map("customers")
 }
 
 model Buyer {
-  id             String   @id @default(uuid()) @db.Uuid
-  companyId      String   @map("company_id") @db.Uuid
-  customerId     String   @map("customer_id") @db.Uuid
-  code           String
-  name           String
-  contactPerson  String?  @map("contact_person")
-  email          String?
-  phone          String?
-  isActive       Boolean  @default(true) @map("is_active")
-  createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @updatedAt @map("updated_at")
+  id            String   @id @default(uuid()) @db.Uuid
+  companyId     String   @map("company_id") @db.Uuid
+  customerId    String   @map("customer_id") @db.Uuid
+  code          String
+  name          String
+  contactPerson String?  @map("contact_person")
+  email         String?
+  phone         String?
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
 
   customer Customer @relation(fields: [customerId], references: [id])
 
@@ -251,7 +255,8 @@ model Supplier {
   createdAt           DateTime         @default(now()) @map("created_at")
   updatedAt           DateTime         @updatedAt @map("updated_at")
 
-  company Company @relation(fields: [companyId], references: [id])
+  company            Company   @relation(fields: [companyId], references: [id])
+  defaultForProducts Product[]
 
   @@unique([companyId, code])
   @@map("suppliers")
@@ -266,9 +271,10 @@ model Department {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  company   Company    @relation(fields: [companyId], references: [id])
-  branch    Branch?    @relation(fields: [branchId], references: [id])
-  employees Employee[]
+  company         Company          @relation(fields: [companyId], references: [id])
+  branch          Branch?          @relation(fields: [branchId], references: [id])
+  employees       Employee[]
+  productionLines ProductionLine[]
 
   @@unique([companyId, code])
   @@map("departments")
@@ -302,29 +308,40 @@ model Employee {
   @@map("employees")
 }
 
-model Product {
-  id           String    @id @default(uuid()) @db.Uuid
-  companyId    String    @map("company_id") @db.Uuid
-  customerId   String?   @map("customer_id") @db.Uuid
-  departmentId String?   @map("department_id") @db.Uuid
-  baseUomId    String?   @map("base_uom_id") @db.Uuid
-  styleCode    String    @map("style_code")
-  styleName    String    @map("style_name")
-  category     String?
-  season       String?
-  gender       String?
-  description  String?
-  imageUrl     String?   @map("image_url")
-  hsnSacCode   String?   @map("hsn_sac_code")
-  isActive     Boolean   @default(true) @map("is_active")
-  deletedAt    DateTime? @map("deleted_at")
-  createdAt    DateTime  @default(now()) @map("created_at")
-  updatedAt    DateTime  @updatedAt @map("updated_at")
+enum ItemType {
+  STYLE
+  RAW_MATERIAL
+}
 
-  company  Company          @relation(fields: [companyId], references: [id])
-  customer Customer?        @relation(fields: [customerId], references: [id])
-  baseUom  UnitOfMeasure?   @relation(fields: [baseUomId], references: [id])
-  variants ProductVariant[]
+model Product {
+  id                String            @id @default(uuid()) @db.Uuid
+  companyId         String            @map("company_id") @db.Uuid
+  customerId        String?           @map("customer_id") @db.Uuid
+  departmentId      String?           @map("department_id") @db.Uuid
+  baseUomId         String?           @map("base_uom_id") @db.Uuid
+  defaultSupplierId String?           @map("default_supplier_id") @db.Uuid
+  itemType          ItemType          @default(STYLE) @map("item_type")
+  materialCategory  SupplierCategory? @map("material_category")
+  styleCode         String            @map("style_code")
+  styleName         String            @map("style_name")
+  category          String?
+  season            String?
+  gender            String?
+  description       String?
+  imageUrl          String?           @map("image_url")
+  hsnSacCode        String?           @map("hsn_sac_code")
+  reorderLevel      Decimal?          @map("reorder_level") @db.Decimal(18, 4)
+  unitCost          Decimal?          @map("unit_cost") @db.Decimal(18, 2)
+  isActive          Boolean           @default(true) @map("is_active")
+  deletedAt         DateTime?         @map("deleted_at")
+  createdAt         DateTime          @default(now()) @map("created_at")
+  updatedAt         DateTime          @updatedAt @map("updated_at")
+
+  company         Company          @relation(fields: [companyId], references: [id])
+  customer        Customer?        @relation(fields: [customerId], references: [id])
+  baseUom         UnitOfMeasure?   @relation(fields: [baseUomId], references: [id])
+  defaultSupplier Supplier?        @relation(fields: [defaultSupplierId], references: [id])
+  variants        ProductVariant[]
 
   @@unique([companyId, styleCode])
   @@map("products")
@@ -365,11 +382,11 @@ model Size {
 }
 
 model UnitOfMeasure {
-  id                String          @id @default(uuid()) @db.Uuid
-  code              String          @unique
-  name              String
-  baseUnitId        String?         @map("base_unit_id") @db.Uuid
-  conversionFactor  Decimal         @default(1) @map("conversion_factor") @db.Decimal(18, 6)
+  id               String  @id @default(uuid()) @db.Uuid
+  code             String  @unique
+  name             String
+  baseUnitId       String? @map("base_unit_id") @db.Uuid
+  conversionFactor Decimal @default(1) @map("conversion_factor") @db.Decimal(18, 6)
 
   baseUnit UnitOfMeasure?  @relation("UomConversion", fields: [baseUnitId], references: [id])
   derived  UnitOfMeasure[] @relation("UomConversion")
@@ -408,16 +425,16 @@ enum WarehouseType {
 }
 
 model Warehouse {
-  id        String        @id @default(uuid()) @db.Uuid
-  companyId String        @map("company_id") @db.Uuid
-  branchId  String        @map("branch_id") @db.Uuid
-  code      String
-  name      String
-  type      WarehouseType
-  managerEmployeeId String? @map("manager_employee_id") @db.Uuid
-  isActive  Boolean       @default(true) @map("is_active")
-  createdAt DateTime      @default(now()) @map("created_at")
-  updatedAt DateTime      @updatedAt @map("updated_at")
+  id                String        @id @default(uuid()) @db.Uuid
+  companyId         String        @map("company_id") @db.Uuid
+  branchId          String        @map("branch_id") @db.Uuid
+  code              String
+  name              String
+  type              WarehouseType
+  managerEmployeeId String?       @map("manager_employee_id") @db.Uuid
+  isActive          Boolean       @default(true) @map("is_active")
+  createdAt         DateTime      @default(now()) @map("created_at")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
 
   company   Company             @relation(fields: [companyId], references: [id])
   branch    Branch              @relation(fields: [branchId], references: [id])
@@ -441,6 +458,64 @@ model WarehouseLocation {
 
   @@unique([warehouseId, code])
   @@map("warehouse_locations")
+}
+
+model ProductionStage {
+  id            String   @id @default(uuid()) @db.Uuid
+  companyId     String   @map("company_id") @db.Uuid
+  parentStageId String?  @map("parent_stage_id") @db.Uuid
+  code          String
+  name          String
+  sequence      Int      @default(0)
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  company     Company           @relation(fields: [companyId], references: [id])
+  parentStage ProductionStage?  @relation("StageHierarchy", fields: [parentStageId], references: [id])
+  subStages   ProductionStage[] @relation("StageHierarchy")
+
+  @@unique([companyId, code])
+  @@map("production_stages")
+}
+
+model ProductionLine {
+  id             String   @id @default(uuid()) @db.Uuid
+  companyId      String   @map("company_id") @db.Uuid
+  branchId       String?  @map("branch_id") @db.Uuid
+  departmentId   String?  @map("department_id") @db.Uuid
+  code           String
+  name           String
+  capacityPerDay Int?     @map("capacity_per_day")
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  company    Company     @relation(fields: [companyId], references: [id])
+  branch     Branch?     @relation(fields: [branchId], references: [id])
+  department Department? @relation(fields: [departmentId], references: [id])
+
+  @@unique([companyId, code])
+  @@map("production_lines")
+}
+
+model SalesAgent {
+  id                String   @id @default(uuid()) @db.Uuid
+  companyId         String   @map("company_id") @db.Uuid
+  code              String
+  name              String
+  contactPerson     String?  @map("contact_person")
+  email             String?
+  phone             String?
+  commissionPercent Decimal? @map("commission_percent") @db.Decimal(5, 2)
+  isActive          Boolean  @default(true) @map("is_active")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, code])
+  @@map("sales_agents")
 }
 
 // ─────────────────────────────────────────────────────────────
