@@ -1,0 +1,574 @@
+// Fashion ERP — Phase 2 schema: Organization/Auth + Masters + System domains.
+// Sampling, Sales Orders, Production, Inventory, Accounts, and Dispatch domains
+// are added in their respective phases (see CLAUDE.md).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─────────────────────────────────────────────────────────────
+// Organization / Auth
+// ─────────────────────────────────────────────────────────────
+
+model Company {
+  id                 String   @id @default(uuid()) @db.Uuid
+  name               String
+  legalName          String?  @map("legal_name")
+  taxRegistrationNo  String?  @unique @map("tax_registration_no")
+  baseCurrencyCode   String   @map("base_currency_code") @db.Char(3)
+  fiscalYearStartMonth Int    @default(1) @map("fiscal_year_start_month")
+  addressJson        Json?    @map("address_json")
+  isActive           Boolean  @default(true) @map("is_active")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  baseCurrency       Currency @relation(fields: [baseCurrencyCode], references: [code])
+  branches           Branch[]
+  users              User[]
+  roles              Role[]
+  customers          Customer[]
+  suppliers          Supplier[]
+  departments        Department[]
+  employees          Employee[]
+  products           Product[]
+  colors             Color[]
+  sizes              Size[]
+  warehouses         Warehouse[]
+  documentSequences  DocumentSequence[]
+  auditLogs          AuditLog[]
+  notifications      Notification[]
+  attachments        Attachment[]
+
+  @@map("companies")
+}
+
+enum BranchType {
+  FACTORY
+  OFFICE
+  WAREHOUSE
+}
+
+model Branch {
+  id        String     @id @default(uuid()) @db.Uuid
+  companyId String     @map("company_id") @db.Uuid
+  code      String
+  name      String
+  type      BranchType
+  addressJson Json?    @map("address_json")
+  isActive  Boolean    @default(true) @map("is_active")
+  createdAt DateTime   @default(now()) @map("created_at")
+  updatedAt DateTime   @updatedAt @map("updated_at")
+
+  company           Company            @relation(fields: [companyId], references: [id])
+  usersDefault      User[]             @relation("UserDefaultBranch")
+  userBranchRoles   UserBranchRole[]
+  employees         Employee[]
+  departments       Department[]
+  warehouses        Warehouse[]
+  documentSequences DocumentSequence[]
+
+  @@unique([companyId, code])
+  @@map("branches")
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  LOCKED
+}
+
+model User {
+  id               String     @id @default(uuid()) @db.Uuid
+  companyId        String     @map("company_id") @db.Uuid
+  defaultBranchId  String?    @map("default_branch_id") @db.Uuid
+  employeeId       String?    @unique @map("employee_id") @db.Uuid
+  email            String     @unique
+  passwordHash     String     @map("password_hash")
+  fullName         String     @map("full_name")
+  phone            String?
+  mfaSecret        String?    @map("mfa_secret")
+  lastLoginAt      DateTime?  @map("last_login_at")
+  status           UserStatus @default(ACTIVE)
+  createdAt        DateTime   @default(now()) @map("created_at")
+  updatedAt        DateTime   @updatedAt @map("updated_at")
+
+  company          Company          @relation(fields: [companyId], references: [id])
+  defaultBranch    Branch?          @relation("UserDefaultBranch", fields: [defaultBranchId], references: [id])
+  employee         Employee?        @relation(fields: [employeeId], references: [id])
+  branchRoles      UserBranchRole[]
+  auditLogs        AuditLog[]
+  notifications    Notification[]
+  uploadedFiles    Attachment[]
+
+  @@map("users")
+}
+
+model Role {
+  id           String   @id @default(uuid()) @db.Uuid
+  companyId    String   @map("company_id") @db.Uuid
+  name         String
+  description  String?
+  isSystemRole Boolean  @default(false) @map("is_system_role")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  company          Company          @relation(fields: [companyId], references: [id])
+  rolePermissions  RolePermission[]
+  userBranchRoles  UserBranchRole[]
+
+  @@unique([companyId, name])
+  @@map("roles")
+}
+
+model Permission {
+  id          String   @id @default(uuid()) @db.Uuid
+  key         String   @unique
+  module      String
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  rolePermissions RolePermission[]
+
+  @@index([module])
+  @@map("permissions")
+}
+
+model RolePermission {
+  id           String   @id @default(uuid()) @db.Uuid
+  roleId       String   @map("role_id") @db.Uuid
+  permissionId String   @map("permission_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model UserBranchRole {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  branchId  String   @map("branch_id") @db.Uuid
+  roleId    String   @map("role_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  branch Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, branchId, roleId])
+  @@map("user_branch_roles")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Masters
+// ─────────────────────────────────────────────────────────────
+
+model Currency {
+  code          String @id @db.Char(3)
+  name          String
+  symbol        String
+  decimalPlaces Int    @default(2) @map("decimal_places")
+
+  companies Company[]
+
+  @@map("currencies")
+}
+
+model Customer {
+  id                 String   @id @default(uuid()) @db.Uuid
+  companyId          String   @map("company_id") @db.Uuid
+  code               String
+  name               String
+  type               String   @default("CUSTOMER")
+  country            String?
+  paymentTermsDays   Int?     @map("payment_terms_days")
+  creditLimit        Decimal? @map("credit_limit") @db.Decimal(18, 2)
+  defaultCurrencyCode String? @map("default_currency_code") @db.Char(3)
+  isActive           Boolean  @default(true) @map("is_active")
+  deletedAt          DateTime? @map("deleted_at")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  company   Company    @relation(fields: [companyId], references: [id])
+  buyers    Buyer[]
+  products  Product[]
+
+  @@unique([companyId, code])
+  @@map("customers")
+}
+
+model Buyer {
+  id             String   @id @default(uuid()) @db.Uuid
+  companyId      String   @map("company_id") @db.Uuid
+  customerId     String   @map("customer_id") @db.Uuid
+  code           String
+  name           String
+  contactPerson  String?  @map("contact_person")
+  email          String?
+  phone          String?
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  customer Customer @relation(fields: [customerId], references: [id])
+
+  @@unique([customerId, code])
+  @@map("buyers")
+}
+
+enum SupplierCategory {
+  FABRIC
+  TRIMS
+  ACCESSORIES
+  PACKAGING
+  SERVICES
+  MACHINERY
+  OTHER
+}
+
+model Supplier {
+  id                  String           @id @default(uuid()) @db.Uuid
+  companyId           String           @map("company_id") @db.Uuid
+  code                String
+  name                String
+  category            SupplierCategory
+  contactPerson       String?          @map("contact_person")
+  email               String?
+  phone               String?
+  address             String?
+  taxRegistrationNo   String?          @map("tax_registration_no")
+  paymentTermsDays    Int?             @map("payment_terms_days")
+  defaultCurrencyCode String?          @map("default_currency_code") @db.Char(3)
+  bankDetailsJson     Json?            @map("bank_details_json")
+  isActive            Boolean          @default(true) @map("is_active")
+  deletedAt           DateTime?        @map("deleted_at")
+  createdAt           DateTime         @default(now()) @map("created_at")
+  updatedAt           DateTime         @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, code])
+  @@map("suppliers")
+}
+
+model Department {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  branchId  String?  @map("branch_id") @db.Uuid
+  name      String
+  code      String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company   Company    @relation(fields: [companyId], references: [id])
+  branch    Branch?    @relation(fields: [branchId], references: [id])
+  employees Employee[]
+
+  @@unique([companyId, code])
+  @@map("departments")
+}
+
+model Employee {
+  id           String    @id @default(uuid()) @db.Uuid
+  companyId    String    @map("company_id") @db.Uuid
+  branchId     String?   @map("branch_id") @db.Uuid
+  departmentId String?   @map("department_id") @db.Uuid
+  reportsToId  String?   @map("reports_to_id") @db.Uuid
+  employeeCode String    @map("employee_code")
+  fullName     String    @map("full_name")
+  designation  String?
+  phone        String?
+  email        String?
+  joinDate     DateTime? @map("join_date")
+  isActive     Boolean   @default(true) @map("is_active")
+  deletedAt    DateTime? @map("deleted_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  company    Company     @relation(fields: [companyId], references: [id])
+  branch     Branch?     @relation(fields: [branchId], references: [id])
+  department Department? @relation(fields: [departmentId], references: [id])
+  reportsTo  Employee?   @relation("EmployeeHierarchy", fields: [reportsToId], references: [id])
+  reports    Employee[]  @relation("EmployeeHierarchy")
+  user       User?
+
+  @@unique([companyId, employeeCode])
+  @@map("employees")
+}
+
+model Product {
+  id           String    @id @default(uuid()) @db.Uuid
+  companyId    String    @map("company_id") @db.Uuid
+  customerId   String?   @map("customer_id") @db.Uuid
+  departmentId String?   @map("department_id") @db.Uuid
+  baseUomId    String?   @map("base_uom_id") @db.Uuid
+  styleCode    String    @map("style_code")
+  styleName    String    @map("style_name")
+  category     String?
+  season       String?
+  gender       String?
+  description  String?
+  imageUrl     String?   @map("image_url")
+  hsnSacCode   String?   @map("hsn_sac_code")
+  isActive     Boolean   @default(true) @map("is_active")
+  deletedAt    DateTime? @map("deleted_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  company  Company          @relation(fields: [companyId], references: [id])
+  customer Customer?        @relation(fields: [customerId], references: [id])
+  baseUom  UnitOfMeasure?   @relation(fields: [baseUomId], references: [id])
+  variants ProductVariant[]
+
+  @@unique([companyId, styleCode])
+  @@map("products")
+}
+
+model Color {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  code      String
+  name      String
+  hexValue  String?  @map("hex_value")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company  Company          @relation(fields: [companyId], references: [id])
+  variants ProductVariant[]
+
+  @@unique([companyId, code])
+  @@map("colors")
+}
+
+model Size {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  code      String
+  name      String
+  sortOrder Int      @default(0) @map("sort_order")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company  Company          @relation(fields: [companyId], references: [id])
+  variants ProductVariant[]
+
+  @@unique([companyId, code])
+  @@map("sizes")
+}
+
+model UnitOfMeasure {
+  id                String          @id @default(uuid()) @db.Uuid
+  code              String          @unique
+  name              String
+  baseUnitId        String?         @map("base_unit_id") @db.Uuid
+  conversionFactor  Decimal         @default(1) @map("conversion_factor") @db.Decimal(18, 6)
+
+  baseUnit UnitOfMeasure?  @relation("UomConversion", fields: [baseUnitId], references: [id])
+  derived  UnitOfMeasure[] @relation("UomConversion")
+  products Product[]
+
+  @@map("units_of_measure")
+}
+
+model ProductVariant {
+  id        String   @id @default(uuid()) @db.Uuid
+  productId String   @map("product_id") @db.Uuid
+  colorId   String   @map("color_id") @db.Uuid
+  sizeId    String   @map("size_id") @db.Uuid
+  skuCode   String   @unique @map("sku_code")
+  barcode   String?
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  product Product @relation(fields: [productId], references: [id])
+  color   Color   @relation(fields: [colorId], references: [id])
+  size    Size    @relation(fields: [sizeId], references: [id])
+
+  @@unique([productId, colorId, sizeId])
+  @@map("product_variants")
+}
+
+enum WarehouseType {
+  RAW_MATERIAL
+  FABRIC
+  TRIMS
+  WIP
+  FINISHED_GOODS
+  DISPATCH
+  REJECT
+}
+
+model Warehouse {
+  id        String        @id @default(uuid()) @db.Uuid
+  companyId String        @map("company_id") @db.Uuid
+  branchId  String        @map("branch_id") @db.Uuid
+  code      String
+  name      String
+  type      WarehouseType
+  managerEmployeeId String? @map("manager_employee_id") @db.Uuid
+  isActive  Boolean       @default(true) @map("is_active")
+  createdAt DateTime      @default(now()) @map("created_at")
+  updatedAt DateTime      @updatedAt @map("updated_at")
+
+  company   Company             @relation(fields: [companyId], references: [id])
+  branch    Branch              @relation(fields: [branchId], references: [id])
+  locations WarehouseLocation[]
+
+  @@unique([branchId, code])
+  @@map("warehouses")
+}
+
+model WarehouseLocation {
+  id          String   @id @default(uuid()) @db.Uuid
+  warehouseId String   @map("warehouse_id") @db.Uuid
+  code        String
+  zone        String?
+  rack        String?
+  bin         String?
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id])
+
+  @@unique([warehouseId, code])
+  @@map("warehouse_locations")
+}
+
+// ─────────────────────────────────────────────────────────────
+// System
+// ─────────────────────────────────────────────────────────────
+
+enum RelatedModule {
+  SAMPLE_REQUEST
+  SALES_ORDER
+  PURCHASE_ORDER
+  PURCHASE_REQUEST
+  SALES_INVOICE
+  PURCHASE_INVOICE
+  QC_INSPECTION
+  DISPATCH
+  PAYMENT
+  GOODS_RECEIPT
+  PRODUCTION_ORDER
+  EXPENSE
+  CUSTOMER
+  SUPPLIER
+  EMPLOYEE
+  PRODUCT
+}
+
+model Attachment {
+  id              String        @id @default(uuid()) @db.Uuid
+  companyId       String        @map("company_id") @db.Uuid
+  uploadedById    String        @map("uploaded_by") @db.Uuid
+  relatedModule   RelatedModule @map("related_module")
+  relatedRecordId String        @map("related_record_id") @db.Uuid
+  fileName        String        @map("file_name")
+  storageKey      String        @map("storage_key")
+  fileSizeBytes   Int           @map("file_size_bytes")
+  mimeType        String        @map("mime_type")
+  uploadedAt      DateTime      @default(now()) @map("uploaded_at")
+
+  company    Company @relation(fields: [companyId], references: [id])
+  uploadedBy User    @relation(fields: [uploadedById], references: [id])
+
+  @@index([relatedModule, relatedRecordId])
+  @@map("attachments")
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  SMS
+}
+
+model Notification {
+  id              String              @id @default(uuid()) @db.Uuid
+  companyId       String              @map("company_id") @db.Uuid
+  userId          String              @map("user_id") @db.Uuid
+  title           String
+  body            String
+  relatedModule   RelatedModule?      @map("related_module")
+  relatedRecordId String?             @map("related_record_id") @db.Uuid
+  channel         NotificationChannel @default(IN_APP)
+  isRead          Boolean             @default(false) @map("is_read")
+  sentAt          DateTime?           @map("sent_at")
+  createdAt       DateTime            @default(now()) @map("created_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+  user    User    @relation(fields: [userId], references: [id])
+
+  @@index([userId, isRead])
+  @@map("notifications")
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  APPROVE
+  REJECT
+  POST
+  CANCEL
+  DELETE
+}
+
+model AuditLog {
+  id          String      @id @default(uuid()) @db.Uuid
+  companyId   String      @map("company_id") @db.Uuid
+  userId      String?     @map("user_id") @db.Uuid
+  tableName   String      @map("table_name")
+  recordId    String      @map("record_id") @db.Uuid
+  action      AuditAction
+  oldValues   Json?       @map("old_values")
+  newValues   Json?       @map("new_values")
+  ipAddress   String?     @map("ip_address")
+  performedAt DateTime    @default(now()) @map("performed_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+  user    User?   @relation(fields: [userId], references: [id])
+
+  @@index([tableName, recordId, performedAt])
+  @@map("audit_logs")
+}
+
+enum DocumentType {
+  SAMPLE_REQUEST
+  SALES_ORDER
+  PRODUCTION_ORDER
+  SALES_INVOICE
+  PURCHASE_INVOICE
+  PURCHASE_ORDER
+  PURCHASE_REQUEST
+  GOODS_RECEIPT
+  DISPATCH
+  PAYMENT
+  EXPENSE
+  STOCK_MOVEMENT
+  JOURNAL
+}
+
+model DocumentSequence {
+  id            String       @id @default(uuid()) @db.Uuid
+  companyId     String       @map("company_id") @db.Uuid
+  branchId      String?      @map("branch_id") @db.Uuid
+  documentType  DocumentType @map("document_type")
+  prefix        String
+  fiscalYear    Int          @map("fiscal_year")
+  currentNumber BigInt       @default(0) @map("current_number")
+  paddingLength Int          @default(5) @map("padding_length")
+
+  company Company @relation(fields: [companyId], references: [id])
+  branch  Branch? @relation(fields: [branchId], references: [id])
+
+  @@unique([companyId, branchId, documentType, fiscalYear])
+  @@map("document_sequences")
+}

@@ -1,0 +1,74 @@
+export type BusinessRuleErrorCode =
+  | "INSUFFICIENT_FG_STOCK"
+  | "INSUFFICIENT_RAW_MATERIAL_STOCK"
+  | "UNBALANCED_JOURNAL"
+  | "POSTED_INVOICE_LOCKED"
+  | "REFERENCED_RECORD_IN_USE"
+  | "DUPLICATE_DOC_NUMBER"
+  | "PERMISSION_DENIED"
+  | "SELF_APPROVAL_NOT_ALLOWED"
+  | "INVALID_STATE_TRANSITION"
+  | "VALIDATION_ERROR"
+  | "NOT_FOUND";
+
+const HTTP_STATUS_BY_CODE: Record<BusinessRuleErrorCode, number> = {
+  INSUFFICIENT_FG_STOCK: 409,
+  INSUFFICIENT_RAW_MATERIAL_STOCK: 409,
+  UNBALANCED_JOURNAL: 422,
+  POSTED_INVOICE_LOCKED: 409,
+  REFERENCED_RECORD_IN_USE: 409,
+  DUPLICATE_DOC_NUMBER: 409,
+  PERMISSION_DENIED: 403,
+  SELF_APPROVAL_NOT_ALLOWED: 403,
+  INVALID_STATE_TRANSITION: 409,
+  VALIDATION_ERROR: 400,
+  NOT_FOUND: 404,
+};
+
+/**
+ * Every user-facing business-rule violation across modules should throw this
+ * (or a helper that constructs one) rather than a generic Error, so route
+ * handlers can map it to the structured `{ error: { code, message, details } }`
+ * response shape instead of a bare 500.
+ */
+export class BusinessRuleError extends Error {
+  readonly code: BusinessRuleErrorCode;
+  readonly httpStatus: number;
+  readonly details?: Record<string, unknown>;
+
+  constructor(code: BusinessRuleErrorCode, message: string, details?: Record<string, unknown>) {
+    super(message);
+    this.name = "BusinessRuleError";
+    this.code = code;
+    this.httpStatus = HTTP_STATUS_BY_CODE[code];
+    this.details = details;
+  }
+
+  toResponseBody() {
+    return {
+      error: {
+        code: this.code,
+        message: this.message,
+        details: this.details ?? null,
+      },
+    };
+  }
+}
+
+export function toErrorResponse(error: unknown): { status: number; body: unknown } {
+  if (error instanceof BusinessRuleError) {
+    return { status: error.httpStatus, body: error.toResponseBody() };
+  }
+
+  console.error("Unhandled error:", error);
+  return {
+    status: 500,
+    body: {
+      error: {
+        code: "INTERNAL_ERROR",
+        message: "Something went wrong. Please try again or contact support if the problem persists.",
+        details: null,
+      },
+    },
+  };
+}
