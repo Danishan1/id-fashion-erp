@@ -7,11 +7,11 @@ import { updateProductionLine } from "@/modules/production-config/production-con
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "masters", "edit");
+    await PermissionService.assert(session.user.id, "masters_core", "edit");
 
     const { id } = await params;
     const input = productionLineSchema.parse(await req.json());
-    const line = await updateProductionLine({ companyId: session.user.companyId }, id, input);
+    const line = await updateProductionLine({ companyId: session.user.companyId, userId: session.user.id }, id, input);
     return NextResponse.json({ data: line });
   } catch (error) {
     return handleApiError(error);

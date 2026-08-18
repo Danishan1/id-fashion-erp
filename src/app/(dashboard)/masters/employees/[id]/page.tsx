@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { auth } from "@/core/auth/auth";
 import { getEmployeeById } from "@/modules/employees/employee.service";
 import { EmployeeForm } from "../EmployeeForm";
+import { Breadcrumb } from "@/components/ui/Breadcrumb";
 
 export default async function EditEmployeePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -13,7 +14,14 @@ export default async function EditEmployeePage({ params }: { params: Promise<{ i
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">{employee.fullName}</h1>
+        <Breadcrumb
+          items={[
+            { label: "Masters", href: "/masters" },
+            { label: "Employees", href: "/masters/employees" },
+            { label: employee.fullName },
+          ]}
+        />
+        <h1 className="mt-2 text-lg font-semibold text-zinc-900 dark:text-zinc-50">{employee.fullName}</h1>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">Code: {employee.employeeCode}</p>
       </div>
 

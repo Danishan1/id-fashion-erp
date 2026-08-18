@@ -26,25 +26,46 @@ model Company {
   createdAt            DateTime @default(now()) @map("created_at")
   updatedAt            DateTime @updatedAt @map("updated_at")
 
-  baseCurrency      Currency           @relation(fields: [baseCurrencyCode], references: [code])
-  branches          Branch[]
-  users             User[]
-  roles             Role[]
-  customers         Customer[]
-  suppliers         Supplier[]
-  departments       Department[]
-  employees         Employee[]
-  products          Product[]
-  colors            Color[]
-  sizes             Size[]
-  warehouses        Warehouse[]
-  productionStages  ProductionStage[]
-  productionLines   ProductionLine[]
-  salesAgents       SalesAgent[]
-  documentSequences DocumentSequence[]
-  auditLogs         AuditLog[]
-  notifications     Notification[]
-  attachments       Attachment[]
+  baseCurrency       Currency            @relation(fields: [baseCurrencyCode], references: [code])
+  branches           Branch[]
+  users              User[]
+  roles              Role[]
+  customers          Customer[]
+  suppliers          Supplier[]
+  departments        Department[]
+  employees          Employee[]
+  products           Product[]
+  colors             Color[]
+  sizes              Size[]
+  warehouses         Warehouse[]
+  productionStages   ProductionStage[]
+  productionLines    ProductionLine[]
+  salesAgents        SalesAgent[]
+  brands             Brand[]
+  categories         Category[]
+  seasons            Season[]
+  productFittings    ProductFitting[]
+  productTypes       ProductType[]
+  designs            Design[]
+  designPatterns     DesignPattern[]
+  patterns           Pattern[]
+  fabricGsms         FabricGsm[]
+  fabricDyes         FabricDye[]
+  fabricWeaveTypes   FabricWeaveType[]
+  fabricWidths       FabricWidth[]
+  fabricCompositions FabricComposition[]
+  machines           Machine[]
+  designations       Designation[]
+  employeeCategories EmployeeCategory[]
+  shiftMasters       ShiftMaster[]
+  holidayMasters     HolidayMaster[]
+  costMasters        CostMaster[]
+  paymentTypes       PaymentType[]
+  bankAccounts       BankAccount[]
+  documentSequences  DocumentSequence[]
+  auditLogs          AuditLog[]
+  notifications      Notification[]
+  attachments        Attachment[]
 
   @@map("companies")
 }
@@ -324,8 +345,8 @@ model Product {
   materialCategory  SupplierCategory? @map("material_category")
   styleCode         String            @map("style_code")
   styleName         String            @map("style_name")
-  category          String?
-  season            String?
+  categoryId        String?           @map("category_id") @db.Uuid
+  seasonId          String?           @map("season_id") @db.Uuid
   gender            String?
   description       String?
   imageUrl          String?           @map("image_url")
@@ -342,6 +363,8 @@ model Product {
   baseUom         UnitOfMeasure?   @relation(fields: [baseUomId], references: [id])
   defaultSupplier Supplier?        @relation(fields: [defaultSupplierId], references: [id])
   variants        ProductVariant[]
+  category        Category?        @relation(fields: [categoryId], references: [id])
+  season          Season?          @relation(fields: [seasonId], references: [id])
 
   @@unique([companyId, styleCode])
   @@map("products")
@@ -494,6 +517,7 @@ model ProductionLine {
   company    Company     @relation(fields: [companyId], references: [id])
   branch     Branch?     @relation(fields: [branchId], references: [id])
   department Department? @relation(fields: [departmentId], references: [id])
+  machines   Machine[]
 
   @@unique([companyId, code])
   @@map("production_lines")
@@ -516,6 +540,376 @@ model SalesAgent {
 
   @@unique([companyId, code])
   @@map("sales_agents")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Masters — Garment/Production Attributes
+// (imported from Royal Jeans + Inventory reference systems, see CLAUDE.md)
+// ─────────────────────────────────────────────────────────────
+
+model Brand {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  code      String
+  name      String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, code])
+  @@map("brands")
+}
+
+model Category {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  code      String
+  name      String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company  Company   @relation(fields: [companyId], references: [id])
+  products Product[]
+
+  @@unique([companyId, code])
+  @@map("categories")
+}
+
+model Season {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  code      String
+  name      String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company  Company   @relation(fields: [companyId], references: [id])
+  products Product[]
+
+  @@unique([companyId, code])
+  @@map("seasons")
+}
+
+model ProductFitting {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  code      String
+  name      String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, code])
+  @@map("product_fittings")
+}
+
+model ProductType {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  code      String
+  name      String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, code])
+  @@map("product_types")
+}
+
+model Design {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  code      String
+  name      String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, code])
+  @@map("designs")
+}
+
+model DesignPattern {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  code      String
+  name      String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, code])
+  @@map("design_patterns")
+}
+
+model Pattern {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  code      String
+  name      String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, code])
+  @@map("patterns")
+}
+
+model FabricGsm {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  code      String
+  name      String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, code])
+  @@map("fabric_gsms")
+}
+
+model FabricDye {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  code      String
+  name      String
+  pantone   String?
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, code])
+  @@map("fabric_dyes")
+}
+
+model FabricWeaveType {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  code      String
+  name      String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, code])
+  @@map("fabric_weave_types")
+}
+
+model FabricWidth {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  code      String
+  name      String
+  unit      String   @default("cm")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, code])
+  @@map("fabric_widths")
+}
+
+model FabricComposition {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  code      String
+  name      String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, code])
+  @@map("fabric_compositions")
+}
+
+model Machine {
+  id               String   @id @default(uuid()) @db.Uuid
+  companyId        String   @map("company_id") @db.Uuid
+  productionLineId String?  @map("production_line_id") @db.Uuid
+  code             String
+  name             String
+  machineType      String?  @map("machine_type")
+  isActive         Boolean  @default(true) @map("is_active")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  company        Company         @relation(fields: [companyId], references: [id])
+  productionLine ProductionLine? @relation(fields: [productionLineId], references: [id])
+
+  @@unique([companyId, code])
+  @@map("machines")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Masters — HR Configuration
+// (imported from HRMS domain gap — HRMS itself only has free-text designation)
+// ─────────────────────────────────────────────────────────────
+
+model Designation {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  code      String
+  name      String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, code])
+  @@map("designations")
+}
+
+model EmployeeCategory {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  code      String
+  name      String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, code])
+  @@map("employee_categories")
+}
+
+model ShiftMaster {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  code      String
+  name      String
+  startTime String   @map("start_time")
+  endTime   String   @map("end_time")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, code])
+  @@map("shift_masters")
+}
+
+model HolidayMaster {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  name      String
+  date      DateTime @db.Date
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, date, name])
+  @@map("holiday_masters")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Masters — Costing
+// (imported from Inventory reference system)
+// ─────────────────────────────────────────────────────────────
+
+enum CostMasterType {
+  HOURLY
+  MONTHLY
+  PER_UNIT
+  FIXED
+}
+
+model CostMaster {
+  id        String         @id @default(uuid()) @db.Uuid
+  companyId String         @map("company_id") @db.Uuid
+  code      String
+  name      String
+  type      CostMasterType @default(HOURLY)
+  rate      Decimal        @db.Decimal(18, 2)
+  isActive  Boolean        @default(true) @map("is_active")
+  createdAt DateTime       @default(now()) @map("created_at")
+  updatedAt DateTime       @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, code])
+  @@map("cost_masters")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Masters — Finance Configuration
+// (imported from Inventory + HRMS reference systems; standalone lookups only —
+// no ledger/balance wiring yet, that lands with the Phase 7 Accounts domain)
+// ─────────────────────────────────────────────────────────────
+
+enum PaymentTypeKind {
+  CASH
+  BANK
+  CHEQUE
+  CARD
+  UPI
+  OTHER
+}
+
+model PaymentType {
+  id        String          @id @default(uuid()) @db.Uuid
+  companyId String          @map("company_id") @db.Uuid
+  code      String
+  name      String
+  type      PaymentTypeKind @default(CASH)
+  isActive  Boolean         @default(true) @map("is_active")
+  createdAt DateTime        @default(now()) @map("created_at")
+  updatedAt DateTime        @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, code])
+  @@map("payment_types")
+}
+
+model BankAccount {
+  id                String   @id @default(uuid()) @db.Uuid
+  companyId         String   @map("company_id") @db.Uuid
+  code              String
+  name              String
+  bankName          String   @map("bank_name")
+  accountNumber     String   @map("account_number")
+  ifscCode          String?  @map("ifsc_code")
+  branch            String?
+  accountHolderName String?  @map("account_holder_name")
+  upiId             String?  @map("upi_id")
+  isActive          Boolean  @default(true) @map("is_active")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, code])
+  @@map("bank_accounts")
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -629,6 +1023,11 @@ enum DocumentType {
   EXPENSE
   STOCK_MOVEMENT
   JOURNAL
+  CUSTOMER
+  SUPPLIER
+  EMPLOYEE
+  STYLE
+  MATERIAL
 }
 
 model DocumentSequence {

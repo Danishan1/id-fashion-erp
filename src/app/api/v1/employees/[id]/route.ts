@@ -11,7 +11,7 @@ interface RouteContext {
 export async function GET(_req: NextRequest, { params }: RouteContext) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "masters", "view");
+    await PermissionService.assert(session.user.id, "masters_core", "view");
 
     const { id } = await params;
     const employee = await getEmployeeById(session.user.companyId, id);
@@ -24,7 +24,7 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
 export async function PATCH(req: NextRequest, { params }: RouteContext) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "masters", "edit");
+    await PermissionService.assert(session.user.id, "masters_core", "edit");
 
     const { id } = await params;
     const input = employeeSchema.parse(await req.json());
@@ -39,7 +39,7 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
 export async function DELETE(_req: NextRequest, { params }: RouteContext) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "masters", "delete");
+    await PermissionService.assert(session.user.id, "masters_core", "delete");
 
     const { id } = await params;
     await deactivateEmployee({ companyId: session.user.companyId, userId: session.user.id }, id);

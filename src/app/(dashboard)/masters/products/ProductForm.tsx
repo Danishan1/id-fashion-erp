@@ -7,8 +7,8 @@ import { FormField, textInputClass } from "@/components/ui/FormField";
 export interface ProductFormValues {
   styleCode: string;
   styleName: string;
-  category: string;
-  season: string;
+  categoryId: string;
+  seasonId: string;
   gender: string;
   description: string;
   hsnSacCode: string;
@@ -19,8 +19,8 @@ export interface ProductFormValues {
 const EMPTY_VALUES: ProductFormValues = {
   styleCode: "",
   styleName: "",
-  category: "",
-  season: "",
+  categoryId: "",
+  seasonId: "",
   gender: "",
   description: "",
   hsnSacCode: "",
@@ -29,6 +29,11 @@ const EMPTY_VALUES: ProductFormValues = {
 };
 
 interface Customer {
+  id: string;
+  name: string;
+}
+
+interface NamedOption {
   id: string;
   name: string;
 }
@@ -44,6 +49,8 @@ export function ProductForm({ initialValues, submitUrl, method, redirectTo }: Pr
   const router = useRouter();
   const [values, setValues] = useState<ProductFormValues>(initialValues ?? EMPTY_VALUES);
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [categories, setCategories] = useState<NamedOption[]>([]);
+  const [seasons, setSeasons] = useState<NamedOption[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -52,6 +59,25 @@ export function ProductForm({ initialValues, submitUrl, method, redirectTo }: Pr
       .then((res) => res.json())
       .then((body) => setCustomers(body.data ?? []))
       .catch(() => setCustomers([]));
+    fetch("/api/v1/categories?pageSize=200")
+      .then((res) => res.json())
+      .then((body) => setCategories(body.data ?? []))
+      .catch(() => setCategories([]));
+    fetch("/api/v1/seasons?pageSize=200")
+      .then((res) => res.json())
+      .then((body) => setSeasons(body.data ?? []))
+      .catch(() => setSeasons([]));
+  }, []);
+
+  useEffect(() => {
+    if (initialValues) return;
+    fetch("/api/v1/products/next-code")
+      .then((res) => res.json())
+      .then((body) => {
+        if (body?.data?.code) setValues((prev) => (prev.styleCode ? prev : { ...prev, styleCode: body.data.code }));
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -118,21 +144,35 @@ export function ProductForm({ initialValues, submitUrl, method, redirectTo }: Pr
       </FormField>
 
       <div className="grid grid-cols-3 gap-4">
-        <FormField label="Category" htmlFor="category">
-          <input
-            id="category"
-            value={values.category}
-            onChange={(e) => setValues({ ...values, category: e.target.value })}
+        <FormField label="Category" htmlFor="categoryId">
+          <select
+            id="categoryId"
+            value={values.categoryId}
+            onChange={(e) => setValues({ ...values, categoryId: e.target.value })}
             className={textInputClass()}
-          />
+          >
+            <option value="">— None —</option>
+            {categories.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
         </FormField>
-        <FormField label="Season" htmlFor="season">
-          <input
-            id="season"
-            value={values.season}
-            onChange={(e) => setValues({ ...values, season: e.target.value })}
+        <FormField label="Season" htmlFor="seasonId">
+          <select
+            id="seasonId"
+            value={values.seasonId}
+            onChange={(e) => setValues({ ...values, seasonId: e.target.value })}
             className={textInputClass()}
-          />
+          >
+            <option value="">— None —</option>
+            {seasons.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
         </FormField>
         <FormField label="Gender" htmlFor="gender">
           <input

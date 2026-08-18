@@ -8,7 +8,7 @@ import { listEmployees, createEmployee } from "@/modules/employees/employee.serv
 export async function GET(req: NextRequest) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "masters", "view");
+    await PermissionService.assert(session.user.id, "masters_core", "view");
 
     const query = parseListQuery(req.nextUrl.searchParams, "fullName");
     const { data, totalCount } = await listEmployees(session.user.companyId, query);
@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "masters", "create");
+    await PermissionService.assert(session.user.id, "masters_core", "create");
 
     const input = employeeSchema.parse(await req.json());
     const employee = await createEmployee({ companyId: session.user.companyId, userId: session.user.id }, input);

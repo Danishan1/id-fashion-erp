@@ -1,6 +1,7 @@
 "use client";
 
 import { DataTable } from "@/components/ui/DataTable";
+import { Breadcrumb } from "@/components/ui/Breadcrumb";
 
 interface WarehouseRow {
   id: string;
@@ -14,7 +15,8 @@ export default function WarehousesListPage() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Warehouses</h1>
+        <Breadcrumb items={[{ label: "Masters", href: "/masters" }, { label: "Warehouses" }]} />
+        <h1 className="mt-2 text-lg font-semibold text-zinc-900 dark:text-zinc-50">Warehouses</h1>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">Warehouses and their storage locations.</p>
       </div>
 

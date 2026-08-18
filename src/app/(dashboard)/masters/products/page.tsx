@@ -1,13 +1,14 @@
 "use client";
 
 import { DataTable } from "@/components/ui/DataTable";
+import { Breadcrumb } from "@/components/ui/Breadcrumb";
 
 interface ProductRow {
   id: string;
   styleCode: string;
   styleName: string;
-  category: string | null;
-  season: string | null;
+  category: { name: string } | null;
+  season: { name: string } | null;
   isActive: boolean;
   _count: { variants: number };
 }
@@ -16,7 +17,8 @@ export default function ProductsListPage() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Styles</h1>
+        <Breadcrumb items={[{ label: "Masters", href: "/masters" }, { label: "Styles" }]} />
+        <h1 className="mt-2 text-lg font-semibold text-zinc-900 dark:text-zinc-50">Styles</h1>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">Product styles with color/size variants.</p>
       </div>
 
@@ -29,8 +31,8 @@ export default function ProductsListPage() {
         columns={[
           { key: "styleCode", header: "Style Code" },
           { key: "styleName", header: "Name" },
-          { key: "category", header: "Category", render: (row) => row.category ?? "—" },
-          { key: "season", header: "Season", render: (row) => row.season ?? "—" },
+          { key: "category", header: "Category", render: (row) => row.category?.name ?? "—" },
+          { key: "season", header: "Season", render: (row) => row.season?.name ?? "—" },
           { key: "variants", header: "Variants", render: (row) => row._count.variants },
           {
             key: "isActive",

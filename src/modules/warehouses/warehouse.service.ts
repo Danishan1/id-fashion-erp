@@ -1,8 +1,8 @@
-import { prisma } from "@/core/db/client";
 import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import type { ListQuery } from "@/lib/list-query";
 import type { WarehouseInput, WarehouseLocationInput } from "./warehouse.schema";
+import { WarehouseLocationRepository, WarehouseRepository } from "./warehouse.repository";
 
 interface ActorContext {
   companyId: string;
@@ -24,18 +24,15 @@ export async function listWarehouses(companyId: string, query: ListQuery) {
   };
 
   const [data, totalCount] = await Promise.all([
-    prisma.warehouse.findMany({ where, orderBy: { [query.sortBy]: query.sortOrder }, skip: query.skip, take: query.take }),
-    prisma.warehouse.count({ where }),
+    WarehouseRepository.findMany(where, { orderBy: { [query.sortBy]: query.sortOrder }, skip: query.skip, take: query.take }),
+    WarehouseRepository.count(where),
   ]);
 
   return { data, totalCount };
 }
 
 export async function getWarehouseById(companyId: string, id: string) {
-  const warehouse = await prisma.warehouse.findFirst({
-    where: { id, companyId },
-    include: { locations: { orderBy: { code: "asc" } } },
-  });
+  const warehouse = await WarehouseRepository.findByIdWithLocations(companyId, id);
   if (!warehouse) throw new BusinessRuleError("NOT_FOUND", "Warehouse not found.", { id });
   return warehouse;
 }
@@ -45,20 +42,18 @@ export async function createWarehouse(actor: ActorContext, input: WarehouseInput
     throw new BusinessRuleError("VALIDATION_ERROR", "Your account has no default branch assigned.");
   }
 
-  const existing = await prisma.warehouse.findFirst({ where: { branchId: actor.branchId, code: input.code } });
+  const existing = await WarehouseRepository.findByCodeInBranch(actor.branchId, input.code);
   if (existing) {
     throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Warehouse code "${input.code}" is already in use.`);
   }
 
-  const warehouse = await prisma.warehouse.create({
-    data: {
-      companyId: actor.companyId,
-      branchId: actor.branchId,
-      code: input.code,
-      name: input.name,
-      type: input.type,
-      isActive: input.isActive,
-    },
+  const warehouse = await WarehouseRepository.create({
+    companyId: actor.companyId,
+    branchId: actor.branchId,
+    code: input.code,
+    name: input.name,
+    type: input.type,
+    isActive: input.isActive,
   });
 
   await writeAuditLog({
@@ -73,12 +68,31 @@ export async function createWarehouse(actor: ActorContext, input: WarehouseInput
   return warehouse;
 }
 
+export async function setWarehouseActiveStatus(actor: ActorContext, id: string, isActive: boolean) {
+  const before = await getWarehouseById(actor.companyId, id);
+  const updated = await WarehouseRepository.update(id, { isActive });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "warehouses",
+    recordId: id,
+    action: "UPDATE",
+    oldValues: before,
+    newValues: updated,
+  });
+
+  return updated;
+}
+
 export async function updateWarehouse(actor: ActorContext, id: string, input: WarehouseInput) {
   const before = await getWarehouseById(actor.companyId, id);
 
-  const updated = await prisma.warehouse.update({
-    where: { id },
-    data: { code: input.code, name: input.name, type: input.type, isActive: input.isActive },
+  const updated = await WarehouseRepository.update(id, {
+    code: input.code,
+    name: input.name,
+    type: input.type,
+    isActive: input.isActive,
   });
 
   await writeAuditLog({
@@ -101,19 +115,17 @@ export async function createWarehouseLocation(
 ) {
   await getWarehouseById(actor.companyId, warehouseId);
 
-  const existing = await prisma.warehouseLocation.findFirst({ where: { warehouseId, code: input.code } });
+  const existing = await WarehouseLocationRepository.findByCode(warehouseId, input.code);
   if (existing) {
     throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Location code "${input.code}" already exists in this warehouse.`);
   }
 
-  const location = await prisma.warehouseLocation.create({
-    data: {
-      warehouseId,
-      code: input.code,
-      zone: input.zone || null,
-      rack: input.rack || null,
-      bin: input.bin || null,
-    },
+  const location = await WarehouseLocationRepository.create({
+    warehouseId,
+    code: input.code,
+    zone: input.zone || null,
+    rack: input.rack || null,
+    bin: input.bin || null,
   });
 
   await writeAuditLog({

@@ -7,11 +7,11 @@ import { updateProductionStage } from "@/modules/production-config/production-co
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "masters", "edit");
+    await PermissionService.assert(session.user.id, "masters_core", "edit");
 
     const { id } = await params;
     const input = productionStageSchema.parse(await req.json());
-    const stage = await updateProductionStage({ companyId: session.user.companyId }, id, input);
+    const stage = await updateProductionStage({ companyId: session.user.companyId, userId: session.user.id }, id, input);
     return NextResponse.json({ data: stage });
   } catch (error) {
     return handleApiError(error);

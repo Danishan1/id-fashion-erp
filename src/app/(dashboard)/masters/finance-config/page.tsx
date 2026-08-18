@@ -1,0 +1,86 @@
+"use client";
+
+import { useState } from "react";
+import { SimpleLookupManager } from "@/components/ui/SimpleLookupManager";
+import { Breadcrumb } from "@/components/ui/Breadcrumb";
+
+const TABS = ["Payment Types", "Bank Accounts"] as const;
+type Tab = (typeof TABS)[number];
+
+export default function FinanceConfigPage() {
+  const [tab, setTab] = useState<Tab>("Payment Types");
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <Breadcrumb items={[{ label: "Masters", href: "/masters" }, { label: "Finance Configuration" }]} />
+        <h1 className="mt-2 text-lg font-semibold text-zinc-900 dark:text-zinc-50">Finance Configuration</h1>
+        <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+          Payment type and bank account masters, imported from Inventory/HRMS — standalone lookups for now; ledger
+          and balance tracking arrive with the Phase 7 Accounts domain.
+        </p>
+      </div>
+
+      <div className="flex gap-1 border-b border-zinc-200 dark:border-zinc-800">
+        {TABS.map((t) => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={`px-3 py-2 text-sm font-medium ${
+              tab === t
+                ? "border-b-2 border-indigo-600 text-indigo-600"
+                : "text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+            }`}
+          >
+            {t}
+          </button>
+        ))}
+      </div>
+
+      {tab === "Payment Types" && (
+        <SimpleLookupManager
+          fetchUrl="/api/v1/payment-types"
+          fields={[
+            { key: "code", label: "Code", required: true },
+            { key: "name", label: "Name", required: true },
+            {
+              key: "type",
+              label: "Type",
+              type: "select",
+              required: true,
+              options: [
+                { value: "CASH", label: "Cash" },
+                { value: "BANK", label: "Bank" },
+                { value: "CHEQUE", label: "Cheque" },
+                { value: "CARD", label: "Card" },
+                { value: "UPI", label: "UPI" },
+                { value: "OTHER", label: "Other" },
+              ],
+            },
+          ]}
+        />
+      )}
+      {tab === "Bank Accounts" && (
+        <SimpleLookupManager
+          fetchUrl="/api/v1/bank-accounts"
+          fields={[
+            { key: "code", label: "Code", required: true },
+            { key: "name", label: "Label", required: true, placeholder: "e.g. Primary Current A/C" },
+            { key: "bankName", label: "Bank Name", required: true },
+            { key: "accountNumber", label: "Account No.", required: true },
+            { key: "ifscCode", label: "IFSC" },
+            { key: "branch", label: "Branch" },
+            { key: "accountHolderName", label: "Account Holder" },
+            { key: "upiId", label: "UPI ID" },
+          ]}
+          displayColumns={[
+            { key: "code", header: "Code" },
+            { key: "name", header: "Label" },
+            { key: "bankName", header: "Bank" },
+            { key: "accountNumber", header: "Account No." },
+          ]}
+        />
+      )}
+    </div>
+  );
+}

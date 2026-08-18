@@ -8,7 +8,7 @@ import { listCustomers, createCustomer } from "@/modules/customers/customer.serv
 export async function GET(req: NextRequest) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "masters", "view");
+    await PermissionService.assert(session.user.id, "masters_core", "view");
 
     const query = parseListQuery(req.nextUrl.searchParams, "name");
     const { data, totalCount } = await listCustomers(session.user.companyId, query);
@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "masters", "create");
+    await PermissionService.assert(session.user.id, "masters_core", "create");
 
     const input = customerSchema.parse(await req.json());
     const customer = await createCustomer(

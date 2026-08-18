@@ -1,8 +1,9 @@
-import { prisma } from "@/core/db/client";
 import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
+import { advanceMasterCodeSequence } from "@/core/numbering/DocumentNumberingService";
 import type { ListQuery } from "@/lib/list-query";
 import type { SupplierInput } from "./supplier.schema";
+import { SupplierRepository } from "./supplier.repository";
 
 interface ActorContext {
   companyId: string;
@@ -24,20 +25,19 @@ export async function listSuppliers(companyId: string, query: ListQuery) {
   };
 
   const [data, totalCount] = await Promise.all([
-    prisma.supplier.findMany({
-      where,
+    SupplierRepository.findMany(where, {
       orderBy: { [query.sortBy]: query.sortOrder },
       skip: query.skip,
       take: query.take,
     }),
-    prisma.supplier.count({ where }),
+    SupplierRepository.count(where),
   ]);
 
   return { data, totalCount };
 }
 
 export async function getSupplierById(companyId: string, id: string) {
-  const supplier = await prisma.supplier.findFirst({ where: { id, companyId, deletedAt: null } });
+  const supplier = await SupplierRepository.findById(companyId, id);
   if (!supplier) {
     throw new BusinessRuleError("NOT_FOUND", "Supplier not found.", { id });
   }
@@ -61,16 +61,16 @@ function toData(input: SupplierInput) {
 }
 
 export async function createSupplier(actor: ActorContext, input: SupplierInput) {
-  const existing = await prisma.supplier.findFirst({
-    where: { companyId: actor.companyId, code: input.code, deletedAt: null },
-  });
+  const existing = await SupplierRepository.findByCode(actor.companyId, input.code);
   if (existing) {
     throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Supplier code "${input.code}" is already in use.`, {
       code: input.code,
     });
   }
 
-  const supplier = await prisma.supplier.create({ data: { companyId: actor.companyId, ...toData(input) } });
+  const supplier = await SupplierRepository.create({ companyId: actor.companyId, ...toData(input) });
+
+  await advanceMasterCodeSequence(actor.companyId, "SUPPLIER");
 
   await writeAuditLog({
     companyId: actor.companyId,
@@ -88,15 +88,30 @@ export async function updateSupplier(actor: ActorContext, id: string, input: Sup
   const before = await getSupplierById(actor.companyId, id);
 
   if (input.code !== before.code) {
-    const codeInUse = await prisma.supplier.findFirst({
-      where: { companyId: actor.companyId, code: input.code, deletedAt: null, id: { not: id } },
-    });
+    const codeInUse = await SupplierRepository.findByCode(actor.companyId, input.code, id);
     if (codeInUse) {
       throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Supplier code "${input.code}" is already in use.`);
     }
   }
 
-  const updated = await prisma.supplier.update({ where: { id }, data: toData(input) });
+  const updated = await SupplierRepository.update(id, toData(input));
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "suppliers",
+    recordId: id,
+    action: "UPDATE",
+    oldValues: before,
+    newValues: updated,
+  });
+
+  return updated;
+}
+
+export async function setSupplierActiveStatus(actor: ActorContext, id: string, isActive: boolean) {
+  const before = await getSupplierById(actor.companyId, id);
+  const updated = await SupplierRepository.update(id, { isActive });
 
   await writeAuditLog({
     companyId: actor.companyId,
@@ -113,7 +128,7 @@ export async function updateSupplier(actor: ActorContext, id: string, input: Sup
 
 export async function deactivateSupplier(actor: ActorContext, id: string) {
   const before = await getSupplierById(actor.companyId, id);
-  const updated = await prisma.supplier.update({ where: { id }, data: { isActive: false, deletedAt: new Date() } });
+  const updated = await SupplierRepository.update(id, { isActive: false, deletedAt: new Date() });
 
   await writeAuditLog({
     companyId: actor.companyId,

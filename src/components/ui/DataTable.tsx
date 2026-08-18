@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type MouseEvent, type ReactNode } from "react";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
+import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 
 export interface DataTableColumn<T> {
   key: string;
@@ -41,6 +43,9 @@ export function DataTable<T extends { id: string }>({
   const [result, setResult] = useState<ListResponse<T> | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [pendingToggleRow, setPendingToggleRow] = useState<T | null>(null);
+  const [isToggling, setIsToggling] = useState(false);
+  const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -69,7 +74,27 @@ export function DataTable<T extends { id: string }>({
       clearTimeout(timeout);
       controller.abort();
     };
-  }, [fetchUrl, page, search, refreshKey]);
+  }, [fetchUrl, page, search, refreshKey, reloadTick]);
+
+  const rowIsActive = (row: T): boolean | undefined => (row as { isActive?: boolean }).isActive;
+
+  const rowLabel = (row: T): string => {
+    const r = row as Record<string, unknown>;
+    return String(r.name ?? r.styleName ?? r.fullName ?? r.code ?? "this record");
+  };
+
+  const confirmToggleActive = async () => {
+    if (!pendingToggleRow) return;
+    setIsToggling(true);
+    await fetch(`${fetchUrl}/${pendingToggleRow.id}/status`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ isActive: !rowIsActive(pendingToggleRow) }),
+    });
+    setIsToggling(false);
+    setPendingToggleRow(null);
+    setReloadTick((t) => t + 1);
+  };
 
   return (
     <div className="space-y-3">
@@ -103,26 +128,27 @@ export function DataTable<T extends { id: string }>({
                   {col.header}
                 </th>
               ))}
+              {rowHref && <th className="px-4 py-2 font-medium">Actions</th>}
             </tr>
           </thead>
           <tbody>
             {error && (
               <tr>
-                <td colSpan={columns.length} className="px-4 py-6 text-center text-red-600 dark:text-red-400">
+                <td colSpan={columns.length + (rowHref ? 1 : 0)} className="px-4 py-6 text-center text-red-600 dark:text-red-400">
                   {error}
                 </td>
               </tr>
             )}
             {!error && isLoading && (
               <tr>
-                <td colSpan={columns.length} className="px-4 py-6 text-center text-zinc-500">
+                <td colSpan={columns.length + (rowHref ? 1 : 0)} className="px-4 py-6 text-center text-zinc-500">
                   Loading…
                 </td>
               </tr>
             )}
             {!error && !isLoading && result?.data.length === 0 && (
               <tr>
-                <td colSpan={columns.length} className="px-4 py-6 text-center text-zinc-500">
+                <td colSpan={columns.length + (rowHref ? 1 : 0)} className="px-4 py-6 text-center text-zinc-500">
                   No records found.
                 </td>
               </tr>
@@ -136,6 +162,7 @@ export function DataTable<T extends { id: string }>({
                     {col.render ? col.render(row) : String((row as Record<string, unknown>)[col.key] ?? "")}
                   </td>
                 ));
+                const isActive = rowIsActive(row);
                 return (
                   <tr
                     key={row.id}
@@ -153,6 +180,26 @@ export function DataTable<T extends { id: string }>({
                     }`}
                   >
                     {cells}
+                    {rowHref && (
+                      <td className="px-4 py-2">
+                        <div className="flex items-center gap-3">
+                          <Link
+                            href={href!}
+                            onClick={(e: MouseEvent) => e.stopPropagation()}
+                            className="font-medium text-indigo-600 hover:text-indigo-500"
+                          >
+                            Edit
+                          </Link>
+                          {isActive !== undefined && (
+                            <ToggleSwitch
+                              checked={isActive}
+                              onToggle={() => setPendingToggleRow(row)}
+                              label={isActive ? "Active — click to deactivate" : "Inactive — click to activate"}
+                            />
+                          )}
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 );
               })}
@@ -184,6 +231,21 @@ export function DataTable<T extends { id: string }>({
           </div>
         </div>
       )}
+
+      <ConfirmModal
+        open={pendingToggleRow !== null}
+        title={pendingToggleRow && rowIsActive(pendingToggleRow) ? "Deactivate record?" : "Activate record?"}
+        message={
+          pendingToggleRow && rowIsActive(pendingToggleRow)
+            ? `"${rowLabel(pendingToggleRow)}" will be deactivated and hidden from active selection lists. You can reactivate it later.`
+            : `"${pendingToggleRow ? rowLabel(pendingToggleRow) : ""}" will be marked active again.`
+        }
+        confirmLabel={pendingToggleRow && rowIsActive(pendingToggleRow) ? "Deactivate" : "Activate"}
+        isDangerous={Boolean(pendingToggleRow && rowIsActive(pendingToggleRow))}
+        isBusy={isToggling}
+        onConfirm={confirmToggleActive}
+        onCancel={() => setPendingToggleRow(null)}
+      />
     </div>
   );
 }

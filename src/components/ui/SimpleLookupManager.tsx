@@ -2,13 +2,19 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { textInputClass } from "@/components/ui/FormField";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
+import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
+import { suggestCodeFromName } from "@/lib/code-suggest";
 
 export interface LookupField {
   key: string;
   label: string;
-  type?: "text" | "number" | "color";
+  type?: "text" | "number" | "color" | "date" | "select";
   required?: boolean;
   placeholder?: string;
+  /** For type "select": static options, or a URL returning {data: {id,name}[]} to fetch options from. */
+  options?: { value: string; label: string }[];
+  optionsUrl?: string;
 }
 
 export interface LookupRow {
@@ -21,6 +27,8 @@ interface SimpleLookupManagerProps {
   fields: LookupField[];
   displayColumns?: { key: string; header: string }[];
   hasActiveToggle?: boolean;
+  /** Prepended to the auto-suggested Code when creating a new record (e.g. "BR-"). */
+  codePrefix?: string;
 }
 
 function emptyValues(fields: LookupField[]): Record<string, string> {
@@ -32,16 +40,42 @@ export function SimpleLookupManager({
   fields,
   displayColumns,
   hasActiveToggle = true,
+  codePrefix = "",
 }: SimpleLookupManagerProps) {
+  const hasCodeField = fields.some((f) => f.key === "code");
   const [rows, setRows] = useState<LookupRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [values, setValues] = useState<Record<string, string>>(emptyValues(fields));
+  const [isCodeManuallyEdited, setIsCodeManuallyEdited] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [dynamicOptions, setDynamicOptions] = useState<Record<string, { value: string; label: string }[]>>({});
+  const [pendingToggleRow, setPendingToggleRow] = useState<LookupRow | null>(null);
+  const [isToggling, setIsToggling] = useState(false);
 
   const columns = displayColumns ?? fields.map((f) => ({ key: f.key, header: f.label }));
+
+  useEffect(() => {
+    fields
+      .filter((f) => f.type === "select" && f.optionsUrl)
+      .forEach((f) => {
+        fetch(`${f.optionsUrl}?pageSize=200`)
+          .then((res) => res.json())
+          .then((body) =>
+            setDynamicOptions((prev) => ({
+              ...prev,
+              [f.key]: (body.data ?? []).map((row: LookupRow) => ({
+                value: row.id,
+                label: String(row.name ?? row.code ?? row.id),
+              })),
+            }))
+          )
+          .catch(() => setDynamicOptions((prev) => ({ ...prev, [f.key]: [] })));
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetchUrl]);
 
   const load = () => {
     setIsLoading(true);
@@ -61,15 +95,37 @@ export function SimpleLookupManager({
   const startCreate = () => {
     setEditingId(null);
     setValues(emptyValues(fields));
+    setIsCodeManuallyEdited(false);
     setShowForm(true);
     setError(null);
   };
 
   const startEdit = (row: LookupRow) => {
     setEditingId(row.id);
-    setValues(Object.fromEntries(fields.map((f) => [f.key, String(row[f.key] ?? "")])));
+    setValues(
+      Object.fromEntries(
+        fields.map((f) => {
+          const raw = String(row[f.key] ?? "");
+          return [f.key, f.type === "date" ? raw.slice(0, 10) : raw];
+        })
+      )
+    );
+    setIsCodeManuallyEdited(true); // never auto-overwrite an existing record's code
     setShowForm(true);
     setError(null);
+  };
+
+  const handleFieldChange = (key: string, value: string) => {
+    if (key === "code") {
+      setIsCodeManuallyEdited(true);
+      setValues((prev) => ({ ...prev, code: value }));
+      return;
+    }
+    if (key === "name" && hasCodeField && !isCodeManuallyEdited) {
+      setValues((prev) => ({ ...prev, name: value, code: suggestCodeFromName(value, codePrefix) }));
+      return;
+    }
+    setValues((prev) => ({ ...prev, [key]: value }));
   };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -99,14 +155,23 @@ export function SimpleLookupManager({
     load();
   };
 
-  const toggleActive = async (row: LookupRow) => {
-    await fetch(`${fetchUrl}/${row.id}`, {
+  const confirmToggleActive = async () => {
+    if (!pendingToggleRow) return;
+    setIsToggling(true);
+    await fetch(`${fetchUrl}/${pendingToggleRow.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...Object.fromEntries(fields.map((f) => [f.key, row[f.key]])), isActive: !row.isActive }),
+      body: JSON.stringify({
+        ...Object.fromEntries(fields.map((f) => [f.key, pendingToggleRow[f.key]])),
+        isActive: !pendingToggleRow.isActive,
+      }),
     });
+    setIsToggling(false);
+    setPendingToggleRow(null);
     load();
   };
+
+  const rowLabel = (row: LookupRow) => String(row.name ?? row.code ?? "this record");
 
   return (
     <div className="max-w-2xl space-y-3">
@@ -124,14 +189,30 @@ export function SimpleLookupManager({
           {fields.map((f) => (
             <div key={f.key} className="flex-1 min-w-[120px]">
               <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400">{f.label}</label>
-              <input
-                type={f.type ?? "text"}
-                required={f.required}
-                placeholder={f.placeholder}
-                value={values[f.key] ?? ""}
-                onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
-                className={textInputClass()}
-              />
+              {f.type === "select" ? (
+                <select
+                  required={f.required}
+                  value={values[f.key] ?? ""}
+                  onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
+                  className={textInputClass()}
+                >
+                  <option value="">{f.placeholder ?? "— Select —"}</option>
+                  {(f.options ?? dynamicOptions[f.key] ?? []).map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type={f.type ?? "text"}
+                  required={f.required}
+                  placeholder={f.placeholder}
+                  value={values[f.key] ?? ""}
+                  onChange={(e) => handleFieldChange(f.key, e.target.value)}
+                  className={textInputClass()}
+                />
+              )}
             </div>
           ))}
           <button
@@ -187,21 +268,40 @@ export function SimpleLookupManager({
                       {String(row[c.key] ?? "")}
                     </td>
                   ))}
-                  <td className="px-4 py-2 space-x-3">
-                    <button onClick={() => startEdit(row)} className="text-indigo-600 hover:text-indigo-500">
-                      Edit
-                    </button>
-                    {hasActiveToggle && (
-                      <button onClick={() => toggleActive(row)} className="text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300">
-                        {row.isActive ? "Deactivate" : "Activate"}
+                  <td className="px-4 py-2">
+                    <div className="flex items-center gap-3">
+                      <button onClick={() => startEdit(row)} className="text-indigo-600 hover:text-indigo-500">
+                        Edit
                       </button>
-                    )}
+                      {hasActiveToggle && (
+                        <ToggleSwitch
+                          checked={Boolean(row.isActive)}
+                          onToggle={() => setPendingToggleRow(row)}
+                          label={row.isActive ? "Active — click to deactivate" : "Inactive — click to activate"}
+                        />
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
           </tbody>
         </table>
       </div>
+
+      <ConfirmModal
+        open={pendingToggleRow !== null}
+        title={pendingToggleRow?.isActive ? "Deactivate record?" : "Activate record?"}
+        message={
+          pendingToggleRow?.isActive
+            ? `"${rowLabel(pendingToggleRow ?? {} as LookupRow)}" will be deactivated and hidden from active selection lists. You can reactivate it later.`
+            : `"${rowLabel(pendingToggleRow ?? {} as LookupRow)}" will be marked active again.`
+        }
+        confirmLabel={pendingToggleRow?.isActive ? "Deactivate" : "Activate"}
+        isDangerous={Boolean(pendingToggleRow?.isActive)}
+        isBusy={isToggling}
+        onConfirm={confirmToggleActive}
+        onCancel={() => setPendingToggleRow(null)}
+      />
     </div>
   );
 }

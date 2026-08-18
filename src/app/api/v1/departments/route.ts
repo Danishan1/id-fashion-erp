@@ -8,7 +8,7 @@ import { listDepartments, createDepartment } from "@/modules/departments/departm
 export async function GET(req: NextRequest) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "masters", "view");
+    await PermissionService.assert(session.user.id, "masters_core", "view");
 
     const query = parseListQuery(req.nextUrl.searchParams, "name");
     query.take = Math.max(query.take, 200); // departments are few; dropdowns want the full list
@@ -23,7 +23,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "masters", "create");
+    await PermissionService.assert(session.user.id, "masters_core", "create");
 
     const input = departmentSchema.parse(await req.json());
     const department = await createDepartment({ companyId: session.user.companyId, userId: session.user.id }, input);

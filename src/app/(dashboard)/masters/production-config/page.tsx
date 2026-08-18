@@ -2,8 +2,9 @@
 
 import { useState } from "react";
 import { SimpleLookupManager } from "@/components/ui/SimpleLookupManager";
+import { Breadcrumb } from "@/components/ui/Breadcrumb";
 
-const TABS = ["Stages", "Lines"] as const;
+const TABS = ["Stages", "Lines", "Machines"] as const;
 type Tab = (typeof TABS)[number];
 
 export default function ProductionConfigPage() {
@@ -12,10 +13,11 @@ export default function ProductionConfigPage() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Production Stages &amp; Lines</h1>
+        <Breadcrumb items={[{ label: "Masters", href: "/masters" }, { label: "Production Stages, Lines & Machines" }]} />
+        <h1 className="mt-2 text-lg font-semibold text-zinc-900 dark:text-zinc-50">Production Stages, Lines &amp; Machines</h1>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-          Configurable production stages (Cutting, Sewing, Finishing, …) and factory lines/work centers used to plan
-          and track production in Phase 5.
+          Configurable production stages (Cutting, Sewing, Finishing, …), factory lines/work centers, and individual
+          machines assigned to a line — used to plan and track production in Phase 5.
         </p>
       </div>
 
@@ -52,6 +54,27 @@ export default function ProductionConfigPage() {
             { key: "code", label: "Code", required: true },
             { key: "name", label: "Name", required: true },
             { key: "capacityPerDay", label: "Capacity/Day", type: "number" },
+          ]}
+        />
+      )}
+      {tab === "Machines" && (
+        <SimpleLookupManager
+          fetchUrl="/api/v1/machines"
+          fields={[
+            { key: "code", label: "Code", required: true },
+            { key: "name", label: "Name", required: true },
+            { key: "machineType", label: "Machine Type", placeholder: "e.g. Single Needle, Overlock" },
+            {
+              key: "productionLineId",
+              label: "Production Line",
+              type: "select",
+              optionsUrl: "/api/v1/production-lines",
+            },
+          ]}
+          displayColumns={[
+            { key: "code", header: "Code" },
+            { key: "name", header: "Name" },
+            { key: "machineType", header: "Type" },
           ]}
         />
       )}

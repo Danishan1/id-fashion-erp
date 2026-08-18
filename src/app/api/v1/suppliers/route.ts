@@ -8,7 +8,7 @@ import { listSuppliers, createSupplier } from "@/modules/suppliers/supplier.serv
 export async function GET(req: NextRequest) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "masters", "view");
+    await PermissionService.assert(session.user.id, "masters_core", "view");
 
     const query = parseListQuery(req.nextUrl.searchParams, "name");
     const { data, totalCount } = await listSuppliers(session.user.companyId, query);
@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "masters", "create");
+    await PermissionService.assert(session.user.id, "masters_core", "create");
 
     const input = supplierSchema.parse(await req.json());
     const supplier = await createSupplier({ companyId: session.user.companyId, userId: session.user.id }, input);

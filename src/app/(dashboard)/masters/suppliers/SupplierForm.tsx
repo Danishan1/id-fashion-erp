@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { SUPPLIER_CATEGORIES } from "@/modules/suppliers/supplier.schema";
 
@@ -29,8 +29,20 @@ const EMPTY_VALUES: SupplierFormValues = {
   address: "",
   taxRegistrationNo: "",
   paymentTermsDays: "",
-  defaultCurrencyCode: "",
+  defaultCurrencyCode: "INR",
   isActive: true,
+};
+
+interface Currency {
+  code: string;
+  name: string;
+}
+
+/** Currency model has no country column — this just labels the dropdown for the handful of seeded currencies. */
+const COUNTRY_BY_CURRENCY: Record<string, string> = {
+  INR: "India",
+  USD: "United States",
+  EUR: "Eurozone",
 };
 
 interface SupplierFormProps {
@@ -43,8 +55,27 @@ interface SupplierFormProps {
 export function SupplierForm({ initialValues, submitUrl, method, redirectTo }: SupplierFormProps) {
   const router = useRouter();
   const [values, setValues] = useState<SupplierFormValues>(initialValues ?? EMPTY_VALUES);
+  const [currencies, setCurrencies] = useState<Currency[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (initialValues) return;
+    fetch("/api/v1/suppliers/next-code")
+      .then((res) => res.json())
+      .then((body) => {
+        if (body?.data?.code) setValues((prev) => (prev.code ? prev : { ...prev, code: body.data.code }));
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    fetch("/api/v1/currencies")
+      .then((res) => res.json())
+      .then((body) => setCurrencies(body.data ?? []))
+      .catch(() => setCurrencies([]));
+  }, []);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -170,14 +201,20 @@ export function SupplierForm({ initialValues, submitUrl, method, redirectTo }: S
           />
         </FormField>
         <FormField label="Currency" htmlFor="currency">
-          <input
+          <select
             id="currency"
-            placeholder="USD"
-            maxLength={3}
             value={values.defaultCurrencyCode}
-            onChange={(e) => setValues({ ...values, defaultCurrencyCode: e.target.value.toUpperCase() })}
+            onChange={(e) => setValues({ ...values, defaultCurrencyCode: e.target.value })}
             className={textInputClass()}
-          />
+          >
+            <option value="">— None —</option>
+            {currencies.map((c) => (
+              <option key={c.code} value={c.code}>
+                {c.code} — {c.name}
+                {COUNTRY_BY_CURRENCY[c.code] ? ` (${COUNTRY_BY_CURRENCY[c.code]})` : ""}
+              </option>
+            ))}
+          </select>
         </FormField>
       </div>
 

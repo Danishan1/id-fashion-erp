@@ -1,8 +1,9 @@
-import { prisma } from "@/core/db/client";
 import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
+import { advanceMasterCodeSequence } from "@/core/numbering/DocumentNumberingService";
 import type { ListQuery } from "@/lib/list-query";
 import type { CustomerInput, BuyerInput } from "./customer.schema";
+import { BuyerRepository, CustomerRepository } from "./customer.repository";
 
 interface ActorContext {
   companyId: string;
@@ -24,23 +25,19 @@ export async function listCustomers(companyId: string, query: ListQuery) {
   };
 
   const [data, totalCount] = await Promise.all([
-    prisma.customer.findMany({
-      where,
+    CustomerRepository.findMany(where, {
       orderBy: { [query.sortBy]: query.sortOrder },
       skip: query.skip,
       take: query.take,
     }),
-    prisma.customer.count({ where }),
+    CustomerRepository.count(where),
   ]);
 
   return { data, totalCount };
 }
 
 export async function getCustomerById(companyId: string, id: string) {
-  const customer = await prisma.customer.findFirst({
-    where: { id, companyId, deletedAt: null },
-    include: { buyers: { orderBy: { name: "asc" } } },
-  });
+  const customer = await CustomerRepository.findByIdWithBuyers(companyId, id);
   if (!customer) {
     throw new BusinessRuleError("NOT_FOUND", "Customer not found.", { id });
   }
@@ -48,28 +45,26 @@ export async function getCustomerById(companyId: string, id: string) {
 }
 
 export async function createCustomer(actor: ActorContext, input: CustomerInput) {
-  const existing = await prisma.customer.findFirst({
-    where: { companyId: actor.companyId, code: input.code, deletedAt: null },
-  });
+  const existing = await CustomerRepository.findByCode(actor.companyId, input.code);
   if (existing) {
     throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Customer code "${input.code}" is already in use.`, {
       code: input.code,
     });
   }
 
-  const customer = await prisma.customer.create({
-    data: {
-      companyId: actor.companyId,
-      code: input.code,
-      name: input.name,
-      type: input.type,
-      country: input.country || null,
-      paymentTermsDays: input.paymentTermsDays ?? null,
-      creditLimit: input.creditLimit ?? null,
-      defaultCurrencyCode: input.defaultCurrencyCode || null,
-      isActive: input.isActive,
-    },
+  const customer = await CustomerRepository.create({
+    companyId: actor.companyId,
+    code: input.code,
+    name: input.name,
+    type: input.type,
+    country: input.country || null,
+    paymentTermsDays: input.paymentTermsDays ?? null,
+    creditLimit: input.creditLimit ?? null,
+    defaultCurrencyCode: input.defaultCurrencyCode || null,
+    isActive: input.isActive,
   });
+
+  await advanceMasterCodeSequence(actor.companyId, "CUSTOMER");
 
   await writeAuditLog({
     companyId: actor.companyId,
@@ -87,9 +82,7 @@ export async function updateCustomer(actor: ActorContext, id: string, input: Cus
   const before = await getCustomerById(actor.companyId, id);
 
   if (input.code !== before.code) {
-    const codeInUse = await prisma.customer.findFirst({
-      where: { companyId: actor.companyId, code: input.code, deletedAt: null, id: { not: id } },
-    });
+    const codeInUse = await CustomerRepository.findByCode(actor.companyId, input.code, id);
     if (codeInUse) {
       throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Customer code "${input.code}" is already in use.`, {
         code: input.code,
@@ -97,19 +90,33 @@ export async function updateCustomer(actor: ActorContext, id: string, input: Cus
     }
   }
 
-  const updated = await prisma.customer.update({
-    where: { id },
-    data: {
-      code: input.code,
-      name: input.name,
-      type: input.type,
-      country: input.country || null,
-      paymentTermsDays: input.paymentTermsDays ?? null,
-      creditLimit: input.creditLimit ?? null,
-      defaultCurrencyCode: input.defaultCurrencyCode || null,
-      isActive: input.isActive,
-    },
+  const updated = await CustomerRepository.update(id, {
+    code: input.code,
+    name: input.name,
+    type: input.type,
+    country: input.country || null,
+    paymentTermsDays: input.paymentTermsDays ?? null,
+    creditLimit: input.creditLimit ?? null,
+    defaultCurrencyCode: input.defaultCurrencyCode || null,
+    isActive: input.isActive,
   });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "customers",
+    recordId: id,
+    action: "UPDATE",
+    oldValues: before,
+    newValues: updated,
+  });
+
+  return updated;
+}
+
+export async function setCustomerActiveStatus(actor: ActorContext, id: string, isActive: boolean) {
+  const before = await getCustomerById(actor.companyId, id);
+  const updated = await CustomerRepository.update(id, { isActive });
 
   await writeAuditLog({
     companyId: actor.companyId,
@@ -127,10 +134,7 @@ export async function updateCustomer(actor: ActorContext, id: string, input: Cus
 export async function deactivateCustomer(actor: ActorContext, id: string) {
   const before = await getCustomerById(actor.companyId, id);
 
-  const updated = await prisma.customer.update({
-    where: { id },
-    data: { isActive: false, deletedAt: new Date() },
-  });
+  const updated = await CustomerRepository.update(id, { isActive: false, deletedAt: new Date() });
 
   await writeAuditLog({
     companyId: actor.companyId,
@@ -147,21 +151,19 @@ export async function deactivateCustomer(actor: ActorContext, id: string) {
 export async function createBuyer(actor: ActorContext, customerId: string, input: BuyerInput) {
   await getCustomerById(actor.companyId, customerId);
 
-  const existing = await prisma.buyer.findFirst({ where: { customerId, code: input.code } });
+  const existing = await BuyerRepository.findByCode(customerId, input.code);
   if (existing) {
     throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Buyer code "${input.code}" is already in use for this customer.`);
   }
 
-  const buyer = await prisma.buyer.create({
-    data: {
-      companyId: actor.companyId,
-      customerId,
-      code: input.code,
-      name: input.name,
-      contactPerson: input.contactPerson || null,
-      email: input.email || null,
-      phone: input.phone || null,
-    },
+  const buyer = await BuyerRepository.create({
+    companyId: actor.companyId,
+    customerId,
+    code: input.code,
+    name: input.name,
+    contactPerson: input.contactPerson || null,
+    email: input.email || null,
+    phone: input.phone || null,
   });
 
   await writeAuditLog({
