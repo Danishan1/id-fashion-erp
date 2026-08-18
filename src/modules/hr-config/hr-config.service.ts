@@ -1,0 +1,205 @@
+import { writeAuditLog } from "@/core/audit/AuditLogger";
+import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
+import type {
+  DesignationInput,
+  EmployeeCategoryInput,
+  HolidayMasterInput,
+  ShiftMasterInput,
+} from "./hr-config.schema";
+import { HrConfigRepository } from "./hr-config.repository";
+
+interface ActorContext {
+  companyId: string;
+  userId: string;
+}
+
+// ── Designations ──────────────────────────────────────────────────────────
+
+export async function listDesignations(companyId: string) {
+  return HrConfigRepository.designation.findMany({ where: { companyId }, orderBy: { name: "asc" } });
+}
+
+export async function createDesignation(actor: ActorContext, input: DesignationInput) {
+  const existing = await HrConfigRepository.designation.findFirst({ where: { companyId: actor.companyId, code: input.code } });
+  if (existing) throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Designation code "${input.code}" is already in use.`);
+
+  const designation = await HrConfigRepository.designation.create({
+    data: { companyId: actor.companyId, code: input.code, name: input.name, isActive: input.isActive },
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "designations",
+    recordId: designation.id,
+    action: "CREATE",
+    newValues: designation,
+  });
+
+  return designation;
+}
+
+export async function updateDesignation(actor: ActorContext, id: string, input: DesignationInput) {
+  const updated = await HrConfigRepository.designation.update({
+    where: { id },
+    data: { code: input.code, name: input.name, isActive: input.isActive },
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "designations",
+    recordId: id,
+    action: "UPDATE",
+    newValues: updated,
+  });
+
+  return updated;
+}
+
+// ── Employee Categories ───────────────────────────────────────────────────
+
+export async function listEmployeeCategories(companyId: string) {
+  return HrConfigRepository.employeeCategory.findMany({ where: { companyId }, orderBy: { name: "asc" } });
+}
+
+export async function createEmployeeCategory(actor: ActorContext, input: EmployeeCategoryInput) {
+  const existing = await HrConfigRepository.employeeCategory.findFirst({ where: { companyId: actor.companyId, code: input.code } });
+  if (existing) throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Employee category code "${input.code}" is already in use.`);
+
+  const category = await HrConfigRepository.employeeCategory.create({
+    data: { companyId: actor.companyId, code: input.code, name: input.name, isActive: input.isActive },
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "employee_categories",
+    recordId: category.id,
+    action: "CREATE",
+    newValues: category,
+  });
+
+  return category;
+}
+
+export async function updateEmployeeCategory(actor: ActorContext, id: string, input: EmployeeCategoryInput) {
+  const updated = await HrConfigRepository.employeeCategory.update({
+    where: { id },
+    data: { code: input.code, name: input.name, isActive: input.isActive },
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "employee_categories",
+    recordId: id,
+    action: "UPDATE",
+    newValues: updated,
+  });
+
+  return updated;
+}
+
+// ── Shift Master ──────────────────────────────────────────────────────────
+
+export async function listShiftMasters(companyId: string) {
+  return HrConfigRepository.shiftMaster.findMany({ where: { companyId }, orderBy: { name: "asc" } });
+}
+
+export async function createShiftMaster(actor: ActorContext, input: ShiftMasterInput) {
+  const existing = await HrConfigRepository.shiftMaster.findFirst({ where: { companyId: actor.companyId, code: input.code } });
+  if (existing) throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Shift code "${input.code}" is already in use.`);
+
+  const shift = await HrConfigRepository.shiftMaster.create({
+    data: {
+      companyId: actor.companyId,
+      code: input.code,
+      name: input.name,
+      startTime: input.startTime,
+      endTime: input.endTime,
+      isActive: input.isActive,
+    },
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "shift_masters",
+    recordId: shift.id,
+    action: "CREATE",
+    newValues: shift,
+  });
+
+  return shift;
+}
+
+export async function updateShiftMaster(actor: ActorContext, id: string, input: ShiftMasterInput) {
+  const updated = await HrConfigRepository.shiftMaster.update({
+    where: { id },
+    data: {
+      code: input.code,
+      name: input.name,
+      startTime: input.startTime,
+      endTime: input.endTime,
+      isActive: input.isActive,
+    },
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "shift_masters",
+    recordId: id,
+    action: "UPDATE",
+    newValues: updated,
+  });
+
+  return updated;
+}
+
+// ── Holiday Master ────────────────────────────────────────────────────────
+
+export async function listHolidayMasters(companyId: string) {
+  return HrConfigRepository.holidayMaster.findMany({ where: { companyId }, orderBy: { date: "asc" } });
+}
+
+export async function createHolidayMaster(actor: ActorContext, input: HolidayMasterInput) {
+  const existing = await HrConfigRepository.holidayMaster.findFirst({
+    where: { companyId: actor.companyId, name: input.name, date: input.date },
+  });
+  if (existing) throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Holiday "${input.name}" on this date already exists.`);
+
+  const holiday = await HrConfigRepository.holidayMaster.create({
+    data: { companyId: actor.companyId, name: input.name, date: input.date, isActive: input.isActive },
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "holiday_masters",
+    recordId: holiday.id,
+    action: "CREATE",
+    newValues: holiday,
+  });
+
+  return holiday;
+}
+
+export async function updateHolidayMaster(actor: ActorContext, id: string, input: HolidayMasterInput) {
+  const updated = await HrConfigRepository.holidayMaster.update({
+    where: { id },
+    data: { name: input.name, date: input.date, isActive: input.isActive },
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "holiday_masters",
+    recordId: id,
+    action: "UPDATE",
+    newValues: updated,
+  });
+
+  return updated;
+}

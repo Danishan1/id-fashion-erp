@@ -1,22 +1,24 @@
-import { prisma } from "@/core/db/client";
+import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
-import type { ProductionLineInput, ProductionStageInput, SalesAgentInput } from "./production-config.schema";
+import type { MachineInput, ProductionLineInput, ProductionStageInput, SalesAgentInput } from "./production-config.schema";
+import { ProductionConfigRepository } from "./production-config.repository";
 
 interface ActorContext {
   companyId: string;
+  userId: string;
 }
 
 // ── Production Stages ────────────────────────────────────────────────────
 
 export async function listProductionStages(companyId: string) {
-  return prisma.productionStage.findMany({ where: { companyId }, orderBy: { sequence: "asc" } });
+  return ProductionConfigRepository.stage.findMany({ where: { companyId }, orderBy: { sequence: "asc" } });
 }
 
 export async function createProductionStage(actor: ActorContext, input: ProductionStageInput) {
-  const existing = await prisma.productionStage.findFirst({ where: { companyId: actor.companyId, code: input.code } });
+  const existing = await ProductionConfigRepository.stage.findFirst({ where: { companyId: actor.companyId, code: input.code } });
   if (existing) throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Stage code "${input.code}" is already in use.`);
 
-  return prisma.productionStage.create({
+  const stage = await ProductionConfigRepository.stage.create({
     data: {
       companyId: actor.companyId,
       code: input.code,
@@ -25,26 +27,48 @@ export async function createProductionStage(actor: ActorContext, input: Producti
       isActive: input.isActive,
     },
   });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "production_stages",
+    recordId: stage.id,
+    action: "CREATE",
+    newValues: stage,
+  });
+
+  return stage;
 }
 
 export async function updateProductionStage(actor: ActorContext, id: string, input: ProductionStageInput) {
-  return prisma.productionStage.update({
+  const updated = await ProductionConfigRepository.stage.update({
     where: { id },
     data: { code: input.code, name: input.name, sequence: input.sequence, isActive: input.isActive },
   });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "production_stages",
+    recordId: id,
+    action: "UPDATE",
+    newValues: updated,
+  });
+
+  return updated;
 }
 
 // ── Production Lines ─────────────────────────────────────────────────────
 
 export async function listProductionLines(companyId: string) {
-  return prisma.productionLine.findMany({ where: { companyId }, orderBy: { name: "asc" } });
+  return ProductionConfigRepository.line.findMany({ where: { companyId }, orderBy: { name: "asc" } });
 }
 
 export async function createProductionLine(actor: ActorContext, input: ProductionLineInput) {
-  const existing = await prisma.productionLine.findFirst({ where: { companyId: actor.companyId, code: input.code } });
+  const existing = await ProductionConfigRepository.line.findFirst({ where: { companyId: actor.companyId, code: input.code } });
   if (existing) throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Line code "${input.code}" is already in use.`);
 
-  return prisma.productionLine.create({
+  const line = await ProductionConfigRepository.line.create({
     data: {
       companyId: actor.companyId,
       code: input.code,
@@ -53,10 +77,21 @@ export async function createProductionLine(actor: ActorContext, input: Productio
       isActive: input.isActive,
     },
   });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "production_lines",
+    recordId: line.id,
+    action: "CREATE",
+    newValues: line,
+  });
+
+  return line;
 }
 
 export async function updateProductionLine(actor: ActorContext, id: string, input: ProductionLineInput) {
-  return prisma.productionLine.update({
+  const updated = await ProductionConfigRepository.line.update({
     where: { id },
     data: {
       code: input.code,
@@ -65,19 +100,87 @@ export async function updateProductionLine(actor: ActorContext, id: string, inpu
       isActive: input.isActive,
     },
   });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "production_lines",
+    recordId: id,
+    action: "UPDATE",
+    newValues: updated,
+  });
+
+  return updated;
+}
+
+// ── Machines ──────────────────────────────────────────────────────────────
+
+export async function listMachines(companyId: string) {
+  return ProductionConfigRepository.machine.findMany({ where: { companyId }, orderBy: { name: "asc" } });
+}
+
+export async function createMachine(actor: ActorContext, input: MachineInput) {
+  const existing = await ProductionConfigRepository.machine.findFirst({ where: { companyId: actor.companyId, code: input.code } });
+  if (existing) throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Machine code "${input.code}" is already in use.`);
+
+  const machine = await ProductionConfigRepository.machine.create({
+    data: {
+      companyId: actor.companyId,
+      code: input.code,
+      name: input.name,
+      productionLineId: input.productionLineId || null,
+      machineType: input.machineType || null,
+      isActive: input.isActive,
+    },
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "machines",
+    recordId: machine.id,
+    action: "CREATE",
+    newValues: machine,
+  });
+
+  return machine;
+}
+
+export async function updateMachine(actor: ActorContext, id: string, input: MachineInput) {
+  const updated = await ProductionConfigRepository.machine.update({
+    where: { id },
+    data: {
+      code: input.code,
+      name: input.name,
+      productionLineId: input.productionLineId || null,
+      machineType: input.machineType || null,
+      isActive: input.isActive,
+    },
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "machines",
+    recordId: id,
+    action: "UPDATE",
+    newValues: updated,
+  });
+
+  return updated;
 }
 
 // ── Sales Agents ──────────────────────────────────────────────────────────
 
 export async function listSalesAgents(companyId: string) {
-  return prisma.salesAgent.findMany({ where: { companyId }, orderBy: { name: "asc" } });
+  return ProductionConfigRepository.salesAgent.findMany({ where: { companyId }, orderBy: { name: "asc" } });
 }
 
 export async function createSalesAgent(actor: ActorContext, input: SalesAgentInput) {
-  const existing = await prisma.salesAgent.findFirst({ where: { companyId: actor.companyId, code: input.code } });
+  const existing = await ProductionConfigRepository.salesAgent.findFirst({ where: { companyId: actor.companyId, code: input.code } });
   if (existing) throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Agent code "${input.code}" is already in use.`);
 
-  return prisma.salesAgent.create({
+  const agent = await ProductionConfigRepository.salesAgent.create({
     data: {
       companyId: actor.companyId,
       code: input.code,
@@ -89,10 +192,21 @@ export async function createSalesAgent(actor: ActorContext, input: SalesAgentInp
       isActive: input.isActive,
     },
   });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "sales_agents",
+    recordId: agent.id,
+    action: "CREATE",
+    newValues: agent,
+  });
+
+  return agent;
 }
 
 export async function updateSalesAgent(actor: ActorContext, id: string, input: SalesAgentInput) {
-  return prisma.salesAgent.update({
+  const updated = await ProductionConfigRepository.salesAgent.update({
     where: { id },
     data: {
       code: input.code,
@@ -104,4 +218,15 @@ export async function updateSalesAgent(actor: ActorContext, id: string, input: S
       isActive: input.isActive,
     },
   });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "sales_agents",
+    recordId: id,
+    action: "UPDATE",
+    newValues: updated,
+  });
+
+  return updated;
 }

@@ -16,6 +16,15 @@ export const productionLineSchema = z.object({
 });
 export type ProductionLineInput = z.infer<typeof productionLineSchema>;
 
+export const machineSchema = z.object({
+  code: z.string().min(1, "Code is required").max(30),
+  name: z.string().min(1, "Name is required").max(200),
+  productionLineId: z.string().uuid().optional().or(z.literal("")),
+  machineType: z.string().max(100).optional().or(z.literal("")),
+  isActive: z.coerce.boolean().default(true),
+});
+export type MachineInput = z.infer<typeof machineSchema>;
+
 export const salesAgentSchema = z.object({
   code: z.string().min(1, "Code is required").max(30),
   name: z.string().min(1, "Name is required").max(200),

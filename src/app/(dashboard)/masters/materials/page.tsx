@@ -1,6 +1,7 @@
 "use client";
 
 import { DataTable } from "@/components/ui/DataTable";
+import { Breadcrumb } from "@/components/ui/Breadcrumb";
 
 interface MaterialRow {
   id: string;
@@ -16,7 +17,8 @@ export default function MaterialsListPage() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Raw Materials</h1>
+        <Breadcrumb items={[{ label: "Masters", href: "/masters" }, { label: "Raw Materials" }]} />
+        <h1 className="mt-2 text-lg font-semibold text-zinc-900 dark:text-zinc-50">Raw Materials</h1>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
           Fabric, trims, accessories, and packaging items used in production.
         </p>

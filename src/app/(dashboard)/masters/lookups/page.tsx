@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { SimpleLookupManager } from "@/components/ui/SimpleLookupManager";
+import { Breadcrumb } from "@/components/ui/Breadcrumb";
 
 const TABS = ["Colors", "Sizes", "Units"] as const;
 type Tab = (typeof TABS)[number];
@@ -12,7 +13,8 @@ export default function LookupsPage() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Colors, Sizes & Units</h1>
+        <Breadcrumb items={[{ label: "Masters", href: "/masters" }, { label: "Colors, Sizes & Units" }]} />
+        <h1 className="mt-2 text-lg font-semibold text-zinc-900 dark:text-zinc-50">Colors, Sizes & Units</h1>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">Shared lookup values used across styles and production.</p>
       </div>
 

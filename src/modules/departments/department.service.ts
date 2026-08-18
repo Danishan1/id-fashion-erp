@@ -1,8 +1,8 @@
-import { prisma } from "@/core/db/client";
 import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import type { ListQuery } from "@/lib/list-query";
 import type { DepartmentInput } from "./department.schema";
+import { DepartmentRepository } from "./department.repository";
 
 interface ActorContext {
   companyId: string;
@@ -23,26 +23,26 @@ export async function listDepartments(companyId: string, query: ListQuery) {
   };
 
   const [data, totalCount] = await Promise.all([
-    prisma.department.findMany({ where, orderBy: { [query.sortBy]: query.sortOrder }, skip: query.skip, take: query.take }),
-    prisma.department.count({ where }),
+    DepartmentRepository.findMany({ where, orderBy: { [query.sortBy]: query.sortOrder }, skip: query.skip, take: query.take }),
+    DepartmentRepository.count({ where }),
   ]);
 
   return { data, totalCount };
 }
 
 export async function getDepartmentById(companyId: string, id: string) {
-  const department = await prisma.department.findFirst({ where: { id, companyId } });
+  const department = await DepartmentRepository.findFirst({ where: { id, companyId } });
   if (!department) throw new BusinessRuleError("NOT_FOUND", "Department not found.", { id });
   return department;
 }
 
 export async function createDepartment(actor: ActorContext, input: DepartmentInput) {
-  const existing = await prisma.department.findFirst({ where: { companyId: actor.companyId, code: input.code } });
+  const existing = await DepartmentRepository.findFirst({ where: { companyId: actor.companyId, code: input.code } });
   if (existing) {
     throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Department code "${input.code}" is already in use.`);
   }
 
-  const department = await prisma.department.create({
+  const department = await DepartmentRepository.create({
     data: { companyId: actor.companyId, code: input.code, name: input.name },
   });
 
@@ -62,7 +62,7 @@ export async function updateDepartment(actor: ActorContext, id: string, input: D
   const before = await getDepartmentById(actor.companyId, id);
 
   if (input.code !== before.code) {
-    const codeInUse = await prisma.department.findFirst({
+    const codeInUse = await DepartmentRepository.findFirst({
       where: { companyId: actor.companyId, code: input.code, id: { not: id } },
     });
     if (codeInUse) {
@@ -70,7 +70,7 @@ export async function updateDepartment(actor: ActorContext, id: string, input: D
     }
   }
 
-  const updated = await prisma.department.update({ where: { id }, data: { code: input.code, name: input.name } });
+  const updated = await DepartmentRepository.update({ where: { id }, data: { code: input.code, name: input.name } });
 
   await writeAuditLog({
     companyId: actor.companyId,

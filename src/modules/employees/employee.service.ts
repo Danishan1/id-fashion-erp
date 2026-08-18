@@ -1,8 +1,9 @@
-import { prisma } from "@/core/db/client";
 import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
+import { advanceMasterCodeSequence } from "@/core/numbering/DocumentNumberingService";
 import type { ListQuery } from "@/lib/list-query";
 import type { EmployeeInput } from "./employee.schema";
+import { EmployeeRepository } from "./employee.repository";
 
 interface ActorContext {
   companyId: string;
@@ -24,24 +25,19 @@ export async function listEmployees(companyId: string, query: ListQuery) {
   };
 
   const [data, totalCount] = await Promise.all([
-    prisma.employee.findMany({
-      where,
-      include: { department: true },
+    EmployeeRepository.findMany(where, {
       orderBy: { [query.sortBy]: query.sortOrder },
       skip: query.skip,
       take: query.take,
     }),
-    prisma.employee.count({ where }),
+    EmployeeRepository.count(where),
   ]);
 
   return { data, totalCount };
 }
 
 export async function getEmployeeById(companyId: string, id: string) {
-  const employee = await prisma.employee.findFirst({
-    where: { id, companyId, deletedAt: null },
-    include: { department: true },
-  });
+  const employee = await EmployeeRepository.findById(companyId, id);
   if (!employee) throw new BusinessRuleError("NOT_FOUND", "Employee not found.", { id });
   return employee;
 }
@@ -60,9 +56,7 @@ function toData(input: EmployeeInput) {
 }
 
 export async function createEmployee(actor: ActorContext, input: EmployeeInput) {
-  const existing = await prisma.employee.findFirst({
-    where: { companyId: actor.companyId, employeeCode: input.employeeCode, deletedAt: null },
-  });
+  const existing = await EmployeeRepository.findByCode(actor.companyId, input.employeeCode);
   if (existing) {
     throw new BusinessRuleError(
       "DUPLICATE_DOC_NUMBER",
@@ -70,7 +64,9 @@ export async function createEmployee(actor: ActorContext, input: EmployeeInput) 
     );
   }
 
-  const employee = await prisma.employee.create({ data: { companyId: actor.companyId, ...toData(input) } });
+  const employee = await EmployeeRepository.create({ companyId: actor.companyId, ...toData(input) });
+
+  await advanceMasterCodeSequence(actor.companyId, "EMPLOYEE");
 
   await writeAuditLog({
     companyId: actor.companyId,
@@ -88,9 +84,7 @@ export async function updateEmployee(actor: ActorContext, id: string, input: Emp
   const before = await getEmployeeById(actor.companyId, id);
 
   if (input.employeeCode !== before.employeeCode) {
-    const codeInUse = await prisma.employee.findFirst({
-      where: { companyId: actor.companyId, employeeCode: input.employeeCode, deletedAt: null, id: { not: id } },
-    });
+    const codeInUse = await EmployeeRepository.findByCode(actor.companyId, input.employeeCode, id);
     if (codeInUse) {
       throw new BusinessRuleError(
         "DUPLICATE_DOC_NUMBER",
@@ -99,7 +93,24 @@ export async function updateEmployee(actor: ActorContext, id: string, input: Emp
     }
   }
 
-  const updated = await prisma.employee.update({ where: { id }, data: toData(input) });
+  const updated = await EmployeeRepository.update(id, toData(input));
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "employees",
+    recordId: id,
+    action: "UPDATE",
+    oldValues: before,
+    newValues: updated,
+  });
+
+  return updated;
+}
+
+export async function setEmployeeActiveStatus(actor: ActorContext, id: string, isActive: boolean) {
+  const before = await getEmployeeById(actor.companyId, id);
+  const updated = await EmployeeRepository.update(id, { isActive });
 
   await writeAuditLog({
     companyId: actor.companyId,
@@ -116,7 +127,7 @@ export async function updateEmployee(actor: ActorContext, id: string, input: Emp
 
 export async function deactivateEmployee(actor: ActorContext, id: string) {
   const before = await getEmployeeById(actor.companyId, id);
-  const updated = await prisma.employee.update({ where: { id }, data: { isActive: false, deletedAt: new Date() } });
+  const updated = await EmployeeRepository.update(id, { isActive: false, deletedAt: new Date() });
 
   await writeAuditLog({
     companyId: actor.companyId,

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Breadcrumb } from "@/components/ui/Breadcrumb";
 
 const MASTER_SECTIONS = [
   { href: "/masters/customers", label: "Customers", description: "Customers and their buyers/brands" },
@@ -10,17 +11,31 @@ const MASTER_SECTIONS = [
   { href: "/masters/warehouses", label: "Warehouses", description: "Warehouses and storage locations" },
   {
     href: "/masters/production-config",
-    label: "Production Stages & Lines",
-    description: "Configurable production stages and factory lines",
+    label: "Production Stages, Lines & Machines",
+    description: "Configurable production stages, factory lines, and machines",
   },
   { href: "/masters/sales-agents", label: "Sales Agents", description: "Domestic/retail sales channel agents" },
+  {
+    href: "/masters/garment-attributes",
+    label: "Garment Attributes",
+    description: "Brand, category, season, fitting, product type, design & pattern",
+  },
+  {
+    href: "/masters/fabric-config",
+    label: "Fabric Configuration",
+    description: "GSM, dye, weave type, width, and composition for fabric materials",
+  },
+  { href: "/masters/hr-config", label: "HR Configuration", description: "Designation, employee category, shifts, and holidays" },
+  { href: "/masters/cost-master", label: "Cost Master", description: "Overhead cost rates for costing" },
+  { href: "/masters/finance-config", label: "Finance Configuration", description: "Payment types and bank accounts" },
 ];
 
 export default function MastersIndexPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Masters</h1>
+        <Breadcrumb items={[{ label: "Dashboard", href: "/dashboard" }, { label: "Masters" }]} />
+        <h1 className="mt-2 text-lg font-semibold text-zinc-900 dark:text-zinc-50">Masters</h1>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">Centralized master data used across every module.</p>
       </div>
 

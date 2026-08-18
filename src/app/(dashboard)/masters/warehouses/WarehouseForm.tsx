@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { WAREHOUSE_TYPES } from "@/modules/warehouses/warehouse.schema";
+import { suggestCodeFromName } from "@/lib/code-suggest";
 
 export interface WarehouseFormValues {
   code: string;
@@ -24,6 +25,7 @@ interface WarehouseFormProps {
 export function WarehouseForm({ initialValues, submitUrl, method, redirectTo }: WarehouseFormProps) {
   const router = useRouter();
   const [values, setValues] = useState<WarehouseFormValues>(initialValues ?? EMPTY_VALUES);
+  const [isCodeManuallyEdited, setIsCodeManuallyEdited] = useState(Boolean(initialValues));
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -59,7 +61,10 @@ export function WarehouseForm({ initialValues, submitUrl, method, redirectTo }: 
             id="code"
             required
             value={values.code}
-            onChange={(e) => setValues({ ...values, code: e.target.value })}
+            onChange={(e) => {
+              setIsCodeManuallyEdited(true);
+              setValues({ ...values, code: e.target.value });
+            }}
             className={textInputClass()}
           />
         </FormField>
@@ -84,7 +89,10 @@ export function WarehouseForm({ initialValues, submitUrl, method, redirectTo }: 
           id="name"
           required
           value={values.name}
-          onChange={(e) => setValues({ ...values, name: e.target.value })}
+          onChange={(e) => {
+            const name = e.target.value;
+            setValues({ ...values, name, code: isCodeManuallyEdited ? values.code : suggestCodeFromName(name) });
+          }}
           className={textInputClass()}
         />
       </FormField>

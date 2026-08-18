@@ -8,7 +8,7 @@ import { listMaterials, createMaterial } from "@/modules/products/product.servic
 export async function GET(req: NextRequest) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "masters", "view");
+    await PermissionService.assert(session.user.id, "masters_core", "view");
 
     const query = parseListQuery(req.nextUrl.searchParams, "styleName");
     const { data, totalCount } = await listMaterials(session.user.companyId, query);
@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "masters", "create");
+    await PermissionService.assert(session.user.id, "masters_core", "create");
 
     const input = materialSchema.parse(await req.json());
     const material = await createMaterial({ companyId: session.user.companyId, userId: session.user.id }, input);

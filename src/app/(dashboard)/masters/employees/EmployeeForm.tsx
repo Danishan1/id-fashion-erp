@@ -52,6 +52,19 @@ export function EmployeeForm({ initialValues, submitUrl, method, redirectTo }: E
       .catch(() => setDepartments([]));
   }, []);
 
+  useEffect(() => {
+    if (initialValues) return;
+    fetch("/api/v1/employees/next-code")
+      .then((res) => res.json())
+      .then((body) => {
+        if (body?.data?.code) {
+          setValues((prev) => (prev.employeeCode ? prev : { ...prev, employeeCode: body.data.code }));
+        }
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (isSubmitting) return;

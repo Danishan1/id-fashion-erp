@@ -3,6 +3,7 @@ import { auth } from "@/core/auth/auth";
 import { getProductById } from "@/modules/products/product.service";
 import { ProductForm } from "../ProductForm";
 import { VariantsSection } from "../VariantsSection";
+import { Breadcrumb } from "@/components/ui/Breadcrumb";
 
 export default async function EditProductPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -14,7 +15,14 @@ export default async function EditProductPage({ params }: { params: Promise<{ id
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">{product.styleName}</h1>
+        <Breadcrumb
+          items={[
+            { label: "Masters", href: "/masters" },
+            { label: "Styles", href: "/masters/products" },
+            { label: product.styleName },
+          ]}
+        />
+        <h1 className="mt-2 text-lg font-semibold text-zinc-900 dark:text-zinc-50">{product.styleName}</h1>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">Style Code: {product.styleCode}</p>
       </div>
 
@@ -25,8 +33,8 @@ export default async function EditProductPage({ params }: { params: Promise<{ id
         initialValues={{
           styleCode: product.styleCode,
           styleName: product.styleName,
-          category: product.category ?? "",
-          season: product.season ?? "",
+          categoryId: product.categoryId ?? "",
+          seasonId: product.seasonId ?? "",
           gender: product.gender ?? "",
           description: product.description ?? "",
           hsnSacCode: product.hsnSacCode ?? "",

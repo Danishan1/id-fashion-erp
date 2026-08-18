@@ -1,8 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { COUNTRIES } from "@/lib/countries";
 
 export interface CustomerFormValues {
   code: string;
@@ -19,11 +20,23 @@ const EMPTY_VALUES: CustomerFormValues = {
   code: "",
   name: "",
   type: "CUSTOMER",
-  country: "",
+  country: "India",
   paymentTermsDays: "",
   creditLimit: "",
-  defaultCurrencyCode: "",
+  defaultCurrencyCode: "INR",
   isActive: true,
+};
+
+interface Currency {
+  code: string;
+  name: string;
+}
+
+/** Currency model has no country column — this just labels the dropdown for the handful of seeded currencies. */
+const COUNTRY_BY_CURRENCY: Record<string, string> = {
+  INR: "India",
+  USD: "United States",
+  EUR: "Eurozone",
 };
 
 interface CustomerFormProps {
@@ -36,8 +49,28 @@ interface CustomerFormProps {
 export function CustomerForm({ initialValues, submitUrl, method, redirectTo }: CustomerFormProps) {
   const router = useRouter();
   const [values, setValues] = useState<CustomerFormValues>(initialValues ?? EMPTY_VALUES);
+  const [currencies, setCurrencies] = useState<Currency[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/v1/currencies")
+      .then((res) => res.json())
+      .then((body) => setCurrencies(body.data ?? []))
+      .catch(() => setCurrencies([]));
+  }, []);
+
+  // New records get a suggested sequential code (e.g. CUST-00006); the field stays editable.
+  useEffect(() => {
+    if (initialValues) return;
+    fetch("/api/v1/customers/next-code")
+      .then((res) => res.json())
+      .then((body) => {
+        if (body?.data?.code) setValues((prev) => (prev.code ? prev : { ...prev, code: body.data.code }));
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -109,22 +142,35 @@ export function CustomerForm({ initialValues, submitUrl, method, redirectTo }: C
 
       <div className="grid grid-cols-2 gap-4">
         <FormField label="Country" htmlFor="country">
-          <input
+          <select
             id="country"
             value={values.country}
             onChange={(e) => setValues({ ...values, country: e.target.value })}
             className={textInputClass()}
-          />
+          >
+            <option value="">— Select —</option>
+            {COUNTRIES.map((country) => (
+              <option key={country} value={country}>
+                {country}
+              </option>
+            ))}
+          </select>
         </FormField>
         <FormField label="Default Currency" htmlFor="currency">
-          <input
+          <select
             id="currency"
-            placeholder="USD"
-            maxLength={3}
             value={values.defaultCurrencyCode}
-            onChange={(e) => setValues({ ...values, defaultCurrencyCode: e.target.value.toUpperCase() })}
+            onChange={(e) => setValues({ ...values, defaultCurrencyCode: e.target.value })}
             className={textInputClass()}
-          />
+          >
+            <option value="">— None —</option>
+            {currencies.map((c) => (
+              <option key={c.code} value={c.code}>
+                {c.code} — {c.name}
+                {COUNTRY_BY_CURRENCY[c.code] ? ` (${COUNTRY_BY_CURRENCY[c.code]})` : ""}
+              </option>
+            ))}
+          </select>
         </FormField>
       </div>
 

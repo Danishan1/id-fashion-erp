@@ -3,6 +3,7 @@ import Credentials from "next-auth/providers/credentials";
 import { prisma } from "@/core/db/client";
 import { verifyPassword } from "@/core/auth/password";
 import { authConfig } from "@/core/auth/auth.config";
+import { assertNotLockedOut, clearAttempts, recordFailedAttempt } from "@/core/auth/rateLimiter";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   ...authConfig,
@@ -17,11 +18,27 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const password = credentials?.password as string | undefined;
         if (!email || !password) return null;
 
+        // Keeps the existing "return null on any failure" contract intact —
+        // lockout is just another failure reason, not a new error path.
+        try {
+          assertNotLockedOut(email);
+        } catch {
+          return null;
+        }
+
         const user = await prisma.user.findUnique({ where: { email } });
-        if (!user || user.status !== "ACTIVE") return null;
+        if (!user || user.status !== "ACTIVE") {
+          recordFailedAttempt(email);
+          return null;
+        }
 
         const passwordValid = await verifyPassword(password, user.passwordHash);
-        if (!passwordValid) return null;
+        if (!passwordValid) {
+          recordFailedAttempt(email);
+          return null;
+        }
+
+        clearAttempts(email);
 
         await prisma.user.update({
           where: { id: user.id },

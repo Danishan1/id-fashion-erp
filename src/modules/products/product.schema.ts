@@ -11,8 +11,8 @@ export const MATERIAL_CATEGORIES = [
 export const productSchema = z.object({
   styleCode: z.string().min(1, "Style code is required").max(30),
   styleName: z.string().min(1, "Style name is required").max(200),
-  category: z.string().max(100).optional().or(z.literal("")),
-  season: z.string().max(50).optional().or(z.literal("")),
+  categoryId: z.string().uuid().optional().or(z.literal("")),
+  seasonId: z.string().uuid().optional().or(z.literal("")),
   gender: z.string().max(30).optional().or(z.literal("")),
   description: z.string().max(1000).optional().or(z.literal("")),
   hsnSacCode: z.string().max(30).optional().or(z.literal("")),

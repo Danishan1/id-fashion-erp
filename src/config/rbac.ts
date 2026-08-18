@@ -3,9 +3,13 @@
  * permission seed data (prisma/seed.ts) and PermissionService checks.
  */
 
+// masters_core = Customer/Supplier/Employee/Product/Warehouse/etc; masters_finance =
+// Bank Account/Payment Type/Cost Master — split so day-to-day floor/warehouse roles
+// never implicitly get edit rights on financial masters (see CLAUDE.md 2026-08-17).
 export const MODULES = [
   "dashboard",
-  "masters",
+  "masters_core",
+  "masters_finance",
   "sampling",
   "sales_orders",
   "bom_mrp",
@@ -66,7 +70,8 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
   SUPER_ADMIN: Object.fromEntries(MODULES.map((m) => [m, [...ACTIONS]])) as Record<Module, Action[]>,
   MANAGEMENT: {
     dashboard: ["view"],
-    masters: ["view"],
+    masters_core: ["view"],
+    masters_finance: ["view"],
     sampling: ["view", "approve", "reject"],
     sales_orders: ["view", "approve", "export"],
     bom_mrp: ["view"],
@@ -84,7 +89,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
   },
   MERCHANDISER: {
     dashboard: ["view"],
-    masters: ["view", "create", "edit"],
+    masters_core: ["view", "create", "edit"],
     sampling: ["view", "create", "edit", "export", "print"],
     sales_orders: ["view", "create", "edit", "cancel", "export", "print"],
     bom_mrp: ["view", "create", "edit"],
@@ -96,7 +101,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
   },
   SAMPLING_MANAGER: {
     dashboard: ["view"],
-    masters: ["view"],
+    masters_core: ["view"],
     sampling: ["view", "create", "edit", "delete", "approve", "reject", "export", "print"],
     sales_orders: ["view"],
     bom_mrp: ["view"],
@@ -106,7 +111,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
   },
   PRODUCTION_MANAGER: {
     dashboard: ["view"],
-    masters: ["view"],
+    masters_core: ["view"],
     sampling: ["view"],
     sales_orders: ["view"],
     bom_mrp: ["view", "create", "edit", "export"],
@@ -118,7 +123,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
   },
   PRODUCTION_SUPERVISOR: {
     dashboard: ["view"],
-    masters: ["view"],
+    masters_core: ["view"],
     sales_orders: ["view"],
     bom_mrp: ["view"],
     production: ["view", "create", "edit"],
@@ -128,7 +133,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
   },
   QC_MANAGER: {
     dashboard: ["view"],
-    masters: ["view"],
+    masters_core: ["view"],
     sampling: ["view"],
     bom_mrp: ["view"],
     production: ["view"],
@@ -138,7 +143,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
   },
   STORE_MANAGER: {
     dashboard: ["view"],
-    masters: ["view", "create", "edit"],
+    masters_core: ["view", "create", "edit"],
     bom_mrp: ["view"],
     production: ["view"],
     inventory: ["view", "create", "edit", "delete", "export", "print"],
@@ -148,7 +153,8 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
   },
   ACCOUNTS_MANAGER: {
     dashboard: ["view"],
-    masters: ["view", "create", "edit"],
+    masters_core: ["view", "create", "edit"],
+    masters_finance: ["view", "create", "edit"],
     sales_orders: ["view"],
     purchasing: ["view", "approve"],
     accounts: ["view", "create", "edit", "post", "cancel", "export", "print"],
@@ -160,7 +166,8 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
   },
   ACCOUNTS_EXECUTIVE: {
     dashboard: ["view"],
-    masters: ["view"],
+    masters_core: ["view"],
+    masters_finance: ["view"],
     sales_orders: ["view", "create"],
     purchasing: ["view", "create"],
     accounts: ["view", "create"],
@@ -171,7 +178,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
   },
   DISPATCH_MANAGER: {
     dashboard: ["view"],
-    masters: ["view"],
+    masters_core: ["view"],
     sales_orders: ["view"],
     production: ["view"],
     inventory: ["view"],
@@ -180,7 +187,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
   },
   WAREHOUSE_USER: {
     dashboard: ["view"],
-    masters: ["view"],
+    masters_core: ["view"],
     bom_mrp: ["view"],
     production: ["view"],
     qc: ["view"],

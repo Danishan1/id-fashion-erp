@@ -1,8 +1,9 @@
-import { prisma } from "@/core/db/client";
 import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
+import { advanceMasterCodeSequence } from "@/core/numbering/DocumentNumberingService";
 import type { ListQuery } from "@/lib/list-query";
 import type { GenerateVariantsInput, MaterialInput, ProductInput } from "./product.schema";
+import { ProductRepository, ProductVariantRepository } from "./product.repository";
 
 interface ActorContext {
   companyId: string;
@@ -25,29 +26,15 @@ export async function listProducts(companyId: string, query: ListQuery) {
   };
 
   const [data, totalCount] = await Promise.all([
-    prisma.product.findMany({
-      where,
-      include: { _count: { select: { variants: true } } },
-      orderBy: { [query.sortBy]: query.sortOrder },
-      skip: query.skip,
-      take: query.take,
-    }),
-    prisma.product.count({ where }),
+    ProductRepository.findManyStyles(where, { orderBy: { [query.sortBy]: query.sortOrder }, skip: query.skip, take: query.take }),
+    ProductRepository.count(where),
   ]);
 
   return { data, totalCount };
 }
 
 export async function getProductById(companyId: string, id: string) {
-  const product = await prisma.product.findFirst({
-    where: { id, companyId, itemType: "STYLE", deletedAt: null },
-    include: {
-      variants: {
-        include: { color: true, size: true },
-        orderBy: [{ color: { name: "asc" } }, { size: { sortOrder: "asc" } }],
-      },
-    },
-  });
+  const product = await ProductRepository.findStyleById(companyId, id);
   if (!product) throw new BusinessRuleError("NOT_FOUND", "Style not found.", { id });
   return product;
 }
@@ -57,8 +44,8 @@ function toData(input: ProductInput) {
     itemType: "STYLE" as const,
     styleCode: input.styleCode,
     styleName: input.styleName,
-    category: input.category || null,
-    season: input.season || null,
+    categoryId: input.categoryId || null,
+    seasonId: input.seasonId || null,
     gender: input.gender || null,
     description: input.description || null,
     hsnSacCode: input.hsnSacCode || null,
@@ -84,14 +71,14 @@ function toMaterialData(input: MaterialInput) {
 }
 
 export async function createProduct(actor: ActorContext, input: ProductInput) {
-  const existing = await prisma.product.findFirst({
-    where: { companyId: actor.companyId, styleCode: input.styleCode, deletedAt: null },
-  });
+  const existing = await ProductRepository.findByStyleCode(actor.companyId, input.styleCode);
   if (existing) {
     throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Style code "${input.styleCode}" is already in use.`);
   }
 
-  const product = await prisma.product.create({ data: { companyId: actor.companyId, ...toData(input) } });
+  const product = await ProductRepository.create({ companyId: actor.companyId, ...toData(input) });
+
+  await advanceMasterCodeSequence(actor.companyId, "STYLE");
 
   await writeAuditLog({
     companyId: actor.companyId,
@@ -109,15 +96,32 @@ export async function updateProduct(actor: ActorContext, id: string, input: Prod
   const before = await getProductById(actor.companyId, id);
 
   if (input.styleCode !== before.styleCode) {
-    const codeInUse = await prisma.product.findFirst({
-      where: { companyId: actor.companyId, styleCode: input.styleCode, deletedAt: null, id: { not: id } },
-    });
+    const codeInUse = await ProductRepository.findByStyleCode(actor.companyId, input.styleCode, id);
     if (codeInUse) {
       throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Style code "${input.styleCode}" is already in use.`);
     }
   }
 
-  const updated = await prisma.product.update({ where: { id }, data: toData(input) });
+  const updated = await ProductRepository.update(id, toData(input));
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "products",
+    recordId: id,
+    action: "UPDATE",
+    oldValues: before,
+    newValues: updated,
+  });
+
+  return updated;
+}
+
+export async function setProductActiveStatus(actor: ActorContext, id: string, isActive: boolean) {
+  const before = await ProductRepository.findAnyById(actor.companyId, id);
+  if (!before) throw new BusinessRuleError("NOT_FOUND", "Record not found.", { id });
+
+  const updated = await ProductRepository.update(id, { isActive });
 
   await writeAuditLog({
     companyId: actor.companyId,
@@ -148,37 +152,32 @@ export async function listMaterials(companyId: string, query: ListQuery) {
   };
 
   const [data, totalCount] = await Promise.all([
-    prisma.product.findMany({
-      where,
-      include: { baseUom: true, defaultSupplier: true },
+    ProductRepository.findManyMaterials(where, {
       orderBy: { [query.sortBy]: query.sortOrder },
       skip: query.skip,
       take: query.take,
     }),
-    prisma.product.count({ where }),
+    ProductRepository.count(where),
   ]);
 
   return { data, totalCount };
 }
 
 export async function getMaterialById(companyId: string, id: string) {
-  const material = await prisma.product.findFirst({
-    where: { id, companyId, itemType: "RAW_MATERIAL", deletedAt: null },
-    include: { baseUom: true, defaultSupplier: true },
-  });
+  const material = await ProductRepository.findMaterialById(companyId, id);
   if (!material) throw new BusinessRuleError("NOT_FOUND", "Material not found.", { id });
   return material;
 }
 
 export async function createMaterial(actor: ActorContext, input: MaterialInput) {
-  const existing = await prisma.product.findFirst({
-    where: { companyId: actor.companyId, styleCode: input.styleCode, deletedAt: null },
-  });
+  const existing = await ProductRepository.findByStyleCode(actor.companyId, input.styleCode);
   if (existing) {
     throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Item code "${input.styleCode}" is already in use.`);
   }
 
-  const material = await prisma.product.create({ data: { companyId: actor.companyId, ...toMaterialData(input) } });
+  const material = await ProductRepository.create({ companyId: actor.companyId, ...toMaterialData(input) });
+
+  await advanceMasterCodeSequence(actor.companyId, "MATERIAL");
 
   await writeAuditLog({
     companyId: actor.companyId,
@@ -196,15 +195,13 @@ export async function updateMaterial(actor: ActorContext, id: string, input: Mat
   const before = await getMaterialById(actor.companyId, id);
 
   if (input.styleCode !== before.styleCode) {
-    const codeInUse = await prisma.product.findFirst({
-      where: { companyId: actor.companyId, styleCode: input.styleCode, deletedAt: null, id: { not: id } },
-    });
+    const codeInUse = await ProductRepository.findByStyleCode(actor.companyId, input.styleCode, id);
     if (codeInUse) {
       throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Item code "${input.styleCode}" is already in use.`);
     }
   }
 
-  const updated = await prisma.product.update({ where: { id }, data: toMaterialData(input) });
+  const updated = await ProductRepository.update(id, toMaterialData(input));
 
   await writeAuditLog({
     companyId: actor.companyId,
@@ -223,15 +220,11 @@ export async function generateVariants(actor: ActorContext, productId: string, i
   const product = await getProductById(actor.companyId, productId);
 
   const [colors, sizes] = await Promise.all([
-    prisma.color.findMany({ where: { id: { in: input.colorIds }, companyId: actor.companyId } }),
-    prisma.size.findMany({ where: { id: { in: input.sizeIds }, companyId: actor.companyId } }),
+    ProductVariantRepository.findColorsByIds(actor.companyId, input.colorIds),
+    ProductVariantRepository.findSizesByIds(actor.companyId, input.sizeIds),
   ]);
 
-  const existing = await prisma.productVariant.findMany({
-    where: { productId },
-    select: { colorId: true, sizeId: true },
-  });
-  const existingKeys = new Set(existing.map((v) => `${v.colorId}:${v.sizeId}`));
+  const existingKeys = await ProductVariantRepository.findExistingKeys(productId);
 
   const toCreate = [];
   for (const color of colors) {
@@ -251,7 +244,7 @@ export async function generateVariants(actor: ActorContext, productId: string, i
     return { created: 0 };
   }
 
-  await prisma.productVariant.createMany({ data: toCreate, skipDuplicates: true });
+  await ProductVariantRepository.createMany(toCreate);
 
   await writeAuditLog({
     companyId: actor.companyId,
