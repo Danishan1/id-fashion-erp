@@ -36,8 +36,9 @@ yarn-error.log*
 # vercel
 .vercel
 
-# local file storage (dev attachments)
+# local file storage (dev attachments) — deliberately NOT under public/, see FileStorage.ts
 /storage
+/uploads
 
 # typescript
 *.tsbuildinfo

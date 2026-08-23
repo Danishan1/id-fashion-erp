@@ -3,12 +3,13 @@ import type { DocumentType } from "@prisma/client";
 
 const PREFIX_BY_DOCUMENT_TYPE: Record<DocumentType, string> = {
   SAMPLE_REQUEST: "SAM",
+  BUYER_ENQUIRY: "ENQ",
   SALES_ORDER: "ORD",
   PRODUCTION_ORDER: "PROD",
   SALES_INVOICE: "INV",
   PURCHASE_INVOICE: "PINV",
   PURCHASE_ORDER: "PO",
-  PURCHASE_REQUEST: "PR",
+  MATERIAL_REQUEST: "MR",
   GOODS_RECEIPT: "REC",
   DISPATCH: "DSP",
   PAYMENT: "PAY",

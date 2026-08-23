@@ -1,0 +1,748 @@
+"use client";
+
+import { useRouter } from "next/navigation";
+import { useEffect, useState, type FormEvent } from "react";
+import { FormField, textInputClass } from "@/components/ui/FormField";
+
+interface Option {
+  id: string;
+  name?: string;
+  styleName?: string;
+}
+
+interface StyleOption extends Option {
+  designNumber?: string | null;
+}
+
+interface SampleOption {
+  id: string;
+  requestNumber: string;
+  product: { id: string } | null;
+}
+
+interface VariantOption {
+  id: string;
+  skuCode: string;
+  color: { id: string; name: string };
+  size: { id: string; name: string; sortOrder?: number };
+}
+
+interface LineItem {
+  productId: string;
+  sampleRequestId: string;
+  unitPrice: string;
+  notes: string;
+  variants: VariantOption[];
+  quantities: Record<string, string>;
+}
+
+const TODAY = new Date().toISOString().slice(0, 10);
+
+function emptyLine(): LineItem {
+  return { productId: "", sampleRequestId: "", unitPrice: "", notes: "", variants: [], quantities: {} };
+}
+
+export interface InitialOrderItem {
+  productId: string;
+  sampleRequestId: string | null;
+  unitPrice: string;
+  notes: string | null;
+  breakdown: Array<{ productVariantId: string; orderedQuantity: number }>;
+}
+
+export interface InitialOrder {
+  id: string;
+  status: string;
+  customerId: string;
+  buyerId: string | null;
+  orderDate: string;
+  requiredShipDate: string | null;
+  items: InitialOrderItem[];
+}
+
+export function SalesOrderForm({ initialOrder }: { initialOrder?: InitialOrder } = {}) {
+  const router = useRouter();
+  const [customerId, setCustomerId] = useState(initialOrder?.customerId ?? "");
+  const [buyerId, setBuyerId] = useState(initialOrder?.buyerId ?? "");
+  const [orderDate, setOrderDate] = useState(initialOrder ? initialOrder.orderDate.slice(0, 10) : TODAY);
+  const [requiredShipDate, setRequiredShipDate] = useState(initialOrder?.requiredShipDate?.slice(0, 10) ?? "");
+  const [customers, setCustomers] = useState<Option[]>([]);
+  const [buyers, setBuyers] = useState<Option[]>([]);
+  const [styles, setStyles] = useState<StyleOption[]>([]);
+  const [colors, setColors] = useState<Option[]>([]);
+  const [sizes, setSizes] = useState<Option[]>([]);
+  const [approvedSamples, setApprovedSamples] = useState<SampleOption[]>([]);
+  // Off by default (the common case: reference this order's own customer's
+  // approved samples) — on, when a customer wants to order based on a
+  // sample that was actually made/approved for a different customer.
+  const [searchAllCustomers, setSearchAllCustomers] = useState(false);
+  const [items, setItems] = useState<LineItem[]>(
+    initialOrder
+      ? initialOrder.items.map((item) => ({
+          productId: item.productId,
+          sampleRequestId: item.sampleRequestId ?? "",
+          unitPrice: item.unitPrice,
+          notes: item.notes ?? "",
+          variants: [],
+          quantities: Object.fromEntries(item.breakdown.map((b) => [b.productVariantId, String(b.orderedQuantity)])),
+        }))
+      : [emptyLine()]
+  );
+  const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  // Editing a CONFIRMED order re-runs the sample-approval gate server-side —
+  // only relevant when editing (creation has its own confirm-time gate on
+  // the detail page instead).
+  const [needsOverride, setNeedsOverride] = useState(false);
+  const [overrideReason, setOverrideReason] = useState("");
+
+  useEffect(() => {
+    fetch("/api/v1/customers?pageSize=200")
+      .then((res) => res.json())
+      .then((body) => setCustomers(body.data ?? []));
+    fetch("/api/v1/products?pageSize=200")
+      .then((res) => res.json())
+      .then((body) => setStyles(body.data ?? []));
+    fetch("/api/v1/colors")
+      .then((res) => res.json())
+      .then((body) => setColors(body.data ?? []));
+    fetch("/api/v1/sizes")
+      .then((res) => res.json())
+      .then((body) => setSizes(body.data ?? []));
+  }, []);
+
+  // Buyers stay scoped to the selected customer — resetting them on customer
+  // change happens in the <select>'s onChange handler itself, not here, to
+  // avoid a synchronous setState in the effect body (same pattern as
+  // SampleRequestForm.tsx).
+  useEffect(() => {
+    if (!customerId) return;
+    fetch(`/api/v1/customers/${customerId}`)
+      .then((res) => res.json())
+      .then((body) => setBuyers(body.data?.buyers ?? []));
+  }, [customerId]);
+
+  // The approved-sample pool is scoped to the customer by default, or
+  // company-wide when "search all customers" is on — either way, still
+  // narrowed down to the line's own Style at render time (see the sample
+  // <select> below).
+  useEffect(() => {
+    if (!searchAllCustomers && !customerId) return;
+    const url = searchAllCustomers
+      ? "/api/v1/sampling?status=APPROVED&pageSize=200"
+      : `/api/v1/sampling?status=APPROVED&customerId=${customerId}&pageSize=200`;
+    fetch(url)
+      .then((res) => res.json())
+      .then((body) => setApprovedSamples(body.data ?? []));
+  }, [customerId, searchAllCustomers]);
+
+  const updateItem = (index: number, patch: Partial<LineItem>) => {
+    setItems((prev) => prev.map((item, i) => (i === index ? { ...item, ...patch } : item)));
+  };
+
+  const onStyleChange = (index: number, productId: string) => {
+    updateItem(index, { productId, variants: [], quantities: {} });
+    if (!productId) return;
+    fetch(`/api/v1/products/${productId}`)
+      .then((res) => res.json())
+      .then((body) => updateItem(index, { variants: body.data?.variants ?? [] }));
+  };
+
+  // Pre-fill each existing line's variant grid when editing, so entered
+  // quantities show up immediately instead of the grid staying empty until a
+  // Style is re-picked. initialOrder only changes via a full remount
+  // (key={id} on the edit page), so this only ever runs once per order.
+  useEffect(() => {
+    initialOrder?.items.forEach((item, index) => {
+      fetch(`/api/v1/products/${item.productId}`)
+        .then((res) => res.json())
+        .then((body) => updateItem(index, { variants: body.data?.variants ?? [] }));
+    });
+  }, [initialOrder]);
+
+  const setQuantities = (index: number, patch: Record<string, string>) => {
+    setItems((prev) =>
+      prev.map((item, i) => (i === index ? { ...item, quantities: { ...item.quantities, ...patch } } : item))
+    );
+  };
+
+  const addLine = () => setItems((prev) => [...prev, emptyLine()]);
+  const removeLine = (index: number) => setItems((prev) => prev.filter((_, i) => i !== index));
+
+  const lineTotal = (item: LineItem) => {
+    const qty = Object.values(item.quantities).reduce((sum, v) => sum + (Number(v) || 0), 0);
+    return qty * (Number(item.unitPrice) || 0);
+  };
+  const orderTotal = items.reduce((sum, item) => sum + lineTotal(item), 0);
+
+  // This business only operates in INR today — multi-currency UI is
+  // deferred project-wide, so the live preview is fixed to ₹ rather than
+  // resolving a customer/company currency that isn't actually in use yet.
+  // The order's stored currencyCode is still set correctly server-side.
+  const formatAmount = (amount: number) => `₹${amount.toLocaleString()}`;
+
+  const submitOrder = async (useOverride: boolean) => {
+    if (isSubmitting) return;
+    setIsSubmitting(true);
+    setError(null);
+
+    const payloadItems = items.map((item) => ({
+      productId: item.productId,
+      sampleRequestId: item.sampleRequestId || undefined,
+      unitPrice: Number(item.unitPrice),
+      notes: item.notes || undefined,
+      breakdown: Object.entries(item.quantities)
+        .filter(([, qty]) => Number(qty) > 0)
+        .map(([productVariantId, qty]) => ({ productVariantId, orderedQuantity: Number(qty) })),
+    }));
+
+    const url = initialOrder ? `/api/v1/sales-orders/${initialOrder.id}` : "/api/v1/sales-orders";
+    const res = await fetch(url, {
+      method: initialOrder ? "PATCH" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        customerId,
+        buyerId: buyerId || undefined,
+        orderDate,
+        requiredShipDate: requiredShipDate || undefined,
+        items: payloadItems,
+        overrideReason: initialOrder && useOverride ? overrideReason : undefined,
+      }),
+    });
+
+    setIsSubmitting(false);
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      setError(body?.error?.message ?? "Failed to save this sales order.");
+      // Editing a CONFIRMED order can be blocked by the sample-approval
+      // gate — only that case gets an override retry, since a DRAFT edit or
+      // a plain validation error has nothing to override.
+      if (initialOrder?.status === "CONFIRMED" && !useOverride) setNeedsOverride(true);
+      return;
+    }
+
+    setNeedsOverride(false);
+    const { data } = await res.json();
+    router.push(`/sales-orders/${data.id}`);
+    router.refresh();
+  };
+
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    submitOrder(false);
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="max-w-3xl space-y-6">
+      <div className="grid grid-cols-2 gap-4">
+        <FormField label="Customer" htmlFor="customerId" required>
+          <select
+            id="customerId"
+            required
+            value={customerId}
+            onChange={(e) => {
+              setCustomerId(e.target.value);
+              setBuyerId("");
+              setBuyers([]);
+              // Company-wide sample search is independent of the customer,
+              // so only reset the pool when scoped search is actually in use.
+              if (!searchAllCustomers) setApprovedSamples([]);
+            }}
+            className={textInputClass()}
+          >
+            <option value="">— Select —</option>
+            {customers.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </FormField>
+
+        <FormField label="Buyer" htmlFor="buyerId">
+          <select
+            id="buyerId"
+            value={buyerId}
+            onChange={(e) => setBuyerId(e.target.value)}
+            disabled={!customerId}
+            className={textInputClass()}
+          >
+            <option value="">— None —</option>
+            {buyers.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name}
+              </option>
+            ))}
+          </select>
+        </FormField>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <FormField label="Order Date" htmlFor="orderDate" required>
+          <input
+            id="orderDate"
+            type="date"
+            required
+            value={orderDate}
+            onChange={(e) => setOrderDate(e.target.value)}
+            className={textInputClass()}
+          />
+        </FormField>
+        <FormField label="Required Ship Date" htmlFor="requiredShipDate">
+          <input
+            id="requiredShipDate"
+            type="date"
+            value={requiredShipDate}
+            onChange={(e) => setRequiredShipDate(e.target.value)}
+            className={textInputClass()}
+          />
+        </FormField>
+      </div>
+
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Style Lines</h2>
+          <label className="flex items-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-400">
+            <input
+              type="checkbox"
+              checked={searchAllCustomers}
+              onChange={(e) => {
+                setSearchAllCustomers(e.target.checked);
+                if (!e.target.checked && !customerId) setApprovedSamples([]);
+              }}
+            />
+            Search approved samples from all customers
+          </label>
+        </div>
+        {items.map((item, index) => (
+          <div key={index} className="space-y-3 rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-zinc-500">Line {index + 1}</span>
+              {items.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => removeLine(index)}
+                  className="text-xs font-medium text-red-600 hover:text-red-500"
+                >
+                  Remove
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <FormField label="Style" htmlFor={`style-${index}`} required>
+                <select
+                  id={`style-${index}`}
+                  required
+                  value={item.productId}
+                  onChange={(e) => onStyleChange(index, e.target.value)}
+                  className={textInputClass()}
+                >
+                  <option value="">— Select —</option>
+                  {styles.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.styleName}
+                      {s.designNumber ? ` (Design: ${s.designNumber})` : ""}
+                    </option>
+                  ))}
+                </select>
+              </FormField>
+
+              <FormField label="Linked Sample (optional)" htmlFor={`sample-${index}`}>
+                <select
+                  id={`sample-${index}`}
+                  value={item.sampleRequestId}
+                  onChange={(e) => updateItem(index, { sampleRequestId: e.target.value })}
+                  disabled={(!searchAllCustomers && !customerId) || !item.productId}
+                  className={textInputClass()}
+                >
+                  <option value="">— None —</option>
+                  {approvedSamples
+                    .filter((s) => s.product?.id === item.productId)
+                    .map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.requestNumber}
+                      </option>
+                    ))}
+                </select>
+                {!searchAllCustomers && !customerId ? (
+                  <p className="mt-1 text-xs text-zinc-400">Pick a Customer first, or search all customers above.</p>
+                ) : !item.productId ? (
+                  <p className="mt-1 text-xs text-zinc-400">Pick a Style first.</p>
+                ) : (
+                  approvedSamples.filter((s) => s.product?.id === item.productId).length === 0 && (
+                    <p className="mt-1 text-xs text-zinc-400">No approved samples for this style yet.</p>
+                  )
+                )}
+              </FormField>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <FormField label="Unit Price" htmlFor={`price-${index}`} required>
+                <input
+                  id={`price-${index}`}
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  required
+                  value={item.unitPrice}
+                  onChange={(e) => updateItem(index, { unitPrice: e.target.value })}
+                  className={textInputClass()}
+                />
+              </FormField>
+              <FormField label="Notes" htmlFor={`notes-${index}`}>
+                <input
+                  id={`notes-${index}`}
+                  value={item.notes}
+                  onChange={(e) => updateItem(index, { notes: e.target.value })}
+                  className={textInputClass()}
+                />
+              </FormField>
+            </div>
+
+            {item.productId && item.variants.length === 0 && (
+              <InlineVariantGenerator
+                productId={item.productId}
+                colors={colors}
+                sizes={sizes}
+                onGenerated={(variants) => updateItem(index, { variants })}
+              />
+            )}
+
+            {item.variants.length > 0 && (
+              <div>
+                <label className="block text-xs font-medium text-zinc-500 dark:text-zinc-400">
+                  Quantity by Color / Size
+                </label>
+                <VariantQuantityGrid
+                  variants={item.variants}
+                  quantities={item.quantities}
+                  onChange={(patch) => setQuantities(index, patch)}
+                />
+              </div>
+            )}
+
+            <p className="text-xs text-zinc-500">Line Amount: {formatAmount(lineTotal(item))}</p>
+          </div>
+        ))}
+
+        <button
+          type="button"
+          onClick={addLine}
+          className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 dark:border-zinc-700 dark:text-zinc-200"
+        >
+          + Add Style Line
+        </button>
+      </div>
+
+      <p className="text-sm font-medium text-zinc-900 dark:text-zinc-50">Order Amount: {formatAmount(orderTotal)}</p>
+
+      {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+
+      {needsOverride && (
+        <div className="max-w-md space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3 dark:border-amber-700 dark:bg-amber-900/20">
+          <FormField label="Management override reason" htmlFor="editOverrideReason">
+            <input
+              id="editOverrideReason"
+              value={overrideReason}
+              onChange={(e) => setOverrideReason(e.target.value)}
+              placeholder="Why save without full sample approval?"
+              className={textInputClass()}
+            />
+          </FormField>
+          <button
+            type="button"
+            onClick={() => submitOrder(true)}
+            disabled={isSubmitting || !overrideReason}
+            className="rounded-md border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+          >
+            Save Anyway (Override)
+          </button>
+        </div>
+      )}
+
+      <div className="flex gap-3">
+        <button
+          type="submit"
+          disabled={isSubmitting}
+          className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
+        >
+          {isSubmitting ? "Saving…" : initialOrder ? "Save Changes" : "Create Sales Order"}
+        </button>
+        <button
+          type="button"
+          onClick={() => router.push(initialOrder ? `/sales-orders/${initialOrder.id}` : "/sales-orders")}
+          className="rounded-md border border-zinc-300 px-4 py-2 text-sm text-zinc-700 dark:border-zinc-700 dark:text-zinc-200"
+        >
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+
+/**
+ * Color × Size matrix, not a flat truncated list — colors as rows, sizes as
+ * columns, so both dimensions are always fully legible. Each row/column
+ * header carries its own "fill" input + button so a merchandiser can set one
+ * color across every size, one size across every color, or a single cell,
+ * without three different UIs for what's really one bulk-set operation.
+ */
+function VariantQuantityGrid({
+  variants,
+  quantities,
+  onChange,
+}: {
+  variants: VariantOption[];
+  quantities: Record<string, string>;
+  onChange: (patch: Record<string, string>) => void;
+}) {
+  const [rowFill, setRowFill] = useState<Record<string, string>>({});
+  const [colFill, setColFill] = useState<Record<string, string>>({});
+
+  const colors = Array.from(new Map(variants.map((v) => [v.color.id, v.color])).values());
+  const sizes = Array.from(new Map(variants.map((v) => [v.size.id, v.size])).values()).sort(
+    (a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)
+  );
+  const cellByKey = new Map(variants.map((v) => [`${v.color.id}:${v.size.id}`, v]));
+
+  const applyRow = (colorId: string) => {
+    const value = rowFill[colorId];
+    if (!value) return;
+    const patch: Record<string, string> = {};
+    for (const size of sizes) {
+      const v = cellByKey.get(`${colorId}:${size.id}`);
+      if (v) patch[v.id] = value;
+    }
+    onChange(patch);
+  };
+
+  const applyColumn = (sizeId: string) => {
+    const value = colFill[sizeId];
+    if (!value) return;
+    const patch: Record<string, string> = {};
+    for (const color of colors) {
+      const v = cellByKey.get(`${color.id}:${sizeId}`);
+      if (v) patch[v.id] = value;
+    }
+    onChange(patch);
+  };
+
+  const fillInputClass =
+    "w-11 rounded border border-dashed border-zinc-300 bg-transparent px-1 py-1 text-center text-xs text-zinc-500 focus:border-indigo-400 focus:outline-none dark:border-zinc-600 dark:text-zinc-400";
+  const cellInputClass =
+    "w-14 rounded-md border border-zinc-300 bg-white px-1 py-1.5 text-center text-xs text-zinc-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100";
+
+  return (
+    <div className="mt-1.5 overflow-x-auto rounded-md border border-zinc-200 dark:border-zinc-800">
+      <table className="w-full table-fixed border-collapse text-xs">
+        <colgroup>
+          <col style={{ width: 108 }} />
+          <col style={{ width: 84 }} />
+          {sizes.map((size) => (
+            <col key={size.id} style={{ width: 76 }} />
+          ))}
+        </colgroup>
+        <thead>
+          <tr className="bg-zinc-50 dark:bg-zinc-900/60">
+            <th className="border-b border-r border-zinc-200 dark:border-zinc-800"></th>
+            <th className="border-b border-r border-zinc-200 px-1 py-1.5 text-center text-[10px] font-normal uppercase tracking-wide text-zinc-400 dark:border-zinc-800">
+              Fill
+            </th>
+            {sizes.map((size) => (
+              <th
+                key={size.id}
+                className="border-b border-zinc-200 px-1.5 py-1.5 text-center font-medium text-zinc-600 dark:border-zinc-800 dark:text-zinc-300"
+              >
+                {size.name}
+              </th>
+            ))}
+          </tr>
+          <tr className="bg-zinc-50 dark:bg-zinc-900/60">
+            <th className="border-b border-r border-zinc-200 dark:border-zinc-800"></th>
+            <th className="border-b border-r border-zinc-200 px-1 py-1 text-center text-[10px] font-normal text-zinc-400 dark:border-zinc-800">
+              all sizes
+            </th>
+            {sizes.map((size) => (
+              <td key={size.id} className="border-b border-zinc-200 px-1.5 py-1 dark:border-zinc-800">
+                <div className="flex items-center justify-center gap-1">
+                  <input
+                    type="number"
+                    min={0}
+                    placeholder="all"
+                    title={`Set every color to this quantity for ${size.name}`}
+                    value={colFill[size.id] ?? ""}
+                    onChange={(e) => setColFill((prev) => ({ ...prev, [size.id]: e.target.value }))}
+                    className={fillInputClass}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => applyColumn(size.id)}
+                    title={`Apply to all colors — ${size.name}`}
+                    className="font-medium text-indigo-600 hover:text-indigo-500"
+                  >
+                    ↓
+                  </button>
+                </div>
+              </td>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {colors.map((color) => (
+            <tr key={color.id}>
+              <th className="truncate border-b border-r border-zinc-100 px-2 py-1.5 text-left font-medium text-zinc-700 dark:border-zinc-800 dark:text-zinc-200">
+                {color.name}
+              </th>
+              <td className="border-b border-r border-zinc-100 px-1 py-1 dark:border-zinc-800">
+                <div className="flex items-center justify-center gap-1">
+                  <input
+                    type="number"
+                    min={0}
+                    placeholder="all"
+                    title={`Set every size to this quantity for ${color.name}`}
+                    value={rowFill[color.id] ?? ""}
+                    onChange={(e) => setRowFill((prev) => ({ ...prev, [color.id]: e.target.value }))}
+                    className={fillInputClass}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => applyRow(color.id)}
+                    title={`Apply to all sizes — ${color.name}`}
+                    className="font-medium text-indigo-600 hover:text-indigo-500"
+                  >
+                    →
+                  </button>
+                </div>
+              </td>
+              {sizes.map((size) => {
+                const variant = cellByKey.get(`${color.id}:${size.id}`);
+                return (
+                  <td key={size.id} className="border-b border-zinc-100 px-1.5 py-1 text-center dark:border-zinc-800">
+                    {variant ? (
+                      <input
+                        type="number"
+                        min={0}
+                        value={quantities[variant.id] ?? ""}
+                        onChange={(e) => onChange({ [variant.id]: e.target.value })}
+                        className={cellInputClass}
+                      />
+                    ) : (
+                      <span className="text-zinc-300 dark:text-zinc-700">—</span>
+                    )}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/**
+ * Shown instead of the quantity grid when the selected Style has no
+ * Color×Size variants generated yet — reuses the exact same
+ * `POST /api/v1/products/:id/variants/bulk` endpoint and Color/Size master
+ * picker already built for this in Masters → Products → Variants, so a
+ * merchandiser doesn't have to leave the order screen to unblock a new style.
+ */
+function InlineVariantGenerator({
+  productId,
+  colors,
+  sizes,
+  onGenerated,
+}: {
+  productId: string;
+  colors: Option[];
+  sizes: Option[];
+  onGenerated: (variants: VariantOption[]) => void;
+}) {
+  const [selectedColorIds, setSelectedColorIds] = useState<string[]>([]);
+  const [selectedSizeIds, setSelectedSizeIds] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const toggle = (list: string[], setList: (v: string[]) => void, id: string) => {
+    setList(list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
+  };
+
+  const handleGenerate = async () => {
+    if (selectedColorIds.length === 0 || selectedSizeIds.length === 0) {
+      setError("Select at least one color and one size.");
+      return;
+    }
+    setIsSubmitting(true);
+    setError(null);
+
+    const res = await fetch(`/api/v1/products/${productId}/variants/bulk`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ colorIds: selectedColorIds, sizeIds: selectedSizeIds }),
+    });
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      setError(body?.error?.message ?? "Failed to generate variants.");
+      setIsSubmitting(false);
+      return;
+    }
+
+    const refreshed = await fetch(`/api/v1/products/${productId}`).then((r) => r.json());
+    setIsSubmitting(false);
+    onGenerated(refreshed.data?.variants ?? []);
+  };
+
+  return (
+    <div className="rounded-md border border-dashed border-zinc-300 p-3 dark:border-zinc-700">
+      <p className="mb-2 text-xs text-zinc-500 dark:text-zinc-400">
+        This style has no color/size variants yet. Pick some to generate them now — no need to go to Masters first.
+      </p>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <p className="mb-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">Colors</p>
+          <div className="max-h-28 space-y-1 overflow-y-auto">
+            {colors.length === 0 && <p className="text-xs text-zinc-400">No colors defined yet.</p>}
+            {colors.map((c) => (
+              <label key={c.id} className="flex items-center gap-1.5 text-xs text-zinc-700 dark:text-zinc-300">
+                <input
+                  type="checkbox"
+                  checked={selectedColorIds.includes(c.id)}
+                  onChange={() => toggle(selectedColorIds, setSelectedColorIds, c.id)}
+                />
+                {c.name}
+              </label>
+            ))}
+          </div>
+        </div>
+        <div>
+          <p className="mb-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">Sizes</p>
+          <div className="max-h-28 space-y-1 overflow-y-auto">
+            {sizes.length === 0 && <p className="text-xs text-zinc-400">No sizes defined yet.</p>}
+            {sizes.map((s) => (
+              <label key={s.id} className="flex items-center gap-1.5 text-xs text-zinc-700 dark:text-zinc-300">
+                <input
+                  type="checkbox"
+                  checked={selectedSizeIds.includes(s.id)}
+                  onChange={() => toggle(selectedSizeIds, setSelectedSizeIds, s.id)}
+                />
+                {s.name}
+              </label>
+            ))}
+          </div>
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={handleGenerate}
+        disabled={isSubmitting}
+        className="mt-2 rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
+      >
+        {isSubmitting ? "Generating…" : "Generate Variants"}
+      </button>
+      {error && <p className="mt-1 text-xs text-red-600 dark:text-red-400">{error}</p>}
+    </div>
+  );
+}

@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { auth } from "@/core/auth/auth";
 import { getMaterialById } from "@/modules/products/product.service";
+import type { MATERIAL_CATEGORIES } from "@/modules/products/product.schema";
 import { MaterialForm } from "../MaterialForm";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 
@@ -26,13 +27,14 @@ export default async function EditMaterialPage({ params }: { params: Promise<{ i
       </div>
 
       <MaterialForm
+        key={id}
         submitUrl={`/api/v1/materials/${id}`}
         method="PATCH"
         redirectTo="/masters/materials"
         initialValues={{
           styleCode: material.styleCode,
           styleName: material.styleName,
-          materialCategory: (material.materialCategory ?? "OTHER") as MaterialFormValuesCategory,
+          materialCategory: (material.materialCategory ?? "OTHER") as (typeof MATERIAL_CATEGORIES)[number],
           baseUomId: material.baseUomId ?? "",
           defaultSupplierId: material.defaultSupplierId ?? "",
           reorderLevel: material.reorderLevel?.toString() ?? "",
@@ -45,5 +47,3 @@ export default async function EditMaterialPage({ params }: { params: Promise<{ i
     </div>
   );
 }
-
-type MaterialFormValuesCategory = "FABRIC" | "TRIMS" | "ACCESSORIES" | "PACKAGING" | "OTHER";

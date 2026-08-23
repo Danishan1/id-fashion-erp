@@ -26,6 +26,7 @@ export default async function EditSupplierPage({ params }: { params: Promise<{ i
       </div>
 
       <SupplierForm
+        key={id}
         submitUrl={`/api/v1/suppliers/${id}`}
         method="PATCH"
         redirectTo="/masters/suppliers"

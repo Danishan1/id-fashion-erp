@@ -40,6 +40,9 @@ export async function createDesignation(actor: ActorContext, input: DesignationI
 }
 
 export async function updateDesignation(actor: ActorContext, id: string, input: DesignationInput) {
+  const existing = await HrConfigRepository.designation.findFirst({ where: { id, companyId: actor.companyId } });
+  if (!existing) throw new BusinessRuleError("NOT_FOUND", "Designation not found.", { id });
+
   const updated = await HrConfigRepository.designation.update({
     where: { id },
     data: { code: input.code, name: input.name, isActive: input.isActive },
@@ -84,6 +87,9 @@ export async function createEmployeeCategory(actor: ActorContext, input: Employe
 }
 
 export async function updateEmployeeCategory(actor: ActorContext, id: string, input: EmployeeCategoryInput) {
+  const existing = await HrConfigRepository.employeeCategory.findFirst({ where: { id, companyId: actor.companyId } });
+  if (!existing) throw new BusinessRuleError("NOT_FOUND", "Employee category not found.", { id });
+
   const updated = await HrConfigRepository.employeeCategory.update({
     where: { id },
     data: { code: input.code, name: input.name, isActive: input.isActive },
@@ -135,6 +141,9 @@ export async function createShiftMaster(actor: ActorContext, input: ShiftMasterI
 }
 
 export async function updateShiftMaster(actor: ActorContext, id: string, input: ShiftMasterInput) {
+  const existing = await HrConfigRepository.shiftMaster.findFirst({ where: { id, companyId: actor.companyId } });
+  if (!existing) throw new BusinessRuleError("NOT_FOUND", "Shift not found.", { id });
+
   const updated = await HrConfigRepository.shiftMaster.update({
     where: { id },
     data: {
@@ -187,6 +196,9 @@ export async function createHolidayMaster(actor: ActorContext, input: HolidayMas
 }
 
 export async function updateHolidayMaster(actor: ActorContext, id: string, input: HolidayMasterInput) {
+  const existing = await HrConfigRepository.holidayMaster.findFirst({ where: { id, companyId: actor.companyId } });
+  if (!existing) throw new BusinessRuleError("NOT_FOUND", "Holiday not found.", { id });
+
   const updated = await HrConfigRepository.holidayMaster.update({
     where: { id },
     data: { name: input.name, date: input.date, isActive: input.isActive },

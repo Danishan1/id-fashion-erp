@@ -1,0 +1,438 @@
+"use client";
+
+import Link from "next/link";
+import { useState } from "react";
+import { FormField, textInputClass } from "@/components/ui/FormField";
+import {
+  LINE_STATUS_BADGE_CLASS,
+  LINE_STATUS_LABELS,
+  STATUS_BADGE_CLASS,
+  STATUS_LABELS,
+} from "./statusLabels";
+import { SAMPLE_TYPE_LABELS } from "../sampling/sampleTypeLabels";
+
+type EnquiryStatus = keyof typeof STATUS_LABELS;
+type LineStatus = keyof typeof LINE_STATUS_LABELS;
+
+interface SampleRequestRef {
+  id: string;
+  requestNumber: string;
+  status: string;
+}
+
+interface LineRow {
+  id: string;
+  productId: string | null;
+  styleNameFreeText: string | null;
+  description: string | null;
+  colorRemarks: string | null;
+  targetQuantity: string | null;
+  targetUnitPrice: string | null;
+  targetDeliveryDate: string | null;
+  remarks: string | null;
+  lineStatus: LineStatus;
+  rejectionReason: string | null;
+  product: { id: string; styleName: string; styleCode: string } | null;
+  sampleRequest: SampleRequestRef | null;
+}
+
+interface EnquiryDetail {
+  id: string;
+  status: EnquiryStatus;
+  customer: { id: string; name: string } | null;
+  buyer: { name: string } | null;
+  lines: LineRow[];
+}
+
+const STATUS_HELP: Record<EnquiryStatus, string> = {
+  OPEN: "Review each line below and decide whether it's worth sampling.",
+  PARTIALLY_CONVERTED: "Some lines have already been converted to Sample Requests; others are still open.",
+  CLOSED: "Every line has reached a final outcome (converted or rejected).",
+  CANCELLED: "This enquiry was cancelled. Lines already converted to a Sample Request are unaffected.",
+};
+
+async function parseErrorMessage(res: Response, fallback: string) {
+  const body = await res.json().catch(() => null);
+  return body?.error?.message ?? fallback;
+}
+
+export function BuyerEnquiryWorkflowPanel({
+  buyerEnquiryId,
+  initialEnquiry,
+}: {
+  buyerEnquiryId: string;
+  initialEnquiry: EnquiryDetail;
+}) {
+  const [enquiry, setEnquiry] = useState(initialEnquiry);
+  const [error, setError] = useState<string | null>(null);
+  const [isBusy, setIsBusy] = useState(false);
+
+  const refresh = async () => {
+    const res = await fetch(`/api/v1/buyer-enquiries/${buyerEnquiryId}`);
+    const body = await res.json();
+    if (res.ok) setEnquiry(body.data);
+  };
+
+  const run = async (action: () => Promise<Response>, fallbackError: string) => {
+    setIsBusy(true);
+    setError(null);
+    const res = await action();
+    if (!res.ok) {
+      setError(await parseErrorMessage(res, fallbackError));
+      setIsBusy(false);
+      return false;
+    }
+    await refresh();
+    setIsBusy(false);
+    return true;
+  };
+
+  const setLineStatus = (lineId: string, lineStatus: string, rejectionReason?: string) =>
+    run(
+      () =>
+        fetch(`/api/v1/buyer-enquiries/lines/${lineId}/status`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ lineStatus, rejectionReason }),
+        }),
+      "Failed to change this line's status."
+    );
+
+  const cancelEnquiry = () =>
+    run(() => fetch(`/api/v1/buyer-enquiries/${buyerEnquiryId}/cancel`, { method: "POST" }), "Failed to cancel this enquiry.");
+
+  return (
+    <div className="space-y-8">
+      <div className="flex items-center gap-3">
+        <span className={`rounded-full px-3 py-1 text-xs font-medium ${STATUS_BADGE_CLASS[enquiry.status]}`}>
+          {STATUS_LABELS[enquiry.status]}
+        </span>
+        {isBusy && <span className="text-xs text-zinc-400">Saving…</span>}
+      </div>
+
+      <p className="text-sm text-zinc-600 dark:text-zinc-300">{STATUS_HELP[enquiry.status]}</p>
+
+      {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+
+      {(enquiry.status === "OPEN" || enquiry.status === "PARTIALLY_CONVERTED") && (
+        <div className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
+          <h2 className="mb-3 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Actions</h2>
+          <ActionButton label="Cancel Enquiry" onClick={cancelEnquiry} isBusy={isBusy} variant="danger" />
+        </div>
+      )}
+
+      <div className="space-y-3">
+        <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Enquiry Lines</h2>
+        {enquiry.lines.map((line) => (
+          <EnquiryLineCard
+            key={line.id}
+            line={line}
+            enquiryStatus={enquiry.status}
+            enquiryCustomerId={enquiry.customer?.id ?? null}
+            isBusy={isBusy}
+            onSetStatus={setLineStatus}
+            onConverted={refresh}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function EnquiryLineCard({
+  line,
+  enquiryStatus,
+  enquiryCustomerId,
+  isBusy,
+  onSetStatus,
+  onConverted,
+}: {
+  line: LineRow;
+  enquiryStatus: EnquiryStatus;
+  enquiryCustomerId: string | null;
+  isBusy: boolean;
+  onSetStatus: (lineId: string, lineStatus: string, rejectionReason?: string) => Promise<boolean>;
+  onConverted: () => Promise<void>;
+}) {
+  const [rejectionReason, setRejectionReason] = useState("");
+  const [showRejectForm, setShowRejectForm] = useState(false);
+  const [showConvertForm, setShowConvertForm] = useState(false);
+
+  const displayName = line.product?.styleName ?? line.styleNameFreeText ?? "Untitled line";
+  const enquiryIsCancelled = enquiryStatus === "CANCELLED";
+
+  return (
+    <div className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-medium text-zinc-900 dark:text-zinc-50">
+            {displayName}
+            {line.product && <span className="ml-1 text-xs text-zinc-400">({line.product.styleCode})</span>}
+          </p>
+          {line.description && <p className="mt-0.5 text-xs text-zinc-500">{line.description}</p>}
+        </div>
+        <span className={`whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium ${LINE_STATUS_BADGE_CLASS[line.lineStatus]}`}>
+          {LINE_STATUS_LABELS[line.lineStatus]}
+        </span>
+      </div>
+
+      <dl className="mt-3 grid grid-cols-4 gap-3 text-xs text-zinc-600 dark:text-zinc-300">
+        <div>
+          <dt className="text-zinc-400">Color</dt>
+          <dd>{line.colorRemarks ?? "—"}</dd>
+        </div>
+        <div>
+          <dt className="text-zinc-400">Target Qty</dt>
+          <dd>{line.targetQuantity ?? "—"}</dd>
+        </div>
+        <div>
+          <dt className="text-zinc-400">Target Price</dt>
+          <dd>{line.targetUnitPrice ?? "—"}</dd>
+        </div>
+        <div>
+          <dt className="text-zinc-400">Target Delivery</dt>
+          <dd>{line.targetDeliveryDate ? new Date(line.targetDeliveryDate).toLocaleDateString() : "—"}</dd>
+        </div>
+      </dl>
+      {line.remarks && <p className="mt-2 text-xs text-zinc-500">Remarks: {line.remarks}</p>}
+
+      {line.lineStatus === "REJECTED" && line.rejectionReason && (
+        <p className="mt-2 text-xs text-red-600 dark:text-red-400">Rejected: {line.rejectionReason}</p>
+      )}
+
+      {line.lineStatus === "CONVERTED" && line.sampleRequest && (
+        <p className="mt-2 text-xs text-green-700 dark:text-green-400">
+          Converted to Sample Request{" "}
+          <Link href={`/sampling/${line.sampleRequest.id}`} className="font-medium underline">
+            {line.sampleRequest.requestNumber}
+          </Link>
+          {" "}({line.sampleRequest.status.replace(/_/g, " ")})
+        </p>
+      )}
+
+      {!enquiryIsCancelled && line.lineStatus !== "REJECTED" && line.lineStatus !== "CONVERTED" && (
+        <div className="mt-3 space-y-3 border-t border-zinc-100 pt-3 dark:border-zinc-800">
+          <div className="flex flex-wrap gap-2">
+            {line.lineStatus === "PENDING_REVIEW" && (
+              <>
+                <ActionButton
+                  label="Approve for Sampling"
+                  onClick={() => onSetStatus(line.id, "APPROVED_FOR_SAMPLING")}
+                  isBusy={isBusy}
+                />
+                <ActionButton
+                  label="Put On Hold"
+                  onClick={() => onSetStatus(line.id, "ON_HOLD")}
+                  isBusy={isBusy}
+                  variant="secondary"
+                />
+              </>
+            )}
+
+            {line.lineStatus === "APPROVED_FOR_SAMPLING" && (
+              <>
+                {enquiryCustomerId ? (
+                  <ActionButton
+                    label="Convert to Sample Request"
+                    onClick={() => setShowConvertForm((v) => !v)}
+                    isBusy={isBusy}
+                  />
+                ) : (
+                  <p className="text-xs text-amber-600 dark:text-amber-400">
+                    Link a real Customer to this enquiry before converting.
+                  </p>
+                )}
+                <ActionButton
+                  label="Put On Hold"
+                  onClick={() => onSetStatus(line.id, "ON_HOLD")}
+                  isBusy={isBusy}
+                  variant="secondary"
+                />
+              </>
+            )}
+
+            {line.lineStatus === "ON_HOLD" && (
+              <>
+                <ActionButton
+                  label="Resume to Pending Review"
+                  onClick={() => onSetStatus(line.id, "PENDING_REVIEW")}
+                  isBusy={isBusy}
+                  variant="secondary"
+                />
+                <ActionButton
+                  label="Resume to Approved for Sampling"
+                  onClick={() => onSetStatus(line.id, "APPROVED_FOR_SAMPLING")}
+                  isBusy={isBusy}
+                />
+              </>
+            )}
+
+            <ActionButton
+              label="Reject"
+              onClick={() => setShowRejectForm((v) => !v)}
+              isBusy={isBusy}
+              variant="danger"
+            />
+          </div>
+
+          {showRejectForm && (
+            <div className="max-w-md space-y-2 rounded-md border border-red-200 bg-red-50 p-3 dark:border-red-900 dark:bg-red-900/10">
+              <FormField label="Rejection reason" htmlFor={`reject-reason-${line.id}`} required>
+                <input
+                  id={`reject-reason-${line.id}`}
+                  value={rejectionReason}
+                  onChange={(e) => setRejectionReason(e.target.value)}
+                  className={textInputClass()}
+                />
+              </FormField>
+              <ActionButton
+                label="Confirm Reject"
+                onClick={async () => {
+                  const ok = await onSetStatus(line.id, "REJECTED", rejectionReason);
+                  if (ok) {
+                    setShowRejectForm(false);
+                    setRejectionReason("");
+                  }
+                }}
+                isBusy={isBusy}
+                disabled={!rejectionReason}
+                variant="danger"
+              />
+            </div>
+          )}
+
+          {showConvertForm && (
+            <ConvertToSampleForm
+              line={line}
+              isBusy={isBusy}
+              onConverted={async () => {
+                setShowConvertForm(false);
+                await onConverted();
+              }}
+            />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ConvertToSampleForm({
+  line,
+  isBusy,
+  onConverted,
+}: {
+  line: LineRow;
+  isBusy: boolean;
+  onConverted: () => Promise<void>;
+}) {
+  const [styleName, setStyleName] = useState(line.product?.styleName ?? line.styleNameFreeText ?? "");
+  const [sampleType, setSampleType] = useState("");
+  const [color, setColor] = useState(line.colorRemarks ?? "");
+  const [targetSubmissionDate, setTargetSubmissionDate] = useState(line.targetDeliveryDate?.slice(0, 10) ?? "");
+  const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleConvert = async () => {
+    setIsSubmitting(true);
+    setError(null);
+
+    const res = await fetch(`/api/v1/buyer-enquiries/lines/${line.id}/convert`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        styleName,
+        sampleType,
+        color: color || undefined,
+        targetSubmissionDate: targetSubmissionDate || undefined,
+      }),
+    });
+
+    setIsSubmitting(false);
+
+    if (!res.ok) {
+      setError(await parseErrorMessage(res, "Failed to convert this line."));
+      return;
+    }
+
+    await onConverted();
+  };
+
+  return (
+    <div className="max-w-md space-y-2 rounded-md border border-indigo-200 bg-indigo-50 p-3 dark:border-indigo-900 dark:bg-indigo-900/10">
+      <p className="text-xs text-zinc-600 dark:text-zinc-300">
+        Review before creating the Sample Request — you can still edit these on the sample itself afterward.
+      </p>
+      <FormField label="Style Name" htmlFor={`convert-style-${line.id}`} required>
+        <input id={`convert-style-${line.id}`} required value={styleName} onChange={(e) => setStyleName(e.target.value)} className={textInputClass()} />
+      </FormField>
+      <FormField label="Sample Type" htmlFor={`convert-type-${line.id}`} required>
+        <select
+          id={`convert-type-${line.id}`}
+          required
+          value={sampleType}
+          onChange={(e) => setSampleType(e.target.value)}
+          className={textInputClass()}
+        >
+          <option value="">— Select —</option>
+          {Object.entries(SAMPLE_TYPE_LABELS).map(([value, label]) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </FormField>
+      <FormField label="Color" htmlFor={`convert-color-${line.id}`}>
+        <input id={`convert-color-${line.id}`} value={color} onChange={(e) => setColor(e.target.value)} className={textInputClass()} />
+      </FormField>
+      <FormField label="Target Submission Date" htmlFor={`convert-date-${line.id}`}>
+        <input
+          id={`convert-date-${line.id}`}
+          type="date"
+          value={targetSubmissionDate}
+          onChange={(e) => setTargetSubmissionDate(e.target.value)}
+          className={textInputClass()}
+        />
+      </FormField>
+      {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
+      <ActionButton
+        label="Create Sample Request"
+        onClick={handleConvert}
+        isBusy={isBusy || isSubmitting}
+        disabled={!styleName || !sampleType}
+      />
+    </div>
+  );
+}
+
+function ActionButton({
+  label,
+  onClick,
+  isBusy,
+  disabled,
+  variant = "primary",
+}: {
+  label: string;
+  onClick: () => void;
+  isBusy: boolean;
+  disabled?: boolean;
+  variant?: "primary" | "secondary" | "danger";
+}) {
+  const variantClass =
+    variant === "primary"
+      ? "bg-indigo-600 text-white hover:bg-indigo-500"
+      : variant === "danger"
+        ? "bg-red-600 text-white hover:bg-red-500"
+        : "border border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800";
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={isBusy || disabled}
+      className={`whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium disabled:opacity-50 ${variantClass}`}
+    >
+      {label}
+    </button>
+  );
+}

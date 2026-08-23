@@ -38,9 +38,9 @@ The user has two real, manually-coded PHP/Laravel garment systems already in pro
 | 1 | Architecture (this document) | ✅ Done |
 | 2 | Foundation | ✅ Done |
 | 3 | Masters | ✅ Done |
-| 4 | Sampling | ⬜ Not started |
-| 5 | Orders + Production | ⬜ Not started |
-| 6 | Inventory | ⬜ Not started |
+| 4 | Sampling | ✅ Done |
+| 5 | Orders + Production | 🔶 In progress — 5A (Sales Orders) and 5B (BOM/MRP) done, 5C (Production) not started |
+| 6 | Inventory | 🔶 In progress — Purchase Order + Goods Receipt (with fabric roll tracking), a minimal stock ledger, and Material Request (internal stock request → issue-from-stock or optional escalation to a Purchase Order) pulled forward and done; full Stock Movements/Adjustments and Return-to-Supplier still not started |
 | 7 | Accounts | ⬜ Not started |
 | 8 | Dispatch | ⬜ Not started |
 | 9 | Reports | ⬜ Not started |
@@ -132,7 +132,893 @@ Second import batch, covering the two Phase-7-deferred items from the original c
 - Both are plain standalone masters with no wiring into a payments/invoicing flow yet (none exists in this codebase) — that integration is Phase 7 work.
 - Gotcha repeated from the batch-1 note above, worth calling out again since it bit again in-session: after `prisma migrate dev` + `prisma generate`, the **already-running** dev server process (this one predated the migration) kept the stale `@prisma/client` module in memory and threw `Cannot read properties of undefined (reading 'findMany')` on the new models until the dev server was fully stopped and restarted. Always restart after a schema change, not just `prisma generate`.
 
+### Phase 4 — Sampling, complete (2026-08-18)
+Full request → version → approval workflow built per the plan reviewed and approved with the user beforehand (10-point analysis: purpose, features, schema, integration, workflow, roles, business rules, edge cases, architecture, risks).
+
+- **Schema (5 new tables + 3 enums)**: `SampleRequest` (immutable header — customer/style identity never changes after create), `SampleVersion` (**append-only** — a revision is always a new row, `@@unique([sampleRequestId, versionNumber])`, the prior version flips to `SUPERSEDED` and is never edited), `SampleMaterial`, `SampleApproval`, `SampleComment`. `SampleStatus` (12-state header lifecycle), `SampleVersionStatus`, `SampleDecision` enums. `RelatedModule.SAMPLE_REQUEST` and `DocumentType.SAMPLE_REQUEST` (prefix `SAM`) already existed from Phase 1/2 planning — zero enum changes needed there, `generateDocumentNumber()` reused as-is for `SAM-2026-00001` numbering.
+- **Module** (`src/modules/sampling/`) built repository-first from day one (schema → repository → service, no retrofit needed unlike the Phase C masters cleanup): `sample.schema.ts` (Zod), `sample.repository.ts` (5 repository objects, one per model), `sample.service.ts` — the state machine lives here as one explicit `ALLOWED_TRANSITIONS: Record<SampleStatus, SampleStatus[]>` map, checked by a single `transitionSampleStatus()` function rather than scattered if/else. `CUSTOMER_FEEDBACK_RECEIVED`'s three outcomes (`APPROVED`/`REJECTED`/`REVISION_REQUESTED`) and `REVISION_REQUESTED → IN_DEVELOPMENT` are deliberately *not* in that map — they're only reachable through `recordSampleApproval()`/`addSampleVersion()` respectively, not the generic status-change endpoint, so an approval decision can't be forged as a plain status PATCH.
+- **Deliberate MVP simplification**: creation goes straight to `REQUESTED` with the request number already assigned (no separate persisted `DRAFT` row) since the create form's Zod schema already requires every field `DRAFT` would exist to defer — `DRAFT` stays a valid enum value for a future partial-save UI, just unused today. Documented here so it isn't mistaken for an oversight.
+- **RBAC**: no `rbac.ts` changes needed — the `sampling` module and its per-role action sets (`SAMPLING_MANAGER` full CRUD+approve+reject, `MERCHANDISER` create/edit only, `MANAGEMENT`/`QC_MANAGER`/`PRODUCTION_MANAGER` view/approve-only per role) were already seeded back in Phase 1. Self-approval guard reused as-is: recording an `APPROVED` decision asserts the `approve` action with `resourceContext: { createdBy: request.requestedByUserId }`, so `PermissionService`'s existing creator-can't-approve-their-own-record check (`SELF_APPROVAL_GUARDED_ACTIONS`) applies for free; `REJECTED`/`REVISION_REQUESTED` assert `reject` instead, deliberately *not* self-approval-guarded (CLAUDE.md's original rule only calls out the Approve action).
+- **No new `BusinessRuleError` codes** — `INVALID_STATE_TRANSITION`, `NOT_FOUND`, `VALIDATION_ERROR`, `PERMISSION_DENIED` already covered every failure mode this module needed.
+- **UI** (`src/app/(dashboard)/sampling/`): list page reuses `DataTable` as-is (no `isActive` column on a transactional record, so the toggle simply doesn't render — matches the status-driven-lifecycle convention for transactional docs). Detail page is a Server Component (`getSampleRequestById` called directly, no fetch round-trip) composing one Client Component, `SampleWorkflowPanel`, which renders context-appropriate action buttons per `request.status` (e.g. only `SUBMITTED_TO_CUSTOMER` shows the decision form) plus the version timeline, per-version material table, and comment thread — same "Server Component page + Client Component for the interactive part" split already established by Products' `VariantsSection`.
+- **Gotcha (new)**: passing a Prisma query result containing `Decimal`/`Date` fields straight from a Server Component into a Client Component prop fails TypeScript (`Decimal` isn't `string`) and would fail at runtime too (`Decimal` instances aren't plain serializable objects across the RSC boundary). Fixed with `JSON.parse(JSON.stringify(request))` before passing down — `Decimal.toJSON()` and `Date.toJSON()` both produce plain strings, which is also what the client-side prop types expect. Watch for this on any future detail page whose model has a `Decimal` or `DateTime` field feeding a Client Component.
+- Verified end-to-end in the browser through the full state machine on one real record: create → add Version 1 (tech pack) → add material → Start Development → Send to Internal QC → Submit to Customer → record `REVISION_REQUESTED` (confirmed Version 1 flips to `SUPERSEDED`, its approval history stays visible) → add Version 2 → Internal QC → Submit to Customer → record `APPROVED` (confirmed terminal state, all actions correctly hidden) → posted a comment. `npx tsc --noEmit` and `npm run lint` clean throughout.
+- Not yet wired (explicitly out of scope until their own phase): the Sales-Order gate ("cannot confirm without an Approved Sample") is Phase 5 work — the FK design (`sales_order_items.sample_request_id`, `Product.sampleRequests`/`SampleMaterial.material` relations) is already in place to support it without a later migration.
+
+### Phase 4 bugfix — Hold/Resume could skip version creation entirely (2026-08-18)
+User-reported: a real request got stuck showing "Submitted to Customer" with **no way to record a decision** and no visible reason why. Root cause was a genuine state-machine design flaw, not a UI glitch — `ALLOWED_TRANSITIONS.REQUESTED` allowed a direct jump to `TECH_PACK_READY` (and `ON_HOLD`'s resume dropdown let the caller pick *any* of the 5 in-progress statuses as the target), so **Put On Hold → Resume to "Submitted to Customer"** from a brand-new `REQUESTED` request skipped `addSampleVersion` entirely, landing on `SUBMITTED_TO_CUSTOMER` with zero versions — and the decision form requires a version to attach the decision to, so it just silently didn't render. This doubled as the user's second complaint (the flow wasn't transparent) — the same design gap caused both the bug and the confusion.
+- **Schema**: added `SampleRequest.statusBeforeHold` (nullable `SampleStatus`) — captures exactly which status a request was paused from.
+- **Service**: `ALLOWED_TRANSITIONS.REQUESTED` no longer includes `TECH_PACK_READY` (that transition only happens by actually calling `addSampleVersion`, which creates version 1); `ALLOWED_TRANSITIONS.ON_HOLD` is now just `["CANCELLED"]` — resuming is a new dedicated `resumeSampleFromHold()` function that restores `statusBeforeHold` exactly, with no caller-chosen target at all, so this whole class of "skip past a required step" bug is closed structurally rather than patched with an extra `if`. `sampleStatusChangeSchema`'s Zod enum also dropped `TECH_PACK_READY` as a defense-in-depth second layer (confirmed live: a direct API call trying to set it now fails Zod validation with `400`, and a same-Zod-valid-but-illegal transition like `REQUESTED → SUBMITTED_TO_CUSTOMER` fails the service's state machine with `409 INVALID_STATE_TRANSITION`).
+- **New route**: `POST /api/v1/sampling/[id]/resume` (replaces the old dropdown-driven generic status PATCH for resuming).
+- **UX — made the whole flow visibly transparent, not just fixed**: added a horizontal step tracker (Requested → Tech Pack → Development → Internal QC → With Customer → Approved) at the top of the detail page showing exactly where a request stands, plus a one-line plain-English explanation of the current status and what to do next (`STATUS_HELP` map in `SampleWorkflowPanel.tsx`) — this was the user's actual ask ("flow ko transparent banao taaki samajh aaye kya ho raha hai"), not just the bug. The Hold/Resume UI changed from a dropdown of 5 options to a single "Resume to X" button showing the exact status by name.
+- The user's own stuck record (`SAM-2026-00003`) turned out to already be self-resolved — they'd hit Cancel on it before this fix landed, which is a legitimate terminal state regardless of version count, so no manual data repair was needed.
+- Verified live: created a fresh request, held it from `REQUESTED`, confirmed the panel showed "On hold from Requested" with a single unambiguous resume button, resumed, confirmed it landed back on exactly `REQUESTED`; then confirmed via direct `fetch()` calls from the browser console that both the old exploit paths now fail (`400` from Zod, `409` from the state machine).
+
+### Security fix — cross-tenant write/read via Sample Materials endpoint (2026-08-19)
+Found during a full multi-tenant architecture audit (user-requested, 20-section review — see session transcript): `addSampleMaterial()` in `sample.service.ts` fetched the target `SampleVersion` via `SampleVersionRepository.findById(id)` — a bare `prisma.sampleVersion.findUnique({ where: { id } })` with **no `companyId` check** — before inserting a `SampleMaterial` row and returning the full materials list for that version. Every other Sampling mutation (`recordSampleApproval`, `addSampleVersion`) already re-verified ownership via a `companyId`-scoped `SampleRequestRepository.findAnyById()` call; this one function was the sole exception, missed because there's no centralized/automatic tenant-scoping layer in this codebase (every repository function is manually parameterized with `companyId` — see the Phase C `*.repository.ts` pattern — so a single missed check like this doesn't get caught by anything but review or audit).
+- **Impact**: any authenticated user, regardless of company, who obtained another tenant's `sampleVersionId` (a UUID — not guessable, but could leak via logs/URLs/referrer) could `POST /api/v1/sampling/versions/{id}/materials` and (a) insert a material row into that tenant's version, and (b) receive that tenant's full existing materials list back in the response — a cross-tenant write **and** read.
+- **Fix**: `addSampleMaterial()` now calls `SampleVersionRepository.findWithRequestOwner()` (already existed, used by the decision route) and checks `version.sampleRequest.companyId === actor.companyId` before proceeding, throwing `NOT_FOUND` otherwise — the same pattern already correct everywhere else in this module.
+- **Verified live**: created a temporary second tenant (company + user + sample request + version) in the dev DB, confirmed the existing Tenant-A session got `404 NOT_FOUND` attempting to add a material to Tenant B's version (previously would have silently succeeded), confirmed zero rows were written, then confirmed the legitimate same-tenant path still returns `201` with no regression. Temporary test tenant deleted afterward.
+- **Not yet done** (explicitly out of scope for this fix, flagged in the audit for a separate pass): a full sweep of every other module's by-id repository functions for the same missed-`companyId` class of bug — this was the only instance found in the modules inspected, but the audit recommends a systematic sweep (P1) rather than assuming it's the only one. Also flagged, not yet fixed: file storage has no tenant-namespacing (currently harmless since no upload/download route exists yet), and `UserBranchRole` has no cross-tenant consistency check (currently harmless since no live role-assignment UI/API exists yet) — both noted as "fix before that feature is built," not urgent today.
+
+### Security fix — P1 sweep found the same bug in 26 more entities across 7 modules (2026-08-19)
+Followed through on the P1 recommendation above immediately rather than assuming the Sampling instance was isolated — it wasn't. Every `update*` function in the 7 `SimpleLookupManager`-backed modules had the **identical missing-`companyId`** flaw: `Repository.x.update({ where: { id }, data })` with no ownership check, for **26 entities total** — Brand/Category/Season/ProductFitting/ProductType/Design/DesignPattern/Pattern (garment-attributes, via the shared `makeSimpleLookupService` factory), FabricGsm/FabricDye/FabricWeaveType/FabricWidth/FabricComposition (fabric-config), Designation/EmployeeCategory/ShiftMaster/HolidayMaster (hr-config), ProductionStage/ProductionLine/Machine/SalesAgent (production-config), CostMaster (cost-master), PaymentType/BankAccount (finance-config), Color/Size (lookups — `UnitOfMeasure` excluded, it's deliberately global with no `companyId` column at all). Any authenticated user with `masters_core`/`masters_finance` "edit" permission — which most roles have — could `PATCH` another tenant's row by id and silently rename/deactivate/retype it.
+- **Why `departments` wasn't affected**: `updateDepartment()` already called `getDepartmentById(actor.companyId, id)` first (throws `NOT_FOUND` if the id belongs to another company) before updating — the same safe pattern already used by all 5 "rich" modules (Customers/Suppliers/Employees/Warehouses/Products). The 7 simple-lookup modules were written faster/later and never got this check — a consistency gap between the "rich" and "simple" module patterns, not a one-off mistake.
+- **Fix**: added the identical ownership check to every one of the 26 `update*` functions — `const existing = await Repository.x.findFirst({ where: { id, companyId: actor.companyId } }); if (!existing) throw NOT_FOUND;` before the `update()` call. For `garment-attributes`, fixed once in the shared `makeSimpleLookupService` factory (covers all 8 entities); the other 6 modules don't share a factory, so each of their 18 individual `update*` functions got the same two-line addition. No route-level changes needed — these entities have no separate `/status` sub-route, their `SimpleLookupManager` toggle already PATCHes the same now-fixed `update*` function.
+- **Verified live**: same method as the Sampling fix — temporary second tenant + a `Brand` row in the dev DB, confirmed Tenant A's session got `404` PATCHing Tenant B's brand (previously would have silently renamed it to "HACKED"), confirmed the row was untouched in the DB afterward, then confirmed a real same-tenant PATCH still returns `200` with no regression. Temporary tenant deleted afterward. `npx tsc --noEmit` and `npm run lint` both clean after all 7 files.
+- **Residual scope, not yet done**: this sweep covered every `update*` function (the mutation path an attacker would actually use). It did not re-audit every `findFirst`/`findMany` *read* path a second time beyond what the original architecture audit already checked (which found reads were consistently safe everywhere). The file-storage and `UserBranchRole` gaps noted above are still open, still low-priority until those features get a real UI.
+
+### Phase 4 extension — Sample → Style graduation ("Convert to Style") (2026-08-19)
+User's own architectural instinct, matched to how real garment ERPs actually work: an approved sample should be able to "graduate" into a permanent Style master, but only deliberately, not automatically — most real companies don't want every rejected/abandoned sample experiment cluttering the Styles catalog. Design was discussed and agreed before building (see session transcript for the fuller "how should Sampling relate to Production/BOM/Inventory" discussion, which stayed a "not yet, already planned for Phase 5/6" answer for everything except this one, genuinely Sampling-scoped addition).
+- **Schema**: added `SampleRequest.styleName` (nullable at the DB level — existing rows predate it — but required going forward by the create-form's Zod schema). This closed a real display gap: previously, a sample for a *brand-new* style (`productId` null) had no name field anywhere, so it showed as blank/"—" throughout its entire lifecycle until someone eventually created a Style for it.
+- **New action, `convertSampleToStyle()`**: only legal when `status === APPROVED` and `productId` is still `null` (throws `INVALID_STATE_TRANSITION` or `REFERENCED_RECORD_IN_USE` otherwise — confirmed live, a second conversion attempt on an already-linked sample correctly gets `409`). Creates a real `Product` (itemType STYLE) reusing the exact same style-code sequence (`advanceMasterCodeSequence(..., "STYLE")`) and duplicate-code check (`ProductRepository.findByStyleCode`) that Products' own create flow already uses — no parallel numbering mechanism. Links back via `SampleRequest.productId`. **Deliberately one-way and manual**: a small form (style name pre-filled from the sample, code pre-filled from the same next-code preview Products' own form uses, optional category/season) requires a human to review before the master is created — not a silent side effect of the approval click itself.
+- **Deliberately NOT done**: `SampleMaterial` (the sample's planned-materials list) is *not* auto-copied into a BOM — BOM/MRP doesn't exist as a module yet (Phase 5); auto-generating a "BOM" now would mean building Phase 5's structure prematurely and inside the wrong module. The sample's own detail page remains the reference a merchandiser reads from when building the real BOM later. Color×Size variant generation also isn't duplicated into this flow — the "Convert to Style" success state links straight to the new Product's own detail page, which already has `VariantsSection` built (Phase 3) — reusing it beats rebuilding it inline.
+- **Verified live end-to-end**: created a fresh sample with no linked style, ran it through the full state machine to `APPROVED`, converted it to a Style (auto-suggested `ST-00002`, picked a category and season), confirmed the created `Product` had the correct `customerId` (inherited from the sample), `categoryId`/`seasonId`/`styleCode`/`isActive`, confirmed the sample detail page updated to show a "linked to a Style master" link instead of the conversion form, followed that link to the real Product edit page and confirmed `VariantsSection` was there ready to use, then confirmed a second conversion attempt correctly fails with `409`. `npx tsc --noEmit` and `npm run lint` clean throughout.
+
+### Phase 4 bugfix — stale sample data after client-side navigation between samples (2026-08-19)
+User-reported: clicking the "linked to a Style master" link sometimes opened the *wrong* Product. Root cause: `<SampleWorkflowPanel>` (a Client Component holding `useState(initialRequest)`) was rendered without a `key` prop in `src/app/(dashboard)/sampling/[id]/page.tsx`. Next.js App Router doesn't remount a Client Component just because a prop changed — navigating client-side from `/sampling/A` to `/sampling/B` (e.g. via the list page's row link, or the breadcrumb) reused the *same* component instance, and `useState`'s initializer only runs on first mount, so the panel kept displaying sample A's `productId`/versions/materials under sample B's URL and header. Any link or action inside the panel that relied on `request.*` (as opposed to the `sampleRequestId` prop, which *does* update correctly) was silently acting on stale data — the "Convert to Style" link was the one the user happened to notice, but this affected the whole panel's displayed state, not just that link.
+- **Fix**: added `key={id}` to `<SampleWorkflowPanel>` — forces a full remount (and therefore a fresh `useState(initialRequest)`) every time the `id` in the URL changes, even during client-side navigation.
+- **Verified live**: opened SAM-2026-00010 (linked to Product `8aed6889…`), then client-side-navigated (via the list page, not a hard reload) to a different sample SAM-2026-00011 — confirmed the panel now shows SAM-2026-00011's own data (different customer, different version/materials) and its "linked to a Style master" link correctly points to Product `5f6e002e…`, which a direct DB query confirmed is that sample's actual `productId`. `npx tsc --noEmit` and `npm run lint` clean.
+- **Followed up immediately rather than leaving it as a "worth checking" note**: swept all 7 `[id]`-based detail pages in the app for the same missing-`key` pattern — found it in **every single one**: `customers/[id]` (`CustomerForm` + `BuyersSection`), `suppliers/[id]` (`SupplierForm`), `employees/[id]` (`EmployeeForm`), `warehouses/[id]` (`WarehouseForm` + `LocationsSection`), `products/[id]` (`ProductForm` + `VariantsSection`), `materials/[id]` (`MaterialForm`) — 10 component instances across 6 files, all missing `key={id}`. Added it to every one. This means the bug wasn't Sampling-specific at all — every master's edit page could show stale data (and let a save silently update the *wrong* record) after a client-side navigation between two different records of the same type, e.g. clicking from one customer straight to another via the list page. Verified live on Customers: navigated client-side from "Zenith Apparel Imports" (CUST001, has a buyer) to "Urban Edge Retail" (CUST007, no buyers) and confirmed the form and buyers list both updated correctly instead of showing CUST001's data under CUST007's URL. `npx tsc --noEmit` and `npm run lint` clean across all 6 files.
+- **Pattern to remember for every future `[id]`-based detail page**: any Server Component page that hands server-fetched data to a stateful Client Component (a `*Form` with `useState(initialValues)`, or a `*Section` with `useState(initialX)`) must pass `key={id}` on that component — Next.js App Router does not remount a Client Component just because a prop changed during client-side navigation, and `useState`'s initializer only ever runs on first mount.
+- **Follow-up bug from this fix itself, caught immediately via a live console error**: `customers/[id]`, `products/[id]`, and `warehouses/[id]` each render *two* sibling keyed components (`CustomerForm`+`BuyersSection`, `ProductForm`+`VariantsSection`, `WarehouseForm`+`LocationsSection`) — giving both the same literal `key={id}` violates React's "keys must be unique among siblings" rule (React scopes key uniqueness to sibling position, not per-component-type), which threw a live "Encountered two children with the same key" console error. Fixed by suffixing each sibling's key distinctly (`key={\`form-${id}\`}`, `key={\`buyers-${id}\`}`/`key={\`variants-${id}\`}`/`key={\`locations-${id}\`}`) — same remount behavior, no collision. The single-component pages (`suppliers/[id]`, `employees/[id]`, `materials/[id]`, `sampling/[id]`) only ever had one keyed child each, so they were never at risk of this — **the rule going forward: a bare `key={id}` is fine for a lone keyed child, but as soon as a second sibling on the same page also needs `key={id}` for the same reason, both need distinguishing prefixes.**
+
+### Phase 4 extension — Tech Pack attachments, and the first real use of the file-storage layer (2026-08-19)
+User initially asked for uploads to land in `public/uploads` (matching the sibling `inventory` reference project's pattern). Investigated that reference app first rather than assuming it was a good pattern to copy: its uploads (`app/Http/Controllers/User/ProductController.php`, `SettingsController.php`) call PHP's raw `move(public_path(...))`, bypassing Laravel's `Storage` facade entirely — every uploaded file sits under the web root with **zero auth check**, reachable by anyone who has or guesses the URL, identically in "local" and "production" (the `S3`/`FILESYSTEM_DISK` config in that app's `.env.example` is unused dead scaffolding — confirmed no code path ever calls `Storage::disk('s3')`). Given this project just spent real effort fixing multi-tenant cross-tenant-access bugs, replicating that pattern would have reopened the exact class of hole just closed. Flagged this clearly and let the user decide with full information — they chose the private/authenticated route instead.
+- **Storage root moved from `./storage` to `./uploads`** (`FileStorage.ts`) — same reasoning as before (outside `public/`, never directly web-servable), just renamed per the user's preferred folder name once the security tradeoff was understood. `.gitignore` and `.env.example` updated to match.
+- **New shared core service**: `src/core/attachments/AttachmentService.ts` — `uploadAttachment`/`listAttachments`/`getAttachmentForDownload`/`deleteAttachment`, polymorphic via the existing `Attachment` model's `relatedModule`+`relatedRecordId` (no schema change — `Attachment` and its `RelatedModule.SAMPLE_REQUEST` enum value have existed since Phase 2 planning, just never had a real caller until now). Deliberately built as a `core/` service, not a Sampling-owned one, so Sales Orders/Purchase Orders/etc. can reuse it later without duplicating upload/download/delete logic — Sampling is just its first real consumer.
+- **Routes**: `GET`/`POST /api/v1/sampling/[id]/attachments` (list/upload, `sampling` view/edit), `GET /api/v1/sampling/attachments/[attachmentId]/download` (streams the file with correct `Content-Type`/`Content-Disposition`, `sampling` view), `DELETE /api/v1/sampling/attachments/[attachmentId]` (`sampling` edit) — every one company-scoped through `getAttachmentForDownload`/`deleteAttachment`'s `findFirst({ id, companyId })` check, same safe-by-construction pattern as the rest of this session's tenant-isolation work.
+- **Scope decision**: attachments are kept at the **sample-request level**, not per-version — avoids needing a new `RelatedModule` enum value or a version-scoped attachment table for what's still a first pass; upload date/filename make it easy enough to tell which round a file belongs to. Revisit only if real usage shows this is actually confusing.
+- **Verified live**: uploaded a file via a direct `fetch()`+`FormData` call (the sandboxed browser tool can't drive a native OS file picker, so this exercises the exact same code path the real `<input type="file">` posts to), confirmed it landed on disk under `./uploads/` (not `public/`) with a random UUID name, confirmed the sample detail page's Attachments section listed it with correct name/size/uploader/date after a reload, downloaded it and confirmed `Content-Type: application/pdf` / `Content-Disposition: attachment` and byte-for-byte content matched, deleted it and confirmed both the DB row and the on-disk file were gone. `npx tsc --noEmit` and `npm run lint` clean throughout (one `react-hooks/set-state-in-effect` lint error hit and fixed along the way — inlining the initial fetch with `.then()` instead of calling a named async function from the effect body, matching the pattern already used for materials/units/categories/seasons in the same file).
+
+### Phase 4 extension — shared `FilePreviewModal` (view-in-modal with zoom/rotate) (2026-08-19)
+User asked for a **common/reusable** component, not a Sampling-specific one — built at `src/components/ui/FilePreviewModal.tsx` alongside `ConfirmModal`/`ToggleSwitch`, so any future module with attachments (Sales Orders, Purchase Orders, ...) can reuse it instead of re-implementing preview UI.
+- **Behavior by file type**: images (`image/*`) get zoom (25%–400%, 25% steps) and 90°-increment rotate via a CSS `transform`, plus a "Reset" button; PDFs render in an `<iframe>` (the browser's own PDF viewer already has zoom, no need to duplicate it); anything else (Word/Excel) shows a "preview not available" message with a direct download button — no attempt to render those inline.
+- **Required a small change to the download route** (`.../attachments/[attachmentId]/download/route.ts`): added `?disposition=inline` support (`Content-Disposition: inline` vs the existing default `attachment`) — without this, an `<img>`/`<iframe>` pointing at the existing force-download URL would trigger a save-as prompt instead of rendering. The plain download link/button (no query param) is unchanged and still forces a download.
+- **Reset-on-open implemented via `key`, not an effect**: zoom/rotation reset by remounting (caller passes `key={attachment.id}`) rather than a `useEffect` that calls `setZoom(1)`/`setRotation(0)` when `open` becomes true — the latter tripped the same `react-hooks/set-state-in-effect` lint rule hit earlier in this session, and remount-via-key is the simpler fix (also correctly resets if the user switches from previewing one file straight to another without closing in between, which the effect-based approach would have gotten wrong).
+- **Verified live**: uploaded a real 1×1 PNG and a fake PDF, confirmed the dialog opens with correct file-type-specific controls (zoom/rotate/reset for the image, iframe-only for the PDf), clicked zoom-in twice + rotate-right once and confirmed the image's CSS transform became `scale(1.5) rotate(90deg)` with the label reading "150%", clicked Reset and confirmed it returned to `scale(1) rotate(0deg)`, pressed Escape and confirmed the dialog unmounted. (Verification note: this session's browser-automation accessibility-tree reader didn't pick up the dialog's contents for some reason even though it was genuinely open, visible, and interactive — had to fall back to direct DOM queries via the JS console to confirm; the real functionality was never in doubt, just that one read-only inspection tool.)
+
+### Phase 4 extension — attachment upload records the sample's stage (2026-08-19)
+User wanted each attachment's display to show which stage it was uploaded during, alongside the existing timestamp — e.g. so a tech-pack file and a QC photo on the same request are visually distinguishable by when in the workflow they were added.
+- Added `Attachment.contextLabel` (nullable `String`, `@map("context_label")`) — a generic, module-agnostic snapshot field, not FK'd to `SampleStatus` or any other enum, since `Attachment` is a shared polymorphic table used across every future module (Sales Orders, Purchase Orders, ...), not owned by Sampling.
+- `uploadAttachment()` (`src/core/attachments/AttachmentService.ts`) takes an optional 5th `contextLabel` param and stores it as-is; the Sampling upload route (`.../sampling/[id]/attachments/route.ts`) fetches the sample's current `status` server-side via `SampleRequestRepository.findAnyById()` and passes it in — **never trust a client-supplied stage value**, since a user editing the request client-side could otherwise forge history.
+- UI (`SampleWorkflowPanel.tsx`) maps the stored raw enum value back through the existing `STATUS_LABELS` map for display (falls back to the raw string if it's ever not a recognized key, since the column is intentionally not FK-constrained) — e.g. `68 B · Super Admin · Tech Pack Ready · 8/19/2026, 4:26:37 PM`.
+- Migration: `add_attachment_context_label`. Verified live: uploaded a PNG to a request at "Tech Pack Ready", confirmed the API response and the reloaded page both showed `contextLabel: "TECH_PACK_READY"` rendered as "Tech Pack Ready" next to the timestamp; `npx tsc --noEmit` and `npm run lint` clean.
+
+### Phase 4 extension — freely-editable `color` field on Sample Request (2026-08-19)
+Real-world gap raised by the user: some clients hand over only a reference photo and let the factory decide everything; others specify a color upfront but may change their mind after seeing the physical sample. There was no structured place to capture this — only free-text `techPackNotes`/comments — so a color mentioned early had nowhere to live and no clean way to be revised later.
+- Added `SampleRequest.color` (nullable `String`, no `@map` needed) — deliberately plain free text, not FK'd to the `Color` master or any enum, since this is a casual descriptive value a client states informally (unlike a Style's actual `Color` variant data used once Production begins) — matches the same "generic snapshot field, not over-modeled" reasoning already applied to `Attachment.contextLabel` above.
+- **Deliberately editable at every status, including terminal ones** (`APPROVED`/`REJECTED`) — no state-machine restriction added, since the real trigger for a color change (customer feedback after seeing the physical sample) can happen at any point, and no business rule was requested to lock it. New scoped endpoint `PATCH /api/v1/sampling/[id]/color` (mirrors the existing `/status` sub-route pattern — a dedicated single-field route, not a reuse of the full header endpoint, since the header itself has none and stays intentionally identity-immutable) → `updateSampleRequestColor()` in `sample.service.ts`, company-scoped via `findAnyById` + audit-logged (`UPDATE`, old/new color values).
+- Raw-material mentions from an informal client were deliberately **not** given a matching structured field — `techPackNotes` (free text, already exists on `SampleVersion`) already covers this; promoting an informally-mentioned material into a real `SampleMaterial` row (which requires linking an existing Materials-master entry) stays a manual merchandiser step, not automated, so as not to force premature master-data entry.
+- UI: `SampleRequestForm.tsx` gained an optional Color input (between Style Name and the date fields); `SampleWorkflowPanel.tsx` shows "Color: <value or 'Not specified yet'>" right under the status badge with an inline Edit → Save/Cancel control (no page navigation needed to change it later).
+- Migration: `add_sample_request_color`. Verified live end-to-end: created via the form, edited an existing request's color from empty to "Navy Blue" through the inline UI, confirmed it persisted after a full page reload (not just client state), then reverted the test value via a direct API call. `npx tsc --noEmit` and `npm run lint` clean.
+
+### Phase 4 extension — Damage/Wastage tracking on Sample Materials (2026-08-19)
+Agreed earlier (during the "should Sampling manage BOM/damage materials like Production" discussion) as a reasonable, genuinely Sampling-scoped addition — a merchandiser discovers, during actual sample-making, that some of a planned material got damaged/wasted (torn fabric, a broken trim, etc.), and there was previously no structured place to record it.
+- Added `SampleMaterial.damagedQuantity` (nullable `Decimal(18,4)`) and `SampleMaterial.damageReason` (nullable `String`) — both independent of `plannedQuantity`, since damage is discovered after the material line already exists, not at planning time.
+- New scoped endpoint `PATCH /api/v1/sampling/materials/:materialId/damage` → `recordSampleMaterialDamage()` in `sample.service.ts`, following the same "scoped single-field(-group) update sub-route" shape as the color endpoint above (now generalized in `COMMON_FEATURES.md` §6): company-scoped via a new `SampleMaterialRepository.findWithRequestOwner()` (joins `sampleVersion → sampleRequest.companyId`, mirroring the exact pattern that fixed this session's cross-tenant `addSampleMaterial` bug), audit-logged with old/new damage values.
+- **Deliberately editable at any time, no state-machine restriction** — same reasoning as `color`.
+- UI: the materials table on each version gained a 4th "Damaged / Wasted" column — shows a "Report damage" link when nothing's recorded, or the recorded qty + unit + reason with an inline Edit → Save/Cancel control once something is.
+- **Bug caught and fixed during live verification**: the "has damage been recorded?" check was `m.damagedQuantity ? ... : "Report damage"` — but Prisma serializes `Decimal` fields to JSON as **strings**, so a legitimately-recorded `0` came back as the string `"0"`, which is truthy in JS, so it never actually hit the falsy branch by coincidence — the real bug was the reverse: after testing with a real value then attempting to "clear" it back to `0` (the damage endpoint's Zod schema requires a non-negative number, it can't accept `null`), the UI kept showing "0 PCS" as if damage were still recorded instead of returning to the empty state. Fixed by checking `m.damagedQuantity !== null` instead of truthiness — this also happens to be the more correct semantic anyway (an explicit recorded `0` means "inspected, confirmed no damage," which is meaningfully different from "never checked").
+- Migration: `add_sample_material_damage_tracking`. Verified live end-to-end: clicked "Report damage" through the real UI (not just a direct API call), entered a quantity + reason, confirmed the PATCH request succeeded (200) and the table re-rendered with the recorded value and an Edit link, then reset the test row directly in the dev DB (the damage endpoint can't set it back to `null`, only to `0`, so a one-off script was used to fully restore the pre-test state) and confirmed both material rows showed "Report damage" again. `npx tsc --noEmit` and `npm run lint` clean throughout, including after the truthy-check fix.
+
+### Phase 4 fix — Add Material's Unit now defaults from the material's own base UOM (2026-08-19)
+User-reported UX gap: the "Add Material" row's Unit dropdown stayed blank after picking a Material, requiring a manual pick every time even though every Material master row already has its own `baseUomId` (its default unit of measure).
+- No schema/API change needed — `GET /api/v1/materials` already returns each material's `baseUom` via `ProductRepository.findManyMaterials`'s existing `include: { baseUom: true }` (added back in Phase 3, just never consumed by this form).
+- Client-side only fix in `SampleWorkflowPanel.tsx`: the Material `<select>`'s `onChange` now also looks up the selected material in the already-fetched `materials` list and sets `materialUomId` to that material's `baseUom.id` — falls back to empty if the material has no base UOM set. The Unit field **stays a normal editable dropdown**, not locked/disabled — this is a default, not an enforced value, in case one sample line genuinely needs a different unit than the master's default (e.g. buying thread by the roll normally but a small swatch by weight for this one sample).
+- Verified live: selecting "Polyester Thread" (base UOM `ROL`) auto-selected `ROL` in the Unit dropdown; switching to "Cotton Fabric" (base UOM `MTR`) re-defaulted it to `MTR`; manually overriding to `YDS` afterward stuck (confirming it's a default, not a forced value). `npx tsc --noEmit` and `npm run lint` clean.
+
+### Phase 4 fix — adding the same material to a version twice now merges instead of duplicating (2026-08-19)
+User-reported (via screenshot): a version's materials table showed the same material (e.g. "Plastic Button 4-Hole") on two separate rows — confusing, looks like a data-entry mistake, and the table has no notes/reason column to explain a legitimate reason for two lines.
+- `addSampleMaterial()` (`sample.service.ts`) now checks for an existing `SampleMaterial` row with the same `materialId` on that version (new `SampleMaterialRepository.findByVersionAndMaterial()`) before inserting. If one exists, it **merges**: the existing line's `plannedQuantity` is incremented by the newly-added quantity (and its `uomId`/`notes` are updated only if the new call actually supplied them), audit-logged as `UPDATE`. Only when no line exists yet does it fall back to the original `createMany` insert, audit-logged as `CREATE`.
+- No new UI needed — from the user's perspective, "adding" the same material again just increases its quantity in place rather than requiring a separate quantity-edit control.
+- Verified live end-to-end through the real Add Material form: added "Plastic Button 4-Hole" with qty 3 (created), then added it again with qty 5 — confirmed via the API response that the row's `id` stayed the same and its quantity became 8, with zero new rows created. Test row removed afterward. `npx tsc --noEmit` and `npm run lint` clean.
+
+### Phase 4 refinement — material merge now keyed on a matching-attributes set, not just materialId (2026-08-19)
+User pushed back on the merge fix above (correctly): blindly merging on `materialId` alone is wrong for real garment sampling, where the same material can legitimately need multiple lines — different color, spec/variant, or usage/purpose (e.g. "for main body" vs "for collar trim"). The fix needed a real matching-attributes key, not a single-field one, and needed to be built so **future distinguishing attributes (color, specification, usage/purpose) can join the key later without rewriting the merge algorithm** — none of those three exist as `SampleMaterial` columns yet, only `materialId` and `uomId` (Unit) are real today.
+- Added `MATERIAL_MERGE_KEY_FIELDS = ["materialId", "uomId"] as const` in `sample.service.ts` — the single source of truth for which attributes must match for two "add material" calls to merge. Adding color/specification/usage later means: add the column + schema field, then add its name to this array — the merge function and repository call are untouched.
+- `buildMaterialMergeKey(input)` builds a `Prisma.SampleMaterialWhereInput` generically by looping over that field list (with a documented, deliberate type cast — Prisma's per-field types differ, e.g. `materialId` is non-nullable and `uomId` isn't, which a loop over a plain field-name list can't statically know). `SampleMaterialRepository.findByVersionAndMergeKey()` replaces the old materialId-only lookup and just spreads whatever key it's given.
+- Removed the old merge behavior's `uomId: input.uomId || existing.uomId` — that line was silently overwriting the unit on merge, which is exactly the kind of attribute-loss the user was flagging; now that `uomId` is part of the merge key, a merge only ever happens when it already matches, so there's nothing to overwrite.
+- Verified live via direct API calls simulating the real Add Material flow: added "Metal Zipper 7 Inch" as 4 PCS then 6 PCS → merged into one row at 10 PCS; then added the same material as 1 DZN → correctly created a **separate** line (different unit); a further 2 DZN merged into that second line → 3 DZN. Confirmed both PCS and DZN lines coexist as distinct rows, proving same-material-different-attribute lines are preserved rather than merged. Test rows removed afterward. `npx tsc --noEmit` and `npm run lint` clean.
+
+### Phase 4 extension — Color select on Sample Material lines (2026-08-19)
+First real use of the `MATERIAL_MERGE_KEY_FIELDS` extensibility built for exactly this: the user asked for a Color selector on material lines, and this is the first of the originally-requested attributes (Color/Specification/Usage) to actually get built as a real column.
+- Added `SampleMaterial.colorId` (nullable UUID FK to the existing `Color` master, same table Products/Variants already use — no new lookup table) + the `Color.sampleMaterials` back-relation.
+- **Adding it to the merge key was a one-line change** exactly as designed: `MATERIAL_MERGE_KEY_FIELDS` went from `["materialId", "uomId"]` to `["materialId", "uomId", "colorId"]` — `buildMaterialMergeKey()` and the merge algorithm in `addSampleMaterial()` were untouched, confirming the extensibility mechanism built earlier this session actually works as intended, not just in theory.
+- UI: the materials table gained a "Color" column (swatch dot from `Color.hexValue` + name, or "—" when none), and the Add Material row gained an optional Color `<select>` (populated from the existing `/api/v1/colors` endpoint) alongside Material/Qty/Unit.
+- Migration: `add_sample_material_color`. Verified live: added "Metal Zipper 7 Inch" as 4 + 6 pcs in Navy Blue → merged to 10 (same color); added 2 more in Black → correctly created a **separate** line instead of merging or overwriting the color, confirmed the table rendered both rows with correct swatches and names. Test rows removed afterward. `npx tsc --noEmit` and `npm run lint` clean.
+- **Deliberately deferred** (per explicit user scope): the Sample Request header's own free-text `color` field (added earlier this session) was *not* converted to a Colors-master select in this pass — user chose to add material-line color selection only for now.
+
+### Phase 4 fix — file input kept showing the previous file's name after upload (2026-08-19)
+User-reported: uploaded a file (`WIN_20260805_13_00_31_Pro.jpg`), and the file-picker input next to the Upload button kept displaying that same filename afterward instead of resetting — looked like the file hadn't actually changed/uploaded.
+- Root cause: `<input type="file">` is **uncontrolled** in React — there's no `value` prop it can accept, so `setUploadFile(null)` after a successful upload cleared the component's own state but had no effect on what the native DOM input visually displays. The browser keeps showing the last-selected filename until the input element itself is reset or remounted.
+- Fix: added an `uploadInputKey` counter, bumped in `uploadAttachment()` right after `setUploadFile(null)`, and passed as `key={uploadInputKey}` on the `<input type="file">` — forces React to remount the input on every successful upload, which clears its displayed value. Same remount-via-key technique already used elsewhere in this file (`FilePreviewModal`'s zoom/rotate reset, the `[id]` detail-page stale-navigation fixes) — the standard fix whenever `useState` can't reach into an uncontrolled/native element's own display state.
+- Verified live: selected a file via a simulated `DataTransfer` (the sandboxed browser tool can't drive a native OS file picker), confirmed `fileInput.files[0].name` showed it pre-upload, clicked Upload, confirmed the attachment appeared correctly in the list, then confirmed `fileInput.files.length === 0` and `fileInput.value === ""` post-upload — the input is now genuinely empty, not just showing an empty *React* state while the DOM disagreed. Test attachment removed afterward. `npx tsc --noEmit` and `npm run lint` clean.
+
+### Phase 4 extension — Sampling worklist: server-side filters, sorting, and a real filter panel (2026-08-19)
+User asked for the Sampling list to become a practical worklist (Request Number/Customer/Buyer/Style/Status/Requested By/Request Date/Color filters, collapsible panel, active-filter count, sortable columns, server-side filtering) — with an explicit instruction to analyze what's supported today vs. what needs new schema/API before building anything, and to reuse existing masters/APIs rather than duplicate them.
+
+**Analysis delivered before implementation** (see session transcript for the full breakdown): every filter maps onto an existing column/relation except "Requested By" (no Users list API existed anywhere in the app) — added a minimal `GET /api/v1/users` (id+fullName, company-scoped, `ACTIVE` only), same no-module-needed pattern as the existing `/api/v1/currencies`. **Two requested filters were deliberately not built** as separate concepts: "Sampling Stage/Current Stage" is not a second field — it's the same 12-value `SampleStatus` state machine already driving the Status filter, so building a second "stage" filter would duplicate it. "Buyer Approval/Approval Status" also wasn't added — the header's own `Status` already terminates in `APPROVED`/`REJECTED` and covers `REVISION_REQUESTED`, so selecting those in the Status filter already achieves this; the real per-version `SampleApproval.decision` history is a different, deeper concept than a header-level current-status filter. "Priority" was skipped entirely — it doesn't exist anywhere in the schema or roadmap, consistent with the user's own "only add if appropriate" instruction.
+
+- **Backend** (`sample.schema.ts`/`sample.service.ts`/`sampling/route.ts`): new `sampleRequestListFiltersSchema` (Zod-validates customerId/buyerId/requestedByUserId as real UUIDs, rejects malformed ones with a clean `400 VALIDATION_ERROR` rather than letting a bad UUID hit Prisma raw). `listSampleRequests()` now builds a real `Prisma.SampleRequestWhereInput` from customerId/buyerId/requestedByUserId (equals), `status` (comma-separated list intersected against `Object.values(SampleStatus)` — **the Prisma-generated runtime enum object is the existing status source reused here, not a second hardcoded list**, satisfying the user's explicit "don't hardcode" instruction), `color` (case-insensitive contains), `styleSearch` (OR across the free-text `styleName` and the linked `product.styleName`, since a request may have either or both), and `dateFrom`/`dateTo` (gte/lte on `requestDate`). Added `buildSampleRequestOrderBy()` for relation-aware sorting (`customer.name`/`buyer.name` need a nested Prisma orderBy object the shared `{[sortBy]: sortOrder}` pattern used by every other list endpoint can't express) — kept local to this module, not generalized into `list-query.ts`, since no other module needs relation sorting yet. Default sort changed to `requestDate desc` (was `createdAt`) — "latest requested first" per the ask.
+- **Buyer filter cascades from Customer** rather than a new flat "all buyers" endpoint — reuses the exact same `/api/v1/customers/:id` → `.buyers` call the create form already makes. No new API for this.
+- **Frontend**: `SamplingFilters.tsx` (new) — a collapsible panel showing "Filters" / "Filters (N)" (active-filter count computed from the currently *applied* filters, not the in-progress draft), with Customer/Buyer/Style/Requested By/Color/Request-Date-range-with-Today/This-Week/This-Month-presets/Status-checkboxes (checkbox labels come from the existing `STATUS_LABELS` map — same reasoning as the backend, one existing source, not re-hardcoded), and Apply Filters/Clear All buttons. Filters are staged in a local `draft` and only take effect on Apply, matching the requested UX exactly. `page.tsx` was rewritten from the generic `DataTable`-based list into a purpose-built worklist table: sortable column headers (Customer/Buyer/Style/Status/Request Date, click to sort, click again to reverse) with an arrow indicator, a "N sample requests found" count, and Prev/Next pagination that carries the current filters/sort/page together in every fetch (all client-side state — filters are not lost on pagination). Deliberately **not** merged into the shared `DataTable` component — that component is used by ~12 simple masters lists and adding this much filter/sort machinery to it would risk regressing all of them for a feature only Sampling needs today; revisit only if a second module needs the same worklist pattern.
+- **Two `react-hooks/set-state-in-effect` lint errors hit and fixed** (same rule as earlier this session): the Buyer-list-reset-on-customer-clear now happens in the Customer `<select>`'s `onChange` itself (mirroring `SampleRequestForm.tsx`'s existing pattern) instead of an effect branch; the "sync local draft back to the applied value on Clear All" need was replaced with the established **remount-via-`key`** convention (`filtersResetKey`, bumped only on Clear All) instead of an effect that calls `setDraft(value)`.
+- **Follow-up bug caught during live verification, not just claimed**: bumping `filtersResetKey` remounts the whole `SamplingFilters` component, which was *also* resetting its own `isOpen` panel state back to closed — so clicking Clear All silently collapsed the filter panel, a real UX regression from the fix above. Caught by testing Clear All in isolation and noticing "Clear All" was no longer findable on the next interaction. Fixed by lifting `isOpen`/`onToggleOpen` up into `page.tsx` as a controlled prop, so the key-driven remount only resets the draft/lookup-list state, never the panel's open/closed state.
+- **Verified live end-to-end**, each independently: Customer filter (13 → 6 results) with "Filters (1)" updating correctly; combined Customer+Status=Cancelled (→ 1, "Filters (2)"); Clear All (→ back to 13, panel stays open); column-header sort on Customer both directions (alphabetical asc/desc confirmed row-by-row); Color filter via a temporary real value ("Navy Blue" set → `?color=navy` found exactly that record, case-insensitive — reverted after); Style search matching both an exact and a "test"-suffixed style name; a Request Date range matching the expected count; sortBy=styleName; and a malformed `customerId` query param correctly returning `400 VALIDATION_ERROR` instead of a raw 500. `npx tsc --noEmit` and `npm run lint` clean throughout, including after both lint-rule fixes.
+
+### Phase 5A — Sales Orders, complete (2026-08-20)
+First slice of Phase 5, built per a plan reviewed and approved beforehand (mirroring Phase 4's design→build→verify rhythm): a 3-table Sales Order module gating confirmation on Sample approval, built to the exact conventions established by Sampling.
+
+- **Schema (3 new tables, 1 new enum)**: `SalesOrder` (header — customer/buyer, currency snapshot frozen at creation, `statusBeforeHold` Hold/Resume field reused verbatim from `SampleRequest`'s pattern), `SalesOrderItem` (one per Style line, `sampleRequestId` nullable **per-item, not per-header** — matches the original architecture doc's literal field placement, since one order can carry several style lines each tracing to a different sample or none at all), `SalesOrderItemBreakdown` (the size/color qty matrix, FK'd to the *existing* `ProductVariant` rather than duplicating raw colorId+sizeId — exactly the case that table was built for). `SalesOrderStatus` has the full 9-value roadmap enum, but only `DRAFT/CONFIRMED/ON_HOLD/CANCELLED` are reachable through this phase's own code — `IN_PRODUCTION` is reserved for 5C to set as a side effect of creating a Production Order, `PARTIALLY_DISPATCHED/DISPATCHED/INVOICED/CLOSED` for Phase 7/8 — same "enum has values nothing reaches yet" discipline as `SampleStatus.DRAFT`. `DocumentType.SALES_ORDER` already existed with prefix `ORD` (not `SO` as the initial plan draft assumed — corrected during design review by actually reading `DocumentNumberingService.ts` instead of guessing) — numbers render as `ORD-2026-00001`, no changes needed to that shared file.
+- **Sample approval gate** (`confirmSalesOrder()` in `sales-order.service.ts`): loops every item with a non-null `sampleRequestId` and requires `SampleRequest.status === APPROVED`; blocks with `409 INVALID_STATE_TRANSITION` otherwise. A Management override (a required reason, audited) is gated behind the `approve` RBAC action on the already-seeded `sales_orders` module, **and** self-approval-guarded via `PermissionService`'s existing `resourceContext.createdBy` mechanism — the exact same check already proven on Sampling's Approve action, not a new mechanism. Items with no linked sample skip the gate entirely (a repeat/direct order needs no sample at all).
+- **Currency defaulting**: `currencyCode` defaults to `customer.defaultCurrencyCode ?? company.baseCurrencyCode` (both fields already existed, just previously unused for this purpose) — frozen at creation alongside `exchangeRate`/`baseCurrencyCode`/`baseTotalAmount`, matching the project's multi-currency design decision (base amounts stored, not computed live). No currency picker in the UI — multi-currency UI stays deferred project-wide.
+- **RBAC**: `sales_orders` module and its full per-role action matrix were already seeded back in Phase 1 planning — zero changes needed, exactly like Sampling.
+- **Design review caught a real gap before implementation**: the original 13-state `ProductionOrder` sketch for 5C assumed a fixed enum pipeline (Planned→CuttingInProgress→...→Closed) — user correctly flagged that `ProductionStage` already exists (Phase 3) as a company-configurable, reorderable master, so hardcoding stage names into an enum would contradict that and block a company from ever inserting a new stage (e.g. Embroidery) without a migration. Revised to a two-layer model (a small universal `ProductionOrderStatus` lifecycle enum + fully dynamic stage progress driven by `ProductionStage.sequence`) — see the reviewed plan and the published **Production Schema Blueprint** artifact for the full 5C design, deepened further with a direct code-level analysis of a reference denim-manufacturing system's actual production schema (confirmed the generic stage-transition-ledger approach; found concrete evidence for why a `stage_id_1..12` wide-column design is a real anti-pattern to avoid; added a `ProductionOrderStageProgress` cache table and a `ProductionStageTransactionDetail` child table modeled directly on that system's own proven shape). None of this schema is implemented yet — 5C is still design-only, reviewed and ready for its own build pass.
+- **UI**: list page reuses the plain `DataTable` component as-is (not a custom worklist like Sampling's — that was purpose-built because it was explicitly asked for there; revisit only if Sales Orders needs the same treatment later). New-order form (`SalesOrderForm.tsx`) has a Customer→Buyer cascade, an "Approved Sample" picker per style line that reuses the *just-built* Sampling filters API (`GET /api/v1/sampling?status=APPROVED&customerId=...`) — a direct payoff of that earlier work — and a live variant×quantity grid sourced from the selected style's own `ProductVariant`s via the existing `/api/v1/products/:id` endpoint, with the order total computed client-side as items are entered. Detail page follows the established "Server Component page + one Client Component panel" split (`SalesOrderWorkflowPanel`, same shape as `SampleWorkflowPanel`), including the confirm-blocked → inline override-reason-field → "Confirm Anyway" flow.
+- **Verified live end-to-end** through the real UI, not just API calls: created a real order (Customer→Style→Variant-grid→Sample-link, all through the actual form) that correctly computed its live total, submitted it, confirmed it (sample already Approved, no gate friction) — landed on `ORD-2026-00001`; separately created an order linked to an *unapproved* sample, confirmed the Confirm button correctly surfaced the block message and revealed the override UI, filled a reason, clicked "Confirm Anyway," confirmed it succeeded; tested Hold → Resume (landed back on the exact prior status, mirroring the specific test that caught Sampling's original Hold/Resume bug) and Cancel from both Draft and Confirmed; confirmed a terminal-state transition attempt (`CANCELLED → ON_HOLD`) correctly fails with `409`. Test orders removed afterward, kept the one real end-to-end demo order. `npx tsc --noEmit` and `npm run lint` clean throughout.
+- **Not yet built** (explicitly deferred per the reviewed plan, not oversights): order Amendment/versioning ("Amended creates a new version, prior locked" — deferred until real usage shows what actually needs to change post-confirmation), "Cancel blocked past Cutting without Management override" (no Cutting exists yet to block past), multi-currency UI. Next up: **5B — BOM & MRP**, its own reviewed design pass before implementation.
+
+### Phase 5A fix — line/order totals didn't read as money (2026-08-20)
+User feedback after reviewing the New Sales Order form live: "Line total: 3750" and "Order Total: 3750" rendered as bare numbers — nothing told the user these were currency amounts.
+- Renamed to "Line Amount"/"Order Amount" everywhere in the module (create form, detail page, list column) for consistency.
+- Create form now shows a live currency-symbol-prefixed preview (e.g. `₹100,000`) that mirrors the server's own currency-defaulting logic exactly: the selected customer's `defaultCurrencyCode` first, falling back to the company's `baseCurrencyCode` — needed a new minimal `GET /api/v1/company` endpoint (same no-module-needed pattern as `/api/v1/currencies`/`/api/v1/users`) since nothing previously exposed the company's base currency to the client. Caught during verification that most seeded customers have no `defaultCurrencyCode` set, which would have silently shown no symbol at all without the fallback — confirmed live that both paths resolve correctly (`₹` via the company fallback for a customer with no currency of its own).
+- Detail page and list page already showed the ISO code (e.g. "INR 3,750") — left as-is (an ISO code next to a number is already unambiguous), just renamed the label for consistency with the form.
+- `npx tsc --noEmit` and `npm run lint` clean.
+
+### Phase 5A fix — variant quantity grid rebuilt as a real Color×Size matrix (2026-08-20)
+User-reported (with a screenshot): the flat variant list ("Black /...", "Navy ...") truncated color/size names illegibly, and entering quantity one cell at a time with many size/color combinations was tedious — asked for three entry modes: one color across all sizes, one size across all colors, and single-cell.
+- `VariantQuantityGrid` (new component in `SalesOrderForm.tsx`) replaces the flat `grid-cols-3` list with a real `<table>`: colors as rows, sizes as columns (sorted by the existing `Size.sortOrder`), so both dimensions are always fully legible — no truncation possible since each gets its own header cell.
+- Each row header (color name) and column header (size name) carries a small "fill" input + button (`→` for the row, `↓` for the column) — filling that entire row/column in one action via a batched `onChange` patch, alongside the existing per-cell input for single (color, size) entry. This is the same "same underlying update, three entry granularities" shape rather than three separate UIs.
+- `setQuantity(index, variantId, qty)` generalized to `setQuantities(index, patch: Record<string, string>)` so both a single-cell edit and a row/column bulk-fill go through the same state update path.
+- Verified live: selected "Printed Casual Shirt" (3 colors × 4 sizes), confirmed the table renders full names with zero truncation; set Black/Medium directly (single-cell); row-filled White across all 4 sizes with one value; column-filled "Large" across all 3 colors with a different value — confirmed the shared cell (White/Large) correctly took the *later* fill's value, proving both mechanisms write through the same state. `npx tsc --noEmit` and `npm run lint` clean.
+
+### Phase 5A fix — variant grid alignment (2026-08-20)
+User-reported (with a screenshot): the grid's columns didn't line up — row-fill inputs sat at a different x-position per row since they followed variable-length color names ("Black" vs "Navy Blue") in a plain flex row, and the header fill-controls lived awkwardly stacked inside the size-name `<th>` instead of their own row. Asked to confirm scope first: purely a visual/alignment fix, not a change to where colors/sizes come from (they're already sourced from the real Color/Size masters via each style's `ProductVariant`s — confirmed with the user this is correct as-is).
+- Rebuilt the table with `table-fixed` + an explicit `<colgroup>` (name column, a dedicated "Fill" column, then one fixed-width column per size) — this is what actually guarantees pixel-identical column boundaries across the header, the new dedicated column-fill row, and every data row; a plain auto-layout table can't promise that once cell content varies in length.
+- Row-fill controls moved into their own dedicated column (not inline next to the color name) — so they align under the header's own "Fill" label and never shift based on name length.
+- Column-fill controls moved into a dedicated row right under the size-name header row, instead of stacked inside the same `<th>` as the label.
+- Visually distinguished the two input kinds: real quantity cells use the app's normal solid-border input style; the 7 "fill" controls (one per row + one per column) use a smaller, dashed-border, muted style so it's clear at a glance which boxes are bulk-set controls versus actual order quantities.
+- Verified via `getBoundingClientRect()` (not just eyeballing): every row header starts at the identical x-coordinate regardless of color-name length, every row-fill input starts at the identical x-coordinate, and the header/fill-row/data-row column boundaries are pixel-identical across all three. Re-ran all three fill modes (single-cell, row-fill, column-fill) against the new markup to confirm behavior didn't regress. `npx tsc --noEmit` and `npm run lint` clean.
+
+### Phase 5A fixes — Linked Sample not scoped to the line's Style, currency preview simplified to ₹ (2026-08-20)
+Two more user-reported issues from live use of the New Sales Order form.
+- **Linked Sample dropdown ignored the selected Style**: it was scoped only by `customerId`, so a customer with approved samples for multiple different styles saw all of them on every line, regardless of which Style that line was actually for — a V-Neck T-Shirt line could show a Round Neck T-Shirt's sample as a linkable option, which makes no sense for the Sample→Order traceability this field exists for. Fixed by filtering `approvedSamples` client-side on `sample.product?.id === item.productId` (the data was already being fetched, just never filtered by style) — the dropdown is now disabled with a "Pick a Style first" hint until a Style is chosen, mirroring the existing "Pick a Customer first" pattern for Buyer, and shows "No approved samples for this style yet" when the filtered list is empty. Verified live: Zenith Apparel Imports has approved samples for both V-Neck T-Shirt and Round Neck T-Shirt — selecting the V-Neck line now shows only its own matching sample, not both.
+- **Currency preview simplified to a fixed ₹**: the live Line/Order Amount preview had been dynamically resolving a currency symbol from customer/company data (added earlier this session) — correct in principle, but unnecessary complexity for a business that only operates in INR today, and multi-currency UI is explicitly deferred project-wide anyway. Simplified to a fixed `₹` prefix; removed the now-unused `/api/v1/company` endpoint (built solely for this lookup, no other caller) and the `currencies`/`baseCurrencySymbol` state and fetches. The order's actual stored `currencyCode` is unaffected — still set correctly server-side from `customer.defaultCurrencyCode ?? company.baseCurrencyCode`; this only simplified the client-side live-preview display.
+- `npx tsc --noEmit` and `npm run lint` clean.
+
+### Phase 5A extension — cross-customer sample search, and generating variants inline from the order form (2026-08-20)
+Two more real gaps surfaced from live use, plus a design question about the Sample→Order flow answered directly rather than built.
+- **"Without sampling" already works as-is** — a user asked how to bypass the Sample→Order flow for a direct/repeat order. No change needed: `SalesOrderItem.sampleRequestId` is nullable per-item, and leaving "Linked Sample" as "— None —" skips the approval gate entirely. This was already the intended design (see the original 5A note above), just not obviously discoverable — worth remembering if it comes up again as a UX/labeling question rather than a missing-feature one.
+- **Cross-customer sample linking**: a real scenario — Customer A wants to order against a sample that was actually made/approved for Customer B (or a showroom/development sample). Added a "Search approved samples from all customers" checkbox on the create form (off by default, so the common case — a customer's own approved samples — is unaffected); when on, the sample fetch drops the `customerId` filter and searches company-wide, still narrowed to the line's own Style client-side same as before. `SalesOrderItem.sampleRequest`'s repository select was extended to include the sample's own `customer.name`, and the detail page (`SalesOrderWorkflowPanel.tsx`) now shows "(Customer: X)" next to the linked sample whenever it differs from the order's own customer, so nobody reading the order later mistakes it for that customer's own sample. Verified live: ROMANCHAL NAYAK's order linked to Zenith Apparel Imports' `SAM-2026-00001` — company-wide toggle correctly surfaced it, and the detail page correctly annotated the customer mismatch; confirmed the sample-approval gate itself doesn't care which customer the sample belongs to (correctly, since the gate is about the design being proven, not who owns it).
+- **Inline "Generate Variants" when a Style has none yet**: user hit `VALIDATION_ERROR: items.0.breakdown: At least one size/color line is required` — the selected Style had zero `ProductVariant`s generated (confirmed live this is the *common* case, not rare — most seeded styles have none), so the quantity grid had nothing to show and the order couldn't be created at all. Rather than forcing a context-switch to Masters → Products → that style → Variants, added `InlineVariantGenerator` directly on the Style Line — the exact same Color/Size checkbox picker and `POST /api/v1/products/:id/variants/bulk` endpoint already built in Phase 3's `VariantsSection.tsx`, just reused inline. Shown only when a Style is selected and has no variants; on success, refetches that style's variants and the quantity grid appears immediately, no page reload. Verified live end-to-end: "Slim Fit Formal Trouser" (zero variants) → picked Black/Navy Blue/White × Small/Medium/Large → generated exactly 9 real, persisted `ProductVariant` rows → grid appeared immediately with all 9 correctly labeled.
+- `npx tsc --noEmit` and `npm run lint` clean throughout.
+
+### Phase 5A extension — file attachments, a barcode, and Design Number (2026-08-20)
+Four requests in one message; one was a design decision, three were straightforward reuse of existing infrastructure.
+- **Make-to-stock (no customer) production — deliberately NOT built here.** User asked how to model a company manufacturing for its own stock with no customer. Decided (with the user) that a `SalesOrder` always represents a real customer sale — a "Make to Stock" run will be a Production Order created directly in 5C without any Sales Order at all, rather than making `customerId` nullable and blurring what this table means. Noted for when 5C is designed.
+- **File attachments**: reused `AttachmentService` verbatim (`RelatedModule.SALES_ORDER` already existed in the schema from Phase 1/2 planning, just had no caller until now) — same three-route shape as Sampling's attachments (`[id]/attachments`, `attachments/[attachmentId]`, `attachments/[attachmentId]/download`), same `contextLabel` snapshot (the order's `status` at upload time, fetched server-side), same `FilePreviewModal` UI. Verified live: uploaded a file to a Confirmed order, confirmed it displayed "Confirmed" as the context label, downloaded/deleted correctly.
+- **Barcode**: added a new shared `src/components/ui/Barcode.tsx` (Code128 via the `jsbarcode` package, a new dependency) encoding the order number — rendered on the Server Component detail page (no need to thread it through client state, it's static). Deliberately a shared component, not Sales-Order-specific, so Production Orders/Dispatch can reuse it later without a second barcode library. Verified live: a real SVG with 50 bars rendered for `ORD-2026-00001`.
+- **Design Number**: added `Product.designNumber` (nullable string) — some companies identify a style primarily by design number rather than style code/name (confirmed as a real, actively-used field in the Royal Jeans reference schema during the earlier sales-order analysis). Added to `ProductForm.tsx` (Masters → Styles), and surfaced on the Sales Order create form's Style dropdown (`"V-Neck T-Shirt (Design: DN-4521)"`) and the order detail page's style-line header — the two places this session's requester actually needs to see it, not force-added everywhere Style appears.
+- **Gotcha hit while migrating**: the `add_product_design_number` migration got created with a copy-pasted, misleading folder name (`..._add_sample_request_style_name`) from stale shell history. Caught before it became permanent history — renamed the migration folder and corrected the corresponding row in `_prisma_migrations.migration_name` directly (safe since this is local dev-only and nothing else had pulled it yet); `npx prisma migrate status` confirmed clean afterward. Worth double-checking migration names match their actual content before moving on, especially when copy-pasting a previous migrate command.
+- `npx tsc --noEmit` and `npm run lint` clean throughout.
+
+### Phase 5A fix — order currency always follows the company, not the customer; Edit capability for Draft/Confirmed orders (2026-08-20)
+Two more issues from live use: currency showing USD on an order whose customer happens to have `defaultCurrencyCode = "USD"` seeded ("Order Amount: USD AA RHA HAI Ruppe chahiye"), and no way to correct a Sales Order at all once created — including after Confirm, which the user explicitly wanted.
+
+- **Currency fix**: `createSalesOrder()` previously set `currencyCode = customer.defaultCurrencyCode ?? company.baseCurrencyCode` — technically correct multi-currency design, but premature since this business only transacts in INR today (the same reasoning that already simplified the client-side amount preview to a fixed ₹ earlier this session). Simplified to `currencyCode = company.baseCurrencyCode` unconditionally. The one real order affected (`ORD-2026-00006`, created against a USD-default customer before the fix) was corrected directly in the DB (`currencyCode: "USD" → "INR"`, matching what it would have been created as post-fix). `Customer.defaultCurrencyCode` itself is untouched — this only changed which field the order-creation flow reads from.
+- **Edit capability, per the user's explicit choice** ("Edit block, naya order banao" was the *rejected* option — user wants editing, not "cancel and recreate"): new `updateSalesOrder()` in `sales-order.service.ts`, allowed only while `status` is `DRAFT` or `CONFIRMED` — any other status (`ON_HOLD`, `CANCELLED`, and future `IN_PRODUCTION`+) throws `INVALID_STATE_TRANSITION` with a message pointing at creating a new order instead, which is where the *other* AskUserQuestion answer this session ("customer wants to add more to an order already in production → new order, don't reopen it") actually landed: editing stays possible right up to Confirmed, but stops being safe once Production exists to consume the order's committed quantities.
+- **Editing a Confirmed order re-runs the sample-approval gate** — extracted the gate-check that `confirmSalesOrder()` already had into a shared `assertSamplesApprovedOrOverride()` helper, now called from both `confirmSalesOrder()` and `updateSalesOrder()`. Editing in a sample-request-id for a still-unapproved sample is blocked exactly like confirming would be, with the same Management-override-with-reason escape hatch (self-approval-guarded, same as everywhere else this pattern's used) — an edit to a Confirmed order can't be used to sneak an unapproved style in without the same gate a fresh confirm would apply.
+- **`SalesOrderRepository.replaceItems()`** — a full delete-and-recreate of items/breakdown inside one `$transaction`, rather than hand-diffing which lines changed. Simplest correct option for a header+2-level-detail structure with no independent lifecycle per line (unlike Sampling's append-only versions, an order line has no history worth preserving line-by-line) — a mid-transaction failure never leaves a partial item list since it's one atomic write.
+- **UI**: new `src/app/(dashboard)/sales-orders/[id]/edit/page.tsx` (Server Component, `notFound()` if the order isn't Draft/Confirmed — mirrors the service's own guard so a stale bookmark to a Cancelled order's edit page fails the same way the API would), reusing `SalesOrderForm` in a new dual-mode (`initialOrder` prop pre-fills customer/buyer/dates/items/quantities; submit does `PATCH` instead of `POST`). An `EditLink` was added to `SalesOrderWorkflowPanel.tsx`'s action rows for both Draft and Confirmed states. The blocked-by-gate → override flow on the edit form mirrors the confirm panel's existing pattern exactly (amber notice, override-reason field, "Save Anyway" button) rather than inventing a second UX for the same concept.
+- **Lint gotcha**: the effect that pre-fills each line's variant grid on edit (fetching `/api/v1/products/:id` per existing line) initially lived inside the form's top-level mount effect, which sat *before* `updateItem`'s `const` declaration in the file — tripped `react-hooks/immutability` ("cannot access variable before it is declared"), even though the effect's closure only runs after mount, long after `updateItem` exists at runtime. Fixed by moving the effect to its own `useEffect` placed textually after `updateItem`'s declaration. Worth remembering for any future component with a similar "effect closes over a helper declared later in the same component" shape — the rule cares about declaration order in the source, not actual execution order.
+- **Verified live end-to-end**: created a test order against the USD-default customer, confirmed it now stores `currencyCode: "INR"`; opened its Edit page and confirmed every field (customer, style, unit price, quantities) pre-filled correctly; edited a quantity and saved, confirmed the Order Amount recalculated; confirmed the order, then edited the now-Confirmed order via a direct API call linking an unapproved sample — got `409 INVALID_STATE_TRANSITION` as expected, then confirmed the override path succeeds with a reason supplied; cancelled the order and confirmed both the API (`409`, "Cannot edit a sales order in 'CANCELLED' status — create a new sales order for additional quantity instead.") and the Edit page itself (`404`) correctly refuse it. Test order removed afterward. Confirmed the real kept demo order `ORD-2026-00001` is unaffected by the currency-service change (already `CONFIRMED`/`INR`, created before this fix and untouched by it, since the fix only changes what a *new* order picks at creation time). `npx tsc --noEmit` and `npm run lint` clean throughout.
+
+## Phase 6 — Purchase Order + Goods Receipt (fabric roll tracking), pulled forward (2026-08-20)
+
+User asked for a Purchase Order + fabric/raw-material-shipment module. Rather than build this ad hoc, it was
+scoped as a proper pull-forward of Phase 6 (Inventory) ahead of 5B/5C, confirmed via three AskUserQuestion
+rounds (pull forward now vs. finish 5B/5C first; general-purpose PO vs. fabric-only; roll-level tracking
+yes/no), then designed via a full reviewed plan (a Plan-agent critique pass caught and fixed several real
+issues before any code was written — see below) before implementation, matching the established
+design→review→build→verify rhythm used for Sampling and Sales Orders.
+
+**Schema (5 new models, 3 new enums, migration `20260820102502_add_purchase_orders_and_goods_receipt`)**:
+- `PurchaseOrder`/`PurchaseOrderItem` — `PurchaseOrderStatus` (`DRAFT→APPROVED→SENT_TO_SUPPLIER→PARTIALLY_RECEIVED→FULLY_RECEIVED→CLOSED`, plus `ON_HOLD`/`CANCELLED`). `PurchaseOrderItem.receivedQuantity` is a cumulative accumulator, incremented per receipt via an **atomic guarded `updateMany`** (`where: { receivedQuantity: { lte: orderedQuantity - incrementBy } }`) rather than a plain read-then-write — this is the fix for a real TOCTOU race a design-review pass caught (two concurrent receipts against the same line could otherwise both pass a naive check-then-increment and produce a real over-receipt). Currency always `company.baseCurrencyCode`, never `supplier.defaultCurrencyCode` — applying the Sales-Order currency lesson (2026-08-20, above) proactively instead of repeating it.
+- `GoodsReceipt`/`GoodsReceiptItem` — the "shipment" record. `GoodsReceiptStatus` (`COMPLETED`/`PARTIALLY_REVERSED`/`CANCELLED`) is a derived/cached status, recomputed after every reversal, never hand-set. `GoodsReceiptItem.reversedQuantity` is the "already-reversed" cap accumulator (same atomic-`updateMany`-guard pattern as the receipt guard above).
+- `FabricRoll` — optional per `GoodsReceiptItem` line (required when `Product.materialCategory === "FABRIC"`, enforced at the service layer). **First real wiring of the standalone `FabricGsm`/`FabricDye`/`FabricWeaveType`/`FabricWidth`/`FabricComposition` masters** built in Phase 3 and flagged in this file ever since as "pending — wire in once Sampling/Production phases need them." `rollNumber` is deliberately **not** unique company-wide (a design-review catch — different suppliers routinely reuse roll numbering; the row's own id, rendered via the existing `Barcode` component, is the real identity). `rollQuantity`/`remainingQuantity` named distinctly from the two other tables' `receivedQuantity` to avoid a same-field-name-three-meanings ambiguity the review also flagged.
+- `InventoryTransaction`/`StockBalance` — the minimal stock ledger pulled forward from Phase 6 proper, exactly as this file's Domain Reference section already specified (append-only ledger, cache upserted in the *same transaction*, reversing entries not arithmetic-on-edit). `InventoryTransaction.referenceModule` reuses the existing `RelatedModule` enum as its polymorphic discriminator rather than inventing a parallel one.
+- Two new `BusinessRuleError` codes: `OVER_RECEIPT_NOT_ALLOWED`, `OVER_REVERSAL_NOT_ALLOWED` (both 409) — the standard 2-line addition to the closed-set code list.
+
+**Module structure** — a deliberate two-module split, `src/modules/purchasing/` (owns `PurchaseOrder`/`GoodsReceipt`/`FabricRoll`) and `src/modules/inventory/` (owns the reusable ledger engine), matching `src/config/rbac.ts`'s existing `purchasing`/`inventory` module split 1:1 — no RBAC changes needed anywhere, both modules were already fully seeded with per-role action matrices back in Phase 1. `inventory.service.ts` exports `recordInventoryTransaction(tx, actor, input)` with **`tx: Prisma.TransactionClient` required, no optional fallback** — a design-review catch: an optional-tx-with-internal-fallback signature would let a careless future caller silently start a second, independent transaction and break the ledger/balance atomicity the whole engine exists to protect. It also re-verifies `productId`/`warehouseId` belong to `actor.companyId` before writing — a cheap chokepoint check that pays off for every future caller (Production in 5C, Dispatch in Phase 8), matching the project's "a shared low-level engine is exactly where a defensive check earns its keep" reasoning from the tenant-scoping sweep.
+
+**`reverseGoodsReceiptLine()`** — the actual "goods-receipt returns" pattern this file's Domain Reference section calls for (per-line, capped, reversal-only — not a blunt whole-receipt void, and not the richer "physical return to supplier + credit note" workflow, which stays explicitly deferred). Requires `fabricRollId` when the line has rolls (ambiguous otherwise which physical roll a reversal applies to); reversal granularity mirrors creation granularity (one negative `InventoryTransaction` per original roll-linked row, never one aggregate reversal for a multi-roll line); decrements the roll's `remainingQuantity` and flips it `CANCELLED` if it hits zero; recomputes both `PurchaseOrder.status` and `GoodsReceipt.status` in the same transaction. `cancelGoodsReceipt()` is a thin wrapper that reverses every line's (and every roll's) full remaining quantity.
+
+**`cancelPurchaseOrder` bug avoided by design, not patched after the fact**: cancellation is blocked once any non-fully-reversed `GoodsReceipt` exists against the PO, checked by directly querying `GoodsReceipt` rows — **not** by trusting the PO's current status label. A design-review pass caught that checking only the status name would let a PO cancel from `ON_HOLD` even when `statusBeforeHold` was `PARTIALLY_RECEIVED`, silently cancelling a PO that already has stock in the warehouse — the same bug class (a business rule gated on a status label instead of the real underlying state) already found once in Sampling's Hold/Resume flow. Verified live: cancel is blocked identically whether attempted directly from `PARTIALLY_RECEIVED` or from `ON_HOLD` after holding from it.
+
+**Reused as-is, zero changes needed**: `generateDocumentNumber()` (prefixes `PO`/`REC` already registered from Phase 1/2 planning), `AttachmentService` (`RelatedModule.PURCHASE_ORDER`/`GOODS_RECEIPT` already existed), `Barcode.tsx`, the Hold/Resume `statusBeforeHold` pattern, `COMMON_FEATURES.md` §7a's edit-after-create pattern (`updatePurchaseOrder()` bounded to `DRAFT`/`APPROVED`, reverting `APPROVED`→`DRAFT` on edit to force re-approval — no override-reason escape hatch needed here since there's no approval-gate concept to bypass, unlike Sales Orders' sample gate).
+
+**UI**: `/purchase-orders` (list, edit, detail with barcode/attachments/receipts list), `/purchase-orders/[id]/receive` (the Goods Receipt creation form — per-line warehouse/location pickers, an "Add Roll" repeatable sub-form for fabric lines with GSM/Dye/Weave/Width/Composition dropdowns sourced from the existing fabric-config masters), `/goods-receipts` (list) and `/goods-receipts/[id]` (detail — per-line/per-roll "Reverse" inline form, "Cancel Entire Receipt"), `/inventory/stock-balances` (a minimal read-only list proving the ledger works, not a full Phase-6 stock-movements UI). Sidebar gained "Purchase Orders" and "Goods Receipts" entries; "Inventory" now points at the one real page under it instead of a dead link.
+
+**Deliberately deferred** (documented, not built): Purchase Request (a separate pre-PO requisition document), the formal "Return to Supplier" workflow (physical reverse-logistics + supplier credit note — `reverseGoodsReceiptLine()` is the correction *primitive* underneath it, not that whole flow), manual "Opening Stock" entry for pre-existing warehouse stock, fabric composition blends (single dominant `compositionId` for MVP), multi-currency UI, Stock Movements/Transfers/Adjustments, a QR-scan-to-lookup screen for `FabricRoll`.
+
+**Verified live end-to-end** through the real UI on one PO (`PO-2026-00001`, 2 lines — Cotton Fabric [FABRIC] + Metal Zipper [non-fabric]): create → Approve (self-approval bypass confirmed for the SUPER_ADMIN creator) → Send to Supplier → attempted a Goods Receipt on the fabric line with zero rolls, confirmed the exact rejection message → added 2 rolls (ROLL-001/002) summing correctly, receipt succeeded, `StockBalance` incremented correctly for both lines, PO flipped to `PARTIALLY_RECEIVED` → attempted an over-receipt (250 against 200 remaining), confirmed `409 OVER_RECEIPT_NOT_ALLOWED` with the exact message → completed the line, PO flipped to `FULLY_RECEIVED` → partially reversed 40 MTR off ROLL-002 (reason supplied), confirmed the receipt flipped to `PARTIALLY_REVERSED`, the roll's `remainingQuantity` dropped 100→60, `StockBalance` decremented 500→460, and the PO recomputed back to `PARTIALLY_RECEIVED` → confirmed Cancel is blocked directly from `PARTIALLY_RECEIVED` *and* from `ON_HOLD` after holding from it (the specific bug class this design avoided) → Resumed, confirmed it restored the exact prior status → received the remaining 40 MTR, PO back to `FULLY_RECEIVED` → Closed. `npx tsc --noEmit` and `npm run lint` clean throughout; no server or console errors during the full walkthrough.
+
+**Gotcha (recorded, matches the project's own established pattern)**: a failed over-receipt attempt still consumes a `GOODS_RECEIPT` document-number sequence value (the number is drawn via `generateDocumentNumber()` *before* the transaction that validates the guard) — so real receipt numbers can have gaps from a rejected attempt. This is the same structural trade-off every document-numbering call in this project already has (a number drawn just before a downstream validation fails is never reused), not a defect introduced here — real accounting systems have the identical trade-off once a number is issued.
+
+## Phase 5B — BOM & MRP, with a prerequisite UOM-conversion fix (2026-08-20)
+
+User asked to continue with 5B. Designed via the same design→review→build→verify rhythm (three
+AskUserQuestion rounds — pull-forward-timing-style questions this time were about scope choices: fix a
+real UOM-conversion gap now vs. defer, per-color BOM lines yes/no, show available/shortfall in MRP vs.
+needed-only, include "generate PO from shortfall" in this pass — all answered "yes/recommended"), then a
+Plan-agent critique pass before implementation, matching Sampling/Sales-Orders/Phase-6's precedent.
+
+**Prerequisite correctness fix, found while researching 5B, not part of the original ask**: `UnitOfMeasure`
+has had `baseUnitId`/`conversionFactor` fields since Phase 1/2 planning, but **no code anywhere ever
+performed a conversion** — confirmed via grep. A user could (and the live-tested data never had, purely by
+luck) choose a Purchase Order line's UOM different from a material's own base UOM, and the stock ledger
+(`InventoryTransaction`/`StockBalance`, which has no `uomId` column — the design intent is "always the
+material's base UOM") would silently record the raw number in the wrong unit. Since MRP's whole point is
+comparing "needed" against real `StockBalance`, this gap would have directly corrupted MRP's output — fixed
+as a prerequisite, not deferred.
+- New `src/lib/uom-conversion.ts` — `convertUomQuantity(quantity, fromUom, toUom)`, depth-1 only by design (a
+  derived unit's `baseUnitId` must point to a root unit whose own `baseUnitId` is null) — **enforced**, not
+  just coincidentally true of today's seed data: `lookup.service.ts`'s `createUnit`/`updateUnit` now reject
+  setting a `baseUnitId` that itself points to an already-derived unit. `baseUnitId` was previously dead
+  schema — added to `unitSchema`, threaded through create/update, and exposed as a new "Base Unit" `select`
+  field on the Units tab (`/masters/lookups`) — the master-data UI for a schema column that's existed
+  unused for a very long time.
+- Seed data (`prisma/seed.ts`) gets two real, universal, unambiguous conversions: `DZN.baseUnitId = PCS`
+  (factor 12), `YDS.baseUnitId = MTR` (factor 0.9144). `ROL`/`SET`/`KG` deliberately stay roots — a roll's or
+  set's quantity has no fixed universal factor to any other unit.
+- New `BusinessRuleError` code `UOM_CONVERSION_UNAVAILABLE` (409) — a defensive backstop at the ledger-write
+  call sites, distinct from the primary `VALIDATION_ERROR` thrown at PO-creation time.
+- `purchase-order.service.ts`'s `createPurchaseOrder`/`updatePurchaseOrder` now reject a line whose chosen
+  `uomId` has no fixed conversion path to its material's `baseUomId` (or whose material has no `baseUomId`
+  configured at all) — catching the mistake immediately instead of at receipt time, weeks later.
+- `goods-receipt.service.ts` — a deliberate split: **`GoodsReceiptItem.receivedQuantity`/`reversedQuantity`
+  stay in the PO line's original unit** (the commercial document, compared against
+  `PurchaseOrderItem.orderedQuantity` in that same unit), while **`FabricRoll.rollQuantity`/`remainingQuantity`
+  and every ledger write are converted to the material's base UOM** — a Plan-agent review catch: converting
+  only the ledger while leaving `FabricRoll`'s own numbers in the original unit would make "remaining roll
+  quantity" and "stock balance" visibly disagree for a FABRIC material once YDS→MTR conversion existed. The
+  roll-quantity-sum-equals-line-quantity validation runs first, in the original unit (as entered); conversion
+  to base UOM happens immediately before the nested `create`. `reverseGoodsReceiptLine()` mirrors this: a
+  roll-scoped reversal is already base-UOM (matches `remainingQuantity`), a line-scoped reversal is converted
+  from the original unit before it can cancel out the ledger entry.
+
+**BOM (`src/modules/bom-mrp/`, new `Bom`/`BomItem` models)**: one mutable `Bom` per Style (`productId
+@unique`, no versioning, no approve/reject action — matches the already-seeded `bom_mrp` RBAC module having
+none either). `BomItem` gets an optional `colorId` (per-color consumption, e.g. thread color matching the
+garment) and a `wastagePercentage` (effective qty = `quantityPerUnit * (1 + wastagePercentage/100)`).
+`upsertBom()` is a full replace-items-in-one-transaction (same shape as Sales/Purchase Orders' `replaceItems`
+— `COMMON_FEATURES.md` §7a), with two validation layers a review pass insisted on: (1) exact duplicate
+`(materialId, colorId)` pairs rejected, and (2) a `colorId: null` ("applies to every color") line rejected
+from coexisting with a specific-color line for the *same* material — the two would otherwise silently
+double-count that color's consumption in the MRP calc. Zero RBAC changes needed.
+
+**MRP (`GET /api/v1/bom-mrp/requirements?salesOrderId=`)**: for each Sales Order style line, sums
+`breakdown` quantities matching each `BomItem`'s `colorId` filter (or all rows if null), applies wastage,
+converts to the material's base UOM, and **aggregates by `materialId` only** (never `materialId+uomId` — a
+review catch against a mixed-unit sum bug) while nesting a `contributingStyles` breakdown per material so a
+merchandiser can see which style(s) are driving a given material's need — a flat total alone would have
+lost that traceability. `availableQuantity` is a new `sumAvailableByProductIds()` aggregate in
+`inventory.service.ts` (company-wide sum across all warehouses — per-warehouse allocation is Production's,
+5C's, job). Styles with no BOM are reported separately (`stylesWithoutBom`), not a hard error for the whole
+request; BOM lines that fail conversion are reported in `unconvertibleLines` rather than crashing the
+endpoint. No Sales Order status restriction — purely informational, no stock reservation happens here.
+
+**"Generate Purchase Order from shortfall"** — deliberately client-side orchestration, not a new backend
+endpoint: the UI groups selected shortfall rows by `defaultSupplierId` (prompting for a manual pick when a
+material has none) and calls the *existing* `POST /api/v1/purchase-orders` once per supplier group, reusing
+`createPurchaseOrder()` unchanged. Tracks a **per-supplier-group result** (pending/success/failed) explicitly
+in its own UI state rather than one all-or-nothing spinner, so a partial failure leaves a clear, inspectable
+trail and a retry can't double-post an already-succeeded group. Explicitly documented as an MVP tradeoff — a
+server-side multi-PO orchestrator is a reasonable future hardening pass, not built now.
+
+**Bug found and fixed along the way, not part of the plan**: the new `/bom-mrp` style list initially returned
+full `Product` rows to `DataTable`, which auto-renders an Active/Inactive toggle for *any* row with an
+`isActive` field, PATCHing `${fetchUrl}/:id/status` — a route that doesn't exist for this list (and
+shouldn't; style activation belongs to Masters → Products only). Caught live before it could 404 on a real
+click. Fixed by having `listStylesWithBom()` return a narrow DTO (`id`/`styleName`/`styleCode`/`bomItemCount`)
+instead of spreading the full Product row — worth remembering for any future list page built on `DataTable`
+from a master-data model: project only the fields the page actually means to expose, since `isActive`
+triggers this affordance implicitly. Separately, `SimpleLookupManager`'s list table previously rendered a
+`select`-type field's raw UUID instead of its resolved label (only the edit-form dropdown resolved it) — a
+pre-existing gap surfaced by adding the Base Unit column, fixed generically for every current and future
+`select` field in that shared component.
+
+**Verified live end-to-end**: added `DZN.baseUnitId`/`YDS.baseUnitId` through the real Units UI, confirmed
+the depth-1 guard rejects pointing a new unit's base at `DZN` (already derived) with the exact message;
+created a Purchase Order forcing Cotton Fabric (base MTR) to `ROL`, confirmed the exact
+`UOM_CONVERSION_UNAVAILABLE`-style rejection; created and fully received a PO in `YDS` for the same MTR-based
+fabric, confirmed the `GoodsReceiptItem` shows "10 YDS received" (original unit preserved) while the
+`FabricRoll` shows "9.144" (converted, `10 × 0.9144`) and `StockBalance` incremented by exactly `9.144`;
+authored a BOM on Round Neck T-Shirt (Cotton Fabric, all colors, 10% wastage + Polyester Thread, Navy Blue
+only), confirmed both the exact-duplicate and the null-vs-specific-color overlap validations reject via
+direct API calls with the exact messages; created a real Sales Order (`ORD-2026-00009`, 200 Black + 400 Navy
+Blue pieces) and ran the MRP preview, hand-verified `Cotton Fabric: needed 792 MTR (1.2 × 1.10 × 600),
+available 509.144, shortfall 282.856` and `Polyester Thread: needed 20 ROL (0.05 × 400 Navy-only), available
+0, shortfall 20` — both exactly matching the per-color-filtered, wastage-applied, base-UOM-converted
+calculation; selected both shortfall rows (same supplier), generated `PO-2026-00003`, confirmed its two
+lines match the shortfall quantities/unit costs exactly (`Order Amount: INR 43,128.4`). `npx tsc --noEmit`
+and `npm run lint` clean throughout; no server or console errors during the full walkthrough.
+
 ---
+
+### Phase 4 extension — material grouping and shade/Pantone precision on Sample Materials (2026-08-21)
+User feedback on the live Sampling module, ahead of a planned Buyer Enquiry module: the "Add Material" picker had no grouping (one flat dropdown across every raw material — Fabric/Trims/Zips/Buttons/etc. all mixed together) and no way to record an exact shade beyond the generic `Color` master name (e.g. "Red" alone doesn't tell a factory which physical dye lot to use).
+
+- **Shade/Pantone**: added `SampleMaterial.dyeId` (nullable UUID FK to the existing `FabricDye` master, built in Phase 3's fabric-config batch and unused until now) + `FabricDye.sampleMaterials` back-relation. Reused `MATERIAL_MERGE_KEY_FIELDS`'s extensibility mechanism a second time — `["materialId", "uomId", "colorId"]` → `["materialId", "uomId", "colorId", "dyeId"]`, one line, no changes needed to `buildMaterialMergeKey()` or `addSampleMaterial()`'s merge algorithm — confirms the mechanism generalizes as designed (first proven with `colorId` earlier in Phase 4). Migration `add_sample_material_dye_shade`.
+- **Material grouping — user reversed the initial decision mid-build**: first confirmed via AskUserQuestion to reuse existing `materialCategory` values as-is (no new categories); the user then explicitly asked for Zips and Buttons to be split out of the generic `TRIMS` bucket into their own distinct categories, so the grouped picker could distinguish them. Added `ZIPS`/`BUTTONS` to the shared `SupplierCategory` enum (used by both `Supplier.category` and `Product.materialCategory`) — required touching two separate Zod const arrays (`SUPPLIER_CATEGORIES`, `MATERIAL_CATEGORIES` — confirmed these are NOT the same list), `prisma/seed.ts`'s literals, and a one-off correction script for the two already-seeded rows (`MAT-ZIP`/`SUP003` → `ZIPS`, `MAT-BTN`/`SUP004` → `BUTTONS`) since `createMany`/`skipDuplicates` never retroactively updates existing rows. Migration `split_zips_buttons_from_trims`.
+- **UI** (`SampleWorkflowPanel.tsx`): the Add Material row gained a "Group" `<select>` (options derived from the distinct `materialCategory` values actually present in the fetched materials list, not a second hardcoded list) that filters the Material `<select>`'s options client-side, plus a "Shade / Pantone (optional)" `<select>` sourced from `GET /api/v1/fabric-dyes`. The materials table gained a "Shade / Pantone" column (`name (pantone)` format, "—" when unset).
+- **Bug caught during live verification**: the new material rendered its shade as "—" even though the field had genuinely saved (`dyeId` correct via a direct API check) — root cause was `SampleRequestRepository.findByIdWithDetails()` (the actual query the detail page uses) had its own separate, inline `materials: { include: { material, uom, color } }` that never got `dye: true` added, distinct from `SampleMaterialRepository.findByVersionId()` (a different function, used elsewhere) which did get it. Fixed by adding `dye: true` to the inline include at [sample.repository.ts:32](src/modules/sampling/sample.repository.ts:32) — a reminder that this module has more than one place materials get fetched from, and a new relation needs adding to all of them, not just the first one found.
+- **Cleanup note found in passing, not a defect**: `Material.hsnSacCode` already exists on the schema and form — an earlier gap-analysis note (from Buyer-Enquiry-screenshot review) suggesting "HS Code missing" was already incorrect; no action needed.
+- Verified live end-to-end through the real UI (not just direct API calls): on `SAM-2026-00014`, selected Group="Zips" and confirmed the Material dropdown narrowed to exactly "Metal Zipper 7 Inch"; added it with Shade="Black Dye (19-4005 TCX)" and Qty 15 PCS; confirmed the row initially showed "—" for shade (the bug above), fixed the repository include, reloaded, and confirmed it then correctly showed "Black Dye (19-4005 TCX)"; confirmed via a direct API fetch that `dyeId` and the full `dye` object round-tripped correctly; removed the test row via a one-off script afterward and confirmed the request reverted to its original single Cotton Fabric line. `npx tsc --noEmit` and `npm run lint` clean throughout.
+- **Not yet done**: applying the same Group→Material cascading picker to `BomEditor.tsx`'s or `PurchaseOrderForm.tsx`'s material pickers — the user's ask was scoped specifically to the Sampling module; revisit only if asked. The Buyer Enquiry module itself (the original trigger for this feedback) remains queued, not started.
+
+## Phase 4 extension — Buyer Enquiry: an optional intake layer before Sampling (2026-08-21)
+
+Built per a plan reviewed and refined across several rounds with the user (a full 13-point architecture
+critique first, then an explicit final schema-refinement request) before implementation — the same
+design→review→build→verify rhythm as every other module this session.
+
+**Hard business requirement, enforced structurally, not by convention**: Buyer Enquiry is OPTIONAL. Direct
+`SampleRequest` creation and direct `SalesOrder` creation are both completely unmodified — neither module's
+schema, service, or route files were touched at all (confirmed via `grep -rl "buyerenquiry"
+src/modules/sampling src/modules/sales-orders` returning zero matches). A merchandiser who never opens this
+module never has to know it exists.
+
+**Schema (2 new tables, 3 new enums, migration `add_buyer_enquiry`)** — the final design deliberately uses
+**one authoritative nullable FK**, not two: `BuyerEnquiryLine.sampleRequestId` (`@unique`) is the only
+physical column linking the two tables; `SampleRequest.buyerEnquiryLine` is a pure virtual Prisma
+back-relation (no DB column at all), the same shape already used by `Product.bom`/`Bom.productId`. This was
+a direct response to the user's explicit final-review instruction ("do not maintain two independent foreign
+keys... unless Prisma/database constraints require it") — an earlier draft of this design had briefly
+considered a second FK column on `SampleRequest` for the same traceability, which would have been redundant.
+`@unique` on the one real column enforces **both** directions of the cardinality rule at the DB level: a
+`BuyerEnquiryLine` converts to at most one `SampleRequest`, and (via the same constraint, from the other
+side) a `SampleRequest` originates from at most one line — no second constraint needed.
+- `BuyerEnquiry` (header) — `customerId`/`buyerId` both nullable; a not-yet-onboarded **prospect** is
+  captured via plain `prospectName`/`prospectContactPerson`/`prospectEmail`/`prospectPhone`/`prospectCountry`
+  fields directly on the header, deliberately **not** a separate Prospect/Lead master table — no lifecycle,
+  no promotion workflow, no reminders (explicit user instruction: "do not introduce unnecessary CRM
+  functionality"). `status` (`OPEN`/`PARTIALLY_CONVERTED`/`CLOSED`/`CANCELLED`) is always derived from line
+  statuses except the one manual `CANCELLED` action — same "never let a status label drift from real state"
+  discipline this project already learned the hard way twice (Sampling's Hold/Resume bug, Goods Receipt's
+  cancel-from-`ON_HOLD` bug).
+- `BuyerEnquiryLine` — `productId` nullable (existing Style) with a `styleNameFreeText` fallback, mirroring
+  `SampleRequest`'s own "may not exist as a Style yet" precedent exactly. `lineStatus`
+  (`PENDING_REVIEW`/`APPROVED_FOR_SAMPLING`/`ON_HOLD`/`REJECTED`/`CONVERTED`) — `CONVERTED` is deliberately
+  excluded from the generic line-status-change Zod schema and its `ALLOWED_TRANSITIONS` map, reachable
+  *only* through the dedicated conversion action, the same discipline that already protects
+  `SampleStatus.TECH_PACK_READY`/`REVISION_REQUESTED` from being forged via a plain status PATCH.
+- `Attachment`/photo support was explicitly **deferred out of this V1** despite being in the original
+  feature list — the user's final scoping message narrowed the ask to schema/optionality/conversion/RBAC/UI/
+  regression, and adding attachments now would have been scope creep beyond what was actually requested;
+  revisit only if asked.
+
+**Prospect lifecycle, resolved before implementation per the user's explicit question**: an enquiry that
+never converts simply sits in whatever status it's in indefinitely — no expiry, no archival job, no
+promotion-to-Customer workflow. `CLOSED`/`CANCELLED` are the only "done" states V1 needs; a prospect that
+never becomes a real relationship is filtered out of active-customer reporting by a plain `customerId IS
+NULL` check whenever that's needed later, not by any lifecycle machinery in this module.
+
+**Conversion (`convertEnquiryLineToSampleRequest` in `buyer-enquiry.service.ts`)** reuses
+`createSampleRequest()` from the Sampling module **completely unchanged** — the conversion function calls it
+exactly like any other caller would, then separately links the result back onto the line. This is what makes
+"direct Sample Request creation must not accept a BuyerEnquiryLineId" true by construction rather than by
+promise: `SampleRequestInput`'s Zod schema has no such field, and there is no column on `SampleRequest` to
+even write to. Guarded against a concurrent double-conversion race with an atomic `updateMany` whose `where`
+clause re-asserts `sampleRequestId: null, lineStatus: "APPROVED_FOR_SAMPLING"` (the same
+express-the-precondition-in-the-where-clause pattern as the Purchasing module's over-receipt/over-reversal
+guards) — if the guard loses the race, the `SampleRequest` already created is left as a harmless orphan
+rather than double-linking the line, mirroring this project's own already-accepted "a document number drawn
+just before a downstream check fails is never reused" trade-off from the Goods Receipt gotcha.
+**Verified live**: a genuine concurrent-attempt artifact surfaced during browser testing (a stray duplicate
+PATCH landed a real `409 Conflict` — "Cannot move a buyer enquiry line from APPROVED_FOR_SAMPLING to
+APPROVED_FOR_SAMPLING") while the underlying data stayed perfectly consistent (exactly one `SampleRequest`
+created, exactly one conversion recorded in the audit log) — a live, unplanned demonstration that the guard
+does what it's for.
+
+**RBAC**: new `buyer_enquiries` module in `src/config/rbac.ts`. `MERCHANDISER` gets
+view/create/edit/reject/export/print (owns the whole intake→triage→convert flow, matching their ownership of
+Sampling itself); `MANAGEMENT` gets view/reject only (mirrors their view/approve/reject shape on `sampling`,
+minus an "approve" action since there's no header-level approval concept here — approval happens later, at
+the Sample stage); `SAMPLING_MANAGER`/`PRODUCTION_MANAGER`/`QC_MANAGER` get view only. Line-status changes
+split the same way Sampling's decision route already does: `REJECTED` asserts the `reject` action, every
+other transition asserts `edit` — and the convert action itself asserts `edit` too, following
+`convertSampleToStyle()`'s own precedent of not inventing a new "convert" RBAC action for a single call site.
+
+**UI**: `/buyer-enquiries` (list, plain `DataTable`, no `isActive` toggle — matches the transactional-record
+convention already used by Sampling/Sales Orders lists), `/buyer-enquiries/new` (header form with a
+prospect/Customer toggle + repeatable lines, mirroring `SalesOrderForm`'s repeatable-line shape without its
+variant grid), `/buyer-enquiries/[id]` (Server Component + `BuyerEnquiryWorkflowPanel` Client Component,
+same split as every other module's detail page, including the `key={id}` remount-on-navigation fix and the
+`JSON.parse(JSON.stringify(...))` Decimal/Date serialization fix both already established project-wide).
+Sidebar gained a "Buyer Enquiries" entry positioned above "Sampling" — a visual "earliest in the pipeline"
+cue only, not a functional gate.
+
+**Regression-verified, not just asserted**: created a Sample Request directly via the API with a
+`buyerEnquiryLineId` deliberately included in the payload — confirmed it was silently ignored (`201`, no
+such field in the response) since the schema has no such field to accept; created a Sales Order directly
+with no sample link at all — confirmed `201` with zero Buyer Enquiry involvement. Full happy path also
+verified end-to-end through the real UI/API: created an enquiry against a real Customer → approved a line →
+converted it (created `SAM-2026-00018`, correct customer/style/color) → header auto-derived to `CLOSED`.
+Separately verified: prospect-only enquiry creation (two free-text lines, no Customer); reject requires a
+reason (`400` without one, `200` with one); Hold → Resume round-trip; header Cancel blocks all further line
+actions (`409 INVALID_STATE_TRANSITION` on both a second cancel attempt and a subsequent line-status change);
+conversion correctly blocked for a still-prospect enquiry with a clear message pointing at linking a real
+Customer first. `npx tsc --noEmit`, `npm run lint`, and `npm test` (32/32) all clean throughout. Test data
+cleaned up afterward; kept the one real end-to-end demo enquiry (`ENQ-2026-00001`, `CLOSED`, converted to
+`SAM-2026-00018`).
+
+**Not yet built** (explicitly out of scope for this pass, not oversights): per-line/header attachments (see
+above), the Group→Material cascading picker or any other Sampling-module UI pattern applied here (never
+asked for), a server-side multi-enquiry bulk-import, and any reporting on enquiry→sample conversion rate
+(the schema supports computing it, no report screen exists yet).
+
+## Phase 4 extension — Sample Type + Sample Costing, the P0 pair from the Sampling gap analysis (2026-08-21)
+
+Followed a full analysis → design → Plan-agent critique → approval → build → verify cycle (the most rigorous
+review pass this session, per the user's explicit request to independently re-evaluate rather than just
+port the reference product's UI). See the session transcript for the full 14-section gap analysis; only the
+two P0 items were implemented in this pass — everything else (structured measurements, `assignedToUserId`,
+notifications, multi-currency costing, configurable formula templates) stays deferred, several of them
+reversed from an earlier, less critical version of the same analysis.
+
+**Sample Type**: new hardcoded `SampleType` enum (`FIT`/`PROTO`/`PP`/`TOP`/`SHIPMENT`/`PHOTOSHOOT`/`SMS`/`OTHER`)
+on `SampleRequest` — nullable at the DB level (real rows predate it, same precedent as `styleName`/`color`),
+required by the create Zod schema, immutable after creation (identity-like, no edit endpoint — a PP sample
+silently relabeled later would undermine its stated future role as a Production-order eligibility gate).
+Also threaded through Buyer Enquiry's `convertEnquiryLineToSampleRequest()` — conversion is a real sample
+creation moment too, not exempt from "always a deliberate choice."
+
+**Sample Costing, scoped to `SampleVersion`** — the revised, reuse-first design (rejected an earlier draft
+that would have duplicated `SampleMaterial` into a parallel `SampleCostLine` table):
+- `SampleMaterial` gained two nullable columns, `rate`/`gstPercentage` — set/cleared only through a new
+  scoped sub-route (`PATCH /api/v1/sampling/materials/:materialId/costing`, mirroring the existing
+  `.../damage` sub-route exactly), never through `addSampleMaterial()`'s create/merge payload. Deliberately
+  **not** added to `MATERIAL_MERGE_KEY_FIELDS` — rate is a cost attribute, not an identity attribute that
+  should split/merge lines, so a merged line always carries one rate (an accepted, explicitly-flagged
+  constraint, not a silent gap).
+- New `SampleOtherCharge` model (plain CRUD — `costHead` `PROCESS`/`FABRICATION`/`OTHER`, `description`,
+  a flat `amount`) for labor/process/overhead costs that don't fit `SampleMaterial`'s shape at all.
+- `SampleVersion` gained `marginPercent`/`commissionPercent`/`freightAmount` (merchandiser-entered) and
+  `costSubtotal`/`finalTotal` (system-computed and stored, same precedent as `SalesOrder.totalAmount` —
+  never trusted from the client), plus a **reversible lock** — `isCostingLocked`/`costingLockedAt`/
+  `costingLockedByUserId` (the first reversible lock in this app; carries its own actor/timestamp columns
+  rather than a bare boolean, matching the existing `submittedToCustomerAt`/`customerDecisionAt` precedent
+  on this same model, since a lock→unlock→lock cycle would otherwise lose the who/when story).
+- Hardcoded formula, base currency only — the standard garment-export FOB-costing shape, not an arbitrary
+  choice: `materialCost (Σ qty×rate×(1+gst%)) + otherCharges = costSubtotal → +margin% → +commission% →
+  +freight = finalTotal`. No configurable templates, no multi-currency — both explicitly rejected as scope
+  this business doesn't need, consistent with the project's already-deliberate multi-currency deferral
+  elsewhere.
+- `estimatedCostPerUnit` **implicit mode switch** (no new boolean): manual and fully editable while no
+  material has a rate and no charge exists; the moment either exists, every recalculation overwrites it to
+  equal `finalTotal` and a manual value is silently ignored; clearing all pricing reverts to manual mode,
+  keeping the last computed number rather than nulling it — a symmetric toggle, not a one-way ratchet.
+- **Costing is never a gate** — zero changes to `ALLOWED_TRANSITIONS` or anywhere else in `SampleStatus`;
+  verified by design, not just stated as intent.
+- **Lock/unlock gated on `sampling.approve`, not `edit`** — a Plan-agent critique caught that reusing `edit`
+  would give the same role (`MERCHANDISER`) both data-entry and freeze/unfreeze power with no maker/checker
+  separation. Using the already-seeded `approve` action (held by `MANAGEMENT`, not `MERCHANDISER`) gives a
+  real boundary for free, no new RBAC action needed.
+- **Race-free lock/supersede enforcement, no separate read-then-write check**: every costing mutation
+  (material rate edit, charge create/update/delete, the margin/commission/freight PATCH, and the recompute
+  itself) runs inside one `prisma.$transaction`; the *only* guarded write is `SampleVersion`'s own
+  `updateCostingIfUnlocked`/`updateCostingIfLocked` (`updateMany` with the precondition in the `WHERE`
+  clause) — if that guard fails, the whole transaction rolls back, including whatever material/charge
+  mutation triggered it. **Verified live**: locked a version, then attempted a material rate edit and a new
+  charge creation — both correctly rejected with `409`, and a direct DB check confirmed *zero* orphan rows
+  from the rejected charge attempt and the material's rate genuinely unchanged — the rollback-on-guard-failure
+  mechanism works exactly as designed, not just in theory.
+- `addSampleMaterial()`'s merge branch (not just create) now also triggers a recompute — a Plan-agent
+  critique catch: without this, merging quantity into an already-priced line would silently desync
+  `costSubtotal`/`finalTotal` until an unrelated costing edit happened to fire a recompute. This call passes
+  `throwIfBlocked: false` — adding a material must never be blocked by a costing lock at all, since it's a
+  general workflow action, not a costing edit (rate is never part of that payload).
+- **Backward compatible by construction**: any sample that never touches costing behaves identically to
+  before — `rate`/`gstPercentage` default `NULL` and display "—"; `estimatedCostPerUnit` stays a plain
+  manual field. Confirmed live on a real pre-existing sample (`SAM-2026-00002`): `sampleType: null` renders
+  "Not specified," `costSubtotal: null`, zero errors.
+- **New routes**, all inside the existing `sampling` module: `PATCH .../materials/:materialId/costing`,
+  `POST .../versions/:versionId/charges`, `PATCH`/`DELETE .../charges/:chargeId`,
+  `PATCH .../versions/:versionId/costing`, `POST .../versions/:versionId/costing/lock`/`unlock`.
+- **UI**: rate/GST inline-edit on the existing materials table (same edit-toggle pattern as damage), a new
+  Other Charges mini-table + add-row, a costing summary footer (Subtotal/Margin/Commission/Freight/Final
+  Total) with Lock/Unlock buttons — the manual Cost/Unit input only renders while the version has no priced
+  data yet, disappearing automatically once real costing exists.
+- First unit tests for `sample.service.ts` (`sample.service.test.ts`, 8 tests) — justified here because
+  there's now real calculation logic worth testing, not just CRUD (matching this project's "test business
+  logic, not the mock" guidance): hand-verified `finalTotal` from a known formula, null-rate-contributes-0,
+  locked/superseded rejection, the manual/computed mode switch in both directions, and a regression test for
+  the merge-triggers-recompute fix.
+- **Verified live end-to-end**: created a real sample (`SAM-2026-00020`, type PP) → added a material →
+  priced it (10 MTR × ₹25 × 1.10 GST = ₹275, hand-verified) → added a Process charge (₹45, subtotal ₹320) →
+  set margin 10%/commission 5%/freight ₹20 → hand-verified `finalTotal = 320×1.10×1.05+20 = 389.6` exactly →
+  locked (further edits correctly `409`, confirmed no orphan data) → unlocked (edits resumed, freight
+  30→+10 to `finalTotal` correctly) → progressed through the full state machine to a real revision
+  (`addSampleVersion`) and confirmed version 1 flipped to `SUPERSEDED` with its costing permanently frozen
+  (a further edit attempt correctly `409`) while version 2 started empty and unlocked. Test record cleaned
+  up afterward. `npx tsc --noEmit`, `npm run lint`, and `npm test` (40/40) all clean throughout.
+- **Not yet done, explicitly deferred**: adding `sampleType` to the advanced worklist filter panel UI
+  (the field itself, the query-param plumbing, and a plain list-column badge are done; the collapsible
+  filter panel wasn't touched, to keep this pass scoped to the two approved P0 items) — same for a
+  Sample-Type-aware Production gate, which has no consumer yet since Phase 5C doesn't exist.
+
+### Phase 4 extension — Sampling small-CRUD actions moved into Modals (2026-08-21)
+
+Explicit UI/UX requirement: small, focused CRUD actions (Add/Edit Material, Add/Edit Other Charge, Comments,
+Attachments, Approval/Rejection confirmation, small configuration actions) should use a Modal/Dialog instead
+of an always-visible inline expanding form, while record creation, the detailed workflow panel, the Costing
+overview, and the Version timeline stay full page sections. No generic Modal component existed yet (only
+`ConfirmModal`, confirm-only, and `FilePreviewModal`, a file viewer) — added `src/components/ui/Modal.tsx`
+(title + children + Escape/backdrop-click to close) and refactored `SampleWorkflowPanel.tsx`'s Add Material,
+Set/Edit Rate, Report/Edit Damage, Add/Edit Other Charge, Edit Costing, the customer decision form, Add
+Comment, and Upload Attachment into Modal-triggered flows — each is now a button that opens a Modal, submits,
+and closes on success, instead of an always-rendered row. Convert-to-Style and the read-only Costing summary
+`<dl>` were deliberately left as page sections (a substantial one-way action and a "keep visible" overview,
+respectively, not "small" actions). See `COMMON_FEATURES.md`'s 2026-08-21 entry for the reusable patterns
+(store the whole target row as modal state, not just an id; one Modal + a nullable-target state for
+add-vs-edit of the same shape). Verified live: opened/closed via Escape, submitted a real Add Material →
+Set Rate → Add Comment sequence through the actual modals (each closed on success, Final Total recomputed
+correctly to a hand-verified 138.56), confirmed the Manual Cost/Unit field correctly disappears in the Edit
+Costing modal once real pricing exists, then cleaned up the test data and confirmed the record's display
+matched its pre-test state exactly. `npx tsc --noEmit`, `npm run lint`, and `npm test` (40/40) all clean.
+
+## Phase 6 extension — Purchase Request (pre-PO authorization workflow) (2026-08-21) — SUPERSEDED SAME DAY
+
+**Superseded within hours by "Phase 6 extension — Material Request" below.** The user reviewed this design
+against the real business flow and correctly identified that it had drifted from the actual requirement: an
+approval-gated, pricing-carrying document living inside `purchasing` conflated two genuinely separate
+responsibilities — "what does a department internally need" (Inventory's job) and "what are we
+commercially buying from a supplier" (Purchasing's job) — and added an authorize/approve-line workflow
+nobody had actually asked for. The whole module (schema, service, routes, UI, RBAC widening) was removed
+and replaced same-day; nothing from this section is still in the codebase. Left in place, not deleted, as a
+record of what was tried and why — see the Material Request section for the corrected design and the exact
+migration/data-cleanup steps taken to remove this one cleanly.
+
+Built following a full 20-section analysis-only report on a "Requisition Slip" reference module (3 screenshots
+the user supplied) — explicitly scoped to STOP after the report and wait for approval, then a design→critique→
+build→verify cycle (EnterPlanMode → 2 parallel Explore agents → Plan-agent critique → approval → implementation)
+on the report's top "DO NEXT" item. Fills the `DocumentType.PURCHASE_REQUEST`/`RelatedModule.PURCHASE_REQUEST`
+placeholders reserved since Phase 1 planning (prefix `PR`, e.g. `PR-2026-00001`) — the first real caller of
+either enum value. Built inside the *existing* `src/modules/purchasing/` module (not a new one), directly
+alongside `PurchaseOrder`/`GoodsReceipt`, reusing that module's RBAC grants and the currency/receipt lessons
+already learned there.
+
+**Schema (2 new tables, 2 new enums, migration `add_purchase_requests`)**: `PurchaseRequest` (header —
+Department/Reference/Delivery Date/"Receive At" Warehouse/Remarks, `status` derived except the manual
+`ON_HOLD`/`CANCELLED`/`CLOSED` transitions, `statusBeforeHold` reused verbatim from `PurchaseOrder`'s own
+Hold/Resume pattern, `isAuthorized`/`authorizedAt`/`authorizedByUserId` — a reversible lock mirroring
+`SampleVersion.isCostingLocked`'s exact shape but gated on the `approve` RBAC action rather than `edit`,
+`estimatedTotalAmount` stored rollup), `PurchaseRequestItem` (Material/Color/Shade — reusing the `Color`/
+`FabricDye` masters exactly like `SampleMaterial`, not free text — `requestedQuantity`/`rate`/
+`approvedQuantity`/`lineStatus`/`rejectionReason`/`salesOrderId` traceability for "Add from BOM" lines).
+`PurchaseOrderItem.purchaseRequestItemId` (`@unique`, nullable) is the single authoritative FK back to the
+originating line — same "one real FK, virtual back-relation" shape already proven on
+`BuyerEnquiryLine.sampleRequestId`; `@unique` is load-bearing, not decorative: it's what turns a concurrent
+double-"Generate PO" race into a DB-level `P2002` instead of a silent double-order.
+- **`approvedQuantity` is deliberately non-nullable, defaulting to 0** — a `null` (not reviewed) vs. `0`
+  (rejected) dual signal would be the exact `SampleMaterial.damagedQuantity` landmine repeated on purpose
+  (a Decimal `0` serializes as the JSON string `"0"`, which is truthy). `lineStatus` alone is the "has this
+  been reviewed" signal; the UI shows "—" while `PENDING_REVIEW` regardless of the underlying `0`.
+- **`computePurchaseRequestStatus(lines)`** (`purchase-request.service.ts`) is a small pure function with a
+  critical guard a Plan-agent critique caught before any code was written: `if (approvedLines.length === 0)
+  return "OPEN"` *before* checking "every approved line converted" — without it, an all-rejected or
+  all-still-pending request would vacuously satisfy that check over an empty set and wrongly report
+  `CONVERTED_TO_PO`. Verified live on a real 2-line request (one approved+converted, one rejected) — status
+  correctly landed on `CONVERTED_TO_PO` (only the approved line counts), and a second request confirmed
+  `PARTIALLY_CONVERTED`/`OPEN` render correctly for the intermediate cases.
+- **Maker/checker workflow**: `approveRequestLine`/`rejectRequestLine`/`approveAllLines` are gated on
+  `purchasing.edit` and deliberately **not** self-approval-guarded (matches the project's established
+  pattern that only the *final* authority checkpoint gets that guard — a Sales Order's own creator fills in
+  its own lines with no gate either). `authorizePurchaseRequest` is the real checkpoint: gated
+  `purchasing.approve` **and** self-approval-guarded via `PermissionService`'s existing
+  `resourceContext.createdBy` mechanism, same as `approvePurchaseOrder()`. `unauthorizePurchaseRequest` is
+  gated `approve` but **not** self-guarded (undoing isn't the same risk as granting) and is permanently
+  blocked once any line has actually converted — enforced via a guarded `updateMany`
+  (`where: { isAuthorized: true, status: { notIn: ["PARTIALLY_CONVERTED", "CONVERTED_TO_PO", "CANCELLED"] } }`),
+  not a plain read-then-write.
+- **`generatePurchaseOrdersFromRequest()`** groups `APPROVED`, not-yet-linked lines by the material's own
+  `defaultSupplierId` (rejecting the whole call with a `VALIDATION_ERROR` naming every material that needs a
+  manual supplier assignment, rather than silently skipping any), then calls the *existing, unchanged*
+  `createPurchaseOrder()` once per supplier group — each resulting `PurchaseOrderItem` carries
+  `purchaseRequestItemId` back to its origin. A concurrent double-generate hits the `@unique` constraint
+  (Prisma `P2002`), caught per-group and reported as a failed group rather than aborting every other group's
+  result. Explicitly asserts `purchasing.create` (not `edit`) since this functionally creates real
+  `PurchaseOrder`s — a gap a Plan-agent critique flagged (`MERCHANDISER`/`PRODUCTION_MANAGER`, the realistic
+  requester personas, previously had `create`+no `edit` on `purchasing` at all — **deliberately widened** to
+  add `edit` to both roles in `src/config/rbac.ts`, an explained widening rather than silent inheritance of
+  the gap).
+- **`addLinesFromBom()`** reuses the *unchanged* `getMaterialRequirements()` from `bom-mrp/mrp.service.ts`
+  (already company-scoped — no second tenant check needed) to append shortfall lines from a Sales Order's
+  BOM, tagged with `salesOrderId` for traceability. Appends via a dedicated `createMany` repository call
+  rather than routing through the header's `replaceLines()` full-replace — reconstructing every existing
+  line's `lineStatus`/`approvedQuantity` just to add new ones would have been fragile for no reason.
+- **Small additive threading, not a new mechanism**: `purchase-order.schema.ts`'s item schema and
+  `purchase-order.service.ts`'s `createPurchaseOrder()` item-mapping both gained an optional
+  `purchaseRequestItemId` — direct PO creation (no Purchase Request involved) is completely unaffected, the
+  field is simply absent from that payload. `PurchaseOrderWorkflowPanel.tsx` shows "Originated from Purchase
+  Request PR-XXXXX" (linked) whenever any item carries that FK — closes a traceability gap the critique
+  flagged: `createPurchaseOrder()` always attributes `requestedByUserId` to whoever clicked Generate, not the
+  original requester, so without this a reviewer approving the generated PO would have no visibility into the
+  original request's own review trail.
+- New `BusinessRuleError` code `OVER_APPROVAL_NOT_ALLOWED` (409) — approving a line above its
+  `requestedQuantity`, same 2-line-addition convention as `OVER_RECEIPT_NOT_ALLOWED`.
+- **UI**: full pages mirroring `purchase-orders`' exact shape (list/new/detail/edit) plus the small-focused-
+  action convention this session already established for Sampling — Approve/Reject line, Add from BOM, and
+  Generate Purchase Order(s) are all `Modal`-driven, Authorize/Un-Authorize/Cancel use `ConfirmModal`. The
+  Generate-PO modal has no separate "preview" endpoint — it optimistically calls the real endpoint, and a
+  `VALIDATION_ERROR` naming unresolved materials turns into an inline supplier-picker for exactly those
+  materials rather than a dead-end error, then resubmits.
+- **Migration-tooling gotcha (new, worth remembering)**: `npx prisma migrate dev` refuses to run at all in
+  this non-interactive shell once Prisma's own risk-confirmation prompt fires (here, triggered by adding a
+  `@unique` constraint to a nullable column) — `--create-only` doesn't help, and `npx prisma migrate diff
+  --from-migrations ... --to-schema ...` additionally requires a `shadowDatabaseUrl` this project's
+  `prisma.config.ts` doesn't define. The workaround that unblocked this: `npx prisma migrate diff
+  --from-config-datasource prisma.config.ts --to-schema prisma/schema.prisma --script` diffs directly against
+  the *live* dev database (no shadow DB needed) and prints the raw SQL; hand-place that into a new
+  `prisma/migrations/<timestamp>_<name>/migration.sql`, apply it via `npx prisma db execute --file <path>`,
+  then mark it tracked with `npx prisma migrate resolve --applied <name>` — mirrors this project's own
+  earlier-documented precedent for `_prisma_migrations` recovery, just for a different root cause this time.
+- **Not yet built** (explicitly out of scope per the original analysis report's DO LATER/DO NOT BUILD
+  buckets): Issue Requisition (store→department handout — needs a real Production consumer, Phase 5C),
+  Purchase-Requisition history as a dedicated UI (relies on `AuditLog` + the derived
+  `purchaseOrderItem !== null` trail instead), a separate Authorization/RequisitionType table, currency
+  fields on `PurchaseRequestItem` (budget estimate only, implicit base currency), `productionOrderId`
+  traceability (add nullable once Phase 5C exists).
+- **Verified live end-to-end** through the real UI (not just direct API calls): created `PR-2026-00001`
+  (Cotton Fabric, Navy Blue / Indigo shade, 100 MTR) → Approve All Pending → Authorize (self-approval bypass
+  confirmed for the SUPER_ADMIN creator, same as every other Approve action this session) → Generate Purchase
+  Order(s) → `PO-2026-00004` created with the "Originated from Purchase Request PR-2026-00001" link rendering
+  correctly on the PO's own page; created a second request `PR-2026-00002` (2 lines) to exercise the mixed
+  case — approved one line, rejected the other with a required reason, confirmed status stayed `OPEN` (not
+  vacuously `CONVERTED_TO_PO`) — authorized, un-authorized successfully *before* any conversion (confirming
+  that path isn't blocked prematurely), re-authorized, generated `PO-2026-00005` off the one approved line,
+  confirmed status correctly landed on `CONVERTED_TO_PO`; then confirmed via direct `fetch()` calls that both
+  `unauthorize` and `cancel` now correctly return `409 INVALID_STATE_TRANSITION` with the exact expected
+  messages, that editing the now-authorized `PR-2026-00001` returns the exact "unauthorize it first" `409`,
+  and that its Edit page correctly `404`s. `npx tsc --noEmit`, `npm run lint`, and `npm test` (48/48) all
+  clean throughout; zero server or console errors during the full walkthrough.
+
+## Phase 6 extension — Material Request replaces Purchase Request (2026-08-21)
+
+User provided a full business-rule spec re-analyzing the ERP's procurement/inventory split and asked for a
+suggestion before coding. The core correction: **Purchase Request (above) conflated two separate
+responsibilities** — "what does a department internally need" belongs to Inventory, "what are we
+commercially buying from a supplier" belongs to Purchasing — and added an authorize/approve-line workflow
+the actual business flow never called for. Analyzed the existing codebase first (an Explore-agent pass
+confirmed: Inventory was a thin ledger-only module with zero request/reservation concept; no
+`MATERIAL_REQUEST`/`MATERIAL_ISSUE` document type existed yet, only unused `InventoryTransactionType` enum
+values of the same name; Purchase Order/Goods Receipt already matched the target architecture and needed no
+change; blast radius of removing Purchase Request was fully contained). Presented the analysis + a concrete
+design, then used two targeted questions (drop the old module cleanly vs. keep both — dropped cleanly;
+add a per-line triage/approval step vs. straight stock-check-and-issue — no approval step, matching the
+user's own diagram) rather than guessing on decisions only the user could make.
+
+**Schema**: dropped `PurchaseRequest`/`PurchaseRequestItem` and their two enums entirely; replaced with
+`MaterialRequest`/`MaterialRequestItem` (migration
+`replace_purchase_requisition_with_material_request`) — owned by Inventory's domain, not Purchasing's.
+Deliberate differences from the removed design: **no `rate`/pricing field anywhere** (Material Request is
+never a commercial document); **no `isAuthorized`/authorize/unauthorize** (no approval gate — an
+inventory/warehouse user directly checks stock and issues, matching "Production/Department → Material
+Request → Inventory checks stock → Issue or escalate" exactly); **no stored `lineStatus` column** — a
+line's state (pending/partially issued/fully issued/escalated) is fully derived from `issuedQuantity` plus
+whether a `purchaseOrderItem` exists, deliberately avoiding a second source of truth that could drift (the
+same class of bug this project has fixed twice already by *adding* a stored status column — this time the
+fix was to *not add one in the first place*). `warehouseId` is required (not optional like the old
+"Receive At") since Material Issue must decrement one real warehouse's stock balance.
+`PurchaseOrderItem.purchaseRequestItemId` renamed to `materialRequestItemId` (same `@unique`
+single-authoritative-FK shape, unchanged reasoning).
+- **Migration gotcha hit and fixed**: a mechanical find-and-replace across the schema (`purchaseRequestItems`
+  → `materialRequestItems` on `Product`/`Color`/`UnitOfMeasure`/`FabricDye`/`SalesOrder`) carried over the
+  *shape* of the old `SalesOrder` back-relation without checking whether the new item model still had the
+  field it was pairing with — it didn't (that traceability moved to the header, `MaterialRequest.salesOrderId`,
+  not the line). `prisma validate` caught it immediately with an exact "missing opposite relation field"
+  error pointing at the orphaned line; a second, more insidious layer was that an earlier `prisma format` run
+  had already silently auto-added a phantom `salesOrderId`/`salesOrder` column onto `MaterialRequestItem` to
+  paper over the same orphaned relation before it was caught — worth remembering that `prisma format` will
+  silently synthesize a missing relation side rather than erroring, so a stray back-relation can survive a
+  format pass and only surfaces via `prisma validate` (or by noticing an unexpected column in the generated
+  migration SQL, which is exactly how this was actually caught — a stray camelCase `"salesOrderId"` UUID
+  column with no `@map` in the generated `CREATE TABLE`, inconsistent with every other column's snake_case).
+- **Data migration note**: the 3 real `document_sequences` counter rows and `PurchaseRequest` test records
+  (including the user's own "test" record, `PR-2026-00003`) were dropped per the user's explicit choice — the
+  stale `PURCHASE_REQUEST` `document_sequences` row had to be deleted *before* the `DocumentType` enum swap
+  could succeed (Postgres refuses to migrate an enum column to a new type that no longer contains a value
+  still present in the data). The 2 already-generated demo POs (`PO-2026-00004`/`00005`) were **not**
+  affected at all beyond losing their now-meaningless "Originated from" traceability line — confirmed live,
+  both still show their correct supplier/line/amount data untouched after the migration.
+
+**Service** (`src/modules/inventory/material-request.schema.ts`/`.repository.ts`/`.service.ts`, new
+module inside Inventory, not Purchasing): `issueMaterialRequestLine()` is the "Inventory checks stock" step
+— two independent caps, both real and race-free: cannot issue more than remains on the line (guarded
+`updateMany` on `issuedQuantity`, same idiom as every other accumulator in this project) and cannot issue
+more than is actually on hand at the request's own warehouse (checked via a new
+`getAvailableQuantity(companyId, productId, warehouseId)` in `inventory.service.ts` — the company-wide
+`sumAvailableByProductIds` MRP already had wasn't warehouse-specific enough for a real stock decrement).
+`generatePurchaseOrdersForShortfall()` is a direct relocation of the removed module's mature
+`generatePurchaseOrdersFromRequest()` engine (supplier grouping, per-group partial-failure tolerance, P2002
+concurrent-escalation protection) — one behavioral fix during the move: it now orders the *remaining*
+shortfall (`requestedQuantity - issuedQuantity`), not the original full line quantity, since some of the line
+may already be sitting in a warehouse from a prior partial issue. `computeMaterialRequestStatus()` keeps the
+exact empty-set guard lesson (`if (lines.length === 0) return "OPEN"`) already learned twice on this
+project's other status-derivation functions.
+- **Real-state guards, not label-based**: editing and cancelling are blocked once anything has *actually*
+  been issued or escalated (`assertNothingIssuedOrEscalated()`, checked via `countIssuedLines`/
+  `countLinkedPurchaseOrderItems`), never inferred from the status label alone — the same lesson this
+  project has now learned three times (Sampling's Hold/Resume bug, Purchasing's cancel-from-`ON_HOLD` bug,
+  and this one).
+- **RBAC**: the `purchasing` grant widening given to `MERCHANDISER`/`PRODUCTION_MANAGER` for the old module
+  was reverted back to `["view", "create"]` (they don't touch real commercial POs); `inventory` widened to
+  `["view", "create", "edit"]` for both instead, since raising/editing their own Material Requests is an
+  Inventory action. `generatePurchaseOrdersForShortfall()` still explicitly asserts `purchasing.create`
+  internally (it creates real `PurchaseOrder`s) — the same "assert the permission the action actually needs,
+  not the one the route happens to sit under" discipline as before.
+- **UI bug caught and fixed during live verification**: the Edit page's guard only checked the header's
+  derived status label (`CANCELLED`/`CLOSED`), which let a `FULFILLED` (or even nominally `OPEN`, if only
+  some lines had activity) request's Edit page render a form that would then fail server-side — a live
+  reproduction of the exact "check the label, not the real state" bug class this file just finished warning
+  about in the paragraph above, caught in the same session it was written. Fixed by deriving `hasActivity`
+  from the lines themselves (`issuedQuantity > 0` or `purchaseOrderItem !== null`) in both the Edit page's
+  `notFound()` guard and the detail panel's Edit-link visibility, matching the service's own real guard
+  exactly instead of approximating it from the status label.
+- New `BusinessRuleError` code `OVER_ISSUE_NOT_ALLOWED` (409); removed the now-unused
+  `OVER_APPROVAL_NOT_ALLOWED` from the closed set rather than leaving dead code behind.
+- **UI**: full pages mirroring the removed module's shape (list/new/detail/edit), reusing every established
+  common component as-is (`Modal`, `ConfirmModal`, `FilePreviewModal`, `DataTable`, `Breadcrumb`,
+  `FormField`, `Barcode`) — zero new shared components needed. Sidebar entry "Material Requests" placed
+  directly after "Inventory", not near "Purchase Orders".
+- **Verified live end-to-end** through the real UI and direct `fetch()` calls together: created
+  `MR-2026-00001` (Cotton Fabric 100 MTR with real stock at Fabric Store + Denim Fabric 50 MTR with zero
+  stock anywhere) → partially issued 60 MTR of Cotton (confirmed `StockBalance` decremented
+  509.144→449.144, exactly −60) → confirmed over-issue (`999`) correctly `409 OVER_ISSUE_NOT_ALLOWED` with
+  "only 40 remains" → confirmed issuing the zero-stock Denim line correctly `409
+  INSUFFICIENT_RAW_MATERIAL_STOCK` with "Available: 0, Requested: 5" → clicked "Generate Purchase Order(s)"
+  once, correctly split into **two** POs by the two materials' different default suppliers
+  (`PO-2026-00006`/`Om Fabrics Pvt Ltd` for the Cotton 40 MTR shortfall, `PO-2026-00007`/`Shree Balaji
+  Textiles` for the Denim 50 MTR shortfall) — confirmed `PO-2026-00006` shows "Originated from Material
+  Request MR-2026-00001" and orders exactly **40** MTR (the shortfall), not the original 100 — confirmed the
+  header status correctly derived to `FULFILLED` (every line either issued or escalated) with "No actions
+  available"; separately created `MR-2026-00002` (single line, fully issued 5/5) and confirmed its Edit link
+  disappears and its Edit page `404`s once fulfilled, while a genuinely untouched fresh request still shows
+  a working Edit link (regression check); finally confirmed a **direct** `POST /api/v1/purchase-orders` call
+  with zero Material Request involvement still succeeds normally with `materialRequestItemId: null`. `npx
+  tsc --noEmit`, `npm run lint`, and `npm test` (49/49) all clean throughout; zero server or console errors
+  during the full walkthrough.
+- **Not yet built** (explicitly out of scope per the user's own spec): Issue Requisition / department-side
+  material handout beyond Material Request itself (no separate document — Material Request already *is*
+  this), Stock Transfer/Return/Adjustment as first-class documents (the `InventoryTransactionType` enum
+  values exist, no UI/service consumes them yet), a `productionOrderId` traceability field on
+  `MaterialRequest` (Production/5C doesn't exist yet — schema left extensible, add it non-breaking later).
+
+## Material Request lifecycle extension — BOM→MR→Issue/Shortfall→PO→GR traceability (2026-08-22)
+
+Closed the gap flagged right after the module above shipped: BOM/MRP's own "Create Purchase Order(s)"
+button still bypassed Material Request entirely, creating two independent, uncoordinated paths into
+Purchasing. Designed via 3 parallel `Explore` research agents + 2 parallel `Plan` agents synthesized into
+one reviewed plan (approved before implementation, per this project's established design→review→build→verify
+rhythm), then implemented incrementally.
+
+- **Schema**: new `MaterialRequestType` enum (`PRODUCTION_REQUIREMENT` default / `DAMAGE_REPLACEMENT`) on
+  `MaterialRequest`, plus nullable `bomId` (populated only when every selected shortfall row traces to a
+  single style — a multi-style request has no one correct BOM to point at) and a self-referencing
+  `originalMaterialRequestId`/`replacementRequests` pair (damage replacement points back at the original
+  requirement; no `ProductionOrder` FK since Production/5C still doesn't exist). `MaterialRequestItem` gained
+  `purchaseReceivedQuantity` (guarded accumulator, same idiom as `issuedQuantity`) and `damageReason`.
+  **`PurchaseOrderItem.materialRequestItemId` lost its `@unique`** (replaced by a plain index) — a single
+  Material Request line can now legitimately spawn more than one `PurchaseOrderItem` over its lifetime, since
+  Purchase Qty is user-edited and no longer forced to equal the shortfall (a first PO can cover part of it,
+  a later one the rest). The accepted trade-off: the `@unique` used to make a concurrent double-"Generate PO"
+  attempt fail loudly via Prisma P2002; removing it moves that protection to an explicit
+  re-check-`availableToOrderQuantity`-immediately-before-each-`createPurchaseOrder()`-call inside the service
+  instead — not airtight against a true race, but this is a manual, low-frequency, reviewed action, not a hot
+  concurrent path, so real locking here would be exactly the "complicated stock reservation" the user said
+  not to build.
+- **Status derivation fix, not just a type change**: `computeMaterialRequestStatus()`'s old "any linked PO
+  item exists → fulfilled" heuristic stopped being safe the moment PO quantity became editable — a line
+  could have an active PO for 4 out of a 10-unit shortfall and the old code would still call it done. Fixed
+  with `isLineFulfilled()`: a line counts as fulfilled only once `issuedQuantity` plus the sum of its *active*
+  (non-cancelled-PO) linked `orderedQuantity` actually covers `requestedQuantity`. A new, deliberately
+  separate `computeRequiresPurchaseAction()` boolean (surfaced as an amber "Purchase Required" badge, not
+  folded into the status enum) — a request can be `PARTIALLY_FULFILLED` on some lines *and* still need
+  purchasing on others, a fact one mutually-exclusive status column can't express. `DRAFT`/`PARTIALLY_ISSUED`
+  /`PURCHASE_REQUIRED` were all deliberately rejected as new enum values for the same "derive, don't
+  duplicate" reasons already established elsewhere in this codebase (no stored `lineStatus` anywhere else
+  either).
+- **Quantity projections, computed not stored**: `remainingQuantity = requested − issued` (deliberately does
+  *not* subtract already-ordered quantity — that's what separates it from `availableToOrderQuantity`, and is
+  what makes repeat/partial escalation safe: without the split, a second "Generate PO" pass would re-suggest
+  the *full* remaining shortfall and double-order the part an earlier PO already covers).
+  `purchaseOrderedQuantity` sums active-PO quantity; `availableToOrderQuantity = max(0, remaining −
+  purchaseOrdered)` is what the review modal suggests. `purchaseReceivedQuantity` is deliberately **not**
+  wired into `remainingQuantity` at all — receiving goods against a linked PO grows the warehouse's general
+  stock, it does not auto-fulfill the request line; that still requires an explicit Issue action by the
+  Inventory Incharge. Verified live: after a full 400 MTR receipt against a 400 MTR PO, the MR line's
+  "Purchase-Received" column showed 400 while "Remaining" stayed unchanged at 247.856.
+- **Goods-Receipt → Material-Request rollup, fail-soft by design**: `createGoodsReceipt()`/
+  `reverseGoodsReceiptLine()` (in `goods-receipt.service.ts`, not the Material Request module — the write
+  belongs where the transaction already is) increment/decrement `purchaseReceivedQuantity` via the same
+  guarded-`updateMany` idiom as every other accumulator in this project, converting through the material's
+  UOM chain. A lost race or an unconvertible UOM skips the rollup silently rather than aborting the goods
+  receipt — this field is a secondary traceability mirror, not a stock-affecting write (that protection
+  already happened one step earlier via the existing PO-item receive guard). Verified live end-to-end:
+  received 400 MTR (rollup → 400), reversed 40 MTR with a reason (rollup correctly decremented → 350).
+- **BOM/MRP page rewritten**: removed the entire supplier-grouping/direct-PO-creation UI and logic from
+  `/bom-mrp/requirements`; replaced with a warehouse picker and a single "Generate Material Request" button
+  hitting a new `POST /api/v1/bom-mrp/generate-material-request` (asserts `inventory.create`, not
+  `bom_mrp.create`, so a view-only MRP user can't back-door a Material Request through this button). A
+  proactive, advisory duplicate-request check (`GET /api/v1/material-requests/duplicate-check`, reusing the
+  same repository query the server-side hard-block uses) shows an inline amber warning per affected material
+  *before* the click, not only as a rejected-submit error; the server-side check is the real gate, with an
+  `overrideDuplicateCheck` escape hatch surfaced as a "Generate Anyway" button on the exact
+  `DUPLICATE_MATERIAL_REQUEST_EXISTS` (409) rejection. Verified live: selecting the same Sales
+  Order/material twice showed the exact remaining-quantity warning with a working link, and "Generate
+  Anyway" correctly created a second request despite it.
+- **Redesigned "Generate Purchase Order(s)" review modal**: now fetches a dedicated `GET` on the existing
+  `.../generate-purchase-orders` route (Requested/Available Stock/Issued/Remaining/Suggested PO qty/
+  default supplier per still-open line in one call) instead of reusing the panel's already-loaded data,
+  which lacked stock availability. Purchase Qty is a genuinely editable number input, pre-filled with the
+  suggestion but never forced to match it (verified live: edited Cotton Fabric's suggested 247.856 up to 400
+  and the resulting PO ordered exactly 400); Supplier is per-line and editable; one optional Expected
+  Delivery Date applies to every order the batch creates. A "Purchase Quantity Changed" audit entry is
+  written per line whose submitted quantity differs from the suggestion, visible in a new **Timeline**
+  section (`GET /api/v1/material-requests/[id]/audit-log`, scoped to the request's own `material_requests`/
+  `material_request_items` audit rows — deep-linking into a linked PO's own page is how a user follows the
+  trail further, not a merged cross-table feed).
+- **Damage Replacement**: same `createMaterialRequest()` function, no second code path — a Zod `.refine()`
+  requires `originalMaterialRequestId` and a per-line `damageReason` only when `requestType ===
+  "DAMAGE_REPLACEMENT"`. The original request is loaded once purely to confirm it exists/belongs to the same
+  company; nothing in this function ever writes to it, so "must not mutate the original" is structural, not
+  a promise. Verified live: `MR-2026-00006` (Damage Replacement, linked to `MR-2026-00005`) created correctly
+  with its own Damage Reason column, while `MR-2026-00005` itself remained completely unchanged.
+- **Regression-verified, not just asserted**: a direct `POST /api/v1/purchase-orders` call with no
+  `materialRequestItemId` at all still returns `201` unaffected; `issueMaterialRequestLine`'s
+  `OVER_ISSUE_NOT_ALLOWED` and `INSUFFICIENT_RAW_MATERIAL_STOCK` guards both still fire with their exact
+  messages.
+- **Browser-automation gotcha hit twice this session, not an app bug**: the sandboxed browser tool's
+  `form_input` on a plain `<select>` intermittently committed the *wrong* option (once landing on the last
+  option in the list) despite being called with the exact visible text of the intended option — confirmed by
+  cross-checking the saved value via a direct API `fetch()` immediately after. Root-caused as a tool
+  limitation, not a React state bug, by re-reading the accessibility tree immediately after each `form_input`
+  call before proceeding (the correct value was reliably visible in that immediate re-read); worth doing this
+  defensively for every future `<select>` interaction via this tool, and falling back to a direct
+  `fetch()`-based `PATCH`/`POST` to correct or re-verify state when a page action's visible result doesn't
+  match what was submitted.
+- Extended `src/modules/inventory/material-request.service.test.ts` to 26 tests: the rewritten
+  `computeMaterialRequestStatus`/new `computeRequiresPurchaseAction` cases (including the specific
+  active-vs-cancelled-PO and partial-coverage regressions the old heuristic would have missed),
+  `generatePurchaseOrdersForShortfall` (submitted-supplier grouping, stale/already-covered line skipping,
+  one-group-failure-doesn't-abort-another), the duplicate-check repository query, and
+  `createMaterialRequestFromShortfall` (server-side requirement recomputation, single-vs-multi-style `bomId`
+  population, the duplicate block and its override). `npx tsc --noEmit`, `npm run lint`, and `npm test`
+  (66/66) all clean throughout; full manual browser walkthrough covering every numbered step in the reviewed
+  plan's testing section, including the two goods-receipt rollup directions and the damage-replacement flow,
+  with zero server or console errors.
 
 ## Recommended Stack
 

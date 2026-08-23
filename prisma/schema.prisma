@@ -26,46 +26,63 @@ model Company {
   createdAt            DateTime @default(now()) @map("created_at")
   updatedAt            DateTime @updatedAt @map("updated_at")
 
-  baseCurrency       Currency            @relation(fields: [baseCurrencyCode], references: [code])
-  branches           Branch[]
-  users              User[]
-  roles              Role[]
-  customers          Customer[]
-  suppliers          Supplier[]
-  departments        Department[]
-  employees          Employee[]
-  products           Product[]
-  colors             Color[]
-  sizes              Size[]
-  warehouses         Warehouse[]
-  productionStages   ProductionStage[]
-  productionLines    ProductionLine[]
-  salesAgents        SalesAgent[]
-  brands             Brand[]
-  categories         Category[]
-  seasons            Season[]
-  productFittings    ProductFitting[]
-  productTypes       ProductType[]
-  designs            Design[]
-  designPatterns     DesignPattern[]
-  patterns           Pattern[]
-  fabricGsms         FabricGsm[]
-  fabricDyes         FabricDye[]
-  fabricWeaveTypes   FabricWeaveType[]
-  fabricWidths       FabricWidth[]
-  fabricCompositions FabricComposition[]
-  machines           Machine[]
-  designations       Designation[]
-  employeeCategories EmployeeCategory[]
-  shiftMasters       ShiftMaster[]
-  holidayMasters     HolidayMaster[]
-  costMasters        CostMaster[]
-  paymentTypes       PaymentType[]
-  bankAccounts       BankAccount[]
-  documentSequences  DocumentSequence[]
-  auditLogs          AuditLog[]
-  notifications      Notification[]
-  attachments        Attachment[]
+  baseCurrency                Currency                     @relation(fields: [baseCurrencyCode], references: [code])
+  branches                    Branch[]
+  users                       User[]
+  roles                       Role[]
+  customers                   Customer[]
+  suppliers                   Supplier[]
+  departments                 Department[]
+  employees                   Employee[]
+  products                    Product[]
+  colors                      Color[]
+  sizes                       Size[]
+  warehouses                  Warehouse[]
+  productionStages            ProductionStage[]
+  productionLines             ProductionLine[]
+  salesAgents                 SalesAgent[]
+  brands                      Brand[]
+  categories                  Category[]
+  seasons                     Season[]
+  productFittings             ProductFitting[]
+  productTypes                ProductType[]
+  designs                     Design[]
+  designPatterns              DesignPattern[]
+  patterns                    Pattern[]
+  fabricGsms                  FabricGsm[]
+  fabricDyes                  FabricDye[]
+  fabricWeaveTypes            FabricWeaveType[]
+  fabricWidths                FabricWidth[]
+  fabricCompositions          FabricComposition[]
+  machines                    Machine[]
+  designations                Designation[]
+  employeeCategories          EmployeeCategory[]
+  shiftMasters                ShiftMaster[]
+  holidayMasters              HolidayMaster[]
+  costMasters                 CostMaster[]
+  paymentTypes                PaymentType[]
+  bankAccounts                BankAccount[]
+  sampleRequests              SampleRequest[]
+  buyerEnquiries              BuyerEnquiry[]
+  salesOrders                 SalesOrder[]
+  boms                        Bom[]
+  purchaseOrders              PurchaseOrder[]
+  materialRequests            MaterialRequest[]
+  goodsReceipts               GoodsReceipt[]
+  fabricRolls                 FabricRoll[]
+  inventoryTransactions       InventoryTransaction[]
+  stockBalances               StockBalance[]
+  productionOrders            ProductionOrder[]
+  lots                        Lot[]
+  lotRelations                LotRelation[]
+  jobOrders                   JobOrder[]
+  productionStageTransactions ProductionStageTransaction[]
+  qcInspections               QcInspection[]
+  defectTypes                 DefectType[]
+  documentSequences           DocumentSequence[]
+  auditLogs                   AuditLog[]
+  notifications               Notification[]
+  attachments                 Attachment[]
 
   @@map("companies")
 }
@@ -87,14 +104,23 @@ model Branch {
   createdAt   DateTime   @default(now()) @map("created_at")
   updatedAt   DateTime   @updatedAt @map("updated_at")
 
-  company           Company            @relation(fields: [companyId], references: [id])
-  usersDefault      User[]             @relation("UserDefaultBranch")
-  userBranchRoles   UserBranchRole[]
-  employees         Employee[]
-  departments       Department[]
-  warehouses        Warehouse[]
-  productionLines   ProductionLine[]
-  documentSequences DocumentSequence[]
+  company               Company                @relation(fields: [companyId], references: [id])
+  usersDefault          User[]                 @relation("UserDefaultBranch")
+  userBranchRoles       UserBranchRole[]
+  employees             Employee[]
+  departments           Department[]
+  warehouses            Warehouse[]
+  productionLines       ProductionLine[]
+  sampleRequests        SampleRequest[]
+  buyerEnquiries        BuyerEnquiry[]
+  salesOrders           SalesOrder[]
+  purchaseOrders        PurchaseOrder[]
+  materialRequests      MaterialRequest[]
+  goodsReceipts         GoodsReceipt[]
+  inventoryTransactions InventoryTransaction[]
+  productionOrders      ProductionOrder[]
+  lots                  Lot[]
+  documentSequences     DocumentSequence[]
 
   @@unique([companyId, code])
   @@map("branches")
@@ -121,13 +147,31 @@ model User {
   createdAt       DateTime   @default(now()) @map("created_at")
   updatedAt       DateTime   @updatedAt @map("updated_at")
 
-  company       Company          @relation(fields: [companyId], references: [id])
-  defaultBranch Branch?          @relation("UserDefaultBranch", fields: [defaultBranchId], references: [id])
-  employee      Employee?        @relation(fields: [employeeId], references: [id])
-  branchRoles   UserBranchRole[]
-  auditLogs     AuditLog[]
-  notifications Notification[]
-  uploadedFiles Attachment[]
+  company                              Company                      @relation(fields: [companyId], references: [id])
+  defaultBranch                        Branch?                      @relation("UserDefaultBranch", fields: [defaultBranchId], references: [id])
+  employee                             Employee?                    @relation(fields: [employeeId], references: [id])
+  branchRoles                          UserBranchRole[]
+  auditLogs                            AuditLog[]
+  notifications                        Notification[]
+  uploadedFiles                        Attachment[]
+  sampleRequestsMade                   SampleRequest[]              @relation("SampleRequestedBy")
+  buyerEnquiriesMade                   BuyerEnquiry[]               @relation("BuyerEnquiryRequestedBy")
+  salesOrdersRequested                 SalesOrder[]                 @relation("SalesOrderRequestedBy")
+  purchaseOrdersRequested              PurchaseOrder[]              @relation("PurchaseOrderRequestedBy")
+  materialRequestsMade                 MaterialRequest[]            @relation("MaterialRequestRequestedBy")
+  goodsReceiptsReceived                GoodsReceipt[]               @relation("GoodsReceiptReceivedBy")
+  inventoryTransactionsPerformed       InventoryTransaction[]       @relation("InventoryTransactionPerformedBy")
+  sampleVersionsCreated                SampleVersion[]              @relation("SampleVersionCreatedBy")
+  sampleVersionsCostingLocked          SampleVersion[]              @relation("SampleVersionCostingLockedBy")
+  sampleApprovalsMade                  SampleApproval[]             @relation("SampleApprovalDecidedBy")
+  sampleCommentsMade                   SampleComment[]              @relation("SampleCommentAuthor")
+  productionOrdersRequested            ProductionOrder[]            @relation("ProductionOrderRequestedBy")
+  lotsCreated                          Lot[]                        @relation("LotCreatedBy")
+  lotRelationsPerformed                LotRelation[]                @relation("LotRelationPerformedBy")
+  jobOrderAssignmentsMade              JobOrderAssignment[]         @relation("JobOrderAssignmentAssignedBy")
+  jobOrderProgressEntriesRecorded      JobOrderProgressEntry[]      @relation("JobOrderProgressEntryRecordedBy")
+  productionStageTransactionsPerformed ProductionStageTransaction[] @relation("ProductionStageTransactionPerformedBy")
+  qcInspectionsMade                    QcInspection[]               @relation("QcInspectionInspector")
 
   @@map("users")
 }
@@ -220,9 +264,12 @@ model Customer {
   createdAt           DateTime  @default(now()) @map("created_at")
   updatedAt           DateTime  @updatedAt @map("updated_at")
 
-  company  Company   @relation(fields: [companyId], references: [id])
-  buyers   Buyer[]
-  products Product[]
+  company        Company         @relation(fields: [companyId], references: [id])
+  buyers         Buyer[]
+  products       Product[]
+  sampleRequests SampleRequest[]
+  buyerEnquiries BuyerEnquiry[]
+  salesOrders    SalesOrder[]
 
   @@unique([companyId, code])
   @@map("customers")
@@ -241,7 +288,10 @@ model Buyer {
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
-  customer Customer @relation(fields: [customerId], references: [id])
+  customer       Customer        @relation(fields: [customerId], references: [id])
+  sampleRequests SampleRequest[]
+  buyerEnquiries BuyerEnquiry[]
+  salesOrders    SalesOrder[]
 
   @@unique([customerId, code])
   @@map("buyers")
@@ -250,6 +300,12 @@ model Buyer {
 enum SupplierCategory {
   FABRIC
   TRIMS
+  // Split out of TRIMS on 2026-08-21 so the "Add Material" grouped picker in
+  // Sampling can distinguish them at a glance — Trims stays as the general
+  // bucket for anything that isn't specifically a zip or a button (elastic,
+  // labels, etc.).
+  ZIPS
+  BUTTONS
   ACCESSORIES
   PACKAGING
   SERVICES
@@ -276,8 +332,9 @@ model Supplier {
   createdAt           DateTime         @default(now()) @map("created_at")
   updatedAt           DateTime         @updatedAt @map("updated_at")
 
-  company            Company   @relation(fields: [companyId], references: [id])
+  company            Company         @relation(fields: [companyId], references: [id])
   defaultForProducts Product[]
+  purchaseOrders     PurchaseOrder[]
 
   @@unique([companyId, code])
   @@map("suppliers")
@@ -292,10 +349,12 @@ model Department {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  company         Company          @relation(fields: [companyId], references: [id])
-  branch          Branch?          @relation(fields: [branchId], references: [id])
-  employees       Employee[]
-  productionLines ProductionLine[]
+  company          Company           @relation(fields: [companyId], references: [id])
+  branch           Branch?           @relation(fields: [branchId], references: [id])
+  employees        Employee[]
+  productionLines  ProductionLine[]
+  materialRequests MaterialRequest[]
+  productionStages ProductionStage[]
 
   @@unique([companyId, code])
   @@map("departments")
@@ -325,6 +384,13 @@ model Employee {
   reports    Employee[]  @relation("EmployeeHierarchy")
   user       User?
 
+  // Production (Phase 5C) — a worker/operator is always tracked here, never
+  // via User, so shop-floor staff never need a login just to be assigned
+  // work or logged against (see PRODUCTION_MODULE_DESIGN.md §7).
+  productionStagesOwned   ProductionStage[]       @relation("ProductionStageDefaultOwner")
+  jobOrderAssignments     JobOrderAssignment[]    @relation("JobOrderAssignmentEmployee")
+  jobOrderProgressEntries JobOrderProgressEntry[] @relation("JobOrderProgressEntryEmployee")
+
   @@unique([companyId, employeeCode])
   @@map("employees")
 }
@@ -345,6 +411,11 @@ model Product {
   materialCategory  SupplierCategory? @map("material_category")
   styleCode         String            @map("style_code")
   styleName         String            @map("style_name")
+  // Some companies identify a style primarily by a design number rather than
+  // (or alongside) styleCode/styleName — free text, not unique, since design
+  // numbering conventions vary by company and this is a display/reference
+  // field, not the system's own identity key for the style.
+  designNumber      String?           @map("design_number")
   categoryId        String?           @map("category_id") @db.Uuid
   seasonId          String?           @map("season_id") @db.Uuid
   gender            String?
@@ -358,13 +429,25 @@ model Product {
   createdAt         DateTime          @default(now()) @map("created_at")
   updatedAt         DateTime          @updatedAt @map("updated_at")
 
-  company         Company          @relation(fields: [companyId], references: [id])
-  customer        Customer?        @relation(fields: [customerId], references: [id])
-  baseUom         UnitOfMeasure?   @relation(fields: [baseUomId], references: [id])
-  defaultSupplier Supplier?        @relation(fields: [defaultSupplierId], references: [id])
-  variants        ProductVariant[]
-  category        Category?        @relation(fields: [categoryId], references: [id])
-  season          Season?          @relation(fields: [seasonId], references: [id])
+  company               Company                @relation(fields: [companyId], references: [id])
+  customer              Customer?              @relation(fields: [customerId], references: [id])
+  baseUom               UnitOfMeasure?         @relation(fields: [baseUomId], references: [id])
+  defaultSupplier       Supplier?              @relation(fields: [defaultSupplierId], references: [id])
+  variants              ProductVariant[]
+  category              Category?              @relation(fields: [categoryId], references: [id])
+  season                Season?                @relation(fields: [seasonId], references: [id])
+  sampleRequests        SampleRequest[]        @relation("SampleRequestStyle")
+  sampleMaterialUse     SampleMaterial[]       @relation("SampleMaterialProduct")
+  buyerEnquiryLines     BuyerEnquiryLine[]
+  salesOrderItems       SalesOrderItem[]
+  purchaseOrderItems    PurchaseOrderItem[]
+  goodsReceiptItems     GoodsReceiptItem[]
+  inventoryTransactions InventoryTransaction[]
+  stockBalances         StockBalance[]
+  bom                   Bom?
+  bomItemUsages         BomItem[]              @relation("BomItemMaterial")
+  materialRequestItems  MaterialRequestItem[]  @relation("MaterialRequestItemMaterial")
+  productionOrders      ProductionOrder[]
 
   @@unique([companyId, styleCode])
   @@map("products")
@@ -380,8 +463,11 @@ model Color {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  company  Company          @relation(fields: [companyId], references: [id])
-  variants ProductVariant[]
+  company              Company               @relation(fields: [companyId], references: [id])
+  variants             ProductVariant[]
+  sampleMaterials      SampleMaterial[]
+  bomItems             BomItem[]
+  materialRequestItems MaterialRequestItem[]
 
   @@unique([companyId, code])
   @@map("colors")
@@ -411,9 +497,15 @@ model UnitOfMeasure {
   baseUnitId       String? @map("base_unit_id") @db.Uuid
   conversionFactor Decimal @default(1) @map("conversion_factor") @db.Decimal(18, 6)
 
-  baseUnit UnitOfMeasure?  @relation("UomConversion", fields: [baseUnitId], references: [id])
-  derived  UnitOfMeasure[] @relation("UomConversion")
-  products Product[]
+  baseUnit             UnitOfMeasure?        @relation("UomConversion", fields: [baseUnitId], references: [id])
+  derived              UnitOfMeasure[]       @relation("UomConversion")
+  products             Product[]
+  sampleMaterials      SampleMaterial[]
+  purchaseOrderItems   PurchaseOrderItem[]
+  goodsReceiptItems    GoodsReceiptItem[]
+  materialRequestItems MaterialRequestItem[]
+  bomItems             BomItem[]
+  lots                 Lot[]
 
   @@map("units_of_measure")
 }
@@ -432,6 +524,8 @@ model ProductVariant {
   product Product @relation(fields: [productId], references: [id])
   color   Color   @relation(fields: [colorId], references: [id])
   size    Size    @relation(fields: [sizeId], references: [id])
+
+  salesOrderBreakdown SalesOrderItemBreakdown[]
 
   @@unique([productId, colorId, sizeId])
   @@map("product_variants")
@@ -459,9 +553,13 @@ model Warehouse {
   createdAt         DateTime      @default(now()) @map("created_at")
   updatedAt         DateTime      @updatedAt @map("updated_at")
 
-  company   Company             @relation(fields: [companyId], references: [id])
-  branch    Branch              @relation(fields: [branchId], references: [id])
-  locations WarehouseLocation[]
+  company               Company                @relation(fields: [companyId], references: [id])
+  branch                Branch                 @relation(fields: [branchId], references: [id])
+  locations             WarehouseLocation[]
+  goodsReceiptItems     GoodsReceiptItem[]
+  inventoryTransactions InventoryTransaction[]
+  stockBalances         StockBalance[]
+  materialRequests      MaterialRequest[]
 
   @@unique([branchId, code])
   @@map("warehouses")
@@ -477,26 +575,52 @@ model WarehouseLocation {
   isActive    Boolean  @default(true) @map("is_active")
   createdAt   DateTime @default(now()) @map("created_at")
 
-  warehouse Warehouse @relation(fields: [warehouseId], references: [id])
+  // NOTE: no companyId column of its own — any company-scoped lookup on a
+  // warehouseLocationId FK must join through warehouse.companyId, never
+  // assume a direct filter (the exact bug class fixed 27 times project-wide).
+  warehouse             Warehouse              @relation(fields: [warehouseId], references: [id])
+  goodsReceiptItems     GoodsReceiptItem[]
+  fabricRolls           FabricRoll[]
+  inventoryTransactions InventoryTransaction[]
 
   @@unique([warehouseId, code])
   @@map("warehouse_locations")
 }
 
 model ProductionStage {
-  id            String   @id @default(uuid()) @db.Uuid
-  companyId     String   @map("company_id") @db.Uuid
-  parentStageId String?  @map("parent_stage_id") @db.Uuid
-  code          String
-  name          String
-  sequence      Int      @default(0)
-  isActive      Boolean  @default(true) @map("is_active")
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt @map("updated_at")
+  id                     String   @id @default(uuid()) @db.Uuid
+  companyId              String   @map("company_id") @db.Uuid
+  parentStageId          String?  @map("parent_stage_id") @db.Uuid
+  code                   String
+  name                   String
+  sequence               Int      @default(0)
+  // Landing here (forward) is what auto-fires the Finished-Goods receipt —
+  // avoids inferring "last stage" from MAX(sequence), which breaks the
+  // moment a company appends a stage after their current final one.
+  isFinal                Boolean  @default(false) @map("is_final")
+  // A stage can be marked "no rework back into this stage" (e.g. a
+  // post-Dispatch labeling step) — checked on the TARGET stage of a revert.
+  allowRework            Boolean  @default(true) @map("allow_rework")
+  // Advisory only — QC remains possible at any stage regardless of this
+  // flag; it just pre-selects a sensible default in the UI.
+  isQcRecommended        Boolean  @default(false) @map("is_qc_recommended")
+  departmentId           String?  @map("department_id") @db.Uuid
+  // UI default only ("who's usually responsible here") — never an
+  // enforcement gate.
+  defaultOwnerEmployeeId String?  @map("default_owner_employee_id") @db.Uuid
+  isActive               Boolean  @default(true) @map("is_active")
+  createdAt              DateTime @default(now()) @map("created_at")
+  updatedAt              DateTime @updatedAt @map("updated_at")
 
-  company     Company           @relation(fields: [companyId], references: [id])
-  parentStage ProductionStage?  @relation("StageHierarchy", fields: [parentStageId], references: [id])
-  subStages   ProductionStage[] @relation("StageHierarchy")
+  company              Company                      @relation(fields: [companyId], references: [id])
+  parentStage          ProductionStage?             @relation("StageHierarchy", fields: [parentStageId], references: [id])
+  subStages            ProductionStage[]            @relation("StageHierarchy")
+  department           Department?                  @relation(fields: [departmentId], references: [id])
+  defaultOwner         Employee?                    @relation("ProductionStageDefaultOwner", fields: [defaultOwnerEmployeeId], references: [id])
+  jobOrders            JobOrder[]
+  lotsAtStage          Lot[]                        @relation("LotCurrentStage")
+  transactionsFromHere ProductionStageTransaction[] @relation("StageTransactionFromStage")
+  transactionsToHere   ProductionStageTransaction[] @relation("StageTransactionToStage")
 
   @@unique([companyId, code])
   @@map("production_stages")
@@ -518,6 +642,7 @@ model ProductionLine {
   branch     Branch?     @relation(fields: [branchId], references: [id])
   department Department? @relation(fields: [departmentId], references: [id])
   machines   Machine[]
+  jobOrders  JobOrder[]
 
   @@unique([companyId, code])
   @@map("production_lines")
@@ -678,7 +803,8 @@ model FabricGsm {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  company Company @relation(fields: [companyId], references: [id])
+  company     Company      @relation(fields: [companyId], references: [id])
+  fabricRolls FabricRoll[]
 
   @@unique([companyId, code])
   @@map("fabric_gsms")
@@ -694,7 +820,10 @@ model FabricDye {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  company Company @relation(fields: [companyId], references: [id])
+  company              Company               @relation(fields: [companyId], references: [id])
+  fabricRolls          FabricRoll[]
+  sampleMaterials      SampleMaterial[]
+  materialRequestItems MaterialRequestItem[]
 
   @@unique([companyId, code])
   @@map("fabric_dyes")
@@ -709,7 +838,8 @@ model FabricWeaveType {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  company Company @relation(fields: [companyId], references: [id])
+  company     Company      @relation(fields: [companyId], references: [id])
+  fabricRolls FabricRoll[]
 
   @@unique([companyId, code])
   @@map("fabric_weave_types")
@@ -725,7 +855,8 @@ model FabricWidth {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  company Company @relation(fields: [companyId], references: [id])
+  company     Company      @relation(fields: [companyId], references: [id])
+  fabricRolls FabricRoll[]
 
   @@unique([companyId, code])
   @@map("fabric_widths")
@@ -740,7 +871,8 @@ model FabricComposition {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  company Company @relation(fields: [companyId], references: [id])
+  company     Company      @relation(fields: [companyId], references: [id])
+  fabricRolls FabricRoll[]
 
   @@unique([companyId, code])
   @@map("fabric_compositions")
@@ -913,14 +1045,1386 @@ model BankAccount {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Sampling (Phase 4)
+// sample_requests is an immutable header (customer/style identity never
+// changes); every revision is a new, append-only sample_versions row —
+// versions are never edited or overwritten, only superseded. Materials,
+// approvals, and comments hang off a specific version so history stays
+// intact across revisions. See CLAUDE.md's Sampling workflow section.
+// ─────────────────────────────────────────────────────────────
+
+enum SampleStatus {
+  DRAFT
+  REQUESTED
+  TECH_PACK_READY
+  IN_DEVELOPMENT
+  INTERNAL_QC
+  SUBMITTED_TO_CUSTOMER
+  CUSTOMER_FEEDBACK_RECEIVED
+  REVISION_REQUESTED
+  APPROVED
+  REJECTED
+  ON_HOLD
+  CANCELLED
+}
+
+enum SampleVersionStatus {
+  DRAFT
+  IN_DEVELOPMENT
+  INTERNAL_QC
+  SUBMITTED
+  APPROVED
+  REJECTED
+  SUPERSEDED
+}
+
+enum SampleDecision {
+  APPROVED
+  REJECTED
+  REVISION_REQUESTED
+}
+
+// Standard garment-export sample classifications. Hardcoded (not a configurable
+// master) — this taxonomy rarely changes across the industry, matching the same
+// "small closed enum, not a lookup table" choice already made for
+// BuyerEnquiryLineStatus/SalesOrderStatus. A PP (Pre-Production) sample's
+// approval is the natural future gate for Production-order eligibility once
+// Phase 5C exists — the concrete reason this exists now, not just labeling.
+enum SampleType {
+  FIT
+  PROTO
+  PP
+  TOP
+  SHIPMENT
+  PHOTOSHOOT
+  SMS
+  OTHER
+}
+
+model SampleRequest {
+  id                   String        @id @default(uuid()) @db.Uuid
+  companyId            String        @map("company_id") @db.Uuid
+  branchId             String?       @map("branch_id") @db.Uuid
+  requestNumber        String        @map("request_number")
+  customerId           String        @map("customer_id") @db.Uuid
+  buyerId              String?       @map("buyer_id") @db.Uuid
+  productId            String?       @map("product_id") @db.Uuid
+  // Nullable at the DB level (existing rows predate this field) but required by
+  // the create-form's Zod schema — the display name for the sample even before
+  // it has (or ever gets) a linked Product/Style. Prefilled onto the "Convert to
+  // Style" form when the sample later graduates into a real Style master.
+  styleName            String?       @map("style_name")
+  // Nullable at the DB level (existing rows predate this field) but required by
+  // the create-form's Zod schema, same precedent as styleName above. Immutable
+  // after creation (no edit endpoint) — identity-like, same footing as
+  // customer/style; silently relabeling a PP sample after the fact would
+  // undermine its future role as a Production-order eligibility gate.
+  sampleType           SampleType?
+  // Free-text, editable at any stage — a customer may name a color upfront
+  // (or only after seeing the physical sample) and revise it later; not an
+  // enum/FK since this is a casual descriptive value, not a Color master pick.
+  color                String?
+  requestedByUserId    String        @map("requested_by_user_id") @db.Uuid
+  requestDate          DateTime      @map("request_date") @db.Date
+  targetSubmissionDate DateTime?     @map("target_submission_date") @db.Date
+  status               SampleStatus  @default(DRAFT)
+  statusBeforeHold     SampleStatus? @map("status_before_hold")
+  currentVersionNumber Int           @default(0) @map("current_version_number")
+  createdAt            DateTime      @default(now()) @map("created_at")
+  updatedAt            DateTime      @updatedAt @map("updated_at")
+
+  company          Company           @relation(fields: [companyId], references: [id])
+  branch           Branch?           @relation(fields: [branchId], references: [id])
+  customer         Customer          @relation(fields: [customerId], references: [id])
+  buyer            Buyer?            @relation(fields: [buyerId], references: [id])
+  product          Product?          @relation("SampleRequestStyle", fields: [productId], references: [id])
+  requestedBy      User              @relation("SampleRequestedBy", fields: [requestedByUserId], references: [id])
+  versions         SampleVersion[]
+  comments         SampleComment[]
+  salesOrderItems  SalesOrderItem[]
+  // Virtual back-relation only — no physical column on this table. The
+  // single authoritative FK lives on BuyerEnquiryLine.sampleRequestId (see
+  // that model); this is purely how a Sample's detail page can show "this
+  // originated from Enquiry ENQ-..." without a second, redundant FK here.
+  buyerEnquiryLine BuyerEnquiryLine?
+
+  @@unique([companyId, requestNumber])
+  @@map("sample_requests")
+}
+
+model SampleVersion {
+  id                    String              @id @default(uuid()) @db.Uuid
+  sampleRequestId       String              @map("sample_request_id") @db.Uuid
+  versionNumber         Int                 @map("version_number")
+  status                SampleVersionStatus @default(DRAFT)
+  techPackNotes         String?             @map("tech_pack_notes")
+  // Manual while no priced SampleMaterial/SampleOtherCharge exists for this
+  // version (zero behavior change from before costing existed). Once the
+  // version has real costing data, every recalculation overwrites this to
+  // equal finalTotal and the UI stops accepting manual edits for it — see
+  // recalculateSampleVersionCosting() in sample.service.ts.
+  estimatedCostPerUnit  Decimal?            @map("estimated_cost_per_unit") @db.Decimal(18, 2)
+  submittedToCustomerAt DateTime?           @map("submitted_to_customer_at")
+  customerDecisionAt    DateTime?           @map("customer_decision_at")
+  createdByUserId       String              @map("created_by_user_id") @db.Uuid
+  createdAt             DateTime            @default(now()) @map("created_at")
+
+  // Costing rollup — hardcoded formula (materialCost + otherCharges ->
+  // subtotal -> +margin% -> +commission% -> +freight -> finalTotal), base
+  // currency only. costSubtotal/finalTotal are system-computed and stored
+  // (same precedent as SalesOrder.totalAmount), never accepted from a client.
+  marginPercent         Decimal?  @map("margin_percent") @db.Decimal(5, 2)
+  commissionPercent     Decimal?  @map("commission_percent") @db.Decimal(5, 2)
+  freightAmount         Decimal?  @map("freight_amount") @db.Decimal(18, 2)
+  costSubtotal          Decimal?  @map("cost_subtotal") @db.Decimal(18, 2)
+  finalTotal            Decimal?  @map("final_total") @db.Decimal(18, 2)
+  // Reversible lock (the first one in this app) — deliberately carries its
+  // own actor/timestamp columns rather than being a bare boolean, matching
+  // the existing submittedToCustomerAt/customerDecisionAt precedent on this
+  // same model, since a lock->unlock->lock cycle would otherwise lose the
+  // who/when story. Gated on the "approve" RBAC action, not "edit" — see
+  // lockSampleCosting()/unlockSampleCosting() in sample.service.ts.
+  isCostingLocked       Boolean   @default(false) @map("is_costing_locked")
+  costingLockedAt       DateTime? @map("costing_locked_at")
+  costingLockedByUserId String?   @map("costing_locked_by_user_id") @db.Uuid
+
+  sampleRequest   SampleRequest       @relation(fields: [sampleRequestId], references: [id])
+  createdBy       User                @relation("SampleVersionCreatedBy", fields: [createdByUserId], references: [id])
+  costingLockedBy User?               @relation("SampleVersionCostingLockedBy", fields: [costingLockedByUserId], references: [id])
+  materials       SampleMaterial[]
+  approvals       SampleApproval[]
+  comments        SampleComment[]
+  otherCharges    SampleOtherCharge[]
+
+  @@unique([sampleRequestId, versionNumber])
+  @@map("sample_versions")
+}
+
+model SampleMaterial {
+  id              String   @id @default(uuid()) @db.Uuid
+  sampleVersionId String   @map("sample_version_id") @db.Uuid
+  materialId      String   @map("material_id") @db.Uuid
+  plannedQuantity Decimal  @map("planned_quantity") @db.Decimal(18, 4)
+  uomId           String?  @map("uom_id") @db.Uuid
+  // Which Colors-master color this material line is for — a raw material
+  // like fabric or thread is frequently needed in more than one color on the
+  // same sample; distinct colors are distinct lines (see the material merge
+  // key in sample.service.ts), not different quantities of one line.
+  colorId         String?  @map("color_id") @db.Uuid
+  // Optional precise shade/Pantone reference, distinct from the generic
+  // Color-master name above — a colorId of "Navy Blue" can span many
+  // physical shades; dyeId pins down the exact one when it matters. Added
+  // to MATERIAL_MERGE_KEY_FIELDS in sample.service.ts, same as colorId was.
+  dyeId           String?  @map("dye_id") @db.Uuid
+  notes           String?
+  // Recorded after the fact, once known — how much of this planned material
+  // was actually damaged/wasted during sampling, and why. Both nullable and
+  // independently editable from the line's planned quantity (see the scoped
+  // damage-recording endpoint), since damage is discovered later, not at
+  // material-planning time.
+  damagedQuantity Decimal? @map("damaged_quantity") @db.Decimal(18, 4)
+  damageReason    String?  @map("damage_reason")
+  // Costing — both nullable, set/cleared only via the scoped
+  // PATCH /api/v1/sampling/materials/:materialId/costing endpoint, never
+  // through the create/merge path (addSampleMaterial). Deliberately NOT part
+  // of MATERIAL_MERGE_KEY_FIELDS in sample.service.ts — rate is a cost
+  // attribute, not an identity attribute that should split/merge lines. A row
+  // with rate = null contributes 0 to costing, never treated as "priced at
+  // zero" (see recalculateSampleVersionCosting()).
+  rate            Decimal? @db.Decimal(18, 4)
+  gstPercentage   Decimal? @map("gst_percentage") @db.Decimal(5, 2)
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  sampleVersion SampleVersion  @relation(fields: [sampleVersionId], references: [id])
+  material      Product        @relation("SampleMaterialProduct", fields: [materialId], references: [id])
+  uom           UnitOfMeasure? @relation(fields: [uomId], references: [id])
+  color         Color?         @relation(fields: [colorId], references: [id])
+  dye           FabricDye?     @relation(fields: [dyeId], references: [id])
+
+  @@map("sample_materials")
+}
+
+enum SampleOtherChargeCostHead {
+  PROCESS
+  FABRICATION
+  OTHER
+}
+
+// Non-material costing lines (labor/process/overhead) that don't fit
+// SampleMaterial's shape (no materialId, no consumption quantity) — a flat
+// lump-sum amount per charge, deliberately simpler than SampleMaterial.
+// Plain CRUD, no merge-key logic: a duplicate charge is just user error the
+// merchandiser edits/deletes directly, unlike a raw-material line which
+// legitimately needs to distinguish/merge by attribute.
+model SampleOtherCharge {
+  id              String                    @id @default(uuid()) @db.Uuid
+  sampleVersionId String                    @map("sample_version_id") @db.Uuid
+  costHead        SampleOtherChargeCostHead @map("cost_head")
+  description     String
+  amount          Decimal                   @db.Decimal(18, 2)
+  notes           String?
+  createdAt       DateTime                  @default(now()) @map("created_at")
+  updatedAt       DateTime                  @updatedAt @map("updated_at")
+
+  sampleVersion SampleVersion @relation(fields: [sampleVersionId], references: [id])
+
+  @@map("sample_other_charges")
+}
+
+model SampleApproval {
+  id                  String         @id @default(uuid()) @db.Uuid
+  sampleVersionId     String         @map("sample_version_id") @db.Uuid
+  decision            SampleDecision
+  decidedByUserId     String         @map("decided_by_user_id") @db.Uuid
+  customerContactName String?        @map("customer_contact_name")
+  decisionNotes       String?        @map("decision_notes")
+  decidedAt           DateTime       @default(now()) @map("decided_at")
+
+  sampleVersion SampleVersion @relation(fields: [sampleVersionId], references: [id])
+  decidedBy     User          @relation("SampleApprovalDecidedBy", fields: [decidedByUserId], references: [id])
+
+  @@map("sample_approvals")
+}
+
+model SampleComment {
+  id              String   @id @default(uuid()) @db.Uuid
+  sampleRequestId String   @map("sample_request_id") @db.Uuid
+  sampleVersionId String?  @map("sample_version_id") @db.Uuid
+  authorUserId    String   @map("author_user_id") @db.Uuid
+  body            String
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  sampleRequest SampleRequest  @relation(fields: [sampleRequestId], references: [id])
+  sampleVersion SampleVersion? @relation(fields: [sampleVersionId], references: [id])
+  author        User           @relation("SampleCommentAuthor", fields: [authorUserId], references: [id])
+
+  @@map("sample_comments")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Buyer Enquiry (Phase 4 extension, 2026-08-21) — an OPTIONAL intake layer
+// in front of Sampling, not a parent of it. The only link to Sampling is one
+// nullable, unique FK on BuyerEnquiryLine pointing forward into
+// SampleRequest (mirrors SalesOrderItem.sampleRequestId's own shape) — never
+// a required relation, never a shared state machine. Direct SampleRequest
+// creation and direct SalesOrder creation are both completely unaffected; a
+// merchandiser who never opens this module never has to know it exists.
+// ─────────────────────────────────────────────────────────────
+
+enum EnquirySource {
+  EMAIL
+  PHONE
+  TRADE_SHOW
+  REFERRAL
+  WEBSITE
+  OTHER
+}
+
+// Always derived from line statuses (recomputeBuyerEnquiryStatus() in
+// buyer-enquiry.service.ts) — never set directly by a generic status PATCH,
+// the same discipline that closed the GoodsReceipt-status-label and Sample
+// Hold/Resume bugs elsewhere in this project. CANCELLED is the one manual
+// exception (cancelBuyerEnquiry()), and once set nothing recomputes over it.
+enum BuyerEnquiryStatus {
+  OPEN
+  PARTIALLY_CONVERTED
+  CLOSED
+  CANCELLED
+}
+
+enum BuyerEnquiryLineStatus {
+  PENDING_REVIEW
+  APPROVED_FOR_SAMPLING
+  ON_HOLD
+  REJECTED
+  // Reachable ONLY through convertEnquiryLineToSampleRequest() — deliberately
+  // excluded from the generic line-status-change endpoint's Zod schema, the
+  // same discipline already used for SampleStatus.TECH_PACK_READY /
+  // REVISION_REQUESTED so a line can't be forged into "converted" without a
+  // real SampleRequest actually being created.
+  CONVERTED
+}
+
+model BuyerEnquiry {
+  id                    String             @id @default(uuid()) @db.Uuid
+  companyId             String             @map("company_id") @db.Uuid
+  branchId              String?            @map("branch_id") @db.Uuid
+  enquiryNumber         String             @map("enquiry_number")
+  // Both nullable — an enquiry may be logged against an existing Customer
+  // (and optionally one of its Buyers), OR against a not-yet-onboarded
+  // prospect using the fields below. Never both null and never auto-created:
+  // conversion to a Sample Request hard-requires a real customerId.
+  customerId            String?            @map("customer_id") @db.Uuid
+  buyerId               String?            @map("buyer_id") @db.Uuid
+  // Quick-capture lead fields, relevant only while customerId is null. This
+  // is deliberately NOT a Prospect/Lead master table — no lifecycle, no
+  // promotion workflow, no reminders. An enquiry that never converts simply
+  // sits here indefinitely; formalizing a real relationship means someone
+  // creates a real Customer separately in Masters, same as today.
+  prospectName          String?            @map("prospect_name")
+  prospectContactPerson String?            @map("prospect_contact_person")
+  prospectEmail         String?            @map("prospect_email")
+  prospectPhone         String?            @map("prospect_phone")
+  prospectCountry       String?            @map("prospect_country")
+  enquiryDate           DateTime           @map("enquiry_date") @db.Date
+  source                EnquirySource      @default(OTHER)
+  status                BuyerEnquiryStatus @default(OPEN)
+  remarks               String?
+  requestedByUserId     String             @map("requested_by_user_id") @db.Uuid
+  createdAt             DateTime           @default(now()) @map("created_at")
+  updatedAt             DateTime           @updatedAt @map("updated_at")
+
+  company     Company            @relation(fields: [companyId], references: [id])
+  branch      Branch?            @relation(fields: [branchId], references: [id])
+  customer    Customer?          @relation(fields: [customerId], references: [id])
+  buyer       Buyer?             @relation(fields: [buyerId], references: [id])
+  requestedBy User               @relation("BuyerEnquiryRequestedBy", fields: [requestedByUserId], references: [id])
+  lines       BuyerEnquiryLine[]
+
+  @@unique([companyId, enquiryNumber])
+  @@map("buyer_enquiries")
+}
+
+model BuyerEnquiryLine {
+  id                 String                 @id @default(uuid()) @db.Uuid
+  buyerEnquiryId     String                 @map("buyer_enquiry_id") @db.Uuid
+  // An existing Style, if picked from the catalog — nullable, the same
+  // "may not exist as a Style yet" precedent as SampleRequest.productId.
+  productId          String?                @map("product_id") @db.Uuid
+  styleNameFreeText  String?                @map("style_name_free_text")
+  description        String?
+  colorRemarks       String?                @map("color_remarks")
+  targetQuantity     Decimal?               @map("target_quantity") @db.Decimal(18, 2)
+  targetUnitPrice    Decimal?               @map("target_unit_price") @db.Decimal(18, 2)
+  targetDeliveryDate DateTime?              @map("target_delivery_date") @db.Date
+  remarks            String?
+  lineStatus         BuyerEnquiryLineStatus @default(PENDING_REVIEW) @map("line_status")
+  rejectionReason    String?                @map("rejection_reason")
+  // The single authoritative FK for the whole Enquiry<->Sample relationship —
+  // set exactly once, only by convertEnquiryLineToSampleRequest(), never
+  // cleared. @unique enforces "a SampleRequest can originate from at most one
+  // line" as a real DB constraint (via the back-relation on SampleRequest),
+  // not just an application-layer promise — a concurrent double-convert
+  // attempt fails on this constraint even if the service-layer check races.
+  sampleRequestId    String?                @unique @map("sample_request_id") @db.Uuid
+  createdAt          DateTime               @default(now()) @map("created_at")
+  updatedAt          DateTime               @updatedAt @map("updated_at")
+
+  buyerEnquiry  BuyerEnquiry   @relation(fields: [buyerEnquiryId], references: [id])
+  product       Product?       @relation(fields: [productId], references: [id])
+  sampleRequest SampleRequest? @relation(fields: [sampleRequestId], references: [id])
+
+  @@map("buyer_enquiry_lines")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Sales Orders (Phase 5A)
+// ─────────────────────────────────────────────────────────────
+
+// Full lifecycle defined now (matches the roadmap's state machine), but only
+// DRAFT/CONFIRMED/ON_HOLD/CANCELLED are reachable through this phase's own
+// code — PARTIALLY_DISPATCHED/DISPATCHED/INVOICED/CLOSED are reserved for
+// Phase 7/8 to wire up later, same discipline as SampleStatus.DRAFT existing
+// unused until something actually transitions into it.
+enum SalesOrderStatus {
+  DRAFT
+  CONFIRMED
+  IN_PRODUCTION
+  PARTIALLY_DISPATCHED
+  DISPATCHED
+  INVOICED
+  CLOSED
+  ON_HOLD
+  CANCELLED
+}
+
+model SalesOrder {
+  id                String            @id @default(uuid()) @db.Uuid
+  companyId         String            @map("company_id") @db.Uuid
+  branchId          String?           @map("branch_id") @db.Uuid
+  orderNumber       String            @map("order_number")
+  customerId        String            @map("customer_id") @db.Uuid
+  buyerId           String?           @map("buyer_id") @db.Uuid
+  orderDate         DateTime          @map("order_date") @db.Date
+  requiredShipDate  DateTime?         @map("required_ship_date") @db.Date
+  status            SalesOrderStatus  @default(DRAFT)
+  statusBeforeHold  SalesOrderStatus? @map("status_before_hold")
+  // Frozen at creation (no live FX picker — multi-currency UI is deferred
+  // project-wide); base amounts are stored, not computed live, so historical
+  // totals never drift if a rate source changes later.
+  currencyCode      String            @map("currency_code") @db.Char(3)
+  exchangeRate      Decimal           @default(1) @map("exchange_rate") @db.Decimal(18, 6)
+  baseCurrencyCode  String            @map("base_currency_code") @db.Char(3)
+  totalAmount       Decimal           @default(0) @map("total_amount") @db.Decimal(18, 2)
+  baseTotalAmount   Decimal           @default(0) @map("base_total_amount") @db.Decimal(18, 2)
+  requestedByUserId String            @map("requested_by_user_id") @db.Uuid
+  createdAt         DateTime          @default(now()) @map("created_at")
+  updatedAt         DateTime          @updatedAt @map("updated_at")
+
+  company          Company           @relation(fields: [companyId], references: [id])
+  branch           Branch?           @relation(fields: [branchId], references: [id])
+  customer         Customer          @relation(fields: [customerId], references: [id])
+  buyer            Buyer?            @relation(fields: [buyerId], references: [id])
+  requestedBy      User              @relation("SalesOrderRequestedBy", fields: [requestedByUserId], references: [id])
+  items            SalesOrderItem[]
+  materialRequests MaterialRequest[]
+
+  @@unique([companyId, orderNumber])
+  @@map("sales_orders")
+}
+
+model SalesOrderItem {
+  id              String   @id @default(uuid()) @db.Uuid
+  salesOrderId    String   @map("sales_order_id") @db.Uuid
+  productId       String   @map("product_id") @db.Uuid
+  // Nullable, per-item (not per-header) — one order can carry several style
+  // lines, each optionally tracing back to a different approved sample; a
+  // repeat/direct order line needs no sample link at all.
+  sampleRequestId String?  @map("sample_request_id") @db.Uuid
+  unitPrice       Decimal  @map("unit_price") @db.Decimal(18, 2)
+  notes           String?
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  salesOrder       SalesOrder                @relation(fields: [salesOrderId], references: [id])
+  product          Product                   @relation(fields: [productId], references: [id])
+  sampleRequest    SampleRequest?            @relation(fields: [sampleRequestId], references: [id])
+  breakdown        SalesOrderItemBreakdown[]
+  productionOrders ProductionOrder[]
+
+  @@map("sales_order_items")
+}
+
+model SalesOrderItemBreakdown {
+  id               String   @id @default(uuid()) @db.Uuid
+  salesOrderItemId String   @map("sales_order_item_id") @db.Uuid
+  // FK's to the existing style×color×size join rather than duplicating raw
+  // colorId+sizeId — ProductVariant exists specifically so every stock/
+  // production/dispatch line has one concrete SKU FK.
+  productVariantId String   @map("product_variant_id") @db.Uuid
+  orderedQuantity  Int      @map("ordered_quantity")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  salesOrderItem SalesOrderItem @relation(fields: [salesOrderItemId], references: [id])
+  productVariant ProductVariant @relation(fields: [productVariantId], references: [id])
+
+  @@unique([salesOrderItemId, productVariantId])
+  @@map("sales_order_item_breakdown")
+}
+
+// ─────────────────────────────────────────────────────────────
+// BOM & MRP (Phase 5B)
+// ─────────────────────────────────────────────────────────────
+
+// Deliberately NOT a numbered document (no DocumentType/document_number) — a
+// mutable spec attached 1:1 to a Style, corrected as costing/sourcing
+// evolves, not a repeatable transactional document. No versioning (unlike
+// SampleVersion) and no approve/reject action, matching the already-seeded
+// bom_mrp RBAC module (no approve/reject action for any role).
+model Bom {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  productId String   @unique @map("product_id") @db.Uuid
+  notes     String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company          Company           @relation(fields: [companyId], references: [id])
+  product          Product           @relation(fields: [productId], references: [id])
+  items            BomItem[]
+  materialRequests MaterialRequest[]
+  productionOrders ProductionOrder[]
+
+  @@map("boms")
+}
+
+model BomItem {
+  id                String   @id @default(uuid()) @db.Uuid
+  bomId             String   @map("bom_id") @db.Uuid
+  materialId        String   @map("material_id") @db.Uuid
+  // Optional per-color consumption line (e.g. thread color matching the
+  // garment's own color) — null means "applies to every color" on this
+  // style. Duplicate/overlap combinations (same material twice, or a null
+  // line coexisting with a specific-color line for the same material) are
+  // rejected at the service layer, not by a DB constraint (Postgres treats
+  // NULL as distinct in a unique index, which wouldn't catch the overlap).
+  colorId           String?  @map("color_id") @db.Uuid
+  // Consumption per ONE finished garment piece, denominated in `uomId`.
+  quantityPerUnit   Decimal  @map("quantity_per_unit") @db.Decimal(18, 4)
+  // Effective qty = quantityPerUnit * (1 + wastagePercentage/100).
+  wastagePercentage Decimal  @default(0) @map("wastage_percentage") @db.Decimal(5, 2)
+  uomId             String   @map("uom_id") @db.Uuid
+  notes             String?
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  bom      Bom           @relation(fields: [bomId], references: [id])
+  material Product       @relation("BomItemMaterial", fields: [materialId], references: [id])
+  color    Color?        @relation(fields: [colorId], references: [id])
+  uom      UnitOfMeasure @relation(fields: [uomId], references: [id])
+
+  @@index([bomId])
+  @@map("bom_items")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Purchasing (pulled forward from Phase 6 — Purchase Order + Goods Receipt,
+// with fabric roll-level tracking on receipt)
+// ─────────────────────────────────────────────────────────────
+
+enum PurchaseOrderStatus {
+  DRAFT
+  APPROVED
+  SENT_TO_SUPPLIER
+  // Only reachable as an automatic side effect of createGoodsReceipt() —
+  // never via the generic status-change endpoint, same discipline as
+  // SalesOrderStatus.IN_PRODUCTION being reserved for a real business action.
+  PARTIALLY_RECEIVED
+  FULLY_RECEIVED
+  CLOSED
+  ON_HOLD
+  CANCELLED
+}
+
+model PurchaseOrder {
+  id                   String               @id @default(uuid()) @db.Uuid
+  companyId            String               @map("company_id") @db.Uuid
+  branchId             String?              @map("branch_id") @db.Uuid
+  orderNumber          String               @map("order_number")
+  supplierId           String               @map("supplier_id") @db.Uuid
+  orderDate            DateTime             @map("order_date") @db.Date
+  expectedDeliveryDate DateTime?            @map("expected_delivery_date") @db.Date
+  status               PurchaseOrderStatus  @default(DRAFT)
+  statusBeforeHold     PurchaseOrderStatus? @map("status_before_hold")
+  // Always company.baseCurrencyCode, never supplier.defaultCurrencyCode —
+  // applying the Sales Order currency-defaulting lesson (CLAUDE.md, 2026-08-20)
+  // proactively instead of repeating the same mistake here.
+  currencyCode         String               @map("currency_code") @db.Char(3)
+  exchangeRate         Decimal              @default(1) @map("exchange_rate") @db.Decimal(18, 6)
+  baseCurrencyCode     String               @map("base_currency_code") @db.Char(3)
+  totalAmount          Decimal              @default(0) @map("total_amount") @db.Decimal(18, 2)
+  baseTotalAmount      Decimal              @default(0) @map("base_total_amount") @db.Decimal(18, 2)
+  requestedByUserId    String               @map("requested_by_user_id") @db.Uuid
+  createdAt            DateTime             @default(now()) @map("created_at")
+  updatedAt            DateTime             @updatedAt @map("updated_at")
+
+  company     Company             @relation(fields: [companyId], references: [id])
+  branch      Branch?             @relation(fields: [branchId], references: [id])
+  supplier    Supplier            @relation(fields: [supplierId], references: [id])
+  requestedBy User                @relation("PurchaseOrderRequestedBy", fields: [requestedByUserId], references: [id])
+  items       PurchaseOrderItem[]
+  receipts    GoodsReceipt[]
+
+  @@unique([companyId, orderNumber])
+  @@index([companyId, supplierId])
+  @@index([companyId, status])
+  @@map("purchase_orders")
+}
+
+model PurchaseOrderItem {
+  id                    String   @id @default(uuid()) @db.Uuid
+  purchaseOrderId       String   @map("purchase_order_id") @db.Uuid
+  // RAW_MATERIAL only — enforced at the service layer (query filter), not a
+  // DB constraint, matching how the Products STYLE/RAW_MATERIAL split already
+  // works everywhere else in this schema.
+  productId             String   @map("product_id") @db.Uuid
+  uomId                 String   @map("uom_id") @db.Uuid
+  orderedQuantity       Decimal  @map("ordered_quantity") @db.Decimal(18, 4)
+  unitPrice             Decimal  @map("unit_price") @db.Decimal(18, 2)
+  // Cumulative accumulator, incremented atomically per receipt via a guarded
+  // updateMany (see purchase-order.service.ts) — never a plain read-then-write.
+  receivedQuantity      Decimal  @default(0) @map("received_quantity") @db.Decimal(18, 4)
+  notes                 String?
+  createdAt             DateTime @default(now()) @map("created_at")
+  // The authoritative FK for the optional Material Request -> Purchase Order
+  // link (mirrors BuyerEnquiryLine.sampleRequestId's shape) — set only by
+  // generatePurchaseOrdersForShortfall(), never by direct PO creation.
+  // Deliberately NOT @unique — a single MaterialRequestItem can legitimately
+  // spawn more than one PurchaseOrderItem over its lifetime (a first PO for
+  // part of a shortfall, a later one for the rest, since PO quantity is
+  // user-edited and never forced to equal the full remaining shortfall).
+  materialRequestItemId String?  @map("material_request_item_id") @db.Uuid
+
+  purchaseOrder       PurchaseOrder        @relation(fields: [purchaseOrderId], references: [id])
+  product             Product              @relation(fields: [productId], references: [id])
+  uom                 UnitOfMeasure        @relation(fields: [uomId], references: [id])
+  goodsReceiptItems   GoodsReceiptItem[]
+  materialRequestItem MaterialRequestItem? @relation(fields: [materialRequestItemId], references: [id])
+
+  @@index([purchaseOrderId])
+  @@index([materialRequestItemId])
+  @@map("purchase_order_items")
+}
+
+// Internal-only: "which department/production needs which material" — owned
+// by Inventory, deliberately carries no supplier/pricing/commercial fields at
+// all (that's what makes it different from a Purchase Requisition/Purchase
+// Order). Lines are simply fulfilled from stock (Material Issue) or, when
+// stock falls short, optionally escalated to Purchasing as a real Purchase
+// Order — escalation is never automatic and never gates on any approval step.
+enum MaterialRequestStatus {
+  OPEN
+  // Reachable only as a derived side effect of issuing/escalating lines —
+  // never hand-set via a generic status-change endpoint, same discipline as
+  // BuyerEnquiry.status/PurchaseOrderStatus.PARTIALLY_RECEIVED.
+  PARTIALLY_FULFILLED
+  FULFILLED
+  // Manual, only reachable from OPEN/PARTIALLY_FULFILLED.
+  CLOSED
+  ON_HOLD
+  CANCELLED
+}
+
+enum MaterialRequestType {
+  // The normal BOM-driven requirement, whether created manually or via
+  // "Generate Material Request" from BOM/MRP shortfall.
+  PRODUCTION_REQUIREMENT
+  // An additional requirement caused by real production-floor damage —
+  // never modifies the original request/BOM, always a new document that
+  // references it via originalMaterialRequestId.
+  DAMAGE_REPLACEMENT
+}
+
+model MaterialRequest {
+  id                        String                 @id @default(uuid()) @db.Uuid
+  companyId                 String                 @map("company_id") @db.Uuid
+  branchId                  String?                @map("branch_id") @db.Uuid
+  requestNumber             String                 @map("request_number")
+  requestType               MaterialRequestType    @default(PRODUCTION_REQUIREMENT) @map("request_type")
+  departmentId              String?                @map("department_id") @db.Uuid
+  // Where the material should be issued from — required, unlike Purchase
+  // Order's optional "Receive At", since Material Issue must decrement a
+  // specific warehouse's real StockBalance.
+  warehouseId               String                 @map("warehouse_id") @db.Uuid
+  requiredDate              DateTime?              @map("required_date") @db.Date
+  // Free-text "why" (e.g. "cutting shortage for Lot 42") — deliberately not a
+  // structured reason-code table, matches the project's existing preference
+  // for a single free-text reference field over several rigid ones.
+  purpose                   String?
+  // Nullable traceability only — a manually-raised request simply leaves
+  // this null.
+  salesOrderId              String?                @map("sales_order_id") @db.Uuid
+  // Nullable traceability to the Production Order this requirement was
+  // generated for (Phase 5C) — a request raised directly from BOM/MRP
+  // against a Sales Order, with no Production Order yet, simply leaves this
+  // null; both fields can be set together once a Production Order exists.
+  productionOrderId         String?                @map("production_order_id") @db.Uuid
+  // Populated only when every line traces to exactly one style's BOM (a
+  // multi-style-aggregated request leaves this null — salesOrderId remains
+  // the primary traceability field; see material-request.service.ts).
+  bomId                     String?                @map("bom_id") @db.Uuid
+  // Set only when requestType = DAMAGE_REPLACEMENT — the original
+  // requirement this damage relates to. Self-referencing rather than a
+  // ProductionOrder FK, since no Production module exists yet (same
+  // reasoning already applied above to salesOrderId).
+  originalMaterialRequestId String?                @map("original_material_request_id") @db.Uuid
+  remarks                   String?
+  // Derived from lines except the manual ON_HOLD/CANCELLED/CLOSED
+  // transitions — never hand-set to PARTIALLY_FULFILLED/FULFILLED.
+  status                    MaterialRequestStatus  @default(OPEN)
+  statusBeforeHold          MaterialRequestStatus? @map("status_before_hold")
+  requestedByUserId         String                 @map("requested_by_user_id") @db.Uuid
+  createdAt                 DateTime               @default(now()) @map("created_at")
+  updatedAt                 DateTime               @updatedAt @map("updated_at")
+
+  company                 Company               @relation(fields: [companyId], references: [id])
+  branch                  Branch?               @relation(fields: [branchId], references: [id])
+  department              Department?           @relation(fields: [departmentId], references: [id])
+  warehouse               Warehouse             @relation(fields: [warehouseId], references: [id])
+  salesOrder              SalesOrder?           @relation(fields: [salesOrderId], references: [id])
+  productionOrder         ProductionOrder?      @relation(fields: [productionOrderId], references: [id])
+  bom                     Bom?                  @relation(fields: [bomId], references: [id])
+  originalMaterialRequest MaterialRequest?      @relation("MaterialRequestReplacementOrigin", fields: [originalMaterialRequestId], references: [id])
+  replacementRequests     MaterialRequest[]     @relation("MaterialRequestReplacementOrigin")
+  requestedBy             User                  @relation("MaterialRequestRequestedBy", fields: [requestedByUserId], references: [id])
+  lines                   MaterialRequestItem[]
+
+  @@unique([companyId, requestNumber])
+  @@index([companyId, status])
+  @@index([companyId, requestType])
+  @@index([productionOrderId])
+  @@map("material_requests")
+}
+
+model MaterialRequestItem {
+  id                       String   @id @default(uuid()) @db.Uuid
+  materialRequestId        String   @map("material_request_id") @db.Uuid
+  materialId               String   @map("material_id") @db.Uuid
+  // Reuse the existing Color/FabricDye masters for shade precision — the
+  // same shape already proven on SampleMaterial/PurchaseRequestItem before it.
+  colorId                  String?  @map("color_id") @db.Uuid
+  dyeId                    String?  @map("dye_id") @db.Uuid
+  uomId                    String   @map("uom_id") @db.Uuid
+  requestedQuantity        Decimal  @map("requested_quantity") @db.Decimal(18, 4)
+  // Cumulative accumulator, incremented atomically per issue via a guarded
+  // updateMany (see material-request.service.ts) — never a plain
+  // read-then-write. No `rate`/pricing field at all — this line never becomes
+  // a commercial document; deliberately no `lineStatus` column either, since
+  // "pending/partially issued/fully issued/escalated" is fully derivable from
+  // issuedQuantity + whether a purchaseOrderItem exists, and storing it too
+  // would just be a second source of truth to drift out of sync.
+  issuedQuantity           Decimal  @default(0) @map("issued_quantity") @db.Decimal(18, 4)
+  // Guarded accumulator (same idiom as issuedQuantity) — incremented inside
+  // createGoodsReceipt()'s existing transaction when a linked
+  // PurchaseOrderItem is received, decremented inside
+  // reverseGoodsReceiptLine()'s. Informational only — deliberately does NOT
+  // reduce the line's remainingQuantity (a computed value); receiving goods
+  // against a linked PO adds to general warehouse stock, it does not by
+  // itself fulfill this request line — that still requires an explicit
+  // Material Issue action.
+  purchaseReceivedQuantity Decimal  @default(0) @map("purchase_received_quantity") @db.Decimal(18, 4)
+  // Only meaningful when the owning request's requestType is
+  // DAMAGE_REPLACEMENT — free text, same "no rigid reason-code table"
+  // convention as MaterialRequest.purpose.
+  damageReason             String?  @map("damage_reason")
+  remarks                  String?
+  createdAt                DateTime @default(now()) @map("created_at")
+  updatedAt                DateTime @updatedAt @map("updated_at")
+
+  materialRequest    MaterialRequest     @relation(fields: [materialRequestId], references: [id])
+  material           Product             @relation("MaterialRequestItemMaterial", fields: [materialId], references: [id])
+  color              Color?              @relation(fields: [colorId], references: [id])
+  dye                FabricDye?          @relation(fields: [dyeId], references: [id])
+  uom                UnitOfMeasure       @relation(fields: [uomId], references: [id])
+  // Virtual back-relation only — the authoritative FK lives on
+  // PurchaseOrderItem.materialRequestItemId (see that model). A line can
+  // legitimately have more than one linked PurchaseOrderItem over its
+  // lifetime (repeat/partial escalation) — see that model's own comment.
+  purchaseOrderItems PurchaseOrderItem[]
+
+  @@index([materialRequestId])
+  @@map("material_request_items")
+}
+
+// CANCELLED means "every line fully reversed" — derived/cached, recomputed in
+// the same transaction as every reversal, never hand-set by a caller.
+enum GoodsReceiptStatus {
+  COMPLETED
+  PARTIALLY_REVERSED
+  CANCELLED
+}
+
+model GoodsReceipt {
+  id               String             @id @default(uuid()) @db.Uuid
+  companyId        String             @map("company_id") @db.Uuid
+  branchId         String?            @map("branch_id") @db.Uuid
+  receiptNumber    String             @map("receipt_number")
+  purchaseOrderId  String             @map("purchase_order_id") @db.Uuid
+  receivedDate     DateTime           @map("received_date") @db.Date
+  receivedByUserId String             @map("received_by_user_id") @db.Uuid
+  status           GoodsReceiptStatus @default(COMPLETED)
+  createdAt        DateTime           @default(now()) @map("created_at")
+  updatedAt        DateTime           @updatedAt @map("updated_at")
+
+  company       Company            @relation(fields: [companyId], references: [id])
+  branch        Branch?            @relation(fields: [branchId], references: [id])
+  purchaseOrder PurchaseOrder      @relation(fields: [purchaseOrderId], references: [id])
+  receivedBy    User               @relation("GoodsReceiptReceivedBy", fields: [receivedByUserId], references: [id])
+  items         GoodsReceiptItem[]
+
+  @@unique([companyId, receiptNumber])
+  @@index([companyId, purchaseOrderId])
+  @@map("goods_receipts")
+}
+
+model GoodsReceiptItem {
+  id                  String   @id @default(uuid()) @db.Uuid
+  goodsReceiptId      String   @map("goods_receipt_id") @db.Uuid
+  purchaseOrderItemId String   @map("purchase_order_item_id") @db.Uuid
+  productId           String   @map("product_id") @db.Uuid
+  uomId               String   @map("uom_id") @db.Uuid
+  receivedQuantity    Decimal  @map("received_quantity") @db.Decimal(18, 4)
+  // "Already-reversed" cap accumulator — see reverseGoodsReceiptLine().
+  reversedQuantity    Decimal  @default(0) @map("reversed_quantity") @db.Decimal(18, 4)
+  warehouseId         String   @map("warehouse_id") @db.Uuid
+  warehouseLocationId String?  @map("warehouse_location_id") @db.Uuid
+  notes               String?
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  goodsReceipt      GoodsReceipt       @relation(fields: [goodsReceiptId], references: [id])
+  purchaseOrderItem PurchaseOrderItem  @relation(fields: [purchaseOrderItemId], references: [id])
+  product           Product            @relation(fields: [productId], references: [id])
+  uom               UnitOfMeasure      @relation(fields: [uomId], references: [id])
+  warehouse         Warehouse          @relation(fields: [warehouseId], references: [id])
+  warehouseLocation WarehouseLocation? @relation(fields: [warehouseLocationId], references: [id])
+  rolls             FabricRoll[]
+
+  @@index([goodsReceiptId])
+  @@index([purchaseOrderItemId])
+  @@map("goods_receipt_items")
+}
+
+// PARTIALLY_USED/CONSUMED are reserved for Phase 5C's cutting-issuance — not
+// reachable by this module, same "enum value nothing reaches yet" discipline
+// as SampleStatus.DRAFT / SalesOrderStatus.IN_PRODUCTION.
+enum FabricRollStatus {
+  IN_STOCK
+  PARTIALLY_USED
+  CONSUMED
+  DAMAGED
+  CANCELLED
+}
+
+model FabricRoll {
+  id                  String           @id @default(uuid()) @db.Uuid
+  companyId           String           @map("company_id") @db.Uuid
+  goodsReceiptItemId  String           @map("goods_receipt_item_id") @db.Uuid
+  // Not unique company-wide — different suppliers routinely reuse roll
+  // numbering ("R-001"). Just indexed for lookup; this row's own id (rendered
+  // via the shared Barcode component) is the real identity.
+  rollNumber          String           @map("roll_number")
+  // The roll's own meterage/weight at receipt. Named distinctly from
+  // GoodsReceiptItem.receivedQuantity / PurchaseOrderItem.receivedQuantity to
+  // avoid the "same field name, three different meanings" ambiguity.
+  rollQuantity        Decimal          @map("roll_quantity") @db.Decimal(18, 4)
+  // Decremented by future reversals AND by Phase 5C cutting-issuance — one
+  // field, one meaning: "still-available quantity on this physical roll."
+  remainingQuantity   Decimal          @map("remaining_quantity") @db.Decimal(18, 4)
+  batchNo             String?          @map("batch_no")
+  // First real wiring of the standalone fabric masters built in Phase 3.
+  // Single dominant composition for MVP — blends are a documented future
+  // refinement, not built now.
+  gsmId               String?          @map("gsm_id") @db.Uuid
+  dyeId               String?          @map("dye_id") @db.Uuid
+  weaveTypeId         String?          @map("weave_type_id") @db.Uuid
+  widthId             String?          @map("width_id") @db.Uuid
+  compositionId       String?          @map("composition_id") @db.Uuid
+  warehouseLocationId String?          @map("warehouse_location_id") @db.Uuid
+  status              FabricRollStatus @default(IN_STOCK)
+  notes               String?
+  createdAt           DateTime         @default(now()) @map("created_at")
+  updatedAt           DateTime         @updatedAt @map("updated_at")
+
+  company               Company                @relation(fields: [companyId], references: [id])
+  goodsReceiptItem      GoodsReceiptItem       @relation(fields: [goodsReceiptItemId], references: [id])
+  gsm                   FabricGsm?             @relation(fields: [gsmId], references: [id])
+  dye                   FabricDye?             @relation(fields: [dyeId], references: [id])
+  weaveType             FabricWeaveType?       @relation(fields: [weaveTypeId], references: [id])
+  width                 FabricWidth?           @relation(fields: [widthId], references: [id])
+  composition           FabricComposition?     @relation(fields: [compositionId], references: [id])
+  warehouseLocation     WarehouseLocation?     @relation(fields: [warehouseLocationId], references: [id])
+  inventoryTransactions InventoryTransaction[]
+
+  @@index([companyId, rollNumber])
+  @@index([goodsReceiptItemId])
+  @@map("fabric_rolls")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Production (Phase 5C) — see PRODUCTION_MODULE_DESIGN.md for the full
+// reviewed design. Core discipline: NO stage is ever named in schema or
+// code — everything is generic over ProductionStage.id, validated only by
+// its sequence/isActive/allowRework columns. ProductionStageTransaction is
+// the single append-only ledger; JobOrder/JobOrderAssignment/
+// JobOrderProgressEntry are the only work-tracking tables (no
+// CuttingPlan/SewingProduction/FinishingRecord-style per-stage tables).
+// ─────────────────────────────────────────────────────────────
+
+enum ProductionOrderStatus {
+  PLANNED
+  MATERIAL_ALLOCATED
+  IN_PROGRESS
+  ON_HOLD
+  CANCELLED
+  CLOSED
+}
+
+enum ProductionPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+model ProductionOrder {
+  id                String                 @id @default(uuid()) @db.Uuid
+  companyId         String                 @map("company_id") @db.Uuid
+  branchId          String?                @map("branch_id") @db.Uuid
+  orderNumber       String                 @map("order_number")
+  // Nullable — null means Make-to-Stock (no customer sale behind this run).
+  salesOrderItemId  String?                @map("sales_order_item_id") @db.Uuid
+  productId         String                 @map("product_id") @db.Uuid
+  // Snapshot pointer for audit purposes — Bom itself has no versioning yet,
+  // but this still records "the BOM as it existed" at order-creation time.
+  bomId             String?                @map("bom_id") @db.Uuid
+  plannedQuantity   Decimal                @map("planned_quantity") @db.Decimal(18, 4)
+  status            ProductionOrderStatus  @default(PLANNED)
+  statusBeforeHold  ProductionOrderStatus? @map("status_before_hold")
+  priority          ProductionPriority     @default(NORMAL)
+  plannedStartDate  DateTime?              @map("planned_start_date") @db.Date
+  plannedEndDate    DateTime?              @map("planned_end_date") @db.Date
+  actualStartDate   DateTime?              @map("actual_start_date") @db.Date
+  actualEndDate     DateTime?              @map("actual_end_date") @db.Date
+  // Internal counter for generating this order's own Lot-number suffixes
+  // (PROD-2026-00001-L01, -L02, ...) — a sub-sequence per order, deliberately
+  // not routed through the shared DocumentNumberingService (a different
+  // concern: a per-company/fiscal-year document number vs. a per-order line
+  // counter).
+  nextLotSequence   Int                    @default(1) @map("next_lot_sequence")
+  remarks           String?
+  requestedByUserId String                 @map("requested_by_user_id") @db.Uuid
+  createdAt         DateTime               @default(now()) @map("created_at")
+  updatedAt         DateTime               @updatedAt @map("updated_at")
+
+  company           Company                      @relation(fields: [companyId], references: [id])
+  branch            Branch?                      @relation(fields: [branchId], references: [id])
+  salesOrderItem    SalesOrderItem?              @relation(fields: [salesOrderItemId], references: [id])
+  product           Product                      @relation(fields: [productId], references: [id])
+  bom               Bom?                         @relation(fields: [bomId], references: [id])
+  requestedBy       User                         @relation("ProductionOrderRequestedBy", fields: [requestedByUserId], references: [id])
+  lots              Lot[]
+  jobOrders         JobOrder[]
+  stageTransactions ProductionStageTransaction[]
+  qcInspections     QcInspection[]
+  materialRequests  MaterialRequest[]
+
+  @@unique([companyId, orderNumber])
+  @@index([companyId, status])
+  @@index([salesOrderItemId])
+  @@index([productId])
+  @@map("production_orders")
+}
+
+enum LotStatus {
+  PLANNED
+  IN_PROGRESS
+  ON_HOLD
+  COMPLETED
+  // Terminal — this lot's full quantity was consumed by a SPLIT/MERGE
+  // LotRelation. Never re-activated; genealogy is what remains traceable.
+  SPLIT
+  MERGED
+  CANCELLED
+}
+
+// A Lot is first-class, not a string on another table — it has its own
+// lifecycle, and (via LotRelation below) its own genealogy.
+model Lot {
+  id                String    @id @default(uuid()) @db.Uuid
+  companyId         String    @map("company_id") @db.Uuid
+  branchId          String?   @map("branch_id") @db.Uuid
+  productionOrderId String    @map("production_order_id") @db.Uuid
+  lotNumber         String    @map("lot_number")
+  // Immutable after creation except via a recorded split/merge event, which
+  // closes this lot (status -> SPLIT/MERGED) rather than mutating it.
+  quantity          Decimal   @map("quantity") @db.Decimal(18, 4)
+  uomId             String    @map("uom_id") @db.Uuid
+  status            LotStatus @default(PLANNED)
+  // CACHE ONLY, refreshed whenever a ProductionStageTransaction posts for
+  // this lot — never the source of truth for correctness-critical logic
+  // (that's always "which JobOrders for this lot have no onward transaction
+  // yet"). This is deliberate: it's what lets a future multi-position
+  // (parallel-stage) upgrade be additive rather than a breaking migration —
+  // see PRODUCTION_MODULE_DESIGN.md §6.
+  currentStageId    String?   @map("current_stage_id") @db.Uuid
+  createdByUserId   String    @map("created_by_user_id") @db.Uuid
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  company           Company                      @relation(fields: [companyId], references: [id])
+  branch            Branch?                      @relation(fields: [branchId], references: [id])
+  productionOrder   ProductionOrder              @relation(fields: [productionOrderId], references: [id])
+  uom               UnitOfMeasure                @relation(fields: [uomId], references: [id])
+  currentStage      ProductionStage?             @relation("LotCurrentStage", fields: [currentStageId], references: [id])
+  createdBy         User                         @relation("LotCreatedBy", fields: [createdByUserId], references: [id])
+  asParentRelations LotRelation[]                @relation("LotRelationParent")
+  asChildRelations  LotRelation[]                @relation("LotRelationChild")
+  jobOrders         JobOrder[]
+  stageTransactions ProductionStageTransaction[]
+  qcInspections     QcInspection[]
+
+  @@unique([companyId, lotNumber])
+  @@index([productionOrderId])
+  @@index([companyId, status])
+  @@map("lots")
+}
+
+enum LotRelationType {
+  SPLIT
+  MERGE
+}
+
+// Genealogy as a join table, not a single parentLotId column — a single FK
+// can't represent MERGE (many parents -> one child). Full ancestry/descent
+// in either direction is a plain recursive walk over this table; no separate
+// materialized genealogy table needed.
+model LotRelation {
+  id                String          @id @default(uuid()) @db.Uuid
+  companyId         String          @map("company_id") @db.Uuid
+  parentLotId       String          @map("parent_lot_id") @db.Uuid
+  childLotId        String          @map("child_lot_id") @db.Uuid
+  relationType      LotRelationType @map("relation_type")
+  // The slice of the parent that went into this specific child. Split:
+  // sum(children) must equal the parent's quantity exactly, in one
+  // transaction (all-or-nothing — no partial split in V1). Merge: every
+  // named parent is fully consumed; sum(parents) must equal the new child's
+  // quantity exactly.
+  quantity          Decimal         @map("quantity") @db.Decimal(18, 4)
+  reason            String?
+  performedByUserId String          @map("performed_by_user_id") @db.Uuid
+  performedAt       DateTime        @default(now()) @map("performed_at")
+
+  company     Company @relation(fields: [companyId], references: [id])
+  parentLot   Lot     @relation("LotRelationParent", fields: [parentLotId], references: [id])
+  childLot    Lot     @relation("LotRelationChild", fields: [childLotId], references: [id])
+  performedBy User    @relation("LotRelationPerformedBy", fields: [performedByUserId], references: [id])
+
+  @@index([parentLotId])
+  @@index([childLotId])
+  @@map("lot_relations")
+}
+
+enum JobOrderStatus {
+  PENDING
+  IN_PROGRESS
+  PARTIALLY_COMPLETED
+  COMPLETED
+  ON_HOLD
+  CANCELLED
+}
+
+// Generic by construction: Lot x whatever ProductionStage a company has
+// configured. Replaces every stage-named table (no CuttingPlan/
+// SewingProduction/FinishingRecord) — this is the ONLY work-tracking header,
+// for any stage, at any company. Auto-created (never hand-created) by the
+// service layer whenever a ProductionStageTransaction posts a quantity into
+// a stage — including the very first stage, a rework return, and a
+// QC-driven revert, all through the same mechanism.
+model JobOrder {
+  id                String             @id @default(uuid()) @db.Uuid
+  companyId         String             @map("company_id") @db.Uuid
+  productionOrderId String             @map("production_order_id") @db.Uuid
+  lotId             String             @map("lot_id") @db.Uuid
+  productionStageId String             @map("production_stage_id") @db.Uuid
+  // Deterministic display code ({lotNumber}-{stageCode}-{n}), not a
+  // fiscal-year document sequence.
+  jobNumber         String             @map("job_number")
+  // The JobOrder this one's input came from — null only for a lot's very
+  // first stage entry.
+  sourceJobOrderId  String?            @map("source_job_order_id") @db.Uuid
+  productionLineId  String?            @map("production_line_id") @db.Uuid
+  plannedQuantity   Decimal            @map("planned_quantity") @db.Decimal(18, 4)
+  // Guarded accumulators — completed+rejected+damaged <= planned, enforced
+  // by a service-layer read-verify-write inside one transaction AND a
+  // Postgres CHECK constraint as a hard backstop (see migration SQL; this
+  // 3-column constraint can't be expressed as the single-column guarded
+  // updateMany idiom used everywhere else in this codebase).
+  completedQuantity Decimal            @default(0) @map("completed_quantity") @db.Decimal(18, 4)
+  rejectedQuantity  Decimal            @default(0) @map("rejected_quantity") @db.Decimal(18, 4)
+  damagedQuantity   Decimal            @default(0) @map("damaged_quantity") @db.Decimal(18, 4)
+  // How much of completedQuantity has already been pushed to the next stage
+  // — forwarding is an explicit action, never automatic on every progress
+  // entry (this is what makes partial, continuous hand-off between stages
+  // representable). Guarded: forwarded <= completed.
+  forwardedQuantity Decimal            @default(0) @map("forwarded_quantity") @db.Decimal(18, 4)
+  // Guarded: qcPassed <= completed — prevents double-QC-ing the same units.
+  qcPassedQuantity  Decimal            @default(0) @map("qc_passed_quantity") @db.Decimal(18, 4)
+  status            JobOrderStatus     @default(PENDING)
+  priority          ProductionPriority @default(NORMAL)
+  plannedStartAt    DateTime?          @map("planned_start_at")
+  plannedEndAt      DateTime?          @map("planned_end_at")
+  actualStartAt     DateTime?          @map("actual_start_at")
+  actualEndAt       DateTime?          @map("actual_end_at")
+  createdAt         DateTime           @default(now()) @map("created_at")
+  updatedAt         DateTime           @updatedAt @map("updated_at")
+
+  company              Company                      @relation(fields: [companyId], references: [id])
+  productionOrder      ProductionOrder              @relation(fields: [productionOrderId], references: [id])
+  lot                  Lot                          @relation(fields: [lotId], references: [id])
+  productionStage      ProductionStage              @relation(fields: [productionStageId], references: [id])
+  sourceJobOrder       JobOrder?                    @relation("JobOrderChain", fields: [sourceJobOrderId], references: [id])
+  nextJobOrders        JobOrder[]                   @relation("JobOrderChain")
+  productionLine       ProductionLine?              @relation(fields: [productionLineId], references: [id])
+  assignments          JobOrderAssignment[]
+  progressEntries      JobOrderProgressEntry[]
+  incomingTransactions ProductionStageTransaction[] @relation("StageTransactionTo")
+  outgoingTransactions ProductionStageTransaction[] @relation("StageTransactionFrom")
+  qcInspections        QcInspection[]
+
+  // Not unique on (lotId, productionStageId) — a lot can legitimately
+  // revisit the same stage after rework; each revisit is a NEW row, never an
+  // update to an old one (history is never overwritten).
+  @@index([lotId, productionStageId])
+  @@index([productionOrderId])
+  @@index([companyId, status])
+  @@index([productionStageId])
+  @@map("job_orders")
+}
+
+enum AssignmentStatus {
+  ASSIGNED
+  IN_PROGRESS
+  COMPLETED
+  REASSIGNED
+  CANCELLED
+}
+
+// Multiple workers per JobOrder falls out of this directly — "multiple
+// Cutting Masters on one lot" is just multiple rows here against the same
+// Cutting-stage JobOrder. No separate "CuttingMaster" concept anywhere.
+model JobOrderAssignment {
+  id               String           @id @default(uuid()) @db.Uuid
+  jobOrderId       String           @map("job_order_id") @db.Uuid
+  // Reuses the existing Employee master — NOT User. Tracking who did the
+  // work never requires that person to have a login (see
+  // PRODUCTION_MODULE_DESIGN.md §7).
+  employeeId       String           @map("employee_id") @db.Uuid
+  // Soft-validated (sum across a JobOrder's assignments should not exceed
+  // plannedQuantity) at assignment time — not DB-enforced, since assignments
+  // can be freely rebalanced before work actually starts.
+  assignedQuantity Decimal          @map("assigned_quantity") @db.Decimal(18, 4)
+  status           AssignmentStatus @default(ASSIGNED)
+  assignedByUserId String           @map("assigned_by_user_id") @db.Uuid
+  assignedAt       DateTime         @default(now()) @map("assigned_at")
+  startedAt        DateTime?        @map("started_at")
+  completedAt      DateTime?        @map("completed_at")
+
+  jobOrder        JobOrder                @relation(fields: [jobOrderId], references: [id])
+  employee        Employee                @relation("JobOrderAssignmentEmployee", fields: [employeeId], references: [id])
+  assignedBy      User                    @relation("JobOrderAssignmentAssignedBy", fields: [assignedByUserId], references: [id])
+  progressEntries JobOrderProgressEntry[]
+
+  @@index([jobOrderId])
+  @@index([employeeId])
+  @@map("job_order_assignments")
+}
+
+// Append-only worker-level logging — never edited or deleted. A genuine
+// data-entry mistake is corrected with a NEW isAdjustment=true row (the only
+// kind allowed to carry a negative quantity), mirroring
+// InventoryTransaction's own signed-reversal convention, rather than ever
+// touching an existing row.
+model JobOrderProgressEntry {
+  id                   String    @id @default(uuid()) @db.Uuid
+  jobOrderId           String    @map("job_order_id") @db.Uuid
+  jobOrderAssignmentId String?   @map("job_order_assignment_id") @db.Uuid
+  employeeId           String    @map("employee_id") @db.Uuid
+  // Who is logged in and clicked save — may differ from employeeId (the
+  // supervisor-entry model recommended for V1; see
+  // PRODUCTION_MODULE_DESIGN.md §7).
+  recordedByUserId     String    @map("recorded_by_user_id") @db.Uuid
+  completedQuantity    Decimal   @default(0) @map("completed_quantity") @db.Decimal(18, 4)
+  rejectedQuantity     Decimal   @default(0) @map("rejected_quantity") @db.Decimal(18, 4)
+  damagedQuantity      Decimal   @default(0) @map("damaged_quantity") @db.Decimal(18, 4)
+  isAdjustment         Boolean   @default(false) @map("is_adjustment")
+  remarks              String?
+  startedAt            DateTime? @map("started_at")
+  endedAt              DateTime? @map("ended_at")
+  createdAt            DateTime  @default(now()) @map("created_at")
+
+  jobOrder           JobOrder            @relation(fields: [jobOrderId], references: [id])
+  jobOrderAssignment JobOrderAssignment? @relation(fields: [jobOrderAssignmentId], references: [id])
+  employee           Employee            @relation("JobOrderProgressEntryEmployee", fields: [employeeId], references: [id])
+  recordedBy         User                @relation("JobOrderProgressEntryRecordedBy", fields: [recordedByUserId], references: [id])
+
+  @@index([jobOrderId])
+  @@index([employeeId])
+  @@map("job_order_progress_entries")
+}
+
+enum StageTransactionType {
+  FORWARD
+  REWORK
+  ADJUSTMENT
+}
+
+// The single append-only ledger — never edited, never deleted. Everything
+// else (a lot's current position, a JobOrder's existence) is derived from
+// this table; it is the actual source of truth in this module, the same
+// role InventoryTransaction plays for stock.
+model ProductionStageTransaction {
+  id                    String               @id @default(uuid()) @db.Uuid
+  companyId             String               @map("company_id") @db.Uuid
+  productionOrderId     String               @map("production_order_id") @db.Uuid
+  lotId                 String               @map("lot_id") @db.Uuid
+  fromJobOrderId        String?              @map("from_job_order_id") @db.Uuid
+  toJobOrderId          String               @map("to_job_order_id") @db.Uuid
+  // Denormalized directly onto the transaction for fast reporting — same
+  // rationale already used for FabricRoll.rollNumber-style denormalization
+  // elsewhere in this schema.
+  fromProductionStageId String?              @map("from_production_stage_id") @db.Uuid
+  toProductionStageId   String               @map("to_production_stage_id") @db.Uuid
+  transactionType       StageTransactionType @map("transaction_type")
+  // Always positive — direction is expressed by from/to, not sign.
+  quantity              Decimal              @map("quantity") @db.Decimal(18, 4)
+  // Precomputed at insert (toStage.sequence < fromStage.sequence) for fast
+  // querying/reporting.
+  isBackward            Boolean              @default(false) @map("is_backward")
+  // Required by the service layer whenever isBackward=true — not DB-enforced
+  // (a conditionally-required field isn't expressible as a plain NOT NULL).
+  revertReason          String?              @map("revert_reason")
+  performedByUserId     String               @map("performed_by_user_id") @db.Uuid
+  performedAt           DateTime             @default(now()) @map("performed_at")
+  notes                 String?
+
+  company                  Company          @relation(fields: [companyId], references: [id])
+  productionOrder          ProductionOrder  @relation(fields: [productionOrderId], references: [id])
+  lot                      Lot              @relation(fields: [lotId], references: [id])
+  fromJobOrder             JobOrder?        @relation("StageTransactionFrom", fields: [fromJobOrderId], references: [id])
+  toJobOrder               JobOrder         @relation("StageTransactionTo", fields: [toJobOrderId], references: [id])
+  fromProductionStage      ProductionStage? @relation("StageTransactionFromStage", fields: [fromProductionStageId], references: [id])
+  toProductionStage        ProductionStage  @relation("StageTransactionToStage", fields: [toProductionStageId], references: [id])
+  performedBy              User             @relation("ProductionStageTransactionPerformedBy", fields: [performedByUserId], references: [id])
+  qcInspectionsCausingThis QcInspection[]   @relation("QcInspectionReworkTransaction")
+
+  @@index([lotId, performedAt])
+  @@index([toProductionStageId])
+  @@index([productionOrderId])
+  @@map("production_stage_transactions")
+}
+
+enum QcResult {
+  PASS
+  PARTIAL_PASS
+  FAIL
+}
+
+// Generic by construction: keyed on jobOrderId, never a stage name. No
+// SewingQC/FinishingQC-style tables. A Fail or Partial-Pass creates a new
+// ProductionStageTransaction (REWORK) using the exact same target-stage
+// validation function as a manual revert — one mechanism, not two.
+model QcInspection {
+  id                       String   @id @default(uuid()) @db.Uuid
+  companyId                String   @map("company_id") @db.Uuid
+  productionOrderId        String   @map("production_order_id") @db.Uuid
+  lotId                    String   @map("lot_id") @db.Uuid
+  jobOrderId               String   @map("job_order_id") @db.Uuid
+  inspectedQuantity        Decimal  @map("inspected_quantity") @db.Decimal(18, 4)
+  acceptedQuantity         Decimal  @map("accepted_quantity") @db.Decimal(18, 4)
+  rejectedQuantity         Decimal  @map("rejected_quantity") @db.Decimal(18, 4)
+  damagedQuantity          Decimal  @default(0) @map("damaged_quantity") @db.Decimal(18, 4)
+  result                   QcResult
+  reworkStageTransactionId String?  @map("rework_stage_transaction_id") @db.Uuid
+  inspectorUserId          String   @map("inspector_user_id") @db.Uuid
+  inspectedAt              DateTime @default(now()) @map("inspected_at")
+  remarks                  String?
+
+  company                Company                     @relation(fields: [companyId], references: [id])
+  productionOrder        ProductionOrder             @relation(fields: [productionOrderId], references: [id])
+  lot                    Lot                         @relation(fields: [lotId], references: [id])
+  jobOrder               JobOrder                    @relation(fields: [jobOrderId], references: [id])
+  reworkStageTransaction ProductionStageTransaction? @relation("QcInspectionReworkTransaction", fields: [reworkStageTransactionId], references: [id])
+  inspector              User                        @relation("QcInspectionInspector", fields: [inspectorUserId], references: [id])
+  defects                QcDefect[]
+
+  @@index([jobOrderId])
+  @@index([lotId])
+  @@map("qc_inspections")
+}
+
+model QcDefect {
+  id             String  @id @default(uuid()) @db.Uuid
+  qcInspectionId String  @map("qc_inspection_id") @db.Uuid
+  defectTypeId   String  @map("defect_type_id") @db.Uuid
+  quantity       Decimal @map("quantity") @db.Decimal(18, 4)
+  severity       String?
+  remarks        String?
+
+  qcInspection QcInspection @relation(fields: [qcInspectionId], references: [id])
+  defectType   DefectType   @relation(fields: [defectTypeId], references: [id])
+
+  @@index([qcInspectionId])
+  @@map("qc_defects")
+}
+
+// Company-configurable defect catalogue — same shape as ProductionStage/
+// Color/Size etc.
+model DefectType {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  code      String
+  name      String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company   Company    @relation(fields: [companyId], references: [id])
+  qcDefects QcDefect[]
+
+  @@unique([companyId, code])
+  @@map("defect_types")
+}
+
+// Only GOODS_RECEIPT and GOODS_RECEIPT_REVERSAL are reachable by Purchasing —
+// PRODUCTION_RECEIPT/DAMAGE are Phase 5C's own. OPENING_BALANCE's manual
+// entry point is explicitly deferred (see CLAUDE.md).
+enum InventoryTransactionType {
+  OPENING_BALANCE
+  GOODS_RECEIPT
+  GOODS_RECEIPT_REVERSAL
+  MATERIAL_ISSUE
+  PRODUCTION_RECEIPT
+  // Fully-damaged production quantity posted into a REJECT-type warehouse —
+  // repairable damage never touches inventory at all, it's purely a backward
+  // ProductionStageTransaction (see PRODUCTION_MODULE_DESIGN.md §6).
+  DAMAGE
+  ADJUSTMENT
+  STOCK_TRANSFER
+}
+
+// Append-only, source of truth — no delete column, no edit path, ever.
+// Corrections are always a new compensating row, never an update to an
+// existing one (the project's established ledger discipline).
+model InventoryTransaction {
+  id                  String                   @id @default(uuid()) @db.Uuid
+  companyId           String                   @map("company_id") @db.Uuid
+  branchId            String?                  @map("branch_id") @db.Uuid
+  productId           String                   @map("product_id") @db.Uuid
+  warehouseId         String                   @map("warehouse_id") @db.Uuid
+  warehouseLocationId String?                  @map("warehouse_location_id") @db.Uuid
+  transactionType     InventoryTransactionType @map("transaction_type")
+  // Signed: positive for a receipt, negative for a reversal/issue.
+  quantity            Decimal                  @map("quantity") @db.Decimal(18, 4)
+  // Polymorphic discriminator — reuses the existing RelatedModule enum
+  // instead of inventing a parallel one, matching the Attachment/AuditLog
+  // convention already established for this class of table.
+  referenceModule     RelatedModule            @map("reference_module")
+  referenceRecordId   String                   @map("reference_record_id") @db.Uuid
+  fabricRollId        String?                  @map("fabric_roll_id") @db.Uuid
+  performedByUserId   String                   @map("performed_by_user_id") @db.Uuid
+  performedAt         DateTime                 @default(now()) @map("performed_at")
+  notes               String?
+
+  company           Company            @relation(fields: [companyId], references: [id])
+  branch            Branch?            @relation(fields: [branchId], references: [id])
+  product           Product            @relation(fields: [productId], references: [id])
+  warehouse         Warehouse          @relation(fields: [warehouseId], references: [id])
+  warehouseLocation WarehouseLocation? @relation(fields: [warehouseLocationId], references: [id])
+  fabricRoll        FabricRoll?        @relation(fields: [fabricRollId], references: [id])
+  performedBy       User               @relation("InventoryTransactionPerformedBy", fields: [performedByUserId], references: [id])
+
+  @@index([companyId, productId, warehouseId])
+  @@index([referenceModule, referenceRecordId])
+  @@index([fabricRollId])
+  @@map("inventory_transactions")
+}
+
+// Derived cache — upserted in the SAME transaction as every InventoryTransaction
+// insert that justifies it, never computed by summing the ledger at read time.
+model StockBalance {
+  id             String   @id @default(uuid()) @db.Uuid
+  companyId      String   @map("company_id") @db.Uuid
+  productId      String   @map("product_id") @db.Uuid
+  warehouseId    String   @map("warehouse_id") @db.Uuid
+  quantityOnHand Decimal  @default(0) @map("quantity_on_hand") @db.Decimal(18, 4)
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  company   Company   @relation(fields: [companyId], references: [id])
+  product   Product   @relation(fields: [productId], references: [id])
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id])
+
+  @@unique([companyId, productId, warehouseId])
+  @@map("stock_balances")
+}
+
+// ─────────────────────────────────────────────────────────────
 // System
 // ─────────────────────────────────────────────────────────────
 
 enum RelatedModule {
   SAMPLE_REQUEST
+  BUYER_ENQUIRY
   SALES_ORDER
   PURCHASE_ORDER
-  PURCHASE_REQUEST
+  MATERIAL_REQUEST
   SALES_INVOICE
   PURCHASE_INVOICE
   QC_INSPECTION
@@ -945,6 +2449,11 @@ model Attachment {
   storageKey      String        @map("storage_key")
   fileSizeBytes   Int           @map("file_size_bytes")
   mimeType        String        @map("mime_type")
+  // Free-text snapshot of "what state was the parent record in when this was
+  // uploaded" (e.g. a SampleStatus value like "IN_DEVELOPMENT") — generic
+  // string, not FK'd to any one module's status enum, since Attachment is
+  // shared across every future module, not owned by Sampling.
+  contextLabel    String?       @map("context_label")
   uploadedAt      DateTime      @default(now()) @map("uploaded_at")
 
   company    Company @relation(fields: [companyId], references: [id])
@@ -1011,12 +2520,13 @@ model AuditLog {
 
 enum DocumentType {
   SAMPLE_REQUEST
+  BUYER_ENQUIRY
   SALES_ORDER
   PRODUCTION_ORDER
   SALES_INVOICE
   PURCHASE_INVOICE
   PURCHASE_ORDER
-  PURCHASE_REQUEST
+  MATERIAL_REQUEST
   GOODS_RECEIPT
   DISPATCH
   PAYMENT

@@ -7,6 +7,7 @@ import { FormField, textInputClass } from "@/components/ui/FormField";
 export interface ProductFormValues {
   styleCode: string;
   styleName: string;
+  designNumber: string;
   categoryId: string;
   seasonId: string;
   gender: string;
@@ -19,6 +20,7 @@ export interface ProductFormValues {
 const EMPTY_VALUES: ProductFormValues = {
   styleCode: "",
   styleName: "",
+  designNumber: "",
   categoryId: "",
   seasonId: "",
   gender: "",
@@ -139,6 +141,16 @@ export function ProductForm({ initialValues, submitUrl, method, redirectTo }: Pr
           required
           value={values.styleName}
           onChange={(e) => setValues({ ...values, styleName: e.target.value })}
+          className={textInputClass()}
+        />
+      </FormField>
+
+      <FormField label="Design Number" htmlFor="designNumber">
+        <input
+          id="designNumber"
+          value={values.designNumber}
+          onChange={(e) => setValues({ ...values, designNumber: e.target.value })}
+          placeholder="For companies that identify styles by design number"
           className={textInputClass()}
         />
       </FormField>

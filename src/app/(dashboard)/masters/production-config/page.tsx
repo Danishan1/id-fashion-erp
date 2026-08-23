@@ -44,6 +44,24 @@ export default function ProductionConfigPage() {
             { key: "code", label: "Code", required: true },
             { key: "name", label: "Name", required: true },
             { key: "sequence", label: "Sequence", type: "number" },
+            {
+              key: "isFinal",
+              label: "Final Stage (triggers Finished Goods receipt)",
+              type: "select",
+              options: [
+                { value: "false", label: "No" },
+                { value: "true", label: "Yes" },
+              ],
+            },
+            {
+              key: "allowRework",
+              label: "Allow Rework Into This Stage",
+              type: "select",
+              options: [
+                { value: "true", label: "Yes" },
+                { value: "false", label: "No" },
+              ],
+            },
           ]}
         />
       )}

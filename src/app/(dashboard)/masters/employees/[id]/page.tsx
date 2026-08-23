@@ -26,6 +26,7 @@ export default async function EditEmployeePage({ params }: { params: Promise<{ i
       </div>
 
       <EmployeeForm
+        key={id}
         submitUrl={`/api/v1/employees/${id}`}
         method="PATCH"
         redirectTo="/masters/employees"

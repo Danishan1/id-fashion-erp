@@ -27,6 +27,7 @@ export default async function EditWarehousePage({ params }: { params: Promise<{ 
       </div>
 
       <WarehouseForm
+        key={`form-${id}`}
         submitUrl={`/api/v1/warehouses/${id}`}
         method="PATCH"
         redirectTo="/masters/warehouses"
@@ -38,7 +39,7 @@ export default async function EditWarehousePage({ params }: { params: Promise<{ 
         }}
       />
 
-      <LocationsSection warehouseId={id} initialLocations={warehouse.locations} />
+      <LocationsSection key={`locations-${id}`} warehouseId={id} initialLocations={warehouse.locations} />
     </div>
   );
 }

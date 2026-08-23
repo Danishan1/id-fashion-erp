@@ -44,6 +44,7 @@ function toData(input: ProductInput) {
     itemType: "STYLE" as const,
     styleCode: input.styleCode,
     styleName: input.styleName,
+    designNumber: input.designNumber || null,
     categoryId: input.categoryId || null,
     seasonId: input.seasonId || null,
     gender: input.gender || null,

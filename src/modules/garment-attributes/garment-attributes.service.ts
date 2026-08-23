@@ -20,7 +20,7 @@ interface LookupRecord {
 
 interface SimpleLookupDelegate {
   findMany(args: { where: { companyId: string }; orderBy: { name: "asc" } }): Promise<unknown[]>;
-  findFirst(args: { where: { companyId: string; code: string } }): Promise<{ id: string } | null>;
+  findFirst(args: { where: Record<string, unknown> }): Promise<{ id: string } | null>;
   create(args: { data: CodeNameInput & { companyId: string } }): Promise<LookupRecord>;
   update(args: { where: { id: string }; data: CodeNameInput }): Promise<LookupRecord>;
 }
@@ -56,6 +56,13 @@ function makeSimpleLookupService(delegate: SimpleLookupDelegate, label: string, 
     },
 
     update: async (actor: ActorContext, id: string, input: CodeNameInput) => {
+      // Ownership check before mutating — without this, any company's "edit" permission
+      // could update another tenant's row by id (found + fixed in a multi-tenant audit).
+      const existing = await delegate.findFirst({ where: { id, companyId: actor.companyId } });
+      if (!existing) {
+        throw new BusinessRuleError("NOT_FOUND", `${label} not found.`, { id });
+      }
+
       const updated = await delegate.update({
         where: { id },
         data: { code: input.code, name: input.name, isActive: input.isActive },
