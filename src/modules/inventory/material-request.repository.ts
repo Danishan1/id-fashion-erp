@@ -193,7 +193,7 @@ export const MaterialRequestItemRepository = {
     prisma.materialRequestItem.findMany({
       where: { materialRequestId },
       include: {
-        material: { select: { id: true, styleName: true, styleCode: true, defaultSupplierId: true } },
+        material: { select: { id: true, styleName: true, styleCode: true, defaultSupplierId: true, unitCost: true } },
         uom: { select: { id: true, code: true } },
         purchaseOrderItems: ACTIVE_PURCHASE_ORDER_ITEMS_INCLUDE,
       },

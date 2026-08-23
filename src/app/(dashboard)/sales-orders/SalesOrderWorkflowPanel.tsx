@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { FilePreviewModal } from "@/components/ui/FilePreviewModal";
+import { formatCurrency } from "@/lib/currency";
 import { STATUS_BADGE_CLASS, STATUS_LABELS } from "./statusLabels";
 
 type SalesOrderStatus = keyof typeof STATUS_LABELS;
@@ -295,7 +296,7 @@ export function SalesOrderWorkflowPanel({
                   </span>
                 </p>
                 <p className="text-xs text-zinc-500">
-                  {order.currencyCode} {Number(item.unitPrice).toLocaleString()} / pc
+                  {order.currencyCode} {formatCurrency(item.unitPrice)} / pc
                 </p>
               </div>
               {item.sampleRequest && (
@@ -336,7 +337,7 @@ export function SalesOrderWorkflowPanel({
           ))}
         </div>
         <p className="mt-3 text-sm font-medium text-zinc-900 dark:text-zinc-50">
-          Order Amount: {order.currencyCode} {Number(order.totalAmount).toLocaleString()}
+          Order Amount: {order.currencyCode} {formatCurrency(order.totalAmount)}
         </p>
       </div>
 

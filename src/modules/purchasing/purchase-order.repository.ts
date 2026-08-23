@@ -47,6 +47,15 @@ export const PurchaseOrderRepository = {
 
   findAnyById: (companyId: string, id: string) => prisma.purchaseOrder.findFirst({ where: { id, companyId } }),
 
+  /** Same scope as findAnyById, plus each item's unitPrice — used by
+   * approvePurchaseOrder()'s zero-price backstop (see BUG-04) without paying
+   * for findByIdWithDetails's much heavier supplier/receipts/product include. */
+  findAnyByIdWithItemPrices: (companyId: string, id: string) =>
+    prisma.purchaseOrder.findFirst({
+      where: { id, companyId },
+      include: { items: { select: { id: true, unitPrice: true } } },
+    }),
+
   createWithItems: (data: Prisma.PurchaseOrderUncheckedCreateInput) =>
     prisma.purchaseOrder.create({ data, include: { items: true } }),
 

@@ -253,13 +253,26 @@ export async function updatePurchaseOrder(actor: ActorContext, id: string, input
  * every other Approve action.
  */
 export async function approvePurchaseOrder(actor: ActorContext, id: string) {
-  const order = await PurchaseOrderRepository.findAnyById(actor.companyId, id);
+  const order = await PurchaseOrderRepository.findAnyByIdWithItemPrices(actor.companyId, id);
   if (!order) throw new BusinessRuleError("NOT_FOUND", "Purchase order not found.", { id });
 
   if (order.status !== "DRAFT") {
     throw new BusinessRuleError("INVALID_STATE_TRANSITION", `Cannot approve a purchase order in "${order.status}" status.`, {
       currentStatus: order.status,
     });
+  }
+
+  // Defense-in-depth backstop: direct PO creation already requires a
+  // positive unitPrice per line at creation time, so this is a no-op there.
+  // It exists to catch any other caller of createPurchaseOrder() reaching
+  // this code path with a zero/unset price — the exact bug class BUG-04
+  // found in generatePurchaseOrdersForShortfall()'s old hardcoded unitPrice: 0.
+  if (order.items.some((item) => Number(item.unitPrice) <= 0)) {
+    throw new BusinessRuleError(
+      "VALIDATION_ERROR",
+      "Cannot approve a purchase order with a zero or missing unit price on one or more lines — set a real price first.",
+      { orderId: id }
+    );
   }
 
   await PermissionService.assert(actor.userId, "purchasing", "approve", { createdBy: order.requestedByUserId });

@@ -1,5 +1,5 @@
 import { prisma } from "@/core/db/client";
-import type { Prisma } from "@prisma/client";
+import type { Prisma, SalesOrderStatus } from "@prisma/client";
 
 export const SalesOrderRepository = {
   findMany: (where: Prisma.SalesOrderWhereInput, args: Omit<Prisma.SalesOrderFindManyArgs, "where">) =>
@@ -49,6 +49,20 @@ export const SalesOrderRepository = {
 
   update: (id: string, data: Prisma.SalesOrderUncheckedUpdateInput) =>
     prisma.salesOrder.update({ where: { id }, data }),
+
+  /**
+   * Conditional status write — `WHERE id = ? AND status = expectedStatus`,
+   * enforced at the database level via `updateMany` rather than a plain
+   * `SELECT`-then-`update` by primary key. Closes the check-then-write race
+   * where two concurrent callers both pass an in-app "current status" check
+   * before either commits (e.g. two "Confirm" double-clicks), which would
+   * otherwise both succeed and both fire side effects/audit rows for one
+   * real event. Returns the number of rows updated — 0 means someone else
+   * already moved this order out of `expectedStatus`, and the caller should
+   * treat that as an invalid transition rather than retrying blindly.
+   */
+  updateStatusConditional: (id: string, expectedStatus: SalesOrderStatus, data: Prisma.SalesOrderUncheckedUpdateInput) =>
+    prisma.salesOrder.updateMany({ where: { id, status: expectedStatus }, data }),
 
   /**
    * Full replace of a sales order's items/breakdown — simplest correct way to

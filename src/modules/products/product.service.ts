@@ -1,8 +1,15 @@
+import type { Prisma } from "@prisma/client";
 import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { advanceMasterCodeSequence } from "@/core/numbering/DocumentNumberingService";
 import type { ListQuery } from "@/lib/list-query";
-import type { GenerateVariantsInput, MaterialInput, ProductInput } from "./product.schema";
+import type {
+  GenerateVariantsInput,
+  MaterialInput,
+  MaterialUpdateInput,
+  ProductInput,
+  ProductUpdateInput,
+} from "./product.schema";
 import { ProductRepository, ProductVariantRepository } from "./product.repository";
 
 interface ActorContext {
@@ -71,6 +78,38 @@ function toMaterialData(input: MaterialInput) {
   };
 }
 
+/** Only includes keys actually present in a partial PATCH body — omitted fields are left untouched in the DB. */
+function toUpdateData(input: ProductUpdateInput): Prisma.ProductUncheckedUpdateInput {
+  const data: Prisma.ProductUncheckedUpdateInput = {};
+  if (input.styleCode !== undefined) data.styleCode = input.styleCode;
+  if (input.styleName !== undefined) data.styleName = input.styleName;
+  if (input.designNumber !== undefined) data.designNumber = input.designNumber || null;
+  if (input.categoryId !== undefined) data.categoryId = input.categoryId || null;
+  if (input.seasonId !== undefined) data.seasonId = input.seasonId || null;
+  if (input.gender !== undefined) data.gender = input.gender || null;
+  if (input.description !== undefined) data.description = input.description || null;
+  if (input.hsnSacCode !== undefined) data.hsnSacCode = input.hsnSacCode || null;
+  if (input.customerId !== undefined) data.customerId = input.customerId || null;
+  if (input.isActive !== undefined) data.isActive = input.isActive;
+  return data;
+}
+
+/** Only includes keys actually present in a partial PATCH body — omitted fields are left untouched in the DB. */
+function toMaterialUpdateData(input: MaterialUpdateInput): Prisma.ProductUncheckedUpdateInput {
+  const data: Prisma.ProductUncheckedUpdateInput = {};
+  if (input.styleCode !== undefined) data.styleCode = input.styleCode;
+  if (input.styleName !== undefined) data.styleName = input.styleName;
+  if (input.materialCategory !== undefined) data.materialCategory = input.materialCategory;
+  if (input.baseUomId !== undefined) data.baseUomId = input.baseUomId || null;
+  if (input.defaultSupplierId !== undefined) data.defaultSupplierId = input.defaultSupplierId || null;
+  if (input.reorderLevel !== undefined) data.reorderLevel = input.reorderLevel ?? null;
+  if (input.unitCost !== undefined) data.unitCost = input.unitCost ?? null;
+  if (input.description !== undefined) data.description = input.description || null;
+  if (input.hsnSacCode !== undefined) data.hsnSacCode = input.hsnSacCode || null;
+  if (input.isActive !== undefined) data.isActive = input.isActive;
+  return data;
+}
+
 export async function createProduct(actor: ActorContext, input: ProductInput) {
   const existing = await ProductRepository.findByStyleCode(actor.companyId, input.styleCode);
   if (existing) {
@@ -93,17 +132,17 @@ export async function createProduct(actor: ActorContext, input: ProductInput) {
   return product;
 }
 
-export async function updateProduct(actor: ActorContext, id: string, input: ProductInput) {
+export async function updateProduct(actor: ActorContext, id: string, input: ProductUpdateInput) {
   const before = await getProductById(actor.companyId, id);
 
-  if (input.styleCode !== before.styleCode) {
+  if (input.styleCode !== undefined && input.styleCode !== before.styleCode) {
     const codeInUse = await ProductRepository.findByStyleCode(actor.companyId, input.styleCode, id);
     if (codeInUse) {
       throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Style code "${input.styleCode}" is already in use.`);
     }
   }
 
-  const updated = await ProductRepository.update(id, toData(input));
+  const updated = await ProductRepository.update(id, toUpdateData(input));
 
   await writeAuditLog({
     companyId: actor.companyId,
@@ -192,17 +231,17 @@ export async function createMaterial(actor: ActorContext, input: MaterialInput) 
   return material;
 }
 
-export async function updateMaterial(actor: ActorContext, id: string, input: MaterialInput) {
+export async function updateMaterial(actor: ActorContext, id: string, input: MaterialUpdateInput) {
   const before = await getMaterialById(actor.companyId, id);
 
-  if (input.styleCode !== before.styleCode) {
+  if (input.styleCode !== undefined && input.styleCode !== before.styleCode) {
     const codeInUse = await ProductRepository.findByStyleCode(actor.companyId, input.styleCode, id);
     if (codeInUse) {
       throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Item code "${input.styleCode}" is already in use.`);
     }
   }
 
-  const updated = await ProductRepository.update(id, toMaterialData(input));
+  const updated = await ProductRepository.update(id, toMaterialUpdateData(input));
 
   await writeAuditLog({
     companyId: actor.companyId,

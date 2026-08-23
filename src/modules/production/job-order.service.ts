@@ -181,10 +181,15 @@ async function applyJobOrderQuantityDelta(
   });
 }
 
-/** Removes quantity from a JobOrder's pool entirely (manual revert, QC
- * rejection/damage write-off) — guarded against removing more than what's
- * still genuinely unprocessed. */
-async function guardedDecrementPlannedQuantity(tx: Prisma.TransactionClient, jobOrderId: string, decrementBy: number) {
+/** Manual revert only: pulls quantity back out of the genuinely-unprocessed
+ * pool — units nobody has completed/rejected/damaged yet at this stage,
+ * being sent to an earlier stage before this job order ever touches them.
+ * This is deliberately NOT reused for QC (see
+ * guardedShrinkPlannedForQcDisposition below): "unprocessed" is normally
+ * zero once a stage's work is 100% logged as completed, which is the usual
+ * precondition for running QC at all — reusing this guard there produced a
+ * false "over production" rejection on every already-completed job order. */
+async function guardedDecrementUnprocessedQuantity(tx: Prisma.TransactionClient, jobOrderId: string, decrementBy: number) {
   const jo = await JobOrderRepository.findForGuardedUpdateInTx(tx, jobOrderId);
   const planned = Number(jo.plannedQuantity);
   const done = Number(jo.completedQuantity) + Number(jo.rejectedQuantity) + Number(jo.damagedQuantity);
@@ -192,8 +197,33 @@ async function guardedDecrementPlannedQuantity(tx: Prisma.TransactionClient, job
   if (decrementBy > unprocessed + EPSILON) {
     throw new BusinessRuleError(
       "OVER_PRODUCTION_NOT_ALLOWED",
-      `Cannot remove ${decrementBy} from this job order — only ${unprocessed} is still unprocessed.`,
+      `Cannot revert ${decrementBy} from this job order — only ${unprocessed} is still unprocessed.`,
       { unprocessed, attempted: decrementBy }
+    );
+  }
+  return JobOrderRepository.updateInTx(tx, jobOrderId, { plannedQuantity: planned - decrementBy });
+}
+
+/** QC rejection/damage write-off only: draws from the *completed* pool
+ * (pieces that already finished this stage), not the "unprocessed" one —
+ * a fundamentally different pool than manual revert's. The real cap —
+ * never disposition more than has been completed, and never disposition
+ * the same completed piece twice — is already enforced atomically earlier
+ * in the same transaction by guardedIncrementQcPassed() (qcPassed <=
+ * completed) together with the schema-level invariant that
+ * accepted+rejected+damaged === inspectedQuantity for a single inspection.
+ * This guard only needs to stop plannedQuantity itself from going negative
+ * as it shrinks to reflect that these pieces have left the job order's
+ * remaining scope (routed backward for rework, or written off as damage) —
+ * it must NOT re-check against "unprocessed", which is what caused BUG-03. */
+async function guardedShrinkPlannedForQcDisposition(tx: Prisma.TransactionClient, jobOrderId: string, decrementBy: number) {
+  const jo = await JobOrderRepository.findForGuardedUpdateInTx(tx, jobOrderId);
+  const planned = Number(jo.plannedQuantity);
+  if (decrementBy > planned + EPSILON) {
+    throw new BusinessRuleError(
+      "OVER_PRODUCTION_NOT_ALLOWED",
+      `Cannot remove ${decrementBy} from this job order — only ${planned} of planned quantity remains.`,
+      { planned, attempted: decrementBy }
     );
   }
   return JobOrderRepository.updateInTx(tx, jobOrderId, { plannedQuantity: planned - decrementBy });
@@ -232,6 +262,11 @@ export async function startLot(actor: ActorContext, lotId: string, input: StartL
 
   const order = await ProductionOrderRepository.findAnyById(actor.companyId, lot.productionOrderId);
   if (!order) throw new BusinessRuleError("NOT_FOUND", "Production order not found.", { id: lot.productionOrderId });
+  if (order.status === "ON_HOLD") {
+    throw new BusinessRuleError("INVALID_STATE_TRANSITION", "Resume the production order before starting new work on it.", {
+      currentStatus: order.status,
+    });
+  }
 
   let stage;
   if (input.stageId) {
@@ -514,7 +549,7 @@ export async function revertJobOrder(actor: ActorContext, jobOrderId: string, in
       transactionType: "REWORK",
       revertReason: input.reason,
     });
-    await guardedDecrementPlannedQuantity(tx, jobOrderId, input.quantity);
+    await guardedDecrementUnprocessedQuantity(tx, jobOrderId, input.quantity);
     return posted;
   });
 
@@ -623,7 +658,7 @@ export async function recordQcInspection(actor: ActorContext, jobOrderId: string
         revertReason: `QC rejection${input.remarks ? `: ${input.remarks}` : ""}`,
       });
       reworkTransactionId = posted.transactionId;
-      await guardedDecrementPlannedQuantity(tx, jobOrderId, input.rejectedQuantity);
+      await guardedShrinkPlannedForQcDisposition(tx, jobOrderId, input.rejectedQuantity);
     }
 
     if (input.damagedQuantity > 0) {
@@ -635,7 +670,7 @@ export async function recordQcInspection(actor: ActorContext, jobOrderId: string
         referenceModule: "PRODUCTION_ORDER",
         referenceRecordId: jobOrderId,
       });
-      await guardedDecrementPlannedQuantity(tx, jobOrderId, input.damagedQuantity);
+      await guardedShrinkPlannedForQcDisposition(tx, jobOrderId, input.damagedQuantity);
     }
 
     return QcInspectionRepository.createWithDefectsInTx(

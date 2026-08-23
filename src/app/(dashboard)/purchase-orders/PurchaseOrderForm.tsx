@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { MaterialPicker } from "@/components/ui/MaterialPicker";
+import { formatCurrency } from "@/lib/currency";
 
 interface Option {
   id: string;
@@ -99,7 +100,7 @@ export function PurchaseOrderForm({ initialOrder }: { initialOrder?: InitialPurc
 
   const lineAmount = (item: LineItem) => (Number(item.orderedQuantity) || 0) * (Number(item.unitPrice) || 0);
   const orderAmount = items.reduce((sum, item) => sum + lineAmount(item), 0);
-  const formatAmount = (amount: number) => `₹${amount.toLocaleString()}`;
+  const formatAmount = (amount: number) => `₹${formatCurrency(amount)}`;
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();

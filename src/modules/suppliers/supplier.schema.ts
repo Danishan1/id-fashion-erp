@@ -27,3 +27,7 @@ export const supplierSchema = z.object({
 });
 
 export type SupplierInput = z.infer<typeof supplierSchema>;
+
+/** Partial variant for PATCH — only fields actually present in the request body are validated/updated. */
+export const supplierUpdateSchema = supplierSchema.partial();
+export type SupplierUpdateInput = z.infer<typeof supplierUpdateSchema>;

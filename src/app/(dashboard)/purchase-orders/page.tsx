@@ -2,6 +2,7 @@
 
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { DataTable } from "@/components/ui/DataTable";
+import { formatCurrency } from "@/lib/currency";
 import { STATUS_LABELS } from "./statusLabels";
 
 interface PurchaseOrderRow {
@@ -39,7 +40,7 @@ export default function PurchaseOrdersListPage() {
           {
             key: "totalAmount",
             header: "Amount",
-            render: (row) => `${row.currencyCode} ${Number(row.totalAmount).toLocaleString()}`,
+            render: (row) => `${row.currencyCode} ${formatCurrency(row.totalAmount)}`,
           },
           { key: "requestedBy", header: "Requested By", render: (row) => row.requestedBy?.fullName ?? "—" },
           {

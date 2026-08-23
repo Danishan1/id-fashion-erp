@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireSession, handleApiError } from "@/lib/api-route";
 import { PermissionService } from "@/core/rbac/PermissionService";
-import { supplierSchema } from "@/modules/suppliers/supplier.schema";
+import { supplierUpdateSchema } from "@/modules/suppliers/supplier.schema";
 import { getSupplierById, updateSupplier, deactivateSupplier } from "@/modules/suppliers/supplier.service";
 
 interface RouteContext {
@@ -27,7 +27,7 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
     await PermissionService.assert(session.user.id, "masters_core", "edit");
 
     const { id } = await params;
-    const input = supplierSchema.parse(await req.json());
+    const input = supplierUpdateSchema.parse(await req.json());
     const supplier = await updateSupplier({ companyId: session.user.companyId, userId: session.user.id }, id, input);
 
     return NextResponse.json({ data: supplier });

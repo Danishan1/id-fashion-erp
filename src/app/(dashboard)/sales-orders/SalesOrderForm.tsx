@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { formatCurrency } from "@/lib/currency";
 
 interface Option {
   id: string;
@@ -179,7 +180,7 @@ export function SalesOrderForm({ initialOrder }: { initialOrder?: InitialOrder }
   // deferred project-wide, so the live preview is fixed to ₹ rather than
   // resolving a customer/company currency that isn't actually in use yet.
   // The order's stored currencyCode is still set correctly server-side.
-  const formatAmount = (amount: number) => `₹${amount.toLocaleString()}`;
+  const formatAmount = (amount: number) => `₹${formatCurrency(amount)}`;
 
   const submitOrder = async (useOverride: boolean) => {
     if (isSubmitting) return;

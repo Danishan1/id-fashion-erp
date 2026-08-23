@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireSession, handleApiError } from "@/lib/api-route";
 import { PermissionService } from "@/core/rbac/PermissionService";
-import { materialSchema } from "@/modules/products/product.schema";
+import { materialUpdateSchema } from "@/modules/products/product.schema";
 import { getMaterialById, updateMaterial } from "@/modules/products/product.service";
 
 interface RouteContext {
@@ -27,7 +27,7 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
     await PermissionService.assert(session.user.id, "masters_core", "edit");
 
     const { id } = await params;
-    const input = materialSchema.parse(await req.json());
+    const input = materialUpdateSchema.parse(await req.json());
     const material = await updateMaterial({ companyId: session.user.companyId, userId: session.user.id }, id, input);
 
     return NextResponse.json({ data: material });

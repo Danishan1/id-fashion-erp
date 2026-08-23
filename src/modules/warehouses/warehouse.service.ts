@@ -1,7 +1,8 @@
+import type { Prisma } from "@prisma/client";
 import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import type { ListQuery } from "@/lib/list-query";
-import type { WarehouseInput, WarehouseLocationInput } from "./warehouse.schema";
+import type { WarehouseInput, WarehouseUpdateInput, WarehouseLocationInput } from "./warehouse.schema";
 import { WarehouseLocationRepository, WarehouseRepository } from "./warehouse.repository";
 
 interface ActorContext {
@@ -85,15 +86,16 @@ export async function setWarehouseActiveStatus(actor: ActorContext, id: string, 
   return updated;
 }
 
-export async function updateWarehouse(actor: ActorContext, id: string, input: WarehouseInput) {
+export async function updateWarehouse(actor: ActorContext, id: string, input: WarehouseUpdateInput) {
   const before = await getWarehouseById(actor.companyId, id);
 
-  const updated = await WarehouseRepository.update(id, {
-    code: input.code,
-    name: input.name,
-    type: input.type,
-    isActive: input.isActive,
-  });
+  const data: Prisma.WarehouseUncheckedUpdateInput = {};
+  if (input.code !== undefined) data.code = input.code;
+  if (input.name !== undefined) data.name = input.name;
+  if (input.type !== undefined) data.type = input.type;
+  if (input.isActive !== undefined) data.isActive = input.isActive;
+
+  const updated = await WarehouseRepository.update(id, data);
 
   await writeAuditLog({
     companyId: actor.companyId,

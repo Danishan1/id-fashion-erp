@@ -1,8 +1,9 @@
+import type { Prisma } from "@prisma/client";
 import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { advanceMasterCodeSequence } from "@/core/numbering/DocumentNumberingService";
 import type { ListQuery } from "@/lib/list-query";
-import type { SupplierInput } from "./supplier.schema";
+import type { SupplierInput, SupplierUpdateInput } from "./supplier.schema";
 import { SupplierRepository } from "./supplier.repository";
 
 interface ActorContext {
@@ -60,6 +61,23 @@ function toData(input: SupplierInput) {
   };
 }
 
+/** Only includes keys actually present in a partial PATCH body — omitted fields are left untouched in the DB. */
+function toUpdateData(input: SupplierUpdateInput): Prisma.SupplierUncheckedUpdateInput {
+  const data: Prisma.SupplierUncheckedUpdateInput = {};
+  if (input.code !== undefined) data.code = input.code;
+  if (input.name !== undefined) data.name = input.name;
+  if (input.category !== undefined) data.category = input.category;
+  if (input.contactPerson !== undefined) data.contactPerson = input.contactPerson || null;
+  if (input.email !== undefined) data.email = input.email || null;
+  if (input.phone !== undefined) data.phone = input.phone || null;
+  if (input.address !== undefined) data.address = input.address || null;
+  if (input.taxRegistrationNo !== undefined) data.taxRegistrationNo = input.taxRegistrationNo || null;
+  if (input.paymentTermsDays !== undefined) data.paymentTermsDays = input.paymentTermsDays ?? null;
+  if (input.defaultCurrencyCode !== undefined) data.defaultCurrencyCode = input.defaultCurrencyCode || null;
+  if (input.isActive !== undefined) data.isActive = input.isActive;
+  return data;
+}
+
 export async function createSupplier(actor: ActorContext, input: SupplierInput) {
   const existing = await SupplierRepository.findByCode(actor.companyId, input.code);
   if (existing) {
@@ -84,17 +102,17 @@ export async function createSupplier(actor: ActorContext, input: SupplierInput) 
   return supplier;
 }
 
-export async function updateSupplier(actor: ActorContext, id: string, input: SupplierInput) {
+export async function updateSupplier(actor: ActorContext, id: string, input: SupplierUpdateInput) {
   const before = await getSupplierById(actor.companyId, id);
 
-  if (input.code !== before.code) {
+  if (input.code !== undefined && input.code !== before.code) {
     const codeInUse = await SupplierRepository.findByCode(actor.companyId, input.code, id);
     if (codeInUse) {
       throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Supplier code "${input.code}" is already in use.`);
     }
   }
 
-  const updated = await SupplierRepository.update(id, toData(input));
+  const updated = await SupplierRepository.update(id, toUpdateData(input));
 
   await writeAuditLog({
     companyId: actor.companyId,

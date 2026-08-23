@@ -256,7 +256,19 @@ export async function confirmSalesOrder(actor: ActorContext, id: string, input: 
     input.overrideReason
   );
 
-  const updated = await SalesOrderRepository.update(id, { status: "CONFIRMED" });
+  // Conditional on status still being DRAFT at write time — closes the race
+  // between the check above and this write (two concurrent "Confirm" clicks
+  // both reading DRAFT before either commits).
+  const { count } = await SalesOrderRepository.updateStatusConditional(id, "DRAFT", { status: "CONFIRMED" });
+  if (count === 0) {
+    throw new BusinessRuleError(
+      "INVALID_STATE_TRANSITION",
+      `Cannot confirm a sales order in "${order.status}" status.`,
+      { currentStatus: order.status }
+    );
+  }
+  const updated = await SalesOrderRepository.findAnyById(actor.companyId, id);
+  if (!updated) throw new BusinessRuleError("NOT_FOUND", "Sales order not found.", { id });
 
   await writeAuditLog({
     companyId: actor.companyId,
@@ -289,7 +301,19 @@ export async function transitionSalesOrderStatus(actor: ActorContext, id: string
     data.statusBeforeHold = before.status;
   }
 
-  const updated = await SalesOrderRepository.update(id, data);
+  // Conditional on status still being `before.status` at write time — closes
+  // the race between the check above and this write (e.g. two concurrent
+  // "Cancel" clicks both reading the same prior status before either commits).
+  const { count } = await SalesOrderRepository.updateStatusConditional(id, before.status, data);
+  if (count === 0) {
+    throw new BusinessRuleError(
+      "INVALID_STATE_TRANSITION",
+      `Cannot move a sales order from "${before.status}" to "${targetStatus}".`,
+      { from: before.status, to: targetStatus }
+    );
+  }
+  const updated = await SalesOrderRepository.findAnyById(actor.companyId, id);
+  if (!updated) throw new BusinessRuleError("NOT_FOUND", "Sales order not found.", { id });
 
   await writeAuditLog({
     companyId: actor.companyId,
@@ -316,10 +340,20 @@ export async function resumeSalesOrderFromHold(actor: ActorContext, id: string) 
     });
   }
 
-  const updated = await SalesOrderRepository.update(id, {
+  // Conditional on status still being ON_HOLD at write time — closes the
+  // race between the check above and this write (two concurrent "Resume"
+  // clicks both reading ON_HOLD before either commits).
+  const { count } = await SalesOrderRepository.updateStatusConditional(id, "ON_HOLD", {
     status: before.statusBeforeHold,
     statusBeforeHold: null,
   });
+  if (count === 0) {
+    throw new BusinessRuleError("INVALID_STATE_TRANSITION", "This sales order isn't on hold.", {
+      currentStatus: before.status,
+    });
+  }
+  const updated = await SalesOrderRepository.findAnyById(actor.companyId, id);
+  if (!updated) throw new BusinessRuleError("NOT_FOUND", "Sales order not found.", { id });
 
   await writeAuditLog({
     companyId: actor.companyId,

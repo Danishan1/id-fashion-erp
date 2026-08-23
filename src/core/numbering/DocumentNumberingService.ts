@@ -1,5 +1,5 @@
 import { prisma } from "@/core/db/client";
-import type { DocumentType } from "@prisma/client";
+import type { DocumentType, Prisma } from "@prisma/client";
 
 const PREFIX_BY_DOCUMENT_TYPE: Record<DocumentType, string> = {
   SAMPLE_REQUEST: "SAM",

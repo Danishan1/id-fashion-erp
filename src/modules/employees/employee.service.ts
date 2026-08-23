@@ -1,8 +1,9 @@
+import type { Prisma } from "@prisma/client";
 import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { advanceMasterCodeSequence } from "@/core/numbering/DocumentNumberingService";
 import type { ListQuery } from "@/lib/list-query";
-import type { EmployeeInput } from "./employee.schema";
+import type { EmployeeInput, EmployeeUpdateInput } from "./employee.schema";
 import { EmployeeRepository } from "./employee.repository";
 
 interface ActorContext {
@@ -55,6 +56,20 @@ function toData(input: EmployeeInput) {
   };
 }
 
+/** Only includes keys actually present in a partial PATCH body — omitted fields are left untouched in the DB. */
+function toUpdateData(input: EmployeeUpdateInput): Prisma.EmployeeUncheckedUpdateInput {
+  const data: Prisma.EmployeeUncheckedUpdateInput = {};
+  if (input.employeeCode !== undefined) data.employeeCode = input.employeeCode;
+  if (input.fullName !== undefined) data.fullName = input.fullName;
+  if (input.departmentId !== undefined) data.departmentId = input.departmentId || null;
+  if (input.designation !== undefined) data.designation = input.designation || null;
+  if (input.phone !== undefined) data.phone = input.phone || null;
+  if (input.email !== undefined) data.email = input.email || null;
+  if (input.joinDate !== undefined) data.joinDate = input.joinDate ? new Date(input.joinDate) : null;
+  if (input.isActive !== undefined) data.isActive = input.isActive;
+  return data;
+}
+
 export async function createEmployee(actor: ActorContext, input: EmployeeInput) {
   const existing = await EmployeeRepository.findByCode(actor.companyId, input.employeeCode);
   if (existing) {
@@ -80,10 +95,10 @@ export async function createEmployee(actor: ActorContext, input: EmployeeInput) 
   return employee;
 }
 
-export async function updateEmployee(actor: ActorContext, id: string, input: EmployeeInput) {
+export async function updateEmployee(actor: ActorContext, id: string, input: EmployeeUpdateInput) {
   const before = await getEmployeeById(actor.companyId, id);
 
-  if (input.employeeCode !== before.employeeCode) {
+  if (input.employeeCode !== undefined && input.employeeCode !== before.employeeCode) {
     const codeInUse = await EmployeeRepository.findByCode(actor.companyId, input.employeeCode, id);
     if (codeInUse) {
       throw new BusinessRuleError(
@@ -93,7 +108,7 @@ export async function updateEmployee(actor: ActorContext, id: string, input: Emp
     }
   }
 
-  const updated = await EmployeeRepository.update(id, toData(input));
+  const updated = await EmployeeRepository.update(id, toUpdateData(input));
 
   await writeAuditLog({
     companyId: actor.companyId,

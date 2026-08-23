@@ -86,6 +86,12 @@ export const generatePurchaseOrdersForShortfallSchema = z.object({
         materialRequestItemId: z.string().uuid(),
         purchaseQuantity: z.coerce.number().positive("Purchase quantity must be greater than 0"),
         supplierId: z.string().uuid("Supplier is required"),
+        // Required — previously absent, which let generatePurchaseOrdersForShortfall()
+        // silently hardcode unitPrice to 0 on the resulting PurchaseOrderItem. Same
+        // validation as the real PO creation path's purchaseOrderItemSchema (see
+        // purchase-order.schema.ts) so this escalation path can't be laxer or
+        // stricter than direct PO creation.
+        unitPrice: z.coerce.number().min(0, "Unit price cannot be negative"),
       })
     )
     .min(1, "Select at least one line to purchase"),

@@ -1,4 +1,5 @@
 import { prisma } from "@/core/db/client";
+import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import {
   deleteStoredFile,
@@ -44,7 +45,7 @@ export async function uploadAttachment(
     throw err;
   }
 
-  return prisma.attachment.create({
+  const attachment = await prisma.attachment.create({
     data: {
       companyId: actor.companyId,
       uploadedById: actor.userId,
@@ -57,6 +58,17 @@ export async function uploadAttachment(
       contextLabel: contextLabel || null,
     },
   });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "attachments",
+    recordId: attachment.id,
+    action: "CREATE",
+    newValues: attachment,
+  });
+
+  return attachment;
 }
 
 export async function listAttachments(companyId: string, relatedModule: RelatedModule, relatedRecordId: string) {
@@ -75,10 +87,23 @@ export async function getAttachmentForDownload(companyId: string, attachmentId: 
   return { attachment, buffer };
 }
 
-export async function deleteAttachment(companyId: string, attachmentId: string) {
-  const attachment = await prisma.attachment.findFirst({ where: { id: attachmentId, companyId } });
+export async function deleteAttachment(actor: ActorContext, attachmentId: string) {
+  const attachment = await prisma.attachment.findFirst({ where: { id: attachmentId, companyId: actor.companyId } });
   if (!attachment) throw new BusinessRuleError("NOT_FOUND", "Attachment not found.", { id: attachmentId });
 
   await deleteStoredFile(attachment.storageKey);
   await prisma.attachment.delete({ where: { id: attachmentId } });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "attachments",
+    recordId: attachment.id,
+    action: "DELETE",
+    oldValues: {
+      fileName: attachment.fileName,
+      relatedModule: attachment.relatedModule,
+      relatedRecordId: attachment.relatedRecordId,
+    },
+  });
 }

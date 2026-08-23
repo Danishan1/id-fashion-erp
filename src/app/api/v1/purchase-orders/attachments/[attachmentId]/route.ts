@@ -13,7 +13,7 @@ export async function DELETE(_req: Request, { params }: RouteContext) {
     await PermissionService.assert(session.user.id, "purchasing", "edit");
 
     const { attachmentId } = await params;
-    await deleteAttachment(session.user.companyId, attachmentId);
+    await deleteAttachment({ companyId: session.user.companyId, userId: session.user.id }, attachmentId);
 
     return NextResponse.json({ data: { id: attachmentId } });
   } catch (error) {

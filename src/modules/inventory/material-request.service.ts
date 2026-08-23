@@ -539,6 +539,11 @@ export interface GeneratePurchaseOrdersReviewLine {
   purchaseOrderedQuantity: number;
   suggestedPurchaseQty: number;
   defaultSupplierId: string | null;
+  // From the Raw Material master's unitCost (Masters -> Materials) — a
+  // suggested default only, so the UI can pre-fill the required Unit Price
+  // field. Never applied silently: the caller must still see and can edit it
+  // before generatePurchaseOrdersForShortfall() uses it (see BUG-04).
+  suggestedUnitPrice: number | null;
 }
 
 /** Review payload for the "Generate Purchase Order(s)" modal — one fetch
@@ -571,6 +576,7 @@ export async function getGeneratePurchaseOrdersReview(actor: ActorContext, id: s
       purchaseOrderedQuantity: projection.purchaseOrderedQuantity,
       suggestedPurchaseQty: projection.availableToOrderQuantity,
       defaultSupplierId: line.material.defaultSupplierId,
+      suggestedUnitPrice: line.material.unitCost === null ? null : Number(line.material.unitCost),
     });
   }
 
@@ -596,7 +602,10 @@ export async function getGeneratePurchaseOrdersReview(actor: ActorContext, id: s
 export async function generatePurchaseOrdersForShortfall(
   actor: ActorContext,
   id: string,
-  input: { lines: Array<{ materialRequestItemId: string; purchaseQuantity: number; supplierId: string }>; expectedDeliveryDate?: string }
+  input: {
+    lines: Array<{ materialRequestItemId: string; purchaseQuantity: number; supplierId: string; unitPrice: number }>;
+    expectedDeliveryDate?: string;
+  }
 ) {
   const request = await MaterialRequestRepository.findAnyById(actor.companyId, id);
   if (!request) throw new BusinessRuleError("NOT_FOUND", "Material request not found.", { id });
@@ -609,7 +618,10 @@ export async function generatePurchaseOrdersForShortfall(
   const candidatesById = new Map(candidateLines.map((c) => [c.id, c] as const));
 
   type Candidate = (typeof candidateLines)[number];
-  const bySupplier = new Map<string, Array<{ line: Candidate; purchaseQuantity: number; suggestedQty: number }>>();
+  const bySupplier = new Map<
+    string,
+    Array<{ line: Candidate; purchaseQuantity: number; suggestedQty: number; unitPrice: number }>
+  >();
   const skipped: Array<{ materialRequestItemId: string; reason: string }> = [];
 
   for (const submitted of input.lines) {
@@ -627,7 +639,12 @@ export async function generatePurchaseOrdersForShortfall(
       continue;
     }
     const list = bySupplier.get(submitted.supplierId) ?? [];
-    list.push({ line: candidate, purchaseQuantity: submitted.purchaseQuantity, suggestedQty: projection.availableToOrderQuantity });
+    list.push({
+      line: candidate,
+      purchaseQuantity: submitted.purchaseQuantity,
+      suggestedQty: projection.availableToOrderQuantity,
+      unitPrice: submitted.unitPrice,
+    });
     bySupplier.set(submitted.supplierId, list);
   }
 
@@ -639,11 +656,11 @@ export async function generatePurchaseOrdersForShortfall(
         supplierId,
         orderDate: new Date().toISOString().slice(0, 10),
         expectedDeliveryDate: input.expectedDeliveryDate || "",
-        items: lines.map(({ line, purchaseQuantity }) => ({
+        items: lines.map(({ line, purchaseQuantity, unitPrice }) => ({
           productId: line.materialId,
           uomId: line.uomId,
           orderedQuantity: purchaseQuantity,
-          unitPrice: 0,
+          unitPrice,
           notes: `Shortfall for Material Request ${request.requestNumber}`,
           materialRequestItemId: line.id,
         })),

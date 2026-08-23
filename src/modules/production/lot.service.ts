@@ -6,6 +6,15 @@ import { LotRelationRepository, LotRepository, ProductionOrderRepository } from 
 import type { CreateLotInput, MergeLotsInput, SplitLotInput } from "./production.schema";
 import type { ActorContext } from "./production-order.service";
 
+const EPSILON = 0.0001;
+
+// Lots that no longer represent "live" quantity against the order's plan —
+// a SPLIT lot's quantity now lives entirely in its children, and a MERGED
+// lot's quantity now lives entirely in the lot it was merged into. Counting
+// either alongside their replacement would double-count the same physical
+// pieces.
+const SUPERSEDED_LOT_STATUSES = ["CANCELLED", "SPLIT", "MERGED"] as const;
+
 function padLotSuffix(n: number) {
   return String(n).padStart(2, "0");
 }
@@ -36,9 +45,36 @@ export async function createLot(actor: ActorContext, productionOrderId: string, 
       currentStatus: order.status,
     });
   }
+  if (order.status === "ON_HOLD") {
+    throw new BusinessRuleError("INVALID_STATE_TRANSITION", "Resume the production order before starting new work on it.", {
+      currentStatus: order.status,
+    });
+  }
 
   const lot = await prisma.$transaction(async (tx) => {
+    // Claiming the next lot-number suffix is a genuine row UPDATE on the
+    // ProductionOrder, which takes a Postgres row lock for the rest of this
+    // transaction — that lock is what makes the quantity-cap check below
+    // atomic against a concurrent createLot on the same order (the second
+    // transaction blocks here until the first commits, then re-reads the
+    // now-committed sibling Lots before it sums them).
     const lotNumber = await claimNextLotNumber(tx, order.id, order.orderNumber);
+
+    const existingSum = await tx.lot.aggregate({
+      where: { productionOrderId: order.id, status: { notIn: [...SUPERSEDED_LOT_STATUSES] } },
+      _sum: { quantity: true },
+    });
+    const alreadyPlanned = Number(existingSum._sum.quantity ?? 0);
+    const plannedQuantity = Number(order.plannedQuantity);
+    const newTotal = alreadyPlanned + input.quantity;
+    if (newTotal > plannedQuantity + EPSILON) {
+      throw new BusinessRuleError(
+        "OVER_PRODUCTION_NOT_ALLOWED",
+        `Cannot create a lot of ${input.quantity} — existing lots already total ${alreadyPlanned}, and this would bring the total to ${newTotal}, above the production order's planned quantity of ${plannedQuantity}.`,
+        { alreadyPlanned, attempted: input.quantity, plannedQuantity }
+      );
+    }
+
     const created = await LotRepository.createInTx(tx, {
       companyId: actor.companyId,
       branchId: actor.branchId || null,

@@ -12,3 +12,7 @@ export const employeeSchema = z.object({
 });
 
 export type EmployeeInput = z.infer<typeof employeeSchema>;
+
+/** Partial variant for PATCH — only fields actually present in the request body are validated/updated. */
+export const employeeUpdateSchema = employeeSchema.partial();
+export type EmployeeUpdateInput = z.infer<typeof employeeUpdateSchema>;

@@ -18,6 +18,10 @@ export const warehouseSchema = z.object({
 });
 export type WarehouseInput = z.infer<typeof warehouseSchema>;
 
+/** Partial variant for PATCH — only fields actually present in the request body are validated/updated. */
+export const warehouseUpdateSchema = warehouseSchema.partial();
+export type WarehouseUpdateInput = z.infer<typeof warehouseUpdateSchema>;
+
 export const warehouseLocationSchema = z.object({
   code: z.string().min(1, "Code is required").max(30),
   zone: z.string().max(50).optional().or(z.literal("")),

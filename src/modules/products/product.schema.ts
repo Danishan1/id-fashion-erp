@@ -24,6 +24,10 @@ export const productSchema = z.object({
 });
 export type ProductInput = z.infer<typeof productSchema>;
 
+/** Partial variant for PATCH — only fields actually present in the request body are validated/updated. */
+export const productUpdateSchema = productSchema.partial();
+export type ProductUpdateInput = z.infer<typeof productUpdateSchema>;
+
 export const materialSchema = z.object({
   styleCode: z.string().min(1, "Item code is required").max(30),
   styleName: z.string().min(1, "Name is required").max(200),
@@ -37,6 +41,10 @@ export const materialSchema = z.object({
   isActive: z.boolean().default(true),
 });
 export type MaterialInput = z.infer<typeof materialSchema>;
+
+/** Partial variant for PATCH — only fields actually present in the request body are validated/updated. */
+export const materialUpdateSchema = materialSchema.partial();
+export type MaterialUpdateInput = z.infer<typeof materialUpdateSchema>;
 
 export const generateVariantsSchema = z.object({
   colorIds: z.array(z.string().uuid()).min(1, "Select at least one color"),

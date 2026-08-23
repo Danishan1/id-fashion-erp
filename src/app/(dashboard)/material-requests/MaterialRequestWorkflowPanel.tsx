@@ -592,12 +592,14 @@ interface ReviewLine {
   purchaseOrderedQuantity: number;
   suggestedPurchaseQty: number;
   defaultSupplierId: string | null;
+  suggestedUnitPrice: number | null;
 }
 
 interface ReviewRowState {
   included: boolean;
   purchaseQuantity: string;
   supplierId: string;
+  unitPrice: string;
 }
 
 function GeneratePurchaseOrdersModal({
@@ -630,7 +632,12 @@ function GeneratePurchaseOrdersModal({
           Object.fromEntries(
             lines.map((l) => [
               l.materialRequestItemId,
-              { included: true, purchaseQuantity: String(l.suggestedPurchaseQty), supplierId: l.defaultSupplierId ?? "" },
+              {
+                included: true,
+                purchaseQuantity: String(l.suggestedPurchaseQty),
+                supplierId: l.defaultSupplierId ?? "",
+                unitPrice: l.suggestedUnitPrice !== null ? String(l.suggestedUnitPrice) : "",
+              },
             ])
           )
         );
@@ -648,6 +655,7 @@ function GeneratePurchaseOrdersModal({
         materialRequestItemId: l.materialRequestItemId,
         purchaseQuantity: Number(rowState[l.materialRequestItemId].purchaseQuantity),
         supplierId: rowState[l.materialRequestItemId].supplierId,
+        unitPrice: Number(rowState[l.materialRequestItemId].unitPrice),
       }));
 
     if (submitLines.length === 0) {
@@ -660,6 +668,10 @@ function GeneratePurchaseOrdersModal({
     }
     if (submitLines.some((l) => !(l.purchaseQuantity > 0))) {
       setError("Purchase quantity must be greater than 0 for every included line.");
+      return;
+    }
+    if (submitLines.some((l) => !(l.unitPrice > 0))) {
+      setError("Unit price must be greater than 0 for every included line.");
       return;
     }
 
@@ -707,6 +719,7 @@ function GeneratePurchaseOrdersModal({
                     <th className="py-1 pr-2 font-medium">Remaining</th>
                     <th className="py-1 pr-2 font-medium">Suggested PO</th>
                     <th className="py-1 pr-2 font-medium">Purchase Qty</th>
+                    <th className="py-1 pr-2 font-medium">Unit Price</th>
                     <th className="py-1 font-medium">Supplier</th>
                   </tr>
                 </thead>
@@ -752,6 +765,17 @@ function GeneratePurchaseOrdersModal({
                             className={`${textInputClass()} w-24`}
                           />
                         </td>
+                        <td className="py-2 pr-2">
+                          <input
+                            type="number"
+                            min={0}
+                            step="0.01"
+                            disabled={!row.included}
+                            value={row.unitPrice}
+                            onChange={(e) => updateRow(l.materialRequestItemId, { unitPrice: e.target.value })}
+                            className={`${textInputClass()} w-24`}
+                          />
+                        </td>
                         <td className="py-2">
                           <select
                             disabled={!row.included}
@@ -772,7 +796,7 @@ function GeneratePurchaseOrdersModal({
                   })}
                   {reviewLines.length === 0 && (
                     <tr>
-                      <td colSpan={9} className="py-4 text-center text-sm text-zinc-500">
+                      <td colSpan={10} className="py-4 text-center text-sm text-zinc-500">
                         Nothing left to escalate — every line is already fully issued or covered by an existing order.
                       </td>
                     </tr>

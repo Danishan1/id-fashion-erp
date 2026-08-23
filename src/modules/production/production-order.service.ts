@@ -252,6 +252,16 @@ export async function closeProductionOrder(actor: ActorContext, id: string) {
     });
   }
 
+  // The filter above is vacuously satisfied when zero lots were ever raised
+  // (or when every lot was CANCELLED) — without this check, a production
+  // order could be closed having produced nothing at all.
+  const completedLots = lots.filter((lot) => lot.status === "COMPLETED");
+  if (completedLots.length === 0) {
+    throw new BusinessRuleError("INVALID_STATE_TRANSITION", "Cannot close: no production has been completed on this order yet.", {
+      lotCount: lots.length,
+    });
+  }
+
   const updated = await ProductionOrderRepository.update(id, { status: "CLOSED", actualEndDate: new Date() });
 
   await writeAuditLog({

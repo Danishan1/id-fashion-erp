@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { FilePreviewModal } from "@/components/ui/FilePreviewModal";
+import { formatCurrency } from "@/lib/currency";
 import { STATUS_BADGE_CLASS, STATUS_LABELS } from "./statusLabels";
 
 type PurchaseOrderStatus = keyof typeof STATUS_LABELS;
@@ -290,14 +291,14 @@ export function PurchaseOrderWorkflowPanel({
                 <td className="py-2 pr-3 text-zinc-700 dark:text-zinc-200">{item.orderedQuantity}</td>
                 <td className="py-2 pr-3 text-zinc-700 dark:text-zinc-200">{item.receivedQuantity}</td>
                 <td className="py-2 text-zinc-700 dark:text-zinc-200">
-                  {order.currencyCode} {Number(item.unitPrice).toLocaleString()}
+                  {order.currencyCode} {formatCurrency(item.unitPrice)}
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
         <p className="mt-3 text-sm font-medium text-zinc-900 dark:text-zinc-50">
-          Order Amount: {order.currencyCode} {Number(order.totalAmount).toLocaleString()}
+          Order Amount: {order.currencyCode} {formatCurrency(order.totalAmount)}
         </p>
       </div>
 
