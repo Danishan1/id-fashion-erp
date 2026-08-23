@@ -20,5 +20,8 @@ export const unitSchema = z.object({
   code: z.string().min(1, "Code is required").max(20),
   name: z.string().min(1, "Name is required").max(100),
   conversionFactor: z.coerce.number().positive().default(1),
+  // If set, 1 of this unit = conversionFactor units of baseUnitId — must itself be a root unit
+  // (its own baseUnitId must be null), enforced in lookup.service.ts. Depth-1 only, by design.
+  baseUnitId: z.string().uuid().optional().or(z.literal("")),
 });
 export type UnitInput = z.infer<typeof unitSchema>;

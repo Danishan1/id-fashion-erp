@@ -25,6 +25,8 @@ export async function createProductionStage(actor: ActorContext, input: Producti
       name: input.name,
       sequence: input.sequence,
       isActive: input.isActive,
+      isFinal: input.isFinal,
+      allowRework: input.allowRework,
     },
   });
 
@@ -41,9 +43,19 @@ export async function createProductionStage(actor: ActorContext, input: Producti
 }
 
 export async function updateProductionStage(actor: ActorContext, id: string, input: ProductionStageInput) {
+  const existing = await ProductionConfigRepository.stage.findFirst({ where: { id, companyId: actor.companyId } });
+  if (!existing) throw new BusinessRuleError("NOT_FOUND", "Stage not found.", { id });
+
   const updated = await ProductionConfigRepository.stage.update({
     where: { id },
-    data: { code: input.code, name: input.name, sequence: input.sequence, isActive: input.isActive },
+    data: {
+      code: input.code,
+      name: input.name,
+      sequence: input.sequence,
+      isActive: input.isActive,
+      isFinal: input.isFinal,
+      allowRework: input.allowRework,
+    },
   });
 
   await writeAuditLog({
@@ -91,6 +103,9 @@ export async function createProductionLine(actor: ActorContext, input: Productio
 }
 
 export async function updateProductionLine(actor: ActorContext, id: string, input: ProductionLineInput) {
+  const existing = await ProductionConfigRepository.line.findFirst({ where: { id, companyId: actor.companyId } });
+  if (!existing) throw new BusinessRuleError("NOT_FOUND", "Line not found.", { id });
+
   const updated = await ProductionConfigRepository.line.update({
     where: { id },
     data: {
@@ -147,6 +162,9 @@ export async function createMachine(actor: ActorContext, input: MachineInput) {
 }
 
 export async function updateMachine(actor: ActorContext, id: string, input: MachineInput) {
+  const existing = await ProductionConfigRepository.machine.findFirst({ where: { id, companyId: actor.companyId } });
+  if (!existing) throw new BusinessRuleError("NOT_FOUND", "Machine not found.", { id });
+
   const updated = await ProductionConfigRepository.machine.update({
     where: { id },
     data: {
@@ -206,6 +224,9 @@ export async function createSalesAgent(actor: ActorContext, input: SalesAgentInp
 }
 
 export async function updateSalesAgent(actor: ActorContext, id: string, input: SalesAgentInput) {
+  const existing = await ProductionConfigRepository.salesAgent.findFirst({ where: { id, companyId: actor.companyId } });
+  if (!existing) throw new BusinessRuleError("NOT_FOUND", "Agent not found.", { id });
+
   const updated = await ProductionConfigRepository.salesAgent.update({
     where: { id },
     data: {

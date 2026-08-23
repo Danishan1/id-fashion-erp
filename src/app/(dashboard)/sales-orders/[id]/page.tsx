@@ -1,0 +1,40 @@
+import { notFound } from "next/navigation";
+import { auth } from "@/core/auth/auth";
+import { getSalesOrderById } from "@/modules/sales-orders/sales-order.service";
+import { Breadcrumb } from "@/components/ui/Breadcrumb";
+import { Barcode } from "@/components/ui/Barcode";
+import { SalesOrderWorkflowPanel } from "../SalesOrderWorkflowPanel";
+
+export default async function SalesOrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const session = await auth();
+
+  const order = await getSalesOrderById(session!.user.companyId, id).catch(() => null);
+  if (!order) notFound();
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <Breadcrumb items={[{ label: "Dashboard", href: "/dashboard" }, { label: "Sales Orders", href: "/sales-orders" }, { label: order.orderNumber }]} />
+          <h1 className="mt-2 text-lg font-semibold text-zinc-900 dark:text-zinc-50">{order.orderNumber}</h1>
+          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+            {order.customer.name}
+            {order.buyer ? ` — ${order.buyer.name}` : ""} · Requested by {order.requestedBy.fullName} on{" "}
+            {new Date(order.orderDate).toLocaleDateString()}
+            {order.requiredShipDate ? ` · Required ship: ${new Date(order.requiredShipDate).toLocaleDateString()}` : ""}
+          </p>
+        </div>
+        {/* Scan-to-lookup during production/dispatch — encodes the order number itself, nothing else. */}
+        <Barcode value={order.orderNumber} />
+      </div>
+
+      {/* Prisma Decimal/Date instances aren't plain-serializable across the
+          server/client boundary — round-trip through JSON, same pattern as
+          Sampling's detail page. `key={id}` forces a remount on client-side
+          navigation between two different orders — same stale-data fix
+          applied project-wide after the Sampling bug. */}
+      <SalesOrderWorkflowPanel key={id} salesOrderId={id} initialOrder={JSON.parse(JSON.stringify(order))} />
+    </div>
+  );
+}

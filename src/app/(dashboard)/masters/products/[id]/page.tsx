@@ -27,12 +27,14 @@ export default async function EditProductPage({ params }: { params: Promise<{ id
       </div>
 
       <ProductForm
+        key={`form-${id}`}
         submitUrl={`/api/v1/products/${id}`}
         method="PATCH"
         redirectTo="/masters/products"
         initialValues={{
           styleCode: product.styleCode,
           styleName: product.styleName,
+          designNumber: product.designNumber ?? "",
           categoryId: product.categoryId ?? "",
           seasonId: product.seasonId ?? "",
           gender: product.gender ?? "",
@@ -43,7 +45,7 @@ export default async function EditProductPage({ params }: { params: Promise<{ id
         }}
       />
 
-      <VariantsSection productId={id} initialVariants={product.variants} />
+      <VariantsSection key={`variants-${id}`} productId={id} initialVariants={product.variants} />
     </div>
   );
 }

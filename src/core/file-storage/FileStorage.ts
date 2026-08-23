@@ -2,7 +2,11 @@ import { randomUUID } from "crypto";
 import { mkdir, readFile, unlink, writeFile } from "fs/promises";
 import path from "path";
 
-const STORAGE_ROOT = process.env.FILE_STORAGE_ROOT ?? "./storage";
+// Deliberately outside `public/` — anything under public/ is served by Next.js
+// with no auth check at all, which would make every tenant's files (including
+// this one's) downloadable by anyone who guesses/finds the URL. Files here are
+// only ever reachable through an authenticated, company-scoped download route.
+const STORAGE_ROOT = process.env.FILE_STORAGE_ROOT ?? "./uploads";
 
 const ALLOWED_MIME_TYPES = new Set([
   "image/jpeg",

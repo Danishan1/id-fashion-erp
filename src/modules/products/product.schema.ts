@@ -3,6 +3,8 @@ import { z } from "zod";
 export const MATERIAL_CATEGORIES = [
   "FABRIC",
   "TRIMS",
+  "ZIPS",
+  "BUTTONS",
   "ACCESSORIES",
   "PACKAGING",
   "OTHER",
@@ -11,6 +13,7 @@ export const MATERIAL_CATEGORIES = [
 export const productSchema = z.object({
   styleCode: z.string().min(1, "Style code is required").max(30),
   styleName: z.string().min(1, "Style name is required").max(200),
+  designNumber: z.string().max(50).optional().or(z.literal("")),
   categoryId: z.string().uuid().optional().or(z.literal("")),
   seasonId: z.string().uuid().optional().or(z.literal("")),
   gender: z.string().max(30).optional().or(z.literal("")),

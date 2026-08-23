@@ -40,6 +40,9 @@ export async function createCostMaster(actor: ActorContext, input: CostMasterInp
 }
 
 export async function updateCostMaster(actor: ActorContext, id: string, input: CostMasterInput) {
+  const existing = await CostMasterRepository.findFirst({ where: { id, companyId: actor.companyId } });
+  if (!existing) throw new BusinessRuleError("NOT_FOUND", "Cost master not found.", { id });
+
   const updated = await CostMasterRepository.update({
     where: { id },
     data: { code: input.code, name: input.name, type: input.type, rate: input.rate, isActive: input.isActive },

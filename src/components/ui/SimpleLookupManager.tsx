@@ -263,11 +263,21 @@ export function SimpleLookupManager({
             {!isLoading &&
               rows.map((row) => (
                 <tr key={row.id} className="border-b border-zinc-100 last:border-0 dark:border-zinc-800">
-                  {columns.map((c) => (
-                    <td key={c.key} className="px-4 py-2 text-zinc-700 dark:text-zinc-200">
-                      {String(row[c.key] ?? "")}
-                    </td>
-                  ))}
+                  {columns.map((c) => {
+                    const field = fields.find((f) => f.key === c.key);
+                    const rawValue = row[c.key];
+                    let display = String(rawValue ?? "");
+                    if (field?.type === "select") {
+                      const selectOptions = field.options ?? dynamicOptions[field.key] ?? [];
+                      const match = selectOptions.find((opt) => opt.value === rawValue);
+                      display = match ? match.label : rawValue ? display : "—";
+                    }
+                    return (
+                      <td key={c.key} className="px-4 py-2 text-zinc-700 dark:text-zinc-200">
+                        {display}
+                      </td>
+                    );
+                  })}
                   <td className="px-4 py-2">
                     <div className="flex items-center gap-3">
                       <button onClick={() => startEdit(row)} className="text-indigo-600 hover:text-indigo-500">

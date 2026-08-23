@@ -35,6 +35,9 @@ export async function createPaymentType(actor: ActorContext, input: PaymentTypeI
 }
 
 export async function updatePaymentType(actor: ActorContext, id: string, input: PaymentTypeInput) {
+  const existing = await FinanceConfigRepository.paymentType.findFirst({ where: { id, companyId: actor.companyId } });
+  if (!existing) throw new BusinessRuleError("NOT_FOUND", "Payment type not found.", { id });
+
   const updated = await FinanceConfigRepository.paymentType.update({
     where: { id },
     data: { code: input.code, name: input.name, type: input.type, isActive: input.isActive },
@@ -90,6 +93,9 @@ export async function createBankAccount(actor: ActorContext, input: BankAccountI
 }
 
 export async function updateBankAccount(actor: ActorContext, id: string, input: BankAccountInput) {
+  const existing = await FinanceConfigRepository.bankAccount.findFirst({ where: { id, companyId: actor.companyId } });
+  if (!existing) throw new BusinessRuleError("NOT_FOUND", "Bank account not found.", { id });
+
   const updated = await FinanceConfigRepository.bankAccount.update({
     where: { id },
     data: {

@@ -27,6 +27,7 @@ export default async function EditCustomerPage({ params }: { params: Promise<{ i
       </div>
 
       <CustomerForm
+        key={`form-${id}`}
         submitUrl={`/api/v1/customers/${id}`}
         method="PATCH"
         redirectTo="/masters/customers"
@@ -42,7 +43,7 @@ export default async function EditCustomerPage({ params }: { params: Promise<{ i
         }}
       />
 
-      <BuyersSection customerId={id} initialBuyers={customer.buyers} />
+      <BuyersSection key={`buyers-${id}`} customerId={id} initialBuyers={customer.buyers} />
     </div>
   );
 }

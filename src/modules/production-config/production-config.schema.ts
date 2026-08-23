@@ -5,6 +5,20 @@ export const productionStageSchema = z.object({
   name: z.string().min(1, "Name is required").max(200),
   sequence: z.coerce.number().int().default(0),
   isActive: z.coerce.boolean().default(true),
+  // Represented as a "true"/"false" select in the UI (reuses the existing
+  // select field type rather than adding a new checkbox type to the shared
+  // SimpleLookupManager component) — see PRODUCTION_MODULE_DESIGN.md §2.4.
+  // SimpleLookupManager's select always prepends an empty "" placeholder
+  // option, so "" (left untouched) must resolve to each field's own sensible
+  // default rather than failing validation.
+  isFinal: z
+    .enum(["true", "false", ""])
+    .default("false")
+    .transform((v) => v === "true"),
+  allowRework: z
+    .enum(["true", "false", ""])
+    .default("true")
+    .transform((v) => v !== "false"),
 });
 export type ProductionStageInput = z.infer<typeof productionStageSchema>;
 

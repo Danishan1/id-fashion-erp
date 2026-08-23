@@ -1,0 +1,37 @@
+import { NextRequest, NextResponse } from "next/server";
+import { requireSession, handleApiError } from "@/lib/api-route";
+import { PermissionService } from "@/core/rbac/PermissionService";
+import { parseListQuery, buildListMeta } from "@/lib/list-query";
+import { salesOrderSchema } from "@/modules/sales-orders/sales-order.schema";
+import { createSalesOrder, listSalesOrders } from "@/modules/sales-orders/sales-order.service";
+
+export async function GET(req: NextRequest) {
+  try {
+    const session = await requireSession();
+    await PermissionService.assert(session.user.id, "sales_orders", "view");
+
+    const query = parseListQuery(req.nextUrl.searchParams, "orderDate");
+    const { data, totalCount } = await listSalesOrders(session.user.companyId, query);
+
+    return NextResponse.json({ data, meta: buildListMeta(totalCount, query.page, query.pageSize) });
+  } catch (error) {
+    return handleApiError(error);
+  }
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    const session = await requireSession();
+    await PermissionService.assert(session.user.id, "sales_orders", "create");
+
+    const input = salesOrderSchema.parse(await req.json());
+    const order = await createSalesOrder(
+      { companyId: session.user.companyId, userId: session.user.id, branchId: session.user.defaultBranchId },
+      input
+    );
+
+    return NextResponse.json({ data: order }, { status: 201 });
+  } catch (error) {
+    return handleApiError(error);
+  }
+}

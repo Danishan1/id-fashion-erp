@@ -171,6 +171,20 @@ async function main() {
     skipDuplicates: true,
   });
 
+  // Real, universal, unambiguous conversions only — DZN->PCS and YDS->MTR are fixed physical
+  // constants. ROL/SET/KG deliberately stay roots with no conversion: a roll's or a set's
+  // quantity has no fixed universal factor to any other unit.
+  const seededUnits = await prisma.unitOfMeasure.findMany({ where: { code: { in: ["PCS", "MTR", "DZN", "YDS"] } } });
+  const seededUnitIdByCode = new Map(seededUnits.map((u) => [u.code, u.id]));
+  await prisma.unitOfMeasure.update({
+    where: { id: seededUnitIdByCode.get("DZN") },
+    data: { baseUnitId: seededUnitIdByCode.get("PCS"), conversionFactor: 12 },
+  });
+  await prisma.unitOfMeasure.update({
+    where: { id: seededUnitIdByCode.get("YDS") },
+    data: { baseUnitId: seededUnitIdByCode.get("MTR"), conversionFactor: 0.9144 },
+  });
+
   console.log("Seeding Departments, Designations, Employee Categories, Shifts, Holidays...");
   await prisma.department.createMany({
     data: [
@@ -273,8 +287,8 @@ async function main() {
     data: [
       { companyId, code: "SUP001", name: "Shree Balaji Textiles", category: "FABRIC", contactPerson: "Balaji Rao", phone: "9820011122" },
       { companyId, code: "SUP002", name: "Om Fabrics Pvt Ltd", category: "FABRIC", contactPerson: "Om Prakash", phone: "9820033344" },
-      { companyId, code: "SUP003", name: "National Zipper Co.", category: "TRIMS", contactPerson: "Feroz Khan", phone: "9820055566" },
-      { companyId, code: "SUP004", name: "Universal Buttons & Trims", category: "TRIMS", contactPerson: "Ramesh Shah", phone: "9820077788" },
+      { companyId, code: "SUP003", name: "National Zipper Co.", category: "ZIPS", contactPerson: "Feroz Khan", phone: "9820055566" },
+      { companyId, code: "SUP004", name: "Universal Buttons & Trims", category: "BUTTONS", contactPerson: "Ramesh Shah", phone: "9820077788" },
       { companyId, code: "SUP005", name: "Classic Labels & Tags", category: "ACCESSORIES", contactPerson: "Meena Iyer", phone: "9820099900" },
       { companyId, code: "SUP006", name: "Perfect Packaging Solutions", category: "PACKAGING", contactPerson: "Ashok Jain", phone: "9821011122" },
       { companyId, code: "SUP007", name: "SecureBox Cartons", category: "PACKAGING", contactPerson: "Vinod Agarwal", phone: "9821033344" },
@@ -569,8 +583,8 @@ async function main() {
     data: [
       { companyId, itemType: "RAW_MATERIAL", materialCategory: "FABRIC", styleCode: "MAT-DNM12", styleName: "Denim Fabric 12oz", baseUomId: unitIdByCode.get("MTR"), defaultSupplierId: supplierIdByCode.get("SUP001"), reorderLevel: 500, unitCost: 220 },
       { companyId, itemType: "RAW_MATERIAL", materialCategory: "FABRIC", styleCode: "MAT-CTN", styleName: "Cotton Fabric", baseUomId: unitIdByCode.get("MTR"), defaultSupplierId: supplierIdByCode.get("SUP002"), reorderLevel: 500, unitCost: 150 },
-      { companyId, itemType: "RAW_MATERIAL", materialCategory: "TRIMS", styleCode: "MAT-ZIP", styleName: "Metal Zipper 7 Inch", baseUomId: unitIdByCode.get("PCS"), defaultSupplierId: supplierIdByCode.get("SUP003"), reorderLevel: 2000, unitCost: 8 },
-      { companyId, itemType: "RAW_MATERIAL", materialCategory: "TRIMS", styleCode: "MAT-BTN", styleName: "Plastic Button 4-Hole", baseUomId: unitIdByCode.get("PCS"), defaultSupplierId: supplierIdByCode.get("SUP004"), reorderLevel: 5000, unitCost: 1.5 },
+      { companyId, itemType: "RAW_MATERIAL", materialCategory: "ZIPS", styleCode: "MAT-ZIP", styleName: "Metal Zipper 7 Inch", baseUomId: unitIdByCode.get("PCS"), defaultSupplierId: supplierIdByCode.get("SUP003"), reorderLevel: 2000, unitCost: 8 },
+      { companyId, itemType: "RAW_MATERIAL", materialCategory: "BUTTONS", styleCode: "MAT-BTN", styleName: "Plastic Button 4-Hole", baseUomId: unitIdByCode.get("PCS"), defaultSupplierId: supplierIdByCode.get("SUP004"), reorderLevel: 5000, unitCost: 1.5 },
       { companyId, itemType: "RAW_MATERIAL", materialCategory: "ACCESSORIES", styleCode: "MAT-LBL", styleName: "Woven Brand Label", baseUomId: unitIdByCode.get("PCS"), defaultSupplierId: supplierIdByCode.get("SUP005"), reorderLevel: 3000, unitCost: 2 },
       { companyId, itemType: "RAW_MATERIAL", materialCategory: "PACKAGING", styleCode: "MAT-POLY", styleName: "Poly Bag", baseUomId: unitIdByCode.get("PCS"), defaultSupplierId: supplierIdByCode.get("SUP006"), reorderLevel: 5000, unitCost: 1 },
       { companyId, itemType: "RAW_MATERIAL", materialCategory: "PACKAGING", styleCode: "MAT-CTNBOX", styleName: "Export Carton Box", baseUomId: unitIdByCode.get("PCS"), defaultSupplierId: supplierIdByCode.get("SUP007"), reorderLevel: 500, unitCost: 45 },

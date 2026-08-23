@@ -62,6 +62,7 @@ export default function LookupsPage() {
             { key: "code", label: "Code", required: true },
             { key: "name", label: "Name", required: true },
             { key: "conversionFactor", label: "Conversion Factor", type: "number" },
+            { key: "baseUnitId", label: "Base Unit (optional)", type: "select", optionsUrl: "/api/v1/units" },
           ]}
         />
       )}

@@ -41,6 +41,9 @@ export async function createFabricGsm(actor: ActorContext, input: FabricGsmInput
 }
 
 export async function updateFabricGsm(actor: ActorContext, id: string, input: FabricGsmInput) {
+  const existing = await FabricConfigRepository.gsm.findFirst({ where: { id, companyId: actor.companyId } });
+  if (!existing) throw new BusinessRuleError("NOT_FOUND", "GSM not found.", { id });
+
   const updated = await FabricConfigRepository.gsm.update({
     where: { id },
     data: { code: input.code, name: input.name, isActive: input.isActive },
@@ -91,6 +94,9 @@ export async function createFabricDye(actor: ActorContext, input: FabricDyeInput
 }
 
 export async function updateFabricDye(actor: ActorContext, id: string, input: FabricDyeInput) {
+  const existing = await FabricConfigRepository.dye.findFirst({ where: { id, companyId: actor.companyId } });
+  if (!existing) throw new BusinessRuleError("NOT_FOUND", "Dye not found.", { id });
+
   const updated = await FabricConfigRepository.dye.update({
     where: { id },
     data: { code: input.code, name: input.name, pantone: input.pantone || null, isActive: input.isActive },
@@ -135,6 +141,9 @@ export async function createFabricWeaveType(actor: ActorContext, input: FabricWe
 }
 
 export async function updateFabricWeaveType(actor: ActorContext, id: string, input: FabricWeaveTypeInput) {
+  const existing = await FabricConfigRepository.weaveType.findFirst({ where: { id, companyId: actor.companyId } });
+  if (!existing) throw new BusinessRuleError("NOT_FOUND", "Weave type not found.", { id });
+
   const updated = await FabricConfigRepository.weaveType.update({
     where: { id },
     data: { code: input.code, name: input.name, isActive: input.isActive },
@@ -179,6 +188,9 @@ export async function createFabricWidth(actor: ActorContext, input: FabricWidthI
 }
 
 export async function updateFabricWidth(actor: ActorContext, id: string, input: FabricWidthInput) {
+  const existing = await FabricConfigRepository.width.findFirst({ where: { id, companyId: actor.companyId } });
+  if (!existing) throw new BusinessRuleError("NOT_FOUND", "Width not found.", { id });
+
   const updated = await FabricConfigRepository.width.update({
     where: { id },
     data: { code: input.code, name: input.name, unit: input.unit, isActive: input.isActive },
@@ -223,6 +235,9 @@ export async function createFabricComposition(actor: ActorContext, input: Fabric
 }
 
 export async function updateFabricComposition(actor: ActorContext, id: string, input: FabricCompositionInput) {
+  const existing = await FabricConfigRepository.composition.findFirst({ where: { id, companyId: actor.companyId } });
+  if (!existing) throw new BusinessRuleError("NOT_FOUND", "Composition not found.", { id });
+
   const updated = await FabricConfigRepository.composition.update({
     where: { id },
     data: { code: input.code, name: input.name, isActive: input.isActive },

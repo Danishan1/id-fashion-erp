@@ -11,6 +11,7 @@ export const MODULES = [
   "masters_core",
   "masters_finance",
   "sampling",
+  "buyer_enquiries",
   "sales_orders",
   "bom_mrp",
   "production",
@@ -73,9 +74,13 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     masters_core: ["view"],
     masters_finance: ["view"],
     sampling: ["view", "approve", "reject"],
+    buyer_enquiries: ["view", "reject"],
     sales_orders: ["view", "approve", "export"],
     bom_mrp: ["view"],
-    production: ["view", "export"],
+    // "approve" here gates Lot restructure (split/merge) and forward
+    // stage-skip overrides (see PRODUCTION_MODULE_DESIGN.md §7/§9) — reuses
+    // the existing action rather than inventing new production-specific verbs.
+    production: ["view", "approve", "export"],
     qc: ["view", "export"],
     inventory: ["view", "export"],
     purchasing: ["view", "approve"],
@@ -91,11 +96,14 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     dashboard: ["view"],
     masters_core: ["view", "create", "edit"],
     sampling: ["view", "create", "edit", "export", "print"],
+    buyer_enquiries: ["view", "create", "edit", "reject", "export", "print"],
     sales_orders: ["view", "create", "edit", "cancel", "export", "print"],
     bom_mrp: ["view", "create", "edit"],
     production: ["view"],
     qc: ["view"],
-    inventory: ["view"],
+    // "create"/"edit" here are for raising and editing their own Material
+    // Requests — Merchandisers don't touch real commercial Purchase Orders.
+    inventory: ["view", "create", "edit"],
     purchasing: ["view", "create"],
     reports: ["view", "export", "print"],
   },
@@ -103,6 +111,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     dashboard: ["view"],
     masters_core: ["view"],
     sampling: ["view", "create", "edit", "delete", "approve", "reject", "export", "print"],
+    buyer_enquiries: ["view"],
     sales_orders: ["view"],
     bom_mrp: ["view"],
     production: ["view"],
@@ -113,11 +122,16 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     dashboard: ["view"],
     masters_core: ["view"],
     sampling: ["view"],
+    buyer_enquiries: ["view"],
     sales_orders: ["view"],
     bom_mrp: ["view", "create", "edit", "export"],
-    production: ["view", "create", "edit", "cancel", "export", "print"],
+    // "approve" gates Lot restructure (split/merge) and forward stage-skip
+    // overrides — see PRODUCTION_MODULE_DESIGN.md §7/§9.
+    production: ["view", "create", "edit", "approve", "cancel", "export", "print"],
     qc: ["view"],
-    inventory: ["view"],
+    // Same reasoning as MERCHANDISER above — raising/editing Material
+    // Requests, not creating real commercial Purchase Orders.
+    inventory: ["view", "create", "edit"],
     purchasing: ["view", "create"],
     reports: ["view", "export", "print"],
   },
@@ -135,6 +149,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     dashboard: ["view"],
     masters_core: ["view"],
     sampling: ["view"],
+    buyer_enquiries: ["view"],
     bom_mrp: ["view"],
     production: ["view"],
     qc: ["view", "create", "edit", "approve", "reject", "export", "print"],

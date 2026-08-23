@@ -3,6 +3,8 @@ import { z } from "zod";
 export const SUPPLIER_CATEGORIES = [
   "FABRIC",
   "TRIMS",
+  "ZIPS",
+  "BUTTONS",
   "ACCESSORIES",
   "PACKAGING",
   "SERVICES",
