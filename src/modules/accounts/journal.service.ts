@@ -267,19 +267,26 @@ export async function reverseJournal(actor: ActorContext, id: string, input: Rev
     );
   }
 
-  // A generic ledger-only reversal would desync a Payment's paidAmount (and,
-  // by extension, its invoice's PAID/PARTIALLY_PAID status) from the ledger
-  // it's derived from — unlike a Sales/Purchase Invoice's own status, which
-  // nothing re-reads after posting, paidAmount is load-bearing: it directly
-  // gates the next payment via OVER_PAYMENT_NOT_ALLOWED. Blocking reversal
-  // for all three auto-posting document types closes this gap structurally
-  // (and retroactively closes the identical latent gap Sales/Purchase
-  // Invoice already had) rather than building a full accumulator-aware
-  // reversal flow for a correction path nobody has asked for yet.
+  // Payment's paidAmount (and, by extension, its invoice's PAID/
+  // PARTIALLY_PAID status) is load-bearing — it's derived from the ledger
+  // and directly gates the next payment via OVER_PAYMENT_NOT_ALLOWED, so a
+  // generic ledger-only reversal would desync it. But that's not the whole
+  // rule: every auto-posting document type (Sales/Purchase Invoice,
+  // Expense) is blocked too, even where there's no accumulator to desync,
+  // because the real invariant this guard protects is simpler and applies
+  // uniformly — an auto-posting document's own status/journalId must never
+  // silently disagree with its actual ledger impact. "Document-sourced
+  // journals aren't reversible; manual journals are" is the whole rule, not
+  // "only block it where something would break" — carving out an exception
+  // per document type would just make the next reader re-derive this each
+  // time. Correcting a mistake in any of these documents requires a manual
+  // adjusting journal entry until a future Credit-Note/reversal-workflow
+  // slice exists.
   if (
     original.sourceModule === "PAYMENT" ||
     original.sourceModule === "SALES_INVOICE" ||
-    original.sourceModule === "PURCHASE_INVOICE"
+    original.sourceModule === "PURCHASE_INVOICE" ||
+    original.sourceModule === "EXPENSE"
   ) {
     throw new BusinessRuleError(
       "INVALID_STATE_TRANSITION",

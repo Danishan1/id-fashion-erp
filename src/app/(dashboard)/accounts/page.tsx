@@ -8,6 +8,7 @@ const ACCOUNTS_SECTIONS = [
   { href: "/accounts/sales-invoices", label: "Sales Invoices", description: "Invoices raised against confirmed sales orders, auto-posting to the ledger" },
   { href: "/accounts/purchase-invoices", label: "Purchase Invoices", description: "Supplier invoices raised against received purchase orders — partial and repeatable per order" },
   { href: "/accounts/payments", label: "Payments", description: "Money received from customers or paid to suppliers, allocated against invoices" },
+  { href: "/accounts/expenses", label: "Expenses", description: "Direct day-to-day costs (rent, utilities, salaries) paid immediately, not vendor bills with terms" },
   { href: "/accounts/ledger", label: "Account Ledger", description: "Posted transactions and running balance for one account" },
   { href: "/accounts/trial-balance", label: "Trial Balance", description: "Per-account debit/credit totals across all posted journals" },
 ];
@@ -19,8 +20,8 @@ export default function AccountsIndexPage() {
         <Breadcrumb items={[{ label: "Dashboard", href: "/dashboard" }, { label: "Accounts" }]} />
         <h1 className="mt-2 text-lg font-semibold text-zinc-900 dark:text-zinc-50">Accounts</h1>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-          Chart of Accounts, tax configuration, the double-entry journal engine, Sales/Purchase Invoices, and
-          Payments. Expenses is not part of this slice yet.
+          Chart of Accounts, tax configuration, the double-entry journal engine, Sales/Purchase Invoices,
+          Payments, and Expenses.
         </p>
       </div>
 

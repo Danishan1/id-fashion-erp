@@ -96,6 +96,7 @@ model Company {
   salesInvoices               SalesInvoice[]
   purchaseInvoices            PurchaseInvoice[]
   payments                    Payment[]
+  expenses                    Expense[]
 
   @@map("companies")
 }
@@ -141,6 +142,7 @@ model Branch {
   salesInvoices         SalesInvoice[]
   purchaseInvoices      PurchaseInvoice[]
   payments              Payment[]
+  expenses              Expense[]
 
   @@unique([companyId, code])
   @@map("branches")
@@ -208,6 +210,8 @@ model User {
   purchaseInvoicesPosted               PurchaseInvoice[]            @relation("PurchaseInvoicePostedBy")
   paymentsCreated                      Payment[]                    @relation("PaymentCreatedBy")
   paymentsPosted                       Payment[]                    @relation("PaymentPostedBy")
+  expensesCreated                      Expense[]                    @relation("ExpenseCreatedBy")
+  expensesPosted                       Expense[]                    @relation("ExpensePostedBy")
 
   @@map("users")
 }
@@ -377,6 +381,7 @@ model Supplier {
   stockMovements     StockMovement[]
   purchaseInvoices   PurchaseInvoice[]
   payments           Payment[]
+  expenses           Expense[]
 
   @@unique([companyId, code])
   @@map("suppliers")
@@ -1068,6 +1073,7 @@ model PaymentType {
 
   company  Company   @relation(fields: [companyId], references: [id])
   payments Payment[]
+  expenses Expense[]
 
   @@unique([companyId, code])
   @@map("payment_types")
@@ -1090,6 +1096,7 @@ model BankAccount {
 
   company  Company   @relation(fields: [companyId], references: [id])
   payments Payment[]
+  expenses Expense[]
 
   @@unique([companyId, code])
   @@map("bank_accounts")
@@ -2810,6 +2817,7 @@ model ChartOfAccount {
   parentAccount ChartOfAccount?  @relation("ChartOfAccountParent", fields: [parentAccountId], references: [id])
   childAccounts ChartOfAccount[] @relation("ChartOfAccountParent")
   journalLines  JournalLine[]
+  expenses      Expense[]
 
   @@unique([companyId, code])
   @@map("chart_of_accounts")
@@ -2853,6 +2861,7 @@ model TaxRate {
   taxType              TaxType               @relation(fields: [taxTypeId], references: [id])
   salesInvoiceItems    SalesInvoiceItem[]
   purchaseInvoiceItems PurchaseInvoiceItem[]
+  expenses             Expense[]
 
   @@index([taxTypeId])
   @@map("tax_rates")
@@ -2907,6 +2916,7 @@ model Journal {
   salesInvoice      SalesInvoice?
   purchaseInvoice   PurchaseInvoice?
   payment           Payment?
+  expense           Expense?
 
   @@unique([companyId, journalNumber])
   @@map("journals")
@@ -3224,6 +3234,76 @@ model PaymentAllocation {
   @@index([salesInvoiceId])
   @@index([purchaseInvoiceId])
   @@map("payment_allocations")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Expenses (Phase 7E) — a direct, day-to-day cost (rent, utilities, salaries,
+// misc.) that doesn't flow through Purchase Order → Goods Receipt → Purchase
+// Invoice. Deliberately always paid immediately at post time (no unpaid/
+// payable lifecycle, no later settlement via Payment — an unpaid vendor bill
+// with terms already has a home: Purchase Invoice + Payment) and always a
+// single flat row (no child items table) — both confirmed with the user.
+// Posting creates one Journal (Dr the chosen Expense account, Dr GST Input
+// Tax Credit if any, Cr Cash-or-Bank) via the same postJournalCore engine
+// every other Accounts document uses. No reversal/correction path exists
+// this slice — see journal.service.ts's reverseJournal() sourceModule guard,
+// which blocks EXPENSE alongside PAYMENT/SALES_INVOICE/PURCHASE_INVOICE.
+// ─────────────────────────────────────────────────────────────
+
+enum ExpenseStatus {
+  DRAFT
+  POSTED
+  CANCELLED
+}
+
+model Expense {
+  id              String        @id @default(uuid()) @db.Uuid
+  companyId       String        @map("company_id") @db.Uuid
+  branchId        String?       @map("branch_id") @db.Uuid
+  expenseNumber   String        @map("expense_number")
+  expenseDate     DateTime      @map("expense_date") @db.Date
+  // Service-validated as accountType === EXPENSE, code !== "COGS" (COGS is a
+  // Purchase-Invoice-only control account, never user-selectable — see
+  // postPurchaseInvoice's own hardcoded findByCode lookup), and isActive.
+  accountId       String        @map("account_id") @db.Uuid
+  // Pure reference field — no business logic gated on it, unlike Payment's
+  // customerId/supplierId (which are direction-required).
+  supplierId      String?       @map("supplier_id") @db.Uuid
+  description     String
+  amount          Decimal       @map("amount") @db.Decimal(18, 2)
+  taxRateId       String?       @map("tax_rate_id") @db.Uuid
+  taxPercentage   Decimal?      @map("tax_percentage") @db.Decimal(5, 2)
+  taxAmount       Decimal       @default(0) @map("tax_amount") @db.Decimal(18, 2)
+  totalAmount     Decimal       @map("total_amount") @db.Decimal(18, 2)
+  paymentTypeId   String        @map("payment_type_id") @db.Uuid
+  bankAccountId   String?       @map("bank_account_id") @db.Uuid
+  referenceNumber String?       @map("reference_number")
+  // Always company.baseCurrencyCode, no exchangeRate/baseAmount split —
+  // matches Payment's own simplification (multi-currency UI deferred
+  // project-wide).
+  currencyCode    String        @map("currency_code") @db.Char(3)
+  status          ExpenseStatus @default(DRAFT)
+  // Set only at post time — the settlement Journal this expense generated.
+  journalId       String?       @unique @map("journal_id") @db.Uuid
+  postedAt        DateTime?     @map("posted_at")
+  postedByUserId  String?       @map("posted_by_user_id") @db.Uuid
+  createdByUserId String        @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  company     Company        @relation(fields: [companyId], references: [id])
+  branch      Branch?        @relation(fields: [branchId], references: [id])
+  account     ChartOfAccount @relation(fields: [accountId], references: [id])
+  supplier    Supplier?      @relation(fields: [supplierId], references: [id])
+  taxRate     TaxRate?       @relation(fields: [taxRateId], references: [id])
+  paymentType PaymentType    @relation(fields: [paymentTypeId], references: [id])
+  bankAccount BankAccount?   @relation(fields: [bankAccountId], references: [id])
+  journal     Journal?       @relation(fields: [journalId], references: [id])
+  postedBy    User?          @relation("ExpensePostedBy", fields: [postedByUserId], references: [id])
+  createdBy   User           @relation("ExpenseCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@unique([companyId, branchId, expenseNumber])
+  @@map("expenses")
 }
 
 // ─────────────────────────────────────────────────────────────

@@ -41,7 +41,7 @@ The user has two real, manually-coded PHP/Laravel garment systems already in pro
 | 4 | Sampling | ✅ Done |
 | 5 | Orders + Production | ✅ Done — 5A (Sales Orders), 5B (BOM/MRP), and 5C (Production: Production Orders/Lots/JobOrders/QC/split-merge) all built and verified end-to-end this session |
 | 6 | Inventory | ✅ Done — Purchase Order + Goods Receipt (fabric roll tracking), the stock ledger, Material Request, and Stock Movements (Transfer/Adjustment/Return-to-Supplier) all built and verified |
-| 7 | Accounts | 🔶 In progress — 7A (Chart of Accounts, Tax Config, Journal engine), 7B (Sales Invoices), 7C (Purchase Invoices), and 7D (Payments + Allocations) done on branch `phase-7-accounts`; Expenses not started |
+| 7 | Accounts | ✅ Done — 7A (Chart of Accounts, Tax Config, Journal engine), 7B (Sales Invoices), 7C (Purchase Invoices), 7D (Payments + Allocations), and 7E (Expenses) all built and verified on branch `phase-7-accounts` |
 | 8 | Dispatch | ⬜ Not started |
 | 9 | Reports | ⬜ Not started |
 | 10 | Testing | ⬜ Not started |
@@ -1411,10 +1411,97 @@ design — no enum split).
   correctly `409 INVALID_STATE_TRANSITION`. `npx tsc --noEmit`, `npm run lint`, and `npm test` (161/161, 14
   new in `payment.service.test.ts`) all clean throughout; zero unexpected server or console errors during
   the full walkthrough (only the deliberately-triggered 409/405s from the guard tests above).
-- **Not built this slice**: Expenses (the last remaining Phase 7 item), a real Credit Note/payment-reversal
-  workflow (the `reverseJournal()` guard above is the enforced absence, not a built correction path),
-  unallocated/advance payments, multi-currency UI (payments are always `company.baseCurrencyCode`, same
-  project-wide deferral).
+- **Not built this slice**: Expenses (the last remaining Phase 7 item — see below, now done), a real Credit
+  Note/payment-reversal workflow (the `reverseJournal()` guard above is the enforced absence, not a built
+  correction path), unallocated/advance payments, multi-currency UI (payments are always
+  `company.baseCurrencyCode`, same project-wide deferral).
+
+## Phase 7E — Expenses (2026-08-24)
+
+Sixth and final slice of Phase 7. An Expense records a direct, day-to-day cost (rent, utilities, salaries,
+misc.) that doesn't flow through Purchase Order → Goods Receipt → Purchase Invoice — a petty-cash-voucher-
+style document, not a vendor-terms bill. Reviewed via a Plan-agent critique before implementation. Two scope
+questions were confirmed with the user beforehand: **Expense is always paid immediately at posting time**
+(no unpaid/payable lifecycle, no later settlement via Payment — an unpaid vendor bill with terms already has
+a home: Purchase Invoice + Payment), and **one Expense is a single flat row** (no child items table, no
+"Expense Report" multi-line shape).
+
+- **Schema**: `ExpenseStatus` (`DRAFT/POSTED/CANCELLED`, Payment's minimal 3-state shape, not Invoice's
+  6-state narrative enum). `Expense` — `accountId` (FK `ChartOfAccount`), optional `supplierId` (pure
+  reference, no gated logic), `description`, `amount`/`taxRateId`/`taxAmount`/`totalAmount` (same tax-line
+  shape as Purchase Invoice), `paymentTypeId`/`bankAccountId` (reused from Payment), `currencyCode` (always
+  `company.baseCurrencyCode`, no exchangeRate split — matches Payment's own simplification), `journalId`
+  (set at post time). `RelatedModule.EXPENSE`/`DocumentType.EXPENSE` (prefix `EXP`) were reserved since
+  Phase 1/2 planning — this is their first real consumer. Hand-added CHECK constraints (`amount > 0`,
+  `tax_amount >= 0`, `total_amount = amount + tax_amount`) match every prior Phase 7 migration.
+- **`reverseJournal()`'s `sourceModule` guard (7D) now also blocks `EXPENSE`** alongside `PAYMENT`/
+  `SALES_INVOICE`/`PURCHASE_INVOICE`. Expense has no cross-table accumulator like Payment's `paidAmount`
+  that reversal would desync, but the critique argued (and the fix adopts) the simpler, consistent rule:
+  "document-sourced journals aren't reversible; manual journals are" — carving Expense out as the one
+  exception would just make every future reader re-derive why it's different. A wrongly-posted Expense
+  therefore has zero correction path this slice (a manual adjusting journal entry is the only recourse) —
+  stated explicitly in code comments rather than left as a stale "reverse the journal" promise (the mistake
+  Purchase Invoice's own doc comment made before 7D's guard shipped).
+- **`COGS` is explicitly excluded from the Expense account picker, not just filtered by `accountType`.**
+  `COGS` is seeded with `accountType: "EXPENSE"` but is deliberately **not** `isSystemAccount: true` (only
+  `AR`/`AP`/`GST-ITC`/`GST-PAY` are) — `postPurchaseInvoice` debits it via a hardcoded `findByCode` lookup,
+  never exposing it as user-selectable. A validation that only checked `accountType === "EXPENSE"` would let
+  a user post an ad hoc Expense straight into the same account Purchase Invoice postings drive automatically,
+  polluting any COGS-based margin reporting with manual, PO-disconnected debits. Fixed with an explicit
+  `code !== "COGS"` check in `assertValidExpenseAccount()`, verified live via a direct API call. Expense is
+  also the first module in this codebase to expose a free `ChartOfAccount` picker to end users at all
+  (Payment/Purchase Invoice only ever resolve control accounts by hardcoded `code`) — `isActive` is
+  validated at both create and post time, and the picker itself filters to active, non-COGS `EXPENSE`-type
+  accounts.
+- **Journal line numbering is a dynamic incrementing counter** (Purchase Invoice's `let nextLineNumber = 2`
+  pattern), **not** Payment's hardcoded `lineNumber: 1`/`lineNumber: 2` literals — Expense's journal is a
+  variable 2-or-3-line shape (Dr account, optional Dr GST-ITC, Cr cash/bank), and copying Payment's fixed
+  literals would have made a tax-bearing expense's Cr cash/bank line collide with the GST-ITC line at
+  `lineNumber: 2`. `JournalLine` has no DB unique constraint on `(journalId, lineNumber)`, so this would have
+  been a silent, undetected data-quality bug rather than a thrown error — a dedicated regression test in
+  `expense.service.test.ts` asserts no two lines in a tax-bearing expense's journal share a `lineNumber`.
+- **Error code for the non-DRAFT guard is `INVALID_STATE_TRANSITION`**, not `POSTED_INVOICE_LOCKED` —
+  Expense's lifecycle is anchored to Payment (not Invoice), so it reuses Payment's own vocabulary for
+  exactly this guard; no new `BusinessRuleError` code was needed anywhere in this slice.
+- **RBAC**: new `expenses` module. `ACCOUNTS_MANAGER`: `view/create/edit/approve/cancel/export/print`
+  (exact `invoices` shape with `approve` swapped in for `post`, since posting is gated on `"approve"` to
+  match Payment's verb, not Invoice's). `ACCOUNTS_EXECUTIVE`: `view/create/edit` (exact match to `invoices`).
+  `MANAGEMENT`: `view/approve` (exact match to `payments` — Management's approval power in this codebase is
+  specifically scoped to the `"approve"` verb, which Invoice posting doesn't use, so mirroring `payments`
+  here rather than `invoices` is the correct asymmetry). Since `prisma db seed` isn't safe to re-run against
+  the dev DB (documented gotcha), the new `expenses` permission rows and `role_permissions` links were
+  inserted via a narrow one-off script re-running only the seed's idempotent permission-catalog logic
+  (`createMany`+`skipDuplicates` and `upsert`, both purely additive) — not a full reseed.
+- **Edit-while-DRAFT is supported** (unlike Payment's deliberate "no edit, cancel-and-recreate only") —
+  Expense is single-row, the same shape Purchase/Sales Invoice already support update-while-DRAFT for (a
+  *harder* problem, replacing a whole item collection), so this is the well-precedented choice, not an ad
+  hoc one. A `/accounts/expenses/[id]/edit` page reuses `ExpenseForm` in dual-mode (mirrors Sales Order's
+  own `initialOrder` pattern), guarded `notFound()` for non-DRAFT expenses matching the service's own guard.
+- Reuses the existing `AttachmentService` for receipt/bill photo uploads against `RelatedModule.EXPENSE`
+  (already reserved, zero schema change) — the same 3-route shape and `FilePreviewModal` UI already proven
+  by Sampling's and Sales Order's attachments.
+- **Verified live end-to-end** through the real UI and direct API calls together: created `EXP-2026-00001`
+  (Utilities, GST 18%, Bank Transfer, ₹1,000 → ₹1,180 total) through the real form — confirmed the Expense
+  Account dropdown correctly excluded `COGS` and any inactive account; edited it while DRAFT (amount
+  1000→1200, confirmed the live preview and the persisted total both recalculated to ₹1,416.00); approved →
+  `JRN-2026-00013` with the exact 3 correctly-numbered lines (Dr EXP-UTIL 1200 / Dr GST-ITC 216 / Cr BANK
+  1416, `lineNumber` 1/2/3, no collision); created and posted `EXP-2026-00002` (Factory Rent, no tax, Cash)
+  → confirmed a clean 2-line journal (Dr EXP-RENT / Cr CASH); confirmed a direct API attempt to post an
+  Expense against `COGS` correctly rejected (`400 VALIDATION_ERROR`); deactivated `EXP-SALARY` and confirmed
+  an Expense against it was rejected, then reactivated it; confirmed re-approve/re-cancel/edit on the POSTED
+  `EXP-2026-00002` all correctly `409 INVALID_STATE_TRANSITION`, and its `/edit` page correctly `404`s;
+  confirmed reversing `EXP-2026-00001`'s auto-posted Journal is blocked with `409 INVALID_STATE_TRANSITION`;
+  uploaded a receipt attachment, confirmed byte-for-byte download, then deleted it. `npx tsc --noEmit`, `npm
+  run lint`, and `npm test` (172/172, 11 new in `expense.service.test.ts`) all clean throughout; zero
+  unexpected server or console errors during the full walkthrough (only the deliberately-triggered
+  400/404/409s from the guard tests above). One unrelated environment gotcha hit and fixed: after this
+  session's heavy schema/migration work, the dev server's route manifest briefly 404'd on every page
+  (including pre-existing ones like `/accounts/payments`) until a full stop + `.next/dev/types` cache clear
+  + restart — same class of stale-`.next`-cache issue already documented for `tsc` in the Stock Movements
+  section, just manifesting as page 404s instead of a `tsc` syntax error this time.
+
+**Phase 7 (Accounts) is now fully done** — Chart of Accounts, Tax Config, the Journal engine, Sales
+Invoices, Purchase Invoices, Payments + Allocations, and Expenses are all built, tested, and verified live.
 
 ## Recommended Stack
 
