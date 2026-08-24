@@ -42,7 +42,7 @@ The user has two real, manually-coded PHP/Laravel garment systems already in pro
 | 5 | Orders + Production | ✅ Done — 5A (Sales Orders), 5B (BOM/MRP), and 5C (Production: Production Orders/Lots/JobOrders/QC/split-merge) all built and verified end-to-end this session |
 | 6 | Inventory | ✅ Done — Purchase Order + Goods Receipt (fabric roll tracking), the stock ledger, Material Request, and Stock Movements (Transfer/Adjustment/Return-to-Supplier) all built and verified |
 | 7 | Accounts | ✅ Done — 7A (Chart of Accounts, Tax Config, Journal engine), 7B (Sales Invoices), 7C (Purchase Invoices), 7D (Payments + Allocations), and 7E (Expenses) all built and verified on branch `phase-7-accounts` |
-| 8 | Dispatch | ⬜ Not started |
+| 8 | Dispatch | ✅ Done — pick/pack/confirm/deliver workflow, cartons with barcodes, and Finished-Goods stock decrement all built and verified on branch `phase-8-dispatch` |
 | 9 | Reports | ⬜ Not started |
 | 10 | Testing | ⬜ Not started |
 | 11 | Hardening | ⬜ Not started |
@@ -1502,6 +1502,111 @@ a home: Purchase Invoice + Payment), and **one Expense is a single flat row** (n
 
 **Phase 7 (Accounts) is now fully done** — Chart of Accounts, Tax Config, the Journal engine, Sales
 Invoices, Purchase Invoices, Payments + Allocations, and Expenses are all built, tested, and verified live.
+
+## Phase 8 — Dispatch (2026-08-24)
+
+First slice of Phase 8, on a new `phase-8-dispatch` branch (created off `main` after Phase 7 was merged).
+Dispatch is the shipping workflow that fulfills a confirmed Sales Order — picking, packing into cartons,
+confirming the shipment (which decrements Finished-Goods stock), and recording delivery. Explored via 2
+parallel Explore agents and reviewed via a Plan-agent critique before implementation. Two scope questions
+were confirmed with the user beforehand:
+
+1. **Product-level stock check only.** The FG stock ledger (`InventoryTransaction`/`StockBalance`) has no
+   `productVariantId` dimension at all — confirmed neither it nor Production's `Lot`/`JobOrder` track
+   color/size, only flat per-style quantity. Making the ledger variant-aware would have cascaded into
+   already-shipped, verified Phase 5C Production code, far beyond Dispatch's own scope. Dispatch validates
+   and decrements stock at the style level; `CartonItem.productVariantId` records real color/size detail for
+   packing-list purposes, but it's informational only, never enforced against per-variant stock.
+2. **Consolidated documents, no separate Picking List / Packing List tables.** One `Dispatch` record owns
+   its own `DispatchItem`s (what to ship) and `Carton`/`CartonItem`s (how it's packed) — picking/packing are
+   status states on the same document, matching this project's Material-Request/Stock-Movement
+   consolidation precedent.
+
+- **A real, ordinary-usage-reachable bug the Plan-agent critique caught by reading `updateSalesOrder()`/
+  `replaceItems()` closely**: `replaceItems()` unconditionally deletes and recreates *every*
+  `SalesOrderItem`/breakdown row on any edit to a `CONFIRMED` order, and `updateSalesOrder()`'s only existing
+  guard checked for an *active* Sales Invoice — nothing stopped a plain edit from trying to delete a
+  `SalesOrderItem` row a Dispatch's `DispatchItem.salesOrderItemId` FK already pointed at, a raw DB
+  constraint violation reachable through completely normal usage. **Fixed**: `updateSalesOrder()` gained a
+  new guard — throws `REFERENCED_RECORD_IN_USE` if **any** Dispatch (any status, including `CANCELLED` — a
+  cancelled Dispatch's `DispatchItem` rows still sit on the FK) references the order, via a new
+  `DispatchRepository.findAnyByOrderId()`. (The same critique flagged that the existing Sales Invoice guard
+  has this same "active-only" weakness already latent in shipped Phase 7 code — noted here as a known
+  pre-existing gap, deliberately not copied into Dispatch's own guard, and not fixed in this pass since it's
+  outside Dispatch's scope.) This also made `SalesOrderItem.dispatchedQuantity`'s guarded increment
+  (`guardedIncrementDispatched`-shaped, same idiom as `PurchaseOrderItem.receivedQuantity`) safe with the
+  plain Prisma `updateMany` idiom rather than needing 7C's raw-SQL technique — the cap
+  (`sum(breakdown.orderedQuantity)`) is now genuinely frozen for the lifetime of any Dispatch referencing
+  the order.
+- **A genuine cross-module status collision that would have broken shipped Phase 7 code on day one**: Sales
+  Invoice's `ELIGIBLE_ORDER_STATUSES` had no awareness of `PARTIALLY_DISPATCHED`/`DISPATCHED` — the moment an
+  order was ever partially dispatched, `createSalesInvoice()` would have permanently rejected it. **Fixed**
+  by widening `ELIGIBLE_ORDER_STATUSES` in `sales-invoice.service.ts` to include both. Dispatch's own
+  eligibility set is `["CONFIRMED", "PARTIALLY_DISPATCHED", "INVOICED"]` — deliberately allowing shipment
+  either before or after invoicing, not assuming one fixed order (`DISPATCHED` itself is excluded from
+  Dispatch eligibility — nothing left to ship).
+- **Stock-sufficiency check**: `recordInventoryTransaction`'s underlying `StockBalanceRepository
+  .upsertIncrement` has no floor guard at all — it will drive `quantityOnHand` negative with no complaint.
+  `confirmDispatch()` pre-checks `getAvailableQuantity()` per `DispatchItem`, throwing the
+  reserved-since-Phase-1 `INSUFFICIENT_FG_STOCK` if requested exceeds available — the same "pre-check is
+  enough, a hot-path race guard isn't warranted for a manual, low-frequency action" tradeoff already
+  accepted project-wide for Stock Movement's own negative-quantity paths.
+- **The CANCELLED-reachability design deliberately avoids relying on the transition map alone** — the exact
+  bug class this project has now hit twice (Sampling's Hold/Resume bug, Purchasing's cancel-from-`ON_HOLD`
+  bug). `ON_HOLD` is reachable only from `DRAFT`/`PACKED` in the transition map (post-dispatch "hold" isn't
+  a real floor action once goods have left), **and** `cancelDispatch()` independently, unconditionally
+  rejects cancellation whenever `dispatchedAt` is already set — a hard fact stamped only inside the
+  Confirm-Dispatch transaction, checked directly rather than reasoning about status labels. Two independent
+  layers, neither relying on the other; a dedicated regression test exercises the hypothetical
+  `ON_HOLD`-with-`dispatchedAt`-set case directly to prove the guard doesn't depend on that combination
+  being unreachable today.
+- **RBAC**: `DISPATCH_MANAGER` gained `"post"` (Confirm Dispatch, self-approval-guarded via
+  `{createdBy: requestedByUserId}` — `"post"` is already in `SELF_APPROVAL_GUARDED_ACTIONS`, matching
+  Invoice/Journal's precedent rather than Payment's `"approve"` verb, since this is posting a ledger-
+  affecting confirmation, not approving someone else's request). `WAREHOUSE_USER` gained `"edit"` (the
+  workflow needs the same actor to add `DispatchItem`s and pack `Carton`/`CartonItem`s after creation, no
+  bespoke "pack" verb was warranted). `cancelDispatch()` is gated on the module's own pre-existing `"cancel"`
+  action (not `"edit"`), matching Payment/Invoice's dedicated-cancel-route precedent — Hold/Resume/Pack/
+  Deliver got their own dedicated body-less POST endpoints for this reason too, rather than a single generic
+  edit-gated status route like Sales Order's own (which predates Dispatch's `"cancel"` grant existing as a
+  meaningfully different permission). New `expenses`-batch-style permission rows/role_permissions links were
+  inserted via the same narrow one-off script used for Expenses' RBAC rows (`prisma db seed` remains unsafe
+  to re-run against the dev DB).
+- **Make-to-stock dispatch (no Sales Order) is an explicit v1 scope cut**: `ProductionOrder.salesOrderItemId`
+  is nullable specifically to support Make-to-Stock production, but `Dispatch.salesOrderId` is required —
+  make-to-stock FG shipped with no formal order has no Dispatch path this slice (a plain `StockMovement`
+  `STOCK_TRANSFER` is the workaround if ever actually needed).
+- **A genuine hydration bug found and fixed during live verification, not present anywhere else in this
+  codebase**: `DispatchWorkflowPanel`'s "Dispatched At"/"Delivered At" fields render `toLocaleString()`
+  directly on a `Date` derived from a server-passed prop — unlike every other workflow panel's own
+  `toLocaleString()` usage (all confirmed to live only inside `useEffect`-populated attachment lists that
+  start empty), this ran once during SSR in the server's locale and again during client hydration in the
+  browser's locale, a real text mismatch React couldn't reconcile. Fixed with a small `<ClientDateTime>`
+  wrapper using `suppressHydrationWarning` (React's own documented escape hatch for content that legitimately
+  differs between server and client) rather than a manual mounted-state effect (which trips this project's
+  `react-hooks/set-state-in-effect` lint rule for no benefit here).
+- **Verified live end-to-end** through the real UI and direct API calls together: created `DSP-2026-00001`
+  against a real `INVOICED` order (`ORD-2026-00001`, 220 pcs, confirming the widened eligibility works) for a
+  partial 100 pcs → packed 2 cartons (one plain, one with a real color/size variant) via the real carton
+  packer UI → confirmed `SalesOrderItem.dispatchedQuantity` incremented to 100, `StockBalance` decremented
+  365→265, `SalesOrder.status` became `PARTIALLY_DISPATCHED`, `dispatchedAt` stamped; confirmed
+  `updateSalesOrder()` now correctly `409 REFERENCED_RECORD_IN_USE`s on that order, including via a separate
+  test dispatch that was cancelled first (proving the "any status" guard, not just active); confirmed a
+  Sales Invoice could still be created against a `PARTIALLY_DISPATCHED` order (the exact regression the
+  critique caught); dispatched the remaining 120 pcs and confirmed `SalesOrder.status` became `DISPATCHED`;
+  marked the second dispatch Delivered through the real UI (with a Received-By name) and confirmed
+  `SalesOrder.status` stayed `DISPATCHED` (delivery is Dispatch-level only); confirmed a deliberately
+  zero-stock warehouse correctly `409 INSUFFICIENT_FG_STOCK`s at Confirm time with the exact available/
+  requested numbers; confirmed a Hold→Resume round trip restores the exact prior status; uploaded a POD
+  attachment and confirmed byte-for-byte download and delete. `npx tsc --noEmit`, `npm run lint`, and `npm
+  test` (194/194, 20 new in `dispatch.service.test.ts` + 2 regression tests added to
+  `sales-invoice.service.test.ts`) all clean throughout.
+- **Not built this slice**: make-to-stock dispatch (see above), an "un-dispatch"/reversal correction path
+  once `DISPATCHED` (matching this project's now-repeated "no reversal, correction requires a manual
+  compensating entry later" stance for Payment/Sales/Purchase Invoice/Expense), rack-level location tracking
+  specifically for packed cartons (`WarehouseType.DISPATCH` already exists as an enum value — confirmed via
+  the "Dispatch Yard" seed row — but nothing yet validates a Dispatch's own `warehouseId` against it), and
+  printable delivery-challan/packing-slip documents.
 
 ## Recommended Stack
 

@@ -97,6 +97,7 @@ model Company {
   purchaseInvoices            PurchaseInvoice[]
   payments                    Payment[]
   expenses                    Expense[]
+  dispatches                  Dispatch[]
 
   @@map("companies")
 }
@@ -143,6 +144,7 @@ model Branch {
   purchaseInvoices      PurchaseInvoice[]
   payments              Payment[]
   expenses              Expense[]
+  dispatches            Dispatch[]
 
   @@unique([companyId, code])
   @@map("branches")
@@ -212,6 +214,7 @@ model User {
   paymentsPosted                       Payment[]                    @relation("PaymentPostedBy")
   expensesCreated                      Expense[]                    @relation("ExpenseCreatedBy")
   expensesPosted                       Expense[]                    @relation("ExpensePostedBy")
+  dispatchesRequested                  Dispatch[]                   @relation("DispatchRequestedBy")
 
   @@map("users")
 }
@@ -313,6 +316,7 @@ model Customer {
   deals          Deal[]
   salesInvoices  SalesInvoice[]
   payments       Payment[]
+  dispatches     Dispatch[]
 
   @@unique([companyId, code])
   @@map("customers")
@@ -498,6 +502,7 @@ model Product {
   stockMovementItems    StockMovementItem[]
   salesInvoiceItems     SalesInvoiceItem[]
   purchaseInvoiceItems  PurchaseInvoiceItem[]
+  dispatchItems         DispatchItem[]
 
   @@unique([companyId, styleCode])
   @@map("products")
@@ -577,6 +582,7 @@ model ProductVariant {
   size    Size    @relation(fields: [sizeId], references: [id])
 
   salesOrderBreakdown SalesOrderItemBreakdown[]
+  cartonItems         CartonItem[]
 
   @@unique([productId, colorId, sizeId])
   @@map("product_variants")
@@ -613,6 +619,7 @@ model Warehouse {
   materialRequests      MaterialRequest[]
   stockMovementsFrom    StockMovement[]        @relation("StockMovementSourceWarehouse")
   stockMovementsTo      StockMovement[]        @relation("StockMovementDestinationWarehouse")
+  dispatches            Dispatch[]
 
   @@unique([branchId, code])
   @@map("warehouses")
@@ -1743,22 +1750,30 @@ model SalesOrder {
   items            SalesOrderItem[]
   materialRequests MaterialRequest[]
   salesInvoices    SalesInvoice[]
+  dispatches       Dispatch[]
 
   @@unique([companyId, orderNumber])
   @@map("sales_orders")
 }
 
 model SalesOrderItem {
-  id              String   @id @default(uuid()) @db.Uuid
-  salesOrderId    String   @map("sales_order_id") @db.Uuid
-  productId       String   @map("product_id") @db.Uuid
+  id                 String   @id @default(uuid()) @db.Uuid
+  salesOrderId       String   @map("sales_order_id") @db.Uuid
+  productId          String   @map("product_id") @db.Uuid
   // Nullable, per-item (not per-header) — one order can carry several style
   // lines, each optionally tracing back to a different approved sample; a
   // repeat/direct order line needs no sample link at all.
-  sampleRequestId String?  @map("sample_request_id") @db.Uuid
-  unitPrice       Decimal  @map("unit_price") @db.Decimal(18, 2)
-  notes           String?
-  createdAt       DateTime @default(now()) @map("created_at")
+  sampleRequestId    String?  @map("sample_request_id") @db.Uuid
+  unitPrice          Decimal  @map("unit_price") @db.Decimal(18, 2)
+  notes              String?
+  // Guarded accumulator (Phase 8), same idiom as PurchaseOrderItem's
+  // receivedQuantity/invoicedQuantity — capped by sum(breakdown.orderedQuantity),
+  // incremented only at Confirm-Dispatch time, never at Draft creation. One
+  // SalesOrderItem can be dispatched across multiple separate Dispatch
+  // documents over time (partial dispatch), hence an accumulator here rather
+  // than a one-shot flag.
+  dispatchedQuantity Int      @default(0) @map("dispatched_quantity")
+  createdAt          DateTime @default(now()) @map("created_at")
 
   salesOrder        SalesOrder                @relation(fields: [salesOrderId], references: [id])
   product           Product                   @relation(fields: [productId], references: [id])
@@ -1766,6 +1781,7 @@ model SalesOrderItem {
   breakdown         SalesOrderItemBreakdown[]
   productionOrders  ProductionOrder[]
   salesInvoiceItems SalesInvoiceItem[]
+  dispatchItems     DispatchItem[]
 
   @@map("sales_order_items")
 }
@@ -2631,8 +2647,8 @@ model DefectType {
 
 // Only GOODS_RECEIPT and GOODS_RECEIPT_REVERSAL are reachable by Purchasing —
 // PRODUCTION_RECEIPT/DAMAGE are Phase 5C's own, ADJUSTMENT/STOCK_TRANSFER/
-// RETURN_TO_SUPPLIER are StockMovement's (Phase 6). OPENING_BALANCE's manual
-// entry point is explicitly deferred (see CLAUDE.md).
+// RETURN_TO_SUPPLIER are StockMovement's (Phase 6), DISPATCH is Phase 8's own.
+// OPENING_BALANCE's manual entry point is explicitly deferred (see CLAUDE.md).
 enum InventoryTransactionType {
   OPENING_BALANCE
   GOODS_RECEIPT
@@ -2649,6 +2665,11 @@ enum InventoryTransactionType {
   // only; a supplier credit note is a Phase 7 (Accounts) concept that
   // doesn't exist yet, deliberately not modeled here.
   RETURN_TO_SUPPLIER
+  // Finished-Goods stock leaving the warehouse against a confirmed Dispatch
+  // (Phase 8) — always a negative quantity, posted only at Confirm Dispatch
+  // time (never at Draft/Packed), matching every other module's "post-time,
+  // not draft-time" ledger discipline.
+  DISPATCH
 }
 
 // Append-only, source of truth — no delete column, no edit path, ever.
@@ -2771,6 +2792,132 @@ model StockMovementItem {
 
   @@index([stockMovementId])
   @@map("stock_movement_items")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Dispatch (Phase 8) — the shipping workflow that fulfills a confirmed Sales
+// Order: pick which style lines/quantities to ship, pack them into Cartons,
+// confirm the shipment (which decrements Finished-Goods stock), and record
+// delivery. Deliberately consolidated — no separate PickingList/PackingList
+// tables (picking/packing are status states on this one document, matching
+// the project's own Material-Request/Stock-Movement consolidation
+// precedent) — and deliberately product-level only for the real stock
+// check/decrement (the FG ledger has no productVariantId dimension at all,
+// same as Production's Lot/JobOrder; CartonItem's own productVariantId is
+// informational/for packing-list labeling only, never enforced against
+// per-variant stock — see CLAUDE.md for the full reasoning).
+// ─────────────────────────────────────────────────────────────
+
+enum DispatchStatus {
+  DRAFT
+  PACKED
+  DISPATCHED
+  DELIVERED
+  ON_HOLD
+  CANCELLED
+}
+
+model Dispatch {
+  id                String          @id @default(uuid()) @db.Uuid
+  companyId         String          @map("company_id") @db.Uuid
+  branchId          String?         @map("branch_id") @db.Uuid
+  dispatchNumber    String          @map("dispatch_number")
+  // Required — Dispatch always fulfills a real Sales Order; a make-to-stock
+  // shipment with no formal order (e.g. straight to a distributor) has no
+  // Dispatch path this slice — use a plain StockMovement (STOCK_TRANSFER)
+  // if that's ever actually needed. Revisit only if requested.
+  salesOrderId      String          @map("sales_order_id") @db.Uuid
+  // Denormalized from the order — this table is itself the shipping
+  // document of record, same justification as SalesInvoice.customerId.
+  customerId        String          @map("customer_id") @db.Uuid
+  // The source Finished-Goods warehouse this shipment is issued from.
+  warehouseId       String          @map("warehouse_id") @db.Uuid
+  dispatchDate      DateTime        @map("dispatch_date") @db.Date
+  status            DispatchStatus  @default(DRAFT)
+  statusBeforeHold  DispatchStatus? @map("status_before_hold")
+  deliveryAddress   String          @map("delivery_address")
+  transporterName   String?         @map("transporter_name")
+  vehicleNumber     String?         @map("vehicle_number")
+  trackingNumber    String?         @map("tracking_number")
+  // Stamped only inside confirmDispatch()'s own transaction, the moment the
+  // ledger is actually touched — a hard fact, not a status label, that
+  // cancelDispatch() checks directly and unconditionally (see
+  // dispatch.service.ts) rather than trusting the current status alone,
+  // the same lesson this project already learned twice (Sampling's Hold/
+  // Resume bug, Purchasing's cancel-from-ON_HOLD bug).
+  dispatchedAt      DateTime?       @map("dispatched_at")
+  deliveredAt       DateTime?       @map("delivered_at")
+  receivedByName    String?         @map("received_by_name")
+  requestedByUserId String          @map("requested_by_user_id") @db.Uuid
+  createdAt         DateTime        @default(now()) @map("created_at")
+  updatedAt         DateTime        @updatedAt @map("updated_at")
+
+  company     Company        @relation(fields: [companyId], references: [id])
+  branch      Branch?        @relation(fields: [branchId], references: [id])
+  salesOrder  SalesOrder     @relation(fields: [salesOrderId], references: [id])
+  customer    Customer       @relation(fields: [customerId], references: [id])
+  warehouse   Warehouse      @relation(fields: [warehouseId], references: [id])
+  requestedBy User           @relation("DispatchRequestedBy", fields: [requestedByUserId], references: [id])
+  items       DispatchItem[]
+  cartons     Carton[]
+
+  @@unique([companyId, branchId, dispatchNumber])
+  @@map("dispatches")
+}
+
+model DispatchItem {
+  id                 String   @id @default(uuid()) @db.Uuid
+  dispatchId         String   @map("dispatch_id") @db.Uuid
+  salesOrderItemId   String   @map("sales_order_item_id") @db.Uuid
+  productId          String   @map("product_id") @db.Uuid
+  dispatchedQuantity Int      @map("dispatched_quantity")
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  dispatch       Dispatch       @relation(fields: [dispatchId], references: [id])
+  salesOrderItem SalesOrderItem @relation(fields: [salesOrderItemId], references: [id])
+  product        Product        @relation(fields: [productId], references: [id])
+  cartonItems    CartonItem[]
+
+  @@index([dispatchId])
+  @@map("dispatch_items")
+}
+
+model Carton {
+  id            String   @id @default(uuid()) @db.Uuid
+  dispatchId    String   @map("dispatch_id") @db.Uuid
+  cartonNumber  Int      @map("carton_number")
+  // Rollup of its own CartonItems — stored for display convenience, same
+  // "stored rollup, not always-live-computed" pattern used elsewhere
+  // (SalesOrder.totalAmount, PurchaseOrderItem.receivedQuantity).
+  totalQuantity Int      @default(0) @map("total_quantity")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  dispatch Dispatch     @relation(fields: [dispatchId], references: [id])
+  items    CartonItem[]
+
+  @@unique([dispatchId, cartonNumber])
+  @@map("cartons")
+}
+
+model CartonItem {
+  id               String   @id @default(uuid()) @db.Uuid
+  cartonId         String   @map("carton_id") @db.Uuid
+  dispatchItemId   String   @map("dispatch_item_id") @db.Uuid
+  // Nullable — only set when the style has generated variants. This is the
+  // real color/size packing detail (informational/for packing-list labeling
+  // only — never enforced against per-variant stock, see the section
+  // comment above).
+  productVariantId String?  @map("product_variant_id") @db.Uuid
+  quantity         Int
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  carton         Carton          @relation(fields: [cartonId], references: [id])
+  dispatchItem   DispatchItem    @relation(fields: [dispatchItemId], references: [id])
+  productVariant ProductVariant? @relation(fields: [productVariantId], references: [id])
+
+  @@index([cartonId])
+  @@index([dispatchItemId])
+  @@map("carton_items")
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -2993,13 +3140,13 @@ model SalesInvoice {
   createdAt        DateTime           @default(now()) @map("created_at")
   updatedAt        DateTime           @updatedAt @map("updated_at")
 
-  company     Company              @relation(fields: [companyId], references: [id])
-  branch      Branch?              @relation(fields: [branchId], references: [id])
-  salesOrder  SalesOrder           @relation(fields: [salesOrderId], references: [id])
-  customer    Customer             @relation(fields: [customerId], references: [id])
-  journal     Journal?             @relation(fields: [journalId], references: [id])
-  postedBy    User?                @relation("SalesInvoicePostedBy", fields: [postedByUserId], references: [id])
-  createdBy   User                 @relation("SalesInvoiceCreatedBy", fields: [createdByUserId], references: [id])
+  company     Company             @relation(fields: [companyId], references: [id])
+  branch      Branch?             @relation(fields: [branchId], references: [id])
+  salesOrder  SalesOrder          @relation(fields: [salesOrderId], references: [id])
+  customer    Customer            @relation(fields: [customerId], references: [id])
+  journal     Journal?            @relation(fields: [journalId], references: [id])
+  postedBy    User?               @relation("SalesInvoicePostedBy", fields: [postedByUserId], references: [id])
+  createdBy   User                @relation("SalesInvoiceCreatedBy", fields: [createdByUserId], references: [id])
   items       SalesInvoiceItem[]
   allocations PaymentAllocation[]
 

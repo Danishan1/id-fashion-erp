@@ -204,7 +204,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     sales_orders: ["view"],
     production: ["view"],
     inventory: ["view"],
-    dispatch: ["view", "create", "edit", "delete", "cancel", "export", "print"],
+    dispatch: ["view", "create", "edit", "post", "delete", "cancel", "export", "print"],
     reports: ["view", "export", "print"],
   },
   WAREHOUSE_USER: {
@@ -215,7 +215,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     qc: ["view"],
     inventory: ["view", "create", "edit"],
     purchasing: ["view", "create"],
-    dispatch: ["view", "create"],
+    dispatch: ["view", "create", "edit"],
     reports: ["view"],
   },
   VIEWER: Object.fromEntries(MODULES.map((m) => [m, ["view"] as Action[]])) as Record<Module, Action[]>,

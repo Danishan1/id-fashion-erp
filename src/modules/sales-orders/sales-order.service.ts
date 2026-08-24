@@ -6,6 +6,7 @@ import type { ListQuery } from "@/lib/list-query";
 import { CustomerRepository } from "@/modules/customers/customer.repository";
 import { SampleRequestRepository } from "@/modules/sampling/sample.repository";
 import { SalesInvoiceRepository } from "@/modules/accounts/sales-invoice.repository";
+import { DispatchRepository } from "@/modules/dispatch/dispatch.repository";
 import type { ConfirmSalesOrderInput, SalesOrderInput, UpdateSalesOrderInput } from "./sales-order.schema";
 import { CompanyRepository, SalesOrderRepository } from "./sales-order.repository";
 import { SalesOrderStatus, type Prisma } from "@prisma/client";
@@ -184,6 +185,22 @@ export async function updateSalesOrder(actor: ActorContext, id: string, input: U
       "REFERENCED_RECORD_IN_USE",
       `This sales order has an active invoice (${activeInvoice.invoiceNumber}) and can no longer be edited.`,
       { salesInvoiceId: activeInvoice.id }
+    );
+  }
+
+  // ANY Dispatch (any status, including CANCELLED — its own DispatchItem
+  // rows still sit on the salesOrderItemId FK) blocks editing — replaceItems()
+  // below unconditionally deletes and recreates every SalesOrderItem/
+  // breakdown row, which would otherwise violate that FK the moment a
+  // Dispatch (even a still-DRAFT one) references this order. Deliberately
+  // NOT scoped to "active" Dispatches only, unlike the invoice check above —
+  // see DispatchRepository.findAnyByOrderId's own doc comment for why.
+  const anyDispatch = await DispatchRepository.findAnyByOrderId(actor.companyId, id);
+  if (anyDispatch) {
+    throw new BusinessRuleError(
+      "REFERENCED_RECORD_IN_USE",
+      `This sales order has a dispatch (${anyDispatch.dispatchNumber}) and can no longer be edited.`,
+      { dispatchId: anyDispatch.id }
     );
   }
 
