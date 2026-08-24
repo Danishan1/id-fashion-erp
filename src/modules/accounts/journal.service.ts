@@ -267,6 +267,27 @@ export async function reverseJournal(actor: ActorContext, id: string, input: Rev
     );
   }
 
+  // A generic ledger-only reversal would desync a Payment's paidAmount (and,
+  // by extension, its invoice's PAID/PARTIALLY_PAID status) from the ledger
+  // it's derived from — unlike a Sales/Purchase Invoice's own status, which
+  // nothing re-reads after posting, paidAmount is load-bearing: it directly
+  // gates the next payment via OVER_PAYMENT_NOT_ALLOWED. Blocking reversal
+  // for all three auto-posting document types closes this gap structurally
+  // (and retroactively closes the identical latent gap Sales/Purchase
+  // Invoice already had) rather than building a full accumulator-aware
+  // reversal flow for a correction path nobody has asked for yet.
+  if (
+    original.sourceModule === "PAYMENT" ||
+    original.sourceModule === "SALES_INVOICE" ||
+    original.sourceModule === "PURCHASE_INVOICE"
+  ) {
+    throw new BusinessRuleError(
+      "INVALID_STATE_TRANSITION",
+      `Cannot reverse a journal auto-posted by ${original.sourceModule.replace("_", " ").toLowerCase()} — no correction path exists yet for this document type.`,
+      { sourceModule: original.sourceModule }
+    );
+  }
+
   const reversalNumber = await generateDocumentNumber({
     companyId: actor.companyId,
     branchId: actor.branchId ?? null,

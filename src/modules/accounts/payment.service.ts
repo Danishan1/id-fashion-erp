@@ -1,0 +1,420 @@
+import { writeAuditLog } from "@/core/audit/AuditLogger";
+import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
+import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingService";
+import { PermissionService } from "@/core/rbac/PermissionService";
+import { prisma } from "@/core/db/client";
+import type { ListQuery } from "@/lib/list-query";
+import type { Prisma } from "@prisma/client";
+import { CustomerRepository } from "@/modules/customers/customer.repository";
+import { SupplierRepository } from "@/modules/suppliers/supplier.repository";
+import { FinanceConfigRepository } from "@/modules/finance-config/finance-config.repository";
+import type { PaymentInput } from "./payment.schema";
+import { PaymentRepository, CompanyRepository } from "./payment.repository";
+import { SalesInvoiceRepository } from "./sales-invoice.repository";
+import { PurchaseInvoiceRepository } from "./purchase-invoice.repository";
+import { ChartOfAccountRepository } from "./chart-of-account.repository";
+import { postJournalCore } from "./journal.service";
+
+interface ActorContext {
+  companyId: string;
+  userId: string;
+  branchId?: string | null;
+}
+
+const AMOUNT_EPSILON = 0.005;
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+export async function listPayments(companyId: string, query: ListQuery) {
+  const where: Prisma.PaymentWhereInput = {
+    companyId,
+    ...(query.search ? { paymentNumber: { contains: query.search, mode: "insensitive" as const } } : {}),
+  };
+
+  const [data, totalCount] = await Promise.all([
+    PaymentRepository.findMany(where, {
+      orderBy: { [query.sortBy]: query.sortOrder },
+      skip: query.skip,
+      take: query.take,
+    }),
+    PaymentRepository.count(where),
+  ]);
+
+  return { data, totalCount };
+}
+
+export async function getPaymentById(companyId: string, id: string) {
+  const payment = await PaymentRepository.findByIdWithDetails(companyId, id);
+  if (!payment) throw new BusinessRuleError("NOT_FOUND", "Payment not found.", { id });
+  return payment;
+}
+
+/**
+ * Invoices with a real outstanding balance for the party a Receipt/Payment
+ * Out would be allocated against — feeds the create-form's allocation
+ * picker. RECEIPT looks at Sales Invoices for a Customer; PAYMENT_OUT looks
+ * at Purchase Invoices for a Supplier.
+ */
+export async function listOutstandingInvoicesForParty(
+  companyId: string,
+  direction: "RECEIPT" | "PAYMENT_OUT",
+  partyId: string
+) {
+  return direction === "RECEIPT"
+    ? SalesInvoiceRepository.findOutstandingByCustomer(companyId, partyId)
+    : PurchaseInvoiceRepository.findOutstandingBySupplier(companyId, partyId);
+}
+
+interface ValidatedAllocation {
+  salesInvoiceId: string | null;
+  purchaseInvoiceId: string | null;
+  allocatedAmount: number;
+}
+
+async function buildAndValidateAllocations(
+  companyId: string,
+  direction: "RECEIPT" | "PAYMENT_OUT",
+  partyId: string,
+  amount: number,
+  allocations: PaymentInput["allocations"]
+): Promise<ValidatedAllocation[]> {
+  const rows: ValidatedAllocation[] = [];
+
+  for (const allocation of allocations) {
+    const invoiceId = direction === "RECEIPT" ? allocation.salesInvoiceId! : allocation.purchaseInvoiceId!;
+    const invoice =
+      direction === "RECEIPT"
+        ? await SalesInvoiceRepository.findAnyById(companyId, invoiceId)
+        : await PurchaseInvoiceRepository.findAnyById(companyId, invoiceId);
+
+    if (!invoice) throw new BusinessRuleError("NOT_FOUND", "Invoice not found.", { id: invoiceId });
+
+    const invoicePartyId = direction === "RECEIPT" ? (invoice as { customerId: string }).customerId : (invoice as { supplierId: string }).supplierId;
+    if (invoicePartyId !== partyId) {
+      throw new BusinessRuleError(
+        "VALIDATION_ERROR",
+        `Invoice does not belong to the selected ${direction === "RECEIPT" ? "customer" : "supplier"}.`,
+        { invoiceId }
+      );
+    }
+
+    if (invoice.status !== "POSTED" && invoice.status !== "PARTIALLY_PAID") {
+      throw new BusinessRuleError(
+        "VALIDATION_ERROR",
+        `Cannot allocate a payment to an invoice in "${invoice.status}" status.`,
+        { invoiceId, currentStatus: invoice.status }
+      );
+    }
+
+    const outstanding = round2(Number(invoice.totalAmount) - Number(invoice.paidAmount));
+    if (allocation.allocatedAmount > outstanding + AMOUNT_EPSILON) {
+      throw new BusinessRuleError(
+        "VALIDATION_ERROR",
+        `Cannot allocate ${allocation.allocatedAmount} to invoice — only ${outstanding} is outstanding.`,
+        { invoiceId, requestedAmount: allocation.allocatedAmount, outstanding }
+      );
+    }
+
+    rows.push({
+      salesInvoiceId: direction === "RECEIPT" ? invoiceId : null,
+      purchaseInvoiceId: direction === "PAYMENT_OUT" ? invoiceId : null,
+      allocatedAmount: round2(allocation.allocatedAmount),
+    });
+  }
+
+  const allocatedTotal = round2(rows.reduce((sum, r) => sum + r.allocatedAmount, 0));
+  if (Math.abs(allocatedTotal - round2(amount)) > AMOUNT_EPSILON) {
+    throw new BusinessRuleError(
+      "VALIDATION_ERROR",
+      `Allocations (${allocatedTotal}) must add up to the payment amount (${round2(amount)}).`,
+      { allocatedTotal, amount: round2(amount) }
+    );
+  }
+
+  return rows;
+}
+
+export async function createPayment(actor: ActorContext, input: PaymentInput) {
+  const partyId = input.direction === "RECEIPT" ? input.customerId! : input.supplierId!;
+
+  const party =
+    input.direction === "RECEIPT"
+      ? await CustomerRepository.findByIdWithBuyers(actor.companyId, partyId)
+      : await SupplierRepository.findById(actor.companyId, partyId);
+  if (!party) {
+    throw new BusinessRuleError(
+      "NOT_FOUND",
+      `${input.direction === "RECEIPT" ? "Customer" : "Supplier"} not found.`,
+      { id: partyId }
+    );
+  }
+
+  const paymentType = await FinanceConfigRepository.paymentType.findFirst({
+    where: { id: input.paymentTypeId, companyId: actor.companyId },
+  });
+  if (!paymentType) throw new BusinessRuleError("NOT_FOUND", "Payment type not found.", { id: input.paymentTypeId });
+
+  if (input.bankAccountId) {
+    const bankAccount = await FinanceConfigRepository.bankAccount.findFirst({
+      where: { id: input.bankAccountId, companyId: actor.companyId },
+    });
+    if (!bankAccount) throw new BusinessRuleError("NOT_FOUND", "Bank account not found.", { id: input.bankAccountId });
+  }
+
+  const allocationRows = await buildAndValidateAllocations(
+    actor.companyId,
+    input.direction,
+    partyId,
+    input.amount,
+    input.allocations
+  );
+
+  const company = await CompanyRepository.findBaseCurrencyCode(actor.companyId);
+  if (!company) throw new BusinessRuleError("NOT_FOUND", "Company not found.", { id: actor.companyId });
+
+  const paymentNumber = await generateDocumentNumber({
+    companyId: actor.companyId,
+    branchId: actor.branchId ?? null,
+    documentType: "PAYMENT",
+  });
+
+  const payment = await PaymentRepository.createWithAllocations(
+    {
+      companyId: actor.companyId,
+      branchId: actor.branchId || null,
+      paymentNumber,
+      direction: input.direction,
+      customerId: input.direction === "RECEIPT" ? partyId : null,
+      supplierId: input.direction === "PAYMENT_OUT" ? partyId : null,
+      paymentDate: new Date(input.paymentDate),
+      paymentTypeId: input.paymentTypeId,
+      bankAccountId: input.bankAccountId || null,
+      referenceNumber: input.referenceNumber || null,
+      amount: round2(input.amount),
+      status: "DRAFT",
+      currencyCode: company.baseCurrencyCode,
+      createdByUserId: actor.userId,
+    },
+    allocationRows
+  );
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "payments",
+    recordId: payment.id,
+    action: "CREATE",
+    newValues: { paymentNumber: payment.paymentNumber, direction: payment.direction, amount: payment.amount },
+  });
+
+  return payment;
+}
+
+/**
+ * DRAFT -> POSTED. Gated on "approve" (not "post" — payments' own RBAC grants
+ * use "approve" as the real verb; ACCOUNTS_MANAGER has it, ACCOUNTS_EXECUTIVE
+ * doesn't), self-approval-guarded via the same {createdBy} mechanism used
+ * everywhere else (PermissionService already treats "approve" as a
+ * self-approval-guarded action). One transaction: for each allocation, a
+ * guarded conditional increment of the invoice's paidAmount — safe with the
+ * plain Prisma updateMany idiom (no raw SQL needed) because the cap
+ * (invoice.totalAmount) is frozen once POSTED and captured once, before the
+ * transaction, as a JS literal. On guard success, a FRESH in-transaction
+ * re-read of paidAmount followed by an UNCONDITIONAL status write (PAID or
+ * PARTIALLY_PAID) — not a guarded conditional transition, since a second or
+ * third partial payment has no single "expected prior status" to key
+ * against (same idiom PurchaseOrder's own received-quantity status recompute
+ * already uses in goods-receipt.service.ts). Then a settlement Journal via
+ * postJournalCore, then a guarded conditional flip of this Payment.
+ */
+export async function postPayment(actor: ActorContext, id: string) {
+  const payment = await PaymentRepository.findByIdWithDetails(actor.companyId, id);
+  if (!payment) throw new BusinessRuleError("NOT_FOUND", "Payment not found.", { id });
+
+  await PermissionService.assert(actor.userId, "payments", "approve", { createdBy: payment.createdByUserId });
+
+  if (payment.status !== "DRAFT") {
+    throw new BusinessRuleError("INVALID_STATE_TRANSITION", `Cannot post a payment in "${payment.status}" status.`, {
+      currentStatus: payment.status,
+    });
+  }
+
+  // Cash/Bank resolution is keyed off PaymentType.type (the PaymentTypeKind
+  // enum), NEVER off PaymentType.code. PaymentType.code "BANK" (a seeded
+  // payment-type code) and ChartOfAccount.code "BANK" are the same string in
+  // two unrelated tables purely by coincidence — looking up
+  // ChartOfAccount.findByCode(companyId, paymentType.code) directly would
+  // silently return nothing for CHEQUE/CARD/UPI-typed payment types.
+  const cashOrBankAccountCode = payment.paymentType.type === "CASH" ? "CASH" : "BANK";
+  const [cashOrBankAccount, arAccount, apAccount] = await Promise.all([
+    ChartOfAccountRepository.findByCode(actor.companyId, cashOrBankAccountCode),
+    payment.direction === "RECEIPT" ? ChartOfAccountRepository.findByCode(actor.companyId, "AR") : null,
+    payment.direction === "PAYMENT_OUT" ? ChartOfAccountRepository.findByCode(actor.companyId, "AP") : null,
+  ]);
+  if (!cashOrBankAccount) {
+    throw new BusinessRuleError(
+      "NOT_FOUND",
+      `The ${cashOrBankAccountCode === "CASH" ? "Cash" : "Bank"} control account is missing from the Chart of Accounts.`,
+      {}
+    );
+  }
+  if (payment.direction === "RECEIPT" && !arAccount) {
+    throw new BusinessRuleError("NOT_FOUND", "The Accounts Receivable control account is missing from the Chart of Accounts.", {});
+  }
+  if (payment.direction === "PAYMENT_OUT" && !apAccount) {
+    throw new BusinessRuleError("NOT_FOUND", "The Accounts Payable control account is missing from the Chart of Accounts.", {});
+  }
+
+  const journalNumber = await generateDocumentNumber({
+    companyId: actor.companyId,
+    branchId: actor.branchId ?? null,
+    documentType: "JOURNAL",
+  });
+
+  const amount = Number(payment.amount);
+
+  await prisma.$transaction(async (tx) => {
+    for (const allocation of payment.allocations) {
+      const allocatedAmount = Number(allocation.allocatedAmount);
+
+      if (allocation.salesInvoiceId) {
+        // Comparing this base-currency Payment.amount against
+        // SalesInvoice.totalAmount is only safe because every Sales Order
+        // (and thus every invoice) is already forced to
+        // company.baseCurrencyCode — see sales-order.service.ts's own
+        // hardcoding. A future multi-currency slice would need to revisit
+        // this comparison.
+        const totalAmount = Number(allocation.salesInvoice!.totalAmount);
+        const { count } = await tx.salesInvoice.updateMany({
+          where: { id: allocation.salesInvoiceId, paidAmount: { lte: totalAmount - allocatedAmount + AMOUNT_EPSILON } },
+          data: { paidAmount: { increment: allocatedAmount } },
+        });
+        if (count === 0) {
+          throw new BusinessRuleError(
+            "OVER_PAYMENT_NOT_ALLOWED",
+            "This invoice's outstanding balance changed and no longer covers this allocation.",
+            { salesInvoiceId: allocation.salesInvoiceId }
+          );
+        }
+
+        const fresh = await tx.salesInvoice.findUniqueOrThrow({
+          where: { id: allocation.salesInvoiceId },
+          select: { paidAmount: true, totalAmount: true },
+        });
+        await tx.salesInvoice.update({
+          where: { id: allocation.salesInvoiceId },
+          data: { status: Number(fresh.paidAmount) >= Number(fresh.totalAmount) - AMOUNT_EPSILON ? "PAID" : "PARTIALLY_PAID" },
+        });
+      } else {
+        const totalAmount = Number(allocation.purchaseInvoice!.totalAmount);
+        const { count } = await tx.purchaseInvoice.updateMany({
+          where: { id: allocation.purchaseInvoiceId!, paidAmount: { lte: totalAmount - allocatedAmount + AMOUNT_EPSILON } },
+          data: { paidAmount: { increment: allocatedAmount } },
+        });
+        if (count === 0) {
+          throw new BusinessRuleError(
+            "OVER_PAYMENT_NOT_ALLOWED",
+            "This invoice's outstanding balance changed and no longer covers this allocation.",
+            { purchaseInvoiceId: allocation.purchaseInvoiceId }
+          );
+        }
+
+        const fresh = await tx.purchaseInvoice.findUniqueOrThrow({
+          where: { id: allocation.purchaseInvoiceId! },
+          select: { paidAmount: true, totalAmount: true },
+        });
+        await tx.purchaseInvoice.update({
+          where: { id: allocation.purchaseInvoiceId! },
+          data: { status: Number(fresh.paidAmount) >= Number(fresh.totalAmount) - AMOUNT_EPSILON ? "PAID" : "PARTIALLY_PAID" },
+        });
+      }
+    }
+
+    const lines =
+      payment.direction === "RECEIPT"
+        ? [
+            { accountId: cashOrBankAccount.id, lineNumber: 1, debitAmount: amount, creditAmount: 0, description: `Payment ${payment.paymentNumber}` },
+            { accountId: arAccount!.id, lineNumber: 2, debitAmount: 0, creditAmount: amount, description: `Payment ${payment.paymentNumber}` },
+          ]
+        : [
+            { accountId: apAccount!.id, lineNumber: 1, debitAmount: amount, creditAmount: 0, description: `Payment ${payment.paymentNumber}` },
+            { accountId: cashOrBankAccount.id, lineNumber: 2, debitAmount: 0, creditAmount: amount, description: `Payment ${payment.paymentNumber}` },
+          ];
+
+    const journal = await tx.journal.create({
+      data: {
+        companyId: actor.companyId,
+        branchId: actor.branchId || null,
+        journalNumber,
+        journalDate: payment.paymentDate,
+        status: "DRAFT",
+        narration: `Auto-posted for Payment ${payment.paymentNumber}`,
+        sourceModule: "PAYMENT",
+        sourceRecordId: payment.id,
+        createdByUserId: actor.userId,
+        lines: { create: lines },
+      },
+    });
+
+    // Internal auto-post — no second PermissionService call (see
+    // postJournalCore's doc comment): the outer "approve" assertion above
+    // already authorized this whole operation.
+    await postJournalCore(tx, journal.id, "DRAFT", actor.userId);
+
+    const { count } = await tx.payment.updateMany({
+      where: { id, status: "DRAFT" },
+      data: { status: "POSTED", journalId: journal.id, postedAt: new Date(), postedByUserId: actor.userId },
+    });
+    if (count === 0) {
+      throw new BusinessRuleError("INVALID_STATE_TRANSITION", "This payment is no longer in Draft status.", {});
+    }
+  });
+
+  const updated = await PaymentRepository.findByIdWithDetails(actor.companyId, id);
+  if (!updated) throw new BusinessRuleError("NOT_FOUND", "Payment not found.", { id });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "payments",
+    recordId: id,
+    action: "APPROVE",
+    oldValues: { status: "DRAFT" },
+    newValues: { status: "POSTED", journalId: updated.journalId },
+  });
+
+  return updated;
+}
+
+/** Only from DRAFT — no compensating decrement needed, since DRAFT never
+ * touched paidAmount in the first place (only POST does). No updatePayment
+ * exists (deliberately — see the schema-file doc comment); the only
+ * DRAFT-stage correction is cancel-and-recreate. */
+export async function cancelPayment(actor: ActorContext, id: string) {
+  const existing = await PaymentRepository.findAnyById(actor.companyId, id);
+  if (!existing) throw new BusinessRuleError("NOT_FOUND", "Payment not found.", { id });
+
+  const { count } = await PaymentRepository.updateStatusConditional(id, "DRAFT", { status: "CANCELLED" });
+  if (count === 0) {
+    throw new BusinessRuleError("INVALID_STATE_TRANSITION", `Cannot cancel a payment in "${existing.status}" status.`, {
+      currentStatus: existing.status,
+    });
+  }
+
+  const updated = await PaymentRepository.findAnyById(actor.companyId, id);
+  if (!updated) throw new BusinessRuleError("NOT_FOUND", "Payment not found.", { id });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "payments",
+    recordId: id,
+    action: "CANCEL",
+    oldValues: { status: "DRAFT" },
+    newValues: { status: "CANCELLED" },
+  });
+
+  return updated;
+}

@@ -41,7 +41,7 @@ The user has two real, manually-coded PHP/Laravel garment systems already in pro
 | 4 | Sampling | ✅ Done |
 | 5 | Orders + Production | ✅ Done — 5A (Sales Orders), 5B (BOM/MRP), and 5C (Production: Production Orders/Lots/JobOrders/QC/split-merge) all built and verified end-to-end this session |
 | 6 | Inventory | ✅ Done — Purchase Order + Goods Receipt (fabric roll tracking), the stock ledger, Material Request, and Stock Movements (Transfer/Adjustment/Return-to-Supplier) all built and verified |
-| 7 | Accounts | 🔶 In progress — 7A (Chart of Accounts, Tax Config, Journal engine), 7B (Sales Invoices), and 7C (Purchase Invoices) done on branch `phase-7-accounts`; Payments+Allocations and Expenses not started |
+| 7 | Accounts | 🔶 In progress — 7A (Chart of Accounts, Tax Config, Journal engine), 7B (Sales Invoices), 7C (Purchase Invoices), and 7D (Payments + Allocations) done on branch `phase-7-accounts`; Expenses not started |
 | 8 | Dispatch | ⬜ Not started |
 | 9 | Reports | ⬜ Not started |
 | 10 | Testing | ⬜ Not started |
@@ -1349,6 +1349,72 @@ divergence was explicitly justified and reviewed, not an oversight.
   11 new) all clean throughout.
 - **Not built this slice**: Payments+Allocations, Expenses, a real Credit Note workflow, any
   Product/HSN→TaxRate auto-inference (same gaps as 7B, still open).
+
+## Phase 7D — Payments + Allocations (2026-08-24)
+
+Fifth slice. A `Payment` records money received from a Customer (`RECEIPT`) or paid to a Supplier
+(`PAYMENT_OUT`), allocated across one or more invoices via `PaymentAllocation`; posting it finally wires up
+`SalesInvoiceStatus`/`PurchaseInvoiceStatus`'s `PARTIALLY_PAID`/`PAID` values reserved-but-dead since 7B/7C.
+Reviewed via a Plan-agent critique before implementation, per this project's established rhythm; a single
+shared `PAY-` numbering series for both directions was confirmed with the user (matches the single-table
+design — no enum split).
+
+- **`paidAmount` accumulator is safe with the plain Prisma `updateMany` idiom — no raw SQL needed**, unlike
+  7C's newer guards: `SalesInvoice`/`PurchaseInvoice.totalAmount` is frozen once `POSTED` (never touched by
+  cancel or post), so it's captured once as a JS literal before the transaction and used as the cap —
+  the same safety condition that made 7C's *original* `guardedIncrementReceived` safe.
+- **A real gap the critique refused to accept as "precedented"**: the generic `reverseJournal()` (7A) had no
+  awareness of *why* a journal existed — reversing a Payment's auto-posted journal would desync `paidAmount`
+  (and derived invoice status) from the ledger, and unlike Sales/Purchase Invoice's own harmless "no reversal
+  path" gap (nothing re-reads their status after posting), `paidAmount` is **load-bearing**: it directly
+  gates the next payment via `OVER_PAYMENT_NOT_ALLOWED`. Fixed by adding a `sourceModule` guard directly
+  inside `reverseJournal()` — reversal is now blocked for any journal sourced from `PAYMENT`,
+  `SALES_INVOICE`, or `PURCHASE_INVOICE`, closing this slice's own gap *and* retroactively closing 7B/7C's
+  identical latent one in one change, rather than building a full accumulator-aware reversal flow nobody has
+  asked for.
+- **Status recompute uses a fresh in-transaction read + unconditional write, not a guarded conditional
+  transition** — `updateStatusConditional` is for one-shot transitions keyed to exactly one expected prior
+  status; a second or third partial payment has no single "expected prior status" to key against. Follows
+  the exact precedent already established in `goods-receipt.service.ts`'s own received-quantity status
+  recompute (`findManyForStatusRecompute` + `updateStatusInTx`, both unconditional).
+- **Cash/Bank account resolution is keyed off `PaymentType.type` (the `PaymentTypeKind` enum), never off
+  `PaymentType.code`** — a real trap the critique flagged: `PaymentType.code` "BANK" (a seeded code) and
+  `ChartOfAccount.code` "BANK" are the same string in two unrelated tables purely by coincidence; resolving
+  via `ChartOfAccount.findByCode(companyId, paymentType.code)` directly would silently return nothing for
+  CHEQUE/CARD/UPI-typed payment types. `{ CASH: "CASH", default: "BANK" }` is the actual resolution rule,
+  verified live with a CHEQUE-typed payment type correctly resolving to the BANK account, not failing.
+- **`PaymentAllocation` uses two nullable FKs (`salesInvoiceId`/`purchaseInvoiceId`) + a hand-added CHECK**
+  (`(sales_invoice_id IS NOT NULL) != (purchase_invoice_id IS NOT NULL)`), not a polymorphic
+  `relatedModule`/`relatedRecordId` shape — matches CLAUDE.md's own architecture doc, which lists
+  `payment_allocations` as a concrete Accounts table, separate from the explicit polymorphic-tables list.
+- **No `updatePayment` — deliberately**: RBAC confirms nobody except `SUPER_ADMIN`'s wildcard has `"edit"`
+  on the `payments` module (`ACCOUNTS_MANAGER`: view/create/approve/cancel/export/print; `ACCOUNTS_EXECUTIVE`:
+  view/create only). The only DRAFT-stage correction is cancel-and-recreate; confirmed live (`405` on a
+  direct `PATCH` attempt — no route exists at all, not just a permission block).
+- **Posting is gated on `"approve"`, not `"post"`** — `payments`' RBAC grants use `"approve"` as the real
+  verb, matching CLAUDE.md's literal "payments cannot be approved by their own creator" rule. `"approve"` is
+  already in `PermissionService`'s `SELF_APPROVAL_GUARDED_ACTIONS`, so the same maker/checker protection
+  applies with zero `PermissionService` changes.
+- **Verified live end-to-end** through the real UI: created `PAY-2026-00001` (RECEIPT, Bank Transfer) for the
+  full outstanding balance of a real `POSTED` Sales Invoice → approved → confirmed the auto-posted Journal
+  (Dr Bank / Cr AR, exact amounts) and the invoice flipping to `PAID`; created `PAY-2026-00002` (RECEIPT,
+  Cash — a new "Cash"-kind `PaymentType` created in-session, since none existed yet) for a **partial** amount
+  against a different invoice → approved → confirmed Dr Cash / Cr AR and the invoice landing on
+  `PARTIALLY_PAID`, not `PAID`; created `PAY-2026-00005` (`PAYMENT_OUT`, Bank Transfer) for the full balance
+  of a real `POSTED` Purchase Invoice → approved → confirmed Dr AP / Cr Bank and the invoice flipping to
+  `PAID`. Confirmed the `reverseJournal()` guard blocks reversal of all three auto-posting document types
+  (`PAYMENT`/`SALES_INVOICE`/`PURCHASE_INVOICE`) with `409 INVALID_STATE_TRANSITION`. Exercised the real race
+  the guard exists for: created two DRAFT payments both claiming the same remaining outstanding balance on
+  one invoice, approved the first (succeeded, invoice fully paid), then approved the second — correctly
+  rejected with `409 OVER_PAYMENT_NOT_ALLOWED`, invoice untouched by the failed attempt, failed payment
+  cleanly cancelled afterward. Confirmed re-approving and re-cancelling an already-`POSTED` payment both
+  correctly `409 INVALID_STATE_TRANSITION`. `npx tsc --noEmit`, `npm run lint`, and `npm test` (161/161, 14
+  new in `payment.service.test.ts`) all clean throughout; zero unexpected server or console errors during
+  the full walkthrough (only the deliberately-triggered 409/405s from the guard tests above).
+- **Not built this slice**: Expenses (the last remaining Phase 7 item), a real Credit Note/payment-reversal
+  workflow (the `reverseJournal()` guard above is the enforced absence, not a built correction path),
+  unallocated/advance payments, multi-currency UI (payments are always `company.baseCurrencyCode`, same
+  project-wide deferral).
 
 ## Recommended Stack
 

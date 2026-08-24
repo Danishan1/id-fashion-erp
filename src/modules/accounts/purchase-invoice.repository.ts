@@ -75,4 +75,11 @@ export const PurchaseInvoiceRepository = {
   /** Conditional status write — same race-closing shape used throughout this project. */
   updateStatusConditional: (id: string, expectedStatus: PurchaseInvoiceStatus, data: Prisma.PurchaseInvoiceUncheckedUpdateInput) =>
     prisma.purchaseInvoice.updateMany({ where: { id, status: expectedStatus }, data }),
+
+  /** Invoices with a real outstanding balance for one supplier — feeds Payment's allocation picker (Phase 7D). */
+  findOutstandingBySupplier: (companyId: string, supplierId: string) =>
+    prisma.purchaseInvoice.findMany({
+      where: { companyId, supplierId, status: { in: ["POSTED", "PARTIALLY_PAID"] } },
+      orderBy: { invoiceDate: "asc" },
+    }),
 };
