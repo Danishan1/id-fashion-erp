@@ -98,6 +98,14 @@ model Company {
   attendanceRecords           AttendanceRecord[]
   leaveTypes                  LeaveType[]
   leaveRequests               LeaveRequest[]
+  chartOfAccounts             ChartOfAccount[]
+  taxTypes                    TaxType[]
+  taxRates                    TaxRate[]
+  journals                    Journal[]
+  salesInvoices               SalesInvoice[]
+  purchaseInvoices            PurchaseInvoice[]
+  payments                    Payment[]
+  expenses                    Expense[]
 
   @@map("companies")
 }
@@ -140,6 +148,11 @@ model Branch {
   leads                 Lead[]
   deals                 Deal[]
   campaigns             Campaign[]
+  journals              Journal[]
+  salesInvoices         SalesInvoice[]
+  purchaseInvoices      PurchaseInvoice[]
+  payments              Payment[]
+  expenses              Expense[]
 
   @@unique([companyId, code])
   @@map("branches")
@@ -209,6 +222,16 @@ model User {
   attendanceRecordsRecorded            AttendanceRecord[]
   leaveRequestsApproved                LeaveRequest[]               @relation("LeaveRequestApprovedBy")
   leaveRequestsCreated                 LeaveRequest[]               @relation("LeaveRequestCreatedBy")
+  journalsCreated                      Journal[]                    @relation("JournalCreatedBy")
+  journalsPosted                       Journal[]                    @relation("JournalPostedBy")
+  salesInvoicesCreated                 SalesInvoice[]               @relation("SalesInvoiceCreatedBy")
+  salesInvoicesPosted                  SalesInvoice[]               @relation("SalesInvoicePostedBy")
+  purchaseInvoicesCreated              PurchaseInvoice[]            @relation("PurchaseInvoiceCreatedBy")
+  purchaseInvoicesPosted               PurchaseInvoice[]            @relation("PurchaseInvoicePostedBy")
+  paymentsCreated                      Payment[]                    @relation("PaymentCreatedBy")
+  paymentsPosted                       Payment[]                    @relation("PaymentPostedBy")
+  expensesCreated                      Expense[]                    @relation("ExpenseCreatedBy")
+  expensesPosted                       Expense[]                    @relation("ExpensePostedBy")
 
   @@map("users")
 }
@@ -308,6 +331,8 @@ model Customer {
   buyerEnquiries BuyerEnquiry[]
   salesOrders    SalesOrder[]
   deals          Deal[]
+  salesInvoices  SalesInvoice[]
+  payments       Payment[]
 
   @@unique([companyId, code])
   @@map("customers")
@@ -370,10 +395,13 @@ model Supplier {
   createdAt           DateTime         @default(now()) @map("created_at")
   updatedAt           DateTime         @updatedAt @map("updated_at")
 
-  company            Company         @relation(fields: [companyId], references: [id])
+  company            Company           @relation(fields: [companyId], references: [id])
   defaultForProducts Product[]
   purchaseOrders     PurchaseOrder[]
   stockMovements     StockMovement[]
+  purchaseInvoices   PurchaseInvoice[]
+  payments           Payment[]
+  expenses           Expense[]
 
   @@unique([companyId, code])
   @@map("suppliers")
@@ -497,6 +525,8 @@ model Product {
   materialRequestItems  MaterialRequestItem[]  @relation("MaterialRequestItemMaterial")
   productionOrders      ProductionOrder[]
   stockMovementItems    StockMovementItem[]
+  salesInvoiceItems     SalesInvoiceItem[]
+  purchaseInvoiceItems  PurchaseInvoiceItem[]
 
   @@unique([companyId, styleCode])
   @@map("products")
@@ -1071,7 +1101,9 @@ model PaymentType {
   createdAt DateTime        @default(now()) @map("created_at")
   updatedAt DateTime        @updatedAt @map("updated_at")
 
-  company Company @relation(fields: [companyId], references: [id])
+  company  Company   @relation(fields: [companyId], references: [id])
+  payments Payment[]
+  expenses Expense[]
 
   @@unique([companyId, code])
   @@map("payment_types")
@@ -1092,7 +1124,9 @@ model BankAccount {
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @updatedAt @map("updated_at")
 
-  company Company @relation(fields: [companyId], references: [id])
+  company  Company   @relation(fields: [companyId], references: [id])
+  payments Payment[]
+  expenses Expense[]
 
   @@unique([companyId, code])
   @@map("bank_accounts")
@@ -2114,6 +2148,7 @@ model SalesOrder {
   requestedBy      User              @relation("SalesOrderRequestedBy", fields: [requestedByUserId], references: [id])
   items            SalesOrderItem[]
   materialRequests MaterialRequest[]
+  salesInvoices    SalesInvoice[]
 
   @@unique([companyId, orderNumber])
   @@map("sales_orders")
@@ -2131,11 +2166,12 @@ model SalesOrderItem {
   notes           String?
   createdAt       DateTime @default(now()) @map("created_at")
 
-  salesOrder       SalesOrder                @relation(fields: [salesOrderId], references: [id])
-  product          Product                   @relation(fields: [productId], references: [id])
-  sampleRequest    SampleRequest?            @relation(fields: [sampleRequestId], references: [id])
-  breakdown        SalesOrderItemBreakdown[]
-  productionOrders ProductionOrder[]
+  salesOrder        SalesOrder                @relation(fields: [salesOrderId], references: [id])
+  product           Product                   @relation(fields: [productId], references: [id])
+  sampleRequest     SampleRequest?            @relation(fields: [sampleRequestId], references: [id])
+  breakdown         SalesOrderItemBreakdown[]
+  productionOrders  ProductionOrder[]
+  salesInvoiceItems SalesInvoiceItem[]
 
   @@map("sales_order_items")
 }
@@ -2252,12 +2288,13 @@ model PurchaseOrder {
   createdAt            DateTime             @default(now()) @map("created_at")
   updatedAt            DateTime             @updatedAt @map("updated_at")
 
-  company     Company             @relation(fields: [companyId], references: [id])
-  branch      Branch?             @relation(fields: [branchId], references: [id])
-  supplier    Supplier            @relation(fields: [supplierId], references: [id])
-  requestedBy User                @relation("PurchaseOrderRequestedBy", fields: [requestedByUserId], references: [id])
-  items       PurchaseOrderItem[]
-  receipts    GoodsReceipt[]
+  company          Company             @relation(fields: [companyId], references: [id])
+  branch           Branch?             @relation(fields: [branchId], references: [id])
+  supplier         Supplier            @relation(fields: [supplierId], references: [id])
+  requestedBy      User                @relation("PurchaseOrderRequestedBy", fields: [requestedByUserId], references: [id])
+  items            PurchaseOrderItem[]
+  receipts         GoodsReceipt[]
+  purchaseInvoices PurchaseInvoice[]
 
   @@unique([companyId, orderNumber])
   @@index([companyId, supplierId])
@@ -2278,6 +2315,14 @@ model PurchaseOrderItem {
   // Cumulative accumulator, incremented atomically per receipt via a guarded
   // updateMany (see purchase-order.service.ts) — never a plain read-then-write.
   receivedQuantity      Decimal  @default(0) @map("received_quantity") @db.Decimal(18, 4)
+  // Cumulative accumulator, incremented only at Purchase Invoice POST time
+  // (never at DRAFT-creation) via a raw-SQL guarded update comparing against
+  // the LIVE receivedQuantity column (see PurchaseOrderItemRepository —
+  // Prisma's updateMany cannot express a column-to-column comparison, so the
+  // usual guarded-updateMany idiom doesn't apply here). receivedQuantity's
+  // own decrement (goods-receipt reversal) is guarded symmetrically against
+  // this column, so it can never drop below what's already been invoiced.
+  invoicedQuantity      Decimal  @default(0) @map("invoiced_quantity") @db.Decimal(18, 4)
   notes                 String?
   createdAt             DateTime @default(now()) @map("created_at")
   // The authoritative FK for the optional Material Request -> Purchase Order
@@ -2289,11 +2334,12 @@ model PurchaseOrderItem {
   // user-edited and never forced to equal the full remaining shortfall).
   materialRequestItemId String?  @map("material_request_item_id") @db.Uuid
 
-  purchaseOrder       PurchaseOrder        @relation(fields: [purchaseOrderId], references: [id])
-  product             Product              @relation(fields: [productId], references: [id])
-  uom                 UnitOfMeasure        @relation(fields: [uomId], references: [id])
-  goodsReceiptItems   GoodsReceiptItem[]
-  materialRequestItem MaterialRequestItem? @relation(fields: [materialRequestItemId], references: [id])
+  purchaseOrder        PurchaseOrder         @relation(fields: [purchaseOrderId], references: [id])
+  product              Product               @relation(fields: [productId], references: [id])
+  uom                  UnitOfMeasure         @relation(fields: [uomId], references: [id])
+  goodsReceiptItems    GoodsReceiptItem[]
+  materialRequestItem  MaterialRequestItem?  @relation(fields: [materialRequestItemId], references: [id])
+  purchaseInvoiceItems PurchaseInvoiceItem[]
 
   @@index([purchaseOrderId])
   @@index([materialRequestItemId])
@@ -3131,6 +3177,539 @@ model StockMovementItem {
 
   @@index([stockMovementId])
   @@map("stock_movement_items")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Accounts (Phase 7A — Chart of Accounts, Tax Config, Journal Engine)
+//
+// First slice of Phase 7. Sales/Purchase Invoices, Payments+Allocations, and
+// Expenses are NOT part of this slice — they're later slices that will post
+// through the Journal engine built here. Multi-currency is deliberately out
+// of scope (JournalLine amounts are base-currency-only), matching the
+// project-wide multi-currency-UI deferral already applied to SalesOrder/
+// PurchaseOrder.
+// ─────────────────────────────────────────────────────────────
+
+enum AccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  INCOME
+  EXPENSE
+}
+
+model ChartOfAccount {
+  id              String      @id @default(uuid()) @db.Uuid
+  companyId       String      @map("company_id") @db.Uuid
+  code            String
+  name            String
+  accountType     AccountType @map("account_type")
+  // Self-relation, schema-only for now — no hierarchy UI yet, matching the
+  // ProductionStage.parentStageId precedent (column exists, exposed later
+  // when actually needed). NOT YET DECIDED: nothing here distinguishes a
+  // postable "leaf" account from a rollup "group" account (e.g. a future
+  // isGroup/postable flag) — deliberately deferred, not solved, so whichever
+  // slice builds the hierarchy UI doesn't rediscover this as a surprise.
+  parentAccountId String?     @map("parent_account_id") @db.Uuid
+  // Protects control accounts (AR/AP/GST) seeded by prisma/seed.ts from
+  // deactivation — checked alongside the JournalLine-reference guard, not a
+  // replacement for it.
+  isSystemAccount Boolean     @default(false) @map("is_system_account")
+  isActive        Boolean     @default(true) @map("is_active")
+  createdAt       DateTime    @default(now()) @map("created_at")
+  updatedAt       DateTime    @updatedAt @map("updated_at")
+
+  company       Company          @relation(fields: [companyId], references: [id])
+  parentAccount ChartOfAccount?  @relation("ChartOfAccountParent", fields: [parentAccountId], references: [id])
+  childAccounts ChartOfAccount[] @relation("ChartOfAccountParent")
+  journalLines  JournalLine[]
+  expenses      Expense[]
+
+  @@unique([companyId, code])
+  @@map("chart_of_accounts")
+}
+
+model TaxType {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  code      String
+  name      String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company Company   @relation(fields: [companyId], references: [id])
+  rates   TaxRate[]
+
+  @@unique([companyId, code])
+  @@map("tax_types")
+}
+
+model TaxRate {
+  id             String    @id @default(uuid()) @db.Uuid
+  companyId      String    @map("company_id") @db.Uuid
+  taxTypeId      String    @map("tax_type_id") @db.Uuid
+  name           String
+  // Matches the existing SampleMaterial.gstPercentage precision precedent —
+  // not inventing a new one.
+  ratePercentage Decimal   @map("rate_percentage") @db.Decimal(5, 2)
+  effectiveFrom  DateTime  @map("effective_from") @db.Date
+  // Nullable = still the current rate. Service layer rejects a new rate whose
+  // [effectiveFrom, effectiveTo) window overlaps an existing active rate for
+  // the same taxTypeId — cheap to enforce now, avoids ambiguous data a later
+  // slice's "find the effective rate as of date X" logic would mishandle.
+  effectiveTo    DateTime? @map("effective_to") @db.Date
+  isActive       Boolean   @default(true) @map("is_active")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  company              Company               @relation(fields: [companyId], references: [id])
+  taxType              TaxType               @relation(fields: [taxTypeId], references: [id])
+  salesInvoiceItems    SalesInvoiceItem[]
+  purchaseInvoiceItems PurchaseInvoiceItem[]
+  expenses             Expense[]
+
+  @@index([taxTypeId])
+  @@map("tax_rates")
+}
+
+enum JournalStatus {
+  DRAFT
+  POSTED
+  CANCELLED
+}
+
+model Journal {
+  id                  String         @id @default(uuid()) @db.Uuid
+  companyId           String         @map("company_id") @db.Uuid
+  branchId            String?        @map("branch_id") @db.Uuid
+  journalNumber       String         @map("journal_number")
+  journalDate         DateTime       @map("journal_date") @db.Date
+  status              JournalStatus  @default(DRAFT)
+  narration           String?
+  // Polymorphic "what caused this journal" discriminator, reusing the
+  // existing RelatedModule enum rather than inventing a parallel one — null
+  // for a manually-created journal (no source document). No enum value is
+  // added this slice; later slices (Sales/Purchase Invoice) will populate
+  // these with their own RelatedModule value + id when they auto-create a
+  // journal on posting.
+  sourceModule        RelatedModule? @map("source_module")
+  sourceRecordId      String?        @map("source_record_id") @db.Uuid
+  // Written only at post time, recomputed from a fresh read of JournalLine
+  // rows inside the same transaction as the status flip — never trusted from
+  // a client-submitted total.
+  totalDebit          Decimal        @default(0) @map("total_debit") @db.Decimal(18, 2)
+  totalCredit         Decimal        @default(0) @map("total_credit") @db.Decimal(18, 2)
+  postedAt            DateTime?      @map("posted_at")
+  postedByUserId      String?        @map("posted_by_user_id") @db.Uuid
+  createdByUserId     String         @map("created_by_user_id") @db.Uuid
+  // At most one reversal per original journal. The ORIGINAL journal's own
+  // status never changes when reversed — it stays POSTED forever, since a
+  // posted journal is an immutable historical accounting fact, not something
+  // that "un-happens." Only the read model (via this back-relation) shows
+  // that a reversal exists.
+  reversalOfJournalId String?        @unique @map("reversal_of_journal_id") @db.Uuid
+  createdAt           DateTime       @default(now()) @map("created_at")
+  updatedAt           DateTime       @updatedAt @map("updated_at")
+
+  company           Company          @relation(fields: [companyId], references: [id])
+  branch            Branch?          @relation(fields: [branchId], references: [id])
+  postedBy          User?            @relation("JournalPostedBy", fields: [postedByUserId], references: [id])
+  createdBy         User             @relation("JournalCreatedBy", fields: [createdByUserId], references: [id])
+  reversalOf        Journal?         @relation("JournalReversal", fields: [reversalOfJournalId], references: [id])
+  reversedByJournal Journal?         @relation("JournalReversal")
+  lines             JournalLine[]
+  salesInvoice      SalesInvoice?
+  purchaseInvoice   PurchaseInvoice?
+  payment           Payment?
+  expense           Expense?
+
+  @@unique([companyId, journalNumber])
+  @@map("journals")
+}
+
+model JournalLine {
+  id           String   @id @default(uuid()) @db.Uuid
+  journalId    String   @map("journal_id") @db.Uuid
+  lineNumber   Int      @map("line_number")
+  accountId    String   @map("account_id") @db.Uuid
+  debitAmount  Decimal  @default(0) @map("debit_amount") @db.Decimal(18, 2)
+  creditAmount Decimal  @default(0) @map("credit_amount") @db.Decimal(18, 2)
+  description  String?
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  journal Journal        @relation(fields: [journalId], references: [id])
+  account ChartOfAccount @relation(fields: [accountId], references: [id])
+
+  @@index([journalId])
+  @@index([accountId])
+  @@map("journal_lines")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Sales Invoices (Phase 7B) — the first real consumer of the Journal engine.
+// Posting an invoice auto-creates+auto-posts a Journal (Dr Accounts
+// Receivable / Cr Sales Revenue / Cr GST Payable) and flips the originating
+// SalesOrder to INVOICED.
+// ─────────────────────────────────────────────────────────────
+
+enum SalesInvoiceStatus {
+  DRAFT
+  POSTED
+  // Reserved for the Payments slice — not reachable by any code yet, same
+  // "enum has values nothing reaches yet" discipline as SalesOrderStatus.
+  PARTIALLY_PAID
+  PAID
+  CLOSED
+  CANCELLED
+}
+
+model SalesInvoice {
+  id               String             @id @default(uuid()) @db.Uuid
+  companyId        String             @map("company_id") @db.Uuid
+  branchId         String?            @map("branch_id") @db.Uuid
+  invoiceNumber    String             @map("invoice_number")
+  salesOrderId     String             @map("sales_order_id") @db.Uuid
+  // Denormalized from the order — justified here (unlike e.g. GoodsReceipt
+  // not denormalizing supplierId) because this table IS the AR ledger's own
+  // document of record, not a downstream operational record.
+  customerId       String             @map("customer_id") @db.Uuid
+  invoiceDate      DateTime           @map("invoice_date") @db.Date
+  dueDate          DateTime           @map("due_date") @db.Date
+  status           SalesInvoiceStatus @default(DRAFT)
+  // Copied from the SalesOrder at creation time, never re-derived — same
+  // frozen-currency convention as SalesOrder/PurchaseOrder.
+  currencyCode     String             @map("currency_code") @db.Char(3)
+  exchangeRate     Decimal            @default(1) @map("exchange_rate") @db.Decimal(18, 6)
+  baseCurrencyCode String             @map("base_currency_code") @db.Char(3)
+  subtotalAmount   Decimal            @default(0) @map("subtotal_amount") @db.Decimal(18, 2)
+  taxAmount        Decimal            @default(0) @map("tax_amount") @db.Decimal(18, 2)
+  totalAmount      Decimal            @default(0) @map("total_amount") @db.Decimal(18, 2)
+  baseTotalAmount  Decimal            @default(0) @map("base_total_amount") @db.Decimal(18, 2)
+  // Accumulator, incremented only at Payment-post time (Phase 7D) via a
+  // guarded conditional update capped against the frozen totalAmount (safe
+  // with the plain Prisma updateMany idiom — totalAmount never changes once
+  // POSTED). Drives the PARTIALLY_PAID/PAID status derivation.
+  paidAmount       Decimal            @default(0) @map("paid_amount") @db.Decimal(18, 2)
+  // Set only at post time — the settlement Journal this invoice generated.
+  journalId        String?            @unique @map("journal_id") @db.Uuid
+  postedAt         DateTime?          @map("posted_at")
+  postedByUserId   String?            @map("posted_by_user_id") @db.Uuid
+  createdByUserId  String             @map("created_by_user_id") @db.Uuid
+  createdAt        DateTime           @default(now()) @map("created_at")
+  updatedAt        DateTime           @updatedAt @map("updated_at")
+
+  company     Company              @relation(fields: [companyId], references: [id])
+  branch      Branch?              @relation(fields: [branchId], references: [id])
+  salesOrder  SalesOrder           @relation(fields: [salesOrderId], references: [id])
+  customer    Customer             @relation(fields: [customerId], references: [id])
+  journal     Journal?             @relation(fields: [journalId], references: [id])
+  postedBy    User?                @relation("SalesInvoicePostedBy", fields: [postedByUserId], references: [id])
+  createdBy   User                 @relation("SalesInvoiceCreatedBy", fields: [createdByUserId], references: [id])
+  items       SalesInvoiceItem[]
+  allocations PaymentAllocation[]
+
+  @@unique([companyId, branchId, invoiceNumber])
+  @@map("sales_invoices")
+}
+
+model SalesInvoiceItem {
+  id               String   @id @default(uuid()) @db.Uuid
+  salesInvoiceId   String   @map("sales_invoice_id") @db.Uuid
+  // Traces back to the originating line — the Sales Order remains the source
+  // of truth for size/color breakdown; this table aggregates to one line per
+  // style since SalesOrderItem.unitPrice is already per-style, not per-variant.
+  salesOrderItemId String   @map("sales_order_item_id") @db.Uuid
+  productId        String   @map("product_id") @db.Uuid
+  quantity         Int
+  unitPrice        Decimal  @map("unit_price") @db.Decimal(18, 2)
+  // Deliberate deviation from CLAUDE.md's 13-table Accounts plan (a shared
+  // tax_transactions table): freezes the tax rate/amount directly on the
+  // item since this is the first consumer. Revisit if Purchase Invoices
+  // (7C) or a third consumer make the shared shape worth building — not
+  // speculatively generalizing before a second real caller exists.
+  taxRateId        String?  @map("tax_rate_id") @db.Uuid
+  taxPercentage    Decimal? @map("tax_percentage") @db.Decimal(5, 2)
+  taxAmount        Decimal  @default(0) @map("tax_amount") @db.Decimal(18, 2)
+  lineTotal        Decimal  @map("line_total") @db.Decimal(18, 2)
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  salesInvoice   SalesInvoice   @relation(fields: [salesInvoiceId], references: [id])
+  salesOrderItem SalesOrderItem @relation(fields: [salesOrderItemId], references: [id])
+  product        Product        @relation(fields: [productId], references: [id])
+  taxRate        TaxRate?       @relation(fields: [taxRateId], references: [id])
+
+  @@index([salesInvoiceId])
+  @@map("sales_invoice_items")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Purchase Invoices (Phase 7C) — deliberately diverges from Sales Invoice's
+// one-shot-per-order shape: partial, repeatable invoicing against a Purchase
+// Order (multiple Goods Receipts against one PO are already a live pattern,
+// so multiple invoices are too). PurchaseOrderItem.invoicedQuantity (added
+// above) tracks progress; PurchaseOrder.status is never changed by invoicing
+// (no invoiced-adjacent status value exists, and a single flip wouldn't be
+// semantically correct for a partial document) — "how much has been
+// invoiced" is derived by comparing invoicedQuantity to receivedQuantity.
+// ─────────────────────────────────────────────────────────────
+
+enum PurchaseInvoiceStatus {
+  DRAFT
+  POSTED
+  // Reserved for the Payments slice — not reachable by any code yet, same
+  // discipline as SalesInvoiceStatus's own reserved values.
+  PARTIALLY_PAID
+  PAID
+  CLOSED
+  CANCELLED
+}
+
+model PurchaseInvoice {
+  id                    String                @id @default(uuid()) @db.Uuid
+  companyId             String                @map("company_id") @db.Uuid
+  branchId              String?               @map("branch_id") @db.Uuid
+  invoiceNumber         String                @map("invoice_number")
+  purchaseOrderId       String                @map("purchase_order_id") @db.Uuid
+  // Denormalized from the order — this table IS the AP ledger's own document
+  // of record, same justification as SalesInvoice.customerId.
+  supplierId            String                @map("supplier_id") @db.Uuid
+  // The supplier's own bill/reference number — free text, since we don't
+  // control it (unlike invoiceNumber, which we generate). Guarded against
+  // double-entry via a hand-added partial unique index (see migration) since
+  // this slice has no other "at most one" constraint to lean on.
+  supplierInvoiceNumber String?               @map("supplier_invoice_number")
+  invoiceDate           DateTime              @map("invoice_date") @db.Date
+  dueDate               DateTime              @map("due_date") @db.Date
+  status                PurchaseInvoiceStatus @default(DRAFT)
+  // Copied from the PurchaseOrder at creation time, never re-derived — same
+  // frozen-currency convention used throughout this project.
+  currencyCode          String                @map("currency_code") @db.Char(3)
+  exchangeRate          Decimal               @default(1) @map("exchange_rate") @db.Decimal(18, 6)
+  baseCurrencyCode      String                @map("base_currency_code") @db.Char(3)
+  subtotalAmount        Decimal               @default(0) @map("subtotal_amount") @db.Decimal(18, 2)
+  taxAmount             Decimal               @default(0) @map("tax_amount") @db.Decimal(18, 2)
+  totalAmount           Decimal               @default(0) @map("total_amount") @db.Decimal(18, 2)
+  baseTotalAmount       Decimal               @default(0) @map("base_total_amount") @db.Decimal(18, 2)
+  // Accumulator, incremented only at Payment-post time (Phase 7D) — same
+  // shape/reasoning as SalesInvoice.paidAmount above.
+  paidAmount            Decimal               @default(0) @map("paid_amount") @db.Decimal(18, 2)
+  // Set only at post time — the settlement Journal this invoice generated.
+  journalId             String?               @unique @map("journal_id") @db.Uuid
+  postedAt              DateTime?             @map("posted_at")
+  postedByUserId        String?               @map("posted_by_user_id") @db.Uuid
+  createdByUserId       String                @map("created_by_user_id") @db.Uuid
+  createdAt             DateTime              @default(now()) @map("created_at")
+  updatedAt             DateTime              @updatedAt @map("updated_at")
+
+  company       Company               @relation(fields: [companyId], references: [id])
+  branch        Branch?               @relation(fields: [branchId], references: [id])
+  purchaseOrder PurchaseOrder         @relation(fields: [purchaseOrderId], references: [id])
+  supplier      Supplier              @relation(fields: [supplierId], references: [id])
+  journal       Journal?              @relation(fields: [journalId], references: [id])
+  postedBy      User?                 @relation("PurchaseInvoicePostedBy", fields: [postedByUserId], references: [id])
+  createdBy     User                  @relation("PurchaseInvoiceCreatedBy", fields: [createdByUserId], references: [id])
+  items         PurchaseInvoiceItem[]
+  allocations   PaymentAllocation[]
+
+  @@unique([companyId, branchId, invoiceNumber])
+  @@map("purchase_invoices")
+}
+
+model PurchaseInvoiceItem {
+  id                  String   @id @default(uuid()) @db.Uuid
+  purchaseInvoiceId   String   @map("purchase_invoice_id") @db.Uuid
+  purchaseOrderItemId String   @map("purchase_order_item_id") @db.Uuid
+  productId           String   @map("product_id") @db.Uuid
+  // Both user-entered, bounded by (receivedQuantity - invoicedQuantity) as a
+  // friendly check plus a real atomic guard at post time — NOT auto-derived
+  // like Sales Invoice, since a supplier invoice can cover a subset of a PO's
+  // lines and routinely bills at a different price than the PO (rate
+  // revision, negotiated discount).
+  quantity            Decimal  @map("quantity") @db.Decimal(18, 4)
+  unitPrice           Decimal  @map("unit_price") @db.Decimal(18, 2)
+  // Same deliberate tax_transactions-table deviation as SalesInvoiceItem.
+  taxRateId           String?  @map("tax_rate_id") @db.Uuid
+  taxPercentage       Decimal? @map("tax_percentage") @db.Decimal(5, 2)
+  taxAmount           Decimal  @default(0) @map("tax_amount") @db.Decimal(18, 2)
+  lineTotal           Decimal  @map("line_total") @db.Decimal(18, 2)
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  purchaseInvoice   PurchaseInvoice   @relation(fields: [purchaseInvoiceId], references: [id])
+  purchaseOrderItem PurchaseOrderItem @relation(fields: [purchaseOrderItemId], references: [id])
+  product           Product           @relation(fields: [productId], references: [id])
+  taxRate           TaxRate?          @relation(fields: [taxRateId], references: [id])
+
+  @@index([purchaseInvoiceId])
+  @@index([purchaseOrderItemId])
+  @@map("purchase_invoice_items")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Payments + Allocations (Phase 7D) — records money received from a Customer
+// (RECEIPT) or paid to a Supplier (PAYMENT_OUT), allocated across one or more
+// invoices. Posting increments each allocated invoice's paidAmount (guarded,
+// capped by its own frozen totalAmount), derives PARTIALLY_PAID/PAID via a
+// fresh in-transaction re-read + unconditional write (same idiom as
+// PurchaseOrder's own received-quantity status recompute — NOT a guarded
+// conditional transition, since a second/third partial payment has no single
+// "expected prior status" to key against), and auto-posts a settlement
+// Journal via journal.service.ts's postJournalCore. No updatePayment exists —
+// deliberately: RBAC's "payments" module has no "edit" action for any role
+// except SUPER_ADMIN's wildcard; the only DRAFT-stage correction is
+// cancel-and-recreate.
+// ─────────────────────────────────────────────────────────────
+
+enum PaymentDirection {
+  RECEIPT
+  PAYMENT_OUT
+}
+
+enum PaymentStatus {
+  DRAFT
+  POSTED
+  CANCELLED
+}
+
+model Payment {
+  id              String           @id @default(uuid()) @db.Uuid
+  companyId       String           @map("company_id") @db.Uuid
+  branchId        String?          @map("branch_id") @db.Uuid
+  // Single shared "PAY-" series for both directions (DocumentType.PAYMENT) —
+  // confirmed with the user rather than splitting RECEIPT/PAYMENT_OUT into
+  // two series, matching the single-table design.
+  paymentNumber   String           @map("payment_number")
+  direction       PaymentDirection
+  // Exactly one of customerId/supplierId is set, matching `direction` —
+  // service-layer check only (no DB trigger anywhere in this codebase; see
+  // PaymentAllocation's own CHECK constraint for the one case that IS
+  // DB-enforced, which doesn't need direction awareness).
+  customerId      String?          @map("customer_id") @db.Uuid
+  supplierId      String?          @map("supplier_id") @db.Uuid
+  paymentDate     DateTime         @map("payment_date") @db.Date
+  paymentTypeId   String           @map("payment_type_id") @db.Uuid
+  bankAccountId   String?          @map("bank_account_id") @db.Uuid
+  // Free text — cheque number, bank UTR/reference, etc. We don't control it.
+  referenceNumber String?          @map("reference_number")
+  amount          Decimal          @map("amount") @db.Decimal(18, 2)
+  status          PaymentStatus    @default(DRAFT)
+  // Always company.baseCurrencyCode — every Sales/Purchase Order (and thus
+  // invoice) this pays against is already forced to base currency, so no
+  // exchangeRate/baseAmount split is needed here, unlike Sales/Purchase
+  // Order's own multi-currency-ready columns.
+  currencyCode    String           @map("currency_code") @db.Char(3)
+  // Set only at post time — the settlement Journal this payment generated.
+  journalId       String?          @unique @map("journal_id") @db.Uuid
+  postedAt        DateTime?        @map("posted_at")
+  postedByUserId  String?          @map("posted_by_user_id") @db.Uuid
+  createdByUserId String           @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+
+  company     Company             @relation(fields: [companyId], references: [id])
+  branch      Branch?             @relation(fields: [branchId], references: [id])
+  customer    Customer?           @relation(fields: [customerId], references: [id])
+  supplier    Supplier?           @relation(fields: [supplierId], references: [id])
+  paymentType PaymentType         @relation(fields: [paymentTypeId], references: [id])
+  bankAccount BankAccount?        @relation(fields: [bankAccountId], references: [id])
+  journal     Journal?            @relation(fields: [journalId], references: [id])
+  postedBy    User?               @relation("PaymentPostedBy", fields: [postedByUserId], references: [id])
+  createdBy   User                @relation("PaymentCreatedBy", fields: [createdByUserId], references: [id])
+  allocations PaymentAllocation[]
+
+  @@unique([companyId, branchId, paymentNumber])
+  @@map("payments")
+}
+
+model PaymentAllocation {
+  id                String   @id @default(uuid()) @db.Uuid
+  paymentId         String   @map("payment_id") @db.Uuid
+  // Exactly one of these two is set — DB-enforced via a hand-added CHECK
+  // constraint (see migration), not just a service-layer convention, since
+  // this is the one real "exactly one of two FKs" invariant this table has.
+  salesInvoiceId    String?  @map("sales_invoice_id") @db.Uuid
+  purchaseInvoiceId String?  @map("purchase_invoice_id") @db.Uuid
+  allocatedAmount   Decimal  @map("allocated_amount") @db.Decimal(18, 2)
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  payment         Payment          @relation(fields: [paymentId], references: [id])
+  salesInvoice    SalesInvoice?    @relation(fields: [salesInvoiceId], references: [id])
+  purchaseInvoice PurchaseInvoice? @relation(fields: [purchaseInvoiceId], references: [id])
+
+  @@index([paymentId])
+  @@index([salesInvoiceId])
+  @@index([purchaseInvoiceId])
+  @@map("payment_allocations")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Expenses (Phase 7E) — a direct, day-to-day cost (rent, utilities, salaries,
+// misc.) that doesn't flow through Purchase Order → Goods Receipt → Purchase
+// Invoice. Deliberately always paid immediately at post time (no unpaid/
+// payable lifecycle, no later settlement via Payment — an unpaid vendor bill
+// with terms already has a home: Purchase Invoice + Payment) and always a
+// single flat row (no child items table) — both confirmed with the user.
+// Posting creates one Journal (Dr the chosen Expense account, Dr GST Input
+// Tax Credit if any, Cr Cash-or-Bank) via the same postJournalCore engine
+// every other Accounts document uses. No reversal/correction path exists
+// this slice — see journal.service.ts's reverseJournal() sourceModule guard,
+// which blocks EXPENSE alongside PAYMENT/SALES_INVOICE/PURCHASE_INVOICE.
+// ─────────────────────────────────────────────────────────────
+
+enum ExpenseStatus {
+  DRAFT
+  POSTED
+  CANCELLED
+}
+
+model Expense {
+  id              String        @id @default(uuid()) @db.Uuid
+  companyId       String        @map("company_id") @db.Uuid
+  branchId        String?       @map("branch_id") @db.Uuid
+  expenseNumber   String        @map("expense_number")
+  expenseDate     DateTime      @map("expense_date") @db.Date
+  // Service-validated as accountType === EXPENSE, code !== "COGS" (COGS is a
+  // Purchase-Invoice-only control account, never user-selectable — see
+  // postPurchaseInvoice's own hardcoded findByCode lookup), and isActive.
+  accountId       String        @map("account_id") @db.Uuid
+  // Pure reference field — no business logic gated on it, unlike Payment's
+  // customerId/supplierId (which are direction-required).
+  supplierId      String?       @map("supplier_id") @db.Uuid
+  description     String
+  amount          Decimal       @map("amount") @db.Decimal(18, 2)
+  taxRateId       String?       @map("tax_rate_id") @db.Uuid
+  taxPercentage   Decimal?      @map("tax_percentage") @db.Decimal(5, 2)
+  taxAmount       Decimal       @default(0) @map("tax_amount") @db.Decimal(18, 2)
+  totalAmount     Decimal       @map("total_amount") @db.Decimal(18, 2)
+  paymentTypeId   String        @map("payment_type_id") @db.Uuid
+  bankAccountId   String?       @map("bank_account_id") @db.Uuid
+  referenceNumber String?       @map("reference_number")
+  // Always company.baseCurrencyCode, no exchangeRate/baseAmount split —
+  // matches Payment's own simplification (multi-currency UI deferred
+  // project-wide).
+  currencyCode    String        @map("currency_code") @db.Char(3)
+  status          ExpenseStatus @default(DRAFT)
+  // Set only at post time — the settlement Journal this expense generated.
+  journalId       String?       @unique @map("journal_id") @db.Uuid
+  postedAt        DateTime?     @map("posted_at")
+  postedByUserId  String?       @map("posted_by_user_id") @db.Uuid
+  createdByUserId String        @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  company     Company        @relation(fields: [companyId], references: [id])
+  branch      Branch?        @relation(fields: [branchId], references: [id])
+  account     ChartOfAccount @relation(fields: [accountId], references: [id])
+  supplier    Supplier?      @relation(fields: [supplierId], references: [id])
+  taxRate     TaxRate?       @relation(fields: [taxRateId], references: [id])
+  paymentType PaymentType    @relation(fields: [paymentTypeId], references: [id])
+  bankAccount BankAccount?   @relation(fields: [bankAccountId], references: [id])
+  journal     Journal?       @relation(fields: [journalId], references: [id])
+  postedBy    User?          @relation("ExpensePostedBy", fields: [postedByUserId], references: [id])
+  createdBy   User           @relation("ExpenseCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@unique([companyId, branchId, expenseNumber])
+  @@map("expenses")
 }
 
 // ─────────────────────────────────────────────────────────────

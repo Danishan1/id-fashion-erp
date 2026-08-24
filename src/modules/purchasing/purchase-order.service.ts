@@ -366,6 +366,19 @@ export async function transitionPurchaseOrderStatus(actor: ActorContext, id: str
         { activeReceipts }
       );
     }
+
+    // Same "never inferred from the status label alone" discipline as the
+    // active-receipts guard above — a Purchase Invoice with a live Journal
+    // entry (Phase 7C) must block cancellation regardless of what the PO's
+    // status happens to say, including after an ON_HOLD round-trip.
+    const invoicedItems = await PurchaseOrderRepository.countInvoicedItems(id);
+    if (invoicedItems > 0) {
+      throw new BusinessRuleError(
+        "INVALID_STATE_TRANSITION",
+        `Cannot cancel — ${invoicedItems} line(s) on this purchase order have already been invoiced.`,
+        { invoicedItems }
+      );
+    }
   }
 
   const data: Prisma.PurchaseOrderUncheckedUpdateInput = { status: targetStatus };

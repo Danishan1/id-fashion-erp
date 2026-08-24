@@ -6,6 +6,7 @@ import type { ListQuery } from "@/lib/list-query";
 import { prisma } from "@/core/db/client";
 import { CustomerRepository } from "@/modules/customers/customer.repository";
 import { SampleRequestRepository } from "@/modules/sampling/sample.repository";
+import { SalesInvoiceRepository } from "@/modules/accounts/sales-invoice.repository";
 import type { ConfirmSalesOrderInput, SalesOrderInput, UpdateSalesOrderInput } from "./sales-order.schema";
 import { CompanyRepository, SalesOrderRepository } from "./sales-order.repository";
 import { SalesOrderStatus, type Prisma } from "@prisma/client";
@@ -182,6 +183,18 @@ export async function updateSalesOrder(actor: ActorContext, id: string, input: U
       "INVALID_STATE_TRANSITION",
       `Cannot edit a sales order in "${existing.status}" status — create a new sales order for additional quantity instead.`,
       { currentStatus: existing.status }
+    );
+  }
+
+  // An active (non-cancelled) Sales Invoice has already copied this order's
+  // items/prices/customer — letting the order keep changing underneath it
+  // would silently desync the invoice from what it claims to represent.
+  const activeInvoice = await SalesInvoiceRepository.findActiveByOrderId(actor.companyId, id);
+  if (activeInvoice) {
+    throw new BusinessRuleError(
+      "REFERENCED_RECORD_IN_USE",
+      `This sales order has an active invoice (${activeInvoice.invoiceNumber}) and can no longer be edited.`,
+      { salesInvoiceId: activeInvoice.id }
     );
   }
 
