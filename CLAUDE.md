@@ -41,7 +41,7 @@ The user has two real, manually-coded PHP/Laravel garment systems already in pro
 | 4 | Sampling | ✅ Done |
 | 5 | Orders + Production | ✅ Done — 5A (Sales Orders), 5B (BOM/MRP), and 5C (Production: Production Orders/Lots/JobOrders/QC/split-merge) all built and verified end-to-end this session |
 | 6 | Inventory | ✅ Done — Purchase Order + Goods Receipt (fabric roll tracking), the stock ledger, Material Request, and Stock Movements (Transfer/Adjustment/Return-to-Supplier) all built and verified |
-| 7 | Accounts | ⬜ Not started |
+| 7 | Accounts | 🔶 In progress — 7A (Chart of Accounts, Tax Config, Journal engine) and 7B (Sales Invoices, auto-posting) done on branch `phase-7-accounts`; Purchase Invoices, Payments+Allocations, and Expenses not started |
 | 8 | Dispatch | ⬜ Not started |
 | 9 | Reports | ⬜ Not started |
 | 10 | Testing | ⬜ Not started |
@@ -1204,6 +1204,96 @@ invoicing.
 **Phase 6 is now fully done** — Purchase Order, Goods Receipt (with fabric roll tracking), the stock
 ledger, Material Request (with full BOM→MR→Issue/Shortfall→PO→GR traceability), and Stock Movements
 (Transfer/Adjustment/Return to Supplier) are all built, tested, and verified live.
+
+## Phase 7A — Chart of Accounts, Tax Config, Journal Engine (2026-08-24)
+
+First slice of Phase 7 (Accounts), on a new `phase-7-accounts` branch. Built via the established
+design→Explore→Plan-agent-critique→build→verify rhythm.
+
+- **Schema**: `ChartOfAccount` (self-referencing `parentAccountId`, schema-only for now — no hierarchy UI
+  yet, matching the `ProductionStage.parentStageId` precedent; `isSystemAccount` protects seeded control
+  accounts from deactivation), `TaxType`/`TaxRate` (effective-dated, service-layer overlap validation on
+  `[effectiveFrom, effectiveTo)`), `Journal`/`JournalLine` (`sourceModule`/`sourceRecordId` reuse the
+  existing `RelatedModule` enum as a polymorphic discriminator for later slices to populate). Hand-added
+  CHECK constraints on `journal_lines` (non-negative amounts, never both debit and credit on one line) —
+  same precedent as `job_orders_quantity_consistency_check`; no DB trigger for balance validation (confirmed
+  zero `CREATE TRIGGER` statements exist anywhere in this codebase — app-layer check only, matching real
+  practice over CLAUDE.md's own aspirational trigger language for inventory).
+- **Journal engine** (`src/modules/accounts/journal.service.ts`): `postJournal()` recomputes
+  `totalDebit`/`totalCredit` from a fresh DB read inside the transaction (never a client-submitted total),
+  guarded-conditional status flip (`JournalRepository.updateStatusConditional`, same race-closing idiom as
+  `SalesOrderRepository`'s), and is deliberately self-approval-guarded (`PermissionService.assert(...,
+  "accounts", "post", { createdBy })`) — a journal moving real ledger balances gets the same maker/checker
+  rigor as a Payment approval, even though it means a solo `ACCOUNTS_MANAGER` can't post their own
+  manually-created journal. `reverseJournal()` creates a new journal with every line flipped, auto-posts it
+  via an internal `postJournalCore()` (exported for reuse) that deliberately skips the permission check
+  (the reversal's `createdByUserId` is unavoidably always the actor, so routing it through the public
+  self-approval-guarded path would make reversal unusable for anyone but `SUPER_ADMIN`) — the original
+  journal's own status never changes, since a posted journal is an immutable historical fact, not something
+  that "un-happens." No new `"reverse"` RBAC action — reuses the existing `"cancel"` action, which already
+  matches "gated to Accounts Manager+" (`ACCOUNTS_EXECUTIVE` lacks `cancel`).
+- Seeded a default Chart of Accounts (Cash, Bank, AR, AP, GST Payable/Input Credit, Sales Revenue, COGS,
+  expense heads) and GST tax rates (5/12/18%) via a one-off script against the real dev DB — `prisma db
+  seed` is not safe to re-run against it (documented gotcha from earlier phases).
+- **Verified live end-to-end**: balanced manual journal posted, ledger/trial-balance updated correctly;
+  unbalanced post rejected (422 `UNBALANCED_JOURNAL`); edit/cancel blocked once posted (409); reversal nets
+  to zero on both accounts with the original showing a "Reversed by JRN-…" badge; system-account and
+  referenced-account deactivation blocked (409 `REFERENCED_RECORD_IN_USE`); overlapping tax rate rejected
+  (400). Two real bugs caught and fixed during verification: a Server Component passing a function prop to
+  a Client Component (not serializable across the RSC boundary), and a Decimal-serialized-as-string-is-
+  truthy display bug in a confirmation dialog (the exact bug class `SampleMaterial.damagedQuantity` hit
+  earlier this project). `npx tsc --noEmit`, `npm run lint`, and `npm test` (125/125) all clean.
+- **Not built this slice** (explicitly deferred): Sales/Purchase Invoices, Payments+Allocations, Expenses,
+  account hierarchy UI (`isGroup`/postable-leaf distinction not yet decided), a "default account" resolution
+  mapping (deferred to the first invoicing slice that actually needs it).
+
+## Phase 7B — Sales Invoices (2026-08-24)
+
+Second slice, building directly on 7A. Explored via 1 Explore agent (re-verified current schema facts, not
+assumed from memory) and reviewed via 1 Plan-agent critique before implementation — it caught two real gaps
+a naive design would have shipped with, both fixed before any code was written:
+
+- **Stale-copy hole**: `updateSalesOrder()` allowed a full item/price/customer rewrite while `status ===
+  CONFIRMED` with no guard against an already-existing invoice — a DRAFT invoice's copied lines/prices could
+  silently desync from a concurrently-edited order. Fixed: `updateSalesOrder()` now throws
+  `REFERENCED_RECORD_IN_USE` if an active (non-cancelled) `SalesInvoice` already exists for the order.
+- **Real create-race, not just a sequential-check case**: "at most one active invoice per order" needed a
+  DB-level guarantee, not a `findFirst`-then-insert check two concurrent requests could both pass. Fixed
+  with a hand-added Postgres **partial unique index** — `CREATE UNIQUE INDEX
+  sales_invoices_one_active_per_order ON sales_invoices(sales_order_id) WHERE status != 'CANCELLED'` — a
+  racing second insert hits `P2002`, caught and translated to `REFERENCED_RECORD_IN_USE`. Chosen over a
+  stateful pointer-column approach (the critique's initial suggestion) since Postgres already has the
+  native tool for exactly this "at most one non-cancelled child" shape.
+- **Schema**: `SalesInvoice`/`SalesInvoiceItem` — quantity/unitPrice always derived server-side from the
+  linked `SalesOrderItem`/breakdown, never client-accepted; per-line tax rate is a **manual user choice**
+  (nothing maps a Product/HSN code to a `TaxRate` yet); `taxRateId`/`taxPercentage`/`taxAmount` frozen
+  directly on the item rather than building CLAUDE.md's originally-planned shared `tax_transactions` table
+  — a documented, deliberate deviation (revisit once Purchase Invoices or a third consumer justifies the
+  shared shape). Correct branch-scoped uniqueness from day one (`@@unique([companyId, branchId,
+  invoiceNumber])`) — several older models (`SalesOrder`, `Journal`, `GoodsReceipt`) have this latent gap,
+  not retrofitted here but not propagated into this new model either.
+- **Posting** (`postSalesInvoice`): self-approval-guarded like Journal's own post gate; one single
+  transaction creates+auto-posts a settlement Journal (Dr Accounts Receivable / Cr Sales Revenue / Cr GST
+  Payable if any tax) via 7A's exported `postJournalCore()`, then guarded conditional flips of both the
+  invoice (DRAFT→POSTED) and the Sales Order (`CONFIRMED`/`IN_PRODUCTION`→`INVOICED`, the latter via a new
+  `SalesOrderRepository.updateStatusConditionalIn()` accepting a status set, since the existing
+  `updateStatusConditional` only took one exact value). Uses the specifically-reserved `POSTED_INVOICE_LOCKED`
+  (unused since Phase 1) for edit/cancel/post attempts on a non-DRAFT invoice — distinct from the generic
+  `INVALID_STATE_TRANSITION`. **No reversal/void path for a POSTED invoice this slice** — a real Credit Note
+  is a separate, comparably-sized document type with no reserved enum values anywhere; the documented
+  stopgap is reversing the invoice's own linked Journal directly if a correction is truly needed.
+- **Verified live end-to-end**: created `INV-2026-00001` against a real confirmed order (`ORD-2026-00001`,
+  220 pcs @ ₹9, GST 18%) — correct subtotal (1980)/tax (356.40)/total (2336.40) and due date (invoice date +
+  customer's `paymentTermsDays`); a second invoice attempt against the same order blocked
+  (`REFERENCED_RECORD_IN_USE`); editing the underlying order blocked once invoiced (same code); posted →
+  `JRN-2026-00004` auto-created with the exact Dr AR / Cr Sales Revenue / Cr GST Payable lines, `SalesOrder`
+  flipped to `INVOICED`, trial balance reflected it exactly (grand total 4336.40/4336.40 including the
+  pre-existing 7A demo journal); edit/cancel/re-post on the posted invoice all correctly blocked with
+  `POSTED_INVOICE_LOCKED` (409); cancelling a fresh draft against a second order correctly freed the
+  partial-unique-index slot for a new invoice. `npx tsc --noEmit`, `npm run lint`, and `npm test` (136/136,
+  11 new) all clean.
+- **Not built this slice**: Purchase Invoices (7C, the next slice), Payments+Allocations, Expenses, a real
+  Credit Note workflow, any Product/HSN→TaxRate auto-inference.
 
 ## Recommended Stack
 
