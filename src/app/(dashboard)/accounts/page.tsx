@@ -6,6 +6,7 @@ const ACCOUNTS_SECTIONS = [
   { href: "/accounts/tax-config", label: "Tax Configuration", description: "Tax types and effective-dated tax rates" },
   { href: "/accounts/journals", label: "Journals", description: "Manual double-entry journal entries — create, post, reverse" },
   { href: "/accounts/sales-invoices", label: "Sales Invoices", description: "Invoices raised against confirmed sales orders, auto-posting to the ledger" },
+  { href: "/accounts/purchase-invoices", label: "Purchase Invoices", description: "Supplier invoices raised against received purchase orders — partial and repeatable per order" },
   { href: "/accounts/ledger", label: "Account Ledger", description: "Posted transactions and running balance for one account" },
   { href: "/accounts/trial-balance", label: "Trial Balance", description: "Per-account debit/credit totals across all posted journals" },
 ];

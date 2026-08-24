@@ -389,7 +389,18 @@ export async function reverseGoodsReceiptLine(
       notes: input.reason,
     });
 
-    await PurchaseOrderItemRepository.decrementReceived(tx, item.purchaseOrderItemId, input.quantity);
+    const decrementResult = await PurchaseOrderItemRepository.guardedDecrementReceived(
+      tx,
+      item.purchaseOrderItemId,
+      input.quantity
+    );
+    if (decrementResult === 0) {
+      throw new BusinessRuleError(
+        "OVER_REVERSAL_NOT_ALLOWED",
+        `Cannot reverse ${input.quantity} — ${item.purchaseOrderItem.invoicedQuantity} of this line has already been invoiced and can't be left unreceived.`,
+        { purchaseOrderItemId: item.purchaseOrderItemId }
+      );
+    }
 
     // Symmetric to the rollup in createGoodsReceipt() — same fail-soft
     // philosophy, never blocks the reversal itself.

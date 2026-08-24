@@ -94,6 +94,7 @@ model Company {
   taxRates                    TaxRate[]
   journals                    Journal[]
   salesInvoices               SalesInvoice[]
+  purchaseInvoices            PurchaseInvoice[]
 
   @@map("companies")
 }
@@ -137,6 +138,7 @@ model Branch {
   deals                 Deal[]
   journals              Journal[]
   salesInvoices         SalesInvoice[]
+  purchaseInvoices      PurchaseInvoice[]
 
   @@unique([companyId, code])
   @@map("branches")
@@ -200,6 +202,8 @@ model User {
   journalsPosted                       Journal[]                    @relation("JournalPostedBy")
   salesInvoicesCreated                 SalesInvoice[]               @relation("SalesInvoiceCreatedBy")
   salesInvoicesPosted                  SalesInvoice[]               @relation("SalesInvoicePostedBy")
+  purchaseInvoicesCreated              PurchaseInvoice[]            @relation("PurchaseInvoiceCreatedBy")
+  purchaseInvoicesPosted               PurchaseInvoice[]            @relation("PurchaseInvoicePostedBy")
 
   @@map("users")
 }
@@ -362,10 +366,11 @@ model Supplier {
   createdAt           DateTime         @default(now()) @map("created_at")
   updatedAt           DateTime         @updatedAt @map("updated_at")
 
-  company            Company         @relation(fields: [companyId], references: [id])
+  company            Company           @relation(fields: [companyId], references: [id])
   defaultForProducts Product[]
   purchaseOrders     PurchaseOrder[]
   stockMovements     StockMovement[]
+  purchaseInvoices   PurchaseInvoice[]
 
   @@unique([companyId, code])
   @@map("suppliers")
@@ -481,6 +486,7 @@ model Product {
   productionOrders      ProductionOrder[]
   stockMovementItems    StockMovementItem[]
   salesInvoiceItems     SalesInvoiceItem[]
+  purchaseInvoiceItems  PurchaseInvoiceItem[]
 
   @@unique([companyId, styleCode])
   @@map("products")
@@ -1861,12 +1867,13 @@ model PurchaseOrder {
   createdAt            DateTime             @default(now()) @map("created_at")
   updatedAt            DateTime             @updatedAt @map("updated_at")
 
-  company     Company             @relation(fields: [companyId], references: [id])
-  branch      Branch?             @relation(fields: [branchId], references: [id])
-  supplier    Supplier            @relation(fields: [supplierId], references: [id])
-  requestedBy User                @relation("PurchaseOrderRequestedBy", fields: [requestedByUserId], references: [id])
-  items       PurchaseOrderItem[]
-  receipts    GoodsReceipt[]
+  company          Company             @relation(fields: [companyId], references: [id])
+  branch           Branch?             @relation(fields: [branchId], references: [id])
+  supplier         Supplier            @relation(fields: [supplierId], references: [id])
+  requestedBy      User                @relation("PurchaseOrderRequestedBy", fields: [requestedByUserId], references: [id])
+  items            PurchaseOrderItem[]
+  receipts         GoodsReceipt[]
+  purchaseInvoices PurchaseInvoice[]
 
   @@unique([companyId, orderNumber])
   @@index([companyId, supplierId])
@@ -1887,6 +1894,14 @@ model PurchaseOrderItem {
   // Cumulative accumulator, incremented atomically per receipt via a guarded
   // updateMany (see purchase-order.service.ts) — never a plain read-then-write.
   receivedQuantity      Decimal  @default(0) @map("received_quantity") @db.Decimal(18, 4)
+  // Cumulative accumulator, incremented only at Purchase Invoice POST time
+  // (never at DRAFT-creation) via a raw-SQL guarded update comparing against
+  // the LIVE receivedQuantity column (see PurchaseOrderItemRepository —
+  // Prisma's updateMany cannot express a column-to-column comparison, so the
+  // usual guarded-updateMany idiom doesn't apply here). receivedQuantity's
+  // own decrement (goods-receipt reversal) is guarded symmetrically against
+  // this column, so it can never drop below what's already been invoiced.
+  invoicedQuantity      Decimal  @default(0) @map("invoiced_quantity") @db.Decimal(18, 4)
   notes                 String?
   createdAt             DateTime @default(now()) @map("created_at")
   // The authoritative FK for the optional Material Request -> Purchase Order
@@ -1898,11 +1913,12 @@ model PurchaseOrderItem {
   // user-edited and never forced to equal the full remaining shortfall).
   materialRequestItemId String?  @map("material_request_item_id") @db.Uuid
 
-  purchaseOrder       PurchaseOrder        @relation(fields: [purchaseOrderId], references: [id])
-  product             Product              @relation(fields: [productId], references: [id])
-  uom                 UnitOfMeasure        @relation(fields: [uomId], references: [id])
-  goodsReceiptItems   GoodsReceiptItem[]
-  materialRequestItem MaterialRequestItem? @relation(fields: [materialRequestItemId], references: [id])
+  purchaseOrder        PurchaseOrder         @relation(fields: [purchaseOrderId], references: [id])
+  product              Product               @relation(fields: [productId], references: [id])
+  uom                  UnitOfMeasure         @relation(fields: [uomId], references: [id])
+  goodsReceiptItems    GoodsReceiptItem[]
+  materialRequestItem  MaterialRequestItem?  @relation(fields: [materialRequestItemId], references: [id])
+  purchaseInvoiceItems PurchaseInvoiceItem[]
 
   @@index([purchaseOrderId])
   @@index([materialRequestItemId])
@@ -2825,9 +2841,10 @@ model TaxRate {
   createdAt      DateTime  @default(now()) @map("created_at")
   updatedAt      DateTime  @updatedAt @map("updated_at")
 
-  company           Company            @relation(fields: [companyId], references: [id])
-  taxType           TaxType            @relation(fields: [taxTypeId], references: [id])
-  salesInvoiceItems SalesInvoiceItem[]
+  company              Company               @relation(fields: [companyId], references: [id])
+  taxType              TaxType               @relation(fields: [taxTypeId], references: [id])
+  salesInvoiceItems    SalesInvoiceItem[]
+  purchaseInvoiceItems PurchaseInvoiceItem[]
 
   @@index([taxTypeId])
   @@map("tax_rates")
@@ -2872,14 +2889,15 @@ model Journal {
   createdAt           DateTime       @default(now()) @map("created_at")
   updatedAt           DateTime       @updatedAt @map("updated_at")
 
-  company           Company       @relation(fields: [companyId], references: [id])
-  branch            Branch?       @relation(fields: [branchId], references: [id])
-  postedBy          User?         @relation("JournalPostedBy", fields: [postedByUserId], references: [id])
-  createdBy         User          @relation("JournalCreatedBy", fields: [createdByUserId], references: [id])
-  reversalOf        Journal?      @relation("JournalReversal", fields: [reversalOfJournalId], references: [id])
-  reversedByJournal Journal?      @relation("JournalReversal")
+  company           Company          @relation(fields: [companyId], references: [id])
+  branch            Branch?          @relation(fields: [branchId], references: [id])
+  postedBy          User?            @relation("JournalPostedBy", fields: [postedByUserId], references: [id])
+  createdBy         User             @relation("JournalCreatedBy", fields: [createdByUserId], references: [id])
+  reversalOf        Journal?         @relation("JournalReversal", fields: [reversalOfJournalId], references: [id])
+  reversedByJournal Journal?         @relation("JournalReversal")
   lines             JournalLine[]
   salesInvoice      SalesInvoice?
+  purchaseInvoice   PurchaseInvoice?
 
   @@unique([companyId, journalNumber])
   @@map("journals")
@@ -2992,6 +3010,104 @@ model SalesInvoiceItem {
 
   @@index([salesInvoiceId])
   @@map("sales_invoice_items")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Purchase Invoices (Phase 7C) — deliberately diverges from Sales Invoice's
+// one-shot-per-order shape: partial, repeatable invoicing against a Purchase
+// Order (multiple Goods Receipts against one PO are already a live pattern,
+// so multiple invoices are too). PurchaseOrderItem.invoicedQuantity (added
+// above) tracks progress; PurchaseOrder.status is never changed by invoicing
+// (no invoiced-adjacent status value exists, and a single flip wouldn't be
+// semantically correct for a partial document) — "how much has been
+// invoiced" is derived by comparing invoicedQuantity to receivedQuantity.
+// ─────────────────────────────────────────────────────────────
+
+enum PurchaseInvoiceStatus {
+  DRAFT
+  POSTED
+  // Reserved for the Payments slice — not reachable by any code yet, same
+  // discipline as SalesInvoiceStatus's own reserved values.
+  PARTIALLY_PAID
+  PAID
+  CLOSED
+  CANCELLED
+}
+
+model PurchaseInvoice {
+  id                    String                @id @default(uuid()) @db.Uuid
+  companyId             String                @map("company_id") @db.Uuid
+  branchId              String?               @map("branch_id") @db.Uuid
+  invoiceNumber         String                @map("invoice_number")
+  purchaseOrderId       String                @map("purchase_order_id") @db.Uuid
+  // Denormalized from the order — this table IS the AP ledger's own document
+  // of record, same justification as SalesInvoice.customerId.
+  supplierId            String                @map("supplier_id") @db.Uuid
+  // The supplier's own bill/reference number — free text, since we don't
+  // control it (unlike invoiceNumber, which we generate). Guarded against
+  // double-entry via a hand-added partial unique index (see migration) since
+  // this slice has no other "at most one" constraint to lean on.
+  supplierInvoiceNumber String?               @map("supplier_invoice_number")
+  invoiceDate           DateTime              @map("invoice_date") @db.Date
+  dueDate               DateTime              @map("due_date") @db.Date
+  status                PurchaseInvoiceStatus @default(DRAFT)
+  // Copied from the PurchaseOrder at creation time, never re-derived — same
+  // frozen-currency convention used throughout this project.
+  currencyCode          String                @map("currency_code") @db.Char(3)
+  exchangeRate          Decimal               @default(1) @map("exchange_rate") @db.Decimal(18, 6)
+  baseCurrencyCode      String                @map("base_currency_code") @db.Char(3)
+  subtotalAmount        Decimal               @default(0) @map("subtotal_amount") @db.Decimal(18, 2)
+  taxAmount             Decimal               @default(0) @map("tax_amount") @db.Decimal(18, 2)
+  totalAmount           Decimal               @default(0) @map("total_amount") @db.Decimal(18, 2)
+  baseTotalAmount       Decimal               @default(0) @map("base_total_amount") @db.Decimal(18, 2)
+  // Set only at post time — the settlement Journal this invoice generated.
+  journalId             String?               @unique @map("journal_id") @db.Uuid
+  postedAt              DateTime?             @map("posted_at")
+  postedByUserId        String?               @map("posted_by_user_id") @db.Uuid
+  createdByUserId       String                @map("created_by_user_id") @db.Uuid
+  createdAt             DateTime              @default(now()) @map("created_at")
+  updatedAt             DateTime              @updatedAt @map("updated_at")
+
+  company       Company               @relation(fields: [companyId], references: [id])
+  branch        Branch?               @relation(fields: [branchId], references: [id])
+  purchaseOrder PurchaseOrder         @relation(fields: [purchaseOrderId], references: [id])
+  supplier      Supplier              @relation(fields: [supplierId], references: [id])
+  journal       Journal?              @relation(fields: [journalId], references: [id])
+  postedBy      User?                 @relation("PurchaseInvoicePostedBy", fields: [postedByUserId], references: [id])
+  createdBy     User                  @relation("PurchaseInvoiceCreatedBy", fields: [createdByUserId], references: [id])
+  items         PurchaseInvoiceItem[]
+
+  @@unique([companyId, branchId, invoiceNumber])
+  @@map("purchase_invoices")
+}
+
+model PurchaseInvoiceItem {
+  id                  String   @id @default(uuid()) @db.Uuid
+  purchaseInvoiceId   String   @map("purchase_invoice_id") @db.Uuid
+  purchaseOrderItemId String   @map("purchase_order_item_id") @db.Uuid
+  productId           String   @map("product_id") @db.Uuid
+  // Both user-entered, bounded by (receivedQuantity - invoicedQuantity) as a
+  // friendly check plus a real atomic guard at post time — NOT auto-derived
+  // like Sales Invoice, since a supplier invoice can cover a subset of a PO's
+  // lines and routinely bills at a different price than the PO (rate
+  // revision, negotiated discount).
+  quantity            Decimal  @map("quantity") @db.Decimal(18, 4)
+  unitPrice           Decimal  @map("unit_price") @db.Decimal(18, 2)
+  // Same deliberate tax_transactions-table deviation as SalesInvoiceItem.
+  taxRateId           String?  @map("tax_rate_id") @db.Uuid
+  taxPercentage       Decimal? @map("tax_percentage") @db.Decimal(5, 2)
+  taxAmount           Decimal  @default(0) @map("tax_amount") @db.Decimal(18, 2)
+  lineTotal           Decimal  @map("line_total") @db.Decimal(18, 2)
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  purchaseInvoice   PurchaseInvoice   @relation(fields: [purchaseInvoiceId], references: [id])
+  purchaseOrderItem PurchaseOrderItem @relation(fields: [purchaseOrderItemId], references: [id])
+  product           Product           @relation(fields: [productId], references: [id])
+  taxRate           TaxRate?          @relation(fields: [taxRateId], references: [id])
+
+  @@index([purchaseInvoiceId])
+  @@index([purchaseOrderItemId])
+  @@map("purchase_invoice_items")
 }
 
 // ─────────────────────────────────────────────────────────────
