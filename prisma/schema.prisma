@@ -92,6 +92,9 @@ model Company {
   campaigns                   Campaign[]
   campaignAttributions        CampaignAttribution[]
   campaignAlerts              CampaignAlert[]
+  attendanceRecords           AttendanceRecord[]
+  leaveTypes                  LeaveType[]
+  leaveRequests               LeaveRequest[]
 
   @@map("companies")
 }
@@ -196,6 +199,9 @@ model User {
   campaignsOwned                       Campaign[]                   @relation("CampaignOwner")
   campaignsCreated                     Campaign[]                   @relation("CampaignCreatedBy")
   campaignDailyMetricsRecorded         CampaignDailyMetric[]
+  attendanceRecordsRecorded            AttendanceRecord[]
+  leaveRequestsApproved                LeaveRequest[]               @relation("LeaveRequestApprovedBy")
+  leaveRequestsCreated                 LeaveRequest[]               @relation("LeaveRequestCreatedBy")
 
   @@map("users")
 }
@@ -392,6 +398,10 @@ model Employee {
   branchId     String?   @map("branch_id") @db.Uuid
   departmentId String?   @map("department_id") @db.Uuid
   reportsToId  String?   @map("reports_to_id") @db.Uuid
+  // Nullable — wiring this in is the one deliberate HRMS improvement over
+  // the WordPress source, which hardcodes a single 10:15 late-cutoff for
+  // every employee company-wide. See CRM_SALES_MARKETING_HRMS_MIGRATION_REPORT.md.
+  shiftId      String?   @map("shift_id") @db.Uuid
   employeeCode String    @map("employee_code")
   fullName     String    @map("full_name")
   designation  String?
@@ -403,11 +413,12 @@ model Employee {
   createdAt    DateTime  @default(now()) @map("created_at")
   updatedAt    DateTime  @updatedAt @map("updated_at")
 
-  company    Company     @relation(fields: [companyId], references: [id])
-  branch     Branch?     @relation(fields: [branchId], references: [id])
-  department Department? @relation(fields: [departmentId], references: [id])
-  reportsTo  Employee?   @relation("EmployeeHierarchy", fields: [reportsToId], references: [id])
-  reports    Employee[]  @relation("EmployeeHierarchy")
+  company    Company      @relation(fields: [companyId], references: [id])
+  branch     Branch?      @relation(fields: [branchId], references: [id])
+  department Department?  @relation(fields: [departmentId], references: [id])
+  shift      ShiftMaster? @relation(fields: [shiftId], references: [id])
+  reportsTo  Employee?    @relation("EmployeeHierarchy", fields: [reportsToId], references: [id])
+  reports    Employee[]   @relation("EmployeeHierarchy")
   user       User?
 
   // Production (Phase 5C) — a worker/operator is always tracked here, never
@@ -416,6 +427,10 @@ model Employee {
   productionStagesOwned   ProductionStage[]       @relation("ProductionStageDefaultOwner")
   jobOrderAssignments     JobOrderAssignment[]    @relation("JobOrderAssignmentEmployee")
   jobOrderProgressEntries JobOrderProgressEntry[] @relation("JobOrderProgressEntryEmployee")
+
+  // HRMS (migrated from WordPress "EQ HRMS")
+  attendanceRecords AttendanceRecord[]
+  leaveRequests     LeaveRequest[]
 
   @@unique([companyId, employeeCode])
   @@map("employees")
@@ -973,7 +988,8 @@ model ShiftMaster {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  company Company @relation(fields: [companyId], references: [id])
+  company   Company    @relation(fields: [companyId], references: [id])
+  employees Employee[]
 
   @@unique([companyId, code])
   @@map("shift_masters")
@@ -1837,6 +1853,88 @@ model CampaignAlert {
   @@index([companyId, status])
   @@index([companyId, campaignId])
   @@map("mkt_campaign_alerts")
+}
+
+// ─────────────────────────────────────────────────────────────
+// HRMS — Attendance & Leave (migrated from WordPress "EQ HRMS"; see
+// CRM_SALES_MARKETING_HRMS_MIGRATION_REPORT.md). Payroll and
+// KPI/Performance are explicitly out of scope for this pass — the source's
+// own versions are thin flat-entry ports with no real calculation engine
+// behind either, per the confirmed scope decision.
+// ─────────────────────────────────────────────────────────────
+
+// Late-flag is deliberately NOT a stored column — computed at read time
+// against the employee's own Shift.startTime (a real improvement over the
+// source, which hardcodes one 10:15 cutoff for every employee company-wide;
+// Fashion ERP already had a real Shift concept, just never wired to
+// Employee until now).
+model AttendanceRecord {
+  id               String    @id @default(uuid()) @db.Uuid
+  companyId        String    @map("company_id") @db.Uuid
+  employeeId       String    @map("employee_id") @db.Uuid
+  attendanceDate   DateTime  @map("attendance_date") @db.Date
+  punchIn          DateTime? @map("punch_in")
+  punchOut         DateTime? @map("punch_out")
+  remarks          String?
+  recordedByUserId String    @map("recorded_by_user_id") @db.Uuid
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  company    Company  @relation(fields: [companyId], references: [id])
+  employee   Employee @relation(fields: [employeeId], references: [id])
+  recordedBy User     @relation(fields: [recordedByUserId], references: [id])
+
+  @@unique([employeeId, attendanceDate])
+  @@index([companyId, attendanceDate])
+  @@map("hrms_attendance_records")
+}
+
+model LeaveType {
+  id         String   @id @default(uuid()) @db.Uuid
+  companyId  String   @map("company_id") @db.Uuid
+  name       String
+  annualDays Decimal  @default(0) @map("annual_days") @db.Decimal(6, 2)
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  company  Company        @relation(fields: [companyId], references: [id])
+  requests LeaveRequest[]
+
+  @@unique([companyId, name])
+  @@map("hrms_leave_types")
+}
+
+enum LeaveRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model LeaveRequest {
+  id               String             @id @default(uuid()) @db.Uuid
+  companyId        String             @map("company_id") @db.Uuid
+  employeeId       String             @map("employee_id") @db.Uuid
+  leaveTypeId      String             @map("leave_type_id") @db.Uuid
+  startDate        DateTime           @map("start_date") @db.Date
+  endDate          DateTime           @map("end_date") @db.Date
+  reason           String?
+  status           LeaveRequestStatus @default(PENDING)
+  rejectionReason  String?            @map("rejection_reason")
+  approvedByUserId String?            @map("approved_by_user_id") @db.Uuid
+  decidedAt        DateTime?          @map("decided_at")
+  createdByUserId  String             @map("created_by_user_id") @db.Uuid
+  createdAt        DateTime           @default(now()) @map("created_at")
+
+  company    Company   @relation(fields: [companyId], references: [id])
+  employee   Employee  @relation(fields: [employeeId], references: [id])
+  leaveType  LeaveType @relation(fields: [leaveTypeId], references: [id])
+  approvedBy User?     @relation("LeaveRequestApprovedBy", fields: [approvedByUserId], references: [id])
+  createdBy  User      @relation("LeaveRequestCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@index([companyId, employeeId])
+  @@index([companyId, status])
+  @@map("hrms_leave_requests")
 }
 
 // ─────────────────────────────────────────────────────────────

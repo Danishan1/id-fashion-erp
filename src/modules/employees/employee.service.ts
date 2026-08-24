@@ -48,6 +48,7 @@ function toData(input: EmployeeInput) {
     employeeCode: input.employeeCode,
     fullName: input.fullName,
     departmentId: input.departmentId || null,
+    shiftId: input.shiftId || null,
     designation: input.designation || null,
     phone: input.phone || null,
     email: input.email || null,
@@ -62,6 +63,7 @@ function toUpdateData(input: EmployeeUpdateInput): Prisma.EmployeeUncheckedUpdat
   if (input.employeeCode !== undefined) data.employeeCode = input.employeeCode;
   if (input.fullName !== undefined) data.fullName = input.fullName;
   if (input.departmentId !== undefined) data.departmentId = input.departmentId || null;
+  if (input.shiftId !== undefined) data.shiftId = input.shiftId || null;
   if (input.designation !== undefined) data.designation = input.designation || null;
   if (input.phone !== undefined) data.phone = input.phone || null;
   if (input.email !== undefined) data.email = input.email || null;

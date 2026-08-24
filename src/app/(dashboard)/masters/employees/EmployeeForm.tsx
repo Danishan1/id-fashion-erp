@@ -8,6 +8,7 @@ export interface EmployeeFormValues {
   employeeCode: string;
   fullName: string;
   departmentId: string;
+  shiftId: string;
   designation: string;
   phone: string;
   email: string;
@@ -19,6 +20,7 @@ const EMPTY_VALUES: EmployeeFormValues = {
   employeeCode: "",
   fullName: "",
   departmentId: "",
+  shiftId: "",
   designation: "",
   phone: "",
   email: "",
@@ -29,6 +31,12 @@ const EMPTY_VALUES: EmployeeFormValues = {
 interface Department {
   id: string;
   name: string;
+}
+
+interface Shift {
+  id: string;
+  name: string;
+  startTime: string;
 }
 
 interface EmployeeFormProps {
@@ -42,6 +50,7 @@ export function EmployeeForm({ initialValues, submitUrl, method, redirectTo }: E
   const router = useRouter();
   const [values, setValues] = useState<EmployeeFormValues>(initialValues ?? EMPTY_VALUES);
   const [departments, setDepartments] = useState<Department[]>([]);
+  const [shifts, setShifts] = useState<Shift[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -50,6 +59,10 @@ export function EmployeeForm({ initialValues, submitUrl, method, redirectTo }: E
       .then((res) => res.json())
       .then((body) => setDepartments(body.data ?? []))
       .catch(() => setDepartments([]));
+    fetch("/api/v1/shift-masters?pageSize=200")
+      .then((res) => res.json())
+      .then((body) => setShifts(body.data ?? []))
+      .catch(() => setShifts([]));
   }, []);
 
   useEffect(() => {
@@ -147,6 +160,17 @@ export function EmployeeForm({ initialValues, submitUrl, method, redirectTo }: E
           />
         </FormField>
       </div>
+
+      <FormField label="Shift" htmlFor="shiftId">
+        <select id="shiftId" value={values.shiftId} onChange={(e) => setValues({ ...values, shiftId: e.target.value })} className={textInputClass()}>
+          <option value="">— None —</option>
+          {shifts.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name} ({s.startTime})
+            </option>
+          ))}
+        </select>
+      </FormField>
 
       <div className="grid grid-cols-2 gap-4">
         <FormField label="Phone" htmlFor="phone">
