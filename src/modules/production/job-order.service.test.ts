@@ -39,8 +39,9 @@ vi.mock("./production.repository", () => ({
 
 const { prisma } = await import("@/core/db/client");
 const { PermissionService } = await import("@/core/rbac/PermissionService");
-const { JobOrderRepository, JobOrderAssignmentRepository, ProductionOrderRepository } = await import("./production.repository");
-const { computeJobOrderStatus, assignWorker, forwardJobOrder, revertJobOrder } = await import("./job-order.service");
+const { JobOrderRepository, JobOrderAssignmentRepository, ProductionOrderRepository, ProductionStageTransactionRepository, LotRepository, QcInspectionRepository } =
+  await import("./production.repository");
+const { computeJobOrderStatus, assignWorker, forwardJobOrder, revertJobOrder, recordQcInspection } = await import("./job-order.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
 
@@ -74,6 +75,12 @@ beforeEach(() => {
   vi.mocked(JobOrderAssignmentRepository.createInTx).mockReset();
   vi.mocked(ProductionOrderRepository.findAnyById).mockReset();
   vi.mocked(PermissionService.assert).mockReset().mockResolvedValue(undefined);
+  vi.mocked(JobOrderRepository.findForGuardedUpdateInTx).mockReset();
+  vi.mocked(JobOrderRepository.updateInTx).mockReset();
+  vi.mocked(JobOrderRepository.createInTx).mockReset();
+  vi.mocked(ProductionStageTransactionRepository.createInTx).mockReset();
+  vi.mocked(LotRepository.updateInTx).mockReset();
+  vi.mocked(QcInspectionRepository.createWithDefectsInTx).mockReset();
   mockPrismaClient.productionStage.findFirst.mockReset();
   mockPrismaClient.jobOrder.count.mockReset();
   mockPrismaClient.jobOrder.updateMany.mockReset();
@@ -196,5 +203,88 @@ describe("revertJobOrder", () => {
     await expect(revertJobOrder(actor, "jo-1", { targetStageId: "stage-1", quantity: 50, reason: "test" })).rejects.toMatchObject({
       code: "OVER_PRODUCTION_NOT_ALLOWED",
     });
+  });
+});
+
+describe("recordQcInspection", () => {
+  // Regression test for ERP-BUG-0001: accepting at QC after the same
+  // completed quantity was already sent on via a manual Forward previously
+  // created a second, phantom downstream job order and double-posted
+  // Finished-Goods stock. Must now be rejected up front, before any write.
+  it("rejects inspecting quantity that has already been forwarded to the next stage", async () => {
+    vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(
+      jobOrder({ completedQuantity: "5", forwardedQuantity: "5", qcPassedQuantity: "0" }) as never
+    );
+
+    await expect(
+      recordQcInspection(actor, "jo-1", {
+        inspectedQuantity: 5,
+        acceptedQuantity: 5,
+        rejectedQuantity: 0,
+        damagedQuantity: 0,
+        result: "PASS",
+        defects: [],
+      } as never)
+    ).rejects.toMatchObject({ code: "OVER_PRODUCTION_NOT_ALLOWED" });
+
+    expect(mockPrismaClient.productionStage.findFirst).not.toHaveBeenCalled();
+    expect(QcInspectionRepository.createWithDefectsInTx).not.toHaveBeenCalled();
+  });
+
+  // Regression test for ERP-BUG-0002: recording a rejected/damaged QC
+  // disposition against a fully-completed job order (completed === planned,
+  // the normal precondition for running QC) used to crash on the
+  // job_orders_quantity_consistency_check CHECK constraint because it tried
+  // to shrink plannedQuantity while completedQuantity stayed fixed. It must
+  // now succeed by reclassifying quantity out of completed and into
+  // rejected, leaving completed+rejected+damaged (and therefore the CHECK
+  // constraint) unchanged.
+  it("reclassifies rejected quantity out of completed instead of shrinking planned, on an already fully-completed job order", async () => {
+    vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(
+      jobOrder({
+        plannedQuantity: "100",
+        completedQuantity: "100",
+        rejectedQuantity: "0",
+        damagedQuantity: "0",
+        forwardedQuantity: "0",
+        qcPassedQuantity: "0",
+        productionStage: stage({ sequence: 3 }),
+      }) as never
+    );
+    mockPrismaClient.productionStage.findFirst.mockResolvedValueOnce(stage({ id: "stage-1", sequence: 1, name: "Cutting" }) as never); // reworkTargetStage lookup
+    mockPrismaClient.jobOrder.updateMany.mockResolvedValue({ count: 1 } as never); // guardedIncrementQcPassed
+    mockPrismaClient.jobOrder.count.mockResolvedValue(0); // postStageTransactionInTx's priorAtStage count
+    vi.mocked(JobOrderRepository.createInTx).mockResolvedValue({ id: "jo-rework-1" } as never);
+    vi.mocked(ProductionStageTransactionRepository.createInTx).mockResolvedValue({ id: "txn-1" } as never);
+    vi.mocked(LotRepository.updateInTx).mockResolvedValue({} as never);
+    vi.mocked(JobOrderRepository.findForGuardedUpdateInTx).mockResolvedValue(
+      jobOrder({ plannedQuantity: "100", completedQuantity: "100", rejectedQuantity: "0", damagedQuantity: "0" }) as never
+    );
+    vi.mocked(JobOrderRepository.updateInTx).mockResolvedValue({} as never);
+    vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue({ id: "po-1", productId: "prod-1" } as never);
+    vi.mocked(QcInspectionRepository.createWithDefectsInTx).mockResolvedValue({ id: "qc-1" } as never);
+
+    await recordQcInspection(actor, "jo-1", {
+      inspectedQuantity: 20,
+      acceptedQuantity: 0,
+      rejectedQuantity: 20,
+      damagedQuantity: 0,
+      result: "FAIL",
+      reworkTargetStageId: "stage-1",
+      defects: [],
+    } as never);
+
+    expect(JobOrderRepository.updateInTx).toHaveBeenCalledWith(
+      expect.anything(),
+      "jo-1",
+      expect.objectContaining({ completedQuantity: 80, rejectedQuantity: 20, damagedQuantity: 0 })
+    );
+    // plannedQuantity must never be touched by this path — that's the exact
+    // mutation that violated the CHECK constraint.
+    expect(JobOrderRepository.updateInTx).not.toHaveBeenCalledWith(
+      expect.anything(),
+      "jo-1",
+      expect.objectContaining({ plannedQuantity: expect.anything() })
+    );
   });
 });

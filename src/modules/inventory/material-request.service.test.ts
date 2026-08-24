@@ -236,7 +236,7 @@ describe("generatePurchaseOrdersForShortfall", () => {
     vi.mocked(createPurchaseOrder).mockResolvedValue({ id: "po-1", orderNumber: "PO-2026-00001" } as never);
 
     await generatePurchaseOrdersForShortfall(actor, "mr-1", {
-      lines: [{ materialRequestItemId: "line-1", purchaseQuantity: 500, supplierId: "sup-1" }],
+      lines: [{ materialRequestItemId: "line-1", purchaseQuantity: 500, supplierId: "sup-1", unitPrice: 25 }],
     });
 
     expect(PermissionService.assert).toHaveBeenCalledWith(actor.userId, "purchasing", "create");
@@ -253,7 +253,7 @@ describe("generatePurchaseOrdersForShortfall", () => {
     vi.mocked(MaterialRequestItemRepository.findLinesForShortfallGeneration).mockResolvedValue([] as never);
 
     const result = await generatePurchaseOrdersForShortfall(actor, "mr-1", {
-      lines: [{ materialRequestItemId: "not-real", purchaseQuantity: 10, supplierId: "sup-1" }],
+      lines: [{ materialRequestItemId: "not-real", purchaseQuantity: 10, supplierId: "sup-1", unitPrice: 25 }],
     });
 
     expect(createPurchaseOrder).not.toHaveBeenCalled();
@@ -266,7 +266,7 @@ describe("generatePurchaseOrdersForShortfall", () => {
     vi.mocked(MaterialRequestItemRepository.findLinesForShortfallGeneration).mockResolvedValue([covered] as never);
 
     const result = await generatePurchaseOrdersForShortfall(actor, "mr-1", {
-      lines: [{ materialRequestItemId: "line-1", purchaseQuantity: 5, supplierId: "sup-1" }],
+      lines: [{ materialRequestItemId: "line-1", purchaseQuantity: 5, supplierId: "sup-1", unitPrice: 25 }],
     });
 
     expect(createPurchaseOrder).not.toHaveBeenCalled();
@@ -284,8 +284,8 @@ describe("generatePurchaseOrdersForShortfall", () => {
 
     const result = await generatePurchaseOrdersForShortfall(actor, "mr-1", {
       lines: [
-        { materialRequestItemId: "line-1", purchaseQuantity: 100, supplierId: "sup-a" },
-        { materialRequestItemId: "line-2", purchaseQuantity: 50, supplierId: "sup-b" },
+        { materialRequestItemId: "line-1", purchaseQuantity: 100, supplierId: "sup-a", unitPrice: 25 },
+        { materialRequestItemId: "line-2", purchaseQuantity: 50, supplierId: "sup-b", unitPrice: 40 },
       ],
     });
 

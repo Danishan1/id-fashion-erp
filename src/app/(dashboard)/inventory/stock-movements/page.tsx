@@ -1,0 +1,61 @@
+"use client";
+
+import { Breadcrumb } from "@/components/ui/Breadcrumb";
+import { DataTable } from "@/components/ui/DataTable";
+
+const MOVEMENT_TYPE_LABELS: Record<string, string> = {
+  TRANSFER: "Transfer",
+  ADJUSTMENT: "Adjustment",
+  RETURN_TO_SUPPLIER: "Return to Supplier",
+};
+
+interface StockMovementRow {
+  id: string;
+  movementNumber: string;
+  movementType: string;
+  performedAt: string;
+  warehouse: { name: string } | null;
+  toWarehouse: { name: string } | null;
+  supplier: { name: string } | null;
+  performedBy: { fullName: string } | null;
+  _count: { items: number };
+}
+
+export default function StockMovementsPage() {
+  return (
+    <div className="space-y-4">
+      <Breadcrumb items={[{ label: "Dashboard", href: "/dashboard" }, { label: "Stock Movements" }]} />
+      <div>
+        <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Stock Movements</h1>
+        <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+          Warehouse transfers, stock adjustments, and returns to supplier — every one posted to the inventory ledger.
+        </p>
+      </div>
+
+      <DataTable<StockMovementRow>
+        fetchUrl="/api/v1/stock-movements"
+        searchPlaceholder="Search by movement number…"
+        rowHref={(row) => `/inventory/stock-movements/${row.id}`}
+        newHref="/inventory/stock-movements/new"
+        newLabel="New Stock Movement"
+        columns={[
+          { key: "movementNumber", header: "Movement #" },
+          { key: "movementType", header: "Type", render: (row) => MOVEMENT_TYPE_LABELS[row.movementType] ?? row.movementType },
+          {
+            key: "warehouse",
+            header: "Warehouse(s)",
+            render: (row) =>
+              row.movementType === "TRANSFER"
+                ? `${row.warehouse?.name ?? "—"} → ${row.toWarehouse?.name ?? "—"}`
+                : row.movementType === "RETURN_TO_SUPPLIER"
+                  ? `${row.warehouse?.name ?? "—"} → ${row.supplier?.name ?? "—"}`
+                  : (row.warehouse?.name ?? "—"),
+          },
+          { key: "items", header: "Lines", render: (row) => row._count.items },
+          { key: "performedBy", header: "Performed By", render: (row) => row.performedBy?.fullName ?? "—" },
+          { key: "performedAt", header: "Date", render: (row) => new Date(row.performedAt).toLocaleString() },
+        ]}
+      />
+    </div>
+  );
+}

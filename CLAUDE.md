@@ -39,8 +39,8 @@ The user has two real, manually-coded PHP/Laravel garment systems already in pro
 | 2 | Foundation | ✅ Done |
 | 3 | Masters | ✅ Done |
 | 4 | Sampling | ✅ Done |
-| 5 | Orders + Production | 🔶 In progress — 5A (Sales Orders) and 5B (BOM/MRP) done, 5C (Production) not started |
-| 6 | Inventory | 🔶 In progress — Purchase Order + Goods Receipt (with fabric roll tracking), a minimal stock ledger, and Material Request (internal stock request → issue-from-stock or optional escalation to a Purchase Order) pulled forward and done; full Stock Movements/Adjustments and Return-to-Supplier still not started |
+| 5 | Orders + Production | ✅ Done — 5A (Sales Orders), 5B (BOM/MRP), and 5C (Production: Production Orders/Lots/JobOrders/QC/split-merge) all built and verified end-to-end this session |
+| 6 | Inventory | ✅ Done — Purchase Order + Goods Receipt (fabric roll tracking), the stock ledger, Material Request, and Stock Movements (Transfer/Adjustment/Return-to-Supplier) all built and verified |
 | 7 | Accounts | ⬜ Not started |
 | 8 | Dispatch | ⬜ Not started |
 | 9 | Reports | ⬜ Not started |
@@ -48,6 +48,8 @@ The user has two real, manually-coded PHP/Laravel garment systems already in pro
 | 11 | Hardening | ⬜ Not started |
 
 Update the status column and add a short dated note under the relevant phase section below whenever a phase completes or deviates from plan.
+
+**CRM/Sales/Marketing/HRMS migration (separate initiative, not part of the 11 phases above)** — a business-logic migration from a sibling WordPress project ("EQ Business OS"), tracked in full in [CRM_SALES_MARKETING_HRMS_MIGRATION_REPORT.md](CRM_SALES_MARKETING_HRMS_MIGRATION_REPORT.md): the source analysis/mapping/decisions, and a build log. Status: **CRM (Lead + Deal + Activity/Followup) is built and verified (2026-08-24)**; Marketing and HRMS (Attendance + Leave only, per the confirmed scope) are not started. Sequenced deliberately one module at a time — see that file before touching `Lead`/`Deal`/`CrmActivity`/`CrmFollowup` or the `crm` RBAC module.
 
 ### Phase 2 notes (2026-08-16)
 - Next.js 16 scaffold, Prisma 7 schema (Organization/Auth + Masters + System, 24 models), NextAuth v5 Credentials auth (JWT sessions), RBAC `PermissionService`, document numbering, audit logging, local file storage, `BusinessRuleError`, sidebar/topbar shell, login page, DB-backed dashboard placeholder, and full seed data (roles/permissions/Super Admin) are all in place and verified end-to-end in the browser (login → dashboard showing real DB counts).
@@ -464,6 +466,102 @@ available 509.144, shortfall 282.856` and `Polyester Thread: needed 20 ROL (0.05
 calculation; selected both shortfall rows (same supplier), generated `PO-2026-00003`, confirmed its two
 lines match the shortfall quantities/unit costs exactly (`Order Amount: INR 43,128.4`). `npx tsc --noEmit`
 and `npm run lint` clean throughout; no server or console errors during the full walkthrough.
+
+---
+
+## Phase 5C — Production, core engine built; live verification pending (2026-08-22/23)
+
+Designed via the project's established design→review→build→verify rhythm on top of the earlier
+**Production Schema Blueprint** (a two-layer state model: a small fixed `ProductionOrderStatus` lifecycle
+enum + a fully dynamic, `ProductionStage.sequence`-driven Lot stage position — no hardcoded stage names
+anywhere, matching the same "don't bake a configurable master into an enum" lesson already learned once
+during 5A's own design review). A 23-section user specification demanded an explicit STOP-and-approve gate
+before any code was touched; the user then authorized full implementation using the design's own stated
+recommendations for all 6 open decisions (Employee-tracks-work/User-tracks-login split, block split/merge
+mid-JobOrder, no variant-level Lot tracking in V1, defer a `Bundle` table, no mandatory
+`ProductionOrder`-level approval gate, reuse existing RBAC actions rather than mint 3 new verbs).
+
+**Schema (9 new tables, 7 new enums)**: `ProductionOrder` (header, `ORD`-sibling numbering via
+`generateDocumentNumber`, `salesOrderItemId` nullable — null means Make-to-Stock, decided explicitly rather
+than overloading `SalesOrder`), `Lot` (immutable quantity, `currentStageId` is a **documented cache-only**
+convenience column — the ledger below is the sole source of truth, exactly the `stock_balances`/
+`inventory_transactions` pattern this project already trusts), `LotRelation` (SPLIT/MERGE genealogy via a
+join table, since MERGE needs many-parents→one-child), `JobOrder` (the generic `Lot × ProductionStage` unit
+— replaces the old blueprint's stage-named `cutting_plans`/`sewing_production`/`finishing_records` tables
+entirely; **not** unique on `(lotId, productionStageId)` since a lot can revisit a stage after rework),
+`JobOrderAssignment`/`JobOrderProgressEntry` (Employee tracks the work, User tracks who was logged in and
+clicked save — resolved at zero schema cost by reusing the pre-existing `User.employeeId` FK),
+`ProductionStageTransaction` (append-only ledger — the actual source of truth a Lot's stage position is
+derived from), `QcInspection`/`QcDefect`/`DefectType`. `JobOrder`'s 3-column quantity cap
+(`completed+rejected+damaged <= planned`) can't use the project's usual single-column guarded-`updateMany`
+idiom, so it's enforced by a read-verify-write inside the transaction *and* backed by a hand-written
+Postgres `CHECK` constraint as a hard backstop. `MaterialRequest.productionOrderId` (nullable) threads
+Production into the existing BOM→MR→PO chain unchanged.
+- **RBAC simplified mid-build**: the design doc's proposed 3 new action verbs (`revert`/`restructure`/
+  `skip_stage`) were dropped once a pre-existing, separate `qc` RBAC module (with `QC_MANAGER` already
+  seeded) was found — QC actions use `qc.create`; lot restructure (split/merge) and stage-skip-forward both
+  reuse the existing `production.approve` action instead (added to `MANAGEMENT`/`PRODUCTION_MANAGER`'s
+  grants).
+- `npx tsc --noEmit` and `npm run lint` clean on the core engine; unit tests added for `job-order.service.ts`
+  (stage-graph validation, the quantity-guard transaction, QC disposition) reaching 85/85 project-wide.
+- **Git note**: this work landed on `main` alongside a same-day commit from another contributor
+  ("Indradhar Team", message "after changes") touching several of the same files (Material Request,
+  Purchase/Customer/Employee/Supplier/Warehouse routes). Two real compile breaks from that merge
+  (`customer.schema.ts`'s `customerUpdateSchema`/`CustomerUpdateInput` exports collapsed into
+  `customerSchema`/`CustomerInput` without updating its two importers; 5 test-only `unitPrice`-missing
+  errors in `material-request.service.test.ts` after `generatePurchaseOrdersForShortfallSchema` correctly
+  made `unitPrice` required) were found and fixed same-day — `npx tsc --noEmit`/`npm run lint`/`npm test`
+  all clean again afterward. Worth a quick sync with that contributor before further parallel work on
+  Production/Material Request/Purchasing files to avoid repeat collisions.
+
+### Phase 5C QA pass — 2 P0 bugs found and fixed in `recordQcInspection()` (2026-08-23)
+
+The deferred live-browser verification ran via the `erp-qa-uat` agent, covering the full Add Lot → Start →
+Assign Worker → Log Progress → Forward → Revert → QC → Split → Merge walkthrough end-to-end. Lots, Job
+Orders, Forward/Revert, and Split/Merge all passed with zero defects — every cap, guard, and state
+transition behaved correctly with clear, specific error messages. QC Inspection had two independent P0
+defects, both in `src/modules/production/job-order.service.ts`'s `recordQcInspection()`:
+
+- **ERP-BUG-0001 (stock/WIP double-posting)**: accepting a job order at QC after the same completed
+  quantity had already been sent on via a manual Forward created a second, phantom downstream job order and
+  double-posted Finished-Goods stock (confirmed live: 5 units manually forwarded, then QC-accepted again,
+  produced 10 units in Finished Goods Godam instead of 5). Root cause: the accept branch called the same
+  guarded `forwardedQuantity` accumulator increment used by manual Forward, but never checked whether the
+  guard actually matched a row (`guard.count === 0`) before proceeding — so a lost guard check still let the
+  already-executed `postStageTransactionInTx()` call (downstream job order + FG receipt) stand uncontested.
+  Fixed with two layers, mirroring `forwardJobOrder()`'s own existing two-layer defense: a friendly
+  pre-transaction check (`notYetForwarded = completed - forwardedQuantity`, rejecting the whole call with a
+  clear `409` before any write) plus checking the in-transaction guard's result and throwing to roll back on
+  a lost race.
+- **ERP-BUG-0002 (crash on the mainline QC-reject scenario)**: recording a Partial Pass/Fail (any
+  rejected/damaged quantity) against a job order that was already fully completed — the normal precondition
+  for running QC at all — crashed with a raw `500 INTERNAL_ERROR`, the Postgres CHECK constraint
+  (`job_orders_quantity_consistency_check`) rejecting the write. Root cause: the disposition path shrank
+  `plannedQuantity` to "make room" for the rejected/damaged amount, but `completedQuantity` never shrank to
+  match, making `completed+rejected+damaged <= planned` impossible to satisfy once `completed === planned`.
+  Fixed by replacing that function with `applyQcDispositionInTx()`, which reclassifies the disposed quantity
+  *out of* `completedQuantity` and *into* `rejectedQuantity`/`damagedQuantity` instead — the sum, and
+  therefore the CHECK constraint, is preserved automatically; `plannedQuantity` is never touched by this
+  path.
+- Two regression tests added to `job-order.service.test.ts` (87/87 project-wide) reproducing each bug
+  exactly against mocks; both also re-verified live against the real dev DB and Postgres CHECK constraint
+  (fresh `PROD-2026-00003`/Lot `L01`, left in the dev DB as reproducible evidence) — confirmed the exact
+  double-forward is now blocked with a clear `409`, confirmed the exact QC-reject-on-completed scenario now
+  succeeds (`201`) with `completed`/`rejected` correctly split and downstream Checking/rework job orders
+  each created exactly once (no duplicates), and confirmed the original "false rejection on an
+  already-completed job order" bug the old code was guarding against (referenced in-code as "BUG-03") is
+  not reintroduced — a clean QC-Pass on a normal, never-forwarded completed job order still succeeds.
+- Also fixed: a P3 UI clarity gap where a Lot's "Currently at: X" label implied its entire quantity sits at
+  one stage even after a partial forward + partial revert splits it across stages — relabeled to "Last
+  stage transition" with an explanatory tooltip (`LotWorkflowPanel.tsx`). A P4 finding (`ProductionOrderStatus.MATERIAL_ALLOCATED`
+  is a reserved enum value no code path currently reaches) was left as-is, matching this project's own
+  established "reserved enum value" precedent (`SampleStatus.DRAFT`) rather than force-wiring an
+  unrequested transition.
+- `npx tsc --noEmit`, `npm run lint`, `npm test` (87/87) all clean throughout.
+
+**Phase 5C is now verified and considered done** — Production Orders, Lots, Job Orders, Split/Merge, and QC
+Inspection have all been exercised end-to-end in the real app against the real dev DB with zero remaining
+known defects.
 
 ---
 
@@ -1019,6 +1117,93 @@ rhythm), then implemented incrementally.
   (66/66) all clean throughout; full manual browser walkthrough covering every numbered step in the reviewed
   plan's testing section, including the two goods-receipt rollup directions and the damage-replacement flow,
   with zero server or console errors.
+
+## Phase 6 completion — Stock Movements (Transfer / Adjustment / Return to Supplier) (2026-08-23)
+
+Closed the last open item on Phase 6's roadmap line. Scoped via one AskUserQuestion: Return to Supplier is
+built stock-side only (a real physical movement out of a warehouse, ledger + a `StockMovement` header for
+traceability) — a supplier credit note is a Phase 7 (Accounts) concept that doesn't exist yet, so the
+financial side is deliberately deferred, the same way Goods Receipt already operates independently of
+invoicing.
+
+- **Schema**: one new unified `StockMovement`/`StockMovementItem` pair (migration `add_stock_movements`),
+  not three separate tables — this is Phase 1's own original architecture-doc decision ("material
+  issues/returns/transfers merged into one `stock_movements` table via a `movement_type` discriminator"),
+  finally implemented rather than re-derived. `StockMovementType` (`TRANSFER`/`ADJUSTMENT`/
+  `RETURN_TO_SUPPLIER`); a single `warehouseId` (the only warehouse for Adjustment/Return, the source for
+  Transfer) plus a conditionally-required `toWarehouseId` (Transfer) or `supplierId` (Return). Reused the
+  already-reserved `DocumentType.STOCK_MOVEMENT` → prefix `STK` (numbers render as `STK-2026-00001`, zero
+  numbering-service changes needed) and the already-reserved `InventoryTransactionType.ADJUSTMENT`/
+  `STOCK_TRANSFER` enum values (unused since Phase 1 planning); added the one genuinely new value,
+  `RETURN_TO_SUPPLIER`. Immutable once created — no delete/edit column, matching every other inventory
+  transactional table in this project; a mistake is corrected with a new, opposite-direction
+  `StockMovement`, not an edit endpoint on this one.
+- **Deliberately scoped to raw materials only** (reusing the existing `MaterialPicker` + `/api/v1/materials`
+  verbatim, zero new picker component) — matches every other Inventory-side document in this project
+  (Material Request, Purchase Order, Goods Receipt); finished-goods stock movements are a Dispatch-phase
+  (8) concern with its own carton/picking workflow, not retrofitted here.
+- **One shared code path for every movement type**: `createStockMovement()` posts through the *existing*
+  `recordInventoryTransaction()` ledger engine unchanged — a Transfer posts two entries (negative at
+  source, positive at destination) inside one transaction, so the two sides can never observably disagree,
+  even under a mid-write crash; Adjustment posts the line's own signed quantity as-is (positive = stock
+  found, negative = write-off); Return to Supplier posts one negative entry. No new low-level ledger
+  mechanism — Stock Movement is the fourth caller of an engine already proven by Goods Receipt, Material
+  Request, and Production.
+- **Stock-sufficiency check, not a DB-level guard**: a pre-write check via the existing
+  `getAvailableQuantity()` blocks a Transfer/Return/negative-Adjustment that would take a warehouse's
+  balance negative, throwing the new `INSUFFICIENT_STOCK_FOR_MOVEMENT` (409) — the same "manual,
+  low-frequency, reviewed action; a pre-check is enough, a hot-path race guard isn't warranted" tradeoff
+  this project already accepted for Material Request's own issue-from-stock check, applied consistently
+  rather than inventing a stricter standard for this one feature.
+- **RBAC**: reused the existing `inventory` module's `create`/`view` actions — no new module, no approval
+  gate, matching this project's now-repeated "no unnecessary approval states" conclusion (Material Request
+  superseding the approval-gated Purchase Request design, Sampling's costing lock being the one place a
+  real maker/checker split was actually needed).
+- **UI**: `/inventory/stock-movements` (list, `DataTable`), `/new` (a single form whose fields
+  conditionally show/hide by Movement Type — From/To Warehouse for Transfer, Warehouse+Supplier for Return,
+  Warehouse+required Reason for Adjustment, with a "+ found / − written off" hint on the quantity field),
+  `/[id]` (a plain read-only Server Component detail view — no interactive workflow panel needed for an
+  immutable document). Sidebar gained "Stock Movements" under Inventory.
+- **Gotcha hit again, same root cause as twice before this project**: after `prisma db execute` + `prisma
+  generate`, the already-running dev server's in-memory `@prisma/client` was stale, throwing `Cannot read
+  properties of undefined (reading 'findMany')` on the new `stockMovement` delegate until the dev server was
+  fully stopped and restarted — CLAUDE.md's own documented gotcha, bitten a third time, worth internalizing
+  as a reflex ("just changed the schema → restart the dev server before testing," not "if something breaks
+  after a schema change").
+- **New, unrelated tooling gotcha found this session**: running `npx tsc --noEmit` while the dev server is
+  live can transiently fail with a `TS1128` syntax error inside the Next.js–generated
+  `.next/dev/types/validator.ts` (a route-type-validator file the dev server continuously rewrites as routes
+  are exercised) — caught it reading a genuinely corrupted mid-rewrite file (`Specific` truncated to
+  `ecific`), confirmed by inspecting the exact byte range, and resolved by clearing `.next/dev/types`/`.next/types`
+  and letting the dev server regenerate them (a full dev-server restart, or any page hit after clearing,
+  is enough). Not a real source-code defect — if a future `tsc` run ever produces an inexplicable syntax
+  error pointing inside `.next/`, this is almost certainly the cause; don't chase it as a real bug.
+- 6 new unit tests (`stock-movement.service.test.ts`, 93/93 project-wide): both ledger entries posted
+  correctly for a Transfer, the over-transfer rejection, Return to Supplier's single negative entry, a
+  positive Adjustment skipping the stock check entirely, a negative Adjustment correctly rejected/allowed
+  against real availability.
+- **Verified live end-to-end** through the real UI and direct API calls together (the sandboxed browser's
+  own documented `form_input`-on-`<select>` unreliability was hit again on this form specifically —
+  confirmed via a stale ref-map error immediately after a select changed the form's own conditional fields
+  — so verification switched to direct `fetch()` calls per this project's own established fallback
+  discipline): created `STK-2026-00001` (Transfer, 50 MTR Cotton Fabric, Fabric Store → Raw Material
+  Godam) and hand-verified both sides of the ledger (694.144→644.144 at source, 0→50 at destination);
+  confirmed an over-transfer (9999 MTR) correctly `409`s with the exact expected message; created
+  `STK-2026-00002` (Adjustment, +5 found) and `STK-2026-00003` (Return to Supplier, −10) and confirmed the
+  resulting balance (50+5−10=45) matched exactly; confirmed a negative Adjustment exceeding real
+  availability correctly `409`s; confirmed the list page renders all three movement types with correct
+  warehouse-routing display and the detail page renders a Transfer's From/To Warehouse and line items
+  correctly. `npx tsc --noEmit`, `npm run lint`, and `npm test` (93/93) all clean throughout.
+- **Not built** (explicitly out of scope, matching the AskUserQuestion decision and this project's own
+  "don't build for hypothetical future requirements" discipline): the supplier credit-note/financial side
+  of Return to Supplier (Phase 7), a reversal/void endpoint for a posted Stock Movement (corrections are a
+  new opposite-direction movement, matching the "no delete column on inventory transactional tables"
+  convention already established), Opening Stock manual entry (still separately deferred, unrelated to this
+  pass), and finished-goods/style-level stock movements (Dispatch phase's own scope).
+
+**Phase 6 is now fully done** — Purchase Order, Goods Receipt (with fabric roll tracking), the stock
+ledger, Material Request (with full BOM→MR→Issue/Shortfall→PO→GR traceability), and Stock Movements
+(Transfer/Adjustment/Return to Supplier) are all built, tested, and verified live.
 
 ## Recommended Stack
 

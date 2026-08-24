@@ -72,6 +72,7 @@ model Company {
   fabricRolls                 FabricRoll[]
   inventoryTransactions       InventoryTransaction[]
   stockBalances               StockBalance[]
+  stockMovements              StockMovement[]
   productionOrders            ProductionOrder[]
   lots                        Lot[]
   lotRelations                LotRelation[]
@@ -83,6 +84,11 @@ model Company {
   auditLogs                   AuditLog[]
   notifications               Notification[]
   attachments                 Attachment[]
+  leads                       Lead[]
+  deals                       Deal[]
+  crmActivities               CrmActivity[]
+  crmFollowups                CrmFollowup[]
+  crmRoundRobinState          CrmRoundRobinState?
 
   @@map("companies")
 }
@@ -118,9 +124,12 @@ model Branch {
   materialRequests      MaterialRequest[]
   goodsReceipts         GoodsReceipt[]
   inventoryTransactions InventoryTransaction[]
+  stockMovements        StockMovement[]
   productionOrders      ProductionOrder[]
   lots                  Lot[]
   documentSequences     DocumentSequence[]
+  leads                 Lead[]
+  deals                 Deal[]
 
   @@unique([companyId, code])
   @@map("branches")
@@ -161,6 +170,7 @@ model User {
   materialRequestsMade                 MaterialRequest[]            @relation("MaterialRequestRequestedBy")
   goodsReceiptsReceived                GoodsReceipt[]               @relation("GoodsReceiptReceivedBy")
   inventoryTransactionsPerformed       InventoryTransaction[]       @relation("InventoryTransactionPerformedBy")
+  stockMovementsPerformed              StockMovement[]              @relation("StockMovementPerformedBy")
   sampleVersionsCreated                SampleVersion[]              @relation("SampleVersionCreatedBy")
   sampleVersionsCostingLocked          SampleVersion[]              @relation("SampleVersionCostingLockedBy")
   sampleApprovalsMade                  SampleApproval[]             @relation("SampleApprovalDecidedBy")
@@ -172,6 +182,13 @@ model User {
   jobOrderProgressEntriesRecorded      JobOrderProgressEntry[]      @relation("JobOrderProgressEntryRecordedBy")
   productionStageTransactionsPerformed ProductionStageTransaction[] @relation("ProductionStageTransactionPerformedBy")
   qcInspectionsMade                    QcInspection[]               @relation("QcInspectionInspector")
+  leadsAssigned                        Lead[]                       @relation("LeadAssignedTo")
+  leadsCreated                         Lead[]                       @relation("LeadCreatedBy")
+  dealsAssigned                        Deal[]                       @relation("DealAssignedTo")
+  dealsCreated                         Deal[]                       @relation("DealCreatedBy")
+  crmActivitiesPerformed               CrmActivity[]                @relation("CrmActivityPerformedBy")
+  crmFollowupsAssigned                 CrmFollowup[]                @relation("CrmFollowupAssignedTo")
+  crmFollowupsCreated                  CrmFollowup[]                @relation("CrmFollowupCreatedBy")
 
   @@map("users")
 }
@@ -270,6 +287,7 @@ model Customer {
   sampleRequests SampleRequest[]
   buyerEnquiries BuyerEnquiry[]
   salesOrders    SalesOrder[]
+  deals          Deal[]
 
   @@unique([companyId, code])
   @@map("customers")
@@ -335,6 +353,7 @@ model Supplier {
   company            Company         @relation(fields: [companyId], references: [id])
   defaultForProducts Product[]
   purchaseOrders     PurchaseOrder[]
+  stockMovements     StockMovement[]
 
   @@unique([companyId, code])
   @@map("suppliers")
@@ -448,6 +467,7 @@ model Product {
   bomItemUsages         BomItem[]              @relation("BomItemMaterial")
   materialRequestItems  MaterialRequestItem[]  @relation("MaterialRequestItemMaterial")
   productionOrders      ProductionOrder[]
+  stockMovementItems    StockMovementItem[]
 
   @@unique([companyId, styleCode])
   @@map("products")
@@ -506,6 +526,7 @@ model UnitOfMeasure {
   materialRequestItems MaterialRequestItem[]
   bomItems             BomItem[]
   lots                 Lot[]
+  stockMovementItems   StockMovementItem[]
 
   @@map("units_of_measure")
 }
@@ -560,6 +581,8 @@ model Warehouse {
   inventoryTransactions InventoryTransaction[]
   stockBalances         StockBalance[]
   materialRequests      MaterialRequest[]
+  stockMovementsFrom    StockMovement[]        @relation("StockMovementSourceWarehouse")
+  stockMovementsTo      StockMovement[]        @relation("StockMovementDestinationWarehouse")
 
   @@unique([branchId, code])
   @@map("warehouses")
@@ -662,6 +685,7 @@ model SalesAgent {
   updatedAt         DateTime @updatedAt @map("updated_at")
 
   company Company @relation(fields: [companyId], references: [id])
+  deals   Deal[]
 
   @@unique([companyId, code])
   @@map("sales_agents")
@@ -1374,12 +1398,16 @@ model BuyerEnquiry {
   createdAt             DateTime           @default(now()) @map("created_at")
   updatedAt             DateTime           @updatedAt @map("updated_at")
 
-  company     Company            @relation(fields: [companyId], references: [id])
-  branch      Branch?            @relation(fields: [branchId], references: [id])
-  customer    Customer?          @relation(fields: [customerId], references: [id])
-  buyer       Buyer?             @relation(fields: [buyerId], references: [id])
-  requestedBy User               @relation("BuyerEnquiryRequestedBy", fields: [requestedByUserId], references: [id])
-  lines       BuyerEnquiryLine[]
+  company         Company            @relation(fields: [companyId], references: [id])
+  branch          Branch?            @relation(fields: [branchId], references: [id])
+  customer        Customer?          @relation(fields: [customerId], references: [id])
+  buyer           Buyer?             @relation(fields: [buyerId], references: [id])
+  requestedBy     User               @relation("BuyerEnquiryRequestedBy", fields: [requestedByUserId], references: [id])
+  lines           BuyerEnquiryLine[]
+  // Virtual back-relation only — the one real column lives on Lead
+  // (Lead.buyerEnquiryId), same "single authoritative FK" shape as
+  // BuyerEnquiryLine.sampleRequestId above.
+  originatingLead Lead?
 
   @@unique([companyId, enquiryNumber])
   @@map("buyer_enquiries")
@@ -1418,6 +1446,212 @@ model BuyerEnquiryLine {
 }
 
 // ─────────────────────────────────────────────────────────────
+// CRM — Lead & Deal (migrated from WordPress "EQ CRM"; see
+// CRM_SALES_MARKETING_HRMS_MIGRATION_REPORT.md for the full source analysis
+// and the mapping decisions this schema follows)
+// ─────────────────────────────────────────────────────────────
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  PROPOSAL
+  NEGOTIATION
+  WON
+  LOST
+}
+
+// Deliberately NOT a stored column on Lead — computed from leadScore at read
+// time (>=80 hot, >=50 warm, else normal, matching the source's own
+// thresholds exactly). The source stores this as a column that can drift
+// from the score that produced it; this project's own established
+// "derive, don't duplicate" discipline (Material Request's status,
+// JobOrder's status, etc.) applies here identically.
+enum LeadPriority {
+  NORMAL
+  WARM
+  HOT
+}
+
+model Lead {
+  id                String        @id @default(uuid()) @db.Uuid
+  companyId         String        @map("company_id") @db.Uuid
+  branchId          String?       @map("branch_id") @db.Uuid
+  leadNumber        String        @map("lead_number")
+  name              String
+  email             String?
+  phone             String?
+  companyName       String?       @map("company_name")
+  source            EnquirySource @default(OTHER)
+  // Free text for now — becomes a real FK once Campaign exists (Marketing
+  // pass); matches this project's "don't build for a phase that isn't
+  // reached yet" discipline (e.g. SalesOrderItem.sampleRequestId existed as
+  // a plan long before Sampling's own module was built).
+  campaignText      String?       @map("campaign_text")
+  leadScore         Decimal       @default(0) @map("lead_score") @db.Decimal(6, 2)
+  status            LeadStatus    @default(NEW)
+  value             Decimal       @default(0) @db.Decimal(15, 2)
+  expectedCloseDate DateTime?     @map("expected_close_date") @db.Date
+  assignedToUserId  String?       @map("assigned_to_user_id") @db.Uuid
+  // Forward-only traceability into the existing Buyer Enquiry -> Sample ->
+  // Style pipeline, for when a generic sales lead turns into a real garment
+  // style enquiry. @unique enforces "a BuyerEnquiry originates from at most
+  // one Lead" at the DB level — same single-authoritative-FK shape already
+  // proven by BuyerEnquiryLine.sampleRequestId. Deliberately NOT a merge of
+  // Lead into BuyerEnquiry itself (see the migration report's decision log)
+  // — BuyerEnquiry's own shape is style-centric and would distort a generic
+  // CRM lead that has no product discussed yet.
+  buyerEnquiryId    String?       @unique @map("buyer_enquiry_id") @db.Uuid
+  lastActivityAt    DateTime?     @map("last_activity_at")
+  notes             String?
+  createdByUserId   String        @map("created_by_user_id") @db.Uuid
+  createdAt         DateTime      @default(now()) @map("created_at")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
+
+  company      Company       @relation(fields: [companyId], references: [id])
+  branch       Branch?       @relation(fields: [branchId], references: [id])
+  assignedTo   User?         @relation("LeadAssignedTo", fields: [assignedToUserId], references: [id])
+  createdBy    User          @relation("LeadCreatedBy", fields: [createdByUserId], references: [id])
+  buyerEnquiry BuyerEnquiry? @relation(fields: [buyerEnquiryId], references: [id])
+  deals        Deal[]
+
+  @@unique([companyId, leadNumber])
+  @@index([companyId, status])
+  @@index([companyId, assignedToUserId])
+  @@map("crm_leads")
+}
+
+// A real transition guard, unlike the source (which allows a Deal to jump
+// between any of its 5 stage strings with zero validation) — a deliberate,
+// flagged improvement (see migration report §7), not scope creep: this
+// project adds an ALLOWED_TRANSITIONS guard to every other status-driven
+// document, and Deal is no exception.
+enum DealStage {
+  QUALIFIED
+  PROPOSAL
+  NEGOTIATION
+  WON
+  LOST
+}
+
+model Deal {
+  id                 String    @id @default(uuid()) @db.Uuid
+  companyId          String    @map("company_id") @db.Uuid
+  branchId           String?   @map("branch_id") @db.Uuid
+  dealNumber         String    @map("deal_number")
+  title              String
+  leadId             String?   @map("lead_id") @db.Uuid
+  customerId         String?   @map("customer_id") @db.Uuid
+  stage              DealStage @default(QUALIFIED)
+  value              Decimal   @default(0) @db.Decimal(15, 2)
+  probabilityPercent Decimal   @default(0) @map("probability_percent") @db.Decimal(5, 2)
+  // Two distinct concepts kept independent, both optional: the day-to-day
+  // owner (any User, matching the source's wp_user-based assignment) and
+  // the commission-tracked salesperson (SalesAgent, Fashion ERP's own
+  // existing domestic-channel concept) — a deal can have either, both, or
+  // neither, per the migration report's §9 decision.
+  assignedToUserId   String?   @map("assigned_to_user_id") @db.Uuid
+  salesAgentId       String?   @map("sales_agent_id") @db.Uuid
+  expectedCloseDate  DateTime? @map("expected_close_date") @db.Date
+  lostReason         String?   @map("lost_reason")
+  notes              String?
+  createdByUserId    String    @map("created_by_user_id") @db.Uuid
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  company              Company      @relation(fields: [companyId], references: [id])
+  branch               Branch?      @relation(fields: [branchId], references: [id])
+  lead                 Lead?        @relation(fields: [leadId], references: [id])
+  customer             Customer?    @relation(fields: [customerId], references: [id])
+  assignedTo           User?        @relation("DealAssignedTo", fields: [assignedToUserId], references: [id])
+  salesAgent           SalesAgent?  @relation(fields: [salesAgentId], references: [id])
+  createdBy            User         @relation("DealCreatedBy", fields: [createdByUserId], references: [id])
+  resultingSalesOrders SalesOrder[]
+
+  @@unique([companyId, dealNumber])
+  @@index([companyId, stage])
+  @@map("crm_deals")
+}
+
+enum CrmInteractionType {
+  CALL
+  WHATSAPP
+  EMAIL
+  MEETING
+  NOTE
+}
+
+// Polymorphic via the existing RelatedModule discriminator (LEAD | DEAL |
+// CUSTOMER) — the same convention already used by Attachment/AuditLog/
+// InventoryTransaction, rather than inventing a parallel polymorphic scheme
+// just for CRM.
+model CrmActivity {
+  id                String             @id @default(uuid()) @db.Uuid
+  companyId         String             @map("company_id") @db.Uuid
+  relatedModule     RelatedModule      @map("related_module")
+  relatedRecordId   String             @map("related_record_id") @db.Uuid
+  activityType      CrmInteractionType @map("activity_type")
+  subject           String?
+  body              String?
+  activityAt        DateTime           @default(now()) @map("activity_at")
+  performedByUserId String             @map("performed_by_user_id") @db.Uuid
+  createdAt         DateTime           @default(now()) @map("created_at")
+
+  company     Company @relation(fields: [companyId], references: [id])
+  performedBy User    @relation("CrmActivityPerformedBy", fields: [performedByUserId], references: [id])
+
+  @@index([companyId, relatedModule, relatedRecordId])
+  @@map("crm_activities")
+}
+
+enum CrmFollowupStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+}
+
+model CrmFollowup {
+  id               String             @id @default(uuid()) @db.Uuid
+  companyId        String             @map("company_id") @db.Uuid
+  relatedModule    RelatedModule      @map("related_module")
+  relatedRecordId  String             @map("related_record_id") @db.Uuid
+  assignedToUserId String?            @map("assigned_to_user_id") @db.Uuid
+  followupDate     DateTime           @map("followup_date")
+  type             CrmInteractionType @default(CALL)
+  status           CrmFollowupStatus  @default(PENDING)
+  notes            String?
+  completedAt      DateTime?          @map("completed_at")
+  createdByUserId  String             @map("created_by_user_id") @db.Uuid
+  createdAt        DateTime           @default(now()) @map("created_at")
+
+  company    Company @relation(fields: [companyId], references: [id])
+  assignedTo User?   @relation("CrmFollowupAssignedTo", fields: [assignedToUserId], references: [id])
+  createdBy  User    @relation("CrmFollowupCreatedBy", fields: [createdByUserId], references: [id])
+
+  // isOverdue is deliberately NOT a stored column — computed at read time as
+  // status='PENDING' AND followupDate < now(), exactly matching both the
+  // source's own behavior and this project's derive-don't-duplicate rule.
+  @@index([companyId, relatedModule, relatedRecordId])
+  @@index([companyId, status, followupDate])
+  @@map("crm_followups")
+}
+
+// Fixes a real fragility in the source: WordPress re-derives "who's next"
+// by looking up the last-assigned lead's own assignee every time, which
+// silently breaks if that lead's assignment is later changed. A real
+// stored rotation pointer, atomically advanced, replaces that guesswork.
+model CrmRoundRobinState {
+  id                 String   @id @default(uuid()) @db.Uuid
+  companyId          String   @unique @map("company_id") @db.Uuid
+  lastAssignedUserId String?  @map("last_assigned_user_id") @db.Uuid
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@map("crm_round_robin_state")
+}
+
+// ─────────────────────────────────────────────────────────────
 // Sales Orders (Phase 5A)
 // ─────────────────────────────────────────────────────────────
 
@@ -1445,6 +1679,11 @@ model SalesOrder {
   orderNumber       String            @map("order_number")
   customerId        String            @map("customer_id") @db.Uuid
   buyerId           String?           @map("buyer_id") @db.Uuid
+  // Nullable traceability into the CRM pipeline this order originated from,
+  // if any — a direct/repeat order (the common case) has none. Header-level
+  // (not per-item) since a Deal has no line items of its own, matching its
+  // flat, pre-sale shape in the source system.
+  originatingDealId String?           @map("originating_deal_id") @db.Uuid
   orderDate         DateTime          @map("order_date") @db.Date
   requiredShipDate  DateTime?         @map("required_ship_date") @db.Date
   status            SalesOrderStatus  @default(DRAFT)
@@ -1465,6 +1704,7 @@ model SalesOrder {
   branch           Branch?           @relation(fields: [branchId], references: [id])
   customer         Customer          @relation(fields: [customerId], references: [id])
   buyer            Buyer?            @relation(fields: [buyerId], references: [id])
+  originatingDeal  Deal?             @relation(fields: [originatingDealId], references: [id])
   requestedBy      User              @relation("SalesOrderRequestedBy", fields: [requestedByUserId], references: [id])
   items            SalesOrderItem[]
   materialRequests MaterialRequest[]
@@ -2344,7 +2584,8 @@ model DefectType {
 }
 
 // Only GOODS_RECEIPT and GOODS_RECEIPT_REVERSAL are reachable by Purchasing —
-// PRODUCTION_RECEIPT/DAMAGE are Phase 5C's own. OPENING_BALANCE's manual
+// PRODUCTION_RECEIPT/DAMAGE are Phase 5C's own, ADJUSTMENT/STOCK_TRANSFER/
+// RETURN_TO_SUPPLIER are StockMovement's (Phase 6). OPENING_BALANCE's manual
 // entry point is explicitly deferred (see CLAUDE.md).
 enum InventoryTransactionType {
   OPENING_BALANCE
@@ -2358,6 +2599,10 @@ enum InventoryTransactionType {
   DAMAGE
   ADJUSTMENT
   STOCK_TRANSFER
+  // Stock leaving a warehouse back to a supplier — the physical/stock side
+  // only; a supplier credit note is a Phase 7 (Accounts) concept that
+  // doesn't exist yet, deliberately not modeled here.
+  RETURN_TO_SUPPLIER
 }
 
 // Append-only, source of truth — no delete column, no edit path, ever.
@@ -2415,6 +2660,73 @@ model StockBalance {
   @@map("stock_balances")
 }
 
+// A single unified header for the three remaining Phase 6 stock-movement
+// documents (Consolidation decision from Phase 1's architecture doc:
+// "material issues/returns/transfers merged into one stock_movements table
+// via a movement_type discriminator" — Material Request's own ISSUE already
+// has its own dedicated flow and is NOT part of this table). Immutable once
+// created, matching every other inventory/financial transactional table in
+// this project — no delete/edit column; a mistake is corrected with a new,
+// opposite-direction StockMovement, never an update to an existing one.
+enum StockMovementType {
+  TRANSFER
+  ADJUSTMENT
+  RETURN_TO_SUPPLIER
+}
+
+model StockMovement {
+  id                String            @id @default(uuid()) @db.Uuid
+  companyId         String            @map("company_id") @db.Uuid
+  branchId          String?           @map("branch_id") @db.Uuid
+  movementNumber    String            @map("movement_number")
+  movementType      StockMovementType @map("movement_type")
+  // TRANSFER: the source warehouse. ADJUSTMENT / RETURN_TO_SUPPLIER: the
+  // only warehouse involved.
+  warehouseId       String            @map("warehouse_id") @db.Uuid
+  // TRANSFER only — the destination warehouse.
+  toWarehouseId     String?           @map("to_warehouse_id") @db.Uuid
+  // RETURN_TO_SUPPLIER only.
+  supplierId        String?           @map("supplier_id") @db.Uuid
+  // Required for ADJUSTMENT (a stock discrepancy correction should always
+  // explain why); optional context for TRANSFER/RETURN_TO_SUPPLIER.
+  reason            String?
+  remarks           String?
+  performedByUserId String            @map("performed_by_user_id") @db.Uuid
+  performedAt       DateTime          @default(now()) @map("performed_at")
+  createdAt         DateTime          @default(now()) @map("created_at")
+
+  company     Company             @relation(fields: [companyId], references: [id])
+  branch      Branch?             @relation(fields: [branchId], references: [id])
+  warehouse   Warehouse           @relation("StockMovementSourceWarehouse", fields: [warehouseId], references: [id])
+  toWarehouse Warehouse?          @relation("StockMovementDestinationWarehouse", fields: [toWarehouseId], references: [id])
+  supplier    Supplier?           @relation(fields: [supplierId], references: [id])
+  performedBy User                @relation("StockMovementPerformedBy", fields: [performedByUserId], references: [id])
+  items       StockMovementItem[]
+
+  @@index([companyId, movementType])
+  @@index([companyId, warehouseId])
+  @@map("stock_movements")
+}
+
+model StockMovementItem {
+  id              String  @id @default(uuid()) @db.Uuid
+  stockMovementId String  @map("stock_movement_id") @db.Uuid
+  productId       String  @map("product_id") @db.Uuid
+  uomId           String  @map("uom_id") @db.Uuid
+  // TRANSFER / RETURN_TO_SUPPLIER: always positive (the quantity moved or
+  // returned). ADJUSTMENT: signed — positive means stock found on a
+  // physical count, negative means shrinkage/write-off.
+  quantity        Decimal @db.Decimal(18, 4)
+  remarks         String?
+
+  stockMovement StockMovement @relation(fields: [stockMovementId], references: [id])
+  product       Product       @relation(fields: [productId], references: [id])
+  uom           UnitOfMeasure @relation(fields: [uomId], references: [id])
+
+  @@index([stockMovementId])
+  @@map("stock_movement_items")
+}
+
 // ─────────────────────────────────────────────────────────────
 // System
 // ─────────────────────────────────────────────────────────────
@@ -2437,6 +2749,9 @@ enum RelatedModule {
   SUPPLIER
   EMPLOYEE
   PRODUCT
+  STOCK_MOVEMENT
+  LEAD
+  DEAL
 }
 
 model Attachment {
@@ -2538,6 +2853,8 @@ enum DocumentType {
   EMPLOYEE
   STYLE
   MATERIAL
+  LEAD
+  DEAL
 }
 
 model DocumentSequence {

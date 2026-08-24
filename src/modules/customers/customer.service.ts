@@ -3,7 +3,7 @@ import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { advanceMasterCodeSequence } from "@/core/numbering/DocumentNumberingService";
 import type { ListQuery } from "@/lib/list-query";
-import type { CustomerInput, CustomerUpdateInput, BuyerInput } from "./customer.schema";
+import type { CustomerInput, BuyerInput } from "./customer.schema";
 import { BuyerRepository, CustomerRepository } from "./customer.repository";
 
 interface ActorContext {
@@ -79,7 +79,7 @@ export async function createCustomer(actor: ActorContext, input: CustomerInput) 
   return customer;
 }
 
-export async function updateCustomer(actor: ActorContext, id: string, input: CustomerUpdateInput) {
+export async function updateCustomer(actor: ActorContext, id: string, input: CustomerInput) {
   const before = await getCustomerById(actor.companyId, id);
 
   if (input.code !== undefined && input.code !== before.code) {

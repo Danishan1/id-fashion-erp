@@ -312,7 +312,11 @@ export function LotWorkflowPanel({
         <span className="text-sm text-zinc-600 dark:text-zinc-300">
           {lot.quantity} {lot.uom.code}
         </span>
-        {lot.currentStage && <span className="text-sm text-zinc-500">Currently at: {lot.currentStage.name}</span>}
+        {lot.currentStage && (
+          <span className="text-sm text-zinc-500" title="A lot's quantity can be split across more than one stage at once (e.g. after a partial forward or rework) — this reflects only the most recent stage transition, not necessarily every stage the lot's quantity currently sits at. See the job orders below for the full picture.">
+            Last stage transition: {lot.currentStage.name}
+          </span>
+        )}
         {isBusy && <span className="text-xs text-zinc-400">Saving…</span>}
       </div>
 
