@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { auth } from "@/core/auth/auth";
 import { getCustomerById } from "@/modules/customers/customer.service";
+import Link from "next/link";
 import { CustomerForm } from "../CustomerForm";
 import { BuyersSection } from "../BuyersSection";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
@@ -22,7 +23,12 @@ export default async function EditCustomerPage({ params }: { params: Promise<{ i
             { label: customer.name },
           ]}
         />
-        <h1 className="mt-2 text-lg font-semibold text-zinc-900 dark:text-zinc-50">{customer.name}</h1>
+        <div className="mt-2 flex items-center justify-between">
+          <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">{customer.name}</h1>
+          <Link href={`/masters/customers/${id}/360`} className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400">
+            Customer 360 →
+          </Link>
+        </div>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">Code: {customer.code}</p>
       </div>
 

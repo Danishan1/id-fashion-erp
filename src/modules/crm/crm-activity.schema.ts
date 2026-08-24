@@ -5,6 +5,7 @@ import { z } from "zod";
 // way) — scoped to the 3 CRM record types an activity/followup can attach to.
 export const CRM_RELATED_MODULES = ["LEAD", "DEAL", "CUSTOMER"] as const;
 export const CRM_INTERACTION_TYPES = ["CALL", "WHATSAPP", "EMAIL", "MEETING", "NOTE"] as const;
+export const CRM_FOLLOWUP_PRIORITIES = ["LOW", "MEDIUM", "HIGH"] as const;
 
 export const createCrmActivitySchema = z.object({
   relatedModule: z.enum(CRM_RELATED_MODULES),
@@ -21,6 +22,7 @@ export const createCrmFollowupSchema = z.object({
   assignedToUserId: z.string().uuid().optional().or(z.literal("")),
   followupDate: z.string().min(1, "Follow-up date is required"),
   type: z.enum(CRM_INTERACTION_TYPES).default("CALL"),
+  priority: z.enum(CRM_FOLLOWUP_PRIORITIES).default("MEDIUM"),
   notes: z.string().max(2000).optional().or(z.literal("")),
 });
 export type CreateCrmFollowupInput = z.infer<typeof createCrmFollowupSchema>;

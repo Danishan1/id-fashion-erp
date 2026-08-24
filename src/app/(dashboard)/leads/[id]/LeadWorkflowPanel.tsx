@@ -40,12 +40,19 @@ interface Followup {
   id: string;
   followupDate: string;
   type: string;
+  priority: "LOW" | "MEDIUM" | "HIGH";
   status: "PENDING" | "COMPLETED" | "CANCELLED";
   notes: string | null;
   assignedTo: { fullName: string } | null;
 }
 
 const INTERACTION_TYPES = ["CALL", "WHATSAPP", "EMAIL", "MEETING", "NOTE"] as const;
+const FOLLOWUP_PRIORITIES = ["LOW", "MEDIUM", "HIGH"] as const;
+const PRIORITY_BADGE_CLASS: Record<(typeof FOLLOWUP_PRIORITIES)[number], string> = {
+  HIGH: "bg-red-100 text-red-700 dark:bg-red-500/10 dark:text-red-300",
+  MEDIUM: "bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300",
+  LOW: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300",
+};
 
 export function LeadWorkflowPanel({ lead }: { lead: LeadDetail }) {
   const [activities, setActivities] = useState<Activity[]>([]);
@@ -65,6 +72,7 @@ export function LeadWorkflowPanel({ lead }: { lead: LeadDetail }) {
 
   const [followupDate, setFollowupDate] = useState("");
   const [followupType, setFollowupType] = useState<(typeof INTERACTION_TYPES)[number]>("CALL");
+  const [followupPriority, setFollowupPriority] = useState<(typeof FOLLOWUP_PRIORITIES)[number]>("MEDIUM");
   const [followupNotes, setFollowupNotes] = useState("");
 
   const loadActivities = () =>
@@ -118,6 +126,7 @@ export function LeadWorkflowPanel({ lead }: { lead: LeadDetail }) {
         assignedToUserId: lead.assignedTo?.id,
         followupDate,
         type: followupType,
+        priority: followupPriority,
         notes: followupNotes || undefined,
       }),
     });
@@ -128,6 +137,7 @@ export function LeadWorkflowPanel({ lead }: { lead: LeadDetail }) {
     }
     setFollowupDate("");
     setFollowupNotes("");
+    setFollowupPriority("MEDIUM");
     setShowFollowupModal(false);
     loadFollowups();
   };
@@ -245,7 +255,8 @@ export function LeadWorkflowPanel({ lead }: { lead: LeadDetail }) {
                   <span className={isOverdue(f) ? "font-medium text-red-600 dark:text-red-400" : "text-zinc-900 dark:text-zinc-50"}>
                     {new Date(f.followupDate).toLocaleString()}
                   </span>{" "}
-                  · {f.type} · {f.status}
+                  · {f.type} · {f.status}{" "}
+                  <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium uppercase ${PRIORITY_BADGE_CLASS[f.priority]}`}>{f.priority}</span>
                   {f.notes && <p className="text-xs text-zinc-500">{f.notes}</p>}
                 </div>
                 {f.status === "PENDING" && (
@@ -324,6 +335,15 @@ export function LeadWorkflowPanel({ lead }: { lead: LeadDetail }) {
               {INTERACTION_TYPES.map((t) => (
                 <option key={t} value={t}>
                   {t}
+                </option>
+              ))}
+            </select>
+          </FormField>
+          <FormField label="Priority" htmlFor="followupPriority">
+            <select id="followupPriority" value={followupPriority} onChange={(e) => setFollowupPriority(e.target.value as typeof followupPriority)} className={textInputClass()}>
+              {FOLLOWUP_PRIORITIES.map((p) => (
+                <option key={p} value={p}>
+                  {p}
                 </option>
               ))}
             </select>

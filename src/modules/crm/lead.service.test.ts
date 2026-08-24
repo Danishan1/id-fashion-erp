@@ -2,6 +2,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/numbering/DocumentNumberingService", () => ({ generateDocumentNumber: vi.fn() }));
+// Same 80/50 pair the hardcoded literals used to be — keeps every existing
+// priority assertion in this file valid now that thresholds are a real
+// per-company DB setting rather than a literal inside computeLeadPriority.
+vi.mock("./crm-settings.service", () => ({
+  getCrmSettings: vi.fn().mockResolvedValue({ hotThreshold: 80, warmThreshold: 50 }),
+  DEFAULT_LEAD_PRIORITY_THRESHOLDS: { hotThreshold: 80, warmThreshold: 50 },
+}));
 vi.mock("@/core/db/client", () => ({
   prisma: {
     user: { findMany: vi.fn() },
@@ -58,6 +65,13 @@ describe("computeLeadPriority", () => {
 
   it("handles a Decimal-shaped string the same as a number", () => {
     expect(computeLeadPriority("80.00")).toBe("HOT");
+  });
+
+  it("uses a custom threshold pair instead of the 80/50 default when one is supplied", () => {
+    const custom = { hotThreshold: 90, warmThreshold: 60 };
+    expect(computeLeadPriority(85, custom)).toBe("WARM"); // would be HOT under the default 80 cutoff
+    expect(computeLeadPriority(55, custom)).toBe("NORMAL"); // would be WARM under the default 50 cutoff
+    expect(computeLeadPriority(90, custom)).toBe("HOT");
   });
 });
 

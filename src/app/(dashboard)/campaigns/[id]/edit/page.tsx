@@ -9,7 +9,7 @@ export default async function EditCampaignPage({ params }: { params: Promise<{ i
   const session = await auth();
 
   const campaign = await getCampaignById(session!.user.companyId, id).catch(() => null);
-  if (!campaign) notFound();
+  if (!campaign || campaign.status === "COMPLETED") notFound();
 
   return (
     <div className="space-y-4">

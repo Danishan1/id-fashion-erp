@@ -1,6 +1,7 @@
 "use client";
 
 import { signOut } from "next-auth/react";
+import { NotificationBell } from "./NotificationBell";
 
 interface TopbarProps {
   userName: string;
@@ -17,6 +18,7 @@ export function Topbar({ userName }: TopbarProps) {
         />
       </div>
       <div className="flex items-center gap-4">
+        <NotificationBell />
         <span className="text-sm text-zinc-600 dark:text-zinc-300">{userName}</span>
         <button
           onClick={() => signOut({ callbackUrl: "/login" })}

@@ -1,7 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
-vi.mock("@/core/numbering/DocumentNumberingService", () => ({ generateDocumentNumber: vi.fn() }));
+vi.mock("@/core/numbering/DocumentNumberingService", () => ({ generateDocumentNumber: vi.fn(), advanceMasterCodeSequence: vi.fn() }));
+vi.mock("@/core/db/client", () => ({
+  prisma: {
+    crmActivity: { create: vi.fn() },
+    crmFollowup: { create: vi.fn() },
+    $transaction: vi.fn(),
+  },
+}));
 vi.mock("./deal.repository", () => ({
   DealRepository: {
     create: vi.fn(),
@@ -12,6 +19,7 @@ vi.mock("./deal.repository", () => ({
   },
 }));
 
+const { prisma } = await import("@/core/db/client");
 const { generateDocumentNumber } = await import("@/core/numbering/DocumentNumberingService");
 const { DealRepository } = await import("./deal.repository");
 const { computeWeightedValue, createDeal, changeDealStage, updateDeal, getSalesLeaderboard } = await import("./deal.service");
@@ -24,6 +32,7 @@ beforeEach(() => {
   vi.mocked(DealRepository.update).mockReset();
   vi.mocked(DealRepository.findAnyById).mockReset();
   vi.mocked(DealRepository.salesLeaderboard).mockReset();
+  vi.mocked(prisma.crmActivity.create).mockReset().mockResolvedValue({} as never);
 });
 
 describe("computeWeightedValue", () => {
@@ -84,6 +93,19 @@ describe("changeDealStage", () => {
     await changeDealStage(actor, "deal-1", { stage: "LOST", lostReason: "Budget cut" } as never);
 
     expect(DealRepository.update).toHaveBeenCalledWith("deal-1", expect.objectContaining({ stage: "LOST", lostReason: "Budget cut", probabilityPercent: 0 }));
+  });
+
+  it("leaves an activity-timeline entry for every stage move, whether from the detail page or the pipeline board", async () => {
+    vi.mocked(DealRepository.findAnyById).mockResolvedValue({ id: "deal-1", stage: "QUALIFIED", probabilityPercent: "20" } as never);
+    vi.mocked(DealRepository.update).mockResolvedValue({ id: "deal-1", value: "0", probabilityPercent: "20" } as never);
+
+    await changeDealStage(actor, "deal-1", { stage: "PROPOSAL" } as never);
+
+    expect(prisma.crmActivity.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ relatedModule: "DEAL", relatedRecordId: "deal-1", subject: "Stage changed: QUALIFIED → PROPOSAL" }),
+      })
+    );
   });
 });
 

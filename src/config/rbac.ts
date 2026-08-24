@@ -78,7 +78,12 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     masters_core: ["view"],
     masters_finance: ["view"],
     crm: ["view", "export"],
-    marketing: ["view", "export"],
+    // Approve/reject added deliberately for the Campaign approval workflow —
+    // MANAGEMENT is the checkpoint (mirrors their identical approve/reject
+    // shape on `sampling` just below), MERCHANDISER (the creator) stays
+    // view/create/edit/export/print only, same self-approval-guard reasoning
+    // as every other final approval checkpoint in this project.
+    marketing: ["view", "approve", "reject", "export"],
     // No dedicated HR role exists yet in this system — MANAGEMENT owns
     // attendance/leave for now (same "closest existing manager role" default
     // used for crm/marketing above), including leave approval.

@@ -5,6 +5,7 @@ import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingServic
 import type { ListQuery } from "@/lib/list-query";
 import type { LeadPriority, Prisma } from "@prisma/client";
 import { CrmRoundRobinRepository, LeadRepository } from "./lead.repository";
+import { DEFAULT_LEAD_PRIORITY_THRESHOLDS, getCrmSettings, type LeadPriorityThresholds } from "./crm-settings.service";
 import type { CreateLeadInput, UpdateLeadInput } from "./lead.schema";
 
 export interface ActorContext {
@@ -14,17 +15,22 @@ export interface ActorContext {
 }
 
 /** Deliberately NOT a stored column — see the Prisma schema's own comment on
- * LeadPriority. Same thresholds as the source (>=80 hot, >=50 warm, else
- * normal), computed fresh from leadScore every time so it can never drift. */
-export function computeLeadPriority(leadScore: number | string | Prisma.Decimal): LeadPriority {
+ * LeadPriority. Thresholds default to the original 80/50 pair but are now a
+ * real per-company setting (`CrmSettings`, see crm-settings.service.ts)
+ * instead of a hardcoded literal — computed fresh from leadScore every time
+ * so it can never drift. */
+export function computeLeadPriority(
+  leadScore: number | string | Prisma.Decimal,
+  thresholds: LeadPriorityThresholds = DEFAULT_LEAD_PRIORITY_THRESHOLDS
+): LeadPriority {
   const score = Number(leadScore);
-  if (score >= 80) return "HOT";
-  if (score >= 50) return "WARM";
+  if (score >= thresholds.hotThreshold) return "HOT";
+  if (score >= thresholds.warmThreshold) return "WARM";
   return "NORMAL";
 }
 
-function decorateLead<T extends { leadScore: Prisma.Decimal | number | string }>(lead: T) {
-  return { ...lead, priority: computeLeadPriority(lead.leadScore) };
+function decorateLead<T extends { leadScore: Prisma.Decimal | number | string }>(lead: T, thresholds: LeadPriorityThresholds) {
+  return { ...lead, priority: computeLeadPriority(lead.leadScore, thresholds) };
 }
 
 async function assertNoDuplicate(
@@ -79,18 +85,19 @@ export async function listLeads(companyId: string, query: ListQuery) {
       : {}),
   };
 
-  const [data, totalCount] = await Promise.all([
+  const [data, totalCount, thresholds] = await Promise.all([
     LeadRepository.findMany(where, { orderBy: { [query.sortBy]: query.sortOrder }, skip: query.skip, take: query.take }),
     LeadRepository.count(where),
+    getCrmSettings(companyId),
   ]);
 
-  return { data: data.map(decorateLead), totalCount };
+  return { data: data.map((l) => decorateLead(l, thresholds)), totalCount };
 }
 
 export async function getLeadById(companyId: string, id: string) {
-  const lead = await LeadRepository.findByIdWithDetails(companyId, id);
+  const [lead, thresholds] = await Promise.all([LeadRepository.findByIdWithDetails(companyId, id), getCrmSettings(companyId)]);
   if (!lead) throw new BusinessRuleError("NOT_FOUND", "Lead not found.", { id });
-  return decorateLead(lead);
+  return decorateLead(lead, thresholds);
 }
 
 export async function createLead(actor: ActorContext, input: CreateLeadInput) {
@@ -149,7 +156,7 @@ export async function createLead(actor: ActorContext, input: CreateLeadInput) {
     newValues: { leadNumber, name: input.name, source: input.source },
   });
 
-  return decorateLead(lead);
+  return decorateLead(lead, await getCrmSettings(actor.companyId));
 }
 
 export async function updateLead(actor: ActorContext, id: string, input: UpdateLeadInput) {
@@ -184,5 +191,5 @@ export async function updateLead(actor: ActorContext, id: string, input: UpdateL
     newValues: { status: updated.status, assignedToUserId: updated.assignedToUserId },
   });
 
-  return decorateLead(updated);
+  return decorateLead(updated, await getCrmSettings(actor.companyId));
 }

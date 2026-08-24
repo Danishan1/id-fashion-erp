@@ -43,4 +43,23 @@ export const CrmFollowupRepository = {
 
   countOverdue: (companyId: string, now: Date) =>
     prisma.crmFollowup.count({ where: { companyId, status: "PENDING", followupDate: { lt: now } } }),
+
+  countDueToday: (companyId: string, startOfToday: Date, startOfTomorrow: Date) =>
+    prisma.crmFollowup.count({ where: { companyId, status: "PENDING", followupDate: { gte: startOfToday, lt: startOfTomorrow } } }),
+
+  countUpcoming: (companyId: string, startOfTomorrow: Date) =>
+    prisma.crmFollowup.count({ where: { companyId, status: "PENDING", followupDate: { gte: startOfTomorrow } } }),
+
+  countCompleted: (companyId: string) => prisma.crmFollowup.count({ where: { companyId, status: "COMPLETED" } }),
+
+  /** Every non-cancelled follow-up company-wide, for the Follow-up
+   * Management screen — bucketing into overdue/due-today/upcoming/completed
+   * happens in the service layer so the date-boundary logic lives in one
+   * place alongside `getFollowupCounters()`. */
+  findAllForCompany: (companyId: string) =>
+    prisma.crmFollowup.findMany({
+      where: { companyId, status: { not: "CANCELLED" } },
+      include: { assignedTo: { select: { id: true, fullName: true } } },
+      orderBy: { followupDate: "asc" },
+    }),
 };

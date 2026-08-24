@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/core/db/client", () => ({ prisma: {} }));
+vi.mock("@/core/db/client", () => ({ prisma: { crmFollowup: { create: vi.fn() } } }));
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/numbering/DocumentNumberingService", () => ({
   generateDocumentNumber: vi.fn(),
@@ -49,10 +49,11 @@ vi.mock("./sample.repository", () => ({
   SampleCommentRepository: { create: vi.fn() },
 }));
 
-const { SampleVersionRepository, SampleMaterialRepository, SampleOtherChargeRepository } = await import(
+const { prisma } = await import("@/core/db/client");
+const { SampleRequestRepository, SampleVersionRepository, SampleMaterialRepository, SampleOtherChargeRepository } = await import(
   "./sample.repository"
 );
-const { recalculateSampleVersionCosting, addSampleMaterial } = await import("./sample.service");
+const { recalculateSampleVersionCosting, addSampleMaterial, transitionSampleStatus } = await import("./sample.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
 const fakeTx = {} as never;
@@ -66,6 +67,9 @@ beforeEach(() => {
   vi.mocked(SampleMaterialRepository.findByVersionAndMergeKey).mockReset();
   vi.mocked(SampleMaterialRepository.update).mockReset();
   vi.mocked(SampleMaterialRepository.findByVersionId).mockReset();
+  vi.mocked(SampleRequestRepository.findAnyById).mockReset();
+  vi.mocked(SampleRequestRepository.update).mockReset();
+  vi.mocked(prisma.crmFollowup.create).mockReset().mockResolvedValue({} as never);
 });
 
 describe("recalculateSampleVersionCosting", () => {
@@ -236,5 +240,35 @@ describe("addSampleMaterial merge branch", () => {
 
     expect(SampleMaterialRepository.update).toHaveBeenCalledWith("m-1", expect.objectContaining({ plannedQuantity: 8 }));
     expect(SampleVersionRepository.updateCostingIfUnlocked).toHaveBeenCalled();
+  });
+});
+
+describe("transitionSampleStatus", () => {
+  it("auto-creates a 3-day follow-up against the customer when a sample moves to SUBMITTED_TO_CUSTOMER", async () => {
+    vi.mocked(SampleRequestRepository.findAnyById).mockResolvedValue({
+      id: "sam-1",
+      status: "INTERNAL_QC",
+      requestNumber: "SAM-2026-00001",
+      styleName: "V-Neck T-Shirt",
+      customerId: "cust-1",
+    } as never);
+    vi.mocked(SampleRequestRepository.update).mockResolvedValue({ id: "sam-1", status: "SUBMITTED_TO_CUSTOMER" } as never);
+
+    await transitionSampleStatus(actor, "sam-1", "SUBMITTED_TO_CUSTOMER" as never);
+
+    expect(prisma.crmFollowup.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ relatedModule: "CUSTOMER", relatedRecordId: "cust-1", type: "EMAIL" }),
+      })
+    );
+  });
+
+  it("does not create a follow-up for a transition that isn't SUBMITTED_TO_CUSTOMER", async () => {
+    vi.mocked(SampleRequestRepository.findAnyById).mockResolvedValue({ id: "sam-1", status: "REQUESTED", customerId: "cust-1" } as never);
+    vi.mocked(SampleRequestRepository.update).mockResolvedValue({ id: "sam-1", status: "ON_HOLD" } as never);
+
+    await transitionSampleStatus(actor, "sam-1", "ON_HOLD" as never);
+
+    expect(prisma.crmFollowup.create).not.toHaveBeenCalled();
   });
 });

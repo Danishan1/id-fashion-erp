@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { Modal } from "@/components/ui/Modal";
 import { FormField, textInputClass } from "@/components/ui/FormField";
-import { CHANNEL_LABELS, STATUS_LABELS, ALERT_TYPE_LABELS } from "../statusLabels";
+import { CHANNEL_LABELS, STATUS_LABELS, APPROVAL_LABELS, ALERT_TYPE_LABELS } from "../statusLabels";
 
 interface DailyMetric {
   id: string;
@@ -41,6 +41,10 @@ interface CampaignDetail {
   objective: string | null;
   channel: keyof typeof CHANNEL_LABELS;
   status: keyof typeof STATUS_LABELS;
+  approvalStatus: "PENDING" | "APPROVED" | "REJECTED";
+  approvedBy: { fullName: string } | null;
+  approvedAt: string | null;
+  rejectionReason: string | null;
   budget: string;
   startDate: string | null;
   endDate: string | null;
@@ -51,6 +55,19 @@ interface CampaignDetail {
   attributions: Attribution[];
   alerts: Alert[];
 }
+
+const NEXT_STATUSES: Record<keyof typeof STATUS_LABELS, Array<keyof typeof STATUS_LABELS>> = {
+  DRAFT: ["ACTIVE"],
+  ACTIVE: ["PAUSED", "COMPLETED"],
+  PAUSED: ["ACTIVE", "COMPLETED"],
+  COMPLETED: [],
+};
+
+const APPROVAL_BADGE_CLASS: Record<CampaignDetail["approvalStatus"], string> = {
+  PENDING: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
+  APPROVED: "bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-300",
+  REJECTED: "bg-red-100 text-red-700 dark:bg-red-500/10 dark:text-red-300",
+};
 
 export function CampaignWorkflowPanel({ campaign }: { campaign: CampaignDetail }) {
   const [dailyMetrics, setDailyMetrics] = useState(campaign.dailyMetrics);
@@ -63,9 +80,60 @@ export function CampaignWorkflowPanel({ campaign }: { campaign: CampaignDetail }
   const [error, setError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [automationMessage, setAutomationMessage] = useState<string | null>(null);
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
 
   const roas = campaign.metrics.spend ? campaign.metrics.revenue / campaign.metrics.spend : 0;
   const cpl = campaign.metrics.leads ? campaign.metrics.spend / campaign.metrics.leads : 0;
+  const isApproved = campaign.approvalStatus === "APPROVED";
+
+  const changeStatus = async (status: keyof typeof STATUS_LABELS) => {
+    setIsBusy(true);
+    setError(null);
+    const res = await fetch(`/api/v1/campaigns/${campaign.id}/status`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status }),
+    });
+    setIsBusy(false);
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      setError(body?.error?.message ?? "Failed to change status.");
+      return;
+    }
+    window.location.reload();
+  };
+
+  const approve = async () => {
+    setIsBusy(true);
+    setError(null);
+    const res = await fetch(`/api/v1/campaigns/${campaign.id}/approve`, { method: "POST" });
+    setIsBusy(false);
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      setError(body?.error?.message ?? "Failed to approve this campaign.");
+      return;
+    }
+    window.location.reload();
+  };
+
+  const reject = async () => {
+    setIsBusy(true);
+    setError(null);
+    const res = await fetch(`/api/v1/campaigns/${campaign.id}/reject`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason: rejectReason }),
+    });
+    setIsBusy(false);
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      setError(body?.error?.message ?? "Failed to reject this campaign.");
+      return;
+    }
+    setShowRejectModal(false);
+    window.location.reload();
+  };
 
   const submitMetric = async () => {
     setError(null);
@@ -109,18 +177,68 @@ export function CampaignWorkflowPanel({ campaign }: { campaign: CampaignDetail }
         <span className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
           {STATUS_LABELS[campaign.status]}
         </span>
-        <Link href={`/campaigns/${campaign.id}/edit`} className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400">
-          Edit
-        </Link>
+        <span className={`rounded-full px-3 py-1 text-xs font-medium ${APPROVAL_BADGE_CLASS[campaign.approvalStatus]}`}>
+          {APPROVAL_LABELS[campaign.approvalStatus]}
+        </span>
+        {campaign.status !== "COMPLETED" && (
+          <Link href={`/campaigns/${campaign.id}/edit`} className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400">
+            Edit
+          </Link>
+        )}
+        {campaign.approvalStatus !== "APPROVED" && (
+          <button
+            type="button"
+            disabled={isBusy}
+            onClick={approve}
+            className="rounded-md bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-500 disabled:opacity-60"
+          >
+            Approve
+          </button>
+        )}
+        {campaign.approvalStatus !== "REJECTED" && (
+          <button
+            type="button"
+            disabled={isBusy}
+            onClick={() => setShowRejectModal(true)}
+            className="rounded-md border border-red-300 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-900/20"
+          >
+            Reject
+          </button>
+        )}
+        {NEXT_STATUSES[campaign.status].map((s) => (
+          <button
+            key={s}
+            type="button"
+            disabled={isBusy}
+            onClick={() => changeStatus(s)}
+            title={s === "ACTIVE" && !isApproved ? "This campaign must be Approved before it can run." : undefined}
+            className="rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+          >
+            Move to {STATUS_LABELS[s]}
+          </button>
+        ))}
         <button
           type="button"
-          disabled={isBusy}
+          disabled={isBusy || !isApproved}
           onClick={runAutomation}
+          title={!isApproved ? "Only Approved campaigns can run automation." : undefined}
           className="rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
         >
           Run Automation Now
         </button>
       </div>
+
+      {campaign.approvalStatus === "REJECTED" && campaign.rejectionReason && (
+        <p className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300">
+          Rejected — {campaign.rejectionReason}
+        </p>
+      )}
+      {campaign.approvalStatus === "APPROVED" && campaign.approvedBy && (
+        <p className="text-xs text-zinc-500 dark:text-zinc-400">
+          Approved by {campaign.approvedBy.fullName}
+          {campaign.approvedAt ? ` on ${new Date(campaign.approvedAt).toLocaleString()}` : ""}
+        </p>
+      )}
 
       {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
       {automationMessage && <p className="text-sm text-zinc-500">{automationMessage}</p>}
@@ -208,7 +326,13 @@ export function CampaignWorkflowPanel({ campaign }: { campaign: CampaignDetail }
       <div>
         <div className="mb-2 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Daily Metrics</h2>
-          <button type="button" onClick={() => setShowMetricModal(true)} className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400">
+          <button
+            type="button"
+            onClick={() => setShowMetricModal(true)}
+            disabled={!isApproved}
+            title={!isApproved ? "Only Approved campaigns can record metrics." : undefined}
+            className="text-sm font-medium text-indigo-600 hover:underline disabled:cursor-not-allowed disabled:text-zinc-400 disabled:no-underline dark:text-indigo-400 dark:disabled:text-zinc-600"
+          >
             + Record Daily Metrics
           </button>
         </div>
@@ -287,6 +411,22 @@ export function CampaignWorkflowPanel({ campaign }: { campaign: CampaignDetail }
             className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
           >
             Save
+          </button>
+        </div>
+      </Modal>
+
+      <Modal open={showRejectModal} onClose={() => setShowRejectModal(false)} title="Reject Campaign">
+        <div className="space-y-3">
+          <FormField label="Reason" htmlFor="rejectReason" required>
+            <textarea id="rejectReason" required value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} className={textInputClass()} rows={3} />
+          </FormField>
+          <button
+            type="button"
+            disabled={!rejectReason || isBusy}
+            onClick={reject}
+            className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-500 disabled:opacity-60"
+          >
+            Reject Campaign
           </button>
         </div>
       </Modal>

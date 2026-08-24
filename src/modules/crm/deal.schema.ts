@@ -18,6 +18,26 @@ export type CreateDealInput = z.infer<typeof createDealSchema>;
 export const updateDealSchema = createDealSchema;
 export type UpdateDealInput = z.infer<typeof updateDealSchema>;
 
+// Two distinct modes for closing the Deal→Customer gap: CREATE makes a brand
+// new Customer (with a name-based duplicate check, overridable — mirrors
+// Lead's own duplicate-detection shape), LINK attaches an already-existing
+// one. Only reachable once a Deal is WON (enforced in the service, not here).
+export const convertDealToCustomerSchema = z.discriminatedUnion("mode", [
+  z.object({
+    mode: z.literal("CREATE"),
+    name: z.string().min(1, "Customer name is required").max(200),
+    code: z.string().min(1, "Code is required").max(30),
+    type: z.enum(["CUSTOMER", "AGENT"]).default("CUSTOMER"),
+    country: z.string().max(100).optional().or(z.literal("")),
+    overrideDuplicateCheck: z.boolean().optional(),
+  }),
+  z.object({
+    mode: z.literal("LINK"),
+    customerId: z.string().uuid("Select a customer"),
+  }),
+]);
+export type ConvertDealToCustomerInput = z.infer<typeof convertDealToCustomerSchema>;
+
 export const dealStageChangeSchema = z
   .object({
     stage: z.enum(DEAL_STAGES),

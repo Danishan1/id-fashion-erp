@@ -4,6 +4,7 @@ import type { Prisma } from "@prisma/client";
 const DETAIL_INCLUDE = {
   owner: { select: { id: true, fullName: true } },
   createdBy: { select: { id: true, fullName: true } },
+  approvedBy: { select: { id: true, fullName: true } },
   dailyMetrics: { orderBy: { metricDate: "desc" as const }, take: 60 },
   attributions: { orderBy: { createdAt: "desc" as const }, take: 50, include: { lead: { select: { id: true, leadNumber: true, name: true } } } },
   alerts: { orderBy: { createdAt: "desc" as const }, take: 50 },

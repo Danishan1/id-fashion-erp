@@ -61,9 +61,19 @@ export interface InitialOrder {
   items: InitialOrderItem[];
 }
 
-export function SalesOrderForm({ initialOrder }: { initialOrder?: InitialOrder } = {}) {
+export function SalesOrderForm({
+  initialOrder,
+  presetCustomerId,
+  originatingDealId,
+  originatingDealNumber,
+}: {
+  initialOrder?: InitialOrder;
+  presetCustomerId?: string;
+  originatingDealId?: string;
+  originatingDealNumber?: string;
+} = {}) {
   const router = useRouter();
-  const [customerId, setCustomerId] = useState(initialOrder?.customerId ?? "");
+  const [customerId, setCustomerId] = useState(initialOrder?.customerId ?? presetCustomerId ?? "");
   const [buyerId, setBuyerId] = useState(initialOrder?.buyerId ?? "");
   const [orderDate, setOrderDate] = useState(initialOrder ? initialOrder.orderDate.slice(0, 10) : TODAY);
   const [requiredShipDate, setRequiredShipDate] = useState(initialOrder?.requiredShipDate?.slice(0, 10) ?? "");
@@ -206,6 +216,7 @@ export function SalesOrderForm({ initialOrder }: { initialOrder?: InitialOrder }
         buyerId: buyerId || undefined,
         orderDate,
         requiredShipDate: requiredShipDate || undefined,
+        originatingDealId: !initialOrder && originatingDealId ? originatingDealId : undefined,
         items: payloadItems,
         overrideReason: initialOrder && useOverride ? overrideReason : undefined,
       }),
@@ -236,6 +247,11 @@ export function SalesOrderForm({ initialOrder }: { initialOrder?: InitialOrder }
 
   return (
     <form onSubmit={handleSubmit} className="max-w-3xl space-y-6">
+      {!initialOrder && originatingDealId && (
+        <p className="rounded-md bg-indigo-50 px-3 py-2 text-sm text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-300">
+          Creating this order from Deal {originatingDealNumber ?? originatingDealId} — the link will be recorded on the order.
+        </p>
+      )}
       <div className="grid grid-cols-2 gap-4">
         <FormField label="Customer" htmlFor="customerId" required>
           <select

@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
-import { CHANNEL_LABELS, STATUS_LABELS, APPROVAL_LABELS } from "./statusLabels";
+import { CHANNEL_LABELS } from "./statusLabels";
 
 interface Option {
   id: string;
@@ -19,8 +19,6 @@ export interface InitialCampaign {
   endDate: string | null;
   budget: string;
   owner: { id: string } | null;
-  status: keyof typeof STATUS_LABELS;
-  approvalStatus: keyof typeof APPROVAL_LABELS;
   notes: string | null;
 }
 
@@ -33,8 +31,6 @@ export function CampaignForm({ initialCampaign }: { initialCampaign?: InitialCam
   const [endDate, setEndDate] = useState(initialCampaign?.endDate?.slice(0, 10) ?? "");
   const [budget, setBudget] = useState(initialCampaign?.budget ?? "0");
   const [ownerUserId, setOwnerUserId] = useState(initialCampaign?.owner?.id ?? "");
-  const [status, setStatus] = useState<keyof typeof STATUS_LABELS>(initialCampaign?.status ?? "DRAFT");
-  const [approvalStatus, setApprovalStatus] = useState<keyof typeof APPROVAL_LABELS>(initialCampaign?.approvalStatus ?? "PENDING");
   const [notes, setNotes] = useState(initialCampaign?.notes ?? "");
   const [users, setUsers] = useState<Option[]>([]);
 
@@ -65,8 +61,6 @@ export function CampaignForm({ initialCampaign }: { initialCampaign?: InitialCam
         endDate: endDate || undefined,
         budget: Number(budget),
         ownerUserId: ownerUserId || undefined,
-        status,
-        approvalStatus,
         notes: notes || undefined,
       }),
     });
@@ -118,37 +112,22 @@ export function CampaignForm({ initialCampaign }: { initialCampaign?: InitialCam
         </FormField>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
-        <FormField label="Owner" htmlFor="ownerUserId">
-          <select id="ownerUserId" value={ownerUserId} onChange={(e) => setOwnerUserId(e.target.value)} className={textInputClass()}>
-            <option value="">— None —</option>
-            {users.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.fullName}
-              </option>
-            ))}
-          </select>
-        </FormField>
-        <FormField label="Status" htmlFor="status">
-          <select id="status" value={status} onChange={(e) => setStatus(e.target.value as typeof status)} className={textInputClass()}>
-            {Object.entries(STATUS_LABELS).map(([value, label]) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </FormField>
-      </div>
-
-      <FormField label="Approval Status" htmlFor="approvalStatus">
-        <select id="approvalStatus" value={approvalStatus} onChange={(e) => setApprovalStatus(e.target.value as typeof approvalStatus)} className={textInputClass()}>
-          {Object.entries(APPROVAL_LABELS).map(([value, label]) => (
-            <option key={value} value={value}>
-              {label}
+      <FormField label="Owner" htmlFor="ownerUserId">
+        <select id="ownerUserId" value={ownerUserId} onChange={(e) => setOwnerUserId(e.target.value)} className={textInputClass()}>
+          <option value="">— None —</option>
+          {users.map((u) => (
+            <option key={u.id} value={u.id}>
+              {u.fullName}
             </option>
           ))}
         </select>
       </FormField>
+
+      {!initialCampaign && (
+        <p className="rounded-md bg-zinc-50 px-3 py-2 text-xs text-zinc-500 dark:bg-zinc-800/50 dark:text-zinc-400">
+          New campaigns start as Draft, pending approval. Status and approval are managed from the campaign&apos;s own page after it&apos;s created.
+        </p>
+      )}
 
       <FormField label="Notes" htmlFor="notes">
         <textarea id="notes" value={notes} onChange={(e) => setNotes(e.target.value)} className={textInputClass()} rows={3} />

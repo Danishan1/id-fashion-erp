@@ -11,7 +11,8 @@ export async function GET(req: NextRequest) {
     await PermissionService.assert(session.user.id, "marketing", "view");
 
     const query = parseListQuery(req.nextUrl.searchParams, "createdAt");
-    const { data, totalCount } = await listCampaigns(session.user.companyId, query);
+    const channel = req.nextUrl.searchParams.get("channel") ?? undefined;
+    const { data, totalCount } = await listCampaigns(session.user.companyId, query, channel);
 
     return NextResponse.json({ data, meta: buildListMeta(totalCount, query.page, query.pageSize) });
   } catch (error) {

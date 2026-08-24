@@ -3,6 +3,7 @@ import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingService";
 import { PermissionService } from "@/core/rbac/PermissionService";
 import type { ListQuery } from "@/lib/list-query";
+import { prisma } from "@/core/db/client";
 import { CustomerRepository } from "@/modules/customers/customer.repository";
 import { SampleRequestRepository } from "@/modules/sampling/sample.repository";
 import type { ConfirmSalesOrderInput, SalesOrderInput, UpdateSalesOrderInput } from "./sales-order.schema";
@@ -92,6 +93,15 @@ export async function createSalesOrder(actor: ActorContext, input: SalesOrderInp
   const company = await CompanyRepository.findBaseCurrencyCode(actor.companyId);
   if (!company) throw new BusinessRuleError("NOT_FOUND", "Company not found.", { id: actor.companyId });
 
+  // Tenant-scoped, same discipline every other polymorphic/cross-module FK
+  // in this codebase now follows (Sampling's addSampleMaterial fix, the
+  // 26-entity sweep) — never trust a client-supplied id belongs to this
+  // company without checking, even one that came from a same-app link.
+  if (input.originatingDealId) {
+    const deal = await prisma.deal.findFirst({ where: { id: input.originatingDealId, companyId: actor.companyId } });
+    if (!deal) throw new BusinessRuleError("NOT_FOUND", "The originating deal was not found.", { id: input.originatingDealId });
+  }
+
   // Always the company's own base currency — a customer's own
   // defaultCurrencyCode is deliberately NOT used here. Multi-currency UI is
   // deferred project-wide, and per-customer currency was causing orders to
@@ -118,6 +128,7 @@ export async function createSalesOrder(actor: ActorContext, input: SalesOrderInp
     buyerId: input.buyerId || null,
     orderDate: new Date(input.orderDate),
     requiredShipDate: input.requiredShipDate ? new Date(input.requiredShipDate) : null,
+    originatingDealId: input.originatingDealId || null,
     status: "DRAFT",
     currencyCode,
     exchangeRate: 1,

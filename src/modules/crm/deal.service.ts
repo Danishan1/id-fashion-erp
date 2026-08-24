@@ -1,11 +1,12 @@
 import { writeAuditLog } from "@/core/audit/AuditLogger";
+import { prisma } from "@/core/db/client";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
-import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingService";
+import { advanceMasterCodeSequence, generateDocumentNumber } from "@/core/numbering/DocumentNumberingService";
 import type { ListQuery } from "@/lib/list-query";
 import type { DealStage, Prisma } from "@prisma/client";
 import { DealRepository } from "./deal.repository";
 import type { ActorContext } from "./lead.service";
-import type { CreateDealInput, DealStageChangeInput, UpdateDealInput } from "./deal.schema";
+import type { ConvertDealToCustomerInput, CreateDealInput, DealStageChangeInput, UpdateDealInput } from "./deal.schema";
 
 /**
  * A real transition guard — the source lets a Deal jump between any of its
@@ -149,7 +150,152 @@ export async function changeDealStage(actor: ActorContext, id: string, input: De
     newValues: { stage: input.stage, lostReason: input.lostReason || null },
   });
 
+  // Every stage move — whether via the detail page's buttons or the pipeline
+  // board's drag-and-drop — leaves a real activity-timeline entry, not just
+  // a silent audit-log row, so the timeline reads as a full history of what
+  // happened to the deal.
+  await prisma.crmActivity.create({
+    data: {
+      companyId: actor.companyId,
+      relatedModule: "DEAL",
+      relatedRecordId: id,
+      activityType: "NOTE",
+      subject: `Stage changed: ${existing.stage} → ${input.stage}`,
+      body: input.stage === "LOST" ? input.lostReason || null : null,
+      performedByUserId: actor.userId,
+    },
+  });
+
   return decorateDeal(updated);
+}
+
+/**
+ * Closes the Deal→Customer gap flagged in the CRM/Marketing enhancement
+ * audit: `Deal.customerId` already existed as a plain manual link, but
+ * nothing guided a WON deal into a real Customer record. Only legal once a
+ * deal is WON and not already linked — both checked before the transaction
+ * even opens, so a doomed call never touches the DB. The actual Customer
+ * duplicate-check + create/link + Deal update happen in one transaction so a
+ * mid-write failure never leaves a half-created Customer dangling with no
+ * Deal pointing at it.
+ */
+export async function convertDealToCustomer(actor: ActorContext, dealId: string, input: ConvertDealToCustomerInput) {
+  const deal = await DealRepository.findAnyById(actor.companyId, dealId);
+  if (!deal) throw new BusinessRuleError("NOT_FOUND", "Deal not found.", { id: dealId });
+  if (deal.stage !== "WON") {
+    throw new BusinessRuleError(
+      "INVALID_STATE_TRANSITION",
+      `A deal can only be converted to a Customer once it is Won (current stage: "${deal.stage}").`,
+      { stage: deal.stage }
+    );
+  }
+  if (deal.customerId) {
+    throw new BusinessRuleError("REFERENCED_RECORD_IN_USE", "This deal is already linked to a customer.", { customerId: deal.customerId });
+  }
+
+  const { customer } = await prisma.$transaction(async (tx) => {
+    if (input.mode === "LINK") {
+      const existing = await tx.customer.findFirst({ where: { id: input.customerId, companyId: actor.companyId, deletedAt: null } });
+      if (!existing) throw new BusinessRuleError("NOT_FOUND", "Customer not found.", { id: input.customerId });
+
+      await tx.deal.update({ where: { id: dealId }, data: { customerId: existing.id } });
+      await tx.crmActivity.create({
+        data: {
+          companyId: actor.companyId,
+          relatedModule: "DEAL",
+          relatedRecordId: dealId,
+          activityType: "NOTE",
+          subject: "Linked to existing Customer",
+          body: `${existing.name} (${existing.code})`,
+          performedByUserId: actor.userId,
+        },
+      });
+      return { customer: existing };
+    }
+
+    if (!input.overrideDuplicateCheck) {
+      const duplicate = await tx.customer.findFirst({
+        where: { companyId: actor.companyId, deletedAt: null, name: { equals: input.name, mode: "insensitive" } },
+      });
+      if (duplicate) {
+        throw new BusinessRuleError(
+          "DUPLICATE_CUSTOMER_EXISTS",
+          `A customer named "${duplicate.name}" already exists (${duplicate.code}). Link to it instead, or confirm you want to create a new, separate customer.`,
+          { existingCustomerId: duplicate.id, existingCustomerName: duplicate.name, existingCustomerCode: duplicate.code }
+        );
+      }
+    }
+
+    const codeInUse = await tx.customer.findFirst({ where: { companyId: actor.companyId, code: input.code, deletedAt: null } });
+    if (codeInUse) {
+      throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Customer code "${input.code}" is already in use.`, { code: input.code });
+    }
+
+    const created = await tx.customer.create({
+      data: {
+        companyId: actor.companyId,
+        code: input.code,
+        name: input.name,
+        type: input.type,
+        country: input.country || null,
+        isActive: true,
+      },
+    });
+
+    await tx.deal.update({ where: { id: dealId }, data: { customerId: created.id } });
+    await tx.crmActivity.create({
+      data: {
+        companyId: actor.companyId,
+        relatedModule: "DEAL",
+        relatedRecordId: dealId,
+        activityType: "NOTE",
+        subject: "Converted to new Customer",
+        body: `${created.name} (${created.code})`,
+        performedByUserId: actor.userId,
+      },
+    });
+
+    return { customer: created };
+  });
+
+  if (input.mode === "CREATE") {
+    await advanceMasterCodeSequence(actor.companyId, "CUSTOMER");
+
+    // Marketing automation trigger: "Deal Won -> Customer Created -> Welcome
+    // Campaign" from the request's own example list. The "Welcome Campaign"
+    // half is deliberately NOT an actual Campaign enrollment — Campaign has
+    // no audience/targeting concept to attach a customer to, and building one
+    // would be a much larger, separate feature. This creates the real,
+    // achievable equivalent: a follow-up task prompting a human to actually
+    // send the welcome outreach. Scoped to CREATE only (a genuinely brand-new
+    // customer) — LINK reuses an existing, already-known customer, so a
+    // "welcome" message wouldn't make sense there.
+    await prisma.crmFollowup.create({
+      data: {
+        companyId: actor.companyId,
+        relatedModule: "CUSTOMER",
+        relatedRecordId: customer.id,
+        followupDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        type: "EMAIL",
+        priority: "MEDIUM",
+        notes: `Auto-created — send welcome outreach to ${customer.name}, converted from Deal.`,
+        createdByUserId: actor.userId,
+      },
+    });
+  }
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "crm_deals",
+    recordId: dealId,
+    action: "UPDATE",
+    oldValues: { customerId: null },
+    newValues: { customerId: customer.id, conversionMode: input.mode },
+  });
+
+  const updated = await DealRepository.findByIdWithDetails(actor.companyId, dealId);
+  return decorateDeal(updated!);
 }
 
 /** Mirrors the source's eq_crm_sales_dashboard()/eq_crm_saas_sales() query:

@@ -1,11 +1,15 @@
 import Link from "next/link";
 import { auth } from "@/core/auth/auth";
-import { getMarketingDashboard } from "@/modules/marketing/campaign.service";
+import { getMarketingDashboard, getMarketingTrends } from "@/modules/marketing/campaign.service";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
+import { TrendChart } from "./TrendChart";
 
 export default async function MarketingDashboardPage() {
   const session = await auth();
-  const stats = await getMarketingDashboard(session!.user.companyId);
+  const [stats, trends] = await Promise.all([
+    getMarketingDashboard(session!.user.companyId),
+    getMarketingTrends(session!.user.companyId, 30),
+  ]);
 
   const cards: Array<[string, string]> = [
     ["Budget", `₹${stats.budget.toLocaleString()}`],
@@ -35,9 +39,32 @@ export default async function MarketingDashboardPage() {
         ))}
       </div>
 
-      <Link href="/campaigns" className="inline-block text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400">
-        View all Campaigns →
-      </Link>
+      <div>
+        <h2 className="mb-2 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Last 30 Days</h2>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <TrendChart title="Spend" data={trends.map((t) => ({ date: t.date, value: t.spend }))} color="#dc2626" format={(v) => `₹${v.toLocaleString()}`} />
+          <TrendChart title="Leads" data={trends.map((t) => ({ date: t.date, value: t.leads }))} color="#4f46e5" />
+          <TrendChart title="Revenue" data={trends.map((t) => ({ date: t.date, value: t.revenue }))} color="#16a34a" format={(v) => `₹${v.toLocaleString()}`} />
+          <TrendChart title="Clicks" data={trends.map((t) => ({ date: t.date, value: t.clicks }))} color="#0891b2" />
+          <TrendChart title="Impressions" data={trends.map((t) => ({ date: t.date, value: t.impressions }))} color="#7c3aed" />
+          <TrendChart title="ROAS" data={trends.map((t) => ({ date: t.date, value: t.roas }))} color="#ea580c" format={(v) => `${v.toFixed(2)}x`} />
+        </div>
+      </div>
+
+      <div className="flex gap-4">
+        <Link href="/campaigns" className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400">
+          View all Campaigns →
+        </Link>
+        <Link href="/marketing/channel-performance" className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400">
+          Channel Performance →
+        </Link>
+        <Link href="/marketing/customer-segments" className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400">
+          Customer Segments →
+        </Link>
+        <Link href="/marketing/ad-integrations" className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400">
+          Ad Integrations →
+        </Link>
+      </div>
     </div>
   );
 }

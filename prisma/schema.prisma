@@ -89,9 +89,12 @@ model Company {
   crmActivities               CrmActivity[]
   crmFollowups                CrmFollowup[]
   crmRoundRobinState          CrmRoundRobinState?
+  crmSettings                 CrmSettings?
+  importBatches               ImportBatch[]
   campaigns                   Campaign[]
   campaignAttributions        CampaignAttribution[]
   campaignAlerts              CampaignAlert[]
+  adAccountConnections        AdAccountConnection[]
   attendanceRecords           AttendanceRecord[]
   leaveTypes                  LeaveType[]
   leaveRequests               LeaveRequest[]
@@ -198,7 +201,11 @@ model User {
   crmFollowupsCreated                  CrmFollowup[]                @relation("CrmFollowupCreatedBy")
   campaignsOwned                       Campaign[]                   @relation("CampaignOwner")
   campaignsCreated                     Campaign[]                   @relation("CampaignCreatedBy")
+  campaignsApproved                    Campaign[]                   @relation("CampaignApprovedBy")
   campaignDailyMetricsRecorded         CampaignDailyMetric[]
+  crmSettingsUpdated                   CrmSettings[]
+  importBatchesCreated                 ImportBatch[]
+  adAccountConnectionsCreated          AdAccountConnection[]
   attendanceRecordsRecorded            AttendanceRecord[]
   leaveRequestsApproved                LeaveRequest[]               @relation("LeaveRequestApprovedBy")
   leaveRequestsCreated                 LeaveRequest[]               @relation("LeaveRequestCreatedBy")
@@ -1638,19 +1645,26 @@ enum CrmFollowupStatus {
   CANCELLED
 }
 
+enum CrmFollowupPriority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
 model CrmFollowup {
-  id               String             @id @default(uuid()) @db.Uuid
-  companyId        String             @map("company_id") @db.Uuid
-  relatedModule    RelatedModule      @map("related_module")
-  relatedRecordId  String             @map("related_record_id") @db.Uuid
-  assignedToUserId String?            @map("assigned_to_user_id") @db.Uuid
-  followupDate     DateTime           @map("followup_date")
-  type             CrmInteractionType @default(CALL)
-  status           CrmFollowupStatus  @default(PENDING)
+  id               String              @id @default(uuid()) @db.Uuid
+  companyId        String              @map("company_id") @db.Uuid
+  relatedModule    RelatedModule       @map("related_module")
+  relatedRecordId  String              @map("related_record_id") @db.Uuid
+  assignedToUserId String?             @map("assigned_to_user_id") @db.Uuid
+  followupDate     DateTime            @map("followup_date")
+  type             CrmInteractionType  @default(CALL)
+  status           CrmFollowupStatus   @default(PENDING)
+  priority         CrmFollowupPriority @default(MEDIUM)
   notes            String?
-  completedAt      DateTime?          @map("completed_at")
-  createdByUserId  String             @map("created_by_user_id") @db.Uuid
-  createdAt        DateTime           @default(now()) @map("created_at")
+  completedAt      DateTime?           @map("completed_at")
+  createdByUserId  String              @map("created_by_user_id") @db.Uuid
+  createdAt        DateTime            @default(now()) @map("created_at")
 
   company    Company @relation(fields: [companyId], references: [id])
   assignedTo User?   @relation("CrmFollowupAssignedTo", fields: [assignedToUserId], references: [id])
@@ -1677,6 +1691,29 @@ model CrmRoundRobinState {
   company Company @relation(fields: [companyId], references: [id])
 
   @@map("crm_round_robin_state")
+}
+
+// Replaces the hardcoded 80/50 literals `computeLeadPriority()` used to have
+// baked in — one row per company, lazily created on first edit (a company
+// that never touches this keeps the same 80/50 defaults with no row at all,
+// same "create on first real use" precedent as this project's document
+// sequences). `warmThreshold` doubles as Marketing's own "qualified lead"
+// cutoff (`computeCampaignMetricsMap()`) — the source's own `lead_quality`
+// count was already documented as the identical score>=50 definition under a
+// different label, so both now read the one configurable value instead of
+// two separately hardcoded copies of the same number.
+model CrmSettings {
+  id              String   @id @default(uuid()) @db.Uuid
+  companyId       String   @unique @map("company_id") @db.Uuid
+  hotThreshold    Decimal  @default(80) @map("hot_threshold") @db.Decimal(5, 2)
+  warmThreshold   Decimal  @default(50) @map("warm_threshold") @db.Decimal(5, 2)
+  updatedByUserId String?  @map("updated_by_user_id") @db.Uuid
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  company   Company @relation(fields: [companyId], references: [id])
+  updatedBy User?   @relation(fields: [updatedByUserId], references: [id])
+
+  @@map("crm_settings")
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1722,32 +1759,42 @@ enum CampaignApprovalStatus {
 }
 
 model Campaign {
-  id              String                 @id @default(uuid()) @db.Uuid
-  companyId       String                 @map("company_id") @db.Uuid
-  branchId        String?                @map("branch_id") @db.Uuid
-  campaignNumber  String                 @map("campaign_number")
-  name            String
-  objective       String?
-  channel         CampaignChannel
-  startDate       DateTime?              @map("start_date") @db.Date
-  endDate         DateTime?              @map("end_date") @db.Date
-  budget          Decimal                @default(0) @db.Decimal(15, 2)
-  ownerUserId     String?                @map("owner_user_id") @db.Uuid
-  status          CampaignStatus         @default(DRAFT)
-  approvalStatus  CampaignApprovalStatus @default(PENDING) @map("approval_status")
-  notes           String?
-  createdByUserId String                 @map("created_by_user_id") @db.Uuid
-  createdAt       DateTime               @default(now()) @map("created_at")
-  updatedAt       DateTime               @updatedAt @map("updated_at")
+  id               String                 @id @default(uuid()) @db.Uuid
+  companyId        String                 @map("company_id") @db.Uuid
+  branchId         String?                @map("branch_id") @db.Uuid
+  campaignNumber   String                 @map("campaign_number")
+  name             String
+  objective        String?
+  channel          CampaignChannel
+  startDate        DateTime?              @map("start_date") @db.Date
+  endDate          DateTime?              @map("end_date") @db.Date
+  budget           Decimal                @default(0) @db.Decimal(15, 2)
+  ownerUserId      String?                @map("owner_user_id") @db.Uuid
+  status           CampaignStatus         @default(DRAFT)
+  approvalStatus   CampaignApprovalStatus @default(PENDING) @map("approval_status")
+  // Approval metadata — who/when/why, mirroring the same "who/when" shape
+  // already used for SampleVersion's costing lock rather than a bare
+  // boolean. rejectionReason is cleared on a later approval, and vice versa
+  // (approvedBy/approvedAt cleared on a later rejection) — the three fields
+  // together always describe exactly one decision, never a stale mix of both.
+  approvedByUserId String?                @map("approved_by_user_id") @db.Uuid
+  approvedAt       DateTime?              @map("approved_at")
+  rejectionReason  String?                @map("rejection_reason")
+  notes            String?
+  createdByUserId  String                 @map("created_by_user_id") @db.Uuid
+  createdAt        DateTime               @default(now()) @map("created_at")
+  updatedAt        DateTime               @updatedAt @map("updated_at")
 
-  company      Company               @relation(fields: [companyId], references: [id])
-  branch       Branch?               @relation(fields: [branchId], references: [id])
-  owner        User?                 @relation("CampaignOwner", fields: [ownerUserId], references: [id])
-  createdBy    User                  @relation("CampaignCreatedBy", fields: [createdByUserId], references: [id])
-  dailyMetrics CampaignDailyMetric[]
-  attributions CampaignAttribution[]
-  alerts       CampaignAlert[]
-  leads        Lead[]
+  company         Company               @relation(fields: [companyId], references: [id])
+  branch          Branch?               @relation(fields: [branchId], references: [id])
+  owner           User?                 @relation("CampaignOwner", fields: [ownerUserId], references: [id])
+  createdBy       User                  @relation("CampaignCreatedBy", fields: [createdByUserId], references: [id])
+  approvedBy      User?                 @relation("CampaignApprovedBy", fields: [approvedByUserId], references: [id])
+  dailyMetrics    CampaignDailyMetric[]
+  attributions    CampaignAttribution[]
+  alerts          CampaignAlert[]
+  leads           Lead[]
+  adCampaignLinks AdCampaignLink[]
 
   @@unique([companyId, campaignNumber])
   @@index([companyId, status])
@@ -1778,6 +1825,79 @@ model CampaignDailyMetric {
 
   @@unique([campaignId, metricDate])
   @@map("mkt_campaign_daily_metrics")
+}
+
+enum AdPlatform {
+  META
+  GOOGLE
+}
+
+enum AdConnectionStatus {
+  CONNECTED
+  // Set only by a deliberate user action (Disconnect) — never inferred from
+  // an expired token, since that's a recoverable ERROR state, not a decision
+  // to stop syncing.
+  DISCONNECTED
+  // A sync attempt failed (expired/revoked token, API error) — surfaced with
+  // lastSyncError so the connection page can point at "reconnect" rather
+  // than silently retrying forever with no explanation.
+  ERROR
+}
+
+// One row per connected external ad account (a company can connect more than
+// one Meta ad account or Google Ads customer ID). Tokens are encrypted at
+// rest (src/core/security/encryption.ts) — these are live credentials with
+// real ad-spend-account access, not app-internal data, so plaintext storage
+// would be a real, easily avoidable vulnerability.
+model AdAccountConnection {
+  id                    String             @id @default(uuid()) @db.Uuid
+  companyId             String             @map("company_id") @db.Uuid
+  platform              AdPlatform
+  externalAccountId     String             @map("external_account_id")
+  accountName           String             @map("account_name")
+  accessTokenEncrypted  String             @map("access_token_encrypted")
+  refreshTokenEncrypted String?            @map("refresh_token_encrypted")
+  tokenExpiresAt        DateTime?          @map("token_expires_at")
+  status                AdConnectionStatus @default(CONNECTED)
+  lastSyncedAt          DateTime?          @map("last_synced_at")
+  lastSyncError         String?            @map("last_sync_error")
+  connectedByUserId     String             @map("connected_by_user_id") @db.Uuid
+  createdAt             DateTime           @default(now()) @map("created_at")
+  updatedAt             DateTime           @updatedAt @map("updated_at")
+
+  company       Company          @relation(fields: [companyId], references: [id])
+  connectedBy   User             @relation(fields: [connectedByUserId], references: [id])
+  campaignLinks AdCampaignLink[]
+
+  @@unique([companyId, platform, externalAccountId])
+  @@index([companyId, platform])
+  @@map("ad_account_connections")
+}
+
+// Maps one external ad-platform campaign to (at most) one local Campaign
+// record. Deliberately a separate mapping table, not a field on Campaign
+// itself — one local Campaign has no reason to know about ad-platform
+// wiring, and a connection can see many external campaigns the user hasn't
+// (or won't) map to anything local yet; those stay listed with
+// localCampaignId = null rather than auto-creating a local Campaign per
+// external one (would flood the Campaigns list with entries nobody asked
+// for and bypass this project's own approval-workflow gate on new
+// campaigns).
+model AdCampaignLink {
+  id                   String   @id @default(uuid()) @db.Uuid
+  connectionId         String   @map("connection_id") @db.Uuid
+  externalCampaignId   String   @map("external_campaign_id")
+  externalCampaignName String   @map("external_campaign_name")
+  localCampaignId      String?  @map("local_campaign_id") @db.Uuid
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  connection    AdAccountConnection @relation(fields: [connectionId], references: [id])
+  localCampaign Campaign?           @relation(fields: [localCampaignId], references: [id])
+
+  @@unique([connectionId, externalCampaignId])
+  @@index([localCampaignId])
+  @@map("ad_campaign_links")
 }
 
 // Multi-touch attribution record — a distinct concept from Lead itself
@@ -3038,6 +3158,7 @@ enum RelatedModule {
   STOCK_MOVEMENT
   LEAD
   DEAL
+  CRM_FOLLOWUP
 }
 
 model Attachment {
@@ -3088,6 +3209,40 @@ model Notification {
 
   @@index([userId, isRead])
   @@map("notifications")
+}
+
+enum ImportBatchType {
+  LEAD
+  DEAL
+  CAMPAIGN_DAILY_METRIC
+}
+
+// "Import history" from the CRM/Marketing enhancement request's own CSV
+// import spec — one row per completed import run (not per imported record;
+// the imported Leads/Deals/DailyMetrics are the real rows, this is just the
+// run's own summary + a way to look back at what was imported and when).
+// `failedRowsJson` stores just enough to reconstruct a "download failed
+// rows" CSV after the fact — the original file itself is never persisted
+// (this project's file storage has no import-specific retention policy, and
+// keeping the raw upload would be a real data-retention decision, not a
+// side effect of this feature).
+model ImportBatch {
+  id              String          @id @default(uuid()) @db.Uuid
+  companyId       String          @map("company_id") @db.Uuid
+  importType      ImportBatchType @map("import_type")
+  fileName        String          @map("file_name")
+  totalRows       Int             @map("total_rows")
+  importedCount   Int             @map("imported_count")
+  skippedCount    Int             @map("skipped_count")
+  failedRowsJson  Json?           @map("failed_rows_json")
+  createdByUserId String          @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime        @default(now()) @map("created_at")
+
+  company   Company @relation(fields: [companyId], references: [id])
+  createdBy User    @relation(fields: [createdByUserId], references: [id])
+
+  @@index([companyId, importType])
+  @@map("import_batches")
 }
 
 enum AuditAction {

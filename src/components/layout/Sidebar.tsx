@@ -6,10 +6,13 @@ import { usePathname } from "next/navigation";
 const NAV_SECTIONS = [
   { label: "Dashboard", href: "/dashboard" },
   { label: "Masters", href: "/masters" },
+  { label: "CRM", href: "/crm" },
   { label: "Leads", href: "/leads" },
   { label: "Deals", href: "/deals" },
+  { label: "Follow-ups", href: "/follow-ups" },
   { label: "Marketing", href: "/marketing" },
   { label: "Campaigns", href: "/campaigns" },
+  { label: "Import History", href: "/imports" },
   { label: "Attendance", href: "/attendance" },
   { label: "Leave Requests", href: "/leave-requests" },
   { label: "Leave Types", href: "/leave-types" },
