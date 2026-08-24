@@ -87,6 +87,27 @@ describe("createSalesInvoice", () => {
     ).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
   });
 
+  it.each(["PARTIALLY_DISPATCHED", "DISPATCHED"] as const)(
+    "regression (Phase 8): accepts an order in %s status — a partially/fully dispatched order must still be invoiceable",
+    async (status) => {
+      vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue({
+        id: "so-1",
+        status,
+        customerId: "cust-1",
+        customer: { paymentTermsDays: 30 },
+        currencyCode: "INR",
+        exchangeRate: 1,
+        baseCurrencyCode: "INR",
+        items: [orderItem("item-1", "100.00", [10])],
+      } as never);
+      vi.mocked(SalesInvoiceRepository.createWithItems).mockResolvedValue({ id: "inv-1" } as never);
+
+      await expect(
+        createSalesInvoice(actor, { salesOrderId: "so-1", invoiceDate: "2026-08-24", lines: [{ salesOrderItemId: "item-1", taxRateId: "" }] })
+      ).resolves.toBeDefined();
+    }
+  );
+
   it("rejects when the order already has an active invoice (the friendly pre-check)", async () => {
     vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue({
       id: "so-1",

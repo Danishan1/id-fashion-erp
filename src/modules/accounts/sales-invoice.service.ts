@@ -18,7 +18,13 @@ interface ActorContext {
   branchId?: string | null;
 }
 
-const ELIGIBLE_ORDER_STATUSES = ["CONFIRMED", "IN_PRODUCTION"] as const;
+// Widened for Phase 8 (Dispatch): an order that's been partially or fully
+// dispatched must still be invoiceable — real businesses invoice on either
+// side of shipment depending on payment terms, and before this fix,
+// createSalesInvoice() would permanently reject any order that had ever had
+// so much as one partial dispatch (PARTIALLY_DISPATCHED/DISPATCHED weren't
+// eligible at all).
+const ELIGIBLE_ORDER_STATUSES = ["CONFIRMED", "IN_PRODUCTION", "PARTIALLY_DISPATCHED", "DISPATCHED"] as const;
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
