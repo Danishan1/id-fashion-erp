@@ -575,6 +575,43 @@ async function main() {
     skipDuplicates: true,
   });
 
+  console.log("Seeding Chart of Accounts + Tax Config (Phase 7A)...");
+  await prisma.chartOfAccount.createMany({
+    data: [
+      { companyId, code: "CASH", name: "Cash", accountType: "ASSET" },
+      { companyId, code: "BANK", name: "Bank", accountType: "ASSET" },
+      { companyId, code: "AR", name: "Accounts Receivable", accountType: "ASSET", isSystemAccount: true },
+      { companyId, code: "GST-ITC", name: "GST Input Tax Credit", accountType: "ASSET", isSystemAccount: true },
+      { companyId, code: "AP", name: "Accounts Payable", accountType: "LIABILITY", isSystemAccount: true },
+      { companyId, code: "GST-PAY", name: "GST Payable", accountType: "LIABILITY", isSystemAccount: true },
+      { companyId, code: "RETAINED-EARN", name: "Retained Earnings", accountType: "EQUITY" },
+      { companyId, code: "SALES-REV", name: "Sales Revenue", accountType: "INCOME" },
+      { companyId, code: "COGS", name: "Purchases / Cost of Goods Sold", accountType: "EXPENSE" },
+      { companyId, code: "EXP-RENT", name: "Factory Rent", accountType: "EXPENSE" },
+      { companyId, code: "EXP-SALARY", name: "Salaries & Wages", accountType: "EXPENSE" },
+      { companyId, code: "EXP-UTIL", name: "Utilities", accountType: "EXPENSE" },
+    ],
+    skipDuplicates: true,
+  });
+
+  await prisma.taxType.createMany({
+    data: [{ companyId, code: "GST", name: "Goods & Services Tax" }],
+    skipDuplicates: true,
+  });
+  const gstTaxType = await prisma.taxType.findFirst({ where: { companyId, code: "GST" } });
+  if (gstTaxType) {
+    const existingRates = await prisma.taxRate.count({ where: { companyId, taxTypeId: gstTaxType.id } });
+    if (existingRates === 0) {
+      await prisma.taxRate.createMany({
+        data: [
+          { companyId, taxTypeId: gstTaxType.id, name: "GST 5%", ratePercentage: 5, effectiveFrom: new Date("2026-01-01") },
+          { companyId, taxTypeId: gstTaxType.id, name: "GST 12%", ratePercentage: 12, effectiveFrom: new Date("2026-01-01") },
+          { companyId, taxTypeId: gstTaxType.id, name: "GST 18%", ratePercentage: 18, effectiveFrom: new Date("2026-01-01") },
+        ],
+      });
+    }
+  }
+
   console.log("Seeding Raw Materials and Styles...");
   const units = await prisma.unitOfMeasure.findMany();
   const unitIdByCode = new Map(units.map((u) => [u.code, u.id]));

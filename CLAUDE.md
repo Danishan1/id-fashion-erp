@@ -41,7 +41,7 @@ The user has two real, manually-coded PHP/Laravel garment systems already in pro
 | 4 | Sampling | ✅ Done |
 | 5 | Orders + Production | ✅ Done — 5A (Sales Orders), 5B (BOM/MRP), and 5C (Production: Production Orders/Lots/JobOrders/QC/split-merge) all built and verified end-to-end this session |
 | 6 | Inventory | ✅ Done — Purchase Order + Goods Receipt (fabric roll tracking), the stock ledger, Material Request, and Stock Movements (Transfer/Adjustment/Return-to-Supplier) all built and verified |
-| 7 | Accounts | ⬜ Not started |
+| 7 | Accounts | ✅ Done — 7A (Chart of Accounts, Tax Config, Journal engine), 7B (Sales Invoices), 7C (Purchase Invoices), 7D (Payments + Allocations), and 7E (Expenses) all built and verified on branch `phase-7-accounts` |
 | 8 | Dispatch | ⬜ Not started |
 | 9 | Reports | ⬜ Not started |
 | 10 | Testing | ⬜ Not started |
@@ -1204,6 +1204,304 @@ invoicing.
 **Phase 6 is now fully done** — Purchase Order, Goods Receipt (with fabric roll tracking), the stock
 ledger, Material Request (with full BOM→MR→Issue/Shortfall→PO→GR traceability), and Stock Movements
 (Transfer/Adjustment/Return to Supplier) are all built, tested, and verified live.
+
+## Phase 7A — Chart of Accounts, Tax Config, Journal Engine (2026-08-24)
+
+First slice of Phase 7 (Accounts), on a new `phase-7-accounts` branch. Built via the established
+design→Explore→Plan-agent-critique→build→verify rhythm.
+
+- **Schema**: `ChartOfAccount` (self-referencing `parentAccountId`, schema-only for now — no hierarchy UI
+  yet, matching the `ProductionStage.parentStageId` precedent; `isSystemAccount` protects seeded control
+  accounts from deactivation), `TaxType`/`TaxRate` (effective-dated, service-layer overlap validation on
+  `[effectiveFrom, effectiveTo)`), `Journal`/`JournalLine` (`sourceModule`/`sourceRecordId` reuse the
+  existing `RelatedModule` enum as a polymorphic discriminator for later slices to populate). Hand-added
+  CHECK constraints on `journal_lines` (non-negative amounts, never both debit and credit on one line) —
+  same precedent as `job_orders_quantity_consistency_check`; no DB trigger for balance validation (confirmed
+  zero `CREATE TRIGGER` statements exist anywhere in this codebase — app-layer check only, matching real
+  practice over CLAUDE.md's own aspirational trigger language for inventory).
+- **Journal engine** (`src/modules/accounts/journal.service.ts`): `postJournal()` recomputes
+  `totalDebit`/`totalCredit` from a fresh DB read inside the transaction (never a client-submitted total),
+  guarded-conditional status flip (`JournalRepository.updateStatusConditional`, same race-closing idiom as
+  `SalesOrderRepository`'s), and is deliberately self-approval-guarded (`PermissionService.assert(...,
+  "accounts", "post", { createdBy })`) — a journal moving real ledger balances gets the same maker/checker
+  rigor as a Payment approval, even though it means a solo `ACCOUNTS_MANAGER` can't post their own
+  manually-created journal. `reverseJournal()` creates a new journal with every line flipped, auto-posts it
+  via an internal `postJournalCore()` (exported for reuse) that deliberately skips the permission check
+  (the reversal's `createdByUserId` is unavoidably always the actor, so routing it through the public
+  self-approval-guarded path would make reversal unusable for anyone but `SUPER_ADMIN`) — the original
+  journal's own status never changes, since a posted journal is an immutable historical fact, not something
+  that "un-happens." No new `"reverse"` RBAC action — reuses the existing `"cancel"` action, which already
+  matches "gated to Accounts Manager+" (`ACCOUNTS_EXECUTIVE` lacks `cancel`).
+- Seeded a default Chart of Accounts (Cash, Bank, AR, AP, GST Payable/Input Credit, Sales Revenue, COGS,
+  expense heads) and GST tax rates (5/12/18%) via a one-off script against the real dev DB — `prisma db
+  seed` is not safe to re-run against it (documented gotcha from earlier phases).
+- **Verified live end-to-end**: balanced manual journal posted, ledger/trial-balance updated correctly;
+  unbalanced post rejected (422 `UNBALANCED_JOURNAL`); edit/cancel blocked once posted (409); reversal nets
+  to zero on both accounts with the original showing a "Reversed by JRN-…" badge; system-account and
+  referenced-account deactivation blocked (409 `REFERENCED_RECORD_IN_USE`); overlapping tax rate rejected
+  (400). Two real bugs caught and fixed during verification: a Server Component passing a function prop to
+  a Client Component (not serializable across the RSC boundary), and a Decimal-serialized-as-string-is-
+  truthy display bug in a confirmation dialog (the exact bug class `SampleMaterial.damagedQuantity` hit
+  earlier this project). `npx tsc --noEmit`, `npm run lint`, and `npm test` (125/125) all clean.
+- **Not built this slice** (explicitly deferred): Sales/Purchase Invoices, Payments+Allocations, Expenses,
+  account hierarchy UI (`isGroup`/postable-leaf distinction not yet decided), a "default account" resolution
+  mapping (deferred to the first invoicing slice that actually needs it).
+
+## Phase 7B — Sales Invoices (2026-08-24)
+
+Second slice, building directly on 7A. Explored via 1 Explore agent (re-verified current schema facts, not
+assumed from memory) and reviewed via 1 Plan-agent critique before implementation — it caught two real gaps
+a naive design would have shipped with, both fixed before any code was written:
+
+- **Stale-copy hole**: `updateSalesOrder()` allowed a full item/price/customer rewrite while `status ===
+  CONFIRMED` with no guard against an already-existing invoice — a DRAFT invoice's copied lines/prices could
+  silently desync from a concurrently-edited order. Fixed: `updateSalesOrder()` now throws
+  `REFERENCED_RECORD_IN_USE` if an active (non-cancelled) `SalesInvoice` already exists for the order.
+- **Real create-race, not just a sequential-check case**: "at most one active invoice per order" needed a
+  DB-level guarantee, not a `findFirst`-then-insert check two concurrent requests could both pass. Fixed
+  with a hand-added Postgres **partial unique index** — `CREATE UNIQUE INDEX
+  sales_invoices_one_active_per_order ON sales_invoices(sales_order_id) WHERE status != 'CANCELLED'` — a
+  racing second insert hits `P2002`, caught and translated to `REFERENCED_RECORD_IN_USE`. Chosen over a
+  stateful pointer-column approach (the critique's initial suggestion) since Postgres already has the
+  native tool for exactly this "at most one non-cancelled child" shape.
+- **Schema**: `SalesInvoice`/`SalesInvoiceItem` — quantity/unitPrice always derived server-side from the
+  linked `SalesOrderItem`/breakdown, never client-accepted; per-line tax rate is a **manual user choice**
+  (nothing maps a Product/HSN code to a `TaxRate` yet); `taxRateId`/`taxPercentage`/`taxAmount` frozen
+  directly on the item rather than building CLAUDE.md's originally-planned shared `tax_transactions` table
+  — a documented, deliberate deviation (revisit once Purchase Invoices or a third consumer justifies the
+  shared shape). Correct branch-scoped uniqueness from day one (`@@unique([companyId, branchId,
+  invoiceNumber])`) — several older models (`SalesOrder`, `Journal`, `GoodsReceipt`) have this latent gap,
+  not retrofitted here but not propagated into this new model either.
+- **Posting** (`postSalesInvoice`): self-approval-guarded like Journal's own post gate; one single
+  transaction creates+auto-posts a settlement Journal (Dr Accounts Receivable / Cr Sales Revenue / Cr GST
+  Payable if any tax) via 7A's exported `postJournalCore()`, then guarded conditional flips of both the
+  invoice (DRAFT→POSTED) and the Sales Order (`CONFIRMED`/`IN_PRODUCTION`→`INVOICED`, the latter via a new
+  `SalesOrderRepository.updateStatusConditionalIn()` accepting a status set, since the existing
+  `updateStatusConditional` only took one exact value). Uses the specifically-reserved `POSTED_INVOICE_LOCKED`
+  (unused since Phase 1) for edit/cancel/post attempts on a non-DRAFT invoice — distinct from the generic
+  `INVALID_STATE_TRANSITION`. **No reversal/void path for a POSTED invoice this slice** — a real Credit Note
+  is a separate, comparably-sized document type with no reserved enum values anywhere; the documented
+  stopgap is reversing the invoice's own linked Journal directly if a correction is truly needed.
+- **Verified live end-to-end**: created `INV-2026-00001` against a real confirmed order (`ORD-2026-00001`,
+  220 pcs @ ₹9, GST 18%) — correct subtotal (1980)/tax (356.40)/total (2336.40) and due date (invoice date +
+  customer's `paymentTermsDays`); a second invoice attempt against the same order blocked
+  (`REFERENCED_RECORD_IN_USE`); editing the underlying order blocked once invoiced (same code); posted →
+  `JRN-2026-00004` auto-created with the exact Dr AR / Cr Sales Revenue / Cr GST Payable lines, `SalesOrder`
+  flipped to `INVOICED`, trial balance reflected it exactly (grand total 4336.40/4336.40 including the
+  pre-existing 7A demo journal); edit/cancel/re-post on the posted invoice all correctly blocked with
+  `POSTED_INVOICE_LOCKED` (409); cancelling a fresh draft against a second order correctly freed the
+  partial-unique-index slot for a new invoice. `npx tsc --noEmit`, `npm run lint`, and `npm test` (136/136,
+  11 new) all clean.
+- **Not built this slice**: Purchase Invoices (7C, the next slice), Payments+Allocations, Expenses, a real
+  Credit Note workflow, any Product/HSN→TaxRate auto-inference.
+
+## Phase 7C — Purchase Invoices (2026-08-24)
+
+Fourth slice, deliberately diverging from 7B's shape in three ways rather than copying it verbatim — each
+divergence was explicitly justified and reviewed, not an oversight.
+
+- **Partial, repeatable invoicing, not one-shot-per-order**: multiple Goods Receipts against one PO are
+  already a live pattern, so multiple Purchase Invoices are too. A new `PurchaseOrderItem.invoicedQuantity`
+  accumulator tracks progress, incremented only at POST time (never DRAFT-creation). **Quantity AND unit
+  price are both real user input per line** (not derived, unlike Sales Invoice) — a supplier invoice can
+  cover a subset of a PO's lines and routinely bills at a different price than the PO (rate revision,
+  discount); freezing price to the PO's number would have made real price variance unrepresentable.
+  **Posting never changes `PurchaseOrder.status`** — no invoiced-adjacent status value exists (unlike
+  `SalesOrderStatus.INVOICED`), and a single flip wouldn't be semantically correct for an inherently partial
+  document; "how much has been invoiced" is derived by comparing `invoicedQuantity` to `receivedQuantity`.
+- **A Plan-agent critique caught a genuine cross-module accounting-integrity bug**, not a new-code issue:
+  `PurchaseOrderItemRepository.decrementReceived()` (called when reversing a Goods Receipt line, a function
+  that predates this slice) was completely unguarded — once `invoicedQuantity` existed, a receipt could be
+  reversed below an already-invoiced amount, leaving a posted invoice's Journal entry standing against stock
+  the books no longer show as received. Fixed by replacing it with `guardedDecrementReceived`, a **raw-SQL
+  conditional update** (`receivedQuantity - decrementBy >= invoicedQuantity`) — **the first use of raw SQL
+  anywhere in this codebase**, used narrowly because the guard compares two live, mutable columns, which
+  Prisma's `updateMany` `where` clause cannot express (no column-to-column comparison support). The
+  symmetric `guardedIncrementInvoiced` (the real over-invoice guard, `invoicedQuantity + incrementBy <=
+  receivedQuantity`) uses the identical technique. `reverseGoodsReceiptLine()` now throws
+  `OVER_REVERSAL_NOT_ALLOWED` (reused) on guard failure.
+- Closed a companion hole the same critique found: `transitionPurchaseOrderStatus()`'s `CANCELLED` branch
+  already blocked cancellation once goods had arrived (`countActiveReceipts`), but had no idea invoicing had
+  happened at all — a new sibling `countInvoicedItems` check closes it, checked unconditionally including
+  after an `ON_HOLD` round-trip (same discipline as the existing receipts guard).
+- Explicit eligibility policy: a Purchase Invoice can be created when the PO is `SENT_TO_SUPPLIER`,
+  `PARTIALLY_RECEIVED`, `FULLY_RECEIVED`, or **`CLOSED`** — supplier bills routinely arrive after the buyer
+  has already closed receiving, so `CLOSED` is deliberately included. `PurchaseInvoiceStatus` mirrors 7B's
+  full narrative enum (`DRAFT/POSTED/PARTIALLY_PAID/PAID/CLOSED/CANCELLED`) for future Payments-slice
+  consistency, even though this slice's cardinality shape differs from Sales Invoice's.
+- A hand-added partial unique index (`purchase_invoices_supplier_invoice_number_unique`, scoped to
+  non-cancelled rows) guards against double-entering the same physical supplier bill — 7B's one-invoice-
+  per-order constraint incidentally provided this safety net; removing that constraint here required an
+  explicit replacement. Debiting `COGS` (an EXPENSE account) directly at invoice-post time — rather than a
+  raw-material inventory asset account, which doesn't exist in the seeded Chart of Accounts — is a conscious
+  periodic-inventory-style simplification, stated explicitly since it's expensive to unwind later.
+- **Verified live end-to-end**: created `PINV-2026-00001` against a real `FULLY_RECEIVED` order
+  (`PO-2026-00001`) for a partial quantity (400 of 1000 available) at a manually-entered price (₹235, not
+  the PO's own ₹220) with GST 5% — correct subtotal/tax/total; posted → `JRN-2026-00005` with the exact
+  Dr COGS / Dr GST-ITC / Cr AP lines, `invoicedQuantity` incremented to 400, **`PurchaseOrder.status`
+  confirmed unchanged** (`FULLY_RECEIVED`); a second invoice (`PINV-2026-00002`) against the same order for
+  the remaining quantity succeeded (confirming partial/repeatable invoicing actually works); an over-quantity
+  create attempt correctly rejected with the exact available amount; a duplicate supplier-reference invoice
+  rejected (`REFERENCED_RECORD_IN_USE`); edit/cancel/re-post on a posted invoice all blocked
+  (`POSTED_INVOICE_LOCKED`); a Goods Receipt reversal beyond the invoiced floor blocked
+  (`OVER_REVERSAL_NOT_ALLOWED`, confirming the cross-module fix); Purchase Order cancellation blocked both
+  directly and via an `ON_HOLD` round-trip. `npx tsc --noEmit`, `npm run lint`, and `npm test` (147/147,
+  11 new) all clean throughout.
+- **Not built this slice**: Payments+Allocations, Expenses, a real Credit Note workflow, any
+  Product/HSN→TaxRate auto-inference (same gaps as 7B, still open).
+
+## Phase 7D — Payments + Allocations (2026-08-24)
+
+Fifth slice. A `Payment` records money received from a Customer (`RECEIPT`) or paid to a Supplier
+(`PAYMENT_OUT`), allocated across one or more invoices via `PaymentAllocation`; posting it finally wires up
+`SalesInvoiceStatus`/`PurchaseInvoiceStatus`'s `PARTIALLY_PAID`/`PAID` values reserved-but-dead since 7B/7C.
+Reviewed via a Plan-agent critique before implementation, per this project's established rhythm; a single
+shared `PAY-` numbering series for both directions was confirmed with the user (matches the single-table
+design — no enum split).
+
+- **`paidAmount` accumulator is safe with the plain Prisma `updateMany` idiom — no raw SQL needed**, unlike
+  7C's newer guards: `SalesInvoice`/`PurchaseInvoice.totalAmount` is frozen once `POSTED` (never touched by
+  cancel or post), so it's captured once as a JS literal before the transaction and used as the cap —
+  the same safety condition that made 7C's *original* `guardedIncrementReceived` safe.
+- **A real gap the critique refused to accept as "precedented"**: the generic `reverseJournal()` (7A) had no
+  awareness of *why* a journal existed — reversing a Payment's auto-posted journal would desync `paidAmount`
+  (and derived invoice status) from the ledger, and unlike Sales/Purchase Invoice's own harmless "no reversal
+  path" gap (nothing re-reads their status after posting), `paidAmount` is **load-bearing**: it directly
+  gates the next payment via `OVER_PAYMENT_NOT_ALLOWED`. Fixed by adding a `sourceModule` guard directly
+  inside `reverseJournal()` — reversal is now blocked for any journal sourced from `PAYMENT`,
+  `SALES_INVOICE`, or `PURCHASE_INVOICE`, closing this slice's own gap *and* retroactively closing 7B/7C's
+  identical latent one in one change, rather than building a full accumulator-aware reversal flow nobody has
+  asked for.
+- **Status recompute uses a fresh in-transaction read + unconditional write, not a guarded conditional
+  transition** — `updateStatusConditional` is for one-shot transitions keyed to exactly one expected prior
+  status; a second or third partial payment has no single "expected prior status" to key against. Follows
+  the exact precedent already established in `goods-receipt.service.ts`'s own received-quantity status
+  recompute (`findManyForStatusRecompute` + `updateStatusInTx`, both unconditional).
+- **Cash/Bank account resolution is keyed off `PaymentType.type` (the `PaymentTypeKind` enum), never off
+  `PaymentType.code`** — a real trap the critique flagged: `PaymentType.code` "BANK" (a seeded code) and
+  `ChartOfAccount.code` "BANK" are the same string in two unrelated tables purely by coincidence; resolving
+  via `ChartOfAccount.findByCode(companyId, paymentType.code)` directly would silently return nothing for
+  CHEQUE/CARD/UPI-typed payment types. `{ CASH: "CASH", default: "BANK" }` is the actual resolution rule,
+  verified live with a CHEQUE-typed payment type correctly resolving to the BANK account, not failing.
+- **`PaymentAllocation` uses two nullable FKs (`salesInvoiceId`/`purchaseInvoiceId`) + a hand-added CHECK**
+  (`(sales_invoice_id IS NOT NULL) != (purchase_invoice_id IS NOT NULL)`), not a polymorphic
+  `relatedModule`/`relatedRecordId` shape — matches CLAUDE.md's own architecture doc, which lists
+  `payment_allocations` as a concrete Accounts table, separate from the explicit polymorphic-tables list.
+- **No `updatePayment` — deliberately**: RBAC confirms nobody except `SUPER_ADMIN`'s wildcard has `"edit"`
+  on the `payments` module (`ACCOUNTS_MANAGER`: view/create/approve/cancel/export/print; `ACCOUNTS_EXECUTIVE`:
+  view/create only). The only DRAFT-stage correction is cancel-and-recreate; confirmed live (`405` on a
+  direct `PATCH` attempt — no route exists at all, not just a permission block).
+- **Posting is gated on `"approve"`, not `"post"`** — `payments`' RBAC grants use `"approve"` as the real
+  verb, matching CLAUDE.md's literal "payments cannot be approved by their own creator" rule. `"approve"` is
+  already in `PermissionService`'s `SELF_APPROVAL_GUARDED_ACTIONS`, so the same maker/checker protection
+  applies with zero `PermissionService` changes.
+- **Verified live end-to-end** through the real UI: created `PAY-2026-00001` (RECEIPT, Bank Transfer) for the
+  full outstanding balance of a real `POSTED` Sales Invoice → approved → confirmed the auto-posted Journal
+  (Dr Bank / Cr AR, exact amounts) and the invoice flipping to `PAID`; created `PAY-2026-00002` (RECEIPT,
+  Cash — a new "Cash"-kind `PaymentType` created in-session, since none existed yet) for a **partial** amount
+  against a different invoice → approved → confirmed Dr Cash / Cr AR and the invoice landing on
+  `PARTIALLY_PAID`, not `PAID`; created `PAY-2026-00005` (`PAYMENT_OUT`, Bank Transfer) for the full balance
+  of a real `POSTED` Purchase Invoice → approved → confirmed Dr AP / Cr Bank and the invoice flipping to
+  `PAID`. Confirmed the `reverseJournal()` guard blocks reversal of all three auto-posting document types
+  (`PAYMENT`/`SALES_INVOICE`/`PURCHASE_INVOICE`) with `409 INVALID_STATE_TRANSITION`. Exercised the real race
+  the guard exists for: created two DRAFT payments both claiming the same remaining outstanding balance on
+  one invoice, approved the first (succeeded, invoice fully paid), then approved the second — correctly
+  rejected with `409 OVER_PAYMENT_NOT_ALLOWED`, invoice untouched by the failed attempt, failed payment
+  cleanly cancelled afterward. Confirmed re-approving and re-cancelling an already-`POSTED` payment both
+  correctly `409 INVALID_STATE_TRANSITION`. `npx tsc --noEmit`, `npm run lint`, and `npm test` (161/161, 14
+  new in `payment.service.test.ts`) all clean throughout; zero unexpected server or console errors during
+  the full walkthrough (only the deliberately-triggered 409/405s from the guard tests above).
+- **Not built this slice**: Expenses (the last remaining Phase 7 item — see below, now done), a real Credit
+  Note/payment-reversal workflow (the `reverseJournal()` guard above is the enforced absence, not a built
+  correction path), unallocated/advance payments, multi-currency UI (payments are always
+  `company.baseCurrencyCode`, same project-wide deferral).
+
+## Phase 7E — Expenses (2026-08-24)
+
+Sixth and final slice of Phase 7. An Expense records a direct, day-to-day cost (rent, utilities, salaries,
+misc.) that doesn't flow through Purchase Order → Goods Receipt → Purchase Invoice — a petty-cash-voucher-
+style document, not a vendor-terms bill. Reviewed via a Plan-agent critique before implementation. Two scope
+questions were confirmed with the user beforehand: **Expense is always paid immediately at posting time**
+(no unpaid/payable lifecycle, no later settlement via Payment — an unpaid vendor bill with terms already has
+a home: Purchase Invoice + Payment), and **one Expense is a single flat row** (no child items table, no
+"Expense Report" multi-line shape).
+
+- **Schema**: `ExpenseStatus` (`DRAFT/POSTED/CANCELLED`, Payment's minimal 3-state shape, not Invoice's
+  6-state narrative enum). `Expense` — `accountId` (FK `ChartOfAccount`), optional `supplierId` (pure
+  reference, no gated logic), `description`, `amount`/`taxRateId`/`taxAmount`/`totalAmount` (same tax-line
+  shape as Purchase Invoice), `paymentTypeId`/`bankAccountId` (reused from Payment), `currencyCode` (always
+  `company.baseCurrencyCode`, no exchangeRate split — matches Payment's own simplification), `journalId`
+  (set at post time). `RelatedModule.EXPENSE`/`DocumentType.EXPENSE` (prefix `EXP`) were reserved since
+  Phase 1/2 planning — this is their first real consumer. Hand-added CHECK constraints (`amount > 0`,
+  `tax_amount >= 0`, `total_amount = amount + tax_amount`) match every prior Phase 7 migration.
+- **`reverseJournal()`'s `sourceModule` guard (7D) now also blocks `EXPENSE`** alongside `PAYMENT`/
+  `SALES_INVOICE`/`PURCHASE_INVOICE`. Expense has no cross-table accumulator like Payment's `paidAmount`
+  that reversal would desync, but the critique argued (and the fix adopts) the simpler, consistent rule:
+  "document-sourced journals aren't reversible; manual journals are" — carving Expense out as the one
+  exception would just make every future reader re-derive why it's different. A wrongly-posted Expense
+  therefore has zero correction path this slice (a manual adjusting journal entry is the only recourse) —
+  stated explicitly in code comments rather than left as a stale "reverse the journal" promise (the mistake
+  Purchase Invoice's own doc comment made before 7D's guard shipped).
+- **`COGS` is explicitly excluded from the Expense account picker, not just filtered by `accountType`.**
+  `COGS` is seeded with `accountType: "EXPENSE"` but is deliberately **not** `isSystemAccount: true` (only
+  `AR`/`AP`/`GST-ITC`/`GST-PAY` are) — `postPurchaseInvoice` debits it via a hardcoded `findByCode` lookup,
+  never exposing it as user-selectable. A validation that only checked `accountType === "EXPENSE"` would let
+  a user post an ad hoc Expense straight into the same account Purchase Invoice postings drive automatically,
+  polluting any COGS-based margin reporting with manual, PO-disconnected debits. Fixed with an explicit
+  `code !== "COGS"` check in `assertValidExpenseAccount()`, verified live via a direct API call. Expense is
+  also the first module in this codebase to expose a free `ChartOfAccount` picker to end users at all
+  (Payment/Purchase Invoice only ever resolve control accounts by hardcoded `code`) — `isActive` is
+  validated at both create and post time, and the picker itself filters to active, non-COGS `EXPENSE`-type
+  accounts.
+- **Journal line numbering is a dynamic incrementing counter** (Purchase Invoice's `let nextLineNumber = 2`
+  pattern), **not** Payment's hardcoded `lineNumber: 1`/`lineNumber: 2` literals — Expense's journal is a
+  variable 2-or-3-line shape (Dr account, optional Dr GST-ITC, Cr cash/bank), and copying Payment's fixed
+  literals would have made a tax-bearing expense's Cr cash/bank line collide with the GST-ITC line at
+  `lineNumber: 2`. `JournalLine` has no DB unique constraint on `(journalId, lineNumber)`, so this would have
+  been a silent, undetected data-quality bug rather than a thrown error — a dedicated regression test in
+  `expense.service.test.ts` asserts no two lines in a tax-bearing expense's journal share a `lineNumber`.
+- **Error code for the non-DRAFT guard is `INVALID_STATE_TRANSITION`**, not `POSTED_INVOICE_LOCKED` —
+  Expense's lifecycle is anchored to Payment (not Invoice), so it reuses Payment's own vocabulary for
+  exactly this guard; no new `BusinessRuleError` code was needed anywhere in this slice.
+- **RBAC**: new `expenses` module. `ACCOUNTS_MANAGER`: `view/create/edit/approve/cancel/export/print`
+  (exact `invoices` shape with `approve` swapped in for `post`, since posting is gated on `"approve"` to
+  match Payment's verb, not Invoice's). `ACCOUNTS_EXECUTIVE`: `view/create/edit` (exact match to `invoices`).
+  `MANAGEMENT`: `view/approve` (exact match to `payments` — Management's approval power in this codebase is
+  specifically scoped to the `"approve"` verb, which Invoice posting doesn't use, so mirroring `payments`
+  here rather than `invoices` is the correct asymmetry). Since `prisma db seed` isn't safe to re-run against
+  the dev DB (documented gotcha), the new `expenses` permission rows and `role_permissions` links were
+  inserted via a narrow one-off script re-running only the seed's idempotent permission-catalog logic
+  (`createMany`+`skipDuplicates` and `upsert`, both purely additive) — not a full reseed.
+- **Edit-while-DRAFT is supported** (unlike Payment's deliberate "no edit, cancel-and-recreate only") —
+  Expense is single-row, the same shape Purchase/Sales Invoice already support update-while-DRAFT for (a
+  *harder* problem, replacing a whole item collection), so this is the well-precedented choice, not an ad
+  hoc one. A `/accounts/expenses/[id]/edit` page reuses `ExpenseForm` in dual-mode (mirrors Sales Order's
+  own `initialOrder` pattern), guarded `notFound()` for non-DRAFT expenses matching the service's own guard.
+- Reuses the existing `AttachmentService` for receipt/bill photo uploads against `RelatedModule.EXPENSE`
+  (already reserved, zero schema change) — the same 3-route shape and `FilePreviewModal` UI already proven
+  by Sampling's and Sales Order's attachments.
+- **Verified live end-to-end** through the real UI and direct API calls together: created `EXP-2026-00001`
+  (Utilities, GST 18%, Bank Transfer, ₹1,000 → ₹1,180 total) through the real form — confirmed the Expense
+  Account dropdown correctly excluded `COGS` and any inactive account; edited it while DRAFT (amount
+  1000→1200, confirmed the live preview and the persisted total both recalculated to ₹1,416.00); approved →
+  `JRN-2026-00013` with the exact 3 correctly-numbered lines (Dr EXP-UTIL 1200 / Dr GST-ITC 216 / Cr BANK
+  1416, `lineNumber` 1/2/3, no collision); created and posted `EXP-2026-00002` (Factory Rent, no tax, Cash)
+  → confirmed a clean 2-line journal (Dr EXP-RENT / Cr CASH); confirmed a direct API attempt to post an
+  Expense against `COGS` correctly rejected (`400 VALIDATION_ERROR`); deactivated `EXP-SALARY` and confirmed
+  an Expense against it was rejected, then reactivated it; confirmed re-approve/re-cancel/edit on the POSTED
+  `EXP-2026-00002` all correctly `409 INVALID_STATE_TRANSITION`, and its `/edit` page correctly `404`s;
+  confirmed reversing `EXP-2026-00001`'s auto-posted Journal is blocked with `409 INVALID_STATE_TRANSITION`;
+  uploaded a receipt attachment, confirmed byte-for-byte download, then deleted it. `npx tsc --noEmit`, `npm
+  run lint`, and `npm test` (172/172, 11 new in `expense.service.test.ts`) all clean throughout; zero
+  unexpected server or console errors during the full walkthrough (only the deliberately-triggered
+  400/404/409s from the guard tests above). One unrelated environment gotcha hit and fixed: after this
+  session's heavy schema/migration work, the dev server's route manifest briefly 404'd on every page
+  (including pre-existing ones like `/accounts/payments`) until a full stop + `.next/dev/types` cache clear
+  + restart — same class of stale-`.next`-cache issue already documented for `tsc` in the Stock Movements
+  section, just manifesting as page 404s instead of a `tsc` syntax error this time.
+
+**Phase 7 (Accounts) is now fully done** — Chart of Accounts, Tax Config, the Journal engine, Sales
+Invoices, Purchase Invoices, Payments + Allocations, and Expenses are all built, tested, and verified live.
 
 ## Recommended Stack
 

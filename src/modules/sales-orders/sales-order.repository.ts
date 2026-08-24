@@ -65,6 +65,15 @@ export const SalesOrderRepository = {
     prisma.salesOrder.updateMany({ where: { id, status: expectedStatus }, data }),
 
   /**
+   * Same race-closing shape as `updateStatusConditional`, but against a SET
+   * of acceptable prior statuses rather than one exact value — needed by
+   * Sales Invoice posting, which accepts CONFIRMED or IN_PRODUCTION as the
+   * order's status right before flipping it to INVOICED.
+   */
+  updateStatusConditionalIn: (id: string, expectedStatuses: SalesOrderStatus[], data: Prisma.SalesOrderUncheckedUpdateInput) =>
+    prisma.salesOrder.updateMany({ where: { id, status: { in: expectedStatuses } }, data }),
+
+  /**
    * Full replace of a sales order's items/breakdown — simplest correct way to
    * apply an edit without hand-diffing which lines changed. Breakdown rows
    * have no cascade-delete configured, so they must be deleted before their
