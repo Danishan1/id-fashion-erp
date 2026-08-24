@@ -41,7 +41,7 @@ The user has two real, manually-coded PHP/Laravel garment systems already in pro
 | 4 | Sampling | ✅ Done |
 | 5 | Orders + Production | ✅ Done — 5A (Sales Orders), 5B (BOM/MRP), and 5C (Production: Production Orders/Lots/JobOrders/QC/split-merge) all built and verified end-to-end this session |
 | 6 | Inventory | ✅ Done — Purchase Order + Goods Receipt (fabric roll tracking), the stock ledger, Material Request, and Stock Movements (Transfer/Adjustment/Return-to-Supplier) all built and verified |
-| 7 | Accounts | 🔶 In progress — 7A (Chart of Accounts, Tax Config, Journal engine) and 7B (Sales Invoices, auto-posting) done on branch `phase-7-accounts`; Purchase Invoices, Payments+Allocations, and Expenses not started |
+| 7 | Accounts | 🔶 In progress — 7A (Chart of Accounts, Tax Config, Journal engine), 7B (Sales Invoices), and 7C (Purchase Invoices) done on branch `phase-7-accounts`; Payments+Allocations and Expenses not started |
 | 8 | Dispatch | ⬜ Not started |
 | 9 | Reports | ⬜ Not started |
 | 10 | Testing | ⬜ Not started |
@@ -1294,6 +1294,61 @@ a naive design would have shipped with, both fixed before any code was written:
   11 new) all clean.
 - **Not built this slice**: Purchase Invoices (7C, the next slice), Payments+Allocations, Expenses, a real
   Credit Note workflow, any Product/HSN→TaxRate auto-inference.
+
+## Phase 7C — Purchase Invoices (2026-08-24)
+
+Fourth slice, deliberately diverging from 7B's shape in three ways rather than copying it verbatim — each
+divergence was explicitly justified and reviewed, not an oversight.
+
+- **Partial, repeatable invoicing, not one-shot-per-order**: multiple Goods Receipts against one PO are
+  already a live pattern, so multiple Purchase Invoices are too. A new `PurchaseOrderItem.invoicedQuantity`
+  accumulator tracks progress, incremented only at POST time (never DRAFT-creation). **Quantity AND unit
+  price are both real user input per line** (not derived, unlike Sales Invoice) — a supplier invoice can
+  cover a subset of a PO's lines and routinely bills at a different price than the PO (rate revision,
+  discount); freezing price to the PO's number would have made real price variance unrepresentable.
+  **Posting never changes `PurchaseOrder.status`** — no invoiced-adjacent status value exists (unlike
+  `SalesOrderStatus.INVOICED`), and a single flip wouldn't be semantically correct for an inherently partial
+  document; "how much has been invoiced" is derived by comparing `invoicedQuantity` to `receivedQuantity`.
+- **A Plan-agent critique caught a genuine cross-module accounting-integrity bug**, not a new-code issue:
+  `PurchaseOrderItemRepository.decrementReceived()` (called when reversing a Goods Receipt line, a function
+  that predates this slice) was completely unguarded — once `invoicedQuantity` existed, a receipt could be
+  reversed below an already-invoiced amount, leaving a posted invoice's Journal entry standing against stock
+  the books no longer show as received. Fixed by replacing it with `guardedDecrementReceived`, a **raw-SQL
+  conditional update** (`receivedQuantity - decrementBy >= invoicedQuantity`) — **the first use of raw SQL
+  anywhere in this codebase**, used narrowly because the guard compares two live, mutable columns, which
+  Prisma's `updateMany` `where` clause cannot express (no column-to-column comparison support). The
+  symmetric `guardedIncrementInvoiced` (the real over-invoice guard, `invoicedQuantity + incrementBy <=
+  receivedQuantity`) uses the identical technique. `reverseGoodsReceiptLine()` now throws
+  `OVER_REVERSAL_NOT_ALLOWED` (reused) on guard failure.
+- Closed a companion hole the same critique found: `transitionPurchaseOrderStatus()`'s `CANCELLED` branch
+  already blocked cancellation once goods had arrived (`countActiveReceipts`), but had no idea invoicing had
+  happened at all — a new sibling `countInvoicedItems` check closes it, checked unconditionally including
+  after an `ON_HOLD` round-trip (same discipline as the existing receipts guard).
+- Explicit eligibility policy: a Purchase Invoice can be created when the PO is `SENT_TO_SUPPLIER`,
+  `PARTIALLY_RECEIVED`, `FULLY_RECEIVED`, or **`CLOSED`** — supplier bills routinely arrive after the buyer
+  has already closed receiving, so `CLOSED` is deliberately included. `PurchaseInvoiceStatus` mirrors 7B's
+  full narrative enum (`DRAFT/POSTED/PARTIALLY_PAID/PAID/CLOSED/CANCELLED`) for future Payments-slice
+  consistency, even though this slice's cardinality shape differs from Sales Invoice's.
+- A hand-added partial unique index (`purchase_invoices_supplier_invoice_number_unique`, scoped to
+  non-cancelled rows) guards against double-entering the same physical supplier bill — 7B's one-invoice-
+  per-order constraint incidentally provided this safety net; removing that constraint here required an
+  explicit replacement. Debiting `COGS` (an EXPENSE account) directly at invoice-post time — rather than a
+  raw-material inventory asset account, which doesn't exist in the seeded Chart of Accounts — is a conscious
+  periodic-inventory-style simplification, stated explicitly since it's expensive to unwind later.
+- **Verified live end-to-end**: created `PINV-2026-00001` against a real `FULLY_RECEIVED` order
+  (`PO-2026-00001`) for a partial quantity (400 of 1000 available) at a manually-entered price (₹235, not
+  the PO's own ₹220) with GST 5% — correct subtotal/tax/total; posted → `JRN-2026-00005` with the exact
+  Dr COGS / Dr GST-ITC / Cr AP lines, `invoicedQuantity` incremented to 400, **`PurchaseOrder.status`
+  confirmed unchanged** (`FULLY_RECEIVED`); a second invoice (`PINV-2026-00002`) against the same order for
+  the remaining quantity succeeded (confirming partial/repeatable invoicing actually works); an over-quantity
+  create attempt correctly rejected with the exact available amount; a duplicate supplier-reference invoice
+  rejected (`REFERENCED_RECORD_IN_USE`); edit/cancel/re-post on a posted invoice all blocked
+  (`POSTED_INVOICE_LOCKED`); a Goods Receipt reversal beyond the invoiced floor blocked
+  (`OVER_REVERSAL_NOT_ALLOWED`, confirming the cross-module fix); Purchase Order cancellation blocked both
+  directly and via an `ON_HOLD` round-trip. `npx tsc --noEmit`, `npm run lint`, and `npm test` (147/147,
+  11 new) all clean throughout.
+- **Not built this slice**: Payments+Allocations, Expenses, a real Credit Note workflow, any
+  Product/HSN→TaxRate auto-inference (same gaps as 7B, still open).
 
 ## Recommended Stack
 
