@@ -11,6 +11,7 @@ export const createLeadSchema = z.object({
   phone: z.string().max(40).optional().or(z.literal("")),
   companyName: z.string().max(190).optional().or(z.literal("")),
   source: z.enum(LEAD_SOURCES).default("OTHER"),
+  campaignId: z.string().uuid().optional().or(z.literal("")),
   campaignText: z.string().max(190).optional().or(z.literal("")),
   leadScore: z.coerce.number().min(0).max(100).default(0),
   value: z.coerce.number().min(0).default(0),

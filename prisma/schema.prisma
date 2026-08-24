@@ -89,6 +89,9 @@ model Company {
   crmActivities               CrmActivity[]
   crmFollowups                CrmFollowup[]
   crmRoundRobinState          CrmRoundRobinState?
+  campaigns                   Campaign[]
+  campaignAttributions        CampaignAttribution[]
+  campaignAlerts              CampaignAlert[]
 
   @@map("companies")
 }
@@ -130,6 +133,7 @@ model Branch {
   documentSequences     DocumentSequence[]
   leads                 Lead[]
   deals                 Deal[]
+  campaigns             Campaign[]
 
   @@unique([companyId, code])
   @@map("branches")
@@ -189,6 +193,9 @@ model User {
   crmActivitiesPerformed               CrmActivity[]                @relation("CrmActivityPerformedBy")
   crmFollowupsAssigned                 CrmFollowup[]                @relation("CrmFollowupAssignedTo")
   crmFollowupsCreated                  CrmFollowup[]                @relation("CrmFollowupCreatedBy")
+  campaignsOwned                       Campaign[]                   @relation("CampaignOwner")
+  campaignsCreated                     Campaign[]                   @relation("CampaignCreatedBy")
+  campaignDailyMetricsRecorded         CampaignDailyMetric[]
 
   @@map("users")
 }
@@ -1483,10 +1490,12 @@ model Lead {
   phone             String?
   companyName       String?       @map("company_name")
   source            EnquirySource @default(OTHER)
-  // Free text for now — becomes a real FK once Campaign exists (Marketing
-  // pass); matches this project's "don't build for a phase that isn't
-  // reached yet" discipline (e.g. SalesOrderItem.sampleRequestId existed as
-  // a plan long before Sampling's own module was built).
+  // A real FK now that Campaign exists (Marketing pass) — campaignText
+  // remains as the free-text fallback for a lead sourced from a channel
+  // with no tracked Campaign record (e.g. an informal referral), the same
+  // "existing record OR free text" dual-field shape already used by
+  // BuyerEnquiryLine.productId/styleNameFreeText.
+  campaignId        String?       @map("campaign_id") @db.Uuid
   campaignText      String?       @map("campaign_text")
   leadScore         Decimal       @default(0) @map("lead_score") @db.Decimal(6, 2)
   status            LeadStatus    @default(NEW)
@@ -1508,16 +1517,19 @@ model Lead {
   createdAt         DateTime      @default(now()) @map("created_at")
   updatedAt         DateTime      @updatedAt @map("updated_at")
 
-  company      Company       @relation(fields: [companyId], references: [id])
-  branch       Branch?       @relation(fields: [branchId], references: [id])
-  assignedTo   User?         @relation("LeadAssignedTo", fields: [assignedToUserId], references: [id])
-  createdBy    User          @relation("LeadCreatedBy", fields: [createdByUserId], references: [id])
-  buyerEnquiry BuyerEnquiry? @relation(fields: [buyerEnquiryId], references: [id])
+  company      Company               @relation(fields: [companyId], references: [id])
+  branch       Branch?               @relation(fields: [branchId], references: [id])
+  assignedTo   User?                 @relation("LeadAssignedTo", fields: [assignedToUserId], references: [id])
+  createdBy    User                  @relation("LeadCreatedBy", fields: [createdByUserId], references: [id])
+  buyerEnquiry BuyerEnquiry?         @relation(fields: [buyerEnquiryId], references: [id])
+  campaign     Campaign?             @relation(fields: [campaignId], references: [id])
   deals        Deal[]
+  attributions CampaignAttribution[]
 
   @@unique([companyId, leadNumber])
   @@index([companyId, status])
   @@index([companyId, assignedToUserId])
+  @@index([companyId, campaignId])
   @@map("crm_leads")
 }
 
@@ -1649,6 +1661,182 @@ model CrmRoundRobinState {
   company Company @relation(fields: [companyId], references: [id])
 
   @@map("crm_round_robin_state")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Marketing — Campaigns, attribution, alerts (migrated from WordPress
+// "EQ Marketing"; see CRM_SALES_MARKETING_HRMS_MIGRATION_REPORT.md).
+//
+// Deliberately NOT ported: the source's own `eq_mkt_lead_map` table (one
+// row per lead caching "lead_quality"/"conversion_status") — those fields
+// are redundant with Lead.priority (already computed from leadScore) and
+// Lead.status, exactly the "second source of truth" this project has fixed
+// more than once (Material Request's old status column, JobOrder's status).
+// Campaign's own spend/leads/qualifiedLeads/customers/revenue are likewise
+// NOT stored columns — computed live in campaign.service.ts from
+// CampaignDailyMetric and from Lead/Deal joined through campaignId, the
+// same discipline applied consistently rather than only to the one table
+// the migration report happened to flag.
+// ─────────────────────────────────────────────────────────────
+
+enum CampaignChannel {
+  META_ADS
+  GOOGLE_ADS
+  LINKEDIN
+  YOUTUBE
+  EMAIL
+  WHATSAPP
+  SEO
+  ORGANIC
+  REFERRAL
+  OFFLINE
+}
+
+enum CampaignStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  COMPLETED
+}
+
+enum CampaignApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model Campaign {
+  id              String                 @id @default(uuid()) @db.Uuid
+  companyId       String                 @map("company_id") @db.Uuid
+  branchId        String?                @map("branch_id") @db.Uuid
+  campaignNumber  String                 @map("campaign_number")
+  name            String
+  objective       String?
+  channel         CampaignChannel
+  startDate       DateTime?              @map("start_date") @db.Date
+  endDate         DateTime?              @map("end_date") @db.Date
+  budget          Decimal                @default(0) @db.Decimal(15, 2)
+  ownerUserId     String?                @map("owner_user_id") @db.Uuid
+  status          CampaignStatus         @default(DRAFT)
+  approvalStatus  CampaignApprovalStatus @default(PENDING) @map("approval_status")
+  notes           String?
+  createdByUserId String                 @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime               @default(now()) @map("created_at")
+  updatedAt       DateTime               @updatedAt @map("updated_at")
+
+  company      Company               @relation(fields: [companyId], references: [id])
+  branch       Branch?               @relation(fields: [branchId], references: [id])
+  owner        User?                 @relation("CampaignOwner", fields: [ownerUserId], references: [id])
+  createdBy    User                  @relation("CampaignCreatedBy", fields: [createdByUserId], references: [id])
+  dailyMetrics CampaignDailyMetric[]
+  attributions CampaignAttribution[]
+  alerts       CampaignAlert[]
+  leads        Lead[]
+
+  @@unique([companyId, campaignNumber])
+  @@index([companyId, status])
+  @@index([companyId, channel])
+  @@map("mkt_campaigns")
+}
+
+// Manually recorded (or, later, ad-platform-synced — not built in this
+// pass, see the migration report) daily spend/impressions/clicks. Campaign
+// spend is always SUM(these), never a separately-editable column.
+model CampaignDailyMetric {
+  id               String   @id @default(uuid()) @db.Uuid
+  campaignId       String   @map("campaign_id") @db.Uuid
+  metricDate       DateTime @map("metric_date") @db.Date
+  spend            Decimal  @default(0) @db.Decimal(15, 2)
+  // Int, not BigInt — NextResponse.json() can't serialize a native BigInt
+  // (hit live: this crashed with "Do not know how to serialize a BigInt" on
+  // every read of a recorded metric), and no real campaign at this
+  // business's scale will exceed ~2 billion impressions.
+  impressions      Int      @default(0)
+  clicks           Int      @default(0)
+  notes            String?
+  recordedByUserId String   @map("recorded_by_user_id") @db.Uuid
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  campaign   Campaign @relation(fields: [campaignId], references: [id])
+  recordedBy User     @relation(fields: [recordedByUserId], references: [id])
+
+  @@unique([campaignId, metricDate])
+  @@map("mkt_campaign_daily_metrics")
+}
+
+// Multi-touch attribution record — a distinct concept from Lead itself
+// (one Lead can have several touches on the way in), unlike the source's
+// eq_mkt_lead_map which conflated "attribution" with "current lead state."
+model CampaignAttribution {
+  id                String   @id @default(uuid()) @db.Uuid
+  companyId         String   @map("company_id") @db.Uuid
+  campaignId        String?  @map("campaign_id") @db.Uuid
+  leadId            String?  @map("lead_id") @db.Uuid
+  // Free-text fallback for a touch that never became a real Lead record —
+  // mirrors the source's own customer_name column on this same table.
+  prospectName      String?  @map("prospect_name")
+  source            String?
+  medium            String?
+  content           String?
+  term              String?
+  utmCampaign       String?  @map("utm_campaign")
+  landingPage       String?  @map("landing_page")
+  isFirstTouch      Boolean  @default(false) @map("is_first_touch")
+  isLastTouch       Boolean  @default(false) @map("is_last_touch")
+  attributedRevenue Decimal  @default(0) @map("attributed_revenue") @db.Decimal(15, 2)
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  company  Company   @relation(fields: [companyId], references: [id])
+  campaign Campaign? @relation(fields: [campaignId], references: [id])
+  lead     Lead?     @relation(fields: [leadId], references: [id])
+
+  @@index([companyId, campaignId])
+  @@index([companyId, leadId])
+  @@map("mkt_campaign_attributions")
+}
+
+// The 4 threshold rules ported exactly from the source's eq_mkt_run_automation()
+// (budget overspend/80%, low ROAS, high CPL vs channel benchmark, low
+// conversion — see the migration report §3.5 for the precise formulas).
+enum CampaignAlertType {
+  BUDGET_OVERSPEND
+  BUDGET_80_PERCENT
+  LOW_ROAS
+  ROAS_WATCH
+  HIGH_CPL
+  LOW_CONVERSION
+}
+
+enum CampaignAlertPriority {
+  MEDIUM
+  HIGH
+}
+
+enum CampaignAlertStatus {
+  OPEN
+  RESOLVED
+}
+
+model CampaignAlert {
+  id             String                @id @default(uuid()) @db.Uuid
+  companyId      String                @map("company_id") @db.Uuid
+  campaignId     String?               @map("campaign_id") @db.Uuid
+  alertType      CampaignAlertType     @map("alert_type")
+  priority       CampaignAlertPriority
+  title          String
+  message        String
+  metricValue    Decimal?              @map("metric_value") @db.Decimal(15, 4)
+  thresholdValue Decimal?              @map("threshold_value") @db.Decimal(15, 4)
+  status         CampaignAlertStatus   @default(OPEN)
+  resolvedAt     DateTime?             @map("resolved_at")
+  createdAt      DateTime              @default(now()) @map("created_at")
+
+  company  Company   @relation(fields: [companyId], references: [id])
+  campaign Campaign? @relation(fields: [campaignId], references: [id])
+
+  @@index([companyId, status])
+  @@index([companyId, campaignId])
+  @@map("mkt_campaign_alerts")
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -2855,6 +3043,7 @@ enum DocumentType {
   MATERIAL
   LEAD
   DEAL
+  CAMPAIGN
 }
 
 model DocumentSequence {

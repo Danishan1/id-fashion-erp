@@ -11,6 +11,12 @@ interface Option {
   name?: string;
 }
 
+interface CampaignOption {
+  id: string;
+  name: string;
+  campaignNumber: string;
+}
+
 export interface InitialLead {
   id: string;
   name: string;
@@ -23,6 +29,7 @@ export interface InitialLead {
   value: string;
   expectedCloseDate: string | null;
   assignedTo: { id: string } | null;
+  campaign: { id: string } | null;
   notes: string | null;
 }
 
@@ -38,8 +45,10 @@ export function LeadForm({ initialLead }: { initialLead?: InitialLead } = {}) {
   const [value, setValue] = useState(initialLead?.value ?? "0");
   const [expectedCloseDate, setExpectedCloseDate] = useState(initialLead?.expectedCloseDate?.slice(0, 10) ?? "");
   const [assignedToUserId, setAssignedToUserId] = useState(initialLead?.assignedTo?.id ?? "");
+  const [campaignId, setCampaignId] = useState(initialLead?.campaign?.id ?? "");
   const [notes, setNotes] = useState(initialLead?.notes ?? "");
   const [users, setUsers] = useState<Option[]>([]);
+  const [campaigns, setCampaigns] = useState<CampaignOption[]>([]);
 
   const [error, setError] = useState<string | null>(null);
   const [duplicates, setDuplicates] = useState<Array<{ id: string; name: string; leadNumber: string }> | null>(null);
@@ -49,6 +58,9 @@ export function LeadForm({ initialLead }: { initialLead?: InitialLead } = {}) {
     fetch("/api/v1/users?pageSize=200")
       .then((res) => res.json())
       .then((body) => setUsers(body.data ?? []));
+    fetch("/api/v1/campaigns?pageSize=200")
+      .then((res) => res.json())
+      .then((body) => setCampaigns(body.data ?? []));
   }, []);
 
   const submit = async (overrideDuplicateCheck: boolean) => {
@@ -66,6 +78,7 @@ export function LeadForm({ initialLead }: { initialLead?: InitialLead } = {}) {
         companyName: companyName || undefined,
         source,
         status: initialLead ? status : undefined,
+        campaignId: campaignId || undefined,
         leadScore: Number(leadScore),
         value: Number(value),
         expectedCloseDate: expectedCloseDate || undefined,
@@ -166,6 +179,17 @@ export function LeadForm({ initialLead }: { initialLead?: InitialLead } = {}) {
           </select>
         </FormField>
       )}
+
+      <FormField label="Campaign (optional)" htmlFor="campaignId">
+        <select id="campaignId" value={campaignId} onChange={(e) => setCampaignId(e.target.value)} className={textInputClass()}>
+          <option value="">— None —</option>
+          {campaigns.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name} ({c.campaignNumber})
+            </option>
+          ))}
+        </select>
+      </FormField>
 
       <div className="grid grid-cols-3 gap-4">
         <FormField label="Lead Score (0-100)" htmlFor="leadScore">

@@ -5,6 +5,7 @@ const DETAIL_INCLUDE = {
   assignedTo: { select: { id: true, fullName: true } },
   createdBy: { select: { id: true, fullName: true } },
   buyerEnquiry: { select: { id: true, enquiryNumber: true } },
+  campaign: { select: { id: true, campaignNumber: true, name: true } },
   deals: { select: { id: true, dealNumber: true, title: true, stage: true, value: true } },
 } satisfies Prisma.LeadInclude;
 

@@ -8,6 +8,8 @@ const NAV_SECTIONS = [
   { label: "Masters", href: "/masters" },
   { label: "Leads", href: "/leads" },
   { label: "Deals", href: "/deals" },
+  { label: "Marketing", href: "/marketing" },
+  { label: "Campaigns", href: "/campaigns" },
   { label: "Buyer Enquiries", href: "/buyer-enquiries" },
   { label: "Sampling", href: "/sampling" },
   { label: "Sales Orders", href: "/sales-orders" },

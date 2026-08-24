@@ -23,6 +23,7 @@ interface LeadDetail {
   assignedTo: { id: string; fullName: string } | null;
   createdBy: { id: string; fullName: string };
   buyerEnquiry: { id: string; enquiryNumber: string } | null;
+  campaign: { id: string; campaignNumber: string; name: string } | null;
   deals: Array<{ id: string; dealNumber: string; title: string; stage: string; value: string }>;
 }
 
@@ -189,6 +190,16 @@ export function LeadWorkflowPanel({ lead }: { lead: LeadDetail }) {
             <dd className="mt-0.5">
               <a href={`/buyer-enquiries/${lead.buyerEnquiry.id}`} className="text-indigo-600 hover:underline dark:text-indigo-400">
                 {lead.buyerEnquiry.enquiryNumber}
+              </a>
+            </dd>
+          </div>
+        )}
+        {lead.campaign && (
+          <div>
+            <dt className="text-xs font-medium uppercase text-zinc-500">Campaign</dt>
+            <dd className="mt-0.5">
+              <a href={`/campaigns/${lead.campaign.id}`} className="text-indigo-600 hover:underline dark:text-indigo-400">
+                {lead.campaign.name} ({lead.campaign.campaignNumber})
               </a>
             </dd>
           </div>

@@ -23,6 +23,7 @@ const PREFIX_BY_DOCUMENT_TYPE: Record<DocumentType, string> = {
   MATERIAL: "MAT",
   LEAD: "LEAD",
   DEAL: "DEAL",
+  CAMPAIGN: "CAMP",
 };
 
 /** DocumentTypes that represent master-data codes, not transactional documents. */
