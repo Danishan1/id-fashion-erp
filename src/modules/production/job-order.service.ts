@@ -139,8 +139,11 @@ async function completeAtFinalStageInTx(
  * this codebase, so this is a read-verify-write inside the caller's
  * transaction instead. A Postgres CHECK constraint is the hard backstop
  * (see the migration). `deltas` may be negative only for a genuine
- * isAdjustment=true correction. */
-async function applyJobOrderQuantityDelta(
+ * isAdjustment=true correction. Exported so `job-work-order.service.ts` can
+ * apply an external job-work receipt onto the exact same accumulators an
+ * internal progress entry would — job-work-out is an alternative
+ * fulfillment path for a JobOrder, not a parallel production system. */
+export async function applyJobOrderQuantityDelta(
   tx: Prisma.TransactionClient,
   jobOrderId: string,
   deltas: { completed?: number; rejected?: number; damaged?: number }

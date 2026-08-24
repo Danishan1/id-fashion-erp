@@ -107,6 +107,8 @@ model Company {
   payments                    Payment[]
   expenses                    Expense[]
   dispatches                  Dispatch[]
+  jobWorkOrders               JobWorkOrder[]
+  jobWorkReceipts             JobWorkReceipt[]
 
   @@map("companies")
 }
@@ -155,6 +157,7 @@ model Branch {
   payments              Payment[]
   expenses              Expense[]
   dispatches            Dispatch[]
+  jobWorkOrders         JobWorkOrder[]
 
   @@unique([companyId, code])
   @@map("branches")
@@ -235,6 +238,8 @@ model User {
   expensesCreated                      Expense[]                    @relation("ExpenseCreatedBy")
   expensesPosted                       Expense[]                    @relation("ExpensePostedBy")
   dispatchesRequested                  Dispatch[]                   @relation("DispatchRequestedBy")
+  jobWorkOrdersRequested               JobWorkOrder[]
+  jobWorkReceiptsReceived              JobWorkReceipt[]
 
   @@map("users")
 }
@@ -406,6 +411,7 @@ model Supplier {
   purchaseInvoices   PurchaseInvoice[]
   payments           Payment[]
   expenses           Expense[]
+  jobWorkOrders      JobWorkOrder[]
 
   @@unique([companyId, code])
   @@map("suppliers")
@@ -498,6 +504,16 @@ model Product {
   designNumber      String?           @map("design_number")
   categoryId        String?           @map("category_id") @db.Uuid
   seasonId          String?           @map("season_id") @db.Uuid
+  // Wired for real catalog filtering (Brand/Type/Fitting) — the masters
+  // themselves have existed since Phase 3 but were never attached to a
+  // Product FK until now. Design/DesignPattern/Pattern and the fabric
+  // sub-masters (Gsm/Dye/WeaveType/Width) are deliberately NOT wired here —
+  // their right anchor (style-level vs material-level) isn't unambiguous
+  // yet, and guessing would risk exactly the "duplicate/unclear wiring"
+  // this pass was told to avoid.
+  brandId           String?           @map("brand_id") @db.Uuid
+  productTypeId     String?           @map("product_type_id") @db.Uuid
+  productFittingId  String?           @map("product_fitting_id") @db.Uuid
   gender            String?
   description       String?
   imageUrl          String?           @map("image_url")
@@ -516,6 +532,9 @@ model Product {
   variants              ProductVariant[]
   category              Category?              @relation(fields: [categoryId], references: [id])
   season                Season?                @relation(fields: [seasonId], references: [id])
+  brand                 Brand?                 @relation(fields: [brandId], references: [id])
+  productType           ProductType?           @relation(fields: [productTypeId], references: [id])
+  productFitting        ProductFitting?        @relation(fields: [productFittingId], references: [id])
   sampleRequests        SampleRequest[]        @relation("SampleRequestStyle")
   sampleMaterialUse     SampleMaterial[]       @relation("SampleMaterialProduct")
   buyerEnquiryLines     BuyerEnquiryLine[]
@@ -532,6 +551,7 @@ model Product {
   salesInvoiceItems     SalesInvoiceItem[]
   purchaseInvoiceItems  PurchaseInvoiceItem[]
   dispatchItems         DispatchItem[]
+  jobWorkOrderMaterials JobWorkOrderMaterial[]
 
   @@unique([companyId, styleCode])
   @@map("products")
@@ -581,16 +601,18 @@ model UnitOfMeasure {
   baseUnitId       String? @map("base_unit_id") @db.Uuid
   conversionFactor Decimal @default(1) @map("conversion_factor") @db.Decimal(18, 6)
 
-  baseUnit             UnitOfMeasure?        @relation("UomConversion", fields: [baseUnitId], references: [id])
-  derived              UnitOfMeasure[]       @relation("UomConversion")
-  products             Product[]
-  sampleMaterials      SampleMaterial[]
-  purchaseOrderItems   PurchaseOrderItem[]
-  goodsReceiptItems    GoodsReceiptItem[]
-  materialRequestItems MaterialRequestItem[]
-  bomItems             BomItem[]
-  lots                 Lot[]
-  stockMovementItems   StockMovementItem[]
+  baseUnit              UnitOfMeasure?         @relation("UomConversion", fields: [baseUnitId], references: [id])
+  derived               UnitOfMeasure[]        @relation("UomConversion")
+  products              Product[]
+  sampleMaterials       SampleMaterial[]
+  purchaseOrderItems    PurchaseOrderItem[]
+  goodsReceiptItems     GoodsReceiptItem[]
+  materialRequestItems  MaterialRequestItem[]
+  bomItems              BomItem[]
+  lots                  Lot[]
+  stockMovementItems    StockMovementItem[]
+  jobWorkOrders         JobWorkOrder[]
+  jobWorkOrderMaterials JobWorkOrderMaterial[]
 
   @@map("units_of_measure")
 }
@@ -649,6 +671,7 @@ model Warehouse {
   stockMovementsFrom    StockMovement[]        @relation("StockMovementSourceWarehouse")
   stockMovementsTo      StockMovement[]        @relation("StockMovementDestinationWarehouse")
   dispatches            Dispatch[]
+  jobWorkOrderMaterials JobWorkOrderMaterial[]
 
   @@unique([branchId, code])
   @@map("warehouses")
@@ -771,7 +794,8 @@ model Brand {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  company Company @relation(fields: [companyId], references: [id])
+  company  Company   @relation(fields: [companyId], references: [id])
+  products Product[]
 
   @@unique([companyId, code])
   @@map("brands")
@@ -818,7 +842,8 @@ model ProductFitting {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  company Company @relation(fields: [companyId], references: [id])
+  company  Company   @relation(fields: [companyId], references: [id])
+  products Product[]
 
   @@unique([companyId, code])
   @@map("product_fittings")
@@ -833,7 +858,8 @@ model ProductType {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  company Company @relation(fields: [companyId], references: [id])
+  company  Company   @relation(fields: [companyId], references: [id])
+  products Product[]
 
   @@unique([companyId, code])
   @@map("product_types")
@@ -2610,6 +2636,7 @@ model FabricRoll {
   composition           FabricComposition?     @relation(fields: [compositionId], references: [id])
   warehouseLocation     WarehouseLocation?     @relation(fields: [warehouseLocationId], references: [id])
   inventoryTransactions InventoryTransaction[]
+  jobWorkOrderMaterials JobWorkOrderMaterial[]
 
   @@index([companyId, rollNumber])
   @@index([goodsReceiptItemId])
@@ -2846,6 +2873,7 @@ model JobOrder {
   incomingTransactions ProductionStageTransaction[] @relation("StageTransactionTo")
   outgoingTransactions ProductionStageTransaction[] @relation("StageTransactionFrom")
   qcInspections        QcInspection[]
+  jobWorkOrders        JobWorkOrder[]
 
   // Not unique on (lotId, productionStageId) — a lot can legitimately
   // revisit the same stage after rework; each revisit is a NEW row, never an
@@ -3051,6 +3079,126 @@ model DefectType {
   @@map("defect_types")
 }
 
+enum JobWorkOrderStatus {
+  ISSUED
+  PARTIALLY_RECEIVED
+  FULLY_RECEIVED
+  CLOSED
+  ON_HOLD
+  CANCELLED
+}
+
+enum JobWorkReceiptStatus {
+  COMPLETED
+  PARTIALLY_REVERSED
+  CANCELLED
+}
+
+// External job-work: an alternative fulfillment path for an existing
+// JobOrder's completed/rejected/damaged accumulators — the same three
+// columns internal JobOrderProgressEntry recording already drives, guarded
+// by the same applyJobOrderQuantityDelta() in job-order.service.ts. This is
+// deliberately NOT a parallel production system: once a JobWorkReceipt
+// applies its delta onto the parent JobOrder, the already-built
+// forwardJobOrder()/recordQcInspection() become usable on that quantity for
+// free, with zero changes to either. issuedQuantity draws down the parent
+// JobOrder's "remaining/unprocessed" pool (plannedQuantity - completed -
+// rejected - damaged), the exact same pool internal Assign+Progress draws
+// from — job-work-out is an external alternative to that, not a different
+// concept.
+model JobWorkOrder {
+  id                     String              @id @default(uuid()) @db.Uuid
+  companyId              String              @map("company_id") @db.Uuid
+  branchId               String?             @map("branch_id") @db.Uuid
+  jobWorkNumber          String              @map("job_work_number")
+  supplierId             String              @map("supplier_id") @db.Uuid
+  jobOrderId             String              @map("job_order_id") @db.Uuid
+  issuedQuantity         Decimal             @map("issued_quantity") @db.Decimal(18, 4)
+  uomId                  String              @map("uom_id") @db.Uuid
+  issueDate              DateTime            @map("issue_date") @db.Date
+  expectedCompletionDate DateTime?           @map("expected_completion_date") @db.Date
+  status                 JobWorkOrderStatus  @default(ISSUED)
+  statusBeforeHold       JobWorkOrderStatus? @map("status_before_hold")
+  // Guarded accumulators — the exact PurchaseOrderItem.receivedQuantity
+  // idiom, capped at issuedQuantity via a guarded updateMany, never a
+  // plain read-then-write.
+  receivedQuantity       Decimal             @default(0) @map("received_quantity") @db.Decimal(18, 4)
+  rejectedQuantity       Decimal             @default(0) @map("rejected_quantity") @db.Decimal(18, 4)
+  damagedQuantity        Decimal             @default(0) @map("damaged_quantity") @db.Decimal(18, 4)
+  remarks                String?
+  requestedByUserId      String              @map("requested_by_user_id") @db.Uuid
+  createdAt              DateTime            @default(now()) @map("created_at")
+  updatedAt              DateTime            @updatedAt @map("updated_at")
+
+  company     Company                @relation(fields: [companyId], references: [id])
+  branch      Branch?                @relation(fields: [branchId], references: [id])
+  supplier    Supplier               @relation(fields: [supplierId], references: [id])
+  jobOrder    JobOrder               @relation(fields: [jobOrderId], references: [id])
+  uom         UnitOfMeasure          @relation(fields: [uomId], references: [id])
+  requestedBy User                   @relation(fields: [requestedByUserId], references: [id])
+  materials   JobWorkOrderMaterial[]
+  receipts    JobWorkReceipt[]
+
+  @@unique([companyId, jobWorkNumber])
+  @@index([companyId, status])
+  @@index([supplierId])
+  @@index([jobOrderId])
+  @@map("job_work_orders")
+}
+
+// Optional raw-material lines accompanying the WIP goods sent to the
+// contractor (e.g. trims/extra fabric) — a genuinely separate concern from
+// the WIP quantity itself, since these DO have a real StockBalance row to
+// decrement. Each line posts one JOB_WORK_ISSUE ledger transaction; no
+// return-of-unused-material flow in this pass (see the enum comment).
+model JobWorkOrderMaterial {
+  id             String  @id @default(uuid()) @db.Uuid
+  jobWorkOrderId String  @map("job_work_order_id") @db.Uuid
+  productId      String  @map("product_id") @db.Uuid
+  quantity       Decimal @db.Decimal(18, 4)
+  uomId          String  @map("uom_id") @db.Uuid
+  warehouseId    String  @map("warehouse_id") @db.Uuid
+  fabricRollId   String? @map("fabric_roll_id") @db.Uuid
+  notes          String?
+
+  jobWorkOrder JobWorkOrder  @relation(fields: [jobWorkOrderId], references: [id])
+  product      Product       @relation(fields: [productId], references: [id])
+  uom          UnitOfMeasure @relation(fields: [uomId], references: [id])
+  warehouse    Warehouse     @relation(fields: [warehouseId], references: [id])
+  fabricRoll   FabricRoll?   @relation(fields: [fabricRollId], references: [id])
+
+  @@map("job_work_order_materials")
+}
+
+// Mirrors GoodsReceipt's shape exactly: one JobWorkOrder can have several
+// receipts (partial/multi-shipment return from the contractor). receiptNumber
+// is a simple "<jobWorkNumber>-R<n>" computed at create time, not a global
+// atomic document-number sequence — mirrors SampleVersion's own
+// scoped-to-parent numbering, since this is sub-document numbering, not a
+// standalone business document.
+model JobWorkReceipt {
+  id               String               @id @default(uuid()) @db.Uuid
+  companyId        String               @map("company_id") @db.Uuid
+  jobWorkOrderId   String               @map("job_work_order_id") @db.Uuid
+  receiptNumber    String               @map("receipt_number")
+  receivedDate     DateTime             @map("received_date") @db.Date
+  receivedQuantity Decimal              @map("received_quantity") @db.Decimal(18, 4)
+  rejectedQuantity Decimal              @default(0) @map("rejected_quantity") @db.Decimal(18, 4)
+  damagedQuantity  Decimal              @default(0) @map("damaged_quantity") @db.Decimal(18, 4)
+  status           JobWorkReceiptStatus @default(COMPLETED)
+  remarks          String?
+  receivedByUserId String               @map("received_by_user_id") @db.Uuid
+  createdAt        DateTime             @default(now()) @map("created_at")
+
+  company      Company      @relation(fields: [companyId], references: [id])
+  jobWorkOrder JobWorkOrder @relation(fields: [jobWorkOrderId], references: [id])
+  receivedBy   User         @relation(fields: [receivedByUserId], references: [id])
+
+  @@unique([companyId, jobWorkOrderId, receiptNumber])
+  @@index([jobWorkOrderId])
+  @@map("job_work_receipts")
+}
+
 // Only GOODS_RECEIPT and GOODS_RECEIPT_REVERSAL are reachable by Purchasing —
 // PRODUCTION_RECEIPT/DAMAGE are Phase 5C's own, ADJUSTMENT/STOCK_TRANSFER/
 // RETURN_TO_SUPPLIER are StockMovement's (Phase 6), DISPATCH is Phase 8's own.
@@ -3076,6 +3224,14 @@ enum InventoryTransactionType {
   // time (never at Draft/Packed), matching every other module's "post-time,
   // not draft-time" ledger discipline.
   DISPATCH
+  // Raw-material lines handed to an external job-work contractor alongside
+  // a JobOrder's WIP quantity (see JobWorkOrder) — the WIP quantity itself
+  // never posts here, since it has no StockBalance row to decrement (its
+  // location is tracked structurally via the JobOrder/stage graph, not the
+  // inventory ledger). No matching "receipt" type exists in this pass —
+  // deliberately one-way; a returned-unused-material flow is a future
+  // extension, not part of the confirmed required capability set.
+  JOB_WORK_ISSUE
 }
 
 // Append-only, source of truth — no delete column, no edit path, ever.
@@ -3885,6 +4041,7 @@ enum RelatedModule {
   LEAD
   DEAL
   CRM_FOLLOWUP
+  JOB_WORK_ORDER
 }
 
 model Attachment {
@@ -4023,6 +4180,7 @@ enum DocumentType {
   LEAD
   DEAL
   CAMPAIGN
+  JOB_WORK_ORDER
 }
 
 model DocumentSequence {

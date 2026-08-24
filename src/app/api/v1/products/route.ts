@@ -11,7 +11,16 @@ export async function GET(req: NextRequest) {
     await PermissionService.assert(session.user.id, "masters_core", "view");
 
     const query = parseListQuery(req.nextUrl.searchParams, "styleName");
-    const { data, totalCount } = await listProducts(session.user.companyId, query);
+    const params = req.nextUrl.searchParams;
+    const isActiveParam = params.get("isActive");
+    const { data, totalCount } = await listProducts(session.user.companyId, query, {
+      categoryId: params.get("categoryId") || undefined,
+      seasonId: params.get("seasonId") || undefined,
+      brandId: params.get("brandId") || undefined,
+      productTypeId: params.get("productTypeId") || undefined,
+      productFittingId: params.get("productFittingId") || undefined,
+      isActive: isActiveParam === null ? undefined : isActiveParam === "true",
+    });
 
     return NextResponse.json({ data, meta: buildListMeta(totalCount, query.page, query.pageSize) });
   } catch (error) {

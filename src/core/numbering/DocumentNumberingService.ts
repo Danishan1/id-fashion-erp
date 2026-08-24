@@ -1,5 +1,5 @@
 import { prisma } from "@/core/db/client";
-import type { DocumentType, Prisma } from "@prisma/client";
+import type { DocumentType } from "@prisma/client";
 
 const PREFIX_BY_DOCUMENT_TYPE: Record<DocumentType, string> = {
   SAMPLE_REQUEST: "SAM",
@@ -24,6 +24,7 @@ const PREFIX_BY_DOCUMENT_TYPE: Record<DocumentType, string> = {
   LEAD: "LEAD",
   DEAL: "DEAL",
   CAMPAIGN: "CAMP",
+  JOB_WORK_ORDER: "JWO",
 };
 
 /** DocumentTypes that represent master-data codes, not transactional documents. */
