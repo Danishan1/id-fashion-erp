@@ -89,6 +89,10 @@ model Company {
   crmActivities               CrmActivity[]
   crmFollowups                CrmFollowup[]
   crmRoundRobinState          CrmRoundRobinState?
+  chartOfAccounts             ChartOfAccount[]
+  taxTypes                    TaxType[]
+  taxRates                    TaxRate[]
+  journals                    Journal[]
 
   @@map("companies")
 }
@@ -130,6 +134,7 @@ model Branch {
   documentSequences     DocumentSequence[]
   leads                 Lead[]
   deals                 Deal[]
+  journals              Journal[]
 
   @@unique([companyId, code])
   @@map("branches")
@@ -189,6 +194,8 @@ model User {
   crmActivitiesPerformed               CrmActivity[]                @relation("CrmActivityPerformedBy")
   crmFollowupsAssigned                 CrmFollowup[]                @relation("CrmFollowupAssignedTo")
   crmFollowupsCreated                  CrmFollowup[]                @relation("CrmFollowupCreatedBy")
+  journalsCreated                      Journal[]                    @relation("JournalCreatedBy")
+  journalsPosted                       Journal[]                    @relation("JournalPostedBy")
 
   @@map("users")
 }
@@ -2725,6 +2732,165 @@ model StockMovementItem {
 
   @@index([stockMovementId])
   @@map("stock_movement_items")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Accounts (Phase 7A — Chart of Accounts, Tax Config, Journal Engine)
+//
+// First slice of Phase 7. Sales/Purchase Invoices, Payments+Allocations, and
+// Expenses are NOT part of this slice — they're later slices that will post
+// through the Journal engine built here. Multi-currency is deliberately out
+// of scope (JournalLine amounts are base-currency-only), matching the
+// project-wide multi-currency-UI deferral already applied to SalesOrder/
+// PurchaseOrder.
+// ─────────────────────────────────────────────────────────────
+
+enum AccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  INCOME
+  EXPENSE
+}
+
+model ChartOfAccount {
+  id              String      @id @default(uuid()) @db.Uuid
+  companyId       String      @map("company_id") @db.Uuid
+  code            String
+  name            String
+  accountType     AccountType @map("account_type")
+  // Self-relation, schema-only for now — no hierarchy UI yet, matching the
+  // ProductionStage.parentStageId precedent (column exists, exposed later
+  // when actually needed). NOT YET DECIDED: nothing here distinguishes a
+  // postable "leaf" account from a rollup "group" account (e.g. a future
+  // isGroup/postable flag) — deliberately deferred, not solved, so whichever
+  // slice builds the hierarchy UI doesn't rediscover this as a surprise.
+  parentAccountId String?     @map("parent_account_id") @db.Uuid
+  // Protects control accounts (AR/AP/GST) seeded by prisma/seed.ts from
+  // deactivation — checked alongside the JournalLine-reference guard, not a
+  // replacement for it.
+  isSystemAccount Boolean     @default(false) @map("is_system_account")
+  isActive        Boolean     @default(true) @map("is_active")
+  createdAt       DateTime    @default(now()) @map("created_at")
+  updatedAt       DateTime    @updatedAt @map("updated_at")
+
+  company       Company          @relation(fields: [companyId], references: [id])
+  parentAccount ChartOfAccount?  @relation("ChartOfAccountParent", fields: [parentAccountId], references: [id])
+  childAccounts ChartOfAccount[] @relation("ChartOfAccountParent")
+  journalLines  JournalLine[]
+
+  @@unique([companyId, code])
+  @@map("chart_of_accounts")
+}
+
+model TaxType {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  code      String
+  name      String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company Company   @relation(fields: [companyId], references: [id])
+  rates   TaxRate[]
+
+  @@unique([companyId, code])
+  @@map("tax_types")
+}
+
+model TaxRate {
+  id             String    @id @default(uuid()) @db.Uuid
+  companyId      String    @map("company_id") @db.Uuid
+  taxTypeId      String    @map("tax_type_id") @db.Uuid
+  name           String
+  // Matches the existing SampleMaterial.gstPercentage precision precedent —
+  // not inventing a new one.
+  ratePercentage Decimal   @map("rate_percentage") @db.Decimal(5, 2)
+  effectiveFrom  DateTime  @map("effective_from") @db.Date
+  // Nullable = still the current rate. Service layer rejects a new rate whose
+  // [effectiveFrom, effectiveTo) window overlaps an existing active rate for
+  // the same taxTypeId — cheap to enforce now, avoids ambiguous data a later
+  // slice's "find the effective rate as of date X" logic would mishandle.
+  effectiveTo    DateTime? @map("effective_to") @db.Date
+  isActive       Boolean   @default(true) @map("is_active")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+  taxType TaxType @relation(fields: [taxTypeId], references: [id])
+
+  @@index([taxTypeId])
+  @@map("tax_rates")
+}
+
+enum JournalStatus {
+  DRAFT
+  POSTED
+  CANCELLED
+}
+
+model Journal {
+  id                  String         @id @default(uuid()) @db.Uuid
+  companyId           String         @map("company_id") @db.Uuid
+  branchId            String?        @map("branch_id") @db.Uuid
+  journalNumber       String         @map("journal_number")
+  journalDate         DateTime       @map("journal_date") @db.Date
+  status              JournalStatus  @default(DRAFT)
+  narration           String?
+  // Polymorphic "what caused this journal" discriminator, reusing the
+  // existing RelatedModule enum rather than inventing a parallel one — null
+  // for a manually-created journal (no source document). No enum value is
+  // added this slice; later slices (Sales/Purchase Invoice) will populate
+  // these with their own RelatedModule value + id when they auto-create a
+  // journal on posting.
+  sourceModule        RelatedModule? @map("source_module")
+  sourceRecordId      String?        @map("source_record_id") @db.Uuid
+  // Written only at post time, recomputed from a fresh read of JournalLine
+  // rows inside the same transaction as the status flip — never trusted from
+  // a client-submitted total.
+  totalDebit          Decimal        @default(0) @map("total_debit") @db.Decimal(18, 2)
+  totalCredit         Decimal        @default(0) @map("total_credit") @db.Decimal(18, 2)
+  postedAt            DateTime?      @map("posted_at")
+  postedByUserId      String?        @map("posted_by_user_id") @db.Uuid
+  createdByUserId     String         @map("created_by_user_id") @db.Uuid
+  // At most one reversal per original journal. The ORIGINAL journal's own
+  // status never changes when reversed — it stays POSTED forever, since a
+  // posted journal is an immutable historical accounting fact, not something
+  // that "un-happens." Only the read model (via this back-relation) shows
+  // that a reversal exists.
+  reversalOfJournalId String?        @unique @map("reversal_of_journal_id") @db.Uuid
+  createdAt           DateTime       @default(now()) @map("created_at")
+  updatedAt           DateTime       @updatedAt @map("updated_at")
+
+  company           Company       @relation(fields: [companyId], references: [id])
+  branch            Branch?       @relation(fields: [branchId], references: [id])
+  postedBy          User?         @relation("JournalPostedBy", fields: [postedByUserId], references: [id])
+  createdBy         User          @relation("JournalCreatedBy", fields: [createdByUserId], references: [id])
+  reversalOf        Journal?      @relation("JournalReversal", fields: [reversalOfJournalId], references: [id])
+  reversedByJournal Journal?      @relation("JournalReversal")
+  lines             JournalLine[]
+
+  @@unique([companyId, journalNumber])
+  @@map("journals")
+}
+
+model JournalLine {
+  id           String   @id @default(uuid()) @db.Uuid
+  journalId    String   @map("journal_id") @db.Uuid
+  lineNumber   Int      @map("line_number")
+  accountId    String   @map("account_id") @db.Uuid
+  debitAmount  Decimal  @default(0) @map("debit_amount") @db.Decimal(18, 2)
+  creditAmount Decimal  @default(0) @map("credit_amount") @db.Decimal(18, 2)
+  description  String?
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  journal Journal        @relation(fields: [journalId], references: [id])
+  account ChartOfAccount @relation(fields: [accountId], references: [id])
+
+  @@index([journalId])
+  @@index([accountId])
+  @@map("journal_lines")
 }
 
 // ─────────────────────────────────────────────────────────────
