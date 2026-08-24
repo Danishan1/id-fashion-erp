@@ -5,7 +5,7 @@ export const ProductRepository = {
   findManyStyles: (where: Prisma.ProductWhereInput, args: Omit<Prisma.ProductFindManyArgs, "where">) =>
     prisma.product.findMany({
       where,
-      include: { category: true, season: true, _count: { select: { variants: true } } },
+      include: { category: true, season: true, brand: true, productType: true, productFitting: true, _count: { select: { variants: true } } },
       ...args,
     }),
 
@@ -20,6 +20,9 @@ export const ProductRepository = {
       include: {
         category: true,
         season: true,
+        brand: true,
+        productType: true,
+        productFitting: true,
         variants: {
           include: { color: true, size: true },
           orderBy: [{ color: { name: "asc" } }, { size: { sortOrder: "asc" } }],

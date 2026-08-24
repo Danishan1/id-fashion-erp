@@ -10,7 +10,8 @@ export async function GET(req: NextRequest) {
     await PermissionService.assert(session.user.id, "inventory", "view");
 
     const query = parseListQuery(req.nextUrl.searchParams, "updatedAt");
-    const { data, totalCount } = await listStockBalances(session.user.companyId, query);
+    const warehouseId = req.nextUrl.searchParams.get("warehouseId") || undefined;
+    const { data, totalCount } = await listStockBalances(session.user.companyId, query, { warehouseId });
 
     return NextResponse.json({ data, meta: buildListMeta(totalCount, query.page, query.pageSize) });
   } catch (error) {

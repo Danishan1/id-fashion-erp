@@ -66,6 +66,11 @@ interface DefectTypeOption {
   name: string;
 }
 
+interface SupplierOption {
+  id: string;
+  name: string;
+}
+
 async function parseErrorMessage(res: Response, fallback: string) {
   const body = await res.json().catch(() => null);
   return body?.error?.message ?? fallback;
@@ -92,6 +97,15 @@ export function LotWorkflowPanel({
   const [employees, setEmployees] = useState<EmployeeOption[]>([]);
   const [warehouses, setWarehouses] = useState<WarehouseOption[]>([]);
   const [defectTypes, setDefectTypes] = useState<DefectTypeOption[]>([]);
+  const [suppliers, setSuppliers] = useState<SupplierOption[]>([]);
+
+  const [jobWorkTarget, setJobWorkTarget] = useState<JobOrderRow | null>(null);
+  const [jobWorkSupplierId, setJobWorkSupplierId] = useState("");
+  const [jobWorkQty, setJobWorkQty] = useState("");
+  const [jobWorkIssueDate, setJobWorkIssueDate] = useState(new Date().toISOString().slice(0, 10));
+  const [jobWorkExpectedDate, setJobWorkExpectedDate] = useState("");
+  const [jobWorkRemarks, setJobWorkRemarks] = useState("");
+  const [createdJobWorkOrderId, setCreatedJobWorkOrderId] = useState<string | null>(null);
 
   const [showStart, setShowStart] = useState(false);
   const [startStageId, setStartStageId] = useState("");
@@ -141,6 +155,9 @@ export function LotWorkflowPanel({
     fetch("/api/v1/defect-types")
       .then((res) => res.json())
       .then((body) => setDefectTypes(body.data ?? []));
+    fetch("/api/v1/suppliers?pageSize=200")
+      .then((res) => res.json())
+      .then((body) => setSuppliers(body.data ?? []));
   }, []);
 
   const refresh = async () => {
@@ -301,6 +318,39 @@ export function LotWorkflowPanel({
     }
   };
 
+  const submitJobWork = async () => {
+    if (!jobWorkTarget) return;
+    setIsBusy(true);
+    setError(null);
+    const res = await fetch("/api/v1/job-work-orders", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jobOrderId: jobWorkTarget.id,
+        supplierId: jobWorkSupplierId,
+        issuedQuantity: Number(jobWorkQty),
+        uomId: lot.uom.id,
+        issueDate: jobWorkIssueDate,
+        expectedCompletionDate: jobWorkExpectedDate || undefined,
+        remarks: jobWorkRemarks || undefined,
+      }),
+    });
+    if (!res.ok) {
+      setError(await parseErrorMessage(res, "Failed to send this job order to job-work."));
+      setIsBusy(false);
+      return;
+    }
+    const body = await res.json();
+    await refresh();
+    setIsBusy(false);
+    setJobWorkTarget(null);
+    setJobWorkSupplierId("");
+    setJobWorkQty("");
+    setJobWorkExpectedDate("");
+    setJobWorkRemarks("");
+    setCreatedJobWorkOrderId(body.data.id);
+  };
+
   const canAct = lot.status === "PLANNED" || lot.status === "IN_PROGRESS";
 
   return (
@@ -321,6 +371,15 @@ export function LotWorkflowPanel({
       </div>
 
       {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+
+      {createdJobWorkOrderId && (
+        <p className="text-sm text-emerald-600 dark:text-emerald-400">
+          Sent to job-work —{" "}
+          <Link href={`/production/job-work/${createdJobWorkOrderId}`} className="underline">
+            view the job-work order →
+          </Link>
+        </p>
+      )}
 
       {lot.status === "PLANNED" && (
         <button
@@ -397,6 +456,19 @@ export function LotWorkflowPanel({
                   {remaining > 0 && (
                     <button type="button" onClick={() => setRevertTarget(jo)} className="text-amber-600 hover:text-amber-500">
                       Revert
+                    </button>
+                  )}
+                  {remaining > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setJobWorkTarget(jo);
+                        setJobWorkQty(String(remaining));
+                        setCreatedJobWorkOrderId(null);
+                      }}
+                      className="text-purple-600 hover:text-purple-500"
+                    >
+                      Send to Job-Work
                     </button>
                   )}
                   {notYetInspected > 0 && (
@@ -682,6 +754,54 @@ export function LotWorkflowPanel({
               </button>
               <button type="button" onClick={submitQc} disabled={isBusy} className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60">
                 {isBusy ? "Saving…" : "Record Inspection"}
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <Modal open={!!jobWorkTarget} onClose={() => setJobWorkTarget(null)} title="Send to External Job-Work">
+        {jobWorkTarget && (
+          <div className="space-y-4">
+            <p className="text-xs text-zinc-500">
+              Sends part of &ldquo;{jobWorkTarget.productionStage.name}&rdquo;&apos;s remaining work to an outside contractor. Receiving it back later
+              completes this quantity exactly like an internal progress entry would — QC and Forward remain available on it either way.
+            </p>
+            <FormField label="Contractor" htmlFor="jobWorkSupplierId" required>
+              <select id="jobWorkSupplierId" required value={jobWorkSupplierId} onChange={(e) => setJobWorkSupplierId(e.target.value)} className={textInputClass()}>
+                <option value="">— Select —</option>
+                {suppliers.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </FormField>
+            <FormField label={`Quantity (${lot.uom.code})`} htmlFor="jobWorkQty" required>
+              <input id="jobWorkQty" type="number" min={0} step="0.0001" required value={jobWorkQty} onChange={(e) => setJobWorkQty(e.target.value)} className={textInputClass()} />
+            </FormField>
+            <div className="grid grid-cols-2 gap-3">
+              <FormField label="Issue Date" htmlFor="jobWorkIssueDate" required>
+                <input id="jobWorkIssueDate" type="date" required value={jobWorkIssueDate} onChange={(e) => setJobWorkIssueDate(e.target.value)} className={textInputClass()} />
+              </FormField>
+              <FormField label="Expected Completion" htmlFor="jobWorkExpectedDate">
+                <input id="jobWorkExpectedDate" type="date" value={jobWorkExpectedDate} onChange={(e) => setJobWorkExpectedDate(e.target.value)} className={textInputClass()} />
+              </FormField>
+            </div>
+            <FormField label="Remarks" htmlFor="jobWorkRemarks">
+              <input id="jobWorkRemarks" value={jobWorkRemarks} onChange={(e) => setJobWorkRemarks(e.target.value)} className={textInputClass()} />
+            </FormField>
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setJobWorkTarget(null)} className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800">
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={submitJobWork}
+                disabled={isBusy || !jobWorkSupplierId || !jobWorkQty}
+                className="rounded-md bg-purple-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-purple-500 disabled:opacity-60"
+              >
+                {isBusy ? "Saving…" : "Send to Job-Work"}
               </button>
             </div>
           </div>

@@ -83,7 +83,7 @@ export async function sumAvailableByProductIds(companyId: string, productIds: st
   return new Map(rows.map((row) => [row.productId, Number(row._sum.quantityOnHand ?? 0)]));
 }
 
-export async function listStockBalances(companyId: string, query: ListQuery) {
+export async function listStockBalances(companyId: string, query: ListQuery, filters: { warehouseId?: string } = {}) {
   const where: Prisma.StockBalanceWhereInput = {
     companyId,
     ...(query.search
@@ -96,6 +96,7 @@ export async function listStockBalances(companyId: string, query: ListQuery) {
           },
         }
       : {}),
+    ...(filters.warehouseId ? { warehouseId: filters.warehouseId } : {}),
   };
 
   const [data, totalCount] = await Promise.all([

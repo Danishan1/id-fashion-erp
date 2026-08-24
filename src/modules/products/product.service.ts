@@ -17,8 +17,17 @@ interface ActorContext {
   userId: string;
 }
 
-export async function listProducts(companyId: string, query: ListQuery) {
-  const where = {
+export interface ProductListFilters {
+  categoryId?: string;
+  seasonId?: string;
+  brandId?: string;
+  productTypeId?: string;
+  productFittingId?: string;
+  isActive?: boolean;
+}
+
+export async function listProducts(companyId: string, query: ListQuery, filters: ProductListFilters = {}) {
+  const where: Prisma.ProductWhereInput = {
     companyId,
     itemType: "STYLE" as const,
     deletedAt: null,
@@ -30,6 +39,12 @@ export async function listProducts(companyId: string, query: ListQuery) {
           ],
         }
       : {}),
+    ...(filters.categoryId ? { categoryId: filters.categoryId } : {}),
+    ...(filters.seasonId ? { seasonId: filters.seasonId } : {}),
+    ...(filters.brandId ? { brandId: filters.brandId } : {}),
+    ...(filters.productTypeId ? { productTypeId: filters.productTypeId } : {}),
+    ...(filters.productFittingId ? { productFittingId: filters.productFittingId } : {}),
+    ...(filters.isActive !== undefined ? { isActive: filters.isActive } : {}),
   };
 
   const [data, totalCount] = await Promise.all([
@@ -54,6 +69,9 @@ function toData(input: ProductInput) {
     designNumber: input.designNumber || null,
     categoryId: input.categoryId || null,
     seasonId: input.seasonId || null,
+    brandId: input.brandId || null,
+    productTypeId: input.productTypeId || null,
+    productFittingId: input.productFittingId || null,
     gender: input.gender || null,
     description: input.description || null,
     hsnSacCode: input.hsnSacCode || null,
@@ -86,6 +104,9 @@ function toUpdateData(input: ProductUpdateInput): Prisma.ProductUncheckedUpdateI
   if (input.designNumber !== undefined) data.designNumber = input.designNumber || null;
   if (input.categoryId !== undefined) data.categoryId = input.categoryId || null;
   if (input.seasonId !== undefined) data.seasonId = input.seasonId || null;
+  if (input.brandId !== undefined) data.brandId = input.brandId || null;
+  if (input.productTypeId !== undefined) data.productTypeId = input.productTypeId || null;
+  if (input.productFittingId !== undefined) data.productFittingId = input.productFittingId || null;
   if (input.gender !== undefined) data.gender = input.gender || null;
   if (input.description !== undefined) data.description = input.description || null;
   if (input.hsnSacCode !== undefined) data.hsnSacCode = input.hsnSacCode || null;

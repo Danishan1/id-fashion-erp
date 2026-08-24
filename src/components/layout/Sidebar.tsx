@@ -23,6 +23,7 @@ const NAV_SECTIONS = [
   { label: "Goods Receipts", href: "/goods-receipts" },
   { label: "BOM / MRP", href: "/bom-mrp" },
   { label: "Production", href: "/production-orders" },
+  { label: "Job Work Orders", href: "/production/job-work" },
   { label: "Inventory", href: "/inventory/stock-balances" },
   { label: "Stock Movements", href: "/inventory/stock-movements" },
   { label: "Material Requests", href: "/material-requests" },

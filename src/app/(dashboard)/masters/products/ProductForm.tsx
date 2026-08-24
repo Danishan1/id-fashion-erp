@@ -10,6 +10,9 @@ export interface ProductFormValues {
   designNumber: string;
   categoryId: string;
   seasonId: string;
+  brandId: string;
+  productTypeId: string;
+  productFittingId: string;
   gender: string;
   description: string;
   hsnSacCode: string;
@@ -23,6 +26,9 @@ const EMPTY_VALUES: ProductFormValues = {
   designNumber: "",
   categoryId: "",
   seasonId: "",
+  brandId: "",
+  productTypeId: "",
+  productFittingId: "",
   gender: "",
   description: "",
   hsnSacCode: "",
@@ -53,6 +59,9 @@ export function ProductForm({ initialValues, submitUrl, method, redirectTo }: Pr
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [categories, setCategories] = useState<NamedOption[]>([]);
   const [seasons, setSeasons] = useState<NamedOption[]>([]);
+  const [brands, setBrands] = useState<NamedOption[]>([]);
+  const [productTypes, setProductTypes] = useState<NamedOption[]>([]);
+  const [productFittings, setProductFittings] = useState<NamedOption[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -69,6 +78,18 @@ export function ProductForm({ initialValues, submitUrl, method, redirectTo }: Pr
       .then((res) => res.json())
       .then((body) => setSeasons(body.data ?? []))
       .catch(() => setSeasons([]));
+    fetch("/api/v1/brands?pageSize=200")
+      .then((res) => res.json())
+      .then((body) => setBrands(body.data ?? []))
+      .catch(() => setBrands([]));
+    fetch("/api/v1/product-types?pageSize=200")
+      .then((res) => res.json())
+      .then((body) => setProductTypes(body.data ?? []))
+      .catch(() => setProductTypes([]));
+    fetch("/api/v1/product-fittings?pageSize=200")
+      .then((res) => res.json())
+      .then((body) => setProductFittings(body.data ?? []))
+      .catch(() => setProductFittings([]));
   }, []);
 
   useEffect(() => {
@@ -193,6 +214,54 @@ export function ProductForm({ initialValues, submitUrl, method, redirectTo }: Pr
             onChange={(e) => setValues({ ...values, gender: e.target.value })}
             className={textInputClass()}
           />
+        </FormField>
+      </div>
+
+      <div className="grid grid-cols-3 gap-4">
+        <FormField label="Brand" htmlFor="brandId">
+          <select
+            id="brandId"
+            value={values.brandId}
+            onChange={(e) => setValues({ ...values, brandId: e.target.value })}
+            className={textInputClass()}
+          >
+            <option value="">— None —</option>
+            {brands.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name}
+              </option>
+            ))}
+          </select>
+        </FormField>
+        <FormField label="Product Type" htmlFor="productTypeId">
+          <select
+            id="productTypeId"
+            value={values.productTypeId}
+            onChange={(e) => setValues({ ...values, productTypeId: e.target.value })}
+            className={textInputClass()}
+          >
+            <option value="">— None —</option>
+            {productTypes.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+        </FormField>
+        <FormField label="Fitting" htmlFor="productFittingId">
+          <select
+            id="productFittingId"
+            value={values.productFittingId}
+            onChange={(e) => setValues({ ...values, productFittingId: e.target.value })}
+            className={textInputClass()}
+          >
+            <option value="">— None —</option>
+            {productFittings.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.name}
+              </option>
+            ))}
+          </select>
         </FormField>
       </div>
 
