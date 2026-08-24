@@ -93,6 +93,7 @@ model Company {
   taxTypes                    TaxType[]
   taxRates                    TaxRate[]
   journals                    Journal[]
+  salesInvoices               SalesInvoice[]
 
   @@map("companies")
 }
@@ -135,6 +136,7 @@ model Branch {
   leads                 Lead[]
   deals                 Deal[]
   journals              Journal[]
+  salesInvoices         SalesInvoice[]
 
   @@unique([companyId, code])
   @@map("branches")
@@ -196,6 +198,8 @@ model User {
   crmFollowupsCreated                  CrmFollowup[]                @relation("CrmFollowupCreatedBy")
   journalsCreated                      Journal[]                    @relation("JournalCreatedBy")
   journalsPosted                       Journal[]                    @relation("JournalPostedBy")
+  salesInvoicesCreated                 SalesInvoice[]               @relation("SalesInvoiceCreatedBy")
+  salesInvoicesPosted                  SalesInvoice[]               @relation("SalesInvoicePostedBy")
 
   @@map("users")
 }
@@ -295,6 +299,7 @@ model Customer {
   buyerEnquiries BuyerEnquiry[]
   salesOrders    SalesOrder[]
   deals          Deal[]
+  salesInvoices  SalesInvoice[]
 
   @@unique([companyId, code])
   @@map("customers")
@@ -475,6 +480,7 @@ model Product {
   materialRequestItems  MaterialRequestItem[]  @relation("MaterialRequestItemMaterial")
   productionOrders      ProductionOrder[]
   stockMovementItems    StockMovementItem[]
+  salesInvoiceItems     SalesInvoiceItem[]
 
   @@unique([companyId, styleCode])
   @@map("products")
@@ -1715,6 +1721,7 @@ model SalesOrder {
   requestedBy      User              @relation("SalesOrderRequestedBy", fields: [requestedByUserId], references: [id])
   items            SalesOrderItem[]
   materialRequests MaterialRequest[]
+  salesInvoices    SalesInvoice[]
 
   @@unique([companyId, orderNumber])
   @@map("sales_orders")
@@ -1732,11 +1739,12 @@ model SalesOrderItem {
   notes           String?
   createdAt       DateTime @default(now()) @map("created_at")
 
-  salesOrder       SalesOrder                @relation(fields: [salesOrderId], references: [id])
-  product          Product                   @relation(fields: [productId], references: [id])
-  sampleRequest    SampleRequest?            @relation(fields: [sampleRequestId], references: [id])
-  breakdown        SalesOrderItemBreakdown[]
-  productionOrders ProductionOrder[]
+  salesOrder        SalesOrder                @relation(fields: [salesOrderId], references: [id])
+  product           Product                   @relation(fields: [productId], references: [id])
+  sampleRequest     SampleRequest?            @relation(fields: [sampleRequestId], references: [id])
+  breakdown         SalesOrderItemBreakdown[]
+  productionOrders  ProductionOrder[]
+  salesInvoiceItems SalesInvoiceItem[]
 
   @@map("sales_order_items")
 }
@@ -2817,8 +2825,9 @@ model TaxRate {
   createdAt      DateTime  @default(now()) @map("created_at")
   updatedAt      DateTime  @updatedAt @map("updated_at")
 
-  company Company @relation(fields: [companyId], references: [id])
-  taxType TaxType @relation(fields: [taxTypeId], references: [id])
+  company           Company            @relation(fields: [companyId], references: [id])
+  taxType           TaxType            @relation(fields: [taxTypeId], references: [id])
+  salesInvoiceItems SalesInvoiceItem[]
 
   @@index([taxTypeId])
   @@map("tax_rates")
@@ -2870,6 +2879,7 @@ model Journal {
   reversalOf        Journal?      @relation("JournalReversal", fields: [reversalOfJournalId], references: [id])
   reversedByJournal Journal?      @relation("JournalReversal")
   lines             JournalLine[]
+  salesInvoice      SalesInvoice?
 
   @@unique([companyId, journalNumber])
   @@map("journals")
@@ -2891,6 +2901,97 @@ model JournalLine {
   @@index([journalId])
   @@index([accountId])
   @@map("journal_lines")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Sales Invoices (Phase 7B) — the first real consumer of the Journal engine.
+// Posting an invoice auto-creates+auto-posts a Journal (Dr Accounts
+// Receivable / Cr Sales Revenue / Cr GST Payable) and flips the originating
+// SalesOrder to INVOICED.
+// ─────────────────────────────────────────────────────────────
+
+enum SalesInvoiceStatus {
+  DRAFT
+  POSTED
+  // Reserved for the Payments slice — not reachable by any code yet, same
+  // "enum has values nothing reaches yet" discipline as SalesOrderStatus.
+  PARTIALLY_PAID
+  PAID
+  CLOSED
+  CANCELLED
+}
+
+model SalesInvoice {
+  id               String             @id @default(uuid()) @db.Uuid
+  companyId        String             @map("company_id") @db.Uuid
+  branchId         String?            @map("branch_id") @db.Uuid
+  invoiceNumber    String             @map("invoice_number")
+  salesOrderId     String             @map("sales_order_id") @db.Uuid
+  // Denormalized from the order — justified here (unlike e.g. GoodsReceipt
+  // not denormalizing supplierId) because this table IS the AR ledger's own
+  // document of record, not a downstream operational record.
+  customerId       String             @map("customer_id") @db.Uuid
+  invoiceDate      DateTime           @map("invoice_date") @db.Date
+  dueDate          DateTime           @map("due_date") @db.Date
+  status           SalesInvoiceStatus @default(DRAFT)
+  // Copied from the SalesOrder at creation time, never re-derived — same
+  // frozen-currency convention as SalesOrder/PurchaseOrder.
+  currencyCode     String             @map("currency_code") @db.Char(3)
+  exchangeRate     Decimal            @default(1) @map("exchange_rate") @db.Decimal(18, 6)
+  baseCurrencyCode String             @map("base_currency_code") @db.Char(3)
+  subtotalAmount   Decimal            @default(0) @map("subtotal_amount") @db.Decimal(18, 2)
+  taxAmount        Decimal            @default(0) @map("tax_amount") @db.Decimal(18, 2)
+  totalAmount      Decimal            @default(0) @map("total_amount") @db.Decimal(18, 2)
+  baseTotalAmount  Decimal            @default(0) @map("base_total_amount") @db.Decimal(18, 2)
+  // Set only at post time — the settlement Journal this invoice generated.
+  journalId        String?            @unique @map("journal_id") @db.Uuid
+  postedAt         DateTime?          @map("posted_at")
+  postedByUserId   String?            @map("posted_by_user_id") @db.Uuid
+  createdByUserId  String             @map("created_by_user_id") @db.Uuid
+  createdAt        DateTime           @default(now()) @map("created_at")
+  updatedAt        DateTime           @updatedAt @map("updated_at")
+
+  company    Company            @relation(fields: [companyId], references: [id])
+  branch     Branch?            @relation(fields: [branchId], references: [id])
+  salesOrder SalesOrder         @relation(fields: [salesOrderId], references: [id])
+  customer   Customer           @relation(fields: [customerId], references: [id])
+  journal    Journal?           @relation(fields: [journalId], references: [id])
+  postedBy   User?              @relation("SalesInvoicePostedBy", fields: [postedByUserId], references: [id])
+  createdBy  User               @relation("SalesInvoiceCreatedBy", fields: [createdByUserId], references: [id])
+  items      SalesInvoiceItem[]
+
+  @@unique([companyId, branchId, invoiceNumber])
+  @@map("sales_invoices")
+}
+
+model SalesInvoiceItem {
+  id               String   @id @default(uuid()) @db.Uuid
+  salesInvoiceId   String   @map("sales_invoice_id") @db.Uuid
+  // Traces back to the originating line — the Sales Order remains the source
+  // of truth for size/color breakdown; this table aggregates to one line per
+  // style since SalesOrderItem.unitPrice is already per-style, not per-variant.
+  salesOrderItemId String   @map("sales_order_item_id") @db.Uuid
+  productId        String   @map("product_id") @db.Uuid
+  quantity         Int
+  unitPrice        Decimal  @map("unit_price") @db.Decimal(18, 2)
+  // Deliberate deviation from CLAUDE.md's 13-table Accounts plan (a shared
+  // tax_transactions table): freezes the tax rate/amount directly on the
+  // item since this is the first consumer. Revisit if Purchase Invoices
+  // (7C) or a third consumer make the shared shape worth building — not
+  // speculatively generalizing before a second real caller exists.
+  taxRateId        String?  @map("tax_rate_id") @db.Uuid
+  taxPercentage    Decimal? @map("tax_percentage") @db.Decimal(5, 2)
+  taxAmount        Decimal  @default(0) @map("tax_amount") @db.Decimal(18, 2)
+  lineTotal        Decimal  @map("line_total") @db.Decimal(18, 2)
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  salesInvoice   SalesInvoice   @relation(fields: [salesInvoiceId], references: [id])
+  salesOrderItem SalesOrderItem @relation(fields: [salesOrderItemId], references: [id])
+  product        Product        @relation(fields: [productId], references: [id])
+  taxRate        TaxRate?       @relation(fields: [taxRateId], references: [id])
+
+  @@index([salesInvoiceId])
+  @@map("sales_invoice_items")
 }
 
 // ─────────────────────────────────────────────────────────────

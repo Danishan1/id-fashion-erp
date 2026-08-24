@@ -139,8 +139,12 @@ export async function updateJournal(actor: ActorContext, id: string, input: Jour
  * createdByUserId is unavoidably always the actor — routing it back through
  * the self-approval-guarded public path would make reversal unusable for
  * anyone but SUPER_ADMIN.
+ *
+ * Exported for reuse by other modules that auto-generate-and-post a Journal
+ * as a trusted side effect of their own already-authorized action (e.g.
+ * Sales Invoice posting) — same reasoning as reverseJournal()'s own use.
  */
-async function postJournalCore(
+export async function postJournalCore(
   tx: Prisma.TransactionClient,
   journalId: string,
   expectedStatus: JournalStatus,
