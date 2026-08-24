@@ -6,6 +6,8 @@ import { usePathname } from "next/navigation";
 const NAV_SECTIONS = [
   { label: "Dashboard", href: "/dashboard" },
   { label: "Masters", href: "/masters" },
+  { label: "Leads", href: "/leads" },
+  { label: "Deals", href: "/deals" },
   { label: "Buyer Enquiries", href: "/buyer-enquiries" },
   { label: "Sampling", href: "/sampling" },
   { label: "Sales Orders", href: "/sales-orders" },
@@ -14,6 +16,7 @@ const NAV_SECTIONS = [
   { label: "BOM / MRP", href: "/bom-mrp" },
   { label: "Production", href: "/production-orders" },
   { label: "Inventory", href: "/inventory/stock-balances" },
+  { label: "Stock Movements", href: "/inventory/stock-movements" },
   { label: "Material Requests", href: "/material-requests" },
   { label: "Accounts", href: "/accounts" },
   { label: "Dispatch", href: "/dispatch" },

@@ -10,6 +10,7 @@ export const MODULES = [
   "dashboard",
   "masters_core",
   "masters_finance",
+  "crm",
   "sampling",
   "buyer_enquiries",
   "sales_orders",
@@ -73,6 +74,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     dashboard: ["view"],
     masters_core: ["view"],
     masters_finance: ["view"],
+    crm: ["view", "export"],
     sampling: ["view", "approve", "reject"],
     buyer_enquiries: ["view", "reject"],
     sales_orders: ["view", "approve", "export"],
@@ -95,6 +97,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
   MERCHANDISER: {
     dashboard: ["view"],
     masters_core: ["view", "create", "edit"],
+    crm: ["view", "create", "edit", "export", "print"],
     sampling: ["view", "create", "edit", "export", "print"],
     buyer_enquiries: ["view", "create", "edit", "reject", "export", "print"],
     sales_orders: ["view", "create", "edit", "cancel", "export", "print"],
