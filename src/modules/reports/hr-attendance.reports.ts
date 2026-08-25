@@ -9,6 +9,13 @@ function filtersApplied(filters: Record<string, string>, labels: Record<string, 
     .map(([k, v]) => ({ label: labels[k] ?? k, value: v }));
 }
 
+function parseDateRange(filters: Record<string, string>): { dateFrom?: Date; dateTo?: Date } {
+  return {
+    dateFrom: filters.dateFrom ? new Date(filters.dateFrom) : undefined,
+    dateTo: filters.dateTo ? new Date(filters.dateTo) : undefined,
+  };
+}
+
 // ===========================================================================
 // Category: hr
 // ===========================================================================
@@ -98,6 +105,64 @@ async function getDepartmentWiseEmployeesDescriptor(companyId: string, generated
   };
 }
 
+// ---------------------------------------------------------------------------
+// 3. Leave Register — every LeaveRequest matching the selected filters,
+// reusing the exact HRMS Leave schema this app already built (LeaveType/
+// LeaveRequest) — never a second leave-tracking mechanism.
+// ---------------------------------------------------------------------------
+async function getLeaveRegisterDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>): Promise<ReportDescriptor> {
+  const { dateFrom, dateTo } = parseDateRange(filters);
+  const requests = await prisma.leaveRequest.findMany({
+    where: {
+      companyId,
+      ...(filters.employeeId ? { employeeId: filters.employeeId } : {}),
+      ...(filters.status ? { status: filters.status as never } : {}),
+      ...(dateFrom || dateTo ? { startDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+    },
+    select: {
+      employee: { select: { employeeCode: true, fullName: true } },
+      leaveType: { select: { name: true } },
+      startDate: true,
+      endDate: true,
+      status: true,
+      reason: true,
+    },
+    orderBy: { startDate: "desc" },
+  });
+
+  const rows = requests.map((r) => ({
+    employeeCode: r.employee.employeeCode,
+    fullName: r.employee.fullName,
+    leaveType: r.leaveType.name,
+    startDate: r.startDate,
+    endDate: r.endDate,
+    days: Math.round((r.endDate.getTime() - r.startDate.getTime()) / 86400000) + 1,
+    status: r.status,
+    reason: r.reason ?? "—",
+  }));
+
+  return {
+    title: "Leave Register",
+    subtitle: "Every leave request matching the selected filters.",
+    filtersApplied: filtersApplied(filters, { employeeId: "Employee", status: "Status", dateFrom: "Date From", dateTo: "Date To" }),
+    columns: [
+      { key: "employeeCode", label: "Employee Code" },
+      { key: "fullName", label: "Full Name" },
+      { key: "leaveType", label: "Leave Type" },
+      { key: "startDate", label: "Start Date", type: "date" },
+      { key: "endDate", label: "End Date", type: "date" },
+      { key: "days", label: "Days", type: "number", align: "right" },
+      { key: "status", label: "Status" },
+      { key: "reason", label: "Reason" },
+    ],
+    rows,
+    totals: { days: rows.reduce((s, r) => s + r.days, 0) },
+    meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
+    generatedAt: new Date().toISOString(),
+    generatedByName,
+  };
+}
+
 registerReport({ category: HR_CATEGORY, key: "employee-register", title: "Employee Register", buildDescriptor: getEmployeeRegisterDescriptor });
 registerReport({
   category: HR_CATEGORY,
@@ -105,6 +170,7 @@ registerReport({
   title: "Department-wise Employees",
   buildDescriptor: (companyId, generatedByName) => getDepartmentWiseEmployeesDescriptor(companyId, generatedByName),
 });
+registerReport({ category: HR_CATEGORY, key: "leave-register", title: "Leave Register", buildDescriptor: getLeaveRegisterDescriptor });
 
 // ===========================================================================
 // Category: attendance

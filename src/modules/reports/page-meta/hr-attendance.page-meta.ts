@@ -27,6 +27,17 @@ registerReportPageMeta({
 });
 
 registerReportPageMeta({
+  category: "hr",
+  key: "leave-register",
+  title: "Leave Register",
+  description: "Every leave request matching the selected filters.",
+  filterFields: [
+    { key: "employeeId", label: "Employee", type: "select", optionsUrl: "/api/v1/employees?pageSize=200", optionsLabelKey: "fullName" },
+    { key: "status", label: "Status", type: "select", options: ["PENDING", "APPROVED", "REJECTED"].map((s) => ({ value: s, label: s })) },
+  ],
+});
+
+registerReportPageMeta({
   category: "attendance",
   key: "daily-attendance",
   title: "Daily Attendance",
