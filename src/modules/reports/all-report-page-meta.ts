@@ -20,3 +20,7 @@ import "./page-meta/customers-products.page-meta";
 import "./page-meta/hr-attendance.page-meta";
 import "./page-meta/audit.page-meta";
 import "./page-meta/dashboard.page-meta";
+import "./page-meta/warehouse.page-meta";
+import "./page-meta/production-planning.page-meta";
+import "./page-meta/material-consumption.page-meta";
+import "./page-meta/business-performance.page-meta";

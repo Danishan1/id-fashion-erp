@@ -20,3 +20,7 @@ import "./customers-products.reports";
 import "./hr-attendance.reports";
 import "./audit.reports";
 import "./dashboard.reports";
+import "./warehouse.reports";
+import "./production-planning.reports";
+import "./material-consumption.reports";
+import "./business-performance.reports";
