@@ -7,6 +7,7 @@ vi.mock("@/modules/inventory/inventory.service", () => ({ recordInventoryTransac
 const mockPrismaClient = vi.hoisted(() => ({
   productionStage: { findFirst: vi.fn() },
   jobOrder: { count: vi.fn(), updateMany: vi.fn() },
+  user: { findUnique: vi.fn() },
 }));
 
 vi.mock("@/core/db/client", () => ({
@@ -39,9 +40,16 @@ vi.mock("./production.repository", () => ({
 
 const { prisma } = await import("@/core/db/client");
 const { PermissionService } = await import("@/core/rbac/PermissionService");
-const { JobOrderRepository, JobOrderAssignmentRepository, ProductionOrderRepository, ProductionStageTransactionRepository, LotRepository, QcInspectionRepository } =
-  await import("./production.repository");
-const { computeJobOrderStatus, assignWorker, forwardJobOrder, revertJobOrder, recordQcInspection } = await import("./job-order.service");
+const {
+  JobOrderRepository,
+  JobOrderAssignmentRepository,
+  JobOrderProgressEntryRepository,
+  ProductionOrderRepository,
+  ProductionStageTransactionRepository,
+  LotRepository,
+  QcInspectionRepository,
+} = await import("./production.repository");
+const { computeJobOrderStatus, assignWorker, forwardJobOrder, revertJobOrder, recordQcInspection, recordAdjustmentEntry } = await import("./job-order.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
 
@@ -84,6 +92,8 @@ beforeEach(() => {
   mockPrismaClient.productionStage.findFirst.mockReset();
   mockPrismaClient.jobOrder.count.mockReset();
   mockPrismaClient.jobOrder.updateMany.mockReset();
+  mockPrismaClient.user.findUnique.mockReset();
+  vi.mocked(JobOrderProgressEntryRepository.createInTx).mockReset();
 });
 
 describe("computeJobOrderStatus", () => {
@@ -131,6 +141,21 @@ describe("assignWorker", () => {
 });
 
 describe("forwardJobOrder", () => {
+  // Regression test for the P0 fix: a job order whose raw `status` column is
+  // "COMPLETED" only ever got there via completeAtFinalStageInTx (its
+  // quantity already posted to Finished Goods) — forwarding it again used to
+  // double-post stock and silently un-complete its Lot, since
+  // completeAtFinalStageInTx never bumps forwardedQuantity, leaving the
+  // notYetForwarded check wide open.
+  it("rejects forwarding a job order that already completed at a final stage", async () => {
+    vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(
+      jobOrder({ status: "COMPLETED", completedQuantity: "10", forwardedQuantity: "0" }) as never
+    );
+
+    await expect(forwardJobOrder(actor, "jo-1", { quantity: 10 })).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+    expect(mockPrismaClient.productionStage.findFirst).not.toHaveBeenCalled();
+  });
+
   it("rejects forwarding more than the completed-and-not-yet-forwarded quantity", async () => {
     vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(
       jobOrder({ completedQuantity: "40", forwardedQuantity: "10" }) as never
@@ -207,6 +232,29 @@ describe("revertJobOrder", () => {
 });
 
 describe("recordQcInspection", () => {
+  // Same P0 fix as forwardJobOrder — a job order already completed at a
+  // final stage must not be inspectable again (it already reached Finished
+  // Goods; re-inspecting it previously desynced the FG/WIP ledgers).
+  it("rejects inspecting a job order that already completed at a final stage", async () => {
+    vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(
+      jobOrder({ status: "COMPLETED", completedQuantity: "10", forwardedQuantity: "0", qcPassedQuantity: "0" }) as never
+    );
+
+    await expect(
+      recordQcInspection(actor, "jo-1", {
+        inspectedQuantity: 5,
+        acceptedQuantity: 0,
+        rejectedQuantity: 0,
+        damagedQuantity: 5,
+        result: "FAIL",
+        damageWarehouseId: "wh-1",
+        defects: [],
+      } as never)
+    ).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+
+    expect(QcInspectionRepository.createWithDefectsInTx).not.toHaveBeenCalled();
+  });
+
   // Regression test for ERP-BUG-0001: accepting at QC after the same
   // completed quantity was already sent on via a manual Forward previously
   // created a second, phantom downstream job order and double-posted
@@ -285,6 +333,47 @@ describe("recordQcInspection", () => {
       expect.anything(),
       "jo-1",
       expect.objectContaining({ plannedQuantity: expect.anything() })
+    );
+  });
+});
+
+describe("recordAdjustmentEntry", () => {
+  // Regression test for the P1 fix: this used to pass actor.userId (a User
+  // id) straight through as employeeId (a required FK to Employee), which
+  // failed the job_order_progress_entries_employee_id_fkey constraint on
+  // every single call unless a User happened to share a UUID with an
+  // Employee row. It must now resolve the acting user's own linked Employee
+  // via User.employeeId instead.
+  it("resolves employeeId from the acting user's linked Employee, not the raw user id", async () => {
+    vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder({ plannedQuantity: "100" }) as never);
+    mockPrismaClient.user.findUnique.mockResolvedValue({ employeeId: "emp-42" } as never);
+    vi.mocked(JobOrderRepository.findForGuardedUpdateInTx).mockResolvedValue(
+      jobOrder({ plannedQuantity: "100", completedQuantity: "40" }) as never
+    );
+    vi.mocked(JobOrderRepository.updateInTx).mockResolvedValue({} as never);
+
+    await recordAdjustmentEntry(actor, "jo-1", { completedQuantity: 5, rejectedQuantity: 0, damagedQuantity: 0, remarks: "correction" });
+
+    expect(mockPrismaClient.user.findUnique).toHaveBeenCalledWith({ where: { id: actor.userId }, select: { employeeId: true } });
+    expect(JobOrderProgressEntryRepository.createInTx).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ employeeId: "emp-42", recordedByUserId: actor.userId, isAdjustment: true })
+    );
+  });
+
+  it("records employeeId as null rather than crashing when the acting user has no linked Employee", async () => {
+    vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder({ plannedQuantity: "100" }) as never);
+    mockPrismaClient.user.findUnique.mockResolvedValue({ employeeId: null } as never);
+    vi.mocked(JobOrderRepository.findForGuardedUpdateInTx).mockResolvedValue(
+      jobOrder({ plannedQuantity: "100", completedQuantity: "40" }) as never
+    );
+    vi.mocked(JobOrderRepository.updateInTx).mockResolvedValue({} as never);
+
+    await recordAdjustmentEntry(actor, "jo-1", { completedQuantity: 5, rejectedQuantity: 0, damagedQuantity: 0, remarks: "correction" });
+
+    expect(JobOrderProgressEntryRepository.createInTx).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ employeeId: null })
     );
   });
 });

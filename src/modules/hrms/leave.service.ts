@@ -1,5 +1,6 @@
 import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
+import { PermissionService } from "@/core/rbac/PermissionService";
 import { prisma } from "@/core/db/client";
 import type { ListQuery } from "@/lib/list-query";
 import type { Prisma } from "@prisma/client";
@@ -119,6 +120,13 @@ export async function approveLeaveRequest(actor: ActorContext, id: string) {
   if (existing.status !== "PENDING") {
     throw new BusinessRuleError("INVALID_STATE_TRANSITION", `This leave request is already "${existing.status}".`, { currentStatus: existing.status });
   }
+
+  // Re-asserted here (the route's own assert has no resourceContext) so the
+  // self-approval guard — keyed on this specific request's creator — can
+  // actually apply, matching Campaign's approveCampaign() and every other
+  // approve checkpoint in this app. Previously omitted, which let a
+  // MANAGEMENT-role user approve their own leave request.
+  await PermissionService.assert(actor.userId, "hrms_leave", "approve", { createdBy: existing.createdByUserId });
 
   const year = existing.startDate.getFullYear();
   const balance = await getLeaveBalance(actor.companyId, existing.employeeId, existing.leaveTypeId, year);

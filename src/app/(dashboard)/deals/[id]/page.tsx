@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { auth } from "@/core/auth/auth";
+import { PermissionService } from "@/core/rbac/PermissionService";
 import { getDealById } from "@/modules/crm/deal.service";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { DealWorkflowPanel } from "./DealWorkflowPanel";
@@ -7,6 +8,7 @@ import { DealWorkflowPanel } from "./DealWorkflowPanel";
 export default async function DealDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const session = await auth();
+  await PermissionService.assert(session!.user.id, "crm", "view").catch(() => notFound());
 
   const deal = await getDealById(session!.user.companyId, id).catch(() => null);
   if (!deal) notFound();

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
+vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { assert: vi.fn() } }));
 vi.mock("@/core/db/client", () => ({
   prisma: {
     leaveType: { findFirst: vi.fn() },
@@ -25,6 +26,7 @@ vi.mock("./leave.repository", () => ({
 }));
 
 const { prisma } = await import("@/core/db/client");
+const { PermissionService } = await import("@/core/rbac/PermissionService");
 const { LeaveRequestRepository } = await import("./leave.repository");
 const { getLeaveBalance, approveLeaveRequest, rejectLeaveRequest } = await import("./leave.service");
 
@@ -36,6 +38,7 @@ beforeEach(() => {
   vi.mocked(LeaveRequestRepository.findApprovedInYear).mockReset().mockResolvedValue([]);
   vi.mocked(LeaveRequestRepository.findAnyById).mockReset();
   vi.mocked(LeaveRequestRepository.update).mockReset();
+  vi.mocked(PermissionService.assert).mockReset().mockResolvedValue(undefined);
 });
 
 describe("getLeaveBalance", () => {
@@ -98,6 +101,30 @@ describe("approveLeaveRequest", () => {
     await approveLeaveRequest(actor, "req-1");
 
     expect(LeaveRequestRepository.update).toHaveBeenCalledWith("req-1", expect.objectContaining({ status: "APPROVED" }));
+  });
+
+  // Regression test for the P1 fix: the approve route's own assert has no
+  // resourceContext, so without this call the self-approval guard was
+  // unreachable — a MANAGEMENT-role user (who holds both create and approve
+  // on hrms_leave) could approve their own leave request. Mirrors
+  // approveCampaign()'s already-correct pattern.
+  it("asserts the self-approval guard with the request's real creator, and propagates a denial", async () => {
+    vi.mocked(LeaveRequestRepository.findAnyById).mockResolvedValue({
+      id: "req-1",
+      status: "PENDING",
+      employeeId: "emp-1",
+      leaveTypeId: "lt-1",
+      startDate: new Date("2026-08-01"),
+      endDate: new Date("2026-08-03"),
+      createdByUserId: "user-1",
+    } as never);
+    vi.mocked(prisma.leaveType.findFirst).mockResolvedValue({ id: "lt-1", annualDays: "12" } as never);
+    vi.mocked(PermissionService.assert).mockRejectedValue(Object.assign(new Error("denied"), { code: "PERMISSION_DENIED" }));
+
+    await expect(approveLeaveRequest(actor, "req-1")).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+
+    expect(PermissionService.assert).toHaveBeenCalledWith(actor.userId, "hrms_leave", "approve", { createdBy: "user-1" });
+    expect(LeaveRequestRepository.update).not.toHaveBeenCalled();
   });
 
   it("never blocks approval when the leave type has no annualDays configured (0 = unlimited/untracked)", async () => {

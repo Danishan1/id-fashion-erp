@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { auth } from "@/core/auth/auth";
+import { PermissionService } from "@/core/rbac/PermissionService";
 import { getSampleRequestById } from "@/modules/sampling/sample.service";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { SampleWorkflowPanel } from "../SampleWorkflowPanel";
@@ -8,6 +9,10 @@ import { SAMPLE_TYPE_LABELS } from "../sampleTypeLabels";
 export default async function SampleRequestDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const session = await auth();
+  // Confirmed pre-existing gap (found during a Phase-8/9-era QA pass): this
+  // page called the service directly with no permission check at all,
+  // unlike GET /api/v1/sampling/[id], which correctly gates on "view".
+  await PermissionService.assert(session!.user.id, "sampling", "view").catch(() => notFound());
 
   const request = await getSampleRequestById(session!.user.companyId, id).catch(() => null);
   if (!request) notFound();

@@ -21,6 +21,13 @@ export const FabricRollRepository = {
   findRemainingInTx: (tx: Prisma.TransactionClient, id: string) =>
     tx.fabricRoll.findUnique({ where: { id }, select: { remainingQuantity: true } }),
 
+  /** Returns previously-decremented quantity back onto a roll — used when
+   * reversing an issuance (e.g. cancelling a Job Work Order before any
+   * receipt exists against it). Unconditional by design: unlike the guarded
+   * decrement, there is no upper bound a plain increment could violate. */
+  incrementRemaining: (tx: Prisma.TransactionClient, id: string, incrementBy: number) =>
+    tx.fabricRoll.update({ where: { id }, data: { remainingQuantity: { increment: incrementBy } } }),
+
   updateStatusInTx: (tx: Prisma.TransactionClient, id: string, status: "CANCELLED" | "DAMAGED") =>
     tx.fabricRoll.update({ where: { id }, data: { status } }),
 };

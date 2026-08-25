@@ -2932,7 +2932,12 @@ model JobOrderProgressEntry {
   id                   String    @id @default(uuid()) @db.Uuid
   jobOrderId           String    @map("job_order_id") @db.Uuid
   jobOrderAssignmentId String?   @map("job_order_assignment_id") @db.Uuid
-  employeeId           String    @map("employee_id") @db.Uuid
+  // Nullable specifically for isAdjustment=true rows: a correction entry has
+  // no real "worker" to attribute it to (recordAdjustmentEntry resolves the
+  // acting User's own linked Employee via User.employeeId, which most
+  // non-floor accounts — e.g. Super Admin — legitimately have none of).
+  // Every non-adjustment row still always carries a real Employee.
+  employeeId           String?   @map("employee_id") @db.Uuid
   // Who is logged in and clicked save — may differ from employeeId (the
   // supervisor-entry model recommended for V1; see
   // PRODUCTION_MODULE_DESIGN.md §7).
@@ -2948,7 +2953,7 @@ model JobOrderProgressEntry {
 
   jobOrder           JobOrder            @relation(fields: [jobOrderId], references: [id])
   jobOrderAssignment JobOrderAssignment? @relation(fields: [jobOrderAssignmentId], references: [id])
-  employee           Employee            @relation("JobOrderProgressEntryEmployee", fields: [employeeId], references: [id])
+  employee           Employee?           @relation("JobOrderProgressEntryEmployee", fields: [employeeId], references: [id])
   recordedBy         User                @relation("JobOrderProgressEntryRecordedBy", fields: [recordedByUserId], references: [id])
 
   @@index([jobOrderId])
@@ -3228,10 +3233,14 @@ enum InventoryTransactionType {
   // a JobOrder's WIP quantity (see JobWorkOrder) — the WIP quantity itself
   // never posts here, since it has no StockBalance row to decrement (its
   // location is tracked structurally via the JobOrder/stage graph, not the
-  // inventory ledger). No matching "receipt" type exists in this pass —
-  // deliberately one-way; a returned-unused-material flow is a future
-  // extension, not part of the confirmed required capability set.
+  // inventory ledger).
   JOB_WORK_ISSUE
+  // Posted when a Job Work Order with zero receipts against it is cancelled
+  // — returns its issued raw-material lines to stock. Deliberately a
+  // dedicated reversal type (matching GOODS_RECEIPT_REVERSAL's precedent)
+  // rather than reusing JOB_WORK_ISSUE with a flipped sign, so the ledger
+  // itself makes the cancellation-driven return legible.
+  JOB_WORK_ISSUE_REVERSAL
 }
 
 // Append-only, source of truth — no delete column, no edit path, ever.
