@@ -198,6 +198,28 @@ describe("forwardJobOrder", () => {
     await forwardJobOrder(actor, "jo-1", { quantity: 20, targetStageId: "stage-2" });
     expect(PermissionService.assert).not.toHaveBeenCalled();
   });
+
+  // Regression test for the P3 fix: landing on a final stage returns the
+  // freshly-completed job order (status COMPLETED, completedQuantity set),
+  // not the pre-mutation object postStageTransactionInTx originally created
+  // it as (status PENDING, completedQuantity 0).
+  it("returns the freshly-completed job order, not the stale pre-mutation object, when the target stage is final", async () => {
+    vi.mocked(JobOrderRepository.findAnyById)
+      .mockResolvedValueOnce(jobOrder({ completedQuantity: "10", forwardedQuantity: "0" }) as never) // the job order being forwarded
+      .mockResolvedValueOnce({ id: "jo-2", status: "COMPLETED", completedQuantity: "10" } as never); // the post-completion re-fetch
+    vi.mocked(prisma.productionStage.findFirst).mockResolvedValue(stage({ id: "stage-2", sequence: 2, isFinal: true, name: "Packing", code: "PAK" }) as never);
+    vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue({ id: "po-1", productId: "prod-1" } as never);
+    vi.mocked(prisma.jobOrder.count).mockResolvedValue(0);
+    vi.mocked(prisma.jobOrder.updateMany).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(JobOrderRepository.createInTx).mockResolvedValue({ id: "jo-2", status: "PENDING", completedQuantity: "0" } as never);
+    vi.mocked(ProductionStageTransactionRepository.createInTx).mockResolvedValue({ id: "txn-1" } as never);
+    vi.mocked(LotRepository.updateInTx).mockResolvedValue({} as never);
+
+    const result = await forwardJobOrder(actor, "jo-1", { quantity: 10, finishedGoodsWarehouseId: "wh-1" });
+
+    expect(JobOrderRepository.findAnyById).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({ id: "jo-2", status: "COMPLETED", completedQuantity: "10" });
+  });
 });
 
 describe("revertJobOrder", () => {

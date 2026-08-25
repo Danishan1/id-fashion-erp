@@ -600,6 +600,9 @@ model UnitOfMeasure {
   name             String
   baseUnitId       String? @map("base_unit_id") @db.Uuid
   conversionFactor Decimal @default(1) @map("conversion_factor") @db.Decimal(18, 6)
+  // Previously had no way to hide a unit at all once created — every unit
+  // ever added stayed permanently visible in every Unit dropdown app-wide.
+  isActive         Boolean @default(true) @map("is_active")
 
   baseUnit              UnitOfMeasure?         @relation("UomConversion", fields: [baseUnitId], references: [id])
   derived               UnitOfMeasure[]        @relation("UomConversion")

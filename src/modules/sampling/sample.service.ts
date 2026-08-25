@@ -25,7 +25,24 @@ import {
 } from "./sample.repository";
 import { ProductRepository } from "@/modules/products/product.repository";
 import { advanceMasterCodeSequence } from "@/core/numbering/DocumentNumberingService";
-import { SampleStatus, SampleType, type Prisma } from "@prisma/client";
+import { SampleStatus, SampleType, type Prisma, type SampleVersionStatus } from "@prisma/client";
+
+// The header's own status is the real state — this mirrors it onto the
+// current (latest, still-live) version's display-only status field for the
+// three in-flight stages this generic transition covers. Previously
+// completely unwired: SampleVersion.status stayed frozen at "IN_DEVELOPMENT"
+// from creation all the way through Internal QC and Submitted-to-Customer,
+// so the UI's "Version N — {status}" badge silently lied about where the
+// request actually stood. TECH_PACK_READY/REVISION_REQUESTED and the
+// terminal decision outcomes (APPROVED/REJECTED/SUPERSEDED) are deliberately
+// excluded here — they're only ever reachable through addSampleVersion()/
+// recordSampleApproval(), which already set the correct version status
+// themselves.
+const VERSION_STATUS_BY_HEADER_STATUS: Partial<Record<SampleStatus, SampleVersionStatus>> = {
+  IN_DEVELOPMENT: "IN_DEVELOPMENT",
+  INTERNAL_QC: "INTERNAL_QC",
+  SUBMITTED_TO_CUSTOMER: "SUBMITTED",
+};
 
 interface ActorContext {
   companyId: string;
@@ -248,6 +265,17 @@ export async function transitionSampleStatus(actor: ActorContext, id: string, ta
     oldValues: before,
     newValues: updated,
   });
+
+  const versionStatus = VERSION_STATUS_BY_HEADER_STATUS[targetStatus];
+  if (versionStatus) {
+    const currentVersion = await SampleVersionRepository.findLatest(id);
+    // Only touch a still-live version — never overwrite a terminal one
+    // (APPROVED/REJECTED/SUPERSEDED), which this generic transition has no
+    // business changing.
+    if (currentVersion && !["APPROVED", "REJECTED", "SUPERSEDED"].includes(currentVersion.status)) {
+      await SampleVersionRepository.update(currentVersion.id, { status: versionStatus });
+    }
+  }
 
   // Marketing automation trigger: "Sample Sent -> Wait 3 Days -> Follow-up"
   // from the CRM/Marketing enhancement request's own example list — the one

@@ -152,4 +152,26 @@ describe("updateLead", () => {
 
     await expect(updateLead(actor, "lead-missing", { name: "Lead", source: "OTHER" } as never)).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
+
+  // Regression test for the P3 fix: omitting assignedToUserId from a partial
+  // update payload previously fell through `input.assignedToUserId || null`
+  // and silently unassigned the lead — it must instead leave the existing
+  // assignment untouched. An explicit empty string must still unassign.
+  it("leaves assignedToUserId untouched when the field is omitted from the update", async () => {
+    vi.mocked(LeadRepository.findAnyById).mockResolvedValue({ id: "lead-1", status: "NEW", assignedToUserId: "user-existing" } as never);
+    vi.mocked(LeadRepository.update).mockResolvedValue({ id: "lead-1", assignedToUserId: "user-existing" } as never);
+
+    await updateLead(actor, "lead-1", { name: "Lead", source: "OTHER", status: "QUALIFIED" } as never);
+
+    expect(LeadRepository.update).toHaveBeenCalledWith("lead-1", expect.objectContaining({ assignedToUserId: "user-existing" }));
+  });
+
+  it("still unassigns when assignedToUserId is explicitly sent as an empty string", async () => {
+    vi.mocked(LeadRepository.findAnyById).mockResolvedValue({ id: "lead-1", status: "NEW", assignedToUserId: "user-existing" } as never);
+    vi.mocked(LeadRepository.update).mockResolvedValue({ id: "lead-1", assignedToUserId: null } as never);
+
+    await updateLead(actor, "lead-1", { name: "Lead", source: "OTHER", assignedToUserId: "" } as never);
+
+    expect(LeadRepository.update).toHaveBeenCalledWith("lead-1", expect.objectContaining({ assignedToUserId: null }));
+  });
 });

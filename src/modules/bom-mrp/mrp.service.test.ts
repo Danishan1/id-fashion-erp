@@ -146,4 +146,48 @@ describe("getMaterialRequirements", () => {
     const result = await getMaterialRequirements("co-1", "so-1");
     expect(result.materials.map((m) => m.materialId)).toEqual(["mat-thread", "mat-cotton"]);
   });
+
+  // Regression test for the P4 fix: a single style reaching the same
+  // material via two different color-scoped BOM lines previously produced
+  // two separate contributingStyles entries (one per line) instead of one
+  // merged entry with the combined quantity.
+  it("merges contributingStyles into one entry when a single style reaches a material via two color-scoped BOM lines", async () => {
+    vi.mocked(BomRepository.findManyByProductIds).mockResolvedValue([
+      {
+        productId: "style-1",
+        items: [
+          cottonBomItem({ colorId: "black", wastagePercentage: 0, quantityPerUnit: 1 }),
+          cottonBomItem({ colorId: "navy", wastagePercentage: 0, quantityPerUnit: 1 }),
+        ],
+      },
+    ] as never);
+
+    const result = await getMaterialRequirements("co-1", "so-1");
+    const cotton = result.materials.find((m) => m.materialId === "mat-cotton")!;
+
+    // order()'s default breakdown is 200 black + 400 navy => 600 total.
+    expect(cotton.contributingStyles).toHaveLength(1);
+    expect(cotton.contributingStyles[0]).toMatchObject({ productId: "style-1", neededQuantity: 600 });
+  });
+
+  // Regression test for the P4 fix: quantities accumulate through repeated
+  // floating-point addition (0.1 + 0.2 !== 0.3 under IEEE-754), which
+  // previously surfaced as raw noise like 103.60000000000002 in the response.
+  it("rounds needed/available/shortfall quantities to 4 decimal places, avoiding floating-point noise", async () => {
+    vi.mocked(BomRepository.findManyByProductIds).mockResolvedValue([
+      {
+        productId: "style-1",
+        items: [
+          cottonBomItem({ colorId: "black", wastagePercentage: 0, quantityPerUnit: 0.0005 }), // 0.0005 * 200 = 0.1
+          cottonBomItem({ colorId: "navy", wastagePercentage: 0, quantityPerUnit: 0.0005 }), // 0.0005 * 400 = 0.2
+        ],
+      },
+    ] as never);
+
+    const result = await getMaterialRequirements("co-1", "so-1");
+    const cotton = result.materials.find((m) => m.materialId === "mat-cotton")!;
+
+    expect(cotton.neededQuantity).toBe(0.3);
+    expect(cotton.contributingStyles[0].neededQuantity).toBe(0.3);
+  });
 });

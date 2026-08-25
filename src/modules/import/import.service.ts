@@ -6,7 +6,7 @@ import type { ListQuery } from "@/lib/list-query";
 import type { ActorContext } from "@/modules/crm/lead.service";
 import { createDealSchema } from "@/modules/crm/deal.schema";
 import { createDeal } from "@/modules/crm/deal.service";
-import { createLeadSchema, LEAD_SOURCES } from "@/modules/crm/lead.schema";
+import { createLeadSchema } from "@/modules/crm/lead.schema";
 import { createLead } from "@/modules/crm/lead.service";
 import { recordDailyMetricSchema } from "@/modules/marketing/campaign.schema";
 import { recordDailyMetric } from "@/modules/marketing/campaign.service";
@@ -49,10 +49,15 @@ function undefinedIfBlank(value: string | undefined): string | undefined {
 }
 
 async function importLeadRow(actor: ActorContext, raw: Record<string, string>) {
+  // Deliberately no manual pre-check for an invalid source here — that used
+  // to throw immediately with only that one issue, short-circuiting before
+  // createLeadSchema.parse() below got a chance to run and report every
+  // issue in the row together (matching importDealRow's own behavior,
+  // which has no such pre-check). The schema's own `z.enum(LEAD_SOURCES)`
+  // already rejects an invalid value as one Zod issue among however many
+  // the row actually has, which messageFromError() then joins into one
+  // combined message.
   const source = undefinedIfBlank(raw.source)?.toUpperCase();
-  if (source && !(LEAD_SOURCES as readonly string[]).includes(source)) {
-    throw new BusinessRuleError("VALIDATION_ERROR", `Invalid Source "${raw.source}" — must be one of: ${LEAD_SOURCES.join(", ")}.`);
-  }
 
   const input = createLeadSchema.parse({
     name: raw.name?.trim(),

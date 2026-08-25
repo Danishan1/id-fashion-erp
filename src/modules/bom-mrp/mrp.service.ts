@@ -4,6 +4,15 @@ import { sumAvailableByProductIds } from "@/modules/inventory/inventory.service"
 import { SalesOrderRepository } from "@/modules/sales-orders/sales-order.repository";
 import { BomRepository } from "./bom.repository";
 
+// Every quantity here accumulates through repeated floating-point addition
+// (contributingStyles across multiple BOM lines/order items), which
+// otherwise surfaces IEEE-754 noise like 103.60000000000002 in the JSON
+// response. Rounds to the same 4-decimal precision this project's own
+// Decimal(18,4) quantity columns already use everywhere else.
+function round4(n: number): number {
+  return Math.round(n * 10000) / 10000;
+}
+
 interface ContributingStyle {
   productId: string;
   styleName: string;
@@ -86,11 +95,21 @@ export async function getMaterialRequirements(companyId: string, salesOrderId: s
       const existing = rowsByMaterialId.get(bomItem.materialId);
       if (existing) {
         existing.neededQuantity += neededInBaseUom;
-        existing.contributingStyles.push({
-          productId: orderItem.productId,
-          styleName: orderItem.product.styleName,
-          neededQuantity: neededInBaseUom,
-        });
+        // Merge into an already-listed style rather than pushing a second
+        // entry — a style can reach this material through more than one
+        // BOM line (e.g. two different color-specific lines), and without
+        // this it appeared twice with a partial quantity each, instead of
+        // once with the correct total.
+        const existingStyle = existing.contributingStyles.find((s) => s.productId === orderItem.productId);
+        if (existingStyle) {
+          existingStyle.neededQuantity += neededInBaseUom;
+        } else {
+          existing.contributingStyles.push({
+            productId: orderItem.productId,
+            styleName: orderItem.product.styleName,
+            neededQuantity: neededInBaseUom,
+          });
+        }
       } else {
         rowsByMaterialId.set(bomItem.materialId, {
           materialId: bomItem.materialId,
@@ -114,7 +133,13 @@ export async function getMaterialRequirements(companyId: string, salesOrderId: s
 
   const materials = [...rowsByMaterialId.values()].map((row) => {
     const availableQuantity = availableByMaterialId.get(row.materialId) ?? 0;
-    return { ...row, availableQuantity, shortfallQuantity: Math.max(0, row.neededQuantity - availableQuantity) };
+    return {
+      ...row,
+      neededQuantity: round4(row.neededQuantity),
+      availableQuantity: round4(availableQuantity),
+      shortfallQuantity: round4(Math.max(0, row.neededQuantity - availableQuantity)),
+      contributingStyles: row.contributingStyles.map((s) => ({ ...s, neededQuantity: round4(s.neededQuantity) })),
+    };
   });
 
   materials.sort((a, b) => b.shortfallQuantity - a.shortfallQuantity || a.materialName.localeCompare(b.materialName));

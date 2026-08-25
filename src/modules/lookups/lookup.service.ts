@@ -24,7 +24,7 @@ export async function createColor(actor: ActorContext, input: ColorInput) {
       code: input.code,
       name: input.name,
       hexValue: input.hexValue || null,
-      isActive: input.isActive,
+      isActive: input.isActive ?? true,
     },
   });
 
@@ -46,7 +46,12 @@ export async function updateColor(actor: ActorContext, id: string, input: ColorI
 
   const updated = await LookupRepository.color.update({
     where: { id },
-    data: { code: input.code, name: input.name, hexValue: input.hexValue || null, isActive: input.isActive },
+    data: {
+      code: input.code,
+      name: input.name,
+      hexValue: input.hexValue || null,
+      isActive: input.isActive !== undefined ? input.isActive : existing.isActive,
+    },
   });
 
   await writeAuditLog({
@@ -77,7 +82,7 @@ export async function createSize(actor: ActorContext, input: SizeInput) {
       code: input.code,
       name: input.name,
       sortOrder: input.sortOrder,
-      isActive: input.isActive,
+      isActive: input.isActive ?? true,
     },
   });
 
@@ -99,7 +104,12 @@ export async function updateSize(actor: ActorContext, id: string, input: SizeInp
 
   const updated = await LookupRepository.size.update({
     where: { id },
-    data: { code: input.code, name: input.name, sortOrder: input.sortOrder, isActive: input.isActive },
+    data: {
+      code: input.code,
+      name: input.name,
+      sortOrder: input.sortOrder,
+      isActive: input.isActive !== undefined ? input.isActive : existing.isActive,
+    },
   });
 
   await writeAuditLog({
@@ -151,6 +161,7 @@ export async function createUnit(actor: ActorContext, input: UnitInput) {
       name: input.name,
       conversionFactor: input.conversionFactor,
       baseUnitId: input.baseUnitId || null,
+      isActive: input.isActive ?? true,
     },
   });
 
@@ -167,6 +178,9 @@ export async function createUnit(actor: ActorContext, input: UnitInput) {
 }
 
 export async function updateUnit(actor: ActorContext, id: string, input: UnitInput) {
+  const existing = await LookupRepository.unit.findUnique({ where: { id } });
+  if (!existing) throw new BusinessRuleError("NOT_FOUND", "Unit not found.", { id });
+
   if (input.baseUnitId) await assertValidBaseUnit(input.baseUnitId, id);
 
   const updated = await LookupRepository.unit.update({
@@ -176,6 +190,7 @@ export async function updateUnit(actor: ActorContext, id: string, input: UnitInp
       name: input.name,
       conversionFactor: input.conversionFactor,
       baseUnitId: input.baseUnitId || null,
+      isActive: input.isActive !== undefined ? input.isActive : existing.isActive,
     },
   });
 

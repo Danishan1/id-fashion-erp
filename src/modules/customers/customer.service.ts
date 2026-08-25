@@ -166,6 +166,7 @@ export async function createBuyer(actor: ActorContext, customerId: string, input
     contactPerson: input.contactPerson || null,
     email: input.email || null,
     phone: input.phone || null,
+    isActive: input.isActive ?? true,
   });
 
   await writeAuditLog({
@@ -178,4 +179,43 @@ export async function createBuyer(actor: ActorContext, customerId: string, input
   });
 
   return buyer;
+}
+
+/**
+ * Previously had no update path at all — a typo in a Buyer's code/name/
+ * contact details could never be corrected, and it could never be hidden
+ * from active-selection lists (its `isActive` column has existed since day
+ * one, just with no caller to set it to anything but the create default).
+ */
+export async function updateBuyer(actor: ActorContext, customerId: string, buyerId: string, input: BuyerInput) {
+  const existing = await BuyerRepository.findByIdForCustomer(actor.companyId, customerId, buyerId);
+  if (!existing) throw new BusinessRuleError("NOT_FOUND", "Buyer not found.", { id: buyerId });
+
+  if (input.code !== existing.code) {
+    const duplicate = await BuyerRepository.findByCode(customerId, input.code);
+    if (duplicate) {
+      throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Buyer code "${input.code}" is already in use for this customer.`);
+    }
+  }
+
+  const updated = await BuyerRepository.update(buyerId, {
+    code: input.code,
+    name: input.name,
+    contactPerson: input.contactPerson || null,
+    email: input.email || null,
+    phone: input.phone || null,
+    isActive: input.isActive !== undefined ? input.isActive : existing.isActive,
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "buyers",
+    recordId: buyerId,
+    action: "UPDATE",
+    oldValues: { code: existing.code, name: existing.name, isActive: existing.isActive },
+    newValues: updated,
+  });
+
+  return updated;
 }

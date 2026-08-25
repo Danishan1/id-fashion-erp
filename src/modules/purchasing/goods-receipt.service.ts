@@ -156,10 +156,21 @@ export async function createGoodsReceipt(actor: ActorContext, purchaseOrderId: s
         inputItem.receivedQuantity
       );
       if (result.count === 0) {
+        // remaining is read from the pre-transaction snapshot, purely for
+        // message quality — the atomic guardedIncrementReceived above is
+        // what actually enforces the cap under concurrency; this can't
+        // under-reject, only occasionally show a slightly stale number if
+        // another request also modified this line in the same instant.
+        const remaining = Number(poItem.orderedQuantity) - Number(poItem.receivedQuantity);
         throw new BusinessRuleError(
           "OVER_RECEIPT_NOT_ALLOWED",
-          `Receiving ${inputItem.receivedQuantity} would exceed the ordered quantity for "${poItem.product.styleName}".`,
-          { purchaseOrderItemId: poItem.id }
+          `Receiving ${inputItem.receivedQuantity} of "${poItem.product.styleName}" would exceed the ordered quantity — only ${remaining} remains. Ordered: ${poItem.orderedQuantity}, Already received: ${poItem.receivedQuantity}.`,
+          {
+            purchaseOrderItemId: poItem.id,
+            orderedQuantity: Number(poItem.orderedQuantity),
+            alreadyReceived: Number(poItem.receivedQuantity),
+            remaining,
+          }
         );
       }
     }

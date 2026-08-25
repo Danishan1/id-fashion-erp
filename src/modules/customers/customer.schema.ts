@@ -19,6 +19,11 @@ export const buyerSchema = z.object({
   contactPerson: z.string().max(200).optional().or(z.literal("")),
   email: z.string().email().optional().or(z.literal("")),
   phone: z.string().max(50).optional().or(z.literal("")),
+  // No default — omitted means "leave as-is" on update (see updateBuyer);
+  // create treats omitted as true. Same reasoning as Color/Size/Unit's own
+  // isActive field: a Zod default would silently reactivate a deactivated
+  // Buyer on an ordinary edit that doesn't touch this field.
+  isActive: z.boolean().optional(),
 });
 
 export type BuyerInput = z.infer<typeof buyerSchema>;

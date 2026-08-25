@@ -12,6 +12,7 @@ export async function GET(req: NextRequest) {
 
     const query = parseListQuery(req.nextUrl.searchParams, "name");
     query.take = Math.max(query.take, 200); // departments are few; dropdowns want the full list
+    query.pageSize = query.take; // keep `meta` honest about what was actually fetched
     const { data, totalCount } = await listDepartments(session.user.companyId, query);
 
     return NextResponse.json({ data, meta: buildListMeta(totalCount, query.page, query.pageSize) });

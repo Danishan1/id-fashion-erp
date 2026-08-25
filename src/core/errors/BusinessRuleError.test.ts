@@ -48,4 +48,24 @@ describe("toErrorResponse", () => {
     expect(message).not.toContain("connection string");
     expect((body as { error: { code: string } }).error.code).toBe("INTERNAL_ERROR");
   });
+
+  // Regression tests: these two Prisma error codes are reachable from any
+  // module's `findFirst`-then-`create` duplicate check (P2002, a TOCTOU race)
+  // or any bare `:id` route param (P2007, a malformed UUID) — previously both
+  // fell through to a raw, unhelpful 500 instead of a clean expected response.
+  it("maps a Prisma P2007 (malformed UUID) error to VALIDATION_ERROR / 400", () => {
+    const prismaLike = { code: "P2007", message: "Invalid input value: invalid input syntax for type uuid" };
+    const { status, body } = toErrorResponse(prismaLike);
+    expect(status).toBe(400);
+    expect((body as { error: { code: string } }).error.code).toBe("VALIDATION_ERROR");
+  });
+
+  it("maps a Prisma P2002 (unique constraint race) error to DUPLICATE_DOC_NUMBER / 409", () => {
+    const prismaLike = { code: "P2002", meta: { target: ["company_id", "code"] } };
+    const { status, body } = toErrorResponse(prismaLike);
+    expect(status).toBe(409);
+    const { code, message } = (body as { error: { code: string; message: string } }).error;
+    expect(code).toBe("DUPLICATE_DOC_NUMBER");
+    expect(message).toContain("company_id, code");
+  });
 });

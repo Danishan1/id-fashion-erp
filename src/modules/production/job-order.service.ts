@@ -560,6 +560,18 @@ export async function forwardJobOrder(actor: ActorContext, jobOrderId: string, i
     newValues: { fromJobOrderId: jobOrderId, toStageId: targetStage.id, quantity: input.quantity },
   });
 
+  // result.jobOrder is the row exactly as `postStageTransactionInTx` created
+  // it (status "PENDING", completedQuantity 0) — when the target stage is
+  // final, `completeAtFinalStageInTx` mutates that same row afterward
+  // (status "COMPLETED", completedQuantity set) inside the same transaction,
+  // so returning the pre-mutation object straight from the transaction's
+  // return value would hand the caller stale status/quantity for the very
+  // job order that just completed.
+  if (targetStage.isFinal) {
+    const fresh = await JobOrderRepository.findAnyById(actor.companyId, result.jobOrder.id);
+    if (fresh) return fresh;
+  }
+
   return result.jobOrder;
 }
 

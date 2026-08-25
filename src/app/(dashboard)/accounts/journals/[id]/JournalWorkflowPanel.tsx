@@ -135,8 +135,14 @@ export function JournalWorkflowPanel({ journal }: { journal: JournalDetail }) {
               <td className="px-3 py-2" colSpan={2}>
                 Total
               </td>
-              <td className="px-3 py-2">{Number(journal.totalDebit).toFixed(2)}</td>
-              <td className="px-3 py-2">{Number(journal.totalCredit).toFixed(2)}</td>
+              {/* Summed from the visible lines rather than journal.totalDebit/
+                  totalCredit — those columns are only computed and stored at
+                  POST time (see journal.service.ts), so a DRAFT journal
+                  previously showed a self-contradictory "Total 0.00 / 0.00"
+                  footer under correctly-populated line rows. Summing here
+                  matches the stored total exactly once posted anyway. */}
+              <td className="px-3 py-2">{journal.lines.reduce((sum, l) => sum + Number(l.debitAmount), 0).toFixed(2)}</td>
+              <td className="px-3 py-2">{journal.lines.reduce((sum, l) => sum + Number(l.creditAmount), 0).toFixed(2)}</td>
             </tr>
           </tfoot>
         </table>

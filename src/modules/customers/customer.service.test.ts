@@ -13,12 +13,14 @@ vi.mock("./customer.repository", () => ({
   },
   BuyerRepository: {
     findByCode: vi.fn(),
+    findByIdForCustomer: vi.fn(),
     create: vi.fn(),
+    update: vi.fn(),
   },
 }));
 
-const { CustomerRepository } = await import("./customer.repository");
-const { createCustomer, updateCustomer, getCustomerById } = await import("./customer.service");
+const { CustomerRepository, BuyerRepository } = await import("./customer.repository");
+const { createCustomer, updateCustomer, getCustomerById, updateBuyer } = await import("./customer.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
 const baseInput = {
@@ -37,6 +39,9 @@ beforeEach(() => {
   vi.mocked(CustomerRepository.create).mockReset();
   vi.mocked(CustomerRepository.update).mockReset();
   vi.mocked(CustomerRepository.findByIdWithBuyers).mockReset();
+  vi.mocked(BuyerRepository.findByCode).mockReset();
+  vi.mocked(BuyerRepository.findByIdForCustomer).mockReset();
+  vi.mocked(BuyerRepository.update).mockReset();
 });
 
 describe("createCustomer", () => {
@@ -91,5 +96,62 @@ describe("getCustomerById", () => {
   it("throws NOT_FOUND when the repository returns nothing", async () => {
     vi.mocked(CustomerRepository.findByIdWithBuyers).mockResolvedValue(null);
     await expect(getCustomerById("co-1", "missing-id")).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+});
+
+// Regression tests for the P3 fix: Buyer previously had no update path at
+// all (create-only), so a typo could never be fixed and it could never be
+// deactivated despite `isActive` existing on the model since day one.
+describe("updateBuyer", () => {
+  it("rejects when the buyer doesn't exist for this customer", async () => {
+    vi.mocked(BuyerRepository.findByIdForCustomer).mockResolvedValue(null);
+
+    await expect(
+      updateBuyer(actor, "cust-1", "buyer-missing", { code: "B1", name: "Buyer One" } as never)
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(BuyerRepository.update).not.toHaveBeenCalled();
+  });
+
+  it("preserves the existing isActive value when omitted from the payload", async () => {
+    vi.mocked(BuyerRepository.findByIdForCustomer).mockResolvedValue({
+      id: "buyer-1",
+      code: "B1",
+      name: "Buyer One",
+      isActive: false,
+    } as never);
+    vi.mocked(BuyerRepository.update).mockResolvedValue({ id: "buyer-1" } as never);
+
+    await updateBuyer(actor, "cust-1", "buyer-1", { code: "B1", name: "Buyer One Renamed" } as never);
+
+    expect(BuyerRepository.update).toHaveBeenCalledWith("buyer-1", expect.objectContaining({ isActive: false }));
+  });
+
+  it("applies an explicit isActive (the toggle's own flow)", async () => {
+    vi.mocked(BuyerRepository.findByIdForCustomer).mockResolvedValue({
+      id: "buyer-1",
+      code: "B1",
+      name: "Buyer One",
+      isActive: true,
+    } as never);
+    vi.mocked(BuyerRepository.update).mockResolvedValue({ id: "buyer-1" } as never);
+
+    await updateBuyer(actor, "cust-1", "buyer-1", { code: "B1", name: "Buyer One", isActive: false } as never);
+
+    expect(BuyerRepository.update).toHaveBeenCalledWith("buyer-1", expect.objectContaining({ isActive: false }));
+  });
+
+  it("rejects renaming the code to one already used by another buyer on the same customer", async () => {
+    vi.mocked(BuyerRepository.findByIdForCustomer).mockResolvedValue({
+      id: "buyer-1",
+      code: "B1",
+      name: "Buyer One",
+      isActive: true,
+    } as never);
+    vi.mocked(BuyerRepository.findByCode).mockResolvedValue({ id: "buyer-2" } as never);
+
+    await expect(
+      updateBuyer(actor, "cust-1", "buyer-1", { code: "B2", name: "Buyer One" } as never)
+    ).rejects.toMatchObject({ code: "DUPLICATE_DOC_NUMBER" });
+    expect(BuyerRepository.update).not.toHaveBeenCalled();
   });
 });

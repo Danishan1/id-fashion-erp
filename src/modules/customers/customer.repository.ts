@@ -32,5 +32,12 @@ export const CustomerRepository = {
 export const BuyerRepository = {
   findByCode: (customerId: string, code: string) => prisma.buyer.findFirst({ where: { customerId, code } }),
 
+  // Company-scoped via the parent customer, matching this project's
+  // established tenant-scoping convention for every by-id lookup.
+  findByIdForCustomer: (companyId: string, customerId: string, id: string) =>
+    prisma.buyer.findFirst({ where: { id, customerId, customer: { companyId } } }),
+
   create: (data: Prisma.BuyerUncheckedCreateInput) => prisma.buyer.create({ data }),
+
+  update: (id: string, data: Prisma.BuyerUncheckedUpdateInput) => prisma.buyer.update({ where: { id }, data }),
 };

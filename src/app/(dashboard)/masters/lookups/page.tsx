@@ -57,7 +57,6 @@ export default function LookupsPage() {
       {tab === "Units" && (
         <SimpleLookupManager
           fetchUrl="/api/v1/units"
-          hasActiveToggle={false}
           fields={[
             { key: "code", label: "Code", required: true },
             { key: "name", label: "Name", required: true },

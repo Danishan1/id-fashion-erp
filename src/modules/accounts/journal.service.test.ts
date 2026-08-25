@@ -184,6 +184,24 @@ describe("reverseJournal — internal auto-post bypasses the self-approval guard
       code: "INVALID_STATE_TRANSITION",
     });
   });
+
+  // Regression test for the P2 fix: this previously relied solely on the DB's
+  // `@unique` constraint on reversalOfJournalId, so a second reversal attempt
+  // propagated a raw Prisma P2002 as an unhandled 500 instead of a clean
+  // business error.
+  it("rejects reversing a journal that's already been reversed, with a clean error naming the existing reversal", async () => {
+    vi.mocked(JournalRepository.findByIdWithDetails).mockResolvedValue({
+      id: "j-1",
+      status: "POSTED",
+      sourceModule: null,
+      reversedByJournal: { id: "j-2", journalNumber: "JRN-2026-00002" },
+    } as never);
+
+    await expect(reverseJournal(actor, "j-1", { narration: "" })).rejects.toMatchObject({
+      code: "INVALID_STATE_TRANSITION",
+    });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
 });
 
 describe("getTrialBalance", () => {
