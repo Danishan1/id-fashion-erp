@@ -171,6 +171,19 @@ describe("updatePurchaseOrder", () => {
     const headerData = vi.mocked(PurchaseOrderRepository.replaceItems).mock.calls[0][1];
     expect(headerData).not.toHaveProperty("status");
   });
+
+  // supplierId was validated on create but not re-validated here on update —
+  // a direct API call could swap in another tenant's supplierId on an
+  // existing order (confirmed cross-tenant risk, fixed).
+  it("rejects a supplierId belonging to another company", async () => {
+    vi.mocked(PurchaseOrderRepository.findByIdWithDetails).mockResolvedValue({ id: "po-1", status: "DRAFT", totalAmount: 500 } as never);
+    vi.mocked(SupplierRepository.findById).mockResolvedValue(null);
+
+    await expect(
+      updatePurchaseOrder(actor, "po-1", { supplierId: "sup-x", orderDate: "2026-08-24", expectedDeliveryDate: "", items: [oneItem()] })
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(PurchaseOrderRepository.replaceItems).not.toHaveBeenCalled();
+  });
 });
 
 describe("approvePurchaseOrder", () => {

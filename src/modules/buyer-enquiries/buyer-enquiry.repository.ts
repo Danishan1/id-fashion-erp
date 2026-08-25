@@ -20,7 +20,9 @@ export const BuyerEnquiryRepository = {
     prisma.buyerEnquiry.findFirst({
       where: { id, companyId },
       include: {
-        customer: true,
+        // A narrow `select`, not `customer: true` — see the identical fix
+        // and rationale in sales-order.repository.ts.
+        customer: { select: { id: true, name: true, code: true, country: true, defaultCurrencyCode: true } },
         buyer: true,
         requestedBy: { select: { id: true, fullName: true } },
         lines: {

@@ -7,7 +7,10 @@ vi.mock("@/core/numbering/DocumentNumberingService", () => ({
   advanceMasterCodeSequence: vi.fn(),
 }));
 vi.mock("@/modules/products/product.repository", () => ({
-  ProductRepository: { findByStyleCode: vi.fn(), create: vi.fn() },
+  ProductRepository: { findByStyleCode: vi.fn(), create: vi.fn(), findAnyById: vi.fn() },
+}));
+vi.mock("@/modules/customers/customer.repository", () => ({
+  CustomerRepository: { findByIdWithBuyers: vi.fn() },
 }));
 vi.mock("./sample.repository", () => ({
   SampleRequestRepository: {
@@ -53,12 +56,19 @@ const { prisma } = await import("@/core/db/client");
 const { SampleRequestRepository, SampleVersionRepository, SampleMaterialRepository, SampleOtherChargeRepository } = await import(
   "./sample.repository"
 );
-const { recalculateSampleVersionCosting, addSampleMaterial, transitionSampleStatus } = await import("./sample.service");
+const { ProductRepository } = await import("@/modules/products/product.repository");
+const { CustomerRepository } = await import("@/modules/customers/customer.repository");
+const { generateDocumentNumber } = await import("@/core/numbering/DocumentNumberingService");
+const { recalculateSampleVersionCosting, addSampleMaterial, transitionSampleStatus, createSampleRequest } = await import("./sample.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
 const fakeTx = {} as never;
 
 beforeEach(() => {
+  vi.mocked(generateDocumentNumber).mockReset().mockResolvedValue("SAM-2026-00001");
+  vi.mocked(ProductRepository.findAnyById).mockReset().mockResolvedValue({ id: "prod-1" } as never);
+  vi.mocked(CustomerRepository.findByIdWithBuyers).mockReset().mockResolvedValue({ id: "cust-1", buyers: [{ id: "buyer-1" }] } as never);
+  vi.mocked(SampleRequestRepository.create).mockReset();
   vi.mocked(SampleVersionRepository.findByIdTx).mockReset();
   vi.mocked(SampleVersionRepository.updateCostingIfUnlocked).mockReset();
   vi.mocked(SampleMaterialRepository.findByVersionIdTx).mockReset();
@@ -72,6 +82,40 @@ beforeEach(() => {
   vi.mocked(prisma.crmFollowup.create).mockReset().mockResolvedValue({} as never);
   vi.mocked(SampleVersionRepository.findLatest).mockReset();
   vi.mocked(SampleVersionRepository.update).mockReset();
+});
+
+describe("createSampleRequest", () => {
+  const input = { customerId: "cust-1", buyerId: "buyer-1", productId: "prod-1", styleName: "Test", sampleType: "PROTO", requestDate: "2026-08-25" };
+
+  // customerId/buyerId/productId were previously written straight from
+  // client input with zero ownership check — a direct API call with
+  // another tenant's id would succeed, and findByIdWithDetails's
+  // unrestricted `include` would then return that tenant's full
+  // Customer/Buyer/Product record on every subsequent read (confirmed
+  // cross-tenant disclosure, fixed). These reproduce that exact bug class.
+  it("rejects a customerId belonging to another company", async () => {
+    vi.mocked(CustomerRepository.findByIdWithBuyers).mockResolvedValue(null);
+    await expect(createSampleRequest(actor, input as never)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(SampleRequestRepository.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects a buyerId that doesn't belong to the given customer", async () => {
+    vi.mocked(CustomerRepository.findByIdWithBuyers).mockResolvedValue({ id: "cust-1", buyers: [{ id: "buyer-other" }] } as never);
+    await expect(createSampleRequest(actor, input as never)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(SampleRequestRepository.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects a productId belonging to another company", async () => {
+    vi.mocked(ProductRepository.findAnyById).mockResolvedValue(null);
+    await expect(createSampleRequest(actor, input as never)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(SampleRequestRepository.create).not.toHaveBeenCalled();
+  });
+
+  it("succeeds when the customer, buyer, and product all belong to this company", async () => {
+    vi.mocked(SampleRequestRepository.create).mockResolvedValue({ id: "sam-1" } as never);
+    await createSampleRequest(actor, input as never);
+    expect(SampleRequestRepository.create).toHaveBeenCalledWith(expect.objectContaining({ customerId: "cust-1", buyerId: "buyer-1", productId: "prod-1" }));
+  });
 });
 
 describe("recalculateSampleVersionCosting", () => {

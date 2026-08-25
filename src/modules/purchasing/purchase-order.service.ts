@@ -210,6 +210,11 @@ export async function updatePurchaseOrder(actor: ActorContext, id: string, input
     );
   }
 
+  // Re-validated on update too, not just create — a supplierId from another
+  // company would otherwise sit unvalidated on the record from here on.
+  const supplier = await SupplierRepository.findById(actor.companyId, input.supplierId);
+  if (!supplier) throw new BusinessRuleError("NOT_FOUND", "Supplier not found.", { id: input.supplierId });
+
   await assertItemsHaveConvertibleUom(actor.companyId, input.items);
 
   const totalAmount = computeTotalAmount(input.items);

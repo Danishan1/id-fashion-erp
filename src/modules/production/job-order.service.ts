@@ -3,6 +3,7 @@ import { prisma } from "@/core/db/client";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { PermissionService } from "@/core/rbac/PermissionService";
 import { recordInventoryTransaction } from "@/modules/inventory/inventory.service";
+import { EmployeeRepository } from "@/modules/employees/employee.repository";
 import type { JobOrderStatus, Prisma, ProductionStage } from "@prisma/client";
 import {
   JobOrderAssignmentRepository,
@@ -335,6 +336,11 @@ export async function assignWorker(actor: ActorContext, jobOrderId: string, inpu
   const jobOrder = await JobOrderRepository.findAnyById(actor.companyId, jobOrderId);
   if (!jobOrder) throw new BusinessRuleError("NOT_FOUND", "Job order not found.", { id: jobOrderId });
 
+  // Tenant-scoped — an employeeId from another company would otherwise sit
+  // unvalidated on the assignment record.
+  const employee = await EmployeeRepository.findById(actor.companyId, input.employeeId);
+  if (!employee) throw new BusinessRuleError("NOT_FOUND", "Employee not found.", { id: input.employeeId });
+
   const alreadyAssigned = await JobOrderAssignmentRepository.sumAssignedByJobOrderId(jobOrderId);
   if (alreadyAssigned + input.assignedQuantity > Number(jobOrder.plannedQuantity) + EPSILON) {
     throw new BusinessRuleError(
@@ -378,6 +384,11 @@ export async function recordProgressEntry(actor: ActorContext, jobOrderId: strin
       throw new BusinessRuleError("NOT_FOUND", "Assignment not found on this job order.", { id: input.jobOrderAssignmentId });
     }
   }
+
+  // Tenant-scoped — an employeeId from another company would otherwise sit
+  // unvalidated on the progress entry record.
+  const employee = await EmployeeRepository.findById(actor.companyId, input.employeeId);
+  if (!employee) throw new BusinessRuleError("NOT_FOUND", "Employee not found.", { id: input.employeeId });
 
   const updated = await prisma.$transaction(async (tx) => {
     const jo = await applyJobOrderQuantityDelta(tx, jobOrderId, {

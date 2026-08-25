@@ -4,9 +4,38 @@ import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { advanceMasterCodeSequence, generateDocumentNumber } from "@/core/numbering/DocumentNumberingService";
 import type { ListQuery } from "@/lib/list-query";
 import type { DealStage, Prisma } from "@prisma/client";
+import { CustomerRepository } from "@/modules/customers/customer.repository";
+import { LeadRepository } from "./lead.repository";
+import { ProductionConfigRepository } from "@/modules/production-config/production-config.repository";
 import { DealRepository } from "./deal.repository";
 import type { ActorContext } from "./lead.service";
 import type { ConvertDealToCustomerInput, CreateDealInput, DealStageChangeInput, UpdateDealInput } from "./deal.schema";
+
+/**
+ * Tenant-scoped — `leadId`/`customerId`/`salesAgentId`/`assignedToUserId`
+ * were previously written straight from client input with no ownership
+ * check, unlike `convertDealToCustomer()`'s own `customerId` validation a
+ * few functions below in this same file. Shared by createDeal/updateDeal so
+ * both go through the identical check.
+ */
+async function assertDealReferencesInCompany(companyId: string, input: { leadId?: string | null; customerId?: string | null; salesAgentId?: string | null; assignedToUserId?: string | null }) {
+  if (input.leadId) {
+    const lead = await LeadRepository.findAnyById(companyId, input.leadId);
+    if (!lead) throw new BusinessRuleError("NOT_FOUND", "Lead not found.", { id: input.leadId });
+  }
+  if (input.customerId) {
+    const customer = await CustomerRepository.findByIdWithBuyers(companyId, input.customerId);
+    if (!customer) throw new BusinessRuleError("NOT_FOUND", "Customer not found.", { id: input.customerId });
+  }
+  if (input.salesAgentId) {
+    const agent = await ProductionConfigRepository.salesAgent.findFirst({ where: { id: input.salesAgentId, companyId } });
+    if (!agent) throw new BusinessRuleError("NOT_FOUND", "Sales agent not found.", { id: input.salesAgentId });
+  }
+  if (input.assignedToUserId) {
+    const user = await prisma.user.findFirst({ where: { id: input.assignedToUserId, companyId } });
+    if (!user) throw new BusinessRuleError("NOT_FOUND", "User not found.", { id: input.assignedToUserId });
+  }
+}
 
 /**
  * A real transition guard — the source lets a Deal jump between any of its
@@ -56,6 +85,8 @@ export async function getDealById(companyId: string, id: string) {
 }
 
 export async function createDeal(actor: ActorContext, input: CreateDealInput) {
+  await assertDealReferencesInCompany(actor.companyId, input);
+
   const dealNumber = await generateDocumentNumber({
     companyId: actor.companyId,
     branchId: actor.branchId ?? null,
@@ -96,6 +127,8 @@ export async function updateDeal(actor: ActorContext, id: string, input: UpdateD
   if (existing.stage === "WON" || existing.stage === "LOST") {
     throw new BusinessRuleError("INVALID_STATE_TRANSITION", `Cannot edit a deal in "${existing.stage}" status.`, { currentStage: existing.stage });
   }
+
+  await assertDealReferencesInCompany(actor.companyId, input);
 
   const updated = await DealRepository.update(id, {
     title: input.title,

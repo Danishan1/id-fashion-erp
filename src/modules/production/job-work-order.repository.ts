@@ -48,12 +48,20 @@ export const JobWorkOrderRepository = {
   updateInTx: (tx: Prisma.TransactionClient, id: string, data: Prisma.JobWorkOrderUncheckedUpdateInput) =>
     tx.jobWorkOrder.update({ where: { id }, data }),
 
-  /** Row-locked read inside a transaction, immediately before a guarded
+  /** Row-locked read inside a transaction (a real `SELECT ... FOR UPDATE`,
+   * not just a plain read — a prior version of this comment claimed the
+   * lock without the code actually taking it), immediately before a guarded
    * 3-column quantity update — received+rejected+damaged <= issuedQuantity
    * can't be expressed as a single-column Prisma `updateMany` guard (same
    * limitation `job-order.service.ts`'s own `applyJobOrderQuantityDelta`
-   * documents), so this backs a read-verify-write in the service instead. */
-  findForGuardedUpdateInTx: (tx: Prisma.TransactionClient, id: string) => tx.jobWorkOrder.findUniqueOrThrow({ where: { id } }),
+   * documents), so this backs a read-verify-write in the service instead.
+   * Without the lock, two concurrent receipts/reversals against the same
+   * jobWorkOrderId could both read the same pre-write snapshot and the
+   * second writer would silently discard the first's increment. */
+  findForGuardedUpdateInTx: async (tx: Prisma.TransactionClient, id: string) => {
+    await tx.$queryRaw`SELECT id FROM job_work_orders WHERE id = ${id}::uuid FOR UPDATE`;
+    return tx.jobWorkOrder.findUniqueOrThrow({ where: { id } });
+  },
 
   /** Sum of `issuedQuantity - received - rejected - damaged` across every
    * still-active JobWorkOrder for a given JobOrder, excluding one order

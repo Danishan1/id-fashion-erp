@@ -118,11 +118,30 @@ export const JobOrderRepository = {
 
   findAnyById: (companyId: string, id: string) => prisma.jobOrder.findFirst({ where: { id, companyId }, include: JOB_ORDER_INCLUDE }),
 
-  /** Row-locked read inside a transaction, immediately before a guarded
-   * quantity update — the 3-column cap (completed+rejected+damaged<=planned)
-   * can't be expressed as a single-column Prisma updateMany guard, so this
-   * function backs a read-verify-write instead (see job-order.service.ts). */
-  findForGuardedUpdateInTx: (tx: Prisma.TransactionClient, id: string) => tx.jobOrder.findUniqueOrThrow({ where: { id } }),
+  /**
+   * `SELECT ... FOR UPDATE` before the read — every caller of this function
+   * (applyJobOrderQuantityDelta, guardedDecrementUnprocessedQuantity,
+   * applyQcDispositionInTx) reads completed/rejected/damaged, computes new
+   * values in application code, then writes literal new values via
+   * updateInTx below — unlike every other accumulator in this codebase
+   * (PO received/invoiced, Material Request issued, Dispatch dispatched,
+   * StockBalance), which cap the write itself in an atomic `updateMany`
+   * WHERE clause. A 3-column sum invariant can't be expressed that way, so
+   * without a lock, two concurrent calls for the same jobOrderId could both
+   * read the same pre-write snapshot, and the second writer's update would
+   * silently discard the first's increment (a real lost-update race — the
+   * job_orders_quantity_consistency_check CHECK constraint doesn't catch
+   * this, since the final row can still satisfy the invariant after one
+   * write is dropped). The row lock closes it: a second concurrent
+   * transaction for the same id blocks here until the first commits, then
+   * reads that transaction's final, already-updated values — never a stale
+   * pre-lock snapshot. The `FOR UPDATE` result itself is discarded; the
+   * typed `findUniqueOrThrow` immediately after gets the actual data.
+   */
+  findForGuardedUpdateInTx: async (tx: Prisma.TransactionClient, id: string) => {
+    await tx.$queryRaw`SELECT id FROM job_orders WHERE id = ${id}::uuid FOR UPDATE`;
+    return tx.jobOrder.findUniqueOrThrow({ where: { id } });
+  },
 
   updateInTx: (tx: Prisma.TransactionClient, id: string, data: Prisma.JobOrderUncheckedUpdateInput) =>
     tx.jobOrder.update({ where: { id }, data }),

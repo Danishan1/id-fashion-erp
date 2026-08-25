@@ -3,6 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { assert: vi.fn() } }));
 vi.mock("@/modules/inventory/inventory.service", () => ({ recordInventoryTransaction: vi.fn() }));
+vi.mock("@/modules/employees/employee.repository", () => ({
+  EmployeeRepository: { findById: vi.fn() },
+}));
 
 const mockPrismaClient = vi.hoisted(() => ({
   productionStage: { findFirst: vi.fn() },
@@ -40,6 +43,7 @@ vi.mock("./production.repository", () => ({
 
 const { prisma } = await import("@/core/db/client");
 const { PermissionService } = await import("@/core/rbac/PermissionService");
+const { EmployeeRepository } = await import("@/modules/employees/employee.repository");
 const {
   JobOrderRepository,
   JobOrderAssignmentRepository,
@@ -49,7 +53,7 @@ const {
   LotRepository,
   QcInspectionRepository,
 } = await import("./production.repository");
-const { computeJobOrderStatus, assignWorker, forwardJobOrder, revertJobOrder, recordQcInspection, recordAdjustmentEntry } = await import("./job-order.service");
+const { computeJobOrderStatus, assignWorker, recordProgressEntry, forwardJobOrder, revertJobOrder, recordQcInspection, recordAdjustmentEntry } = await import("./job-order.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
 
@@ -79,6 +83,7 @@ function jobOrder(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.mocked(JobOrderRepository.findAnyById).mockReset();
+  vi.mocked(EmployeeRepository.findById).mockReset().mockResolvedValue({ id: "emp-1" } as never);
   vi.mocked(JobOrderAssignmentRepository.sumAssignedByJobOrderId).mockReset();
   vi.mocked(JobOrderAssignmentRepository.createInTx).mockReset();
   vi.mocked(ProductionOrderRepository.findAnyById).mockReset();
@@ -120,6 +125,19 @@ describe("computeJobOrderStatus", () => {
 });
 
 describe("assignWorker", () => {
+  // employeeId was previously written straight from client input with zero
+  // ownership check — a direct API call with another tenant's employeeId
+  // would succeed (confirmed cross-tenant disclosure risk, fixed).
+  it("rejects an employeeId belonging to another company", async () => {
+    vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder({ plannedQuantity: "100" }) as never);
+    vi.mocked(EmployeeRepository.findById).mockResolvedValue(null);
+
+    await expect(assignWorker(actor, "jo-1", { employeeId: "emp-x", assignedQuantity: 10 })).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
+    expect(JobOrderAssignmentRepository.createInTx).not.toHaveBeenCalled();
+  });
+
   it("rejects an assignment that would push total assigned quantity past the planned quantity", async () => {
     vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder({ plannedQuantity: "100" }) as never);
     vi.mocked(JobOrderAssignmentRepository.sumAssignedByJobOrderId).mockResolvedValue(80);
@@ -137,6 +155,20 @@ describe("assignWorker", () => {
 
     await assignWorker(actor, "jo-1", { employeeId: "emp-1", assignedQuantity: 20 });
     expect(JobOrderAssignmentRepository.createInTx).toHaveBeenCalled();
+  });
+});
+
+describe("recordProgressEntry", () => {
+  // Same class of gap as assignWorker's employeeId check above, fixed the
+  // same way in the same file.
+  it("rejects an employeeId belonging to another company", async () => {
+    vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder({ status: "IN_PROGRESS" }) as never);
+    vi.mocked(EmployeeRepository.findById).mockResolvedValue(null);
+
+    await expect(
+      recordProgressEntry(actor, "jo-1", { employeeId: "emp-x", completedQuantity: 1, rejectedQuantity: 0, damagedQuantity: 0 } as never)
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(JobOrderProgressEntryRepository.createInTx).not.toHaveBeenCalled();
   });
 });
 
