@@ -51,6 +51,17 @@ export async function getGoodsReceiptById(companyId: string, id: string) {
  * the `tx` client — this function only sequences them.
  */
 export async function createGoodsReceipt(actor: ActorContext, purchaseOrderId: string, input: GoodsReceiptInput) {
+  // CF-5: a network retry or double-click resubmitting the identical create
+  // call must return the ORIGINAL receipt, not create and post a second one
+  // — checked before anything else (including drawing a document number, so
+  // a replay doesn't burn a real sequence value either). Only takes effect
+  // when the caller actually supplies a key; a caller that doesn't gets the
+  // prior, unprotected behavior unchanged.
+  if (input.idempotencyKey) {
+    const existing = await GoodsReceiptRepository.findByIdempotencyKey(actor.companyId, input.idempotencyKey);
+    if (existing) return existing;
+  }
+
   const po = await PurchaseOrderRepository.findByIdWithDetails(actor.companyId, purchaseOrderId);
   if (!po) throw new BusinessRuleError("NOT_FOUND", "Purchase order not found.", { id: purchaseOrderId });
 
@@ -142,141 +153,156 @@ export async function createGoodsReceipt(actor: ActorContext, purchaseOrderId: s
     documentType: "GOODS_RECEIPT",
   });
 
-  const receipt = await prisma.$transaction(async (tx) => {
-    // Over-receipt guard: atomic per-line updateMany, not a separate
-    // read-then-write — safe against two concurrent receipts against the
-    // same line (orderedQuantity is frozen once SENT_TO_SUPPLIER, since
-    // updatePurchaseOrder() blocks edits past that point).
-    for (const inputItem of input.items) {
-      const poItem = itemsById.get(inputItem.purchaseOrderItemId)!;
-      const result = await PurchaseOrderItemRepository.guardedIncrementReceived(
-        tx,
-        poItem.id,
-        Number(poItem.orderedQuantity),
-        inputItem.receivedQuantity
-      );
-      if (result.count === 0) {
-        // remaining is read from the pre-transaction snapshot, purely for
-        // message quality — the atomic guardedIncrementReceived above is
-        // what actually enforces the cap under concurrency; this can't
-        // under-reject, only occasionally show a slightly stale number if
-        // another request also modified this line in the same instant.
-        const remaining = Number(poItem.orderedQuantity) - Number(poItem.receivedQuantity);
-        throw new BusinessRuleError(
-          "OVER_RECEIPT_NOT_ALLOWED",
-          `Receiving ${inputItem.receivedQuantity} of "${poItem.product.styleName}" would exceed the ordered quantity — only ${remaining} remains. Ordered: ${poItem.orderedQuantity}, Already received: ${poItem.receivedQuantity}.`,
-          {
-            purchaseOrderItemId: poItem.id,
-            orderedQuantity: Number(poItem.orderedQuantity),
-            alreadyReceived: Number(poItem.receivedQuantity),
-            remaining,
-          }
+  let receipt;
+  try {
+    receipt = await prisma.$transaction(async (tx) => {
+      // Over-receipt guard: atomic per-line updateMany, not a separate
+      // read-then-write — safe against two concurrent receipts against the
+      // same line (orderedQuantity is frozen once SENT_TO_SUPPLIER, since
+      // updatePurchaseOrder() blocks edits past that point).
+      for (const inputItem of input.items) {
+        const poItem = itemsById.get(inputItem.purchaseOrderItemId)!;
+        const result = await PurchaseOrderItemRepository.guardedIncrementReceived(
+          tx,
+          poItem.id,
+          Number(poItem.orderedQuantity),
+          inputItem.receivedQuantity
         );
+        if (result.count === 0) {
+          // remaining is read from the pre-transaction snapshot, purely for
+          // message quality — the atomic guardedIncrementReceived above is
+          // what actually enforces the cap under concurrency; this can't
+          // under-reject, only occasionally show a slightly stale number if
+          // another request also modified this line in the same instant.
+          const remaining = Number(poItem.orderedQuantity) - Number(poItem.receivedQuantity);
+          throw new BusinessRuleError(
+            "OVER_RECEIPT_NOT_ALLOWED",
+            `Receiving ${inputItem.receivedQuantity} of "${poItem.product.styleName}" would exceed the ordered quantity — only ${remaining} remains. Ordered: ${poItem.orderedQuantity}, Already received: ${poItem.receivedQuantity}.`,
+            {
+              purchaseOrderItemId: poItem.id,
+              orderedQuantity: Number(poItem.orderedQuantity),
+              alreadyReceived: Number(poItem.receivedQuantity),
+              remaining,
+            }
+          );
+        }
       }
-    }
 
-    const created = await GoodsReceiptRepository.createWithItemsAndRolls(tx, {
-      companyId: actor.companyId,
-      branchId: actor.branchId || null,
-      receiptNumber,
-      purchaseOrderId,
-      receivedDate: new Date(input.receivedDate),
-      receivedByUserId: actor.userId,
-      status: "COMPLETED",
-      items: {
-        create: input.items.map((item) => {
-          const poItem = itemsById.get(item.purchaseOrderItemId)!;
-          return {
-            purchaseOrderItemId: item.purchaseOrderItemId,
-            productId: poItem.productId,
-            uomId: poItem.uomId,
-            receivedQuantity: item.receivedQuantity,
-            warehouseId: item.warehouseId,
-            warehouseLocationId: item.warehouseLocationId || null,
-            notes: item.notes || null,
-            rolls: {
-              create: item.rolls.map((roll, rollIndex) => {
-                // Stored in the material's base UOM, not the roll's
-                // as-entered unit — see the conversion pass above.
-                const baseQuantity = baseUomRollQuantities.get(item.purchaseOrderItemId)![rollIndex];
-                return {
-                  companyId: actor.companyId,
-                  rollNumber: roll.rollNumber,
-                  rollQuantity: baseQuantity,
-                  remainingQuantity: baseQuantity,
-                  batchNo: roll.batchNo || null,
-                  gsmId: roll.gsmId || null,
-                  dyeId: roll.dyeId || null,
-                  weaveTypeId: roll.weaveTypeId || null,
-                  widthId: roll.widthId || null,
-                  compositionId: roll.compositionId || null,
-                  warehouseLocationId: roll.warehouseLocationId || item.warehouseLocationId || null,
-                  status: "IN_STOCK",
-                };
-              }),
-            },
-          };
-        }),
-      },
-    });
+      const created = await GoodsReceiptRepository.createWithItemsAndRolls(tx, {
+        companyId: actor.companyId,
+        branchId: actor.branchId || null,
+        receiptNumber,
+        purchaseOrderId,
+        receivedDate: new Date(input.receivedDate),
+        receivedByUserId: actor.userId,
+        status: "COMPLETED",
+        idempotencyKey: input.idempotencyKey ?? null,
+        items: {
+          create: input.items.map((item) => {
+            const poItem = itemsById.get(item.purchaseOrderItemId)!;
+            return {
+              purchaseOrderItemId: item.purchaseOrderItemId,
+              productId: poItem.productId,
+              uomId: poItem.uomId,
+              receivedQuantity: item.receivedQuantity,
+              warehouseId: item.warehouseId,
+              warehouseLocationId: item.warehouseLocationId || null,
+              notes: item.notes || null,
+              rolls: {
+                create: item.rolls.map((roll, rollIndex) => {
+                  // Stored in the material's base UOM, not the roll's
+                  // as-entered unit — see the conversion pass above.
+                  const baseQuantity = baseUomRollQuantities.get(item.purchaseOrderItemId)![rollIndex];
+                  return {
+                    companyId: actor.companyId,
+                    rollNumber: roll.rollNumber,
+                    rollQuantity: baseQuantity,
+                    remainingQuantity: baseQuantity,
+                    batchNo: roll.batchNo || null,
+                    gsmId: roll.gsmId || null,
+                    dyeId: roll.dyeId || null,
+                    weaveTypeId: roll.weaveTypeId || null,
+                    widthId: roll.widthId || null,
+                    compositionId: roll.compositionId || null,
+                    warehouseLocationId: roll.warehouseLocationId || item.warehouseLocationId || null,
+                    status: "IN_STOCK",
+                  };
+                }),
+              },
+            };
+          }),
+        },
+      });
 
-    // Ledger granularity mirrors physical rolls when present — one
-    // InventoryTransaction per roll, not one aggregate row per line. Roll
-    // quantities are already base-UOM (stored that way above); the
-    // non-roll line quantity uses the precomputed base-UOM conversion since
-    // createdItem.receivedQuantity itself is still in the original unit.
-    for (const createdItem of created.items) {
-      if (createdItem.rolls.length > 0) {
-        for (const roll of createdItem.rolls) {
+      // Ledger granularity mirrors physical rolls when present — one
+      // InventoryTransaction per roll, not one aggregate row per line. Roll
+      // quantities are already base-UOM (stored that way above); the
+      // non-roll line quantity uses the precomputed base-UOM conversion since
+      // createdItem.receivedQuantity itself is still in the original unit.
+      for (const createdItem of created.items) {
+        if (createdItem.rolls.length > 0) {
+          for (const roll of createdItem.rolls) {
+            await recordInventoryTransaction(tx, actor, {
+              productId: createdItem.productId,
+              warehouseId: createdItem.warehouseId,
+              warehouseLocationId: createdItem.warehouseLocationId,
+              transactionType: "GOODS_RECEIPT",
+              quantity: Number(roll.rollQuantity),
+              referenceModule: "GOODS_RECEIPT",
+              referenceRecordId: createdItem.id,
+              fabricRollId: roll.id,
+            });
+          }
+        } else {
           await recordInventoryTransaction(tx, actor, {
             productId: createdItem.productId,
             warehouseId: createdItem.warehouseId,
             warehouseLocationId: createdItem.warehouseLocationId,
             transactionType: "GOODS_RECEIPT",
-            quantity: Number(roll.rollQuantity),
+            quantity: baseUomLineQuantityByPoItemId.get(createdItem.purchaseOrderItemId)!,
             referenceModule: "GOODS_RECEIPT",
             referenceRecordId: createdItem.id,
-            fabricRollId: roll.id,
           });
         }
-      } else {
-        await recordInventoryTransaction(tx, actor, {
-          productId: createdItem.productId,
-          warehouseId: createdItem.warehouseId,
-          warehouseLocationId: createdItem.warehouseLocationId,
-          transactionType: "GOODS_RECEIPT",
-          quantity: baseUomLineQuantityByPoItemId.get(createdItem.purchaseOrderItemId)!,
-          referenceModule: "GOODS_RECEIPT",
-          referenceRecordId: createdItem.id,
-        });
-      }
 
-      // Material Request rollup — purely a secondary traceability mirror,
-      // never a reason to block a legitimate goods receipt. Fails soft: a
-      // missing/unconvertible unit or a lost concurrency race just skips the
-      // rollup for this line, since the real over-receipt protection already
-      // happened above via guardedIncrementReceived.
-      const poItem = itemsById.get(createdItem.purchaseOrderItemId)!;
-      if (poItem.materialRequestItemId) {
-        const mrLine = await MaterialRequestItemRepository.findForReceiptRollupInTx(tx, poItem.materialRequestItemId);
-        if (mrLine) {
-          const convertedToMrUnit = convertUomQuantity(Number(createdItem.receivedQuantity), poItem.uom, mrLine.uom);
-          if (convertedToMrUnit !== null) {
-            const cap = mrLine.purchaseOrderItems.reduce((sum, p) => sum + Number(p.orderedQuantity), 0);
-            await MaterialRequestItemRepository.guardedIncrementPurchaseReceived(tx, mrLine.id, cap, convertedToMrUnit);
+        // Material Request rollup — purely a secondary traceability mirror,
+        // never a reason to block a legitimate goods receipt. Fails soft: a
+        // missing/unconvertible unit or a lost concurrency race just skips the
+        // rollup for this line, since the real over-receipt protection already
+        // happened above via guardedIncrementReceived.
+        const poItem = itemsById.get(createdItem.purchaseOrderItemId)!;
+        if (poItem.materialRequestItemId) {
+          const mrLine = await MaterialRequestItemRepository.findForReceiptRollupInTx(tx, poItem.materialRequestItemId);
+          if (mrLine) {
+            const convertedToMrUnit = convertUomQuantity(Number(createdItem.receivedQuantity), poItem.uom, mrLine.uom);
+            if (convertedToMrUnit !== null) {
+              const cap = mrLine.purchaseOrderItems.reduce((sum, p) => sum + Number(p.orderedQuantity), 0);
+              await MaterialRequestItemRepository.guardedIncrementPurchaseReceived(tx, mrLine.id, cap, convertedToMrUnit);
+            }
           }
         }
       }
-    }
 
-    const allItems = await PurchaseOrderItemRepository.findManyForStatusRecompute(tx, purchaseOrderId);
-    const allFullyReceived = allItems.every((i) => Number(i.receivedQuantity) >= Number(i.orderedQuantity));
-    await PurchaseOrderRepository.updateStatusInTx(tx, purchaseOrderId, {
-      status: allFullyReceived ? "FULLY_RECEIVED" : "PARTIALLY_RECEIVED",
+      const allItems = await PurchaseOrderItemRepository.findManyForStatusRecompute(tx, purchaseOrderId);
+      const allFullyReceived = allItems.every((i) => Number(i.receivedQuantity) >= Number(i.orderedQuantity));
+      await PurchaseOrderRepository.updateStatusInTx(tx, purchaseOrderId, {
+        status: allFullyReceived ? "FULLY_RECEIVED" : "PARTIALLY_RECEIVED",
+      });
+
+      return created;
     });
-
-    return created;
-  });
+  } catch (err) {
+    // A genuine concurrent replay: two requests carrying the identical
+    // idempotencyKey both passed the pre-transaction check above before
+    // either committed. The @@unique constraint is what actually prevents
+    // the duplicate; this just makes the loser of that race transparently
+    // return the winner's receipt instead of surfacing a raw conflict.
+    if (input.idempotencyKey && err && typeof err === "object" && "code" in err && err.code === "P2002") {
+      const existing = await GoodsReceiptRepository.findByIdempotencyKey(actor.companyId, input.idempotencyKey);
+      if (existing) return existing;
+    }
+    throw err;
+  }
 
   await writeAuditLog({
     companyId: actor.companyId,

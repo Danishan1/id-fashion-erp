@@ -45,7 +45,7 @@ The user has two real, manually-coded PHP/Laravel garment systems already in pro
 | 8 | Dispatch | ✅ Done — pick/pack/confirm/deliver workflow, cartons with barcodes, and Finished-Goods stock decrement all built and verified on branch `phase-8-dispatch` |
 | 9 | Reports | ✅ Done (2026-08-25) — architecture + Report Center nav + 75 reports across all 26 buildable categories (only Payroll unavailable — no schema); merged to `main` |
 | 10 | Testing | ⬜ Not started |
-| 11 | Hardening | 🔶 In progress — see dated note below (branch `Hardening`) |
+| 11 | Hardening | 🔶 In progress — P0 findings fixed and merged; P1 tier partly done (see dated notes below) |
 
 Update the status column and add a short dated note under the relevant phase section below whenever a phase completes or deviates from plan.
 
@@ -1917,6 +1917,108 @@ see the audit's own Phase D section for what's still open).
   at yet). Nonce-based CSP (removing the `'unsafe-inline'` on `script-src`) is also deferred until the
   `proxy.ts`/auth-middleware flow is revisited, since layering it in safely means touching the one piece of
   code that gates every page's login redirect.
+
+## Phase 11 — Hardening, P1 pass (2026-08-25)
+
+Worked through the independent audit's (`HARDENING_BRANCH_INDEPENDENT_AUDIT.md`) P1 tier — the items flagged
+"must fix before production," as distinct from the P0 tier fixed in the first pass above.
+
+- **CF-6 fixed — magic-byte content verification on file upload.** `saveFile()` (`src/core/file-storage/
+  FileStorage.ts`) previously trusted the client-declared MIME type alone; a `.exe` declared as
+  `application/pdf` was accepted, stored, and served back for download unmodified. Now sniffs the buffer's
+  real content via the new `file-type` dependency (`fileTypeFromBuffer`) and rejects on mismatch — legacy
+  `.doc`/`.xls` (pre-OOXML Compound File Binary) is the one deliberate exception, since file-type can only
+  fingerprint the generic CFB container, not which legacy Office format it holds; an undetectable buffer is
+  treated as suspicious rather than trusted on the client's word. **Verified live**: uploaded a real MZ-header
+  executable declared as `application/pdf` to a real Sampling attachment — server correctly rejected with
+  `400 VALIDATION_ERROR` naming the actual detected type (`application/x-msdownload`); a genuine PDF upload
+  immediately after succeeded normally (`201`), confirming no regression. 5 new tests
+  (`FileStorage.test.ts`, new file).
+- **CF-7 fixed — suspending a user now actually revokes their access immediately, not "eventually."**
+  JWT sessions are stateless; nothing previously re-checked `User.status` after initial login, so a
+  suspended user's existing 30-day session cookie kept working everywhere. Fixed at two chokepoints:
+  `PermissionService.can()` (`src/core/rbac/PermissionService.ts`) now re-checks live DB status on every
+  call, deliberately uncached (unlike permission keys) so a suspension takes effect on the very next
+  request — covers both API routes and the handful of Server Component pages that call it directly; and
+  `requireSession()` (`src/lib/api-route.ts`) does the same re-check, closing the smaller set of routes
+  gated on session presence alone with no follow-up permission assert. `setUserStatus()` also now calls
+  `PermissionService.invalidate()` on every status change — not required for this fix (the check is
+  uncached), but closes the separately-flagged P2 gap ("no cache invalidation wired into any production
+  code path") for free. **Verified live end-to-end, not just via unit tests** — created a real second user
+  through the actual `/admin` UI's `POST /api/v1/administration/users`, signed in as them (capturing a real,
+  unexpired 30-day session), confirmed a permission-gated API call succeeded, then suspended them via a
+  direct DB update **without touching that session's cookie at all**, then replayed the identical API call
+  on the exact same never-refreshed session — confirmed it now fails with `403 PERMISSION_DENIED` ("Your
+  account is no longer active. Please sign in again."), and confirmed the equivalent page navigation
+  surfaces the same message inline instead of data. Reactivated the test user and restored the Super Admin
+  session afterward. 3 new tests in `PermissionService.test.ts`.
+- **CF-5 fixed for Goods Receipt — idempotency key protects against a network-retry double-post.**
+  `GoodsReceipt` gained a nullable `idempotencyKey` column (migration `add_goods_receipt_idempotency_key`),
+  `@@unique([companyId, idempotencyKey])`. `createGoodsReceipt()` checks for an existing receipt under the
+  caller-supplied key *before* drawing a document number (so a replay doesn't burn a real sequence value
+  either) and returns it unchanged on a match; a genuine concurrent double-submit that both pass the
+  pre-check race to the DB's own unique constraint, caught as `P2002` and resolved the same way (return the
+  winner's receipt, not a raw conflict). `GoodsReceiptForm.tsx` generates one UUID per mounted form instance
+  and resends it on every submit attempt from that page (including a manual retry after a shown error) —
+  the form's fetch call also gained a proper `try/catch/finally` it was missing entirely, since a thrown
+  network error previously left the Submit button permanently disabled with no way to retry at all, which
+  would have made the new key useless in exactly the scenario it exists for. A full page reload still
+  starts a fresh key (an accepted, documented residual gap, not covered by this scope). 7 new tests in
+  `goods-receipt.service.test.ts`, including the genuine-concurrent-race path. **Not extended to the other
+  ledger-writing document-creation endpoints this pass** (Stock Movement, Job Work receipt, Payment,
+  Sales/Purchase Invoice, Expense) — the audit's own phrasing scoped this to Goods Receipt first; the
+  identical pattern (nullable key column + `@@unique([companyId, key])` + pre-check + P2002 fallback) is
+  ready to replicate once prioritized.
+- **`next-auth` pinned to an exact version** (`^5.0.0-beta.32` → `5.0.0-beta.32`) — a routine `npm ci` could
+  previously have pulled in an unreviewed breaking change to the auth/session/RBAC layer from a new beta.
+- **`npm audit`'s `uuid` finding resolved** via a package.json `overrides` entry forcing `uuid@^11.1.1` —
+  `exceljs`'s only use of the vulnerable package (`cf-rule-ext-xform.js`, a conditional-formatting
+  extension) calls `v4()` with no arguments, so the specific advisory (missing bounds check when a `buf`
+  argument is supplied) was never reachable through this app anyway, but the override closes it cleanly
+  with zero code changes needed (uuid v11 still ships a CJS build `exceljs` can `require()`). The remaining
+  3 `npm audit` findings (`deepmerge-ts` via `@prisma/config`, a dev-tooling dependency chain) are left as
+  accepted risk — fixing them means downgrading Prisma to 6.12.0, which conflicts with this project's
+  Prisma 7 driver-adapter architecture and isn't part of the running application's own attack surface.
+- **Dispatch's race-guard test gap closed** — `dispatch.service.ts` had the most `updateStatusConditional`/
+  guarded-`updateMany` call sites of any module (6, across 5 functions) but the fewest `{count: 0}`
+  rejection tests proving those guards actually reject under contention. Added the missing case for every
+  one: `markPacked`, `confirmDispatch`'s second (dispatch-level) guard, `markDelivered` (previously not
+  even imported into the test file), `transitionDispatchStatus`'s genuine race path (distinct from its
+  already-tested "illegal transition" rejection), and `resumeDispatchFromHold` (also not previously
+  imported) — 7 new tests, `dispatch.service.test.ts` now 27 tests.
+- **Request-correlation ID + actor context threaded into every log line**, closing the audit's observability
+  gap ("error logs carry no actor context... a real gap for diagnosing a production incident"). New
+  `src/core/logging/requestContext.ts` uses Node's `AsyncLocalStorage` with `enterWith` (not `run` — there
+  is no single call site that wraps "the rest of this route handler" in a callback, since `requireSession()`
+  is called partway through each handler's own body, not around it; `enterWith` sets the store for the
+  remainder of the current async continuation instead, which is all that's needed here). `requireSession()`
+  — the one near-universal per-request chokepoint — initializes a correlation ID immediately and records the
+  actor once the session resolves; `logger.ts`'s `write()` picks both up automatically with zero changes
+  needed at any of this app's ~270 individual route handlers. Degrades gracefully to no requestId/actor
+  fields for the rare code path that logs outside of a request (e.g. a background script). 3 new tests in
+  `logger.test.ts`.
+- **CI now applies every migration to a real Postgres 16 service container** before running tests/build —
+  previously "zero automated verification exists that Prisma queries/migrations actually work against real
+  Postgres" (every test mocks the repository/Prisma layer). `.github/workflows/ci.yml` gained a `services:
+  postgres` block (matching the documented local dev version) and an `npx prisma migrate deploy` step
+  between `prisma generate` and the type-check step.
+- **Gotcha hit and caught before it caused real damage**: `npx prisma db execute --file <path> --schema
+  <path>` fails in Prisma 7 (`--schema` was removed as a flag; the datasource now comes solely from
+  `prisma.config.ts`) — but `npx prisma migrate resolve --applied <name>` was run immediately afterward,
+  in the same command sequence, which succeeded and marked the migration as tracked-and-applied **without
+  the SQL ever actually running**. `prisma migrate status` then reported "up to date," which was true only
+  of the tracking table, not the real schema. Caught immediately by not trusting that output — a direct
+  `pg` query confirmed the new column/index were genuinely missing, the corrected `db execute` command (no
+  `--schema` flag) was run to actually apply the SQL, and a second direct query confirmed both existed
+  before proceeding. Worth remembering: `prisma migrate status`/`resolve --applied` only ever reflects the
+  tracking table's own bookkeeping, never re-verifies the live schema — a manual spot-check after any
+  non-standard migration workflow (this project's own established `db execute` workaround, needed because
+  `prisma migrate dev` can't run in this non-interactive shell) is not optional.
+- `npx tsc --noEmit`, `npm run lint`, `npx prisma validate`, `npm test` (508/508, 46 new), and `npm run
+  build` all clean throughout every fix in this pass.
+- **Still open from the P1 tier, not addressed this pass**: no password-reset/change capability exists at
+  all (not even admin-triggered); CF-5's pattern not yet replicated onto the other 5 ledger-writing
+  document-creation endpoints named above. Both are bounded, well-understood follow-ups, not new findings.
 
 ## Phase 9 — Reports & MIS, first slice (2026-08-25)
 

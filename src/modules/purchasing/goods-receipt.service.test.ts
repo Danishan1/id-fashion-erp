@@ -21,6 +21,7 @@ vi.mock("./fabric-roll.repository", () => ({
 vi.mock("./goods-receipt.repository", () => ({
   GoodsReceiptRepository: {
     findByIdWithDetails: vi.fn(),
+    findByIdempotencyKey: vi.fn(),
     createWithItemsAndRolls: vi.fn(),
     updateStatusInTx: vi.fn(),
   },
@@ -87,6 +88,7 @@ beforeEach(() => {
   vi.mocked(FabricRollRepository.findRemainingInTx).mockReset().mockResolvedValue({ remainingQuantity: 0 } as never);
   vi.mocked(FabricRollRepository.updateStatusInTx).mockReset();
   vi.mocked(GoodsReceiptRepository.findByIdWithDetails).mockReset();
+  vi.mocked(GoodsReceiptRepository.findByIdempotencyKey).mockReset().mockResolvedValue(null);
   vi.mocked(GoodsReceiptRepository.createWithItemsAndRolls).mockReset();
   vi.mocked(GoodsReceiptRepository.updateStatusInTx).mockReset();
   vi.mocked(GoodsReceiptItemRepository.findByIdWithContext).mockReset();
@@ -186,6 +188,98 @@ describe("createGoodsReceipt", () => {
     await createGoodsReceipt(actor, "po-1", { receivedDate: "2026-08-24", items: [oneRollItem({ receivedQuantity: 100, rolls: [{ ...oneRollItem().rolls[0], rollQuantity: 100 }] })] });
 
     expect(PurchaseOrderRepository.updateStatusInTx).toHaveBeenCalledWith(expect.anything(), "po-1", { status: "FULLY_RECEIVED" });
+  });
+
+  describe("idempotency (CF-5)", () => {
+    const existingReceipt = { id: "gr-existing", receiptNumber: "REC-2026-00001", items: [] };
+
+    it("returns the original receipt unchanged when the same idempotencyKey is replayed, without touching the PO at all", async () => {
+      vi.mocked(GoodsReceiptRepository.findByIdempotencyKey).mockResolvedValue(existingReceipt as never);
+
+      const result = await createGoodsReceipt(actor, "po-1", {
+        receivedDate: "2026-08-24",
+        items: [oneRollItem()],
+        idempotencyKey: "retry-key-1",
+      });
+
+      expect(result).toBe(existingReceipt);
+      expect(PurchaseOrderRepository.findByIdWithDetails).not.toHaveBeenCalled();
+      expect(GoodsReceiptRepository.createWithItemsAndRolls).not.toHaveBeenCalled();
+    });
+
+    it("proceeds normally the first time a key is used (no existing receipt for it yet)", async () => {
+      vi.mocked(GoodsReceiptRepository.createWithItemsAndRolls).mockResolvedValue({
+        id: "gr-1",
+        receiptNumber: "REC-2026-00002",
+        items: [{ id: "gri-1", purchaseOrderItemId: "poi-1", productId: "mat-1", warehouseId: "wh-1", warehouseLocationId: null, receivedQuantity: 50, rolls: [{ id: "roll-1", rollQuantity: 50 }] }],
+      } as never);
+
+      const result = await createGoodsReceipt(actor, "po-1", {
+        receivedDate: "2026-08-24",
+        items: [oneRollItem()],
+        idempotencyKey: "fresh-key-1",
+      });
+
+      expect(GoodsReceiptRepository.findByIdempotencyKey).toHaveBeenCalledWith("co-1", "fresh-key-1");
+      expect(GoodsReceiptRepository.createWithItemsAndRolls).toHaveBeenCalled();
+      expect((result as { id: string }).id).toBe("gr-1");
+    });
+
+    it("stores the caller-supplied idempotencyKey on the created row", async () => {
+      vi.mocked(GoodsReceiptRepository.createWithItemsAndRolls).mockResolvedValue({
+        id: "gr-1",
+        receiptNumber: "REC-2026-00002",
+        items: [],
+      } as never);
+
+      await createGoodsReceipt(actor, "po-1", { receivedDate: "2026-08-24", items: [oneRollItem()], idempotencyKey: "fresh-key-1" });
+
+      expect(GoodsReceiptRepository.createWithItemsAndRolls).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ idempotencyKey: "fresh-key-1" })
+      );
+    });
+
+    it("does not perform an idempotency check at all when no key is supplied — unprotected but unaffected", async () => {
+      vi.mocked(GoodsReceiptRepository.createWithItemsAndRolls).mockResolvedValue({
+        id: "gr-1",
+        receiptNumber: "REC-2026-00002",
+        items: [],
+      } as never);
+
+      await createGoodsReceipt(actor, "po-1", { receivedDate: "2026-08-24", items: [oneRollItem()] });
+
+      expect(GoodsReceiptRepository.findByIdempotencyKey).not.toHaveBeenCalled();
+      expect(GoodsReceiptRepository.createWithItemsAndRolls).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ idempotencyKey: null })
+      );
+    });
+
+    it("regression: a genuine concurrent replay (both requests pass the pre-check, the DB's unique constraint catches the loser) transparently returns the winner's receipt instead of throwing", async () => {
+      const p2002 = Object.assign(new Error("Unique constraint failed"), { code: "P2002" });
+      vi.mocked(GoodsReceiptRepository.createWithItemsAndRolls).mockRejectedValue(p2002);
+      vi.mocked(GoodsReceiptRepository.findByIdempotencyKey)
+        .mockResolvedValueOnce(null) // the pre-check, before the race is lost
+        .mockResolvedValueOnce(existingReceipt as never); // the post-catch re-fetch, after losing the race
+
+      const result = await createGoodsReceipt(actor, "po-1", {
+        receivedDate: "2026-08-24",
+        items: [oneRollItem()],
+        idempotencyKey: "racing-key",
+      });
+
+      expect(result).toBe(existingReceipt);
+    });
+
+    it("still throws a genuine P2002 from an unrelated constraint when no idempotencyKey was ever supplied to fall back on", async () => {
+      const p2002 = Object.assign(new Error("Unique constraint failed"), { code: "P2002" });
+      vi.mocked(GoodsReceiptRepository.createWithItemsAndRolls).mockRejectedValue(p2002);
+
+      await expect(
+        createGoodsReceipt(actor, "po-1", { receivedDate: "2026-08-24", items: [oneRollItem()] })
+      ).rejects.toBe(p2002);
+    });
   });
 });
 

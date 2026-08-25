@@ -30,7 +30,8 @@ const { PermissionService } = await import("@/core/rbac/PermissionService");
 const { SalesOrderRepository } = await import("@/modules/sales-orders/sales-order.repository");
 const { recordInventoryTransaction, getAvailableQuantity } = await import("@/modules/inventory/inventory.service");
 const { DispatchRepository } = await import("./dispatch.repository");
-const { createDispatch, markPacked, confirmDispatch, transitionDispatchStatus } = await import("./dispatch.service");
+const { createDispatch, markPacked, confirmDispatch, markDelivered, transitionDispatchStatus, resumeDispatchFromHold } =
+  await import("./dispatch.service");
 
 const actor = { companyId: "co-1", userId: "user-1", branchId: null };
 
@@ -160,6 +161,16 @@ describe("markPacked — every line's packed quantity must exactly match", () =>
 
     await expect(markPacked(actor, "disp-1")).resolves.toBeDefined();
   });
+
+  it("race-guard rejection: someone else changed this dispatch's status between the read and the conditional update", async () => {
+    vi.mocked(DispatchRepository.findByIdWithDetails).mockResolvedValue({
+      ...baseDispatch,
+      cartons: [{ items: [{ dispatchItem: { id: "di-1" }, quantity: 30 }] }],
+    } as never);
+    vi.mocked(DispatchRepository.updateStatusConditional).mockResolvedValue({ count: 0 } as never);
+
+    await expect(markPacked(actor, "disp-1")).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+  });
 });
 
 describe("confirmDispatch — self-approval, stock guard, guarded increment, status recompute", () => {
@@ -248,6 +259,34 @@ describe("confirmDispatch — self-approval, stock guard, guarded increment, sta
     await expect(confirmDispatch(actor, "disp-1")).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
+
+  it("race-guard rejection: the dispatch's own status changed underneath the transaction (second guard, after the increment succeeds)", async () => {
+    vi.mocked(DispatchRepository.findByIdWithDetails).mockResolvedValueOnce(packedDispatch as never);
+    const fakeTx = makeFakeTx({ dispatchUpdateManyCount: 0 }); // increment succeeds, dispatch-level guard fails
+    vi.mocked(prisma.$transaction).mockImplementation((cb: unknown) => (cb as (tx: unknown) => Promise<unknown>)(fakeTx));
+
+    await expect(confirmDispatch(actor, "disp-1")).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+  });
+});
+
+describe("markDelivered — race-guard rejection", () => {
+  it("rejects when the dispatch is no longer DISPATCHED by the time the conditional update runs", async () => {
+    vi.mocked(DispatchRepository.findAnyById).mockResolvedValue({ id: "disp-1", status: "DELIVERED" } as never);
+    vi.mocked(DispatchRepository.updateStatusConditional).mockResolvedValue({ count: 0 } as never);
+
+    await expect(markDelivered(actor, "disp-1", "Warehouse Clerk")).rejects.toMatchObject({
+      code: "INVALID_STATE_TRANSITION",
+    });
+  });
+
+  it("succeeds when the dispatch is genuinely DISPATCHED", async () => {
+    vi.mocked(DispatchRepository.findAnyById)
+      .mockResolvedValueOnce({ id: "disp-1", status: "DISPATCHED" } as never)
+      .mockResolvedValueOnce({ id: "disp-1", status: "DELIVERED" } as never);
+    vi.mocked(DispatchRepository.updateStatusConditional).mockResolvedValue({ count: 1 } as never);
+
+    await expect(markDelivered(actor, "disp-1", "Warehouse Clerk")).resolves.toBeDefined();
+  });
 });
 
 describe("transitionDispatchStatus — the dispatchedAt-based cancel guard (two-layer defense)", () => {
@@ -287,5 +326,40 @@ describe("transitionDispatchStatus — the dispatchedAt-based cancel guard (two-
     vi.mocked(DispatchRepository.updateStatusConditional).mockResolvedValue({ count: 1 } as never);
 
     await expect(transitionDispatchStatus(actor, "disp-1", "CANCELLED")).resolves.toBeDefined();
+  });
+
+  it("race-guard rejection: the transition is legal on paper, but the status changed between the read and the conditional update", async () => {
+    vi.mocked(DispatchRepository.findAnyById).mockResolvedValue({ id: "disp-1", status: "DRAFT", dispatchedAt: null } as never);
+    vi.mocked(DispatchRepository.updateStatusConditional).mockResolvedValue({ count: 0 } as never);
+
+    await expect(transitionDispatchStatus(actor, "disp-1", "CANCELLED")).rejects.toMatchObject({
+      code: "INVALID_STATE_TRANSITION",
+    });
+  });
+});
+
+describe("resumeDispatchFromHold — race-guard rejection", () => {
+  it("rejects when the dispatch is no longer ON_HOLD by the time the conditional update runs", async () => {
+    vi.mocked(DispatchRepository.findAnyById).mockResolvedValue({
+      id: "disp-1",
+      status: "ON_HOLD",
+      statusBeforeHold: "PACKED",
+    } as never);
+    vi.mocked(DispatchRepository.updateStatusConditional).mockResolvedValue({ count: 0 } as never);
+
+    await expect(resumeDispatchFromHold(actor, "disp-1")).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+  });
+
+  it("restores the exact prior status when genuinely on hold", async () => {
+    vi.mocked(DispatchRepository.findAnyById)
+      .mockResolvedValueOnce({ id: "disp-1", status: "ON_HOLD", statusBeforeHold: "PACKED" } as never)
+      .mockResolvedValueOnce({ id: "disp-1", status: "PACKED" } as never);
+    vi.mocked(DispatchRepository.updateStatusConditional).mockResolvedValue({ count: 1 } as never);
+
+    await expect(resumeDispatchFromHold(actor, "disp-1")).resolves.toBeDefined();
+    expect(DispatchRepository.updateStatusConditional).toHaveBeenCalledWith("disp-1", "ON_HOLD", {
+      status: "PACKED",
+      statusBeforeHold: null,
+    });
   });
 });

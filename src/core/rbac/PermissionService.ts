@@ -52,6 +52,21 @@ class PermissionServiceImpl {
   }
 
   /**
+   * Deliberately uncached and re-checked on every call — JWT sessions are
+   * stateless, so nothing else in the request path re-validates a user's
+   * live status after their token was issued. Without this, suspending a
+   * user (e.g. offboarding, incident response) would leave their existing
+   * session cookie fully functional for up to the JWT's own maxAge, since a
+   * status change touches no permission/role row this class's own cache
+   * keys on. A tiny extra by-primary-key lookup per permission check is the
+   * accepted cost of making "suspend" actually take effect immediately.
+   */
+  private async isUserActive(userId: string): Promise<boolean> {
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { status: true } });
+    return user?.status === "ACTIVE";
+  }
+
+  /**
    * Server-side permission check — never trust client state for this.
    * When `resourceContext.createdBy` is supplied for an approve/post action,
    * self-approval is denied unless the user holds SUPER_ADMIN.
@@ -62,6 +77,8 @@ class PermissionServiceImpl {
     action: Action,
     resourceContext?: ResourceContext
   ): Promise<boolean> {
+    if (!(await this.isUserActive(userId))) return false;
+
     if (
       resourceContext?.createdBy &&
       resourceContext.createdBy === userId &&

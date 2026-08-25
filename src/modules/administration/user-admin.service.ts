@@ -2,6 +2,7 @@ import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { prisma } from "@/core/db/client";
 import { hashPassword } from "@/core/auth/password";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
+import { PermissionService } from "@/core/rbac/PermissionService";
 import { UserAdminRepository, UserAdminScopeRepository } from "./user-admin.repository";
 import type { CreateUserInput } from "./user-admin.schema";
 
@@ -82,6 +83,12 @@ export async function setUserStatus(actor: ActorContext, id: string, status: "AC
   }
 
   const updated = await UserAdminRepository.updateStatus(id, status);
+
+  // isUserActive() re-checks the DB on every PermissionService call and
+  // is not itself cached, so this isn't required for the suspend-takes-
+  // effect guarantee — it's here so a role/permission change bundled with
+  // this action (or a future one) doesn't ride along on a stale cache too.
+  PermissionService.invalidate(id);
 
   await writeAuditLog({
     companyId: actor.companyId,

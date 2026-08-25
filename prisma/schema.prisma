@@ -2548,6 +2548,17 @@ model GoodsReceipt {
   receivedDate     DateTime           @map("received_date") @db.Date
   receivedByUserId String             @map("received_by_user_id") @db.Uuid
   status           GoodsReceiptStatus @default(COMPLETED)
+  // Client-generated, one per real create attempt (retried on a network
+  // failure with the SAME key) — see CF-5 in the independent hardening
+  // audit: without this, a lost response + a resubmitted identical POST both
+  // succeed and double-post a real InventoryTransaction, since a fresh
+  // document number is drawn on every call and nothing else identifies "this
+  // is the same physical event, not a second one." Nullable because it's
+  // opt-in per caller (a direct API caller that never supplies one simply
+  // gets no idempotency protection — an accepted, documented gap, not a
+  // silent one); @@unique is what turns a replayed request into "return the
+  // original," not a second row.
+  idempotencyKey   String?            @map("idempotency_key")
   createdAt        DateTime           @default(now()) @map("created_at")
   updatedAt        DateTime           @updatedAt @map("updated_at")
 
@@ -2558,6 +2569,7 @@ model GoodsReceipt {
   items         GoodsReceiptItem[]
 
   @@unique([companyId, receiptNumber])
+  @@unique([companyId, idempotencyKey])
   @@index([companyId, purchaseOrderId])
   @@map("goods_receipts")
 }

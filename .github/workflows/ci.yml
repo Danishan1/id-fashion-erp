@@ -12,6 +12,27 @@ jobs:
       DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/fashion_erp"
       NEXTAUTH_SECRET: "ci-placeholder-secret-not-used-for-anything-real"
       NEXTAUTH_URL: "http://localhost:3000"
+    # Matches the documented local dev Postgres version (CLAUDE.md: "PostgreSQL
+    # 16 installed locally via winget"). Every existing test mocks the
+    # Prisma/repository layer — this container's sole purpose is the
+    # "Apply migrations" step below, which is otherwise zero automated
+    # verification that the 47+ migration files in this repo actually apply
+    # cleanly, in order, against a real Postgres instance (flagged by the
+    # independent hardening audit as a real CI gap, not a hypothetical one).
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: fashion_erp
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
 
@@ -25,6 +46,9 @@ jobs:
 
       - name: Generate Prisma Client
         run: npx prisma generate
+
+      - name: Apply migrations to a real Postgres instance
+        run: npx prisma migrate deploy
 
       - name: Type check
         run: npx tsc --noEmit

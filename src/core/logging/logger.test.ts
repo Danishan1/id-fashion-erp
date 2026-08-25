@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { logger } from "./logger";
+import { initRequestContext, setRequestActor } from "./requestContext";
 
 describe("logger", () => {
   let logSpy: ReturnType<typeof vi.spyOn>;
@@ -50,5 +51,42 @@ describe("logger", () => {
     logger.info("no context here");
     const parsed = JSON.parse(logSpy.mock.calls[0][0] as string);
     expect(parsed).not.toHaveProperty("context");
+  });
+
+  it("carries no request/actor fields when logged outside of any request (e.g. a background script)", () => {
+    logger.info("no active request context here");
+    const parsed = JSON.parse(logSpy.mock.calls[0][0] as string);
+    expect(parsed).not.toHaveProperty("requestId");
+    expect(parsed).not.toHaveProperty("userId");
+    expect(parsed).not.toHaveProperty("companyId");
+  });
+
+  it("tags every log line for the rest of the request once requireSession's chokepoint has run", async () => {
+    await new Promise<void>((resolve) => {
+      // enterWith requires an active async context to attach to — a fresh
+      // Promise executor is enough to prove the tagging survives into a
+      // later async continuation, the same shape a route handler has.
+      queueMicrotask(() => {
+        const requestId = initRequestContext();
+        setRequestActor("user-42", "co-7");
+
+        queueMicrotask(() => {
+          logger.error("something failed deeper in the same request");
+          const parsed = JSON.parse(errorSpy.mock.calls[0][0] as string);
+          expect(parsed.requestId).toBe(requestId);
+          expect(parsed.userId).toBe("user-42");
+          expect(parsed.companyId).toBe("co-7");
+          resolve();
+        });
+      });
+    });
+  });
+
+  it("gives two different requests two different correlation IDs", () => {
+    const idsSeen = new Set<string>();
+    for (let i = 0; i < 2; i++) {
+      idsSeen.add(initRequestContext());
+    }
+    expect(idsSeen.size).toBe(2);
   });
 });

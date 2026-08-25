@@ -71,6 +71,12 @@ export function GoodsReceiptForm({ purchaseOrderId, lines }: { purchaseOrderId: 
   const [compositions, setCompositions] = useState<Option[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // One value for the lifetime of this mounted form — reused on every submit
+  // attempt (a double-click, or a manual retry after a network error shown
+  // below), so the server can recognize a retry of the SAME create as the
+  // same physical event rather than a second one. See CF-5 in the
+  // independent hardening audit.
+  const [idempotencyKey] = useState(() => crypto.randomUUID());
 
   useEffect(() => {
     fetch("/api/v1/warehouses?pageSize=200").then((res) => res.json()).then((body) => setWarehouses(body.data ?? []));
@@ -139,23 +145,31 @@ export function GoodsReceiptForm({ purchaseOrderId, lines }: { purchaseOrderId: 
       return;
     }
 
-    const res = await fetch(`/api/v1/purchase-orders/${purchaseOrderId}/receipts`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ receivedDate, items }),
-    });
+    try {
+      const res = await fetch(`/api/v1/purchase-orders/${purchaseOrderId}/receipts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ receivedDate, items, idempotencyKey }),
+      });
 
-    setIsSubmitting(false);
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        setError(body?.error?.message ?? "Failed to record this goods receipt.");
+        return;
+      }
 
-    if (!res.ok) {
-      const body = await res.json().catch(() => null);
-      setError(body?.error?.message ?? "Failed to record this goods receipt.");
-      return;
+      const { data } = await res.json();
+      router.push(`/goods-receipts/${data.id}`);
+      router.refresh();
+    } catch {
+      // A genuine network failure (not a server-returned error) — the exact
+      // "response lost to a network blip" scenario this key exists for.
+      // Re-enabling the button lets the user retry with the SAME key below,
+      // instead of the button staying permanently disabled with no recourse.
+      setError("Could not reach the server. Check your connection and try again — it's safe to resubmit.");
+    } finally {
+      setIsSubmitting(false);
     }
-
-    const { data } = await res.json();
-    router.push(`/goods-receipts/${data.id}`);
-    router.refresh();
   };
 
   if (lines.length === 0) {

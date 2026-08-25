@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/auth/password", () => ({ hashPassword: vi.fn() }));
+vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { invalidate: vi.fn() } }));
 vi.mock("@/core/db/client", () => ({
   prisma: { $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn({})) },
 }));
@@ -20,6 +21,7 @@ vi.mock("./user-admin.repository", () => ({
 }));
 
 const { hashPassword } = await import("@/core/auth/password");
+const { PermissionService } = await import("@/core/rbac/PermissionService");
 const { UserAdminRepository, UserAdminScopeRepository } = await import("./user-admin.repository");
 const { createUser, setUserStatus } = await import("./user-admin.service");
 
@@ -34,6 +36,7 @@ beforeEach(() => {
   vi.mocked(UserAdminRepository.updateStatus).mockReset();
   vi.mocked(UserAdminScopeRepository.findBranchCompanyId).mockReset().mockResolvedValue({ companyId: "co-1" } as never);
   vi.mocked(UserAdminScopeRepository.findRoleCompanyId).mockReset().mockResolvedValue({ companyId: "co-1" } as never);
+  vi.mocked(PermissionService.invalidate).mockReset();
 });
 
 describe("createUser", () => {
@@ -86,6 +89,9 @@ describe("setUserStatus", () => {
 
     await setUserStatus(actor, "user-2", "SUSPENDED");
     expect(UserAdminRepository.updateStatus).toHaveBeenCalledWith("user-2", "SUSPENDED");
+    // CF-7: invalidating the cache is defense-in-depth on top of
+    // isUserActive()'s own uncached per-call DB check — see PermissionService.
+    expect(PermissionService.invalidate).toHaveBeenCalledWith("user-2");
   });
 
   it("rejects a user that doesn't belong to this company", async () => {

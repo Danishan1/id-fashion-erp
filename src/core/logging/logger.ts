@@ -10,6 +10,8 @@
  * logs today can already filter by level/module.
  */
 
+import { getRequestContext } from "@/core/logging/requestContext";
+
 type LogLevel = "info" | "warn" | "error";
 
 interface LogContext {
@@ -17,10 +19,14 @@ interface LogContext {
 }
 
 function write(level: LogLevel, message: string, context?: LogContext) {
+  const requestCtx = getRequestContext();
   const entry = {
     level,
     timestamp: new Date().toISOString(),
     message,
+    ...(requestCtx
+      ? { requestId: requestCtx.requestId, userId: requestCtx.userId, companyId: requestCtx.companyId }
+      : {}),
     ...(context ? { context: serializeContext(context) } : {}),
   };
   const line = JSON.stringify(entry);

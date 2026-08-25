@@ -42,6 +42,14 @@ export const GoodsReceiptRepository = {
 
   findAnyById: (companyId: string, id: string) => prisma.goodsReceipt.findFirst({ where: { id, companyId } }),
 
+  /** CF-5 idempotent-replay lookup — same include shape as createWithItemsAndRolls's own
+   * return value, so a replayed request gets back exactly what the original create returned. */
+  findByIdempotencyKey: (companyId: string, idempotencyKey: string) =>
+    prisma.goodsReceipt.findUnique({
+      where: { companyId_idempotencyKey: { companyId, idempotencyKey } },
+      include: { items: { include: { rolls: true } } },
+    }),
+
   createWithItemsAndRolls: (tx: Prisma.TransactionClient, data: Prisma.GoodsReceiptUncheckedCreateInput) =>
     tx.goodsReceipt.create({
       data,

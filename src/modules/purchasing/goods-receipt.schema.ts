@@ -30,6 +30,11 @@ export type GoodsReceiptItemInput = z.infer<typeof goodsReceiptItemSchema>;
 export const goodsReceiptSchema = z.object({
   receivedDate: z.string().min(1, "Received date is required"),
   items: z.array(goodsReceiptItemSchema).min(1, "At least one line item is required"),
+  // Optional, client-generated (one value per real submit attempt, reused
+  // verbatim on a retry of the SAME attempt) — see CF-5 in the independent
+  // hardening audit. Omitting it just means this particular call gets no
+  // idempotency protection, not a rejected request.
+  idempotencyKey: z.string().min(1).max(200).optional(),
 });
 export type GoodsReceiptInput = z.infer<typeof goodsReceiptSchema>;
 

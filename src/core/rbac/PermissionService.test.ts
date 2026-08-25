@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { findManyMock, countMock } = vi.hoisted(() => ({
+const { findManyMock, countMock, userFindUniqueMock } = vi.hoisted(() => ({
   findManyMock: vi.fn(),
   countMock: vi.fn(),
+  userFindUniqueMock: vi.fn(),
 }));
 
 vi.mock("@/core/db/client", () => ({
@@ -10,6 +11,9 @@ vi.mock("@/core/db/client", () => ({
     userBranchRole: {
       findMany: findManyMock,
       count: countMock,
+    },
+    user: {
+      findUnique: userFindUniqueMock,
     },
   },
 }));
@@ -26,6 +30,7 @@ beforeEach(() => {
   PermissionService.invalidate();
   findManyMock.mockReset();
   countMock.mockReset();
+  userFindUniqueMock.mockReset().mockResolvedValue({ status: "ACTIVE" });
 });
 
 describe("PermissionService.can", () => {
@@ -76,6 +81,29 @@ describe("PermissionService.can", () => {
     const result = await PermissionService.can("user-1", "sales_orders", "edit", { createdBy: "user-1" });
     expect(result).toBe(true);
     expect(countMock).not.toHaveBeenCalled();
+  });
+
+  it("denies a suspended user even though they hold the permission (CF-7: suspend must take effect immediately)", async () => {
+    mockPermissions(["sales_orders.view"]);
+    userFindUniqueMock.mockResolvedValue({ status: "SUSPENDED" });
+
+    await expect(PermissionService.can("user-1", "sales_orders", "view")).resolves.toBe(false);
+  });
+
+  it("denies a user that no longer exists at all", async () => {
+    mockPermissions(["sales_orders.view"]);
+    userFindUniqueMock.mockResolvedValue(null);
+
+    await expect(PermissionService.can("user-1", "sales_orders", "view")).resolves.toBe(false);
+  });
+
+  it("re-checks live status on every call — not cached the way permission keys are", async () => {
+    mockPermissions(["sales_orders.view"]);
+    userFindUniqueMock.mockResolvedValueOnce({ status: "ACTIVE" }).mockResolvedValueOnce({ status: "SUSPENDED" });
+
+    await expect(PermissionService.can("user-1", "sales_orders", "view")).resolves.toBe(true);
+    await expect(PermissionService.can("user-1", "sales_orders", "view")).resolves.toBe(false);
+    expect(userFindUniqueMock).toHaveBeenCalledTimes(2);
   });
 });
 
