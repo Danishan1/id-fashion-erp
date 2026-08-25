@@ -129,9 +129,14 @@ async function getCustomerLedgerDescriptor(companyId: string, generatedByName: s
     ...payments.map((p) => ({ date: p.paymentDate, type: "Payment", reference: p.paymentNumber, amount: -Number(p.amount) })),
   ].sort((a, b) => a.date.getTime() - b.date.getTime());
 
+  // Rounded to currency precision on every step — summing many float amounts
+  // otherwise leaves IEEE-754 noise (e.g. 1.8e-13 instead of exactly 0) that
+  // renders fine in the on-screen currency-formatted table but shows up raw
+  // and ugly in the CSV export, which prints the number as-is (matches the
+  // same fix already applied to MRP's needed/available/shortfall quantities).
   let runningBalance = 0;
   const rows = entries.map((e) => {
-    runningBalance += e.amount;
+    runningBalance = Math.round((runningBalance + e.amount) * 100) / 100;
     return { date: e.date, type: e.type, reference: e.reference, amount: e.amount, runningBalance };
   });
 

@@ -8,14 +8,25 @@ function formatValue(value: number, type: "currency" | "number" | "percent"): st
   return value.toLocaleString("en-IN");
 }
 
+// Every @db.Date column in this schema (dispatchDate, orderDate, invoiceDate,
+// expenseDate, ...) is populated from a plain "YYYY-MM-DD" date-input string,
+// which the JS Date constructor always parses as UTC midnight. Comparing
+// against a LOCAL-midnight boundary (`new Date(y, m, d)`) silently shifts the
+// "today"/"this month" window by the server's UTC offset — on this server
+// (IST, UTC+5:30) that meant "today" actually started 5.5 hours into
+// *yesterday* in DATE-column terms, over-counting the previous day's rows.
+// Deriving the boundary from the UTC calendar date instead (matching the
+// existing `toIsoDate()`/`toISOString().slice(0,10)` convention already used
+// client-side in this app, e.g. marketing/channel-performance/page.tsx) keeps
+// "today" aligned with how every date-only column is actually stored.
 function startOfDay(d: Date): Date {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  return new Date(d.toISOString().slice(0, 10));
 }
 function startOfMonth(d: Date): Date {
-  return new Date(d.getFullYear(), d.getMonth(), 1);
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
 }
 function startOfYear(d: Date): Date {
-  return new Date(d.getFullYear(), 0, 1);
+  return new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
 }
 
 interface KpiRow {

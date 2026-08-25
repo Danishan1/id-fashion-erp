@@ -44,7 +44,7 @@ async function getCustomerRegisterDescriptor(
     name: c.name,
     country: c.country ?? "—",
     paymentTermsDays: c.paymentTermsDays ?? "—",
-    creditLimit: c.creditLimit ? Number(c.creditLimit) : 0,
+    creditLimit: c.creditLimit !== null ? Number(c.creditLimit) : null,
     status: c.isActive ? "Active" : "Inactive",
   }));
 

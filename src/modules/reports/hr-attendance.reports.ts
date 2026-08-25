@@ -111,13 +111,14 @@ registerReport({
 // ===========================================================================
 const ATTENDANCE_CATEGORY = "attendance" as const;
 
-function startOfDay(d: Date): Date {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
-}
-
 async function getDailyAttendanceDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>): Promise<ReportDescriptor> {
   const targetDateStr = filters.date || new Date().toISOString().slice(0, 10);
-  const dayStart = startOfDay(new Date(targetDateStr));
+  // `new Date("YYYY-MM-DD")` already parses as UTC midnight, matching how
+  // `attendanceDate` (@db.Date) is stored — do NOT round-trip this through a
+  // local-timezone Date constructor (see dashboard.reports.ts's startOfDay
+  // comment for why that silently shifts the day boundary on a server whose
+  // local timezone isn't UTC).
+  const dayStart = new Date(targetDateStr);
   const dayEnd = new Date(dayStart.getTime() + 86400000);
 
   const records = await prisma.attendanceRecord.findMany({
@@ -167,8 +168,9 @@ async function getDailyAttendanceDescriptor(companyId: string, generatedByName: 
 
 async function getMonthlyAttendanceSummaryDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>): Promise<ReportDescriptor> {
   const reference = filters.dateFrom ? new Date(filters.dateFrom) : new Date();
-  const monthStart = new Date(reference.getFullYear(), reference.getMonth(), 1);
-  const monthEnd = new Date(reference.getFullYear(), reference.getMonth() + 1, 1);
+  // UTC components, not local — see dashboard.reports.ts's startOfDay comment.
+  const monthStart = new Date(Date.UTC(reference.getUTCFullYear(), reference.getUTCMonth(), 1));
+  const monthEnd = new Date(Date.UTC(reference.getUTCFullYear(), reference.getUTCMonth() + 1, 1));
 
   const records = await prisma.attendanceRecord.findMany({
     where: { companyId, attendanceDate: { gte: monthStart, lt: monthEnd } },
@@ -206,7 +208,7 @@ async function getMonthlyAttendanceSummaryDescriptor(companyId: string, generate
   }
 
   const rows = [...byEmployee.values()].sort((a, b) => a.fullName.localeCompare(b.fullName));
-  const monthLabel = `${monthStart.getFullYear()}-${String(monthStart.getMonth() + 1).padStart(2, "0")}`;
+  const monthLabel = `${monthStart.getUTCFullYear()}-${String(monthStart.getUTCMonth() + 1).padStart(2, "0")}`;
 
   return {
     title: "Monthly Attendance Summary",

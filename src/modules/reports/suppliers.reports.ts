@@ -43,7 +43,7 @@ async function getSupplierRegisterDescriptor(
     category: s.category,
     contactPerson: s.contactPerson ?? "—",
     phone: s.phone ?? "—",
-    paymentTermsDays: s.paymentTermsDays ?? 0,
+    paymentTermsDays: s.paymentTermsDays,
     status: s.isActive ? "Active" : "Inactive",
   }));
 

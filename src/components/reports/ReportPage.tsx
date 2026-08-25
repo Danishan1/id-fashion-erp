@@ -147,7 +147,11 @@ export function ReportPage({
           ) : null}
           {renderKpis ? renderKpis(descriptor) : null}
           {renderChart ? renderChart(descriptor) : null}
-          <ReportTable columns={descriptor.columns} rows={descriptor.rows} totals={descriptor.totals} linkBuilders={linkBuilders} />
+          {/* KPI-card reports (renderKpis) already show every metric/value row visually —
+              the flat table underneath would just duplicate them, so it's skipped for those. */}
+          {renderKpis ? null : (
+            <ReportTable columns={descriptor.columns} rows={descriptor.rows} totals={descriptor.totals} linkBuilders={linkBuilders} />
+          )}
           <p className="text-xs text-zinc-400">
             Generated {new Date(descriptor.generatedAt).toLocaleString()} by {descriptor.generatedByName}
             {descriptor.meta ? ` — ${descriptor.meta.totalCount} total row(s)` : ""}
