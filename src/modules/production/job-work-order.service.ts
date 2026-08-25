@@ -157,6 +157,75 @@ async function convertMaterialsToBaseUomAndCheckStock(
 }
 
 /**
+ * Returns every issued raw-material line back to stock — called only when
+ * cancelling a Job Work Order with zero receipts against it (the caller
+ * already verified this via countActiveReceipts). Recomputes each line's
+ * base-UOM quantity the same way createJobWorkOrder() did at issuance time
+ * (the converted amount itself is never stored on JobWorkOrderMaterial, only
+ * the as-entered quantity/unit) — if a unit's conversion path no longer
+ * exists, cancellation is blocked rather than silently leaving stock
+ * un-reversed, matching this project's "never fail-soft on a real stock
+ * correction" stance.
+ */
+async function reverseIssuedMaterialsInTx(
+  tx: Prisma.TransactionClient,
+  actor: ActorContext,
+  order: {
+    id: string;
+    materials: Array<{
+      productId: string;
+      quantity: Prisma.Decimal | number;
+      uomId: string;
+      warehouseId: string;
+      fabricRollId: string | null;
+    }>;
+  }
+) {
+  for (const material of order.materials) {
+    const product = await ProductRepository.findMaterialById(actor.companyId, material.productId);
+    if (!product || !product.baseUom) {
+      throw new BusinessRuleError(
+        "UOM_CONVERSION_UNAVAILABLE",
+        "Cannot reverse issued material — its base unit configuration is missing.",
+        { productId: material.productId }
+      );
+    }
+
+    const quantity = Number(material.quantity);
+    let baseQuantity: number;
+    if (material.uomId === product.baseUom.id) {
+      baseQuantity = quantity;
+    } else {
+      const chosenUom = await LookupRepository.unit.findUnique({ where: { id: material.uomId } });
+      if (!chosenUom) throw new BusinessRuleError("NOT_FOUND", "Unit not found.", { id: material.uomId });
+      const converted = convertUomQuantity(quantity, chosenUom, product.baseUom);
+      if (converted === null) {
+        throw new BusinessRuleError(
+          "UOM_CONVERSION_UNAVAILABLE",
+          `"${chosenUom.name}" no longer has a fixed conversion to "${product.styleName}"'s base unit — cannot reverse this line automatically.`,
+          { productId: material.productId, uomId: material.uomId }
+        );
+      }
+      baseQuantity = converted;
+    }
+
+    await recordInventoryTransaction(tx, actor, {
+      productId: material.productId,
+      warehouseId: material.warehouseId,
+      transactionType: "JOB_WORK_ISSUE_REVERSAL",
+      quantity: baseQuantity,
+      referenceModule: "JOB_WORK_ORDER",
+      referenceRecordId: order.id,
+      fabricRollId: material.fabricRollId || null,
+    });
+
+    if (material.fabricRollId) {
+      await FabricRollRepository.incrementRemaining(tx, material.fabricRollId, baseQuantity);
+    }
+  }
+}
+
+/**
  * issuedQuantity draws down the parent JobOrder's "remaining/unprocessed"
  * pool (plannedQuantity - completed - rejected - damaged), minus whatever's
  * already pending on this JobOrder's other active job-work orders — the
@@ -433,7 +502,20 @@ export async function transitionJobWorkOrderStatus(actor: ActorContext, id: stri
   const data: Prisma.JobWorkOrderUncheckedUpdateInput = { status: targetStatus };
   if (targetStatus === "ON_HOLD") data.statusBeforeHold = before.status;
 
-  const updated = await JobWorkOrderRepository.update(id, data);
+  await prisma.$transaction(async (tx) => {
+    // Nothing has physically left for the contractor's own books yet
+    // (guarded above via countActiveReceipts) — the raw material issued
+    // against this job-work order is still rightfully ours, so cancelling
+    // returns it to the warehouse it came from rather than leaving it
+    // permanently unaccounted for.
+    if (targetStatus === "CANCELLED") {
+      await reverseIssuedMaterialsInTx(tx, actor, before);
+    }
+    await JobWorkOrderRepository.updateInTx(tx, id, data);
+  });
+
+  const updated = await JobWorkOrderRepository.findAnyById(actor.companyId, id);
+  if (!updated) throw new BusinessRuleError("NOT_FOUND", "Job-work order not found.", { id });
 
   await writeAuditLog({
     companyId: actor.companyId,

@@ -1,11 +1,15 @@
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import { auth } from "@/core/auth/auth";
+import { PermissionService } from "@/core/rbac/PermissionService";
 import { getMarketingDashboard, getMarketingTrends } from "@/modules/marketing/campaign.service";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { TrendChart } from "./TrendChart";
 
 export default async function MarketingDashboardPage() {
   const session = await auth();
+  await PermissionService.assert(session!.user.id, "marketing", "view").catch(() => notFound());
+
   const [stats, trends] = await Promise.all([
     getMarketingDashboard(session!.user.companyId),
     getMarketingTrends(session!.user.companyId, 30),

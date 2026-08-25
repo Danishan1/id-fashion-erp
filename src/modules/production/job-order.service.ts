@@ -425,6 +425,13 @@ export async function recordAdjustmentEntry(actor: ActorContext, jobOrderId: str
   const jobOrder = await JobOrderRepository.findAnyById(actor.companyId, jobOrderId);
   if (!jobOrder) throw new BusinessRuleError("NOT_FOUND", "Job order not found.", { id: jobOrderId });
 
+  // An adjustment has no real "worker" — attribute it to the acting user's
+  // own linked Employee record if one exists (User.employeeId), else leave
+  // it unattributed (null — the column is nullable specifically for this
+  // case). actor.userId itself is a User id, never an Employee id — passing
+  // it directly as employeeId used to fail the FK constraint on every call.
+  const actingUser = await prisma.user.findUnique({ where: { id: actor.userId }, select: { employeeId: true } });
+
   const updated = await prisma.$transaction(async (tx) => {
     const jo = await applyJobOrderQuantityDelta(tx, jobOrderId, {
       completed: input.completedQuantity,
@@ -433,7 +440,7 @@ export async function recordAdjustmentEntry(actor: ActorContext, jobOrderId: str
     });
     await JobOrderProgressEntryRepository.createInTx(tx, {
       jobOrderId,
-      employeeId: actor.userId, // an adjustment has no real "worker" — recorded against the actor
+      employeeId: actingUser?.employeeId ?? null,
       recordedByUserId: actor.userId,
       completedQuantity: input.completedQuantity,
       rejectedQuantity: input.rejectedQuantity,
@@ -461,6 +468,20 @@ export async function forwardJobOrder(actor: ActorContext, jobOrderId: string, i
   if (!jobOrder) throw new BusinessRuleError("NOT_FOUND", "Job order not found.", { id: jobOrderId });
   if (jobOrder.status === "CANCELLED") {
     throw new BusinessRuleError("INVALID_STATE_TRANSITION", "Cannot forward a cancelled job order.", {});
+  }
+  // `status` is only ever written as "COMPLETED" by completeAtFinalStageInTx —
+  // never by ordinary progress entries reaching plannedQuantity (that case
+  // stays PENDING/IN_PROGRESS; see computeJobOrderStatus for the *display*
+  // derivation, which is separate from this stored column). A job order in
+  // this raw state already posted its quantity to Finished Goods and has
+  // nothing left to forward — without this guard, forwarding it again both
+  // double-posts stock and silently un-completes its parent Lot.
+  if (jobOrder.status === "COMPLETED") {
+    throw new BusinessRuleError(
+      "INVALID_STATE_TRANSITION",
+      "This job order already completed at a final production stage and its quantity has already reached Finished Goods — it cannot be forwarded again.",
+      {}
+    );
   }
 
   const notYetForwarded = Number(jobOrder.completedQuantity) - Number(jobOrder.forwardedQuantity);
@@ -605,6 +626,17 @@ export async function revertJobOrder(actor: ActorContext, jobOrderId: string, in
 export async function recordQcInspection(actor: ActorContext, jobOrderId: string, input: CreateQcInspectionInput) {
   const jobOrder = await JobOrderRepository.findAnyById(actor.companyId, jobOrderId);
   if (!jobOrder) throw new BusinessRuleError("NOT_FOUND", "Job order not found.", { id: jobOrderId });
+  // Same guard as forwardJobOrder() — a job order raw-status of "COMPLETED"
+  // is only ever set by completeAtFinalStageInTx and means this quantity
+  // already left the factory into Finished Goods; QC cannot act on it again
+  // (previously reachable and confirmed to double-post FG stock / desync WIP).
+  if (jobOrder.status === "COMPLETED") {
+    throw new BusinessRuleError(
+      "INVALID_STATE_TRANSITION",
+      "This job order already completed at a final production stage and its quantity has already reached Finished Goods — it cannot be inspected again.",
+      {}
+    );
+  }
 
   const completed = Number(jobOrder.completedQuantity);
   const alreadyInspected = Number(jobOrder.qcPassedQuantity);

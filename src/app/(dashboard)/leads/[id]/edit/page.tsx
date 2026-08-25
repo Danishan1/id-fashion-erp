@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { auth } from "@/core/auth/auth";
+import { PermissionService } from "@/core/rbac/PermissionService";
 import { getLeadById } from "@/modules/crm/lead.service";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { LeadForm } from "../../LeadForm";
@@ -7,6 +8,7 @@ import { LeadForm } from "../../LeadForm";
 export default async function EditLeadPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const session = await auth();
+  await PermissionService.assert(session!.user.id, "crm", "view").catch(() => notFound());
 
   const lead = await getLeadById(session!.user.companyId, id).catch(() => null);
   if (!lead) notFound();

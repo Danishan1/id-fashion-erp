@@ -1610,6 +1610,110 @@ were confirmed with the user beforehand:
   the "Dispatch Yard" seed row — but nothing yet validates a Dispatch's own `warehouseId` against it), and
   printable delivery-challan/packing-slip documents.
 
+## Full-system QA/UAT pass across every completed module, P0/P1 fixes (2026-08-24/25)
+
+On branch `test_all_complete_module`. Six parallel `erp-qa-uat` agent passes drove the real app end-to-end
+against the live dev DB, covering every completed module group (Foundation/RBAC/Masters, Buyer Enquiry→
+Sampling→Sales Orders→BOM/MRP, Production+the newly-merged Job Work module, Inventory/Purchasing, Accounts+
+Dispatch, CRM/Marketing/HRMS) — ~320+ test cases, full findings preserved in `QA_UAT_REPORT_2026-08-24.md`.
+One environment gap was fixed mid-pass: the dev DB was missing `Permission` catalog rows for `marketing`/
+`hrms_attendance`/`hrms_leave` entirely (403 for every user including Super Admin) — backfilled via the same
+idempotent one-off-script pattern already used for Expenses/Dispatch's RBAC rows, dev server restarted to
+clear `PermissionService`'s in-process cache, confirmed live.
+
+Two confirmed P0 stock-corruption bugs and four P1s were found and fixed:
+
+- **P0 — re-forwarding or re-QC-inspecting a Job Order already completed at a final stage** double-posted
+  Finished-Goods stock and silently un-completed its Lot. Root cause: `completeAtFinalStageInTx()` sets the
+  newly-created final-stage JobOrder's raw `status` column to `"COMPLETED"` but never bumps its
+  `forwardedQuantity`/`qcPassedQuantity` — so `forwardJobOrder()`/`recordQcInspection()`'s only guards
+  (`notYetForwarded`/`notYetInspected`) stayed wide open on a job order that had already flushed to stock.
+  Fixed with an explicit `if (jobOrder.status === "COMPLETED") throw INVALID_STATE_TRANSITION` guard at the
+  top of both functions — safe specifically because that raw status value is *only* ever written by
+  `completeAtFinalStageInTx`, confirmed by grep; an ordinary job order whose `completedQuantity` reaches
+  `plannedQuantity` through normal progress entries keeps its prior stored status (PENDING/IN_PROGRESS) and
+  is computed as "COMPLETED" only for *display* purposes via the separate `computeJobOrderStatus()` helper —
+  so the new guard doesn't touch the normal, legitimate "QC a fully-completed-but-not-yet-forwarded job
+  order" path at all. Two regression tests added to `job-order.service.test.ts`.
+- **P0 — Job Work Order raw-material issuance had no stock-sufficiency check** (found independently by this
+  pass; fixed upstream by another contributor's same-day `e4992f9` "full ERP readiness audit" commit, merged
+  into this branch before this pass's own fix work began — `recordInventoryTransaction()` now floors every
+  stock decrement with an atomic guarded `updateMany`, and Job Work issuance gained the same
+  `getAvailableQuantity()` pre-check every sibling module already had).
+- **P1 — cancelling a Job Work Order never reversed its issued raw material**, permanently understating
+  warehouse stock. Fixed with a new `reverseIssuedMaterialsInTx()` in `job-work-order.service.ts`, called
+  only when cancelling (zero receipts exist, per the pre-existing guard) — recomputes each line's base-UOM
+  quantity the same way `createJobWorkOrder()` did at issuance (never stored on `JobWorkOrderMaterial`
+  itself), posts a new dedicated `JOB_WORK_ISSUE_REVERSAL` ledger type (mirroring `GOODS_RECEIPT_REVERSAL`'s
+  precedent — a dedicated reversal type, not the original type with a flipped sign) inside the same
+  transaction as the status flip, and restores a fabric roll's `remainingQuantity` via a new
+  `FabricRollRepository.incrementRemaining()`. Migration `add_job_work_issue_reversal_type`.
+- **P1 — the "Adjustment Entry" correction feature crashed with a raw 500 on every call**:
+  `recordAdjustmentEntry()` passed `actor.userId` (a `User` id) straight through as
+  `JobOrderProgressEntry.employeeId` (a required FK to `Employee`), failing the FK constraint unless a User
+  happened to share a UUID with an Employee row. Fixed by resolving the acting user's own linked Employee via
+  `User.employeeId` and making `JobOrderProgressEntry.employeeId` nullable specifically for
+  `isAdjustment=true` rows (every non-adjustment row still always carries a real Employee) — an adjustment
+  now records `employeeId: null` rather than crashing when the actor (e.g. Super Admin) has no linked
+  Employee. Migration `make_job_order_progress_entry_employee_nullable`.
+- **P1 — Leave Request approval had no self-approval guard**: the approve route's own
+  `PermissionService.assert` call had no `resourceContext`, so the self-approval branch was unreachable —
+  unlike every other approve checkpoint in the app (Campaign's `approveCampaign()` confirmed as the working
+  positive-control pattern). Fixed by re-asserting inside `approveLeaveRequest()` itself with
+  `{ createdBy: existing.createdByUserId }`, matching the Payment/Expense "route does a coarse check, the
+  service re-asserts with the real resourceContext" double-gate shape already established in this codebase.
+- **P1 — Lead/Deal/Campaign/Marketing-Dashboard/Sampling detail & edit pages had zero server-side permission
+  check**: these are Server Components that called the service layer directly with only `companyId`
+  scoping — no `PermissionService.assert` anywhere in the chain — even though the equivalent API routes
+  correctly gate on `view`. Confirmed live: the Marketing Dashboard rendered full financials for a session
+  that gets `403` on the equivalent API call. This is a codebase-wide architectural gap (the same pattern
+  was already present in Sampling's own detail page, predating this pass), not specific to CRM/Marketing.
+  Fixed by adding `await PermissionService.assert(session!.user.id, "<module>", "view").catch(() =>
+  notFound())` to the top of all 8 affected pages (`leads/[id]`, `leads/[id]/edit`, `deals/[id]`,
+  `deals/[id]/edit`, `campaigns/[id]`, `campaigns/[id]/edit`, `marketing` dashboard, `sampling/[id]`) —
+  denying as a plain 404 rather than a distinct "forbidden" page deliberately doesn't reveal whether the
+  record exists to a caller without view rights, reusing the exact `notFound()` mechanism these same pages
+  already use for "record doesn't exist." Verified live (Super Admin happy path unaffected on Marketing
+  Dashboard and a real Lead detail page, zero new console errors on a fresh-tab reload); the denial path
+  itself relies on `PermissionService`'s already-separately-unit-tested `assert()` behavior, since this
+  session's sandboxed browser couldn't cleanly complete a second-user sign-out/sign-in round trip to drive it
+  end-to-end (see the Administration fix below, which *did* get a full live create-then-verify pass).
+- **P1 — no UI or API existed anywhere to create additional Users or assign Roles**, found independently by
+  two of the six QA passes (Foundation/Masters and CRM/Marketing/HRMS) — `/admin` 404'd despite the
+  `administration` RBAC module being fully seeded, and the DB had exactly one user (the seeded Super Admin)
+  ever. This structurally blocked exercising the app's own well-built 13-role RBAC matrix by anyone but one
+  person. Fixed with a new minimal `src/modules/administration/` module (`user-admin.schema/repository/
+  service.ts` — `createUser` hashes the password via the existing `hashPassword()` helper from
+  `src/core/auth/password.ts`, checks email uniqueness with a clean `DUPLICATE_EMAIL_EXISTS` error [new
+  `BusinessRuleError` code] before creating the `User` + its one initial `UserBranchRole` assignment in a
+  single transaction; `setUserStatus` toggles `ACTIVE`/`SUSPENDED`, blocked against suspending your own
+  account), two new minimal read-only lookups (`GET /api/v1/branches`, `GET /api/v1/roles`, same
+  no-dedicated-module pattern as `/api/v1/currencies`), and a UI at `/admin` (finally resolving the
+  previously-dead sidebar link) — a Server Component page + `AdminUsersPanel` client component reusing the
+  existing `Modal`/`ConfirmModal`/`ToggleSwitch`/`FormField` components, matching this project's established
+  small-CRUD-in-a-Modal convention. **Verified live end-to-end through the real UI, not just API calls**:
+  created a real second user ("QA Test Manager", STORE_MANAGER role, Head Office branch) through the actual
+  New User modal — confirmed it appeared correctly in the list with the right role/branch. (The first request
+  against this brand-new route took ~53s due to one-time Turbopack dev-compile, not a hang — worth
+  remembering as the likely explanation for the separate not-fully-confirmed Purchase Order route slowness
+  noted below, rather than assuming every slow first-hit is a real bug.)
+- **Not confirmed as a real defect — flagged for isolated re-verification**: one QA pass reported
+  `GET /api/v1/purchase-orders/[id]` hanging indefinitely, but reproduced it only under this session's own
+  atypical load (6 concurrent QA agents hammering the same dev server). The agent's own assessment — a
+  Turbopack dev-compile stall, not a deterministic code bug — is reinforced by the Administration fix above
+  independently hitting the identical "brand-new route takes ~53s on its very first hit, then is fast"
+  pattern in complete isolation. Not fixed in this pass; re-test this specific route with no concurrent load
+  (or a production build) before treating it as a confirmed defect.
+- **Remaining open items from the QA report, not addressed in this pass** (all P2 or lower, see
+  `QA_UAT_REPORT_2026-08-24.md` for full detail): malformed-`:id` routes returning a raw 500 instead of a
+  clean 400/404 (systemic, 2+ modules); duplicate-code creation races producing an occasional raw 500 instead
+  of a clean 409 (systemic `findFirst`-then-`create` TOCTOU, 10+ service files); QC's exact-float-equality
+  quantity validation (`0.1+0.2 !== 0.3`); Production Orders having no cap against their linked Sales Order
+  item's real ordered quantity; Journal's already-reversed-journal reversal attempt raising a raw 500 instead
+  of a clean 409; and a long tail of P3/P4 cosmetic/UX items.
+- `npx tsc --noEmit`, `npm run lint`, and `npm test` (412/412, 8 new) all clean throughout every fix in this
+  pass.
+
 ## Recommended Stack
 
 Next.js 14+ (App Router) + React + TypeScript + Tailwind CSS (frontend); Next.js API routes/route handlers as REST API; PostgreSQL + Prisma ORM; session-based auth (Auth.js/NextAuth, DB sessions) with RBAC and optional TOTP 2FA; S3-compatible or local file storage for attachments; server-side PDF/Excel export (`exceljs`, `pdf-lib`/`@react-pdf/renderer`).

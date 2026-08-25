@@ -11,7 +11,7 @@ vi.mock("@/modules/lookups/lookup.repository", () => ({
   LookupRepository: { unit: { findUnique: vi.fn() } },
 }));
 vi.mock("@/modules/purchasing/fabric-roll.repository", () => ({
-  FabricRollRepository: { findByIdWithContext: vi.fn(), guardedDecrementRemaining: vi.fn() },
+  FabricRollRepository: { findByIdWithContext: vi.fn(), guardedDecrementRemaining: vi.fn(), incrementRemaining: vi.fn() },
 }));
 vi.mock("./job-order.service", () => ({ applyJobOrderQuantityDelta: vi.fn() }));
 vi.mock("./production.repository", () => ({ JobOrderRepository: { findAnyById: vi.fn() } }));
@@ -75,6 +75,7 @@ function jobWorkOrder(overrides: Record<string, unknown> = {}) {
     rejectedQuantity: 0,
     damagedQuantity: 0,
     statusBeforeHold: null,
+    materials: [],
     ...overrides,
   };
 }
@@ -93,6 +94,7 @@ beforeEach(() => {
   vi.mocked(LookupRepository.unit.findUnique).mockReset();
   vi.mocked(FabricRollRepository.findByIdWithContext).mockReset();
   vi.mocked(FabricRollRepository.guardedDecrementRemaining).mockReset().mockResolvedValue({ count: 1 } as never);
+  vi.mocked(FabricRollRepository.incrementRemaining).mockReset();
   vi.mocked(applyJobOrderQuantityDelta).mockReset().mockResolvedValue(undefined as never);
   vi.mocked(JobOrderRepository.findAnyById).mockReset();
   vi.mocked(JobWorkOrderRepository.findAnyById).mockReset();
@@ -311,18 +313,46 @@ describe("transitionJobWorkOrderStatus", () => {
   it("allows cancellation when no receipt exists", async () => {
     vi.mocked(JobWorkOrderRepository.findAnyById).mockResolvedValue(jobWorkOrder({ status: "ISSUED" }) as never);
     vi.mocked(JobWorkOrderRepository.countActiveReceipts).mockResolvedValue(0);
-    vi.mocked(JobWorkOrderRepository.update).mockResolvedValue(jobWorkOrder({ status: "CANCELLED" }) as never);
 
     await transitionJobWorkOrderStatus(actor, "jwo-1", "CANCELLED");
-    expect(JobWorkOrderRepository.update).toHaveBeenCalledWith("jwo-1", { status: "CANCELLED" });
+    expect(JobWorkOrderRepository.updateInTx).toHaveBeenCalledWith(mockTx, "jwo-1", { status: "CANCELLED" });
+  });
+
+  it("reverses every issued raw-material line back to stock on cancellation", async () => {
+    vi.mocked(JobWorkOrderRepository.findAnyById).mockResolvedValue(
+      jobWorkOrder({
+        status: "ISSUED",
+        materials: [
+          { productId: "prod-1", quantity: 10, uomId: "uom-2", warehouseId: "wh-1", fabricRollId: null },
+          { productId: "prod-1", quantity: 4, uomId: "uom-2", warehouseId: "wh-1", fabricRollId: "roll-1" },
+        ],
+      }) as never
+    );
+    vi.mocked(JobWorkOrderRepository.countActiveReceipts).mockResolvedValue(0);
+
+    await transitionJobWorkOrderStatus(actor, "jwo-1", "CANCELLED");
+
+    expect(recordInventoryTransaction).toHaveBeenCalledTimes(2);
+    expect(recordInventoryTransaction).toHaveBeenCalledWith(
+      mockTx,
+      actor,
+      expect.objectContaining({ transactionType: "JOB_WORK_ISSUE_REVERSAL", quantity: 10, productId: "prod-1", warehouseId: "wh-1" })
+    );
+    expect(recordInventoryTransaction).toHaveBeenCalledWith(
+      mockTx,
+      actor,
+      expect.objectContaining({ transactionType: "JOB_WORK_ISSUE_REVERSAL", quantity: 4, fabricRollId: "roll-1" })
+    );
+    expect(FabricRollRepository.incrementRemaining).toHaveBeenCalledWith(mockTx, "roll-1", 4);
+    expect(JobWorkOrderRepository.updateInTx).toHaveBeenCalledWith(mockTx, "jwo-1", { status: "CANCELLED" });
   });
 
   it("captures statusBeforeHold when moving to ON_HOLD", async () => {
     vi.mocked(JobWorkOrderRepository.findAnyById).mockResolvedValue(jobWorkOrder({ status: "PARTIALLY_RECEIVED" }) as never);
-    vi.mocked(JobWorkOrderRepository.update).mockResolvedValue(jobWorkOrder({ status: "ON_HOLD" }) as never);
 
     await transitionJobWorkOrderStatus(actor, "jwo-1", "ON_HOLD");
-    expect(JobWorkOrderRepository.update).toHaveBeenCalledWith("jwo-1", { status: "ON_HOLD", statusBeforeHold: "PARTIALLY_RECEIVED" });
+    expect(JobWorkOrderRepository.updateInTx).toHaveBeenCalledWith(mockTx, "jwo-1", { status: "ON_HOLD", statusBeforeHold: "PARTIALLY_RECEIVED" });
+    expect(recordInventoryTransaction).not.toHaveBeenCalled();
   });
 
   it("rejects an illegal transition", async () => {
