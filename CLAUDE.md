@@ -43,7 +43,7 @@ The user has two real, manually-coded PHP/Laravel garment systems already in pro
 | 6 | Inventory | ✅ Done — Purchase Order + Goods Receipt (fabric roll tracking), the stock ledger, Material Request, and Stock Movements (Transfer/Adjustment/Return-to-Supplier) all built and verified |
 | 7 | Accounts | ✅ Done — 7A (Chart of Accounts, Tax Config, Journal engine), 7B (Sales Invoices), 7C (Purchase Invoices), 7D (Payments + Allocations), and 7E (Expenses) all built and verified on branch `phase-7-accounts` |
 | 8 | Dispatch | ✅ Done — pick/pack/confirm/deliver workflow, cartons with barcodes, and Finished-Goods stock decrement all built and verified on branch `phase-8-dispatch` |
-| 9 | Reports | ✅ First slice done (2026-08-25) — architecture + Report Center nav + 58 reports across 24 categories, on branch `report`; not yet merged to `main` |
+| 9 | Reports | ✅ Done (2026-08-25) — architecture + Report Center nav + 75 reports across all 26 buildable categories (only Payroll unavailable — no schema), on branch `report`; not yet merged to `main` |
 | 10 | Testing | ⬜ Not started |
 | 11 | Hardening | ⬜ Not started |
 
@@ -2018,6 +2018,78 @@ confirm cross-report reconciliation still holds throughout (Trial Balance ⇄ Ge
 Journal Register; Executive Dashboard ⇄ every domain's own register/summary report — Stock Value, Low Stock
 count, Production Achievement/Rejection %, AR/AP totals, Expenses, Stock Valuation all cross-checked
 row-for-row). `npx tsc --noEmit`, `npm run lint`, and `npm test` (450/450) clean throughout.
+
+## Phase 9B — Complete remaining reports (2026-08-25)
+
+Follow-up pass on the same `report` branch, filling in the 4 categories the first pass left as "Coming
+soon" and adding the highest-value reports from Phase 9A's own "explicitly deferred" list — using the exact
+same architecture (one descriptor-builder per report, `registerReport`/`registerReportPageMeta`, no new
+infrastructure needed). **17 new reports, 75 total** (see [REPORTS_INVENTORY.md](REPORTS_INVENTORY.md)).
+
+**New categories, now genuinely built instead of "Coming soon"**:
+- **Warehouse** (2) — Warehouse Stock Summary (a per-warehouse rollup of the exact same StockBalance/
+  unitCost/reorderLevel source the Inventory category's own reports use) and Warehouse Register (the
+  Warehouse master itself with a live `WarehouseLocation` count). Caught mid-build:
+  `Warehouse.managerEmployeeId` is a bare scalar column with **no declared Prisma relation** to `Employee`
+  (confirmed by reading the schema — no `@relation` line exists for it) — an `include`/`select` on it would
+  have been a compile error; resolved with a manual secondary `Employee.findMany({ where: { id: { in:
+  managerIds } } })` lookup instead.
+- **Production Planning** (2) — Production Schedule (planned vs. actual start/end dates straight off
+  `ProductionOrder`'s own columns) and Delayed Production Orders (open orders past `plannedEndDate` with no
+  `actualEndDate` yet). This dev DB's seed data never populated `plannedStartDate`/`plannedEndDate` on any
+  Production Order, so both reports correctly show all-dashes/empty — an honest reflection of what's
+  actually in the database, not a bug.
+- **Material Consumption** (2) — Material Consumption Variance (BOM-computed requirement, converted to the
+  material's base UOM via the existing `convertUomQuantity()` helper — never re-derived — vs. actual issued
+  quantity summed directly from the `InventoryTransaction` ledger, scoped through `MaterialRequest
+  .productionOrderId`) and Consumption by Material Category (the same ledger source grouped by
+  `Product.materialCategory` — the generalized "Fabric/Trims/Accessories consumption split" the original
+  spec asked for, covering whatever categories actually exist rather than hardcoding three).
+- **Business Performance** (3) — Top Customers by Revenue and Top Styles by Revenue (both the same posted-
+  Sales-Invoice source as Sales & Orders'/Profitability's own reports, ranked and capped to the top 20) and
+  Monthly Sales Trend (revenue by calendar month across all history).
+
+**Extensions to already-built categories**: Purchase Price Comparison (unit price paid per material across
+every PO, sorted to surface cross-supplier variance), Slow-Moving/Dead Stock (stock whose most recent
+`InventoryTransaction` predates a configurable threshold, or that has never moved at all — genuinely empty
+on this freshly-seeded dev DB at the default 60-day threshold, confirmed non-empty at `thresholdDays=0` to
+prove the mechanism itself works), Line-wise Production and Operator-wise Production (JobOrder/
+JobOrderProgressEntry grouped by `ProductionLine`/`Employee`, with an honest "Unassigned"/"Adjustment"
+bucket for rows with no line or employee attributed), Rework Report (queries
+`ProductionStageTransaction.transactionType === "REWORK"` — the ledger's own explicit marker, confirmed via
+schema read rather than inferring rework from `isBackward`+quantity heuristics), Leave Register (a thin
+read over the existing `LeaveRequest`/`LeaveType` HRMS schema, zero new leave-tracking mechanism), and two
+real financial statements:
+- **Profit & Loss Statement** — queries `JournalLine` directly (POSTED only, INCOME/EXPENSE accounts,
+  period-scoped) rather than via `getTrialBalance()`, since a P&L is inherently a date-range statement and
+  `getTrialBalance()` only ever takes a single "as of" date. Expense rows are deliberately stored as
+  *negative* amounts specifically so the descriptor's `totals` bar (a plain sum of the Amount column) is
+  exactly Net Profit — never a second, separately-computed net-profit figure that could disagree with the
+  line items shown.
+- **Balance Sheet** — a thin wrapper over `getTrialBalance()` (never re-derived), grouped by `accountType`.
+  This project's Chart of Accounts has no period-closing mechanism, so Current Period Net Profit (computed
+  from the SAME trial balance rows' INCOME/EXPENSE accounts) is folded into Equity, matching real accounting
+  practice. The report's last row is a literal, checkable statement of the fundamental identity
+  (`Assets − (Liabilities + Equity)`, which must be exactly 0) — not asserted in prose, shown as a real
+  computed row a user can verify themselves. Verified live down to the cent.
+
+**One more floating-point bug caught and fixed, before it shipped this time**: the Balance Sheet's own
+identity-check row initially showed `-1.4551915228366852e-11` instead of a clean `0` — the same IEEE-754
+noise-from-many-Decimal-additions class already fixed once in the Customer Ledger during the Phase 9 QA
+sweep. Caught by directly inspecting the raw JSON (the currency-formatted on-screen table rounds for
+display and would have hidden it) before committing, not after a user complaint — added a shared `round2()`
+helper to `accounts.reports.ts` and applied it to every computed total in both the P&L and Balance Sheet
+(`totalIncome`/`totalExpense`/`netProfit`/`totalAssets`/`totalLiabilities`/`totalEquityAccounts`/
+`totalEquityInclProfit`/the final difference check) — verified the identity check reads exactly `0` after
+the fix, with a full dev-server restart to clear Turbopack's cache before re-checking (this project's own
+now-thoroughly-documented gotcha, hit again and immediately recognized rather than mistaken for a real
+regression).
+
+Every new report live-verified in the browser and cross-checked against its already-verified sibling
+(Warehouse Stock Summary ⇄ Inventory's Stock Summary/Valuation/Low Stock; Line-wise/Operator-wise
+Production ⇄ Production Achievement's own totals; Top Customers/Styles by Revenue ⇄ Customer-wise Sales/
+Style Profitability; Profit & Loss ⇄ Trial Balance's own Income/Expense account balances). `npx tsc
+--noEmit`, `npm run lint`, and `npm test` (450/450, no regressions) all clean throughout.
 
 ## Recommended Stack
 

@@ -69,8 +69,27 @@ green, code-reviewed, not individually browser-walked this pass).
 | Monthly Attendance Summary | attendance | monthly-attendance-summary | AttendanceRecord | Month | — | Built |
 | User Activity | audit | user-activity | AuditLog | Date, User | — | Built |
 | Last Login per User | audit | last-login-per-user | User.lastLoginAt | — | — | Built |
+| Purchase Price Comparison | purchase | purchase-price-comparison | PurchaseOrderItem | Material | PO | Verified |
+| Slow-Moving / Dead Stock | inventory | slow-moving-dead-stock | StockBalance + InventoryTransaction (max performedAt) | Threshold (days) | — | Verified |
+| Line-wise Production | production | line-wise-production | JobOrder × ProductionLine | — | — | Verified |
+| Operator-wise Production | production | operator-wise-production | JobOrderProgressEntry × Employee | — | — | Verified |
+| Rework Report | quality | rework-report | ProductionStageTransaction (REWORK) | Date | PO | Verified |
+| Leave Register | hr | leave-register | LeaveRequest + LeaveType | Employee, Status, Date | — | Verified |
+| Profit & Loss Statement | accounts | profit-and-loss | JournalLine (POSTED, INCOME/EXPENSE) | Date | — | Verified — reconciles with Trial Balance |
+| Balance Sheet | accounts | balance-sheet | `getTrialBalance()` grouped by accountType | As Of Date | — | Verified — Assets = Liabilities + Equity identity confirmed to the cent |
+| Warehouse Stock Summary | warehouse | warehouse-stock-summary | StockBalance, grouped by warehouse | — | — | Verified |
+| Warehouse Register | warehouse | warehouse-register | Warehouse + WarehouseLocation count | Status | — | Built |
+| Production Schedule | production-planning | production-schedule | ProductionOrder (planned/actual dates) | Status | PO | Verified |
+| Delayed Production Orders | production-planning | delayed-production-orders | ProductionOrder | — | PO | Verified |
+| Material Consumption Variance | material-consumption | material-consumption-variance | BomItem × ProductionOrder.plannedQuantity vs. InventoryTransaction (MATERIAL_ISSUE) | — | PO | Verified |
+| Consumption by Material Category | material-consumption | consumption-by-material-category | InventoryTransaction (MATERIAL_ISSUE) × Product.materialCategory | Date | — | Verified |
+| Top Customers by Revenue | business-performance | top-customers-by-revenue | SalesInvoice | Date | — | Verified — matches Customer-wise Sales |
+| Top Styles by Revenue | business-performance | top-styles-by-revenue | SalesInvoiceItem | Date | — | Verified — matches Style Profitability |
+| Monthly Sales Trend | business-performance | monthly-sales-trend | SalesInvoice, grouped by month | — | — | Verified |
 
-**Total: 58 reports** (57 generic + 1 bespoke Order Lifecycle) across 24 of the 27 spec categories.
-Warehouse, Production Planning, Material Consumption, Business Performance, and Payroll show an honest
-"Coming soon" / "Not available" state in the Report Center (see CLAUDE.md's Phase 9 section for exactly
-why each is deferred or a hard gap).
+**Total: 75 reports** (74 generic + 1 bespoke Order Lifecycle) across all 26 buildable spec categories.
+Only Payroll shows a "Not available" state (no schema exists in this ERP at all). Phase 9B (2026-08-25)
+filled in the 4 previously "Coming soon" categories (Warehouse, Production Planning, Material Consumption,
+Business Performance) and added the highest-value deferred reports from Phase 9A's own "explicitly deferred"
+list (Purchase Price Comparison, Slow-Moving/Dead Stock, Line-wise/Operator-wise Production, Rework Report,
+Leave Register, Profit & Loss, Balance Sheet) — see CLAUDE.md's Phase 9B section for the full build notes.
