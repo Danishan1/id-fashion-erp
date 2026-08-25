@@ -287,6 +287,67 @@ async function getStockValuationDescriptor(companyId: string, generatedByName: s
   };
 }
 
+// ---------------------------------------------------------------------------
+// 6. Slow-Moving / Dead Stock — StockBalance rows with real quantity on hand
+// whose most recent InventoryTransaction (the sole source of truth for stock
+// movement) is older than the threshold, or which have never moved at all
+// (no ledger entry exists yet for that product+warehouse pair). A genuinely
+// empty result on a freshly-seeded dataset is an honest "nothing is stale
+// yet" outcome, not a bug to paper over.
+// ---------------------------------------------------------------------------
+const DEFAULT_SLOW_MOVING_THRESHOLD_DAYS = 60;
+
+async function getSlowMovingDeadStockDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>): Promise<ReportDescriptor> {
+  const thresholdDays = filters.thresholdDays ? Number(filters.thresholdDays) : DEFAULT_SLOW_MOVING_THRESHOLD_DAYS;
+  const cutoff = new Date(Date.now() - thresholdDays * 86400000);
+
+  const [balances, lastMovements] = await Promise.all([
+    prisma.stockBalance.findMany({
+      where: { companyId, quantityOnHand: { gt: 0 } },
+      select: { productId: true, warehouseId: true, quantityOnHand: true, product: { select: { styleCode: true, styleName: true } }, warehouse: { select: { name: true } } },
+    }),
+    prisma.inventoryTransaction.groupBy({ by: ["productId", "warehouseId"], where: { companyId }, _max: { performedAt: true } }),
+  ]);
+
+  const lastMovementMap = new Map(lastMovements.map((m) => [`${m.productId}:${m.warehouseId}`, m._max.performedAt]));
+
+  const rows = balances
+    .map((b) => {
+      const lastMovement = lastMovementMap.get(`${b.productId}:${b.warehouseId}`) ?? null;
+      const daysSinceLastMovement = lastMovement ? Math.floor((Date.now() - lastMovement.getTime()) / 86400000) : null;
+      return {
+        productId: b.productId,
+        styleCode: b.product.styleCode,
+        styleName: b.product.styleName,
+        warehouse: b.warehouse.name,
+        quantityOnHand: Number(b.quantityOnHand),
+        lastMovementDate: lastMovement,
+        daysSinceLastMovement,
+      };
+    })
+    .filter((r) => r.lastMovementDate === null || r.lastMovementDate < cutoff)
+    .sort((a, b) => (b.daysSinceLastMovement ?? Infinity) - (a.daysSinceLastMovement ?? Infinity));
+
+  return {
+    title: "Slow-Moving / Dead Stock",
+    subtitle: `Stock on hand with no inventory movement in the last ${thresholdDays} days (or never moved at all).`,
+    filtersApplied: filtersApplied(filters, { thresholdDays: "Threshold (days)" }),
+    columns: [
+      { key: "styleCode", label: "Style Code", linkTo: "product" },
+      { key: "styleName", label: "Style Name" },
+      { key: "warehouse", label: "Warehouse" },
+      { key: "quantityOnHand", label: "Quantity On Hand", type: "number", align: "right" },
+      { key: "lastMovementDate", label: "Last Movement Date", type: "date" },
+      { key: "daysSinceLastMovement", label: "Days Since Last Movement", type: "number", align: "right" },
+    ],
+    rows: rows as unknown as Record<string, unknown>[],
+    totals: { quantityOnHand: rows.reduce((s, r) => s + r.quantityOnHand, 0) },
+    meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
+    generatedAt: new Date().toISOString(),
+    generatedByName,
+  };
+}
+
 registerReport({ category: CATEGORY, key: "stock-summary", title: "Stock Summary", buildDescriptor: getStockSummaryDescriptor });
 registerReport({
   category: CATEGORY,
@@ -298,3 +359,4 @@ registerReport({
 registerReport({ category: CATEGORY, key: "low-stock-report", title: "Low Stock Report", buildDescriptor: getLowStockReportDescriptor });
 registerReport({ category: CATEGORY, key: "negative-stock-report", title: "Negative Stock Report", buildDescriptor: getNegativeStockReportDescriptor });
 registerReport({ category: CATEGORY, key: "stock-valuation", title: "Stock Valuation", buildDescriptor: getStockValuationDescriptor });
+registerReport({ category: CATEGORY, key: "slow-moving-dead-stock", title: "Slow-Moving / Dead Stock", buildDescriptor: getSlowMovingDeadStockDescriptor });

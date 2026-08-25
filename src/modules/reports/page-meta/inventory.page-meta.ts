@@ -58,3 +58,13 @@ registerReportPageMeta({
   includeDateRange: false,
   linkBuilders,
 });
+
+registerReportPageMeta({
+  category: CATEGORY,
+  key: "slow-moving-dead-stock",
+  title: "Slow-Moving / Dead Stock",
+  description: "Stock on hand with no inventory movement in the last N days (or never moved at all).",
+  includeDateRange: false,
+  filterFields: [{ key: "thresholdDays", label: "Threshold (days)", type: "text", placeholder: "60" }],
+  linkBuilders,
+});

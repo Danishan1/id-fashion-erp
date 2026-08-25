@@ -40,3 +40,13 @@ registerReportPageMeta({
   description: "Non-cancelled Purchase Orders grouped by calendar month.",
   linkBuilders,
 });
+
+registerReportPageMeta({
+  category: CATEGORY,
+  key: "purchase-price-comparison",
+  title: "Purchase Price Comparison",
+  description: "Unit price paid per material across every Purchase Order.",
+  includeDateRange: false,
+  filterFields: [{ key: "materialId", label: "Material", type: "select", optionsUrl: "/api/v1/materials?pageSize=200", optionsLabelKey: "styleName" }],
+  linkBuilders,
+});

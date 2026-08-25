@@ -241,6 +241,58 @@ async function getPurchaseMonthlySummaryDescriptor(
   };
 }
 
+// ---------------------------------------------------------------------------
+// 5. Purchase Price Comparison — one row per PurchaseOrderItem line, sorted
+// by material then unit price, so a buyer can visually compare what price
+// was actually paid for the same raw material across different suppliers/
+// orders. Straight from PurchaseOrderItem.unitPrice — never re-derived.
+// ---------------------------------------------------------------------------
+async function getPurchasePriceComparisonDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>): Promise<ReportDescriptor> {
+  const items = await prisma.purchaseOrderItem.findMany({
+    where: {
+      // PurchaseOrderItem has no own companyId column — scoped via the parent PurchaseOrder.
+      purchaseOrder: { companyId, status: { not: "CANCELLED" } },
+      ...(filters.materialId ? { productId: filters.materialId } : {}),
+    },
+    select: {
+      unitPrice: true,
+      product: { select: { styleCode: true, styleName: true } },
+      uom: { select: { code: true } },
+      purchaseOrder: { select: { id: true, orderNumber: true, orderDate: true, supplier: { select: { name: true } } } },
+    },
+  });
+
+  const rows = items
+    .map((item) => ({
+      purchaseOrderId: item.purchaseOrder.id,
+      material: `${item.product.styleCode} — ${item.product.styleName}`,
+      supplier: item.purchaseOrder.supplier.name,
+      orderNumber: item.purchaseOrder.orderNumber,
+      orderDate: item.purchaseOrder.orderDate,
+      unitPrice: Number(item.unitPrice),
+      unit: item.uom.code,
+    }))
+    .sort((a, b) => a.material.localeCompare(b.material) || a.unitPrice - b.unitPrice);
+
+  return {
+    title: "Purchase Price Comparison",
+    subtitle: "Unit price actually paid per material across every Purchase Order, sorted to make cross-supplier price variance visible.",
+    filtersApplied: filtersApplied(filters, { materialId: "Material" }),
+    columns: [
+      { key: "material", label: "Material" },
+      { key: "supplier", label: "Supplier" },
+      { key: "orderNumber", label: "PO Number", linkTo: "purchaseOrder" },
+      { key: "orderDate", label: "Order Date", type: "date" },
+      { key: "unitPrice", label: "Unit Price", type: "currency", align: "right" },
+      { key: "unit", label: "Unit" },
+    ],
+    rows,
+    meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
+    generatedAt: new Date().toISOString(),
+    generatedByName,
+  };
+}
+
 registerReport({
   category: CATEGORY,
   key: "purchase-order-register",
@@ -264,4 +316,10 @@ registerReport({
   key: "purchase-monthly-summary",
   title: "Purchase Monthly Summary",
   buildDescriptor: getPurchaseMonthlySummaryDescriptor,
+});
+registerReport({
+  category: CATEGORY,
+  key: "purchase-price-comparison",
+  title: "Purchase Price Comparison",
+  buildDescriptor: getPurchasePriceComparisonDescriptor,
 });
