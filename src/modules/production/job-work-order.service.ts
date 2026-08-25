@@ -8,6 +8,7 @@ import { getAvailableQuantity, recordInventoryTransaction } from "@/modules/inve
 import { LookupRepository } from "@/modules/lookups/lookup.repository";
 import { ProductRepository } from "@/modules/products/product.repository";
 import { FabricRollRepository } from "@/modules/purchasing/fabric-roll.repository";
+import { SupplierRepository } from "@/modules/suppliers/supplier.repository";
 import type { JobWorkOrderStatus, Prisma } from "@prisma/client";
 import { applyJobOrderQuantityDelta } from "./job-order.service";
 import { JobOrderRepository } from "./production.repository";
@@ -246,6 +247,11 @@ export async function createJobWorkOrder(actor: ActorContext, input: CreateJobWo
   if (jobOrder.status === "CANCELLED") {
     throw new BusinessRuleError("INVALID_STATE_TRANSITION", "Cannot send a cancelled job order to job-work.", {});
   }
+
+  // Tenant-scoped — a supplierId from another company would otherwise sit
+  // unvalidated on the record and be embedded in every subsequent read.
+  const supplier = await SupplierRepository.findById(actor.companyId, input.supplierId);
+  if (!supplier) throw new BusinessRuleError("NOT_FOUND", "Contractor/supplier not found.", { id: input.supplierId });
 
   const unprocessed =
     Number(jobOrder.plannedQuantity) - Number(jobOrder.completedQuantity) - Number(jobOrder.rejectedQuantity) - Number(jobOrder.damagedQuantity);

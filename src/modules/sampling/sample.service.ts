@@ -24,6 +24,7 @@ import {
   SampleVersionRepository,
 } from "./sample.repository";
 import { ProductRepository } from "@/modules/products/product.repository";
+import { CustomerRepository } from "@/modules/customers/customer.repository";
 import { advanceMasterCodeSequence } from "@/core/numbering/DocumentNumberingService";
 import { SampleStatus, SampleType, type Prisma, type SampleVersionStatus } from "@prisma/client";
 
@@ -179,6 +180,25 @@ export async function getSampleRequestById(companyId: string, id: string) {
 }
 
 export async function createSampleRequest(actor: ActorContext, input: SampleRequestInput) {
+  // Tenant-scoped, matching the discipline every other create* function in
+  // this codebase follows (Sales/Purchase Order) — without this, a
+  // customerId/buyerId/productId from another company would pass straight
+  // through, and findByIdWithDetails's unrestricted `include` would then
+  // return that tenant's full Customer/Buyer/Product record on every
+  // subsequent read of this sample request (confirmed cross-tenant
+  // disclosure, fixed here).
+  const customer = await CustomerRepository.findByIdWithBuyers(actor.companyId, input.customerId);
+  if (!customer) throw new BusinessRuleError("NOT_FOUND", "Customer not found.", { id: input.customerId });
+
+  if (input.buyerId && !customer.buyers.some((b) => b.id === input.buyerId)) {
+    throw new BusinessRuleError("NOT_FOUND", "Buyer not found for this customer.", { id: input.buyerId });
+  }
+
+  if (input.productId) {
+    const product = await ProductRepository.findAnyById(actor.companyId, input.productId);
+    if (!product) throw new BusinessRuleError("NOT_FOUND", "Style not found.", { id: input.productId });
+  }
+
   const requestNumber = await generateDocumentNumber({
     companyId: actor.companyId,
     branchId: actor.branchId ?? null,

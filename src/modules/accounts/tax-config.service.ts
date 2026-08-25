@@ -147,6 +147,11 @@ export async function updateTaxRate(actor: ActorContext, id: string, input: TaxR
   const existing = await TaxRateRepository.findAnyById(actor.companyId, id);
   if (!existing) throw new BusinessRuleError("NOT_FOUND", "Tax rate not found.", { id });
 
+  // Re-validated on update too, not just create — a taxTypeId from another
+  // company would otherwise sit unvalidated on the record from here on.
+  const taxType = await TaxTypeRepository.findAnyById(actor.companyId, input.taxTypeId);
+  if (!taxType) throw new BusinessRuleError("NOT_FOUND", "Tax type not found.", { id: input.taxTypeId });
+
   const effectiveFrom = new Date(input.effectiveFrom);
   const effectiveTo = input.effectiveTo ? new Date(input.effectiveTo) : null;
   if (effectiveTo && effectiveTo <= effectiveFrom) {

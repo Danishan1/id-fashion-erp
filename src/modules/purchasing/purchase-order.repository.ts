@@ -18,7 +18,10 @@ export const PurchaseOrderRepository = {
     prisma.purchaseOrder.findFirst({
       where: { id, companyId },
       include: {
-        supplier: true,
+        // A narrow `select`, not `supplier: true` — the full model included
+        // bankDetailsJson/taxRegistrationNo, exposed to anyone with mere
+        // purchasing:view (no separate supplier-master permission implied).
+        supplier: { select: { id: true, name: true, code: true, contactPerson: true, email: true, phone: true, paymentTermsDays: true } },
         requestedBy: { select: { id: true, fullName: true } },
         items: {
           include: {

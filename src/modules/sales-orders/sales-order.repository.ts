@@ -19,7 +19,10 @@ export const SalesOrderRepository = {
     prisma.salesOrder.findFirst({
       where: { id, companyId },
       include: {
-        customer: true,
+        // A narrow `select`, not `customer: true` — the full model included
+        // creditLimit/paymentTermsDays, exposed to anyone with mere
+        // sales_orders:view (no separate customer-master permission implied).
+        customer: { select: { id: true, name: true, code: true, country: true, defaultCurrencyCode: true, paymentTermsDays: true } },
         buyer: true,
         requestedBy: { select: { id: true, fullName: true } },
         items: {

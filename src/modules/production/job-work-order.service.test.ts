@@ -13,6 +13,9 @@ vi.mock("@/modules/lookups/lookup.repository", () => ({
 vi.mock("@/modules/purchasing/fabric-roll.repository", () => ({
   FabricRollRepository: { findByIdWithContext: vi.fn(), guardedDecrementRemaining: vi.fn(), incrementRemaining: vi.fn() },
 }));
+vi.mock("@/modules/suppliers/supplier.repository", () => ({
+  SupplierRepository: { findById: vi.fn() },
+}));
 vi.mock("./job-order.service", () => ({ applyJobOrderQuantityDelta: vi.fn() }));
 vi.mock("./production.repository", () => ({ JobOrderRepository: { findAnyById: vi.fn() } }));
 vi.mock("./job-work-order.repository", () => ({
@@ -45,6 +48,7 @@ const { recordInventoryTransaction, getAvailableQuantity } = await import("@/mod
 const { ProductRepository } = await import("@/modules/products/product.repository");
 const { LookupRepository } = await import("@/modules/lookups/lookup.repository");
 const { FabricRollRepository } = await import("@/modules/purchasing/fabric-roll.repository");
+const { SupplierRepository } = await import("@/modules/suppliers/supplier.repository");
 const { applyJobOrderQuantityDelta } = await import("./job-order.service");
 const { JobOrderRepository } = await import("./production.repository");
 const { JobWorkOrderRepository, JobWorkReceiptRepository } = await import("./job-work-order.repository");
@@ -82,6 +86,7 @@ function jobWorkOrder(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.mocked(generateDocumentNumber).mockReset().mockResolvedValue("JWO-2026-00001");
+  vi.mocked(SupplierRepository.findById).mockReset().mockResolvedValue({ id: "sup-1" } as never);
   vi.mocked(recordInventoryTransaction).mockReset().mockResolvedValue(undefined as never);
   vi.mocked(getAvailableQuantity).mockReset().mockResolvedValue(1000);
   // Every existing test's material line uses uomId "uom-2" — set here to
@@ -111,6 +116,29 @@ beforeEach(() => {
 });
 
 describe("createJobWorkOrder", () => {
+  // supplierId was previously written straight from client input with zero
+  // ownership check — a direct API call with another tenant's supplierId
+  // would succeed and embed that tenant's name/code in every subsequent
+  // read (confirmed cross-tenant disclosure risk, fixed).
+  it("rejects a supplierId belonging to another company", async () => {
+    vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder({ plannedQuantity: 100 }) as never);
+    vi.mocked(SupplierRepository.findById).mockResolvedValue(null);
+
+    await expect(
+      createJobWorkOrder(actor, {
+        jobOrderId: "jo-1",
+        supplierId: "sup-x",
+        issuedQuantity: 5,
+        uomId: "uom-1",
+        issueDate: "2026-08-24",
+        expectedCompletionDate: "",
+        remarks: "",
+        materials: [],
+      })
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(JobWorkOrderRepository.createWithMaterialsInTx).not.toHaveBeenCalled();
+  });
+
   it("issues against the job order's unprocessed pool and posts one JOB_WORK_ISSUE ledger entry per material line", async () => {
     vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder({ plannedQuantity: 100, completedQuantity: 20 }) as never);
     vi.mocked(JobWorkOrderRepository.createWithMaterialsInTx).mockResolvedValue(jobWorkOrder() as never);

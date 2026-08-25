@@ -3,6 +3,8 @@ import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingService";
 import type { ListQuery } from "@/lib/list-query";
 import { createSampleRequest } from "@/modules/sampling/sample.service";
+import { CustomerRepository } from "@/modules/customers/customer.repository";
+import { ProductRepository } from "@/modules/products/product.repository";
 import type {
   BuyerEnquiryInput,
   BuyerEnquiryLineStatusChangeInput,
@@ -97,6 +99,25 @@ export async function createBuyerEnquiry(actor: ActorContext, input: BuyerEnquir
       "VALIDATION_ERROR",
       "Either an existing Customer or a prospect name is required."
     );
+  }
+
+  // Tenant-scoped — a customerId/buyerId/line productId from another
+  // company would otherwise pass straight through, and findByIdWithDetails's
+  // unrestricted `include` would return that tenant's full record on every
+  // subsequent read (confirmed cross-tenant disclosure, fixed here).
+  let customer: Awaited<ReturnType<typeof CustomerRepository.findByIdWithBuyers>> = null;
+  if (input.customerId) {
+    customer = await CustomerRepository.findByIdWithBuyers(actor.companyId, input.customerId);
+    if (!customer) throw new BusinessRuleError("NOT_FOUND", "Customer not found.", { id: input.customerId });
+  }
+  if (input.buyerId && !customer?.buyers.some((b) => b.id === input.buyerId)) {
+    throw new BusinessRuleError("NOT_FOUND", "Buyer not found for this customer.", { id: input.buyerId });
+  }
+  for (const line of input.lines) {
+    if (line.productId) {
+      const product = await ProductRepository.findAnyById(actor.companyId, line.productId);
+      if (!product) throw new BusinessRuleError("NOT_FOUND", "Style not found.", { id: line.productId });
+    }
   }
 
   const enquiryNumber = await generateDocumentNumber({

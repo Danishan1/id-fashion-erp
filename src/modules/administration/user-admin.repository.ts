@@ -1,10 +1,23 @@
 import { prisma } from "@/core/db/client";
 import type { Prisma } from "@prisma/client";
 
-const USER_INCLUDE = {
+// A `select`, not an `include` — `include` returns every scalar column of
+// the base model in addition to the named relations, which was silently
+// returning `passwordHash` (a real bcrypt hash) in every one of these
+// responses. Every field the UI actually needs is named explicitly here.
+const USER_SELECT = {
+  id: true,
+  email: true,
+  fullName: true,
+  phone: true,
+  status: true,
+  defaultBranchId: true,
+  createdAt: true,
+  updatedAt: true,
   defaultBranch: { select: { id: true, name: true } },
   branchRoles: {
-    include: {
+    select: {
+      id: true,
       role: { select: { id: true, name: true } },
       branch: { select: { id: true, name: true } },
     },
@@ -13,11 +26,11 @@ const USER_INCLUDE = {
 
 export const UserAdminRepository = {
   findMany: (companyId: string) =>
-    prisma.user.findMany({ where: { companyId }, include: USER_INCLUDE, orderBy: { createdAt: "desc" } }),
+    prisma.user.findMany({ where: { companyId }, select: USER_SELECT, orderBy: { createdAt: "desc" } }),
 
   findByEmail: (email: string) => prisma.user.findUnique({ where: { email } }),
 
-  findById: (companyId: string, id: string) => prisma.user.findFirst({ where: { id, companyId }, include: USER_INCLUDE }),
+  findById: (companyId: string, id: string) => prisma.user.findFirst({ where: { id, companyId }, select: USER_SELECT }),
 
   /** Creates the User row and its one initial UserBranchRole assignment in a
    * single transaction — a user with no role assignment at all would be
@@ -30,11 +43,11 @@ export const UserAdminRepository = {
   ) =>
     tx.user.create({
       data: { ...data, branchRoles: { create: [roleAssignment] } },
-      include: USER_INCLUDE,
+      select: USER_SELECT,
     }),
 
   updateStatus: (id: string, status: "ACTIVE" | "SUSPENDED") =>
-    prisma.user.update({ where: { id }, data: { status }, include: USER_INCLUDE }),
+    prisma.user.update({ where: { id }, data: { status }, select: USER_SELECT }),
 };
 
 /**
