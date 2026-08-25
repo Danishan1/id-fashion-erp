@@ -35,7 +35,7 @@ export const ChartOfAccountRepository = {
             : {}),
         },
       },
-      include: { journal: { select: { journalNumber: true, journalDate: true, narration: true } } },
+      include: { journal: { select: { id: true, journalNumber: true, journalDate: true, narration: true } } },
       orderBy: [{ journal: { journalDate: "asc" } }, { createdAt: "asc" }],
     }),
 
