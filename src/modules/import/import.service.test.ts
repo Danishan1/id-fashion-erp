@@ -64,7 +64,28 @@ describe("runImport — LEAD", () => {
 
     expect(result.importedCount).toBe(0);
     expect(result.skippedCount).toBe(1);
-    expect(result.failedRows[0].reason).toContain("Invalid Source");
+    expect(result.failedRows[0].reason).toContain("source");
+    expect(createLead).not.toHaveBeenCalled();
+  });
+
+  // Regression test for the P4 fix: an invalid Source used to be checked by
+  // a manual pre-check that threw immediately with only that one issue,
+  // before createLeadSchema.parse() ever ran — silently hiding any other
+  // problems in the same row (e.g. a missing name) until the source was
+  // fixed and the row was re-uploaded. It must now report every issue in
+  // the row together in one combined message, matching importDealRow's own
+  // (already-correct) behavior.
+  it("aggregates every validation issue in a Lead row into one combined message, not just the first", async () => {
+    const result = await runImport(actor, {
+      importType: "LEAD",
+      fileName: "leads.csv",
+      // Both an invalid source AND a missing required name.
+      rows: [{ name: "", source: "carrier-pigeon" }],
+    });
+
+    expect(result.skippedCount).toBe(1);
+    expect(result.failedRows[0].reason).toContain("source");
+    expect(result.failedRows[0].reason).toContain("name");
     expect(createLead).not.toHaveBeenCalled();
   });
 

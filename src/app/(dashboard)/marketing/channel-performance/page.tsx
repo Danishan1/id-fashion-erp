@@ -69,6 +69,7 @@ export default function ChannelPerformancePage() {
   const [dateTo, setDateTo] = useState("");
   const [channel, setChannel] = useState("");
   const [rows, setRows] = useState<ChannelRow[] | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
 
   useEffect(() => {
     const url = new URL("/api/v1/marketing/channel-performance", window.location.origin);
@@ -76,8 +77,12 @@ export default function ChannelPerformancePage() {
     if (dateTo) url.searchParams.set("dateTo", dateTo);
     if (channel) url.searchParams.set("channel", channel);
     fetch(url.toString())
-      .then((res) => res.json())
-      .then((body) => setRows(body.data));
+      .then((res) => (res.ok ? res.json() : Promise.reject(res)))
+      .then((body) => {
+        setRows(body.data);
+        setLoadFailed(false);
+      })
+      .catch(() => setLoadFailed(true));
   }, [dateFrom, dateTo, channel]);
 
   const applyPreset = (preset: Preset) => {
@@ -153,7 +158,9 @@ export default function ChannelPerformancePage() {
         </button>
       </div>
 
-      {!rows ? (
+      {loadFailed ? (
+        <p className="text-sm text-red-600 dark:text-red-400">Failed to load channel performance — you may not have permission, or the request failed.</p>
+      ) : !rows ? (
         <p className="text-sm text-zinc-500">Loading…</p>
       ) : rows.length === 0 ? (
         <p className="text-sm text-zinc-500">No campaign activity in this period.</p>

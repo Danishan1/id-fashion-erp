@@ -65,10 +65,18 @@ export function computeJobWorkOrderMetrics(order: {
   issueDate: Date;
   expectedCompletionDate: Date | null;
 }) {
-  const pendingQuantity = Math.max(
-    0,
-    Number(order.issuedQuantity) - Number(order.receivedQuantity) - Number(order.rejectedQuantity) - Number(order.damagedQuantity)
-  );
+  // A CANCELLED order (only reachable with zero receipts against it, and its
+  // issued material is now reversed back to stock — see
+  // reverseIssuedMaterialsInTx) has nothing genuinely outstanding with the
+  // contractor, regardless of what the raw issued/received/rejected/damaged
+  // arithmetic below would otherwise suggest.
+  const pendingQuantity =
+    order.status === "CANCELLED"
+      ? 0
+      : Math.max(
+          0,
+          Number(order.issuedQuantity) - Number(order.receivedQuantity) - Number(order.rejectedQuantity) - Number(order.damagedQuantity)
+        );
   const isDone = order.status === "FULLY_RECEIVED" || order.status === "CLOSED" || order.status === "CANCELLED";
   const daysElapsed = Math.floor((Date.now() - order.issueDate.getTime()) / (24 * 60 * 60 * 1000));
   const isOverdue = !isDone && !!order.expectedCompletionDate && Date.now() > order.expectedCompletionDate.getTime();

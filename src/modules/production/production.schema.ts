@@ -123,12 +123,25 @@ export const createQcInspectionSchema = z
       .optional()
       .default([]),
   })
-  .refine((input) => input.acceptedQuantity + input.rejectedQuantity + input.damagedQuantity === input.inspectedQuantity, {
-    message: "Accepted + Rejected + Damaged must equal the inspected quantity.",
-    path: ["inspectedQuantity"],
-  })
-  .refine((input) => input.result === "PASS" || !!input.reworkTargetStageId, {
-    message: "A rework target stage is required for a Partial Pass or Fail result.",
+  // Epsilon tolerance, not exact equality — 0.1 + 0.2 !== 0.3 in IEEE-754,
+  // and this codebase's own decimal quantities routinely land on inexact
+  // sums (matches the EPSILON convention already used by every quantity-cap
+  // check in job-order.service.ts).
+  .refine(
+    (input) => Math.abs(input.acceptedQuantity + input.rejectedQuantity + input.damagedQuantity - input.inspectedQuantity) < 0.0001,
+    {
+      message: "Accepted + Rejected + Damaged must equal the inspected quantity.",
+      path: ["inspectedQuantity"],
+    }
+  )
+  // Only required when the service actually consults it — recordQcInspection()
+  // only looks up reworkTargetStageId when rejectedQuantity > 0 (a pure-damage
+  // disposition with damagedQuantity > 0 and rejectedQuantity === 0 never
+  // reads it at all). Requiring it for any non-PASS result was stricter than
+  // the service needs, and made a pure-damage FAIL unrecordable at the very
+  // first production stage (no earlier stage exists to name).
+  .refine((input) => input.result === "PASS" || input.rejectedQuantity <= 0 || !!input.reworkTargetStageId, {
+    message: "A rework target stage is required whenever any quantity is being rejected.",
     path: ["reworkTargetStageId"],
   });
 export type CreateQcInspectionInput = z.infer<typeof createQcInspectionSchema>;

@@ -52,7 +52,9 @@ export default function AdIntegrationsPage() {
 function AdIntegrationsContent() {
   const searchParams = useSearchParams();
   const [configStatus, setConfigStatus] = useState<Record<Platform, boolean> | null>(null);
+  const [configStatusFailed, setConfigStatusFailed] = useState(false);
   const [connections, setConnections] = useState<Connection[] | null>(null);
+  const [connectionsFailed, setConnectionsFailed] = useState(false);
   const [localCampaigns, setLocalCampaigns] = useState<LocalCampaignOption[] | null>(null);
   const [linksModalConnection, setLinksModalConnection] = useState<Connection | null>(null);
   const [disconnectTarget, setDisconnectTarget] = useState<Connection | null>(null);
@@ -61,14 +63,24 @@ function AdIntegrationsContent() {
 
   const load = () => {
     fetch("/api/v1/ad-integrations/config-status")
-      .then((res) => res.json())
-      .then((body) => setConfigStatus(body.data));
+      .then((res) => (res.ok ? res.json() : Promise.reject(res)))
+      .then((body) => {
+        setConfigStatus(body.data);
+        setConfigStatusFailed(false);
+      })
+      .catch(() => setConfigStatusFailed(true));
+
     fetch("/api/v1/ad-integrations")
-      .then((res) => res.json())
-      .then((body) => setConnections(body.data));
+      .then((res) => (res.ok ? res.json() : Promise.reject(res)))
+      .then((body) => {
+        setConnections(body.data);
+        setConnectionsFailed(false);
+      })
+      .catch(() => setConnectionsFailed(true));
+
     fetch("/api/v1/campaigns?pageSize=200")
-      .then((res) => res.json())
-      .then((body) => setLocalCampaigns(body.data.map((c: { id: string; name: string }) => ({ id: c.id, name: c.name }))));
+      .then((res) => (res.ok ? res.json() : { data: [] }))
+      .then((body) => setLocalCampaigns((body.data ?? []).map((c: { id: string; name: string }) => ({ id: c.id, name: c.name }))));
   };
 
   useEffect(load, []);
@@ -154,7 +166,11 @@ function AdIntegrationsContent() {
           return (
             <div key={platform} className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
               <div className="text-sm font-medium text-zinc-900 dark:text-zinc-50">{PLATFORM_LABELS[platform]}</div>
-              {configStatus === null ? (
+              {configStatusFailed ? (
+                <p className="mt-1 text-xs text-red-600 dark:text-red-400">
+                  Could not check configuration status — you may not have permission, or the request failed.
+                </p>
+              ) : configStatus === null ? (
                 <p className="mt-1 text-xs text-zinc-500">Checking configuration…</p>
               ) : isConfigured ? (
                 <a
@@ -177,7 +193,9 @@ function AdIntegrationsContent() {
 
       <div>
         <h2 className="mb-2 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Connected Accounts</h2>
-        {!connections ? (
+        {connectionsFailed ? (
+          <p className="text-sm text-red-600 dark:text-red-400">Failed to load connected accounts — you may not have permission, or the request failed.</p>
+        ) : !connections ? (
           <p className="text-sm text-zinc-500">Loading…</p>
         ) : connections.length === 0 ? (
           <p className="text-sm text-zinc-500">No ad accounts connected yet.</p>

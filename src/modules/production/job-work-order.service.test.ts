@@ -415,4 +415,21 @@ describe("computeJobWorkOrderMetrics", () => {
     });
     expect(doneButPastDue.isOverdue).toBe(false);
   });
+
+  // Regression test for the P3 fix: a CANCELLED order's issued material is
+  // reversed back to stock (see reverseIssuedMaterialsInTx) — nothing is
+  // genuinely outstanding with the contractor, so the raw
+  // issued-minus-received arithmetic must not be shown as "Pending".
+  it("reports zero pending quantity for a CANCELLED order regardless of raw issued/received figures", () => {
+    const metrics = computeJobWorkOrderMetrics({
+      status: "CANCELLED",
+      issuedQuantity: 50,
+      receivedQuantity: 0,
+      rejectedQuantity: 0,
+      damagedQuantity: 0,
+      issueDate: new Date(),
+      expectedCompletionDate: null,
+    });
+    expect(metrics.pendingQuantity).toBe(0);
+  });
 });

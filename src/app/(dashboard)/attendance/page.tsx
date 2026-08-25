@@ -35,8 +35,9 @@ export default function AttendancePage() {
 
   useEffect(() => {
     fetch("/api/v1/employees?pageSize=500")
-      .then((res) => res.json())
-      .then((body) => setEmployees(body.data ?? []));
+      .then((res) => (res.ok ? res.json() : { data: [] }))
+      .then((body) => setEmployees(body.data ?? []))
+      .catch(() => setEmployees([]));
   }, []);
 
   const submit = async () => {

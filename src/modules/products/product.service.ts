@@ -285,6 +285,22 @@ export async function generateVariants(actor: ActorContext, productId: string, i
     ProductVariantRepository.findSizesByIds(actor.companyId, input.sizeIds),
   ]);
 
+  // A deactivated master shouldn't be usable in a new transaction — the same
+  // "inactive masters can't be picked for new business" pattern already
+  // enforced elsewhere (e.g. Expense's COGS/inactive-account exclusion).
+  // Rejecting outright, rather than silently skipping the inactive ones,
+  // avoids silently generating fewer variants than the caller asked for.
+  const inactiveColors = colors.filter((c) => !c.isActive);
+  const inactiveSizes = sizes.filter((s) => !s.isActive);
+  if (inactiveColors.length > 0 || inactiveSizes.length > 0) {
+    const names = [...inactiveColors.map((c) => c.name), ...inactiveSizes.map((s) => s.name)];
+    throw new BusinessRuleError(
+      "VALIDATION_ERROR",
+      `Cannot generate variants using inactive master(s): ${names.join(", ")}.`,
+      { inactiveColorIds: inactiveColors.map((c) => c.id), inactiveSizeIds: inactiveSizes.map((s) => s.id) }
+    );
+  }
+
   const existingKeys = await ProductVariantRepository.findExistingKeys(productId);
 
   const toCreate = [];

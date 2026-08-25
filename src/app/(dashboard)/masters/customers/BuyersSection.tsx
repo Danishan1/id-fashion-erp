@@ -3,6 +3,9 @@
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { textInputClass } from "@/components/ui/FormField";
+import { Modal } from "@/components/ui/Modal";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
+import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 
 interface Buyer {
   id: string;
@@ -10,6 +13,8 @@ interface Buyer {
   name: string;
   contactPerson: string | null;
   email: string | null;
+  phone: string | null;
+  isActive: boolean;
 }
 
 interface BuyersSectionProps {
@@ -17,14 +22,37 @@ interface BuyersSectionProps {
   initialBuyers: Buyer[];
 }
 
+const EMPTY_FORM = { code: "", name: "", contactPerson: "", email: "", phone: "" };
+
 export function BuyersSection({ customerId, initialBuyers }: BuyersSectionProps) {
   const router = useRouter();
   const [buyers, setBuyers] = useState(initialBuyers);
   const [showForm, setShowForm] = useState(false);
-  const [code, setCode] = useState("");
-  const [name, setName] = useState("");
+  const [editingBuyer, setEditingBuyer] = useState<Buyer | null>(null);
+  const [form, setForm] = useState(EMPTY_FORM);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [pendingToggle, setPendingToggle] = useState<Buyer | null>(null);
+
+  const openAddForm = () => {
+    setEditingBuyer(null);
+    setForm(EMPTY_FORM);
+    setError(null);
+    setShowForm(true);
+  };
+
+  const openEditForm = (buyer: Buyer) => {
+    setEditingBuyer(buyer);
+    setForm({
+      code: buyer.code,
+      name: buyer.name,
+      contactPerson: buyer.contactPerson ?? "",
+      email: buyer.email ?? "",
+      phone: buyer.phone ?? "",
+    });
+    setError(null);
+    setShowForm(true);
+  };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -32,91 +60,178 @@ export function BuyersSection({ customerId, initialBuyers }: BuyersSectionProps)
     setIsSubmitting(true);
     setError(null);
 
-    const res = await fetch(`/api/v1/customers/${customerId}/buyers`, {
-      method: "POST",
+    const url = editingBuyer ? `/api/v1/customers/${customerId}/buyers/${editingBuyer.id}` : `/api/v1/customers/${customerId}/buyers`;
+    const res = await fetch(url, {
+      method: editingBuyer ? "PATCH" : "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code, name }),
+      body: JSON.stringify(form),
     });
 
     setIsSubmitting(false);
 
     if (!res.ok) {
       const body = await res.json().catch(() => null);
-      setError(body?.error?.message ?? "Failed to add buyer.");
+      setError(body?.error?.message ?? "Failed to save buyer.");
       return;
     }
 
     const { data } = await res.json();
-    setBuyers([...buyers, data]);
-    setCode("");
-    setName("");
+    setBuyers(editingBuyer ? buyers.map((b) => (b.id === data.id ? data : b)) : [...buyers, data]);
     setShowForm(false);
+    setEditingBuyer(null);
     router.refresh();
+  };
+
+  const confirmToggle = async () => {
+    if (!pendingToggle) return;
+    const res = await fetch(`/api/v1/customers/${customerId}/buyers/${pendingToggle.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        code: pendingToggle.code,
+        name: pendingToggle.name,
+        contactPerson: pendingToggle.contactPerson ?? "",
+        email: pendingToggle.email ?? "",
+        phone: pendingToggle.phone ?? "",
+        isActive: !pendingToggle.isActive,
+      }),
+    });
+    if (res.ok) {
+      const { data } = await res.json();
+      setBuyers(buyers.map((b) => (b.id === data.id ? data : b)));
+      router.refresh();
+    }
+    setPendingToggle(null);
   };
 
   return (
     <div className="max-w-xl space-y-3">
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Buyers</h2>
-        <button
-          onClick={() => setShowForm((v) => !v)}
-          className="text-sm font-medium text-indigo-600 hover:text-indigo-500"
-        >
-          {showForm ? "Cancel" : "+ Add buyer"}
+        <button onClick={openAddForm} className="text-sm font-medium text-indigo-600 hover:text-indigo-500">
+          + Add buyer
         </button>
       </div>
 
-      {showForm && (
-        <form onSubmit={handleSubmit} className="flex items-end gap-2 rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
-          <div className="flex-1">
-            <label htmlFor="buyerCode" className="block text-xs font-medium text-zinc-600 dark:text-zinc-400">
-              Code
-            </label>
-            <input
-              id="buyerCode"
-              required
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              className={textInputClass()}
-            />
-          </div>
-          <div className="flex-1">
-            <label htmlFor="buyerName" className="block text-xs font-medium text-zinc-600 dark:text-zinc-400">
-              Name
-            </label>
-            <input
-              id="buyerName"
-              required
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className={textInputClass()}
-            />
-          </div>
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
-          >
-            Add
-          </button>
-        </form>
-      )}
-      {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+      {error && !showForm && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
 
       {buyers.length === 0 ? (
         <p className="text-sm text-zinc-500">No buyers yet.</p>
       ) : (
         <ul className="divide-y divide-zinc-100 rounded-md border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
           {buyers.map((buyer) => (
-            <li key={buyer.id} className="flex justify-between px-3 py-2 text-sm">
-              <span className="font-medium text-zinc-800 dark:text-zinc-100">
-                {buyer.name} <span className="text-zinc-400">({buyer.code})</span>
-              </span>
-              <span className="text-zinc-500">{buyer.email ?? buyer.contactPerson ?? ""}</span>
+            <li key={buyer.id} className="flex items-center justify-between px-3 py-2 text-sm">
+              <div>
+                <span className="font-medium text-zinc-800 dark:text-zinc-100">
+                  {buyer.name} <span className="text-zinc-400">({buyer.code})</span>
+                </span>
+                <span className="ml-2 text-zinc-500">{buyer.email ?? buyer.contactPerson ?? ""}</span>
+                {!buyer.isActive && <span className="ml-2 text-xs text-zinc-400">(inactive)</span>}
+              </div>
+              <div className="flex items-center gap-3">
+                <button onClick={() => openEditForm(buyer)} className="text-indigo-600 hover:text-indigo-500">
+                  Edit
+                </button>
+                <ToggleSwitch checked={buyer.isActive} onToggle={() => setPendingToggle(buyer)} />
+              </div>
             </li>
           ))}
         </ul>
       )}
+
+      <Modal open={showForm} onClose={() => setShowForm(false)} title={editingBuyer ? "Edit Buyer" : "Add Buyer"}>
+        <form onSubmit={handleSubmit} className="space-y-3">
+          {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+          <div>
+            <label htmlFor="buyerCode" className="block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+              Code
+            </label>
+            <input
+              id="buyerCode"
+              required
+              value={form.code}
+              onChange={(e) => setForm({ ...form, code: e.target.value })}
+              className={textInputClass()}
+            />
+          </div>
+          <div>
+            <label htmlFor="buyerName" className="block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+              Name
+            </label>
+            <input
+              id="buyerName"
+              required
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              className={textInputClass()}
+            />
+          </div>
+          <div>
+            <label htmlFor="buyerContactPerson" className="block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+              Contact Person
+            </label>
+            <input
+              id="buyerContactPerson"
+              value={form.contactPerson}
+              onChange={(e) => setForm({ ...form, contactPerson: e.target.value })}
+              className={textInputClass()}
+            />
+          </div>
+          <div>
+            <label htmlFor="buyerEmail" className="block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+              Email
+            </label>
+            <input
+              id="buyerEmail"
+              type="email"
+              value={form.email}
+              onChange={(e) => setForm({ ...form, email: e.target.value })}
+              className={textInputClass()}
+            />
+          </div>
+          <div>
+            <label htmlFor="buyerPhone" className="block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+              Phone
+            </label>
+            <input
+              id="buyerPhone"
+              value={form.phone}
+              onChange={(e) => setForm({ ...form, phone: e.target.value })}
+              className={textInputClass()}
+            />
+          </div>
+          <div className="flex justify-end gap-3 pt-2">
+            <button
+              type="button"
+              onClick={() => setShowForm(false)}
+              className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
+            >
+              {isSubmitting ? "Saving…" : editingBuyer ? "Save Changes" : "Add"}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      <ConfirmModal
+        open={pendingToggle !== null}
+        title={pendingToggle?.isActive ? "Deactivate buyer?" : "Activate buyer?"}
+        message={
+          pendingToggle?.isActive
+            ? `"${pendingToggle?.name}" will be deactivated and hidden from active selection lists. You can reactivate it later.`
+            : `"${pendingToggle?.name}" will be marked active again.`
+        }
+        confirmLabel={pendingToggle?.isActive ? "Deactivate" : "Activate"}
+        isDangerous={Boolean(pendingToggle?.isActive)}
+        onConfirm={confirmToggle}
+        onCancel={() => setPendingToggle(null)}
+      />
     </div>
   );
 }

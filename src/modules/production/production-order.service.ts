@@ -11,6 +11,8 @@ import type { Prisma, ProductionOrderStatus } from "@prisma/client";
 import { LotRepository, ProductionOrderRepository } from "./production.repository";
 import type { CreateProductionOrderInput, GenerateMaterialRequestInput } from "./production.schema";
 
+const EPSILON = 0.0001;
+
 export interface ActorContext {
   companyId: string;
   userId: string;
@@ -81,8 +83,31 @@ export async function createProductionOrder(actor: ActorContext, input: CreatePr
   if (input.salesOrderItemId) {
     const item = await prisma.salesOrderItem.findFirst({
       where: { id: input.salesOrderItemId, salesOrder: { companyId: actor.companyId } },
+      include: { breakdown: true },
     });
     if (!item) throw new BusinessRuleError("NOT_FOUND", "Sales order line not found.", { id: input.salesOrderItemId });
+
+    // Cap planned quantity against what the customer actually ordered on
+    // this line — previously nothing checked this at all, so a Production
+    // Order could plan arbitrarily more than the order (tying up material/
+    // capacity for stock nobody ordered), and multiple Production Orders
+    // could silently attach to the same line with no cross-check between
+    // them. `committed` sums every other non-cancelled Production Order
+    // already linked to this exact line.
+    const orderedTotal = item.breakdown.reduce((sum, b) => sum + b.orderedQuantity, 0);
+    const committedAgg = await prisma.productionOrder.aggregate({
+      where: { salesOrderItemId: input.salesOrderItemId, status: { not: "CANCELLED" } },
+      _sum: { plannedQuantity: true },
+    });
+    const committed = Number(committedAgg._sum.plannedQuantity ?? 0);
+    const remaining = orderedTotal - committed;
+    if (input.plannedQuantity > remaining + EPSILON) {
+      throw new BusinessRuleError(
+        "OVER_PRODUCTION_NOT_ALLOWED",
+        `Cannot plan ${input.plannedQuantity} — only ${remaining} of the ${orderedTotal} ordered units on this Sales Order line remain unplanned (${committed} already committed to other Production Order(s)).`,
+        { orderedTotal, committed, remaining }
+      );
+    }
   }
 
   // Snapshot pointer only — Bom has no versioning yet, but this still

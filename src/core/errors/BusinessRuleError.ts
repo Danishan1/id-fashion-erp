@@ -107,6 +107,45 @@ export function toErrorResponse(error: unknown): { status: number; body: unknown
     };
   }
 
+  // Prisma errors that every `findFirst`-then-`create` or bare `:id` lookup
+  // across this codebase can throw, previously falling through to a raw 500
+  // in every single module rather than a clean, expected response:
+  //  - P2007 "Data validation error" — a malformed (non-UUID) id/filter value
+  //    reaching a `@db.Uuid` column, e.g. a bad :id route param.
+  //  - P2002 "Unique constraint failed" — a genuine TOCTOU race between two
+  //    concurrent creates that both passed an app-layer duplicate check
+  //    before either committed; the DB's own unique constraint is what
+  //    actually prevents the duplicate, this just gives it a clean message.
+  if (error && typeof error === "object" && "code" in error) {
+    const prismaError = error as { code?: string; meta?: { target?: string[] | string } };
+    if (prismaError.code === "P2007") {
+      return {
+        status: 400,
+        body: {
+          error: {
+            code: "VALIDATION_ERROR",
+            message: "One or more values in this request are not in the expected format.",
+            details: null,
+          },
+        },
+      };
+    }
+    if (prismaError.code === "P2002") {
+      const target = prismaError.meta?.target;
+      const field = Array.isArray(target) ? target.join(", ") : target;
+      return {
+        status: 409,
+        body: {
+          error: {
+            code: "DUPLICATE_DOC_NUMBER",
+            message: field ? `A record with this ${field} already exists.` : "A record with these values already exists.",
+            details: null,
+          },
+        },
+      };
+    }
+  }
+
   console.error("Unhandled error:", error);
   return {
     status: 500,

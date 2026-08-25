@@ -177,7 +177,12 @@ export async function updateLead(actor: ActorContext, id: string, input: UpdateL
     status: input.status ?? existing.status,
     value: input.value,
     expectedCloseDate: input.expectedCloseDate ? new Date(input.expectedCloseDate) : null,
-    assignedToUserId: input.assignedToUserId || null,
+    // Field omitted entirely (undefined) means "leave assignment as-is," not
+    // "unassign" — the real UI form always resubmits this field so it never
+    // hit this distinction, but a direct API caller doing a partial-intent
+    // update (e.g. only changing status) previously got the lead silently
+    // unassigned. An explicit empty string still means "unassign."
+    assignedToUserId: input.assignedToUserId !== undefined ? input.assignedToUserId || null : existing.assignedToUserId,
     notes: input.notes || null,
   });
 

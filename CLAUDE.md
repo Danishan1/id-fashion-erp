@@ -1697,22 +1697,146 @@ Two confirmed P0 stock-corruption bugs and four P1s were found and fixed:
   against this brand-new route took ~53s due to one-time Turbopack dev-compile, not a hang — worth
   remembering as the likely explanation for the separate not-fully-confirmed Purchase Order route slowness
   noted below, rather than assuming every slow first-hit is a real bug.)
-- **Not confirmed as a real defect — flagged for isolated re-verification**: one QA pass reported
-  `GET /api/v1/purchase-orders/[id]` hanging indefinitely, but reproduced it only under this session's own
-  atypical load (6 concurrent QA agents hammering the same dev server). The agent's own assessment — a
-  Turbopack dev-compile stall, not a deterministic code bug — is reinforced by the Administration fix above
-  independently hitting the identical "brand-new route takes ~53s on its very first hit, then is fast"
-  pattern in complete isolation. Not fixed in this pass; re-test this specific route with no concurrent load
-  (or a production build) before treating it as a confirmed defect.
+- **Not confirmed as a real defect at the time — since root-caused, see the P2-P4 pass below**: one QA pass
+  reported `GET /api/v1/purchase-orders/[id]` hanging indefinitely under this session's own heavy load (6
+  concurrent QA agents). Initially guessed as a Turbopack dev-compile stall; the P2-P4 fix pass below hit the
+  exact same symptom again on a brand-new route and got a definitive root cause — see that section.
 - **Remaining open items from the QA report, not addressed in this pass** (all P2 or lower, see
-  `QA_UAT_REPORT_2026-08-24.md` for full detail): malformed-`:id` routes returning a raw 500 instead of a
-  clean 400/404 (systemic, 2+ modules); duplicate-code creation races producing an occasional raw 500 instead
-  of a clean 409 (systemic `findFirst`-then-`create` TOCTOU, 10+ service files); QC's exact-float-equality
-  quantity validation (`0.1+0.2 !== 0.3`); Production Orders having no cap against their linked Sales Order
-  item's real ordered quantity; Journal's already-reversed-journal reversal attempt raising a raw 500 instead
-  of a clean 409; and a long tail of P3/P4 cosmetic/UX items.
+  `QA_UAT_REPORT_2026-08-24.md` for full detail — all fixed in the P2-P4 pass immediately below): malformed-
+  `:id` routes returning a raw 500 instead of a clean 400/404; duplicate-code creation races producing an
+  occasional raw 500 instead of a clean 409; QC's exact-float-equality quantity validation; Production
+  Orders having no cap against their linked Sales Order item's real ordered quantity; Journal's already-
+  reversed-journal reversal attempt raising a raw 500 instead of a clean 409; and a long tail of P3/P4
+  cosmetic/UX items.
 - `npx tsc --noEmit`, `npm run lint`, and `npm test` (412/412, 8 new) all clean throughout every fix in this
   pass.
+
+## P2-P4 fix pass — every remaining QA/UAT finding addressed (2026-08-25)
+
+Continuation of the QA/UAT report (`QA_UAT_REPORT_2026-08-24.md`) — every P2, and every practically-fixable
+P3/P4 finding, addressed in one pass. Two items were deliberately left open (see end of this section).
+
+**P2 (all fixed):**
+- **Malformed `:id` routes / duplicate-code races → raw 500s, fixed at the shared choke point.** Both were
+  systemic (2+ modules, 10+ service files respectively) but shared one root cause: `toErrorResponse()`
+  (`src/core/errors/BusinessRuleError.ts`) had no handler for two specific Prisma error codes it can see from
+  *any* module — `P2007` ("Data validation error" — a non-UUID string reaching a `@db.Uuid` column,
+  confirmed via a live probe script against a real malformed-id query) and `P2002` (unique constraint —
+  reachable from any `findFirst`-then-`create` duplicate check under a genuine concurrent-request race, the
+  DB constraint the actual protection, this only gives the failure a clean shape). Both now map to a clean
+  400/409 respectively, fixed once for every module rather than patched per call site.
+- **QC quantity validation used exact float equality** (`0.1 + 0.2 !== 0.3` under IEEE-754) — switched to the
+  same epsilon-tolerance convention every other quantity-cap check in `job-order.service.ts` already uses.
+  Bundled in the same schema edit: the QC schema's `reworkTargetStageId`-required rule was stricter than what
+  `recordQcInspection()` actually reads (only when `rejectedQuantity > 0`) — a pure-damage FAIL was
+  unrecordable at a job order's very first stage (no earlier stage to name) purely because of this
+  schema/service mismatch. Both fixed in `production.schema.ts`'s `createQcInspectionSchema`.
+- **Production Orders had no cap against their linked Sales Order item's real ordered quantity** — a 500-unit
+  Production Order could be planned against a 5-unit order line with zero pushback, and multiple Production
+  Orders could silently attach to the same line. `createProductionOrder()` now sums the line's real
+  `orderedQuantity` from its breakdown, subtracts what other non-cancelled Production Orders already
+  committed to that same line, and rejects planning more than what's left (`OVER_PRODUCTION_NOT_ALLOWED`,
+  reused). Make-to-Stock orders (no `salesOrderItemId`) are correctly unaffected.
+- **Journal double-reversal raised a raw 500** — `reverseJournal()` relied solely on the DB's `@unique`
+  constraint on `reversalOfJournalId` to prevent a second reversal (correct for data integrity, confirmed no
+  double-reversal ever occurred), but the resulting `P2002` had no explicit pre-check, so the *common*
+  (non-racing) case surfaced the raw Prisma error instead of a clean one. Added an explicit
+  `if (original.reversedByJournal) throw INVALID_STATE_TRANSITION` check naming the existing reversal; the DB
+  constraint remains the real backstop for a genuine concurrent-reversal race.
+
+**P3 (all practically-fixable items done):**
+- `OVER_RECEIPT_NOT_ALLOWED`'s message now states ordered/already-received/remaining, matching the
+  `Available: X, Requested: Y` template already used elsewhere in Inventory.
+- Journal detail page's Total row now sums the visible lines client-side instead of showing
+  `journal.totalDebit`/`totalCredit` (only ever computed at POST time) — a DRAFT journal no longer shows a
+  self-contradictory "Total 0.00 / 0.00" under correctly-populated line rows.
+- Job Work's `pendingQuantity` metric now reports `0` for a `CANCELLED` order regardless of raw
+  issued/received figures — consistent with cancellation now reversing issued material back to stock (see
+  the P0/P1 pass above).
+- `forwardJobOrder()` now re-fetches and returns the freshly-completed job order when the target stage is
+  final, instead of the pre-mutation object `postStageTransactionInTx()` originally created (status
+  `PENDING`, `completedQuantity` 0) before `completeAtFinalStageInTx()` mutated that same row later in the
+  same transaction.
+- `updateLead()` no longer silently unassigns a lead when `assignedToUserId` is omitted from a partial-intent
+  API update (only an explicit empty string still unassigns) — the real UI form was never affected (it always
+  resubmits the field), this was purely a direct-API-consumer robustness gap.
+- Three client pages (`marketing/ad-integrations`, `attendance`, `marketing/channel-performance`) now check
+  `res.ok` before consuming a fetch response, with a visible error state instead of an infinite spinner or an
+  uncaught `TypeError` on a denied/failed request.
+- **`UnitOfMeasure` gained a real `isActive` column and deactivate capability** (migration
+  `add_unit_of_measure_is_active`) — previously had no way to hide a unit at all once created. While fixing
+  this, found and fixed the *same* latent bug for Color/Size too: their `isActive` Zod field had a
+  `.default(true)`, so the ordinary "Edit" form (which never sends this field — only the dedicated
+  Active/Inactive toggle does) silently reactivated an already-deactivated record on every routine edit.
+  Fixed uniformly across all three (`isActive` now `.optional()` with no default; `create` defaults to
+  `true` when omitted, `update` preserves the existing value when omitted, applies an explicit value when
+  supplied) — verified live end-to-end (deactivate → reactivate round trip via the real UI).
+- **Bulk variant generation accepted a deactivated Color/Size with no check at all** — `generateVariants()`
+  now rejects outright (naming which masters are inactive) rather than silently generating fewer variants
+  than requested, matching the "inactive masters can't be used in a new transaction" pattern already
+  established elsewhere (e.g. Expense's COGS exclusion).
+- **Buyer records had no update or deactivate path at all** (create-only since Phase 3) despite
+  `Buyer.isActive` existing on the model since day one. Added `updateBuyer()` (same
+  optional-isActive-preserved-on-omit pattern as above), a new `PATCH /api/v1/customers/[id]/buyers/[buyerId]`
+  route, and rebuilt `BuyersSection.tsx` with a real Edit modal + Active/Inactive toggle, reusing the existing
+  `Modal`/`ConfirmModal`/`ToggleSwitch` components. Verified live end-to-end through the real UI.
+- Added the same `job_orders_quantity_consistency_check` CHECK-constraint precedent for `job_work_orders`
+  (migration `add_job_work_orders_quantity_check`) — the app-layer guarded accumulators were already correct;
+  this was a hard backstop it was missing relative to its sibling table.
+- **`SampleVersion.status` finally tracks the header's real workflow stage** — previously frozen at
+  `IN_DEVELOPMENT` from creation through Internal QC and Submitted-to-Customer (`SampleVersionStatus` already
+  *had* `INTERNAL_QC`/`SUBMITTED` values, `transitionSampleStatus()` just never set them). Now mirrors the
+  header's status onto the current, still-live version for exactly these three in-flight stages; never
+  touches a terminal version status (`APPROVED`/`REJECTED`/`SUPERSEDED`), which stays reachable only through
+  `addSampleVersion()`/`recordSampleApproval()` as before.
+
+**P4 (all done):**
+- MRP's `contributingStyles` now merges into one entry when a single style reaches a material through two
+  different color-scoped BOM lines, instead of listing it twice with a partial quantity each.
+- MRP's `neededQuantity`/`availableQuantity`/`shortfallQuantity` (and each contributing style's own quantity)
+  are now rounded to 4 decimal places, eliminating IEEE-754 noise like `103.60000000000002` from the JSON
+  response (matches this project's `Decimal(18,4)` quantity-column precision everywhere else).
+- Lead CSV import now aggregates every validation issue in a row into one combined message, matching Deal
+  import's own (already-correct) behavior — the gap was a manual pre-check for an invalid `source` value that
+  threw immediately, short-circuiting before `createLeadSchema.parse()` (whose own `z.enum(LEAD_SOURCES)`
+  already validates the same thing) got a chance to collect every issue in the row together. Removed the
+  redundant pre-check entirely.
+- `GET /api/v1/departments?pageSize=N` no longer reports a `meta.pageSize` that contradicts what was actually
+  returned — the route deliberately floors `take` to 200 (departments are few; dropdowns want the full list)
+  but was never updating `pageSize` to match, so `meta` lied about it. One-line fix.
+
+**Root-caused the P1-6 "PO route hang" from the previous pass, while fixing this one's Buyer feature**: the
+exact same symptom recurred on a brand-new route (`PATCH .../buyers/[buyerId]`) — `preview_logs` showed
+`TypeError: updateBuyer is not a function` despite the export genuinely existing and `tsc` passing clean, with
+the request taking 65s-2.3min before failing. This is a **stale Turbopack module cache** in the long-running
+dev server process, not a request-volume/compile-latency issue as originally guessed — a full dev-server
+restart (not just `prisma generate`) resolved it immediately, and the same request succeeded normally
+afterward. Worth internalizing as a new variant of this project's existing "stale artifact" gotcha family
+(alongside the stale-Prisma-client-in-a-running-dev-server and stale-`.next/dev/types` ones): **after adding
+a new export to a file a route already imports from, or a brand-new route file, if the very first request
+against it fails with an "X is not a function"-shaped error or hangs far longer than a normal compile,
+restart the dev server before assuming it's a real bug** — this cost real debugging time in this session
+before the pattern was recognized.
+
+**Also hit and fixed in passing**: `npx tsc --noEmit` transiently failed with `TS1128`/`TS1005` syntax errors
+inside `.next/dev/types/routes.d.ts` after clearing that directory mid-session (the same class of gotcha
+already documented for `.next/dev/types/validator.ts` in the Stock Movements section) — resolved by hitting
+any page once to force regeneration, then a full dev-server restart once `LayoutProps` still didn't resolve
+from a single page hit alone.
+
+**Deliberately left open, not addressed in this pass** (both broad, cross-cutting audits rather than
+single-file fixes — flagging for a dedicated future pass rather than attempting a rushed partial fix):
+- `DELETE` on Customer/Supplier/Employee performs an unconditional soft-delete with no check for
+  transactional references and no restore path. Real-world risk is low (only `SUPER_ADMIN` holds
+  `masters_core.delete`, and no UI button anywhere calls this endpoint), but a proper fix means auditing
+  reference-checking conventions across every "rich" master, not a one-line change.
+- Internal worker Assignment and the external Job-Work-Issue pool are uncoordinated — the same unprocessed
+  Job Order quantity can be double-committed to both a worker and an external contractor simultaneously.
+  Fixing this properly means `assignWorker()` and `createJobWorkOrder()` cross-checking each other's
+  commitments, a real design change to both functions rather than a guard tweak to one.
+
+412 tests → **450 tests** (38 new), `npx tsc --noEmit`, `npm run lint`, and `npm test` all clean throughout
+every fix in this pass.
 
 ## Recommended Stack
 

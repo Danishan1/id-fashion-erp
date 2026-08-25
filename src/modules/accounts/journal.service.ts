@@ -295,6 +295,21 @@ export async function reverseJournal(actor: ActorContext, id: string, input: Rev
     );
   }
 
+  // Previously relied solely on the DB's own `@unique` constraint on
+  // reversalOfJournalId to prevent a second reversal — correct for data
+  // integrity (confirmed: never more than one reversal exists), but the
+  // resulting P2002 propagated as a raw 500 instead of a clean business
+  // error, including under a genuine two-concurrent-reversal race. This
+  // explicit pre-check gives the common (non-racing) case a proper 409; the
+  // DB constraint remains the real, race-safe backstop.
+  if (original.reversedByJournal) {
+    throw new BusinessRuleError(
+      "INVALID_STATE_TRANSITION",
+      `This journal has already been reversed by ${original.reversedByJournal.journalNumber}.`,
+      { reversedByJournalId: original.reversedByJournal.id }
+    );
+  }
+
   const reversalNumber = await generateDocumentNumber({
     companyId: actor.companyId,
     branchId: actor.branchId ?? null,

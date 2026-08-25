@@ -70,6 +70,8 @@ beforeEach(() => {
   vi.mocked(SampleRequestRepository.findAnyById).mockReset();
   vi.mocked(SampleRequestRepository.update).mockReset();
   vi.mocked(prisma.crmFollowup.create).mockReset().mockResolvedValue({} as never);
+  vi.mocked(SampleVersionRepository.findLatest).mockReset();
+  vi.mocked(SampleVersionRepository.update).mockReset();
 });
 
 describe("recalculateSampleVersionCosting", () => {
@@ -270,5 +272,49 @@ describe("transitionSampleStatus", () => {
     await transitionSampleStatus(actor, "sam-1", "ON_HOLD" as never);
 
     expect(prisma.crmFollowup.create).not.toHaveBeenCalled();
+  });
+
+  // Regression tests for the P3 fix: SampleVersion.status previously stayed
+  // frozen at "IN_DEVELOPMENT" from creation through Internal QC and
+  // Submitted-to-Customer — the header's own status is now mirrored onto the
+  // current, still-live version for these three in-flight stages.
+  it("mirrors the header's new status onto the current version for INTERNAL_QC/SUBMITTED_TO_CUSTOMER", async () => {
+    vi.mocked(SampleRequestRepository.findAnyById).mockResolvedValue({ id: "sam-1", status: "IN_DEVELOPMENT", customerId: "cust-1" } as never);
+    vi.mocked(SampleRequestRepository.update).mockResolvedValue({ id: "sam-1", status: "INTERNAL_QC" } as never);
+    vi.mocked(SampleVersionRepository.findLatest).mockResolvedValue({ id: "ver-1", status: "IN_DEVELOPMENT" } as never);
+
+    await transitionSampleStatus(actor, "sam-1", "INTERNAL_QC" as never);
+
+    expect(SampleVersionRepository.update).toHaveBeenCalledWith("ver-1", { status: "INTERNAL_QC" });
+  });
+
+  it("maps SUBMITTED_TO_CUSTOMER to the version's own SUBMITTED value, not the header's literal name", async () => {
+    vi.mocked(SampleRequestRepository.findAnyById).mockResolvedValue({ id: "sam-1", status: "INTERNAL_QC", customerId: "cust-1" } as never);
+    vi.mocked(SampleRequestRepository.update).mockResolvedValue({ id: "sam-1", status: "SUBMITTED_TO_CUSTOMER" } as never);
+    vi.mocked(SampleVersionRepository.findLatest).mockResolvedValue({ id: "ver-1", status: "INTERNAL_QC" } as never);
+
+    await transitionSampleStatus(actor, "sam-1", "SUBMITTED_TO_CUSTOMER" as never);
+
+    expect(SampleVersionRepository.update).toHaveBeenCalledWith("ver-1", { status: "SUBMITTED" });
+  });
+
+  it("never overwrites a terminal version status (APPROVED/REJECTED/SUPERSEDED)", async () => {
+    vi.mocked(SampleRequestRepository.findAnyById).mockResolvedValue({ id: "sam-1", status: "TECH_PACK_READY", customerId: "cust-1" } as never);
+    vi.mocked(SampleRequestRepository.update).mockResolvedValue({ id: "sam-1", status: "IN_DEVELOPMENT" } as never);
+    vi.mocked(SampleVersionRepository.findLatest).mockResolvedValue({ id: "ver-old", status: "SUPERSEDED" } as never);
+
+    await transitionSampleStatus(actor, "sam-1", "IN_DEVELOPMENT" as never);
+
+    expect(SampleVersionRepository.update).not.toHaveBeenCalled();
+  });
+
+  it("does not touch version status for a transition with no version-status counterpart (e.g. ON_HOLD)", async () => {
+    vi.mocked(SampleRequestRepository.findAnyById).mockResolvedValue({ id: "sam-1", status: "IN_DEVELOPMENT", customerId: "cust-1" } as never);
+    vi.mocked(SampleRequestRepository.update).mockResolvedValue({ id: "sam-1", status: "ON_HOLD" } as never);
+
+    await transitionSampleStatus(actor, "sam-1", "ON_HOLD" as never);
+
+    expect(SampleVersionRepository.findLatest).not.toHaveBeenCalled();
+    expect(SampleVersionRepository.update).not.toHaveBeenCalled();
   });
 });
