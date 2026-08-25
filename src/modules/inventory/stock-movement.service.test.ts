@@ -7,19 +7,36 @@ vi.mock("./inventory.service", () => ({ getAvailableQuantity: vi.fn(), recordInv
 vi.mock("./stock-movement.repository", () => ({
   StockMovementRepository: { createWithItems: vi.fn() },
 }));
+vi.mock("@/modules/products/product.repository", () => ({
+  ProductRepository: { findMaterialById: vi.fn() },
+}));
+vi.mock("@/modules/lookups/lookup.repository", () => ({
+  LookupRepository: { unit: { findUnique: vi.fn() } },
+}));
 
 const { generateDocumentNumber } = await import("@/core/numbering/DocumentNumberingService");
 const { getAvailableQuantity, recordInventoryTransaction } = await import("./inventory.service");
 const { StockMovementRepository } = await import("./stock-movement.repository");
+const { ProductRepository } = await import("@/modules/products/product.repository");
+const { LookupRepository } = await import("@/modules/lookups/lookup.repository");
 const { createStockMovement } = await import("./stock-movement.service");
 
 const actor = { companyId: "co-1", userId: "user-1", branchId: "br-1" };
+
+// Every test's items use uomId "uom-1", which is set here to match the
+// material's own base UOM — the "no conversion needed" branch — so these
+// pre-existing tests keep asserting the same as-entered quantities. UOM
+// conversion itself is covered by its own dedicated test below.
+const BASE_UOM = { id: "uom-1", baseUnitId: null, conversionFactor: 1 };
 
 beforeEach(() => {
   vi.mocked(generateDocumentNumber).mockReset().mockResolvedValue("STK-2026-00001");
   vi.mocked(getAvailableQuantity).mockReset();
   vi.mocked(recordInventoryTransaction).mockReset();
   vi.mocked(StockMovementRepository.createWithItems).mockReset().mockResolvedValue({ id: "sm-1" } as never);
+  vi.mocked(ProductRepository.findMaterialById)
+    .mockReset()
+    .mockResolvedValue({ id: "mat-1", styleName: "Test Material", baseUom: BASE_UOM } as never);
 });
 
 describe("createStockMovement", () => {
@@ -128,5 +145,70 @@ describe("createStockMovement", () => {
       actor,
       expect.objectContaining({ warehouseId: "wh-a", quantity: -8, transactionType: "ADJUSTMENT" })
     );
+  });
+
+  it("converts a line's quantity into the material's base UOM before checking availability and posting to the ledger", async () => {
+    vi.mocked(LookupRepository.unit.findUnique).mockResolvedValue({
+      id: "uom-dzn",
+      name: "Dozen",
+      baseUnitId: "uom-1",
+      conversionFactor: 12,
+    } as never);
+    vi.mocked(getAvailableQuantity).mockResolvedValue(50);
+
+    await createStockMovement(actor, {
+      movementType: "RETURN_TO_SUPPLIER",
+      warehouseId: "wh-a",
+      supplierId: "sup-1",
+      items: [{ productId: "mat-1", uomId: "uom-dzn", quantity: 2, remarks: "" }],
+    } as never);
+
+    // 2 DZN -> 24 PCS (the material's base unit) — both the availability
+    // check and the ledger post must see the converted quantity, not 2.
+    expect(getAvailableQuantity).toHaveBeenCalledWith("co-1", "mat-1", "wh-a");
+    expect(recordInventoryTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      actor,
+      expect.objectContaining({ quantity: -24, transactionType: "RETURN_TO_SUPPLIER" })
+    );
+  });
+
+  it("rejects a line whose material has no base UOM configured", async () => {
+    vi.mocked(ProductRepository.findMaterialById).mockResolvedValue({
+      id: "mat-1",
+      styleName: "Test Material",
+      baseUom: null,
+    } as never);
+
+    await expect(
+      createStockMovement(actor, {
+        movementType: "RETURN_TO_SUPPLIER",
+        warehouseId: "wh-a",
+        supplierId: "sup-1",
+        items: [{ productId: "mat-1", uomId: "uom-1", quantity: 5, remarks: "" }],
+      } as never)
+    ).rejects.toMatchObject({ code: "UOM_CONVERSION_UNAVAILABLE" });
+
+    expect(recordInventoryTransaction).not.toHaveBeenCalled();
+  });
+
+  it("rejects a line whose chosen unit has no fixed conversion path to the material's base unit", async () => {
+    vi.mocked(LookupRepository.unit.findUnique).mockResolvedValue({
+      id: "uom-other",
+      name: "Roll",
+      baseUnitId: null,
+      conversionFactor: 1,
+    } as never);
+
+    await expect(
+      createStockMovement(actor, {
+        movementType: "RETURN_TO_SUPPLIER",
+        warehouseId: "wh-a",
+        supplierId: "sup-1",
+        items: [{ productId: "mat-1", uomId: "uom-other", quantity: 5, remarks: "" }],
+      } as never)
+    ).rejects.toMatchObject({ code: "UOM_CONVERSION_UNAVAILABLE" });
+
+    expect(recordInventoryTransaction).not.toHaveBeenCalled();
   });
 });

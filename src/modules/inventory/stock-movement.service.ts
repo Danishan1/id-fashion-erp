@@ -3,6 +3,9 @@ import { prisma } from "@/core/db/client";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingService";
 import type { ListQuery } from "@/lib/list-query";
+import { convertUomQuantity } from "@/lib/uom-conversion";
+import { LookupRepository } from "@/modules/lookups/lookup.repository";
+import { ProductRepository } from "@/modules/products/product.repository";
 import type { Prisma } from "@prisma/client";
 import { getAvailableQuantity, recordInventoryTransaction } from "./inventory.service";
 import { StockMovementRepository } from "./stock-movement.repository";
@@ -45,6 +48,49 @@ export async function getStockMovementById(companyId: string, id: string) {
 }
 
 /**
+ * Converts every line's quantity into its material's own base UOM before it
+ * can reach the ledger. Stock Movement previously posted the raw as-entered
+ * number regardless of the chosen unit — the one ledger-writing module (with
+ * Job Work Order) that skipped this, unlike Purchase Order/Goods
+ * Receipt/Material Request, which all convert. A mismatched unit here would
+ * silently corrupt StockBalance against every other module's base-UOM
+ * assumption. Returns the converted quantities in the same order as
+ * `items`; `StockMovementItem.quantity` itself is left in the originally
+ * entered unit (the commercial record), matching Goods Receipt's own
+ * "document keeps the original unit, ledger keeps base UOM" precedent.
+ */
+async function convertItemsToBaseUom(companyId: string, items: CreateStockMovementInput["items"]): Promise<number[]> {
+  const baseQuantities: number[] = [];
+  for (const item of items) {
+    const material = await ProductRepository.findMaterialById(companyId, item.productId);
+    if (!material) throw new BusinessRuleError("NOT_FOUND", "Material not found.", { id: item.productId });
+    if (!material.baseUom) {
+      throw new BusinessRuleError(
+        "UOM_CONVERSION_UNAVAILABLE",
+        `"${material.styleName}" has no base unit configured — cannot record stock for it.`,
+        { productId: item.productId }
+      );
+    }
+    if (item.uomId === material.baseUom.id) {
+      baseQuantities.push(item.quantity);
+      continue;
+    }
+    const chosenUom = await LookupRepository.unit.findUnique({ where: { id: item.uomId } });
+    if (!chosenUom) throw new BusinessRuleError("NOT_FOUND", "Unit not found.", { id: item.uomId });
+    const converted = convertUomQuantity(item.quantity, chosenUom, material.baseUom);
+    if (converted === null) {
+      throw new BusinessRuleError(
+        "UOM_CONVERSION_UNAVAILABLE",
+        `"${chosenUom.name}" has no fixed conversion to "${material.styleName}"'s base unit ("${material.baseUom.name}") — pick a convertible unit.`,
+        { productId: item.productId, uomId: item.uomId }
+      );
+    }
+    baseQuantities.push(converted);
+  }
+  return baseQuantities;
+}
+
+/**
  * Every StockMovement, regardless of movementType, is one document that
  * posts to the shared ledger via recordInventoryTransaction() — never
  * arithmetic on StockBalance directly (this project's own established
@@ -54,17 +100,26 @@ export async function getStockMovementById(companyId: string, id: string) {
  * endpoint on this one.
  */
 export async function createStockMovement(actor: ActorContext, input: CreateStockMovementInput) {
+  // Convert every line to its material's base UOM up front (pure
+  // computation, no writes yet) — everything downstream (the availability
+  // check and every ledger post) must speak base UOM, matching every other
+  // ledger-writing module's convention.
+  const baseQuantities = await convertItemsToBaseUom(actor.companyId, input.items);
+
   // TRANSFER/RETURN_TO_SUPPLIER always remove stock from `warehouseId`;
   // ADJUSTMENT only removes stock when a line's signed quantity is negative
   // (shrinkage/write-off) — a positive adjustment (stock found) never needs
   // this check. Checked up front, before any write, since this is a manual,
   // low-frequency, reviewed action (the same tradeoff Material Request's own
   // issue-from-stock check already accepted) rather than a hot concurrent
-  // path needing a DB-level guard.
-  for (const item of input.items) {
-    const removesStock = input.movementType !== "ADJUSTMENT" || item.quantity < 0;
+  // path needing a DB-level guard — the atomic floor guard inside
+  // recordInventoryTransaction() is the real backstop against a race.
+  for (let i = 0; i < input.items.length; i++) {
+    const item = input.items[i];
+    const baseQuantity = baseQuantities[i];
+    const removesStock = input.movementType !== "ADJUSTMENT" || baseQuantity < 0;
     if (!removesStock) continue;
-    const removedQuantity = Math.abs(item.quantity);
+    const removedQuantity = Math.abs(baseQuantity);
     const available = await getAvailableQuantity(actor.companyId, item.productId, input.warehouseId);
     if (removedQuantity > available) {
       throw new BusinessRuleError(
@@ -106,7 +161,9 @@ export async function createStockMovement(actor: ActorContext, input: CreateStoc
       }))
     );
 
-    for (const item of input.items) {
+    for (let i = 0; i < input.items.length; i++) {
+      const item = input.items[i];
+      const baseQuantity = baseQuantities[i];
       if (input.movementType === "TRANSFER") {
         // One document, two ledger entries — stock leaves the source and
         // lands at the destination inside the same transaction, so the two
@@ -117,7 +174,7 @@ export async function createStockMovement(actor: ActorContext, input: CreateStoc
           productId: item.productId,
           warehouseId: input.warehouseId,
           transactionType: inventoryTransactionType,
-          quantity: -item.quantity,
+          quantity: -baseQuantity,
           referenceModule: "STOCK_MOVEMENT",
           referenceRecordId: created.id,
         });
@@ -125,7 +182,7 @@ export async function createStockMovement(actor: ActorContext, input: CreateStoc
           productId: item.productId,
           warehouseId: input.toWarehouseId!,
           transactionType: inventoryTransactionType,
-          quantity: item.quantity,
+          quantity: baseQuantity,
           referenceModule: "STOCK_MOVEMENT",
           referenceRecordId: created.id,
         });
@@ -134,18 +191,19 @@ export async function createStockMovement(actor: ActorContext, input: CreateStoc
           productId: item.productId,
           warehouseId: input.warehouseId,
           transactionType: inventoryTransactionType,
-          quantity: -item.quantity,
+          quantity: -baseQuantity,
           referenceModule: "STOCK_MOVEMENT",
           referenceRecordId: created.id,
         });
       } else {
         // ADJUSTMENT — the item's own signed quantity carries the meaning
-        // (positive = found, negative = written off), posted as-is.
+        // (positive = found, negative = written off), posted as-is (already
+        // base-UOM converted, sign preserved by convertUomQuantity).
         await recordInventoryTransaction(tx, actor, {
           productId: item.productId,
           warehouseId: input.warehouseId,
           transactionType: inventoryTransactionType,
-          quantity: item.quantity,
+          quantity: baseQuantity,
           referenceModule: "STOCK_MOVEMENT",
           referenceRecordId: created.id,
         });

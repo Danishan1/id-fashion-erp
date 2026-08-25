@@ -3,7 +3,13 @@ import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/numbering/DocumentNumberingService", () => ({ generateDocumentNumber: vi.fn() }));
-vi.mock("@/modules/inventory/inventory.service", () => ({ recordInventoryTransaction: vi.fn() }));
+vi.mock("@/modules/inventory/inventory.service", () => ({ recordInventoryTransaction: vi.fn(), getAvailableQuantity: vi.fn() }));
+vi.mock("@/modules/products/product.repository", () => ({
+  ProductRepository: { findMaterialById: vi.fn() },
+}));
+vi.mock("@/modules/lookups/lookup.repository", () => ({
+  LookupRepository: { unit: { findUnique: vi.fn() } },
+}));
 vi.mock("@/modules/purchasing/fabric-roll.repository", () => ({
   FabricRollRepository: { findByIdWithContext: vi.fn(), guardedDecrementRemaining: vi.fn() },
 }));
@@ -35,7 +41,9 @@ vi.mock("@/core/db/client", () => ({
 }));
 
 const { generateDocumentNumber } = await import("@/core/numbering/DocumentNumberingService");
-const { recordInventoryTransaction } = await import("@/modules/inventory/inventory.service");
+const { recordInventoryTransaction, getAvailableQuantity } = await import("@/modules/inventory/inventory.service");
+const { ProductRepository } = await import("@/modules/products/product.repository");
+const { LookupRepository } = await import("@/modules/lookups/lookup.repository");
 const { FabricRollRepository } = await import("@/modules/purchasing/fabric-roll.repository");
 const { applyJobOrderQuantityDelta } = await import("./job-order.service");
 const { JobOrderRepository } = await import("./production.repository");
@@ -74,6 +82,15 @@ function jobWorkOrder(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.mocked(generateDocumentNumber).mockReset().mockResolvedValue("JWO-2026-00001");
   vi.mocked(recordInventoryTransaction).mockReset().mockResolvedValue(undefined as never);
+  vi.mocked(getAvailableQuantity).mockReset().mockResolvedValue(1000);
+  // Every existing test's material line uses uomId "uom-2" — set here to
+  // match the material's own base UOM (the "no conversion needed" branch)
+  // so pre-existing tests keep asserting the same as-entered quantities.
+  // UOM conversion itself is covered by its own dedicated test below.
+  vi.mocked(ProductRepository.findMaterialById)
+    .mockReset()
+    .mockResolvedValue({ id: "prod-1", styleName: "Test Material", baseUom: { id: "uom-2", baseUnitId: null, conversionFactor: 1 } } as never);
+  vi.mocked(LookupRepository.unit.findUnique).mockReset();
   vi.mocked(FabricRollRepository.findByIdWithContext).mockReset();
   vi.mocked(FabricRollRepository.guardedDecrementRemaining).mockReset().mockResolvedValue({ count: 1 } as never);
   vi.mocked(applyJobOrderQuantityDelta).mockReset().mockResolvedValue(undefined as never);
@@ -161,6 +178,63 @@ describe("createJobWorkOrder", () => {
         materials: [{ productId: "prod-1", quantity: 10, uomId: "uom-2", warehouseId: "wh-1", fabricRollId: "roll-1", notes: "" }],
       })
     ).rejects.toThrow(BusinessRuleError);
+  });
+
+  it("rejects issuing a raw-material line with no fabric roll when the warehouse doesn't have enough stock", async () => {
+    vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder({ plannedQuantity: 100 }) as never);
+    vi.mocked(getAvailableQuantity).mockResolvedValue(3);
+
+    await expect(
+      createJobWorkOrder(actor, {
+        jobOrderId: "jo-1",
+        supplierId: "sup-1",
+        issuedQuantity: 5,
+        uomId: "uom-1",
+        issueDate: "2026-08-24",
+        expectedCompletionDate: "",
+        remarks: "",
+        materials: [{ productId: "prod-1", quantity: 10, uomId: "uom-2", warehouseId: "wh-1", fabricRollId: "", notes: "" }],
+      })
+    ).rejects.toMatchObject({ code: "INSUFFICIENT_RAW_MATERIAL_STOCK" });
+
+    expect(recordInventoryTransaction).not.toHaveBeenCalled();
+    expect(JobWorkOrderRepository.createWithMaterialsInTx).not.toHaveBeenCalled();
+  });
+
+  it("converts a material line's quantity into its base UOM before checking stock and posting to the ledger", async () => {
+    vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder({ plannedQuantity: 100 }) as never);
+    vi.mocked(JobWorkOrderRepository.createWithMaterialsInTx).mockResolvedValue(jobWorkOrder() as never);
+    vi.mocked(ProductRepository.findMaterialById).mockResolvedValue({
+      id: "prod-1",
+      styleName: "Test Material",
+      baseUom: { id: "uom-base", baseUnitId: null, conversionFactor: 1 },
+    } as never);
+    vi.mocked(LookupRepository.unit.findUnique).mockResolvedValue({
+      id: "uom-dzn",
+      name: "Dozen",
+      baseUnitId: "uom-base",
+      conversionFactor: 12,
+    } as never);
+    vi.mocked(getAvailableQuantity).mockResolvedValue(1000);
+
+    await createJobWorkOrder(actor, {
+      jobOrderId: "jo-1",
+      supplierId: "sup-1",
+      issuedQuantity: 5,
+      uomId: "uom-1",
+      issueDate: "2026-08-24",
+      expectedCompletionDate: "",
+      remarks: "",
+      materials: [{ productId: "prod-1", quantity: 2, uomId: "uom-dzn", warehouseId: "wh-1", fabricRollId: "", notes: "" }],
+    });
+
+    // 2 DZN -> 24 (the material's base unit).
+    expect(getAvailableQuantity).toHaveBeenCalledWith("co-1", "prod-1", "wh-1");
+    expect(recordInventoryTransaction).toHaveBeenCalledWith(
+      mockTx,
+      actor,
+      expect.objectContaining({ transactionType: "JOB_WORK_ISSUE", quantity: -24 })
+    );
   });
 });
 

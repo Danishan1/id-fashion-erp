@@ -9,6 +9,13 @@ interface ActorContext {
   branchId?: string | null;
 }
 
+// Decimal(18,4) columns throughout this schema — a small tolerance absorbs
+// floating-point drift from UOM conversion (e.g. YDS->MTR) without letting a
+// meaningfully negative balance through. Matches the EPSILON idiom already
+// used by every other quantity-guard in this codebase (job-order.service.ts,
+// job-work-order.service.ts, etc).
+const EPSILON = 0.0001;
+
 interface RecordInventoryTransactionInput {
   productId: string;
   warehouseId: string;
@@ -63,7 +70,33 @@ export async function recordInventoryTransaction(
     notes: input.notes || null,
   });
 
-  await StockBalanceRepository.upsertIncrement(tx, actor.companyId, input.productId, input.warehouseId, input.quantity);
+  // A receipt (quantity >= 0) can never drive the balance negative, so a
+  // plain upsert is safe. A decrement (quantity < 0) is the one direction
+  // that can — guarded atomically here, the single choke point every module
+  // writes through, so no caller can bypass this floor by mistake. This is
+  // deliberately the last line of defense: callers should still do their own
+  // friendly pre-check with a helpful "Available: X, Requested: Y" message;
+  // this guard exists to close the race a pre-check alone can't.
+  if (input.quantity >= 0) {
+    await StockBalanceRepository.upsertIncrement(tx, actor.companyId, input.productId, input.warehouseId, input.quantity);
+  } else {
+    const decrementAmount = -input.quantity;
+    const guard = await StockBalanceRepository.guardedDecrement(
+      tx,
+      actor.companyId,
+      input.productId,
+      input.warehouseId,
+      decrementAmount,
+      decrementAmount - EPSILON
+    );
+    if (guard.count === 0) {
+      throw new BusinessRuleError(
+        "INSUFFICIENT_STOCK_FOR_MOVEMENT",
+        `Not enough stock to post this transaction — requested ${decrementAmount}, but the available balance at this warehouse is insufficient.`,
+        { productId: input.productId, warehouseId: input.warehouseId, requested: decrementAmount }
+      );
+    }
+  }
 }
 
 /** Available quantity for one product at one specific warehouse — what

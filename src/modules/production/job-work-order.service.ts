@@ -3,7 +3,10 @@ import { prisma } from "@/core/db/client";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingService";
 import type { ListQuery } from "@/lib/list-query";
-import { recordInventoryTransaction } from "@/modules/inventory/inventory.service";
+import { convertUomQuantity } from "@/lib/uom-conversion";
+import { getAvailableQuantity, recordInventoryTransaction } from "@/modules/inventory/inventory.service";
+import { LookupRepository } from "@/modules/lookups/lookup.repository";
+import { ProductRepository } from "@/modules/products/product.repository";
 import { FabricRollRepository } from "@/modules/purchasing/fabric-roll.repository";
 import type { JobWorkOrderStatus, Prisma } from "@prisma/client";
 import { applyJobOrderQuantityDelta } from "./job-order.service";
@@ -98,6 +101,62 @@ export async function getJobWorkOrderById(companyId: string, id: string) {
 }
 
 /**
+ * Converts each raw-material line into its own material's base UOM, and
+ * checks it against real warehouse stock — before this fix, a job-work-order
+ * material line posted its raw as-entered quantity straight to the ledger
+ * with zero stock check for a non-roll material (a single ordinary request
+ * could drive stock arbitrarily negative, no concurrency needed) and with no
+ * UOM conversion at all (a non-base unit would silently corrupt the shared
+ * ledger). Returns the converted quantities in the same order as `materials`.
+ */
+async function convertMaterialsToBaseUomAndCheckStock(
+  companyId: string,
+  materials: CreateJobWorkOrderInput["materials"]
+): Promise<number[]> {
+  const baseQuantities: number[] = [];
+  for (const material of materials) {
+    const product = await ProductRepository.findMaterialById(companyId, material.productId);
+    if (!product) throw new BusinessRuleError("NOT_FOUND", "Material not found.", { id: material.productId });
+    if (!product.baseUom) {
+      throw new BusinessRuleError(
+        "UOM_CONVERSION_UNAVAILABLE",
+        `"${product.styleName}" has no base unit configured — cannot record stock for it.`,
+        { productId: material.productId }
+      );
+    }
+
+    let baseQuantity: number;
+    if (material.uomId === product.baseUom.id) {
+      baseQuantity = material.quantity;
+    } else {
+      const chosenUom = await LookupRepository.unit.findUnique({ where: { id: material.uomId } });
+      if (!chosenUom) throw new BusinessRuleError("NOT_FOUND", "Unit not found.", { id: material.uomId });
+      const converted = convertUomQuantity(material.quantity, chosenUom, product.baseUom);
+      if (converted === null) {
+        throw new BusinessRuleError(
+          "UOM_CONVERSION_UNAVAILABLE",
+          `"${chosenUom.name}" has no fixed conversion to "${product.styleName}"'s base unit ("${product.baseUom.name}") — pick a convertible unit.`,
+          { productId: material.productId, uomId: material.uomId }
+        );
+      }
+      baseQuantity = converted;
+    }
+
+    const available = await getAvailableQuantity(companyId, material.productId, material.warehouseId);
+    if (baseQuantity > available + EPSILON) {
+      throw new BusinessRuleError(
+        "INSUFFICIENT_RAW_MATERIAL_STOCK",
+        `Cannot issue ${baseQuantity} of "${product.styleName}" to job-work — only ${available} is available at the selected warehouse.`,
+        { productId: material.productId, warehouseId: material.warehouseId, available, requested: baseQuantity }
+      );
+    }
+
+    baseQuantities.push(baseQuantity);
+  }
+  return baseQuantities;
+}
+
+/**
  * issuedQuantity draws down the parent JobOrder's "remaining/unprocessed"
  * pool (plannedQuantity - completed - rejected - damaged), minus whatever's
  * already pending on this JobOrder's other active job-work orders — the
@@ -130,6 +189,10 @@ export async function createJobWorkOrder(actor: ActorContext, input: CreateJobWo
       if (!roll) throw new BusinessRuleError("NOT_FOUND", "Fabric roll not found.", { id: material.fabricRollId });
     }
   }
+
+  // Convert every raw-material line to its material's base UOM and check it
+  // against real warehouse stock, up front, before any write.
+  const materialBaseQuantities = await convertMaterialsToBaseUomAndCheckStock(actor.companyId, input.materials);
 
   const jobWorkNumber = await generateDocumentNumber({
     companyId: actor.companyId,
@@ -166,20 +229,24 @@ export async function createJobWorkOrder(actor: ActorContext, input: CreateJobWo
     // The WIP quantity itself never posts to the ledger — it has no
     // StockBalance row to decrement (WIP location is tracked structurally
     // via the JobOrder/stage graph, not the inventory ledger). Only the
-    // optional raw-material lines are real stock leaving a real warehouse.
-    for (const material of input.materials) {
+    // optional raw-material lines are real stock leaving a real warehouse,
+    // posted in their material's base UOM (materialBaseQuantities), not the
+    // as-entered quantity.
+    for (let i = 0; i < input.materials.length; i++) {
+      const material = input.materials[i];
+      const baseQuantity = materialBaseQuantities[i];
       await recordInventoryTransaction(tx, actor, {
         productId: material.productId,
         warehouseId: material.warehouseId,
         transactionType: "JOB_WORK_ISSUE",
-        quantity: -material.quantity,
+        quantity: -baseQuantity,
         referenceModule: "JOB_WORK_ORDER",
         referenceRecordId: order.id,
         fabricRollId: material.fabricRollId || null,
       });
 
       if (material.fabricRollId) {
-        const guard = await FabricRollRepository.guardedDecrementRemaining(tx, material.fabricRollId, material.quantity);
+        const guard = await FabricRollRepository.guardedDecrementRemaining(tx, material.fabricRollId, baseQuantity);
         if (guard.count === 0) {
           throw new BusinessRuleError("INSUFFICIENT_RAW_MATERIAL_STOCK", "Not enough remaining quantity on the selected fabric roll.", {
             fabricRollId: material.fabricRollId,

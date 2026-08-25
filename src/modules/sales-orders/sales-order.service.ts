@@ -5,6 +5,7 @@ import { PermissionService } from "@/core/rbac/PermissionService";
 import type { ListQuery } from "@/lib/list-query";
 import { prisma } from "@/core/db/client";
 import { CustomerRepository } from "@/modules/customers/customer.repository";
+import { ProductRepository } from "@/modules/products/product.repository";
 import { SampleRequestRepository } from "@/modules/sampling/sample.repository";
 import { SalesInvoiceRepository } from "@/modules/accounts/sales-invoice.repository";
 import { DispatchRepository } from "@/modules/dispatch/dispatch.repository";
@@ -88,9 +89,28 @@ async function assertSamplesApprovedOrOverride(
   await PermissionService.assert(actor.userId, "sales_orders", "approve", { createdBy: requestedByUserId });
 }
 
+/**
+ * Every other module that references `Product` by id (BOM, Purchase Order,
+ * Material Request) restricts its lookup to the correct `itemType` via
+ * `findMaterialById`/`findStyleById` — Sales Order was the one exception,
+ * accepting any UUID that exists in `products` with no itemType check at
+ * all, so a raw material could be sold as a finished-goods line via a direct
+ * API call (the UI's own picker was the only thing preventing it). Closes
+ * that gap the same way every sibling module already does.
+ */
+async function assertItemsAreStyles(companyId: string, items: { productId: string }[]) {
+  const distinctProductIds = [...new Set(items.map((item) => item.productId))];
+  for (const productId of distinctProductIds) {
+    const style = await ProductRepository.findStyleById(companyId, productId);
+    if (!style) throw new BusinessRuleError("NOT_FOUND", "Style not found.", { id: productId });
+  }
+}
+
 export async function createSalesOrder(actor: ActorContext, input: SalesOrderInput) {
   const customer = await CustomerRepository.findByIdWithBuyers(actor.companyId, input.customerId);
   if (!customer) throw new BusinessRuleError("NOT_FOUND", "Customer not found.", { id: input.customerId });
+
+  await assertItemsAreStyles(actor.companyId, input.items);
 
   const company = await CompanyRepository.findBaseCurrencyCode(actor.companyId);
   if (!company) throw new BusinessRuleError("NOT_FOUND", "Company not found.", { id: actor.companyId });
@@ -178,6 +198,8 @@ export async function createSalesOrder(actor: ActorContext, input: SalesOrderInp
 export async function updateSalesOrder(actor: ActorContext, id: string, input: UpdateSalesOrderInput) {
   const existing = await SalesOrderRepository.findByIdWithDetails(actor.companyId, id);
   if (!existing) throw new BusinessRuleError("NOT_FOUND", "Sales order not found.", { id });
+
+  await assertItemsAreStyles(actor.companyId, input.items);
 
   if (existing.status !== "DRAFT" && existing.status !== "CONFIRMED") {
     throw new BusinessRuleError(

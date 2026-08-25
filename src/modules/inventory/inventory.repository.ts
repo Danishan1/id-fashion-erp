@@ -25,6 +25,28 @@ export const StockBalanceRepository = {
       update: { quantityOnHand: { increment: deltaQuantity } },
     }),
 
+  /**
+   * Atomic floor guard for any stock decrement — the cap (a balance row must
+   * already exist with at least `minimumRequiredBalance`) is expressed in the
+   * WHERE clause, not read-then-written, so it's safe under concurrency: two
+   * racing decrements against the same balance can't both succeed and drive
+   * `quantityOnHand` negative. `count === 0` means either no balance row
+   * exists yet (implicitly zero stock) or the existing balance is
+   * insufficient — both are correctly rejected by the caller.
+   */
+  guardedDecrement: (
+    tx: Prisma.TransactionClient,
+    companyId: string,
+    productId: string,
+    warehouseId: string,
+    decrementAmount: number,
+    minimumRequiredBalance: number
+  ) =>
+    tx.stockBalance.updateMany({
+      where: { companyId, productId, warehouseId, quantityOnHand: { gte: minimumRequiredBalance } },
+      data: { quantityOnHand: { decrement: decrementAmount } },
+    }),
+
   /** Single product+warehouse balance — used by Material Request's issue
    * action to check available stock at the specific warehouse it's issuing
    * from (unlike sumByProductIds, which is company-wide/warehouse-agnostic). */
