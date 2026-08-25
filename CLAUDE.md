@@ -1973,6 +1973,52 @@ every commit. Full report inventory (report/category/key/DB source/filters/drill
 - Weekly/Monthly MIS trend views beyond the Daily MIS built this pass — sequencing, not a gap.
 - Not yet merged to `main` — still on the `report` branch pending review.
 
+### Phase 9 QA sweep — 4 real bugs found and fixed (2026-08-25)
+
+Walked every one of the 58 reports live in the browser after the initial build (not just the handful spot-
+checked during the build itself) and found four real bugs:
+
+- **P1 — "today"/"this month"/"this year" boundaries were computed one UTC calendar day too early on this
+  server.** `startOfDay`/`startOfMonth`/`startOfYear` in `dashboard.reports.ts` (Executive Dashboard, Daily
+  MIS) and the equivalent helpers in `hr-attendance.reports.ts` (Daily Attendance, Monthly Attendance
+  Summary) built boundaries via `new Date(year, month, day)` — the LOCAL-timezone component constructor. This
+  server runs IST (UTC+5:30), so local midnight is 5.5 hours *behind* UTC midnight of the same calendar day.
+  Every `@db.Date` column in this schema (`dispatchDate`, `orderDate`, `invoiceDate`, `expenseDate`,
+  `attendanceDate`, ...) is populated from a plain "YYYY-MM-DD" date-input string, which the JS `Date`
+  constructor always parses as UTC midnight — so comparing a `@db.Date` column against a local-midnight
+  boundary silently pulled in the previous UTC calendar day's rows as "today". Confirmed empirically with a
+  standalone script against the real dev DB: a `dispatch.count({ dispatchDate: { gte: todayStart } })` query
+  matched every dispatch dated the day before "today," not zero as it should have. Fixed by deriving every
+  boundary from UTC calendar components instead (`d.toISOString().slice(0,10)` for a day boundary,
+  `Date.UTC(...)` for month/year) — the same convention this app's own client-side code already uses for
+  "today" (`toIsoDate()` in `marketing/channel-performance/page.tsx`). **Worth remembering for any future
+  report/dashboard code that buckets by day/month/year**: never build a date-column comparison boundary with
+  `new Date(y, m, d)` — always derive it from UTC components, since the server's local timezone has nothing
+  to do with how a `@db.Date` value was written.
+- **P3 — null-vs-zero conflation, the same bug class this project has hit before.** Supplier Register's
+  Payment Terms (days) and Customer Register's Credit Limit both defaulted a genuinely-unset (`null`) value
+  to `0` before display, rendering "0" — indistinguishable from a real, deliberately-configured zero. Fixed
+  to pass `null` through so `ReportTable` renders "—" instead, matching the `SampleMaterial.damagedQuantity`
+  precedent from Phase 4.
+- **P3 — floating-point noise in the Customer Ledger's running balance.** Summing many sequential
+  invoice/payment amounts left IEEE-754 drift (a fully-paid customer's final balance was `1.8e-13`, not
+  exactly `0`) — invisible in the currency-formatted on-screen table (which rounds for display) but printed
+  raw and ugly (`1.8118839761882555e-13`) in the CSV export, which prints numbers as-is. Fixed by rounding to
+  currency precision (`Math.round(x * 100) / 100`) at every accumulation step, the same fix already applied
+  to MRP's quantity calculations in the P2-P4 QA pass.
+- **P4 — redundant flat table under KPI-card reports.** `ReportPage` rendered the generic `ReportTable`
+  underneath a report's own KPI cards (Executive Dashboard, Daily MIS) even though the cards already show
+  every row — purely visual duplication. The table is now skipped whenever a report supplies `renderKpis`.
+
+Verified live after each fix (including a full dev-server restart each time, per this project's own
+documented stale-Turbopack-cache gotcha): Executive Dashboard/Daily MIS correctly show ₹0/0 for "today" (all
+seeded activity is dated the prior day); Customer/Supplier Register show "—" for unset values; Customer
+Ledger's total and CSV export both show a clean `0`. Re-swept all 58 reports end-to-end after the fixes to
+confirm cross-report reconciliation still holds throughout (Trial Balance ⇄ General Ledger ⇄ Day Book ⇄
+Journal Register; Executive Dashboard ⇄ every domain's own register/summary report — Stock Value, Low Stock
+count, Production Achievement/Rejection %, AR/AP totals, Expenses, Stock Valuation all cross-checked
+row-for-row). `npx tsc --noEmit`, `npm run lint`, and `npm test` (450/450) clean throughout.
+
 ## Recommended Stack
 
 Next.js 14+ (App Router) + React + TypeScript + Tailwind CSS (frontend); Next.js API routes/route handlers as REST API; PostgreSQL + Prisma ORM; session-based auth (Auth.js/NextAuth, DB sessions) with RBAC and optional TOTP 2FA; S3-compatible or local file storage for attachments; server-side PDF/Excel export (`exceljs`, `pdf-lib`/`@react-pdf/renderer`).
