@@ -43,7 +43,7 @@ The user has two real, manually-coded PHP/Laravel garment systems already in pro
 | 6 | Inventory | ✅ Done — Purchase Order + Goods Receipt (fabric roll tracking), the stock ledger, Material Request, and Stock Movements (Transfer/Adjustment/Return-to-Supplier) all built and verified |
 | 7 | Accounts | ✅ Done — 7A (Chart of Accounts, Tax Config, Journal engine), 7B (Sales Invoices), 7C (Purchase Invoices), 7D (Payments + Allocations), and 7E (Expenses) all built and verified on branch `phase-7-accounts` |
 | 8 | Dispatch | ✅ Done — pick/pack/confirm/deliver workflow, cartons with barcodes, and Finished-Goods stock decrement all built and verified on branch `phase-8-dispatch` |
-| 9 | Reports | ⬜ Not started |
+| 9 | Reports | ✅ Done (2026-08-25) — architecture + Report Center nav + 75 reports across all 26 buildable categories (only Payroll unavailable — no schema); merged to `main` |
 | 10 | Testing | ⬜ Not started |
 | 11 | Hardening | 🔶 In progress — see dated note below (branch `Hardening`) |
 
@@ -1917,6 +1917,258 @@ see the audit's own Phase D section for what's still open).
   at yet). Nonce-based CSP (removing the `'unsafe-inline'` on `script-src`) is also deferred until the
   `proxy.ts`/auth-middleware flow is revisited, since layering it in safely means touching the one piece of
   code that gates every page's login redirect.
+
+## Phase 9 — Reports & MIS, first slice (2026-08-25)
+
+Built on branch `report`, merged to `main` on 2026-08-25. The user supplied an extremely detailed ~150-report, 27-
+category spec, with an explicit instruction to inspect the real schema/services first, never invent data
+for a genuine gap, and never create a duplicate calculation that could disagree with an existing one.
+Scoped via two AskUserQuestion rounds before any code was written: (1) build the full architecture + Report
+Center nav for all 27 categories now, but implement only the highest-value ~40-50 reports this pass (every
+unbuilt report shows an honest "not yet built"/"not available" state, never a fake page) — ended up
+shipping **58 reports** across 24 categories, comfortably past that target; (2) add `@react-pdf/renderer`
+(pulled in `yoga-layout@3.2.1`, the WASM build, not the old native-binding one — confirmed via `npm ls`) with
+one shared generic PDF template, not a bespoke layout per report.
+
+**The reconciliation guarantee, architecturally enforced, not just promised**: every report has exactly ONE
+`async function get<X>Descriptor(companyId, generatedByName, filters)` — registered once via
+`registerReport()` (`src/modules/reports/registry.ts`) — called identically by the JSON view route
+(`GET /api/v1/reports/[category]/[report]`) and every export route
+(`GET /api/v1/reports/[category]/[report]/export/[format]`), both single dynamic route files shared by
+every report rather than one pair of files per report (a `?export=` query param was explicitly rejected in
+favor of matching the existing sibling-route precedent already used by `stock-balances/export/xlsx` etc.).
+This is what makes an export unable to silently disagree with its own screen — not the routing style. Two
+registries exist deliberately split by server/client boundary: `registry.ts` (server, holds the real
+Prisma-backed `buildDescriptor` functions) and `report-page-meta.ts` (client-safe, zero Prisma imports
+anywhere in its chain, holds title/filterFields/linkBuilders/renderKpis) — the generic
+`/reports/[category]/[report]` detail page is a Client Component that imports only the latter, so a report's
+filter config never accidentally drags Prisma into the browser bundle.
+
+**Verified data-mapping was the actual first deliverable**, not skipped: three parallel Explore agents
+confirmed exact schema field names against every one of the 27 categories before any report was coded (see
+the plan file's own "Confirmed reusable" / "Confirmed hard gaps" tables, preserved in git history on this
+branch). Concrete gaps found and handled honestly rather than papered over:
+- **Payroll** — zero schema anywhere (`Payroll`/`Salary` models don't exist). Report Center shows it as
+  "Not available — no payroll module exists in this ERP," not a fake page.
+- **Sample Material Issue/Return/Consumption** — `SampleMaterial` only has `plannedQuantity`+
+  `damagedQuantity`; only a Sample Material **Requirement** report was built, with an explicit subtitle
+  stating issue/return/consumption tracking doesn't exist in the schema yet.
+- **True Login History** — only `User.lastLoginAt` (a single overwritten timestamp, no history table). Built
+  as "Last Login per User," explicitly labeled as not a history list.
+- **Labour Cost / Overhead Cost in Profitability** — `CostMaster` exists but has zero FK from any
+  transactional table. Both Profitability reports render these columns as the literal string `"Not Tracked"`
+  — never computed from `CostMaster.rate` as if it were a real incurred cost. An order/style whose BOM chain
+  is incomplete (missing BOM, or a BomItem material with no `unitCost`) shows `"Incomplete (no BOM)"` rather
+  than a silently-undercounted number, and totals report the exact count of excluded rows rather than
+  quietly summing over a partial set.
+- **"Color-wise / Size-wise Packing"** — built as real data (`CartonItem.productVariantId` is genuine
+  user-entered packing detail), explicitly subtitled as packing composition, not a sales/revenue figure —
+  no schema exists to support a genuine variant-level revenue number, and none was fabricated.
+- **Production Achievement %/Rejection %** — confirmed absent everywhere in the codebase via grep; built
+  fresh as pure ratios over real, existing `JobOrder` quantity columns per the spec's own formulas — this is
+  deriving, not inventing.
+- **"Production Planning"** — no distinct planning/schedule concept exists beyond `ProductionOrder`'s own
+  planned fields; folded into Production's own reports rather than inventing a separate category's worth of
+  sub-reports.
+
+**RBAC reuses the existing catalog untouched** — zero new modules/actions. `assertReportAccess()`
+(`src/core/reports/permissions.ts`) asserts `reports.<action>` plus every "owning module" `view` permission
+for that category (a static `REPORT_CATEGORY_MODULES` map, e.g. `sales-orders` → `sales_orders`,
+`accounts`/`invoicing`/`receivables`/`payables`/`expenses`/`profitability` → `accounts`+`financial_reports`).
+The one cross-module exception is the **Order Lifecycle Report** — the single bespoke, non-generic report in
+this module (its own page + its own API route, not built on the generic `ReportTable` shell, mirroring
+`getCustomer360()`'s multi-section precedent since forcing a many-stage trace into flat columns/rows would
+lose the hierarchy). It's gated on `reports.view` only; each of its 9 sections (Order/Sampling/Material
+Requirement/Purchase/Production/QC/Dispatch/Invoice/Payment) is independently checked against the viewer's
+real per-module permission via `canAccessModule()` and **omitted** (not shown-then-blocked) if they lack
+it — a Merchandiser without Accounts access still sees every stage they ARE allowed to see instead of being
+denied the whole report for lacking one stage's permission. Verified live end-to-end against a real order
+(`ORD-2026-00009`): populated Sampling and Dispatch sections rendered correctly, empty sections (Material
+Requirement/Purchase/Production/QC/Invoice/Payment) showed honest "not yet" messages rather than blank space
+or errors.
+
+**PDF/Excel/CSV export**: `src/core/reports/pdf.tsx` is one shared `@react-pdf/renderer` `Document`
+component reused by every report (repeating header via `fixed`, page numbers via the `render={({pageNumber,
+totalPages})}` footer callback, `landscape` orientation for wide reports like General Ledger/Day Book/Order
+Aging), capped at 2,000 rows (`EXPORT_ROW_CAP_PDF`) with an explicit "showing first N of M" notice rather
+than silently truncating — large registers should use Excel/CSV instead. `src/core/reports/excel.ts` wraps
+the existing `buildXlsxBuffer`/exceljs convention with a filter-summary block, frozen header row, and a
+totals row; `src/core/reports/csv.ts` wraps the existing hand-rolled `toCsv`. All three verified live via a
+direct `fetch()` per format against Trial Balance's export routes — all three returned `200` with correct
+`Content-Type`/`Content-Disposition` headers and non-trivial byte sizes.
+
+**Reconciliation verified live, not just asserted**: Trial Balance's report page showed an identical
+₹3,51,288.90 / ₹3,51,288.90 grand total, row-for-row, against the pre-existing `/accounts/trial-balance`
+page for the same data — confirming `getTrialBalance()` (journal.service.ts) is genuinely reused unchanged,
+never re-derived. General Ledger's Cash account closing balance (₹-465.00) matched Trial Balance's own Cash
+Net Balance exactly, confirming `getAccountLedger()` (chart-of-account.service.ts) is likewise reused
+unchanged — the one small supporting change was adding `journal.id` to an existing `include` in
+`ChartOfAccountRepository.findLedgerLines()` (`chart-of-account.repository.ts`) purely for the drill-down
+link, a minimal additive change with no behavior change for existing callers (confirmed via the full 450-test
+suite staying green).
+
+**Two real bugs caught and fixed before merge-readiness**: an ESLint `react-hooks/set-state-in-effect`
+violation in `ReportPage.tsx` (calling `setLoading(true)`/`setError(null)` synchronously at the top of the
+data-fetching effect, before any promise chain — fixed by following the exact pattern already established in
+`channel-performance/page.tsx`: never call setState synchronously in an effect body, only inside `.then()`/
+`.catch()` callbacks, with loading derived as `descriptor === null && error === null` instead of a separate
+state variable); and a Next.js `no-assign-module-variable` violation in `permissions.ts` (a `for (const
+module of ...)` loop — Next.js reserves the bare identifier `module` — renamed to `mod`).
+
+**A genuinely surprising TypeScript gotcha hit and documented, worth remembering for any future barrel
+file**: `tsc --noEmit` does **not** report `TS2307` ("Cannot find module") for a bare side-effect-only import
+(`import "./some-missing-file";`) — confirmed by deliberately creating both a side-effect import and a named
+import of the same nonexistent module: the named import correctly errored, the side-effect import produced
+zero diagnostic. This meant `all-reports.ts`/`all-report-page-meta.ts` (the two barrels that each import one
+file per category) stayed "tsc-clean" throughout this session even while several category files hadn't been
+written yet — `tsc` is not a reliable signal that a barrel's referenced files actually exist; only Next.js's
+own bundler (or a manual `ls`) catches a missing file in this specific import shape.
+
+**Delegation note**: 11 of the ~14 category-report file-pairs were built via parallel background `general-
+purpose` agents, each given the exact `ReportConfig`/`ReportPageMeta` interfaces, the full worked
+`sales-orders.reports.ts`/`sales-orders.page-meta.ts` reference implementation, and precise schema excerpts
+for their category (never left to guess field names). Several agents were terminated mid-task by a session
+usage-limit reset; the ones that completed produced files reviewed and confirmed correct, and the
+incomplete/missing pieces (`receivables-payables-expenses.reports.ts`, `hr-attendance.reports.ts`, and six
+missing `page-meta` files) were finished directly afterward, reusing the same exact patterns already
+established by the completed agents' output.
+
+**Verified**: `npx tsc --noEmit`, `npm run lint`, and `npm test` (450/450, no regressions) all clean after
+every commit. Full report inventory (report/category/key/DB source/filters/drill-down/QA status) in
+[REPORTS_INVENTORY.md](REPORTS_INVENTORY.md).
+
+**Known limitations, explicitly not fixed this pass** (documented, not silently dropped):
+- The on-screen "Applied filters: X" summary line echoes a `<select>` filter's raw stored value (e.g. a
+  UUID for Customer/Supplier/Account) rather than its human-readable label, since the label only exists
+  client-side in the already-fetched dropdown options, not in the server-built descriptor. Cosmetic only —
+  every report's actual data and totals are correct; only this one summary line reads awkwardly for
+  ID-based filters.
+- Every category is capped at 1-5 of the highest-value named reports from the original ~150-report spec,
+  not the full list (e.g. Purchase Price Comparison, Slow-Moving/Dead Stock, Line/Department/Operator-wise
+  Production, Rework Report, Fabric/Trims/Accessories Consumption splits, Cash Flow/Balance Sheet, Leave
+  Register). Follow-up sessions can add more reports directly onto this same architecture — the pattern is
+  now proven end-to-end.
+- Saved report filters (a user-preference system) — deferred; no existing preference-storage mechanism to
+  reuse, would need new schema.
+- Weekly/Monthly MIS trend views beyond the Daily MIS built this pass — sequencing, not a gap.
+
+### Phase 9 QA sweep — 4 real bugs found and fixed (2026-08-25)
+
+Walked every one of the 58 reports live in the browser after the initial build (not just the handful spot-
+checked during the build itself) and found four real bugs:
+
+- **P1 — "today"/"this month"/"this year" boundaries were computed one UTC calendar day too early on this
+  server.** `startOfDay`/`startOfMonth`/`startOfYear` in `dashboard.reports.ts` (Executive Dashboard, Daily
+  MIS) and the equivalent helpers in `hr-attendance.reports.ts` (Daily Attendance, Monthly Attendance
+  Summary) built boundaries via `new Date(year, month, day)` — the LOCAL-timezone component constructor. This
+  server runs IST (UTC+5:30), so local midnight is 5.5 hours *behind* UTC midnight of the same calendar day.
+  Every `@db.Date` column in this schema (`dispatchDate`, `orderDate`, `invoiceDate`, `expenseDate`,
+  `attendanceDate`, ...) is populated from a plain "YYYY-MM-DD" date-input string, which the JS `Date`
+  constructor always parses as UTC midnight — so comparing a `@db.Date` column against a local-midnight
+  boundary silently pulled in the previous UTC calendar day's rows as "today". Confirmed empirically with a
+  standalone script against the real dev DB: a `dispatch.count({ dispatchDate: { gte: todayStart } })` query
+  matched every dispatch dated the day before "today," not zero as it should have. Fixed by deriving every
+  boundary from UTC calendar components instead (`d.toISOString().slice(0,10)` for a day boundary,
+  `Date.UTC(...)` for month/year) — the same convention this app's own client-side code already uses for
+  "today" (`toIsoDate()` in `marketing/channel-performance/page.tsx`). **Worth remembering for any future
+  report/dashboard code that buckets by day/month/year**: never build a date-column comparison boundary with
+  `new Date(y, m, d)` — always derive it from UTC components, since the server's local timezone has nothing
+  to do with how a `@db.Date` value was written.
+- **P3 — null-vs-zero conflation, the same bug class this project has hit before.** Supplier Register's
+  Payment Terms (days) and Customer Register's Credit Limit both defaulted a genuinely-unset (`null`) value
+  to `0` before display, rendering "0" — indistinguishable from a real, deliberately-configured zero. Fixed
+  to pass `null` through so `ReportTable` renders "—" instead, matching the `SampleMaterial.damagedQuantity`
+  precedent from Phase 4.
+- **P3 — floating-point noise in the Customer Ledger's running balance.** Summing many sequential
+  invoice/payment amounts left IEEE-754 drift (a fully-paid customer's final balance was `1.8e-13`, not
+  exactly `0`) — invisible in the currency-formatted on-screen table (which rounds for display) but printed
+  raw and ugly (`1.8118839761882555e-13`) in the CSV export, which prints numbers as-is. Fixed by rounding to
+  currency precision (`Math.round(x * 100) / 100`) at every accumulation step, the same fix already applied
+  to MRP's quantity calculations in the P2-P4 QA pass.
+- **P4 — redundant flat table under KPI-card reports.** `ReportPage` rendered the generic `ReportTable`
+  underneath a report's own KPI cards (Executive Dashboard, Daily MIS) even though the cards already show
+  every row — purely visual duplication. The table is now skipped whenever a report supplies `renderKpis`.
+
+Verified live after each fix (including a full dev-server restart each time, per this project's own
+documented stale-Turbopack-cache gotcha): Executive Dashboard/Daily MIS correctly show ₹0/0 for "today" (all
+seeded activity is dated the prior day); Customer/Supplier Register show "—" for unset values; Customer
+Ledger's total and CSV export both show a clean `0`. Re-swept all 58 reports end-to-end after the fixes to
+confirm cross-report reconciliation still holds throughout (Trial Balance ⇄ General Ledger ⇄ Day Book ⇄
+Journal Register; Executive Dashboard ⇄ every domain's own register/summary report — Stock Value, Low Stock
+count, Production Achievement/Rejection %, AR/AP totals, Expenses, Stock Valuation all cross-checked
+row-for-row). `npx tsc --noEmit`, `npm run lint`, and `npm test` (450/450) clean throughout.
+
+## Phase 9B — Complete remaining reports (2026-08-25)
+
+Follow-up pass on the same `report` branch, filling in the 4 categories the first pass left as "Coming
+soon" and adding the highest-value reports from Phase 9A's own "explicitly deferred" list — using the exact
+same architecture (one descriptor-builder per report, `registerReport`/`registerReportPageMeta`, no new
+infrastructure needed). **17 new reports, 75 total** (see [REPORTS_INVENTORY.md](REPORTS_INVENTORY.md)).
+
+**New categories, now genuinely built instead of "Coming soon"**:
+- **Warehouse** (2) — Warehouse Stock Summary (a per-warehouse rollup of the exact same StockBalance/
+  unitCost/reorderLevel source the Inventory category's own reports use) and Warehouse Register (the
+  Warehouse master itself with a live `WarehouseLocation` count). Caught mid-build:
+  `Warehouse.managerEmployeeId` is a bare scalar column with **no declared Prisma relation** to `Employee`
+  (confirmed by reading the schema — no `@relation` line exists for it) — an `include`/`select` on it would
+  have been a compile error; resolved with a manual secondary `Employee.findMany({ where: { id: { in:
+  managerIds } } })` lookup instead.
+- **Production Planning** (2) — Production Schedule (planned vs. actual start/end dates straight off
+  `ProductionOrder`'s own columns) and Delayed Production Orders (open orders past `plannedEndDate` with no
+  `actualEndDate` yet). This dev DB's seed data never populated `plannedStartDate`/`plannedEndDate` on any
+  Production Order, so both reports correctly show all-dashes/empty — an honest reflection of what's
+  actually in the database, not a bug.
+- **Material Consumption** (2) — Material Consumption Variance (BOM-computed requirement, converted to the
+  material's base UOM via the existing `convertUomQuantity()` helper — never re-derived — vs. actual issued
+  quantity summed directly from the `InventoryTransaction` ledger, scoped through `MaterialRequest
+  .productionOrderId`) and Consumption by Material Category (the same ledger source grouped by
+  `Product.materialCategory` — the generalized "Fabric/Trims/Accessories consumption split" the original
+  spec asked for, covering whatever categories actually exist rather than hardcoding three).
+- **Business Performance** (3) — Top Customers by Revenue and Top Styles by Revenue (both the same posted-
+  Sales-Invoice source as Sales & Orders'/Profitability's own reports, ranked and capped to the top 20) and
+  Monthly Sales Trend (revenue by calendar month across all history).
+
+**Extensions to already-built categories**: Purchase Price Comparison (unit price paid per material across
+every PO, sorted to surface cross-supplier variance), Slow-Moving/Dead Stock (stock whose most recent
+`InventoryTransaction` predates a configurable threshold, or that has never moved at all — genuinely empty
+on this freshly-seeded dev DB at the default 60-day threshold, confirmed non-empty at `thresholdDays=0` to
+prove the mechanism itself works), Line-wise Production and Operator-wise Production (JobOrder/
+JobOrderProgressEntry grouped by `ProductionLine`/`Employee`, with an honest "Unassigned"/"Adjustment"
+bucket for rows with no line or employee attributed), Rework Report (queries
+`ProductionStageTransaction.transactionType === "REWORK"` — the ledger's own explicit marker, confirmed via
+schema read rather than inferring rework from `isBackward`+quantity heuristics), Leave Register (a thin
+read over the existing `LeaveRequest`/`LeaveType` HRMS schema, zero new leave-tracking mechanism), and two
+real financial statements:
+- **Profit & Loss Statement** — queries `JournalLine` directly (POSTED only, INCOME/EXPENSE accounts,
+  period-scoped) rather than via `getTrialBalance()`, since a P&L is inherently a date-range statement and
+  `getTrialBalance()` only ever takes a single "as of" date. Expense rows are deliberately stored as
+  *negative* amounts specifically so the descriptor's `totals` bar (a plain sum of the Amount column) is
+  exactly Net Profit — never a second, separately-computed net-profit figure that could disagree with the
+  line items shown.
+- **Balance Sheet** — a thin wrapper over `getTrialBalance()` (never re-derived), grouped by `accountType`.
+  This project's Chart of Accounts has no period-closing mechanism, so Current Period Net Profit (computed
+  from the SAME trial balance rows' INCOME/EXPENSE accounts) is folded into Equity, matching real accounting
+  practice. The report's last row is a literal, checkable statement of the fundamental identity
+  (`Assets − (Liabilities + Equity)`, which must be exactly 0) — not asserted in prose, shown as a real
+  computed row a user can verify themselves. Verified live down to the cent.
+
+**One more floating-point bug caught and fixed, before it shipped this time**: the Balance Sheet's own
+identity-check row initially showed `-1.4551915228366852e-11` instead of a clean `0` — the same IEEE-754
+noise-from-many-Decimal-additions class already fixed once in the Customer Ledger during the Phase 9 QA
+sweep. Caught by directly inspecting the raw JSON (the currency-formatted on-screen table rounds for
+display and would have hidden it) before committing, not after a user complaint — added a shared `round2()`
+helper to `accounts.reports.ts` and applied it to every computed total in both the P&L and Balance Sheet
+(`totalIncome`/`totalExpense`/`netProfit`/`totalAssets`/`totalLiabilities`/`totalEquityAccounts`/
+`totalEquityInclProfit`/the final difference check) — verified the identity check reads exactly `0` after
+the fix, with a full dev-server restart to clear Turbopack's cache before re-checking (this project's own
+now-thoroughly-documented gotcha, hit again and immediately recognized rather than mistaken for a real
+regression).
+
+Every new report live-verified in the browser and cross-checked against its already-verified sibling
+(Warehouse Stock Summary ⇄ Inventory's Stock Summary/Valuation/Low Stock; Line-wise/Operator-wise
+Production ⇄ Production Achievement's own totals; Top Customers/Styles by Revenue ⇄ Customer-wise Sales/
+Style Profitability; Profit & Loss ⇄ Trial Balance's own Income/Expense account balances). `npx tsc
+--noEmit`, `npm run lint`, and `npm test` (450/450, no regressions) all clean throughout.
 
 ## Recommended Stack
 
