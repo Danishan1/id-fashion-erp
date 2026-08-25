@@ -137,6 +137,69 @@ async function getDefectWiseAnalysisDescriptor(
   };
 }
 
+// ---------------------------------------------------------------------------
+// 3. Rework Report — every ProductionStageTransaction of type REWORK, the
+// append-only ledger's own explicit marker for a lot sent back for correction
+// (never re-derived from `isBackward`/quantity heuristics).
+// ---------------------------------------------------------------------------
+async function getReworkReportDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>): Promise<ReportDescriptor> {
+  const { dateFrom, dateTo } = parseDateRange(filters);
+  const transactions = await prisma.productionStageTransaction.findMany({
+    where: {
+      companyId,
+      transactionType: "REWORK",
+      ...(dateFrom || dateTo ? { performedAt: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+    },
+    select: {
+      performedAt: true,
+      quantity: true,
+      revertReason: true,
+      productionOrderId: true,
+      productionOrder: { select: { orderNumber: true, product: { select: { styleName: true } } } },
+      lot: { select: { lotNumber: true } },
+      fromProductionStage: { select: { name: true } },
+      toProductionStage: { select: { name: true } },
+      performedBy: { select: { fullName: true } },
+    },
+    orderBy: { performedAt: "desc" },
+  });
+
+  const rows = transactions.map((t) => ({
+    productionOrderId: t.productionOrderId,
+    performedAt: t.performedAt,
+    orderNumber: t.productionOrder.orderNumber,
+    style: t.productionOrder.product.styleName,
+    lotNumber: t.lot.lotNumber,
+    fromStage: t.fromProductionStage?.name ?? "—",
+    toStage: t.toProductionStage.name,
+    quantity: Number(t.quantity),
+    revertReason: t.revertReason ?? "—",
+    performedBy: t.performedBy.fullName,
+  }));
+
+  return {
+    title: "Rework Report",
+    subtitle: "Every lot sent backward to an earlier stage for rework, from the production stage-transaction ledger.",
+    filtersApplied: filtersApplied(filters, { dateFrom: "Date From", dateTo: "Date To" }),
+    columns: [
+      { key: "performedAt", label: "Date", type: "date" },
+      { key: "orderNumber", label: "Production Order Number", linkTo: "productionOrder" },
+      { key: "style", label: "Style" },
+      { key: "lotNumber", label: "Lot Number" },
+      { key: "fromStage", label: "From Stage" },
+      { key: "toStage", label: "To Stage" },
+      { key: "quantity", label: "Quantity", type: "number", align: "right" },
+      { key: "revertReason", label: "Revert Reason" },
+      { key: "performedBy", label: "Performed By" },
+    ],
+    rows,
+    totals: { quantity: rows.reduce((s, r) => s + r.quantity, 0) },
+    meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
+    generatedAt: new Date().toISOString(),
+    generatedByName,
+  };
+}
+
 registerReport({
   category: CATEGORY,
   key: "qc-inspection-register",
@@ -144,3 +207,4 @@ registerReport({
   buildDescriptor: getQcInspectionRegisterDescriptor,
 });
 registerReport({ category: CATEGORY, key: "defect-wise-analysis", title: "Defect-wise Analysis", buildDescriptor: getDefectWiseAnalysisDescriptor });
+registerReport({ category: CATEGORY, key: "rework-report", title: "Rework Report", buildDescriptor: getReworkReportDescriptor });

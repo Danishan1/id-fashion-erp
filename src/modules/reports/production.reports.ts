@@ -336,6 +336,132 @@ async function getProductionRejectionDescriptor(companyId: string, generatedByNa
   };
 }
 
+// ---------------------------------------------------------------------------
+// 6. Line-wise Production — JobOrder quantities aggregated by
+// ProductionLine (nullable — job orders with no line assigned are grouped
+// under "Unassigned" rather than dropped).
+// ---------------------------------------------------------------------------
+async function getLineWiseProductionDescriptor(companyId: string, generatedByName: string): Promise<ReportDescriptor> {
+  const jobOrders = await prisma.jobOrder.findMany({
+    where: { companyId },
+    select: {
+      plannedQuantity: true,
+      completedQuantity: true,
+      rejectedQuantity: true,
+      damagedQuantity: true,
+      productionLine: { select: { name: true } },
+    },
+  });
+
+  interface LineAgg {
+    line: string;
+    totalPlanned: number;
+    totalCompleted: number;
+    totalRejected: number;
+    totalDamaged: number;
+  }
+  const byLine = new Map<string, LineAgg>();
+  for (const jo of jobOrders) {
+    const line = jo.productionLine?.name ?? "Unassigned";
+    const existing = byLine.get(line) ?? { line, totalPlanned: 0, totalCompleted: 0, totalRejected: 0, totalDamaged: 0 };
+    existing.totalPlanned += Number(jo.plannedQuantity);
+    existing.totalCompleted += Number(jo.completedQuantity);
+    existing.totalRejected += Number(jo.rejectedQuantity);
+    existing.totalDamaged += Number(jo.damagedQuantity);
+    byLine.set(line, existing);
+  }
+
+  const rows = [...byLine.values()].sort((a, b) => b.totalCompleted - a.totalCompleted);
+
+  return {
+    title: "Line-wise Production",
+    subtitle: "Job Order quantities aggregated by Production Line.",
+    filtersApplied: [],
+    columns: [
+      { key: "line", label: "Production Line" },
+      { key: "totalPlanned", label: "Total Planned", type: "number", align: "right" },
+      { key: "totalCompleted", label: "Total Completed", type: "number", align: "right" },
+      { key: "totalRejected", label: "Total Rejected", type: "number", align: "right" },
+      { key: "totalDamaged", label: "Total Damaged", type: "number", align: "right" },
+    ],
+    rows: rows as unknown as Record<string, unknown>[],
+    totals: {
+      totalPlanned: rows.reduce((s, r) => s + r.totalPlanned, 0),
+      totalCompleted: rows.reduce((s, r) => s + r.totalCompleted, 0),
+      totalRejected: rows.reduce((s, r) => s + r.totalRejected, 0),
+      totalDamaged: rows.reduce((s, r) => s + r.totalDamaged, 0),
+    },
+    meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
+    generatedAt: new Date().toISOString(),
+    generatedByName,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 7. Operator-wise Production — JobOrderProgressEntry quantities aggregated
+// by Employee (the real "who did the work" record — see JobOrderProgressEntry's
+// own schema comment; adjustment entries with no employeeId are grouped under
+// "Adjustment / Unattributed" rather than dropped).
+// ---------------------------------------------------------------------------
+async function getOperatorWiseProductionDescriptor(companyId: string, generatedByName: string): Promise<ReportDescriptor> {
+  const entries = await prisma.jobOrderProgressEntry.findMany({
+    where: { jobOrder: { companyId } },
+    select: {
+      completedQuantity: true,
+      rejectedQuantity: true,
+      damagedQuantity: true,
+      employee: { select: { employeeCode: true, fullName: true } },
+    },
+  });
+
+  interface OperatorAgg {
+    employeeCode: string;
+    fullName: string;
+    totalCompleted: number;
+    totalRejected: number;
+    totalDamaged: number;
+  }
+  const byOperator = new Map<string, OperatorAgg>();
+  for (const e of entries) {
+    const key = e.employee ? e.employee.employeeCode : "UNATTRIBUTED";
+    const existing = byOperator.get(key) ?? {
+      employeeCode: e.employee?.employeeCode ?? "—",
+      fullName: e.employee?.fullName ?? "Adjustment / Unattributed",
+      totalCompleted: 0,
+      totalRejected: 0,
+      totalDamaged: 0,
+    };
+    existing.totalCompleted += Number(e.completedQuantity);
+    existing.totalRejected += Number(e.rejectedQuantity);
+    existing.totalDamaged += Number(e.damagedQuantity);
+    byOperator.set(key, existing);
+  }
+
+  const rows = [...byOperator.values()].sort((a, b) => b.totalCompleted - a.totalCompleted);
+
+  return {
+    title: "Operator-wise Production",
+    subtitle: "Job Order progress entries aggregated by the Employee who performed the work.",
+    filtersApplied: [],
+    columns: [
+      { key: "employeeCode", label: "Employee Code" },
+      { key: "fullName", label: "Full Name" },
+      { key: "totalCompleted", label: "Total Completed", type: "number", align: "right" },
+      { key: "totalRejected", label: "Total Rejected", type: "number", align: "right" },
+      { key: "totalDamaged", label: "Total Damaged", type: "number", align: "right" },
+    ],
+    rows: rows as unknown as Record<string, unknown>[],
+    totals: {
+      totalCompleted: rows.reduce((s, r) => s + r.totalCompleted, 0),
+      totalRejected: rows.reduce((s, r) => s + r.totalRejected, 0),
+      totalDamaged: rows.reduce((s, r) => s + r.totalDamaged, 0),
+    },
+    meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
+    generatedAt: new Date().toISOString(),
+    generatedByName,
+  };
+}
+
 registerReport({ category: CATEGORY, key: "production-register", title: "Production Register", buildDescriptor: getProductionRegisterDescriptor });
 registerReport({ category: CATEGORY, key: "order-wise-production", title: "Order-wise Production", buildDescriptor: getOrderWiseProductionDescriptor });
 registerReport({ category: CATEGORY, key: "production-pending", title: "Production Pending", buildDescriptor: getProductionPendingDescriptor });
@@ -346,3 +472,15 @@ registerReport({
   buildDescriptor: getProductionAchievementDescriptor,
 });
 registerReport({ category: CATEGORY, key: "production-rejection", title: "Production Rejection %", buildDescriptor: getProductionRejectionDescriptor });
+registerReport({
+  category: CATEGORY,
+  key: "line-wise-production",
+  title: "Line-wise Production",
+  buildDescriptor: (c, g) => getLineWiseProductionDescriptor(c, g),
+});
+registerReport({
+  category: CATEGORY,
+  key: "operator-wise-production",
+  title: "Operator-wise Production",
+  buildDescriptor: (c, g) => getOperatorWiseProductionDescriptor(c, g),
+});

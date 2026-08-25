@@ -49,3 +49,19 @@ registerReportPageMeta({
   includeDateRange: false,
   linkBuilders,
 });
+
+registerReportPageMeta({
+  category: CATEGORY,
+  key: "line-wise-production",
+  title: "Line-wise Production",
+  description: "Job Order quantities aggregated by Production Line.",
+  includeDateRange: false,
+});
+
+registerReportPageMeta({
+  category: CATEGORY,
+  key: "operator-wise-production",
+  title: "Operator-wise Production",
+  description: "Job Order progress entries aggregated by the Employee who performed the work.",
+  includeDateRange: false,
+});

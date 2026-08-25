@@ -21,3 +21,11 @@ registerReportPageMeta({
   description: "QC defect quantities aggregated by defect type.",
   linkBuilders,
 });
+
+registerReportPageMeta({
+  category: CATEGORY,
+  key: "rework-report",
+  title: "Rework Report",
+  description: "Every lot sent backward to an earlier stage for rework.",
+  linkBuilders,
+});
