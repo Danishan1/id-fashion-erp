@@ -1,0 +1,267 @@
+import { prisma } from "@/core/db/client";
+import type { ReportDescriptor } from "@/core/reports/report-types";
+import { registerReport } from "./registry";
+
+const CATEGORY = "purchase" as const;
+
+function parseDateRange(filters: Record<string, string>): { dateFrom?: Date; dateTo?: Date } {
+  return {
+    dateFrom: filters.dateFrom ? new Date(filters.dateFrom) : undefined,
+    dateTo: filters.dateTo ? new Date(filters.dateTo) : undefined,
+  };
+}
+
+function filtersApplied(filters: Record<string, string>, labels: Record<string, string>) {
+  return Object.entries(filters)
+    .filter(([, v]) => v)
+    .map(([k, v]) => ({ label: labels[k] ?? k, value: v }));
+}
+
+// ---------------------------------------------------------------------------
+// 1. Purchase Order Register
+// ---------------------------------------------------------------------------
+async function getPurchaseOrderRegisterDescriptor(
+  companyId: string,
+  generatedByName: string,
+  filters: Record<string, string>
+): Promise<ReportDescriptor> {
+  const { dateFrom, dateTo } = parseDateRange(filters);
+  const orders = await prisma.purchaseOrder.findMany({
+    where: {
+      companyId,
+      ...(filters.supplierId ? { supplierId: filters.supplierId } : {}),
+      ...(dateFrom || dateTo ? { orderDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+    },
+    select: { id: true, orderNumber: true, orderDate: true, status: true, baseTotalAmount: true, supplier: { select: { name: true } } },
+    orderBy: { orderDate: "desc" },
+  });
+
+  const rows = orders.map((o) => ({
+    purchaseOrderId: o.id,
+    orderNumber: o.orderNumber,
+    orderDate: o.orderDate,
+    supplier: o.supplier.name,
+    status: o.status,
+    orderAmount: Number(o.baseTotalAmount),
+  }));
+
+  return {
+    title: "Purchase Order Register",
+    subtitle: "Every Purchase Order matching the selected filters.",
+    filtersApplied: filtersApplied(filters, { dateFrom: "Date From", dateTo: "Date To", supplierId: "Supplier" }),
+    columns: [
+      { key: "orderNumber", label: "PO Number", linkTo: "purchaseOrder" },
+      { key: "orderDate", label: "Order Date", type: "date" },
+      { key: "supplier", label: "Supplier" },
+      { key: "status", label: "Status" },
+      { key: "orderAmount", label: "Order Amount", type: "currency", align: "right" },
+    ],
+    rows,
+    totals: { orderAmount: rows.reduce((sum, r) => sum + r.orderAmount, 0) },
+    meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
+    generatedAt: new Date().toISOString(),
+    generatedByName,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 2. Pending Purchase Order — one row per open line, so ordered/received/
+// pending quantities are meaningful.
+// ---------------------------------------------------------------------------
+const PENDING_PO_STATUSES = ["DRAFT", "APPROVED", "SENT_TO_SUPPLIER", "PARTIALLY_RECEIVED", "ON_HOLD"] as const;
+
+async function getPendingPurchaseOrderDescriptor(
+  companyId: string,
+  generatedByName: string,
+  filters: Record<string, string>
+): Promise<ReportDescriptor> {
+  const orders = await prisma.purchaseOrder.findMany({
+    where: {
+      companyId,
+      status: { in: [...PENDING_PO_STATUSES] },
+      ...(filters.supplierId ? { supplierId: filters.supplierId } : {}),
+    },
+    select: {
+      id: true,
+      orderNumber: true,
+      status: true,
+      supplier: { select: { name: true } },
+      items: {
+        select: {
+          orderedQuantity: true,
+          receivedQuantity: true,
+          product: { select: { styleName: true } },
+        },
+      },
+    },
+    orderBy: { orderDate: "desc" },
+  });
+
+  const rows: Record<string, unknown>[] = [];
+  for (const o of orders) {
+    for (const item of o.items) {
+      const ordered = Number(item.orderedQuantity);
+      const received = Number(item.receivedQuantity);
+      const pending = ordered - received;
+      if (pending <= 0.0001) continue;
+      rows.push({
+        purchaseOrderId: o.id,
+        orderNumber: o.orderNumber,
+        supplier: o.supplier.name,
+        material: item.product.styleName,
+        orderedQty: ordered,
+        receivedQty: received,
+        pendingQty: pending,
+        status: o.status,
+      });
+    }
+  }
+
+  return {
+    title: "Pending Purchase Order",
+    subtitle: "Purchase Order lines not yet fully received.",
+    filtersApplied: filtersApplied(filters, { supplierId: "Supplier" }),
+    columns: [
+      { key: "orderNumber", label: "PO Number", linkTo: "purchaseOrder" },
+      { key: "supplier", label: "Supplier" },
+      { key: "material", label: "Material" },
+      { key: "orderedQty", label: "Ordered Qty", type: "number", align: "right" },
+      { key: "receivedQty", label: "Received Qty", type: "number", align: "right" },
+      { key: "pendingQty", label: "Pending Qty", type: "number", align: "right" },
+      { key: "status", label: "Status" },
+    ],
+    rows,
+    totals: {
+      orderedQty: rows.reduce((s, r) => s + (r.orderedQty as number), 0),
+      receivedQty: rows.reduce((s, r) => s + (r.receivedQty as number), 0),
+      pendingQty: rows.reduce((s, r) => s + (r.pendingQty as number), 0),
+    },
+    meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
+    generatedAt: new Date().toISOString(),
+    generatedByName,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 3. Supplier-wise Purchase — aggregates PurchaseOrder.baseTotalAmount by
+// supplier, excluding cancelled orders.
+// ---------------------------------------------------------------------------
+async function getSupplierWisePurchaseDescriptor(
+  companyId: string,
+  generatedByName: string,
+  filters: Record<string, string>
+): Promise<ReportDescriptor> {
+  const { dateFrom, dateTo } = parseDateRange(filters);
+  const orders = await prisma.purchaseOrder.findMany({
+    where: {
+      companyId,
+      status: { not: "CANCELLED" },
+      ...(dateFrom || dateTo ? { orderDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+    },
+    select: { supplierId: true, baseTotalAmount: true, supplier: { select: { name: true } } },
+  });
+
+  const bySupplier = new Map<string, { supplier: string; orderCount: number; totalAmount: number }>();
+  for (const o of orders) {
+    const existing = bySupplier.get(o.supplierId) ?? { supplier: o.supplier.name, orderCount: 0, totalAmount: 0 };
+    existing.orderCount += 1;
+    existing.totalAmount += Number(o.baseTotalAmount);
+    bySupplier.set(o.supplierId, existing);
+  }
+
+  const rows = [...bySupplier.values()].sort((a, b) => b.totalAmount - a.totalAmount);
+
+  return {
+    title: "Supplier-wise Purchase",
+    subtitle: "Purchase Order totals grouped by supplier (excludes cancelled orders).",
+    filtersApplied: filtersApplied(filters, { dateFrom: "Date From", dateTo: "Date To" }),
+    columns: [
+      { key: "supplier", label: "Supplier" },
+      { key: "orderCount", label: "Order Count", type: "number", align: "right" },
+      { key: "totalAmount", label: "Total Amount", type: "currency", align: "right" },
+    ],
+    rows,
+    totals: {
+      orderCount: rows.reduce((s, r) => s + r.orderCount, 0),
+      totalAmount: rows.reduce((s, r) => s + r.totalAmount, 0),
+    },
+    meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
+    generatedAt: new Date().toISOString(),
+    generatedByName,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 4. Purchase Monthly Summary — grouped by calendar month across the
+// filtered date range (default: no filter = all data).
+// ---------------------------------------------------------------------------
+async function getPurchaseMonthlySummaryDescriptor(
+  companyId: string,
+  generatedByName: string,
+  filters: Record<string, string>
+): Promise<ReportDescriptor> {
+  const { dateFrom, dateTo } = parseDateRange(filters);
+  const orders = await prisma.purchaseOrder.findMany({
+    where: {
+      companyId,
+      status: { not: "CANCELLED" },
+      ...(dateFrom || dateTo ? { orderDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+    },
+    select: { orderDate: true, baseTotalAmount: true },
+  });
+
+  const byMonth = new Map<string, { month: string; orderCount: number; totalAmount: number }>();
+  for (const o of orders) {
+    const month = o.orderDate.toISOString().slice(0, 7);
+    const existing = byMonth.get(month) ?? { month, orderCount: 0, totalAmount: 0 };
+    existing.orderCount += 1;
+    existing.totalAmount += Number(o.baseTotalAmount);
+    byMonth.set(month, existing);
+  }
+
+  const rows = [...byMonth.values()].sort((a, b) => a.month.localeCompare(b.month));
+
+  return {
+    title: "Purchase Monthly Summary",
+    subtitle: "Non-cancelled Purchase Orders grouped by calendar month.",
+    filtersApplied: filtersApplied(filters, { dateFrom: "Date From", dateTo: "Date To" }),
+    columns: [
+      { key: "month", label: "Month" },
+      { key: "orderCount", label: "Order Count", type: "number", align: "right" },
+      { key: "totalAmount", label: "Total Amount", type: "currency", align: "right" },
+    ],
+    rows,
+    totals: {
+      orderCount: rows.reduce((s, r) => s + r.orderCount, 0),
+      totalAmount: rows.reduce((s, r) => s + r.totalAmount, 0),
+    },
+    meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
+    generatedAt: new Date().toISOString(),
+    generatedByName,
+  };
+}
+
+registerReport({
+  category: CATEGORY,
+  key: "purchase-order-register",
+  title: "Purchase Order Register",
+  buildDescriptor: getPurchaseOrderRegisterDescriptor,
+});
+registerReport({
+  category: CATEGORY,
+  key: "pending-purchase-order",
+  title: "Pending Purchase Order",
+  buildDescriptor: getPendingPurchaseOrderDescriptor,
+});
+registerReport({
+  category: CATEGORY,
+  key: "supplier-wise-purchase",
+  title: "Supplier-wise Purchase",
+  buildDescriptor: getSupplierWisePurchaseDescriptor,
+});
+registerReport({
+  category: CATEGORY,
+  key: "purchase-monthly-summary",
+  title: "Purchase Monthly Summary",
+  buildDescriptor: getPurchaseMonthlySummaryDescriptor,
+});
