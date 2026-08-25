@@ -20,6 +20,15 @@ function filtersApplied(filters: Record<string, string>, labels: Record<string, 
     .map(([k, v]) => ({ label: labels[k] ?? k, value: v }));
 }
 
+// Rounds to currency precision — summing many Decimal-derived floats
+// otherwise leaves IEEE-754 noise (e.g. -1.46e-11 instead of exactly 0) in a
+// figure that's supposed to be a clean accounting-identity check. Same fix
+// already applied to MRP's quantities and the Customer Ledger's running
+// balance (see CLAUDE.md's Phase 9 QA sweep section).
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
 // ---------------------------------------------------------------------------
 // 1. Trial Balance — a thin presentation wrapper over the existing, already-
 // tested getTrialBalance() from journal.service.ts. No debit/credit math is
@@ -266,6 +275,144 @@ async function getJournalRegisterDescriptor(companyId: string, generatedByName: 
   };
 }
 
+// ---------------------------------------------------------------------------
+// 5. Profit & Loss Statement — POSTED journal lines for INCOME/EXPENSE
+// accounts over a period, queried directly (matches Day Book's own
+// "POSTED only, direct JournalLine query" convention) rather than via
+// getTrialBalance(), since a P&L is period-scoped (dateFrom/dateTo) while
+// getTrialBalance() is only ever "as of" a single point in time. Expense
+// rows are stored as NEGATIVE amounts specifically so the descriptor's
+// totals bar (a plain sum of the Amount column) is exactly Net Profit —
+// never a second, separately-computed net-profit figure that could disagree.
+// ---------------------------------------------------------------------------
+async function getProfitAndLossDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>): Promise<ReportDescriptor> {
+  const { dateFrom, dateTo } = parseDateRange(filters);
+  const lines = await prisma.journalLine.findMany({
+    where: {
+      journal: {
+        companyId,
+        status: "POSTED",
+        ...(dateFrom || dateTo ? { journalDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+      },
+      account: { accountType: { in: ["INCOME", "EXPENSE"] } },
+    },
+    select: { debitAmount: true, creditAmount: true, account: { select: { code: true, name: true, accountType: true } } },
+  });
+
+  interface AccountAgg {
+    code: string;
+    name: string;
+    accountType: "INCOME" | "EXPENSE";
+    net: number;
+  }
+  const byAccount = new Map<string, AccountAgg>();
+  for (const line of lines) {
+    const key = line.account.code;
+    const existing = byAccount.get(key) ?? { code: line.account.code, name: line.account.name, accountType: line.account.accountType as "INCOME" | "EXPENSE", net: 0 };
+    const debit = Number(line.debitAmount);
+    const credit = Number(line.creditAmount);
+    // INCOME is credit-natured (net = credit - debit); EXPENSE is debit-natured (net = debit - credit).
+    existing.net += existing.accountType === "INCOME" ? credit - debit : debit - credit;
+    byAccount.set(key, existing);
+  }
+
+  const incomeAccounts = [...byAccount.values()].filter((a) => a.accountType === "INCOME").sort((a, b) => b.net - a.net);
+  const expenseAccounts = [...byAccount.values()].filter((a) => a.accountType === "EXPENSE").sort((a, b) => b.net - a.net);
+  const totalIncome = round2(incomeAccounts.reduce((s, a) => s + a.net, 0));
+  const totalExpense = round2(expenseAccounts.reduce((s, a) => s + a.net, 0));
+  const netProfit = round2(totalIncome - totalExpense);
+
+  const rows = [
+    ...incomeAccounts.map((a) => ({ section: "Income", code: a.code, name: a.name, amount: a.net })),
+    { section: "Income", code: "", name: "Total Income", amount: totalIncome },
+    ...expenseAccounts.map((a) => ({ section: "Expense", code: a.code, name: a.name, amount: -a.net })),
+    { section: "Expense", code: "", name: "Total Expense", amount: -totalExpense },
+    { section: "Net Profit", code: "", name: "Net Profit (Income − Expense)", amount: netProfit },
+  ];
+
+  return {
+    title: "Profit & Loss Statement",
+    subtitle: "POSTED journal lines for Income/Expense accounts over the selected period. Expense amounts shown as negative so the total below is Net Profit.",
+    filtersApplied: filtersApplied(filters, { dateFrom: "Date From", dateTo: "Date To" }),
+    columns: [
+      { key: "section", label: "Section" },
+      { key: "code", label: "Code" },
+      { key: "name", label: "Account" },
+      { key: "amount", label: "Amount", type: "currency", align: "right" },
+    ],
+    rows,
+    // Deliberately NOT a plain reduce over `rows` (that would double-count the
+    // Total Income/Total Expense subtotal rows already included above) —
+    // this is the one real net profit figure, stated once.
+    totals: { amount: netProfit },
+    meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
+    generatedAt: new Date().toISOString(),
+    generatedByName,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 6. Balance Sheet — a thin presentation wrapper over the existing, already-
+// tested getTrialBalance(). Assets shown at their natural debit balance;
+// Liabilities/Equity sign-flipped to their natural credit balance. This
+// project's Chart of Accounts has no period-closing mechanism, so the
+// current period's Net Profit (Income − Expense, from the SAME trial
+// balance rows) is folded into Equity as real accounting practice requires
+// — never a separately-computed figure. The final two rows are a literal,
+// checkable statement of the fundamental accounting identity
+// (Assets = Liabilities + Equity), verifiable directly from getTrialBalance()'s
+// own already-balanced debit/credit totals — not asserted, shown.
+// ---------------------------------------------------------------------------
+async function getBalanceSheetDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>): Promise<ReportDescriptor> {
+  const asOfDate = filters.asOfDate || filters.dateTo;
+  const result = await getTrialBalance(companyId, asOfDate);
+
+  const assets = result.rows.filter((r) => r.accountType === "ASSET" && (r.totalDebit > 0 || r.totalCredit > 0));
+  const liabilities = result.rows.filter((r) => r.accountType === "LIABILITY" && (r.totalDebit > 0 || r.totalCredit > 0));
+  const equity = result.rows.filter((r) => r.accountType === "EQUITY" && (r.totalDebit > 0 || r.totalCredit > 0));
+  const income = result.rows.filter((r) => r.accountType === "INCOME");
+  const expense = result.rows.filter((r) => r.accountType === "EXPENSE");
+
+  const totalAssets = round2(assets.reduce((s, a) => s + a.netBalance, 0));
+  const totalLiabilities = round2(liabilities.reduce((s, a) => s - a.netBalance, 0));
+  const totalEquityAccounts = round2(equity.reduce((s, a) => s - a.netBalance, 0));
+  const netProfit = round2(income.reduce((s, a) => s - a.netBalance, 0) - expense.reduce((s, a) => s + a.netBalance, 0));
+  const totalEquityInclProfit = round2(totalEquityAccounts + netProfit);
+
+  const totalLiabilitiesAndEquity = round2(totalLiabilities + totalEquityInclProfit);
+  const difference = round2(totalAssets - totalLiabilitiesAndEquity);
+
+  const rows = [
+    ...assets.map((a) => ({ section: "Assets", code: a.code, name: a.name, amount: a.netBalance })),
+    { section: "Summary", code: "", name: "Total Assets", amount: totalAssets },
+    ...liabilities.map((a) => ({ section: "Liabilities", code: a.code, name: a.name, amount: -a.netBalance })),
+    { section: "Summary", code: "", name: "Total Liabilities", amount: totalLiabilities },
+    ...equity.map((a) => ({ section: "Equity", code: a.code, name: a.name, amount: -a.netBalance })),
+    { section: "Equity", code: "", name: "Current Period Net Profit (Income − Expense)", amount: netProfit },
+    { section: "Summary", code: "", name: "Total Equity (incl. Net Profit)", amount: totalEquityInclProfit },
+    { section: "Summary", code: "", name: "Total Liabilities + Equity", amount: totalLiabilitiesAndEquity },
+    { section: "Check", code: "", name: "Difference (Assets − (Liabilities + Equity)) — should be 0", amount: difference },
+  ];
+
+  return {
+    title: "Balance Sheet",
+    subtitle: asOfDate
+      ? `As of ${asOfDate}. Current Period Net Profit is folded into Equity (no period-closing mechanism exists in this ERP).`
+      : "As of now. Current Period Net Profit is folded into Equity (no period-closing mechanism exists in this ERP).",
+    filtersApplied: filtersApplied(filters, { asOfDate: "As Of Date", dateTo: "As Of Date" }),
+    columns: [
+      { key: "section", label: "Section" },
+      { key: "code", label: "Code" },
+      { key: "name", label: "Account" },
+      { key: "amount", label: "Amount", type: "currency", align: "right" },
+    ],
+    rows,
+    meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
+    generatedAt: new Date().toISOString(),
+    generatedByName,
+  };
+}
+
 registerReport({ category: CATEGORY, key: "trial-balance", title: "Trial Balance", buildDescriptor: getTrialBalanceDescriptor });
 registerReport({
   category: CATEGORY,
@@ -276,3 +423,5 @@ registerReport({
 });
 registerReport({ category: CATEGORY, key: "day-book", title: "Day Book", buildDescriptor: getDayBookDescriptor, pdfOrientation: "landscape" });
 registerReport({ category: CATEGORY, key: "journal-register", title: "Journal Register", buildDescriptor: getJournalRegisterDescriptor });
+registerReport({ category: CATEGORY, key: "profit-and-loss", title: "Profit & Loss Statement", buildDescriptor: getProfitAndLossDescriptor });
+registerReport({ category: CATEGORY, key: "balance-sheet", title: "Balance Sheet", buildDescriptor: getBalanceSheetDescriptor });

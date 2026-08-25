@@ -49,3 +49,19 @@ registerReportPageMeta({
   ],
   linkBuilders,
 });
+
+registerReportPageMeta({
+  category: CATEGORY,
+  key: "profit-and-loss",
+  title: "Profit & Loss Statement",
+  description: "Income vs. Expense over a period, from posted journal lines.",
+});
+
+registerReportPageMeta({
+  category: CATEGORY,
+  key: "balance-sheet",
+  title: "Balance Sheet",
+  description: "Assets, Liabilities, and Equity (incl. current period Net Profit) as of a point in time.",
+  includeDateRange: false,
+  filterFields: [{ key: "asOfDate", label: "As Of Date", type: "date" }],
+});
