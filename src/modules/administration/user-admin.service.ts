@@ -2,7 +2,7 @@ import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { prisma } from "@/core/db/client";
 import { hashPassword } from "@/core/auth/password";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
-import { UserAdminRepository } from "./user-admin.repository";
+import { UserAdminRepository, UserAdminScopeRepository } from "./user-admin.repository";
 import type { CreateUserInput } from "./user-admin.schema";
 
 export interface ActorContext {
@@ -25,6 +25,22 @@ export async function createUser(actor: ActorContext, input: CreateUserInput) {
   const existing = await UserAdminRepository.findByEmail(input.email);
   if (existing) {
     throw new BusinessRuleError("DUPLICATE_EMAIL_EXISTS", `A user with email "${input.email}" already exists.`, { email: input.email });
+  }
+
+  // The picker endpoints (/api/v1/branches, /api/v1/roles) already scope by
+  // companyId, but that only constrains the UI — a direct API call could
+  // otherwise submit another tenant's branchId/roleId and create a
+  // cross-tenant-inconsistent UserBranchRole. Checked here, server-side,
+  // before anything is written.
+  const [branch, role] = await Promise.all([
+    UserAdminScopeRepository.findBranchCompanyId(input.branchId),
+    UserAdminScopeRepository.findRoleCompanyId(input.roleId),
+  ]);
+  if (!branch || branch.companyId !== actor.companyId) {
+    throw new BusinessRuleError("NOT_FOUND", "Branch not found.", { id: input.branchId });
+  }
+  if (!role || role.companyId !== actor.companyId) {
+    throw new BusinessRuleError("NOT_FOUND", "Role not found.", { id: input.roleId });
   }
 
   const passwordHash = await hashPassword(input.password);

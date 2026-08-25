@@ -45,7 +45,7 @@ The user has two real, manually-coded PHP/Laravel garment systems already in pro
 | 8 | Dispatch | ✅ Done — pick/pack/confirm/deliver workflow, cartons with barcodes, and Finished-Goods stock decrement all built and verified on branch `phase-8-dispatch` |
 | 9 | Reports | ⬜ Not started |
 | 10 | Testing | ⬜ Not started |
-| 11 | Hardening | ⬜ Not started |
+| 11 | Hardening | 🔶 In progress — see dated note below (branch `Hardening`) |
 
 Update the status column and add a short dated note under the relevant phase section below whenever a phase completes or deviates from plan.
 
@@ -1837,6 +1837,86 @@ single-file fixes — flagging for a dedicated future pass rather than attemptin
 
 412 tests → **450 tests** (38 new), `npx tsc --noEmit`, `npm run lint`, and `npm test` all clean throughout
 every fix in this pass.
+
+## Full ERP readiness audit + P0 inventory/UOM/validation fixes (2026-08-25)
+
+A full evidence-based audit (`FASHION_ERP_COMPLETE_READINESS_AUDIT.md`) covering multi-tenancy, product/
+manufacturing, procurement/inventory, sales/dispatch/accounting, HRMS/reporting, API/database architecture,
+and frontend/testing/production-readiness — classified **C (Feature Complete but Business Gaps Remain)**,
+with a scored breakdown per area and a P0–P3 gap matrix. Read that file for the full findings; this entry
+covers only the P0 fixes made off the back of it (on `main`, before the `Hardening` branch existed):
+- `recordInventoryTransaction()` (`src/modules/inventory/inventory.service.ts`) now floors every stock
+  decrement with an atomic guarded `updateMany` at the one shared ledger choke point, instead of the plain
+  `upsert` every caller previously relied on — closes negative-stock races in Material Request issue, Stock
+  Movement, Dispatch confirm, Goods Receipt reversal, and Job Work issue all at once, rather than patching
+  each call site separately.
+- Job Work Order raw-material issuance had **no** stock-availability check at all for non-fabric-roll
+  materials (not a race — a single ordinary request could drive stock negative) — added a real pre-check
+  plus the atomic backstop above.
+- Stock Movement and Job Work Order both skipped UOM conversion before posting to the ledger, unlike every
+  other ledger-writing module — both now convert to the material's base UOM first, matching Purchase
+  Order/Goods Receipt/Material Request's existing convention.
+- Sales Order line items were never validated as actual Styles (`itemType`) — the one exception to a guard
+  every sibling module (BOM/PO/Material Request) already enforces via `findMaterialById`/`findStyleById`.
+  Closed on both `createSalesOrder` and `updateSalesOrder`.
+- 96 new tests added for the previously zero-coverage modules most tied to the above:
+  `inventory.service.ts` (the ledger engine itself), `sales-order.service.ts`, `purchase-order.service.ts`,
+  `goods-receipt.service.ts`, `bom.service.ts`, `mrp.service.ts`.
+
+## Phase 11 — Hardening, first pass (2026-08-25, branch `Hardening`)
+
+Started directly off the audit's own Phase D roadmap, prioritizing items that needed no new external
+dependency or infrastructure decision (2FA, OpenAPI generation, a CD pipeline, cloud file storage, and a
+Redis-backed rate limiter/permission cache all still need that kind of decision and are **not** done —
+see the audit's own Phase D section for what's still open).
+- **Found and fixed a live cross-tenant gap, not a hypothetical one**: the audit had flagged
+  `UserBranchRole` having no cross-company consistency check as "harmless — no role-assignment API exists
+  yet." That API now exists (`src/modules/administration/`, pulled in from a separate contributor's same-day
+  commit) — and `createUser()` took `branchId`/`roleId` straight from client input with no check either
+  belonged to the actor's own company. The picker endpoints (`/api/v1/branches`, `/api/v1/roles`) already
+  scope by `companyId`, but that only constrains the UI, not a direct API call. Fixed with the same
+  chokepoint-validation pattern used everywhere else in this codebase (`UserAdminScopeRepository.
+  findBranchCompanyId`/`findRoleCompanyId`, checked before `createUser()` writes anything) — verified both
+  via 8 new unit tests and live against the real dev DB (`POST /api/v1/administration/users` with a
+  nonexistent `branchId` correctly `404`s instead of silently succeeding).
+- **Security headers hardened**: added `Strict-Transport-Security` (2-year max-age, `includeSubDomains`)
+  and a real `Content-Security-Policy` to `next.config.ts`, alongside the existing `X-Frame-Options`/
+  `X-Content-Type-Options`/`Referrer-Policy`/`Permissions-Policy`. The CSP's `script-src` deliberately
+  includes `'unsafe-inline'` — a stated, explained tradeoff, not an oversight: the App Router injects its
+  own inline `<script>` tags for streaming RSC hydration (`self.__next_f.push(...)`) on every page, and a
+  strict nonce-based policy (the textbook-correct fix) would require wrapping the NextAuth `proxy.ts`
+  middleware's `auth()` call, which drives every page's login-redirect behavior — not a risk worth taking in
+  this pass. Still real protection: blocks any externally-sourced or injected `<script src>`, all
+  object/embed plugins, all framing, and restricts navigation/form targets to same-origin. Verified live:
+  loaded the dashboard and a masters list page with zero CSP-violation console errors, confirmed all three
+  new headers are actually present via a direct `fetch()` header check.
+- **Health-check endpoint added** (`GET /api/v1/health`) — deliberately unauthenticated (load
+  balancers/orchestrators/uptime monitors can't carry a session cookie) and minimal-information (up/down +
+  a DB ping only, no stack traces or config values). Previously didn't exist anywhere, flagged explicitly by
+  the audit as a real deploy blocker for any container/orchestrator-based deployment. Verified live.
+- **Structured logging added** (`src/core/logging/logger.ts`) — a minimal JSON-per-line logger
+  (`level`/`timestamp`/`message`/`context`, with `Error` objects in context explicitly unwrapped since they
+  don't survive a plain `JSON.stringify`), wired into the shared `toErrorResponse()` handler in place of the
+  single bare `console.error("Unhandled error:", error)` call that was previously the *entire* backend
+  observability story (confirmed by the audit — this was the only console call in all of `src/`). This does
+  **not** pick an observability vendor (Sentry/Datadog/etc. — a real infra decision, deliberately left
+  open) — it just gives every log line a consistent, greppable shape so a log aggregator can be pointed at
+  stdout later with zero further code changes. Verified live: triggered a real unhandled error (malformed
+  JSON body to a POST route) and confirmed the resulting log line in the dev server's own output was a
+  correctly-shaped JSON object with the error's name/message/stack intact.
+- Confirmed already fixed by the same upstream pull that added the Administration module:
+  `approveLeaveRequest()`'s missing self-approval guard (the audit's other live RBAC-completeness finding) —
+  no action needed, verified the fix is already in place with the exact reasoning the audit itself gave.
+- 12 new tests (`user-admin.service.test.ts` ×8, `logger.test.ts` ×4). `npx tsc --noEmit`, `npm run lint`,
+  and `npm test` all clean throughout (462/462 total).
+- **Not done this pass, explicitly deferred** (each needs a decision only the user can make, or a new
+  dependency): TOTP-based 2FA (schema column `User.mfaSecret` has existed unused since Phase 1/2 — needs a
+  TOTP library choice and an enrollment/backup-codes UX design), an OpenAPI/Swagger spec, a CD pipeline
+  (needs a deployment target decision), cloud file storage (needs an S3-compatible provider decision), and a
+  Redis-backed rate limiter/permission cache (only matters once horizontally scaled — no infra to point it
+  at yet). Nonce-based CSP (removing the `'unsafe-inline'` on `script-src`) is also deferred until the
+  `proxy.ts`/auth-middleware flow is revisited, since layering it in safely means touching the one piece of
+  code that gates every page's login redirect.
 
 ## Recommended Stack
 

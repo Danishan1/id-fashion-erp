@@ -36,3 +36,18 @@ export const UserAdminRepository = {
   updateStatus: (id: string, status: "ACTIVE" | "SUSPENDED") =>
     prisma.user.update({ where: { id }, data: { status }, include: USER_INCLUDE }),
 };
+
+/**
+ * Scoped existence checks for createUser()'s own defensive company-ownership
+ * check before creating a UserBranchRole — the picker endpoints
+ * (/api/v1/branches, /api/v1/roles) already scope by companyId, but that
+ * only constrains the UI; a direct API call could otherwise submit another
+ * tenant's branchId/roleId and create a cross-tenant-inconsistent role
+ * assignment, the exact bug class this project has already found and fixed
+ * repeatedly elsewhere (never trust a client-supplied FK belongs to your
+ * company without checking it server-side).
+ */
+export const UserAdminScopeRepository = {
+  findBranchCompanyId: (id: string) => prisma.branch.findUnique({ where: { id }, select: { companyId: true } }),
+  findRoleCompanyId: (id: string) => prisma.role.findUnique({ where: { id }, select: { companyId: true } }),
+};

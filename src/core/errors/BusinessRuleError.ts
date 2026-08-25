@@ -1,3 +1,5 @@
+import { logger } from "@/core/logging/logger";
+
 export type BusinessRuleErrorCode =
   | "INSUFFICIENT_FG_STOCK"
   | "INSUFFICIENT_RAW_MATERIAL_STOCK"
@@ -146,7 +148,7 @@ export function toErrorResponse(error: unknown): { status: number; body: unknown
     }
   }
 
-  console.error("Unhandled error:", error);
+  logger.error("Unhandled API error", { error });
   return {
     status: 500,
     body: {
