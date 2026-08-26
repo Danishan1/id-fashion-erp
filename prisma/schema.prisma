@@ -96,6 +96,7 @@ model Company {
   campaignAlerts              CampaignAlert[]
   adAccountConnections        AdAccountConnection[]
   attendanceRecords           AttendanceRecord[]
+  attendanceCorrectionRequests AttendanceCorrectionRequest[]
   leaveTypes                  LeaveType[]
   leaveRequests               LeaveRequest[]
   chartOfAccounts             ChartOfAccount[]
@@ -232,6 +233,8 @@ model User {
   importBatchesCreated                 ImportBatch[]
   adAccountConnectionsCreated          AdAccountConnection[]
   attendanceRecordsRecorded            AttendanceRecord[]
+  attendanceCorrectionsApproved        AttendanceCorrectionRequest[] @relation("AttendanceCorrectionApprovedBy")
+  attendanceCorrectionsCreated         AttendanceCorrectionRequest[] @relation("AttendanceCorrectionCreatedBy")
   leaveRequestsApproved                LeaveRequest[]               @relation("LeaveRequestApprovedBy")
   leaveRequestsCreated                 LeaveRequest[]               @relation("LeaveRequestCreatedBy")
   journalsCreated                      Journal[]                    @relation("JournalCreatedBy")
@@ -488,8 +491,9 @@ model Employee {
   jobOrderProgressEntries JobOrderProgressEntry[] @relation("JobOrderProgressEntryEmployee")
 
   // HRMS (migrated from WordPress "EQ HRMS")
-  attendanceRecords AttendanceRecord[]
-  leaveRequests     LeaveRequest[]
+  attendanceRecords            AttendanceRecord[]
+  attendanceCorrectionRequests AttendanceCorrectionRequest[]
+  leaveRequests                LeaveRequest[]
 
   @@unique([companyId, employeeCode])
   @@map("employees")
@@ -2089,9 +2093,57 @@ model AttendanceRecord {
   employee   Employee @relation(fields: [employeeId], references: [id])
   recordedBy User     @relation(fields: [recordedByUserId], references: [id])
 
+  // A correction request may reference the record it ultimately amended —
+  // nullable both ways (a request can pre-date any record existing yet for
+  // that day, e.g. a forgotten punch-in) and one-to-many (a record can be
+  // corrected more than once over its life).
+  correctionRequests AttendanceCorrectionRequest[]
+
   @@unique([employeeId, attendanceDate])
   @@index([companyId, attendanceDate])
   @@map("hrms_attendance_records")
+}
+
+enum AttendanceCorrectionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+/**
+ * HRMS gap-analysis Priority 2 item — attendance edits were previously only
+ * possible via a direct, unguarded upsert (recordAttendance), with no
+ * request/approval trail. This is the same submit -> approve/reject shape
+ * as LeaveRequest, applied to punch-time corrections instead of leave days.
+ * Approval writes the requested punch times onto the real AttendanceRecord
+ * (creating it via the same upsert recordAttendance already uses if none
+ * exists yet for that date) — see attendance-correction.service.ts.
+ */
+model AttendanceCorrectionRequest {
+  id                 String                      @id @default(uuid()) @db.Uuid
+  companyId          String                      @map("company_id") @db.Uuid
+  employeeId         String                      @map("employee_id") @db.Uuid
+  attendanceRecordId String?                     @map("attendance_record_id") @db.Uuid
+  attendanceDate     DateTime                    @map("attendance_date") @db.Date
+  requestedPunchIn   DateTime?                   @map("requested_punch_in")
+  requestedPunchOut  DateTime?                   @map("requested_punch_out")
+  reason             String
+  status             AttendanceCorrectionStatus  @default(PENDING)
+  rejectionReason    String?                     @map("rejection_reason")
+  approvedByUserId   String?                     @map("approved_by_user_id") @db.Uuid
+  decidedAt          DateTime?                   @map("decided_at")
+  createdByUserId    String                      @map("created_by_user_id") @db.Uuid
+  createdAt          DateTime                    @default(now()) @map("created_at")
+
+  company          Company           @relation(fields: [companyId], references: [id])
+  employee         Employee          @relation(fields: [employeeId], references: [id])
+  attendanceRecord AttendanceRecord? @relation(fields: [attendanceRecordId], references: [id])
+  approvedBy       User?             @relation("AttendanceCorrectionApprovedBy", fields: [approvedByUserId], references: [id])
+  createdBy        User              @relation("AttendanceCorrectionCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@index([companyId, employeeId])
+  @@index([companyId, status])
+  @@map("hrms_attendance_correction_requests")
 }
 
 model LeaveType {
@@ -4113,6 +4165,7 @@ enum RelatedModule {
   CRM_FOLLOWUP
   JOB_WORK_ORDER
   LEAVE_REQUEST
+  ATTENDANCE_CORRECTION
 }
 
 model Attachment {

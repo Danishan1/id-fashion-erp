@@ -45,6 +45,7 @@ export const NAV_SECTIONS: NavSection[] = [
     label: "HRMS",
     children: [
       { label: "Attendance", href: "/attendance" },
+      { label: "Attendance Corrections", href: "/attendance-corrections" },
       { label: "Leave Requests", href: "/leave-requests" },
       { label: "Leave Types", href: "/leave-types" },
     ],

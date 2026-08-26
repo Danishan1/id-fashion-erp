@@ -26,4 +26,7 @@ export const AttendanceRepository = {
 
   findByDate: (companyId: string, attendanceDate: Date) =>
     prisma.attendanceRecord.findMany({ where: { companyId, attendanceDate }, include: DETAIL_INCLUDE }),
+
+  findByEmployeeAndDate: (employeeId: string, attendanceDate: Date) =>
+    prisma.attendanceRecord.findUnique({ where: { employeeId_attendanceDate: { employeeId, attendanceDate } } }),
 };
