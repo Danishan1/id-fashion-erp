@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { auth } from "@/core/auth/auth";
 import { getBomByProductId } from "@/modules/bom-mrp/bom.service";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
-import { BomEditor } from "../BomEditor";
+import { BomDetailTabs } from "./BomDetailTabs";
 
 export default async function BomEditorPage({ params }: { params: Promise<{ productId: string }> }) {
   const { productId } = await params;
@@ -40,7 +40,7 @@ export default async function BomEditorPage({ params }: { params: Promise<{ prod
           Materials consumed per one finished piece of this style.
         </p>
       </div>
-      <BomEditor key={productId} productId={productId} initialNotes={bom?.notes ?? ""} initialItems={initialItems} />
+      <BomDetailTabs key={productId} productId={productId} initialNotes={bom?.notes ?? ""} initialItems={initialItems} />
     </div>
   );
 }
