@@ -2,6 +2,7 @@ import type { Prisma } from "@prisma/client";
 import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { advanceMasterCodeSequence } from "@/core/numbering/DocumentNumberingService";
+import { HrConfigRepository } from "@/modules/hr-config/hr-config.repository";
 import type { ListQuery } from "@/lib/list-query";
 import type { EmployeeInput, EmployeeUpdateInput } from "./employee.schema";
 import { EmployeeRepository } from "./employee.repository";
@@ -43,13 +44,23 @@ export async function getEmployeeById(companyId: string, id: string) {
   return employee;
 }
 
+/** Tenant-scope check on a designationId before it's ever written — an
+ * unchecked FK from client input is exactly the class of bug this project
+ * has found and fixed repeatedly (see CLAUDE.md's 2026-08-19 cross-tenant
+ * sweep). Cheap here since this is a low-frequency master-data pick, not a
+ * hot path. */
+async function assertDesignationBelongsToCompany(companyId: string, designationId: string) {
+  const designation = await HrConfigRepository.designation.findFirst({ where: { id: designationId, companyId } });
+  if (!designation) throw new BusinessRuleError("NOT_FOUND", "Designation not found.", { id: designationId });
+}
+
 function toData(input: EmployeeInput) {
   return {
     employeeCode: input.employeeCode,
     fullName: input.fullName,
     departmentId: input.departmentId || null,
     shiftId: input.shiftId || null,
-    designation: input.designation || null,
+    designationId: input.designationId || null,
     phone: input.phone || null,
     email: input.email || null,
     joinDate: input.joinDate ? new Date(input.joinDate) : null,
@@ -64,7 +75,7 @@ function toUpdateData(input: EmployeeUpdateInput): Prisma.EmployeeUncheckedUpdat
   if (input.fullName !== undefined) data.fullName = input.fullName;
   if (input.departmentId !== undefined) data.departmentId = input.departmentId || null;
   if (input.shiftId !== undefined) data.shiftId = input.shiftId || null;
-  if (input.designation !== undefined) data.designation = input.designation || null;
+  if (input.designationId !== undefined) data.designationId = input.designationId || null;
   if (input.phone !== undefined) data.phone = input.phone || null;
   if (input.email !== undefined) data.email = input.email || null;
   if (input.joinDate !== undefined) data.joinDate = input.joinDate ? new Date(input.joinDate) : null;
@@ -79,6 +90,9 @@ export async function createEmployee(actor: ActorContext, input: EmployeeInput) 
       "DUPLICATE_DOC_NUMBER",
       `Employee code "${input.employeeCode}" is already in use.`
     );
+  }
+  if (input.designationId) {
+    await assertDesignationBelongsToCompany(actor.companyId, input.designationId);
   }
 
   const employee = await EmployeeRepository.create({ companyId: actor.companyId, ...toData(input) });
@@ -108,6 +122,9 @@ export async function updateEmployee(actor: ActorContext, id: string, input: Emp
         `Employee code "${input.employeeCode}" is already in use.`
       );
     }
+  }
+  if (input.designationId) {
+    await assertDesignationBelongsToCompany(actor.companyId, input.designationId);
   }
 
   const updated = await EmployeeRepository.update(id, toUpdateData(input));

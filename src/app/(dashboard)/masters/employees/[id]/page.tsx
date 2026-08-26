@@ -35,7 +35,7 @@ export default async function EditEmployeePage({ params }: { params: Promise<{ i
           fullName: employee.fullName,
           departmentId: employee.departmentId ?? "",
           shiftId: employee.shiftId ?? "",
-          designation: employee.designation ?? "",
+          designationId: employee.designationId ?? "",
           phone: employee.phone ?? "",
           email: employee.email ?? "",
           joinDate: employee.joinDate ? employee.joinDate.toISOString().slice(0, 10) : "",

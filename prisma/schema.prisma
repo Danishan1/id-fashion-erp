@@ -454,9 +454,15 @@ model Employee {
   // the WordPress source, which hardcodes a single 10:15 late-cutoff for
   // every employee company-wide. See CRM_SALES_MARKETING_HRMS_MIGRATION_REPORT.md.
   shiftId      String?   @map("shift_id") @db.Uuid
+  // Wired to the real Designation master (HRMS gap-analysis Priority 1 item
+  // #1, 2026-08-26) — was a plain free-text string, now a real FK, matching
+  // the same string→FK cutover already done once for Product.category/season
+  // in Phase 3. The old `designation` string column is intentionally gone
+  // (not kept as a shim) — its data was backfilled into `designationId`
+  // before the column was dropped, see the migration's own backfill note.
+  designationId String?  @map("designation_id") @db.Uuid
   employeeCode String    @map("employee_code")
   fullName     String    @map("full_name")
-  designation  String?
   phone        String?
   email        String?
   joinDate     DateTime? @map("join_date")
@@ -465,13 +471,14 @@ model Employee {
   createdAt    DateTime  @default(now()) @map("created_at")
   updatedAt    DateTime  @updatedAt @map("updated_at")
 
-  company    Company      @relation(fields: [companyId], references: [id])
-  branch     Branch?      @relation(fields: [branchId], references: [id])
-  department Department?  @relation(fields: [departmentId], references: [id])
-  shift      ShiftMaster? @relation(fields: [shiftId], references: [id])
-  reportsTo  Employee?    @relation("EmployeeHierarchy", fields: [reportsToId], references: [id])
-  reports    Employee[]   @relation("EmployeeHierarchy")
-  user       User?
+  company     Company      @relation(fields: [companyId], references: [id])
+  branch      Branch?      @relation(fields: [branchId], references: [id])
+  department  Department?  @relation(fields: [departmentId], references: [id])
+  shift       ShiftMaster? @relation(fields: [shiftId], references: [id])
+  designation Designation? @relation(fields: [designationId], references: [id])
+  reportsTo   Employee?    @relation("EmployeeHierarchy", fields: [reportsToId], references: [id])
+  reports     Employee[]   @relation("EmployeeHierarchy")
+  user        User?
 
   // Production (Phase 5C) — a worker/operator is always tracked here, never
   // via User, so shop-floor staff never need a login just to be assigned
@@ -1036,7 +1043,8 @@ model Designation {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  company Company @relation(fields: [companyId], references: [id])
+  company   Company    @relation(fields: [companyId], references: [id])
+  employees Employee[]
 
   @@unique([companyId, code])
   @@map("designations")

@@ -7,7 +7,7 @@ export const employeeSchema = z.object({
   // Wired for HRMS Attendance's late-flag computation — see
   // CRM_SALES_MARKETING_HRMS_MIGRATION_REPORT.md.
   shiftId: z.string().uuid().optional().or(z.literal("")),
-  designation: z.string().max(100).optional().or(z.literal("")),
+  designationId: z.string().uuid().optional().or(z.literal("")),
   phone: z.string().max(50).optional().or(z.literal("")),
   email: z.string().email().optional().or(z.literal("")),
   joinDate: z.string().optional().or(z.literal("")),

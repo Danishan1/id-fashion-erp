@@ -7,7 +7,7 @@ interface EmployeeRow {
   id: string;
   employeeCode: string;
   fullName: string;
-  designation: string | null;
+  designation: { name: string } | null;
   department: { name: string } | null;
   isActive: boolean;
 }
@@ -36,7 +36,7 @@ export default function EmployeesListPage() {
           { key: "employeeCode", header: "Code" },
           { key: "fullName", header: "Name" },
           { key: "department", header: "Department", render: (row) => row.department?.name ?? "—" },
-          { key: "designation", header: "Designation", render: (row) => row.designation ?? "—" },
+          { key: "designation", header: "Designation", render: (row) => row.designation?.name ?? "—" },
           {
             key: "isActive",
             header: "Status",

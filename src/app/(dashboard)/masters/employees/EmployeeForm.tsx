@@ -9,7 +9,7 @@ export interface EmployeeFormValues {
   fullName: string;
   departmentId: string;
   shiftId: string;
-  designation: string;
+  designationId: string;
   phone: string;
   email: string;
   joinDate: string;
@@ -21,7 +21,7 @@ const EMPTY_VALUES: EmployeeFormValues = {
   fullName: "",
   departmentId: "",
   shiftId: "",
-  designation: "",
+  designationId: "",
   phone: "",
   email: "",
   joinDate: "",
@@ -39,6 +39,11 @@ interface Shift {
   startTime: string;
 }
 
+interface Designation {
+  id: string;
+  name: string;
+}
+
 interface EmployeeFormProps {
   initialValues?: EmployeeFormValues;
   submitUrl: string;
@@ -51,6 +56,7 @@ export function EmployeeForm({ initialValues, submitUrl, method, redirectTo }: E
   const [values, setValues] = useState<EmployeeFormValues>(initialValues ?? EMPTY_VALUES);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [shifts, setShifts] = useState<Shift[]>([]);
+  const [designations, setDesignations] = useState<Designation[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -63,6 +69,10 @@ export function EmployeeForm({ initialValues, submitUrl, method, redirectTo }: E
       .then((res) => res.json())
       .then((body) => setShifts(body.data ?? []))
       .catch(() => setShifts([]));
+    fetch("/api/v1/designations")
+      .then((res) => res.json())
+      .then((body) => setDesignations(body.data ?? []))
+      .catch(() => setDesignations([]));
   }, []);
 
   useEffect(() => {
@@ -142,13 +152,20 @@ export function EmployeeForm({ initialValues, submitUrl, method, redirectTo }: E
       </FormField>
 
       <div className="grid grid-cols-2 gap-4">
-        <FormField label="Designation" htmlFor="designation">
-          <input
-            id="designation"
-            value={values.designation}
-            onChange={(e) => setValues({ ...values, designation: e.target.value })}
+        <FormField label="Designation" htmlFor="designationId">
+          <select
+            id="designationId"
+            value={values.designationId}
+            onChange={(e) => setValues({ ...values, designationId: e.target.value })}
             className={textInputClass()}
-          />
+          >
+            <option value="">— None —</option>
+            {designations.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.name}
+              </option>
+            ))}
+          </select>
         </FormField>
         <FormField label="Join Date" htmlFor="joinDate">
           <input

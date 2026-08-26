@@ -374,19 +374,21 @@ async function main() {
   console.log("Seeding Employees...");
   const departments = await prisma.department.findMany({ where: { companyId } });
   const deptIdByCode = new Map(departments.map((d) => [d.code, d.id]));
+  const designations = await prisma.designation.findMany({ where: { companyId } });
+  const designationIdByName = new Map(designations.map((d) => [d.name, d.id]));
 
   await prisma.employee.createMany({
     data: [
-      { companyId, branchId, departmentId: deptIdByCode.get("SEW"), employeeCode: "EMP001", fullName: "Ramesh Kumar", designation: "Production Manager", phone: "9700011122", joinDate: new Date("2022-01-10") },
-      { companyId, branchId, departmentId: deptIdByCode.get("CUT"), employeeCode: "EMP002", fullName: "Suresh Patil", designation: "Cutting Master", phone: "9700033344", joinDate: new Date("2021-06-15") },
-      { companyId, branchId, departmentId: deptIdByCode.get("QC"), employeeCode: "EMP003", fullName: "Anita Sharma", designation: "Quality Checker", phone: "9700055566", joinDate: new Date("2023-02-20") },
-      { companyId, branchId, departmentId: deptIdByCode.get("MER"), employeeCode: "EMP004", fullName: "Priya Singh", designation: "Merchandiser", phone: "9700077788", joinDate: new Date("2022-09-01") },
-      { companyId, branchId, departmentId: deptIdByCode.get("SEW"), employeeCode: "EMP005", fullName: "Vikram Rao", designation: "Sewing Supervisor", phone: "9700099900", joinDate: new Date("2020-11-05") },
-      { companyId, branchId, departmentId: deptIdByCode.get("STR"), employeeCode: "EMP006", fullName: "Deepak Joshi", designation: "Store Keeper", phone: "9700111122", joinDate: new Date("2023-05-18") },
-      { companyId, branchId, departmentId: deptIdByCode.get("ACC"), employeeCode: "EMP007", fullName: "Kavita Desai", designation: "Accountant", phone: "9700133344", joinDate: new Date("2021-03-12") },
-      { companyId, branchId, departmentId: deptIdByCode.get("HR"), employeeCode: "EMP008", fullName: "Manoj Yadav", designation: "HR Executive", phone: "9700155566", joinDate: new Date("2022-07-25") },
-      { companyId, branchId, departmentId: deptIdByCode.get("SEW"), employeeCode: "EMP009", fullName: "Sunita Gupta", designation: "Sewing Operator", phone: "9700177788", joinDate: new Date("2023-08-30") },
-      { companyId, branchId, departmentId: deptIdByCode.get("FIN"), employeeCode: "EMP010", fullName: "Rajesh Verma", designation: "Helper", phone: "9700199900", joinDate: new Date("2023-10-02") },
+      { companyId, branchId, departmentId: deptIdByCode.get("SEW"), employeeCode: "EMP001", fullName: "Ramesh Kumar", designationId: designationIdByName.get("Production Manager"), phone: "9700011122", joinDate: new Date("2022-01-10") },
+      { companyId, branchId, departmentId: deptIdByCode.get("CUT"), employeeCode: "EMP002", fullName: "Suresh Patil", designationId: designationIdByName.get("Cutting Master"), phone: "9700033344", joinDate: new Date("2021-06-15") },
+      { companyId, branchId, departmentId: deptIdByCode.get("QC"), employeeCode: "EMP003", fullName: "Anita Sharma", designationId: designationIdByName.get("Quality Checker"), phone: "9700055566", joinDate: new Date("2023-02-20") },
+      { companyId, branchId, departmentId: deptIdByCode.get("MER"), employeeCode: "EMP004", fullName: "Priya Singh", designationId: designationIdByName.get("Merchandiser"), phone: "9700077788", joinDate: new Date("2022-09-01") },
+      { companyId, branchId, departmentId: deptIdByCode.get("SEW"), employeeCode: "EMP005", fullName: "Vikram Rao", designationId: designationIdByName.get("Sewing Supervisor"), phone: "9700099900", joinDate: new Date("2020-11-05") },
+      { companyId, branchId, departmentId: deptIdByCode.get("STR"), employeeCode: "EMP006", fullName: "Deepak Joshi", designationId: designationIdByName.get("Store Keeper"), phone: "9700111122", joinDate: new Date("2023-05-18") },
+      { companyId, branchId, departmentId: deptIdByCode.get("ACC"), employeeCode: "EMP007", fullName: "Kavita Desai", designationId: designationIdByName.get("Accountant"), phone: "9700133344", joinDate: new Date("2021-03-12") },
+      { companyId, branchId, departmentId: deptIdByCode.get("HR"), employeeCode: "EMP008", fullName: "Manoj Yadav", designationId: designationIdByName.get("HR Executive"), phone: "9700155566", joinDate: new Date("2022-07-25") },
+      { companyId, branchId, departmentId: deptIdByCode.get("SEW"), employeeCode: "EMP009", fullName: "Sunita Gupta", designationId: designationIdByName.get("Sewing Operator"), phone: "9700177788", joinDate: new Date("2023-08-30") },
+      { companyId, branchId, departmentId: deptIdByCode.get("FIN"), employeeCode: "EMP010", fullName: "Rajesh Verma", designationId: designationIdByName.get("Helper"), phone: "9700199900", joinDate: new Date("2023-10-02") },
     ],
     skipDuplicates: true,
   });
