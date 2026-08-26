@@ -10,6 +10,9 @@ vi.mock("@/core/db/client", () => ({
     user: { findFirst: vi.fn() },
   },
 }));
+vi.mock("@/modules/hr-config/hr-config.repository", () => ({
+  HrConfigRepository: { holidayMaster: { findMany: vi.fn() } },
+}));
 vi.mock("./leave.repository", () => ({
   LeaveTypeRepository: {
     findMany: vi.fn(),
@@ -30,6 +33,7 @@ vi.mock("./leave.repository", () => ({
 const { prisma } = await import("@/core/db/client");
 const { PermissionService } = await import("@/core/rbac/PermissionService");
 const { createNotification } = await import("@/core/notifications/NotificationService");
+const { HrConfigRepository } = await import("@/modules/hr-config/hr-config.repository");
 const { LeaveRequestRepository } = await import("./leave.repository");
 const { getLeaveBalance, approveLeaveRequest, rejectLeaveRequest, createLeaveRequest } = await import("./leave.service");
 
@@ -39,6 +43,7 @@ beforeEach(() => {
   vi.mocked(prisma.leaveType.findFirst).mockReset();
   vi.mocked(prisma.employee.findFirst).mockReset();
   vi.mocked(prisma.user.findFirst).mockReset();
+  vi.mocked(HrConfigRepository.holidayMaster.findMany).mockReset().mockResolvedValue([]);
   vi.mocked(LeaveRequestRepository.findApprovedInYear).mockReset().mockResolvedValue([]);
   vi.mocked(LeaveRequestRepository.findAnyById).mockReset();
   vi.mocked(LeaveRequestRepository.update).mockReset();
@@ -58,6 +63,18 @@ describe("getLeaveBalance", () => {
     const balance = await getLeaveBalance("co-1", "emp-1", "lt-1", 2026);
 
     expect(balance).toEqual({ annualDays: 12, usedDays: 4, remainingDays: 8 });
+  });
+
+  it("does not charge a company holiday inside the request range against the balance", async () => {
+    vi.mocked(prisma.leaveType.findFirst).mockResolvedValue({ id: "lt-1", annualDays: "12" } as never);
+    vi.mocked(HrConfigRepository.holidayMaster.findMany).mockResolvedValue([{ date: new Date("2026-03-02") }] as never);
+    vi.mocked(LeaveRequestRepository.findApprovedInYear).mockResolvedValue([
+      { startDate: new Date("2026-03-01"), endDate: new Date("2026-03-03") }, // 3 calendar days, 1 is a holiday
+    ] as never);
+
+    const balance = await getLeaveBalance("co-1", "emp-1", "lt-1", 2026);
+
+    expect(balance.usedDays).toBe(2);
   });
 
   it("clips a request that spans across the year boundary to only the days inside the requested year", async () => {
@@ -157,6 +174,26 @@ describe("approveLeaveRequest", () => {
     vi.mocked(LeaveRequestRepository.findApprovedInYear).mockResolvedValue([]);
     vi.mocked(LeaveRequestRepository.update).mockResolvedValue({ id: "req-1", status: "APPROVED" } as never);
 
+    await approveLeaveRequest(actor, "req-1");
+
+    expect(LeaveRequestRepository.update).toHaveBeenCalledWith("req-1", expect.objectContaining({ status: "APPROVED" }));
+  });
+
+  it("does not count a company holiday inside the request range against the requested-days check", async () => {
+    vi.mocked(LeaveRequestRepository.findAnyById).mockResolvedValue({
+      id: "req-1",
+      status: "PENDING",
+      employeeId: "emp-1",
+      leaveTypeId: "lt-1",
+      startDate: new Date("2026-08-01"),
+      endDate: new Date("2026-08-10"), // 10 calendar days, but 1 is a holiday -> 9 real leave days
+    } as never);
+    vi.mocked(prisma.leaveType.findFirst).mockResolvedValue({ id: "lt-1", annualDays: "9" } as never);
+    vi.mocked(LeaveRequestRepository.findApprovedInYear).mockResolvedValue([]);
+    vi.mocked(HrConfigRepository.holidayMaster.findMany).mockResolvedValue([{ date: new Date("2026-08-05") }] as never);
+    vi.mocked(LeaveRequestRepository.update).mockResolvedValue({ id: "req-1", status: "APPROVED" } as never);
+
+    // Would fail (10 > 9 remaining) if the holiday weren't excluded.
     await approveLeaveRequest(actor, "req-1");
 
     expect(LeaveRequestRepository.update).toHaveBeenCalledWith("req-1", expect.objectContaining({ status: "APPROVED" }));

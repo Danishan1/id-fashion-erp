@@ -5,6 +5,7 @@ import { createNotification } from "@/core/notifications/NotificationService";
 import { prisma } from "@/core/db/client";
 import type { ListQuery } from "@/lib/list-query";
 import type { Prisma } from "@prisma/client";
+import { HrConfigRepository } from "@/modules/hr-config/hr-config.repository";
 import { LeaveRequestRepository, LeaveTypeRepository } from "./leave.repository";
 import type { CreateLeaveRequestInput, CreateLeaveTypeInput, RejectLeaveRequestInput, UpdateLeaveTypeInput } from "./leave.schema";
 
@@ -16,10 +17,39 @@ export interface ActorContext {
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
+/** YYYY-MM-DD, matching how @db.Date columns round-trip through Prisma —
+ * comparing sliced ISO strings avoids the local-timezone Date-construction
+ * pitfalls already documented elsewhere in this project (see
+ * dashboard.reports.ts's startOfDay comment). */
+function toDateKey(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * HRMS gap-analysis Priority 2 item: HolidayMaster existed since Phase 3 but
+ * had no caller outside its own CRUD — a company holiday fell inside a leave
+ * range and silently cost the employee a real leave day. Fetches every
+ * active holiday in [start, end] once as a lookup set (leave ranges are
+ * always short, so a day-by-day scan against it is cheap and simple — no
+ * need for interval-overlap SQL).
+ */
+async function countHolidayDaysInRange(companyId: string, start: Date, end: Date): Promise<Set<string>> {
+  const holidays = await HrConfigRepository.holidayMaster.findMany({
+    where: { companyId, isActive: true, date: { gte: start, lte: end } },
+    select: { date: true },
+  });
+  return new Set(holidays.map((h) => toDateKey(h.date)));
+}
+
 /** Inclusive day count (Aug 1 -> Aug 3 is 3 days, matching how leave is
- * always counted in practice, not an exclusive date-math span). */
-function inclusiveDayCount(start: Date, end: Date): number {
-  return Math.round((end.getTime() - start.getTime()) / MS_PER_DAY) + 1;
+ * always counted in practice) minus any company holiday inside the range —
+ * this is what a leave request actually costs the employee's balance. */
+function countLeaveDays(start: Date, end: Date, holidayKeys: Set<string>): number {
+  let days = 0;
+  for (let t = start.getTime(); t <= end.getTime(); t += MS_PER_DAY) {
+    if (!holidayKeys.has(toDateKey(new Date(t)))) days++;
+  }
+  return days;
 }
 
 /** The `Notification` table is keyed on a User, not an Employee — resolves
@@ -62,10 +92,11 @@ export async function getLeaveBalance(companyId: string, employeeId: string, lea
   const approved = await LeaveRequestRepository.findApprovedInYear(employeeId, leaveTypeId, year);
   const yearStart = new Date(`${year}-01-01`);
   const yearEnd = new Date(`${year}-12-31`);
+  const holidayKeys = await countHolidayDaysInRange(companyId, yearStart, yearEnd);
   const usedDays = approved.reduce((sum, r) => {
     const clippedStart = r.startDate < yearStart ? yearStart : r.startDate;
     const clippedEnd = r.endDate > yearEnd ? yearEnd : r.endDate;
-    return sum + inclusiveDayCount(clippedStart, clippedEnd);
+    return sum + countLeaveDays(clippedStart, clippedEnd, holidayKeys);
   }, 0);
 
   const annualDays = Number(leaveType.annualDays);
@@ -122,11 +153,13 @@ export async function createLeaveRequest(actor: ActorContext, input: CreateLeave
   if (employee.reportsToId) {
     const manager = await findLinkedUserId(actor.companyId, employee.reportsToId);
     if (manager) {
+      const holidayKeys = await countHolidayDaysInRange(actor.companyId, request.startDate, request.endDate);
+      const requestedDays = countLeaveDays(request.startDate, request.endDate, holidayKeys);
       await createNotification({
         companyId: actor.companyId,
         userId: manager.id,
         title: "New leave request pending approval",
-        body: `${employee.fullName} requested ${inclusiveDayCount(request.startDate, request.endDate)} day(s) of leave (${input.startDate} to ${input.endDate}).`,
+        body: `${employee.fullName} requested ${requestedDays} day(s) of leave (${input.startDate} to ${input.endDate}).`,
         relatedModule: "LEAVE_REQUEST",
         relatedRecordId: request.id,
       });
@@ -159,7 +192,8 @@ export async function approveLeaveRequest(actor: ActorContext, id: string) {
 
   const year = existing.startDate.getFullYear();
   const balance = await getLeaveBalance(actor.companyId, existing.employeeId, existing.leaveTypeId, year);
-  const requestedDays = inclusiveDayCount(existing.startDate, existing.endDate);
+  const requestHolidayKeys = await countHolidayDaysInRange(actor.companyId, existing.startDate, existing.endDate);
+  const requestedDays = countLeaveDays(existing.startDate, existing.endDate, requestHolidayKeys);
 
   if (balance.annualDays > 0 && requestedDays > balance.remainingDays) {
     throw new BusinessRuleError(
