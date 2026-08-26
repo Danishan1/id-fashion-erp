@@ -24,7 +24,7 @@ green, code-reviewed, not individually browser-walked this pass).
 | Supplier-wise Purchase | purchase | supplier-wise-purchase | PurchaseOrder | — | — | Built |
 | Purchase Monthly Summary | purchase | purchase-monthly-summary | PurchaseOrder | — | — | Built |
 | Supplier Register | suppliers | supplier-register | Supplier | Status | `/masters/suppliers/:id` | Built |
-| Supplier Outstanding | suppliers | supplier-outstanding | PurchaseInvoice | Supplier | — | Built |
+| Supplier Outstanding | suppliers | supplier-outstanding | PurchaseInvoice | Supplier | Invoice → `/accounts/purchase-invoices/:id` | Verified |
 | Sample Register | sampling | sample-register | SampleRequest | Customer, Status | `/sampling/:id` | Built |
 | Sample Status Report | sampling | sample-status-report | SampleRequest | — | — | Built |
 | Sample Conversion Report | sampling | sample-conversion-report | SampleRequest | — | — | Built |
@@ -54,7 +54,7 @@ green, code-reviewed, not individually browser-walked this pass).
 | Journal Register | accounts | journal-register | Journal | Date, Status | Journal | Built |
 | Customer Outstanding / AR Aging | receivables | customer-outstanding | SalesInvoice | Customer | Invoice | Built |
 | Customer Ledger | receivables | customer-ledger | SalesInvoice + Payment | Customer (required), Date | — | Built |
-| Supplier Outstanding / AP Aging | payables | supplier-outstanding | PurchaseInvoice | Supplier | — | Built |
+| Supplier Outstanding / AP Aging | payables | supplier-outstanding | PurchaseInvoice | Supplier | Invoice → `/accounts/purchase-invoices/:id` | Verified |
 | Payment Made Register | payables | payment-made-register | Payment (PAYMENT_OUT) | Date, Supplier | Payment → `/accounts/payments/:id` | Built |
 | Expense Register | expenses | expense-register | Expense | Date | Expense → `/accounts/expenses/:id` | Built |
 | Order Profitability | profitability | order-profitability | SalesInvoice + Bom × Product.unitCost | Date, Customer | Order | Verified |
@@ -93,3 +93,36 @@ filled in the 4 previously "Coming soon" categories (Warehouse, Production Plann
 Business Performance) and added the highest-value deferred reports from Phase 9A's own "explicitly deferred"
 list (Purchase Price Comparison, Slow-Moving/Dead Stock, Line-wise/Operator-wise Production, Rework Report,
 Leave Register, Profit & Loss, Balance Sheet) — see CLAUDE.md's Phase 9B section for the full build notes.
+
+## Phase 10 corrections (2026-08-26)
+
+A full QA/UAT pass across every report (see CLAUDE.md's Phase 10 section for the complete methodology and
+bug list) found and fixed real defects in several of the reports above — noted here since the fixes changed
+what a few rows in this table claim:
+
+- **Supplier Outstanding** (both the `suppliers` and `payables` category variants) gained a real drill-down
+  to the underlying Purchase Invoice (previously `—`) — table updated above, both rows now "Verified".
+- **Date-range filters** (`dateFrom`/`dateTo`) across ~15 reports were silently dropping most of the selected
+  end date's data for any report filtering a genuine `DateTime` column (not `@db.Date`) — fixed via a shared
+  `parseReportDateRange()` helper. Affects: Production Register, Defect-wise Analysis, Consumption by
+  Material Category, Rework Report, QC Inspection Register, and others sharing the pattern.
+- **Floating-point noise** (raw scientific notation or long-tail decimals like `49.600000000000364`) in Trial
+  Balance/General Ledger/Balance Sheet per-line items, Day Book, Sales/Purchase registers, and Customer/
+  Supplier Outstanding — all now pass through one shared `round2()` helper (`src/lib/money.ts`) instead of
+  the two earlier point-fixes (Customer Ledger, Balance Sheet's summary row) that never generalized.
+- **Sales Invoice Register** and **Purchase Order Register**: totals previously included CANCELLED
+  documents, disagreeing with their own sibling reports by exactly the cancelled amount — rows still show
+  every status (unchanged, documented "full audit trail" design), totals now exclude CANCELLED.
+- **Customer-wise Dispatch**: "Total Dispatched Quantity" previously counted DRAFT/PACKED (never-shipped)
+  dispatches — now scoped to DISPATCHED/DELIVERED only, matching every other "dispatched" definition in
+  this app.
+- **Sample Conversion Report**: renamed its `convertedSamples`/"Converted Samples" metric to
+  `linkedToStyleSamples`/"Linked to a Style" — the old label claimed to measure genuine Convert-to-Style
+  conversions specifically, but nothing in the schema distinguishes that from a sample created directly
+  against a pre-existing style, so the old metric materially overstated the real conversion rate.
+- **Excel export** (`/export/xlsx`) crashed with a raw 500 for any report title containing an Excel-illegal
+  worksheet-name character (`* ? : \ / [ ]`) — affected "Slow-Moving / Dead Stock" and both "Customer/
+  Supplier Outstanding / AR/AP Aging" report titles. Fixed at the shared `buildReportXlsxBuffer()` level.
+- **Invalid `status` filter values** (e.g. `?status=BOGUS`) previously caused a raw 500 on 7 reports (Journal
+  Register, Leave Register, Sales Invoice Register, Dispatch Register, Production Schedule, Order Register,
+  Sample Register) — now return a clean 400 naming every valid value.
