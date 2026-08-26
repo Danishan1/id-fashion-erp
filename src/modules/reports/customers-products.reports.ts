@@ -1,6 +1,7 @@
 import { prisma } from "@/core/db/client";
 import type { ReportDescriptor } from "@/core/reports/report-types";
 import { registerReport } from "./registry";
+import { round2 } from "@/lib/money";
 
 function filtersApplied(filters: Record<string, string>, labels: Record<string, string>) {
   return Object.entries(filters)
@@ -90,7 +91,7 @@ async function getCustomerOutstandingDescriptor(companyId: string, generatedByNa
 
   const byCustomer = new Map<string, { customerId: string; customer: string; invoiceCount: number; outstandingAmount: number }>();
   for (const inv of invoices) {
-    const outstanding = Number(inv.totalAmount) - Number(inv.paidAmount);
+    const outstanding = round2(Number(inv.totalAmount) - Number(inv.paidAmount));
     if (outstanding <= 0.0001) continue;
     const existing = byCustomer.get(inv.customerId) ?? {
       customerId: inv.customerId,
@@ -99,7 +100,7 @@ async function getCustomerOutstandingDescriptor(companyId: string, generatedByNa
       outstandingAmount: 0,
     };
     existing.invoiceCount += 1;
-    existing.outstandingAmount += outstanding;
+    existing.outstandingAmount = round2(existing.outstandingAmount + outstanding);
     byCustomer.set(inv.customerId, existing);
   }
 
@@ -117,7 +118,7 @@ async function getCustomerOutstandingDescriptor(companyId: string, generatedByNa
     rows,
     totals: {
       invoiceCount: rows.reduce((s, r) => s + r.invoiceCount, 0),
-      outstandingAmount: rows.reduce((s, r) => s + r.outstandingAmount, 0),
+      outstandingAmount: round2(rows.reduce((s, r) => s + r.outstandingAmount, 0)),
     },
     meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
     generatedAt: new Date().toISOString(),

@@ -2,6 +2,7 @@ import { prisma } from "@/core/db/client";
 import type { ReportDescriptor } from "@/core/reports/report-types";
 import { registerReport } from "./registry";
 import { parseReportDateRange } from "./report-date-range";
+import { round2 } from "@/lib/money";
 
 const CATEGORY = "inventory" as const;
 
@@ -253,7 +254,7 @@ async function getStockValuationDescriptor(companyId: string, generatedByName: s
         warehouse: b.warehouse.name,
         quantityOnHand,
         unitCost,
-        stockValue: quantityOnHand * unitCost,
+        stockValue: round2(quantityOnHand * unitCost),
       };
     })
     .sort((a, b) => b.stockValue - a.stockValue);
@@ -274,7 +275,7 @@ async function getStockValuationDescriptor(companyId: string, generatedByName: s
       { key: "stockValue", label: "Stock Value", type: "currency", align: "right" },
     ],
     rows,
-    totals: { stockValue: rows.reduce((s, r) => s + r.stockValue, 0) },
+    totals: { stockValue: round2(rows.reduce((s, r) => s + r.stockValue, 0)) },
     meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
     generatedAt: new Date().toISOString(),
     generatedByName,

@@ -2,6 +2,7 @@ import { prisma } from "@/core/db/client";
 import type { ReportDescriptor } from "@/core/reports/report-types";
 import { registerReport } from "./registry";
 import { parseReportDateRange } from "./report-date-range";
+import { round2 } from "@/lib/money";
 
 const CATEGORY = "sales-orders" as const;
 
@@ -55,7 +56,7 @@ async function getOrderRegisterDescriptor(companyId: string, generatedByName: st
       { key: "orderAmount", label: "Order Amount", type: "currency", align: "right" },
     ],
     rows,
-    totals: { orderAmount: rows.reduce((sum, r) => sum + r.orderAmount, 0) },
+    totals: { orderAmount: round2(rows.reduce((sum, r) => sum + r.orderAmount, 0)) },
     meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
     generatedAt: new Date().toISOString(),
     generatedByName,
@@ -118,9 +119,9 @@ async function getSalesRegisterDescriptor(companyId: string, generatedByName: st
     ],
     rows,
     totals: {
-      subtotal: rows.reduce((s, r) => s + r.subtotal, 0),
-      tax: rows.reduce((s, r) => s + r.tax, 0),
-      total: rows.reduce((s, r) => s + r.total, 0),
+      subtotal: round2(rows.reduce((s, r) => s + r.subtotal, 0)),
+      tax: round2(rows.reduce((s, r) => s + r.tax, 0)),
+      total: round2(rows.reduce((s, r) => s + r.total, 0)),
     },
     meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
     generatedAt: new Date().toISOString(),
@@ -147,7 +148,7 @@ async function getCustomerWiseSalesDescriptor(companyId: string, generatedByName
   for (const inv of invoices) {
     const existing = byCustomer.get(inv.customerId) ?? { customerId: inv.customerId, customer: inv.customer.name, invoiceCount: 0, totalAmount: 0 };
     existing.invoiceCount += 1;
-    existing.totalAmount += Number(inv.totalAmount);
+    existing.totalAmount = round2(existing.totalAmount + Number(inv.totalAmount));
     byCustomer.set(inv.customerId, existing);
   }
 
@@ -165,7 +166,7 @@ async function getCustomerWiseSalesDescriptor(companyId: string, generatedByName
     rows,
     totals: {
       invoiceCount: rows.reduce((s, r) => s + r.invoiceCount, 0),
-      totalAmount: rows.reduce((s, r) => s + r.totalAmount, 0),
+      totalAmount: round2(rows.reduce((s, r) => s + r.totalAmount, 0)),
     },
     meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
     generatedAt: new Date().toISOString(),
@@ -213,7 +214,7 @@ async function getPendingOrdersDescriptor(companyId: string, generatedByName: st
       { key: "orderAmount", label: "Order Amount", type: "currency", align: "right" },
     ],
     rows,
-    totals: { orderAmount: rows.reduce((s, r) => s + r.orderAmount, 0) },
+    totals: { orderAmount: round2(rows.reduce((s, r) => s + r.orderAmount, 0)) },
     meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
     generatedAt: new Date().toISOString(),
     generatedByName,
@@ -267,7 +268,7 @@ async function getOrderAgingDescriptor(companyId: string, generatedByName: strin
       { key: "orderAmount", label: "Order Amount", type: "currency", align: "right" },
     ],
     rows,
-    totals: { orderAmount: rows.reduce((s, r) => s + r.orderAmount, 0) },
+    totals: { orderAmount: round2(rows.reduce((s, r) => s + r.orderAmount, 0)) },
     meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
     generatedAt: new Date().toISOString(),
     generatedByName,

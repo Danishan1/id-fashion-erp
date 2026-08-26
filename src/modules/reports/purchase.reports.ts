@@ -2,6 +2,7 @@ import { prisma } from "@/core/db/client";
 import type { ReportDescriptor } from "@/core/reports/report-types";
 import { registerReport } from "./registry";
 import { parseReportDateRange } from "./report-date-range";
+import { round2 } from "@/lib/money";
 
 const CATEGORY = "purchase" as const;
 
@@ -51,7 +52,7 @@ async function getPurchaseOrderRegisterDescriptor(
       { key: "orderAmount", label: "Order Amount", type: "currency", align: "right" },
     ],
     rows,
-    totals: { orderAmount: rows.reduce((sum, r) => sum + r.orderAmount, 0) },
+    totals: { orderAmount: round2(rows.reduce((sum, r) => sum + r.orderAmount, 0)) },
     meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
     generatedAt: new Date().toISOString(),
     generatedByName,
@@ -159,7 +160,7 @@ async function getSupplierWisePurchaseDescriptor(
   for (const o of orders) {
     const existing = bySupplier.get(o.supplierId) ?? { supplier: o.supplier.name, orderCount: 0, totalAmount: 0 };
     existing.orderCount += 1;
-    existing.totalAmount += Number(o.baseTotalAmount);
+    existing.totalAmount = round2(existing.totalAmount + Number(o.baseTotalAmount));
     bySupplier.set(o.supplierId, existing);
   }
 
@@ -177,7 +178,7 @@ async function getSupplierWisePurchaseDescriptor(
     rows,
     totals: {
       orderCount: rows.reduce((s, r) => s + r.orderCount, 0),
-      totalAmount: rows.reduce((s, r) => s + r.totalAmount, 0),
+      totalAmount: round2(rows.reduce((s, r) => s + r.totalAmount, 0)),
     },
     meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
     generatedAt: new Date().toISOString(),
@@ -209,7 +210,7 @@ async function getPurchaseMonthlySummaryDescriptor(
     const month = o.orderDate.toISOString().slice(0, 7);
     const existing = byMonth.get(month) ?? { month, orderCount: 0, totalAmount: 0 };
     existing.orderCount += 1;
-    existing.totalAmount += Number(o.baseTotalAmount);
+    existing.totalAmount = round2(existing.totalAmount + Number(o.baseTotalAmount));
     byMonth.set(month, existing);
   }
 
@@ -227,7 +228,7 @@ async function getPurchaseMonthlySummaryDescriptor(
     rows,
     totals: {
       orderCount: rows.reduce((s, r) => s + r.orderCount, 0),
-      totalAmount: rows.reduce((s, r) => s + r.totalAmount, 0),
+      totalAmount: round2(rows.reduce((s, r) => s + r.totalAmount, 0)),
     },
     meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
     generatedAt: new Date().toISOString(),

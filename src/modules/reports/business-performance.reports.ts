@@ -2,6 +2,7 @@ import { prisma } from "@/core/db/client";
 import type { ReportDescriptor } from "@/core/reports/report-types";
 import { registerReport } from "./registry";
 import { parseReportDateRange } from "./report-date-range";
+import { round2 } from "@/lib/money";
 
 const CATEGORY = "business-performance" as const;
 const TOP_N = 20;
@@ -31,12 +32,12 @@ async function getTopCustomersByRevenueDescriptor(companyId: string, generatedBy
   const byCustomer = new Map<string, { customer: string; revenue: number; invoiceCount: number }>();
   for (const inv of invoices) {
     const existing = byCustomer.get(inv.customerId) ?? { customer: inv.customer.name, revenue: 0, invoiceCount: 0 };
-    existing.revenue += Number(inv.totalAmount);
+    existing.revenue = round2(existing.revenue + Number(inv.totalAmount));
     existing.invoiceCount += 1;
     byCustomer.set(inv.customerId, existing);
   }
 
-  const totalRevenue = [...byCustomer.values()].reduce((s, c) => s + c.revenue, 0);
+  const totalRevenue = round2([...byCustomer.values()].reduce((s, c) => s + c.revenue, 0));
   const rows = [...byCustomer.values()]
     .sort((a, b) => b.revenue - a.revenue)
     .slice(0, TOP_N)
@@ -86,7 +87,7 @@ async function getTopStylesByRevenueDescriptor(companyId: string, generatedByNam
     for (const item of inv.items) {
       const key = item.product.styleCode;
       const existing = byStyle.get(key) ?? { styleCode: item.product.styleCode, styleName: item.product.styleName, revenue: 0, quantity: 0 };
-      existing.revenue += Number(item.lineTotal);
+      existing.revenue = round2(existing.revenue + Number(item.lineTotal));
       existing.quantity += item.quantity;
       byStyle.set(key, existing);
     }
@@ -131,7 +132,7 @@ async function getMonthlySalesTrendDescriptor(companyId: string, generatedByName
   for (const inv of invoices) {
     const month = inv.invoiceDate.toISOString().slice(0, 7);
     const existing = byMonth.get(month) ?? { revenue: 0, invoiceCount: 0 };
-    existing.revenue += Number(inv.totalAmount);
+    existing.revenue = round2(existing.revenue + Number(inv.totalAmount));
     existing.invoiceCount += 1;
     byMonth.set(month, existing);
   }
@@ -150,7 +151,7 @@ async function getMonthlySalesTrendDescriptor(companyId: string, generatedByName
       { key: "revenue", label: "Revenue", type: "currency", align: "right" },
     ],
     rows,
-    totals: { invoiceCount: rows.reduce((s, r) => s + r.invoiceCount, 0), revenue: rows.reduce((s, r) => s + r.revenue, 0) },
+    totals: { invoiceCount: rows.reduce((s, r) => s + r.invoiceCount, 0), revenue: round2(rows.reduce((s, r) => s + r.revenue, 0)) },
     meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
     generatedAt: new Date().toISOString(),
     generatedByName,

@@ -3,6 +3,7 @@ import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingService";
 import { PermissionService } from "@/core/rbac/PermissionService";
 import { prisma } from "@/core/db/client";
+import { round2 } from "@/lib/money";
 import type { ListQuery } from "@/lib/list-query";
 import type { JournalInput, ReverseJournalInput } from "./journal.schema";
 import { JournalRepository } from "./journal.repository";
@@ -395,8 +396,8 @@ export async function getTrialBalance(companyId: string, asOfDate?: string) {
 
   const rows = accounts.map((account) => {
     const sum = sumsByAccountId.get(account.id);
-    const totalDebit = Number(sum?._sum.debitAmount ?? 0);
-    const totalCredit = Number(sum?._sum.creditAmount ?? 0);
+    const totalDebit = round2(Number(sum?._sum.debitAmount ?? 0));
+    const totalCredit = round2(Number(sum?._sum.creditAmount ?? 0));
     return {
       accountId: account.id,
       code: account.code,
@@ -404,12 +405,12 @@ export async function getTrialBalance(companyId: string, asOfDate?: string) {
       accountType: account.accountType,
       totalDebit,
       totalCredit,
-      netBalance: totalDebit - totalCredit,
+      netBalance: round2(totalDebit - totalCredit),
     };
   });
 
-  const grandTotalDebit = rows.reduce((sum, r) => sum + r.totalDebit, 0);
-  const grandTotalCredit = rows.reduce((sum, r) => sum + r.totalCredit, 0);
+  const grandTotalDebit = round2(rows.reduce((sum, r) => sum + r.totalDebit, 0));
+  const grandTotalCredit = round2(rows.reduce((sum, r) => sum + r.totalCredit, 0));
 
   return { rows, grandTotalDebit, grandTotalCredit };
 }

@@ -1,6 +1,7 @@
 import { prisma } from "@/core/db/client";
 import type { ReportDescriptor } from "@/core/reports/report-types";
 import { registerReport } from "./registry";
+import { round2 } from "@/lib/money";
 
 const CATEGORY = "warehouse" as const;
 
@@ -44,7 +45,7 @@ async function getWarehouseStockSummaryDescriptor(companyId: string, generatedBy
     const qty = Number(b.quantityOnHand);
     agg.skuCount += 1;
     agg.totalQuantity += qty;
-    if (b.product.unitCost !== null) agg.stockValue += qty * Number(b.product.unitCost);
+    if (b.product.unitCost !== null) agg.stockValue = round2(agg.stockValue + qty * Number(b.product.unitCost));
     if (b.product.reorderLevel !== null && qty < Number(b.product.reorderLevel)) agg.lowStockCount += 1;
   }
 
@@ -67,7 +68,7 @@ async function getWarehouseStockSummaryDescriptor(companyId: string, generatedBy
     totals: {
       skuCount: rows.reduce((s, r) => s + r.skuCount, 0),
       totalQuantity: rows.reduce((s, r) => s + r.totalQuantity, 0),
-      stockValue: rows.reduce((s, r) => s + r.stockValue, 0),
+      stockValue: round2(rows.reduce((s, r) => s + r.stockValue, 0)),
       lowStockCount: rows.reduce((s, r) => s + r.lowStockCount, 0),
     },
     meta: { page: 1, pageSize: rows.length, totalCount: rows.length },

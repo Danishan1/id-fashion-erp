@@ -2,6 +2,7 @@ import { prisma } from "@/core/db/client";
 import type { ReportDescriptor } from "@/core/reports/report-types";
 import { registerReport } from "./registry";
 import { parseReportDateRange } from "./report-date-range";
+import { round2 } from "@/lib/money";
 
 const CATEGORY = "invoicing" as const;
 
@@ -71,9 +72,9 @@ async function getSalesInvoiceRegisterDescriptor(
     ],
     rows,
     totals: {
-      subtotal: rows.reduce((s, r) => s + r.subtotal, 0),
-      tax: rows.reduce((s, r) => s + r.tax, 0),
-      total: rows.reduce((s, r) => s + r.total, 0),
+      subtotal: round2(rows.reduce((s, r) => s + r.subtotal, 0)),
+      tax: round2(rows.reduce((s, r) => s + r.tax, 0)),
+      total: round2(rows.reduce((s, r) => s + r.total, 0)),
     },
     meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
     generatedAt: new Date().toISOString(),
@@ -109,9 +110,9 @@ async function getOutstandingInvoiceDescriptor(
 
   const rows = invoices
     .map((inv) => {
-      const total = Number(inv.totalAmount);
-      const paid = Number(inv.paidAmount);
-      const outstanding = total - paid;
+      const total = round2(Number(inv.totalAmount));
+      const paid = round2(Number(inv.paidAmount));
+      const outstanding = round2(total - paid);
       return {
         salesInvoiceId: inv.id,
         invoiceNumber: inv.invoiceNumber,
@@ -141,9 +142,9 @@ async function getOutstandingInvoiceDescriptor(
     ],
     rows,
     totals: {
-      total: rows.reduce((s, r) => s + r.total, 0),
-      paid: rows.reduce((s, r) => s + r.paid, 0),
-      outstanding: rows.reduce((s, r) => s + r.outstanding, 0),
+      total: round2(rows.reduce((s, r) => s + r.total, 0)),
+      paid: round2(rows.reduce((s, r) => s + r.paid, 0)),
+      outstanding: round2(rows.reduce((s, r) => s + r.outstanding, 0)),
     },
     meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
     generatedAt: new Date().toISOString(),
