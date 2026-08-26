@@ -4112,6 +4112,7 @@ enum RelatedModule {
   DEAL
   CRM_FOLLOWUP
   JOB_WORK_ORDER
+  LEAVE_REQUEST
 }
 
 model Attachment {

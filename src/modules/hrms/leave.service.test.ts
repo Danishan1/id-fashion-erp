@@ -2,10 +2,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { assert: vi.fn() } }));
+vi.mock("@/core/notifications/NotificationService", () => ({ createNotification: vi.fn() }));
 vi.mock("@/core/db/client", () => ({
   prisma: {
     leaveType: { findFirst: vi.fn() },
     employee: { findFirst: vi.fn() },
+    user: { findFirst: vi.fn() },
   },
 }));
 vi.mock("./leave.repository", () => ({
@@ -27,18 +29,22 @@ vi.mock("./leave.repository", () => ({
 
 const { prisma } = await import("@/core/db/client");
 const { PermissionService } = await import("@/core/rbac/PermissionService");
+const { createNotification } = await import("@/core/notifications/NotificationService");
 const { LeaveRequestRepository } = await import("./leave.repository");
-const { getLeaveBalance, approveLeaveRequest, rejectLeaveRequest } = await import("./leave.service");
+const { getLeaveBalance, approveLeaveRequest, rejectLeaveRequest, createLeaveRequest } = await import("./leave.service");
 
 const actor = { companyId: "co-1", userId: "user-1", branchId: "br-1" };
 
 beforeEach(() => {
   vi.mocked(prisma.leaveType.findFirst).mockReset();
   vi.mocked(prisma.employee.findFirst).mockReset();
+  vi.mocked(prisma.user.findFirst).mockReset();
   vi.mocked(LeaveRequestRepository.findApprovedInYear).mockReset().mockResolvedValue([]);
   vi.mocked(LeaveRequestRepository.findAnyById).mockReset();
   vi.mocked(LeaveRequestRepository.update).mockReset();
+  vi.mocked(LeaveRequestRepository.create).mockReset();
   vi.mocked(PermissionService.assert).mockReset().mockResolvedValue(undefined);
+  vi.mocked(createNotification).mockReset();
 });
 
 describe("getLeaveBalance", () => {
@@ -63,6 +69,59 @@ describe("getLeaveBalance", () => {
     const balance = await getLeaveBalance("co-1", "emp-1", "lt-1", 2026);
 
     expect(balance.usedDays).toBe(2);
+  });
+});
+
+describe("createLeaveRequest", () => {
+  it("notifies the employee's reporting manager when the manager has a login account", async () => {
+    vi.mocked(prisma.employee.findFirst).mockResolvedValue({ id: "emp-1", fullName: "Asha Rao", reportsToId: "emp-mgr" } as never);
+    vi.mocked(prisma.leaveType.findFirst).mockResolvedValue({ id: "lt-1" } as never);
+    vi.mocked(prisma.user.findFirst).mockResolvedValue({ id: "user-mgr" } as never);
+    vi.mocked(LeaveRequestRepository.create).mockResolvedValue({
+      id: "req-1",
+      employeeId: "emp-1",
+      startDate: new Date("2026-09-01"),
+      endDate: new Date("2026-09-02"),
+    } as never);
+
+    await createLeaveRequest(actor, { employeeId: "emp-1", leaveTypeId: "lt-1", startDate: "2026-09-01", endDate: "2026-09-02" } as never);
+
+    expect(prisma.user.findFirst).toHaveBeenCalledWith({ where: { companyId: "co-1", employeeId: "emp-mgr" }, select: { id: true } });
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: "user-mgr", relatedModule: "LEAVE_REQUEST", relatedRecordId: "req-1" })
+    );
+  });
+
+  it("skips the notification when the employee has no reporting manager set", async () => {
+    vi.mocked(prisma.employee.findFirst).mockResolvedValue({ id: "emp-1", fullName: "Asha Rao", reportsToId: null } as never);
+    vi.mocked(prisma.leaveType.findFirst).mockResolvedValue({ id: "lt-1" } as never);
+    vi.mocked(LeaveRequestRepository.create).mockResolvedValue({
+      id: "req-1",
+      employeeId: "emp-1",
+      startDate: new Date("2026-09-01"),
+      endDate: new Date("2026-09-02"),
+    } as never);
+
+    await createLeaveRequest(actor, { employeeId: "emp-1", leaveTypeId: "lt-1", startDate: "2026-09-01", endDate: "2026-09-02" } as never);
+
+    expect(prisma.user.findFirst).not.toHaveBeenCalled();
+    expect(createNotification).not.toHaveBeenCalled();
+  });
+
+  it("skips the notification when the reporting manager has no login account", async () => {
+    vi.mocked(prisma.employee.findFirst).mockResolvedValue({ id: "emp-1", fullName: "Asha Rao", reportsToId: "emp-mgr" } as never);
+    vi.mocked(prisma.leaveType.findFirst).mockResolvedValue({ id: "lt-1" } as never);
+    vi.mocked(prisma.user.findFirst).mockResolvedValue(null as never);
+    vi.mocked(LeaveRequestRepository.create).mockResolvedValue({
+      id: "req-1",
+      employeeId: "emp-1",
+      startDate: new Date("2026-09-01"),
+      endDate: new Date("2026-09-02"),
+    } as never);
+
+    await createLeaveRequest(actor, { employeeId: "emp-1", leaveTypeId: "lt-1", startDate: "2026-09-01", endDate: "2026-09-02" } as never);
+
+    expect(createNotification).not.toHaveBeenCalled();
   });
 });
 
@@ -150,6 +209,28 @@ describe("approveLeaveRequest", () => {
 
     await expect(approveLeaveRequest(actor, "req-1")).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
   });
+
+  it("notifies the requesting employee's own login account once approved", async () => {
+    vi.mocked(LeaveRequestRepository.findAnyById).mockResolvedValue({
+      id: "req-1",
+      status: "PENDING",
+      employeeId: "emp-1",
+      leaveTypeId: "lt-1",
+      startDate: new Date("2026-08-01"),
+      endDate: new Date("2026-08-03"),
+    } as never);
+    vi.mocked(prisma.leaveType.findFirst).mockResolvedValue({ id: "lt-1", annualDays: "12" } as never);
+    vi.mocked(LeaveRequestRepository.findApprovedInYear).mockResolvedValue([]);
+    vi.mocked(LeaveRequestRepository.update).mockResolvedValue({ id: "req-1", status: "APPROVED", employeeId: "emp-1" } as never);
+    vi.mocked(prisma.user.findFirst).mockResolvedValue({ id: "user-emp-1" } as never);
+
+    await approveLeaveRequest(actor, "req-1");
+
+    expect(prisma.user.findFirst).toHaveBeenCalledWith({ where: { companyId: "co-1", employeeId: "emp-1" }, select: { id: true } });
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: "user-emp-1", title: "Leave request approved", relatedModule: "LEAVE_REQUEST", relatedRecordId: "req-1" })
+    );
+  });
 });
 
 describe("rejectLeaveRequest", () => {
@@ -162,6 +243,29 @@ describe("rejectLeaveRequest", () => {
     expect(LeaveRequestRepository.update).toHaveBeenCalledWith(
       "req-1",
       expect.objectContaining({ status: "REJECTED", rejectionReason: "Team is understaffed that week" })
+    );
+  });
+
+  it("notifies the requesting employee's own login account with the rejection reason", async () => {
+    vi.mocked(LeaveRequestRepository.findAnyById).mockResolvedValue({
+      id: "req-1",
+      status: "PENDING",
+      startDate: new Date("2026-08-01"),
+      endDate: new Date("2026-08-03"),
+    } as never);
+    vi.mocked(LeaveRequestRepository.update).mockResolvedValue({ id: "req-1", status: "REJECTED", employeeId: "emp-1" } as never);
+    vi.mocked(prisma.user.findFirst).mockResolvedValue({ id: "user-emp-1" } as never);
+
+    await rejectLeaveRequest(actor, "req-1", { reason: "Team is understaffed that week" });
+
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: "user-emp-1",
+        title: "Leave request rejected",
+        body: expect.stringContaining("Team is understaffed that week"),
+        relatedModule: "LEAVE_REQUEST",
+        relatedRecordId: "req-1",
+      })
     );
   });
 });

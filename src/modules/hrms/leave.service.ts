@@ -1,6 +1,7 @@
 import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { PermissionService } from "@/core/rbac/PermissionService";
+import { createNotification } from "@/core/notifications/NotificationService";
 import { prisma } from "@/core/db/client";
 import type { ListQuery } from "@/lib/list-query";
 import type { Prisma } from "@prisma/client";
@@ -19,6 +20,14 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
  * always counted in practice, not an exclusive date-math span). */
 function inclusiveDayCount(start: Date, end: Date): number {
   return Math.round((end.getTime() - start.getTime()) / MS_PER_DAY) + 1;
+}
+
+/** The `Notification` table is keyed on a User, not an Employee — resolves
+ * the login account (if any) linked to a given Employee via the existing
+ * `User.employeeId` FK. Employees with no login account (most shop-floor
+ * staff) simply get no notification, not an error. */
+function findLinkedUserId(companyId: string, employeeId: string) {
+  return prisma.user.findFirst({ where: { companyId, employeeId }, select: { id: true } });
 }
 
 export async function listLeaveTypes(companyId: string) {
@@ -79,7 +88,10 @@ export async function listLeaveRequests(companyId: string, query: ListQuery, sta
 }
 
 export async function createLeaveRequest(actor: ActorContext, input: CreateLeaveRequestInput) {
-  const employee = await prisma.employee.findFirst({ where: { id: input.employeeId, companyId: actor.companyId }, select: { id: true } });
+  const employee = await prisma.employee.findFirst({
+    where: { id: input.employeeId, companyId: actor.companyId },
+    select: { id: true, fullName: true, reportsToId: true },
+  });
   if (!employee) throw new BusinessRuleError("NOT_FOUND", "Employee not found.", { id: input.employeeId });
   const leaveType = await prisma.leaveType.findFirst({ where: { id: input.leaveTypeId, companyId: actor.companyId }, select: { id: true } });
   if (!leaveType) throw new BusinessRuleError("NOT_FOUND", "Leave type not found.", { id: input.leaveTypeId });
@@ -103,6 +115,23 @@ export async function createLeaveRequest(actor: ActorContext, input: CreateLeave
     action: "CREATE",
     newValues: { employeeId: input.employeeId, leaveTypeId: input.leaveTypeId, startDate: input.startDate, endDate: input.endDate },
   });
+
+  // Notify the employee's reporting manager (if the hierarchy is set and the
+  // manager has a login account) that a new request is waiting on them.
+  // Silently skipped otherwise — most shop-floor employees have neither.
+  if (employee.reportsToId) {
+    const manager = await findLinkedUserId(actor.companyId, employee.reportsToId);
+    if (manager) {
+      await createNotification({
+        companyId: actor.companyId,
+        userId: manager.id,
+        title: "New leave request pending approval",
+        body: `${employee.fullName} requested ${inclusiveDayCount(request.startDate, request.endDate)} day(s) of leave (${input.startDate} to ${input.endDate}).`,
+        relatedModule: "LEAVE_REQUEST",
+        relatedRecordId: request.id,
+      });
+    }
+  }
 
   return request;
 }
@@ -152,6 +181,18 @@ export async function approveLeaveRequest(actor: ActorContext, id: string) {
     newValues: { status: "APPROVED" },
   });
 
+  const requester = await findLinkedUserId(actor.companyId, updated.employeeId);
+  if (requester) {
+    await createNotification({
+      companyId: actor.companyId,
+      userId: requester.id,
+      title: "Leave request approved",
+      body: `Your leave request for ${requestedDays} day(s) (${existing.startDate.toISOString().slice(0, 10)} to ${existing.endDate.toISOString().slice(0, 10)}) has been approved.`,
+      relatedModule: "LEAVE_REQUEST",
+      relatedRecordId: id,
+    });
+  }
+
   return updated;
 }
 
@@ -173,6 +214,18 @@ export async function rejectLeaveRequest(actor: ActorContext, id: string, input:
     oldValues: { status: "PENDING" },
     newValues: { status: "REJECTED", rejectionReason: input.reason },
   });
+
+  const requester = await findLinkedUserId(actor.companyId, updated.employeeId);
+  if (requester) {
+    await createNotification({
+      companyId: actor.companyId,
+      userId: requester.id,
+      title: "Leave request rejected",
+      body: `Your leave request for ${existing.startDate.toISOString().slice(0, 10)} to ${existing.endDate.toISOString().slice(0, 10)} was rejected: ${input.reason}`,
+      relatedModule: "LEAVE_REQUEST",
+      relatedRecordId: id,
+    });
+  }
 
   return updated;
 }
