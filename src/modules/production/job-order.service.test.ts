@@ -173,19 +173,55 @@ describe("recordProgressEntry", () => {
 });
 
 describe("forwardJobOrder", () => {
-  // Regression test for the P0 fix: a job order whose raw `status` column is
-  // "COMPLETED" only ever got there via completeAtFinalStageInTx (its
-  // quantity already posted to Finished Goods) — forwarding it again used to
-  // double-post stock and silently un-complete its Lot, since
-  // completeAtFinalStageInTx never bumps forwardedQuantity, leaving the
-  // notYetForwarded check wide open.
+  // Regression test for the original P0 fix: a job order genuinely AT a
+  // final stage with raw `status` "COMPLETED" only ever got there via
+  // completeAtFinalStageInTx (its quantity already posted to Finished
+  // Goods) — forwarding it again used to double-post stock and silently
+  // un-complete its Lot, since completeAtFinalStageInTx never bumps
+  // forwardedQuantity, leaving the notYetForwarded check wide open.
   it("rejects forwarding a job order that already completed at a final stage", async () => {
     vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(
-      jobOrder({ status: "COMPLETED", completedQuantity: "10", forwardedQuantity: "0" }) as never
+      jobOrder({
+        status: "COMPLETED",
+        completedQuantity: "10",
+        forwardedQuantity: "0",
+        productionStage: stage({ isFinal: true }),
+      }) as never
     );
 
     await expect(forwardJobOrder(actor, "jo-1", { quantity: 10 })).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
     expect(mockPrismaClient.productionStage.findFirst).not.toHaveBeenCalled();
+  });
+
+  // Regression test for the SECOND bug this same guard used to cause: the
+  // status "COMPLETED" is also reached by ordinary progress logging the
+  // moment completed+rejected+damaged hits plannedQuantity, at ANY stage —
+  // not just a final one. Logging "100 of 100" in one entry at Cutting
+  // (stage 1 of 6, non-final, nothing forwarded yet) used to make this
+  // guard refuse to forward it at all, permanently, with a message claiming
+  // it had "already reached Finished Goods" — which was false. This proves
+  // a COMPLETED job order at a non-final stage can still be forwarded.
+  it("still allows forwarding a job order that is COMPLETED (100% logged) at a non-final stage", async () => {
+    vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(
+      jobOrder({
+        status: "COMPLETED",
+        completedQuantity: "100",
+        plannedQuantity: "100",
+        forwardedQuantity: "0",
+        productionStage: stage({ isFinal: false }),
+      }) as never
+    );
+    vi.mocked(prisma.productionStage.findFirst).mockResolvedValueOnce(
+      stage({ id: "stage-2", sequence: 2, name: "Stitching", code: "SEW" }) as never
+    );
+    vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue({ id: "po-1", productId: "prod-1" } as never);
+    vi.mocked(prisma.jobOrder.count).mockResolvedValue(0);
+    vi.mocked(prisma.jobOrder.updateMany).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(JobOrderRepository.createInTx).mockResolvedValue({ id: "jo-2" } as never);
+    vi.mocked(ProductionStageTransactionRepository.createInTx).mockResolvedValue({ id: "txn-1" } as never);
+    vi.mocked(LotRepository.updateInTx).mockResolvedValue({} as never);
+
+    await expect(forwardJobOrder(actor, "jo-1", { quantity: 100 })).resolves.toBeDefined();
   });
 
   it("rejects forwarding more than the completed-and-not-yet-forwarded quantity", async () => {
@@ -286,12 +322,19 @@ describe("revertJobOrder", () => {
 });
 
 describe("recordQcInspection", () => {
-  // Same P0 fix as forwardJobOrder — a job order already completed at a
-  // final stage must not be inspectable again (it already reached Finished
-  // Goods; re-inspecting it previously desynced the FG/WIP ledgers).
+  // Same original P0 fix as forwardJobOrder — a job order genuinely AT a
+  // final stage, already completed there, must not be inspectable again
+  // (it already reached Finished Goods; re-inspecting it previously
+  // desynced the FG/WIP ledgers).
   it("rejects inspecting a job order that already completed at a final stage", async () => {
     vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(
-      jobOrder({ status: "COMPLETED", completedQuantity: "10", forwardedQuantity: "0", qcPassedQuantity: "0" }) as never
+      jobOrder({
+        status: "COMPLETED",
+        completedQuantity: "10",
+        forwardedQuantity: "0",
+        qcPassedQuantity: "0",
+        productionStage: stage({ isFinal: true }),
+      }) as never
     );
 
     await expect(
@@ -307,6 +350,38 @@ describe("recordQcInspection", () => {
     ).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
 
     expect(QcInspectionRepository.createWithDefectsInTx).not.toHaveBeenCalled();
+  });
+
+  // Regression test for the SECOND false-positive this same guard caused —
+  // see the matching test on forwardJobOrder. A job order 100% logged at a
+  // non-final stage is genuinely COMPLETED but has real, un-inspected work
+  // still sitting there; QC must still be able to act on it.
+  it("still allows inspecting a job order that is COMPLETED (100% logged) at a non-final stage", async () => {
+    vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(
+      jobOrder({
+        status: "COMPLETED",
+        completedQuantity: "10",
+        plannedQuantity: "10",
+        forwardedQuantity: "0",
+        qcPassedQuantity: "0",
+        productionStage: stage({ isFinal: false }),
+      }) as never
+    );
+    vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue({ id: "po-1", productId: "prod-1" } as never);
+    mockPrismaClient.jobOrder.updateMany.mockResolvedValue({ count: 1 } as never);
+    vi.mocked(QcInspectionRepository.createWithDefectsInTx).mockResolvedValue({ id: "qc-1" } as never);
+
+    await expect(
+      recordQcInspection(actor, "jo-1", {
+        inspectedQuantity: 10,
+        acceptedQuantity: 0,
+        rejectedQuantity: 0,
+        damagedQuantity: 0,
+        result: "PASS",
+        defects: [],
+      } as never)
+    ).resolves.toBeDefined();
+    expect(QcInspectionRepository.createWithDefectsInTx).toHaveBeenCalled();
   });
 
   // Regression test for ERP-BUG-0001: accepting at QC after the same

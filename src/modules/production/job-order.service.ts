@@ -480,14 +480,26 @@ export async function forwardJobOrder(actor: ActorContext, jobOrderId: string, i
   if (jobOrder.status === "CANCELLED") {
     throw new BusinessRuleError("INVALID_STATE_TRANSITION", "Cannot forward a cancelled job order.", {});
   }
-  // `status` is only ever written as "COMPLETED" by completeAtFinalStageInTx —
-  // never by ordinary progress entries reaching plannedQuantity (that case
-  // stays PENDING/IN_PROGRESS; see computeJobOrderStatus for the *display*
-  // derivation, which is separate from this stored column). A job order in
-  // this raw state already posted its quantity to Finished Goods and has
-  // nothing left to forward — without this guard, forwarding it again both
-  // double-posts stock and silently un-completes its parent Lot.
-  if (jobOrder.status === "COMPLETED") {
+  // BUGFIX (previously): this guard used to fire on `status === "COMPLETED"`
+  // alone. That's wrong — computeJobOrderStatus() (called by
+  // applyJobOrderQuantityDelta on every ordinary progress entry, not just by
+  // completeAtFinalStageInTx) already returns "COMPLETED" the moment
+  // completed+rejected+damaged reaches plannedQuantity, at ANY stage, final
+  // or not. A supervisor logging 100% done at Cutting in one entry — before
+  // ever clicking Forward — hit exactly this: the job order was genuinely
+  // stuck at stage 1 of 6 with forwardedQuantity still 0, and every Forward
+  // attempt afterward was refused with a message that claimed it had
+  // "already reached Finished Goods," which was false. Reproduced live and
+  // confirmed against the database before this fix.
+  //
+  // The real invariant to protect is narrower: forwarding must be blocked
+  // only for a job order that already sits AT a final stage and is
+  // COMPLETED there — that combination is what completeAtFinalStageInTx
+  // itself produces, and is the only state where "nothing left to forward,
+  // FG already posted" is actually true. A COMPLETED job order at a
+  // non-final stage still has real work to forward; the notYetForwarded
+  // check just below already caps that correctly and safely.
+  if (jobOrder.status === "COMPLETED" && jobOrder.productionStage.isFinal) {
     throw new BusinessRuleError(
       "INVALID_STATE_TRANSITION",
       "This job order already completed at a final production stage and its quantity has already reached Finished Goods — it cannot be forwarded again.",
@@ -649,11 +661,13 @@ export async function revertJobOrder(actor: ActorContext, jobOrderId: string, in
 export async function recordQcInspection(actor: ActorContext, jobOrderId: string, input: CreateQcInspectionInput) {
   const jobOrder = await JobOrderRepository.findAnyById(actor.companyId, jobOrderId);
   if (!jobOrder) throw new BusinessRuleError("NOT_FOUND", "Job order not found.", { id: jobOrderId });
-  // Same guard as forwardJobOrder() — a job order raw-status of "COMPLETED"
-  // is only ever set by completeAtFinalStageInTx and means this quantity
-  // already left the factory into Finished Goods; QC cannot act on it again
-  // (previously reachable and confirmed to double-post FG stock / desync WIP).
-  if (jobOrder.status === "COMPLETED") {
+  // BUGFIX (previously): same false-positive as forwardJobOrder() — see the
+  // long comment there. "COMPLETED" alone can mean "100% logged at a
+  // perfectly ordinary, non-final stage," not just "already posted to
+  // Finished Goods." QC inspection is only genuinely impossible once a job
+  // order sits AT a final stage and is COMPLETED there — that's the only
+  // state where "this quantity already left the factory" is actually true.
+  if (jobOrder.status === "COMPLETED" && jobOrder.productionStage.isFinal) {
     throw new BusinessRuleError(
       "INVALID_STATE_TRANSITION",
       "This job order already completed at a final production stage and its quantity has already reached Finished Goods — it cannot be inspected again.",
