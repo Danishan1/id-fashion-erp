@@ -2,6 +2,8 @@ import { prisma } from "@/core/db/client";
 import type { ReportDescriptor } from "@/core/reports/report-types";
 import { registerReport } from "./registry";
 import { parseReportDateRange } from "./report-date-range";
+import { validateStatusFilter } from "./report-filters";
+import { DispatchStatus } from "@prisma/client";
 
 function filtersApplied(filters: Record<string, string>, labels: Record<string, string>) {
   return Object.entries(filters)
@@ -127,7 +129,7 @@ async function getDispatchRegisterDescriptor(companyId: string, generatedByName:
     where: {
       companyId,
       ...(filters.customerId ? { customerId: filters.customerId } : {}),
-      ...(filters.status ? { status: filters.status as never } : {}),
+      ...validateStatusFilter(filters, DispatchStatus),
       ...(dateFrom || dateToExclusive ? { dispatchDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
     },
     select: {
@@ -226,7 +228,15 @@ async function getCustomerWiseDispatchDescriptor(companyId: string, generatedByN
   const dispatches = await prisma.dispatch.findMany({
     where: {
       companyId,
-      status: { not: "CANCELLED" },
+      // DISPATCHED/DELIVERED only — matches the FG-stock-decrementing
+      // definition of "dispatched" used everywhere else in this app.
+      // `status: { not: "CANCELLED" }` also let DRAFT/PACKED dispatches
+      // (never actually shipped, zero stock impact) count toward "Total
+      // Dispatched Quantity", disagreeing with Pending Dispatch's own
+      // DRAFT/PACKED scope for what's NOT yet dispatched (ERP-BUG-Q10-0003,
+      // Phase 10 QA pass — confirmed live: an unconfirmed DRAFT dispatch's
+      // quantity was counted as "dispatched").
+      status: { in: ["DISPATCHED", "DELIVERED"] },
       ...(dateFrom || dateToExclusive ? { dispatchDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
     },
     select: {
@@ -248,7 +258,7 @@ async function getCustomerWiseDispatchDescriptor(companyId: string, generatedByN
 
   return {
     title: "Customer-wise Dispatch",
-    subtitle: "Dispatch count and total dispatched quantity grouped by customer, excluding cancelled dispatches.",
+    subtitle: "Dispatch count and total dispatched quantity grouped by customer — Dispatched/Delivered only, matching the FG-stock-decrementing definition of dispatched.",
     filtersApplied: filtersApplied(filters, { dateFrom: "Date From", dateTo: "Date To" }),
     columns: [
       { key: "customer", label: "Customer" },

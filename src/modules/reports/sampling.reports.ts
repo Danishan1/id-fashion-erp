@@ -2,6 +2,8 @@ import { prisma } from "@/core/db/client";
 import type { ReportDescriptor } from "@/core/reports/report-types";
 import { registerReport } from "./registry";
 import { parseReportDateRange } from "./report-date-range";
+import { validateStatusFilter } from "./report-filters";
+import { SampleStatus } from "@prisma/client";
 
 const CATEGORY = "sampling" as const;
 const RAW_MATERIAL_CATEGORY = "sampling-raw-material" as const;
@@ -21,7 +23,7 @@ async function getSampleRegisterDescriptor(companyId: string, generatedByName: s
     where: {
       companyId,
       ...(filters.customerId ? { customerId: filters.customerId } : {}),
-      ...(filters.status ? { status: filters.status as never } : {}),
+      ...validateStatusFilter(filters, SampleStatus),
       ...(dateFrom || dateToExclusive ? { requestDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
     },
     select: {
@@ -101,9 +103,21 @@ async function getSampleStatusReportDescriptor(companyId: string, generatedByNam
 }
 
 // ---------------------------------------------------------------------------
-// 3. Sample Conversion Report — per customer, how many samples actually
-// graduated into a real Style master via "Convert to Style" (productId set
-// AND status APPROVED), out of total samples raised.
+// 3. Sample Conversion Report — per customer, how many Approved samples are
+// linked to a real Style master (productId set), out of total samples
+// raised.
+//
+// Deliberately labeled "Linked to a Style," not "Converted via Convert to
+// Style": `productId` is set by TWO different, indistinguishable paths — a
+// sample created directly against a pre-existing Style, or one that actually
+// went through the Convert-to-Style action — and nothing in the schema
+// records which path a given sample took (ERP-BUG-Q2, Phase 10 QA pass:
+// this report previously claimed to measure genuine conversions specifically
+// and materially overstated the real conversion rate as a result). Adding a
+// real `convertedToStyleAt` timestamp to distinguish the two would need a
+// schema migration — deferred as a follow-up; this fix corrects the report's
+// own claim to match what it can actually measure today, rather than
+// fabricating precision the data doesn't support.
 // ---------------------------------------------------------------------------
 async function getSampleConversionReportDescriptor(companyId: string, generatedByName: string): Promise<ReportDescriptor> {
   const samples = await prisma.sampleRequest.findMany({
@@ -113,16 +127,16 @@ async function getSampleConversionReportDescriptor(companyId: string, generatedB
 
   const byCustomer = new Map<
     string,
-    { customerId: string; customer: string; totalSamples: number; approvedSamples: number; convertedSamples: number }
+    { customerId: string; customer: string; totalSamples: number; approvedSamples: number; linkedToStyleSamples: number }
   >();
 
   for (const s of samples) {
     const existing =
-      byCustomer.get(s.customerId) ?? { customerId: s.customerId, customer: s.customer.name, totalSamples: 0, approvedSamples: 0, convertedSamples: 0 };
+      byCustomer.get(s.customerId) ?? { customerId: s.customerId, customer: s.customer.name, totalSamples: 0, approvedSamples: 0, linkedToStyleSamples: 0 };
     existing.totalSamples += 1;
     if (s.status === "APPROVED") {
       existing.approvedSamples += 1;
-      if (s.productId) existing.convertedSamples += 1;
+      if (s.productId) existing.linkedToStyleSamples += 1;
     }
     byCustomer.set(s.customerId, existing);
   }
@@ -130,31 +144,32 @@ async function getSampleConversionReportDescriptor(companyId: string, generatedB
   const rows = [...byCustomer.values()]
     .map((c) => ({
       ...c,
-      conversionRatePercent: c.totalSamples > 0 ? Math.round((c.convertedSamples / c.totalSamples) * 10000) / 100 : 0,
+      linkedRatePercent: c.totalSamples > 0 ? Math.round((c.linkedToStyleSamples / c.totalSamples) * 10000) / 100 : 0,
     }))
-    .sort((a, b) => b.conversionRatePercent - a.conversionRatePercent);
+    .sort((a, b) => b.linkedRatePercent - a.linkedRatePercent);
 
   const totalSamples = rows.reduce((s, r) => s + r.totalSamples, 0);
   const approvedSamples = rows.reduce((s, r) => s + r.approvedSamples, 0);
-  const convertedSamples = rows.reduce((s, r) => s + r.convertedSamples, 0);
+  const linkedToStyleSamples = rows.reduce((s, r) => s + r.linkedToStyleSamples, 0);
 
   return {
     title: "Sample Conversion Report",
-    subtitle: "Per customer: how many raised samples were actually converted into a real Style master (via Convert to Style).",
+    subtitle:
+      "Per customer: how many Approved samples are linked to a Style master — either created directly against an existing Style, or graduated via Convert to Style (the two are not distinguished in this data).",
     filtersApplied: [],
     columns: [
       { key: "customer", label: "Customer" },
       { key: "totalSamples", label: "Total Samples", type: "number", align: "right" },
       { key: "approvedSamples", label: "Approved Samples", type: "number", align: "right" },
-      { key: "convertedSamples", label: "Converted Samples", type: "number", align: "right" },
-      { key: "conversionRatePercent", label: "Conversion Rate %", type: "percent", align: "right" },
+      { key: "linkedToStyleSamples", label: "Linked to a Style", type: "number", align: "right" },
+      { key: "linkedRatePercent", label: "Linked Rate %", type: "percent", align: "right" },
     ],
     rows,
     totals: {
       totalSamples,
       approvedSamples,
-      convertedSamples,
-      conversionRatePercent: totalSamples > 0 ? Math.round((convertedSamples / totalSamples) * 10000) / 100 : 0,
+      linkedToStyleSamples,
+      linkedRatePercent: totalSamples > 0 ? Math.round((linkedToStyleSamples / totalSamples) * 10000) / 100 : 0,
     },
     meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
     generatedAt: new Date().toISOString(),

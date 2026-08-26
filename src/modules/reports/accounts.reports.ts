@@ -5,7 +5,9 @@ import { getTrialBalance } from "@/modules/accounts/journal.service";
 import { getAccountLedger } from "@/modules/accounts/chart-of-account.service";
 import { ChartOfAccountRepository } from "@/modules/accounts/chart-of-account.repository";
 import { parseReportDateRange } from "./report-date-range";
+import { validateStatusFilter } from "./report-filters";
 import { round2 } from "@/lib/money";
+import { JournalStatus } from "@prisma/client";
 
 const CATEGORY = "accounts" as const;
 
@@ -213,7 +215,7 @@ async function getJournalRegisterDescriptor(companyId: string, generatedByName: 
   const journals = await prisma.journal.findMany({
     where: {
       companyId,
-      ...(filters.status ? { status: filters.status as never } : {}),
+      ...validateStatusFilter(filters, JournalStatus),
       ...(dateFrom || dateToExclusive ? { journalDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
     },
     select: {

@@ -1,6 +1,8 @@
 import { prisma } from "@/core/db/client";
 import type { ReportDescriptor } from "@/core/reports/report-types";
 import { registerReport } from "./registry";
+import { validateStatusFilter } from "./report-filters";
+import { ProductionOrderStatus } from "@prisma/client";
 
 const CATEGORY = "production-planning" as const;
 
@@ -21,7 +23,7 @@ async function getProductionScheduleDescriptor(companyId: string, generatedByNam
   const orders = await prisma.productionOrder.findMany({
     where: {
       companyId,
-      ...(filters.status ? { status: filters.status as never } : {}),
+      ...validateStatusFilter(filters, ProductionOrderStatus),
     },
     select: {
       id: true,

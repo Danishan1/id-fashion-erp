@@ -2,7 +2,9 @@ import { prisma } from "@/core/db/client";
 import type { ReportDescriptor } from "@/core/reports/report-types";
 import { registerReport } from "./registry";
 import { parseReportDateRange } from "./report-date-range";
+import { validateStatusFilter } from "./report-filters";
 import { round2 } from "@/lib/money";
+import { SalesOrderStatus } from "@prisma/client";
 
 const CATEGORY = "sales-orders" as const;
 
@@ -28,7 +30,7 @@ async function getOrderRegisterDescriptor(companyId: string, generatedByName: st
     where: {
       companyId,
       ...(filters.customerId ? { customerId: filters.customerId } : {}),
-      ...(filters.status ? { status: filters.status as never } : {}),
+      ...validateStatusFilter(filters, SalesOrderStatus),
       ...(dateFrom || dateToExclusive ? { orderDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
     },
     select: { id: true, orderNumber: true, orderDate: true, status: true, baseTotalAmount: true, customer: { select: { name: true } } },

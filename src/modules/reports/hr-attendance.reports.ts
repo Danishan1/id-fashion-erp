@@ -3,6 +3,8 @@ import type { ReportDescriptor } from "@/core/reports/report-types";
 import { registerReport } from "./registry";
 import { computeIsLate } from "@/modules/hrms/attendance.service";
 import { parseReportDateRange } from "./report-date-range";
+import { validateStatusFilter } from "./report-filters";
+import { LeaveRequestStatus } from "@prisma/client";
 
 function filtersApplied(filters: Record<string, string>, labels: Record<string, string>) {
   return Object.entries(filters)
@@ -110,7 +112,7 @@ async function getLeaveRegisterDescriptor(companyId: string, generatedByName: st
     where: {
       companyId,
       ...(filters.employeeId ? { employeeId: filters.employeeId } : {}),
-      ...(filters.status ? { status: filters.status as never } : {}),
+      ...validateStatusFilter(filters, LeaveRequestStatus),
       ...(dateFrom || dateToExclusive ? { startDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
     },
     select: {

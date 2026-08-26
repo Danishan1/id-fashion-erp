@@ -40,9 +40,17 @@ async function getPurchaseOrderRegisterDescriptor(
     orderAmount: Number(o.baseTotalAmount),
   }));
 
+  // Rows deliberately include every status (this register is the full audit
+  // trail), but a CANCELLED order was never really purchased, so it must not
+  // contribute to the totals row — otherwise this report's grand total
+  // disagreed with Supplier-wise Purchase/Purchase Monthly Summary (both of
+  // which already exclude cancelled orders) by exactly the cancelled orders'
+  // combined amount (ERP-BUG-0002, Phase 10 QA pass).
+  const realRows = rows.filter((r) => r.status !== "CANCELLED");
+
   return {
     title: "Purchase Order Register",
-    subtitle: "Every Purchase Order matching the selected filters.",
+    subtitle: "Every Purchase Order matching the selected filters. Totals exclude cancelled orders.",
     filtersApplied: filtersApplied(filters, { dateFrom: "Date From", dateTo: "Date To", supplierId: "Supplier" }),
     columns: [
       { key: "orderNumber", label: "PO Number", linkTo: "purchaseOrder" },
@@ -52,7 +60,7 @@ async function getPurchaseOrderRegisterDescriptor(
       { key: "orderAmount", label: "Order Amount", type: "currency", align: "right" },
     ],
     rows,
-    totals: { orderAmount: round2(rows.reduce((sum, r) => sum + r.orderAmount, 0)) },
+    totals: { orderAmount: round2(realRows.reduce((sum, r) => sum + r.orderAmount, 0)) },
     meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
     generatedAt: new Date().toISOString(),
     generatedByName,
