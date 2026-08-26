@@ -1,17 +1,11 @@
 import { prisma } from "@/core/db/client";
 import type { ReportDescriptor } from "@/core/reports/report-types";
 import { registerReport } from "./registry";
+import { parseReportDateRange } from "./report-date-range";
 
 const CATEGORY = "audit" as const;
 
 const MAX_ACTIVITY_ROWS = 2000;
-
-function parseDateRange(filters: Record<string, string>): { dateFrom?: Date; dateTo?: Date } {
-  return {
-    dateFrom: filters.dateFrom ? new Date(filters.dateFrom) : undefined,
-    dateTo: filters.dateTo ? new Date(filters.dateTo) : undefined,
-  };
-}
 
 function filtersApplied(filters: Record<string, string>, labels: Record<string, string>) {
   return Object.entries(filters)
@@ -25,11 +19,11 @@ function filtersApplied(filters: Record<string, string>, labels: Record<string, 
 // a separate count() so the cap is visible, not silently hiding data).
 // ---------------------------------------------------------------------------
 async function getUserActivityDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>): Promise<ReportDescriptor> {
-  const { dateFrom, dateTo } = parseDateRange(filters);
+  const { dateFrom, dateToExclusive } = parseReportDateRange(filters);
   const where = {
     companyId,
     ...(filters.userId ? { userId: filters.userId } : {}),
-    ...(dateFrom || dateTo ? { performedAt: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+    ...(dateFrom || dateToExclusive ? { performedAt: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
   };
 
   const [logs, totalCount] = await Promise.all([

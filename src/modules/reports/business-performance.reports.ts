@@ -1,16 +1,10 @@
 import { prisma } from "@/core/db/client";
 import type { ReportDescriptor } from "@/core/reports/report-types";
 import { registerReport } from "./registry";
+import { parseReportDateRange } from "./report-date-range";
 
 const CATEGORY = "business-performance" as const;
 const TOP_N = 20;
-
-function parseDateRange(filters: Record<string, string>): { dateFrom?: Date; dateTo?: Date } {
-  return {
-    dateFrom: filters.dateFrom ? new Date(filters.dateFrom) : undefined,
-    dateTo: filters.dateTo ? new Date(filters.dateTo) : undefined,
-  };
-}
 
 function filtersApplied(filters: Record<string, string>, labels: Record<string, string>) {
   return Object.entries(filters)
@@ -24,12 +18,12 @@ function filtersApplied(filters: Record<string, string>, labels: Record<string, 
 // capped to the top 20 with each customer's share of total revenue.
 // ---------------------------------------------------------------------------
 async function getTopCustomersByRevenueDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>): Promise<ReportDescriptor> {
-  const { dateFrom, dateTo } = parseDateRange(filters);
+  const { dateFrom, dateToExclusive } = parseReportDateRange(filters);
   const invoices = await prisma.salesInvoice.findMany({
     where: {
       companyId,
       status: { not: "CANCELLED" },
-      ...(dateFrom || dateTo ? { invoiceDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+      ...(dateFrom || dateToExclusive ? { invoiceDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
     },
     select: { customerId: true, totalAmount: true, customer: { select: { name: true } } },
   });
@@ -77,12 +71,12 @@ async function getTopCustomersByRevenueDescriptor(companyId: string, generatedBy
 // per-line source Profitability's own reports use), ranked by revenue.
 // ---------------------------------------------------------------------------
 async function getTopStylesByRevenueDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>): Promise<ReportDescriptor> {
-  const { dateFrom, dateTo } = parseDateRange(filters);
+  const { dateFrom, dateToExclusive } = parseReportDateRange(filters);
   const invoices = await prisma.salesInvoice.findMany({
     where: {
       companyId,
       status: { not: "CANCELLED" },
-      ...(dateFrom || dateTo ? { invoiceDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+      ...(dateFrom || dateToExclusive ? { invoiceDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
     },
     select: { items: { select: { quantity: true, lineTotal: true, product: { select: { styleCode: true, styleName: true } } } } },
   });

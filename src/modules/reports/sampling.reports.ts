@@ -1,16 +1,10 @@
 import { prisma } from "@/core/db/client";
 import type { ReportDescriptor } from "@/core/reports/report-types";
 import { registerReport } from "./registry";
+import { parseReportDateRange } from "./report-date-range";
 
 const CATEGORY = "sampling" as const;
 const RAW_MATERIAL_CATEGORY = "sampling-raw-material" as const;
-
-function parseDateRange(filters: Record<string, string>): { dateFrom?: Date; dateTo?: Date } {
-  return {
-    dateFrom: filters.dateFrom ? new Date(filters.dateFrom) : undefined,
-    dateTo: filters.dateTo ? new Date(filters.dateTo) : undefined,
-  };
-}
 
 function filtersApplied(filters: Record<string, string>, labels: Record<string, string>) {
   return Object.entries(filters)
@@ -22,13 +16,13 @@ function filtersApplied(filters: Record<string, string>, labels: Record<string, 
 // 1. Sample Register
 // ---------------------------------------------------------------------------
 async function getSampleRegisterDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>): Promise<ReportDescriptor> {
-  const { dateFrom, dateTo } = parseDateRange(filters);
+  const { dateFrom, dateToExclusive } = parseReportDateRange(filters);
   const samples = await prisma.sampleRequest.findMany({
     where: {
       companyId,
       ...(filters.customerId ? { customerId: filters.customerId } : {}),
       ...(filters.status ? { status: filters.status as never } : {}),
-      ...(dateFrom || dateTo ? { requestDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+      ...(dateFrom || dateToExclusive ? { requestDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
     },
     select: {
       id: true,
@@ -173,13 +167,13 @@ async function getSampleConversionReportDescriptor(companyId: string, generatedB
 // the company's sample versions.
 // ---------------------------------------------------------------------------
 async function getSampleMaterialRequirementDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>): Promise<ReportDescriptor> {
-  const { dateFrom, dateTo } = parseDateRange(filters);
+  const { dateFrom, dateToExclusive } = parseReportDateRange(filters);
   const materials = await prisma.sampleMaterial.findMany({
     where: {
       sampleVersion: {
         sampleRequest: {
           companyId,
-          ...(dateFrom || dateTo ? { requestDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+          ...(dateFrom || dateToExclusive ? { requestDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
         },
       },
     },

@@ -4,15 +4,9 @@ import { registerReport } from "./registry";
 import { getTrialBalance } from "@/modules/accounts/journal.service";
 import { getAccountLedger } from "@/modules/accounts/chart-of-account.service";
 import { ChartOfAccountRepository } from "@/modules/accounts/chart-of-account.repository";
+import { parseReportDateRange } from "./report-date-range";
 
 const CATEGORY = "accounts" as const;
-
-function parseDateRange(filters: Record<string, string>): { dateFrom?: Date; dateTo?: Date } {
-  return {
-    dateFrom: filters.dateFrom ? new Date(filters.dateFrom) : undefined,
-    dateTo: filters.dateTo ? new Date(filters.dateTo) : undefined,
-  };
-}
 
 function filtersApplied(filters: Record<string, string>, labels: Record<string, string>) {
   return Object.entries(filters)
@@ -107,7 +101,10 @@ async function getGeneralLedgerDescriptor(companyId: string, generatedByName: st
     };
   }
 
-  const { dateFrom, dateTo } = parseDateRange(filters);
+  // journalDate is @db.Date (see prisma/schema.prisma) — a plain inclusive
+  // lte is already correct for it, no dateToExclusive needed here.
+  const dateFrom = filters.dateFrom ? new Date(filters.dateFrom) : undefined;
+  const dateTo = filters.dateTo ? new Date(filters.dateTo) : undefined;
   const result = await getAccountLedger(companyId, filters.accountId, filters.dateFrom, filters.dateTo);
   const rawLines = await ChartOfAccountRepository.findLedgerLines(companyId, filters.accountId, dateFrom, dateTo);
 
@@ -155,13 +152,13 @@ async function getGeneralLedgerDescriptor(companyId: string, generatedByName: st
 // so this reconciles with Trial Balance/General Ledger's own POSTED-only scope.
 // ---------------------------------------------------------------------------
 async function getDayBookDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>): Promise<ReportDescriptor> {
-  const { dateFrom, dateTo } = parseDateRange(filters);
+  const { dateFrom, dateToExclusive } = parseReportDateRange(filters);
   const lines = await prisma.journalLine.findMany({
     where: {
       journal: {
         companyId,
         status: "POSTED",
-        ...(dateFrom || dateTo ? { journalDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+        ...(dateFrom || dateToExclusive ? { journalDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
       },
     },
     select: {
@@ -220,12 +217,12 @@ async function getDayBookDescriptor(companyId: string, generatedByName: string, 
 // instead of summing the real, currently-entered lines.
 // ---------------------------------------------------------------------------
 async function getJournalRegisterDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>): Promise<ReportDescriptor> {
-  const { dateFrom, dateTo } = parseDateRange(filters);
+  const { dateFrom, dateToExclusive } = parseReportDateRange(filters);
   const journals = await prisma.journal.findMany({
     where: {
       companyId,
       ...(filters.status ? { status: filters.status as never } : {}),
-      ...(dateFrom || dateTo ? { journalDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+      ...(dateFrom || dateToExclusive ? { journalDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
     },
     select: {
       id: true,
@@ -286,13 +283,13 @@ async function getJournalRegisterDescriptor(companyId: string, generatedByName: 
 // never a second, separately-computed net-profit figure that could disagree.
 // ---------------------------------------------------------------------------
 async function getProfitAndLossDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>): Promise<ReportDescriptor> {
-  const { dateFrom, dateTo } = parseDateRange(filters);
+  const { dateFrom, dateToExclusive } = parseReportDateRange(filters);
   const lines = await prisma.journalLine.findMany({
     where: {
       journal: {
         companyId,
         status: "POSTED",
-        ...(dateFrom || dateTo ? { journalDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+        ...(dateFrom || dateToExclusive ? { journalDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
       },
       account: { accountType: { in: ["INCOME", "EXPENSE"] } },
     },

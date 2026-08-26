@@ -1,15 +1,9 @@
 import { prisma } from "@/core/db/client";
 import type { ReportDescriptor } from "@/core/reports/report-types";
 import { registerReport } from "./registry";
+import { parseReportDateRange } from "./report-date-range";
 
 const CATEGORY = "production" as const;
-
-function parseDateRange(filters: Record<string, string>): { dateFrom?: Date; dateTo?: Date } {
-  return {
-    dateFrom: filters.dateFrom ? new Date(filters.dateFrom) : undefined,
-    dateTo: filters.dateTo ? new Date(filters.dateTo) : undefined,
-  };
-}
 
 function filtersApplied(filters: Record<string, string>, labels: Record<string, string>) {
   return Object.entries(filters)
@@ -30,11 +24,11 @@ async function getProductionRegisterDescriptor(
   generatedByName: string,
   filters: Record<string, string>
 ): Promise<ReportDescriptor> {
-  const { dateFrom, dateTo } = parseDateRange(filters);
+  const { dateFrom, dateToExclusive } = parseReportDateRange(filters);
   const jobOrders = await prisma.jobOrder.findMany({
     where: {
       companyId,
-      ...(dateFrom || dateTo ? { createdAt: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+      ...(dateFrom || dateToExclusive ? { createdAt: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
     },
     select: {
       jobNumber: true,

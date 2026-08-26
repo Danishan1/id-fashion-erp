@@ -1,13 +1,7 @@
 import { prisma } from "@/core/db/client";
 import type { ReportDescriptor } from "@/core/reports/report-types";
 import { registerReport } from "./registry";
-
-function parseDateRange(filters: Record<string, string>): { dateFrom?: Date; dateTo?: Date } {
-  return {
-    dateFrom: filters.dateFrom ? new Date(filters.dateFrom) : undefined,
-    dateTo: filters.dateTo ? new Date(filters.dateTo) : undefined,
-  };
-}
+import { parseReportDateRange } from "./report-date-range";
 
 function filtersApplied(filters: Record<string, string>, labels: Record<string, string>) {
   return Object.entries(filters)
@@ -95,14 +89,14 @@ async function getCustomerLedgerDescriptor(companyId: string, generatedByName: s
     };
   }
 
-  const { dateFrom, dateTo } = parseDateRange(filters);
+  const { dateFrom, dateToExclusive } = parseReportDateRange(filters);
   const [invoices, payments] = await Promise.all([
     prisma.salesInvoice.findMany({
       where: {
         companyId,
         customerId: filters.customerId,
         status: { not: "CANCELLED" },
-        ...(dateFrom || dateTo ? { invoiceDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+        ...(dateFrom || dateToExclusive ? { invoiceDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
       },
       select: { invoiceNumber: true, invoiceDate: true, totalAmount: true },
     }),
@@ -112,7 +106,7 @@ async function getCustomerLedgerDescriptor(companyId: string, generatedByName: s
         customerId: filters.customerId,
         direction: "RECEIPT",
         status: "POSTED",
-        ...(dateFrom || dateTo ? { paymentDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+        ...(dateFrom || dateToExclusive ? { paymentDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
       },
       select: { paymentNumber: true, paymentDate: true, amount: true },
     }),
@@ -223,14 +217,14 @@ async function getSupplierOutstandingAgingDescriptor(companyId: string, generate
 }
 
 async function getPaymentMadeRegisterDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>): Promise<ReportDescriptor> {
-  const { dateFrom, dateTo } = parseDateRange(filters);
+  const { dateFrom, dateToExclusive } = parseReportDateRange(filters);
   const payments = await prisma.payment.findMany({
     where: {
       companyId,
       direction: "PAYMENT_OUT",
       status: { not: "CANCELLED" },
       ...(filters.supplierId ? { supplierId: filters.supplierId } : {}),
-      ...(dateFrom || dateTo ? { paymentDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+      ...(dateFrom || dateToExclusive ? { paymentDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
     },
     select: {
       id: true,
@@ -293,12 +287,12 @@ registerReport({
 const EXPENSES_CATEGORY = "expenses" as const;
 
 async function getExpenseRegisterDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>): Promise<ReportDescriptor> {
-  const { dateFrom, dateTo } = parseDateRange(filters);
+  const { dateFrom, dateToExclusive } = parseReportDateRange(filters);
   const expenses = await prisma.expense.findMany({
     where: {
       companyId,
       status: { not: "CANCELLED" },
-      ...(dateFrom || dateTo ? { expenseDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+      ...(dateFrom || dateToExclusive ? { expenseDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
     },
     select: {
       id: true,
