@@ -6,7 +6,7 @@ vi.mock("@/core/notifications/NotificationService", () => ({ createNotification:
 vi.mock("@/core/db/client", () => ({
   prisma: {
     leaveType: { findFirst: vi.fn() },
-    employee: { findFirst: vi.fn() },
+    employee: { findFirst: vi.fn(), findMany: vi.fn() },
     user: { findFirst: vi.fn() },
   },
 }));
@@ -28,26 +28,37 @@ vi.mock("./leave.repository", () => ({
     count: vi.fn(),
     findApprovedInYear: vi.fn(),
   },
+  LeaveBalanceCarryForwardRepository: {
+    create: vi.fn(),
+    findExistingForYear: vi.fn(),
+    sumForYear: vi.fn(),
+    findMany: vi.fn(),
+  },
 }));
 
 const { prisma } = await import("@/core/db/client");
 const { PermissionService } = await import("@/core/rbac/PermissionService");
 const { createNotification } = await import("@/core/notifications/NotificationService");
 const { HrConfigRepository } = await import("@/modules/hr-config/hr-config.repository");
-const { LeaveRequestRepository } = await import("./leave.repository");
-const { getLeaveBalance, approveLeaveRequest, rejectLeaveRequest, createLeaveRequest } = await import("./leave.service");
+const { LeaveRequestRepository, LeaveBalanceCarryForwardRepository, LeaveTypeRepository } = await import("./leave.repository");
+const { getLeaveBalance, approveLeaveRequest, rejectLeaveRequest, createLeaveRequest, runLeaveCarryForward } = await import("./leave.service");
 
 const actor = { companyId: "co-1", userId: "user-1", branchId: "br-1" };
 
 beforeEach(() => {
   vi.mocked(prisma.leaveType.findFirst).mockReset();
   vi.mocked(prisma.employee.findFirst).mockReset();
+  vi.mocked(prisma.employee.findMany).mockReset();
   vi.mocked(prisma.user.findFirst).mockReset();
   vi.mocked(HrConfigRepository.holidayMaster.findMany).mockReset().mockResolvedValue([]);
   vi.mocked(LeaveRequestRepository.findApprovedInYear).mockReset().mockResolvedValue([]);
   vi.mocked(LeaveRequestRepository.findAnyById).mockReset();
   vi.mocked(LeaveRequestRepository.update).mockReset();
   vi.mocked(LeaveRequestRepository.create).mockReset();
+  vi.mocked(LeaveBalanceCarryForwardRepository.sumForYear).mockReset().mockResolvedValue(0);
+  vi.mocked(LeaveBalanceCarryForwardRepository.create).mockReset();
+  vi.mocked(LeaveBalanceCarryForwardRepository.findExistingForYear).mockReset().mockResolvedValue([]);
+  vi.mocked(LeaveTypeRepository.findMany).mockReset();
   vi.mocked(PermissionService.assert).mockReset().mockResolvedValue(undefined);
   vi.mocked(createNotification).mockReset();
 });
@@ -62,7 +73,16 @@ describe("getLeaveBalance", () => {
 
     const balance = await getLeaveBalance("co-1", "emp-1", "lt-1", 2026);
 
-    expect(balance).toEqual({ annualDays: 12, usedDays: 4, remainingDays: 8 });
+    expect(balance).toEqual({ annualDays: 12, usedDays: 4, remainingDays: 8, carriedInDays: 0 });
+  });
+
+  it("adds carried-in days from the prior year on top of the leave type's own annualDays", async () => {
+    vi.mocked(prisma.leaveType.findFirst).mockResolvedValue({ id: "lt-1", annualDays: "12" } as never);
+    vi.mocked(LeaveBalanceCarryForwardRepository.sumForYear).mockResolvedValue(3);
+
+    const balance = await getLeaveBalance("co-1", "emp-1", "lt-1", 2027);
+
+    expect(balance).toEqual({ annualDays: 15, usedDays: 0, remainingDays: 15, carriedInDays: 3 });
   });
 
   it("does not charge a company holiday inside the request range against the balance", async () => {
@@ -304,5 +324,59 @@ describe("rejectLeaveRequest", () => {
         relatedRecordId: "req-1",
       })
     );
+  });
+});
+
+describe("runLeaveCarryForward", () => {
+  it("carries forward the unused balance for each active employee and eligible leave type", async () => {
+    vi.mocked(prisma.employee.findMany).mockResolvedValue([{ id: "emp-1" }] as never);
+    vi.mocked(LeaveTypeRepository.findMany).mockResolvedValue([{ id: "lt-1", isActive: true, annualDays: "12" }] as never);
+    vi.mocked(prisma.leaveType.findFirst).mockResolvedValue({ id: "lt-1", annualDays: "12" } as never);
+    vi.mocked(LeaveRequestRepository.findApprovedInYear).mockResolvedValue([
+      { startDate: new Date("2026-01-01"), endDate: new Date("2026-01-05") }, // 5 used, 7 remain
+    ] as never);
+
+    const result = await runLeaveCarryForward(actor, 2026);
+
+    expect(LeaveBalanceCarryForwardRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({ employeeId: "emp-1", leaveTypeId: "lt-1", fromYear: 2026, toYear: 2027, carriedDays: 7 })
+    );
+    expect(result).toEqual({ fromYear: 2026, toYear: 2027, employeesProcessed: 1, carryForwardsCreated: 1, totalDaysCarried: 7 });
+  });
+
+  it("skips a leave type with no remaining balance", async () => {
+    vi.mocked(prisma.employee.findMany).mockResolvedValue([{ id: "emp-1" }] as never);
+    vi.mocked(LeaveTypeRepository.findMany).mockResolvedValue([{ id: "lt-1", isActive: true, annualDays: "12" }] as never);
+    vi.mocked(prisma.leaveType.findFirst).mockResolvedValue({ id: "lt-1", annualDays: "12" } as never);
+    vi.mocked(LeaveRequestRepository.findApprovedInYear).mockResolvedValue([
+      { startDate: new Date("2026-01-01"), endDate: new Date("2026-12-31") }, // fully used, 0 remain
+    ] as never);
+
+    const result = await runLeaveCarryForward(actor, 2026);
+
+    expect(LeaveBalanceCarryForwardRepository.create).not.toHaveBeenCalled();
+    expect(result.carryForwardsCreated).toBe(0);
+  });
+
+  it("skips leave types with annualDays === 0 (unlimited/untracked), matching the balance-check's own convention", async () => {
+    vi.mocked(prisma.employee.findMany).mockResolvedValue([{ id: "emp-1" }] as never);
+    vi.mocked(LeaveTypeRepository.findMany).mockResolvedValue([{ id: "lt-untracked", isActive: true, annualDays: "0" }] as never);
+
+    const result = await runLeaveCarryForward(actor, 2026);
+
+    expect(prisma.leaveType.findFirst).not.toHaveBeenCalled();
+    expect(result.carryForwardsCreated).toBe(0);
+  });
+
+  it("is idempotent — skips an employee+leaveType pair already carried forward into the target year", async () => {
+    vi.mocked(prisma.employee.findMany).mockResolvedValue([{ id: "emp-1" }] as never);
+    vi.mocked(LeaveTypeRepository.findMany).mockResolvedValue([{ id: "lt-1", isActive: true, annualDays: "12" }] as never);
+    vi.mocked(LeaveBalanceCarryForwardRepository.findExistingForYear).mockResolvedValue([{ employeeId: "emp-1", leaveTypeId: "lt-1" }] as never);
+
+    const result = await runLeaveCarryForward(actor, 2026);
+
+    expect(LeaveBalanceCarryForwardRepository.create).not.toHaveBeenCalled();
+    expect(prisma.leaveType.findFirst).not.toHaveBeenCalled();
+    expect(result.carryForwardsCreated).toBe(0);
   });
 });

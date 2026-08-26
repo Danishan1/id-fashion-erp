@@ -27,3 +27,8 @@ export const rejectLeaveRequestSchema = z.object({
   reason: z.string().min(1, "A reason is required to reject a leave request.").max(1000),
 });
 export type RejectLeaveRequestInput = z.infer<typeof rejectLeaveRequestSchema>;
+
+export const runLeaveCarryForwardSchema = z.object({
+  fromYear: z.coerce.number().int().min(2000).max(2100),
+});
+export type RunLeaveCarryForwardInput = z.infer<typeof runLeaveCarryForwardSchema>;

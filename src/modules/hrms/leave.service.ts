@@ -6,7 +6,7 @@ import { prisma } from "@/core/db/client";
 import type { ListQuery } from "@/lib/list-query";
 import type { Prisma } from "@prisma/client";
 import { HrConfigRepository } from "@/modules/hr-config/hr-config.repository";
-import { LeaveRequestRepository, LeaveTypeRepository } from "./leave.repository";
+import { LeaveBalanceCarryForwardRepository, LeaveRequestRepository, LeaveTypeRepository } from "./leave.repository";
 import type { CreateLeaveRequestInput, CreateLeaveTypeInput, RejectLeaveRequestInput, UpdateLeaveTypeInput } from "./leave.schema";
 
 export interface ActorContext {
@@ -99,8 +99,66 @@ export async function getLeaveBalance(companyId: string, employeeId: string, lea
     return sum + countLeaveDays(clippedStart, clippedEnd, holidayKeys);
   }, 0);
 
-  const annualDays = Number(leaveType.annualDays);
-  return { annualDays, usedDays, remainingDays: Math.max(0, annualDays - usedDays) };
+  // Carried-in days from the prior year's unused balance (HRMS gap-analysis
+  // Priority 2 item) — added on top of the leave type's own annualDays, not
+  // a separate bucket, so an existing caller reading remainingDays gets the
+  // correct total without knowing carry-forward exists at all.
+  const carriedInDays = await LeaveBalanceCarryForwardRepository.sumForYear(companyId, employeeId, leaveTypeId, year);
+  const annualDays = Number(leaveType.annualDays) + carriedInDays;
+  return { annualDays, usedDays, remainingDays: Math.max(0, annualDays - usedDays), carriedInDays };
+}
+
+/**
+ * Manually-triggered batch computation (no job runner exists in this
+ * project — see LeaveBalanceCarryForward's own schema comment), computing
+ * each active employee's unused balance for `fromYear` per active leave
+ * type and carrying it into `fromYear + 1`. Idempotent per employee+
+ * leaveType — re-running for the same fromYear skips pairs already carried
+ * forward rather than double-crediting them.
+ */
+export async function runLeaveCarryForward(actor: ActorContext, fromYear: number) {
+  const toYear = fromYear + 1;
+
+  const [employees, leaveTypes, existing] = await Promise.all([
+    prisma.employee.findMany({ where: { companyId: actor.companyId, isActive: true, deletedAt: null }, select: { id: true } }),
+    LeaveTypeRepository.findMany(actor.companyId),
+    LeaveBalanceCarryForwardRepository.findExistingForYear(actor.companyId, toYear),
+  ]);
+
+  const alreadyCarried = new Set(existing.map((e) => `${e.employeeId}:${e.leaveTypeId}`));
+  // annualDays === 0 means "unlimited/untracked" (see getLeaveBalance's own
+  // comment) — nothing meaningful to carry forward for those.
+  const eligibleLeaveTypes = leaveTypes.filter((lt) => lt.isActive && Number(lt.annualDays) > 0);
+
+  let carryForwardsCreated = 0;
+  let totalDaysCarried = 0;
+
+  for (const employee of employees) {
+    for (const leaveType of eligibleLeaveTypes) {
+      if (alreadyCarried.has(`${employee.id}:${leaveType.id}`)) continue;
+
+      const balance = await getLeaveBalance(actor.companyId, employee.id, leaveType.id, fromYear);
+      if (balance.remainingDays <= 0) continue;
+
+      await LeaveBalanceCarryForwardRepository.create({
+        companyId: actor.companyId,
+        employeeId: employee.id,
+        leaveTypeId: leaveType.id,
+        fromYear,
+        toYear,
+        carriedDays: balance.remainingDays,
+        createdByUserId: actor.userId,
+      });
+      carryForwardsCreated++;
+      totalDaysCarried += balance.remainingDays;
+    }
+  }
+
+  return { fromYear, toYear, employeesProcessed: employees.length, carryForwardsCreated, totalDaysCarried };
+}
+
+export async function listLeaveCarryForwards(companyId: string, toYear?: number) {
+  return LeaveBalanceCarryForwardRepository.findMany(companyId, toYear);
 }
 
 export async function listLeaveRequests(companyId: string, query: ListQuery, status?: string) {

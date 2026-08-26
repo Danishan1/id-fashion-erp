@@ -41,3 +41,33 @@ export const LeaveRequestRepository = {
       select: { startDate: true, endDate: true },
     }),
 };
+
+export const LeaveBalanceCarryForwardRepository = {
+  create: (data: Prisma.LeaveBalanceCarryForwardUncheckedCreateInput) => prisma.leaveBalanceCarryForward.create({ data }),
+
+  /** The set of employee+leaveType pairs already carried forward into a
+   * given target year — the batch run's own idempotency check, read once
+   * up front rather than one query per employee. */
+  findExistingForYear: (companyId: string, toYear: number) =>
+    prisma.leaveBalanceCarryForward.findMany({ where: { companyId, toYear }, select: { employeeId: true, leaveTypeId: true } }),
+
+  /** Total carried-in days for one employee+leaveType landing in a given
+   * year — added on top of that leave type's own annualDays. */
+  sumForYear: async (companyId: string, employeeId: string, leaveTypeId: string, toYear: number) => {
+    const rows = await prisma.leaveBalanceCarryForward.findMany({
+      where: { companyId, employeeId, leaveTypeId, toYear },
+      select: { carriedDays: true },
+    });
+    return rows.reduce((sum, r) => sum + Number(r.carriedDays), 0);
+  },
+
+  findMany: (companyId: string, toYear?: number) =>
+    prisma.leaveBalanceCarryForward.findMany({
+      where: { companyId, ...(toYear ? { toYear } : {}) },
+      include: {
+        employee: { select: { id: true, employeeCode: true, fullName: true } },
+        leaveType: { select: { id: true, name: true } },
+      },
+      orderBy: [{ toYear: "desc" }, { employee: { fullName: "asc" } }],
+    }),
+};

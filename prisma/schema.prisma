@@ -99,6 +99,7 @@ model Company {
   attendanceCorrectionRequests AttendanceCorrectionRequest[]
   leaveTypes                  LeaveType[]
   leaveRequests               LeaveRequest[]
+  leaveBalanceCarryForwards   LeaveBalanceCarryForward[]
   chartOfAccounts             ChartOfAccount[]
   taxTypes                    TaxType[]
   taxRates                    TaxRate[]
@@ -237,6 +238,7 @@ model User {
   attendanceCorrectionsCreated         AttendanceCorrectionRequest[] @relation("AttendanceCorrectionCreatedBy")
   leaveRequestsApproved                LeaveRequest[]               @relation("LeaveRequestApprovedBy")
   leaveRequestsCreated                 LeaveRequest[]               @relation("LeaveRequestCreatedBy")
+  leaveBalanceCarryForwardsCreated     LeaveBalanceCarryForward[]
   journalsCreated                      Journal[]                    @relation("JournalCreatedBy")
   journalsPosted                       Journal[]                    @relation("JournalPostedBy")
   salesInvoicesCreated                 SalesInvoice[]               @relation("SalesInvoiceCreatedBy")
@@ -494,6 +496,7 @@ model Employee {
   attendanceRecords            AttendanceRecord[]
   attendanceCorrectionRequests AttendanceCorrectionRequest[]
   leaveRequests                LeaveRequest[]
+  leaveBalanceCarryForwards    LeaveBalanceCarryForward[]
 
   @@unique([companyId, employeeCode])
   @@map("employees")
@@ -2159,8 +2162,9 @@ model LeaveType {
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
 
-  company  Company        @relation(fields: [companyId], references: [id])
-  requests LeaveRequest[]
+  company        Company                    @relation(fields: [companyId], references: [id])
+  requests       LeaveRequest[]
+  carryForwards  LeaveBalanceCarryForward[]
 
   @@unique([companyId, name])
   @@map("hrms_leave_types")
@@ -2196,6 +2200,38 @@ model LeaveRequest {
   @@index([companyId, employeeId])
   @@index([companyId, status])
   @@map("hrms_leave_requests")
+}
+
+/**
+ * HRMS gap-analysis Priority 2 item: leave carry-forward automation. This
+ * project has no job runner/cron infrastructure at all (confirmed — see
+ * customer-segments.service.ts's own "no job runner" note), so this is a
+ * manually-triggered batch computation, not a true scheduled job — the same
+ * shape as CRM's generateFollowupNotifications(). One row per
+ * employee+leaveType+target-year, uncapped (no per-leave-type max-carry-
+ * forward policy exists in this schema to enforce — carries the full unused
+ * balance, a deliberate simplification, not an oversight).
+ */
+model LeaveBalanceCarryForward {
+  id              String   @id @default(uuid()) @db.Uuid
+  companyId       String   @map("company_id") @db.Uuid
+  employeeId      String   @map("employee_id") @db.Uuid
+  leaveTypeId     String   @map("leave_type_id") @db.Uuid
+  fromYear        Int      @map("from_year")
+  toYear          Int      @map("to_year")
+  carriedDays     Decimal  @map("carried_days") @db.Decimal(6, 2)
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  company    Company   @relation(fields: [companyId], references: [id])
+  employee   Employee  @relation(fields: [employeeId], references: [id])
+  leaveType  LeaveType @relation(fields: [leaveTypeId], references: [id])
+  createdBy  User      @relation(fields: [createdByUserId], references: [id])
+
+  // The idempotency guard the batch run relies on — re-running for the same
+  // target year is a safe no-op per employee+leaveType, not a double-credit.
+  @@unique([companyId, employeeId, leaveTypeId, toYear])
+  @@map("hrms_leave_balance_carry_forwards")
 }
 
 // ─────────────────────────────────────────────────────────────
