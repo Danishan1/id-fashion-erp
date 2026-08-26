@@ -124,6 +124,7 @@ export async function createShiftMaster(actor: ActorContext, input: ShiftMasterI
       name: input.name,
       startTime: input.startTime,
       endTime: input.endTime,
+      graceMinutes: input.graceMinutes,
       isActive: input.isActive,
     },
   });
@@ -151,6 +152,7 @@ export async function updateShiftMaster(actor: ActorContext, id: string, input: 
       name: input.name,
       startTime: input.startTime,
       endTime: input.endTime,
+      graceMinutes: input.graceMinutes,
       isActive: input.isActive,
     },
   });

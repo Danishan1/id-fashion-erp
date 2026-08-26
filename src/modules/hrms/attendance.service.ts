@@ -18,19 +18,23 @@ export interface ActorContext {
  * 10:15 cutoff for every employee company-wide (see the migration report).
  * Returns null (not "on time") when the employee has no shift assigned —
  * there's genuinely nothing to compare against, so "late" would be a guess.
+ * `graceMinutes` (HRMS gap-analysis Priority 2) shifts the cutoff itself
+ * later by that many minutes — a punch-in inside the grace window is
+ * "on time", not "late", the same tolerance every real factory floor uses.
  */
-export function computeIsLate(punchIn: Date | null, shiftStartTime: string | null | undefined): boolean | null {
+export function computeIsLate(punchIn: Date | null, shiftStartTime: string | null | undefined, graceMinutes = 0): boolean | null {
   if (!punchIn || !shiftStartTime) return null;
   const [hours, minutes] = shiftStartTime.split(":").map(Number);
   if (Number.isNaN(hours) || Number.isNaN(minutes)) return null;
   const cutoff = new Date(punchIn);
   cutoff.setHours(hours, minutes, 0, 0);
+  cutoff.setMinutes(cutoff.getMinutes() + graceMinutes);
   return punchIn.getTime() > cutoff.getTime();
 }
 
-function decorateAttendance<T extends { punchIn: Date | string | null; employee: { shift: { startTime: string } | null } }>(record: T) {
+function decorateAttendance<T extends { punchIn: Date | string | null; employee: { shift: { startTime: string; graceMinutes: number } | null } }>(record: T) {
   const punchIn = record.punchIn ? new Date(record.punchIn) : null;
-  return { ...record, isLate: computeIsLate(punchIn, record.employee.shift?.startTime) };
+  return { ...record, isLate: computeIsLate(punchIn, record.employee.shift?.startTime, record.employee.shift?.graceMinutes) };
 }
 
 export async function listAttendance(companyId: string, query: ListQuery, attendanceDate?: string) {

@@ -30,4 +30,20 @@ describe("computeIsLate", () => {
     // ...but on time against a 9:30 shift, same punch-in time.
     expect(computeIsLate(punchIn, "09:30")).toBe(false);
   });
+
+  it("defaults to zero grace minutes when omitted, matching the pre-grace-time behavior exactly", () => {
+    expect(computeIsLate(new Date("2026-08-24T09:01:00"), "09:00")).toBe(true);
+  });
+
+  it("treats a punch-in inside the grace window as on time", () => {
+    expect(computeIsLate(new Date("2026-08-24T09:09:00"), "09:00", 10)).toBe(false);
+  });
+
+  it("still counts a punch-in past the grace window as late", () => {
+    expect(computeIsLate(new Date("2026-08-24T09:11:00"), "09:00", 10)).toBe(true);
+  });
+
+  it("is on time exactly at the edge of the grace window", () => {
+    expect(computeIsLate(new Date("2026-08-24T09:10:00"), "09:00", 10)).toBe(false);
+  });
 });

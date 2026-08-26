@@ -1076,6 +1076,10 @@ model ShiftMaster {
   name      String
   startTime String   @map("start_time")
   endTime   String   @map("end_time")
+  // Minutes past startTime before a punch-in counts as late — HRMS
+  // gap-analysis Priority 2 item; computeIsLate() applies this as a
+  // tolerance window rather than the raw startTime cutoff.
+  graceMinutes Int      @default(0) @map("grace_minutes")
   isActive  Boolean  @default(true) @map("is_active")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")

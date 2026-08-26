@@ -189,14 +189,14 @@ async function getDailyAttendanceDescriptor(companyId: string, generatedByName: 
       punchIn: true,
       punchOut: true,
       remarks: true,
-      employee: { select: { employeeCode: true, fullName: true, department: { select: { name: true } }, shift: { select: { startTime: true } } } },
+      employee: { select: { employeeCode: true, fullName: true, department: { select: { name: true } }, shift: { select: { startTime: true, graceMinutes: true } } } },
     },
     orderBy: { employee: { fullName: "asc" } },
   });
 
   const rows = records.map((r) => {
     const punchIn = r.punchIn ? new Date(r.punchIn) : null;
-    const isLate = computeIsLate(punchIn, r.employee.shift?.startTime);
+    const isLate = computeIsLate(punchIn, r.employee.shift?.startTime, r.employee.shift?.graceMinutes);
     return {
       employeeCode: r.employee.employeeCode,
       fullName: r.employee.fullName,
@@ -238,7 +238,7 @@ async function getMonthlyAttendanceSummaryDescriptor(companyId: string, generate
     where: { companyId, attendanceDate: { gte: monthStart, lt: monthEnd } },
     select: {
       punchIn: true,
-      employee: { select: { id: true, employeeCode: true, fullName: true, department: { select: { name: true } }, shift: { select: { startTime: true } } } },
+      employee: { select: { id: true, employeeCode: true, fullName: true, department: { select: { name: true } }, shift: { select: { startTime: true, graceMinutes: true } } } },
     },
   });
 
@@ -263,7 +263,7 @@ async function getMonthlyAttendanceSummaryDescriptor(companyId: string, generate
     existing.totalRecords += 1;
     if (r.punchIn) {
       existing.presentDays += 1;
-      const isLate = computeIsLate(new Date(r.punchIn), r.employee.shift?.startTime);
+      const isLate = computeIsLate(new Date(r.punchIn), r.employee.shift?.startTime, r.employee.shift?.graceMinutes);
       if (isLate) existing.lateDays += 1;
     }
     byEmployee.set(r.employee.id, existing);

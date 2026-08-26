@@ -63,6 +63,7 @@ export default function HrConfigPage() {
             { key: "name", label: "Name", required: true },
             { key: "startTime", label: "Start Time", required: true, placeholder: "09:00" },
             { key: "endTime", label: "End Time", required: true, placeholder: "18:00" },
+            { key: "graceMinutes", label: "Grace (minutes)", type: "number", placeholder: "0" },
           ]}
         />
       )}

@@ -2,7 +2,7 @@ import { prisma } from "@/core/db/client";
 import type { Prisma } from "@prisma/client";
 
 const DETAIL_INCLUDE = {
-  employee: { select: { id: true, employeeCode: true, fullName: true, shift: { select: { id: true, name: true, startTime: true } } } },
+  employee: { select: { id: true, employeeCode: true, fullName: true, shift: { select: { id: true, name: true, startTime: true, graceMinutes: true } } } },
   recordedBy: { select: { id: true, fullName: true } },
 } satisfies Prisma.AttendanceRecordInclude;
 
