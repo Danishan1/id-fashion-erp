@@ -31,18 +31,37 @@ export default async function EditEmployeePage({ params }: { params: Promise<{ i
         submitUrl={`/api/v1/employees/${id}`}
         method="PATCH"
         redirectTo="/masters/employees"
+        excludeEmployeeId={id}
         initialValues={{
           employeeCode: employee.employeeCode,
           fullName: employee.fullName,
           departmentId: employee.departmentId ?? "",
           shiftId: employee.shiftId ?? "",
           designationId: employee.designationId ?? "",
+          reportsToId: employee.reportsToId ?? "",
           phone: employee.phone ?? "",
           email: employee.email ?? "",
           joinDate: employee.joinDate ? employee.joinDate.toISOString().slice(0, 10) : "",
           isActive: employee.isActive,
         }}
       />
+
+      <div className="max-w-xl">
+        <h2 className="mb-3 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Direct Reports</h2>
+        {employee.reports.length === 0 ? (
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">No one reports to {employee.fullName}.</p>
+        ) : (
+          <ul className="space-y-1 text-sm text-zinc-700 dark:text-zinc-200">
+            {employee.reports.map((r) => (
+              <li key={r.id}>
+                <a href={`/masters/employees/${r.id}`} className="text-indigo-600 hover:text-indigo-500">
+                  {r.fullName} ({r.employeeCode})
+                </a>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
 
       <EmployeeAttachmentsSection key={`attachments-${id}`} employeeId={id} />
     </div>

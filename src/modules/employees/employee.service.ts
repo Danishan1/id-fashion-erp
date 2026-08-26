@@ -54,6 +54,20 @@ async function assertDesignationBelongsToCompany(companyId: string, designationI
   if (!designation) throw new BusinessRuleError("NOT_FOUND", "Designation not found.", { id: designationId });
 }
 
+/** Same tenant-scope discipline as the designation check above, plus the
+ * one business rule a reporting hierarchy actually needs: an employee can't
+ * report to themselves. Deeper cycle detection (A -> B -> A) isn't checked —
+ * this is a display/org-chart hierarchy, not a workflow gate anything is
+ * enforced against, so a longer cycle is a data-entry mistake to notice and
+ * fix on sight, not a state a live business process could get stuck in. */
+async function assertReportsToIsValid(companyId: string, reportsToId: string, selfId?: string) {
+  if (reportsToId === selfId) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "An employee cannot report to themselves.");
+  }
+  const manager = await EmployeeRepository.findById(companyId, reportsToId);
+  if (!manager) throw new BusinessRuleError("NOT_FOUND", "Reporting manager not found.", { id: reportsToId });
+}
+
 function toData(input: EmployeeInput) {
   return {
     employeeCode: input.employeeCode,
@@ -61,6 +75,7 @@ function toData(input: EmployeeInput) {
     departmentId: input.departmentId || null,
     shiftId: input.shiftId || null,
     designationId: input.designationId || null,
+    reportsToId: input.reportsToId || null,
     phone: input.phone || null,
     email: input.email || null,
     joinDate: input.joinDate ? new Date(input.joinDate) : null,
@@ -76,6 +91,7 @@ function toUpdateData(input: EmployeeUpdateInput): Prisma.EmployeeUncheckedUpdat
   if (input.departmentId !== undefined) data.departmentId = input.departmentId || null;
   if (input.shiftId !== undefined) data.shiftId = input.shiftId || null;
   if (input.designationId !== undefined) data.designationId = input.designationId || null;
+  if (input.reportsToId !== undefined) data.reportsToId = input.reportsToId || null;
   if (input.phone !== undefined) data.phone = input.phone || null;
   if (input.email !== undefined) data.email = input.email || null;
   if (input.joinDate !== undefined) data.joinDate = input.joinDate ? new Date(input.joinDate) : null;
@@ -93,6 +109,9 @@ export async function createEmployee(actor: ActorContext, input: EmployeeInput) 
   }
   if (input.designationId) {
     await assertDesignationBelongsToCompany(actor.companyId, input.designationId);
+  }
+  if (input.reportsToId) {
+    await assertReportsToIsValid(actor.companyId, input.reportsToId);
   }
 
   const employee = await EmployeeRepository.create({ companyId: actor.companyId, ...toData(input) });
@@ -125,6 +144,9 @@ export async function updateEmployee(actor: ActorContext, id: string, input: Emp
   }
   if (input.designationId) {
     await assertDesignationBelongsToCompany(actor.companyId, input.designationId);
+  }
+  if (input.reportsToId) {
+    await assertReportsToIsValid(actor.companyId, input.reportsToId, id);
   }
 
   const updated = await EmployeeRepository.update(id, toUpdateData(input));

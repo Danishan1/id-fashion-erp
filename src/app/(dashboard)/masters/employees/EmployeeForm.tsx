@@ -10,6 +10,7 @@ export interface EmployeeFormValues {
   departmentId: string;
   shiftId: string;
   designationId: string;
+  reportsToId: string;
   phone: string;
   email: string;
   joinDate: string;
@@ -22,6 +23,7 @@ const EMPTY_VALUES: EmployeeFormValues = {
   departmentId: "",
   shiftId: "",
   designationId: "",
+  reportsToId: "",
   phone: "",
   email: "",
   joinDate: "",
@@ -44,19 +46,28 @@ interface Designation {
   name: string;
 }
 
+interface EmployeeOption {
+  id: string;
+  fullName: string;
+  employeeCode: string;
+}
+
 interface EmployeeFormProps {
   initialValues?: EmployeeFormValues;
   submitUrl: string;
   method: "POST" | "PATCH";
   redirectTo: string;
+  /** Excluded from the "Reports To" options — an employee can't report to themselves. Undefined on create (nothing to exclude yet). */
+  excludeEmployeeId?: string;
 }
 
-export function EmployeeForm({ initialValues, submitUrl, method, redirectTo }: EmployeeFormProps) {
+export function EmployeeForm({ initialValues, submitUrl, method, redirectTo, excludeEmployeeId }: EmployeeFormProps) {
   const router = useRouter();
   const [values, setValues] = useState<EmployeeFormValues>(initialValues ?? EMPTY_VALUES);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [designations, setDesignations] = useState<Designation[]>([]);
+  const [managers, setManagers] = useState<EmployeeOption[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -73,6 +84,10 @@ export function EmployeeForm({ initialValues, submitUrl, method, redirectTo }: E
       .then((res) => res.json())
       .then((body) => setDesignations(body.data ?? []))
       .catch(() => setDesignations([]));
+    fetch("/api/v1/employees?pageSize=500")
+      .then((res) => res.json())
+      .then((body) => setManagers(body.data ?? []))
+      .catch(() => setManagers([]));
   }, []);
 
   useEffect(() => {
@@ -177,6 +192,24 @@ export function EmployeeForm({ initialValues, submitUrl, method, redirectTo }: E
           />
         </FormField>
       </div>
+
+      <FormField label="Reports To" htmlFor="reportsToId">
+        <select
+          id="reportsToId"
+          value={values.reportsToId}
+          onChange={(e) => setValues({ ...values, reportsToId: e.target.value })}
+          className={textInputClass()}
+        >
+          <option value="">— None —</option>
+          {managers
+            .filter((m) => m.id !== excludeEmployeeId)
+            .map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.fullName} ({m.employeeCode})
+              </option>
+            ))}
+        </select>
+      </FormField>
 
       <FormField label="Shift" htmlFor="shiftId">
         <select id="shiftId" value={values.shiftId} onChange={(e) => setValues({ ...values, shiftId: e.target.value })} className={textInputClass()}>

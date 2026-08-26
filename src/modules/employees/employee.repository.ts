@@ -8,7 +8,15 @@ export const EmployeeRepository = {
   count: (where: Prisma.EmployeeWhereInput) => prisma.employee.count({ where }),
 
   findById: (companyId: string, id: string) =>
-    prisma.employee.findFirst({ where: { id, companyId, deletedAt: null }, include: { department: true, designation: true } }),
+    prisma.employee.findFirst({
+      where: { id, companyId, deletedAt: null },
+      include: {
+        department: true,
+        designation: true,
+        reportsTo: { select: { id: true, fullName: true, employeeCode: true } },
+        reports: { where: { deletedAt: null }, select: { id: true, fullName: true, employeeCode: true }, orderBy: { fullName: "asc" } },
+      },
+    }),
 
   findByCode: (companyId: string, employeeCode: string, excludeId?: string) =>
     prisma.employee.findFirst({
