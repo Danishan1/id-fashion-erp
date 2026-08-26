@@ -18,7 +18,8 @@ export default async function AdministrationPage() {
       <div>
         <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Administration</h1>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-          Manage users and review the full audit trail of who changed what, and when, across every module.
+          Users, branches, roles &amp; permissions, company settings, document numbering, and the full audit trail of who
+          changed what, and when, across every module.
         </p>
       </div>
       <AdminTabs initialUsers={JSON.parse(JSON.stringify(users))} canManage={canManage} currentUserId={session!.user.id} />
