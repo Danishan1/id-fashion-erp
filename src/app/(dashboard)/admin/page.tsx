@@ -3,7 +3,7 @@ import { auth } from "@/core/auth/auth";
 import { PermissionService } from "@/core/rbac/PermissionService";
 import { listUsers } from "@/modules/administration/user-admin.service";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
-import { AdminUsersPanel } from "./AdminUsersPanel";
+import { AdminTabs } from "./AdminTabs";
 
 export default async function AdministrationPage() {
   const session = await auth();
@@ -16,13 +16,12 @@ export default async function AdministrationPage() {
     <div className="space-y-4">
       <Breadcrumb items={[{ label: "Dashboard", href: "/dashboard" }, { label: "Administration" }]} />
       <div>
-        <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Administration — Users</h1>
+        <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Administration</h1>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-          Create additional users and assign them a branch + role, so the RBAC permission matrix can actually
-          be exercised by more than the one seeded Super Admin account.
+          Manage users and review the full audit trail of who changed what, and when, across every module.
         </p>
       </div>
-      <AdminUsersPanel initialUsers={JSON.parse(JSON.stringify(users))} canManage={canManage} currentUserId={session!.user.id} />
+      <AdminTabs initialUsers={JSON.parse(JSON.stringify(users))} canManage={canManage} currentUserId={session!.user.id} />
     </div>
   );
 }
