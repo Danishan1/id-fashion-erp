@@ -8,7 +8,7 @@ import { CampaignForm } from "../../CampaignForm";
 export default async function EditCampaignPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const session = await auth();
-  await PermissionService.assert(session!.user.id, "marketing", "view").catch(() => notFound());
+  await PermissionService.assert(session!.user.id, "marketing", "view", { sessionIssuedAt: session!.user.sessionIssuedAt }).catch(() => notFound());
 
   const campaign = await getCampaignById(session!.user.companyId, id).catch(() => null);
   if (!campaign || campaign.status === "COMPLETED") notFound();

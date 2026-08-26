@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { signOut } from "next-auth/react";
 import { NotificationBell } from "./NotificationBell";
 
@@ -19,7 +20,9 @@ export function Topbar({ userName }: TopbarProps) {
       </div>
       <div className="flex items-center gap-4">
         <NotificationBell />
-        <span className="text-sm text-zinc-600 dark:text-zinc-300">{userName}</span>
+        <Link href="/account" className="text-sm text-zinc-600 hover:underline dark:text-zinc-300">
+          {userName}
+        </Link>
         <button
           onClick={() => signOut({ callbackUrl: "/login" })}
           className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"

@@ -14,6 +14,7 @@ vi.mock("./purchase-invoice.repository", () => ({
     count: vi.fn(),
     findAnyById: vi.fn(),
     findByIdWithDetails: vi.fn(),
+    findByIdempotencyKey: vi.fn(),
     createWithItems: vi.fn(),
     replaceItems: vi.fn(),
     updateStatusConditional: vi.fn(),
@@ -64,6 +65,7 @@ beforeEach(() => {
   vi.mocked(PurchaseInvoiceRepository.findByIdWithDetails).mockReset();
   vi.mocked(PurchaseInvoiceRepository.findAnyById).mockReset();
   vi.mocked(PurchaseInvoiceRepository.createWithItems).mockReset();
+  vi.mocked(PurchaseInvoiceRepository.findByIdempotencyKey).mockReset().mockResolvedValue(null);
   vi.mocked(PurchaseInvoiceRepository.replaceItems).mockReset();
   vi.mocked(PurchaseInvoiceRepository.updateStatusConditional).mockReset();
   vi.mocked(TaxRateRepository.findAnyById).mockReset();
@@ -141,7 +143,14 @@ describe("createPurchaseInvoice", () => {
       items: [orderItem("item-1", "100")],
     } as never);
     vi.mocked(PurchaseInvoiceRepository.createWithItems).mockRejectedValue(
-      new Prisma.PrismaClientKnownRequestError("Unique constraint failed", { code: "P2002", clientVersion: "test" })
+      new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+        code: "P2002",
+        clientVersion: "test",
+        // Realistic shape for the supplier-invoice-number partial unique
+        // index collision — confirmed live against this project's own dev
+        // DB (see BusinessRuleError.test.ts).
+        meta: { driverAdapterError: { cause: { constraint: { fields: ["supplier_id", "supplier_invoice_number"] } } } },
+      })
     );
 
     await expect(
@@ -152,6 +161,96 @@ describe("createPurchaseInvoice", () => {
         lines: [{ purchaseOrderItemId: "item-1", quantity: 10, unitPrice: 5, taxRateId: "" }],
       })
     ).rejects.toMatchObject({ code: "REFERENCED_RECORD_IN_USE" });
+  });
+});
+
+describe("createPurchaseInvoice — idempotency (CF-5), distinguished from the pre-existing supplier-invoice-number guard", () => {
+  const existingInvoice = { id: "pinv-existing", invoiceNumber: "PINV-2026-00001" };
+  const validOrder = {
+    id: "po-1",
+    status: "FULLY_RECEIVED",
+    supplierId: "sup-1",
+    currencyCode: "INR",
+    exchangeRate: 1,
+    baseCurrencyCode: "INR",
+    supplier: { paymentTermsDays: 20 },
+    items: [orderItem("item-1", "100", "0")],
+  };
+  const validInput = {
+    purchaseOrderId: "po-1",
+    invoiceDate: "2026-08-24",
+    lines: [{ purchaseOrderItemId: "item-1", quantity: 10, unitPrice: 5, taxRateId: "" }],
+  };
+
+  beforeEach(() => {
+    vi.mocked(PurchaseOrderRepository.findByIdWithDetails).mockResolvedValue(validOrder as never);
+  });
+
+  it("returns the original invoice unchanged when the same idempotencyKey is replayed", async () => {
+    vi.mocked(PurchaseInvoiceRepository.findByIdempotencyKey).mockResolvedValue(existingInvoice as never);
+
+    const result = await createPurchaseInvoice(actor, { ...validInput, idempotencyKey: "retry-key-1" });
+
+    expect(result).toBe(existingInvoice);
+    expect(PurchaseOrderRepository.findByIdWithDetails).not.toHaveBeenCalled();
+    expect(PurchaseInvoiceRepository.createWithItems).not.toHaveBeenCalled();
+  });
+
+  it("proceeds normally the first time a key is used", async () => {
+    vi.mocked(PurchaseInvoiceRepository.createWithItems).mockResolvedValue({ id: "pinv-1" } as never);
+
+    const result = await createPurchaseInvoice(actor, { ...validInput, idempotencyKey: "fresh-key-1" });
+
+    expect(PurchaseInvoiceRepository.findByIdempotencyKey).toHaveBeenCalledWith("co-1", "fresh-key-1");
+    expect(PurchaseInvoiceRepository.createWithItems).toHaveBeenCalledWith(
+      expect.objectContaining({ idempotencyKey: "fresh-key-1" }),
+      expect.anything()
+    );
+    expect((result as { id: string }).id).toBe("pinv-1");
+  });
+
+  it("does not check idempotency at all when no key is supplied", async () => {
+    vi.mocked(PurchaseInvoiceRepository.createWithItems).mockResolvedValue({ id: "pinv-1" } as never);
+
+    await createPurchaseInvoice(actor, validInput);
+
+    expect(PurchaseInvoiceRepository.findByIdempotencyKey).not.toHaveBeenCalled();
+    expect(PurchaseInvoiceRepository.createWithItems).toHaveBeenCalledWith(
+      expect.objectContaining({ idempotencyKey: null }),
+      expect.anything()
+    );
+  });
+
+  it("regression: a genuine concurrent replay on the idempotencyKey constraint transparently returns the winner's invoice, not a REFERENCED_RECORD_IN_USE error", async () => {
+    const idempotencyKeyCollision = new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+      code: "P2002",
+      clientVersion: "test",
+      meta: { driverAdapterError: { cause: { constraint: { fields: ["company_id", "idempotency_key"] } } } },
+    });
+    vi.mocked(PurchaseInvoiceRepository.createWithItems).mockRejectedValue(idempotencyKeyCollision);
+    vi.mocked(PurchaseInvoiceRepository.findByIdempotencyKey)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(existingInvoice as never);
+
+    const result = await createPurchaseInvoice(actor, { ...validInput, idempotencyKey: "racing-key" });
+
+    expect(result).toBe(existingInvoice);
+  });
+
+  it("a supplier-invoice-number collision with an idempotencyKey ALSO supplied still reports REFERENCED_RECORD_IN_USE, not misattributed to the idempotency key", async () => {
+    const supplierInvoiceCollision = new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+      code: "P2002",
+      clientVersion: "test",
+      meta: { driverAdapterError: { cause: { constraint: { fields: ["supplier_id", "supplier_invoice_number"] } } } },
+    });
+    vi.mocked(PurchaseInvoiceRepository.createWithItems).mockRejectedValue(supplierInvoiceCollision);
+
+    await expect(createPurchaseInvoice(actor, { ...validInput, idempotencyKey: "some-key" })).rejects.toMatchObject({
+      code: "REFERENCED_RECORD_IN_USE",
+    });
+    // Called exactly once — the initial pre-check — never a second time from
+    // inside the catch block for this collision.
+    expect(PurchaseInvoiceRepository.findByIdempotencyKey).toHaveBeenCalledTimes(1);
   });
 });
 

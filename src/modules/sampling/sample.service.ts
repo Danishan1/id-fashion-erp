@@ -2,6 +2,7 @@ import { prisma } from "@/core/db/client";
 import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingService";
+import { PermissionService } from "@/core/rbac/PermissionService";
 import type { ListQuery } from "@/lib/list-query";
 import type {
   ConvertSampleToStyleInput,
@@ -871,6 +872,18 @@ export async function recordSampleApproval(actor: ActorContext, sampleVersionId:
 
   const request = await SampleRequestRepository.findAnyById(actor.companyId, version.sampleRequestId);
   if (!request) throw new BusinessRuleError("NOT_FOUND", "Sample request not found.", { id: version.sampleRequestId });
+
+  // The real, self-approval-guarded check — moved here from the route so it
+  // can never be bypassed by a future second caller that invokes this
+  // function directly (the route still does a coarse permission check
+  // before this, purely for early rejection). APPROVED needs "approve"
+  // (self-approval guarded); REJECTED/REVISION_REQUESTED needs "reject",
+  // deliberately not self-approval-guarded — matches the pre-existing route
+  // logic exactly, just relocated.
+  const approvalAction = input.decision === "APPROVED" ? "approve" : "reject";
+  await PermissionService.assert(actor.userId, "sampling", approvalAction, {
+    createdBy: request.requestedByUserId,
+  });
 
   if (request.status !== "SUBMITTED_TO_CUSTOMER") {
     throw new BusinessRuleError(

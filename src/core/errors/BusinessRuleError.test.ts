@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BusinessRuleError, toErrorResponse } from "./BusinessRuleError";
+import { BusinessRuleError, isUniqueConstraintViolationOnColumn, toErrorResponse } from "./BusinessRuleError";
 
 describe("BusinessRuleError", () => {
   it("maps DUPLICATE_DOC_NUMBER to HTTP 409", () => {
@@ -67,5 +67,59 @@ describe("toErrorResponse", () => {
     const { code, message } = (body as { error: { code: string; message: string } }).error;
     expect(code).toBe("DUPLICATE_DOC_NUMBER");
     expect(message).toContain("company_id, code");
+  });
+});
+
+describe("isUniqueConstraintViolationOnColumn", () => {
+  it("matches the @prisma/adapter-pg driver-adapter error shape, confirmed live against this project's own dev database", () => {
+    // Reproduced verbatim from an actual P2002 triggered against a real
+    // idempotencyKey collision on sales_invoices in this session.
+    const realDriverAdapterError = {
+      code: "P2002",
+      meta: {
+        modelName: "SalesInvoice",
+        driverAdapterError: {
+          name: "DriverAdapterError",
+          cause: {
+            originalCode: "23505",
+            originalMessage: 'duplicate key value violates unique constraint "sales_invoices_company_id_idempotency_key_key"',
+            kind: "UniqueConstraintViolation",
+            constraint: { fields: ["company_id", "idempotency_key"] },
+          },
+        },
+      },
+    };
+    expect(isUniqueConstraintViolationOnColumn(realDriverAdapterError, "idempotency_key")).toBe(true);
+    expect(isUniqueConstraintViolationOnColumn(realDriverAdapterError, "sales_order_id")).toBe(false);
+  });
+
+  it("correctly distinguishes a different real constraint on the same table (one_active_per_order)", () => {
+    const realDriverAdapterError = {
+      code: "P2002",
+      meta: {
+        modelName: "SalesInvoice",
+        driverAdapterError: {
+          cause: {
+            originalMessage: 'duplicate key value violates unique constraint "sales_invoices_one_active_per_order"',
+            constraint: { fields: ["sales_order_id"] },
+          },
+        },
+      },
+    };
+    expect(isUniqueConstraintViolationOnColumn(realDriverAdapterError, "sales_order_id")).toBe(true);
+    expect(isUniqueConstraintViolationOnColumn(realDriverAdapterError, "idempotency_key")).toBe(false);
+  });
+
+  it("also matches the classic meta.target array shape, for forward compatibility with a non-driver-adapter Prisma setup", () => {
+    const classicShape = { code: "P2002", meta: { target: ["company_id", "idempotency_key"] } };
+    expect(isUniqueConstraintViolationOnColumn(classicShape, "idempotency_key")).toBe(true);
+  });
+
+  it("returns false for a non-P2002 error", () => {
+    expect(isUniqueConstraintViolationOnColumn({ code: "P2025" }, "idempotency_key")).toBe(false);
+  });
+
+  it("returns false for a plain Error with no code at all", () => {
+    expect(isUniqueConstraintViolationOnColumn(new Error("boom"), "idempotency_key")).toBe(false);
   });
 });

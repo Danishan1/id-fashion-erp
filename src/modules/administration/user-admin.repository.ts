@@ -48,6 +48,20 @@ export const UserAdminRepository = {
 
   updateStatus: (id: string, status: "ACTIVE" | "SUSPENDED") =>
     prisma.user.update({ where: { id }, data: { status }, select: USER_SELECT }),
+
+  /**
+   * Shared by both the self-service change-password flow (src/modules/account/)
+   * and the admin-reset flow below — the same underlying write either way.
+   * Always stamps passwordChangedAt in the same update, never as a separate
+   * call, so the two can never drift out of sync. Returns only `{ id }` —
+   * this function's whole purpose is writing a bcrypt hash, so its own
+   * return value must never be capable of leaking one back to a caller.
+   */
+  updatePasswordHash: (id: string, passwordHash: string) =>
+    prisma.user.update({ where: { id }, data: { passwordHash, passwordChangedAt: new Date() }, select: { id: true } }),
+
+  findByIdWithPasswordHash: (id: string) =>
+    prisma.user.findUnique({ where: { id }, select: { id: true, passwordHash: true } }),
 };
 
 /**

@@ -9,7 +9,7 @@ import "@/modules/reports/all-reports";
 
 export default async function ReportCenterPage() {
   const session = await auth();
-  await PermissionService.assert(session!.user.id, "reports", "view").catch(() => notFound());
+  await PermissionService.assert(session!.user.id, "reports", "view", { sessionIssuedAt: session!.user.sessionIssuedAt }).catch(() => notFound());
 
   return (
     <div className="space-y-4">

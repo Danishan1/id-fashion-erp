@@ -43,6 +43,10 @@ export function AdminUsersPanel({
   const [branches, setBranches] = useState<BranchRef[]>([]);
   const [roles, setRoles] = useState<RoleRef[]>([]);
   const [pendingToggle, setPendingToggle] = useState<UserRow | null>(null);
+  const [resetTarget, setResetTarget] = useState<UserRow | null>(null);
+  const [resetPassword, setResetPassword] = useState("");
+  const [resetError, setResetError] = useState<string | null>(null);
+  const [isResetting, setIsResetting] = useState(false);
 
   async function openModal() {
     setError(null);
@@ -88,6 +92,34 @@ export function AdminUsersPanel({
     setPendingToggle(null);
   }
 
+  function openReset(user: UserRow) {
+    setResetTarget(user);
+    setResetPassword("");
+    setResetError(null);
+  }
+
+  async function handleResetPassword() {
+    if (!resetTarget) return;
+    setIsResetting(true);
+    setResetError(null);
+    try {
+      const res = await fetch(`/api/v1/administration/users/${resetTarget.id}/reset-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ newPassword: resetPassword }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error?.message ?? "Failed to reset password");
+      }
+      setResetTarget(null);
+    } catch (e) {
+      setResetError(e instanceof Error ? e.message : "Failed to reset password");
+    } finally {
+      setIsResetting(false);
+    }
+  }
+
   return (
     <div className="space-y-3">
       {canManage && (
@@ -112,6 +144,7 @@ export function AdminUsersPanel({
               <th className="px-3 py-2 text-left font-medium text-zinc-500">Branch</th>
               <th className="px-3 py-2 text-left font-medium text-zinc-500">Status</th>
               {canManage && <th className="px-3 py-2 text-left font-medium text-zinc-500">Active</th>}
+              {canManage && <th className="px-3 py-2 text-left font-medium text-zinc-500">Actions</th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
@@ -134,6 +167,17 @@ export function AdminUsersPanel({
                       disabled={u.id === currentUserId}
                       onToggle={() => setPendingToggle(u)}
                     />
+                  </td>
+                )}
+                {canManage && (
+                  <td className="px-3 py-2">
+                    <button
+                      type="button"
+                      onClick={() => openReset(u)}
+                      className="text-sm text-indigo-600 hover:underline dark:text-indigo-400"
+                    >
+                      Reset Password
+                    </button>
                   </td>
                 )}
               </tr>
@@ -228,6 +272,43 @@ export function AdminUsersPanel({
         onConfirm={handleToggleConfirm}
         onCancel={() => setPendingToggle(null)}
       />
+
+      <Modal open={!!resetTarget} onClose={() => setResetTarget(null)} title={`Reset Password — ${resetTarget?.fullName ?? ""}`}>
+        <div className="space-y-3">
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+            Sets a new password directly — no current password is required, and any of this user&apos;s existing
+            sessions will stop working immediately.
+          </p>
+          {resetError && <p className="text-sm text-red-600 dark:text-red-400">{resetError}</p>}
+          <FormField label="New Password" htmlFor="resetPassword" required>
+            <input
+              id="resetPassword"
+              type="password"
+              minLength={8}
+              className={textInputClass()}
+              value={resetPassword}
+              onChange={(e) => setResetPassword(e.target.value)}
+            />
+          </FormField>
+          <div className="flex justify-end gap-3 pt-2">
+            <button
+              type="button"
+              onClick={() => setResetTarget(null)}
+              className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={isResetting || resetPassword.length < 8}
+              onClick={handleResetPassword}
+              className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
+            >
+              {isResetting ? "Resetting…" : "Reset Password"}
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

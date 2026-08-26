@@ -30,6 +30,8 @@ export const receiveJobWorkSchema = z.object({
   rejectedQuantity: z.coerce.number().min(0).default(0),
   damagedQuantity: z.coerce.number().min(0).default(0),
   remarks: z.string().max(1000).optional().or(z.literal("")),
+  // Optional, client-generated — see CF-5 in HARDENING_BRANCH_INDEPENDENT_AUDIT.md.
+  idempotencyKey: z.string().min(1).max(200).optional(),
 });
 export type ReceiveJobWorkInput = z.infer<typeof receiveJobWorkSchema>;
 

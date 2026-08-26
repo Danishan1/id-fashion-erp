@@ -27,6 +27,10 @@ export const ExpenseRepository = {
 
   findAnyById: (companyId: string, id: string) => prisma.expense.findFirst({ where: { id, companyId } }),
 
+  /** CF-5 idempotent-replay lookup. */
+  findByIdempotencyKey: (companyId: string, idempotencyKey: string) =>
+    prisma.expense.findUnique({ where: { companyId_idempotencyKey: { companyId, idempotencyKey } } }),
+
   findByIdWithDetails: (companyId: string, id: string) =>
     prisma.expense.findFirst({ where: { id, companyId }, include: detailInclude }),
 

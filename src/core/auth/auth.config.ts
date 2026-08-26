@@ -26,6 +26,10 @@ export const authConfig = {
         token.userId = user.id;
         token.companyId = (user as { companyId: string }).companyId;
         token.defaultBranchId = (user as { defaultBranchId: string | null }).defaultBranchId;
+        // Stamped only at sign-in (when `user` is present), not on every
+        // token refresh — this is the session's own age, used to detect a
+        // session that predates a password change (User.passwordChangedAt).
+        token.sessionIssuedAt = Math.floor(Date.now() / 1000);
       }
       return token;
     },
@@ -34,6 +38,7 @@ export const authConfig = {
         session.user.id = token.userId as string;
         session.user.companyId = token.companyId as string;
         session.user.defaultBranchId = token.defaultBranchId as string | null;
+        session.user.sessionIssuedAt = token.sessionIssuedAt as number;
       }
       return session;
     },

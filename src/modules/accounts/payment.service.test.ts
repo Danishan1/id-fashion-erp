@@ -21,6 +21,7 @@ vi.mock("./payment.repository", () => ({
     count: vi.fn(),
     findAnyById: vi.fn(),
     findByIdWithDetails: vi.fn(),
+    findByIdempotencyKey: vi.fn(),
     createWithAllocations: vi.fn(),
     updateStatusConditional: vi.fn(),
   },
@@ -93,6 +94,7 @@ beforeEach(() => {
   vi.mocked(PaymentRepository.findAnyById).mockReset();
   vi.mocked(PaymentRepository.findByIdWithDetails).mockReset();
   vi.mocked(PaymentRepository.createWithAllocations).mockReset();
+  vi.mocked(PaymentRepository.findByIdempotencyKey).mockReset().mockResolvedValue(null);
   vi.mocked(PaymentRepository.updateStatusConditional).mockReset();
   vi.mocked(CompanyRepository.findBaseCurrencyCode).mockReset().mockResolvedValue({ baseCurrencyCode: "INR" } as never);
   vi.mocked(SalesInvoiceRepository.findAnyById).mockReset();
@@ -195,6 +197,86 @@ describe("createPayment — allocation validation", () => {
 
     const [headerData] = vi.mocked(PaymentRepository.createWithAllocations).mock.calls[0];
     expect(headerData.currencyCode).toBe("INR");
+  });
+});
+
+describe("createPayment — idempotency (CF-5)", () => {
+  const customer = { id: "cust-1" };
+  const paymentType = { id: "pt-1", type: "CASH" };
+  const existingPayment = { id: "pay-existing", paymentNumber: "PAY-2026-00001" };
+  const validInput = {
+    direction: "RECEIPT",
+    customerId: "cust-1",
+    paymentDate: "2026-08-24",
+    paymentTypeId: "pt-1",
+    amount: 100,
+    allocations: [{ salesInvoiceId: "inv-1", allocatedAmount: 100 }],
+  };
+
+  beforeEach(() => {
+    vi.mocked(CustomerRepository.findByIdWithBuyers).mockResolvedValue(customer as never);
+    vi.mocked(FinanceConfigRepository.paymentType.findFirst).mockResolvedValue(paymentType as never);
+    vi.mocked(SalesInvoiceRepository.findAnyById).mockResolvedValue({
+      id: "inv-1",
+      customerId: "cust-1",
+      status: "POSTED",
+      totalAmount: "500",
+      paidAmount: "0",
+    } as never);
+  });
+
+  it("returns the original payment unchanged when the same idempotencyKey is replayed, without validating allocations at all", async () => {
+    vi.mocked(PaymentRepository.findByIdempotencyKey).mockResolvedValue(existingPayment as never);
+
+    const result = await createPayment(actor, { ...validInput, idempotencyKey: "retry-key-1" } as never);
+
+    expect(result).toBe(existingPayment);
+    expect(CustomerRepository.findByIdWithBuyers).not.toHaveBeenCalled();
+    expect(PaymentRepository.createWithAllocations).not.toHaveBeenCalled();
+  });
+
+  it("proceeds normally the first time a key is used", async () => {
+    vi.mocked(PaymentRepository.createWithAllocations).mockResolvedValue({ id: "pay-1" } as never);
+
+    const result = await createPayment(actor, { ...validInput, idempotencyKey: "fresh-key-1" } as never);
+
+    expect(PaymentRepository.findByIdempotencyKey).toHaveBeenCalledWith("co-1", "fresh-key-1");
+    expect(PaymentRepository.createWithAllocations).toHaveBeenCalledWith(
+      expect.objectContaining({ idempotencyKey: "fresh-key-1" }),
+      expect.anything()
+    );
+    expect((result as { id: string }).id).toBe("pay-1");
+  });
+
+  it("does not check idempotency at all when no key is supplied", async () => {
+    vi.mocked(PaymentRepository.createWithAllocations).mockResolvedValue({ id: "pay-1" } as never);
+
+    await createPayment(actor, validInput as never);
+
+    expect(PaymentRepository.findByIdempotencyKey).not.toHaveBeenCalled();
+    expect(PaymentRepository.createWithAllocations).toHaveBeenCalledWith(
+      expect.objectContaining({ idempotencyKey: null }),
+      expect.anything()
+    );
+  });
+
+  it("regression: a genuine concurrent replay transparently returns the winner's payment instead of throwing", async () => {
+    const p2002 = Object.assign(new Error("Unique constraint failed"), { code: "P2002" });
+    vi.mocked(PaymentRepository.createWithAllocations).mockRejectedValue(p2002);
+    vi.mocked(PaymentRepository.findByIdempotencyKey)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(existingPayment as never);
+
+    const result = await createPayment(actor, { ...validInput, idempotencyKey: "racing-key" } as never);
+
+    expect(result).toBe(existingPayment);
+  });
+
+  it("still throws a genuine P2002 with no idempotencyKey supplied", async () => {
+    const p2002 = Object.assign(new Error("Unique constraint failed"), { code: "P2002" });
+    vi.mocked(PaymentRepository.createWithAllocations).mockRejectedValue(p2002);
+
+    await expect(createPayment(actor, validInput as never)).rejects.toBe(p2002);
   });
 });
 

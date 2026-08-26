@@ -100,6 +100,14 @@ async function convertItemsToBaseUom(companyId: string, items: CreateStockMoveme
  * endpoint on this one.
  */
 export async function createStockMovement(actor: ActorContext, input: CreateStockMovementInput) {
+  // CF-5: a network retry or double-click resubmitting the identical create
+  // call must return the ORIGINAL movement, not post a second one — checked
+  // before anything else, including drawing a document number.
+  if (input.idempotencyKey) {
+    const existing = await StockMovementRepository.findByIdempotencyKey(actor.companyId, input.idempotencyKey);
+    if (existing) return existing;
+  }
+
   // Convert every line to its material's base UOM up front (pure
   // computation, no writes yet) — everything downstream (the availability
   // check and every ledger post) must speak base UOM, matching every other
@@ -138,80 +146,92 @@ export async function createStockMovement(actor: ActorContext, input: CreateStoc
 
   const inventoryTransactionType = INVENTORY_TRANSACTION_TYPE_BY_MOVEMENT_TYPE[input.movementType];
 
-  const movement = await prisma.$transaction(async (tx) => {
-    const created = await StockMovementRepository.createWithItems(
-      tx,
-      {
-        companyId: actor.companyId,
-        branchId: actor.branchId || null,
-        movementNumber,
-        movementType: input.movementType,
-        warehouseId: input.warehouseId,
-        toWarehouseId: input.movementType === "TRANSFER" ? input.toWarehouseId || null : null,
-        supplierId: input.movementType === "RETURN_TO_SUPPLIER" ? input.supplierId || null : null,
-        reason: input.reason || null,
-        remarks: input.remarks || null,
-        performedByUserId: actor.userId,
-      },
-      input.items.map((item) => ({
-        productId: item.productId,
-        uomId: item.uomId,
-        quantity: item.quantity,
-        remarks: item.remarks || null,
-      }))
-    );
+  let movement;
+  try {
+    movement = await prisma.$transaction(async (tx) => {
+      const created = await StockMovementRepository.createWithItems(
+        tx,
+        {
+          companyId: actor.companyId,
+          branchId: actor.branchId || null,
+          movementNumber,
+          movementType: input.movementType,
+          warehouseId: input.warehouseId,
+          toWarehouseId: input.movementType === "TRANSFER" ? input.toWarehouseId || null : null,
+          supplierId: input.movementType === "RETURN_TO_SUPPLIER" ? input.supplierId || null : null,
+          reason: input.reason || null,
+          remarks: input.remarks || null,
+          performedByUserId: actor.userId,
+          idempotencyKey: input.idempotencyKey ?? null,
+        },
+        input.items.map((item) => ({
+          productId: item.productId,
+          uomId: item.uomId,
+          quantity: item.quantity,
+          remarks: item.remarks || null,
+        }))
+      );
 
-    for (let i = 0; i < input.items.length; i++) {
-      const item = input.items[i];
-      const baseQuantity = baseQuantities[i];
-      if (input.movementType === "TRANSFER") {
-        // One document, two ledger entries — stock leaves the source and
-        // lands at the destination inside the same transaction, so the two
-        // sides can never observably disagree (no window where the stock is
-        // "nowhere," even under a mid-write crash — the transaction as a
-        // whole either commits both or neither).
-        await recordInventoryTransaction(tx, actor, {
-          productId: item.productId,
-          warehouseId: input.warehouseId,
-          transactionType: inventoryTransactionType,
-          quantity: -baseQuantity,
-          referenceModule: "STOCK_MOVEMENT",
-          referenceRecordId: created.id,
-        });
-        await recordInventoryTransaction(tx, actor, {
-          productId: item.productId,
-          warehouseId: input.toWarehouseId!,
-          transactionType: inventoryTransactionType,
-          quantity: baseQuantity,
-          referenceModule: "STOCK_MOVEMENT",
-          referenceRecordId: created.id,
-        });
-      } else if (input.movementType === "RETURN_TO_SUPPLIER") {
-        await recordInventoryTransaction(tx, actor, {
-          productId: item.productId,
-          warehouseId: input.warehouseId,
-          transactionType: inventoryTransactionType,
-          quantity: -baseQuantity,
-          referenceModule: "STOCK_MOVEMENT",
-          referenceRecordId: created.id,
-        });
-      } else {
-        // ADJUSTMENT — the item's own signed quantity carries the meaning
-        // (positive = found, negative = written off), posted as-is (already
-        // base-UOM converted, sign preserved by convertUomQuantity).
-        await recordInventoryTransaction(tx, actor, {
-          productId: item.productId,
-          warehouseId: input.warehouseId,
-          transactionType: inventoryTransactionType,
-          quantity: baseQuantity,
-          referenceModule: "STOCK_MOVEMENT",
-          referenceRecordId: created.id,
-        });
+      for (let i = 0; i < input.items.length; i++) {
+        const item = input.items[i];
+        const baseQuantity = baseQuantities[i];
+        if (input.movementType === "TRANSFER") {
+          // One document, two ledger entries — stock leaves the source and
+          // lands at the destination inside the same transaction, so the two
+          // sides can never observably disagree (no window where the stock is
+          // "nowhere," even under a mid-write crash — the transaction as a
+          // whole either commits both or neither).
+          await recordInventoryTransaction(tx, actor, {
+            productId: item.productId,
+            warehouseId: input.warehouseId,
+            transactionType: inventoryTransactionType,
+            quantity: -baseQuantity,
+            referenceModule: "STOCK_MOVEMENT",
+            referenceRecordId: created.id,
+          });
+          await recordInventoryTransaction(tx, actor, {
+            productId: item.productId,
+            warehouseId: input.toWarehouseId!,
+            transactionType: inventoryTransactionType,
+            quantity: baseQuantity,
+            referenceModule: "STOCK_MOVEMENT",
+            referenceRecordId: created.id,
+          });
+        } else if (input.movementType === "RETURN_TO_SUPPLIER") {
+          await recordInventoryTransaction(tx, actor, {
+            productId: item.productId,
+            warehouseId: input.warehouseId,
+            transactionType: inventoryTransactionType,
+            quantity: -baseQuantity,
+            referenceModule: "STOCK_MOVEMENT",
+            referenceRecordId: created.id,
+          });
+        } else {
+          // ADJUSTMENT — the item's own signed quantity carries the meaning
+          // (positive = found, negative = written off), posted as-is (already
+          // base-UOM converted, sign preserved by convertUomQuantity).
+          await recordInventoryTransaction(tx, actor, {
+            productId: item.productId,
+            warehouseId: input.warehouseId,
+            transactionType: inventoryTransactionType,
+            quantity: baseQuantity,
+            referenceModule: "STOCK_MOVEMENT",
+            referenceRecordId: created.id,
+          });
+        }
       }
-    }
 
-    return created;
-  });
+      return created;
+    });
+  } catch (err) {
+    // A genuine concurrent replay — see createGoodsReceipt's identical
+    // fallback for the full rationale.
+    if (input.idempotencyKey && err && typeof err === "object" && "code" in err && err.code === "P2002") {
+      const existing = await StockMovementRepository.findByIdempotencyKey(actor.companyId, input.idempotencyKey);
+      if (existing) return existing;
+    }
+    throw err;
+  }
 
   await writeAuditLog({
     companyId: actor.companyId,

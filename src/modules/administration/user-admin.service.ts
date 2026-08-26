@@ -102,3 +102,37 @@ export async function setUserStatus(actor: ActorContext, id: string, status: "AC
 
   return updated;
 }
+
+/**
+ * Admin-triggered "set new password" — the audit's own stated minimum bar
+ * for account recovery (this app has no email/forgot-password infra to
+ * build a self-service reset flow on top of). Company-scoped via the same
+ * `findById` pattern setUserStatus already uses, so an admin from one
+ * company can never reset a user in another. No current-password check —
+ * that's the entire point of an admin reset (the user may have forgotten
+ * it) — the RBAC gate (`administration.edit`, asserted at the route layer)
+ * is what actually authorizes this.
+ */
+export async function resetUserPassword(actor: ActorContext, id: string, newPassword: string): Promise<void> {
+  const existing = await UserAdminRepository.findById(actor.companyId, id);
+  if (!existing) throw new BusinessRuleError("NOT_FOUND", "User not found.", { id });
+
+  const passwordHash = await hashPassword(newPassword);
+  await UserAdminRepository.updatePasswordHash(id, passwordHash);
+
+  // Same reasoning as setUserStatus's own invalidate() call — not required
+  // for the session-invalidation guarantee itself (PermissionService/
+  // requireSession both re-check passwordChangedAt live, uncached), just
+  // keeps the permission-key cache from riding along stale too.
+  PermissionService.invalidate(id);
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "users",
+    recordId: id,
+    action: "UPDATE",
+    // Never the password/hash itself — only the fact that it was reset.
+    newValues: { passwordReset: true },
+  });
+}

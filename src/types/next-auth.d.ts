@@ -6,6 +6,9 @@ declare module "next-auth" {
       id: string;
       companyId: string;
       defaultBranchId: string | null;
+      /** Unix seconds this session's JWT was issued — lets a password
+       * change invalidate sessions that predate it. See CF-7/passwordChangedAt. */
+      sessionIssuedAt: number;
     } & DefaultSession["user"];
   }
 
@@ -20,5 +23,6 @@ declare module "next-auth/jwt" {
     userId: string;
     companyId: string;
     defaultBranchId: string | null;
+    sessionIssuedAt: number;
   }
 }

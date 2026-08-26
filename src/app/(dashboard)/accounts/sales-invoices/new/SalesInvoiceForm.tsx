@@ -40,6 +40,8 @@ export function SalesInvoiceForm() {
   const [lineTaxRateIds, setLineTaxRateIds] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // See CF-5 in the independent hardening audit.
+  const [idempotencyKey] = useState(() => crypto.randomUUID());
 
   useEffect(() => {
     fetch("/api/v1/sales-orders?pageSize=200")
@@ -87,30 +89,35 @@ export function SalesInvoiceForm() {
     setIsSubmitting(true);
     setError(null);
 
-    const res = await fetch("/api/v1/sales-invoices", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        salesOrderId: activeOrder.id,
-        invoiceDate,
-        lines: activeOrder.items.map((item) => ({
-          salesOrderItemId: item.id,
-          taxRateId: lineTaxRateIds[item.id] || "",
-        })),
-      }),
-    });
+    try {
+      const res = await fetch("/api/v1/sales-invoices", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          salesOrderId: activeOrder.id,
+          invoiceDate,
+          lines: activeOrder.items.map((item) => ({
+            salesOrderItemId: item.id,
+            taxRateId: lineTaxRateIds[item.id] || "",
+          })),
+          idempotencyKey,
+        }),
+      });
 
-    setIsSubmitting(false);
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        setError(body?.error?.message ?? "Failed to create invoice.");
+        return;
+      }
 
-    if (!res.ok) {
-      const body = await res.json().catch(() => null);
-      setError(body?.error?.message ?? "Failed to create invoice.");
-      return;
+      const body = await res.json();
+      router.push(`/accounts/sales-invoices/${body.data.id}`);
+      router.refresh();
+    } catch {
+      setError("Could not reach the server. Check your connection and try again — it's safe to resubmit.");
+    } finally {
+      setIsSubmitting(false);
     }
-
-    const body = await res.json();
-    router.push(`/accounts/sales-invoices/${body.data.id}`);
-    router.refresh();
   };
 
   return (

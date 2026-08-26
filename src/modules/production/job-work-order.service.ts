@@ -362,6 +362,12 @@ export async function createJobWorkOrder(actor: ActorContext, input: CreateJobWo
  * forwardJobOrder()/recordQcInspection() become usable on it for free.
  */
 export async function receiveJobWork(actor: ActorContext, jobWorkOrderId: string, input: ReceiveJobWorkInput) {
+  // CF-5: checked before anything else, including drawing a document number.
+  if (input.idempotencyKey) {
+    const existing = await JobWorkReceiptRepository.findByIdempotencyKey(actor.companyId, input.idempotencyKey);
+    if (existing) return existing;
+  }
+
   const order = await JobWorkOrderRepository.findAnyById(actor.companyId, jobWorkOrderId);
   if (!order) throw new BusinessRuleError("NOT_FOUND", "Job-work order not found.", { id: jobWorkOrderId });
 
@@ -376,54 +382,73 @@ export async function receiveJobWork(actor: ActorContext, jobWorkOrderId: string
     throw new BusinessRuleError("VALIDATION_ERROR", "Enter at least one non-zero quantity to receive.", {});
   }
 
-  const receiptCount = await JobWorkReceiptRepository.countByJobWorkOrderId(jobWorkOrderId);
-  const receiptNumber = `${order.jobWorkNumber}-R${receiptCount + 1}`;
-
-  const result = await prisma.$transaction(async (tx) => {
-    const current = await JobWorkOrderRepository.findForGuardedUpdateInTx(tx, jobWorkOrderId);
-    const issued = Number(current.issuedQuantity);
-    const newReceived = Number(current.receivedQuantity) + input.receivedQuantity;
-    const newRejected = Number(current.rejectedQuantity) + input.rejectedQuantity;
-    const newDamaged = Number(current.damagedQuantity) + input.damagedQuantity;
-    const total = newReceived + newRejected + newDamaged;
-
-    if (total > issued + EPSILON) {
-      throw new BusinessRuleError(
-        "OVER_RECEIPT_NOT_ALLOWED",
-        `Receiving this quantity (${totalReceiving}) would bring the total received+rejected+damaged (${total}) above the issued quantity (${issued}).`,
-        { issued, attempted: total }
-      );
-    }
-
-    await JobWorkOrderRepository.updateInTx(tx, jobWorkOrderId, {
-      receivedQuantity: newReceived,
-      rejectedQuantity: newRejected,
-      damagedQuantity: newDamaged,
-      status: computeJobWorkOrderStatus({ ...current, receivedQuantity: newReceived, rejectedQuantity: newRejected, damagedQuantity: newDamaged }),
-    });
-
-    const receipt = await JobWorkReceiptRepository.createInTx(tx, {
-      companyId: actor.companyId,
-      jobWorkOrderId,
-      receiptNumber,
-      receivedDate: new Date(input.receivedDate),
-      receivedQuantity: input.receivedQuantity,
-      rejectedQuantity: input.rejectedQuantity,
-      damagedQuantity: input.damagedQuantity,
-      status: "COMPLETED",
-      remarks: input.remarks || null,
-      receivedByUserId: actor.userId,
-    });
-
-    // Reuse the existing, untouched guard — this is the integration point.
-    await applyJobOrderQuantityDelta(tx, order.jobOrderId, {
-      completed: input.receivedQuantity,
-      rejected: input.rejectedQuantity,
-      damaged: input.damagedQuantity,
-    });
-
-    return receipt;
+  // Drawn via the existing atomic document-number counter (document_sequences,
+  // UPDATE...RETURNING) — replaces the previous count()-then-use scheme,
+  // which raced under concurrent receipts against the same job-work order
+  // (two receipts arriving together could both read the same count and both
+  // build the identical "<jobWorkNumber>-R<n>" suffix).
+  const receiptNumber = await generateDocumentNumber({
+    companyId: actor.companyId,
+    branchId: actor.branchId ?? null,
+    documentType: "JOB_WORK_RECEIPT",
   });
+
+  let result;
+  try {
+    result = await prisma.$transaction(async (tx) => {
+      const current = await JobWorkOrderRepository.findForGuardedUpdateInTx(tx, jobWorkOrderId);
+      const issued = Number(current.issuedQuantity);
+      const newReceived = Number(current.receivedQuantity) + input.receivedQuantity;
+      const newRejected = Number(current.rejectedQuantity) + input.rejectedQuantity;
+      const newDamaged = Number(current.damagedQuantity) + input.damagedQuantity;
+      const total = newReceived + newRejected + newDamaged;
+
+      if (total > issued + EPSILON) {
+        throw new BusinessRuleError(
+          "OVER_RECEIPT_NOT_ALLOWED",
+          `Receiving this quantity (${totalReceiving}) would bring the total received+rejected+damaged (${total}) above the issued quantity (${issued}).`,
+          { issued, attempted: total }
+        );
+      }
+
+      await JobWorkOrderRepository.updateInTx(tx, jobWorkOrderId, {
+        receivedQuantity: newReceived,
+        rejectedQuantity: newRejected,
+        damagedQuantity: newDamaged,
+        status: computeJobWorkOrderStatus({ ...current, receivedQuantity: newReceived, rejectedQuantity: newRejected, damagedQuantity: newDamaged }),
+      });
+
+      const receipt = await JobWorkReceiptRepository.createInTx(tx, {
+        companyId: actor.companyId,
+        jobWorkOrderId,
+        receiptNumber,
+        receivedDate: new Date(input.receivedDate),
+        receivedQuantity: input.receivedQuantity,
+        rejectedQuantity: input.rejectedQuantity,
+        damagedQuantity: input.damagedQuantity,
+        status: "COMPLETED",
+        remarks: input.remarks || null,
+        receivedByUserId: actor.userId,
+        idempotencyKey: input.idempotencyKey ?? null,
+      });
+
+      // Reuse the existing, untouched guard — this is the integration point.
+      await applyJobOrderQuantityDelta(tx, order.jobOrderId, {
+        completed: input.receivedQuantity,
+        rejected: input.rejectedQuantity,
+        damaged: input.damagedQuantity,
+      });
+
+      return receipt;
+    });
+  } catch (err) {
+    // A genuine concurrent replay — see createGoodsReceipt's identical fallback.
+    if (input.idempotencyKey && err && typeof err === "object" && "code" in err && err.code === "P2002") {
+      const existing = await JobWorkReceiptRepository.findByIdempotencyKey(actor.companyId, input.idempotencyKey);
+      if (existing) return existing;
+    }
+    throw err;
+  }
 
   await writeAuditLog({
     companyId: actor.companyId,

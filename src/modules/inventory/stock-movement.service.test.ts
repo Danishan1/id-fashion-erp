@@ -5,7 +5,7 @@ vi.mock("@/core/numbering/DocumentNumberingService", () => ({ generateDocumentNu
 vi.mock("@/core/db/client", () => ({ prisma: { $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn({})) } }));
 vi.mock("./inventory.service", () => ({ getAvailableQuantity: vi.fn(), recordInventoryTransaction: vi.fn() }));
 vi.mock("./stock-movement.repository", () => ({
-  StockMovementRepository: { createWithItems: vi.fn() },
+  StockMovementRepository: { createWithItems: vi.fn(), findByIdempotencyKey: vi.fn() },
 }));
 vi.mock("@/modules/products/product.repository", () => ({
   ProductRepository: { findMaterialById: vi.fn() },
@@ -34,6 +34,7 @@ beforeEach(() => {
   vi.mocked(getAvailableQuantity).mockReset();
   vi.mocked(recordInventoryTransaction).mockReset();
   vi.mocked(StockMovementRepository.createWithItems).mockReset().mockResolvedValue({ id: "sm-1" } as never);
+  vi.mocked(StockMovementRepository.findByIdempotencyKey).mockReset().mockResolvedValue(null);
   vi.mocked(ProductRepository.findMaterialById)
     .mockReset()
     .mockResolvedValue({ id: "mat-1", styleName: "Test Material", baseUom: BASE_UOM } as never);
@@ -210,5 +211,73 @@ describe("createStockMovement", () => {
     ).rejects.toMatchObject({ code: "UOM_CONVERSION_UNAVAILABLE" });
 
     expect(recordInventoryTransaction).not.toHaveBeenCalled();
+  });
+
+  describe("idempotency (CF-5)", () => {
+    const existingMovement = { id: "sm-existing", movementNumber: "STK-2026-00001" };
+    const adjustmentInput = {
+      movementType: "ADJUSTMENT",
+      warehouseId: "wh-a",
+      reason: "stock count",
+      items: [{ productId: "mat-1", uomId: "uom-1", quantity: 5, remarks: "" }],
+    };
+
+    it("returns the original movement unchanged when the same idempotencyKey is replayed, without touching stock at all", async () => {
+      vi.mocked(StockMovementRepository.findByIdempotencyKey).mockResolvedValue(existingMovement as never);
+
+      const result = await createStockMovement(actor, { ...adjustmentInput, idempotencyKey: "retry-key-1" } as never);
+
+      expect(result).toBe(existingMovement);
+      expect(getAvailableQuantity).not.toHaveBeenCalled();
+      expect(StockMovementRepository.createWithItems).not.toHaveBeenCalled();
+    });
+
+    it("proceeds normally the first time a key is used", async () => {
+      vi.mocked(getAvailableQuantity).mockResolvedValue(50);
+
+      const result = await createStockMovement(actor, { ...adjustmentInput, idempotencyKey: "fresh-key-1" } as never);
+
+      expect(StockMovementRepository.findByIdempotencyKey).toHaveBeenCalledWith("co-1", "fresh-key-1");
+      expect(StockMovementRepository.createWithItems).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ idempotencyKey: "fresh-key-1" }),
+        expect.anything()
+      );
+      expect((result as { id: string }).id).toBe("sm-1");
+    });
+
+    it("does not check idempotency at all when no key is supplied — unprotected but unaffected", async () => {
+      vi.mocked(getAvailableQuantity).mockResolvedValue(50);
+
+      await createStockMovement(actor, adjustmentInput as never);
+
+      expect(StockMovementRepository.findByIdempotencyKey).not.toHaveBeenCalled();
+      expect(StockMovementRepository.createWithItems).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ idempotencyKey: null }),
+        expect.anything()
+      );
+    });
+
+    it("regression: a genuine concurrent replay (both pass the pre-check, the DB's unique constraint catches the loser) transparently returns the winner's movement instead of throwing", async () => {
+      vi.mocked(getAvailableQuantity).mockResolvedValue(50);
+      const p2002 = Object.assign(new Error("Unique constraint failed"), { code: "P2002" });
+      vi.mocked(StockMovementRepository.createWithItems).mockRejectedValue(p2002);
+      vi.mocked(StockMovementRepository.findByIdempotencyKey)
+        .mockResolvedValueOnce(null) // pre-check, before the race is lost
+        .mockResolvedValueOnce(existingMovement as never); // post-catch re-fetch, after losing the race
+
+      const result = await createStockMovement(actor, { ...adjustmentInput, idempotencyKey: "racing-key" } as never);
+
+      expect(result).toBe(existingMovement);
+    });
+
+    it("still throws a genuine P2002 with no idempotencyKey supplied to fall back on", async () => {
+      vi.mocked(getAvailableQuantity).mockResolvedValue(50);
+      const p2002 = Object.assign(new Error("Unique constraint failed"), { code: "P2002" });
+      vi.mocked(StockMovementRepository.createWithItems).mockRejectedValue(p2002);
+
+      await expect(createStockMovement(actor, adjustmentInput as never)).rejects.toBe(p2002);
+    });
   });
 });

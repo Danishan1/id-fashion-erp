@@ -1,5 +1,5 @@
 import { writeAuditLog } from "@/core/audit/AuditLogger";
-import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
+import { BusinessRuleError, isUniqueConstraintViolationOnColumn } from "@/core/errors/BusinessRuleError";
 import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingService";
 import { PermissionService } from "@/core/rbac/PermissionService";
 import { prisma } from "@/core/db/client";
@@ -114,6 +114,12 @@ export async function getPurchaseInvoiceById(companyId: string, id: string) {
 }
 
 export async function createPurchaseInvoice(actor: ActorContext, input: PurchaseInvoiceInput) {
+  // CF-5: checked before anything else, including drawing a document number.
+  if (input.idempotencyKey) {
+    const existing = await PurchaseInvoiceRepository.findByIdempotencyKey(actor.companyId, input.idempotencyKey);
+    if (existing) return existing;
+  }
+
   const order = await PurchaseOrderRepository.findByIdWithDetails(actor.companyId, input.purchaseOrderId);
   if (!order) throw new BusinessRuleError("NOT_FOUND", "Purchase order not found.", { id: input.purchaseOrderId });
 
@@ -159,15 +165,24 @@ export async function createPurchaseInvoice(actor: ActorContext, input: Purchase
         totalAmount,
         baseTotalAmount: totalAmount,
         createdByUserId: actor.userId,
+        idempotencyKey: input.idempotencyKey ?? null,
       },
       items
     );
   } catch (error) {
+    // Two distinct unique constraints can raise P2002 here — they must not be
+    // conflated, or an idempotency replay would be misreported as a duplicate
+    // supplier invoice number (or vice versa).
+    if (input.idempotencyKey && isUniqueConstraintViolationOnColumn(error, "idempotency_key")) {
+      // A genuine concurrent replay — see createGoodsReceipt's identical fallback.
+      const existing = await PurchaseInvoiceRepository.findByIdempotencyKey(actor.companyId, input.idempotencyKey);
+      if (existing) return existing;
+    }
     // purchase_invoices_supplier_invoice_number_unique (partial unique index)
     // — Purchase Invoice deliberately allows multiple invoices per order
     // (unlike Sales Invoice), so nothing else stops double-entering the same
     // physical supplier bill without this.
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+    if (isUniqueConstraintViolationOnColumn(error, "supplier_invoice_number")) {
       throw new BusinessRuleError(
         "REFERENCED_RECORD_IN_USE",
         `A purchase invoice with supplier reference "${input.supplierInvoiceNumber}" already exists for this supplier.`,

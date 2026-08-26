@@ -1,5 +1,5 @@
 import { writeAuditLog } from "@/core/audit/AuditLogger";
-import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
+import { BusinessRuleError, isUniqueConstraintViolationOnColumn } from "@/core/errors/BusinessRuleError";
 import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingService";
 import { PermissionService } from "@/core/rbac/PermissionService";
 import { prisma } from "@/core/db/client";
@@ -109,6 +109,12 @@ export async function getSalesInvoiceById(companyId: string, id: string) {
 }
 
 export async function createSalesInvoice(actor: ActorContext, input: SalesInvoiceInput) {
+  // CF-5: checked before anything else, including drawing a document number.
+  if (input.idempotencyKey) {
+    const existing = await SalesInvoiceRepository.findByIdempotencyKey(actor.companyId, input.idempotencyKey);
+    if (existing) return existing;
+  }
+
   const order = await SalesOrderRepository.findByIdWithDetails(actor.companyId, input.salesOrderId);
   if (!order) throw new BusinessRuleError("NOT_FOUND", "Sales order not found.", { id: input.salesOrderId });
 
@@ -162,14 +168,25 @@ export async function createSalesInvoice(actor: ActorContext, input: SalesInvoic
         totalAmount,
         baseTotalAmount: totalAmount,
         createdByUserId: actor.userId,
+        idempotencyKey: input.idempotencyKey ?? null,
       },
       items
     );
   } catch (error) {
+    // Two distinct unique constraints can raise P2002 here — they must not be
+    // conflated, or an idempotency replay would be misreported as "this order
+    // already has an active invoice" (or vice versa).
+    if (input.idempotencyKey && isUniqueConstraintViolationOnColumn(error, "idempotency_key")) {
+      // A genuine concurrent replay: two requests carrying the identical
+      // idempotencyKey both passed the pre-check above before either
+      // committed — see createGoodsReceipt's identical fallback.
+      const existing = await SalesInvoiceRepository.findByIdempotencyKey(actor.companyId, input.idempotencyKey);
+      if (existing) return existing;
+    }
     // sales_invoices_one_active_per_order (partial unique index) — the real
     // guarantee against a concurrent double-create race the findActiveByOrderId
     // pre-check above cannot fully close by itself.
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+    if (isUniqueConstraintViolationOnColumn(error, "sales_order_id")) {
       throw new BusinessRuleError(
         "REFERENCED_RECORD_IN_USE",
         "This sales order already has an active invoice (created by a concurrent request).",

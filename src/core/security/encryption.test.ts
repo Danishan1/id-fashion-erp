@@ -25,7 +25,16 @@ describe("encryptSecret / decryptSecret", () => {
   it("throws on ciphertext tampering (GCM auth tag mismatch)", () => {
     const cipherText = encryptSecret("a-real-token");
     const [iv, authTag, data] = cipherText.split(":");
-    const tampered = `${iv}:${authTag}:${data.slice(0, -2)}AA`;
+    // Deterministic tamper: flip every bit of the last byte via XOR 0xFF.
+    // The previous version replaced the last 2 base64 characters with a
+    // fixed "AA" — a ~1-in-4096 chance those characters already were "AA"
+    // left the ciphertext unchanged and the test passing for the wrong
+    // reason (a false negative, not a real assertion). XOR against a
+    // nonzero mask guarantees a different byte every time, no probability
+    // involved.
+    const dataBuffer = Buffer.from(data, "base64");
+    dataBuffer[dataBuffer.length - 1] ^= 0xff;
+    const tampered = `${iv}:${authTag}:${dataBuffer.toString("base64")}`;
     expect(() => decryptSecret(tampered)).toThrow();
   });
 

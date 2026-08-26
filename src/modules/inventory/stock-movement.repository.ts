@@ -28,6 +28,13 @@ export const StockMovementRepository = {
   findByIdWithDetails: (companyId: string, id: string) =>
     prisma.stockMovement.findFirst({ where: { id, companyId }, include: DETAIL_INCLUDE }),
 
+  /** CF-5 idempotent-replay lookup — same include shape as createWithItems's own return value. */
+  findByIdempotencyKey: (companyId: string, idempotencyKey: string) =>
+    prisma.stockMovement.findUnique({
+      where: { companyId_idempotencyKey: { companyId, idempotencyKey } },
+      include: DETAIL_INCLUDE,
+    }),
+
   findMany: (where: Prisma.StockMovementWhereInput, args: Omit<Prisma.StockMovementFindManyArgs, "where">) =>
     prisma.stockMovement.findMany({
       where,

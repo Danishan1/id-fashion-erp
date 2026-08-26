@@ -7,7 +7,7 @@ import { AdminUsersPanel } from "./AdminUsersPanel";
 
 export default async function AdministrationPage() {
   const session = await auth();
-  await PermissionService.assert(session!.user.id, "administration", "view").catch(() => notFound());
+  await PermissionService.assert(session!.user.id, "administration", "view", { sessionIssuedAt: session!.user.sessionIssuedAt }).catch(() => notFound());
 
   const users = await listUsers(session!.user.companyId);
   const canManage = await PermissionService.can(session!.user.id, "administration", "create");

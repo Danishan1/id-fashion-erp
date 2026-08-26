@@ -49,6 +49,8 @@ export function PurchaseInvoiceForm() {
   const [lines, setLines] = useState<Record<string, LineDraft>>({});
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // See CF-5 in the independent hardening audit.
+  const [idempotencyKey] = useState(() => crypto.randomUUID());
 
   useEffect(() => {
     fetch("/api/v1/purchase-orders?pageSize=200")
@@ -106,33 +108,38 @@ export function PurchaseInvoiceForm() {
     setIsSubmitting(true);
     setError(null);
 
-    const res = await fetch("/api/v1/purchase-invoices", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        purchaseOrderId: activeOrder.id,
-        supplierInvoiceNumber,
-        invoiceDate,
-        lines: activeLines.map(({ item, draft }) => ({
-          purchaseOrderItemId: item.id,
-          quantity: Number(draft.quantity),
-          unitPrice: Number(draft.unitPrice),
-          taxRateId: draft.taxRateId,
-        })),
-      }),
-    });
+    try {
+      const res = await fetch("/api/v1/purchase-invoices", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          purchaseOrderId: activeOrder.id,
+          supplierInvoiceNumber,
+          invoiceDate,
+          lines: activeLines.map(({ item, draft }) => ({
+            purchaseOrderItemId: item.id,
+            quantity: Number(draft.quantity),
+            unitPrice: Number(draft.unitPrice),
+            taxRateId: draft.taxRateId,
+          })),
+          idempotencyKey,
+        }),
+      });
 
-    setIsSubmitting(false);
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        setError(body?.error?.message ?? "Failed to create invoice.");
+        return;
+      }
 
-    if (!res.ok) {
-      const body = await res.json().catch(() => null);
-      setError(body?.error?.message ?? "Failed to create invoice.");
-      return;
+      const body = await res.json();
+      router.push(`/accounts/purchase-invoices/${body.data.id}`);
+      router.refresh();
+    } catch {
+      setError("Could not reach the server. Check your connection and try again — it's safe to resubmit.");
+    } finally {
+      setIsSubmitting(false);
     }
-
-    const body = await res.json();
-    router.push(`/accounts/purchase-invoices/${body.data.id}`);
-    router.refresh();
   };
 
   return (

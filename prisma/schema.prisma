@@ -170,19 +170,26 @@ enum UserStatus {
 }
 
 model User {
-  id              String     @id @default(uuid()) @db.Uuid
-  companyId       String     @map("company_id") @db.Uuid
-  defaultBranchId String?    @map("default_branch_id") @db.Uuid
-  employeeId      String?    @unique @map("employee_id") @db.Uuid
-  email           String     @unique
-  passwordHash    String     @map("password_hash")
-  fullName        String     @map("full_name")
-  phone           String?
-  mfaSecret       String?    @map("mfa_secret")
-  lastLoginAt     DateTime?  @map("last_login_at")
-  status          UserStatus @default(ACTIVE)
-  createdAt       DateTime   @default(now()) @map("created_at")
-  updatedAt       DateTime   @updatedAt @map("updated_at")
+  id                String     @id @default(uuid()) @db.Uuid
+  companyId         String     @map("company_id") @db.Uuid
+  defaultBranchId   String?    @map("default_branch_id") @db.Uuid
+  employeeId        String?    @unique @map("employee_id") @db.Uuid
+  email             String     @unique
+  passwordHash      String     @map("password_hash")
+  fullName          String     @map("full_name")
+  phone             String?
+  mfaSecret         String?    @map("mfa_secret")
+  lastLoginAt       DateTime?  @map("last_login_at")
+  // Stamped on every self-service change and admin reset. CF-7's own
+  // isUserActive() checks already re-verify live DB state on every
+  // permission check, uncached — this reuses that exact same chokepoint to
+  // also compare the session's issued-at time against this timestamp, so an
+  // old session survives a password change no better than it survives a
+  // suspension.
+  passwordChangedAt DateTime?  @map("password_changed_at")
+  status            UserStatus @default(ACTIVE)
+  createdAt         DateTime   @default(now()) @map("created_at")
+  updatedAt         DateTime   @updatedAt @map("updated_at")
 
   company                              Company                      @relation(fields: [companyId], references: [id])
   defaultBranch                        Branch?                      @relation("UserDefaultBranch", fields: [defaultBranchId], references: [id])
@@ -3208,6 +3215,10 @@ model JobWorkReceipt {
   status           JobWorkReceiptStatus @default(COMPLETED)
   remarks          String?
   receivedByUserId String               @map("received_by_user_id") @db.Uuid
+  // CF-5: no branchId field exists on this model at all, so this is
+  // naturally company-only already — see StockMovement.idempotencyKey for
+  // why company-only (not branch-inclusive) is the deliberate choice anyway.
+  idempotencyKey   String?              @map("idempotency_key")
   createdAt        DateTime             @default(now()) @map("created_at")
 
   company      Company      @relation(fields: [companyId], references: [id])
@@ -3215,6 +3226,7 @@ model JobWorkReceipt {
   receivedBy   User         @relation(fields: [receivedByUserId], references: [id])
 
   @@unique([companyId, jobWorkOrderId, receiptNumber])
+  @@unique([companyId, idempotencyKey])
   @@index([jobWorkOrderId])
   @@map("job_work_receipts")
 }
@@ -3346,6 +3358,12 @@ model StockMovement {
   remarks           String?
   performedByUserId String            @map("performed_by_user_id") @db.Uuid
   performedAt       DateTime          @default(now()) @map("performed_at")
+  // CF-5: see GoodsReceipt.idempotencyKey for the full rationale. Company-only
+  // (not branch-inclusive) deliberately — a nullable branchId in a composite
+  // unique would let Postgres treat every null-branch row as non-conflicting
+  // with every other, silently defeating the protection for exactly the
+  // common case (no branch set) this is meant to cover.
+  idempotencyKey    String?           @map("idempotency_key")
   createdAt         DateTime          @default(now()) @map("created_at")
 
   company     Company             @relation(fields: [companyId], references: [id])
@@ -3356,6 +3374,7 @@ model StockMovement {
   performedBy User                @relation("StockMovementPerformedBy", fields: [performedByUserId], references: [id])
   items       StockMovementItem[]
 
+  @@unique([companyId, idempotencyKey])
   @@index([companyId, movementType])
   @@index([companyId, warehouseId])
   @@map("stock_movements")
@@ -3723,6 +3742,12 @@ model SalesInvoice {
   postedAt         DateTime?          @map("posted_at")
   postedByUserId   String?            @map("posted_by_user_id") @db.Uuid
   createdByUserId  String             @map("created_by_user_id") @db.Uuid
+  // CF-5: company-only, not branch-inclusive — see StockMovement.idempotencyKey.
+  // A distinct constraint from the existing one_active_per_order partial
+  // index below (a real, non-null-per-row column comparing companyId+
+  // idempotencyKey only) — createSalesInvoice's P2002 handler must branch on
+  // error.meta.target to tell the two apart.
+  idempotencyKey   String?            @map("idempotency_key")
   createdAt        DateTime           @default(now()) @map("created_at")
   updatedAt        DateTime           @updatedAt @map("updated_at")
 
@@ -3737,6 +3762,7 @@ model SalesInvoice {
   allocations PaymentAllocation[]
 
   @@unique([companyId, branchId, invoiceNumber])
+  @@unique([companyId, idempotencyKey])
   @@map("sales_invoices")
 }
 
@@ -3826,6 +3852,11 @@ model PurchaseInvoice {
   postedAt              DateTime?             @map("posted_at")
   postedByUserId        String?               @map("posted_by_user_id") @db.Uuid
   createdByUserId       String                @map("created_by_user_id") @db.Uuid
+  // CF-5: company-only, not branch-inclusive — see StockMovement.idempotencyKey.
+  // A distinct constraint from the existing supplierInvoiceNumber partial
+  // unique below — createPurchaseInvoice's P2002 handler must branch on
+  // error.meta.target to tell the two apart.
+  idempotencyKey        String?               @map("idempotency_key")
   createdAt             DateTime              @default(now()) @map("created_at")
   updatedAt             DateTime              @updatedAt @map("updated_at")
 
@@ -3840,6 +3871,7 @@ model PurchaseInvoice {
   allocations   PaymentAllocation[]
 
   @@unique([companyId, branchId, invoiceNumber])
+  @@unique([companyId, idempotencyKey])
   @@map("purchase_invoices")
 }
 
@@ -3930,6 +3962,8 @@ model Payment {
   postedAt        DateTime?        @map("posted_at")
   postedByUserId  String?          @map("posted_by_user_id") @db.Uuid
   createdByUserId String           @map("created_by_user_id") @db.Uuid
+  // CF-5: company-only, not branch-inclusive — see StockMovement.idempotencyKey.
+  idempotencyKey  String?          @map("idempotency_key")
   createdAt       DateTime         @default(now()) @map("created_at")
   updatedAt       DateTime         @updatedAt @map("updated_at")
 
@@ -3945,6 +3979,7 @@ model Payment {
   allocations PaymentAllocation[]
 
   @@unique([companyId, branchId, paymentNumber])
+  @@unique([companyId, idempotencyKey])
   @@map("payments")
 }
 
@@ -4021,6 +4056,8 @@ model Expense {
   postedAt        DateTime?     @map("posted_at")
   postedByUserId  String?       @map("posted_by_user_id") @db.Uuid
   createdByUserId String        @map("created_by_user_id") @db.Uuid
+  // CF-5: company-only, not branch-inclusive — see StockMovement.idempotencyKey.
+  idempotencyKey  String?       @map("idempotency_key")
   createdAt       DateTime      @default(now()) @map("created_at")
   updatedAt       DateTime      @updatedAt @map("updated_at")
 
@@ -4036,6 +4073,7 @@ model Expense {
   createdBy   User           @relation("ExpenseCreatedBy", fields: [createdByUserId], references: [id])
 
   @@unique([companyId, branchId, expenseNumber])
+  @@unique([companyId, idempotencyKey])
   @@map("expenses")
 }
 
@@ -4205,6 +4243,7 @@ enum DocumentType {
   DEAL
   CAMPAIGN
   JOB_WORK_ORDER
+  JOB_WORK_RECEIPT
 }
 
 model DocumentSequence {

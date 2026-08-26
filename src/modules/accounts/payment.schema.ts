@@ -22,6 +22,8 @@ export const paymentSchema = z
     referenceNumber: z.string().max(100).optional().or(z.literal("")),
     amount: z.coerce.number().positive("Amount must be greater than 0"),
     allocations: z.array(paymentAllocationInputSchema).min(1, "At least one allocation is required"),
+    // Optional, client-generated — see CF-5 in HARDENING_BRANCH_INDEPENDENT_AUDIT.md.
+    idempotencyKey: z.string().min(1).max(200).optional(),
   })
   .refine((data) => (data.direction === "RECEIPT" ? !!data.customerId : !data.customerId), {
     message: "Customer is required for a Receipt and must not be set for a Payment Out.",

@@ -45,7 +45,7 @@ The user has two real, manually-coded PHP/Laravel garment systems already in pro
 | 8 | Dispatch | ✅ Done — pick/pack/confirm/deliver workflow, cartons with barcodes, and Finished-Goods stock decrement all built and verified on branch `phase-8-dispatch` |
 | 9 | Reports | ✅ Done (2026-08-25) — architecture + Report Center nav + 75 reports across all 26 buildable categories (only Payroll unavailable — no schema); merged to `main` |
 | 10 | Testing | ⬜ Not started |
-| 11 | Hardening | 🔶 In progress — P0 findings fixed and merged; P1 tier partly done (see dated notes below) |
+| 11 | Hardening | ✅ Done — P0 and P1 audit tiers fully closed, plus bounded P2 cleanup; P3 items (2FA, CD pipeline, cloud storage, Redis) explicitly deferred pending decisions only the user can make (see dated notes below) |
 
 Update the status column and add a short dated note under the relevant phase section below whenever a phase completes or deviates from plan.
 
@@ -2016,9 +2016,150 @@ Worked through the independent audit's (`HARDENING_BRANCH_INDEPENDENT_AUDIT.md`)
   `prisma migrate dev` can't run in this non-interactive shell) is not optional.
 - `npx tsc --noEmit`, `npm run lint`, `npx prisma validate`, `npm test` (508/508, 46 new), and `npm run
   build` all clean throughout every fix in this pass.
-- **Still open from the P1 tier, not addressed this pass**: no password-reset/change capability exists at
-  all (not even admin-triggered); CF-5's pattern not yet replicated onto the other 5 ledger-writing
-  document-creation endpoints named above. Both are bounded, well-understood follow-ups, not new findings.
+- **Closed in the next pass, immediately below**: password-reset/change capability, and CF-5 replicated
+  onto the other 6 ledger-writing document-creation endpoints.
+
+## Phase 11 — Hardening, P1 tier closed out (2026-08-26)
+
+Closes every remaining item from the P1 tier: CF-5 extended to the 6 modules the first pass hadn't reached,
+the Job Work Receipt numbering race found along the way, a full password-security capability (change +
+admin-reset + session invalidation), and every bounded P2 item. Reviewed and scoped with the user via an
+explicit architecture-validation pass before implementation — see that discussion for the two evaluations
+below; nothing here was built speculatively.
+
+**CF-5 idempotency — architecture confirmed, then extended to Stock Movement, Job Work Receipt, Payment,
+Sales Invoice, Purchase Invoice, and Expense.** Evaluated module-specific columns (Goods Receipt's own
+pattern) against a centralized idempotency table before touching any code — concluded a central table
+would still need per-module logic to turn a stored reference back into a real response, providing no actual
+simplification while introducing exactly the kind of new polymorphic-table pattern this project has
+consistently declined without a forcing reason. Kept Goods Receipt's pattern, adapted per module rather than
+copy-pasted:
+- **One real correctness deviation from Goods Receipt, found during design, not copied blindly**: every new
+  `idempotencyKey` unique constraint is `[companyId, idempotencyKey]` — company-only — even for the four
+  modules (Payment, Sales/Purchase Invoice, Expense) whose own document-number uniqueness is branch-inclusive
+  (`[companyId, branchId, ...]`). Matching that branch-inclusive shape for the idempotency key specifically
+  would have been a real bug: Postgres treats a NULL in any column of a composite unique constraint as
+  non-conflicting with every other row, so a branch-inclusive key would silently provide **zero** protection
+  the moment `branchId` is null — the common case, not an edge case. Company-only avoids this entirely, since
+  a client-generated UUID key needs no branch scoping to already be effectively unique.
+- **Sales Invoice and Purchase Invoice each already had an unconditional P2002 handler** (for their own
+  pre-existing partial unique indexes — `one_active_per_order` and `supplier_invoice_number` respectively).
+  Adding a second unique constraint on the same table meant that handler could no longer assume any P2002
+  was "its" collision. Fixed with a new shared `isUniqueConstraintViolationOnColumn(error, columnName)`
+  helper (`src/core/errors/BusinessRuleError.ts`) that inspects the actual violated constraint — **the exact
+  shape was confirmed empirically, not assumed**: this project's `@prisma/adapter-pg` driver adapter reports
+  `meta.driverAdapterError.cause.constraint.fields`, not the classic `meta.target` array most Prisma
+  documentation describes (which doesn't appear under this adapter at all) — confirmed by deliberately
+  triggering both real constraints against the live dev DB and inspecting the raw error before writing a
+  single line of disambiguation logic.
+- **Job Work Receipt got a second fix in the same pass**: its `receiptNumber` was never drawn via
+  `generateDocumentNumber()` at all — a pre-existing, separate race (`${jobWorkNumber}-R${count+1}`, the
+  count read outside any lock) discovered while surveying the module for the idempotency work. Fixed by
+  switching to the same atomic `document_sequences` counter every other document type already uses — a new
+  `DocumentType.JOB_WORK_RECEIPT` value (prefix `JWR`), not a new numbering mechanism. **Verified live**: an
+  old receipt from a prior session still shows its legacy `JWO-2026-00002-R1` format untouched (no
+  backfill — history is never rewritten); a brand-new receipt against the same order correctly drew
+  `JWR-2026-00001` from the real counter.
+- **Payment had no `$transaction`/`try-catch` around its create call at all** — this is the first one it's
+  ever had; Stock Movement and Job Work Receipt already had a `$transaction` to wrap. Expense was the
+  simplest (flat row, no items, nothing to disambiguate).
+- Every module: pre-check before drawing a document number, store the key on create, a P2002-race fallback
+  that re-fetches and returns the winner's row, and a client-generated key regenerated per real submit
+  attempt (per-form for the 5 dedicated `/new` pages; regenerated on each open of the Job Work Order's
+  Receive modal, since that panel handles many distinct receive actions over one order's lifetime, not one
+  per page load). Every form's fetch call also gained the same `try/catch/finally` fix as Goods Receipt's own
+  earlier pass — a thrown network error no longer leaves the Submit button stuck disabled forever.
+- **Verified live end-to-end, with direct DB proof, not just unit tests**: created a real Stock Movement with
+  a client-generated key, replayed the identical request — the server returned the exact same movement id
+  both times, and a direct query confirmed exactly one `stock_movements` row and exactly one
+  `inventory_transactions` ledger entry exist despite the duplicate request.
+- 30 new tests across the 6 modules (replay, fresh-key, no-key-unaffected, genuine-concurrent-P2002-race,
+  plus the Sales/Purchase Invoice disambiguation regression proving a same-table-different-constraint
+  collision is never misattributed) — all against the real, empirically-confirmed error shapes, not
+  hypothetical ones.
+
+**Password security — architecture confirmed against what actually exists before building anything.**
+Surveyed first: bcrypt (cost 12) already exists; JWT sessions with no versioning; no email infrastructure
+anywhere in the codebase (confirmed by grep); no token/reset-model exists. Scoped to exactly what the
+existing infrastructure supports, per the user's explicit decisions:
+- **`POST /api/v1/account/change-password`** (new `src/modules/account/` module) — self-service, no RBAC
+  permission required (self-scoped by construction, the same category as "view your own session"),
+  verifies the current password before accepting a new one.
+- **`POST /api/v1/administration/users/[id]/reset-password`** — admin-triggered, gated `administration.edit`,
+  company-scoped via the same `findById` pattern `setUserStatus` already uses (confirmed live: a nonexistent/
+  cross-scope id correctly 404s), no current-password check (that's the entire point of a reset).
+- **`User.passwordChangedAt`** (new nullable column) is stamped by both paths through one shared
+  `UserAdminRepository.updatePasswordHash()` — the two flows can never drift out of sync on this. Never
+  logged in either flow's audit entry (`{ passwordChanged: true }` / `{ passwordReset: true }` only) —
+  confirmed live via a direct query that no plaintext password or hash value appears anywhere in the
+  resulting `audit_logs` rows.
+- **Session invalidation reuses CF-7's exact mechanism, extended to cover it symmetrically at both of CF-7's
+  own chokepoints**: a new `session.user.sessionIssuedAt` JWT claim (stamped once, at sign-in only, via
+  `auth.config.ts`) is compared against `passwordChangedAt` in `requireSession()` (covers the ~285 API
+  routes that call it) and inside `PermissionService.can()` via a new optional `resourceContext.sessionIssuedAt`
+  field (covers the 10 Server Component pages that call `PermissionService.assert()` directly without going
+  through `requireSession()` — each updated to pass it). **Verified live, end-to-end, not just via unit
+  tests**: created a real second user, signed in as them, confirmed a permission-gated call succeeded (200),
+  called `change-password` from that exact session, and — with zero new login — the identical never-refreshed
+  session immediately got `403` ("Your password was changed. Please sign in again.") on its very next call.
+  Separately confirmed the old password no longer authenticates at all and the new one does (via a real
+  sign-out/sign-in round trip, not just a session-state read, since a *failed* login attempt doesn't clear an
+  existing cookie — a subtlety this session initially got wrong and caught by insisting on an unambiguous
+  test).
+- **A real, unavoidable deployment nuance, documented rather than glossed over**: a session whose JWT was
+  issued **before** this change ships has no `sessionIssuedAt` claim at all (NextAuth doesn't retroactively
+  inject a new claim into an already-issued, stateless JWT) — `undefined * 1000 < anything` is `NaN <
+  anything`, which is always `false` in JS, so such a session is silently exempt from the staleness check
+  until it naturally re-authenticates (JWT expiry, or an explicit sign-out/sign-in). This is inherent to
+  layering a new claim onto an existing stateless-JWT scheme, not a bug in this implementation — flagged here
+  so it isn't mistaken for one later.
+- 3 new tests in `PermissionService.test.ts`, a new `src/lib/api-route.test.ts` (7 tests, `requireSession`
+  had none before), 4 new tests in `account.service.test.ts`, 3 new tests in `user-admin.service.test.ts`.
+
+**Sampling's self-approval guard moved from the route into `recordSampleApproval()` itself** — previously
+lived only in `decision/route.ts`, which independently re-fetched the version/request via a separate query
+purely to build the resourceContext, then called the service, which fetched everything a second time via
+different repository calls. A second future caller of the service directly would have silently bypassed the
+guard. Fixed by moving the real, self-approval-guarded assert inside the service (using `request.requestedByUserId`,
+already fetched there — no extra query), leaving only a coarse `sampling.approve`/`reject` check (no
+resourceContext) in the route for early rejection. Matches `approveLeaveRequest()`'s own already-established
+precedent for this exact fix shape. New regression test proves the guard survives a direct service call with
+no route-level check at all.
+
+**Fixed the flaky encryption tamper test** — the old assertion replaced the ciphertext's last 2 base64
+characters with a fixed `"AA"`, a ~1-in-4096 chance of leaving the value unchanged (a false negative: the
+test would pass for the wrong reason). Replaced with a deterministic XOR-flip of the last decoded byte —
+guaranteed different every time, no probability involved.
+
+**New cross-cutting contract test** (`src/modules/__tests__/company-scoping.contract.test.ts`) — scans every
+`*.service.ts` file for exported `update*`/`transition*` functions and asserts each one's own source body
+references `actor.companyId` somewhere, with a small, explicit, reviewed allowlist (`updateUnit` — `UnitOfMeasure`
+is deliberately global, no `companyId` column at all). Deliberately crude (source-text matching, not a real
+AST/type-flow pass) but targets exactly the repeated bug class this project has found and fixed the most
+times. Found 54 matching functions; all 54 passed on the first run except the one correctly allowlisted one —
+a genuine, if retroactive, confirmation that this codebase's own hard-won tenant-scoping discipline has
+actually held across every one of these functions.
+
+**Dependabot + CodeQL added** (`.github/dependabot.yml`, `.github/workflows/codeql.yml`) — weekly npm +
+GitHub Actions dependency checks, and JS/TypeScript CodeQL analysis on push/PR/weekly schedule. This
+repository's visibility/GitHub Advanced Security entitlement could not be verified from this environment;
+per explicit instruction, the workflow was added anyway rather than blocking on that unknown — if GitHub
+blocks or skips runs due to a licensing/visibility constraint, that will show up directly in the Actions tab
+as a platform limitation, not a code defect.
+
+**`EXPORT_ROW_CAP` deduplicated** — the 3 Excel export routes (`products`, `stock-balances`, `job-work-orders`)
+each declared their own local `const EXPORT_ROW_CAP = 20000`. All three now import the single existing
+`EXPORT_ROW_CAP_EXCEL` constant from `src/core/reports/constants.ts` (already existed for this exact purpose,
+just not yet reused here).
+
+`npx tsc --noEmit`, `npm run lint`, `npx prisma validate`, `npm test` (620/620, 100 new), and `npm run build`
+all clean throughout. Every new column/index/enum value independently re-verified against the live database
+via a direct query — never trusted from `prisma migrate resolve --applied` alone, per this project's own
+established gotcha.
+
+**Not addressed, explicitly out of scope per this pass's own instructions**: TOTP/2FA, Redis-backed rate
+limiting, nonce-based CSP, cloud storage, CD/deployment platform decisions — all remain documented P3 items
+requiring a decision only the user can make.
 
 ## Phase 9 — Reports & MIS, first slice (2026-08-25)
 

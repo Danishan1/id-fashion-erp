@@ -8,7 +8,7 @@ import { DealForm } from "../../DealForm";
 export default async function EditDealPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const session = await auth();
-  await PermissionService.assert(session!.user.id, "crm", "view").catch(() => notFound());
+  await PermissionService.assert(session!.user.id, "crm", "view", { sessionIssuedAt: session!.user.sessionIssuedAt }).catch(() => notFound());
 
   const deal = await getDealById(session!.user.companyId, id).catch(() => null);
   if (!deal) notFound();

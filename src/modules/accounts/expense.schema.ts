@@ -12,6 +12,8 @@ export const expenseSchema = z.object({
   paymentTypeId: z.string().uuid("Payment type is required"),
   bankAccountId: z.string().uuid().optional().or(z.literal("")),
   referenceNumber: z.string().max(100).optional().or(z.literal("")),
+  // Optional, client-generated — see CF-5 in HARDENING_BRANCH_INDEPENDENT_AUDIT.md.
+  idempotencyKey: z.string().min(1).max(200).optional(),
 });
 
 export type ExpenseInput = z.infer<typeof expenseSchema>;

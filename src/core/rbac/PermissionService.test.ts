@@ -105,6 +105,46 @@ describe("PermissionService.can", () => {
     await expect(PermissionService.can("user-1", "sales_orders", "view")).resolves.toBe(false);
     expect(userFindUniqueMock).toHaveBeenCalledTimes(2);
   });
+
+  describe("sessionIssuedAt staleness (password changed/reset — reuses the CF-7 mechanism)", () => {
+    it("denies a session issued before the account's last password change", async () => {
+      mockPermissions(["sales_orders.view"]);
+      const changedAt = new Date("2026-08-25T12:00:00Z");
+      userFindUniqueMock.mockResolvedValue({ status: "ACTIVE", passwordChangedAt: changedAt });
+      const sessionIssuedBeforeChange = Math.floor(new Date("2026-08-25T11:00:00Z").getTime() / 1000);
+
+      await expect(
+        PermissionService.can("user-1", "sales_orders", "view", { sessionIssuedAt: sessionIssuedBeforeChange })
+      ).resolves.toBe(false);
+    });
+
+    it("allows a session issued after the account's last password change", async () => {
+      mockPermissions(["sales_orders.view"]);
+      const changedAt = new Date("2026-08-25T12:00:00Z");
+      userFindUniqueMock.mockResolvedValue({ status: "ACTIVE", passwordChangedAt: changedAt });
+      const sessionIssuedAfterChange = Math.floor(new Date("2026-08-25T13:00:00Z").getTime() / 1000);
+
+      await expect(
+        PermissionService.can("user-1", "sales_orders", "view", { sessionIssuedAt: sessionIssuedAfterChange })
+      ).resolves.toBe(true);
+    });
+
+    it("does not check staleness at all when sessionIssuedAt is omitted — the caller went through requireSession() instead", async () => {
+      mockPermissions(["sales_orders.view"]);
+      userFindUniqueMock.mockResolvedValue({ status: "ACTIVE", passwordChangedAt: new Date() });
+
+      await expect(PermissionService.can("user-1", "sales_orders", "view")).resolves.toBe(true);
+    });
+
+    it("never flags staleness for an account that has never changed its password (passwordChangedAt is null)", async () => {
+      mockPermissions(["sales_orders.view"]);
+      userFindUniqueMock.mockResolvedValue({ status: "ACTIVE", passwordChangedAt: null });
+
+      await expect(
+        PermissionService.can("user-1", "sales_orders", "view", { sessionIssuedAt: 0 })
+      ).resolves.toBe(true);
+    });
+  });
 });
 
 describe("PermissionService.assert", () => {

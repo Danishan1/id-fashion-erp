@@ -3,8 +3,7 @@ import { requireSession, handleApiError } from "@/lib/api-route";
 import { PermissionService } from "@/core/rbac/PermissionService";
 import { buildXlsxBuffer, xlsxResponseHeaders } from "@/lib/xlsx";
 import { listProducts } from "@/modules/products/product.service";
-
-const EXPORT_ROW_CAP = 20000;
+import { EXPORT_ROW_CAP_EXCEL as EXPORT_ROW_CAP } from "@/core/reports/constants";
 
 // listProducts()'s return type resolves too widely for TS to statically see
 // the repository's own `include` (a pre-existing quirk of the

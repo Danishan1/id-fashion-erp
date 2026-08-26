@@ -12,6 +12,9 @@ vi.mock("@/modules/products/product.repository", () => ({
 vi.mock("@/modules/customers/customer.repository", () => ({
   CustomerRepository: { findByIdWithBuyers: vi.fn() },
 }));
+vi.mock("@/core/rbac/PermissionService", () => ({
+  PermissionService: { assert: vi.fn() },
+}));
 vi.mock("./sample.repository", () => ({
   SampleRequestRepository: {
     findMany: vi.fn(),
@@ -53,13 +56,14 @@ vi.mock("./sample.repository", () => ({
 }));
 
 const { prisma } = await import("@/core/db/client");
-const { SampleRequestRepository, SampleVersionRepository, SampleMaterialRepository, SampleOtherChargeRepository } = await import(
-  "./sample.repository"
-);
+const { SampleRequestRepository, SampleVersionRepository, SampleMaterialRepository, SampleOtherChargeRepository, SampleApprovalRepository } =
+  await import("./sample.repository");
 const { ProductRepository } = await import("@/modules/products/product.repository");
 const { CustomerRepository } = await import("@/modules/customers/customer.repository");
+const { PermissionService } = await import("@/core/rbac/PermissionService");
 const { generateDocumentNumber } = await import("@/core/numbering/DocumentNumberingService");
-const { recalculateSampleVersionCosting, addSampleMaterial, transitionSampleStatus, createSampleRequest } = await import("./sample.service");
+const { recalculateSampleVersionCosting, addSampleMaterial, transitionSampleStatus, createSampleRequest, recordSampleApproval } =
+  await import("./sample.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
 const fakeTx = {} as never;
@@ -82,6 +86,51 @@ beforeEach(() => {
   vi.mocked(prisma.crmFollowup.create).mockReset().mockResolvedValue({} as never);
   vi.mocked(SampleVersionRepository.findLatest).mockReset();
   vi.mocked(SampleVersionRepository.update).mockReset();
+  vi.mocked(SampleVersionRepository.findById).mockReset();
+  vi.mocked(SampleApprovalRepository.create).mockReset();
+  vi.mocked(PermissionService.assert).mockReset().mockResolvedValue(undefined);
+});
+
+describe("recordSampleApproval — self-approval guard now lives in the service, not just the route", () => {
+  const version = { id: "v-1", sampleRequestId: "sam-1", status: "SUBMITTED" };
+  const request = { id: "sam-1", status: "SUBMITTED_TO_CUSTOMER", requestedByUserId: "user-1" };
+
+  it("asserts the self-approval-guarded 'approve' action using the request's own requestedByUserId, with no route involved", async () => {
+    vi.mocked(SampleVersionRepository.findById).mockResolvedValue(version as never);
+    vi.mocked(SampleRequestRepository.findAnyById).mockResolvedValue(request as never);
+    vi.mocked(SampleApprovalRepository.create).mockResolvedValue({ id: "appr-1" } as never);
+    vi.mocked(SampleVersionRepository.update).mockResolvedValue({} as never);
+    vi.mocked(SampleRequestRepository.update).mockResolvedValue({ id: "sam-1", status: "APPROVED" } as never);
+
+    await recordSampleApproval(actor, "v-1", { decision: "APPROVED" } as never);
+
+    expect(PermissionService.assert).toHaveBeenCalledWith("user-1", "sampling", "approve", { createdBy: "user-1" });
+  });
+
+  it("regression: a direct call to the service (simulating a future second caller with no route-level check) still denies self-approval", async () => {
+    vi.mocked(SampleVersionRepository.findById).mockResolvedValue(version as never);
+    vi.mocked(SampleRequestRepository.findAnyById).mockResolvedValue(request as never);
+    vi.mocked(PermissionService.assert).mockRejectedValue(
+      Object.assign(new Error("denied"), { code: "PERMISSION_DENIED" })
+    );
+
+    await expect(recordSampleApproval(actor, "v-1", { decision: "APPROVED" } as never)).rejects.toMatchObject({
+      code: "PERMISSION_DENIED",
+    });
+    expect(SampleApprovalRepository.create).not.toHaveBeenCalled();
+  });
+
+  it("asserts 'reject' (not self-approval-guarded) for a REJECTED decision", async () => {
+    vi.mocked(SampleVersionRepository.findById).mockResolvedValue(version as never);
+    vi.mocked(SampleRequestRepository.findAnyById).mockResolvedValue(request as never);
+    vi.mocked(SampleApprovalRepository.create).mockResolvedValue({ id: "appr-1" } as never);
+    vi.mocked(SampleVersionRepository.update).mockResolvedValue({} as never);
+    vi.mocked(SampleRequestRepository.update).mockResolvedValue({ id: "sam-1", status: "REJECTED" } as never);
+
+    await recordSampleApproval(actor, "v-1", { decision: "REJECTED" } as never);
+
+    expect(PermissionService.assert).toHaveBeenCalledWith("user-1", "sampling", "reject", { createdBy: "user-1" });
+  });
 });
 
 describe("createSampleRequest", () => {

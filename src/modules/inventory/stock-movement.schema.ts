@@ -23,6 +23,9 @@ export const createStockMovementSchema = z
     reason: z.string().max(500).optional().or(z.literal("")),
     remarks: z.string().max(1000).optional().or(z.literal("")),
     items: z.array(stockMovementItemSchema).min(1, "At least one line item is required"),
+    // Optional, client-generated — see CF-5 in HARDENING_BRANCH_INDEPENDENT_AUDIT.md.
+    // Omitting it just means this call gets no idempotency protection.
+    idempotencyKey: z.string().min(1).max(200).optional(),
   })
   .refine((input) => input.movementType !== "TRANSFER" || !!input.toWarehouseId, {
     message: "A destination warehouse is required for a Transfer.",

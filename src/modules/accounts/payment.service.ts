@@ -137,6 +137,12 @@ async function buildAndValidateAllocations(
 }
 
 export async function createPayment(actor: ActorContext, input: PaymentInput) {
+  // CF-5: checked before anything else, including drawing a document number.
+  if (input.idempotencyKey) {
+    const existing = await PaymentRepository.findByIdempotencyKey(actor.companyId, input.idempotencyKey);
+    if (existing) return existing;
+  }
+
   const partyId = input.direction === "RECEIPT" ? input.customerId! : input.supplierId!;
 
   const party =
@@ -180,25 +186,36 @@ export async function createPayment(actor: ActorContext, input: PaymentInput) {
     documentType: "PAYMENT",
   });
 
-  const payment = await PaymentRepository.createWithAllocations(
-    {
-      companyId: actor.companyId,
-      branchId: actor.branchId || null,
-      paymentNumber,
-      direction: input.direction,
-      customerId: input.direction === "RECEIPT" ? partyId : null,
-      supplierId: input.direction === "PAYMENT_OUT" ? partyId : null,
-      paymentDate: new Date(input.paymentDate),
-      paymentTypeId: input.paymentTypeId,
-      bankAccountId: input.bankAccountId || null,
-      referenceNumber: input.referenceNumber || null,
-      amount: round2(input.amount),
-      status: "DRAFT",
-      currencyCode: company.baseCurrencyCode,
-      createdByUserId: actor.userId,
-    },
-    allocationRows
-  );
+  let payment;
+  try {
+    payment = await PaymentRepository.createWithAllocations(
+      {
+        companyId: actor.companyId,
+        branchId: actor.branchId || null,
+        paymentNumber,
+        direction: input.direction,
+        customerId: input.direction === "RECEIPT" ? partyId : null,
+        supplierId: input.direction === "PAYMENT_OUT" ? partyId : null,
+        paymentDate: new Date(input.paymentDate),
+        paymentTypeId: input.paymentTypeId,
+        bankAccountId: input.bankAccountId || null,
+        referenceNumber: input.referenceNumber || null,
+        amount: round2(input.amount),
+        status: "DRAFT",
+        currencyCode: company.baseCurrencyCode,
+        createdByUserId: actor.userId,
+        idempotencyKey: input.idempotencyKey ?? null,
+      },
+      allocationRows
+    );
+  } catch (err) {
+    // A genuine concurrent replay — see createGoodsReceipt's identical fallback.
+    if (input.idempotencyKey && err && typeof err === "object" && "code" in err && err.code === "P2002") {
+      const existing = await PaymentRepository.findByIdempotencyKey(actor.companyId, input.idempotencyKey);
+      if (existing) return existing;
+    }
+    throw err;
+  }
 
   await writeAuditLog({
     companyId: actor.companyId,

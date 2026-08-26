@@ -52,6 +52,9 @@ export function StockMovementForm() {
 
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // One value for the lifetime of this mounted form, resent on every retry —
+  // see CF-5 in the independent hardening audit.
+  const [idempotencyKey] = useState(() => crypto.randomUUID());
 
   useEffect(() => {
     fetch("/api/v1/warehouses?pageSize=200")
@@ -95,31 +98,36 @@ export function StockMovementForm() {
       remarks: line.remarks || undefined,
     }));
 
-    const res = await fetch("/api/v1/stock-movements", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        movementType,
-        warehouseId,
-        toWarehouseId: movementType === "TRANSFER" ? toWarehouseId || undefined : undefined,
-        supplierId: movementType === "RETURN_TO_SUPPLIER" ? supplierId || undefined : undefined,
-        reason: reason || undefined,
-        remarks: remarks || undefined,
-        items: payloadLines,
-      }),
-    });
+    try {
+      const res = await fetch("/api/v1/stock-movements", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          movementType,
+          warehouseId,
+          toWarehouseId: movementType === "TRANSFER" ? toWarehouseId || undefined : undefined,
+          supplierId: movementType === "RETURN_TO_SUPPLIER" ? supplierId || undefined : undefined,
+          reason: reason || undefined,
+          remarks: remarks || undefined,
+          items: payloadLines,
+          idempotencyKey,
+        }),
+      });
 
-    setIsSubmitting(false);
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        setError(body?.error?.message ?? "Failed to create this stock movement.");
+        return;
+      }
 
-    if (!res.ok) {
-      const body = await res.json().catch(() => null);
-      setError(body?.error?.message ?? "Failed to create this stock movement.");
-      return;
+      const { data } = await res.json();
+      router.push(`/inventory/stock-movements/${data.id}`);
+      router.refresh();
+    } catch {
+      setError("Could not reach the server. Check your connection and try again — it's safe to resubmit.");
+    } finally {
+      setIsSubmitting(false);
     }
-
-    const { data } = await res.json();
-    router.push(`/inventory/stock-movements/${data.id}`);
-    router.refresh();
   };
 
   return (

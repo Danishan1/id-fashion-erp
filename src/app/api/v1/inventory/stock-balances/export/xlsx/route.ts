@@ -3,8 +3,7 @@ import { requireSession, handleApiError } from "@/lib/api-route";
 import { PermissionService } from "@/core/rbac/PermissionService";
 import { buildXlsxBuffer, xlsxResponseHeaders } from "@/lib/xlsx";
 import { listStockBalances } from "@/modules/inventory/inventory.service";
-
-const EXPORT_ROW_CAP = 20000;
+import { EXPORT_ROW_CAP_EXCEL as EXPORT_ROW_CAP } from "@/core/reports/constants";
 
 // See the identical comment in products/export/xlsx/route.ts — the same
 // repository-return-type inference gap, confirmed present at runtime by

@@ -32,6 +32,13 @@ export const PaymentRepository = {
 
   findAnyById: (companyId: string, id: string) => prisma.payment.findFirst({ where: { id, companyId } }),
 
+  /** CF-5 idempotent-replay lookup — same include shape as createWithAllocations's own return value. */
+  findByIdempotencyKey: (companyId: string, idempotencyKey: string) =>
+    prisma.payment.findUnique({
+      where: { companyId_idempotencyKey: { companyId, idempotencyKey } },
+      include: detailInclude,
+    }),
+
   findByIdWithDetails: (companyId: string, id: string) =>
     prisma.payment.findFirst({ where: { id, companyId }, include: detailInclude }),
 

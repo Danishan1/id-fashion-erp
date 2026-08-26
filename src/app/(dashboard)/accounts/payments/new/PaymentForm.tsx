@@ -47,6 +47,8 @@ export function PaymentForm() {
   const [allocations, setAllocations] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // See CF-5 in the independent hardening audit.
+  const [idempotencyKey] = useState(() => crypto.randomUUID());
 
   useEffect(() => {
     fetch("/api/v1/customers?pageSize=200")
@@ -106,37 +108,42 @@ export function PaymentForm() {
     setIsSubmitting(true);
     setError(null);
 
-    const res = await fetch("/api/v1/payments", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        direction,
-        customerId: direction === "RECEIPT" ? partyId : undefined,
-        supplierId: direction === "PAYMENT_OUT" ? partyId : undefined,
-        paymentDate,
-        paymentTypeId,
-        bankAccountId: bankAccountId || undefined,
-        referenceNumber: referenceNumber || undefined,
-        amount: allocatedTotal,
-        allocations: activeAllocations.map((a) => ({
-          salesInvoiceId: direction === "RECEIPT" ? a.invoiceId : undefined,
-          purchaseInvoiceId: direction === "PAYMENT_OUT" ? a.invoiceId : undefined,
-          allocatedAmount: a.amount,
-        })),
-      }),
-    });
+    try {
+      const res = await fetch("/api/v1/payments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          direction,
+          customerId: direction === "RECEIPT" ? partyId : undefined,
+          supplierId: direction === "PAYMENT_OUT" ? partyId : undefined,
+          paymentDate,
+          paymentTypeId,
+          bankAccountId: bankAccountId || undefined,
+          referenceNumber: referenceNumber || undefined,
+          amount: allocatedTotal,
+          allocations: activeAllocations.map((a) => ({
+            salesInvoiceId: direction === "RECEIPT" ? a.invoiceId : undefined,
+            purchaseInvoiceId: direction === "PAYMENT_OUT" ? a.invoiceId : undefined,
+            allocatedAmount: a.amount,
+          })),
+          idempotencyKey,
+        }),
+      });
 
-    setIsSubmitting(false);
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        setError(body?.error?.message ?? "Failed to create payment.");
+        return;
+      }
 
-    if (!res.ok) {
-      const body = await res.json().catch(() => null);
-      setError(body?.error?.message ?? "Failed to create payment.");
-      return;
+      const body = await res.json();
+      router.push(`/accounts/payments/${body.data.id}`);
+      router.refresh();
+    } catch {
+      setError("Could not reach the server. Check your connection and try again — it's safe to resubmit.");
+    } finally {
+      setIsSubmitting(false);
     }
-
-    const body = await res.json();
-    router.push(`/accounts/payments/${body.data.id}`);
-    router.refresh();
   };
 
   return (

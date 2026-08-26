@@ -8,7 +8,7 @@ import { TrendChart } from "./TrendChart";
 
 export default async function MarketingDashboardPage() {
   const session = await auth();
-  await PermissionService.assert(session!.user.id, "marketing", "view").catch(() => notFound());
+  await PermissionService.assert(session!.user.id, "marketing", "view", { sessionIssuedAt: session!.user.sessionIssuedAt }).catch(() => notFound());
 
   const [stats, trends] = await Promise.all([
     getMarketingDashboard(session!.user.companyId),

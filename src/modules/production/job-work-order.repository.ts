@@ -82,10 +82,12 @@ export const JobWorkOrderRepository = {
 export const JobWorkReceiptRepository = {
   createInTx: (tx: Prisma.TransactionClient, data: Prisma.JobWorkReceiptUncheckedCreateInput) => tx.jobWorkReceipt.create({ data }),
 
-  countByJobWorkOrderId: (jobWorkOrderId: string) => prisma.jobWorkReceipt.count({ where: { jobWorkOrderId } }),
-
   findAnyById: (companyId: string, id: string) =>
     prisma.jobWorkReceipt.findFirst({ where: { id, companyId }, include: { jobWorkOrder: true } }),
+
+  /** CF-5 idempotent-replay lookup. */
+  findByIdempotencyKey: (companyId: string, idempotencyKey: string) =>
+    prisma.jobWorkReceipt.findUnique({ where: { companyId_idempotencyKey: { companyId, idempotencyKey } } }),
 
   updateInTx: (tx: Prisma.TransactionClient, id: string, data: Prisma.JobWorkReceiptUncheckedUpdateInput) =>
     tx.jobWorkReceipt.update({ where: { id }, data }),

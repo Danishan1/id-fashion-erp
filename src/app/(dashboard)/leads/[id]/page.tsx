@@ -14,7 +14,7 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
   // role. Denying reads as a plain 404 (not a distinct "forbidden" page)
   // deliberately doesn't reveal whether the record exists to a caller
   // without view rights, matching the notFound() below for the same reason.
-  await PermissionService.assert(session!.user.id, "crm", "view").catch(() => notFound());
+  await PermissionService.assert(session!.user.id, "crm", "view", { sessionIssuedAt: session!.user.sessionIssuedAt }).catch(() => notFound());
 
   const lead = await getLeadById(session!.user.companyId, id).catch(() => null);
   if (!lead) notFound();

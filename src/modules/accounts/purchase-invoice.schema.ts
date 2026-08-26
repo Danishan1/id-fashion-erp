@@ -17,6 +17,8 @@ export const purchaseInvoiceSchema = z.object({
   supplierInvoiceNumber: z.string().max(100).optional().or(z.literal("")),
   invoiceDate: z.string().min(1, "Invoice date is required"),
   lines: z.array(purchaseInvoiceLineInputSchema).min(1, "At least one line is required"),
+  // Optional, client-generated — see CF-5 in HARDENING_BRANCH_INDEPENDENT_AUDIT.md.
+  idempotencyKey: z.string().min(1).max(200).optional(),
 });
 
 export type PurchaseInvoiceInput = z.infer<typeof purchaseInvoiceSchema>;

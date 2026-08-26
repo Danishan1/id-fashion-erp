@@ -14,6 +14,7 @@ vi.mock("./sales-invoice.repository", () => ({
     findAnyById: vi.fn(),
     findByIdWithDetails: vi.fn(),
     findActiveByOrderId: vi.fn(),
+    findByIdempotencyKey: vi.fn(),
     createWithItems: vi.fn(),
     replaceItems: vi.fn(),
     updateStatusConditional: vi.fn(),
@@ -65,6 +66,7 @@ beforeEach(() => {
   vi.mocked(SalesInvoiceRepository.findByIdWithDetails).mockReset();
   vi.mocked(SalesInvoiceRepository.findAnyById).mockReset();
   vi.mocked(SalesInvoiceRepository.findActiveByOrderId).mockReset().mockResolvedValue(null);
+  vi.mocked(SalesInvoiceRepository.findByIdempotencyKey).mockReset().mockResolvedValue(null);
   vi.mocked(SalesInvoiceRepository.createWithItems).mockReset();
   vi.mocked(SalesInvoiceRepository.replaceItems).mockReset();
   vi.mocked(SalesInvoiceRepository.updateStatusConditional).mockReset();
@@ -141,7 +143,15 @@ describe("createSalesInvoice", () => {
     } as never);
 
     vi.mocked(SalesInvoiceRepository.createWithItems).mockRejectedValue(
-      new Prisma.PrismaClientKnownRequestError("Unique constraint failed", { code: "P2002", clientVersion: "test" })
+      new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+        code: "P2002",
+        clientVersion: "test",
+        // Realistic shape for the sales_invoices_one_active_per_order
+        // collision — confirmed live against this project's own dev DB (see
+        // BusinessRuleError.test.ts). Distinct from an idempotencyKey
+        // collision, which the P2002 handler must not conflate with this one.
+        meta: { driverAdapterError: { cause: { constraint: { fields: ["sales_order_id"] } } } },
+      })
     );
 
     await expect(
@@ -196,6 +206,98 @@ describe("createSalesInvoice", () => {
     expect(headerData.totalAmount).toBe(1180);
     // 2026-08-24 + 15 days
     expect((headerData.dueDate as Date).toISOString().slice(0, 10)).toBe("2026-09-08");
+  });
+});
+
+describe("createSalesInvoice — idempotency (CF-5), distinguished from the pre-existing one_active_per_order guard", () => {
+  const existingInvoice = { id: "inv-existing", invoiceNumber: "INV-2026-00001" };
+  const validOrder = {
+    id: "so-1",
+    status: "CONFIRMED",
+    customerId: "cust-1",
+    customer: { paymentTermsDays: 30 },
+    currencyCode: "INR",
+    exchangeRate: 1,
+    baseCurrencyCode: "INR",
+    items: [orderItem("item-1", "100.00", [10])],
+  };
+  const validInput = {
+    salesOrderId: "so-1",
+    invoiceDate: "2026-08-24",
+    lines: [{ salesOrderItemId: "item-1", taxRateId: "" }],
+  };
+
+  beforeEach(() => {
+    vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue(validOrder as never);
+  });
+
+  it("returns the original invoice unchanged when the same idempotencyKey is replayed, without even checking for an active invoice", async () => {
+    vi.mocked(SalesInvoiceRepository.findByIdempotencyKey).mockResolvedValue(existingInvoice as never);
+
+    const result = await createSalesInvoice(actor, { ...validInput, idempotencyKey: "retry-key-1" });
+
+    expect(result).toBe(existingInvoice);
+    expect(SalesOrderRepository.findByIdWithDetails).not.toHaveBeenCalled();
+    expect(SalesInvoiceRepository.createWithItems).not.toHaveBeenCalled();
+  });
+
+  it("proceeds normally the first time a key is used", async () => {
+    vi.mocked(SalesInvoiceRepository.createWithItems).mockResolvedValue({ id: "inv-1" } as never);
+
+    const result = await createSalesInvoice(actor, { ...validInput, idempotencyKey: "fresh-key-1" });
+
+    expect(SalesInvoiceRepository.findByIdempotencyKey).toHaveBeenCalledWith("co-1", "fresh-key-1");
+    expect(SalesInvoiceRepository.createWithItems).toHaveBeenCalledWith(
+      expect.objectContaining({ idempotencyKey: "fresh-key-1" }),
+      expect.anything()
+    );
+    expect((result as { id: string }).id).toBe("inv-1");
+  });
+
+  it("does not check idempotency at all when no key is supplied", async () => {
+    vi.mocked(SalesInvoiceRepository.createWithItems).mockResolvedValue({ id: "inv-1" } as never);
+
+    await createSalesInvoice(actor, validInput);
+
+    expect(SalesInvoiceRepository.findByIdempotencyKey).not.toHaveBeenCalled();
+    expect(SalesInvoiceRepository.createWithItems).toHaveBeenCalledWith(
+      expect.objectContaining({ idempotencyKey: null }),
+      expect.anything()
+    );
+  });
+
+  it("regression: a genuine concurrent replay on the idempotencyKey constraint transparently returns the winner's invoice, not a REFERENCED_RECORD_IN_USE error", async () => {
+    const idempotencyKeyCollision = new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+      code: "P2002",
+      clientVersion: "test",
+      meta: { driverAdapterError: { cause: { constraint: { fields: ["company_id", "idempotency_key"] } } } },
+    });
+    vi.mocked(SalesInvoiceRepository.createWithItems).mockRejectedValue(idempotencyKeyCollision);
+    vi.mocked(SalesInvoiceRepository.findByIdempotencyKey)
+      .mockResolvedValueOnce(null) // pre-check, before the race is lost
+      .mockResolvedValueOnce(existingInvoice as never); // post-catch re-fetch, after losing the race
+
+    const result = await createSalesInvoice(actor, { ...validInput, idempotencyKey: "racing-key" });
+
+    expect(result).toBe(existingInvoice);
+  });
+
+  it("a one_active_per_order collision with an idempotencyKey ALSO supplied still reports REFERENCED_RECORD_IN_USE, not misattributed to the idempotency key", async () => {
+    const activePerOrderCollision = new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+      code: "P2002",
+      clientVersion: "test",
+      meta: { driverAdapterError: { cause: { constraint: { fields: ["sales_order_id"] } } } },
+    });
+    vi.mocked(SalesInvoiceRepository.createWithItems).mockRejectedValue(activePerOrderCollision);
+
+    await expect(createSalesInvoice(actor, { ...validInput, idempotencyKey: "some-key" })).rejects.toMatchObject({
+      code: "REFERENCED_RECORD_IN_USE",
+    });
+    // findByIdempotencyKey is called exactly once — the initial pre-check
+    // (returns null, so creation proceeds) — and NOT a second time from
+    // inside the catch block, confirming the active-per-order collision was
+    // correctly routed away from the idempotency-replay branch.
+    expect(SalesInvoiceRepository.findByIdempotencyKey).toHaveBeenCalledTimes(1);
   });
 });
 

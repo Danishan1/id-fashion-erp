@@ -19,6 +19,7 @@ vi.mock("./expense.repository", () => ({
     count: vi.fn(),
     findAnyById: vi.fn(),
     findByIdWithDetails: vi.fn(),
+    findByIdempotencyKey: vi.fn(),
     create: vi.fn(),
     update: vi.fn(),
     updateStatusConditional: vi.fn(),
@@ -66,6 +67,7 @@ beforeEach(() => {
   vi.mocked(ExpenseRepository.findAnyById).mockReset();
   vi.mocked(ExpenseRepository.findByIdWithDetails).mockReset();
   vi.mocked(ExpenseRepository.create).mockReset();
+  vi.mocked(ExpenseRepository.findByIdempotencyKey).mockReset().mockResolvedValue(null);
   vi.mocked(ExpenseRepository.update).mockReset();
   vi.mocked(ExpenseRepository.updateStatusConditional).mockReset();
   vi.mocked(CompanyRepository.findBaseCurrencyCode).mockReset().mockResolvedValue({ baseCurrencyCode: "INR" } as never);
@@ -125,6 +127,62 @@ describe("createExpense — account validation (COGS exclusion, accountType, isA
     await expect(createExpense(actor, { ...baseInput, supplierId: "sup-other-company" })).rejects.toMatchObject({
       code: "NOT_FOUND",
     });
+  });
+});
+
+describe("createExpense — idempotency (CF-5)", () => {
+  const existingExpense = { id: "exp-existing", expenseNumber: "EXP-2026-00001" };
+
+  beforeEach(() => {
+    vi.mocked(ChartOfAccountRepository.findAnyById).mockResolvedValue(expenseAccount as never);
+  });
+
+  it("returns the original expense unchanged when the same idempotencyKey is replayed, without validating anything", async () => {
+    vi.mocked(ExpenseRepository.findByIdempotencyKey).mockResolvedValue(existingExpense as never);
+
+    const result = await createExpense(actor, { ...baseInput, idempotencyKey: "retry-key-1" });
+
+    expect(result).toBe(existingExpense);
+    expect(ChartOfAccountRepository.findAnyById).not.toHaveBeenCalled();
+    expect(ExpenseRepository.create).not.toHaveBeenCalled();
+  });
+
+  it("proceeds normally the first time a key is used", async () => {
+    vi.mocked(ExpenseRepository.create).mockResolvedValue({ id: "exp-1", expenseNumber: "EXP-2026-00002" } as never);
+
+    const result = await createExpense(actor, { ...baseInput, idempotencyKey: "fresh-key-1" });
+
+    expect(ExpenseRepository.findByIdempotencyKey).toHaveBeenCalledWith("co-1", "fresh-key-1");
+    expect(ExpenseRepository.create).toHaveBeenCalledWith(expect.objectContaining({ idempotencyKey: "fresh-key-1" }));
+    expect((result as { id: string }).id).toBe("exp-1");
+  });
+
+  it("does not check idempotency at all when no key is supplied", async () => {
+    vi.mocked(ExpenseRepository.create).mockResolvedValue({ id: "exp-1" } as never);
+
+    await createExpense(actor, baseInput);
+
+    expect(ExpenseRepository.findByIdempotencyKey).not.toHaveBeenCalled();
+    expect(ExpenseRepository.create).toHaveBeenCalledWith(expect.objectContaining({ idempotencyKey: null }));
+  });
+
+  it("regression: a genuine concurrent replay transparently returns the winner's expense instead of throwing", async () => {
+    const p2002 = Object.assign(new Error("Unique constraint failed"), { code: "P2002" });
+    vi.mocked(ExpenseRepository.create).mockRejectedValue(p2002);
+    vi.mocked(ExpenseRepository.findByIdempotencyKey)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(existingExpense as never);
+
+    const result = await createExpense(actor, { ...baseInput, idempotencyKey: "racing-key" });
+
+    expect(result).toBe(existingExpense);
+  });
+
+  it("still throws a genuine P2002 with no idempotencyKey supplied", async () => {
+    const p2002 = Object.assign(new Error("Unique constraint failed"), { code: "P2002" });
+    vi.mocked(ExpenseRepository.create).mockRejectedValue(p2002);
+
+    await expect(createExpense(actor, baseInput)).rejects.toBe(p2002);
   });
 });
 

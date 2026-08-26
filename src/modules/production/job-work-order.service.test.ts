@@ -32,8 +32,8 @@ vi.mock("./job-work-order.repository", () => ({
   },
   JobWorkReceiptRepository: {
     createInTx: vi.fn(),
-    countByJobWorkOrderId: vi.fn(),
     findAnyById: vi.fn(),
+    findByIdempotencyKey: vi.fn(),
     updateInTx: vi.fn(),
   },
 }));
@@ -110,7 +110,7 @@ beforeEach(() => {
   vi.mocked(JobWorkOrderRepository.sumPendingByJobOrderId).mockReset().mockResolvedValue(0);
   vi.mocked(JobWorkOrderRepository.countActiveReceipts).mockReset().mockResolvedValue(0);
   vi.mocked(JobWorkReceiptRepository.createInTx).mockReset();
-  vi.mocked(JobWorkReceiptRepository.countByJobWorkOrderId).mockReset().mockResolvedValue(0);
+  vi.mocked(JobWorkReceiptRepository.findByIdempotencyKey).mockReset().mockResolvedValue(null);
   vi.mocked(JobWorkReceiptRepository.findAnyById).mockReset();
   vi.mocked(JobWorkReceiptRepository.updateInTx).mockReset();
 });
@@ -308,6 +308,81 @@ describe("receiveJobWork", () => {
     await receiveJobWork(actor, "jwo-1", { receivedDate: "2026-08-24", receivedQuantity: 10, rejectedQuantity: 0, damagedQuantity: 0, remarks: "" });
 
     expect(JobWorkOrderRepository.updateInTx).toHaveBeenCalledWith(mockTx, "jwo-1", expect.objectContaining({ status: "FULLY_RECEIVED" }));
+  });
+
+  it("regression: draws the receipt number via the atomic document-number counter, not the old count()+1 scheme", async () => {
+    vi.mocked(JobWorkOrderRepository.findAnyById).mockResolvedValue(jobWorkOrder({ issuedQuantity: 50 }) as never);
+    vi.mocked(JobWorkOrderRepository.findForGuardedUpdateInTx).mockResolvedValue(jobWorkOrder({ issuedQuantity: 50 }) as never);
+    vi.mocked(JobWorkReceiptRepository.createInTx).mockResolvedValue({ id: "receipt-1" } as never);
+
+    await receiveJobWork(actor, "jwo-1", { receivedDate: "2026-08-24", receivedQuantity: 30, rejectedQuantity: 0, damagedQuantity: 0, remarks: "" });
+
+    expect(generateDocumentNumber).toHaveBeenCalledWith(expect.objectContaining({ documentType: "JOB_WORK_RECEIPT" }));
+    expect(JobWorkReceiptRepository.createInTx).toHaveBeenCalledWith(
+      mockTx,
+      expect.objectContaining({ receiptNumber: "JWO-2026-00001" })
+    );
+  });
+
+  describe("idempotency (CF-5)", () => {
+    const existingReceipt = { id: "receipt-existing" };
+    const validInput = { receivedDate: "2026-08-24", receivedQuantity: 30, rejectedQuantity: 0, damagedQuantity: 0, remarks: "" };
+
+    it("returns the original receipt unchanged when the same idempotencyKey is replayed, without even looking up the job-work order", async () => {
+      vi.mocked(JobWorkReceiptRepository.findByIdempotencyKey).mockResolvedValue(existingReceipt as never);
+
+      const result = await receiveJobWork(actor, "jwo-1", { ...validInput, idempotencyKey: "retry-key-1" });
+
+      expect(result).toBe(existingReceipt);
+      expect(JobWorkOrderRepository.findAnyById).not.toHaveBeenCalled();
+      expect(JobWorkReceiptRepository.createInTx).not.toHaveBeenCalled();
+    });
+
+    it("proceeds normally the first time a key is used", async () => {
+      vi.mocked(JobWorkOrderRepository.findAnyById).mockResolvedValue(jobWorkOrder({ issuedQuantity: 50 }) as never);
+      vi.mocked(JobWorkOrderRepository.findForGuardedUpdateInTx).mockResolvedValue(jobWorkOrder({ issuedQuantity: 50 }) as never);
+      vi.mocked(JobWorkReceiptRepository.createInTx).mockResolvedValue({ id: "receipt-1" } as never);
+
+      const result = await receiveJobWork(actor, "jwo-1", { ...validInput, idempotencyKey: "fresh-key-1" });
+
+      expect(JobWorkReceiptRepository.findByIdempotencyKey).toHaveBeenCalledWith("co-1", "fresh-key-1");
+      expect(JobWorkReceiptRepository.createInTx).toHaveBeenCalledWith(mockTx, expect.objectContaining({ idempotencyKey: "fresh-key-1" }));
+      expect((result as { id: string }).id).toBe("receipt-1");
+    });
+
+    it("does not check idempotency at all when no key is supplied", async () => {
+      vi.mocked(JobWorkOrderRepository.findAnyById).mockResolvedValue(jobWorkOrder({ issuedQuantity: 50 }) as never);
+      vi.mocked(JobWorkOrderRepository.findForGuardedUpdateInTx).mockResolvedValue(jobWorkOrder({ issuedQuantity: 50 }) as never);
+      vi.mocked(JobWorkReceiptRepository.createInTx).mockResolvedValue({ id: "receipt-1" } as never);
+
+      await receiveJobWork(actor, "jwo-1", validInput);
+
+      expect(JobWorkReceiptRepository.findByIdempotencyKey).not.toHaveBeenCalled();
+      expect(JobWorkReceiptRepository.createInTx).toHaveBeenCalledWith(mockTx, expect.objectContaining({ idempotencyKey: null }));
+    });
+
+    it("regression: a genuine concurrent replay transparently returns the winner's receipt instead of throwing", async () => {
+      vi.mocked(JobWorkOrderRepository.findAnyById).mockResolvedValue(jobWorkOrder({ issuedQuantity: 50 }) as never);
+      vi.mocked(JobWorkOrderRepository.findForGuardedUpdateInTx).mockResolvedValue(jobWorkOrder({ issuedQuantity: 50 }) as never);
+      const p2002 = Object.assign(new Error("Unique constraint failed"), { code: "P2002" });
+      vi.mocked(JobWorkReceiptRepository.createInTx).mockRejectedValue(p2002);
+      vi.mocked(JobWorkReceiptRepository.findByIdempotencyKey)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(existingReceipt as never);
+
+      const result = await receiveJobWork(actor, "jwo-1", { ...validInput, idempotencyKey: "racing-key" });
+
+      expect(result).toBe(existingReceipt);
+    });
+
+    it("still throws a genuine P2002 with no idempotencyKey supplied", async () => {
+      vi.mocked(JobWorkOrderRepository.findAnyById).mockResolvedValue(jobWorkOrder({ issuedQuantity: 50 }) as never);
+      vi.mocked(JobWorkOrderRepository.findForGuardedUpdateInTx).mockResolvedValue(jobWorkOrder({ issuedQuantity: 50 }) as never);
+      const p2002 = Object.assign(new Error("Unique constraint failed"), { code: "P2002" });
+      vi.mocked(JobWorkReceiptRepository.createInTx).mockRejectedValue(p2002);
+
+      await expect(receiveJobWork(actor, "jwo-1", validInput)).rejects.toBe(p2002);
+    });
   });
 });
 

@@ -89,6 +89,32 @@ export class BusinessRuleError extends Error {
   }
 }
 
+/**
+ * Distinguishes which unique constraint a P2002 actually violated, by
+ * column name — needed wherever a table has more than one unique constraint
+ * that can raise P2002 (e.g. Sales/Purchase Invoice's pre-existing partial
+ * unique index alongside CF-5's new idempotencyKey constraint), so a
+ * catch block doesn't misattribute one collision as the other.
+ *
+ * Checks two possible shapes, confirmed by directly triggering both real
+ * constraints in this project's own dev database rather than assumed from
+ * generic Prisma docs: `meta.target` (the shape some Prisma configurations
+ * use) and `meta.driverAdapterError.cause.constraint.fields` (the actual
+ * shape produced by this project's `@prisma/adapter-pg` driver adapter —
+ * `meta.target` is NOT present at all under this adapter, confirmed live).
+ */
+export function isUniqueConstraintViolationOnColumn(error: unknown, columnName: string): boolean {
+  if (!(error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "P2002")) {
+    return false;
+  }
+  const meta = (error as { meta?: unknown }).meta as
+    | { target?: unknown; driverAdapterError?: { cause?: { constraint?: { fields?: unknown } } } }
+    | undefined;
+  if (Array.isArray(meta?.target) && meta.target.includes(columnName)) return true;
+  const fields = meta?.driverAdapterError?.cause?.constraint?.fields;
+  return Array.isArray(fields) && fields.includes(columnName);
+}
+
 export function toErrorResponse(error: unknown): { status: number; body: unknown } {
   if (error instanceof BusinessRuleError) {
     return { status: error.httpStatus, body: error.toResponseBody() };

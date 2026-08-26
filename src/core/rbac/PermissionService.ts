@@ -4,6 +4,16 @@ import { permissionKey, type Module, type Action } from "@/config/rbac";
 export interface ResourceContext {
   /** userId of whoever created the record being acted on — enables self-approval checks. */
   createdBy?: string;
+  /**
+   * Unix seconds the caller's session/JWT was issued (session.user.sessionIssuedAt).
+   * Optional — most callers go through requireSession() first (src/lib/api-route.ts),
+   * which already performs this exact check independently and throws before this
+   * function is ever reached, so passing it here would be redundant for them.
+   * This is for the handful of Server Component pages that call
+   * PermissionService.assert() directly without requireSession() — omitting it
+   * simply skips the staleness check for that one call, it never widens access.
+   */
+  sessionIssuedAt?: number;
 }
 
 const SELF_APPROVAL_GUARDED_ACTIONS: Action[] = ["approve", "post"];
@@ -60,16 +70,22 @@ class PermissionServiceImpl {
    * status change touches no permission/role row this class's own cache
    * keys on. A tiny extra by-primary-key lookup per permission check is the
    * accepted cost of making "suspend" actually take effect immediately.
+   * Also returns `passwordChangedAt` in the same query so the optional
+   * session-staleness check below needs no second round-trip.
    */
-  private async isUserActive(userId: string): Promise<boolean> {
-    const user = await prisma.user.findUnique({ where: { id: userId }, select: { status: true } });
-    return user?.status === "ACTIVE";
+  private async loadLiveUserState(userId: string): Promise<{ status: string; passwordChangedAt: Date | null } | null> {
+    return prisma.user.findUnique({ where: { id: userId }, select: { status: true, passwordChangedAt: true } });
   }
 
   /**
    * Server-side permission check — never trust client state for this.
    * When `resourceContext.createdBy` is supplied for an approve/post action,
-   * self-approval is denied unless the user holds SUPER_ADMIN.
+   * self-approval is denied unless the user holds SUPER_ADMIN. When
+   * `resourceContext.sessionIssuedAt` is supplied, a session issued before
+   * the user's last password change/reset is denied — the same guarantee
+   * requireSession() already provides independently for the ~285 routes
+   * that call it first; this extends the identical guarantee to the handful
+   * of Server Component pages that call this function directly.
    */
   async can(
     userId: string,
@@ -77,7 +93,15 @@ class PermissionServiceImpl {
     action: Action,
     resourceContext?: ResourceContext
   ): Promise<boolean> {
-    if (!(await this.isUserActive(userId))) return false;
+    const user = await this.loadLiveUserState(userId);
+    if (!user || user.status !== "ACTIVE") return false;
+    if (
+      resourceContext?.sessionIssuedAt !== undefined &&
+      user.passwordChangedAt &&
+      resourceContext.sessionIssuedAt * 1000 < user.passwordChangedAt.getTime()
+    ) {
+      return false;
+    }
 
     if (
       resourceContext?.createdBy &&

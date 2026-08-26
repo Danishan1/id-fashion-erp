@@ -25,9 +25,18 @@ export async function requireSession() {
   if (!session?.user) {
     throw new BusinessRuleError("PERMISSION_DENIED", "Sign in required.");
   }
-  const user = await prisma.user.findUnique({ where: { id: session.user.id }, select: { status: true } });
+  const user = await prisma.user.findUnique({
+    where: { id: session.user.id },
+    select: { status: true, passwordChangedAt: true },
+  });
   if (!user || user.status !== "ACTIVE") {
     throw new BusinessRuleError("PERMISSION_DENIED", "Your account is no longer active. Please sign in again.");
+  }
+  // Same reasoning as the status check above — a session issued before the
+  // account's password was last changed/reset must stop working immediately,
+  // not silently keep working for the rest of its 30-day JWT lifetime.
+  if (user.passwordChangedAt && session.user.sessionIssuedAt * 1000 < user.passwordChangedAt.getTime()) {
+    throw new BusinessRuleError("PERMISSION_DENIED", "Your password was changed. Please sign in again.");
   }
   setRequestActor(session.user.id, session.user.companyId);
   return session;

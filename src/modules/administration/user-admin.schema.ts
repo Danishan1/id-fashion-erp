@@ -14,3 +14,8 @@ export const updateUserStatusSchema = z.object({
   status: z.enum(["ACTIVE", "SUSPENDED"]),
 });
 export type UpdateUserStatusInput = z.infer<typeof updateUserStatusSchema>;
+
+export const resetUserPasswordSchema = z.object({
+  newPassword: z.string().min(8, "New password must be at least 8 characters"),
+});
+export type ResetUserPasswordInput = z.infer<typeof resetUserPasswordSchema>;

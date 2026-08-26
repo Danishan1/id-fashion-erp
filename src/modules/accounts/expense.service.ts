@@ -128,6 +128,12 @@ export async function getExpenseById(companyId: string, id: string) {
 }
 
 export async function createExpense(actor: ActorContext, input: ExpenseInput) {
+  // CF-5: checked before anything else, including drawing a document number.
+  if (input.idempotencyKey) {
+    const existing = await ExpenseRepository.findByIdempotencyKey(actor.companyId, input.idempotencyKey);
+    if (existing) return existing;
+  }
+
   const fields = await buildExpenseFields(actor.companyId, input);
 
   const company = await CompanyRepository.findBaseCurrencyCode(actor.companyId);
@@ -139,18 +145,29 @@ export async function createExpense(actor: ActorContext, input: ExpenseInput) {
     documentType: "EXPENSE",
   });
 
-  const expense = await ExpenseRepository.create({
-    companyId: actor.companyId,
-    branchId: actor.branchId || null,
-    expenseNumber,
-    expenseDate: new Date(input.expenseDate),
-    description: input.description,
-    referenceNumber: input.referenceNumber || null,
-    currencyCode: company.baseCurrencyCode,
-    status: "DRAFT",
-    createdByUserId: actor.userId,
-    ...fields,
-  });
+  let expense;
+  try {
+    expense = await ExpenseRepository.create({
+      companyId: actor.companyId,
+      branchId: actor.branchId || null,
+      expenseNumber,
+      expenseDate: new Date(input.expenseDate),
+      description: input.description,
+      referenceNumber: input.referenceNumber || null,
+      currencyCode: company.baseCurrencyCode,
+      status: "DRAFT",
+      createdByUserId: actor.userId,
+      idempotencyKey: input.idempotencyKey ?? null,
+      ...fields,
+    });
+  } catch (err) {
+    // A genuine concurrent replay — see createGoodsReceipt's identical fallback.
+    if (input.idempotencyKey && err && typeof err === "object" && "code" in err && err.code === "P2002") {
+      const existing = await ExpenseRepository.findByIdempotencyKey(actor.companyId, input.idempotencyKey);
+      if (existing) return existing;
+    }
+    throw err;
+  }
 
   await writeAuditLog({
     companyId: actor.companyId,

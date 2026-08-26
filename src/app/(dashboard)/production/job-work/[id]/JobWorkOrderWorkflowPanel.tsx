@@ -56,6 +56,12 @@ export function JobWorkOrderWorkflowPanel({ jobWorkOrderId, initialOrder }: { jo
   const [isBusy, setIsBusy] = useState(false);
 
   const [showReceive, setShowReceive] = useState(false);
+  // Regenerated each time the Receive modal opens (not once for this
+  // long-lived panel's whole lifetime) — this panel handles many distinct
+  // receive actions over a job-work order's life, and each one is its own
+  // physical event needing its own key. See CF-5 in the independent
+  // hardening audit.
+  const [receiveIdempotencyKey, setReceiveIdempotencyKey] = useState(() => crypto.randomUUID());
   const [receivedDate, setReceivedDate] = useState(new Date().toISOString().slice(0, 10));
   const [receivedQty, setReceivedQty] = useState(String(order.metrics.pendingQuantity));
   const [rejectedQty, setRejectedQty] = useState("0");
@@ -76,15 +82,24 @@ export function JobWorkOrderWorkflowPanel({ jobWorkOrderId, initialOrder }: { jo
   const run = async (action: () => Promise<Response>, fallbackError: string) => {
     setIsBusy(true);
     setError(null);
-    const res = await action();
-    if (!res.ok) {
-      setError(await parseErrorMessage(res, fallbackError));
-      setIsBusy(false);
+    try {
+      const res = await action();
+      if (!res.ok) {
+        setError(await parseErrorMessage(res, fallbackError));
+        return false;
+      }
+      await refresh();
+      return true;
+    } catch {
+      // A genuine network failure (not a server-returned error) — without
+      // this, isBusy would stay stuck true forever with no way to retry,
+      // which would make the receive flow's idempotency key useless in
+      // exactly the scenario it exists for.
+      setError("Could not reach the server. Check your connection and try again — it's safe to resubmit.");
       return false;
+    } finally {
+      setIsBusy(false);
     }
-    await refresh();
-    setIsBusy(false);
-    return true;
   };
 
   const submitReceive = async () => {
@@ -99,6 +114,7 @@ export function JobWorkOrderWorkflowPanel({ jobWorkOrderId, initialOrder }: { jo
             rejectedQuantity: Number(rejectedQty),
             damagedQuantity: Number(damagedQty),
             remarks: receiveRemarks || undefined,
+            idempotencyKey: receiveIdempotencyKey,
           }),
         }),
       "Failed to record this receipt."
@@ -108,6 +124,10 @@ export function JobWorkOrderWorkflowPanel({ jobWorkOrderId, initialOrder }: { jo
       setRejectedQty("0");
       setDamagedQty("0");
       setReceiveRemarks("");
+      // A new key for the NEXT distinct receive action — the one that just
+      // succeeded keeps its key retired, so a stray retry of it later can
+      // never accidentally collide with a genuinely new receipt.
+      setReceiveIdempotencyKey(crypto.randomUUID());
     }
   };
 

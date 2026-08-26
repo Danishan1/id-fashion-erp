@@ -71,6 +71,10 @@ export function ExpenseForm({ initialExpense }: { initialExpense?: InitialExpens
 
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Create-only — an edit PATCHes an existing row, so there's no "double
+  // create" scenario to protect against there. See CF-5 in the independent
+  // hardening audit.
+  const [idempotencyKey] = useState(() => crypto.randomUUID());
 
   useEffect(() => {
     fetch("/api/v1/chart-of-accounts?pageSize=500")
@@ -124,25 +128,30 @@ export function ExpenseForm({ initialExpense }: { initialExpense?: InitialExpens
       paymentTypeId,
       bankAccountId: bankAccountId || undefined,
       referenceNumber: referenceNumber || undefined,
+      ...(isEditMode ? {} : { idempotencyKey }),
     };
 
-    const res = await fetch(isEditMode ? `/api/v1/expenses/${initialExpense.id}` : "/api/v1/expenses", {
-      method: isEditMode ? "PATCH" : "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+    try {
+      const res = await fetch(isEditMode ? `/api/v1/expenses/${initialExpense.id}` : "/api/v1/expenses", {
+        method: isEditMode ? "PATCH" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
 
-    setIsSubmitting(false);
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        setError(body?.error?.message ?? "Failed to save the expense.");
+        return;
+      }
 
-    if (!res.ok) {
-      const body = await res.json().catch(() => null);
-      setError(body?.error?.message ?? "Failed to save the expense.");
-      return;
+      const body = await res.json();
+      router.push(`/accounts/expenses/${body.data.id}`);
+      router.refresh();
+    } catch {
+      setError("Could not reach the server. Check your connection and try again — it's safe to resubmit.");
+    } finally {
+      setIsSubmitting(false);
     }
-
-    const body = await res.json();
-    router.push(`/accounts/expenses/${body.data.id}`);
-    router.refresh();
   };
 
   return (
