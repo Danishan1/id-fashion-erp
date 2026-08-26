@@ -1,15 +1,12 @@
 import { prisma } from "@/core/db/client";
 import type { ReportDescriptor } from "@/core/reports/report-types";
 import { registerReport } from "./registry";
+import { parseReportDateRange } from "./report-date-range";
+import { validateStatusFilter } from "./report-filters";
+import { round2 } from "@/lib/money";
+import { SalesInvoiceStatus } from "@prisma/client";
 
 const CATEGORY = "invoicing" as const;
-
-function parseDateRange(filters: Record<string, string>): { dateFrom?: Date; dateTo?: Date } {
-  return {
-    dateFrom: filters.dateFrom ? new Date(filters.dateFrom) : undefined,
-    dateTo: filters.dateTo ? new Date(filters.dateTo) : undefined,
-  };
-}
 
 function filtersApplied(filters: Record<string, string>, labels: Record<string, string>) {
   return Object.entries(filters)
@@ -27,13 +24,13 @@ async function getSalesInvoiceRegisterDescriptor(
   generatedByName: string,
   filters: Record<string, string>
 ): Promise<ReportDescriptor> {
-  const { dateFrom, dateTo } = parseDateRange(filters);
+  const { dateFrom, dateToExclusive } = parseReportDateRange(filters);
   const invoices = await prisma.salesInvoice.findMany({
     where: {
       companyId,
       ...(filters.customerId ? { customerId: filters.customerId } : {}),
-      ...(filters.status ? { status: filters.status as never } : {}),
-      ...(dateFrom || dateTo ? { invoiceDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+      ...validateStatusFilter(filters, SalesInvoiceStatus),
+      ...(dateFrom || dateToExclusive ? { invoiceDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
     },
     select: {
       id: true,
@@ -61,9 +58,19 @@ async function getSalesInvoiceRegisterDescriptor(
     total: Number(inv.totalAmount),
   }));
 
+  // Rows deliberately include every status (this register is the full audit
+  // trail — see the module comment above), but a CANCELLED invoice has zero
+  // real financial impact, so it must not contribute to the totals row — a
+  // cancelled invoice's amount inflating "how much did we invoice" broke this
+  // report's own documented reconciliation against Sales Register, which
+  // already excludes cancelled invoices entirely (ERP-BUG-QA-02, Phase 10 QA
+  // pass — confirmed the two disagreed by exactly one cancelled invoice's
+  // amount).
+  const realRows = rows.filter((r) => r.status !== "CANCELLED");
+
   return {
     title: "Sales Invoice Register",
-    subtitle: "Every Sales Invoice matching the selected filters.",
+    subtitle: "Every Sales Invoice matching the selected filters. Totals exclude cancelled invoices.",
     filtersApplied: filtersApplied(filters, { dateFrom: "Date From", dateTo: "Date To", customerId: "Customer", status: "Status" }),
     columns: [
       { key: "invoiceNumber", label: "Invoice Number", linkTo: "salesInvoice" },
@@ -77,9 +84,9 @@ async function getSalesInvoiceRegisterDescriptor(
     ],
     rows,
     totals: {
-      subtotal: rows.reduce((s, r) => s + r.subtotal, 0),
-      tax: rows.reduce((s, r) => s + r.tax, 0),
-      total: rows.reduce((s, r) => s + r.total, 0),
+      subtotal: round2(realRows.reduce((s, r) => s + r.subtotal, 0)),
+      tax: round2(realRows.reduce((s, r) => s + r.tax, 0)),
+      total: round2(realRows.reduce((s, r) => s + r.total, 0)),
     },
     meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
     generatedAt: new Date().toISOString(),
@@ -115,9 +122,9 @@ async function getOutstandingInvoiceDescriptor(
 
   const rows = invoices
     .map((inv) => {
-      const total = Number(inv.totalAmount);
-      const paid = Number(inv.paidAmount);
-      const outstanding = total - paid;
+      const total = round2(Number(inv.totalAmount));
+      const paid = round2(Number(inv.paidAmount));
+      const outstanding = round2(total - paid);
       return {
         salesInvoiceId: inv.id,
         invoiceNumber: inv.invoiceNumber,
@@ -147,9 +154,9 @@ async function getOutstandingInvoiceDescriptor(
     ],
     rows,
     totals: {
-      total: rows.reduce((s, r) => s + r.total, 0),
-      paid: rows.reduce((s, r) => s + r.paid, 0),
-      outstanding: rows.reduce((s, r) => s + r.outstanding, 0),
+      total: round2(rows.reduce((s, r) => s + r.total, 0)),
+      paid: round2(rows.reduce((s, r) => s + r.paid, 0)),
+      outstanding: round2(rows.reduce((s, r) => s + r.outstanding, 0)),
     },
     meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
     generatedAt: new Date().toISOString(),

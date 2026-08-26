@@ -143,7 +143,26 @@ export const createQcInspectionSchema = z
   .refine((input) => input.result === "PASS" || input.rejectedQuantity <= 0 || !!input.reworkTargetStageId, {
     message: "A rework target stage is required whenever any quantity is being rejected.",
     path: ["reworkTargetStageId"],
-  });
+  })
+  // A defect describes what's wrong with rejected/damaged units — it can
+  // never exceed how many units were actually disposed as rejected/damaged
+  // on this inspection, and a clean PASS (nothing rejected or damaged) has
+  // nothing for a defect to describe. Neither was previously enforced: a
+  // real DB row was found with a defect quantity of 500 attached to an
+  // inspection whose own totals were inspected=200/accepted=200/rejected=0/
+  // damaged=0 — a clean PASS — silently corrupting Defect-wise Analysis
+  // reporting (ERP-BUG-Q10-0002, Phase 10 QA pass).
+  .refine((input) => input.defects.length === 0 || input.result !== "PASS", {
+    message: "Defects cannot be recorded against a PASS result — nothing was rejected or damaged.",
+    path: ["defects"],
+  })
+  .refine(
+    (input) => input.defects.reduce((sum, d) => sum + d.quantity, 0) <= input.rejectedQuantity + input.damagedQuantity + 0.0001,
+    {
+      message: "Total defect quantity cannot exceed the rejected + damaged quantity on this inspection.",
+      path: ["defects"],
+    }
+  );
 export type CreateQcInspectionInput = z.infer<typeof createQcInspectionSchema>;
 
 export const defectTypeSchema = z.object({

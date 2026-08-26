@@ -1,15 +1,9 @@
 import { prisma } from "@/core/db/client";
 import type { ReportDescriptor } from "@/core/reports/report-types";
 import { registerReport } from "./registry";
+import { parseReportDateRange } from "./report-date-range";
 
 const CATEGORY = "production" as const;
-
-function parseDateRange(filters: Record<string, string>): { dateFrom?: Date; dateTo?: Date } {
-  return {
-    dateFrom: filters.dateFrom ? new Date(filters.dateFrom) : undefined,
-    dateTo: filters.dateTo ? new Date(filters.dateTo) : undefined,
-  };
-}
 
 function filtersApplied(filters: Record<string, string>, labels: Record<string, string>) {
   return Object.entries(filters)
@@ -30,11 +24,11 @@ async function getProductionRegisterDescriptor(
   generatedByName: string,
   filters: Record<string, string>
 ): Promise<ReportDescriptor> {
-  const { dateFrom, dateTo } = parseDateRange(filters);
+  const { dateFrom, dateToExclusive } = parseReportDateRange(filters);
   const jobOrders = await prisma.jobOrder.findMany({
     where: {
       companyId,
-      ...(dateFrom || dateTo ? { createdAt: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+      ...(dateFrom || dateToExclusive ? { createdAt: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
     },
     select: {
       jobNumber: true,
@@ -441,7 +435,14 @@ async function getOperatorWiseProductionDescriptor(companyId: string, generatedB
 
   return {
     title: "Operator-wise Production",
-    subtitle: "Job Order progress entries aggregated by the Employee who performed the work.",
+    // Totals reflect only LOGGED progress entries, not the same source as
+    // Production Register/Achievement — quantity that arrives at a
+    // downstream job order via Forward or a QC accept never gets its own
+    // JobOrderProgressEntry row, so this report's totals are legitimately
+    // lower than Production Register's. Called out explicitly so a user
+    // comparing the two doesn't mistake the gap for a bug (Phase 10 QA pass).
+    subtitle:
+      "Job Order progress entries aggregated by the Employee who performed the work. Totals reflect only logged progress entries and will be lower than Production Register/Achievement, which also count quantity forwarded from upstream stages.",
     filtersApplied: [],
     columns: [
       { key: "employeeCode", label: "Employee Code" },

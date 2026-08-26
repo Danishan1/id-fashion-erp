@@ -1,6 +1,7 @@
 import { prisma } from "@/core/db/client";
 import type { ReportDescriptor } from "@/core/reports/report-types";
 import { registerReport } from "./registry";
+import { round2 } from "@/lib/money";
 
 const CATEGORY = "suppliers" as const;
 
@@ -104,7 +105,7 @@ async function getSupplierOutstandingDescriptor(
   const now = Date.now();
   const rows = invoices
     .map((inv) => {
-      const outstanding = Number(inv.totalAmount) - Number(inv.paidAmount);
+      const outstanding = round2(Number(inv.totalAmount) - Number(inv.paidAmount));
       const daysOverdue = Math.floor((now - inv.dueDate.getTime()) / 86400000);
       return {
         purchaseInvoiceId: inv.id,
@@ -125,7 +126,7 @@ async function getSupplierOutstandingDescriptor(
     subtitle: "AP aging from posted/partially-paid Purchase Invoices.",
     filtersApplied: filtersApplied(filters, { supplierId: "Supplier" }),
     columns: [
-      { key: "invoiceNumber", label: "Invoice Number" },
+      { key: "invoiceNumber", label: "Invoice Number", linkTo: "purchaseInvoice" },
       { key: "supplier", label: "Supplier" },
       { key: "invoiceDate", label: "Invoice Date", type: "date" },
       { key: "dueDate", label: "Due Date", type: "date" },
@@ -134,7 +135,7 @@ async function getSupplierOutstandingDescriptor(
       { key: "agingBucket", label: "Aging Bucket" },
     ],
     rows,
-    totals: { outstandingAmount: rows.reduce((s, r) => s + r.outstandingAmount, 0) },
+    totals: { outstandingAmount: round2(rows.reduce((s, r) => s + r.outstandingAmount, 0)) },
     meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
     generatedAt: new Date().toISOString(),
     generatedByName,

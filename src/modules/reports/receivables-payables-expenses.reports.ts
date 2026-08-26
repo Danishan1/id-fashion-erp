@@ -1,13 +1,8 @@
 import { prisma } from "@/core/db/client";
 import type { ReportDescriptor } from "@/core/reports/report-types";
 import { registerReport } from "./registry";
-
-function parseDateRange(filters: Record<string, string>): { dateFrom?: Date; dateTo?: Date } {
-  return {
-    dateFrom: filters.dateFrom ? new Date(filters.dateFrom) : undefined,
-    dateTo: filters.dateTo ? new Date(filters.dateTo) : undefined,
-  };
-}
+import { parseReportDateRange } from "./report-date-range";
+import { round2 } from "@/lib/money";
 
 function filtersApplied(filters: Record<string, string>, labels: Record<string, string>) {
   return Object.entries(filters)
@@ -44,7 +39,7 @@ async function getCustomerOutstandingAgingDescriptor(companyId: string, generate
   const now = Date.now();
   const rows = invoices
     .map((inv) => {
-      const outstanding = Number(inv.totalAmount) - Number(inv.paidAmount);
+      const outstanding = round2(Number(inv.totalAmount) - Number(inv.paidAmount));
       const daysOverdue = Math.floor((now - inv.dueDate.getTime()) / 86400000);
       return {
         salesInvoiceId: inv.id,
@@ -74,7 +69,7 @@ async function getCustomerOutstandingAgingDescriptor(companyId: string, generate
       { key: "agingBucket", label: "Aging Bucket" },
     ],
     rows,
-    totals: { outstanding: rows.reduce((s, r) => s + r.outstanding, 0) },
+    totals: { outstanding: round2(rows.reduce((s, r) => s + r.outstanding, 0)) },
     meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
     generatedAt: new Date().toISOString(),
     generatedByName,
@@ -95,14 +90,14 @@ async function getCustomerLedgerDescriptor(companyId: string, generatedByName: s
     };
   }
 
-  const { dateFrom, dateTo } = parseDateRange(filters);
+  const { dateFrom, dateToExclusive } = parseReportDateRange(filters);
   const [invoices, payments] = await Promise.all([
     prisma.salesInvoice.findMany({
       where: {
         companyId,
         customerId: filters.customerId,
         status: { not: "CANCELLED" },
-        ...(dateFrom || dateTo ? { invoiceDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+        ...(dateFrom || dateToExclusive ? { invoiceDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
       },
       select: { invoiceNumber: true, invoiceDate: true, totalAmount: true },
     }),
@@ -112,7 +107,7 @@ async function getCustomerLedgerDescriptor(companyId: string, generatedByName: s
         customerId: filters.customerId,
         direction: "RECEIPT",
         status: "POSTED",
-        ...(dateFrom || dateTo ? { paymentDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+        ...(dateFrom || dateToExclusive ? { paymentDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
       },
       select: { paymentNumber: true, paymentDate: true, amount: true },
     }),
@@ -136,7 +131,7 @@ async function getCustomerLedgerDescriptor(companyId: string, generatedByName: s
   // same fix already applied to MRP's needed/available/shortfall quantities).
   let runningBalance = 0;
   const rows = entries.map((e) => {
-    runningBalance = Math.round((runningBalance + e.amount) * 100) / 100;
+    runningBalance = round2(runningBalance + e.amount);
     return { date: e.date, type: e.type, reference: e.reference, amount: e.amount, runningBalance };
   });
 
@@ -185,7 +180,7 @@ async function getSupplierOutstandingAgingDescriptor(companyId: string, generate
   const now = Date.now();
   const rows = invoices
     .map((inv) => {
-      const outstanding = Number(inv.totalAmount) - Number(inv.paidAmount);
+      const outstanding = round2(Number(inv.totalAmount) - Number(inv.paidAmount));
       const daysOverdue = Math.floor((now - inv.dueDate.getTime()) / 86400000);
       return {
         purchaseInvoiceId: inv.id,
@@ -206,7 +201,7 @@ async function getSupplierOutstandingAgingDescriptor(companyId: string, generate
     subtitle: "Per-invoice AP aging — same totalAmount − paidAmount source as every other outstanding report in this app.",
     filtersApplied: filtersApplied(filters, { supplierId: "Supplier" }),
     columns: [
-      { key: "invoiceNumber", label: "Invoice Number" },
+      { key: "invoiceNumber", label: "Invoice Number", linkTo: "purchaseInvoice" },
       { key: "supplier", label: "Supplier" },
       { key: "invoiceDate", label: "Invoice Date", type: "date" },
       { key: "dueDate", label: "Due Date", type: "date" },
@@ -215,7 +210,7 @@ async function getSupplierOutstandingAgingDescriptor(companyId: string, generate
       { key: "agingBucket", label: "Aging Bucket" },
     ],
     rows,
-    totals: { outstanding: rows.reduce((s, r) => s + r.outstanding, 0) },
+    totals: { outstanding: round2(rows.reduce((s, r) => s + r.outstanding, 0)) },
     meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
     generatedAt: new Date().toISOString(),
     generatedByName,
@@ -223,14 +218,14 @@ async function getSupplierOutstandingAgingDescriptor(companyId: string, generate
 }
 
 async function getPaymentMadeRegisterDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>): Promise<ReportDescriptor> {
-  const { dateFrom, dateTo } = parseDateRange(filters);
+  const { dateFrom, dateToExclusive } = parseReportDateRange(filters);
   const payments = await prisma.payment.findMany({
     where: {
       companyId,
       direction: "PAYMENT_OUT",
       status: { not: "CANCELLED" },
       ...(filters.supplierId ? { supplierId: filters.supplierId } : {}),
-      ...(dateFrom || dateTo ? { paymentDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+      ...(dateFrom || dateToExclusive ? { paymentDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
     },
     select: {
       id: true,
@@ -267,7 +262,7 @@ async function getPaymentMadeRegisterDescriptor(companyId: string, generatedByNa
       { key: "status", label: "Status" },
     ],
     rows,
-    totals: { amount: rows.reduce((s, r) => s + r.amount, 0) },
+    totals: { amount: round2(rows.reduce((s, r) => s + r.amount, 0)) },
     meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
     generatedAt: new Date().toISOString(),
     generatedByName,
@@ -293,12 +288,12 @@ registerReport({
 const EXPENSES_CATEGORY = "expenses" as const;
 
 async function getExpenseRegisterDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>): Promise<ReportDescriptor> {
-  const { dateFrom, dateTo } = parseDateRange(filters);
+  const { dateFrom, dateToExclusive } = parseReportDateRange(filters);
   const expenses = await prisma.expense.findMany({
     where: {
       companyId,
       status: { not: "CANCELLED" },
-      ...(dateFrom || dateTo ? { expenseDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+      ...(dateFrom || dateToExclusive ? { expenseDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
     },
     select: {
       id: true,
@@ -345,9 +340,9 @@ async function getExpenseRegisterDescriptor(companyId: string, generatedByName: 
     ],
     rows,
     totals: {
-      amount: rows.reduce((s, r) => s + r.amount, 0),
-      tax: rows.reduce((s, r) => s + r.tax, 0),
-      total: rows.reduce((s, r) => s + r.total, 0),
+      amount: round2(rows.reduce((s, r) => s + r.amount, 0)),
+      tax: round2(rows.reduce((s, r) => s + r.tax, 0)),
+      total: round2(rows.reduce((s, r) => s + r.total, 0)),
     },
     meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
     generatedAt: new Date().toISOString(),

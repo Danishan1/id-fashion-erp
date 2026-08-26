@@ -59,4 +59,47 @@ describe("createQcInspectionSchema", () => {
     });
     expect(result.success).toBe(false);
   });
+
+  // Regression test for ERP-BUG-Q10-0002 (P2): a real DB row was found with a
+  // defect quantity of 500 attached to an inspection that was a clean PASS
+  // (inspected=200, accepted=200, rejected=0, damaged=0) — nothing was
+  // rejected or damaged, so a defect describing 500 units of something wrong
+  // was nonsensical and corrupted Defect-wise Analysis reporting.
+  it("rejects any defect attached to a PASS result", () => {
+    const result = createQcInspectionSchema.safeParse({
+      inspectedQuantity: 200,
+      acceptedQuantity: 200,
+      rejectedQuantity: 0,
+      damagedQuantity: 0,
+      result: "PASS",
+      defects: [{ defectTypeId: "11111111-1111-4111-8111-111111111111", quantity: 500 }],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a total defect quantity exceeding rejected + damaged", () => {
+    const result = createQcInspectionSchema.safeParse({
+      inspectedQuantity: 20,
+      acceptedQuantity: 10,
+      rejectedQuantity: 5,
+      damagedQuantity: 5,
+      result: "PARTIAL_PASS",
+      reworkTargetStageId: "11111111-1111-4111-8111-111111111111",
+      defects: [{ defectTypeId: "11111111-1111-4111-8111-111111111111", quantity: 15 }],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts a defect quantity within the rejected + damaged total", () => {
+    const result = createQcInspectionSchema.safeParse({
+      inspectedQuantity: 20,
+      acceptedQuantity: 10,
+      rejectedQuantity: 5,
+      damagedQuantity: 5,
+      result: "PARTIAL_PASS",
+      reworkTargetStageId: "11111111-1111-4111-8111-111111111111",
+      defects: [{ defectTypeId: "11111111-1111-4111-8111-111111111111", quantity: 10 }],
+    });
+    expect(result.success).toBe(true);
+  });
 });

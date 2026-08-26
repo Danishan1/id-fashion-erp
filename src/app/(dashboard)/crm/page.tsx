@@ -28,8 +28,18 @@ interface CrmDashboardData {
   overdueFollowups: number;
 }
 
+// Deliberately reads LOCAL calendar components (never .toISOString(), which
+// converts through UTC) — "This Month"/"This Quarter"/"This Year" are
+// business-calendar concepts in the browser's own timezone, not UTC
+// timestamps. On IST (UTC+5:30), local midnight of the 1st is 18:30 UTC on
+// the LAST day of the PREVIOUS month, so .toISOString().slice(0,10) reported
+// the wrong day for every "start of period" preset (ERP-BUG-0001, Phase 10
+// QA pass) — confirmed live: "This Month" on 2026-08-26 returned 2026-07-31.
 function toIsoDate(d: Date): string {
-  return d.toISOString().slice(0, 10);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 type Preset = "today" | "week" | "month" | "quarter" | "year";

@@ -1,15 +1,10 @@
 import { prisma } from "@/core/db/client";
 import type { ReportDescriptor } from "@/core/reports/report-types";
 import { registerReport } from "./registry";
+import { parseReportDateRange } from "./report-date-range";
+import { round2 } from "@/lib/money";
 
 const CATEGORY = "inventory" as const;
-
-function parseDateRange(filters: Record<string, string>): { dateFrom?: Date; dateTo?: Date } {
-  return {
-    dateFrom: filters.dateFrom ? new Date(filters.dateFrom) : undefined,
-    dateTo: filters.dateTo ? new Date(filters.dateTo) : undefined,
-  };
-}
 
 function filtersApplied(filters: Record<string, string>, labels: Record<string, string>) {
   return Object.entries(filters)
@@ -69,11 +64,11 @@ async function getStockSummaryDescriptor(companyId: string, generatedByName: str
 const STOCK_LEDGER_ROW_CAP = 5000;
 
 async function getStockLedgerDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>): Promise<ReportDescriptor> {
-  const { dateFrom, dateTo } = parseDateRange(filters);
+  const { dateFrom, dateToExclusive } = parseReportDateRange(filters);
   const where = {
     companyId,
     ...(filters.warehouseId ? { warehouseId: filters.warehouseId } : {}),
-    ...(dateFrom || dateTo ? { performedAt: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+    ...(dateFrom || dateToExclusive ? { performedAt: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
   };
 
   const [transactions, totalCount, sumAgg] = await Promise.all([
@@ -259,7 +254,7 @@ async function getStockValuationDescriptor(companyId: string, generatedByName: s
         warehouse: b.warehouse.name,
         quantityOnHand,
         unitCost,
-        stockValue: quantityOnHand * unitCost,
+        stockValue: round2(quantityOnHand * unitCost),
       };
     })
     .sort((a, b) => b.stockValue - a.stockValue);
@@ -280,7 +275,7 @@ async function getStockValuationDescriptor(companyId: string, generatedByName: s
       { key: "stockValue", label: "Stock Value", type: "currency", align: "right" },
     ],
     rows,
-    totals: { stockValue: rows.reduce((s, r) => s + r.stockValue, 0) },
+    totals: { stockValue: round2(rows.reduce((s, r) => s + r.stockValue, 0)) },
     meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
     generatedAt: new Date().toISOString(),
     generatedByName,

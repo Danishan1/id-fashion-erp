@@ -170,6 +170,33 @@ describe("recordProgressEntry", () => {
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
     expect(JobOrderProgressEntryRepository.createInTx).not.toHaveBeenCalled();
   });
+
+  // Regression test for ERP-BUG-Q10-0001 (P0): logging progress that brings
+  // completed+rejected+damaged to exactly plannedQuantity at an ORDINARY
+  // (non-final) stage must never persist raw status "COMPLETED" — that value
+  // is reserved exclusively for completeAtFinalStageInTx (see forwardJobOrder's
+  // and recordQcInspection's own guards on it). Before this fix,
+  // applyJobOrderQuantityDelta wrote computeJobOrderStatus()'s result
+  // (which returns "COMPLETED" purely from the quantities, with no idea
+  // whether the stage is final) straight to the column, making a
+  // fully-processed-but-never-forwarded job order indistinguishable from one
+  // that had already posted to Finished Goods — permanently blocking both
+  // Forward and QC Inspection with no recovery path.
+  it("keeps a fully-processed job order's status IN_PROGRESS (never COMPLETED) when the stage isn't final", async () => {
+    vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder({ status: "IN_PROGRESS" }) as never);
+    vi.mocked(JobOrderRepository.findForGuardedUpdateInTx).mockResolvedValue(
+      jobOrder({ status: "IN_PROGRESS", plannedQuantity: "40", completedQuantity: "25", rejectedQuantity: "0", damagedQuantity: "0" }) as never
+    );
+    vi.mocked(JobOrderRepository.updateInTx).mockResolvedValue({ id: "jo-1", status: "IN_PROGRESS" } as never);
+
+    await recordProgressEntry(actor, "jo-1", { employeeId: "emp-1", completedQuantity: 15, rejectedQuantity: 0, damagedQuantity: 0 } as never);
+
+    expect(JobOrderRepository.updateInTx).toHaveBeenCalledWith(
+      expect.anything(),
+      "jo-1",
+      expect.objectContaining({ completedQuantity: 40, status: "IN_PROGRESS" })
+    );
+  });
 });
 
 describe("forwardJobOrder", () => {
@@ -462,6 +489,16 @@ describe("recordQcInspection", () => {
       expect.anything(),
       "jo-1",
       expect.objectContaining({ plannedQuantity: expect.anything() })
+    );
+    // Regression test for ERP-BUG-Q10-0001 (P0): completed+rejected+damaged
+    // still totals plannedQuantity (80+20+0=100) after this disposition, so
+    // computeJobOrderStatus alone would say "COMPLETED" — but this is a QC
+    // disposition on a non-final rework stage (sequence 3, not final), not a
+    // final-stage completion, so the raw status column must stay IN_PROGRESS.
+    expect(JobOrderRepository.updateInTx).toHaveBeenCalledWith(
+      expect.anything(),
+      "jo-1",
+      expect.objectContaining({ status: "IN_PROGRESS" })
     );
   });
 });

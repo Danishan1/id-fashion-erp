@@ -1,15 +1,10 @@
 import { prisma } from "@/core/db/client";
 import type { ReportDescriptor } from "@/core/reports/report-types";
 import { registerReport } from "./registry";
+import { parseReportDateRange } from "./report-date-range";
+import { round2 } from "@/lib/money";
 
 const CATEGORY = "purchase" as const;
-
-function parseDateRange(filters: Record<string, string>): { dateFrom?: Date; dateTo?: Date } {
-  return {
-    dateFrom: filters.dateFrom ? new Date(filters.dateFrom) : undefined,
-    dateTo: filters.dateTo ? new Date(filters.dateTo) : undefined,
-  };
-}
 
 function filtersApplied(filters: Record<string, string>, labels: Record<string, string>) {
   return Object.entries(filters)
@@ -25,12 +20,12 @@ async function getPurchaseOrderRegisterDescriptor(
   generatedByName: string,
   filters: Record<string, string>
 ): Promise<ReportDescriptor> {
-  const { dateFrom, dateTo } = parseDateRange(filters);
+  const { dateFrom, dateToExclusive } = parseReportDateRange(filters);
   const orders = await prisma.purchaseOrder.findMany({
     where: {
       companyId,
       ...(filters.supplierId ? { supplierId: filters.supplierId } : {}),
-      ...(dateFrom || dateTo ? { orderDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+      ...(dateFrom || dateToExclusive ? { orderDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
     },
     select: { id: true, orderNumber: true, orderDate: true, status: true, baseTotalAmount: true, supplier: { select: { name: true } } },
     orderBy: { orderDate: "desc" },
@@ -45,9 +40,17 @@ async function getPurchaseOrderRegisterDescriptor(
     orderAmount: Number(o.baseTotalAmount),
   }));
 
+  // Rows deliberately include every status (this register is the full audit
+  // trail), but a CANCELLED order was never really purchased, so it must not
+  // contribute to the totals row — otherwise this report's grand total
+  // disagreed with Supplier-wise Purchase/Purchase Monthly Summary (both of
+  // which already exclude cancelled orders) by exactly the cancelled orders'
+  // combined amount (ERP-BUG-0002, Phase 10 QA pass).
+  const realRows = rows.filter((r) => r.status !== "CANCELLED");
+
   return {
     title: "Purchase Order Register",
-    subtitle: "Every Purchase Order matching the selected filters.",
+    subtitle: "Every Purchase Order matching the selected filters. Totals exclude cancelled orders.",
     filtersApplied: filtersApplied(filters, { dateFrom: "Date From", dateTo: "Date To", supplierId: "Supplier" }),
     columns: [
       { key: "orderNumber", label: "PO Number", linkTo: "purchaseOrder" },
@@ -57,7 +60,7 @@ async function getPurchaseOrderRegisterDescriptor(
       { key: "orderAmount", label: "Order Amount", type: "currency", align: "right" },
     ],
     rows,
-    totals: { orderAmount: rows.reduce((sum, r) => sum + r.orderAmount, 0) },
+    totals: { orderAmount: round2(realRows.reduce((sum, r) => sum + r.orderAmount, 0)) },
     meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
     generatedAt: new Date().toISOString(),
     generatedByName,
@@ -151,12 +154,12 @@ async function getSupplierWisePurchaseDescriptor(
   generatedByName: string,
   filters: Record<string, string>
 ): Promise<ReportDescriptor> {
-  const { dateFrom, dateTo } = parseDateRange(filters);
+  const { dateFrom, dateToExclusive } = parseReportDateRange(filters);
   const orders = await prisma.purchaseOrder.findMany({
     where: {
       companyId,
       status: { not: "CANCELLED" },
-      ...(dateFrom || dateTo ? { orderDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+      ...(dateFrom || dateToExclusive ? { orderDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
     },
     select: { supplierId: true, baseTotalAmount: true, supplier: { select: { name: true } } },
   });
@@ -165,7 +168,7 @@ async function getSupplierWisePurchaseDescriptor(
   for (const o of orders) {
     const existing = bySupplier.get(o.supplierId) ?? { supplier: o.supplier.name, orderCount: 0, totalAmount: 0 };
     existing.orderCount += 1;
-    existing.totalAmount += Number(o.baseTotalAmount);
+    existing.totalAmount = round2(existing.totalAmount + Number(o.baseTotalAmount));
     bySupplier.set(o.supplierId, existing);
   }
 
@@ -183,7 +186,7 @@ async function getSupplierWisePurchaseDescriptor(
     rows,
     totals: {
       orderCount: rows.reduce((s, r) => s + r.orderCount, 0),
-      totalAmount: rows.reduce((s, r) => s + r.totalAmount, 0),
+      totalAmount: round2(rows.reduce((s, r) => s + r.totalAmount, 0)),
     },
     meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
     generatedAt: new Date().toISOString(),
@@ -200,12 +203,12 @@ async function getPurchaseMonthlySummaryDescriptor(
   generatedByName: string,
   filters: Record<string, string>
 ): Promise<ReportDescriptor> {
-  const { dateFrom, dateTo } = parseDateRange(filters);
+  const { dateFrom, dateToExclusive } = parseReportDateRange(filters);
   const orders = await prisma.purchaseOrder.findMany({
     where: {
       companyId,
       status: { not: "CANCELLED" },
-      ...(dateFrom || dateTo ? { orderDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+      ...(dateFrom || dateToExclusive ? { orderDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
     },
     select: { orderDate: true, baseTotalAmount: true },
   });
@@ -215,7 +218,7 @@ async function getPurchaseMonthlySummaryDescriptor(
     const month = o.orderDate.toISOString().slice(0, 7);
     const existing = byMonth.get(month) ?? { month, orderCount: 0, totalAmount: 0 };
     existing.orderCount += 1;
-    existing.totalAmount += Number(o.baseTotalAmount);
+    existing.totalAmount = round2(existing.totalAmount + Number(o.baseTotalAmount));
     byMonth.set(month, existing);
   }
 
@@ -233,7 +236,7 @@ async function getPurchaseMonthlySummaryDescriptor(
     rows,
     totals: {
       orderCount: rows.reduce((s, r) => s + r.orderCount, 0),
-      totalAmount: rows.reduce((s, r) => s + r.totalAmount, 0),
+      totalAmount: round2(rows.reduce((s, r) => s + r.totalAmount, 0)),
     },
     meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
     generatedAt: new Date().toISOString(),

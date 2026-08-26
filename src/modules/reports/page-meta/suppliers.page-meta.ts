@@ -4,6 +4,7 @@ const CATEGORY = "suppliers";
 
 const linkBuilders = {
   supplier: (row: Record<string, unknown>) => (row.supplierId ? `/masters/suppliers/${row.supplierId}` : undefined),
+  purchaseInvoice: (row: Record<string, unknown>) => (row.purchaseInvoiceId ? `/accounts/purchase-invoices/${row.purchaseInvoiceId}` : undefined),
 };
 
 registerReportPageMeta({

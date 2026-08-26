@@ -2,15 +2,9 @@ import { prisma } from "@/core/db/client";
 import type { ReportDescriptor } from "@/core/reports/report-types";
 import { registerReport } from "./registry";
 import { convertUomQuantity } from "@/lib/uom-conversion";
+import { parseReportDateRange } from "./report-date-range";
 
 const CATEGORY = "material-consumption" as const;
-
-function parseDateRange(filters: Record<string, string>): { dateFrom?: Date; dateTo?: Date } {
-  return {
-    dateFrom: filters.dateFrom ? new Date(filters.dateFrom) : undefined,
-    dateTo: filters.dateTo ? new Date(filters.dateTo) : undefined,
-  };
-}
 
 function filtersApplied(filters: Record<string, string>, labels: Record<string, string>) {
   return Object.entries(filters)
@@ -163,12 +157,12 @@ async function getMaterialConsumptionVarianceDescriptor(companyId: string, gener
 // Packaging/Accessories/Other) rather than by individual material.
 // ---------------------------------------------------------------------------
 async function getConsumptionByMaterialCategoryDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>): Promise<ReportDescriptor> {
-  const { dateFrom, dateTo } = parseDateRange(filters);
+  const { dateFrom, dateToExclusive } = parseReportDateRange(filters);
   const lines = await prisma.inventoryTransaction.findMany({
     where: {
       companyId,
       transactionType: "MATERIAL_ISSUE",
-      ...(dateFrom || dateTo ? { performedAt: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+      ...(dateFrom || dateToExclusive ? { performedAt: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
     },
     select: { quantity: true, product: { select: { materialCategory: true } } },
   });

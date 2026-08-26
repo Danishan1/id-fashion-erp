@@ -1,5 +1,6 @@
 import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
+import { round2 } from "@/lib/money";
 import type { ListQuery } from "@/lib/list-query";
 import type { ChartOfAccountInput } from "./chart-of-account.schema";
 import { ChartOfAccountRepository } from "./chart-of-account.repository";
@@ -160,9 +161,13 @@ export async function getAccountLedger(companyId: string, accountId: string, dat
   const isDebitNatured = account.accountType === "ASSET" || account.accountType === "EXPENSE";
   let runningBalance = 0;
   const rows = lines.map((line) => {
-    const debit = Number(line.debitAmount);
-    const credit = Number(line.creditAmount);
-    runningBalance += isDebitNatured ? debit - credit : credit - debit;
+    const debit = round2(Number(line.debitAmount));
+    const credit = round2(Number(line.creditAmount));
+    // round2 at every step, not just the final value — an unrounded running
+    // total left "should be exactly 0" balances showing raw scientific
+    // notation (e.g. 1.0658141036401503e-14) once the account was fully
+    // settled (Phase 10 QA pass).
+    runningBalance = round2(runningBalance + (isDebitNatured ? debit - credit : credit - debit));
     return {
       id: line.id,
       journalNumber: line.journal.journalNumber,

@@ -4,29 +4,17 @@ import { registerReport } from "./registry";
 import { getTrialBalance } from "@/modules/accounts/journal.service";
 import { getAccountLedger } from "@/modules/accounts/chart-of-account.service";
 import { ChartOfAccountRepository } from "@/modules/accounts/chart-of-account.repository";
+import { parseReportDateRange } from "./report-date-range";
+import { validateStatusFilter } from "./report-filters";
+import { round2 } from "@/lib/money";
+import { JournalStatus } from "@prisma/client";
 
 const CATEGORY = "accounts" as const;
-
-function parseDateRange(filters: Record<string, string>): { dateFrom?: Date; dateTo?: Date } {
-  return {
-    dateFrom: filters.dateFrom ? new Date(filters.dateFrom) : undefined,
-    dateTo: filters.dateTo ? new Date(filters.dateTo) : undefined,
-  };
-}
 
 function filtersApplied(filters: Record<string, string>, labels: Record<string, string>) {
   return Object.entries(filters)
     .filter(([, v]) => v)
     .map(([k, v]) => ({ label: labels[k] ?? k, value: v }));
-}
-
-// Rounds to currency precision — summing many Decimal-derived floats
-// otherwise leaves IEEE-754 noise (e.g. -1.46e-11 instead of exactly 0) in a
-// figure that's supposed to be a clean accounting-identity check. Same fix
-// already applied to MRP's quantities and the Customer Ledger's running
-// balance (see CLAUDE.md's Phase 9 QA sweep section).
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
 }
 
 // ---------------------------------------------------------------------------
@@ -107,7 +95,10 @@ async function getGeneralLedgerDescriptor(companyId: string, generatedByName: st
     };
   }
 
-  const { dateFrom, dateTo } = parseDateRange(filters);
+  // journalDate is @db.Date (see prisma/schema.prisma) — a plain inclusive
+  // lte is already correct for it, no dateToExclusive needed here.
+  const dateFrom = filters.dateFrom ? new Date(filters.dateFrom) : undefined;
+  const dateTo = filters.dateTo ? new Date(filters.dateTo) : undefined;
   const result = await getAccountLedger(companyId, filters.accountId, filters.dateFrom, filters.dateTo);
   const rawLines = await ChartOfAccountRepository.findLedgerLines(companyId, filters.accountId, dateFrom, dateTo);
 
@@ -135,8 +126,8 @@ async function getGeneralLedgerDescriptor(companyId: string, generatedByName: st
     ],
     rows,
     totals: {
-      debitAmount: rows.reduce((s, r) => s + r.debitAmount, 0),
-      creditAmount: rows.reduce((s, r) => s + r.creditAmount, 0),
+      debitAmount: round2(rows.reduce((s, r) => s + r.debitAmount, 0)),
+      creditAmount: round2(rows.reduce((s, r) => s + r.creditAmount, 0)),
       // MUST equal getAccountLedger()'s own closingBalance — never recomputed
       // from the rows above, for the same reconciliation-safety reason as
       // Trial Balance's totals above.
@@ -155,13 +146,13 @@ async function getGeneralLedgerDescriptor(companyId: string, generatedByName: st
 // so this reconciles with Trial Balance/General Ledger's own POSTED-only scope.
 // ---------------------------------------------------------------------------
 async function getDayBookDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>): Promise<ReportDescriptor> {
-  const { dateFrom, dateTo } = parseDateRange(filters);
+  const { dateFrom, dateToExclusive } = parseReportDateRange(filters);
   const lines = await prisma.journalLine.findMany({
     where: {
       journal: {
         companyId,
         status: "POSTED",
-        ...(dateFrom || dateTo ? { journalDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+        ...(dateFrom || dateToExclusive ? { journalDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
       },
     },
     select: {
@@ -202,8 +193,8 @@ async function getDayBookDescriptor(companyId: string, generatedByName: string, 
     // this before flipping status), so summing every line's debit/credit
     // across every journal is a natural self-check, not a coincidence.
     totals: {
-      debitAmount: rows.reduce((s, r) => s + r.debitAmount, 0),
-      creditAmount: rows.reduce((s, r) => s + r.creditAmount, 0),
+      debitAmount: round2(rows.reduce((s, r) => s + r.debitAmount, 0)),
+      creditAmount: round2(rows.reduce((s, r) => s + r.creditAmount, 0)),
     },
     meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
     generatedAt: new Date().toISOString(),
@@ -220,12 +211,12 @@ async function getDayBookDescriptor(companyId: string, generatedByName: string, 
 // instead of summing the real, currently-entered lines.
 // ---------------------------------------------------------------------------
 async function getJournalRegisterDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>): Promise<ReportDescriptor> {
-  const { dateFrom, dateTo } = parseDateRange(filters);
+  const { dateFrom, dateToExclusive } = parseReportDateRange(filters);
   const journals = await prisma.journal.findMany({
     where: {
       companyId,
-      ...(filters.status ? { status: filters.status as never } : {}),
-      ...(dateFrom || dateTo ? { journalDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+      ...validateStatusFilter(filters, JournalStatus),
+      ...(dateFrom || dateToExclusive ? { journalDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
     },
     select: {
       id: true,
@@ -239,8 +230,8 @@ async function getJournalRegisterDescriptor(companyId: string, generatedByName: 
   });
 
   const rows = journals.map((j) => {
-    const totalDebit = j.lines.reduce((s, l) => s + Number(l.debitAmount), 0);
-    const totalCredit = j.lines.reduce((s, l) => s + Number(l.creditAmount), 0);
+    const totalDebit = round2(j.lines.reduce((s, l) => s + Number(l.debitAmount), 0));
+    const totalCredit = round2(j.lines.reduce((s, l) => s + Number(l.creditAmount), 0));
     return {
       journalId: j.id,
       journalNumber: j.journalNumber,
@@ -266,8 +257,8 @@ async function getJournalRegisterDescriptor(companyId: string, generatedByName: 
     ],
     rows,
     totals: {
-      totalDebit: rows.reduce((s, r) => s + r.totalDebit, 0),
-      totalCredit: rows.reduce((s, r) => s + r.totalCredit, 0),
+      totalDebit: round2(rows.reduce((s, r) => s + r.totalDebit, 0)),
+      totalCredit: round2(rows.reduce((s, r) => s + r.totalCredit, 0)),
     },
     meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
     generatedAt: new Date().toISOString(),
@@ -286,13 +277,13 @@ async function getJournalRegisterDescriptor(companyId: string, generatedByName: 
 // never a second, separately-computed net-profit figure that could disagree.
 // ---------------------------------------------------------------------------
 async function getProfitAndLossDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>): Promise<ReportDescriptor> {
-  const { dateFrom, dateTo } = parseDateRange(filters);
+  const { dateFrom, dateToExclusive } = parseReportDateRange(filters);
   const lines = await prisma.journalLine.findMany({
     where: {
       journal: {
         companyId,
         status: "POSTED",
-        ...(dateFrom || dateTo ? { journalDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+        ...(dateFrom || dateToExclusive ? { journalDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
       },
       account: { accountType: { in: ["INCOME", "EXPENSE"] } },
     },

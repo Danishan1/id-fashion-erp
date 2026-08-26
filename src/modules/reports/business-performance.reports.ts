@@ -1,16 +1,11 @@
 import { prisma } from "@/core/db/client";
 import type { ReportDescriptor } from "@/core/reports/report-types";
 import { registerReport } from "./registry";
+import { parseReportDateRange } from "./report-date-range";
+import { round2 } from "@/lib/money";
 
 const CATEGORY = "business-performance" as const;
 const TOP_N = 20;
-
-function parseDateRange(filters: Record<string, string>): { dateFrom?: Date; dateTo?: Date } {
-  return {
-    dateFrom: filters.dateFrom ? new Date(filters.dateFrom) : undefined,
-    dateTo: filters.dateTo ? new Date(filters.dateTo) : undefined,
-  };
-}
 
 function filtersApplied(filters: Record<string, string>, labels: Record<string, string>) {
   return Object.entries(filters)
@@ -24,12 +19,12 @@ function filtersApplied(filters: Record<string, string>, labels: Record<string, 
 // capped to the top 20 with each customer's share of total revenue.
 // ---------------------------------------------------------------------------
 async function getTopCustomersByRevenueDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>): Promise<ReportDescriptor> {
-  const { dateFrom, dateTo } = parseDateRange(filters);
+  const { dateFrom, dateToExclusive } = parseReportDateRange(filters);
   const invoices = await prisma.salesInvoice.findMany({
     where: {
       companyId,
       status: { not: "CANCELLED" },
-      ...(dateFrom || dateTo ? { invoiceDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+      ...(dateFrom || dateToExclusive ? { invoiceDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
     },
     select: { customerId: true, totalAmount: true, customer: { select: { name: true } } },
   });
@@ -37,12 +32,12 @@ async function getTopCustomersByRevenueDescriptor(companyId: string, generatedBy
   const byCustomer = new Map<string, { customer: string; revenue: number; invoiceCount: number }>();
   for (const inv of invoices) {
     const existing = byCustomer.get(inv.customerId) ?? { customer: inv.customer.name, revenue: 0, invoiceCount: 0 };
-    existing.revenue += Number(inv.totalAmount);
+    existing.revenue = round2(existing.revenue + Number(inv.totalAmount));
     existing.invoiceCount += 1;
     byCustomer.set(inv.customerId, existing);
   }
 
-  const totalRevenue = [...byCustomer.values()].reduce((s, c) => s + c.revenue, 0);
+  const totalRevenue = round2([...byCustomer.values()].reduce((s, c) => s + c.revenue, 0));
   const rows = [...byCustomer.values()]
     .sort((a, b) => b.revenue - a.revenue)
     .slice(0, TOP_N)
@@ -77,12 +72,12 @@ async function getTopCustomersByRevenueDescriptor(companyId: string, generatedBy
 // per-line source Profitability's own reports use), ranked by revenue.
 // ---------------------------------------------------------------------------
 async function getTopStylesByRevenueDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>): Promise<ReportDescriptor> {
-  const { dateFrom, dateTo } = parseDateRange(filters);
+  const { dateFrom, dateToExclusive } = parseReportDateRange(filters);
   const invoices = await prisma.salesInvoice.findMany({
     where: {
       companyId,
       status: { not: "CANCELLED" },
-      ...(dateFrom || dateTo ? { invoiceDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+      ...(dateFrom || dateToExclusive ? { invoiceDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
     },
     select: { items: { select: { quantity: true, lineTotal: true, product: { select: { styleCode: true, styleName: true } } } } },
   });
@@ -92,7 +87,7 @@ async function getTopStylesByRevenueDescriptor(companyId: string, generatedByNam
     for (const item of inv.items) {
       const key = item.product.styleCode;
       const existing = byStyle.get(key) ?? { styleCode: item.product.styleCode, styleName: item.product.styleName, revenue: 0, quantity: 0 };
-      existing.revenue += Number(item.lineTotal);
+      existing.revenue = round2(existing.revenue + Number(item.lineTotal));
       existing.quantity += item.quantity;
       byStyle.set(key, existing);
     }
@@ -137,7 +132,7 @@ async function getMonthlySalesTrendDescriptor(companyId: string, generatedByName
   for (const inv of invoices) {
     const month = inv.invoiceDate.toISOString().slice(0, 7);
     const existing = byMonth.get(month) ?? { revenue: 0, invoiceCount: 0 };
-    existing.revenue += Number(inv.totalAmount);
+    existing.revenue = round2(existing.revenue + Number(inv.totalAmount));
     existing.invoiceCount += 1;
     byMonth.set(month, existing);
   }
@@ -156,7 +151,7 @@ async function getMonthlySalesTrendDescriptor(companyId: string, generatedByName
       { key: "revenue", label: "Revenue", type: "currency", align: "right" },
     ],
     rows,
-    totals: { invoiceCount: rows.reduce((s, r) => s + r.invoiceCount, 0), revenue: rows.reduce((s, r) => s + r.revenue, 0) },
+    totals: { invoiceCount: rows.reduce((s, r) => s + r.invoiceCount, 0), revenue: round2(rows.reduce((s, r) => s + r.revenue, 0)) },
     meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
     generatedAt: new Date().toISOString(),
     generatedByName,

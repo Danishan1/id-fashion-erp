@@ -25,6 +25,7 @@ registerReportPageMeta({
   description: "Per-invoice AP aging.",
   includeDateRange: false,
   filterFields: [{ key: "supplierId", label: "Supplier", type: "select", optionsUrl: "/api/v1/suppliers?pageSize=200" }],
+  linkBuilders: { purchaseInvoice: (row) => (row.purchaseInvoiceId ? `/accounts/purchase-invoices/${row.purchaseInvoiceId}` : undefined) },
 });
 
 registerReportPageMeta({

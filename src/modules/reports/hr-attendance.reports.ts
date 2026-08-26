@@ -2,18 +2,14 @@ import { prisma } from "@/core/db/client";
 import type { ReportDescriptor } from "@/core/reports/report-types";
 import { registerReport } from "./registry";
 import { computeIsLate } from "@/modules/hrms/attendance.service";
+import { parseReportDateRange } from "./report-date-range";
+import { validateStatusFilter } from "./report-filters";
+import { LeaveRequestStatus } from "@prisma/client";
 
 function filtersApplied(filters: Record<string, string>, labels: Record<string, string>) {
   return Object.entries(filters)
     .filter(([, v]) => v)
     .map(([k, v]) => ({ label: labels[k] ?? k, value: v }));
-}
-
-function parseDateRange(filters: Record<string, string>): { dateFrom?: Date; dateTo?: Date } {
-  return {
-    dateFrom: filters.dateFrom ? new Date(filters.dateFrom) : undefined,
-    dateTo: filters.dateTo ? new Date(filters.dateTo) : undefined,
-  };
 }
 
 // ===========================================================================
@@ -111,13 +107,13 @@ async function getDepartmentWiseEmployeesDescriptor(companyId: string, generated
 // LeaveRequest) — never a second leave-tracking mechanism.
 // ---------------------------------------------------------------------------
 async function getLeaveRegisterDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>): Promise<ReportDescriptor> {
-  const { dateFrom, dateTo } = parseDateRange(filters);
+  const { dateFrom, dateToExclusive } = parseReportDateRange(filters);
   const requests = await prisma.leaveRequest.findMany({
     where: {
       companyId,
       ...(filters.employeeId ? { employeeId: filters.employeeId } : {}),
-      ...(filters.status ? { status: filters.status as never } : {}),
-      ...(dateFrom || dateTo ? { startDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+      ...validateStatusFilter(filters, LeaveRequestStatus),
+      ...(dateFrom || dateToExclusive ? { startDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
     },
     select: {
       employee: { select: { employeeCode: true, fullName: true } },

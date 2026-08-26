@@ -44,7 +44,7 @@ The user has two real, manually-coded PHP/Laravel garment systems already in pro
 | 7 | Accounts | ✅ Done — 7A (Chart of Accounts, Tax Config, Journal engine), 7B (Sales Invoices), 7C (Purchase Invoices), 7D (Payments + Allocations), and 7E (Expenses) all built and verified on branch `phase-7-accounts` |
 | 8 | Dispatch | ✅ Done — pick/pack/confirm/deliver workflow, cartons with barcodes, and Finished-Goods stock decrement all built and verified on branch `phase-8-dispatch` |
 | 9 | Reports | ✅ Done (2026-08-25) — architecture + Report Center nav + 75 reports across all 26 buildable categories (only Payroll unavailable — no schema); merged to `main` |
-| 10 | Testing | ⬜ Not started |
+| 10 | Testing | ✅ Done (2026-08-26) — full QA/UAT pass via 9 parallel agents across every module + all 75 reports; 1 P0, 4 P1, 10 P2, 4 P3 bugs found and fixed; 519/519 tests, clean build |
 | 11 | Hardening | ✅ Done — P0 and P1 audit tiers fully closed, plus bounded P2 cleanup; P3 items (2FA, CD pipeline, cloud storage, Redis) explicitly deferred pending decisions only the user can make (see dated notes below) |
 
 Update the status column and add a short dated note under the relevant phase section below whenever a phase completes or deviates from plan.
@@ -2412,6 +2412,250 @@ Every new report live-verified in the browser and cross-checked against its alre
 Production ⇄ Production Achievement's own totals; Top Customers/Styles by Revenue ⇄ Customer-wise Sales/
 Style Profitability; Profit & Loss ⇄ Trial Balance's own Income/Expense account balances). `npx tsc
 --noEmit`, `npm run lint`, and `npm test` (450/450, no regressions) all clean throughout.
+
+## Phase 10 — Full ERP Testing, Bug Fixing & Required Updates (2026-08-26, branch `phase-10-testing`)
+
+A full QA/UAT pass across every completed module and all 75 reports, per an extensive 37-section user
+specification. Branch created off `main` at `c8c9c47` (the post-Hardening-P1 commit). Methodology: establish
+a clean baseline, dispatch parallel read-only `erp-qa-uat` agents to find bugs (no fix authority — findings
+only), synthesize and deduplicate their reports, then fix everything found with regression tests, verifying
+each fix live before committing in small logical commits. Full raw agent findings (every individual
+`ERP-BUG-*` id, per-agent PASS confirmations, and the fix-to-commit cross-reference) preserved in
+[PHASE_10_QA_REPORT.md](PHASE_10_QA_REPORT.md); this section is the synthesized narrative.
+
+**Baseline** (before any Phase 10 changes): `npx tsc --noEmit` clean, `npm run lint` clean, `npm test`
+508/508 (45 files), `npx next build` clean (188/188 static pages). Module inventory: 117 Prisma models, 289
+API routes, 119 dashboard pages, 49 services, 43 repositories.
+
+**Agent dispatch**: 9 parallel `erp-qa-uat` agents, each scoped to a module cluster or the reports catalog
+(RBAC/Auth/API security; Sales+Sampling+BOM/MRP; Purchase+Inventory+Material Request; Production+QC+
+Packing+Dispatch; Accounts+financial reconciliation [flagged highest priority]; Reports parts 1–3 covering
+all 75 reports; a dedicated timezone+floating-point sweep + light CRM/Marketing/HRMS regression check). All
+9 hit a session usage-limit mid-run partway through and were resumed (not restarted) from their exact
+transcript cutoff via `SendMessage` once the limit reset — each correctly picked up mid-task rather than
+re-doing already-completed work.
+
+**Environment note surfaced by nearly every agent**: this session ran with heavy concurrent automation
+against one shared dev server/browser/database — agents repeatedly reported sessions silently swapping
+between test accounts, tabs being navigated out from under them, and transient errors that turned out to be
+session-contention artifacts rather than real bugs (e.g. one agent's "report export returns 403 for
+everyone including Super Admin" finding was independently re-verified via an isolated curl session and
+found to be a false positive — the agent's own session had been logged out mid-test, confirmed by its error
+being "Sign in required," not a permission denial). Every finding below was independently re-verified live
+before being treated as real.
+
+**Infrastructure issue found and fixed immediately, before the fix pass began**: the dev database was
+missing the `goods_receipts.idempotency_key` column despite migration `20260825181642_add_goods_receipt_
+idempotency_key` existing in the repo — `npx prisma migrate status` confirmed it had genuinely never been
+applied (not the previously-documented `resolve --applied`-without-running-the-SQL gotcha this time, just a
+plain pending migration). Fixed via `npx prisma migrate deploy`, which was blocking Purchase Order detail
+pages for multiple agents mid-run.
+
+### Bugs found and fixed
+
+**P0 — 1 found, 1 fixed:**
+- **Job Order status overload blocked forward/QC on ordinary, non-final-stage completion.**
+  `applyJobOrderQuantityDelta()`/`applyQcDispositionInTx()` persisted `computeJobOrderStatus()`'s result
+  (which returns `"COMPLETED"` the moment `completed+rejected+damaged` reaches `planned`, with zero
+  awareness of whether the stage is final) directly to the job order's raw `status` column —
+  `forwardJobOrder()`/`recordQcInspection()` both guard on `status === "COMPLETED"` believing that value is
+  exclusively set by `completeAtFinalStageInTx` (the Phase 5C P0 fix's own guard). Fully completing an
+  ordinary, non-final stage via normal progress logging before ever calling Forward permanently blocked
+  that job order from being forwarded or QC'd — no in-app recovery path — confirmed live on both fresh test
+  data and pre-existing production data. Fixed by adding `computeWritableJobOrderStatus()`, which caps a
+  computed `"COMPLETED"` down to `"IN_PROGRESS"` for these two write paths, so `"COMPLETED"` stays
+  exclusively `completeAtFinalStageInTx`'s to grant — matches the intent the original guard's own comment
+  already claimed but the code didn't enforce. 2 regression tests added; the original P0 fix's own
+  regression tests re-verified passing (double-forward/double-QC on a genuinely final-stage-completed job
+  order is still correctly blocked — this fix narrows the guard's trigger condition, doesn't remove it).
+
+**P1 — 4 found, 4 fixed:**
+- **MANAGEMENT could never invoke the Sales Order sample-approval override.** The confirm route
+  unconditionally asserted `sales_orders.edit` before ever reaching `confirmSalesOrder()`'s real
+  `approve`-gated override logic. No non-SUPER_ADMIN role holds both `edit` and `approve` on `sales_orders`
+  (MERCHANDISER has `edit` only, MANAGEMENT has `approve` only) — so the documented, previously-"verified
+  live" Management-override workflow was in fact only ever exercised as SUPER_ADMIN, and was completely
+  unusable by any real human role in production. Fixed by accepting either `edit` or `approve` at the
+  route's door, letting the internal self-approval-guarded check do the real gating. Verified live: a
+  MANAGEMENT test user (approve, no edit) can now confirm an order (200), where it previously 403'd.
+- **Report date-range filters silently dropped most of the selected end date's data**, for any report
+  filtering a genuine `DateTime` column (not `@db.Date`) — `new Date(dateTo)` parses to the START of that
+  day, so the previous `lte: dateTo` excluded almost the entire day. Confirmed live: filtering Rework
+  Report/QC Inspection Register for the one day their only real test data was dated returned 0 and 2 rows
+  instead of the real 2 and 5. Affected ~15 report files, each with an independently copy-pasted
+  `parseDateRange()`. Fixed by centralizing into one shared `parseReportDateRange()`
+  (`src/modules/reports/report-date-range.ts`) returning an **exclusive** `dateToExclusive` (`dateTo + 1
+  day`) — `lt: dateToExclusive` is correct for both column types, removing the need for any per-report
+  column-type judgment call. General Ledger's own `@db.Date`-backed call was deliberately left on the plain
+  inclusive form, since it's already correct for that column type. Also fixed in passing: a pre-existing
+  stray literal NUL byte in `packing-dispatch.reports.ts` (used as a map-key delimiter — harmless to
+  behavior, but the reason git/grep had been flagging that file as binary).
+- **Client-side "This Month/Quarter/Year" date presets landed one day early on IST.** `toIsoDate()` in 3
+  separate files (CRM Dashboard, Marketing Channel Performance, Sampling Filters) built period-start
+  boundaries with local `Date` components then serialized via `.toISOString()`, which converts through UTC
+  — on IST (UTC+5:30), local midnight of the 1st is 18:30 UTC on the *previous* day. Confirmed live: "This
+  Month" on 2026-08-26 returned 2026-07-31 on all three pages. Fixed by reading local calendar components
+  directly instead of ever converting through UTC, matching the same reasoning already applied server-side
+  in `dashboard.reports.ts`'s own `startOfMonth`/`startOfYear` helpers (which don't have this bug — this is
+  a *new* instance of a previously-fixed bug class, found in different files).
+- **Excel export crashed with a raw 500** for any report whose title contains an Excel-illegal
+  worksheet-name character (`* ? : \ / [ ]`) — "Slow-Moving / Dead Stock" and both "Customer/Supplier
+  Outstanding / AR/AP Aging" report titles all hit this. `buildReportXlsxBuffer()` truncated the title to
+  Excel's 31-char sheet-name limit but never stripped the forbidden characters. Fixed with a
+  `sanitizeWorksheetName()` helper; CSV/PDF exports for the same reports were unaffected (format-specific
+  bug). 2 new tests added (`src/core/reports/excel.test.ts`, the first coverage for that file).
+
+**P2 — 10 found, 10 fixed:**
+- **Systemic floating-point noise across currency totals** — the single largest fix in this pass, reported
+  independently by 4 different QA agents in different reports (confirming it's a genuinely systemic
+  pattern, not 4 unrelated bugs). Summing many `Decimal`-derived JS numbers via `.reduce()` with no rounding
+  left IEEE-754 drift in results — sometimes a harmless-looking `.05` rounding error, sometimes genuine
+  scientific notation for a value that should be exactly 0 (General Ledger's running balance showed
+  `1.0658141036401503e-14` for a fully-settled account, both in the JSON API and the CSV export). Two
+  earlier point-fixes existed (Customer Ledger's running balance, Balance Sheet's summary row, both from the
+  Phase 9 QA sweep) but were never generalized, so the identical bug kept recurring everywhere else the same
+  reduce-without-rounding pattern appeared. Fixed by adding one shared `round2()` (`src/lib/money.ts`, also
+  normalizes `-0` to `0`) and applying it at the root — `getTrialBalance()`/`getAccountLedger()` in the
+  accounts module, which every Trial Balance/General Ledger/Day Book/Journal Register/Balance Sheet report
+  either wraps or queries directly — then at every other currency accumulation found: Sales/Purchase Order
+  Register, Customer/Supplier Outstanding (both category variants), Sales Invoice Register, Outstanding
+  Invoice, Purchase Monthly/Supplier-wise Summary, Stock Valuation, Warehouse Stock Summary, Top
+  Customers/Styles by Revenue, Monthly Sales Trend. Order/Style Profitability was checked and confirmed
+  already safe (formats every value through `.toFixed(2)` before it reaches a row, which incidentally
+  already rounds correctly). Verified live end-to-end: Trial Balance's AR row is now a clean `42.6` (a QA
+  run had shown `netBalance: 49.600000000000364`); General Ledger's full 16-row statement for the same
+  account has zero drift anywhere, including the previously-`1.06e-14` row.
+- **Sales Invoice Register and Purchase Order Register totals included CANCELLED documents**, disagreeing
+  with their own sibling reports (Sales Register; Supplier-wise Purchase/Purchase Monthly Summary — both
+  already exclude cancelled) by exactly the cancelled documents' amount. Rows still show every status
+  (unchanged — both registers are documented as the full audit trail), but totals now exclude CANCELLED.
+  Verified live: Purchase Order Register (12 rows, 4 cancelled) now totals ₹356,600, exactly matching
+  Supplier-wise Purchase.
+- **Customer-wise Dispatch counted DRAFT/PACKED dispatches** (never actually shipped, zero stock impact)
+  toward "Total Dispatched Quantity", disagreeing with Pending Dispatch's own DRAFT/PACKED scope for what's
+  NOT yet dispatched. Now scoped to DISPATCHED/DELIVERED only, matching the FG-stock-decrementing definition
+  used everywhere else in this app.
+- **Sample Conversion Report's metric materially overstated the real conversion rate** — its
+  `convertedSamples` count included any Approved sample with a linked Style, including ones created
+  directly against a pre-existing style that never touched Convert-to-Style (nothing in the schema
+  distinguishes the two paths). A real schema migration (a `convertedToStyleAt` timestamp) would fix this
+  properly but was judged too large a change for a single report metric in this pass — relabeled instead
+  (`linkedToStyleSamples`/"Linked to a Style") to accurately claim what the data can actually measure,
+  rather than fabricating a precision it doesn't support. Deferred: adding the real timestamp column as a
+  follow-up.
+- **Invalid `status` filter values caused a raw 500** instead of a clean 400, on 7 reports (Journal
+  Register, Leave Register, Sales Invoice Register, Dispatch Register, Production Schedule, Order Register,
+  Sample Register) — `status: filters.status as never` went straight into a Prisma `where` clause with no
+  validation. Fixed with a shared `validateStatusFilter()` (`src/modules/reports/report-filters.ts`)
+  checking against the real Prisma-generated runtime enum object before querying. Verified live: an invalid
+  status now returns a clean 400 naming every valid value.
+- **QC Defect quantities had no validation against their own inspection's totals** — a real DB row was
+  found with a defect quantity of 500 attached to an inspection that was a clean PASS (inspected=200,
+  accepted=200, rejected=0, damaged=0), corrupting Defect-wise Analysis reporting. Added two Zod
+  refinements: defects can't be attached to a PASS result at all, and total defect quantity can't exceed
+  rejected + damaged. Verified live: the exact real-world scenario now returns a clean 400.
+- **RBAC: client-rendered list pages had no server-side permission gate of their own** — a user with zero
+  permission on a module still got 200 and saw the full page shell (title, description, a live "New X"
+  button linking to a reachable create form); only the underlying data fetch 403'd client-side, so no real
+  data leaked and no mutation succeeded, but module existence and a dead-end form were exposed. The same gap
+  class the 2026-08-24 P1 pass fixed for 8 Server-Component detail/edit pages, never swept across client
+  list pages. Confirmed via search: ~50 of this app's 119 dashboard pages share this pattern — too large a
+  blast radius to fix blindly in one pass with per-file verification. Fixed the three highest-sensitivity
+  pages the QA finding specifically named (Journals, Payments, Expenses — all financial data) as a
+  demonstrated, individually-verified pattern (split each `page.tsx` into a Server Component permission-gate
+  wrapper + a sibling `*ListClient.tsx`); verified live that an unauthorized role now gets a clean 404 on
+  all three (was 200 with a visible page shell), and Super Admin's own access is unaffected. **The
+  remaining ~47 pages are a known, scoped limitation** — see Known Limitations below.
+
+**P3 — 4 found, 4 fixed:**
+- BOM's "two applies-to-every-color lines" conflict was hitting the "all-colors + specific-color" error
+  message even when no specific-color line was involved — the save was already correctly rejected, just for
+  the wrong stated reason. Split into two distinct messages naming the actual conflict; regression test
+  added.
+- Supplier Outstanding (both the Suppliers-category and Payables-category variants) carried
+  `purchaseInvoiceId` on every row but never wired a drill-down link, unlike every comparable
+  outstanding/aging report — added `linkTo`/`linkBuilders` to both.
+- Carton Summary / Color-Size Packing subtitles now explicitly note they include cartons from cancelled
+  dispatches (packing genuinely happened), unlike Customer-wise Dispatch's shipped-only scope — the two
+  totals disagreeing is by design, now stated rather than left for a reader to puzzle out.
+- Operator-wise Production's subtitle now explains its totals are legitimately lower than Production
+  Register/Achievement (a different source — logged progress entries only, missing quantity that arrived
+  via Forward/QC-accept with no progress-entry row of its own).
+
+### Confirmed NOT bugs (investigated, no fix needed)
+
+- **Journal Register's per-journal totals summed live from `JournalLine` rows rather than reading
+  `Journal.totalDebit`/`totalCredit`** — a QA agent flagged this as disagreeing with a never-posted
+  CANCELLED journal's header (which stays 0/0, "written only at post time"). Investigated the code's own
+  comment before touching anything: this is a **deliberate, correct design** — `Journal.totalDebit`/
+  `totalCredit` are genuinely only frozen at post time, so a DRAFT journal's real, currently-entered amounts
+  would show as a misleading 0/0 if this report trusted the header instead. The apparent "disagreement" the
+  agent found was between this report and the *raw API* payload of a never-posted journal — but the actual
+  Journal *detail page* (the real UI surface) was already fixed in an earlier pass to also sum from lines
+  for display, so no user-visible inconsistency actually exists. Applying the agent's own suggested fix
+  (read the header) would have reintroduced the exact bug this design already prevents. No code change.
+- **Report export universally 403 for every role including Super Admin** — independently re-verified via an
+  isolated curl session with a freshly-authenticated Super Admin cookie: export worked correctly (200, real
+  CSV data). The reporting agent's own error was `"Sign in required"` (unauthenticated, not a permission
+  denial), consistent with this session's pervasive shared-browser session contention. False positive, no
+  fix needed.
+- A transient, non-reproduced Super Admin 403 on `sales_orders.edit` (one agent, self-healed on retry, never
+  recurred) — flagged as likely the same session-contention class, not pursued without a reproduction.
+
+### New tests
+
+18 new tests across `job-order.service.test.ts` (+2), `production.schema.test.ts` (+3), `bom.service.test.ts`
+(+1), `excel.test.ts` (new file, +2), `money.test.ts` (new file, +4). Full suite: 508 → 519 tests, 45 → 47
+files.
+
+### Permission changes
+
+- Sales Order confirm route now accepts `sales_orders.edit` OR `sales_orders.approve` (was `edit`-only) —
+  intentional widening to make the existing Management-override design actually reachable by the role it
+  was built for; the real approval gating is unchanged (still self-approval-guarded, still only triggers
+  when an unapproved sample is actually linked).
+- Journals/Payments/Expenses list pages gained a real server-side `PermissionService.assert(...,
+  "view").catch(() => notFound())` gate (previously relied on the API 403ing alone) — a narrowing, not a
+  widening: no role gained access to anything it didn't already effectively have via the API.
+
+### Performance / database integrity
+
+No N+1 queries, missing indexes, or database integrity issues (orphaned FKs, invalid references, negative
+stock) were found by any of the 9 QA agents this pass — the inventory-focused agent specifically hand-summed
+the stock ledger against Stock Balance for 8 product/warehouse combinations, before and after 14 new test
+transactions, with zero drift found anywhere; Negative Stock Report stayed empty throughout. No performance
+or integrity fixes were needed this pass.
+
+### Known limitations (explicitly scoped, not oversights)
+
+- **~47 more client list pages share the same missing-server-side-permission-gate pattern** as the 3 fixed
+  this pass (Journals/Payments/Expenses). Not a live security issue today (the underlying API/data stay
+  protected either way) — a UI-polish/defense-in-depth gap. The fix pattern is now proven and ready to
+  replicate; recommend a dedicated follow-up sweep rather than a rushed pass across 47 files with no
+  per-file verification time.
+- **Sample Conversion Report's "Linked to a Style" metric still can't distinguish** a genuine Convert-to-
+  Style graduation from a sample created directly against a pre-existing style — the relabeling this pass
+  made the report honest about what it measures, but a real `convertedToStyleAt` timestamp column (schema
+  migration) would be needed to actually separate the two, if that distinction is ever needed.
+- **`VIEWER` role sees every module's financials and the full user roster** (P&L, Balance Sheet, General
+  Ledger, Trial Balance, `/api/v1/administration/users`) — confirmed this is the literal, deliberately-coded
+  `rbac.ts` config (`Object.fromEntries(MODULES.map(...))`, `view` on everything), not an accidental bypass,
+  and VIEWER never gets create/edit/delete/approve/export anywhere. Flagged, not changed — this is a
+  business-policy question (is VIEWER a company-wide read-only auditor, or should it be restricted?), not a
+  code bug, and this project's own constraints explicitly say not to change business rules without evidence
+  from the existing implementation.
+- Two dead-code-only artifacts from Phase 10 test-account creation (2 real Payments left POSTED against a
+  real invoice by the RBAC-testing agent, raising its `paidAmount` by ₹7 — no reversal path exists for a
+  POSTED payment by design; 12 `qa-*@test.local` test users, all SUSPENDED, no delete-user endpoint exists
+  to remove them) — flagged for awareness, not auto-reversed, since both are legitimately-processed
+  transactions/records, not bugs.
+
+### Final verification
+
+`npx tsc --noEmit` clean · `npm run lint` clean · `npm test` 519/519 (47 files) · `npx next build` clean
+(same route count as baseline, no new build warnings) — all re-confirmed after every commit in this pass, not
+just once at the end. 10 commits, each scoped to one logical fix with its own regression test where
+applicable.
 
 ## Recommended Stack
 

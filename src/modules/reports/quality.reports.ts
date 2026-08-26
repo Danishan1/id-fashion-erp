@@ -1,15 +1,9 @@
 import { prisma } from "@/core/db/client";
 import type { ReportDescriptor } from "@/core/reports/report-types";
 import { registerReport } from "./registry";
+import { parseReportDateRange } from "./report-date-range";
 
 const CATEGORY = "quality" as const;
-
-function parseDateRange(filters: Record<string, string>): { dateFrom?: Date; dateTo?: Date } {
-  return {
-    dateFrom: filters.dateFrom ? new Date(filters.dateFrom) : undefined,
-    dateTo: filters.dateTo ? new Date(filters.dateTo) : undefined,
-  };
-}
 
 function filtersApplied(filters: Record<string, string>, labels: Record<string, string>) {
   return Object.entries(filters)
@@ -25,11 +19,11 @@ async function getQcInspectionRegisterDescriptor(
   generatedByName: string,
   filters: Record<string, string>
 ): Promise<ReportDescriptor> {
-  const { dateFrom, dateTo } = parseDateRange(filters);
+  const { dateFrom, dateToExclusive } = parseReportDateRange(filters);
   const inspections = await prisma.qcInspection.findMany({
     where: {
       companyId,
-      ...(dateFrom || dateTo ? { inspectedAt: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+      ...(dateFrom || dateToExclusive ? { inspectedAt: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
     },
     select: {
       inspectedAt: true,
@@ -96,12 +90,12 @@ async function getDefectWiseAnalysisDescriptor(
   generatedByName: string,
   filters: Record<string, string>
 ): Promise<ReportDescriptor> {
-  const { dateFrom, dateTo } = parseDateRange(filters);
+  const { dateFrom, dateToExclusive } = parseReportDateRange(filters);
   const defects = await prisma.qcDefect.findMany({
     where: {
       qcInspection: {
         companyId,
-        ...(dateFrom || dateTo ? { inspectedAt: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+        ...(dateFrom || dateToExclusive ? { inspectedAt: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
       },
     },
     select: { quantity: true, defectType: { select: { name: true } } },
@@ -143,12 +137,12 @@ async function getDefectWiseAnalysisDescriptor(
 // (never re-derived from `isBackward`/quantity heuristics).
 // ---------------------------------------------------------------------------
 async function getReworkReportDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>): Promise<ReportDescriptor> {
-  const { dateFrom, dateTo } = parseDateRange(filters);
+  const { dateFrom, dateToExclusive } = parseReportDateRange(filters);
   const transactions = await prisma.productionStageTransaction.findMany({
     where: {
       companyId,
       transactionType: "REWORK",
-      ...(dateFrom || dateTo ? { performedAt: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+      ...(dateFrom || dateToExclusive ? { performedAt: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
     },
     select: {
       performedAt: true,

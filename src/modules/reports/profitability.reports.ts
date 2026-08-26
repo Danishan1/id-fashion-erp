@@ -1,6 +1,7 @@
 import { prisma } from "@/core/db/client";
 import type { ReportDescriptor } from "@/core/reports/report-types";
 import { registerReport } from "./registry";
+import { parseReportDateRange } from "./report-date-range";
 
 const CATEGORY = "profitability" as const;
 
@@ -18,13 +19,6 @@ function filtersApplied(filters: Record<string, string>, labels: Record<string, 
   return Object.entries(filters)
     .filter(([, v]) => v)
     .map(([k, v]) => ({ label: labels[k] ?? k, value: v }));
-}
-
-function parseDateRange(filters: Record<string, string>): { dateFrom?: Date; dateTo?: Date } {
-  return {
-    dateFrom: filters.dateFrom ? new Date(filters.dateFrom) : undefined,
-    dateTo: filters.dateTo ? new Date(filters.dateTo) : undefined,
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -111,13 +105,13 @@ interface InvoiceLineRow {
   lineTotal: number;
 }
 
-async function loadInvoiceLines(companyId: string, dateFrom?: Date, dateTo?: Date, customerId?: string): Promise<InvoiceLineRow[]> {
+async function loadInvoiceLines(companyId: string, dateFrom?: Date, dateToExclusive?: Date, customerId?: string): Promise<InvoiceLineRow[]> {
   const invoices = await prisma.salesInvoice.findMany({
     where: {
       companyId,
       status: { not: "CANCELLED" },
       ...(customerId ? { customerId } : {}),
-      ...(dateFrom || dateTo ? { invoiceDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+      ...(dateFrom || dateToExclusive ? { invoiceDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
     },
     select: {
       salesOrderId: true,
@@ -159,8 +153,8 @@ async function loadInvoiceLines(companyId: string, dateFrom?: Date, dateTo?: Dat
 // invoice line.
 // ---------------------------------------------------------------------------
 async function getOrderProfitabilityDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>): Promise<ReportDescriptor> {
-  const { dateFrom, dateTo } = parseDateRange(filters);
-  const lines = await loadInvoiceLines(companyId, dateFrom, dateTo, filters.customerId);
+  const { dateFrom, dateToExclusive } = parseReportDateRange(filters);
+  const lines = await loadInvoiceLines(companyId, dateFrom, dateToExclusive, filters.customerId);
   const resolveStyleMaterialCost = makeStyleMaterialCostResolver(companyId);
 
   interface OrderAgg {
@@ -253,8 +247,8 @@ async function getOrderProfitabilityDescriptor(companyId: string, generatedByNam
 // across every order line instead of by order.
 // ---------------------------------------------------------------------------
 async function getStyleProfitabilityDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>): Promise<ReportDescriptor> {
-  const { dateFrom, dateTo } = parseDateRange(filters);
-  const lines = await loadInvoiceLines(companyId, dateFrom, dateTo, filters.customerId);
+  const { dateFrom, dateToExclusive } = parseReportDateRange(filters);
+  const lines = await loadInvoiceLines(companyId, dateFrom, dateToExclusive, filters.customerId);
   const resolveStyleMaterialCost = makeStyleMaterialCostResolver(companyId);
 
   interface StyleAgg {

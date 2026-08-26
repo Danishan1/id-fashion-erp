@@ -1,6 +1,10 @@
 import { prisma } from "@/core/db/client";
 import type { ReportDescriptor } from "@/core/reports/report-types";
 import { registerReport } from "./registry";
+import { parseReportDateRange } from "./report-date-range";
+import { validateStatusFilter } from "./report-filters";
+import { round2 } from "@/lib/money";
+import { SalesOrderStatus } from "@prisma/client";
 
 const CATEGORY = "sales-orders" as const;
 
@@ -9,13 +13,6 @@ interface OrderFilters {
   dateTo?: string;
   customerId?: string;
   status?: string;
-}
-
-function parseDateRange(filters: Record<string, string>): { dateFrom?: Date; dateTo?: Date } {
-  return {
-    dateFrom: filters.dateFrom ? new Date(filters.dateFrom) : undefined,
-    dateTo: filters.dateTo ? new Date(filters.dateTo) : undefined,
-  };
 }
 
 function filtersApplied(filters: Record<string, string>, labels: Record<string, string>) {
@@ -28,13 +25,13 @@ function filtersApplied(filters: Record<string, string>, labels: Record<string, 
 // 1. Order Register
 // ---------------------------------------------------------------------------
 async function getOrderRegisterDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>): Promise<ReportDescriptor> {
-  const { dateFrom, dateTo } = parseDateRange(filters);
+  const { dateFrom, dateToExclusive } = parseReportDateRange(filters);
   const orders = await prisma.salesOrder.findMany({
     where: {
       companyId,
       ...(filters.customerId ? { customerId: filters.customerId } : {}),
-      ...(filters.status ? { status: filters.status as never } : {}),
-      ...(dateFrom || dateTo ? { orderDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+      ...validateStatusFilter(filters, SalesOrderStatus),
+      ...(dateFrom || dateToExclusive ? { orderDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
     },
     select: { id: true, orderNumber: true, orderDate: true, status: true, baseTotalAmount: true, customer: { select: { name: true } } },
     orderBy: { orderDate: "desc" },
@@ -61,7 +58,7 @@ async function getOrderRegisterDescriptor(companyId: string, generatedByName: st
       { key: "orderAmount", label: "Order Amount", type: "currency", align: "right" },
     ],
     rows,
-    totals: { orderAmount: rows.reduce((sum, r) => sum + r.orderAmount, 0) },
+    totals: { orderAmount: round2(rows.reduce((sum, r) => sum + r.orderAmount, 0)) },
     meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
     generatedAt: new Date().toISOString(),
     generatedByName,
@@ -74,13 +71,13 @@ async function getOrderRegisterDescriptor(companyId: string, generatedByName: st
 // order commitment, not recognized revenue.
 // ---------------------------------------------------------------------------
 async function getSalesRegisterDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>): Promise<ReportDescriptor> {
-  const { dateFrom, dateTo } = parseDateRange(filters);
+  const { dateFrom, dateToExclusive } = parseReportDateRange(filters);
   const invoices = await prisma.salesInvoice.findMany({
     where: {
       companyId,
       status: { not: "CANCELLED" },
       ...(filters.customerId ? { customerId: filters.customerId } : {}),
-      ...(dateFrom || dateTo ? { invoiceDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+      ...(dateFrom || dateToExclusive ? { invoiceDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
     },
     select: {
       id: true,
@@ -124,9 +121,9 @@ async function getSalesRegisterDescriptor(companyId: string, generatedByName: st
     ],
     rows,
     totals: {
-      subtotal: rows.reduce((s, r) => s + r.subtotal, 0),
-      tax: rows.reduce((s, r) => s + r.tax, 0),
-      total: rows.reduce((s, r) => s + r.total, 0),
+      subtotal: round2(rows.reduce((s, r) => s + r.subtotal, 0)),
+      tax: round2(rows.reduce((s, r) => s + r.tax, 0)),
+      total: round2(rows.reduce((s, r) => s + r.total, 0)),
     },
     meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
     generatedAt: new Date().toISOString(),
@@ -139,12 +136,12 @@ async function getSalesRegisterDescriptor(companyId: string, generatedByName: st
 // Sales Register (never a second, independent calculation).
 // ---------------------------------------------------------------------------
 async function getCustomerWiseSalesDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>): Promise<ReportDescriptor> {
-  const { dateFrom, dateTo } = parseDateRange(filters);
+  const { dateFrom, dateToExclusive } = parseReportDateRange(filters);
   const invoices = await prisma.salesInvoice.findMany({
     where: {
       companyId,
       status: { not: "CANCELLED" },
-      ...(dateFrom || dateTo ? { invoiceDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
+      ...(dateFrom || dateToExclusive ? { invoiceDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
     },
     select: { customerId: true, totalAmount: true, customer: { select: { name: true } } },
   });
@@ -153,7 +150,7 @@ async function getCustomerWiseSalesDescriptor(companyId: string, generatedByName
   for (const inv of invoices) {
     const existing = byCustomer.get(inv.customerId) ?? { customerId: inv.customerId, customer: inv.customer.name, invoiceCount: 0, totalAmount: 0 };
     existing.invoiceCount += 1;
-    existing.totalAmount += Number(inv.totalAmount);
+    existing.totalAmount = round2(existing.totalAmount + Number(inv.totalAmount));
     byCustomer.set(inv.customerId, existing);
   }
 
@@ -171,7 +168,7 @@ async function getCustomerWiseSalesDescriptor(companyId: string, generatedByName
     rows,
     totals: {
       invoiceCount: rows.reduce((s, r) => s + r.invoiceCount, 0),
-      totalAmount: rows.reduce((s, r) => s + r.totalAmount, 0),
+      totalAmount: round2(rows.reduce((s, r) => s + r.totalAmount, 0)),
     },
     meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
     generatedAt: new Date().toISOString(),
@@ -219,7 +216,7 @@ async function getPendingOrdersDescriptor(companyId: string, generatedByName: st
       { key: "orderAmount", label: "Order Amount", type: "currency", align: "right" },
     ],
     rows,
-    totals: { orderAmount: rows.reduce((s, r) => s + r.orderAmount, 0) },
+    totals: { orderAmount: round2(rows.reduce((s, r) => s + r.orderAmount, 0)) },
     meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
     generatedAt: new Date().toISOString(),
     generatedByName,
@@ -273,7 +270,7 @@ async function getOrderAgingDescriptor(companyId: string, generatedByName: strin
       { key: "orderAmount", label: "Order Amount", type: "currency", align: "right" },
     ],
     rows,
-    totals: { orderAmount: rows.reduce((s, r) => s + r.orderAmount, 0) },
+    totals: { orderAmount: round2(rows.reduce((s, r) => s + r.orderAmount, 0)) },
     meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
     generatedAt: new Date().toISOString(),
     generatedByName,

@@ -13,9 +13,19 @@ function excelType(type: ReportColumn["type"]): "date" | "number" | undefined {
  * existing `buildXlsxBuffer`/exceljs conventions (src/lib/xlsx.ts) rather
  * than replacing them; used identically by every report's export/xlsx route.
  */
+/** ExcelJS/Excel itself rejects a worksheet name containing any of
+ * `* ? : \ / [ ]` — several real report titles have one (e.g. "Slow-Moving
+ * / Dead Stock", "Customer Outstanding / AR Aging"), which crashed the
+ * export with a raw 500 instead of the standard structured error shape
+ * (ERP-BUG-R001/ERP-BUG-Q001, Phase 10 QA pass — confirmed the same root
+ * cause behind both independently-reported instances). */
+function sanitizeWorksheetName(title: string): string {
+  return title.replace(/[*?:\\/[\]]/g, "-").slice(0, 31) || "Report";
+}
+
 export async function buildReportXlsxBuffer(descriptor: ReportDescriptor): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook();
-  const worksheet = workbook.addWorksheet(descriptor.title.slice(0, 31) || "Report");
+  const worksheet = workbook.addWorksheet(sanitizeWorksheetName(descriptor.title));
 
   let rowCursor = 1;
   worksheet.getCell(rowCursor, 1).value = descriptor.title;

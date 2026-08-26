@@ -42,6 +42,24 @@ export function computeJobOrderStatus(jo: {
   return "IN_PROGRESS";
 }
 
+/** Guards the one meaning `forwardJobOrder`/`recordQcInspection` actually
+ * need `status === "COMPLETED"` to carry: "this quantity already reached
+ * Finished Goods via `completeAtFinalStageInTx`, don't act on it again."
+ * `computeJobOrderStatus` alone can't provide that — it returns "COMPLETED"
+ * the moment completed+rejected+damaged reaches planned, which routinely
+ * happens at an ordinary, non-final stage before anyone has forwarded
+ * anything (ERP-BUG-Q10-0001: writing that value to the raw column here
+ * made a fully-processed-but-not-yet-forwarded job order permanently
+ * unforwardable and un-QC-able, since it looked identical to a job order
+ * that had already posted to FG). Every write site that derives status from
+ * quantities (ordinary progress entries, adjustments, QC disposition) must
+ * route through this instead of `computeJobOrderStatus` directly, so
+ * "COMPLETED" stays exclusively `completeAtFinalStageInTx`'s to grant. */
+function computeWritableJobOrderStatus(jo: Parameters<typeof computeJobOrderStatus>[0]): JobOrderStatus {
+  const computed = computeJobOrderStatus(jo);
+  return computed === "COMPLETED" ? "IN_PROGRESS" : computed;
+}
+
 async function findActiveStageById(companyId: string, stageId: string) {
   return prisma.productionStage.findFirst({ where: { id: stageId, companyId } });
 }
@@ -175,7 +193,7 @@ export async function applyJobOrderQuantityDelta(
     completedQuantity: Math.max(0, newCompleted),
     rejectedQuantity: Math.max(0, newRejected),
     damagedQuantity: Math.max(0, newDamaged),
-    status: computeJobOrderStatus({
+    status: computeWritableJobOrderStatus({
       status: jo.status,
       plannedQuantity: planned,
       completedQuantity: newCompleted,
@@ -249,7 +267,7 @@ async function applyQcDispositionInTx(
     completedQuantity: Math.max(0, newCompleted),
     rejectedQuantity: newRejected,
     damagedQuantity: newDamaged,
-    status: computeJobOrderStatus({
+    status: computeWritableJobOrderStatus({
       status: jo.status,
       plannedQuantity: jo.plannedQuantity,
       completedQuantity: newCompleted,

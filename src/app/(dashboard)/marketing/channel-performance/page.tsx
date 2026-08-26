@@ -15,8 +15,15 @@ interface ChannelRow {
   roi: number;
 }
 
+// Deliberately reads LOCAL calendar components (never .toISOString(), which
+// converts through UTC) — see the identical fix in crm/page.tsx for the full
+// explanation (ERP-BUG-0001, Phase 10 QA pass): on IST, .toISOString() made
+// "This Month"/"This Quarter"/"This Year" start one calendar day too early.
 function toIsoDate(d: Date): string {
-  return d.toISOString().slice(0, 10);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 type Preset = "today" | "week" | "month" | "quarter" | "year";
