@@ -126,7 +126,7 @@ async function getSupplierOutstandingDescriptor(
     subtitle: "AP aging from posted/partially-paid Purchase Invoices.",
     filtersApplied: filtersApplied(filters, { supplierId: "Supplier" }),
     columns: [
-      { key: "invoiceNumber", label: "Invoice Number" },
+      { key: "invoiceNumber", label: "Invoice Number", linkTo: "purchaseInvoice" },
       { key: "supplier", label: "Supplier" },
       { key: "invoiceDate", label: "Invoice Date", type: "date" },
       { key: "dueDate", label: "Due Date", type: "date" },

@@ -48,7 +48,13 @@ async function getCartonSummaryDescriptor(companyId: string, generatedByName: st
 
   return {
     title: "Carton Summary",
-    subtitle: "Every Carton packed, matching the selected filters.",
+    // Includes cartons from every Dispatch status, including CANCELLED —
+    // packing genuinely happened even if the dispatch was later cancelled,
+    // and this is a packing-composition record, not a shipped-quantity one
+    // (that's Customer-wise Dispatch's job, scoped to DISPATCHED/DELIVERED
+    // only). Called out explicitly since the two totals won't match and
+    // that's by design, not a bug (Phase 10 QA pass).
+    subtitle: "Every Carton packed, matching the selected filters — includes cartons from cancelled dispatches; see Customer-wise Dispatch for shipped-only quantities.",
     filtersApplied: filtersApplied(filters, { dateFrom: "Date From", dateTo: "Date To" }),
     columns: [
       { key: "cartonNumber", label: "Carton Number", type: "number" },
@@ -100,7 +106,7 @@ async function getColorSizePackingDescriptor(companyId: string, generatedByName:
 
   return {
     title: "Color-wise / Size-wise Packing",
-    subtitle: "Packing composition by color/size, as actually packed — not a sales or revenue figure.",
+    subtitle: "Packing composition by color/size, as actually packed — not a sales or revenue figure. Includes cartons from cancelled dispatches, same scope as Carton Summary.",
     filtersApplied: filtersApplied(filters, { dateFrom: "Date From", dateTo: "Date To" }),
     columns: [
       { key: "color", label: "Color" },

@@ -435,7 +435,14 @@ async function getOperatorWiseProductionDescriptor(companyId: string, generatedB
 
   return {
     title: "Operator-wise Production",
-    subtitle: "Job Order progress entries aggregated by the Employee who performed the work.",
+    // Totals reflect only LOGGED progress entries, not the same source as
+    // Production Register/Achievement — quantity that arrives at a
+    // downstream job order via Forward or a QC accept never gets its own
+    // JobOrderProgressEntry row, so this report's totals are legitimately
+    // lower than Production Register's. Called out explicitly so a user
+    // comparing the two doesn't mistake the gap for a bug (Phase 10 QA pass).
+    subtitle:
+      "Job Order progress entries aggregated by the Employee who performed the work. Totals reflect only logged progress entries and will be lower than Production Register/Achievement, which also count quantity forwarded from upstream stages.",
     filtersApplied: [],
     columns: [
       { key: "employeeCode", label: "Employee Code" },

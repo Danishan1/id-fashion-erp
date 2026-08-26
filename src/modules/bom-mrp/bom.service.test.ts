@@ -64,6 +64,20 @@ describe("upsertBom", () => {
     ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
 
+  // Regression test for ERP-BUG-Q3 (P3): two "applies to every color" lines
+  // for the same material used to hit the "all-colors + specific-color
+  // conflict" message even though no specific-color line was involved at
+  // all — a real conflict correctly rejected, but for the wrong stated
+  // reason.
+  it("rejects two 'applies to every color' lines for the same material with a message naming that specific conflict", async () => {
+    await expect(
+      upsertBom(actor, "prod-1", { notes: "", items: [oneItem({ colorId: "" }), oneItem({ colorId: "" })] })
+    ).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("already has an \"applies to every color\" line"),
+    });
+  });
+
   it("allows two lines for the same material with genuinely different colors", async () => {
     await upsertBom(actor, "prod-1", { notes: "", items: [oneItem({ colorId: "color-1" }), oneItem({ colorId: "color-2" })] });
     expect(BomRepository.upsertWithItems).toHaveBeenCalled();

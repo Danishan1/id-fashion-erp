@@ -81,7 +81,19 @@ export async function upsertBom(actor: ActorContext, productId: string, input: B
     const entry = seenByMaterial.get(item.materialId) ?? { hasNullColor: false, colorIds: new Set<string>() };
 
     if (colorId === null) {
-      if (entry.hasNullColor || entry.colorIds.size > 0) {
+      // Two distinct conflicts, two distinct messages — previously both hit
+      // the "all-colors + specific-color" message even when no specific-
+      // color line was involved at all, which described a conflict that
+      // hadn't actually happened for the genuine "two all-colors lines"
+      // case (ERP-BUG-Q3, Phase 10 QA pass).
+      if (entry.hasNullColor) {
+        throw new BusinessRuleError(
+          "VALIDATION_ERROR",
+          "This material already has an \"applies to every color\" line — edit the existing line's quantity instead.",
+          { materialId: item.materialId }
+        );
+      }
+      if (entry.colorIds.size > 0) {
         throw new BusinessRuleError(
           "VALIDATION_ERROR",
           "A material can't have both an \"applies to every color\" line and a specific-color line — they'd double-count that color's consumption.",

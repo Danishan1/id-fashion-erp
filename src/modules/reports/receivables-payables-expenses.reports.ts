@@ -201,7 +201,7 @@ async function getSupplierOutstandingAgingDescriptor(companyId: string, generate
     subtitle: "Per-invoice AP aging — same totalAmount − paidAmount source as every other outstanding report in this app.",
     filtersApplied: filtersApplied(filters, { supplierId: "Supplier" }),
     columns: [
-      { key: "invoiceNumber", label: "Invoice Number" },
+      { key: "invoiceNumber", label: "Invoice Number", linkTo: "purchaseInvoice" },
       { key: "supplier", label: "Supplier" },
       { key: "invoiceDate", label: "Invoice Date", type: "date" },
       { key: "dueDate", label: "Due Date", type: "date" },
