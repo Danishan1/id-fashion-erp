@@ -62,6 +62,16 @@ export const UserAdminRepository = {
 
   findByIdWithPasswordHash: (id: string) =>
     prisma.user.findUnique({ where: { id }, select: { id: true, passwordHash: true } }),
+
+  updateProfile: (id: string, data: { fullName?: string; email?: string; phone?: string | null }) =>
+    prisma.user.update({ where: { id }, data, select: USER_SELECT }),
+
+  countBranchRoles: (userId: string) => prisma.userBranchRole.count({ where: { userId } }),
+
+  addBranchRole: (userId: string, branchId: string, roleId: string) =>
+    prisma.userBranchRole.create({ data: { userId, branchId, roleId }, select: { id: true } }),
+
+  removeBranchRole: (id: string) => prisma.userBranchRole.delete({ where: { id } }),
 };
 
 /**

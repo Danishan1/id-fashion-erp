@@ -21,7 +21,7 @@ interface UserRow {
   fullName: string;
   status: "ACTIVE" | "SUSPENDED" | "LOCKED";
   defaultBranch: { id: string; name: string } | null;
-  branchRoles: Array<{ role: RoleRef; branch: { id: string; name: string } }>;
+  branchRoles: Array<{ id: string; role: RoleRef; branch: { id: string; name: string } }>;
 }
 
 const EMPTY_FORM = { email: "", fullName: "", password: "", phone: "", branchId: "", roleId: "" };
@@ -48,14 +48,105 @@ export function AdminUsersPanel({
   const [resetError, setResetError] = useState<string | null>(null);
   const [isResetting, setIsResetting] = useState(false);
 
-  async function openModal() {
-    setError(null);
-    setForm(EMPTY_FORM);
-    setIsModalOpen(true);
+  const [editTarget, setEditTarget] = useState<UserRow | null>(null);
+  const [editForm, setEditForm] = useState({ fullName: "", email: "", phone: "" });
+  const [editError, setEditError] = useState<string | null>(null);
+  const [isEditSaving, setIsEditSaving] = useState(false);
+
+  const [rolesTarget, setRolesTarget] = useState<UserRow | null>(null);
+  const [rolesError, setRolesError] = useState<string | null>(null);
+  const [isRolesSaving, setIsRolesSaving] = useState(false);
+  const [newRoleBranchId, setNewRoleBranchId] = useState("");
+  const [newRoleId, setNewRoleId] = useState("");
+
+  async function ensureBranchesAndRoles() {
+    if (branches.length > 0 && roles.length > 0) return;
     const [branchRes, roleRes] = await Promise.all([fetch("/api/v1/branches"), fetch("/api/v1/roles")]);
     const [branchBody, roleBody] = await Promise.all([branchRes.json(), roleRes.json()]);
     setBranches(branchBody.data ?? []);
     setRoles(roleBody.data ?? []);
+  }
+
+  async function openModal() {
+    setError(null);
+    setForm(EMPTY_FORM);
+    setIsModalOpen(true);
+    await ensureBranchesAndRoles();
+  }
+
+  function openEdit(user: UserRow) {
+    setEditTarget(user);
+    setEditForm({ fullName: user.fullName, email: user.email, phone: "" });
+    setEditError(null);
+  }
+
+  async function handleEditSave() {
+    if (!editTarget) return;
+    setIsEditSaving(true);
+    setEditError(null);
+    try {
+      const res = await fetch(`/api/v1/administration/users/${editTarget.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fullName: editForm.fullName, email: editForm.email }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error?.message ?? "Failed to update user");
+      setUsers((prev) => prev.map((u) => (u.id === editTarget.id ? { ...u, ...body.data } : u)));
+      setEditTarget(null);
+    } catch (e) {
+      setEditError(e instanceof Error ? e.message : "Failed to update user");
+    } finally {
+      setIsEditSaving(false);
+    }
+  }
+
+  async function openRolesModal(user: UserRow) {
+    setRolesTarget(user);
+    setRolesError(null);
+    setNewRoleBranchId("");
+    setNewRoleId("");
+    await ensureBranchesAndRoles();
+  }
+
+  async function handleAddRole() {
+    if (!rolesTarget || !newRoleBranchId || !newRoleId) return;
+    setIsRolesSaving(true);
+    setRolesError(null);
+    try {
+      const res = await fetch(`/api/v1/administration/users/${rolesTarget.id}/branch-roles`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ branchId: newRoleBranchId, roleId: newRoleId }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error?.message ?? "Failed to add role");
+      setUsers((prev) => prev.map((u) => (u.id === rolesTarget.id ? body.data : u)));
+      setRolesTarget(body.data);
+      setNewRoleBranchId("");
+      setNewRoleId("");
+    } catch (e) {
+      setRolesError(e instanceof Error ? e.message : "Failed to add role");
+    } finally {
+      setIsRolesSaving(false);
+    }
+  }
+
+  async function handleRemoveRole(branchRoleId: string) {
+    if (!rolesTarget) return;
+    setIsRolesSaving(true);
+    setRolesError(null);
+    try {
+      const res = await fetch(`/api/v1/administration/users/${rolesTarget.id}/branch-roles/${branchRoleId}`, { method: "DELETE" });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error?.message ?? "Failed to remove role");
+      setUsers((prev) => prev.map((u) => (u.id === rolesTarget.id ? body.data : u)));
+      setRolesTarget(body.data);
+    } catch (e) {
+      setRolesError(e instanceof Error ? e.message : "Failed to remove role");
+    } finally {
+      setIsRolesSaving(false);
+    }
   }
 
   async function handleCreate() {
@@ -170,7 +261,13 @@ export function AdminUsersPanel({
                   </td>
                 )}
                 {canManage && (
-                  <td className="px-3 py-2">
+                  <td className="space-x-3 whitespace-nowrap px-3 py-2">
+                    <button type="button" onClick={() => openEdit(u)} className="text-sm text-indigo-600 hover:underline dark:text-indigo-400">
+                      Edit
+                    </button>
+                    <button type="button" onClick={() => openRolesModal(u)} className="text-sm text-indigo-600 hover:underline dark:text-indigo-400">
+                      Roles
+                    </button>
                     <button
                       type="button"
                       onClick={() => openReset(u)}
@@ -306,6 +403,100 @@ export function AdminUsersPanel({
             >
               {isResetting ? "Resetting…" : "Reset Password"}
             </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal open={!!editTarget} onClose={() => setEditTarget(null)} title={`Edit User — ${editTarget?.fullName ?? ""}`}>
+        <div className="space-y-3">
+          {editError && <p className="text-sm text-red-600 dark:text-red-400">{editError}</p>}
+          <FormField label="Full Name" htmlFor="editFullName" required>
+            <input
+              id="editFullName"
+              className={textInputClass()}
+              value={editForm.fullName}
+              onChange={(e) => setEditForm({ ...editForm, fullName: e.target.value })}
+            />
+          </FormField>
+          <FormField label="Email" htmlFor="editEmail" required>
+            <input
+              id="editEmail"
+              type="email"
+              className={textInputClass()}
+              value={editForm.email}
+              onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+            />
+          </FormField>
+          <div className="flex justify-end gap-3 pt-2">
+            <button
+              type="button"
+              onClick={() => setEditTarget(null)}
+              className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={isEditSaving || !editForm.fullName || !editForm.email}
+              onClick={handleEditSave}
+              className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
+            >
+              {isEditSaving ? "Saving…" : "Save"}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal open={!!rolesTarget} onClose={() => setRolesTarget(null)} title={`Roles — ${rolesTarget?.fullName ?? ""}`} maxWidthClass="max-w-lg">
+        <div className="space-y-3">
+          {rolesError && <p className="text-sm text-red-600 dark:text-red-400">{rolesError}</p>}
+          <div className="space-y-1">
+            {rolesTarget?.branchRoles.map((br) => (
+              <div key={br.id} className="flex items-center justify-between rounded-md border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-800">
+                <span>
+                  {br.role.name} <span className="text-zinc-400">on</span> {br.branch.name}
+                </span>
+                <button
+                  type="button"
+                  disabled={isRolesSaving}
+                  onClick={() => handleRemoveRole(br.id)}
+                  className="text-xs text-red-600 hover:underline disabled:opacity-50 dark:text-red-400"
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+            {rolesTarget?.branchRoles.length === 0 && <p className="text-sm text-zinc-400">No role assignments.</p>}
+          </div>
+
+          <div className="border-t border-zinc-200 pt-3 dark:border-zinc-800">
+            <p className="mb-2 text-sm font-medium text-zinc-700 dark:text-zinc-300">Add a role</p>
+            <div className="flex gap-2">
+              <select className={textInputClass()} value={newRoleBranchId} onChange={(e) => setNewRoleBranchId(e.target.value)}>
+                <option value="">Branch…</option>
+                {branches.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}
+                  </option>
+                ))}
+              </select>
+              <select className={textInputClass()} value={newRoleId} onChange={(e) => setNewRoleId(e.target.value)}>
+                <option value="">Role…</option>
+                {roles.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                disabled={isRolesSaving || !newRoleBranchId || !newRoleId}
+                onClick={handleAddRole}
+                className="shrink-0 rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
+              >
+                Add
+              </button>
+            </div>
           </div>
         </div>
       </Modal>
