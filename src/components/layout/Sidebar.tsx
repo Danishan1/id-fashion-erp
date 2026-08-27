@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { NAV_SECTIONS, isPathActive, isSectionActive, type NavSection } from "./navigation";
+import { CompanySwitcher } from "./CompanySwitcher";
 
 const PLATFORM_SECTION: NavSection = {
   label: "Platform",
@@ -61,6 +62,7 @@ export function Sidebar({ isPlatformAdmin = false }: { isPlatformAdmin?: boolean
       <div className="flex h-14 items-center border-b border-zinc-200 px-4 dark:border-zinc-800">
         <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Fashion ERP</span>
       </div>
+      <CompanySwitcher />
       <div className="flex-1 space-y-0.5 overflow-y-auto px-2 py-3">
         {sections.map((section) => {
           if (!section.children) {
