@@ -29,3 +29,6 @@ export type DesignPatternInput = z.infer<typeof designPatternSchema>;
 
 export const patternSchema = codeNameSchema;
 export type PatternInput = z.infer<typeof patternSchema>;
+
+export const supplierCategorySchema = codeNameSchema;
+export type SupplierCategoryInput = z.infer<typeof supplierCategorySchema>;

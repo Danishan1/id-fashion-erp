@@ -32,6 +32,7 @@ model Company {
   roles                        Role[]
   customers                    Customer[]
   suppliers                    Supplier[]
+  supplierCategories           SupplierCategory[]
   departments                  Department[]
   employees                    Employee[]
   products                     Product[]
@@ -199,6 +200,16 @@ model User {
   // old session survives a password change no better than it survives a
   // suspension.
   passwordChangedAt DateTime?  @map("password_changed_at")
+  // A capability layered ON TOP OF, not part of, this user's own company's
+  // RBAC — a platform admin still belongs to a real company (companyId
+  // above is never null) but can additionally provision brand-new,
+  // independent companies via src/modules/platform. Deliberately NOT a
+  // Permission/Role — that whole system is scoped per-company by design,
+  // and "create another company" has no company to be scoped to yet.
+  // Checked live from the DB on every use (requirePlatformAdmin()), never
+  // trusted from the JWT alone, matching this project's own passwordChangedAt/
+  // status re-verification discipline.
+  isPlatformAdmin   Boolean    @default(false) @map("is_platform_admin")
   status            UserStatus @default(ACTIVE)
   createdAt         DateTime   @default(now()) @map("created_at")
   updatedAt         DateTime   @updatedAt @map("updated_at")
@@ -403,7 +414,12 @@ model Buyer {
   @@map("buyers")
 }
 
-enum SupplierCategory {
+// Renamed from SupplierCategory (2026-08-27) — Supplier itself moved to a
+// real dynamic master (see the SupplierCategory model below); this enum's
+// only remaining consumer is Product.materialCategory, which already had
+// its own independent Zod validation (MATERIAL_CATEGORIES) the whole time,
+// so the rename has zero downstream TypeScript impact.
+enum MaterialCategory {
   FABRIC
   TRIMS
   // Split out of TRIMS on 2026-08-21 so the "Add Material" grouped picker in
@@ -419,12 +435,38 @@ enum SupplierCategory {
   OTHER
 }
 
+/**
+ * Supplier's category, made a real per-company master (2026-08-27, at the
+ * user's explicit request) instead of the fixed enum it used to share with
+ * Product.materialCategory — same {code,name,isActive} shape and
+ * makeSimpleLookupService() factory as every other Garment Attributes
+ * master (Brand/Category/Season/...). Product.materialCategory is
+ * deliberately NOT part of this cutover — it already had its own
+ * independent validation and UI (grouped material pickers in Sampling/BOM/
+ * Purchasing), a separate, larger decision than what was actually asked.
+ */
+model SupplierCategory {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  code      String
+  name      String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company   Company    @relation(fields: [companyId], references: [id])
+  suppliers Supplier[]
+
+  @@unique([companyId, code])
+  @@map("supplier_categories")
+}
+
 model Supplier {
   id                  String           @id @default(uuid()) @db.Uuid
   companyId           String           @map("company_id") @db.Uuid
   code                String
   name                String
-  category            SupplierCategory
+  categoryId          String           @map("category_id") @db.Uuid
   contactPerson       String?          @map("contact_person")
   email               String?
   phone               String?
@@ -439,6 +481,7 @@ model Supplier {
   updatedAt           DateTime         @updatedAt @map("updated_at")
 
   company            Company           @relation(fields: [companyId], references: [id])
+  category           SupplierCategory  @relation(fields: [categoryId], references: [id])
   defaultForProducts Product[]
   purchaseOrders     PurchaseOrder[]
   stockMovements     StockMovement[]
@@ -539,7 +582,7 @@ model Product {
   baseUomId         String?           @map("base_uom_id") @db.Uuid
   defaultSupplierId String?           @map("default_supplier_id") @db.Uuid
   itemType          ItemType          @default(STYLE) @map("item_type")
-  materialCategory  SupplierCategory? @map("material_category")
+  materialCategory  MaterialCategory? @map("material_category")
   styleCode         String            @map("style_code")
   styleName         String            @map("style_name")
   // Some companies identify a style primarily by a design number rather than

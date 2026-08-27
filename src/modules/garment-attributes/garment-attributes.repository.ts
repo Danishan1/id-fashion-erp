@@ -9,4 +9,5 @@ export const GarmentAttributeRepository = {
   design: prisma.design,
   designPattern: prisma.designPattern,
   pattern: prisma.pattern,
+  supplierCategory: prisma.supplierCategory,
 };

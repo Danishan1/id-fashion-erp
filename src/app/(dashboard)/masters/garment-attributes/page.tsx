@@ -4,7 +4,17 @@ import { useState } from "react";
 import { SimpleLookupManager } from "@/components/ui/SimpleLookupManager";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 
-const TABS = ["Brands", "Categories", "Seasons", "Fittings", "Product Types", "Designs", "Design Patterns", "Patterns"] as const;
+const TABS = [
+  "Brands",
+  "Categories",
+  "Seasons",
+  "Fittings",
+  "Product Types",
+  "Designs",
+  "Design Patterns",
+  "Patterns",
+  "Supplier Categories",
+] as const;
 type Tab = (typeof TABS)[number];
 
 const CODE_NAME_FIELDS = [
@@ -22,7 +32,8 @@ export default function GarmentAttributesPage() {
         <h1 className="mt-2 text-lg font-semibold text-zinc-900 dark:text-zinc-50">Garment Attributes</h1>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
           Style-level attribute masters — brand, category, season, fitting, product type, design, and pattern —
-          imported from the Inventory and Royal Jeans reference systems.
+          imported from the Inventory and Royal Jeans reference systems. Supplier Categories classifies what a
+          supplier provides (fabric, trims, packaging, services, ...), used on the Suppliers master.
         </p>
       </div>
 
@@ -50,6 +61,7 @@ export default function GarmentAttributesPage() {
       {tab === "Designs" && <SimpleLookupManager fetchUrl="/api/v1/designs" fields={CODE_NAME_FIELDS} />}
       {tab === "Design Patterns" && <SimpleLookupManager fetchUrl="/api/v1/design-patterns" fields={CODE_NAME_FIELDS} />}
       {tab === "Patterns" && <SimpleLookupManager fetchUrl="/api/v1/patterns" fields={CODE_NAME_FIELDS} />}
+      {tab === "Supplier Categories" && <SimpleLookupManager fetchUrl="/api/v1/supplier-categories" fields={CODE_NAME_FIELDS} />}
     </div>
   );
 }

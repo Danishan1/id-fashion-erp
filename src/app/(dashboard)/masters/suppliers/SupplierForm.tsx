@@ -3,12 +3,11 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
-import { SUPPLIER_CATEGORIES } from "@/modules/suppliers/supplier.schema";
 
 export interface SupplierFormValues {
   code: string;
   name: string;
-  category: (typeof SUPPLIER_CATEGORIES)[number];
+  categoryId: string;
   contactPerson: string;
   email: string;
   phone: string;
@@ -22,7 +21,7 @@ export interface SupplierFormValues {
 const EMPTY_VALUES: SupplierFormValues = {
   code: "",
   name: "",
-  category: "FABRIC",
+  categoryId: "",
   contactPerson: "",
   email: "",
   phone: "",
@@ -35,6 +34,11 @@ const EMPTY_VALUES: SupplierFormValues = {
 
 interface Currency {
   code: string;
+  name: string;
+}
+
+interface SupplierCategory {
+  id: string;
   name: string;
 }
 
@@ -56,6 +60,7 @@ export function SupplierForm({ initialValues, submitUrl, method, redirectTo }: S
   const router = useRouter();
   const [values, setValues] = useState<SupplierFormValues>(initialValues ?? EMPTY_VALUES);
   const [currencies, setCurrencies] = useState<Currency[]>([]);
+  const [categories, setCategories] = useState<SupplierCategory[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -75,6 +80,10 @@ export function SupplierForm({ initialValues, submitUrl, method, redirectTo }: S
       .then((res) => res.json())
       .then((body) => setCurrencies(body.data ?? []))
       .catch(() => setCurrencies([]));
+    fetch("/api/v1/supplier-categories")
+      .then((res) => res.json())
+      .then((body) => setCategories(body.data ?? []))
+      .catch(() => setCategories([]));
   }, []);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -116,16 +125,18 @@ export function SupplierForm({ initialValues, submitUrl, method, redirectTo }: S
             className={textInputClass()}
           />
         </FormField>
-        <FormField label="Category" htmlFor="category" required>
+        <FormField label="Category" htmlFor="categoryId" required>
           <select
-            id="category"
-            value={values.category}
-            onChange={(e) => setValues({ ...values, category: e.target.value as SupplierFormValues["category"] })}
+            id="categoryId"
+            required
+            value={values.categoryId}
+            onChange={(e) => setValues({ ...values, categoryId: e.target.value })}
             className={textInputClass()}
           >
-            {SUPPLIER_CATEGORIES.map((c) => (
-              <option key={c} value={c}>
-                {c.charAt(0) + c.slice(1).toLowerCase()}
+            <option value="">— Select —</option>
+            {categories.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
               </option>
             ))}
           </select>
