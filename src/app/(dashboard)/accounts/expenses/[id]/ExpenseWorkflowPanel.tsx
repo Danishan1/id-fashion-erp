@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
+import { Modal } from "@/components/ui/Modal";
 import { FilePreviewModal } from "@/components/ui/FilePreviewModal";
 import { formatCurrency } from "@/lib/currency";
 
@@ -29,8 +30,11 @@ interface ExpenseDetail {
   amount: string;
   taxAmount: string;
   totalAmount: string;
+  tdsPercentage: string | null;
+  tdsAmount: string;
   referenceNumber: string | null;
-  status: "DRAFT" | "POSTED" | "CANCELLED";
+  status: "PENDING_APPROVAL" | "APPROVED" | "REJECTED" | "PAID" | "CANCELLED";
+  rejectionReason: string | null;
   account: { code: string; name: string };
   supplier: { name: string } | null;
   taxRate: { name: string } | null;
@@ -38,13 +42,25 @@ interface ExpenseDetail {
   bankAccount: { name: string; bankName: string } | null;
   journal: { id: string; journalNumber: string } | null;
   createdBy: { fullName: string };
+  approvedBy: { fullName: string } | null;
+  rejectedBy: { fullName: string } | null;
   postedBy: { fullName: string } | null;
 }
 
 const STATUS_STYLES: Record<string, string> = {
-  DRAFT: "bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400",
-  POSTED: "bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-400",
+  PENDING_APPROVAL: "bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400",
+  APPROVED: "bg-blue-100 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400",
+  REJECTED: "bg-red-100 text-red-700 dark:bg-red-500/10 dark:text-red-400",
+  PAID: "bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-400",
   CANCELLED: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  PENDING_APPROVAL: "Pending Approval",
+  APPROVED: "Approved",
+  REJECTED: "Rejected",
+  PAID: "Paid",
+  CANCELLED: "Cancelled",
 };
 
 async function parseErrorMessage(res: Response, fallback: string) {
@@ -63,7 +79,10 @@ export function ExpenseWorkflowPanel({ expense }: { expense: ExpenseDetail }) {
   const [error, setError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [showApproveConfirm, setShowApproveConfirm] = useState(false);
+  const [showPayConfirm, setShowPayConfirm] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [rejectionReason, setRejectionReason] = useState("");
 
   const [attachments, setAttachments] = useState<AttachmentRow[]>([]);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
@@ -82,10 +101,13 @@ export function ExpenseWorkflowPanel({ expense }: { expense: ExpenseDetail }) {
       .then((body) => setAttachments(body.data ?? []));
   }, [expense.id]);
 
-  const runAction = async (url: string) => {
+  const runAction = async (url: string, body?: unknown) => {
     setIsBusy(true);
     setError(null);
-    const res = await fetch(url, { method: "POST" });
+    const res = await fetch(url, {
+      method: "POST",
+      ...(body ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}),
+    });
     setIsBusy(false);
     if (!res.ok) {
       setError(await parseErrorMessage(res, "Action failed."));
@@ -134,7 +156,9 @@ export function ExpenseWorkflowPanel({ expense }: { expense: ExpenseDetail }) {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
-        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[expense.status] ?? ""}`}>{expense.status}</span>
+        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[expense.status] ?? ""}`}>
+          {STATUS_LABELS[expense.status] ?? expense.status}
+        </span>
         {expense.journal && (
           <span className="text-sm text-zinc-500 dark:text-zinc-400">
             Journal:{" "}
@@ -146,6 +170,12 @@ export function ExpenseWorkflowPanel({ expense }: { expense: ExpenseDetail }) {
       </div>
 
       {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+
+      {expense.status === "REJECTED" && expense.rejectionReason && (
+        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-500/10 dark:text-red-400">
+          <span className="font-medium">Rejected by {expense.rejectedBy?.fullName ?? "—"}:</span> {expense.rejectionReason}
+        </div>
+      )}
 
       <dl className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
         <div>
@@ -180,6 +210,22 @@ export function ExpenseWorkflowPanel({ expense }: { expense: ExpenseDetail }) {
           <dt className="text-zinc-500 dark:text-zinc-400">Total</dt>
           <dd className="font-medium text-zinc-900 dark:text-zinc-50">₹{formatCurrency(expense.totalAmount)}</dd>
         </div>
+        {Number(expense.tdsAmount) > 0 && (
+          <>
+            <div>
+              <dt className="text-zinc-500 dark:text-zinc-400">TDS</dt>
+              <dd className="font-medium text-zinc-900 dark:text-zinc-50">
+                {Number(expense.tdsPercentage)}% (₹{formatCurrency(expense.tdsAmount)})
+              </dd>
+            </div>
+            <div>
+              <dt className="text-zinc-500 dark:text-zinc-400">Net Paid</dt>
+              <dd className="font-medium text-zinc-900 dark:text-zinc-50">
+                ₹{formatCurrency((Number(expense.totalAmount) - Number(expense.tdsAmount)).toString())}
+              </dd>
+            </div>
+          </>
+        )}
         <div>
           <dt className="text-zinc-500 dark:text-zinc-400">Payment Type</dt>
           <dd className="font-medium text-zinc-900 dark:text-zinc-50">{expense.paymentType.name}</dd>
@@ -200,12 +246,16 @@ export function ExpenseWorkflowPanel({ expense }: { expense: ExpenseDetail }) {
         </div>
         <div>
           <dt className="text-zinc-500 dark:text-zinc-400">Approved By</dt>
+          <dd className="font-medium text-zinc-900 dark:text-zinc-50">{expense.approvedBy?.fullName ?? "—"}</dd>
+        </div>
+        <div>
+          <dt className="text-zinc-500 dark:text-zinc-400">Paid By</dt>
           <dd className="font-medium text-zinc-900 dark:text-zinc-50">{expense.postedBy?.fullName ?? "—"}</dd>
         </div>
       </dl>
 
-      {expense.status === "DRAFT" && (
-        <div className="flex gap-3">
+      {expense.status === "PENDING_APPROVAL" && (
+        <div className="flex flex-wrap gap-3">
           <Link
             href={`/accounts/expenses/${expense.id}/edit`}
             className="rounded-md border border-zinc-300 px-4 py-2 text-sm text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200"
@@ -220,6 +270,32 @@ export function ExpenseWorkflowPanel({ expense }: { expense: ExpenseDetail }) {
             Approve
           </button>
           <button
+            onClick={() => setShowRejectModal(true)}
+            disabled={isBusy}
+            className="rounded-md border border-red-300 px-4 py-2 text-sm text-red-700 hover:bg-red-50 disabled:opacity-60 dark:border-red-800 dark:text-red-400"
+          >
+            Reject
+          </button>
+          <button
+            onClick={() => setShowCancelConfirm(true)}
+            disabled={isBusy}
+            className="rounded-md border border-zinc-300 px-4 py-2 text-sm text-zinc-700 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-200"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+
+      {expense.status === "APPROVED" && (
+        <div className="flex flex-wrap gap-3">
+          <button
+            onClick={() => setShowPayConfirm(true)}
+            disabled={isBusy}
+            className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
+          >
+            Pay
+          </button>
+          <button
             onClick={() => setShowCancelConfirm(true)}
             disabled={isBusy}
             className="rounded-md border border-red-300 px-4 py-2 text-sm text-red-700 hover:bg-red-50 disabled:opacity-60 dark:border-red-800 dark:text-red-400"
@@ -230,7 +306,9 @@ export function ExpenseWorkflowPanel({ expense }: { expense: ExpenseDetail }) {
       )}
 
       <div>
-        <h2 className="mb-3 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Attachments</h2>
+        <h2 className="mb-3 text-sm font-semibold text-zinc-900 dark:text-zinc-50">
+          Attachments <span className="font-normal text-zinc-400">— a bill/receipt can be attached at any stage</span>
+        </h2>
         <div className="space-y-2">
           {attachments.length === 0 && <p className="text-sm text-zinc-500">No files uploaded yet.</p>}
           {attachments.map((a) => (
@@ -248,6 +326,7 @@ export function ExpenseWorkflowPanel({ expense }: { expense: ExpenseDetail }) {
                 </button>
                 <p className="text-xs text-zinc-400">
                   {formatFileSize(a.fileSizeBytes)} · {a.uploadedBy.fullName} · {new Date(a.uploadedAt).toLocaleString()}
+                  {a.contextLabel ? ` · ${STATUS_LABELS[a.contextLabel] ?? a.contextLabel}` : ""}
                 </p>
               </div>
               <button
@@ -295,7 +374,7 @@ export function ExpenseWorkflowPanel({ expense }: { expense: ExpenseDetail }) {
       <ConfirmModal
         open={showApproveConfirm}
         title="Approve expense?"
-        message={`Approving will lock this expense permanently and auto-create a settlement Journal (Dr ${expense.account.name}${Number(expense.taxAmount) > 0 ? " / Dr GST Input Tax Credit" : ""} / Cr Cash-or-Bank) for ₹${formatCurrency(expense.totalAmount)}.`}
+        message="This moves the expense to Approved — no money moves yet, an Accountant still needs to Pay it separately."
         confirmLabel="Approve"
         isBusy={isBusy}
         onConfirm={async () => {
@@ -306,9 +385,22 @@ export function ExpenseWorkflowPanel({ expense }: { expense: ExpenseDetail }) {
       />
 
       <ConfirmModal
+        open={showPayConfirm}
+        title="Pay expense?"
+        message={`Paying will lock this expense permanently and auto-create a settlement Journal (Dr ${expense.account.name}${Number(expense.taxAmount) > 0 ? " / Dr GST Input Tax Credit" : ""}${Number(expense.tdsAmount) > 0 ? " / Cr TDS Payable" : ""} / Cr Cash-or-Bank) for ₹${formatCurrency(expense.totalAmount)}.`}
+        confirmLabel="Pay"
+        isBusy={isBusy}
+        onConfirm={async () => {
+          const ok = await runAction(`/api/v1/expenses/${expense.id}/post`);
+          if (ok) setShowPayConfirm(false);
+        }}
+        onCancel={() => setShowPayConfirm(false)}
+      />
+
+      <ConfirmModal
         open={showCancelConfirm}
         title="Cancel expense?"
-        message="This draft expense will be cancelled."
+        message="This expense will be cancelled. This cannot be undone — a correction after this would need a new expense."
         confirmLabel="Cancel Expense"
         isDangerous
         isBusy={isBusy}
@@ -318,6 +410,45 @@ export function ExpenseWorkflowPanel({ expense }: { expense: ExpenseDetail }) {
         }}
         onCancel={() => setShowCancelConfirm(false)}
       />
+
+      <Modal open={showRejectModal} onClose={() => setShowRejectModal(false)} title="Reject expense">
+        <div className="space-y-3">
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+            This is final — the creator will need to raise a new expense if they want to retry.
+          </p>
+          <textarea
+            value={rejectionReason}
+            onChange={(e) => setRejectionReason(e.target.value)}
+            placeholder="Reason for rejection"
+            rows={3}
+            className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+          />
+          {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setShowRejectModal(false)}
+              className="rounded-md border border-zinc-300 px-4 py-2 text-sm text-zinc-700 dark:border-zinc-700 dark:text-zinc-200"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={isBusy || !rejectionReason.trim()}
+              onClick={async () => {
+                const ok = await runAction(`/api/v1/expenses/${expense.id}/reject`, { rejectionReason: rejectionReason.trim() });
+                if (ok) {
+                  setShowRejectModal(false);
+                  setRejectionReason("");
+                }
+              }}
+              className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-500 disabled:opacity-60"
+            >
+              Reject
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

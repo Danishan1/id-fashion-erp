@@ -12,7 +12,9 @@ interface InvoiceItem {
   taxPercentage: string | null;
   taxAmount: string;
   lineTotal: string;
-  product: { styleCode: string; styleName: string };
+  description: string | null;
+  product: { styleCode: string; styleName: string } | null;
+  expenseAccount: { code: string; name: string } | null;
   taxRate: { name: string } | null;
 }
 
@@ -26,7 +28,7 @@ interface PurchaseInvoiceDetail {
   subtotalAmount: string;
   taxAmount: string;
   totalAmount: string;
-  purchaseOrder: { id: string; orderNumber: string };
+  purchaseOrder: { id: string; orderNumber: string } | null;
   supplier: { name: string };
   journal: { id: string; journalNumber: string } | null;
   createdBy: { fullName: string };
@@ -83,9 +85,13 @@ export function PurchaseInvoiceWorkflowPanel({ invoice }: { invoice: PurchaseInv
         <div>
           <dt className="text-zinc-500 dark:text-zinc-400">Purchase Order</dt>
           <dd className="font-medium text-zinc-900 dark:text-zinc-50">
-            <Link href={`/purchase-orders/${invoice.purchaseOrder.id}`} className="text-indigo-600 hover:text-indigo-500">
-              {invoice.purchaseOrder.orderNumber}
-            </Link>
+            {invoice.purchaseOrder ? (
+              <Link href={`/purchase-orders/${invoice.purchaseOrder.id}`} className="text-indigo-600 hover:text-indigo-500">
+                {invoice.purchaseOrder.orderNumber}
+              </Link>
+            ) : (
+              <span className="text-zinc-500 dark:text-zinc-400">Direct Bill (no PO)</span>
+            )}
           </dd>
         </div>
         <div>
@@ -118,7 +124,7 @@ export function PurchaseInvoiceWorkflowPanel({ invoice }: { invoice: PurchaseInv
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-zinc-200 text-left text-xs uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
-              <th className="px-3 py-2 font-medium">Style</th>
+              <th className="px-3 py-2 font-medium">Item</th>
               <th className="px-3 py-2 font-medium">Qty</th>
               <th className="px-3 py-2 font-medium">Unit Price</th>
               <th className="px-3 py-2 font-medium">Tax</th>
@@ -129,7 +135,18 @@ export function PurchaseInvoiceWorkflowPanel({ invoice }: { invoice: PurchaseInv
             {invoice.items.map((item) => (
               <tr key={item.id} className="border-b border-zinc-100 last:border-0 dark:border-zinc-800">
                 <td className="px-3 py-2">
-                  {item.product.styleCode} — {item.product.styleName}
+                  {item.product ? (
+                    `${item.product.styleCode} — ${item.product.styleName}`
+                  ) : (
+                    <>
+                      {item.description}
+                      {item.expenseAccount && (
+                        <span className="ml-1 text-xs text-zinc-500 dark:text-zinc-400">
+                          ({item.expenseAccount.code} — {item.expenseAccount.name})
+                        </span>
+                      )}
+                    </>
+                  )}
                 </td>
                 <td className="px-3 py-2">{Number(item.quantity)}</td>
                 <td className="px-3 py-2">{Number(item.unitPrice).toFixed(2)}</td>

@@ -10,10 +10,24 @@ const detailInclude = {
   items: {
     include: {
       product: { select: { id: true, styleName: true, styleCode: true } },
+      expenseAccount: { select: { id: true, code: true, name: true, isActive: true } },
       taxRate: { select: { id: true, name: true } },
     },
   },
 } satisfies Prisma.PurchaseInvoiceInclude;
+
+export interface PurchaseInvoiceItemCreateData {
+  purchaseOrderItemId: string | null;
+  productId: string | null;
+  description: string | null;
+  expenseAccountId: string | null;
+  quantity: number;
+  unitPrice: number;
+  taxRateId: string | null;
+  taxPercentage: number | null;
+  taxAmount: number;
+  lineTotal: number;
+}
 
 export const PurchaseInvoiceRepository = {
   findMany: (where: Prisma.PurchaseInvoiceWhereInput, args: Omit<Prisma.PurchaseInvoiceFindManyArgs, "where">) =>
@@ -37,39 +51,14 @@ export const PurchaseInvoiceRepository = {
   findByIdWithDetails: (companyId: string, id: string) =>
     prisma.purchaseInvoice.findFirst({ where: { id, companyId }, include: detailInclude }),
 
-  createWithItems: (
-    data: Omit<Prisma.PurchaseInvoiceUncheckedCreateInput, "items">,
-    items: Array<{
-      purchaseOrderItemId: string;
-      productId: string;
-      quantity: number;
-      unitPrice: number;
-      taxRateId: string | null;
-      taxPercentage: number | null;
-      taxAmount: number;
-      lineTotal: number;
-    }>
-  ) =>
+  createWithItems: (data: Omit<Prisma.PurchaseInvoiceUncheckedCreateInput, "items">, items: PurchaseInvoiceItemCreateData[]) =>
     prisma.purchaseInvoice.create({
       data: { ...data, items: { create: items } },
       include: detailInclude,
     }),
 
   /** Full replace of a DRAFT invoice's items — same shape as Sales Invoice's replaceItems. */
-  replaceItems: (
-    invoiceId: string,
-    headerData: Prisma.PurchaseInvoiceUncheckedUpdateInput,
-    items: Array<{
-      purchaseOrderItemId: string;
-      productId: string;
-      quantity: number;
-      unitPrice: number;
-      taxRateId: string | null;
-      taxPercentage: number | null;
-      taxAmount: number;
-      lineTotal: number;
-    }>
-  ) =>
+  replaceItems: (invoiceId: string, headerData: Prisma.PurchaseInvoiceUncheckedUpdateInput, items: PurchaseInvoiceItemCreateData[]) =>
     prisma.$transaction(async (tx) => {
       await tx.purchaseInvoiceItem.deleteMany({ where: { purchaseInvoiceId: invoiceId } });
       await tx.purchaseInvoice.update({ where: { id: invoiceId }, data: { ...headerData, items: { create: items } } });
@@ -86,4 +75,9 @@ export const PurchaseInvoiceRepository = {
       where: { companyId, supplierId, status: { in: ["POSTED", "PARTIALLY_PAID"] } },
       orderBy: { invoiceDate: "asc" },
     }),
+};
+
+/** Same minimal shape as Expense/Payment's own per-module CompanyRepository — a direct/party bill with no PO has nothing else to derive currency from. */
+export const CompanyRepository = {
+  findBaseCurrencyCode: (companyId: string) => prisma.company.findUnique({ where: { id: companyId }, select: { baseCurrencyCode: true } }),
 };

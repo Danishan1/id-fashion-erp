@@ -8,8 +8,10 @@ import type { Prisma } from "@prisma/client";
 import { SupplierRepository } from "@/modules/suppliers/supplier.repository";
 import { FinanceConfigRepository } from "@/modules/finance-config/finance-config.repository";
 import type { ExpenseInput } from "./expense.schema";
+import type { ExpenseApprovalStatus } from "@prisma/client";
 import { ExpenseRepository, CompanyRepository } from "./expense.repository";
 import { ChartOfAccountRepository } from "./chart-of-account.repository";
+import { assertValidExpenseAccount } from "./chart-of-account.service";
 import { TaxRateRepository } from "./tax-config.repository";
 import { postJournalCore } from "./journal.service";
 
@@ -23,32 +25,6 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-/**
- * COGS is seeded with accountType EXPENSE but is a Purchase-Invoice-only
- * control account (postPurchaseInvoice debits it via a hardcoded
- * findByCode lookup, never user-selectable) — excluded explicitly here, not
- * just implicitly via isSystemAccount (COGS is deliberately NOT flagged
- * isSystemAccount, so that check alone would let it through). Letting a
- * user post an ad hoc Expense into the same account Purchase Invoice drives
- * automatically would pollute any COGS-based margin reporting with manual,
- * PO-disconnected debits.
- */
-async function assertValidExpenseAccount(companyId: string, accountId: string) {
-  const account = await ChartOfAccountRepository.findAnyById(companyId, accountId);
-  if (!account) throw new BusinessRuleError("NOT_FOUND", "Expense account not found.", { id: accountId });
-  if (account.accountType !== "EXPENSE" || account.code === "COGS") {
-    throw new BusinessRuleError(
-      "VALIDATION_ERROR",
-      `"${account.name}" cannot be used as an Expense account.`,
-      { accountId, accountType: account.accountType, code: account.code }
-    );
-  }
-  if (!account.isActive) {
-    throw new BusinessRuleError("VALIDATION_ERROR", `"${account.name}" is not active.`, { accountId });
-  }
-  return account;
-}
-
 interface BuiltExpenseFields {
   accountId: string;
   supplierId: string | null;
@@ -57,6 +33,8 @@ interface BuiltExpenseFields {
   taxPercentage: number | null;
   taxAmount: number;
   totalAmount: number;
+  tdsPercentage: number | null;
+  tdsAmount: number;
   paymentTypeId: string;
   bankAccountId: string | null;
 }
@@ -89,6 +67,11 @@ async function buildExpenseFields(companyId: string, input: ExpenseInput): Promi
   }
   const amount = round2(input.amount);
   const taxAmount = taxPercentage ? round2((amount * taxPercentage) / 100) : 0;
+  // TDS on the base amount, not the GST-inclusive total — matches standard
+  // Indian TDS practice (confirmed against the reference tool's own live
+  // calc, not guessed).
+  const tdsPercentage = input.tdsPercentage || null;
+  const tdsAmount = tdsPercentage ? round2((amount * tdsPercentage) / 100) : 0;
 
   return {
     accountId: input.accountId,
@@ -98,6 +81,8 @@ async function buildExpenseFields(companyId: string, input: ExpenseInput): Promi
     taxPercentage,
     taxAmount,
     totalAmount: round2(amount + taxAmount),
+    tdsPercentage,
+    tdsAmount,
     paymentTypeId: input.paymentTypeId,
     bankAccountId: input.bankAccountId || null,
   };
@@ -155,7 +140,7 @@ export async function createExpense(actor: ActorContext, input: ExpenseInput) {
       description: input.description,
       referenceNumber: input.referenceNumber || null,
       currencyCode: company.baseCurrencyCode,
-      status: "DRAFT",
+      status: "PENDING_APPROVAL",
       createdByUserId: actor.userId,
       idempotencyKey: input.idempotencyKey ?? null,
       ...fields,
@@ -181,13 +166,14 @@ export async function createExpense(actor: ActorContext, input: ExpenseInput) {
   return expense;
 }
 
-/** Editable only while DRAFT — a plain header update, no item-replacement
- * complexity (Expense is single-row, per the locked scope decision). */
+/** Editable only while PENDING_APPROVAL — a plain header update, no
+ * item-replacement complexity (Expense is single-row, per the locked scope
+ * decision). */
 export async function updateExpense(actor: ActorContext, id: string, input: ExpenseInput) {
   const existing = await ExpenseRepository.findAnyById(actor.companyId, id);
   if (!existing) throw new BusinessRuleError("NOT_FOUND", "Expense not found.", { id });
 
-  if (existing.status !== "DRAFT") {
+  if (existing.status !== "PENDING_APPROVAL") {
     throw new BusinessRuleError(
       "INVALID_STATE_TRANSITION",
       `Cannot edit an expense in "${existing.status}" status.`,
@@ -218,16 +204,101 @@ export async function updateExpense(actor: ActorContext, id: string, input: Expe
 }
 
 /**
- * DRAFT -> POSTED. Self-approval-guarded via "approve" (mirroring Payment's
- * own post gate, not Invoice's "post" verb — Management's approval power in
- * this codebase is specifically scoped to "approve"). One transaction:
- * resolves Cash/Bank by paymentType.type (never PaymentType.code — same
- * anti-trap as Payment), resolves GST Input Tax Credit by code if
- * taxAmount > 0, builds journal lines with a DYNAMIC incrementing line
- * number (Purchase Invoice's pattern — NOT Payment's hardcoded literals,
- * which would collide once a tax line is inserted between the expense
- * account line and the cash/bank line), creates+auto-posts a Journal via
- * postJournalCore, then a guarded conditional flip of this Expense.
+ * PENDING_APPROVAL -> APPROVED. The Admin decision step — no cash movement,
+ * no Journal, just a status flip + approvedAt/approvedByUserId. Self-
+ * approval-guarded via "approve" (a creator can't approve their own
+ * expense) — the same checkpoint every other Approve action in this app
+ * uses. Paying is a separate, later action (postExpense, gated on "post").
+ */
+export async function approveExpense(actor: ActorContext, id: string) {
+  const expense = await ExpenseRepository.findAnyById(actor.companyId, id);
+  if (!expense) throw new BusinessRuleError("NOT_FOUND", "Expense not found.", { id });
+
+  await PermissionService.assert(actor.userId, "expenses", "approve", { createdBy: expense.createdByUserId });
+
+  const { count } = await ExpenseRepository.updateStatusConditional(id, "PENDING_APPROVAL", {
+    status: "APPROVED",
+    approvedAt: new Date(),
+    approvedByUserId: actor.userId,
+  });
+  if (count === 0) {
+    throw new BusinessRuleError("INVALID_STATE_TRANSITION", `Cannot approve an expense in "${expense.status}" status.`, {
+      currentStatus: expense.status,
+    });
+  }
+
+  const updated = await ExpenseRepository.findByIdWithDetails(actor.companyId, id);
+  if (!updated) throw new BusinessRuleError("NOT_FOUND", "Expense not found.", { id });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "expenses",
+    recordId: id,
+    action: "APPROVE",
+    oldValues: { status: "PENDING_APPROVAL" },
+    newValues: { status: "APPROVED" },
+  });
+
+  return updated;
+}
+
+/**
+ * PENDING_APPROVAL -> REJECTED. Requires a reason. Terminal — matches every
+ * other rejection in this app (Sample, Sales Order, Purchase Order, ...):
+ * rejected stays rejected, a correction is a new Expense, not a reversal
+ * (confirmed with the user, a deliberate deviation from the reference
+ * tool's own "Admin can flip Declined back to Approved" behavior). Gated on
+ * "reject", deliberately NOT self-approval-guarded — matches Sampling's own
+ * decision route, where only the Approve branch carries that guard.
+ */
+export async function rejectExpense(actor: ActorContext, id: string, rejectionReason: string) {
+  const expense = await ExpenseRepository.findAnyById(actor.companyId, id);
+  if (!expense) throw new BusinessRuleError("NOT_FOUND", "Expense not found.", { id });
+
+  await PermissionService.assert(actor.userId, "expenses", "reject");
+
+  const { count } = await ExpenseRepository.updateStatusConditional(id, "PENDING_APPROVAL", {
+    status: "REJECTED",
+    rejectedAt: new Date(),
+    rejectedByUserId: actor.userId,
+    rejectionReason,
+  });
+  if (count === 0) {
+    throw new BusinessRuleError("INVALID_STATE_TRANSITION", `Cannot reject an expense in "${expense.status}" status.`, {
+      currentStatus: expense.status,
+    });
+  }
+
+  const updated = await ExpenseRepository.findByIdWithDetails(actor.companyId, id);
+  if (!updated) throw new BusinessRuleError("NOT_FOUND", "Expense not found.", { id });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "expenses",
+    recordId: id,
+    action: "REJECT",
+    oldValues: { status: "PENDING_APPROVAL" },
+    newValues: { status: "REJECTED", rejectionReason },
+  });
+
+  return updated;
+}
+
+/**
+ * APPROVED -> PAID. The Accountant-pays step — self-approval-guarded via
+ * "post" (a distinct verb from the Admin's "approve" above, so the two
+ * checkpoints are independently guarded: the creator can't approve their
+ * own expense, and separately can't pay it either unless they're
+ * SUPER_ADMIN). One transaction: resolves Cash/Bank by paymentType.type
+ * (never PaymentType.code — same anti-trap as Payment), resolves GST Input
+ * Tax Credit by code if taxAmount > 0, builds journal lines with a DYNAMIC
+ * incrementing line number (Purchase Invoice's pattern — NOT Payment's
+ * hardcoded literals, which would collide once a tax line is inserted
+ * between the expense account line and the cash/bank line), creates+auto-
+ * posts a Journal via postJournalCore, then a guarded conditional flip of
+ * this Expense.
  *
  * No reversal/correction path exists this slice (journal.service.ts's
  * reverseJournal() blocks EXPENSE-sourced journals) — a posting mistake
@@ -238,10 +309,10 @@ export async function postExpense(actor: ActorContext, id: string) {
   const expense = await ExpenseRepository.findByIdWithDetails(actor.companyId, id);
   if (!expense) throw new BusinessRuleError("NOT_FOUND", "Expense not found.", { id });
 
-  await PermissionService.assert(actor.userId, "expenses", "approve", { createdBy: expense.createdByUserId });
+  await PermissionService.assert(actor.userId, "expenses", "post", { createdBy: expense.createdByUserId });
 
-  if (expense.status !== "DRAFT") {
-    throw new BusinessRuleError("INVALID_STATE_TRANSITION", `Cannot post an expense in "${expense.status}" status.`, {
+  if (expense.status !== "APPROVED") {
+    throw new BusinessRuleError("INVALID_STATE_TRANSITION", `Cannot pay an expense in "${expense.status}" status — it must be Approved first.`, {
       currentStatus: expense.status,
     });
   }
@@ -252,9 +323,11 @@ export async function postExpense(actor: ActorContext, id: string) {
 
   const cashOrBankAccountCode = expense.paymentType.type === "CASH" ? "CASH" : "BANK";
   const taxAmountNum = Number(expense.taxAmount);
-  const [cashOrBankAccount, gstInputAccount] = await Promise.all([
+  const tdsAmountNum = Number(expense.tdsAmount);
+  const [cashOrBankAccount, gstInputAccount, tdsPayableAccount] = await Promise.all([
     ChartOfAccountRepository.findByCode(actor.companyId, cashOrBankAccountCode),
     taxAmountNum > 0 ? ChartOfAccountRepository.findByCode(actor.companyId, "GST-ITC") : null,
+    tdsAmountNum > 0 ? ChartOfAccountRepository.findByCode(actor.companyId, "TDS-PAY") : null,
   ]);
   if (!cashOrBankAccount) {
     throw new BusinessRuleError(
@@ -265,6 +338,9 @@ export async function postExpense(actor: ActorContext, id: string) {
   }
   if (taxAmountNum > 0 && !gstInputAccount) {
     throw new BusinessRuleError("NOT_FOUND", "The GST Input Tax Credit control account is missing from the Chart of Accounts.", {});
+  }
+  if (tdsAmountNum > 0 && !tdsPayableAccount) {
+    throw new BusinessRuleError("NOT_FOUND", "The TDS Payable control account is missing from the Chart of Accounts.", {});
   }
 
   const journalNumber = await generateDocumentNumber({
@@ -293,11 +369,22 @@ export async function postExpense(actor: ActorContext, id: string) {
         description: `Expense ${expense.expenseNumber} — GST Input`,
       });
     }
+    if (tdsAmountNum > 0 && tdsPayableAccount) {
+      lines.push({
+        accountId: tdsPayableAccount.id,
+        lineNumber: nextLineNumber++,
+        debitAmount: 0,
+        creditAmount: tdsAmountNum,
+        description: `Expense ${expense.expenseNumber} — TDS Withheld`,
+      });
+    }
+    // Net cash/bank outflow is totalAmount minus whatever TDS was withheld
+    // at source — the vendor/payee only actually receives the net amount.
     lines.push({
       accountId: cashOrBankAccount.id,
       lineNumber: nextLineNumber++,
       debitAmount: 0,
-      creditAmount: Number(expense.totalAmount),
+      creditAmount: round2(Number(expense.totalAmount) - tdsAmountNum),
       description: `Expense ${expense.expenseNumber}`,
     });
 
@@ -317,16 +404,16 @@ export async function postExpense(actor: ActorContext, id: string) {
     });
 
     // Internal auto-post — no second PermissionService call (see
-    // postJournalCore's doc comment): the outer "approve" assertion above
+    // postJournalCore's doc comment): the outer "post" assertion above
     // already authorized this whole operation.
     await postJournalCore(tx, journal.id, "DRAFT", actor.userId);
 
     const { count } = await tx.expense.updateMany({
-      where: { id, status: "DRAFT" },
-      data: { status: "POSTED", journalId: journal.id, postedAt: new Date(), postedByUserId: actor.userId },
+      where: { id, status: "APPROVED" },
+      data: { status: "PAID", journalId: journal.id, postedAt: new Date(), postedByUserId: actor.userId },
     });
     if (count === 0) {
-      throw new BusinessRuleError("INVALID_STATE_TRANSITION", "This expense is no longer in Draft status.", {});
+      throw new BusinessRuleError("INVALID_STATE_TRANSITION", "This expense is no longer in Approved status.", {});
     }
   });
 
@@ -338,21 +425,25 @@ export async function postExpense(actor: ActorContext, id: string) {
     userId: actor.userId,
     tableName: "expenses",
     recordId: id,
-    action: "APPROVE",
-    oldValues: { status: "DRAFT" },
-    newValues: { status: "POSTED", journalId: updated.journalId },
+    action: "POST",
+    oldValues: { status: "APPROVED" },
+    newValues: { status: "PAID", journalId: updated.journalId },
   });
 
   return updated;
 }
 
-/** Only from DRAFT — no compensating entry needed, since DRAFT never touched
- * the ledger at all (only POST does). */
+/** Only from PENDING_APPROVAL or APPROVED — both pre-payment states, no
+ * compensating entry needed since neither has touched the ledger yet (only
+ * PAID/postExpense does). Blocked once PAID (immutable, matching every
+ * other posted-document precedent in this project) or already
+ * REJECTED/CANCELLED. */
 export async function cancelExpense(actor: ActorContext, id: string) {
   const existing = await ExpenseRepository.findAnyById(actor.companyId, id);
   if (!existing) throw new BusinessRuleError("NOT_FOUND", "Expense not found.", { id });
 
-  const { count } = await ExpenseRepository.updateStatusConditional(id, "DRAFT", { status: "CANCELLED" });
+  const cancellableFrom: ExpenseApprovalStatus[] = ["PENDING_APPROVAL", "APPROVED"];
+  const { count } = await ExpenseRepository.updateStatusConditionalIn(id, cancellableFrom, { status: "CANCELLED" });
   if (count === 0) {
     throw new BusinessRuleError("INVALID_STATE_TRANSITION", `Cannot cancel an expense in "${existing.status}" status.`, {
       currentStatus: existing.status,
@@ -368,7 +459,7 @@ export async function cancelExpense(actor: ActorContext, id: string) {
     tableName: "expenses",
     recordId: id,
     action: "CANCEL",
-    oldValues: { status: "DRAFT" },
+    oldValues: { status: existing.status },
     newValues: { status: "CANCELLED" },
   });
 

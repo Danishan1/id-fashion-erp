@@ -1,5 +1,5 @@
 import { prisma } from "@/core/db/client";
-import type { Prisma, ExpenseStatus } from "@prisma/client";
+import type { Prisma, ExpenseApprovalStatus } from "@prisma/client";
 
 const detailInclude = {
   account: { select: { id: true, code: true, name: true, accountType: true, isActive: true } },
@@ -10,6 +10,8 @@ const detailInclude = {
   journal: { select: { id: true, journalNumber: true, status: true } },
   createdBy: { select: { id: true, fullName: true } },
   postedBy: { select: { id: true, fullName: true } },
+  approvedBy: { select: { id: true, fullName: true } },
+  rejectedBy: { select: { id: true, fullName: true } },
 } satisfies Prisma.ExpenseInclude;
 
 export const ExpenseRepository = {
@@ -40,8 +42,14 @@ export const ExpenseRepository = {
     prisma.expense.update({ where: { id }, data, include: detailInclude }),
 
   /** Conditional status write — same race-closing shape used throughout this project. */
-  updateStatusConditional: (id: string, expectedStatus: ExpenseStatus, data: Prisma.ExpenseUncheckedUpdateInput) =>
+  updateStatusConditional: (id: string, expectedStatus: ExpenseApprovalStatus, data: Prisma.ExpenseUncheckedUpdateInput) =>
     prisma.expense.updateMany({ where: { id, status: expectedStatus }, data }),
+
+  /** Same idiom, against a SET of acceptable prior statuses — cancel is legal
+   * from either pre-payment state (PENDING_APPROVAL or APPROVED), matching
+   * SalesOrderRepository's own updateStatusConditionalIn precedent. */
+  updateStatusConditionalIn: (id: string, expectedStatuses: ExpenseApprovalStatus[], data: Prisma.ExpenseUncheckedUpdateInput) =>
+    prisma.expense.updateMany({ where: { id, status: { in: expectedStatuses } }, data }),
 };
 
 /** Colocated here rather than a dedicated Company module — same pattern as

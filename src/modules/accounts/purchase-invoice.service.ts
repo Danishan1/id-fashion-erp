@@ -6,9 +6,11 @@ import { prisma } from "@/core/db/client";
 import type { ListQuery } from "@/lib/list-query";
 import { Prisma } from "@prisma/client";
 import { PurchaseOrderRepository, PurchaseOrderItemRepository } from "@/modules/purchasing/purchase-order.repository";
+import { SupplierRepository } from "@/modules/suppliers/supplier.repository";
 import type { PurchaseInvoiceInput } from "./purchase-invoice.schema";
-import { PurchaseInvoiceRepository } from "./purchase-invoice.repository";
+import { PurchaseInvoiceRepository, CompanyRepository, type PurchaseInvoiceItemCreateData } from "./purchase-invoice.repository";
 import { ChartOfAccountRepository } from "./chart-of-account.repository";
+import { assertValidExpenseAccount } from "./chart-of-account.service";
 import { TaxRateRepository } from "./tax-config.repository";
 import { postJournalCore } from "./journal.service";
 
@@ -37,29 +39,66 @@ interface OrderItemLike {
   invoicedQuantity: Prisma.Decimal | number;
 }
 
-async function buildInvoiceItems(companyId: string, orderItems: OrderItemLike[], lines: PurchaseInvoiceInput["lines"]) {
-  const orderItemsById = new Map(orderItems.map((i) => [i.id, i]));
-  const items = [];
+/**
+ * Builds every line of the invoice. Each line is EXACTLY one of two shapes
+ * (enforced by the Zod schema before this ever runs, and by a DB CHECK
+ * constraint as a hard backstop): a PO-linked line (bounded by
+ * receivedQuantity - invoicedQuantity, same as always) or a direct/"party
+ * bill" line (a chosen Expense account, no PO backing at all — a service or
+ * expense bill from a supplier, e.g. freight, consulting, rent). orderItems
+ * is null for a standalone bill with no PO at all — any line still claiming
+ * a purchaseOrderItemId in that case correctly fails to resolve below (the
+ * Zod schema already blocks this combination, this is defense in depth).
+ */
+async function buildInvoiceItems(
+  companyId: string,
+  orderItems: OrderItemLike[] | null,
+  lines: PurchaseInvoiceInput["lines"]
+): Promise<PurchaseInvoiceItemCreateData[]> {
+  const orderItemsById = new Map((orderItems ?? []).map((i) => [i.id, i]));
+  const items: PurchaseInvoiceItemCreateData[] = [];
   for (const line of lines) {
-    const orderItem = orderItemsById.get(line.purchaseOrderItemId);
-    if (!orderItem) {
-      throw new BusinessRuleError(
-        "VALIDATION_ERROR",
-        "One or more lines do not belong to the selected purchase order.",
-        { purchaseOrderItemId: line.purchaseOrderItemId }
-      );
+    let purchaseOrderItemId: string | null = null;
+    let productId: string | null = null;
+    let description: string | null = null;
+    let expenseAccountId: string | null = null;
+    let quantity: number;
+    let unitPrice: number;
+
+    if (line.purchaseOrderItemId) {
+      const orderItem = orderItemsById.get(line.purchaseOrderItemId);
+      if (!orderItem) {
+        throw new BusinessRuleError(
+          "VALIDATION_ERROR",
+          "One or more lines do not belong to the selected purchase order.",
+          { purchaseOrderItemId: line.purchaseOrderItemId }
+        );
+      }
+
+      const availableAtCheckTime = round4(Number(orderItem.receivedQuantity) - Number(orderItem.invoicedQuantity));
+      if (line.quantity > availableAtCheckTime) {
+        throw new BusinessRuleError(
+          "VALIDATION_ERROR",
+          `Cannot invoice ${line.quantity} for this line — only ${availableAtCheckTime} has been received and not yet invoiced.`,
+          { purchaseOrderItemId: line.purchaseOrderItemId, requestedQuantity: line.quantity, availableAtCheckTime }
+        );
+      }
+
+      purchaseOrderItemId = orderItem.id;
+      productId = orderItem.productId;
+      quantity = round4(line.quantity);
+      unitPrice = round2(line.unitPrice);
+    } else {
+      // Direct/party-bill line — no PO backing, debits a chosen expense
+      // account directly at post time instead of the automatic COGS line.
+      const account = await assertValidExpenseAccount(companyId, line.expenseAccountId as string);
+      description = (line.description as string).trim();
+      expenseAccountId = account.id;
+      quantity = round4(line.quantity);
+      unitPrice = round2(line.unitPrice);
     }
 
-    const availableAtCheckTime = round4(Number(orderItem.receivedQuantity) - Number(orderItem.invoicedQuantity));
-    if (line.quantity > availableAtCheckTime) {
-      throw new BusinessRuleError(
-        "VALIDATION_ERROR",
-        `Cannot invoice ${line.quantity} for this line — only ${availableAtCheckTime} has been received and not yet invoiced.`,
-        { purchaseOrderItemId: line.purchaseOrderItemId, requestedQuantity: line.quantity, availableAtCheckTime }
-      );
-    }
-
-    const lineSubtotal = round2(line.quantity * line.unitPrice);
+    const lineSubtotal = round2(quantity * unitPrice);
 
     let taxPercentage: number | null = null;
     if (line.taxRateId) {
@@ -70,10 +109,12 @@ async function buildInvoiceItems(companyId: string, orderItems: OrderItemLike[],
     const taxAmount = taxPercentage ? round2((lineSubtotal * taxPercentage) / 100) : 0;
 
     items.push({
-      purchaseOrderItemId: orderItem.id,
-      productId: orderItem.productId,
-      quantity: round4(line.quantity),
-      unitPrice: round2(line.unitPrice),
+      purchaseOrderItemId,
+      productId,
+      description,
+      expenseAccountId,
+      quantity,
+      unitPrice,
       taxRateId: line.taxRateId || null,
       taxPercentage,
       taxAmount,
@@ -83,7 +124,7 @@ async function buildInvoiceItems(companyId: string, orderItems: OrderItemLike[],
   return items;
 }
 
-function sumTotals(items: Awaited<ReturnType<typeof buildInvoiceItems>>) {
+function sumTotals(items: PurchaseInvoiceItemCreateData[]) {
   const subtotalAmount = round2(items.reduce((sum, i) => sum + i.quantity * i.unitPrice, 0));
   const taxAmount = round2(items.reduce((sum, i) => sum + i.taxAmount, 0));
   return { subtotalAmount, taxAmount, totalAmount: round2(subtotalAmount + taxAmount) };
@@ -120,18 +161,50 @@ export async function createPurchaseInvoice(actor: ActorContext, input: Purchase
     if (existing) return existing;
   }
 
-  const order = await PurchaseOrderRepository.findByIdWithDetails(actor.companyId, input.purchaseOrderId);
-  if (!order) throw new BusinessRuleError("NOT_FOUND", "Purchase order not found.", { id: input.purchaseOrderId });
+  let purchaseOrderId: string | null = null;
+  let supplierId: string;
+  let currencyCode: string;
+  let exchangeRate: number;
+  let baseCurrencyCode: string;
+  let paymentTermsDays: number;
+  let orderItems: OrderItemLike[] | null = null;
 
-  if (!(ELIGIBLE_PO_STATUSES as readonly string[]).includes(order.status)) {
-    throw new BusinessRuleError(
-      "INVALID_STATE_TRANSITION",
-      `Cannot invoice a purchase order in "${order.status}" status.`,
-      { currentStatus: order.status }
-    );
+  if (input.purchaseOrderId) {
+    const order = await PurchaseOrderRepository.findByIdWithDetails(actor.companyId, input.purchaseOrderId);
+    if (!order) throw new BusinessRuleError("NOT_FOUND", "Purchase order not found.", { id: input.purchaseOrderId });
+
+    if (!(ELIGIBLE_PO_STATUSES as readonly string[]).includes(order.status)) {
+      throw new BusinessRuleError(
+        "INVALID_STATE_TRANSITION",
+        `Cannot invoice a purchase order in "${order.status}" status.`,
+        { currentStatus: order.status }
+      );
+    }
+
+    purchaseOrderId = order.id;
+    supplierId = order.supplierId;
+    currencyCode = order.currencyCode;
+    exchangeRate = Number(order.exchangeRate);
+    baseCurrencyCode = order.baseCurrencyCode;
+    paymentTermsDays = order.supplier.paymentTermsDays ?? 0;
+    orderItems = order.items;
+  } else {
+    // Standalone "party/direct bill" — no PO at all, e.g. a service or
+    // expense bill from a supplier (freight, consulting, rent).
+    const supplier = await SupplierRepository.findById(actor.companyId, input.supplierId as string);
+    if (!supplier) throw new BusinessRuleError("NOT_FOUND", "Supplier not found.", { id: input.supplierId });
+
+    const company = await CompanyRepository.findBaseCurrencyCode(actor.companyId);
+    if (!company) throw new BusinessRuleError("NOT_FOUND", "Company not found.", {});
+
+    supplierId = supplier.id;
+    currencyCode = company.baseCurrencyCode;
+    exchangeRate = 1;
+    baseCurrencyCode = company.baseCurrencyCode;
+    paymentTermsDays = supplier.paymentTermsDays ?? 0;
   }
 
-  const items = await buildInvoiceItems(actor.companyId, order.items, input.lines);
+  const items = await buildInvoiceItems(actor.companyId, orderItems, input.lines);
   const { subtotalAmount, taxAmount, totalAmount } = sumTotals(items);
 
   const invoiceNumber = await generateDocumentNumber({
@@ -142,7 +215,7 @@ export async function createPurchaseInvoice(actor: ActorContext, input: Purchase
 
   const invoiceDate = new Date(input.invoiceDate);
   const dueDate = new Date(invoiceDate);
-  dueDate.setDate(dueDate.getDate() + (order.supplier.paymentTermsDays ?? 0));
+  dueDate.setDate(dueDate.getDate() + paymentTermsDays);
 
   let invoice;
   try {
@@ -151,15 +224,15 @@ export async function createPurchaseInvoice(actor: ActorContext, input: Purchase
         companyId: actor.companyId,
         branchId: actor.branchId || null,
         invoiceNumber,
-        purchaseOrderId: order.id,
-        supplierId: order.supplierId,
+        purchaseOrderId,
+        supplierId,
         supplierInvoiceNumber: input.supplierInvoiceNumber || null,
         invoiceDate,
         dueDate,
         status: "DRAFT",
-        currencyCode: order.currencyCode,
-        exchangeRate: order.exchangeRate,
-        baseCurrencyCode: order.baseCurrencyCode,
+        currencyCode,
+        exchangeRate,
+        baseCurrencyCode,
         subtotalAmount,
         taxAmount,
         totalAmount,
@@ -186,7 +259,7 @@ export async function createPurchaseInvoice(actor: ActorContext, input: Purchase
       throw new BusinessRuleError(
         "REFERENCED_RECORD_IN_USE",
         `A purchase invoice with supplier reference "${input.supplierInvoiceNumber}" already exists for this supplier.`,
-        { supplierId: order.supplierId, supplierInvoiceNumber: input.supplierInvoiceNumber }
+        { supplierId, supplierInvoiceNumber: input.supplierInvoiceNumber }
       );
     }
     throw error;
@@ -204,7 +277,7 @@ export async function createPurchaseInvoice(actor: ActorContext, input: Purchase
   return invoice;
 }
 
-/** Editable only while DRAFT — the linked purchase order never changes, only line quantities/prices/tax. */
+/** Editable only while DRAFT — the linked purchase order (or lack thereof) never changes, only line quantities/prices/tax/direct-line detail. */
 export async function updatePurchaseInvoice(actor: ActorContext, id: string, input: PurchaseInvoiceInput) {
   const existing = await PurchaseInvoiceRepository.findByIdWithDetails(actor.companyId, id);
   if (!existing) throw new BusinessRuleError("NOT_FOUND", "Purchase invoice not found.", { id });
@@ -217,19 +290,30 @@ export async function updatePurchaseInvoice(actor: ActorContext, id: string, inp
     );
   }
 
-  if (input.purchaseOrderId !== existing.purchaseOrderId) {
-    throw new BusinessRuleError("VALIDATION_ERROR", "An invoice cannot be re-linked to a different purchase order.", {});
+  if ((input.purchaseOrderId || null) !== existing.purchaseOrderId) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "An invoice cannot be re-linked to a different purchase order (or converted to/from a direct bill).", {});
   }
 
-  const order = await PurchaseOrderRepository.findByIdWithDetails(actor.companyId, existing.purchaseOrderId);
-  if (!order) throw new BusinessRuleError("NOT_FOUND", "Purchase order not found.", { id: existing.purchaseOrderId });
+  let orderItems: OrderItemLike[] | null = null;
+  let paymentTermsDays: number;
 
-  const items = await buildInvoiceItems(actor.companyId, order.items, input.lines);
+  if (existing.purchaseOrderId) {
+    const order = await PurchaseOrderRepository.findByIdWithDetails(actor.companyId, existing.purchaseOrderId);
+    if (!order) throw new BusinessRuleError("NOT_FOUND", "Purchase order not found.", { id: existing.purchaseOrderId });
+    orderItems = order.items;
+    paymentTermsDays = order.supplier.paymentTermsDays ?? 0;
+  } else {
+    const supplier = await SupplierRepository.findById(actor.companyId, existing.supplierId);
+    if (!supplier) throw new BusinessRuleError("NOT_FOUND", "Supplier not found.", { id: existing.supplierId });
+    paymentTermsDays = supplier.paymentTermsDays ?? 0;
+  }
+
+  const items = await buildInvoiceItems(actor.companyId, orderItems, input.lines);
   const { subtotalAmount, taxAmount, totalAmount } = sumTotals(items);
 
   const invoiceDate = new Date(input.invoiceDate);
   const dueDate = new Date(invoiceDate);
-  dueDate.setDate(dueDate.getDate() + (order.supplier.paymentTermsDays ?? 0));
+  dueDate.setDate(dueDate.getDate() + paymentTermsDays);
 
   let updated;
   try {
@@ -270,15 +354,26 @@ export async function updatePurchaseInvoice(actor: ActorContext, id: string, inp
   return updated;
 }
 
+interface PostableInvoiceItem {
+  purchaseOrderItemId: string | null;
+  expenseAccountId: string | null;
+  quantity: string | number;
+  unitPrice: string | number;
+  product: { styleName: string } | null;
+  expenseAccount: { id: string; code: string; name: string; isActive: boolean } | null;
+}
+
 /**
  * DRAFT -> POSTED. Self-approval-guarded (same reasoning as Sales Invoice's
  * own post gate). In one transaction: guarded-increment invoicedQuantity per
- * line (the real over-invoice guard — a raw-SQL comparison against the LIVE
- * receivedQuantity column, see PurchaseOrderItemRepository), then
- * auto-create+auto-post a settlement Journal (Dr Purchases/COGS, Dr GST Input
- * Tax Credit if any, Cr Accounts Payable) via postJournalCore, then a guarded
- * conditional flip of this invoice. Deliberately does NOT change
- * PurchaseOrder.status — see the reviewed plan's Divergence 3.
+ * PO-linked line (the real over-invoice guard — a raw-SQL comparison against
+ * the LIVE receivedQuantity column, see PurchaseOrderItemRepository), then
+ * auto-create+auto-post a settlement Journal — one Dr line per distinct
+ * debit account (COGS for the sum of all PO-linked lines, one line per
+ * distinct chosen Expense account for direct lines), Dr GST Input Tax
+ * Credit if any, Cr Accounts Payable for the total — via postJournalCore,
+ * then a guarded conditional flip of this invoice. Deliberately does NOT
+ * change PurchaseOrder.status — see the reviewed plan's Divergence 3.
  */
 export async function postPurchaseInvoice(actor: ActorContext, id: string) {
   const invoice = await PurchaseInvoiceRepository.findByIdWithDetails(actor.companyId, id);
@@ -294,17 +389,41 @@ export async function postPurchaseInvoice(actor: ActorContext, id: string) {
     );
   }
 
+  const items = invoice.items as unknown as PostableInvoiceItem[];
+  const poLinkedItems = items.filter((i) => i.purchaseOrderItemId);
+  const directItems = items.filter((i) => !i.purchaseOrderItemId);
+
+  const directByAccount = new Map<string, { name: string; code: string; subtotal: number }>();
+  let directTotal = 0;
+  for (const item of directItems) {
+    if (!item.expenseAccount) {
+      throw new BusinessRuleError("NOT_FOUND", "One of this invoice's direct lines is missing its expense account.", {});
+    }
+    if (!item.expenseAccount.isActive) {
+      throw new BusinessRuleError("VALIDATION_ERROR", `"${item.expenseAccount.name}" is no longer active.`, {});
+    }
+    const lineSubtotal = round2(Number(item.quantity) * Number(item.unitPrice));
+    directTotal = round2(directTotal + lineSubtotal);
+    const existing = directByAccount.get(item.expenseAccount.id);
+    if (existing) existing.subtotal = round2(existing.subtotal + lineSubtotal);
+    else directByAccount.set(item.expenseAccount.id, { name: item.expenseAccount.name, code: item.expenseAccount.code, subtotal: lineSubtotal });
+  }
+  // Derived from the already-trusted, already-rounded header total rather
+  // than re-summed from raw quantity*unitPrice — matches this function's
+  // original "trust invoice.subtotalAmount, don't recompute it" precedent,
+  // and sidesteps any rounding drift between the two derivations.
+  const poLinkedSubtotal = poLinkedItems.length > 0 ? round2(Number(invoice.subtotalAmount) - directTotal) : 0;
+
   const [cogsAccount, gstInputAccount, apAccount] = await Promise.all([
-    ChartOfAccountRepository.findByCode(actor.companyId, "COGS"),
-    ChartOfAccountRepository.findByCode(actor.companyId, "GST-ITC"),
+    poLinkedSubtotal > 0 ? ChartOfAccountRepository.findByCode(actor.companyId, "COGS") : Promise.resolve(null),
+    Number(invoice.taxAmount) > 0 ? ChartOfAccountRepository.findByCode(actor.companyId, "GST-ITC") : Promise.resolve(null),
     ChartOfAccountRepository.findByCode(actor.companyId, "AP"),
   ]);
-  if (!cogsAccount || !apAccount) {
-    throw new BusinessRuleError(
-      "NOT_FOUND",
-      "The Purchases/COGS or Accounts Payable control account is missing from the Chart of Accounts.",
-      {}
-    );
+  if (poLinkedSubtotal > 0 && !cogsAccount) {
+    throw new BusinessRuleError("NOT_FOUND", "The Purchases/COGS control account is missing from the Chart of Accounts.", {});
+  }
+  if (!apAccount) {
+    throw new BusinessRuleError("NOT_FOUND", "The Accounts Payable control account is missing from the Chart of Accounts.", {});
   }
   const taxAmountNum = Number(invoice.taxAmount);
   if (taxAmountNum > 0 && !gstInputAccount) {
@@ -318,32 +437,43 @@ export async function postPurchaseInvoice(actor: ActorContext, id: string) {
   });
 
   await prisma.$transaction(async (tx) => {
-    for (const item of invoice.items) {
-      const affected = await PurchaseOrderItemRepository.guardedIncrementInvoiced(tx, item.purchaseOrderItemId, Number(item.quantity));
+    for (const item of poLinkedItems) {
+      const affected = await PurchaseOrderItemRepository.guardedIncrementInvoiced(tx, item.purchaseOrderItemId as string, Number(item.quantity));
       if (affected === 0) {
         const current = await tx.purchaseOrderItem.findUnique({
-          where: { id: item.purchaseOrderItemId },
+          where: { id: item.purchaseOrderItemId as string },
           select: { receivedQuantity: true, invoicedQuantity: true },
         });
         const availableNow = current ? Number(current.receivedQuantity) - Number(current.invoicedQuantity) : 0;
         throw new BusinessRuleError(
           "OVER_INVOICE_NOT_ALLOWED",
-          `Cannot invoice ${item.quantity} for "${item.product.styleName}" — only ${availableNow} is currently available to invoice.`,
+          `Cannot invoice ${item.quantity} for "${item.product?.styleName}" — only ${availableNow} is currently available to invoice.`,
           { purchaseOrderItemId: item.purchaseOrderItemId, requestedQuantity: item.quantity, availableQuantityAtCheckTime: availableNow }
         );
       }
     }
 
-    const lines = [
-      {
+    const lines: Array<{ accountId: string; lineNumber: number; debitAmount: number; creditAmount: number; description: string }> = [];
+    let nextLineNumber = 1;
+
+    if (poLinkedSubtotal > 0 && cogsAccount) {
+      lines.push({
         accountId: cogsAccount.id,
-        lineNumber: 1,
-        debitAmount: Number(invoice.subtotalAmount),
+        lineNumber: nextLineNumber++,
+        debitAmount: poLinkedSubtotal,
         creditAmount: 0,
         description: `Purchase Invoice ${invoice.invoiceNumber}`,
-      },
-    ];
-    let nextLineNumber = 2;
+      });
+    }
+    for (const [accountId, group] of directByAccount) {
+      lines.push({
+        accountId,
+        lineNumber: nextLineNumber++,
+        debitAmount: group.subtotal,
+        creditAmount: 0,
+        description: `Purchase Invoice ${invoice.invoiceNumber} — ${group.name}`,
+      });
+    }
     if (taxAmountNum > 0 && gstInputAccount) {
       lines.push({
         accountId: gstInputAccount.id,

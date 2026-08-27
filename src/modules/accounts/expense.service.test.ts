@@ -23,6 +23,7 @@ vi.mock("./expense.repository", () => ({
     create: vi.fn(),
     update: vi.fn(),
     updateStatusConditional: vi.fn(),
+    updateStatusConditionalIn: vi.fn(),
   },
   CompanyRepository: { findBaseCurrencyCode: vi.fn() },
 }));
@@ -43,7 +44,7 @@ const { ExpenseRepository, CompanyRepository } = await import("./expense.reposit
 const { ChartOfAccountRepository } = await import("./chart-of-account.repository");
 const { TaxRateRepository } = await import("./tax-config.repository");
 const { postJournalCore } = await import("./journal.service");
-const { createExpense, updateExpense, postExpense, cancelExpense } = await import("./expense.service");
+const { createExpense, updateExpense, approveExpense, rejectExpense, postExpense, cancelExpense } = await import("./expense.service");
 
 const actor = { companyId: "co-1", userId: "user-1", branchId: null };
 
@@ -70,6 +71,7 @@ beforeEach(() => {
   vi.mocked(ExpenseRepository.findByIdempotencyKey).mockReset().mockResolvedValue(null);
   vi.mocked(ExpenseRepository.update).mockReset();
   vi.mocked(ExpenseRepository.updateStatusConditional).mockReset();
+  vi.mocked(ExpenseRepository.updateStatusConditionalIn).mockReset();
   vi.mocked(CompanyRepository.findBaseCurrencyCode).mockReset().mockResolvedValue({ baseCurrencyCode: "INR" } as never);
   vi.mocked(ChartOfAccountRepository.findAnyById).mockReset();
   vi.mocked(ChartOfAccountRepository.findByCode).mockReset();
@@ -107,7 +109,7 @@ describe("createExpense — account validation (COGS exclusion, accountType, isA
     await expect(createExpense(actor, baseInput)).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
 
-  it("accepts a valid, active, non-COGS EXPENSE account and computes totals", async () => {
+  it("accepts a valid, active, non-COGS EXPENSE account, computes totals, and lands in PENDING_APPROVAL", async () => {
     vi.mocked(ChartOfAccountRepository.findAnyById).mockResolvedValue(expenseAccount as never);
     vi.mocked(TaxRateRepository.findAnyById).mockResolvedValue({ id: "tax-18", ratePercentage: "18.00" } as never);
     vi.mocked(ExpenseRepository.create).mockResolvedValue({ id: "exp-1" } as never);
@@ -118,6 +120,7 @@ describe("createExpense — account validation (COGS exclusion, accountType, isA
     expect(data.amount).toBe(1000);
     expect(data.taxAmount).toBe(180);
     expect(data.totalAmount).toBe(1180);
+    expect(data.status).toBe("PENDING_APPROVAL");
   });
 
   it("validates supplierId belongs to the company when supplied", async () => {
@@ -186,25 +189,99 @@ describe("createExpense — idempotency (CF-5)", () => {
   });
 });
 
-describe("updateExpense / cancelExpense — DRAFT-only guards", () => {
-  it("blocks editing a non-DRAFT expense", async () => {
-    vi.mocked(ExpenseRepository.findAnyById).mockResolvedValue({ id: "exp-1", status: "POSTED" } as never);
+describe("updateExpense — PENDING_APPROVAL-only guard", () => {
+  it("blocks editing a non-PENDING_APPROVAL expense", async () => {
+    vi.mocked(ExpenseRepository.findAnyById).mockResolvedValue({ id: "exp-1", status: "APPROVED" } as never);
 
     await expect(updateExpense(actor, "exp-1", baseInput)).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
   });
+});
 
-  it("blocks cancelling a non-DRAFT expense", async () => {
-    vi.mocked(ExpenseRepository.findAnyById).mockResolvedValue({ id: "exp-1", status: "POSTED" } as never);
+describe("approveExpense — Admin decision, no cash movement", () => {
+  it("asserts the self-approval-guarded 'approve' action", async () => {
+    vi.mocked(ExpenseRepository.findAnyById).mockResolvedValue({ id: "exp-1", status: "PENDING_APPROVAL", createdByUserId: "user-2" } as never);
+    vi.mocked(ExpenseRepository.updateStatusConditional).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(ExpenseRepository.findByIdWithDetails).mockResolvedValue({ id: "exp-1", status: "APPROVED" } as never);
+
+    await approveExpense(actor, "exp-1");
+
+    expect(PermissionService.assert).toHaveBeenCalledWith("user-1", "expenses", "approve", { createdBy: "user-2" });
+    expect(ExpenseRepository.updateStatusConditional).toHaveBeenCalledWith(
+      "exp-1",
+      "PENDING_APPROVAL",
+      expect.objectContaining({ status: "APPROVED", approvedByUserId: "user-1" })
+    );
+    // No Journal/ledger call anywhere in this path.
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("rejects approving a non-PENDING_APPROVAL expense", async () => {
+    vi.mocked(ExpenseRepository.findAnyById).mockResolvedValue({ id: "exp-1", status: "APPROVED", createdByUserId: "user-2" } as never);
     vi.mocked(ExpenseRepository.updateStatusConditional).mockResolvedValue({ count: 0 } as never);
+
+    await expect(approveExpense(actor, "exp-1")).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+  });
+});
+
+describe("rejectExpense — requires a reason, terminal, not self-approval-guarded", () => {
+  it("stores the rejection reason and is gated on 'reject' (not 'approve')", async () => {
+    vi.mocked(ExpenseRepository.findAnyById).mockResolvedValue({ id: "exp-1", status: "PENDING_APPROVAL", createdByUserId: "user-1" } as never);
+    vi.mocked(ExpenseRepository.updateStatusConditional).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(ExpenseRepository.findByIdWithDetails).mockResolvedValue({ id: "exp-1", status: "REJECTED" } as never);
+
+    await rejectExpense(actor, "exp-1", "Missing receipt");
+
+    expect(PermissionService.assert).toHaveBeenCalledWith("user-1", "expenses", "reject");
+    expect(ExpenseRepository.updateStatusConditional).toHaveBeenCalledWith(
+      "exp-1",
+      "PENDING_APPROVAL",
+      expect.objectContaining({ status: "REJECTED", rejectionReason: "Missing receipt", rejectedByUserId: "user-1" })
+    );
+  });
+
+  it("rejects rejecting an already-decided expense", async () => {
+    vi.mocked(ExpenseRepository.findAnyById).mockResolvedValue({ id: "exp-1", status: "REJECTED" } as never);
+    vi.mocked(ExpenseRepository.updateStatusConditional).mockResolvedValue({ count: 0 } as never);
+
+    await expect(rejectExpense(actor, "exp-1", "again")).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+  });
+});
+
+describe("cancelExpense — cancellable from PENDING_APPROVAL or APPROVED, blocked once PAID", () => {
+  it("cancels from PENDING_APPROVAL", async () => {
+    vi.mocked(ExpenseRepository.findAnyById)
+      .mockResolvedValueOnce({ id: "exp-1", status: "PENDING_APPROVAL" } as never)
+      .mockResolvedValueOnce({ id: "exp-1", status: "CANCELLED" } as never);
+    vi.mocked(ExpenseRepository.updateStatusConditionalIn).mockResolvedValue({ count: 1 } as never);
+
+    const result = await cancelExpense(actor, "exp-1");
+
+    expect(ExpenseRepository.updateStatusConditionalIn).toHaveBeenCalledWith("exp-1", ["PENDING_APPROVAL", "APPROVED"], { status: "CANCELLED" });
+    expect(result.status).toBe("CANCELLED");
+  });
+
+  it("cancels from APPROVED (before payment)", async () => {
+    vi.mocked(ExpenseRepository.findAnyById)
+      .mockResolvedValueOnce({ id: "exp-1", status: "APPROVED" } as never)
+      .mockResolvedValueOnce({ id: "exp-1", status: "CANCELLED" } as never);
+    vi.mocked(ExpenseRepository.updateStatusConditionalIn).mockResolvedValue({ count: 1 } as never);
+
+    const result = await cancelExpense(actor, "exp-1");
+    expect(result.status).toBe("CANCELLED");
+  });
+
+  it("blocks cancelling a PAID expense", async () => {
+    vi.mocked(ExpenseRepository.findAnyById).mockResolvedValue({ id: "exp-1", status: "PAID" } as never);
+    vi.mocked(ExpenseRepository.updateStatusConditionalIn).mockResolvedValue({ count: 0 } as never);
 
     await expect(cancelExpense(actor, "exp-1")).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
   });
 });
 
-describe("postExpense — self-approval, dynamic line numbering, journal shape", () => {
-  const draftExpense = {
+describe("postExpense — APPROVED -> PAID, self-approval via 'post', dynamic line numbering, journal shape", () => {
+  const approvedExpense = {
     id: "exp-1",
-    status: "DRAFT",
+    status: "APPROVED",
     createdByUserId: "user-1",
     expenseNumber: "EXP-2026-00001",
     expenseDate: new Date("2026-08-24"),
@@ -213,13 +290,14 @@ describe("postExpense — self-approval, dynamic line numbering, journal shape",
     amount: "1000",
     taxAmount: "180",
     totalAmount: "1180",
+    tdsAmount: "0",
     paymentType: { type: "BANK" },
   };
 
-  it("asserts the self-approval-guarded 'approve' action", async () => {
+  it("asserts the self-approval-guarded 'post' action (distinct from Admin's 'approve')", async () => {
     vi.mocked(ExpenseRepository.findByIdWithDetails)
-      .mockResolvedValueOnce(draftExpense as never)
-      .mockResolvedValueOnce({ id: "exp-1", status: "POSTED" } as never);
+      .mockResolvedValueOnce(approvedExpense as never)
+      .mockResolvedValueOnce({ id: "exp-1", status: "PAID" } as never);
     vi.mocked(ChartOfAccountRepository.findByCode).mockImplementation(
       ((_c: string, code: string) => Promise.resolve({ id: `acct-${code}`, code })) as never
     );
@@ -228,13 +306,13 @@ describe("postExpense — self-approval, dynamic line numbering, journal shape",
 
     await postExpense(actor, "exp-1");
 
-    expect(PermissionService.assert).toHaveBeenCalledWith("user-1", "expenses", "approve", { createdBy: "user-1" });
+    expect(PermissionService.assert).toHaveBeenCalledWith("user-1", "expenses", "post", { createdBy: "user-1" });
   });
 
   it("regression: a tax-bearing expense gets 3 distinctly-numbered lines — no lineNumber collision (fix #5)", async () => {
     vi.mocked(ExpenseRepository.findByIdWithDetails)
-      .mockResolvedValueOnce(draftExpense as never)
-      .mockResolvedValueOnce({ id: "exp-1", status: "POSTED" } as never);
+      .mockResolvedValueOnce(approvedExpense as never)
+      .mockResolvedValueOnce({ id: "exp-1", status: "PAID" } as never);
     vi.mocked(ChartOfAccountRepository.findByCode).mockImplementation(
       ((_c: string, code: string) => Promise.resolve({ id: `acct-${code}`, code })) as never
     );
@@ -259,8 +337,8 @@ describe("postExpense — self-approval, dynamic line numbering, journal shape",
 
   it("a non-tax expense gets a clean 2-line journal (Dr account / Cr cash-or-bank)", async () => {
     vi.mocked(ExpenseRepository.findByIdWithDetails)
-      .mockResolvedValueOnce({ ...draftExpense, taxAmount: "0", totalAmount: "1000", paymentType: { type: "CASH" } } as never)
-      .mockResolvedValueOnce({ id: "exp-1", status: "POSTED" } as never);
+      .mockResolvedValueOnce({ ...approvedExpense, taxAmount: "0", totalAmount: "1000", paymentType: { type: "CASH" } } as never)
+      .mockResolvedValueOnce({ id: "exp-1", status: "PAID" } as never);
     vi.mocked(ChartOfAccountRepository.findByCode).mockImplementation(
       ((_c: string, code: string) => Promise.resolve({ id: `acct-${code}`, code })) as never
     );
@@ -275,10 +353,21 @@ describe("postExpense — self-approval, dynamic line numbering, journal shape",
     expect(lines[1]).toMatchObject({ lineNumber: 2, accountId: "acct-CASH", creditAmount: 1000 });
   });
 
-  it("rejects posting a non-DRAFT expense, never touching the transaction", async () => {
+  it("rejects paying an expense that isn't Approved yet, never touching the transaction", async () => {
     vi.mocked(ExpenseRepository.findByIdWithDetails).mockResolvedValue({
       id: "exp-1",
-      status: "POSTED",
+      status: "PENDING_APPROVAL",
+      createdByUserId: "user-1",
+    } as never);
+
+    await expect(postExpense(actor, "exp-1")).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("rejects paying an already-Paid expense", async () => {
+    vi.mocked(ExpenseRepository.findByIdWithDetails).mockResolvedValue({
+      id: "exp-1",
+      status: "PAID",
       createdByUserId: "user-1",
     } as never);
 

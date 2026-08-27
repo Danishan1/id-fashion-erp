@@ -26,6 +26,10 @@ const PREFIX_BY_DOCUMENT_TYPE: Record<DocumentType, string> = {
   CAMPAIGN: "CAMP",
   JOB_WORK_ORDER: "JWO",
   JOB_WORK_RECEIPT: "JWR",
+  CUSTOM_INVOICE_CREDIT_NOTE: "CN",
+  INTERNAL_TRANSFER: "TRF",
+  EMPLOYEE_ADVANCE: "ADV",
+  EMPLOYEE_ADVANCE_SETTLEMENT: "ADVS",
 };
 
 /** DocumentTypes that represent master-data codes, not transactional documents. */

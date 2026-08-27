@@ -12,7 +12,7 @@ export default async function EditExpensePage({ params }: { params: Promise<{ id
   if (!expense) notFound();
 
   // Matches the service's own guard — nothing else can be edited here.
-  if (expense.status !== "DRAFT") notFound();
+  if (expense.status !== "PENDING_APPROVAL") notFound();
 
   const initialExpense = {
     id: expense.id,
@@ -22,6 +22,7 @@ export default async function EditExpensePage({ params }: { params: Promise<{ id
     description: expense.description,
     amount: expense.amount.toString(),
     taxRateId: expense.taxRateId,
+    tdsPercentage: expense.tdsPercentage?.toString() ?? null,
     paymentTypeId: expense.paymentTypeId,
     bankAccountId: expense.bankAccountId,
     referenceNumber: expense.referenceNumber,

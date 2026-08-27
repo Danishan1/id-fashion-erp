@@ -59,12 +59,17 @@ export async function getMaterialRequirements(companyId: string, salesOrderId: s
 
   for (const orderItem of order.items) {
     const bom = bomByProductId.get(orderItem.productId);
-    if (!bom || bom.items.length === 0) {
+    // An unapproved draft (or no BOM at all) is treated identically —
+    // material planning must never silently consume an edit-in-progress
+    // that no one has signed off on yet (see docs/PRACTICAL_BUSINESS_READY_
+    // AUDIT.md Section 4 — this is the real gate that was missing before).
+    const approvedItems = bom?.approvedVersion?.items ?? [];
+    if (approvedItems.length === 0) {
       stylesWithoutBom.push({ productId: orderItem.productId, styleName: orderItem.product.styleName });
       continue;
     }
 
-    for (const bomItem of bom.items) {
+    for (const bomItem of approvedItems) {
       const matchingBreakdown = orderItem.breakdown.filter(
         (b) => !bomItem.colorId || b.productVariant.color.id === bomItem.colorId
       );

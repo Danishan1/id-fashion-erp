@@ -35,10 +35,15 @@ export function BomEditor({
   productId,
   initialNotes,
   initialItems,
+  isCurrentVersionLocked = false,
+  currentVersionNumber = 0,
 }: {
   productId: string;
   initialNotes: string;
   initialItems: LineItem[];
+  /** True once the current version has been approved — the next Save mints a new DRAFT version rather than rewriting approved history. */
+  isCurrentVersionLocked?: boolean;
+  currentVersionNumber?: number;
 }) {
   const router = useRouter();
   const [notes, setNotes] = useState(initialNotes);
@@ -110,6 +115,12 @@ export function BomEditor({
 
   return (
     <div className="max-w-4xl space-y-6">
+      {isCurrentVersionLocked && (
+        <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
+          Version {currentVersionNumber} is approved and locked. Saving a change here will start Version{" "}
+          {currentVersionNumber + 1} as a new draft — the approved version stays exactly as it was approved.
+        </p>
+      )}
       <FormField label="Notes" htmlFor="bom-notes">
         <input id="bom-notes" value={notes} onChange={(e) => setNotes(e.target.value)} className={textInputClass()} />
       </FormField>

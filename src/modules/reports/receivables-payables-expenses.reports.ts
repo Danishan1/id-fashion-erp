@@ -323,9 +323,15 @@ async function getExpenseRegisterDescriptor(companyId: string, generatedByName: 
     status: e.status,
   }));
 
+  // Totals sum only PAID rows — a PENDING_APPROVAL/APPROVED/REJECTED
+  // expense hasn't actually cost the company anything yet, matching the
+  // same "rows show every status, totals exclude the non-realized ones"
+  // fix already applied to Sales Invoice Register/Purchase Order Register.
+  const paidRows = rows.filter((r) => r.status === "PAID");
+
   return {
     title: "Expense Register",
-    subtitle: "Every non-cancelled Expense matching the selected filters.",
+    subtitle: "Every non-cancelled Expense matching the selected filters. Totals below sum Paid rows only.",
     filtersApplied: filtersApplied(filters, { dateFrom: "Date From", dateTo: "Date To" }),
     columns: [
       { key: "expenseNumber", label: "Expense Number", linkTo: "expense" },
@@ -340,9 +346,9 @@ async function getExpenseRegisterDescriptor(companyId: string, generatedByName: 
     ],
     rows,
     totals: {
-      amount: round2(rows.reduce((s, r) => s + r.amount, 0)),
-      tax: round2(rows.reduce((s, r) => s + r.tax, 0)),
-      total: round2(rows.reduce((s, r) => s + r.total, 0)),
+      amount: round2(paidRows.reduce((s, r) => s + r.amount, 0)),
+      tax: round2(paidRows.reduce((s, r) => s + r.tax, 0)),
+      total: round2(paidRows.reduce((s, r) => s + r.total, 0)),
     },
     meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
     generatedAt: new Date().toISOString(),

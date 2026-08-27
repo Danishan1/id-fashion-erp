@@ -44,6 +44,7 @@ interface InitialExpense {
   description: string;
   amount: string;
   taxRateId: string | null;
+  tdsPercentage: string | null;
   paymentTypeId: string;
   bankAccountId: string | null;
   referenceNumber: string | null;
@@ -65,6 +66,7 @@ export function ExpenseForm({ initialExpense }: { initialExpense?: InitialExpens
   const [description, setDescription] = useState(initialExpense?.description ?? "");
   const [amount, setAmount] = useState(initialExpense?.amount ?? "");
   const [taxRateId, setTaxRateId] = useState(initialExpense?.taxRateId ?? "");
+  const [tdsPercentage, setTdsPercentage] = useState(initialExpense?.tdsPercentage ?? "");
   const [paymentTypeId, setPaymentTypeId] = useState(initialExpense?.paymentTypeId ?? "");
   const [bankAccountId, setBankAccountId] = useState(initialExpense?.bankAccountId ?? "");
   const [referenceNumber, setReferenceNumber] = useState(initialExpense?.referenceNumber ?? "");
@@ -111,6 +113,8 @@ export function ExpenseForm({ initialExpense }: { initialExpense?: InitialExpens
   const amountNum = Number(amount) || 0;
   const taxAmount = selectedTaxRate ? (amountNum * Number(selectedTaxRate.ratePercentage)) / 100 : 0;
   const totalAmount = amountNum + taxAmount;
+  const tdsAmount = tdsPercentage ? (amountNum * Number(tdsPercentage)) / 100 : 0;
+  const netPayable = totalAmount - tdsAmount;
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -125,6 +129,7 @@ export function ExpenseForm({ initialExpense }: { initialExpense?: InitialExpens
       description,
       amount: amountNum,
       taxRateId: taxRateId || undefined,
+      tdsPercentage: tdsPercentage ? Number(tdsPercentage) : undefined,
       paymentTypeId,
       bankAccountId: bankAccountId || undefined,
       referenceNumber: referenceNumber || undefined,
@@ -223,6 +228,18 @@ export function ExpenseForm({ initialExpense }: { initialExpense?: InitialExpens
             ))}
           </select>
         </FormField>
+        <FormField label="TDS % (optional)" htmlFor="tdsPercentage">
+          <input
+            id="tdsPercentage"
+            type="number"
+            min={0}
+            max={100}
+            step="0.01"
+            value={tdsPercentage}
+            onChange={(e) => setTdsPercentage(e.target.value)}
+            className={textInputClass()}
+          />
+        </FormField>
       </div>
 
       <div className="grid grid-cols-3 gap-4">
@@ -268,6 +285,12 @@ export function ExpenseForm({ initialExpense }: { initialExpense?: InitialExpens
         <p>Amount: ₹{formatCurrency(amountNum)}</p>
         <p>Tax: ₹{formatCurrency(taxAmount)}</p>
         <p className="font-medium">Total: ₹{formatCurrency(totalAmount)}</p>
+        {tdsAmount > 0 && (
+          <>
+            <p>TDS Withheld: −₹{formatCurrency(tdsAmount)}</p>
+            <p className="font-medium">Net Payable: ₹{formatCurrency(netPayable)}</p>
+          </>
+        )}
       </div>
 
       {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
