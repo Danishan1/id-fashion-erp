@@ -462,23 +462,23 @@ model SupplierCategory {
 }
 
 model Supplier {
-  id                  String           @id @default(uuid()) @db.Uuid
-  companyId           String           @map("company_id") @db.Uuid
+  id                  String    @id @default(uuid()) @db.Uuid
+  companyId           String    @map("company_id") @db.Uuid
   code                String
   name                String
-  categoryId          String           @map("category_id") @db.Uuid
-  contactPerson       String?          @map("contact_person")
+  categoryId          String    @map("category_id") @db.Uuid
+  contactPerson       String?   @map("contact_person")
   email               String?
   phone               String?
   address             String?
-  taxRegistrationNo   String?          @map("tax_registration_no")
-  paymentTermsDays    Int?             @map("payment_terms_days")
-  defaultCurrencyCode String?          @map("default_currency_code") @db.Char(3)
-  bankDetailsJson     Json?            @map("bank_details_json")
-  isActive            Boolean          @default(true) @map("is_active")
-  deletedAt           DateTime?        @map("deleted_at")
-  createdAt           DateTime         @default(now()) @map("created_at")
-  updatedAt           DateTime         @updatedAt @map("updated_at")
+  taxRegistrationNo   String?   @map("tax_registration_no")
+  paymentTermsDays    Int?      @map("payment_terms_days")
+  defaultCurrencyCode String?   @map("default_currency_code") @db.Char(3)
+  bankDetailsJson     Json?     @map("bank_details_json")
+  isActive            Boolean   @default(true) @map("is_active")
+  deletedAt           DateTime? @map("deleted_at")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
 
   company            Company           @relation(fields: [companyId], references: [id])
   category           SupplierCategory  @relation(fields: [categoryId], references: [id])
