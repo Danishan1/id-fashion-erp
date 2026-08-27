@@ -208,6 +208,8 @@ model User {
   stockMovementsPerformed              StockMovement[]              @relation("StockMovementPerformedBy")
   sampleVersionsCreated                SampleVersion[]              @relation("SampleVersionCreatedBy")
   sampleVersionsCostingLocked          SampleVersion[]              @relation("SampleVersionCostingLockedBy")
+  bomVersionsCreated                   BomVersion[]                 @relation("BomVersionCreatedBy")
+  bomVersionsApproved                  BomVersion[]                 @relation("BomVersionApprovedBy")
   sampleApprovalsMade                  SampleApproval[]             @relation("SampleApprovalDecidedBy")
   sampleCommentsMade                   SampleComment[]              @relation("SampleCommentAuthor")
   productionOrdersRequested            ProductionOrder[]            @relation("ProductionOrderRequestedBy")
@@ -2250,30 +2252,72 @@ model SalesOrderItemBreakdown {
 // ─────────────────────────────────────────────────────────────
 
 // Deliberately NOT a numbered document (no DocumentType/document_number) — a
-// mutable spec attached 1:1 to a Style, corrected as costing/sourcing
-// evolves, not a repeatable transactional document. No versioning (unlike
-// SampleVersion) and no approve/reject action, matching the already-seeded
-// bom_mrp RBAC module (no approve/reject action for any role).
+// header attached 1:1 to a Style. Versioned like SampleVersion (see
+// BomVersion below): a BOM is edited freely while its current version is
+// still DRAFT, but once a version is APPROVED it is locked — the next edit
+// mints a new DRAFT version rather than silently rewriting approved history.
+// MRP/Production consume `approvedVersionId` specifically, never whatever
+// is merely "latest" — an unapproved edit-in-progress can never silently
+// change what material planning already relies on.
 model Bom {
-  id        String   @id @default(uuid()) @db.Uuid
-  companyId String   @map("company_id") @db.Uuid
-  productId String   @unique @map("product_id") @db.Uuid
-  notes     String?
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id                   String   @id @default(uuid()) @db.Uuid
+  companyId            String   @map("company_id") @db.Uuid
+  productId            String   @unique @map("product_id") @db.Uuid
+  // The highest version number ever minted for this BOM — not necessarily
+  // the approved one. 0 means no version has been created yet.
+  currentVersionNumber Int      @default(0) @map("current_version_number")
+  // The version MRP/Production should read. Null until the first approval —
+  // deliberately a separate pointer from "latest version" so an in-progress
+  // edit can never be mistaken for what's actually approved for use.
+  approvedVersionId    String?  @unique @map("approved_version_id") @db.Uuid
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
 
   company          Company           @relation(fields: [companyId], references: [id])
   product          Product           @relation(fields: [productId], references: [id])
-  items            BomItem[]
+  versions         BomVersion[]      @relation("BomVersions")
+  approvedVersion  BomVersion?       @relation("BomApprovedVersion", fields: [approvedVersionId], references: [id])
   materialRequests MaterialRequest[]
   productionOrders ProductionOrder[]
 
   @@map("boms")
 }
 
+enum BomVersionStatus {
+  DRAFT
+  APPROVED
+  SUPERSEDED
+}
+
+// Append-only, mirroring SampleVersion's proven shape: the prior APPROVED
+// version flips to SUPERSEDED the moment a new one is approved, so
+// "which version was approved and used at a given time" is always
+// answerable — the exact traceability BOM never had before this model
+// existed (see docs/PRACTICAL_BUSINESS_READY_AUDIT.md Section 4).
+model BomVersion {
+  id               String           @id @default(uuid()) @db.Uuid
+  bomId            String           @map("bom_id") @db.Uuid
+  versionNumber    Int              @map("version_number")
+  status           BomVersionStatus @default(DRAFT)
+  notes            String?
+  createdByUserId  String           @map("created_by_user_id") @db.Uuid
+  createdAt        DateTime         @default(now()) @map("created_at")
+  approvedByUserId String?          @map("approved_by_user_id") @db.Uuid
+  approvedAt       DateTime?        @map("approved_at")
+
+  bom            Bom       @relation("BomVersions", fields: [bomId], references: [id])
+  approvedForBom Bom?      @relation("BomApprovedVersion")
+  createdBy      User      @relation("BomVersionCreatedBy", fields: [createdByUserId], references: [id])
+  approvedBy     User?     @relation("BomVersionApprovedBy", fields: [approvedByUserId], references: [id])
+  items          BomItem[]
+
+  @@unique([bomId, versionNumber])
+  @@map("bom_versions")
+}
+
 model BomItem {
   id                String   @id @default(uuid()) @db.Uuid
-  bomId             String   @map("bom_id") @db.Uuid
+  bomVersionId      String   @map("bom_version_id") @db.Uuid
   materialId        String   @map("material_id") @db.Uuid
   // Optional per-color consumption line (e.g. thread color matching the
   // garment's own color) — null means "applies to every color" on this
@@ -2290,12 +2334,12 @@ model BomItem {
   notes             String?
   createdAt         DateTime @default(now()) @map("created_at")
 
-  bom      Bom           @relation(fields: [bomId], references: [id])
-  material Product       @relation("BomItemMaterial", fields: [materialId], references: [id])
-  color    Color?        @relation(fields: [colorId], references: [id])
-  uom      UnitOfMeasure @relation(fields: [uomId], references: [id])
+  bomVersion BomVersion    @relation(fields: [bomVersionId], references: [id])
+  material   Product       @relation("BomItemMaterial", fields: [materialId], references: [id])
+  color      Color?        @relation(fields: [colorId], references: [id])
+  uom        UnitOfMeasure @relation(fields: [uomId], references: [id])
 
-  @@index([bomId])
+  @@index([bomVersionId])
   @@map("bom_items")
 }
 

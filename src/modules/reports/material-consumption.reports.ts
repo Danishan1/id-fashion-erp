@@ -31,18 +31,25 @@ async function getMaterialConsumptionVarianceDescriptor(companyId: string, gener
       product: { select: { styleCode: true, styleName: true } },
       bom: {
         select: {
-          items: {
+          // Only the APPROVED version's lines — an unapproved edit-in-
+          // progress must never silently feed a consumption-variance report
+          // any more than it may feed MRP itself (see mrp.service.ts).
+          approvedVersion: {
             select: {
-              quantityPerUnit: true,
-              wastagePercentage: true,
-              uomId: true,
-              uom: { select: { id: true, baseUnitId: true, conversionFactor: true } },
-              material: {
+              items: {
                 select: {
-                  id: true,
-                  styleName: true,
-                  baseUomId: true,
-                  baseUom: { select: { id: true, baseUnitId: true, conversionFactor: true, name: true } },
+                  quantityPerUnit: true,
+                  wastagePercentage: true,
+                  uomId: true,
+                  uom: { select: { id: true, baseUnitId: true, conversionFactor: true } },
+                  material: {
+                    select: {
+                      id: true,
+                      styleName: true,
+                      baseUomId: true,
+                      baseUom: { select: { id: true, baseUnitId: true, conversionFactor: true, name: true } },
+                    },
+                  },
                 },
               },
             },
@@ -93,10 +100,11 @@ async function getMaterialConsumptionVarianceDescriptor(companyId: string, gener
   const rows: Row[] = [];
 
   for (const order of orders) {
-    if (!order.bom) continue;
+    const approvedItems = order.bom?.approvedVersion?.items ?? [];
+    if (approvedItems.length === 0) continue;
     const requestIds = requestIdsByOrder.get(order.id) ?? [];
 
-    for (const item of order.bom.items) {
+    for (const item of approvedItems) {
       let requiredQuantity: number | null = null;
       if (item.material.baseUom) {
         const effectiveQtyPerUnit = Number(item.quantityPerUnit) * (1 + Number(item.wastagePercentage) / 100);

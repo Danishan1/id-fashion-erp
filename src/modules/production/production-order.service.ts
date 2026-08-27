@@ -110,8 +110,10 @@ export async function createProductionOrder(actor: ActorContext, input: CreatePr
     }
   }
 
-  // Snapshot pointer only — Bom has no versioning yet, but this still
-  // records "the BOM as it existed" at order-creation time, for audit.
+  // Snapshot pointer to the Bom header only (not a specific BomVersion) —
+  // the real "which version was actually in effect" gate lives at material-
+  // requirement-generation time, see generateMaterialRequestForOrder below,
+  // which reads bom.approvedVersion specifically.
   const bom = await BomRepository.findByProductId(actor.companyId, input.productId);
 
   const orderNumber = await generateDocumentNumber({
@@ -162,13 +164,18 @@ export async function generateMaterialRequestForOrder(actor: ActorContext, id: s
   if (!order) throw new BusinessRuleError("NOT_FOUND", "Production order not found.", { id });
 
   const bom = await BomRepository.findByProductId(actor.companyId, order.productId);
-  if (!bom || bom.items.length === 0) {
-    throw new BusinessRuleError("VALIDATION_ERROR", "This style has no BOM — nothing to generate a material request for.", { id });
+  if (!bom?.approvedVersion || bom.approvedVersion.items.length === 0) {
+    throw new BusinessRuleError(
+      "VALIDATION_ERROR",
+      "This style has no approved BOM — an unapproved draft can't be used to plan material requirements. Approve a BOM version first.",
+      { id }
+    );
   }
+  const approvedItems = bom.approvedVersion.items;
 
   const plannedQuantity = Number(order.plannedQuantity);
   const neededByMaterial = new Map<string, { uomId: string; needed: number }>();
-  for (const item of bom.items) {
+  for (const item of approvedItems) {
     const effectiveQtyPerUnit = Number(item.quantityPerUnit) * (1 + Number(item.wastagePercentage) / 100);
     const needed = effectiveQtyPerUnit * plannedQuantity;
     const existing = neededByMaterial.get(item.materialId);

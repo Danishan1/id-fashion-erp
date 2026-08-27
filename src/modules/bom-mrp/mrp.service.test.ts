@@ -58,11 +58,20 @@ function threadBomItem(overrides: Record<string, unknown> = {}) {
   };
 }
 
+// Matches BomRepository.findManyByProductIds' real shape: only the APPROVED
+// version's items are ever exposed to MRP — an unapproved draft must read
+// exactly like "no BOM" (see bom.repository.ts / docs/PRACTICAL_BUSINESS_
+// READY_AUDIT.md Section 4). `approvedVersion: null` simulates a style whose
+// BOM exists but has never been approved.
+function bomFixture(productId: string, items: unknown[] | null) {
+  return { id: `bom-${productId}`, productId, approvedVersion: items ? { id: `version-${productId}`, items } : null };
+}
+
 beforeEach(() => {
   vi.mocked(SalesOrderRepository.findByIdWithDetails).mockReset().mockResolvedValue(order() as never);
   vi.mocked(BomRepository.findManyByProductIds)
     .mockReset()
-    .mockResolvedValue([{ productId: "style-1", items: [cottonBomItem(), threadBomItem()] }] as never);
+    .mockResolvedValue([bomFixture("style-1", [cottonBomItem(), threadBomItem()])] as never);
   vi.mocked(sumAvailableByProductIds)
     .mockReset()
     .mockResolvedValue(new Map([["mat-cotton", 509.144], ["mat-thread", 0]]));
@@ -104,8 +113,8 @@ describe("getMaterialRequirements", () => {
       }) as never
     );
     vi.mocked(BomRepository.findManyByProductIds).mockResolvedValue([
-      { productId: "style-1", items: [cottonBomItem({ wastagePercentage: 0, quantityPerUnit: 1 })] },
-      { productId: "style-2", items: [cottonBomItem({ wastagePercentage: 0, quantityPerUnit: 1 })] },
+      bomFixture("style-1", [cottonBomItem({ wastagePercentage: 0, quantityPerUnit: 1 })]),
+      bomFixture("style-2", [cottonBomItem({ wastagePercentage: 0, quantityPerUnit: 1 })]),
     ] as never);
 
     const result = await getMaterialRequirements("co-1", "so-1");
@@ -122,9 +131,20 @@ describe("getMaterialRequirements", () => {
     expect(result.materials).toHaveLength(0);
   });
 
+  // Real regression coverage for the versioning/approval gate: a BOM that
+  // exists but has never been approved (or whose only version is a DRAFT
+  // edit-in-progress) must be treated exactly like "no BOM at all" — MRP
+  // must never silently plan against an unreviewed edit.
+  it("treats a style with an unapproved BOM (approvedVersion: null) the same as no BOM at all", async () => {
+    vi.mocked(BomRepository.findManyByProductIds).mockResolvedValue([bomFixture("style-1", null)] as never);
+    const result = await getMaterialRequirements("co-1", "so-1");
+    expect(result.stylesWithoutBom).toEqual([{ productId: "style-1", styleName: "Round Neck T-Shirt" }]);
+    expect(result.materials).toHaveLength(0);
+  });
+
   it("reports a line whose material has no base unit as unconvertible rather than crashing", async () => {
     vi.mocked(BomRepository.findManyByProductIds).mockResolvedValue([
-      { productId: "style-1", items: [cottonBomItem({ material: { ...cottonBomItem().material, baseUom: null } })] },
+      bomFixture("style-1", [cottonBomItem({ material: { ...cottonBomItem().material, baseUom: null } })]),
     ] as never);
 
     const result = await getMaterialRequirements("co-1", "so-1");
@@ -134,7 +154,7 @@ describe("getMaterialRequirements", () => {
 
   it("reports a line with no fixed UOM conversion path as unconvertible rather than crashing", async () => {
     const rollUom = { id: "uom-roll-fabric", code: "ROLL", name: "Fabric Roll", baseUnitId: null, conversionFactor: 1 };
-    vi.mocked(BomRepository.findManyByProductIds).mockResolvedValue([{ productId: "style-1", items: [cottonBomItem({ uom: rollUom })] }] as never);
+    vi.mocked(BomRepository.findManyByProductIds).mockResolvedValue([bomFixture("style-1", [cottonBomItem({ uom: rollUom })])] as never);
 
     const result = await getMaterialRequirements("co-1", "so-1");
     expect(result.unconvertibleLines).toHaveLength(1);
@@ -153,13 +173,10 @@ describe("getMaterialRequirements", () => {
   // merged entry with the combined quantity.
   it("merges contributingStyles into one entry when a single style reaches a material via two color-scoped BOM lines", async () => {
     vi.mocked(BomRepository.findManyByProductIds).mockResolvedValue([
-      {
-        productId: "style-1",
-        items: [
-          cottonBomItem({ colorId: "black", wastagePercentage: 0, quantityPerUnit: 1 }),
-          cottonBomItem({ colorId: "navy", wastagePercentage: 0, quantityPerUnit: 1 }),
-        ],
-      },
+      bomFixture("style-1", [
+        cottonBomItem({ colorId: "black", wastagePercentage: 0, quantityPerUnit: 1 }),
+        cottonBomItem({ colorId: "navy", wastagePercentage: 0, quantityPerUnit: 1 }),
+      ]),
     ] as never);
 
     const result = await getMaterialRequirements("co-1", "so-1");
@@ -175,13 +192,10 @@ describe("getMaterialRequirements", () => {
   // previously surfaced as raw noise like 103.60000000000002 in the response.
   it("rounds needed/available/shortfall quantities to 4 decimal places, avoiding floating-point noise", async () => {
     vi.mocked(BomRepository.findManyByProductIds).mockResolvedValue([
-      {
-        productId: "style-1",
-        items: [
-          cottonBomItem({ colorId: "black", wastagePercentage: 0, quantityPerUnit: 0.0005 }), // 0.0005 * 200 = 0.1
-          cottonBomItem({ colorId: "navy", wastagePercentage: 0, quantityPerUnit: 0.0005 }), // 0.0005 * 400 = 0.2
-        ],
-      },
+      bomFixture("style-1", [
+        cottonBomItem({ colorId: "black", wastagePercentage: 0, quantityPerUnit: 0.0005 }), // 0.0005 * 200 = 0.1
+        cottonBomItem({ colorId: "navy", wastagePercentage: 0, quantityPerUnit: 0.0005 }), // 0.0005 * 400 = 0.2
+      ]),
     ] as never);
 
     const result = await getMaterialRequirements("co-1", "so-1");
