@@ -190,6 +190,16 @@ model User {
   // old session survives a password change no better than it survives a
   // suspension.
   passwordChangedAt DateTime?  @map("password_changed_at")
+  // A capability layered ON TOP OF, not part of, this user's own company's
+  // RBAC — a platform admin still belongs to a real company (companyId
+  // above is never null) but can additionally provision brand-new,
+  // independent companies via src/modules/platform. Deliberately NOT a
+  // Permission/Role — that whole system is scoped per-company by design,
+  // and "create another company" has no company to be scoped to yet.
+  // Checked live from the DB on every use (requirePlatformAdmin()), never
+  // trusted from the JWT alone, matching this project's own passwordChangedAt/
+  // status re-verification discipline.
+  isPlatformAdmin   Boolean    @default(false) @map("is_platform_admin")
   status            UserStatus @default(ACTIVE)
   createdAt         DateTime   @default(now()) @map("created_at")
   updatedAt         DateTime   @updatedAt @map("updated_at")

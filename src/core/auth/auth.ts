@@ -51,6 +51,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           name: user.fullName,
           companyId: user.companyId,
           defaultBranchId: user.defaultBranchId,
+          isPlatformAdmin: user.isPlatformAdmin,
         };
       },
     }),
