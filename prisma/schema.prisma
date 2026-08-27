@@ -261,6 +261,8 @@ model User {
   paymentsPosted                       Payment[]                     @relation("PaymentPostedBy")
   expensesCreated                      Expense[]                     @relation("ExpenseCreatedBy")
   expensesPosted                       Expense[]                     @relation("ExpensePostedBy")
+  expensesApproved                     Expense[]                     @relation("ExpenseApprovedBy")
+  expensesRejected                     Expense[]                     @relation("ExpenseRejectedBy")
   dispatchesRequested                  Dispatch[]                    @relation("DispatchRequestedBy")
   jobWorkOrdersRequested               JobWorkOrder[]
   jobWorkReceiptsReceived              JobWorkReceipt[]
@@ -4538,50 +4540,74 @@ enum ExpenseStatus {
   CANCELLED
 }
 
+// Expense's own richer workflow — distinct from the shared ExpenseStatus
+// above (EmployeeAdvanceSettlement still uses that simpler 3-state enum
+// for its own single-step post; it does not need an approval gate).
+// PENDING_APPROVAL (created, editable) -> APPROVED/REJECTED (Admin
+// decision, no cash movement) -> from APPROVED only, PAID (Accountant
+// pays, the actual Dr Expense/Cr Cash-Bank journal — same journal-posting
+// logic this model already had, just now reachable only post-approval).
+// REJECTED is terminal by design (confirmed with the user) — matches every
+// other rejection in this app (Sample, Sales Order, Purchase Order, ...):
+// rejected stays rejected, a correction is a new Expense, not a reversal.
+enum ExpenseApprovalStatus {
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  PAID
+  CANCELLED
+}
+
 model Expense {
-  id              String        @id @default(uuid()) @db.Uuid
-  companyId       String        @map("company_id") @db.Uuid
-  branchId        String?       @map("branch_id") @db.Uuid
-  expenseNumber   String        @map("expense_number")
-  expenseDate     DateTime      @map("expense_date") @db.Date
+  id               String                @id @default(uuid()) @db.Uuid
+  companyId        String                @map("company_id") @db.Uuid
+  branchId         String?               @map("branch_id") @db.Uuid
+  expenseNumber    String                @map("expense_number")
+  expenseDate      DateTime              @map("expense_date") @db.Date
   // Service-validated as accountType === EXPENSE, code !== "COGS" (COGS is a
   // Purchase-Invoice-only control account, never user-selectable — see
   // postPurchaseInvoice's own hardcoded findByCode lookup), and isActive.
-  accountId       String        @map("account_id") @db.Uuid
+  accountId        String                @map("account_id") @db.Uuid
   // Pure reference field — no business logic gated on it, unlike Payment's
   // customerId/supplierId (which are direction-required).
-  supplierId      String?       @map("supplier_id") @db.Uuid
-  description     String
-  amount          Decimal       @map("amount") @db.Decimal(18, 2)
-  taxRateId       String?       @map("tax_rate_id") @db.Uuid
-  taxPercentage   Decimal?      @map("tax_percentage") @db.Decimal(5, 2)
-  taxAmount       Decimal       @default(0) @map("tax_amount") @db.Decimal(18, 2)
-  totalAmount     Decimal       @map("total_amount") @db.Decimal(18, 2)
+  supplierId       String?               @map("supplier_id") @db.Uuid
+  description      String
+  amount           Decimal               @map("amount") @db.Decimal(18, 2)
+  taxRateId        String?               @map("tax_rate_id") @db.Uuid
+  taxPercentage    Decimal?              @map("tax_percentage") @db.Decimal(5, 2)
+  taxAmount        Decimal               @default(0) @map("tax_amount") @db.Decimal(18, 2)
+  totalAmount      Decimal               @map("total_amount") @db.Decimal(18, 2)
   // TDS (Tax Deducted at Source) — computed on the base `amount`, not the
   // GST-inclusive totalAmount (matches standard Indian TDS practice, and the
   // reference tool's own live calc). Posting debits the full totalAmount to
   // the expense/GST-ITC accounts as before, but now credits TDS Payable for
   // tdsAmount and only the net (totalAmount - tdsAmount) to Cash-or-Bank —
   // the amount actually paid out once TDS is withheld.
-  tdsPercentage   Decimal?      @map("tds_percentage") @db.Decimal(5, 2)
-  tdsAmount       Decimal       @default(0) @map("tds_amount") @db.Decimal(18, 2)
-  paymentTypeId   String        @map("payment_type_id") @db.Uuid
-  bankAccountId   String?       @map("bank_account_id") @db.Uuid
-  referenceNumber String?       @map("reference_number")
+  tdsPercentage    Decimal?              @map("tds_percentage") @db.Decimal(5, 2)
+  tdsAmount        Decimal               @default(0) @map("tds_amount") @db.Decimal(18, 2)
+  paymentTypeId    String                @map("payment_type_id") @db.Uuid
+  bankAccountId    String?               @map("bank_account_id") @db.Uuid
+  referenceNumber  String?               @map("reference_number")
   // Always company.baseCurrencyCode, no exchangeRate/baseAmount split —
   // matches Payment's own simplification (multi-currency UI deferred
   // project-wide).
-  currencyCode    String        @map("currency_code") @db.Char(3)
-  status          ExpenseStatus @default(DRAFT)
-  // Set only at post time — the settlement Journal this expense generated.
-  journalId       String?       @unique @map("journal_id") @db.Uuid
-  postedAt        DateTime?     @map("posted_at")
-  postedByUserId  String?       @map("posted_by_user_id") @db.Uuid
-  createdByUserId String        @map("created_by_user_id") @db.Uuid
+  currencyCode     String                @map("currency_code") @db.Char(3)
+  status           ExpenseApprovalStatus @default(PENDING_APPROVAL)
+  // Admin's decision — no cash movement, just a status flip.
+  approvedAt       DateTime?             @map("approved_at")
+  approvedByUserId String?               @map("approved_by_user_id") @db.Uuid
+  rejectedAt       DateTime?             @map("rejected_at")
+  rejectedByUserId String?               @map("rejected_by_user_id") @db.Uuid
+  rejectionReason  String?               @map("rejection_reason")
+  // Set only at pay time (from APPROVED) — the settlement Journal this expense generated.
+  journalId        String?               @unique @map("journal_id") @db.Uuid
+  postedAt         DateTime?             @map("posted_at")
+  postedByUserId   String?               @map("posted_by_user_id") @db.Uuid
+  createdByUserId  String                @map("created_by_user_id") @db.Uuid
   // CF-5: company-only, not branch-inclusive — see StockMovement.idempotencyKey.
-  idempotencyKey  String?       @map("idempotency_key")
-  createdAt       DateTime      @default(now()) @map("created_at")
-  updatedAt       DateTime      @updatedAt @map("updated_at")
+  idempotencyKey   String?               @map("idempotency_key")
+  createdAt        DateTime              @default(now()) @map("created_at")
+  updatedAt        DateTime              @updatedAt @map("updated_at")
 
   company     Company        @relation(fields: [companyId], references: [id])
   branch      Branch?        @relation(fields: [branchId], references: [id])
@@ -4593,6 +4619,8 @@ model Expense {
   journal     Journal?       @relation(fields: [journalId], references: [id])
   postedBy    User?          @relation("ExpensePostedBy", fields: [postedByUserId], references: [id])
   createdBy   User           @relation("ExpenseCreatedBy", fields: [createdByUserId], references: [id])
+  approvedBy  User?          @relation("ExpenseApprovedBy", fields: [approvedByUserId], references: [id])
+  rejectedBy  User?          @relation("ExpenseRejectedBy", fields: [rejectedByUserId], references: [id])
 
   @@unique([companyId, branchId, expenseNumber])
   @@unique([companyId, idempotencyKey])
@@ -4780,6 +4808,7 @@ enum RelatedModule {
   JOB_WORK_ORDER
   LEAVE_REQUEST
   ATTENDANCE_CORRECTION
+  EMPLOYEE_ADVANCE_SETTLEMENT
 }
 
 model Attachment {

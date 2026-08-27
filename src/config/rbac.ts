@@ -109,7 +109,9 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     accounts: ["view", "export"],
     invoices: ["view", "export"],
     payments: ["view", "approve"],
-    expenses: ["view", "approve"],
+    // "approve"/"reject" here is the Admin decision step (no cash movement)
+    // — Management does not itself pay an expense, that's Accountant's "post".
+    expenses: ["view", "approve", "reject"],
     financial_reports: ["view", "export", "print"],
     dispatch: ["view", "export"],
     reports: ["view", "export", "print"],
@@ -202,7 +204,10 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     accounts: ["view", "create", "edit", "post", "cancel", "export", "print"],
     invoices: ["view", "create", "edit", "post", "cancel", "export", "print"],
     payments: ["view", "create", "approve", "cancel", "export", "print"],
-    expenses: ["view", "create", "edit", "approve", "cancel", "export", "print"],
+    // "approve"/"reject" (the Admin decision) AND "post" (the Accountant
+    // pays step) both granted here — a senior Accounts Manager can act as
+    // either, unlike ACCOUNTS_EXECUTIVE below which gets neither.
+    expenses: ["view", "create", "edit", "approve", "reject", "post", "cancel", "export", "print"],
     financial_reports: ["view", "export", "print"],
     administration: ["view"],
     reports: ["view", "export", "print"],

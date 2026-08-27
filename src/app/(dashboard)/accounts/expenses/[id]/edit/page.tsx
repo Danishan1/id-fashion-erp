@@ -12,7 +12,7 @@ export default async function EditExpensePage({ params }: { params: Promise<{ id
   if (!expense) notFound();
 
   // Matches the service's own guard — nothing else can be edited here.
-  if (expense.status !== "DRAFT") notFound();
+  if (expense.status !== "PENDING_APPROVAL") notFound();
 
   const initialExpense = {
     id: expense.id,

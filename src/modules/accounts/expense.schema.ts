@@ -22,8 +22,16 @@ export const expenseSchema = z.object({
 
 export type ExpenseInput = z.infer<typeof expenseSchema>;
 
-// Same shape as create — editing a DRAFT expense can change any field,
-// never which company/branch it belongs to.
+// Same shape as create — editing a PENDING_APPROVAL expense can change any
+// field, never which company/branch it belongs to.
 export const updateExpenseSchema = expenseSchema;
 
 export type UpdateExpenseInput = z.infer<typeof updateExpenseSchema>;
+
+// Rejection requires a reason — same "reject needs a stated reason" rule
+// already used by Sampling/Buyer Enquiry line-status changes.
+export const rejectExpenseSchema = z.object({
+  rejectionReason: z.string().min(1, "A reason is required to reject an expense.").max(1000),
+});
+
+export type RejectExpenseInput = z.infer<typeof rejectExpenseSchema>;

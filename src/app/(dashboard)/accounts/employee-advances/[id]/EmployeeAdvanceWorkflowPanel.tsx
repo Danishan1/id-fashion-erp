@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { Modal } from "@/components/ui/Modal";
+import { FilePreviewModal } from "@/components/ui/FilePreviewModal";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 
 interface SettlementRow {
@@ -52,6 +53,129 @@ interface TaxRateOption {
   ratePercentage: string;
 }
 
+interface Person {
+  fullName: string;
+}
+
+interface AttachmentRow {
+  id: string;
+  fileName: string;
+  fileSizeBytes: number;
+  mimeType: string;
+  uploadedAt: string;
+  uploadedBy: Person;
+}
+
+function formatFileSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** Small per-settlement bill/receipt attachments modal — a settlement's
+ * "small focused action" (matching Modal's own documented convention),
+ * kept compact since it lives inside a table row rather than a full page.
+ * A bill can be attached here at any time, not just at settlement creation. */
+function SettlementAttachmentsModal({ settlementId, onClose }: { settlementId: string; onClose: () => void }) {
+  const [attachments, setAttachments] = useState<AttachmentRow[]>([]);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadInputKey, setUploadInputKey] = useState(0);
+  const [isBusy, setIsBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [previewAttachment, setPreviewAttachment] = useState<AttachmentRow | null>(null);
+
+  const fetchAttachments = async () => {
+    const res = await fetch(`/api/v1/employee-advance-settlements/${settlementId}/attachments`);
+    const body = await res.json();
+    if (res.ok) setAttachments(body.data ?? []);
+  };
+
+  useEffect(() => {
+    fetch(`/api/v1/employee-advance-settlements/${settlementId}/attachments`)
+      .then((res) => res.json())
+      .then((body) => setAttachments(body.data ?? []));
+  }, [settlementId]);
+
+  const upload = async () => {
+    if (!uploadFile) return;
+    setIsBusy(true);
+    setError(null);
+    const formData = new FormData();
+    formData.append("file", uploadFile);
+    const res = await fetch(`/api/v1/employee-advance-settlements/${settlementId}/attachments`, { method: "POST", body: formData });
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      setError(body?.error?.message ?? "Failed to upload the file.");
+      setIsBusy(false);
+      return;
+    }
+    setUploadFile(null);
+    setUploadInputKey((k) => k + 1);
+    await fetchAttachments();
+    setIsBusy(false);
+  };
+
+  const remove = async (attachmentId: string) => {
+    setIsBusy(true);
+    setError(null);
+    const res = await fetch(`/api/v1/employee-advance-settlements/attachments/${attachmentId}`, { method: "DELETE" });
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      setError(body?.error?.message ?? "Failed to delete the file.");
+      setIsBusy(false);
+      return;
+    }
+    await fetchAttachments();
+    setIsBusy(false);
+  };
+
+  return (
+    <Modal open onClose={onClose} title="Bill / Receipt">
+      <div className="space-y-3">
+        {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+        {attachments.length === 0 && <p className="text-sm text-zinc-500">No files uploaded yet.</p>}
+        {attachments.map((a) => (
+          <div key={a.id} className="flex items-center justify-between rounded-md border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-800">
+            <div>
+              <button type="button" onClick={() => setPreviewAttachment(a)} className="font-medium text-indigo-600 hover:text-indigo-500">
+                {a.fileName}
+              </button>
+              <p className="text-xs text-zinc-400">
+                {formatFileSize(a.fileSizeBytes)} · {a.uploadedBy.fullName} · {new Date(a.uploadedAt).toLocaleString()}
+              </p>
+            </div>
+            <button type="button" onClick={() => remove(a.id)} disabled={isBusy} className="text-xs font-medium text-red-600 hover:text-red-500 disabled:opacity-50">
+              Remove
+            </button>
+          </div>
+        ))}
+        <div className="flex items-center gap-2">
+          <input key={uploadInputKey} type="file" onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)} className="text-sm text-zinc-600 dark:text-zinc-300" />
+          <button
+            type="button"
+            onClick={upload}
+            disabled={isBusy || !uploadFile}
+            className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200"
+          >
+            Upload
+          </button>
+        </div>
+      </div>
+      {previewAttachment && (
+        <FilePreviewModal
+          key={previewAttachment.id}
+          open
+          onClose={() => setPreviewAttachment(null)}
+          previewUrl={`/api/v1/employee-advance-settlements/attachments/${previewAttachment.id}/download?disposition=inline`}
+          downloadUrl={`/api/v1/employee-advance-settlements/attachments/${previewAttachment.id}/download`}
+          fileName={previewAttachment.fileName}
+          mimeType={previewAttachment.mimeType}
+        />
+      )}
+    </Modal>
+  );
+}
+
 const STATUS_STYLES: Record<string, string> = {
   DRAFT: "bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400",
   ISSUED: "bg-blue-100 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400",
@@ -71,6 +195,7 @@ export function EmployeeAdvanceWorkflowPanel({ advance }: { advance: EmployeeAdv
   const [accounts, setAccounts] = useState<ChartOfAccountOption[]>([]);
   const [taxRates, setTaxRates] = useState<TaxRateOption[]>([]);
   const [showSettlementModal, setShowSettlementModal] = useState(false);
+  const [attachmentsForSettlementId, setAttachmentsForSettlementId] = useState<string | null>(null);
   const [settlementDate, setSettlementDate] = useState(new Date().toISOString().slice(0, 10));
   const [expenseAccountId, setExpenseAccountId] = useState("");
   const [description, setDescription] = useState("");
@@ -257,26 +382,35 @@ export function EmployeeAdvanceWorkflowPanel({ advance }: { advance: EmployeeAdv
                       <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[s.status] ?? ""}`}>{s.status}</span>
                     </td>
                     <td className="px-3 py-2">
-                      {s.status === "DRAFT" && (
-                        <div className="flex gap-2">
-                          <button
-                            type="button"
-                            onClick={() => runAction(`/api/v1/employee-advance-settlements/${s.id}/post`)}
-                            disabled={isBusy}
-                            className="text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400"
-                          >
-                            Post
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => runAction(`/api/v1/employee-advance-settlements/${s.id}/cancel`)}
-                            disabled={isBusy}
-                            className="text-xs font-medium text-red-600 hover:underline dark:text-red-400"
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      )}
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setAttachmentsForSettlementId(s.id)}
+                          className="text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400"
+                        >
+                          Bill
+                        </button>
+                        {s.status === "DRAFT" && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => runAction(`/api/v1/employee-advance-settlements/${s.id}/post`)}
+                              disabled={isBusy}
+                              className="text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400"
+                            >
+                              Post
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => runAction(`/api/v1/employee-advance-settlements/${s.id}/cancel`)}
+                              disabled={isBusy}
+                              className="text-xs font-medium text-red-600 hover:underline dark:text-red-400"
+                            >
+                              Cancel
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -370,6 +504,10 @@ export function EmployeeAdvanceWorkflowPanel({ advance }: { advance: EmployeeAdv
           </div>
         </div>
       </Modal>
+
+      {attachmentsForSettlementId && (
+        <SettlementAttachmentsModal settlementId={attachmentsForSettlementId} onClose={() => setAttachmentsForSettlementId(null)} />
+      )}
     </div>
   );
 }

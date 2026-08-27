@@ -2812,6 +2812,85 @@ incremented `PurchaseOrderItem.invoicedQuantity` (to exactly 10, matching what w
 UI toggle correctly swaps between PO/Supplier pickers and relabels the lines section. `npx tsc --noEmit`,
 `npm run lint`, `npm test` (741/741, 6 new), and `npm run build` all clean throughout.
 
+## Expense Approval Workflow — Admin approves, Accountant pays; Imprest gets bill attachments (2026-08-27)
+
+User described a specific Expense workflow (in their own words) and pointed at a reference project
+(`D:\office-data\claude-projects\hrms`) as having the same logic already working: whoever has expense-create
+rights creates an expense with an optional bill upload → it shows up for an Admin to approve/reject → an
+Accountant separately pays it (with its own optional bill upload) → in some cases the bill comes in only
+after payment → and separately, an "Imprest" wallet-style flow where a user draws money and freely uploads
+small bills against it over time. Investigated the reference project in depth via a dedicated Explore agent
+before building anything (see the session transcript for the full 7-section findings — exact file/line
+citations for `ExpenseTransaction`'s status machine, `ExpenseReceipt`'s dual-purpose linked/freestanding
+shape, and the `User.walletBalance` float-column "wallet").
+
+**Key finding that shaped the design**: the reference app's "wallet" isn't a real ledger at all — it's a
+plain `Float` column on `User`, incremented/decremented by ad-hoc code scattered across the controller, with
+no debit/credit pairing anywhere. Given three AskUserQuestion confirmations with the user (two-step
+Approve→Pay replaces the old one-click flow; a Rejected expense is terminal, not reversible by Admin — a
+deliberate deviation from the reference; and Employee Advance + Settlement, already built earlier this
+session, IS the Imprest concept and just needed bill-attachment support added), the actual gap to close
+turned out to be much smaller than a full reference port — and the one thing NOT to copy was the reference's
+non-ledger wallet-balance mutation, which would have contradicted this project's own foundational "always a
+real journal entry, never ad-hoc balance arithmetic" discipline.
+
+**Schema**: `Expense.status` moved from the shared 3-state `ExpenseStatus` (DRAFT/POSTED/CANCELLED — still
+used as-is by `EmployeeAdvanceSettlement`, deliberately NOT repurposed) to a new, Expense-only
+`ExpenseApprovalStatus`: `PENDING_APPROVAL` (created, editable) → `APPROVED`/`REJECTED` (Admin decision, no
+cash movement) → from `APPROVED` only, `PAID` (Accountant pays — the exact same Dr Expense[+GST-ITC]/Cr
+TDS-Payable/Cr Cash-Bank journal this model already built, just now reachable only post-approval). New
+`approvedAt`/`approvedByUserId`/`rejectedAt`/`rejectedByUserId`/`rejectionReason` columns.
+`postedAt`/`postedByUserId`/`journalId` were kept as-is (still accurate — "posted" now specifically means
+"paid"), not renamed, to minimize schema churn. Existing dev-DB rows would map `DRAFT→PENDING_APPROVAL`,
+`POSTED→PAID` via a `USING` cast in the migration (none existed live in this pass, but the mapping is real
+and defensive for any environment that does have data). New `RelatedModule.EMPLOYEE_ADVANCE_SETTLEMENT`
+value — the first real consumer, giving Employee Advance Settlement its own bill-attachment capability via
+the existing, unchanged `AttachmentService`.
+
+**RBAC — two verbs cleanly split, zero new modules/actions needed**: `approve`/`reject` (Admin's decision,
+no cash movement) and `post` (Accountant's pay step) were both already valid catalog actions, just not both
+granted on `expenses` yet. `MANAGEMENT` gained `reject` (already had `approve`) — Management does the
+Admin decision, never pays. `ACCOUNTS_MANAGER` gained `reject` and `post` (already had `approve`) — a senior
+Accounts Manager can act as either Admin or Accountant. `ACCOUNTS_EXECUTIVE` unchanged
+(`view/create/edit` only — junior role, can't approve or pay, matches every other module's identical
+scoping). Both new actions are independently self-approval-guarded (`approve` and `post` are both in
+`SELF_APPROVAL_GUARDED_ACTIONS`) — a creator can't approve their own expense, and separately can't pay it
+either, unless SUPER_ADMIN. `rejectExpense()` is deliberately NOT self-guarded, matching Sampling's own
+decision-route precedent (only the Approve branch carries that guard).
+
+**Reporting fix, found and fixed while auditing for the schema change's blast radius, not a pre-existing
+bug report**: `dashboard.reports.ts`'s "Expenses This Month"/"Expenses Today" and
+`receivables-payables-expenses.reports.ts`'s "Expense Register" totals both filtered `status: { not:
+CANCELLED }` — correct under the old 2-real-state model, but now would silently inflate "total expense cost"
+with PENDING_APPROVAL/APPROVED/REJECTED amounts that were never actually paid. Fixed to `status: "PAID"` for
+the dashboard aggregates; the Register's own rows still show every non-cancelled status (the established
+"full audit trail" convention already used by Sales Invoice Register/PO Register), but its totals footer
+now sums PAID rows only — the identical "rows show everything, totals exclude the non-realized ones" fix
+already applied to those two registers during the Phase 10 QA pass.
+
+**UI**: `ExpenseWorkflowPanel.tsx` rebuilt for 5 states — Approve/Reject buttons (Reject opens a `Modal`
+requiring a reason) while `PENDING_APPROVAL`, a single Pay button while `APPROVED`, Cancel available from
+either pre-payment state, a red rejection-reason banner once `REJECTED`, and separate "Approved By"/"Paid
+By" fields. Attachments section unchanged (already status-agnostic — a bill can attach at creation, after
+approval, or after payment, satisfying the user's "kisi case me create ke time pr, kisi case me pay hone ke
+baad" requirement with zero code changes needed there). `EmployeeAdvanceWorkflowPanel.tsx` gained a compact
+per-settlement "Bill" button opening a small attachments modal (upload/list/preview/delete), reusing
+`FilePreviewModal` — the one real gap the reference comparison found in the already-built Imprest equivalent.
+
+**Verified live end-to-end** via direct `fetch()` calls against the real dev DB: created `EXP-2026-00001` →
+confirmed `PENDING_APPROVAL` → Approved (confirmed `journalId: null`, no cash movement) → Paid (confirmed
+`Dr EXP-RENT 5000 / Cr CASH 5000`, journal `JRN-2026-00012`); separately created `EXP-2026-00002`, confirmed
+Reject without a reason `400`s, Reject with a reason succeeds and stores it, a second reject attempt on the
+now-terminal record correctly `409`s; created and Approved `EXP-2026-00003`, confirmed Cancel succeeds from
+`APPROVED`, then confirmed cancelling the already-`PAID` `EXP-2026-00001` correctly `409`s; confirmed the
+Executive Dashboard's "Expenses This Month" correctly shows exactly ₹5,000 (only the Paid one, excluding the
+₹1,000 Rejected and ₹750 Cancelled), and the Expense Register lists both non-cancelled rows but totals only
+the Paid one; on the Imprest/Employee-Advance side, issued a ₹3,000 advance, added a ₹150 settlement,
+uploaded a real PDF bill against it (confirmed byte-for-byte download), posted the settlement, and confirmed
+the parent advance correctly recomputed to `PARTIALLY_SETTLED` (₹150/₹3,000) — the exact "user 10000 liya or
+bil 100, 200 ka bill upload karte jao" loop the user described. `npx tsc --noEmit`, `npm run lint`, `npm
+test` (748/748, 7 new), and `npm run build` all clean throughout.
+
 ## Recommended Stack
 
 Next.js 14+ (App Router) + React + TypeScript + Tailwind CSS (frontend); Next.js API routes/route handlers as REST API; PostgreSQL + Prisma ORM; session-based auth (Auth.js/NextAuth, DB sessions) with RBAC and optional TOTP 2FA; S3-compatible or local file storage for attachments; server-side PDF/Excel export (`exceljs`, `pdf-lib`/`@react-pdf/renderer`).
