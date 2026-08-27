@@ -121,3 +121,8 @@ const patternOps = makeSimpleLookupService(GarmentAttributeRepository.pattern, "
 export const listPatterns = patternOps.list;
 export const createPattern = patternOps.create;
 export const updatePattern = patternOps.update;
+
+const supplierCategoryOps = makeSimpleLookupService(GarmentAttributeRepository.supplierCategory, "Supplier category", "supplier_categories");
+export const listSupplierCategories = supplierCategoryOps.list;
+export const createSupplierCategory = supplierCategoryOps.create;
+export const updateSupplierCategory = supplierCategoryOps.update;

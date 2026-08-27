@@ -3,12 +3,12 @@ import type { Prisma } from "@prisma/client";
 
 export const SupplierRepository = {
   findMany: (where: Prisma.SupplierWhereInput, args: Omit<Prisma.SupplierFindManyArgs, "where">) =>
-    prisma.supplier.findMany({ where, ...args }),
+    prisma.supplier.findMany({ where, include: { category: true }, ...args }),
 
   count: (where: Prisma.SupplierWhereInput) => prisma.supplier.count({ where }),
 
   findById: (companyId: string, id: string) =>
-    prisma.supplier.findFirst({ where: { id, companyId, deletedAt: null } }),
+    prisma.supplier.findFirst({ where: { id, companyId, deletedAt: null }, include: { category: true } }),
 
   findByCode: (companyId: string, code: string, excludeId?: string) =>
     prisma.supplier.findFirst({
