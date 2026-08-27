@@ -466,6 +466,7 @@ model Department {
   productionLines  ProductionLine[]
   materialRequests MaterialRequest[]
   productionStages ProductionStage[]
+  designations     Designation[]
 
   @@unique([companyId, code])
   @@map("departments")
@@ -1066,16 +1067,23 @@ model Machine {
 // ─────────────────────────────────────────────────────────────
 
 model Designation {
-  id        String   @id @default(uuid()) @db.Uuid
-  companyId String   @map("company_id") @db.Uuid
-  code      String
-  name      String
-  isActive  Boolean  @default(true) @map("is_active")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id           String   @id @default(uuid()) @db.Uuid
+  companyId    String   @map("company_id") @db.Uuid
+  // Nullable — a designation can belong to one department (e.g. "Cutting
+  // Master" under Cutting) or none at all (e.g. "General Manager", usable
+  // across every department). Filtering by department is a UI convenience,
+  // not a hard requirement, so this stays optional rather than forcing
+  // every designation into exactly one department.
+  departmentId String?  @map("department_id") @db.Uuid
+  code         String
+  name         String
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
 
-  company   Company    @relation(fields: [companyId], references: [id])
-  employees Employee[]
+  company    Company     @relation(fields: [companyId], references: [id])
+  department Department? @relation(fields: [departmentId], references: [id])
+  employees  Employee[]
 
   @@unique([companyId, code])
   @@map("designations")

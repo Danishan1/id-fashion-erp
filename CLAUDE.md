@@ -2891,6 +2891,47 @@ the parent advance correctly recomputed to `PARTIALLY_SETTLED` (₹150/₹3,000)
 bil 100, 200 ka bill upload karte jao" loop the user described. `npx tsc --noEmit`, `npm run lint`, `npm
 test` (748/748, 7 new), and `npm run build` all clean throughout.
 
+## Masters navigation gap + department-wise Designation (2026-08-27)
+
+Two small, related master-data fixes on branch `fix_master_issue`.
+
+**Departments master had no navigation entry**: `/masters/departments` was a fully-working page (real
+`departments` table, complete CRUD service with duplicate-code check and audit logging, already wired as a
+real FK dropdown in both `EmployeeForm.tsx` and `MaterialRequestForm.tsx`) — but the `Masters` index page's
+`MASTER_SECTIONS` card list never linked to it, so there was no way to navigate there from the UI at all.
+Confirmed by comparing every directory under `src/app/(dashboard)/masters/` against the index list — this
+was the only one missing. Added the missing card.
+
+**Designation is now department-wise**: `Designation` previously had no relationship to `Department` at
+all — a single flat, company-wide list. Added a nullable `Designation.departmentId` FK (nullable, not
+required — a designation can belong to one department, e.g. "Cutting Master" under Cutting, or none at all,
+e.g. "General Manager", usable across every department). `HR Configuration → Designations` tab gained a
+Department `select` field (reusing `SimpleLookupManager`'s existing `optionsUrl` mechanism — the exact same
+pattern already proven by Machine's Production Line dropdown, zero new UI infrastructure needed).
+`EmployeeForm.tsx`'s own Designation dropdown now filters to the selected Department's own designations plus
+every department-agnostic one; changing Department clears an out-of-scope Designation selection rather than
+silently keeping a stale cross-department pick (the same fix already applied once to Sales Order's own
+Style-scoped Sample picker). Verified live via direct API + a `nativeInputValueSetter`-based script (the
+sandboxed browser's native `<select>` interaction is unreliable for both `form_input` and OS-level dropdown
+clicks — confirmed this doesn't reflect a real bug: with no department picked, only department-agnostic
+designations show; selecting "Cutting" correctly reveals a Cutting-only test designation while a
+Sewing-only one stays hidden) — caught and fixed a genuinely misleading hint-text label in the same pass
+(it claimed "showing every department" when the actual, correct behavior only shows department-agnostic
+ones until a department is picked).
+
+**Found and fixed in passing, not part of the original ask**: `hr-config.schema.ts`'s `isActive` field had
+`.default(true)` on all 4 entities (Designation, Employee Category, Shift, Holiday) — the exact same P3-class
+bug already fixed once this project for Color/Size/UnitOfMeasure: `SimpleLookupManager`'s ordinary "Edit"
+form never sends `isActive` (only the dedicated toggle does), so every routine edit was silently reactivating
+an already-deactivated record. Fixed identically across all 4: `isActive` is now `.optional()` with no
+default; create defaults to `true` when omitted; update preserves the existing value when omitted, applies
+an explicit value when supplied (the toggle's own flow). New `hr-config.service.test.ts` (13 tests) covers
+both the department-FK validation and the isActive-preserve regression for all 4 entities — this module had
+no test coverage before.
+
+Migration `20260827130000_add_designation_department` (non-destructive, nullable FK). `npx tsc --noEmit`,
+`npm run lint`, `npm test` (761/761, 13 new), and `npm run build` all clean throughout.
+
 ## Recommended Stack
 
 Next.js 14+ (App Router) + React + TypeScript + Tailwind CSS (frontend); Next.js API routes/route handlers as REST API; PostgreSQL + Prisma ORM; session-based auth (Auth.js/NextAuth, DB sessions) with RBAC and optional TOTP 2FA; S3-compatible or local file storage for attachments; server-side PDF/Excel export (`exceljs`, `pdf-lib`/`@react-pdf/renderer`).

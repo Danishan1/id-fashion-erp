@@ -7,6 +7,7 @@ import type {
   ShiftMasterInput,
 } from "./hr-config.schema";
 import { HrConfigRepository } from "./hr-config.repository";
+import { DepartmentRepository } from "@/modules/departments/department.repository";
 
 interface ActorContext {
   companyId: string;
@@ -19,12 +20,19 @@ export async function listDesignations(companyId: string) {
   return HrConfigRepository.designation.findMany({ where: { companyId }, orderBy: { name: "asc" } });
 }
 
+async function assertValidDepartment(companyId: string, departmentId: string) {
+  const department = await DepartmentRepository.findFirst({ where: { id: departmentId, companyId } });
+  if (!department) throw new BusinessRuleError("NOT_FOUND", "Department not found.", { id: departmentId });
+}
+
 export async function createDesignation(actor: ActorContext, input: DesignationInput) {
   const existing = await HrConfigRepository.designation.findFirst({ where: { companyId: actor.companyId, code: input.code } });
   if (existing) throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Designation code "${input.code}" is already in use.`);
 
+  if (input.departmentId) await assertValidDepartment(actor.companyId, input.departmentId);
+
   const designation = await HrConfigRepository.designation.create({
-    data: { companyId: actor.companyId, code: input.code, name: input.name, isActive: input.isActive },
+    data: { companyId: actor.companyId, code: input.code, name: input.name, departmentId: input.departmentId || null, isActive: input.isActive ?? true },
   });
 
   await writeAuditLog({
@@ -43,9 +51,16 @@ export async function updateDesignation(actor: ActorContext, id: string, input: 
   const existing = await HrConfigRepository.designation.findFirst({ where: { id, companyId: actor.companyId } });
   if (!existing) throw new BusinessRuleError("NOT_FOUND", "Designation not found.", { id });
 
+  if (input.departmentId) await assertValidDepartment(actor.companyId, input.departmentId);
+
   const updated = await HrConfigRepository.designation.update({
     where: { id },
-    data: { code: input.code, name: input.name, isActive: input.isActive },
+    data: {
+      code: input.code,
+      name: input.name,
+      departmentId: input.departmentId || null,
+      isActive: input.isActive !== undefined ? input.isActive : existing.isActive,
+    },
   });
 
   await writeAuditLog({
@@ -71,7 +86,7 @@ export async function createEmployeeCategory(actor: ActorContext, input: Employe
   if (existing) throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Employee category code "${input.code}" is already in use.`);
 
   const category = await HrConfigRepository.employeeCategory.create({
-    data: { companyId: actor.companyId, code: input.code, name: input.name, isActive: input.isActive },
+    data: { companyId: actor.companyId, code: input.code, name: input.name, isActive: input.isActive ?? true },
   });
 
   await writeAuditLog({
@@ -92,7 +107,7 @@ export async function updateEmployeeCategory(actor: ActorContext, id: string, in
 
   const updated = await HrConfigRepository.employeeCategory.update({
     where: { id },
-    data: { code: input.code, name: input.name, isActive: input.isActive },
+    data: { code: input.code, name: input.name, isActive: input.isActive !== undefined ? input.isActive : existing.isActive },
   });
 
   await writeAuditLog({
@@ -125,7 +140,7 @@ export async function createShiftMaster(actor: ActorContext, input: ShiftMasterI
       startTime: input.startTime,
       endTime: input.endTime,
       graceMinutes: input.graceMinutes,
-      isActive: input.isActive,
+      isActive: input.isActive ?? true,
     },
   });
 
@@ -153,7 +168,7 @@ export async function updateShiftMaster(actor: ActorContext, id: string, input: 
       startTime: input.startTime,
       endTime: input.endTime,
       graceMinutes: input.graceMinutes,
-      isActive: input.isActive,
+      isActive: input.isActive !== undefined ? input.isActive : existing.isActive,
     },
   });
 
@@ -182,7 +197,7 @@ export async function createHolidayMaster(actor: ActorContext, input: HolidayMas
   if (existing) throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Holiday "${input.name}" on this date already exists.`);
 
   const holiday = await HrConfigRepository.holidayMaster.create({
-    data: { companyId: actor.companyId, name: input.name, date: input.date, isActive: input.isActive },
+    data: { companyId: actor.companyId, name: input.name, date: input.date, isActive: input.isActive ?? true },
   });
 
   await writeAuditLog({
@@ -203,7 +218,7 @@ export async function updateHolidayMaster(actor: ActorContext, id: string, input
 
   const updated = await HrConfigRepository.holidayMaster.update({
     where: { id },
-    data: { name: input.name, date: input.date, isActive: input.isActive },
+    data: { name: input.name, date: input.date, isActive: input.isActive !== undefined ? input.isActive : existing.isActive },
   });
 
   await writeAuditLog({
