@@ -1,5 +1,6 @@
 import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
+import { PermissionService } from "@/core/rbac/PermissionService";
 import type { ListQuery } from "@/lib/list-query";
 import { convertUomQuantity } from "@/lib/uom-conversion";
 import { LookupRepository } from "@/modules/lookups/lookup.repository";
@@ -45,7 +46,9 @@ export async function listStylesWithBom(companyId: string, query: ListQuery) {
     id: row.id,
     styleName: row.styleName,
     styleCode: row.styleCode,
-    bomItemCount: row.bom?._count.items ?? 0,
+    // Only the APPROVED version's line count — a draft-in-progress with
+    // lines shouldn't read as "this style is ready" on the landing list.
+    bomItemCount: row.bom?.approvedVersion?._count.items ?? 0,
   }));
   return { data, totalCount };
 }
@@ -164,17 +167,67 @@ export async function upsertBom(actor: ActorContext, productId: string, input: B
   }
 
   const before = await BomRepository.findByProductId(actor.companyId, productId);
+  const beforeCurrentVersion = before?.versions.find((v) => v.versionNumber === before.currentVersionNumber);
 
-  const updated = await BomRepository.upsertWithItems(actor.companyId, productId, input.notes || null, preparedItems);
+  const updated = await BomRepository.saveDraftWithItems(actor.companyId, productId, actor.userId, input.notes || null, preparedItems);
+  const updatedCurrentVersion = updated.versions.find((v) => v.versionNumber === updated.currentVersionNumber)!;
 
   await writeAuditLog({
     companyId: actor.companyId,
     userId: actor.userId,
-    tableName: "boms",
-    recordId: updated.id,
+    tableName: "bom_versions",
+    recordId: updatedCurrentVersion.id,
     action: before ? "UPDATE" : "CREATE",
-    oldValues: before ? { itemCount: before.items.length } : null,
-    newValues: { itemCount: updated.items.length },
+    oldValues: beforeCurrentVersion ? { versionNumber: beforeCurrentVersion.versionNumber, itemCount: beforeCurrentVersion.items.length } : null,
+    newValues: { versionNumber: updatedCurrentVersion.versionNumber, itemCount: updatedCurrentVersion.items.length },
+  });
+
+  return updated;
+}
+
+/**
+ * Approves the style's current DRAFT BOM version — the real gate MRP/
+ * Production consume via `Bom.approvedVersionId` (see
+ * BomRepository.findManyByProductIds). Self-approval-guarded like every
+ * other approval checkpoint in this app. Requires the draft to actually
+ * have material lines — an empty approved BOM would silently tell MRP/
+ * Production "this style needs nothing," which is worse than having no
+ * approved BOM at all (that case is already honestly flagged as
+ * `stylesWithoutBom` in mrp.service.ts).
+ */
+export async function approveBomVersion(actor: ActorContext, productId: string) {
+  const product = await ProductRepository.findStyleById(actor.companyId, productId);
+  if (!product) throw new BusinessRuleError("NOT_FOUND", "Style not found.", { id: productId });
+
+  const bom = await BomRepository.findByProductId(actor.companyId, productId);
+  if (!bom || bom.currentVersionNumber === 0) {
+    throw new BusinessRuleError("NOT_FOUND", "This style has no BOM version to approve yet.", { id: productId });
+  }
+
+  const currentVersion = bom.versions.find((v) => v.versionNumber === bom.currentVersionNumber)!;
+  if (currentVersion.status !== "DRAFT") {
+    throw new BusinessRuleError(
+      "INVALID_STATE_TRANSITION",
+      `Version ${currentVersion.versionNumber} is already ${currentVersion.status.toLowerCase()} — nothing to approve. Edit the BOM to start a new version.`,
+      {}
+    );
+  }
+  if (currentVersion.items.length === 0) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "Cannot approve a BOM version with no material lines.", {});
+  }
+
+  await PermissionService.assert(actor.userId, "bom_mrp", "approve", { createdBy: currentVersion.createdByUserId });
+
+  const updated = await BomRepository.approveVersionInTx(bom.id, currentVersion.id, actor.userId);
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "bom_versions",
+    recordId: currentVersion.id,
+    action: "APPROVE",
+    oldValues: { status: "DRAFT" },
+    newValues: { status: "APPROVED", versionNumber: currentVersion.versionNumber },
   });
 
   return updated;

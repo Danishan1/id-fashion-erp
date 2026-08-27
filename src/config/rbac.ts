@@ -95,7 +95,10 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     sampling: ["view", "approve", "reject"],
     buyer_enquiries: ["view", "reject"],
     sales_orders: ["view", "approve", "export"],
-    bom_mrp: ["view"],
+    // "approve" here gates BOM version approval — reuses the existing
+    // action rather than inventing a new verb, same as sales_orders/
+    // production/sampling above.
+    bom_mrp: ["view", "approve"],
     // "approve" here gates Lot restructure (split/merge) and forward
     // stage-skip overrides (see PRODUCTION_MODULE_DESIGN.md §7/§9) — reuses
     // the existing action rather than inventing new production-specific verbs.
@@ -146,7 +149,9 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     sampling: ["view"],
     buyer_enquiries: ["view"],
     sales_orders: ["view"],
-    bom_mrp: ["view", "create", "edit", "export"],
+    // "approve" here gates BOM version approval — Production Manager is the
+    // second real-world approver alongside Management for a style's BOM.
+    bom_mrp: ["view", "create", "edit", "approve", "export"],
     // "approve" gates Lot restructure (split/merge) and forward stage-skip
     // overrides — see PRODUCTION_MODULE_DESIGN.md §7/§9.
     production: ["view", "create", "edit", "approve", "cancel", "export", "print"],

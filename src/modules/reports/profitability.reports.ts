@@ -46,24 +46,32 @@ function makeStyleMaterialCostResolver(companyId: string) {
       const bom = await prisma.bom.findFirst({
         where: { companyId, productId },
         select: {
-          items: {
+          // Only the APPROVED version — an unapproved edit-in-progress must
+          // never silently feed a profitability number any more than it
+          // may feed MRP or the consumption-variance report.
+          approvedVersion: {
             select: {
-              quantityPerUnit: true,
-              wastagePercentage: true,
-              material: { select: { unitCost: true } },
+              items: {
+                select: {
+                  quantityPerUnit: true,
+                  wastagePercentage: true,
+                  material: { select: { unitCost: true } },
+                },
+              },
             },
           },
         },
       });
 
-      // No BOM at all for this style — Material Cost is unavailable, not zero.
-      if (!bom) {
+      // No BOM at all, or no approved version yet — Material Cost is
+      // unavailable, not zero.
+      if (!bom?.approvedVersion) {
         return { costPerUnit: 0, available: false };
       }
 
       let costPerUnit = 0;
       let allMaterialsHaveCost = true;
-      for (const item of bom.items) {
+      for (const item of bom.approvedVersion.items) {
         const unitCost = item.material.unitCost;
         if (unitCost === null) {
           // A BomItem whose material has no unitCost set — its contribution
