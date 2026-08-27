@@ -4,7 +4,7 @@ import { useState } from "react";
 import { SimpleLookupManager } from "@/components/ui/SimpleLookupManager";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 
-const TABS = ["Payment Types", "Bank Accounts"] as const;
+const TABS = ["Payment Types", "Bank Accounts", "Invoice Series"] as const;
 type Tab = (typeof TABS)[number];
 
 export default function FinanceConfigPage() {
@@ -78,6 +78,22 @@ export default function FinanceConfigPage() {
             { key: "name", header: "Label" },
             { key: "bankName", header: "Bank" },
             { key: "accountNumber", header: "Account No." },
+          ]}
+        />
+      )}
+      {tab === "Invoice Series" && (
+        <SimpleLookupManager
+          fetchUrl="/api/v1/invoice-series"
+          fields={[
+            { key: "name", label: "Series Name", required: true, placeholder: "e.g. Retail Series" },
+            { key: "prefix", label: "Prefix", required: true, placeholder: "e.g. RET" },
+            { key: "fiscalYearLabel", label: "Fiscal Year Label", required: true, placeholder: "e.g. 2025-2026" },
+          ]}
+          displayColumns={[
+            { key: "name", header: "Series Name" },
+            { key: "prefix", header: "Prefix" },
+            { key: "fiscalYearLabel", header: "Fiscal Year" },
+            { key: "nextNumber", header: "Next No." },
           ]}
         />
       )}

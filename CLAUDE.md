@@ -2657,6 +2657,161 @@ or integrity fixes were needed this pass.
 just once at the end. 10 commits, each scoped to one logical fix with its own regression test where
 applicable.
 
+## Custom Invoice module (standalone, order-independent) + Expense-module gap-fill (2026-08-27)
+
+User posted screenshots of a reference project's ("EQ Business OS", `D:\office-data\claude-projects\hrms`)
+Invoice Management and Accountant Dashboard/Expense screens and asked for a gap comparison, then to build
+what was missing. Two separate builds landed this session, both under `Accounts`, both reusing this
+project's established journal/RBAC/CF-5-idempotency patterns rather than inventing new ones.
+
+**Custom Invoice** (`src/modules/accounts/custom-invoice*.ts`, `/accounts/custom-invoices`) — a standalone
+invoice type independent of a Sales Order (unlike the existing order-linked Sales Invoice), for ad hoc
+billing. Ships with its own numbering series (`InvoiceSeries` master, `/accounts/finance-config` → "Invoice
+Series" tab), Payments (`CustomInvoicePayment` — receipt against an invoice's balance, capped at
+`grandTotal - creditedAmount - paidAmount`), and Credit Notes (`CustomInvoiceCreditNote`, 3 types: overall
+discount, product-wise, product-return — new `DocumentType.CUSTOM_INVOICE_CREDIT_NOTE` prefix `CN`), plus a
+per-customer running-balance Client Ledger (`/accounts/custom-invoices/client-ledger`). **Edit guard closes a
+real gap**: `updateCustomInvoice()` blocks editing once *any* credit note exists against the invoice —
+including a cancelled one, since a cancelled `CustomInvoiceCreditNoteItem` row still FK-references the
+original invoice item and a full item-replace-on-edit would 500 on that constraint. 19 new tests
+(`custom-invoice-payment.service.test.ts`, `custom-invoice-credit-note.service.test.ts`).
+
+**Expense-module gap-fill** — after a 4-item gap analysis against the reference Accountant Dashboard, user
+answered "and all" (build every item, not just the recommended two):
+- **TDS on Expense** — `Expense.tdsPercentage`/`tdsAmount`, computed on the base `amount` (not the
+  GST-inclusive total, matching the reference tool's own live calc). `postExpense()` resolves a new `TDS-PAY`
+  control account and adds a `Cr TDS Payable` journal line when TDS applies, reducing the final `Cr
+  Cash-or-Bank` line by the TDS amount instead of the full total.
+- **Internal Transfer** (`src/modules/accounts/internal-transfer.*`, `/accounts/internal-transfers`) — moving
+  money between the Cash and Bank control accounts (this Chart of Accounts has exactly one control account
+  per `PaymentType.type`, not per physical account — so a transfer between two same-typed payment types is
+  rejected as a no-op `Dr X / Cr X`). DRAFT → POSTED (self-approval-guarded via `accounts`/`post`, Dr
+  toAccount / Cr fromAccount) → immutable; cancel only from DRAFT. New `DocumentType.INTERNAL_TRANSFER`
+  (prefix `TRF`). 6 new tests.
+- **Employee Advance + Settlement** (`src/modules/accounts/employee-advance.*`, `/accounts/employee-advances`)
+  — an advance issued to an employee (DRAFT → ISSUED, Dr new `EMP-ADV` control account / Cr Cash-or-Bank),
+  settled via one or more `EmployeeAdvanceSettlement` child rows against a real expense account (Dr expense
+  [+ Dr GST-ITC] / Cr `EMP-ADV`), each guarded to never exceed what's still unsettled
+  (`amount - settledAmount`, `AMOUNT_EPSILON` tolerance matching every other remaining-balance cap in this
+  project). The parent advance's status is recomputed (never hand-set) to `PARTIALLY_SETTLED`/`SETTLED` after
+  every settlement post via a guarded accumulator increment on `settledAmount`. New `DocumentType`s
+  `EMPLOYEE_ADVANCE` (prefix `ADV`)/`EMPLOYEE_ADVANCE_SETTLEMENT` (prefix `ADVS`). Both `EMP-ADV` and
+  `TDS-PAY` were added as new `isSystemAccount: true` Chart of Accounts control rows. 15 new tests.
+- **On Account Payment** (extends the existing `Payment`/`PaymentAllocation` model, no new table) — a
+  Receipt/Payment can now be recorded with zero allocations at creation (`allocations` schema field relaxed
+  from `.min(1)` to `.default([])`) and posted for its full amount against Cash/Bank ⇄ AR/AP, exactly as
+  before. A new `allocatePayment()` applies an already-POSTED payment's *unallocated remainder* against real
+  outstanding invoices later, as bills arrive — capped at what's actually unallocated on the payment (not
+  just what the target invoice can still absorb), and **deliberately creates no new Journal**: the cash
+  movement already happened in full at the original post time: applying an allocation later is bookkeeping
+  reassignment, not a new financial transaction. UI: `PaymentForm.tsx` gained an "On Account" checkbox;
+  `PaymentWorkflowPanel.tsx` shows an amber "Unallocated: ₹X" banner with an Allocate action once a payment
+  has a real unallocated remainder. 8 new/changed tests (including a dedicated regression proving no
+  Journal is created on allocation).
+
+**Environment gap found and fixed while verifying live, unrelated to the feature code**: this dev database
+was missing the entire `expenses` module's `Permission` catalog (0 rows) — every role including SUPER_ADMIN
+got `403 PERMISSION_DENIED` on any Expense/Employee-Advance action — and 4 of the standard seeded Chart of
+Accounts rows (`RETAINED-EARN`, `EXP-RENT`, `EXP-SALARY`, `EXP-UTIL`). Matches the exact "dev DB missing a
+module's permission catalog rows" gap already hit and fixed twice before for `marketing`/`hrms_*` and
+`expenses`/`dispatch` (see the Phase-10 QA section above) — backfilled both via the same idempotent,
+additive-only one-off-script pattern (`createMany`+`skipDuplicates`/`upsert`, re-running exactly `seed.ts`'s
+own permission-catalog and Chart-of-Accounts literals), then a full dev-server restart to clear
+`PermissionService`'s in-process cache. Not a defect in the new code — a pre-existing gap in this particular
+dev DB's seed history that this session's live verification happened to be the first to exercise those
+specific code paths against.
+
+**Verified live end-to-end** through direct `fetch()` calls against the real dev DB (browser
+`form_input`-on-`<select>` reliability issues from earlier sessions made this the established fallback):
+Internal Transfer created→posted (`TRF-2026-00001`, confirmed Dr BANK/Cr CASH ₹5000) →
+cancel-blocked-once-posted (`409`); Employee Advance created→issued (`ADV-2026-00001`, confirmed Dr
+EMP-ADV/Cr CASH ₹8000) → two settlements (`ADVS-2026-00001`/`00002`) posted, confirmed each journal's exact
+lines and the parent advance's status correctly recomputing `DRAFT`→`PARTIALLY_SETTLED`→`SETTLED`, confirmed
+a further settlement attempt and a cancel attempt on the now-`SETTLED` advance both correctly `409`; On
+Account Payment created with zero allocations (`PAY-2026-00003`, ₹10,000) → posted, confirmed a single Dr
+CASH/Cr AR journal for the full amount with zero allocation rows → created and posted a real Sales Invoice
+(`INV-2026-00002`, ₹3,750) against a separate confirmed order → allocated ₹3,750 of the on-account payment
+against it, confirmed the invoice flipped to `PAID` and the total journal count was unchanged (no new
+Journal created) → confirmed a further allocation attempt against the now-fully-paid invoice correctly
+rejected. `npx tsc --noEmit`, `npm run lint`, `npm test` (735/735, 66 new), and `npm run build` all clean
+throughout.
+
+## Purchase Invoice — direct/party bills with no Purchase Order (2026-08-27)
+
+User asked how to record an expense/bill for a "party" (supplier) — the existing Purchase Invoice always
+required a linked Purchase Order, so a genuine vendor bill with no goods behind it (freight, consulting,
+rent, any service bill from a supplier) had no home that created a real Accounts Payable liability. Expense
+(with its optional `supplierId` tag) covers the "pay it immediately, no real payable" case; this closes the
+other half — a bill that should sit as a real, trackable payable and be settled later via Payment, exactly
+like a PO-backed Purchase Invoice already is.
+
+**Design: extend Purchase Invoice, don't build a parallel document** — evaluated against a standalone
+"Vendor Bill" module (mirroring Custom Invoice's own standalone-AR pattern) and rejected: a parallel model
+would need its own three-way `PaymentAllocation` FK (breaking the clean two-nullable-FK CHECK constraint
+`(sales_invoice_id IS NOT NULL) != (purchase_invoice_id IS NOT NULL)` the moment a NULL FK stops being
+sufficient) and its own Supplier Outstanding/Aging reporting. Extending Purchase Invoice instead means every
+one of those already gets a standalone bill for free, with zero new code.
+
+**Schema**: `PurchaseInvoice.purchaseOrderId` is now nullable (null = no backing PO at all — `supplierId`
+becomes a real, directly-supplied input in that case rather than derived from the order).
+`PurchaseInvoiceItem.purchaseOrderItemId`/`productId` are now nullable, and two new nullable columns —
+`description` (what a direct line is for) and `expenseAccountId` (which GL account to debit for it) — are
+added. **Every line is discriminated per-line, not per-header** — an invoice can mix a PO-linked line with a
+direct one on the same document (e.g. goods received against a PO plus an ad hoc freight charge), enforced
+by a hand-added CHECK constraint (`purchase_invoice_items_exactly_one_source_check`), the same
+two-nullable-field-XOR shape already proven by `payment_allocations_exactly_one_invoice_check`.
+
+**Reused, not duplicated**: `assertValidExpenseAccount()` (the COGS-exclusion + active-check logic) had been
+copy-pasted verbatim into both `expense.service.ts` and `employee-advance.service.ts` earlier this session —
+extracted into a single exported function in `chart-of-account.service.ts` before this third copy was
+needed, and both existing call sites switched to import it. `findOutstandingBySupplier()` (Payment's own
+allocation-picker query, keyed only on `companyId`/`supplierId`/`status`) needed zero changes to pick up a
+standalone bill — confirmed live, not just by inspection.
+
+**Posting logic**: `postPurchaseInvoice()` now builds one Dr line per distinct debit target — a single
+`Dr COGS` line for the sum of all PO-linked lines (derived as `invoice.subtotalAmount − directLinesTotal`,
+not re-summed from raw quantity×price, matching this function's original "trust the stored, already-rounded
+total" precedent and avoiding a second source of rounding drift), plus one `Dr <account>` line per distinct
+`expenseAccountId` among the direct lines — then the usual `Dr GST-ITC` (if any tax) and `Cr AP` for the
+total. The over-invoice guard (`guardedIncrementInvoiced`) only ever runs for PO-linked lines; direct lines
+have no such cap. A direct line's chosen account is re-validated active at post time (mirroring Expense's
+own re-check), since it could have been deactivated between drafting and posting.
+
+**UI**: `PurchaseInvoiceForm.tsx` gained an "Against Purchase Order" / "Direct Bill (No PO)" toggle — PO mode
+keeps the existing order-items table and now also shows an "Additional Direct Lines" section underneath for
+mixed use; Direct mode swaps the PO picker for a Supplier picker and relabels the section "Bill Lines".
+`PurchaseInvoiceWorkflowPanel.tsx` renders the Purchase Order field as "Direct Bill (no PO)" when absent, and
+the items table's "Style" column generalized to "Item", showing either the linked product or
+`description (code — account name)` per line.
+
+**A real, unrelated bug found and fixed while live-verifying this feature**: paying off the new standalone
+bill via `PAYMENT_OUT` + an allocation at Payment-creation time 500'd with a raw Prisma
+`PrismaClientValidationError`. Root cause, entirely pre-existing in this session's earlier "On Account
+Payment" work (not caused by this feature): `ValidatedAllocation` carries an `invoiceTotalAmount` field used
+only by `applyAllocationInTx()`'s own in-memory over-payment guard — not a real `PaymentAllocation` column —
+and `createPayment()` was passing the full `ValidatedAllocation[]` straight into
+`PaymentRepository.createWithAllocations()` instead of whitelisting it down first, the way `allocatePayment()`
+already correctly did inline. `postPayment()`'s own allocation loop was never affected (it re-derives
+`invoiceTotalAmount` fresh from the fetched invoice relation, never trusting a stored value). This is exactly
+the kind of bug TypeScript's structural typing can't catch — passing a variable with *extra* properties
+where a narrower type is expected skips the excess-property check that only applies to object literals — so
+it passed `tsc --noEmit` clean and was only ever going to surface via a real Prisma call. It had gone
+undetected because every existing `createPayment` allocation test asserted with `toMatchObject` (which
+tolerates extra keys) rather than `toEqual`; a new regression test using `toEqual` was added specifically to
+close that gap, plus the one-line fix in `createPayment()` itself.
+
+**Verified live end-to-end** through direct `fetch()` calls: created a standalone direct bill
+(`PINV-2026-00001`, XYZ Textile, "Freight for August shipment" against `EXP-UTIL`, ₹4,500, due date correctly
++30 days from the supplier's own `paymentTermsDays`) → posted, confirmed `Dr EXP-UTIL 4500 / Cr AP 4500` →
+confirmed it appeared automatically in Payment's own outstanding-invoices picker with zero code changes
+needed there → paid it off via a real `PAYMENT_OUT` Payment with an allocation at creation time (the exact
+path that surfaced the bug above), confirmed `POSTED`/`PAID`; separately created a mixed invoice
+(`PINV-2026-00002`, PO `PO-2026-00002`'s Cotton Fabric line ₹1,000 + a direct Freight line ₹250) → posted,
+confirmed `Dr COGS 1000 / Dr EXP-UTIL 250 / Cr AP 1250` in one journal and that only the PO-linked line
+incremented `PurchaseOrderItem.invoicedQuantity` (to exactly 10, matching what was received); confirmed the
+UI toggle correctly swaps between PO/Supplier pickers and relabels the lines section. `npx tsc --noEmit`,
+`npm run lint`, `npm test` (741/741, 6 new), and `npm run build` all clean throughout.
+
 ## Recommended Stack
 
 Next.js 14+ (App Router) + React + TypeScript + Tailwind CSS (frontend); Next.js API routes/route handlers as REST API; PostgreSQL + Prisma ORM; session-based auth (Auth.js/NextAuth, DB sessions) with RBAC and optional TOTP 2FA; S3-compatible or local file storage for attachments; server-side PDF/Excel export (`exceljs`, `pdf-lib`/`@react-pdf/renderer`).

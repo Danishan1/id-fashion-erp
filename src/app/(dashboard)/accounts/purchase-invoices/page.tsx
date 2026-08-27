@@ -11,7 +11,7 @@ interface PurchaseInvoiceRow {
   dueDate: string;
   status: string;
   totalAmount: string;
-  purchaseOrder: { orderNumber: string };
+  purchaseOrder: { orderNumber: string } | null;
   supplier: { name: string };
 }
 
@@ -22,7 +22,8 @@ export default function PurchaseInvoicesListPage() {
         <Breadcrumb items={[{ label: "Accounts", href: "/accounts" }, { label: "Purchase Invoices" }]} />
         <h1 className="mt-2 text-lg font-semibold text-zinc-900 dark:text-zinc-50">Purchase Invoices</h1>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-          Supplier invoices raised against received purchase orders — partial and repeatable per order.
+          Supplier invoices raised against received purchase orders — partial and repeatable per order —
+          or a direct/party bill for a service or expense with no purchase order at all.
         </p>
       </div>
 

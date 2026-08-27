@@ -29,6 +29,8 @@ interface ExpenseDetail {
   amount: string;
   taxAmount: string;
   totalAmount: string;
+  tdsPercentage: string | null;
+  tdsAmount: string;
   referenceNumber: string | null;
   status: "DRAFT" | "POSTED" | "CANCELLED";
   account: { code: string; name: string };
@@ -180,6 +182,22 @@ export function ExpenseWorkflowPanel({ expense }: { expense: ExpenseDetail }) {
           <dt className="text-zinc-500 dark:text-zinc-400">Total</dt>
           <dd className="font-medium text-zinc-900 dark:text-zinc-50">₹{formatCurrency(expense.totalAmount)}</dd>
         </div>
+        {Number(expense.tdsAmount) > 0 && (
+          <>
+            <div>
+              <dt className="text-zinc-500 dark:text-zinc-400">TDS</dt>
+              <dd className="font-medium text-zinc-900 dark:text-zinc-50">
+                {Number(expense.tdsPercentage)}% (₹{formatCurrency(expense.tdsAmount)})
+              </dd>
+            </div>
+            <div>
+              <dt className="text-zinc-500 dark:text-zinc-400">Net Paid</dt>
+              <dd className="font-medium text-zinc-900 dark:text-zinc-50">
+                ₹{formatCurrency((Number(expense.totalAmount) - Number(expense.tdsAmount)).toString())}
+              </dd>
+            </div>
+          </>
+        )}
         <div>
           <dt className="text-zinc-500 dark:text-zinc-400">Payment Type</dt>
           <dd className="font-medium text-zinc-900 dark:text-zinc-50">{expense.paymentType.name}</dd>
@@ -295,7 +313,7 @@ export function ExpenseWorkflowPanel({ expense }: { expense: ExpenseDetail }) {
       <ConfirmModal
         open={showApproveConfirm}
         title="Approve expense?"
-        message={`Approving will lock this expense permanently and auto-create a settlement Journal (Dr ${expense.account.name}${Number(expense.taxAmount) > 0 ? " / Dr GST Input Tax Credit" : ""} / Cr Cash-or-Bank) for ₹${formatCurrency(expense.totalAmount)}.`}
+        message={`Approving will lock this expense permanently and auto-create a settlement Journal (Dr ${expense.account.name}${Number(expense.taxAmount) > 0 ? " / Dr GST Input Tax Credit" : ""}${Number(expense.tdsAmount) > 0 ? " / Cr TDS Payable" : ""} / Cr Cash-or-Bank) for ₹${formatCurrency(expense.totalAmount)}.`}
         confirmLabel="Approve"
         isBusy={isBusy}
         onConfirm={async () => {

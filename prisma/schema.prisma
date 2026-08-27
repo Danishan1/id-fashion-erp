@@ -26,91 +26,98 @@ model Company {
   createdAt            DateTime @default(now()) @map("created_at")
   updatedAt            DateTime @updatedAt @map("updated_at")
 
-  baseCurrency                Currency                     @relation(fields: [baseCurrencyCode], references: [code])
-  branches                    Branch[]
-  users                       User[]
-  roles                       Role[]
-  customers                   Customer[]
-  suppliers                   Supplier[]
-  departments                 Department[]
-  employees                   Employee[]
-  products                    Product[]
-  colors                      Color[]
-  sizes                       Size[]
-  warehouses                  Warehouse[]
-  productionStages            ProductionStage[]
-  productionLines             ProductionLine[]
-  salesAgents                 SalesAgent[]
-  brands                      Brand[]
-  categories                  Category[]
-  seasons                     Season[]
-  productFittings             ProductFitting[]
-  productTypes                ProductType[]
-  designs                     Design[]
-  designPatterns              DesignPattern[]
-  patterns                    Pattern[]
-  fabricGsms                  FabricGsm[]
-  fabricDyes                  FabricDye[]
-  fabricWeaveTypes            FabricWeaveType[]
-  fabricWidths                FabricWidth[]
-  fabricCompositions          FabricComposition[]
-  machines                    Machine[]
-  designations                Designation[]
-  employeeCategories          EmployeeCategory[]
-  shiftMasters                ShiftMaster[]
-  holidayMasters              HolidayMaster[]
-  costMasters                 CostMaster[]
-  paymentTypes                PaymentType[]
-  bankAccounts                BankAccount[]
-  sampleRequests              SampleRequest[]
-  buyerEnquiries              BuyerEnquiry[]
-  salesOrders                 SalesOrder[]
-  boms                        Bom[]
-  purchaseOrders              PurchaseOrder[]
-  materialRequests            MaterialRequest[]
-  goodsReceipts               GoodsReceipt[]
-  fabricRolls                 FabricRoll[]
-  inventoryTransactions       InventoryTransaction[]
-  stockBalances               StockBalance[]
-  stockMovements              StockMovement[]
-  productionOrders            ProductionOrder[]
-  lots                        Lot[]
-  lotRelations                LotRelation[]
-  jobOrders                   JobOrder[]
-  productionStageTransactions ProductionStageTransaction[]
-  qcInspections               QcInspection[]
-  defectTypes                 DefectType[]
-  documentSequences           DocumentSequence[]
-  auditLogs                   AuditLog[]
-  notifications               Notification[]
-  attachments                 Attachment[]
-  leads                       Lead[]
-  deals                       Deal[]
-  crmActivities               CrmActivity[]
-  crmFollowups                CrmFollowup[]
-  crmRoundRobinState          CrmRoundRobinState?
-  crmSettings                 CrmSettings?
-  importBatches               ImportBatch[]
-  campaigns                   Campaign[]
-  campaignAttributions        CampaignAttribution[]
-  campaignAlerts              CampaignAlert[]
-  adAccountConnections        AdAccountConnection[]
-  attendanceRecords           AttendanceRecord[]
+  baseCurrency                 Currency                      @relation(fields: [baseCurrencyCode], references: [code])
+  branches                     Branch[]
+  users                        User[]
+  roles                        Role[]
+  customers                    Customer[]
+  suppliers                    Supplier[]
+  departments                  Department[]
+  employees                    Employee[]
+  products                     Product[]
+  colors                       Color[]
+  sizes                        Size[]
+  warehouses                   Warehouse[]
+  productionStages             ProductionStage[]
+  productionLines              ProductionLine[]
+  salesAgents                  SalesAgent[]
+  brands                       Brand[]
+  categories                   Category[]
+  seasons                      Season[]
+  productFittings              ProductFitting[]
+  productTypes                 ProductType[]
+  designs                      Design[]
+  designPatterns               DesignPattern[]
+  patterns                     Pattern[]
+  fabricGsms                   FabricGsm[]
+  fabricDyes                   FabricDye[]
+  fabricWeaveTypes             FabricWeaveType[]
+  fabricWidths                 FabricWidth[]
+  fabricCompositions           FabricComposition[]
+  machines                     Machine[]
+  designations                 Designation[]
+  employeeCategories           EmployeeCategory[]
+  shiftMasters                 ShiftMaster[]
+  holidayMasters               HolidayMaster[]
+  costMasters                  CostMaster[]
+  paymentTypes                 PaymentType[]
+  bankAccounts                 BankAccount[]
+  sampleRequests               SampleRequest[]
+  buyerEnquiries               BuyerEnquiry[]
+  salesOrders                  SalesOrder[]
+  boms                         Bom[]
+  purchaseOrders               PurchaseOrder[]
+  materialRequests             MaterialRequest[]
+  goodsReceipts                GoodsReceipt[]
+  fabricRolls                  FabricRoll[]
+  inventoryTransactions        InventoryTransaction[]
+  stockBalances                StockBalance[]
+  stockMovements               StockMovement[]
+  productionOrders             ProductionOrder[]
+  lots                         Lot[]
+  lotRelations                 LotRelation[]
+  jobOrders                    JobOrder[]
+  productionStageTransactions  ProductionStageTransaction[]
+  qcInspections                QcInspection[]
+  defectTypes                  DefectType[]
+  documentSequences            DocumentSequence[]
+  auditLogs                    AuditLog[]
+  notifications                Notification[]
+  attachments                  Attachment[]
+  leads                        Lead[]
+  deals                        Deal[]
+  crmActivities                CrmActivity[]
+  crmFollowups                 CrmFollowup[]
+  crmRoundRobinState           CrmRoundRobinState?
+  crmSettings                  CrmSettings?
+  importBatches                ImportBatch[]
+  campaigns                    Campaign[]
+  campaignAttributions         CampaignAttribution[]
+  campaignAlerts               CampaignAlert[]
+  adAccountConnections         AdAccountConnection[]
+  attendanceRecords            AttendanceRecord[]
   attendanceCorrectionRequests AttendanceCorrectionRequest[]
-  leaveTypes                  LeaveType[]
-  leaveRequests               LeaveRequest[]
-  leaveBalanceCarryForwards   LeaveBalanceCarryForward[]
-  chartOfAccounts             ChartOfAccount[]
-  taxTypes                    TaxType[]
-  taxRates                    TaxRate[]
-  journals                    Journal[]
-  salesInvoices               SalesInvoice[]
-  purchaseInvoices            PurchaseInvoice[]
-  payments                    Payment[]
-  expenses                    Expense[]
-  dispatches                  Dispatch[]
-  jobWorkOrders               JobWorkOrder[]
-  jobWorkReceipts             JobWorkReceipt[]
+  leaveTypes                   LeaveType[]
+  leaveRequests                LeaveRequest[]
+  leaveBalanceCarryForwards    LeaveBalanceCarryForward[]
+  chartOfAccounts              ChartOfAccount[]
+  taxTypes                     TaxType[]
+  taxRates                     TaxRate[]
+  journals                     Journal[]
+  salesInvoices                SalesInvoice[]
+  purchaseInvoices             PurchaseInvoice[]
+  payments                     Payment[]
+  expenses                     Expense[]
+  dispatches                   Dispatch[]
+  jobWorkOrders                JobWorkOrder[]
+  jobWorkReceipts              JobWorkReceipt[]
+  invoiceSeries                InvoiceSeries[]
+  customInvoices               CustomInvoice[]
+  customInvoicePayments        CustomInvoicePayment[]
+  customInvoiceCreditNotes     CustomInvoiceCreditNote[]
+  internalTransfers            InternalTransfer[]
+  employeeAdvances             EmployeeAdvance[]
+  employeeAdvanceSettlements   EmployeeAdvanceSettlement[]
 
   @@map("companies")
 }
@@ -160,6 +167,9 @@ model Branch {
   expenses              Expense[]
   dispatches            Dispatch[]
   jobWorkOrders         JobWorkOrder[]
+  customInvoices        CustomInvoice[]
+  internalTransfers     InternalTransfer[]
+  employeeAdvances      EmployeeAdvance[]
 
   @@unique([companyId, code])
   @@map("branches")
@@ -193,44 +203,44 @@ model User {
   createdAt         DateTime   @default(now()) @map("created_at")
   updatedAt         DateTime   @updatedAt @map("updated_at")
 
-  company                              Company                      @relation(fields: [companyId], references: [id])
-  defaultBranch                        Branch?                      @relation("UserDefaultBranch", fields: [defaultBranchId], references: [id])
-  employee                             Employee?                    @relation(fields: [employeeId], references: [id])
+  company                              Company                       @relation(fields: [companyId], references: [id])
+  defaultBranch                        Branch?                       @relation("UserDefaultBranch", fields: [defaultBranchId], references: [id])
+  employee                             Employee?                     @relation(fields: [employeeId], references: [id])
   branchRoles                          UserBranchRole[]
   auditLogs                            AuditLog[]
   notifications                        Notification[]
   uploadedFiles                        Attachment[]
-  sampleRequestsMade                   SampleRequest[]              @relation("SampleRequestedBy")
-  buyerEnquiriesMade                   BuyerEnquiry[]               @relation("BuyerEnquiryRequestedBy")
-  salesOrdersRequested                 SalesOrder[]                 @relation("SalesOrderRequestedBy")
-  purchaseOrdersRequested              PurchaseOrder[]              @relation("PurchaseOrderRequestedBy")
-  materialRequestsMade                 MaterialRequest[]            @relation("MaterialRequestRequestedBy")
-  goodsReceiptsReceived                GoodsReceipt[]               @relation("GoodsReceiptReceivedBy")
-  inventoryTransactionsPerformed       InventoryTransaction[]       @relation("InventoryTransactionPerformedBy")
-  stockMovementsPerformed              StockMovement[]              @relation("StockMovementPerformedBy")
-  sampleVersionsCreated                SampleVersion[]              @relation("SampleVersionCreatedBy")
-  sampleVersionsCostingLocked          SampleVersion[]              @relation("SampleVersionCostingLockedBy")
-  bomVersionsCreated                   BomVersion[]                 @relation("BomVersionCreatedBy")
-  bomVersionsApproved                  BomVersion[]                 @relation("BomVersionApprovedBy")
-  sampleApprovalsMade                  SampleApproval[]             @relation("SampleApprovalDecidedBy")
-  sampleCommentsMade                   SampleComment[]              @relation("SampleCommentAuthor")
-  productionOrdersRequested            ProductionOrder[]            @relation("ProductionOrderRequestedBy")
-  lotsCreated                          Lot[]                        @relation("LotCreatedBy")
-  lotRelationsPerformed                LotRelation[]                @relation("LotRelationPerformedBy")
-  jobOrderAssignmentsMade              JobOrderAssignment[]         @relation("JobOrderAssignmentAssignedBy")
-  jobOrderProgressEntriesRecorded      JobOrderProgressEntry[]      @relation("JobOrderProgressEntryRecordedBy")
-  productionStageTransactionsPerformed ProductionStageTransaction[] @relation("ProductionStageTransactionPerformedBy")
-  qcInspectionsMade                    QcInspection[]               @relation("QcInspectionInspector")
-  leadsAssigned                        Lead[]                       @relation("LeadAssignedTo")
-  leadsCreated                         Lead[]                       @relation("LeadCreatedBy")
-  dealsAssigned                        Deal[]                       @relation("DealAssignedTo")
-  dealsCreated                         Deal[]                       @relation("DealCreatedBy")
-  crmActivitiesPerformed               CrmActivity[]                @relation("CrmActivityPerformedBy")
-  crmFollowupsAssigned                 CrmFollowup[]                @relation("CrmFollowupAssignedTo")
-  crmFollowupsCreated                  CrmFollowup[]                @relation("CrmFollowupCreatedBy")
-  campaignsOwned                       Campaign[]                   @relation("CampaignOwner")
-  campaignsCreated                     Campaign[]                   @relation("CampaignCreatedBy")
-  campaignsApproved                    Campaign[]                   @relation("CampaignApprovedBy")
+  sampleRequestsMade                   SampleRequest[]               @relation("SampleRequestedBy")
+  buyerEnquiriesMade                   BuyerEnquiry[]                @relation("BuyerEnquiryRequestedBy")
+  salesOrdersRequested                 SalesOrder[]                  @relation("SalesOrderRequestedBy")
+  purchaseOrdersRequested              PurchaseOrder[]               @relation("PurchaseOrderRequestedBy")
+  materialRequestsMade                 MaterialRequest[]             @relation("MaterialRequestRequestedBy")
+  goodsReceiptsReceived                GoodsReceipt[]                @relation("GoodsReceiptReceivedBy")
+  inventoryTransactionsPerformed       InventoryTransaction[]        @relation("InventoryTransactionPerformedBy")
+  stockMovementsPerformed              StockMovement[]               @relation("StockMovementPerformedBy")
+  sampleVersionsCreated                SampleVersion[]               @relation("SampleVersionCreatedBy")
+  sampleVersionsCostingLocked          SampleVersion[]               @relation("SampleVersionCostingLockedBy")
+  bomVersionsCreated                   BomVersion[]                  @relation("BomVersionCreatedBy")
+  bomVersionsApproved                  BomVersion[]                  @relation("BomVersionApprovedBy")
+  sampleApprovalsMade                  SampleApproval[]              @relation("SampleApprovalDecidedBy")
+  sampleCommentsMade                   SampleComment[]               @relation("SampleCommentAuthor")
+  productionOrdersRequested            ProductionOrder[]             @relation("ProductionOrderRequestedBy")
+  lotsCreated                          Lot[]                         @relation("LotCreatedBy")
+  lotRelationsPerformed                LotRelation[]                 @relation("LotRelationPerformedBy")
+  jobOrderAssignmentsMade              JobOrderAssignment[]          @relation("JobOrderAssignmentAssignedBy")
+  jobOrderProgressEntriesRecorded      JobOrderProgressEntry[]       @relation("JobOrderProgressEntryRecordedBy")
+  productionStageTransactionsPerformed ProductionStageTransaction[]  @relation("ProductionStageTransactionPerformedBy")
+  qcInspectionsMade                    QcInspection[]                @relation("QcInspectionInspector")
+  leadsAssigned                        Lead[]                        @relation("LeadAssignedTo")
+  leadsCreated                         Lead[]                        @relation("LeadCreatedBy")
+  dealsAssigned                        Deal[]                        @relation("DealAssignedTo")
+  dealsCreated                         Deal[]                        @relation("DealCreatedBy")
+  crmActivitiesPerformed               CrmActivity[]                 @relation("CrmActivityPerformedBy")
+  crmFollowupsAssigned                 CrmFollowup[]                 @relation("CrmFollowupAssignedTo")
+  crmFollowupsCreated                  CrmFollowup[]                 @relation("CrmFollowupCreatedBy")
+  campaignsOwned                       Campaign[]                    @relation("CampaignOwner")
+  campaignsCreated                     Campaign[]                    @relation("CampaignCreatedBy")
+  campaignsApproved                    Campaign[]                    @relation("CampaignApprovedBy")
   campaignDailyMetricsRecorded         CampaignDailyMetric[]
   crmSettingsUpdated                   CrmSettings[]
   importBatchesCreated                 ImportBatch[]
@@ -238,22 +248,29 @@ model User {
   attendanceRecordsRecorded            AttendanceRecord[]
   attendanceCorrectionsApproved        AttendanceCorrectionRequest[] @relation("AttendanceCorrectionApprovedBy")
   attendanceCorrectionsCreated         AttendanceCorrectionRequest[] @relation("AttendanceCorrectionCreatedBy")
-  leaveRequestsApproved                LeaveRequest[]               @relation("LeaveRequestApprovedBy")
-  leaveRequestsCreated                 LeaveRequest[]               @relation("LeaveRequestCreatedBy")
+  leaveRequestsApproved                LeaveRequest[]                @relation("LeaveRequestApprovedBy")
+  leaveRequestsCreated                 LeaveRequest[]                @relation("LeaveRequestCreatedBy")
   leaveBalanceCarryForwardsCreated     LeaveBalanceCarryForward[]
-  journalsCreated                      Journal[]                    @relation("JournalCreatedBy")
-  journalsPosted                       Journal[]                    @relation("JournalPostedBy")
-  salesInvoicesCreated                 SalesInvoice[]               @relation("SalesInvoiceCreatedBy")
-  salesInvoicesPosted                  SalesInvoice[]               @relation("SalesInvoicePostedBy")
-  purchaseInvoicesCreated              PurchaseInvoice[]            @relation("PurchaseInvoiceCreatedBy")
-  purchaseInvoicesPosted               PurchaseInvoice[]            @relation("PurchaseInvoicePostedBy")
-  paymentsCreated                      Payment[]                    @relation("PaymentCreatedBy")
-  paymentsPosted                       Payment[]                    @relation("PaymentPostedBy")
-  expensesCreated                      Expense[]                    @relation("ExpenseCreatedBy")
-  expensesPosted                       Expense[]                    @relation("ExpensePostedBy")
-  dispatchesRequested                  Dispatch[]                   @relation("DispatchRequestedBy")
+  journalsCreated                      Journal[]                     @relation("JournalCreatedBy")
+  journalsPosted                       Journal[]                     @relation("JournalPostedBy")
+  salesInvoicesCreated                 SalesInvoice[]                @relation("SalesInvoiceCreatedBy")
+  salesInvoicesPosted                  SalesInvoice[]                @relation("SalesInvoicePostedBy")
+  purchaseInvoicesCreated              PurchaseInvoice[]             @relation("PurchaseInvoiceCreatedBy")
+  purchaseInvoicesPosted               PurchaseInvoice[]             @relation("PurchaseInvoicePostedBy")
+  paymentsCreated                      Payment[]                     @relation("PaymentCreatedBy")
+  paymentsPosted                       Payment[]                     @relation("PaymentPostedBy")
+  expensesCreated                      Expense[]                     @relation("ExpenseCreatedBy")
+  expensesPosted                       Expense[]                     @relation("ExpensePostedBy")
+  dispatchesRequested                  Dispatch[]                    @relation("DispatchRequestedBy")
   jobWorkOrdersRequested               JobWorkOrder[]
   jobWorkReceiptsReceived              JobWorkReceipt[]
+  customInvoicesCreated                CustomInvoice[]
+  customInvoicePaymentsReceived        CustomInvoicePayment[]
+  customInvoiceCreditNotesCreated      CustomInvoiceCreditNote[]
+  internalTransfersCreated             InternalTransfer[]            @relation("InternalTransferCreatedBy")
+  internalTransfersPosted              InternalTransfer[]            @relation("InternalTransferPostedBy")
+  employeeAdvancesCreated              EmployeeAdvance[]             @relation("EmployeeAdvanceCreatedBy")
+  employeeAdvanceSettlementsCreated    EmployeeAdvanceSettlement[]   @relation("EmployeeAdvanceSettlementCreatedBy")
 
   @@map("users")
 }
@@ -356,6 +373,7 @@ model Customer {
   salesInvoices  SalesInvoice[]
   payments       Payment[]
   dispatches     Dispatch[]
+  customInvoices CustomInvoice[]
 
   @@unique([companyId, code])
   @@map("customers")
@@ -452,31 +470,31 @@ model Department {
 }
 
 model Employee {
-  id           String    @id @default(uuid()) @db.Uuid
-  companyId    String    @map("company_id") @db.Uuid
-  branchId     String?   @map("branch_id") @db.Uuid
-  departmentId String?   @map("department_id") @db.Uuid
-  reportsToId  String?   @map("reports_to_id") @db.Uuid
+  id            String    @id @default(uuid()) @db.Uuid
+  companyId     String    @map("company_id") @db.Uuid
+  branchId      String?   @map("branch_id") @db.Uuid
+  departmentId  String?   @map("department_id") @db.Uuid
+  reportsToId   String?   @map("reports_to_id") @db.Uuid
   // Nullable — wiring this in is the one deliberate HRMS improvement over
   // the WordPress source, which hardcodes a single 10:15 late-cutoff for
   // every employee company-wide. See CRM_SALES_MARKETING_HRMS_MIGRATION_REPORT.md.
-  shiftId      String?   @map("shift_id") @db.Uuid
+  shiftId       String?   @map("shift_id") @db.Uuid
   // Wired to the real Designation master (HRMS gap-analysis Priority 1 item
   // #1, 2026-08-26) — was a plain free-text string, now a real FK, matching
   // the same string→FK cutover already done once for Product.category/season
   // in Phase 3. The old `designation` string column is intentionally gone
   // (not kept as a shim) — its data was backfilled into `designationId`
   // before the column was dropped, see the migration's own backfill note.
-  designationId String?  @map("designation_id") @db.Uuid
-  employeeCode String    @map("employee_code")
-  fullName     String    @map("full_name")
-  phone        String?
-  email        String?
-  joinDate     DateTime? @map("join_date")
-  isActive     Boolean   @default(true) @map("is_active")
-  deletedAt    DateTime? @map("deleted_at")
-  createdAt    DateTime  @default(now()) @map("created_at")
-  updatedAt    DateTime  @updatedAt @map("updated_at")
+  designationId String?   @map("designation_id") @db.Uuid
+  employeeCode  String    @map("employee_code")
+  fullName      String    @map("full_name")
+  phone         String?
+  email         String?
+  joinDate      DateTime? @map("join_date")
+  isActive      Boolean   @default(true) @map("is_active")
+  deletedAt     DateTime? @map("deleted_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
 
   company     Company      @relation(fields: [companyId], references: [id])
   branch      Branch?      @relation(fields: [branchId], references: [id])
@@ -499,6 +517,7 @@ model Employee {
   attendanceCorrectionRequests AttendanceCorrectionRequest[]
   leaveRequests                LeaveRequest[]
   leaveBalanceCarryForwards    LeaveBalanceCarryForward[]
+  employeeAdvances             EmployeeAdvance[]
 
   @@unique([companyId, employeeCode])
   @@map("employees")
@@ -575,6 +594,7 @@ model Product {
   purchaseInvoiceItems  PurchaseInvoiceItem[]
   dispatchItems         DispatchItem[]
   jobWorkOrderMaterials JobWorkOrderMaterial[]
+  customInvoiceItems    CustomInvoiceItem[]
 
   @@unique([companyId, styleCode])
   @@map("products")
@@ -1075,19 +1095,19 @@ model EmployeeCategory {
 }
 
 model ShiftMaster {
-  id        String   @id @default(uuid()) @db.Uuid
-  companyId String   @map("company_id") @db.Uuid
-  code      String
-  name      String
-  startTime String   @map("start_time")
-  endTime   String   @map("end_time")
+  id           String   @id @default(uuid()) @db.Uuid
+  companyId    String   @map("company_id") @db.Uuid
+  code         String
+  name         String
+  startTime    String   @map("start_time")
+  endTime      String   @map("end_time")
   // Minutes past startTime before a punch-in counts as late — HRMS
   // gap-analysis Priority 2 item; computeIsLate() applies this as a
   // tolerance window rather than the raw startTime cutoff.
   graceMinutes Int      @default(0) @map("grace_minutes")
-  isActive  Boolean  @default(true) @map("is_active")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
 
   company   Company    @relation(fields: [companyId], references: [id])
   employees Employee[]
@@ -1165,9 +1185,13 @@ model PaymentType {
   createdAt DateTime        @default(now()) @map("created_at")
   updatedAt DateTime        @updatedAt @map("updated_at")
 
-  company  Company   @relation(fields: [companyId], references: [id])
-  payments Payment[]
-  expenses Expense[]
+  company               Company                @relation(fields: [companyId], references: [id])
+  payments              Payment[]
+  expenses              Expense[]
+  customInvoicePayments CustomInvoicePayment[]
+  employeeAdvances      EmployeeAdvance[]
+  internalTransfersFrom InternalTransfer[]     @relation("InternalTransferFrom")
+  internalTransfersTo   InternalTransfer[]     @relation("InternalTransferTo")
 
   @@unique([companyId, code])
   @@map("payment_types")
@@ -1188,9 +1212,12 @@ model BankAccount {
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @updatedAt @map("updated_at")
 
-  company  Company   @relation(fields: [companyId], references: [id])
-  payments Payment[]
-  expenses Expense[]
+  company               Company            @relation(fields: [companyId], references: [id])
+  payments              Payment[]
+  expenses              Expense[]
+  employeeAdvances      EmployeeAdvance[]
+  internalTransfersFrom InternalTransfer[] @relation("InternalTransferFromBank")
+  internalTransfersTo   InternalTransfer[] @relation("InternalTransferToBank")
 
   @@unique([companyId, code])
   @@map("bank_accounts")
@@ -2129,20 +2156,20 @@ enum AttendanceCorrectionStatus {
  * exists yet for that date) — see attendance-correction.service.ts.
  */
 model AttendanceCorrectionRequest {
-  id                 String                      @id @default(uuid()) @db.Uuid
-  companyId          String                      @map("company_id") @db.Uuid
-  employeeId         String                      @map("employee_id") @db.Uuid
-  attendanceRecordId String?                     @map("attendance_record_id") @db.Uuid
-  attendanceDate     DateTime                    @map("attendance_date") @db.Date
-  requestedPunchIn   DateTime?                   @map("requested_punch_in")
-  requestedPunchOut  DateTime?                   @map("requested_punch_out")
+  id                 String                     @id @default(uuid()) @db.Uuid
+  companyId          String                     @map("company_id") @db.Uuid
+  employeeId         String                     @map("employee_id") @db.Uuid
+  attendanceRecordId String?                    @map("attendance_record_id") @db.Uuid
+  attendanceDate     DateTime                   @map("attendance_date") @db.Date
+  requestedPunchIn   DateTime?                  @map("requested_punch_in")
+  requestedPunchOut  DateTime?                  @map("requested_punch_out")
   reason             String
-  status             AttendanceCorrectionStatus  @default(PENDING)
-  rejectionReason    String?                     @map("rejection_reason")
-  approvedByUserId   String?                     @map("approved_by_user_id") @db.Uuid
-  decidedAt          DateTime?                   @map("decided_at")
-  createdByUserId    String                      @map("created_by_user_id") @db.Uuid
-  createdAt          DateTime                    @default(now()) @map("created_at")
+  status             AttendanceCorrectionStatus @default(PENDING)
+  rejectionReason    String?                    @map("rejection_reason")
+  approvedByUserId   String?                    @map("approved_by_user_id") @db.Uuid
+  decidedAt          DateTime?                  @map("decided_at")
+  createdByUserId    String                     @map("created_by_user_id") @db.Uuid
+  createdAt          DateTime                   @default(now()) @map("created_at")
 
   company          Company           @relation(fields: [companyId], references: [id])
   employee         Employee          @relation(fields: [employeeId], references: [id])
@@ -2164,9 +2191,9 @@ model LeaveType {
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
 
-  company        Company                    @relation(fields: [companyId], references: [id])
-  requests       LeaveRequest[]
-  carryForwards  LeaveBalanceCarryForward[]
+  company       Company                    @relation(fields: [companyId], references: [id])
+  requests      LeaveRequest[]
+  carryForwards LeaveBalanceCarryForward[]
 
   @@unique([companyId, name])
   @@map("hrms_leave_types")
@@ -2225,10 +2252,10 @@ model LeaveBalanceCarryForward {
   createdByUserId String   @map("created_by_user_id") @db.Uuid
   createdAt       DateTime @default(now()) @map("created_at")
 
-  company    Company   @relation(fields: [companyId], references: [id])
-  employee   Employee  @relation(fields: [employeeId], references: [id])
-  leaveType  LeaveType @relation(fields: [leaveTypeId], references: [id])
-  createdBy  User      @relation(fields: [createdByUserId], references: [id])
+  company   Company   @relation(fields: [companyId], references: [id])
+  employee  Employee  @relation(fields: [employeeId], references: [id])
+  leaveType LeaveType @relation(fields: [leaveTypeId], references: [id])
+  createdBy User      @relation(fields: [createdByUserId], references: [id])
 
   // The idempotency guard the batch run relies on — re-running for the same
   // target year is a safe no-op per employee+leaveType, not a double-credit.
@@ -3709,11 +3736,14 @@ model ChartOfAccount {
   createdAt       DateTime    @default(now()) @map("created_at")
   updatedAt       DateTime    @updatedAt @map("updated_at")
 
-  company       Company          @relation(fields: [companyId], references: [id])
-  parentAccount ChartOfAccount?  @relation("ChartOfAccountParent", fields: [parentAccountId], references: [id])
-  childAccounts ChartOfAccount[] @relation("ChartOfAccountParent")
-  journalLines  JournalLine[]
-  expenses      Expense[]
+  company                       Company                     @relation(fields: [companyId], references: [id])
+  parentAccount                 ChartOfAccount?             @relation("ChartOfAccountParent", fields: [parentAccountId], references: [id])
+  childAccounts                 ChartOfAccount[]            @relation("ChartOfAccountParent")
+  journalLines                  JournalLine[]
+  expenses                      Expense[]
+  customInvoicesAsIncomeAccount CustomInvoice[]
+  employeeAdvanceSettlements    EmployeeAdvanceSettlement[]
+  purchaseInvoiceDirectLines    PurchaseInvoiceItem[]
 
   @@unique([companyId, code])
   @@map("chart_of_accounts")
@@ -3753,11 +3783,12 @@ model TaxRate {
   createdAt      DateTime  @default(now()) @map("created_at")
   updatedAt      DateTime  @updatedAt @map("updated_at")
 
-  company              Company               @relation(fields: [companyId], references: [id])
-  taxType              TaxType               @relation(fields: [taxTypeId], references: [id])
-  salesInvoiceItems    SalesInvoiceItem[]
-  purchaseInvoiceItems PurchaseInvoiceItem[]
-  expenses             Expense[]
+  company                    Company                     @relation(fields: [companyId], references: [id])
+  taxType                    TaxType                     @relation(fields: [taxTypeId], references: [id])
+  salesInvoiceItems          SalesInvoiceItem[]
+  purchaseInvoiceItems       PurchaseInvoiceItem[]
+  expenses                   Expense[]
+  employeeAdvanceSettlements EmployeeAdvanceSettlement[]
 
   @@index([taxTypeId])
   @@map("tax_rates")
@@ -3802,17 +3833,20 @@ model Journal {
   createdAt           DateTime       @default(now()) @map("created_at")
   updatedAt           DateTime       @updatedAt @map("updated_at")
 
-  company           Company          @relation(fields: [companyId], references: [id])
-  branch            Branch?          @relation(fields: [branchId], references: [id])
-  postedBy          User?            @relation("JournalPostedBy", fields: [postedByUserId], references: [id])
-  createdBy         User             @relation("JournalCreatedBy", fields: [createdByUserId], references: [id])
-  reversalOf        Journal?         @relation("JournalReversal", fields: [reversalOfJournalId], references: [id])
-  reversedByJournal Journal?         @relation("JournalReversal")
-  lines             JournalLine[]
-  salesInvoice      SalesInvoice?
-  purchaseInvoice   PurchaseInvoice?
-  payment           Payment?
-  expense           Expense?
+  company                   Company                    @relation(fields: [companyId], references: [id])
+  branch                    Branch?                    @relation(fields: [branchId], references: [id])
+  postedBy                  User?                      @relation("JournalPostedBy", fields: [postedByUserId], references: [id])
+  createdBy                 User                       @relation("JournalCreatedBy", fields: [createdByUserId], references: [id])
+  reversalOf                Journal?                   @relation("JournalReversal", fields: [reversalOfJournalId], references: [id])
+  reversedByJournal         Journal?                   @relation("JournalReversal")
+  lines                     JournalLine[]
+  salesInvoice              SalesInvoice?
+  purchaseInvoice           PurchaseInvoice?
+  payment                   Payment?
+  expense                   Expense?
+  internalTransfer          InternalTransfer?
+  employeeAdvance           EmployeeAdvance?
+  employeeAdvanceSettlement EmployeeAdvanceSettlement?
 
   @@unique([companyId, journalNumber])
   @@map("journals")
@@ -3967,9 +4001,16 @@ model PurchaseInvoice {
   companyId             String                @map("company_id") @db.Uuid
   branchId              String?               @map("branch_id") @db.Uuid
   invoiceNumber         String                @map("invoice_number")
-  purchaseOrderId       String                @map("purchase_order_id") @db.Uuid
-  // Denormalized from the order — this table IS the AP ledger's own document
-  // of record, same justification as SalesInvoice.customerId.
+  // Nullable — null means a standalone "party/direct bill" with no backing
+  // Purchase Order at all (a service/expense bill from a supplier, e.g.
+  // freight, consulting, rent — nothing to receive against). When set, the
+  // invoice may still mix PO-linked lines with direct lines on the SAME
+  // document (e.g. goods against the PO plus an ad hoc freight charge) —
+  // see PurchaseInvoiceItem's own per-line discriminator below.
+  purchaseOrderId       String?               @map("purchase_order_id") @db.Uuid
+  // Denormalized from the order when linked; a real, directly-supplied
+  // input when there is no order — this table IS the AP ledger's own
+  // document of record either way, same justification as SalesInvoice.customerId.
   supplierId            String                @map("supplier_id") @db.Uuid
   // The supplier's own bill/reference number — free text, since we don't
   // control it (unlike invoiceNumber, which we generate). Guarded against
@@ -4006,7 +4047,7 @@ model PurchaseInvoice {
 
   company       Company               @relation(fields: [companyId], references: [id])
   branch        Branch?               @relation(fields: [branchId], references: [id])
-  purchaseOrder PurchaseOrder         @relation(fields: [purchaseOrderId], references: [id])
+  purchaseOrder PurchaseOrder?        @relation(fields: [purchaseOrderId], references: [id])
   supplier      Supplier              @relation(fields: [supplierId], references: [id])
   journal       Journal?              @relation(fields: [journalId], references: [id])
   postedBy      User?                 @relation("PurchaseInvoicePostedBy", fields: [postedByUserId], references: [id])
@@ -4019,16 +4060,32 @@ model PurchaseInvoice {
   @@map("purchase_invoices")
 }
 
+// Every line is EXACTLY one of two shapes, discriminated per-line (not just
+// per-header — an invoice can mix both, e.g. goods against a PO plus an ad
+// hoc freight line): a PO-linked line (purchaseOrderItemId + productId set,
+// bounded by receivedQuantity - invoicedQuantity, debits COGS automatically
+// at post time — unchanged from before this line ever supported a second
+// shape) or a direct/"party bill" line (description + expenseAccountId set,
+// no PO backing at all, debits the chosen account directly). Enforced by a
+// hand-added CHECK constraint (see migration), the same two-nullable-field-
+// XOR shape already proven by PaymentAllocation's
+// (sales_invoice_id IS NOT NULL) != (purchase_invoice_id IS NOT NULL).
 model PurchaseInvoiceItem {
   id                  String   @id @default(uuid()) @db.Uuid
   purchaseInvoiceId   String   @map("purchase_invoice_id") @db.Uuid
-  purchaseOrderItemId String   @map("purchase_order_item_id") @db.Uuid
-  productId           String   @map("product_id") @db.Uuid
+  purchaseOrderItemId String?  @map("purchase_order_item_id") @db.Uuid
+  productId           String?  @map("product_id") @db.Uuid
+  // Direct-line only: what this line is for (e.g. "Legal consulting — August").
+  description         String?  @map("description")
+  // Direct-line only: which GL account to debit — a PO-linked line always
+  // debits COGS automatically instead, same as before this field existed.
+  expenseAccountId    String?  @map("expense_account_id") @db.Uuid
   // Both user-entered, bounded by (receivedQuantity - invoicedQuantity) as a
   // friendly check plus a real atomic guard at post time — NOT auto-derived
   // like Sales Invoice, since a supplier invoice can cover a subset of a PO's
   // lines and routinely bills at a different price than the PO (rate
-  // revision, negotiated discount).
+  // revision, negotiated discount). A direct line has no such backing figure
+  // to bound against — its quantity/unitPrice are simply what was entered.
   quantity            Decimal  @map("quantity") @db.Decimal(18, 4)
   unitPrice           Decimal  @map("unit_price") @db.Decimal(18, 2)
   // Same deliberate tax_transactions-table deviation as SalesInvoiceItem.
@@ -4038,14 +4095,327 @@ model PurchaseInvoiceItem {
   lineTotal           Decimal  @map("line_total") @db.Decimal(18, 2)
   createdAt           DateTime @default(now()) @map("created_at")
 
-  purchaseInvoice   PurchaseInvoice   @relation(fields: [purchaseInvoiceId], references: [id])
-  purchaseOrderItem PurchaseOrderItem @relation(fields: [purchaseOrderItemId], references: [id])
-  product           Product           @relation(fields: [productId], references: [id])
-  taxRate           TaxRate?          @relation(fields: [taxRateId], references: [id])
+  purchaseInvoice   PurchaseInvoice    @relation(fields: [purchaseInvoiceId], references: [id])
+  purchaseOrderItem PurchaseOrderItem? @relation(fields: [purchaseOrderItemId], references: [id])
+  product           Product?           @relation(fields: [productId], references: [id])
+  expenseAccount    ChartOfAccount?    @relation(fields: [expenseAccountId], references: [id])
+  taxRate           TaxRate?           @relation(fields: [taxRateId], references: [id])
 
   @@index([purchaseInvoiceId])
   @@index([purchaseOrderItemId])
+  @@index([expenseAccountId])
   @@map("purchase_invoice_items")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Custom Invoice — a standalone, ad-hoc billing document, deliberately
+// separate from SalesInvoice. SalesInvoice is always order-linked (quantity/
+// price derived server-side from a confirmed SalesOrder — see that model's
+// own comments); a Custom Invoice has no such backing order at all — the
+// customer, items, pricing, and discount are all entered directly on the
+// document itself. Modeled after a reference billing tool the user pointed
+// at (D:\office-data\claude-projects\hrms's own Invoice/InvoiceSeries), not
+// the SalesInvoice pattern — this is intentionally the "quick invoice /
+// petty billing" tool, not a second AR ledger. It does NOT post a Journal
+// and does NOT touch Chart of Accounts/paidAmount/AR — same "not every
+// financial-looking document needs to flow through the ledger engine"
+// reasoning already applied to Expense's own scope decisions, applied here
+// because unlike Expense (a real cost) or SalesInvoice (a real AR claim
+// against a confirmed order), a Custom Invoice has no requirement backing it
+// that the rest of this system can verify — wiring it into the ledger would
+// let anyone post arbitrary revenue with zero traceability. Revisit only if
+// asked to post these for real.
+// ─────────────────────────────────────────────────────────────
+
+enum CustomInvoiceType {
+  TAX_INVOICE
+  PROFORMA_INVOICE
+}
+
+enum CustomInvoiceStatus {
+  DRAFT
+  CANCELLED
+}
+
+// A company can define several independently-numbered series (e.g. "Retail
+// Series" -> RET/2025-2026/1, "Export Series" -> EXP/2025-2026/1) — a
+// deliberate departure from this project's usual single atomic
+// DocumentSequence-per-(company,branch,type,year) numbering (see
+// DocumentNumberingService), which has no concept of more than one named
+// series per document type. Reusing that engine here would have meant either
+// forcing every Custom Invoice through one shared counter (losing the
+// multi-series requirement entirely) or bolting a "series name" dimension
+// onto DocumentSequence for a feature nothing else needs — a new, narrowly-
+// scoped counter table is the smaller, more honest change.
+model InvoiceSeries {
+  id              String   @id @default(uuid()) @db.Uuid
+  companyId       String   @map("company_id") @db.Uuid
+  name            String
+  prefix          String
+  // Plain text, not derived from Company.fiscalYearStartMonth — a user-typed
+  // label ("2025-2026") that becomes part of the printed invoice number, not
+  // a real date-bounded fiscal period the system enforces.
+  fiscalYearLabel String   @map("fiscal_year_label")
+  // Atomically incremented (guarded updateMany) inside the same transaction
+  // as CustomInvoice creation — never SELECT MAX()+1, same discipline as
+  // every other counter in this project.
+  nextNumber      Int      @default(1) @map("next_number")
+  isDefault       Boolean  @default(false) @map("is_default")
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  company        Company         @relation(fields: [companyId], references: [id])
+  customInvoices CustomInvoice[]
+
+  @@unique([companyId, name])
+  @@unique([companyId, prefix])
+  @@map("invoice_series")
+}
+
+model CustomInvoice {
+  id                   String              @id @default(uuid()) @db.Uuid
+  companyId            String              @map("company_id") @db.Uuid
+  branchId             String?             @map("branch_id") @db.Uuid
+  invoiceDate          DateTime            @map("invoice_date") @db.Date
+  invoiceType          CustomInvoiceType   @default(TAX_INVOICE) @map("invoice_type")
+  hasDueDate           Boolean             @default(false) @map("has_due_date")
+  dueDate              DateTime?           @map("due_date") @db.Date
+  invoiceSeriesId      String              @map("invoice_series_id") @db.Uuid
+  // Pre-filled from the series' own nextNumber at create time but always
+  // user-editable (the reference tool's "Edit" button) — uniqueness is
+  // enforced by the DB constraint below, not by the series counter itself,
+  // matching this project's own established "external numbering" precedent
+  // (Phase 3's Customer/Supplier/... sequential codes: the system suggests,
+  // the field stays editable, the unique constraint is the real guard).
+  invoiceNumber        String              @map("invoice_number")
+  customerId           String              @map("customer_id") @db.Uuid
+  // Optional classification of this invoice's revenue against the existing
+  // Chart of Accounts (an INCOME-type account) — deliberately reuses this
+  // project's own, more rigorous accounting master instead of adding a
+  // parallel flat "Category" master the reference tool has for the same
+  // purpose (its own Category/Transaction tables are that app's *entire*
+  // bookkeeping ledger; this app already has a real one). Informational
+  // only — does not itself post a Journal entry (see the module-level
+  // comment above on why Custom Invoice stays outside the ledger).
+  incomeAccountId      String?             @map("income_account_id") @db.Uuid
+  // Applied per line at calculation time (discountedPrice = unitPrice * (1 -
+  // discount%)), not as a flat subtotal deduction — matches the reference
+  // tool's own calculation exactly, confirmed by reading its live calc code
+  // rather than guessing from the screenshot alone.
+  discountPercentage   Decimal             @default(0) @map("discount_percentage") @db.Decimal(5, 2)
+  // When true, no line's GST is charged at all (the buyer self-assesses) —
+  // matches the reference tool's isRCM behavior exactly (GST forced to 0 on
+  // every line, not just hidden from the printed total).
+  isReverseCharge      Boolean             @default(false) @map("is_reverse_charge")
+  subtotalAmount       Decimal             @default(0) @map("subtotal_amount") @db.Decimal(18, 2)
+  discountAmount       Decimal             @default(0) @map("discount_amount") @db.Decimal(18, 2)
+  taxAmount            Decimal             @default(0) @map("tax_amount") @db.Decimal(18, 2)
+  grandTotal           Decimal             @default(0) @map("grand_total") @db.Decimal(18, 2)
+  advancePaymentTitle  String?             @map("advance_payment_title")
+  advancePaymentAmount Decimal?            @map("advance_payment_amount") @db.Decimal(18, 2)
+  payableAmountTitle   String?             @map("payable_amount_title")
+  payableAmountValue   Decimal?            @map("payable_amount_value") @db.Decimal(18, 2)
+  // grandTotal - advancePaymentAmount - payableAmountValue — stored (not
+  // computed on read) purely so the list page can sort/filter on it without
+  // a per-row calc, matching PurchaseRequest.estimatedTotalAmount's own
+  // stored-rollup precedent; always recomputed server-side, never trusted
+  // from the client.
+  // Recomputed at every relevant mutation (create/update items, record/cancel
+  // a payment, issue/cancel a credit note) to
+  // grandTotal - advancePaymentAmount - payableAmountValue - paidAmount -
+  // creditedAmount — a genuinely real-time running balance, not a
+  // creation-time snapshot, so it never goes stale as payments/credit notes
+  // are recorded later. Stored (not computed on read) purely so the list
+  // page can sort/filter on it without a per-row calc, matching
+  // PurchaseRequest.estimatedTotalAmount's own stored-rollup precedent;
+  // always recomputed server-side, never trusted from the client.
+  balanceDue           Decimal             @default(0) @map("balance_due") @db.Decimal(18, 2)
+  // Guarded accumulators (same idiom as SalesInvoice.paidAmount /
+  // PurchaseOrderItem.receivedQuantity) — paidAmount capped at
+  // (grandTotal - creditedAmount), creditedAmount capped at grandTotal.
+  paidAmount           Decimal             @default(0) @map("paid_amount") @db.Decimal(18, 2)
+  creditedAmount       Decimal             @default(0) @map("credited_amount") @db.Decimal(18, 2)
+  // Free-form list, not a single field — matches the reference tool's own
+  // "+ Add Note" repeatable list (see CustomInvoiceNote below), same
+  // reasoning as SampleComment being its own table rather than one big text
+  // blob.
+  termsAndConditions   String?             @map("terms_and_conditions")
+  status               CustomInvoiceStatus @default(DRAFT)
+  createdByUserId      String              @map("created_by_user_id") @db.Uuid
+  createdAt            DateTime            @default(now()) @map("created_at")
+  updatedAt            DateTime            @updatedAt @map("updated_at")
+
+  company       Company                   @relation(fields: [companyId], references: [id])
+  branch        Branch?                   @relation(fields: [branchId], references: [id])
+  invoiceSeries InvoiceSeries             @relation(fields: [invoiceSeriesId], references: [id])
+  customer      Customer                  @relation(fields: [customerId], references: [id])
+  incomeAccount ChartOfAccount?           @relation(fields: [incomeAccountId], references: [id])
+  createdBy     User                      @relation(fields: [createdByUserId], references: [id])
+  items         CustomInvoiceItem[]
+  notes         CustomInvoiceNote[]
+  payments      CustomInvoicePayment[]
+  creditNotes   CustomInvoiceCreditNote[]
+
+  @@unique([companyId, invoiceNumber])
+  @@index([companyId, status])
+  @@index([customerId])
+  @@map("custom_invoices")
+}
+
+model CustomInvoiceItem {
+  id              String  @id @default(uuid()) @db.Uuid
+  customInvoiceId String  @map("custom_invoice_id") @db.Uuid
+  // Optional — picking an existing Product/Material auto-fills
+  // name/HSN/price/GST client-side (matching the reference tool's own
+  // auto-fill-then-editable behavior) but every field below stays a real,
+  // independently-stored, user-editable value. Unlike SalesInvoiceItem
+  // (always productId-backed, quantity/price always derived), a Custom
+  // Invoice line can be entirely free text with no master link at all —
+  // that flexibility is this feature's whole reason for existing.
+  productId       String? @map("product_id") @db.Uuid
+  itemName        String  @map("item_name")
+  hsnCode         String? @map("hsn_code")
+  quantity        Decimal @db.Decimal(18, 4)
+  unitPrice       Decimal @map("unit_price") @db.Decimal(18, 4)
+  gstPercentage   Decimal @default(0) @map("gst_percentage") @db.Decimal(5, 2)
+  // All three always recomputed server-side from
+  // quantity/unitPrice/gstPercentage/the header's discount%/reverse-charge
+  // flag — never trusted from the client, same discipline as every other
+  // invoice line in this project.
+  lineAmount      Decimal @default(0) @map("line_amount") @db.Decimal(18, 2)
+  lineTaxAmount   Decimal @default(0) @map("line_tax_amount") @db.Decimal(18, 2)
+  lineTotal       Decimal @default(0) @map("line_total") @db.Decimal(18, 2)
+  // Guarded accumulator, capped at lineTotal — written only by a
+  // PRODUCT_WISE or PRODUCT_RETURN credit note targeting this specific
+  // line (OVERALL_DISCOUNT credit notes never touch item-level rows).
+  creditedAmount  Decimal @default(0) @map("credited_amount") @db.Decimal(18, 2)
+
+  customInvoice   CustomInvoice                 @relation(fields: [customInvoiceId], references: [id])
+  product         Product?                      @relation(fields: [productId], references: [id])
+  creditNoteLines CustomInvoiceCreditNoteItem[]
+
+  @@index([customInvoiceId])
+  @@map("custom_invoice_items")
+}
+
+model CustomInvoiceNote {
+  id              String   @id @default(uuid()) @db.Uuid
+  customInvoiceId String   @map("custom_invoice_id") @db.Uuid
+  note            String
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  customInvoice CustomInvoice @relation(fields: [customInvoiceId], references: [id])
+
+  @@index([customInvoiceId])
+  @@map("custom_invoice_notes")
+}
+
+// A self-contained "record a receipt against this bill" tool — deliberately
+// NOT the same Payment/PaymentAllocation model Sales/Purchase Invoice use
+// (Phase 7D below). That engine auto-posts a settlement Journal crediting
+// Accounts Receivable — correct there because the originating invoice
+// already debited AR at post time. Custom Invoice never posts anything to
+// the ledger at all (see the module comment above), so a real Payment
+// crediting AR here would silently corrupt the trial balance by reducing a
+// balance that was never increased for this specific invoice. This model
+// only ever touches CustomInvoice's own paidAmount accumulator — it has no
+// ledger effect, matching Custom Invoice's own deliberately-standalone
+// scope.
+enum CustomInvoicePaymentStatus {
+  RECORDED
+  CANCELLED
+}
+
+model CustomInvoicePayment {
+  id               String                     @id @default(uuid()) @db.Uuid
+  companyId        String                     @map("company_id") @db.Uuid
+  customInvoiceId  String                     @map("custom_invoice_id") @db.Uuid
+  paymentDate      DateTime                   @map("payment_date") @db.Date
+  amount           Decimal                    @db.Decimal(18, 2)
+  // Reuses the existing PaymentType master (CASH/BANK/CHEQUE/CARD/UPI/OTHER)
+  // rather than a new enum — same master Payment/Expense already use.
+  paymentTypeId    String?                    @map("payment_type_id") @db.Uuid
+  referenceNote    String?                    @map("reference_note")
+  status           CustomInvoicePaymentStatus @default(RECORDED)
+  receivedByUserId String                     @map("received_by_user_id") @db.Uuid
+  createdAt        DateTime                   @default(now()) @map("created_at")
+
+  company       Company       @relation(fields: [companyId], references: [id])
+  customInvoice CustomInvoice @relation(fields: [customInvoiceId], references: [id])
+  paymentType   PaymentType?  @relation(fields: [paymentTypeId], references: [id])
+  receivedBy    User          @relation(fields: [receivedByUserId], references: [id])
+
+  @@index([customInvoiceId])
+  @@map("custom_invoice_payments")
+}
+
+// Adapts the reference tool's own 3 real credit-note types (confirmed by
+// reading its schema, not guessed): OVERALL_DISCOUNT (one flat amount
+// against the whole invoice, no item targeting), PRODUCT_WISE (a manual
+// amount reduction against one specific line), PRODUCT_RETURN (a returned
+// quantity against one specific line, amount derived from that line's own
+// effective per-unit rate). Same "no ledger effect" scope as
+// CustomInvoicePayment above — a credit note here only ever reduces
+// CustomInvoice/CustomInvoiceItem's own creditedAmount accumulators.
+enum CustomInvoiceCreditNoteType {
+  OVERALL_DISCOUNT
+  PRODUCT_WISE
+  PRODUCT_RETURN
+}
+
+enum CustomInvoiceCreditNoteStatus {
+  ISSUED
+  CANCELLED
+}
+
+model CustomInvoiceCreditNote {
+  id               String                        @id @default(uuid()) @db.Uuid
+  companyId        String                        @map("company_id") @db.Uuid
+  customInvoiceId  String                        @map("custom_invoice_id") @db.Uuid
+  creditNoteNumber String                        @map("credit_note_number")
+  creditNoteDate   DateTime                      @map("credit_note_date") @db.Date
+  type             CustomInvoiceCreditNoteType
+  reason           String?
+  // Total reduction this credit note applies — for OVERALL_DISCOUNT this is
+  // the whole story; for PRODUCT_WISE/PRODUCT_RETURN it's the sum of its own
+  // CustomInvoiceCreditNoteItem rows (denormalized here purely for list/sort
+  // display, same stored-rollup precedent as CustomInvoice.balanceDue).
+  totalAmount      Decimal                       @map("total_amount") @db.Decimal(18, 2)
+  status           CustomInvoiceCreditNoteStatus @default(ISSUED)
+  createdByUserId  String                        @map("created_by_user_id") @db.Uuid
+  createdAt        DateTime                      @default(now()) @map("created_at")
+
+  company       Company                       @relation(fields: [companyId], references: [id])
+  customInvoice CustomInvoice                 @relation(fields: [customInvoiceId], references: [id])
+  createdBy     User                          @relation(fields: [createdByUserId], references: [id])
+  items         CustomInvoiceCreditNoteItem[]
+
+  @@unique([companyId, creditNoteNumber])
+  @@index([customInvoiceId])
+  @@map("custom_invoice_credit_notes")
+}
+
+// Only populated for PRODUCT_WISE/PRODUCT_RETURN credit notes — an
+// OVERALL_DISCOUNT credit note has zero rows here, its whole effect living
+// on the header's own totalAmount.
+model CustomInvoiceCreditNoteItem {
+  id                  String   @id @default(uuid()) @db.Uuid
+  creditNoteId        String   @map("credit_note_id") @db.Uuid
+  customInvoiceItemId String   @map("custom_invoice_item_id") @db.Uuid
+  // Set only for PRODUCT_RETURN — the quantity being returned.
+  quantity            Decimal? @db.Decimal(18, 4)
+  // Net reduction this line contributes — for PRODUCT_RETURN this is
+  // computed server-side (quantity * the line's own effective per-unit
+  // rate, i.e. lineTotal / quantity), for PRODUCT_WISE it's the amount the
+  // caller directly specified.
+  amount              Decimal  @db.Decimal(18, 2)
+
+  creditNote        CustomInvoiceCreditNote @relation(fields: [creditNoteId], references: [id])
+  customInvoiceItem CustomInvoiceItem       @relation(fields: [customInvoiceItemId], references: [id])
+
+  @@index([creditNoteId])
+  @@map("custom_invoice_credit_note_items")
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -4187,6 +4557,14 @@ model Expense {
   taxPercentage   Decimal?      @map("tax_percentage") @db.Decimal(5, 2)
   taxAmount       Decimal       @default(0) @map("tax_amount") @db.Decimal(18, 2)
   totalAmount     Decimal       @map("total_amount") @db.Decimal(18, 2)
+  // TDS (Tax Deducted at Source) — computed on the base `amount`, not the
+  // GST-inclusive totalAmount (matches standard Indian TDS practice, and the
+  // reference tool's own live calc). Posting debits the full totalAmount to
+  // the expense/GST-ITC accounts as before, but now credits TDS Payable for
+  // tdsAmount and only the net (totalAmount - tdsAmount) to Cash-or-Bank —
+  // the amount actually paid out once TDS is withheld.
+  tdsPercentage   Decimal?      @map("tds_percentage") @db.Decimal(5, 2)
+  tdsAmount       Decimal       @default(0) @map("tds_amount") @db.Decimal(18, 2)
   paymentTypeId   String        @map("payment_type_id") @db.Uuid
   bankAccountId   String?       @map("bank_account_id") @db.Uuid
   referenceNumber String?       @map("reference_number")
@@ -4219,6 +4597,158 @@ model Expense {
   @@unique([companyId, branchId, expenseNumber])
   @@unique([companyId, idempotencyKey])
   @@map("expenses")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Internal Transfer — moving money between two of the company's own
+// Cash/Bank accounts (e.g. cash deposited into the bank). Zero P&L impact,
+// deliberately NOT an Expense (an Expense always debits an income-statement
+// account; this only ever touches balance-sheet Cash-or-Bank on both sides).
+// Cash/Bank resolution reuses the exact PaymentType.type -> ChartOfAccount
+// idiom Payment already established (never PaymentType.code, see that
+// model's own comment) — a real, accepted limitation of this scheme: this
+// Chart of Accounts has exactly one CASH and one BANK control account, not
+// one per physical bank account, so a transfer between two BANK-typed
+// payment types (e.g. two different real bank accounts) has no real GL
+// effect and is rejected — only CASH<->BANK is postable. fromBankAccountId/
+// toBankAccountId are informational only (which physical account, for the
+// audit trail), never the accounting entry itself.
+// ─────────────────────────────────────────────────────────────
+
+enum InternalTransferStatus {
+  DRAFT
+  POSTED
+  CANCELLED
+}
+
+model InternalTransfer {
+  id                String                 @id @default(uuid()) @db.Uuid
+  companyId         String                 @map("company_id") @db.Uuid
+  branchId          String?                @map("branch_id") @db.Uuid
+  transferNumber    String                 @map("transfer_number")
+  transferDate      DateTime               @map("transfer_date") @db.Date
+  fromPaymentTypeId String                 @map("from_payment_type_id") @db.Uuid
+  fromBankAccountId String?                @map("from_bank_account_id") @db.Uuid
+  toPaymentTypeId   String                 @map("to_payment_type_id") @db.Uuid
+  toBankAccountId   String?                @map("to_bank_account_id") @db.Uuid
+  amount            Decimal                @db.Decimal(18, 2)
+  narration         String?
+  status            InternalTransferStatus @default(DRAFT)
+  journalId         String?                @unique @map("journal_id") @db.Uuid
+  postedAt          DateTime?              @map("posted_at")
+  postedByUserId    String?                @map("posted_by_user_id") @db.Uuid
+  createdByUserId   String                 @map("created_by_user_id") @db.Uuid
+  idempotencyKey    String?                @map("idempotency_key")
+  createdAt         DateTime               @default(now()) @map("created_at")
+  updatedAt         DateTime               @updatedAt @map("updated_at")
+
+  company         Company      @relation(fields: [companyId], references: [id])
+  branch          Branch?      @relation(fields: [branchId], references: [id])
+  fromPaymentType PaymentType  @relation("InternalTransferFrom", fields: [fromPaymentTypeId], references: [id])
+  toPaymentType   PaymentType  @relation("InternalTransferTo", fields: [toPaymentTypeId], references: [id])
+  fromBankAccount BankAccount? @relation("InternalTransferFromBank", fields: [fromBankAccountId], references: [id])
+  toBankAccount   BankAccount? @relation("InternalTransferToBank", fields: [toBankAccountId], references: [id])
+  journal         Journal?     @relation(fields: [journalId], references: [id])
+  postedBy        User?        @relation("InternalTransferPostedBy", fields: [postedByUserId], references: [id])
+  createdBy       User         @relation("InternalTransferCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@unique([companyId, branchId, transferNumber])
+  @@unique([companyId, idempotencyKey])
+  @@index([companyId, status])
+  @@map("internal_transfers")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Employee Advance (Imprest) — an advance given to an employee to spend,
+// settled later against real expense receipts. Two real Journal postings,
+// not one: issuing debits an "Employee Advances" asset control account
+// (money owed back by the employee) and credits Cash-or-Bank; settling
+// debits the actual expense account the spend belongs to (+ GST-ITC if any)
+// and credits Employee Advances back down. This is genuinely more correct
+// double-entry accounting than the reference tool's own design (a bare
+// float column on the user with no ledger trail at all — see the
+// investigation this was modeled from) — the two-journal design was chosen
+// specifically to fix that gap, not copy it.
+// ─────────────────────────────────────────────────────────────
+
+enum EmployeeAdvanceStatus {
+  DRAFT
+  ISSUED
+  PARTIALLY_SETTLED
+  SETTLED
+  CANCELLED
+}
+
+model EmployeeAdvance {
+  id              String                @id @default(uuid()) @db.Uuid
+  companyId       String                @map("company_id") @db.Uuid
+  branchId        String?               @map("branch_id") @db.Uuid
+  advanceNumber   String                @map("advance_number")
+  advanceDate     DateTime              @map("advance_date") @db.Date
+  employeeId      String                @map("employee_id") @db.Uuid
+  amount          Decimal               @db.Decimal(18, 2)
+  paymentTypeId   String                @map("payment_type_id") @db.Uuid
+  bankAccountId   String?               @map("bank_account_id") @db.Uuid
+  purpose         String?
+  // Guarded accumulator (same idiom as every other running-total in this
+  // project), capped at `amount` — incremented only by a POSTED settlement
+  // against this advance.
+  settledAmount   Decimal               @default(0) @map("settled_amount") @db.Decimal(18, 2)
+  status          EmployeeAdvanceStatus @default(DRAFT)
+  journalId       String?               @unique @map("journal_id") @db.Uuid
+  postedAt        DateTime?             @map("posted_at")
+  createdByUserId String                @map("created_by_user_id") @db.Uuid
+  idempotencyKey  String?               @map("idempotency_key")
+  createdAt       DateTime              @default(now()) @map("created_at")
+  updatedAt       DateTime              @updatedAt @map("updated_at")
+
+  company     Company                     @relation(fields: [companyId], references: [id])
+  branch      Branch?                     @relation(fields: [branchId], references: [id])
+  employee    Employee                    @relation(fields: [employeeId], references: [id])
+  paymentType PaymentType                 @relation(fields: [paymentTypeId], references: [id])
+  bankAccount BankAccount?                @relation(fields: [bankAccountId], references: [id])
+  journal     Journal?                    @relation(fields: [journalId], references: [id])
+  createdBy   User                        @relation("EmployeeAdvanceCreatedBy", fields: [createdByUserId], references: [id])
+  settlements EmployeeAdvanceSettlement[]
+
+  @@unique([companyId, branchId, advanceNumber])
+  @@unique([companyId, idempotencyKey])
+  @@index([companyId, status])
+  @@map("employee_advances")
+}
+
+model EmployeeAdvanceSettlement {
+  id                String        @id @default(uuid()) @db.Uuid
+  companyId         String        @map("company_id") @db.Uuid
+  employeeAdvanceId String        @map("employee_advance_id") @db.Uuid
+  settlementNumber  String        @map("settlement_number")
+  settlementDate    DateTime      @map("settlement_date") @db.Date
+  // Which real Expense account this settled spend belongs to (Travel,
+  // Office Supplies, ...) — same validation as Expense.accountId
+  // (accountType EXPENSE, code != "COGS", isActive).
+  expenseAccountId  String        @map("expense_account_id") @db.Uuid
+  description       String
+  amount            Decimal       @db.Decimal(18, 2)
+  taxRateId         String?       @map("tax_rate_id") @db.Uuid
+  taxPercentage     Decimal?      @map("tax_percentage") @db.Decimal(5, 2)
+  taxAmount         Decimal       @default(0) @map("tax_amount") @db.Decimal(18, 2)
+  totalAmount       Decimal       @map("total_amount") @db.Decimal(18, 2)
+  status            ExpenseStatus @default(DRAFT)
+  journalId         String?       @unique @map("journal_id") @db.Uuid
+  postedAt          DateTime?     @map("posted_at")
+  createdByUserId   String        @map("created_by_user_id") @db.Uuid
+  createdAt         DateTime      @default(now()) @map("created_at")
+
+  company         Company         @relation(fields: [companyId], references: [id])
+  employeeAdvance EmployeeAdvance @relation(fields: [employeeAdvanceId], references: [id])
+  expenseAccount  ChartOfAccount  @relation(fields: [expenseAccountId], references: [id])
+  taxRate         TaxRate?        @relation(fields: [taxRateId], references: [id])
+  journal         Journal?        @relation(fields: [journalId], references: [id])
+  createdBy       User            @relation("EmployeeAdvanceSettlementCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@unique([companyId, settlementNumber])
+  @@index([employeeAdvanceId])
+  @@map("employee_advance_settlements")
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -4390,6 +4920,10 @@ enum DocumentType {
   CAMPAIGN
   JOB_WORK_ORDER
   JOB_WORK_RECEIPT
+  CUSTOM_INVOICE_CREDIT_NOTE
+  INTERNAL_TRANSFER
+  EMPLOYEE_ADVANCE
+  EMPLOYEE_ADVANCE_SETTLEMENT
 }
 
 model DocumentSequence {

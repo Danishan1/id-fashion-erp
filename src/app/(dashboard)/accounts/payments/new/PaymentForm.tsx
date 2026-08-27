@@ -45,6 +45,8 @@ export function PaymentForm() {
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10));
   const [invoices, setInvoices] = useState<OutstandingInvoice[]>([]);
   const [allocations, setAllocations] = useState<Record<string, string>>({});
+  const [isOnAccount, setIsOnAccount] = useState(false);
+  const [onAccountAmount, setOnAccountAmount] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   // See CF-5 in the independent hardening audit.
@@ -74,10 +76,14 @@ export function PaymentForm() {
     setPartyId("");
     setInvoices([]);
     setAllocations({});
+    setIsOnAccount(false);
+    setOnAccountAmount("");
   };
 
   const selectParty = (id: string) => {
     setPartyId(id);
+    setIsOnAccount(false);
+    setOnAccountAmount("");
     if (!id) {
       setInvoices([]);
       setAllocations({});
@@ -102,9 +108,11 @@ export function PaymentForm() {
     .map((inv) => ({ invoiceId: inv.id, amount: Number(allocations[inv.id]) || 0 }))
     .filter((a) => a.amount > 0);
 
+  const canSubmit = isOnAccount ? Number(onAccountAmount) > 0 : activeAllocations.length > 0;
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (isSubmitting || !partyId || activeAllocations.length === 0) return;
+    if (isSubmitting || !partyId || !canSubmit) return;
     setIsSubmitting(true);
     setError(null);
 
@@ -120,12 +128,14 @@ export function PaymentForm() {
           paymentTypeId,
           bankAccountId: bankAccountId || undefined,
           referenceNumber: referenceNumber || undefined,
-          amount: allocatedTotal,
-          allocations: activeAllocations.map((a) => ({
-            salesInvoiceId: direction === "RECEIPT" ? a.invoiceId : undefined,
-            purchaseInvoiceId: direction === "PAYMENT_OUT" ? a.invoiceId : undefined,
-            allocatedAmount: a.amount,
-          })),
+          amount: isOnAccount ? Number(onAccountAmount) || 0 : allocatedTotal,
+          allocations: isOnAccount
+            ? []
+            : activeAllocations.map((a) => ({
+                salesInvoiceId: direction === "RECEIPT" ? a.invoiceId : undefined,
+                purchaseInvoiceId: direction === "PAYMENT_OUT" ? a.invoiceId : undefined,
+                allocatedAmount: a.amount,
+              })),
           idempotencyKey,
         }),
       });
@@ -233,6 +243,28 @@ export function PaymentForm() {
       </div>
 
       {partyId && (
+        <label className="flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+          <input type="checkbox" checked={isOnAccount} onChange={(e) => setIsOnAccount(e.target.checked)} className="h-4 w-4" />
+          Record as &quot;On Account&quot; — no specific invoice yet, allocate later as bills arrive
+        </label>
+      )}
+
+      {partyId && isOnAccount && (
+        <FormField label="Amount" htmlFor="onAccountAmount" required>
+          <input
+            id="onAccountAmount"
+            type="number"
+            min={0}
+            step="0.01"
+            required
+            value={onAccountAmount}
+            onChange={(e) => setOnAccountAmount(e.target.value)}
+            className={textInputClass()}
+          />
+        </FormField>
+      )}
+
+      {partyId && !isOnAccount && (
         <div className="space-y-2">
           <h2 className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
             Outstanding Invoices — enter an amount to allocate against a line
@@ -294,7 +326,7 @@ export function PaymentForm() {
       <div className="flex gap-3">
         <button
           type="submit"
-          disabled={isSubmitting || !partyId || activeAllocations.length === 0}
+          disabled={isSubmitting || !partyId || !canSubmit}
           className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
         >
           {isSubmitting ? "Saving…" : "Save Draft"}

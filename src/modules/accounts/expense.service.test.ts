@@ -213,6 +213,7 @@ describe("postExpense — self-approval, dynamic line numbering, journal shape",
     amount: "1000",
     taxAmount: "180",
     totalAmount: "1180",
+    tdsAmount: "0",
     paymentType: { type: "BANK" },
   };
 

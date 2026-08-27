@@ -182,3 +182,34 @@ export async function getAccountLedger(companyId: string, accountId: string, dat
 
   return { account, lines: rows, closingBalance: runningBalance };
 }
+
+/**
+ * Shared validity check for "pick a real Expense-type account to debit"
+ * flows — Expense, Employee Advance Settlement, and a direct/party-bill line
+ * on Purchase Invoice all need the identical rule, so this is the single
+ * source of truth rather than three copies drifting apart.
+ *
+ * COGS is seeded with accountType EXPENSE but is a Purchase-Invoice-only
+ * control account (postPurchaseInvoice debits it automatically for
+ * PO-linked lines, never user-selectable) — excluded explicitly here, not
+ * just implicitly via isSystemAccount (COGS is deliberately NOT flagged
+ * isSystemAccount, so that check alone would let it through). Letting a
+ * user post an ad hoc Expense/direct bill into the same account
+ * PO-linked postings drive automatically would pollute any COGS-based
+ * margin reporting with manual, PO-disconnected debits.
+ */
+export async function assertValidExpenseAccount(companyId: string, accountId: string) {
+  const account = await ChartOfAccountRepository.findAnyById(companyId, accountId);
+  if (!account) throw new BusinessRuleError("NOT_FOUND", "Expense account not found.", { id: accountId });
+  if (account.accountType !== "EXPENSE" || account.code === "COGS") {
+    throw new BusinessRuleError(
+      "VALIDATION_ERROR",
+      `"${account.name}" cannot be used as an Expense account.`,
+      { accountId, accountType: account.accountType, code: account.code }
+    );
+  }
+  if (!account.isActive) {
+    throw new BusinessRuleError("VALIDATION_ERROR", `"${account.name}" is not active.`, { accountId });
+  }
+  return account;
+}

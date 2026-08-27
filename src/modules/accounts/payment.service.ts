@@ -8,7 +8,7 @@ import type { Prisma } from "@prisma/client";
 import { CustomerRepository } from "@/modules/customers/customer.repository";
 import { SupplierRepository } from "@/modules/suppliers/supplier.repository";
 import { FinanceConfigRepository } from "@/modules/finance-config/finance-config.repository";
-import type { PaymentInput } from "./payment.schema";
+import type { PaymentInput, PaymentAllocateInput } from "./payment.schema";
 import { PaymentRepository, CompanyRepository } from "./payment.repository";
 import { SalesInvoiceRepository } from "./sales-invoice.repository";
 import { PurchaseInvoiceRepository } from "./purchase-invoice.repository";
@@ -71,8 +71,60 @@ interface ValidatedAllocation {
   salesInvoiceId: string | null;
   purchaseInvoiceId: string | null;
   allocatedAmount: number;
+  invoiceTotalAmount: number;
 }
 
+async function validateOneAllocation(
+  companyId: string,
+  direction: "RECEIPT" | "PAYMENT_OUT",
+  partyId: string,
+  allocation: PaymentInput["allocations"][number]
+): Promise<ValidatedAllocation> {
+  const invoiceId = direction === "RECEIPT" ? allocation.salesInvoiceId! : allocation.purchaseInvoiceId!;
+  const invoice =
+    direction === "RECEIPT"
+      ? await SalesInvoiceRepository.findAnyById(companyId, invoiceId)
+      : await PurchaseInvoiceRepository.findAnyById(companyId, invoiceId);
+
+  if (!invoice) throw new BusinessRuleError("NOT_FOUND", "Invoice not found.", { id: invoiceId });
+
+  const invoicePartyId = direction === "RECEIPT" ? (invoice as { customerId: string }).customerId : (invoice as { supplierId: string }).supplierId;
+  if (invoicePartyId !== partyId) {
+    throw new BusinessRuleError(
+      "VALIDATION_ERROR",
+      `Invoice does not belong to the selected ${direction === "RECEIPT" ? "customer" : "supplier"}.`,
+      { invoiceId }
+    );
+  }
+
+  if (invoice.status !== "POSTED" && invoice.status !== "PARTIALLY_PAID") {
+    throw new BusinessRuleError(
+      "VALIDATION_ERROR",
+      `Cannot allocate a payment to an invoice in "${invoice.status}" status.`,
+      { invoiceId, currentStatus: invoice.status }
+    );
+  }
+
+  const outstanding = round2(Number(invoice.totalAmount) - Number(invoice.paidAmount));
+  if (allocation.allocatedAmount > outstanding + AMOUNT_EPSILON) {
+    throw new BusinessRuleError(
+      "VALIDATION_ERROR",
+      `Cannot allocate ${allocation.allocatedAmount} to invoice — only ${outstanding} is outstanding.`,
+      { invoiceId, requestedAmount: allocation.allocatedAmount, outstanding }
+    );
+  }
+
+  return {
+    salesInvoiceId: direction === "RECEIPT" ? invoiceId : null,
+    purchaseInvoiceId: direction === "PAYMENT_OUT" ? invoiceId : null,
+    allocatedAmount: round2(allocation.allocatedAmount),
+    invoiceTotalAmount: Number(invoice.totalAmount),
+  };
+}
+
+// Sum(allocations) may now be LESS than amount — the remainder sits
+// unallocated ("On Account") until a later allocatePayment() call assigns
+// it to real invoices as they arrive. Still never MORE than amount.
 async function buildAndValidateAllocations(
   companyId: string,
   direction: "RECEIPT" | "PAYMENT_OUT",
@@ -81,59 +133,78 @@ async function buildAndValidateAllocations(
   allocations: PaymentInput["allocations"]
 ): Promise<ValidatedAllocation[]> {
   const rows: ValidatedAllocation[] = [];
-
   for (const allocation of allocations) {
-    const invoiceId = direction === "RECEIPT" ? allocation.salesInvoiceId! : allocation.purchaseInvoiceId!;
-    const invoice =
-      direction === "RECEIPT"
-        ? await SalesInvoiceRepository.findAnyById(companyId, invoiceId)
-        : await PurchaseInvoiceRepository.findAnyById(companyId, invoiceId);
-
-    if (!invoice) throw new BusinessRuleError("NOT_FOUND", "Invoice not found.", { id: invoiceId });
-
-    const invoicePartyId = direction === "RECEIPT" ? (invoice as { customerId: string }).customerId : (invoice as { supplierId: string }).supplierId;
-    if (invoicePartyId !== partyId) {
-      throw new BusinessRuleError(
-        "VALIDATION_ERROR",
-        `Invoice does not belong to the selected ${direction === "RECEIPT" ? "customer" : "supplier"}.`,
-        { invoiceId }
-      );
-    }
-
-    if (invoice.status !== "POSTED" && invoice.status !== "PARTIALLY_PAID") {
-      throw new BusinessRuleError(
-        "VALIDATION_ERROR",
-        `Cannot allocate a payment to an invoice in "${invoice.status}" status.`,
-        { invoiceId, currentStatus: invoice.status }
-      );
-    }
-
-    const outstanding = round2(Number(invoice.totalAmount) - Number(invoice.paidAmount));
-    if (allocation.allocatedAmount > outstanding + AMOUNT_EPSILON) {
-      throw new BusinessRuleError(
-        "VALIDATION_ERROR",
-        `Cannot allocate ${allocation.allocatedAmount} to invoice — only ${outstanding} is outstanding.`,
-        { invoiceId, requestedAmount: allocation.allocatedAmount, outstanding }
-      );
-    }
-
-    rows.push({
-      salesInvoiceId: direction === "RECEIPT" ? invoiceId : null,
-      purchaseInvoiceId: direction === "PAYMENT_OUT" ? invoiceId : null,
-      allocatedAmount: round2(allocation.allocatedAmount),
-    });
+    rows.push(await validateOneAllocation(companyId, direction, partyId, allocation));
   }
 
   const allocatedTotal = round2(rows.reduce((sum, r) => sum + r.allocatedAmount, 0));
-  if (Math.abs(allocatedTotal - round2(amount)) > AMOUNT_EPSILON) {
+  if (allocatedTotal > round2(amount) + AMOUNT_EPSILON) {
     throw new BusinessRuleError(
       "VALIDATION_ERROR",
-      `Allocations (${allocatedTotal}) must add up to the payment amount (${round2(amount)}).`,
+      `Allocations (${allocatedTotal}) cannot exceed the payment amount (${round2(amount)}).`,
       { allocatedTotal, amount: round2(amount) }
     );
   }
 
   return rows;
+}
+
+/**
+ * Applies one validated allocation's effect to its target invoice — the
+ * exact logic postPayment() already ran per-allocation, extracted so
+ * allocatePayment() (applying a payment's unallocated remainder to an
+ * invoice AFTER the original post) can reuse it unchanged. No Journal entry
+ * here in either case: postPayment's own transaction posts the settlement
+ * Journal once, covering the payment's full amount — a later allocation is
+ * pure bookkeeping (which invoice this already-moved cash counts against),
+ * not a new cash movement.
+ */
+async function applyAllocationInTx(tx: Prisma.TransactionClient, allocation: ValidatedAllocation) {
+  const allocatedAmount = allocation.allocatedAmount;
+
+  if (allocation.salesInvoiceId) {
+    const { count } = await tx.salesInvoice.updateMany({
+      where: { id: allocation.salesInvoiceId, paidAmount: { lte: allocation.invoiceTotalAmount - allocatedAmount + AMOUNT_EPSILON } },
+      data: { paidAmount: { increment: allocatedAmount } },
+    });
+    if (count === 0) {
+      throw new BusinessRuleError(
+        "OVER_PAYMENT_NOT_ALLOWED",
+        "This invoice's outstanding balance changed and no longer covers this allocation.",
+        { salesInvoiceId: allocation.salesInvoiceId }
+      );
+    }
+
+    const fresh = await tx.salesInvoice.findUniqueOrThrow({
+      where: { id: allocation.salesInvoiceId },
+      select: { paidAmount: true, totalAmount: true },
+    });
+    await tx.salesInvoice.update({
+      where: { id: allocation.salesInvoiceId },
+      data: { status: Number(fresh.paidAmount) >= Number(fresh.totalAmount) - AMOUNT_EPSILON ? "PAID" : "PARTIALLY_PAID" },
+    });
+  } else {
+    const { count } = await tx.purchaseInvoice.updateMany({
+      where: { id: allocation.purchaseInvoiceId!, paidAmount: { lte: allocation.invoiceTotalAmount - allocatedAmount + AMOUNT_EPSILON } },
+      data: { paidAmount: { increment: allocatedAmount } },
+    });
+    if (count === 0) {
+      throw new BusinessRuleError(
+        "OVER_PAYMENT_NOT_ALLOWED",
+        "This invoice's outstanding balance changed and no longer covers this allocation.",
+        { purchaseInvoiceId: allocation.purchaseInvoiceId }
+      );
+    }
+
+    const fresh = await tx.purchaseInvoice.findUniqueOrThrow({
+      where: { id: allocation.purchaseInvoiceId! },
+      select: { paidAmount: true, totalAmount: true },
+    });
+    await tx.purchaseInvoice.update({
+      where: { id: allocation.purchaseInvoiceId! },
+      data: { status: Number(fresh.paidAmount) >= Number(fresh.totalAmount) - AMOUNT_EPSILON ? "PAID" : "PARTIALLY_PAID" },
+    });
+  }
 }
 
 export async function createPayment(actor: ActorContext, input: PaymentInput) {
@@ -206,7 +277,11 @@ export async function createPayment(actor: ActorContext, input: PaymentInput) {
         createdByUserId: actor.userId,
         idempotencyKey: input.idempotencyKey ?? null,
       },
-      allocationRows
+      // Whitelisted down to the repository's real column shape — ValidatedAllocation
+      // also carries invoiceTotalAmount (used only by applyAllocationInTx's own
+      // in-memory guard), which is not a real PaymentAllocation column and must
+      // never reach Prisma's create payload directly.
+      allocationRows.map((r) => ({ salesInvoiceId: r.salesInvoiceId, purchaseInvoiceId: r.purchaseInvoiceId, allocatedAmount: r.allocatedAmount }))
     );
   } catch (err) {
     // A genuine concurrent replay — see createGoodsReceipt's identical fallback.
@@ -293,60 +368,18 @@ export async function postPayment(actor: ActorContext, id: string) {
   const amount = Number(payment.amount);
 
   await prisma.$transaction(async (tx) => {
+    // Comparing this base-currency Payment.amount against
+    // SalesInvoice/PurchaseInvoice.totalAmount is only safe because every
+    // Sales/Purchase Order (and thus every invoice) is already forced to
+    // company.baseCurrencyCode — see sales-order.service.ts's own
+    // hardcoding. A future multi-currency slice would need to revisit this.
     for (const allocation of payment.allocations) {
-      const allocatedAmount = Number(allocation.allocatedAmount);
-
-      if (allocation.salesInvoiceId) {
-        // Comparing this base-currency Payment.amount against
-        // SalesInvoice.totalAmount is only safe because every Sales Order
-        // (and thus every invoice) is already forced to
-        // company.baseCurrencyCode — see sales-order.service.ts's own
-        // hardcoding. A future multi-currency slice would need to revisit
-        // this comparison.
-        const totalAmount = Number(allocation.salesInvoice!.totalAmount);
-        const { count } = await tx.salesInvoice.updateMany({
-          where: { id: allocation.salesInvoiceId, paidAmount: { lte: totalAmount - allocatedAmount + AMOUNT_EPSILON } },
-          data: { paidAmount: { increment: allocatedAmount } },
-        });
-        if (count === 0) {
-          throw new BusinessRuleError(
-            "OVER_PAYMENT_NOT_ALLOWED",
-            "This invoice's outstanding balance changed and no longer covers this allocation.",
-            { salesInvoiceId: allocation.salesInvoiceId }
-          );
-        }
-
-        const fresh = await tx.salesInvoice.findUniqueOrThrow({
-          where: { id: allocation.salesInvoiceId },
-          select: { paidAmount: true, totalAmount: true },
-        });
-        await tx.salesInvoice.update({
-          where: { id: allocation.salesInvoiceId },
-          data: { status: Number(fresh.paidAmount) >= Number(fresh.totalAmount) - AMOUNT_EPSILON ? "PAID" : "PARTIALLY_PAID" },
-        });
-      } else {
-        const totalAmount = Number(allocation.purchaseInvoice!.totalAmount);
-        const { count } = await tx.purchaseInvoice.updateMany({
-          where: { id: allocation.purchaseInvoiceId!, paidAmount: { lte: totalAmount - allocatedAmount + AMOUNT_EPSILON } },
-          data: { paidAmount: { increment: allocatedAmount } },
-        });
-        if (count === 0) {
-          throw new BusinessRuleError(
-            "OVER_PAYMENT_NOT_ALLOWED",
-            "This invoice's outstanding balance changed and no longer covers this allocation.",
-            { purchaseInvoiceId: allocation.purchaseInvoiceId }
-          );
-        }
-
-        const fresh = await tx.purchaseInvoice.findUniqueOrThrow({
-          where: { id: allocation.purchaseInvoiceId! },
-          select: { paidAmount: true, totalAmount: true },
-        });
-        await tx.purchaseInvoice.update({
-          where: { id: allocation.purchaseInvoiceId! },
-          data: { status: Number(fresh.paidAmount) >= Number(fresh.totalAmount) - AMOUNT_EPSILON ? "PAID" : "PARTIALLY_PAID" },
-        });
-      }
+      await applyAllocationInTx(tx, {
+        salesInvoiceId: allocation.salesInvoiceId,
+        purchaseInvoiceId: allocation.purchaseInvoiceId,
+        allocatedAmount: Number(allocation.allocatedAmount),
+        invoiceTotalAmount: Number(allocation.salesInvoiceId ? allocation.salesInvoice!.totalAmount : allocation.purchaseInvoice!.totalAmount),
+      });
     }
 
     const lines =
@@ -400,6 +433,61 @@ export async function postPayment(actor: ActorContext, id: string) {
     action: "APPROVE",
     oldValues: { status: "DRAFT" },
     newValues: { status: "POSTED", journalId: updated.journalId },
+  });
+
+  return updated;
+}
+
+/**
+ * Applies part or all of an already-POSTED payment's unallocated ("On
+ * Account") remainder to real invoices as they arrive. Gated on "approve"
+ * (self-approval-guarded, same {createdBy} mechanism as postPayment) — this
+ * still moves real invoice paidAmount/status, the same class of action as
+ * the original post. No new Journal: the cash movement already happened at
+ * post time for the payment's full amount; this is bookkeeping only.
+ */
+export async function allocatePayment(actor: ActorContext, id: string, input: PaymentAllocateInput) {
+  const payment = await PaymentRepository.findByIdWithDetails(actor.companyId, id);
+  if (!payment) throw new BusinessRuleError("NOT_FOUND", "Payment not found.", { id });
+
+  await PermissionService.assert(actor.userId, "payments", "approve", { createdBy: payment.createdByUserId });
+
+  if (payment.status !== "POSTED") {
+    throw new BusinessRuleError("INVALID_STATE_TRANSITION", `Cannot allocate a payment in "${payment.status}" status.`, {
+      currentStatus: payment.status,
+    });
+  }
+
+  const partyId = payment.direction === "RECEIPT" ? payment.customerId! : payment.supplierId!;
+  const alreadyAllocated = round2(payment.allocations.reduce((sum, a) => sum + Number(a.allocatedAmount), 0));
+  const unallocated = round2(Number(payment.amount) - alreadyAllocated);
+
+  const newRows = await buildAndValidateAllocations(actor.companyId, payment.direction, partyId, unallocated, input.allocations);
+
+  await prisma.$transaction(async (tx) => {
+    for (const row of newRows) {
+      await applyAllocationInTx(tx, row);
+      await tx.paymentAllocation.create({
+        data: {
+          paymentId: id,
+          salesInvoiceId: row.salesInvoiceId,
+          purchaseInvoiceId: row.purchaseInvoiceId,
+          allocatedAmount: row.allocatedAmount,
+        },
+      });
+    }
+  });
+
+  const updated = await PaymentRepository.findByIdWithDetails(actor.companyId, id);
+  if (!updated) throw new BusinessRuleError("NOT_FOUND", "Payment not found.", { id });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "payment_allocations",
+    recordId: id,
+    action: "CREATE",
+    newValues: { paymentId: id, newAllocations: newRows },
   });
 
   return updated;

@@ -21,7 +21,12 @@ export const paymentSchema = z
     bankAccountId: z.string().uuid().optional().or(z.literal("")),
     referenceNumber: z.string().max(100).optional().or(z.literal("")),
     amount: z.coerce.number().positive("Amount must be greater than 0"),
-    allocations: z.array(paymentAllocationInputSchema).min(1, "At least one allocation is required"),
+    // Zero allocations is now legal — an "On Account" payment, received/paid
+    // with no specific invoice yet. The service still requires
+    // sum(allocations) <= amount (was: must equal exactly), and a separate
+    // allocatePayment() action lets the unallocated remainder be applied to
+    // real invoices later, once they exist.
+    allocations: z.array(paymentAllocationInputSchema).default([]),
     // Optional, client-generated — see CF-5 in HARDENING_BRANCH_INDEPENDENT_AUDIT.md.
     idempotencyKey: z.string().min(1).max(200).optional(),
   })
@@ -45,3 +50,11 @@ export const paymentSchema = z
   );
 
 export type PaymentInput = z.infer<typeof paymentSchema>;
+
+// Applies part (or all) of an already-POSTED payment's unallocated
+// remainder to real invoices — same per-line shape as create, minus the
+// header fields (direction/party/amount are already fixed on the payment).
+export const paymentAllocateSchema = z.object({
+  allocations: z.array(paymentAllocationInputSchema).min(1, "At least one allocation is required"),
+});
+export type PaymentAllocateInput = z.infer<typeof paymentAllocateSchema>;

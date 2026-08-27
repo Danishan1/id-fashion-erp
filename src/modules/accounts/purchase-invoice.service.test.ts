@@ -19,9 +19,13 @@ vi.mock("./purchase-invoice.repository", () => ({
     replaceItems: vi.fn(),
     updateStatusConditional: vi.fn(),
   },
+  CompanyRepository: { findBaseCurrencyCode: vi.fn() },
+}));
+vi.mock("@/modules/suppliers/supplier.repository", () => ({
+  SupplierRepository: { findById: vi.fn() },
 }));
 vi.mock("./chart-of-account.repository", () => ({
-  ChartOfAccountRepository: { findByCode: vi.fn() },
+  ChartOfAccountRepository: { findByCode: vi.fn(), findAnyById: vi.fn() },
 }));
 vi.mock("./tax-config.repository", () => ({
   TaxRateRepository: { findAnyById: vi.fn() },
@@ -43,7 +47,8 @@ vi.mock("@/core/db/client", () => ({ prisma: { $transaction: vi.fn() } }));
 const { prisma } = await import("@/core/db/client");
 const { PermissionService } = await import("@/core/rbac/PermissionService");
 const { PurchaseOrderRepository, PurchaseOrderItemRepository } = await import("@/modules/purchasing/purchase-order.repository");
-const { PurchaseInvoiceRepository } = await import("./purchase-invoice.repository");
+const { PurchaseInvoiceRepository, CompanyRepository } = await import("./purchase-invoice.repository");
+const { SupplierRepository } = await import("@/modules/suppliers/supplier.repository");
 const { ChartOfAccountRepository } = await import("./chart-of-account.repository");
 const { TaxRateRepository } = await import("./tax-config.repository");
 const { postJournalCore } = await import("./journal.service");
@@ -68,8 +73,11 @@ beforeEach(() => {
   vi.mocked(PurchaseInvoiceRepository.findByIdempotencyKey).mockReset().mockResolvedValue(null);
   vi.mocked(PurchaseInvoiceRepository.replaceItems).mockReset();
   vi.mocked(PurchaseInvoiceRepository.updateStatusConditional).mockReset();
+  vi.mocked(CompanyRepository.findBaseCurrencyCode).mockReset();
+  vi.mocked(SupplierRepository.findById).mockReset();
   vi.mocked(TaxRateRepository.findAnyById).mockReset();
   vi.mocked(ChartOfAccountRepository.findByCode).mockReset();
+  vi.mocked(ChartOfAccountRepository.findAnyById).mockReset();
   vi.mocked(postJournalCore).mockReset().mockResolvedValue(undefined);
   vi.mocked(prisma.$transaction).mockReset();
 });
@@ -379,6 +387,144 @@ describe("postPurchaseInvoice — self-approval, over-invoice guard, no PO statu
     } as never);
 
     await expect(postPurchaseInvoice(actor, "pinv-1")).rejects.toMatchObject({ code: "POSTED_INVOICE_LOCKED" });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+});
+
+describe("createPurchaseInvoice - direct/party bill (no Purchase Order)", () => {
+  it("resolves supplier + company base currency directly, with no order fetch at all", async () => {
+    vi.mocked(SupplierRepository.findById).mockResolvedValue({ id: "sup-9", paymentTermsDays: 15 } as never);
+    vi.mocked(CompanyRepository.findBaseCurrencyCode).mockResolvedValue({ baseCurrencyCode: "INR" } as never);
+    vi.mocked(ChartOfAccountRepository.findAnyById).mockResolvedValue({
+      id: "acct-freight",
+      name: "Freight Expense",
+      code: "EXP-FREIGHT",
+      accountType: "EXPENSE",
+      isActive: true,
+    } as never);
+    vi.mocked(PurchaseInvoiceRepository.createWithItems).mockResolvedValue({ id: "pinv-direct-1" } as never);
+
+    await createPurchaseInvoice(actor, {
+      supplierId: "sup-9",
+      invoiceDate: "2026-08-27",
+      lines: [{ description: "August freight charges", expenseAccountId: "acct-freight", quantity: 1, unitPrice: 2500, taxRateId: "" }],
+    } as never);
+
+    expect(PurchaseOrderRepository.findByIdWithDetails).not.toHaveBeenCalled();
+    const [headerData, items] = vi.mocked(PurchaseInvoiceRepository.createWithItems).mock.calls[0];
+    expect(headerData).toMatchObject({ purchaseOrderId: null, supplierId: "sup-9", currencyCode: "INR", subtotalAmount: 2500, totalAmount: 2500 });
+    expect((headerData.dueDate as Date).toISOString().slice(0, 10)).toBe("2026-09-11"); // +15 days
+    expect(items[0]).toMatchObject({ purchaseOrderItemId: null, productId: null, description: "August freight charges", expenseAccountId: "acct-freight" });
+  });
+
+  it("rejects a direct line whose chosen account is COGS", async () => {
+    vi.mocked(SupplierRepository.findById).mockResolvedValue({ id: "sup-9", paymentTermsDays: 0 } as never);
+    vi.mocked(CompanyRepository.findBaseCurrencyCode).mockResolvedValue({ baseCurrencyCode: "INR" } as never);
+    vi.mocked(ChartOfAccountRepository.findAnyById).mockResolvedValue({
+      id: "acct-cogs",
+      name: "Cost of Goods Sold",
+      code: "COGS",
+      accountType: "EXPENSE",
+      isActive: true,
+    } as never);
+
+    await expect(
+      createPurchaseInvoice(actor, {
+        supplierId: "sup-9",
+        invoiceDate: "2026-08-27",
+        lines: [{ description: "x", expenseAccountId: "acct-cogs", quantity: 1, unitPrice: 100, taxRateId: "" }],
+      } as never)
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+});
+
+describe("postPurchaseInvoice - mixed and direct-only lines", () => {
+  it("posts a separate Dr line per distinct direct expense account, alongside Dr COGS for the PO-linked portion", async () => {
+    vi.mocked(PurchaseInvoiceRepository.findByIdWithDetails)
+      .mockResolvedValueOnce({
+        id: "pinv-1",
+        status: "DRAFT",
+        createdByUserId: "user-1",
+        invoiceNumber: "PINV-2026-00002",
+        invoiceDate: new Date("2026-08-27"),
+        subtotalAmount: "1400",
+        taxAmount: "0",
+        totalAmount: "1400",
+        items: [
+          { purchaseOrderItemId: "item-1", expenseAccountId: null, quantity: "60", unitPrice: "15", product: { styleName: "Cotton Fabric" }, expenseAccount: null },
+          { purchaseOrderItemId: null, expenseAccountId: "acct-freight", quantity: "1", unitPrice: "300", product: null, expenseAccount: { id: "acct-freight", code: "EXP-FREIGHT", name: "Freight Expense", isActive: true } },
+          { purchaseOrderItemId: null, expenseAccountId: "acct-consult", quantity: "1", unitPrice: "200", product: null, expenseAccount: { id: "acct-consult", code: "EXP-CONSULT", name: "Consulting Fees", isActive: true } },
+        ],
+      } as never)
+      .mockResolvedValueOnce({ id: "pinv-1", status: "POSTED" } as never);
+    vi.mocked(ChartOfAccountRepository.findByCode).mockImplementation(
+      ((_c: string, code: string) => Promise.resolve({ id: `acct-${code}`, code })) as never
+    );
+    const fakeTx = makeFakeTx();
+    vi.mocked(prisma.$transaction).mockImplementation((cb: unknown) => (cb as (tx: unknown) => Promise<unknown>)(fakeTx));
+
+    await postPurchaseInvoice(actor, "pinv-1");
+
+    expect(fakeTx.journal.create.mock.calls[0][0].data.lines.create).toEqual([
+      { accountId: "acct-COGS", lineNumber: 1, debitAmount: 900, creditAmount: 0, description: "Purchase Invoice PINV-2026-00002" },
+      { accountId: "acct-freight", lineNumber: 2, debitAmount: 300, creditAmount: 0, description: "Purchase Invoice PINV-2026-00002 — Freight Expense" },
+      { accountId: "acct-consult", lineNumber: 3, debitAmount: 200, creditAmount: 0, description: "Purchase Invoice PINV-2026-00002 — Consulting Fees" },
+      { accountId: "acct-AP", lineNumber: 4, debitAmount: 0, creditAmount: 1400, description: "Purchase Invoice PINV-2026-00002" },
+    ]);
+    // The over-invoice guard only runs for the one PO-linked item, never the two direct lines.
+    expect(PurchaseOrderItemRepository.guardedIncrementInvoiced).toHaveBeenCalledTimes(1);
+  });
+
+  it("posts with no COGS line at all for a pure direct/party bill (no Purchase Order)", async () => {
+    vi.mocked(PurchaseInvoiceRepository.findByIdWithDetails)
+      .mockResolvedValueOnce({
+        id: "pinv-2",
+        status: "DRAFT",
+        createdByUserId: "user-1",
+        invoiceNumber: "PINV-2026-00003",
+        invoiceDate: new Date("2026-08-27"),
+        subtotalAmount: "500",
+        taxAmount: "90",
+        totalAmount: "590",
+        items: [
+          { purchaseOrderItemId: null, expenseAccountId: "acct-rent", quantity: "1", unitPrice: "500", product: null, expenseAccount: { id: "acct-rent", code: "EXP-RENT", name: "Factory Rent", isActive: true } },
+        ],
+      } as never)
+      .mockResolvedValueOnce({ id: "pinv-2", status: "POSTED" } as never);
+    vi.mocked(ChartOfAccountRepository.findByCode).mockImplementation(
+      ((_c: string, code: string) => Promise.resolve({ id: `acct-${code}`, code })) as never
+    );
+    const fakeTx = makeFakeTx();
+    vi.mocked(prisma.$transaction).mockImplementation((cb: unknown) => (cb as (tx: unknown) => Promise<unknown>)(fakeTx));
+
+    await postPurchaseInvoice(actor, "pinv-2");
+
+    expect(fakeTx.journal.create.mock.calls[0][0].data.lines.create).toEqual([
+      { accountId: "acct-rent", lineNumber: 1, debitAmount: 500, creditAmount: 0, description: "Purchase Invoice PINV-2026-00003 — Factory Rent" },
+      { accountId: "acct-GST-ITC", lineNumber: 2, debitAmount: 90, creditAmount: 0, description: "Purchase Invoice PINV-2026-00003 — GST Input" },
+      { accountId: "acct-AP", lineNumber: 3, debitAmount: 0, creditAmount: 590, description: "Purchase Invoice PINV-2026-00003" },
+    ]);
+    expect(PurchaseOrderItemRepository.guardedIncrementInvoiced).not.toHaveBeenCalled();
+    // No PO-linked lines at all - COGS should never even be looked up.
+    expect(ChartOfAccountRepository.findByCode).not.toHaveBeenCalledWith("co-1", "COGS");
+  });
+
+  it("rejects posting when a direct line's chosen account was deactivated since the invoice was drafted", async () => {
+    vi.mocked(PurchaseInvoiceRepository.findByIdWithDetails).mockResolvedValueOnce({
+      id: "pinv-3",
+      status: "DRAFT",
+      createdByUserId: "user-1",
+      invoiceNumber: "PINV-2026-00004",
+      invoiceDate: new Date("2026-08-27"),
+      subtotalAmount: "100",
+      taxAmount: "0",
+      totalAmount: "100",
+      items: [
+        { purchaseOrderItemId: null, expenseAccountId: "acct-old", quantity: "1", unitPrice: "100", product: null, expenseAccount: { id: "acct-old", code: "EXP-OLD", name: "Old Account", isActive: false } },
+      ],
+    } as never);
+
+    await expect(postPurchaseInvoice(actor, "pinv-3")).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 });

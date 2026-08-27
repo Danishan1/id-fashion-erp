@@ -10,6 +10,7 @@ import { FinanceConfigRepository } from "@/modules/finance-config/finance-config
 import type { ExpenseInput } from "./expense.schema";
 import { ExpenseRepository, CompanyRepository } from "./expense.repository";
 import { ChartOfAccountRepository } from "./chart-of-account.repository";
+import { assertValidExpenseAccount } from "./chart-of-account.service";
 import { TaxRateRepository } from "./tax-config.repository";
 import { postJournalCore } from "./journal.service";
 
@@ -23,32 +24,6 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-/**
- * COGS is seeded with accountType EXPENSE but is a Purchase-Invoice-only
- * control account (postPurchaseInvoice debits it via a hardcoded
- * findByCode lookup, never user-selectable) — excluded explicitly here, not
- * just implicitly via isSystemAccount (COGS is deliberately NOT flagged
- * isSystemAccount, so that check alone would let it through). Letting a
- * user post an ad hoc Expense into the same account Purchase Invoice drives
- * automatically would pollute any COGS-based margin reporting with manual,
- * PO-disconnected debits.
- */
-async function assertValidExpenseAccount(companyId: string, accountId: string) {
-  const account = await ChartOfAccountRepository.findAnyById(companyId, accountId);
-  if (!account) throw new BusinessRuleError("NOT_FOUND", "Expense account not found.", { id: accountId });
-  if (account.accountType !== "EXPENSE" || account.code === "COGS") {
-    throw new BusinessRuleError(
-      "VALIDATION_ERROR",
-      `"${account.name}" cannot be used as an Expense account.`,
-      { accountId, accountType: account.accountType, code: account.code }
-    );
-  }
-  if (!account.isActive) {
-    throw new BusinessRuleError("VALIDATION_ERROR", `"${account.name}" is not active.`, { accountId });
-  }
-  return account;
-}
-
 interface BuiltExpenseFields {
   accountId: string;
   supplierId: string | null;
@@ -57,6 +32,8 @@ interface BuiltExpenseFields {
   taxPercentage: number | null;
   taxAmount: number;
   totalAmount: number;
+  tdsPercentage: number | null;
+  tdsAmount: number;
   paymentTypeId: string;
   bankAccountId: string | null;
 }
@@ -89,6 +66,11 @@ async function buildExpenseFields(companyId: string, input: ExpenseInput): Promi
   }
   const amount = round2(input.amount);
   const taxAmount = taxPercentage ? round2((amount * taxPercentage) / 100) : 0;
+  // TDS on the base amount, not the GST-inclusive total — matches standard
+  // Indian TDS practice (confirmed against the reference tool's own live
+  // calc, not guessed).
+  const tdsPercentage = input.tdsPercentage || null;
+  const tdsAmount = tdsPercentage ? round2((amount * tdsPercentage) / 100) : 0;
 
   return {
     accountId: input.accountId,
@@ -98,6 +80,8 @@ async function buildExpenseFields(companyId: string, input: ExpenseInput): Promi
     taxPercentage,
     taxAmount,
     totalAmount: round2(amount + taxAmount),
+    tdsPercentage,
+    tdsAmount,
     paymentTypeId: input.paymentTypeId,
     bankAccountId: input.bankAccountId || null,
   };
@@ -252,9 +236,11 @@ export async function postExpense(actor: ActorContext, id: string) {
 
   const cashOrBankAccountCode = expense.paymentType.type === "CASH" ? "CASH" : "BANK";
   const taxAmountNum = Number(expense.taxAmount);
-  const [cashOrBankAccount, gstInputAccount] = await Promise.all([
+  const tdsAmountNum = Number(expense.tdsAmount);
+  const [cashOrBankAccount, gstInputAccount, tdsPayableAccount] = await Promise.all([
     ChartOfAccountRepository.findByCode(actor.companyId, cashOrBankAccountCode),
     taxAmountNum > 0 ? ChartOfAccountRepository.findByCode(actor.companyId, "GST-ITC") : null,
+    tdsAmountNum > 0 ? ChartOfAccountRepository.findByCode(actor.companyId, "TDS-PAY") : null,
   ]);
   if (!cashOrBankAccount) {
     throw new BusinessRuleError(
@@ -265,6 +251,9 @@ export async function postExpense(actor: ActorContext, id: string) {
   }
   if (taxAmountNum > 0 && !gstInputAccount) {
     throw new BusinessRuleError("NOT_FOUND", "The GST Input Tax Credit control account is missing from the Chart of Accounts.", {});
+  }
+  if (tdsAmountNum > 0 && !tdsPayableAccount) {
+    throw new BusinessRuleError("NOT_FOUND", "The TDS Payable control account is missing from the Chart of Accounts.", {});
   }
 
   const journalNumber = await generateDocumentNumber({
@@ -293,11 +282,22 @@ export async function postExpense(actor: ActorContext, id: string) {
         description: `Expense ${expense.expenseNumber} — GST Input`,
       });
     }
+    if (tdsAmountNum > 0 && tdsPayableAccount) {
+      lines.push({
+        accountId: tdsPayableAccount.id,
+        lineNumber: nextLineNumber++,
+        debitAmount: 0,
+        creditAmount: tdsAmountNum,
+        description: `Expense ${expense.expenseNumber} — TDS Withheld`,
+      });
+    }
+    // Net cash/bank outflow is totalAmount minus whatever TDS was withheld
+    // at source — the vendor/payee only actually receives the net amount.
     lines.push({
       accountId: cashOrBankAccount.id,
       lineNumber: nextLineNumber++,
       debitAmount: 0,
-      creditAmount: Number(expense.totalAmount),
+      creditAmount: round2(Number(expense.totalAmount) - tdsAmountNum),
       description: `Expense ${expense.expenseNumber}`,
     });
 

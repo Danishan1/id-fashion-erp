@@ -49,7 +49,7 @@ const { SalesInvoiceRepository } = await import("./sales-invoice.repository");
 const { PurchaseInvoiceRepository } = await import("./purchase-invoice.repository");
 const { ChartOfAccountRepository } = await import("./chart-of-account.repository");
 const { postJournalCore } = await import("./journal.service");
-const { createPayment, postPayment, cancelPayment } = await import("./payment.service");
+const { createPayment, postPayment, cancelPayment, allocatePayment } = await import("./payment.service");
 
 const actor = { companyId: "co-1", userId: "user-1", branchId: null };
 
@@ -113,7 +113,65 @@ describe("createPayment — allocation validation", () => {
     vi.mocked(FinanceConfigRepository.paymentType.findFirst).mockResolvedValue(paymentType as never);
   });
 
-  it("rejects when allocations don't add up to the payment amount", async () => {
+  // Sum(allocations) < amount is now a legitimate "On Account" creation —
+  // the remainder sits unallocated until a later allocatePayment() call.
+  // Only sum(allocations) > amount is still a real error (see the next
+  // test).
+  it("allows creating a payment with allocations that total less than the amount ('On Account')", async () => {
+    vi.mocked(SalesInvoiceRepository.findAnyById).mockResolvedValue({
+      id: "inv-1",
+      customerId: "cust-1",
+      status: "POSTED",
+      totalAmount: "500",
+      paidAmount: "0",
+    } as never);
+    vi.mocked(PaymentRepository.createWithAllocations).mockResolvedValue({ id: "pay-1" } as never);
+
+    const result = await createPayment(actor, {
+      direction: "RECEIPT",
+      customerId: "cust-1",
+      paymentDate: "2026-08-24",
+      paymentTypeId: "pt-1",
+      amount: 200,
+      allocations: [{ salesInvoiceId: "inv-1", allocatedAmount: 100 }],
+    } as never);
+
+    expect(result).toMatchObject({ id: "pay-1" });
+    const [, allocationRows] = vi.mocked(PaymentRepository.createWithAllocations).mock.calls[0];
+    expect(allocationRows).toMatchObject([{ salesInvoiceId: "inv-1", purchaseInvoiceId: null, allocatedAmount: 100 }]);
+  });
+
+  // Regression: ValidatedAllocation carries an extra invoiceTotalAmount field
+  // (used only by applyAllocationInTx's own in-memory guard, not a real
+  // PaymentAllocation column) — createPayment() must strip it before handing
+  // the array to the repository, or Prisma's create call 500s. toEqual (not
+  // toMatchObject) is deliberate here: toMatchObject would pass even with
+  // the extra field present, which is exactly why this bug went undetected
+  // until a live end-to-end test caught it.
+  it("strips invoiceTotalAmount (an in-memory-only validation field) before calling the repository", async () => {
+    vi.mocked(SalesInvoiceRepository.findAnyById).mockResolvedValue({
+      id: "inv-1",
+      customerId: "cust-1",
+      status: "POSTED",
+      totalAmount: "500",
+      paidAmount: "0",
+    } as never);
+    vi.mocked(PaymentRepository.createWithAllocations).mockResolvedValue({ id: "pay-1" } as never);
+
+    await createPayment(actor, {
+      direction: "RECEIPT",
+      customerId: "cust-1",
+      paymentDate: "2026-08-24",
+      paymentTypeId: "pt-1",
+      amount: 100,
+      allocations: [{ salesInvoiceId: "inv-1", allocatedAmount: 100 }],
+    } as never);
+
+    const [, allocationRows] = vi.mocked(PaymentRepository.createWithAllocations).mock.calls[0];
+    expect(allocationRows).toEqual([{ salesInvoiceId: "inv-1", purchaseInvoiceId: null, allocatedAmount: 100 }]);
+  });
+
+  it("rejects when allocations exceed the payment amount", async () => {
     vi.mocked(SalesInvoiceRepository.findAnyById).mockResolvedValue({
       id: "inv-1",
       customerId: "cust-1",
@@ -128,7 +186,7 @@ describe("createPayment — allocation validation", () => {
         customerId: "cust-1",
         paymentDate: "2026-08-24",
         paymentTypeId: "pt-1",
-        amount: 200,
+        amount: 50,
         allocations: [{ salesInvoiceId: "inv-1", allocatedAmount: 100 }],
       } as never)
     ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
@@ -451,5 +509,68 @@ describe("cancelPayment", () => {
     vi.mocked(PaymentRepository.updateStatusConditional).mockResolvedValue({ count: 0 } as never);
 
     await expect(cancelPayment(actor, "pay-1")).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+  });
+});
+
+describe("allocatePayment — applying an already-POSTED payment's unallocated remainder", () => {
+  const postedOnAccountPayment = {
+    id: "pay-1",
+    status: "POSTED",
+    direction: "RECEIPT" as const,
+    customerId: "cust-1",
+    supplierId: null,
+    amount: "200",
+    createdByUserId: "user-1",
+    allocations: [{ salesInvoiceId: "inv-existing", purchaseInvoiceId: null, allocatedAmount: "50" }],
+  };
+
+  it("rejects allocating against a payment that isn't POSTED", async () => {
+    vi.mocked(PaymentRepository.findByIdWithDetails).mockResolvedValue({ ...postedOnAccountPayment, status: "DRAFT" } as never);
+
+    await expect(
+      allocatePayment(actor, "pay-1", { allocations: [{ salesInvoiceId: "inv-1", allocatedAmount: 50 }] })
+    ).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+  });
+
+  it("rejects a new allocation exceeding the payment's own unallocated remainder", async () => {
+    // amount 200, already allocated 50 -> 150 unallocated; requesting 151 must fail
+    // even though 151 is within the target invoice's own outstanding balance.
+    vi.mocked(PaymentRepository.findByIdWithDetails).mockResolvedValue(postedOnAccountPayment as never);
+    vi.mocked(SalesInvoiceRepository.findAnyById).mockResolvedValue({
+      id: "inv-1",
+      customerId: "cust-1",
+      status: "POSTED",
+      totalAmount: "1000",
+      paidAmount: "0",
+    } as never);
+
+    await expect(
+      allocatePayment(actor, "pay-1", { allocations: [{ salesInvoiceId: "inv-1", allocatedAmount: 151 }] })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("applies a valid allocation and does not create a new Journal (the cash movement already happened)", async () => {
+    vi.mocked(PaymentRepository.findByIdWithDetails)
+      .mockResolvedValueOnce(postedOnAccountPayment as never)
+      .mockResolvedValueOnce({ ...postedOnAccountPayment, allocations: [...postedOnAccountPayment.allocations, { salesInvoiceId: "inv-1", allocatedAmount: "150" }] } as never);
+    vi.mocked(SalesInvoiceRepository.findAnyById).mockResolvedValue({
+      id: "inv-1",
+      customerId: "cust-1",
+      status: "POSTED",
+      totalAmount: "1000",
+      paidAmount: "0",
+    } as never);
+
+    const fakeTx = makeFakeTx();
+    const createSpy = vi.fn();
+    vi.mocked(prisma.$transaction).mockImplementation((cb: unknown) =>
+      (cb as (tx: unknown) => Promise<unknown>)({ ...fakeTx, paymentAllocation: { create: createSpy } })
+    );
+
+    const result = await allocatePayment(actor, "pay-1", { allocations: [{ salesInvoiceId: "inv-1", allocatedAmount: 150 }] });
+
+    expect(result).toMatchObject({ id: "pay-1" });
+    expect(createSpy).toHaveBeenCalledWith({ data: { paymentId: "pay-1", salesInvoiceId: "inv-1", purchaseInvoiceId: null, allocatedAmount: 150 } });
+    expect(fakeTx.journal.create).not.toHaveBeenCalled();
   });
 });
