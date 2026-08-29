@@ -106,6 +106,51 @@ describe("PermissionService.can", () => {
     expect(userFindUniqueMock).toHaveBeenCalledTimes(2);
   });
 
+  describe("isPlatformAdmin — full access to whichever company the session is currently scoped to", () => {
+    it("grants access to a module/action the user holds no permission for at all", async () => {
+      mockPermissions([]); // holds nothing
+      userFindUniqueMock.mockResolvedValue({ status: "ACTIVE", isPlatformAdmin: true });
+
+      await expect(PermissionService.can("user-1", "sales_orders", "delete")).resolves.toBe(true);
+      expect(findManyMock).not.toHaveBeenCalled(); // never even loads permission keys
+    });
+
+    it("bypasses the self-approval guard too — a platform admin can approve/post their own record", async () => {
+      mockPermissions([]);
+      userFindUniqueMock.mockResolvedValue({ status: "ACTIVE", isPlatformAdmin: true });
+
+      const result = await PermissionService.can("user-1", "sales_orders", "approve", { createdBy: "user-1" });
+      expect(result).toBe(true);
+      expect(countMock).not.toHaveBeenCalled(); // never even checks for SUPER_ADMIN
+    });
+
+    it("still denies a suspended platform admin — the ACTIVE-status check runs before the bypass", async () => {
+      mockPermissions([]);
+      userFindUniqueMock.mockResolvedValue({ status: "SUSPENDED", isPlatformAdmin: true });
+
+      await expect(PermissionService.can("user-1", "sales_orders", "view")).resolves.toBe(false);
+    });
+
+    it("still denies a stale session (password changed) for a platform admin — that check also runs before the bypass", async () => {
+      mockPermissions([]);
+      const changedAt = new Date("2026-08-27T12:00:00Z");
+      userFindUniqueMock.mockResolvedValue({ status: "ACTIVE", isPlatformAdmin: true, passwordChangedAt: changedAt });
+      const sessionIssuedBeforeChange = Math.floor(new Date("2026-08-27T11:00:00Z").getTime() / 1000);
+
+      await expect(
+        PermissionService.can("user-1", "sales_orders", "view", { sessionIssuedAt: sessionIssuedBeforeChange })
+      ).resolves.toBe(false);
+    });
+
+    it("an ordinary (non-platform-admin) user is unaffected and still goes through the normal permission-key check", async () => {
+      mockPermissions(["sales_orders.view"]);
+      userFindUniqueMock.mockResolvedValue({ status: "ACTIVE", isPlatformAdmin: false });
+
+      await expect(PermissionService.can("user-1", "sales_orders", "delete")).resolves.toBe(false);
+      await expect(PermissionService.can("user-1", "sales_orders", "view")).resolves.toBe(true);
+    });
+  });
+
   describe("sessionIssuedAt staleness (password changed/reset — reuses the CF-7 mechanism)", () => {
     it("denies a session issued before the account's last password change", async () => {
       mockPermissions(["sales_orders.view"]);

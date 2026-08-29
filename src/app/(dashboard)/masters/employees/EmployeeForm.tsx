@@ -44,6 +44,7 @@ interface Shift {
 interface Designation {
   id: string;
   name: string;
+  departmentId: string | null;
 }
 
 interface EmployeeOption {
@@ -103,6 +104,21 @@ export function EmployeeForm({ initialValues, submitUrl, method, redirectTo, exc
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Department-wise: a designation tied to a specific department only shows
+  // once that department is selected; designations with no department
+  // (departmentId null, e.g. "General Manager") are always available.
+  const visibleDesignations = designations.filter((d) => !d.departmentId || d.departmentId === values.departmentId);
+
+  const selectDepartment = (departmentId: string) => {
+    const currentDesignation = designations.find((d) => d.id === values.designationId);
+    // Clear a now-out-of-scope designation rather than silently keeping a
+    // stale cross-department selection — same "don't let a selection
+    // outlive the context it depended on" fix already applied to Sales
+    // Order's own Style-scoped Sample picker.
+    const designationStillValid = !currentDesignation?.departmentId || currentDesignation.departmentId === departmentId;
+    setValues({ ...values, departmentId, designationId: designationStillValid ? values.designationId : "" });
+  };
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (isSubmitting) return;
@@ -143,7 +159,7 @@ export function EmployeeForm({ initialValues, submitUrl, method, redirectTo, exc
           <select
             id="departmentId"
             value={values.departmentId}
-            onChange={(e) => setValues({ ...values, departmentId: e.target.value })}
+            onChange={(e) => selectDepartment(e.target.value)}
             className={textInputClass()}
           >
             <option value="">— None —</option>
@@ -175,12 +191,18 @@ export function EmployeeForm({ initialValues, submitUrl, method, redirectTo, exc
             className={textInputClass()}
           >
             <option value="">— None —</option>
-            {designations.map((d) => (
+            {visibleDesignations.map((d) => (
               <option key={d.id} value={d.id}>
                 {d.name}
               </option>
             ))}
           </select>
+          {!values.departmentId && designations.some((d) => d.departmentId) && (
+            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+              Only showing designations not tied to a specific department — pick a Department above to also see
+              its own designations.
+            </p>
+          )}
         </FormField>
         <FormField label="Join Date" htmlFor="joinDate">
           <input

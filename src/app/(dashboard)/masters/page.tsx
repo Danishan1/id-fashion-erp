@@ -4,7 +4,8 @@ import { Breadcrumb } from "@/components/ui/Breadcrumb";
 const MASTER_SECTIONS = [
   { href: "/masters/customers", label: "Customers", description: "Customers and their buyers/brands" },
   { href: "/masters/suppliers", label: "Suppliers", description: "Fabric, trims, packaging, and service vendors" },
-  { href: "/masters/employees", label: "Employees", description: "Staff records and departments" },
+  { href: "/masters/employees", label: "Employees", description: "Staff records" },
+  { href: "/masters/departments", label: "Departments", description: "Organize employees by department (Cutting, Sewing, Finishing, …)" },
   { href: "/masters/products", label: "Styles", description: "Product styles with color/size variants" },
   { href: "/masters/materials", label: "Raw Materials", description: "Fabric, trims, accessories, and packaging items" },
   { href: "/masters/lookups", label: "Colors, Sizes & Units", description: "Shared lookup values" },

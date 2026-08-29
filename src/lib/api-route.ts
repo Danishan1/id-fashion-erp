@@ -42,6 +42,23 @@ export async function requireSession() {
   return session;
 }
 
+/**
+ * For the small set of routes that provision or list other companies —
+ * has nothing to do with any single company's own RBAC (there's no
+ * "company" to scope a permission to when you're creating one), so this
+ * is deliberately separate from PermissionService entirely. Re-checks
+ * isPlatformAdmin live from the DB, same "never trust the JWT alone"
+ * discipline requireSession() already applies to status/passwordChangedAt.
+ */
+export async function requirePlatformAdmin() {
+  const session = await requireSession();
+  const user = await prisma.user.findUnique({ where: { id: session.user.id }, select: { isPlatformAdmin: true } });
+  if (!user?.isPlatformAdmin) {
+    throw new BusinessRuleError("PERMISSION_DENIED", "Platform administrator access required.");
+  }
+  return session;
+}
+
 export function handleApiError(error: unknown): NextResponse {
   const { status, body } = toErrorResponse(error);
   return NextResponse.json(body, { status });

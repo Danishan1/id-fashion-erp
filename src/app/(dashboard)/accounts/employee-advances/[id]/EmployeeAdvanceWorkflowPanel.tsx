@@ -160,6 +160,15 @@ function SettlementAttachmentsModal({ settlementId, onClose }: { settlementId: s
             Upload
           </button>
         </div>
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 dark:border-zinc-700 dark:text-zinc-200"
+          >
+            Close
+          </button>
+        </div>
       </div>
       {previewAttachment && (
         <FilePreviewModal

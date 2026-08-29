@@ -1,21 +1,9 @@
 import { z } from "zod";
 
-export const SUPPLIER_CATEGORIES = [
-  "FABRIC",
-  "TRIMS",
-  "ZIPS",
-  "BUTTONS",
-  "ACCESSORIES",
-  "PACKAGING",
-  "SERVICES",
-  "MACHINERY",
-  "OTHER",
-] as const;
-
 export const supplierSchema = z.object({
   code: z.string().min(1, "Code is required").max(30),
   name: z.string().min(1, "Name is required").max(200),
-  category: z.enum(SUPPLIER_CATEGORIES),
+  categoryId: z.string().uuid("Category is required"),
   contactPerson: z.string().max(200).optional().or(z.literal("")),
   email: z.string().email().optional().or(z.literal("")),
   phone: z.string().max(50).optional().or(z.literal("")),

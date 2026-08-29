@@ -33,7 +33,7 @@ export default async function EditSupplierPage({ params }: { params: Promise<{ i
         initialValues={{
           code: supplier.code,
           name: supplier.name,
-          category: supplier.category,
+          categoryId: supplier.categoryId,
           contactPerson: supplier.contactPerson ?? "",
           email: supplier.email ?? "",
           phone: supplier.phone ?? "",

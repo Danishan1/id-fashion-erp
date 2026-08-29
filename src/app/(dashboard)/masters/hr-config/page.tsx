@@ -43,6 +43,7 @@ export default function HrConfigPage() {
           fields={[
             { key: "code", label: "Code", required: true },
             { key: "name", label: "Name", required: true },
+            { key: "departmentId", label: "Department", type: "select", optionsUrl: "/api/v1/departments" },
           ]}
         />
       )}

@@ -283,18 +283,36 @@ async function main() {
     skipDuplicates: true,
   });
 
+  console.log("Seeding Supplier Categories...");
+  await prisma.supplierCategory.createMany({
+    data: [
+      { companyId, code: "FABRIC", name: "Fabric" },
+      { companyId, code: "TRIMS", name: "Trims" },
+      { companyId, code: "ZIPS", name: "Zips" },
+      { companyId, code: "BUTTONS", name: "Buttons" },
+      { companyId, code: "ACCESSORIES", name: "Accessories" },
+      { companyId, code: "PACKAGING", name: "Packaging" },
+      { companyId, code: "SERVICES", name: "Services" },
+      { companyId, code: "MACHINERY", name: "Machinery" },
+      { companyId, code: "OTHER", name: "Other" },
+    ],
+    skipDuplicates: true,
+  });
+  const supplierCategories = await prisma.supplierCategory.findMany({ where: { companyId } });
+  const supplierCategoryIdByCode = new Map(supplierCategories.map((c) => [c.code, c.id]));
+
   await prisma.supplier.createMany({
     data: [
-      { companyId, code: "SUP001", name: "Shree Balaji Textiles", category: "FABRIC", contactPerson: "Balaji Rao", phone: "9820011122" },
-      { companyId, code: "SUP002", name: "Om Fabrics Pvt Ltd", category: "FABRIC", contactPerson: "Om Prakash", phone: "9820033344" },
-      { companyId, code: "SUP003", name: "National Zipper Co.", category: "ZIPS", contactPerson: "Feroz Khan", phone: "9820055566" },
-      { companyId, code: "SUP004", name: "Universal Buttons & Trims", category: "BUTTONS", contactPerson: "Ramesh Shah", phone: "9820077788" },
-      { companyId, code: "SUP005", name: "Classic Labels & Tags", category: "ACCESSORIES", contactPerson: "Meena Iyer", phone: "9820099900" },
-      { companyId, code: "SUP006", name: "Perfect Packaging Solutions", category: "PACKAGING", contactPerson: "Ashok Jain", phone: "9821011122" },
-      { companyId, code: "SUP007", name: "SecureBox Cartons", category: "PACKAGING", contactPerson: "Vinod Agarwal", phone: "9821033344" },
-      { companyId, code: "SUP008", name: "Rapid Logistics Services", category: "SERVICES", contactPerson: "Sanjay Kulkarni", phone: "9821055566" },
-      { companyId, code: "SUP009", name: "Juki Machine Traders", category: "MACHINERY", contactPerson: "Harish Mehta", phone: "9821077788" },
-      { companyId, code: "SUP010", name: "Singer Sewing Equipments", category: "MACHINERY", contactPerson: "Nitin Kapoor", phone: "9821099900" },
+      { companyId, code: "SUP001", name: "Shree Balaji Textiles", categoryId: supplierCategoryIdByCode.get("FABRIC")!, contactPerson: "Balaji Rao", phone: "9820011122" },
+      { companyId, code: "SUP002", name: "Om Fabrics Pvt Ltd", categoryId: supplierCategoryIdByCode.get("FABRIC")!, contactPerson: "Om Prakash", phone: "9820033344" },
+      { companyId, code: "SUP003", name: "National Zipper Co.", categoryId: supplierCategoryIdByCode.get("ZIPS")!, contactPerson: "Feroz Khan", phone: "9820055566" },
+      { companyId, code: "SUP004", name: "Universal Buttons & Trims", categoryId: supplierCategoryIdByCode.get("BUTTONS")!, contactPerson: "Ramesh Shah", phone: "9820077788" },
+      { companyId, code: "SUP005", name: "Classic Labels & Tags", categoryId: supplierCategoryIdByCode.get("ACCESSORIES")!, contactPerson: "Meena Iyer", phone: "9820099900" },
+      { companyId, code: "SUP006", name: "Perfect Packaging Solutions", categoryId: supplierCategoryIdByCode.get("PACKAGING")!, contactPerson: "Ashok Jain", phone: "9821011122" },
+      { companyId, code: "SUP007", name: "SecureBox Cartons", categoryId: supplierCategoryIdByCode.get("PACKAGING")!, contactPerson: "Vinod Agarwal", phone: "9821033344" },
+      { companyId, code: "SUP008", name: "Rapid Logistics Services", categoryId: supplierCategoryIdByCode.get("SERVICES")!, contactPerson: "Sanjay Kulkarni", phone: "9821055566" },
+      { companyId, code: "SUP009", name: "Juki Machine Traders", categoryId: supplierCategoryIdByCode.get("MACHINERY")!, contactPerson: "Harish Mehta", phone: "9821077788" },
+      { companyId, code: "SUP010", name: "Singer Sewing Equipments", categoryId: supplierCategoryIdByCode.get("MACHINERY")!, contactPerson: "Nitin Kapoor", phone: "9821099900" },
     ],
     skipDuplicates: true,
   });

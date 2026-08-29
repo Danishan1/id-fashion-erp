@@ -73,8 +73,13 @@ class PermissionServiceImpl {
    * Also returns `passwordChangedAt` in the same query so the optional
    * session-staleness check below needs no second round-trip.
    */
-  private async loadLiveUserState(userId: string): Promise<{ status: string; passwordChangedAt: Date | null } | null> {
-    return prisma.user.findUnique({ where: { id: userId }, select: { status: true, passwordChangedAt: true } });
+  private async loadLiveUserState(
+    userId: string
+  ): Promise<{ status: string; passwordChangedAt: Date | null; isPlatformAdmin: boolean } | null> {
+    return prisma.user.findUnique({
+      where: { id: userId },
+      select: { status: true, passwordChangedAt: true, isPlatformAdmin: true },
+    });
   }
 
   /**
@@ -102,6 +107,19 @@ class PermissionServiceImpl {
     ) {
       return false;
     }
+
+    // A platform administrator gets full, unrestricted access to whichever
+    // company their own session is currently scoped to (session.user.companyId,
+    // switchable via the sidebar's company switcher) — every module/action,
+    // including self-approval. Company-scoping itself is enforced entirely at
+    // the service/repository layer via actor.companyId sourced from
+    // session.user.companyId, never by this class, so this bypass is exactly
+    // what makes "switch active company" grant real access rather than just
+    // changing which company's data queries happen to filter by. Re-verified
+    // live from the DB on every call (loadLiveUserState is deliberately
+    // uncached), never trusted from the JWT alone — same discipline `status`/
+    // `passwordChangedAt` already use just above.
+    if (user.isPlatformAdmin) return true;
 
     if (
       resourceContext?.createdBy &&

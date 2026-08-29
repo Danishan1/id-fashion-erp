@@ -7,7 +7,7 @@ interface SupplierRow {
   id: string;
   code: string;
   name: string;
-  category: string;
+  category: { name: string };
   isActive: boolean;
 }
 
@@ -29,7 +29,7 @@ export default function SuppliersListPage() {
         columns={[
           { key: "code", header: "Code" },
           { key: "name", header: "Name" },
-          { key: "category", header: "Category" },
+          { key: "category", header: "Category", render: (row) => row.category?.name ?? "—" },
           {
             key: "isActive",
             header: "Status",

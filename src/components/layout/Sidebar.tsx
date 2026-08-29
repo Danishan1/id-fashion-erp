@@ -3,7 +3,13 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
-import { NAV_SECTIONS, isPathActive, isSectionActive } from "./navigation";
+import { NAV_SECTIONS, isPathActive, isSectionActive, type NavSection } from "./navigation";
+import { CompanySwitcher } from "./CompanySwitcher";
+
+const PLATFORM_SECTION: NavSection = {
+  label: "Platform",
+  children: [{ label: "Companies", href: "/platform/companies" }],
+};
 
 function ChevronIcon({ open }: { open: boolean }) {
   return (
@@ -25,8 +31,9 @@ const LEAF_CLASSES = (isActive: boolean) =>
       : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
   }`;
 
-export function Sidebar() {
+export function Sidebar({ isPlatformAdmin = false }: { isPlatformAdmin?: boolean }) {
   const pathname = usePathname();
+  const sections = isPlatformAdmin ? [...NAV_SECTIONS, PLATFORM_SECTION] : NAV_SECTIONS;
 
   // The group containing the active route is expanded by default — derived
   // directly from the current pathname on every render (including a hard
@@ -36,13 +43,13 @@ export function Sidebar() {
   // across client-side navigation without fighting the auto-expand rule.
   const [overrides, setOverrides] = useState<Map<string, boolean>>(new Map());
 
-  function isGroupOpen(section: (typeof NAV_SECTIONS)[number]): boolean {
+  function isGroupOpen(section: NavSection): boolean {
     const override = overrides.get(section.label);
     if (override !== undefined) return override;
     return isSectionActive(section, pathname);
   }
 
-  function toggleGroup(section: (typeof NAV_SECTIONS)[number]) {
+  function toggleGroup(section: NavSection) {
     setOverrides((prev) => {
       const next = new Map(prev);
       next.set(section.label, !isGroupOpen(section));
@@ -55,8 +62,9 @@ export function Sidebar() {
       <div className="flex h-14 items-center border-b border-zinc-200 px-4 dark:border-zinc-800">
         <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Fashion ERP</span>
       </div>
+      <CompanySwitcher />
       <div className="flex-1 space-y-0.5 overflow-y-auto px-2 py-3">
-        {NAV_SECTIONS.map((section) => {
+        {sections.map((section) => {
           if (!section.children) {
             const isActive = section.href ? isPathActive(pathname, section.href) : false;
             return (

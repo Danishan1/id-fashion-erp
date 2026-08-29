@@ -332,14 +332,23 @@ export default function CrmDashboardPage() {
             />
           </FormField>
           {settingsError && <p className="text-sm text-red-600 dark:text-red-400">{settingsError}</p>}
-          <button
-            type="button"
-            onClick={saveSettings}
-            disabled={isSavingSettings}
-            className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
-          >
-            {isSavingSettings ? "Saving…" : "Save Settings"}
-          </button>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={() => setShowSettingsModal(false)}
+              className="rounded-md border border-zinc-300 px-4 py-2 text-sm text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={saveSettings}
+              disabled={isSavingSettings}
+              className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
+            >
+              {isSavingSettings ? "Saving…" : "Save Settings"}
+            </button>
+          </div>
         </div>
       </Modal>
     </div>
