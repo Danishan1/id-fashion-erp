@@ -156,6 +156,34 @@ describe("PermissionService.can", () => {
     });
   });
 
+  describe("PermissionService.getViewableModules", () => {
+    it("returns \"all\" for a platform admin without even loading permission keys", async () => {
+      userFindUniqueMock.mockResolvedValue({ status: "ACTIVE", isPlatformAdmin: true });
+      await expect(PermissionService.getViewableModules("user-1")).resolves.toBe("all");
+      expect(findManyMock).not.toHaveBeenCalled();
+    });
+
+    it("returns only the modules the user holds view on, not modules where they only have a non-view action", async () => {
+      mockPermissions(["sales_orders.view", "sales_orders.edit", "production.create"]);
+      userFindUniqueMock.mockResolvedValue({ status: "ACTIVE", isPlatformAdmin: false });
+
+      const result = await PermissionService.getViewableModules("user-1");
+      expect(result).toEqual(new Set(["sales_orders"]));
+    });
+
+    it("returns an empty Set for a suspended user", async () => {
+      mockPermissions(["sales_orders.view"]);
+      userFindUniqueMock.mockResolvedValue({ status: "SUSPENDED", isPlatformAdmin: false });
+
+      await expect(PermissionService.getViewableModules("user-1")).resolves.toEqual(new Set());
+    });
+
+    it("returns an empty Set for a user that no longer exists", async () => {
+      userFindUniqueMock.mockResolvedValue(null);
+      await expect(PermissionService.getViewableModules("user-1")).resolves.toEqual(new Set());
+    });
+  });
+
   describe("sessionIssuedAt staleness (password changed/reset — reuses the CF-7 mechanism)", () => {
     it("denies a session issued before the account's last password change", async () => {
       mockPermissions(["sales_orders.view"]);

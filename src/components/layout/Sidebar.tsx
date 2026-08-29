@@ -3,12 +3,18 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
-import { NAV_SECTIONS, isPathActive, isSectionActive, type NavSection } from "./navigation";
+import type { Module } from "@/config/rbac";
+import { NAV_SECTIONS, filterNavSections, isPathActive, isSectionActive, type NavSection } from "./navigation";
 import { CompanySwitcher } from "./CompanySwitcher";
 
+// No `modules` gate — visibility is driven entirely by the isPlatformAdmin
+// flag below, appended after the permission-based filter runs rather than
+// through it (a platform admin is orthogonal to the module/action RBAC
+// this whole file otherwise filters by).
 const PLATFORM_SECTION: NavSection = {
   label: "Platform",
-  children: [{ label: "Companies", href: "/platform/companies" }],
+  modules: [],
+  children: [{ label: "Companies", href: "/platform/companies", modules: [] }],
 };
 
 function ChevronIcon({ open }: { open: boolean }) {
@@ -31,9 +37,25 @@ const LEAF_CLASSES = (isActive: boolean) =>
       : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
   }`;
 
-export function Sidebar({ isPlatformAdmin = false }: { isPlatformAdmin?: boolean }) {
+export function Sidebar({
+  isPlatformAdmin = false,
+  viewableModules = "all",
+}: {
+  isPlatformAdmin?: boolean;
+  /**
+   * The current user's real, live-computed set of `view`-permitted modules
+   * (PermissionService.getViewableModules()) — drives which sections/links
+   * actually render, so a narrowly-scoped role only ever sees what it can
+   * do. Defaults to "all" so any caller that doesn't pass this (there
+   * shouldn't be one in the real app — DashboardLayout always does) fails
+   * open to the pre-existing "show everything" behavior rather than a blank
+   * sidebar.
+   */
+  viewableModules?: Module[] | "all";
+}) {
   const pathname = usePathname();
-  const sections = isPlatformAdmin ? [...NAV_SECTIONS, PLATFORM_SECTION] : NAV_SECTIONS;
+  const visibleSections = filterNavSections(NAV_SECTIONS, viewableModules);
+  const sections = isPlatformAdmin ? [...visibleSections, PLATFORM_SECTION] : visibleSections;
 
   // The group containing the active route is expanded by default — derived
   // directly from the current pathname on every render (including a hard

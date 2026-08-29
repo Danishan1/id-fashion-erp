@@ -370,7 +370,12 @@ export function AdminUsersPanel({
         onCancel={() => setPendingToggle(null)}
       />
 
-      <Modal open={!!resetTarget} onClose={() => setResetTarget(null)} title={`Reset Password — ${resetTarget?.fullName ?? ""}`}>
+      <Modal
+        open={!!resetTarget}
+        onClose={() => setResetTarget(null)}
+        title={`Reset Password — ${resetTarget?.fullName ?? ""}`}
+        closeOnBackdropClick={false}
+      >
         <div className="space-y-3">
           <p className="text-sm text-zinc-500 dark:text-zinc-400">
             Sets a new password directly — no current password is required, and any of this user&apos;s existing

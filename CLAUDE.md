@@ -3026,6 +3026,55 @@ confirmed (and had to explain) that custom Role creation + full module/action pe
   covers the real UI surfaces; a future pass could add a friendlier inline message if a stale client ever
   tries anyway).
 
+## Sidebar navigation now reflects real per-role permissions; Reset Password modal ignores backdrop clicks (2026-08-29)
+
+Two small, unrelated UX fixes from direct user reports, both live-verified with the same "Cutting Supervisor"
+test role/user built for the Production Stage access pass above.
+
+**Sidebar permission gating** — user reported that after logging in as a restricted role, the app "wasn't
+behaving per its permissions — only what it has permission for should show." Investigated and confirmed: the
+Sidebar rendered every nav section/link to every logged-in user unconditionally — only the "Platform" section
+was ever gated (by `isPlatformAdmin`). A role holding only `dashboard`+`production` still saw CRM, Masters,
+Accounts, Administration, everything — clicking through any of them either 403'd or showed a broken/empty
+page, since the underlying API routes were correctly protected the whole time; only the *nav itself* was
+unfiltered.
+- `src/components/layout/navigation.ts`'s `NavSection`/`NavLeaf` now each declare a real `modules: Module[]`
+  — the RBAC module(s) that gate that link's visibility (shown if the viewer holds `view` on ANY one of
+  them). A parent section survives if it's directly visible OR at least one child is (e.g. "Manufacturing"
+  still shows for a `production`-only role, just with the `bom_mrp`-gated "BOM / MRP" leaf hidden).
+- New `PermissionService.getViewableModules(userId): Promise<Set<Module> | "all">` — `"all"` for a platform
+  admin (mirrors `can()`'s own bypass), otherwise the real Set of modules the user holds `view` on, computed
+  from the same cached permission-key lookup `can()` already uses (one query, not one per module).
+- Computed server-side in `DashboardLayout` (a Server Component, alongside the pre-existing `isPlatformAdmin`
+  resolution) and passed to `Sidebar` as a plain `Module[] | "all"` — deliberately not a `Set`, to sidestep
+  any question about Set-serialization across the RSC boundary (this codebase already has one documented
+  Decimal/Date serialization gotcha; a plain array avoids adding a second class of the same risk). `Sidebar`
+  passes it straight into the new `filterNavSections()` helper, which builds the `Set` internally.
+- **Verified live end-to-end**: logged in as the real "Cutting Supervisor Test" user (only `dashboard`+
+  `production` granted) — sidebar showed exactly "Dashboard" and "Manufacturing," with "BOM / MRP" correctly
+  absent from Manufacturing's own children, zero console errors (a real improvement over the Production
+  Stage access pass's own verification, which still saw expected-but-noisy 403s from the previously-unfiltered
+  nav). Logged back in as Super Admin and confirmed the full, unfiltered nav still renders — no regression
+  for unrestricted roles. 9 new tests (`navigation.test.ts`, new file; `PermissionService.test.ts` +4).
+- **Gotcha hit during this verification, not a defect**: the test login kept failing with a genuine
+  `CredentialsSignin` error despite using the exact password set at user-creation time earlier in the
+  Production Stage access pass — `bcrypt.compare()` confirmed via a direct script that the stored hash
+  genuinely didn't match that string (root cause not chased further, since a dev-only test account). Fixed
+  by using the existing admin `reset-password` endpoint to set a fresh password, which worked immediately —
+  worth remembering that a `CredentialsSignin` error on an account created earlier in the same long session
+  is worth a direct bcrypt-compare sanity check before assuming the surrounding feature code is at fault.
+
+**Reset Password modal — backdrop click no longer closes it** — separate user report: clicking outside the
+Reset Password modal (`/admin` → Users → Reset Password) closed it, discarding a freshly-typed password. The
+shared `Modal` component's ✕ button, Escape key, and backdrop click all call the same `onClose` — correct
+for every other modal in the app, but backdrop-click-to-close is a real footgun specifically for a modal
+whose entire content is one just-typed, not-yet-submitted value. Added an optional `closeOnBackdropClick`
+prop (default `true`, unchanged for every other modal in the app) and set it `false` only on the Reset
+Password modal — ✕ and Escape still close it, only the accidental-outside-click shortcut is disabled.
+Verified live: backdrop click no longer closes the dialog; the ✕ button still does.
+
+802/802 tests (9 new), `npx tsc --noEmit` and `npx eslint` clean throughout both fixes.
+
 ## Recommended Stack
 
 Next.js 14+ (App Router) + React + TypeScript + Tailwind CSS (frontend); Next.js API routes/route handlers as REST API; PostgreSQL + Prisma ORM; session-based auth (Auth.js/NextAuth, DB sessions) with RBAC and optional TOTP 2FA; S3-compatible or local file storage for attachments; server-side PDF/Excel export (`exceljs`, `pdf-lib`/`@react-pdf/renderer`).

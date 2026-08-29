@@ -1,5 +1,5 @@
 import { prisma } from "@/core/db/client";
-import { permissionKey, type Module, type Action } from "@/config/rbac";
+import { MODULES, permissionKey, type Module, type Action } from "@/config/rbac";
 
 export interface ResourceContext {
   /** userId of whoever created the record being acted on — enables self-approval checks. */
@@ -165,6 +165,28 @@ class PermissionServiceImpl {
     if (hasUnrestrictedRole) return null;
 
     return new Set(restrictions.map((r) => r.productionStageId));
+  }
+
+  /**
+   * The set of modules this user holds `view` on — drives which sidebar
+   * sections/links actually render, so a narrowly-scoped custom role (e.g.
+   * a floor-only "Cutting Supervisor") doesn't see nav entries for modules
+   * it has no access to at all. `"all"` for a platform admin (mirrors
+   * `can()`'s own bypass) and for a suspended/nonexistent user this
+   * returns an empty Set (they're being signed out anyway; an empty nav is
+   * the correct — not broken — state to render in that instant).
+   */
+  async getViewableModules(userId: string): Promise<Set<Module> | "all"> {
+    const user = await this.loadLiveUserState(userId);
+    if (!user || user.status !== "ACTIVE") return new Set();
+    if (user.isPlatformAdmin) return "all";
+
+    const keys = await this.loadPermissionKeys(userId);
+    const viewable = new Set<Module>();
+    for (const mod of MODULES) {
+      if (keys.has(permissionKey(mod, "view"))) viewable.add(mod);
+    }
+    return viewable;
   }
 
   /** Throws BusinessRuleError("PERMISSION_DENIED") if the check fails — use in route handlers/services. */

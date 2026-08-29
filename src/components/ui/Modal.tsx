@@ -9,6 +9,14 @@ interface ModalProps {
   children: ReactNode;
   /** Tailwind max-width class for the dialog card — wider forms (e.g. a multi-field add-row) can pass "max-w-lg"/"max-w-xl". */
   maxWidthClass?: string;
+  /**
+   * Set to false for a modal where an accidental outside-click losing typed
+   * input would be genuinely costly (e.g. a freshly-generated/typed
+   * password) — the ✕ button and Escape still close it either way, this
+   * only disables the backdrop-click shortcut. Defaults to true, matching
+   * every other modal in the app.
+   */
+  closeOnBackdropClick?: boolean;
 }
 
 /**
@@ -24,7 +32,7 @@ interface ModalProps {
  * (record creation, the detailed workflow panel, a costing/timeline
  * overview) — don't reach for this component there.
  */
-export function Modal({ open, onClose, title, children, maxWidthClass = "max-w-md" }: ModalProps) {
+export function Modal({ open, onClose, title, children, maxWidthClass = "max-w-md", closeOnBackdropClick = true }: ModalProps) {
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (e: KeyboardEvent) => {
@@ -42,7 +50,7 @@ export function Modal({ open, onClose, title, children, maxWidthClass = "max-w-m
       role="dialog"
       aria-modal="true"
       aria-labelledby="modal-title"
-      onClick={onClose}
+      onClick={closeOnBackdropClick ? onClose : undefined}
     >
       <div
         className={`w-full ${maxWidthClass} max-h-[90vh] overflow-y-auto rounded-lg border border-zinc-200 bg-white p-5 shadow-lg dark:border-zinc-800 dark:bg-zinc-900`}
