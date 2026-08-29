@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { findManyMock, countMock, userFindUniqueMock } = vi.hoisted(() => ({
+const { findManyMock, countMock, userFindUniqueMock, roleStageAccessFindManyMock } = vi.hoisted(() => ({
   findManyMock: vi.fn(),
   countMock: vi.fn(),
   userFindUniqueMock: vi.fn(),
+  roleStageAccessFindManyMock: vi.fn(),
 }));
 
 vi.mock("@/core/db/client", () => ({
@@ -14,6 +15,9 @@ vi.mock("@/core/db/client", () => ({
     },
     user: {
       findUnique: userFindUniqueMock,
+    },
+    roleProductionStageAccess: {
+      findMany: roleStageAccessFindManyMock,
     },
   },
 }));
@@ -31,6 +35,7 @@ beforeEach(() => {
   findManyMock.mockReset();
   countMock.mockReset();
   userFindUniqueMock.mockReset().mockResolvedValue({ status: "ACTIVE" });
+  roleStageAccessFindManyMock.mockReset();
 });
 
 describe("PermissionService.can", () => {
@@ -189,6 +194,44 @@ describe("PermissionService.can", () => {
         PermissionService.can("user-1", "sales_orders", "view", { sessionIssuedAt: 0 })
       ).resolves.toBe(true);
     });
+  });
+});
+
+describe("PermissionService.getAllowedProductionStageIds", () => {
+  it("returns null (unrestricted) for a platform admin, without even checking roles", async () => {
+    userFindUniqueMock.mockResolvedValue({ status: "ACTIVE", isPlatformAdmin: true });
+    await expect(PermissionService.getAllowedProductionStageIds("user-1")).resolves.toBeNull();
+    expect(findManyMock).not.toHaveBeenCalled();
+  });
+
+  it("returns an empty Set for a user holding no role at all", async () => {
+    findManyMock.mockResolvedValue([]);
+    const result = await PermissionService.getAllowedProductionStageIds("user-1");
+    expect(result).toEqual(new Set());
+  });
+
+  it("returns null (unrestricted) when the user holds at least one role with zero stage-access rows", async () => {
+    findManyMock.mockResolvedValue([{ roleId: "role-unrestricted" }]);
+    roleStageAccessFindManyMock.mockResolvedValue([]);
+    await expect(PermissionService.getAllowedProductionStageIds("user-1")).resolves.toBeNull();
+  });
+
+  it("returns the union of allowed stages when every held role is individually restricted", async () => {
+    findManyMock.mockResolvedValue([{ roleId: "role-cutting" }, { roleId: "role-qc" }]);
+    roleStageAccessFindManyMock.mockResolvedValue([
+      { roleId: "role-cutting", productionStageId: "stage-cutting" },
+      { roleId: "role-qc", productionStageId: "stage-cutting" },
+      { roleId: "role-qc", productionStageId: "stage-qc" },
+    ]);
+    const result = await PermissionService.getAllowedProductionStageIds("user-1");
+    expect(result).toEqual(new Set(["stage-cutting", "stage-qc"]));
+  });
+
+  it("an unrestricted role wins outright — holding one extra restricted role must never shrink an otherwise-unrestricted user", async () => {
+    findManyMock.mockResolvedValue([{ roleId: "role-production-manager" }, { roleId: "role-qc-only-stage" }]);
+    // role-production-manager has zero rows below (unrestricted); role-qc-only-stage has one.
+    roleStageAccessFindManyMock.mockResolvedValue([{ roleId: "role-qc-only-stage", productionStageId: "stage-qc" }]);
+    await expect(PermissionService.getAllowedProductionStageIds("user-1")).resolves.toBeNull();
   });
 });
 

@@ -27,6 +27,27 @@ import type { ActorContext } from "./production-order.service";
 
 const EPSILON = 0.0001;
 
+/**
+ * Enforces PermissionService.getAllowedProductionStageIds() on the write
+ * side — the RBAC module/action check (production.edit/create/etc.) only
+ * gates whether a user can touch the `production` module at all; a role
+ * restricted to specific stages (e.g. "Cutting Supervisor") must additionally
+ * be blocked from acting on a job order sitting at a stage outside that set.
+ * `null` from the permission check means unrestricted (every pre-existing
+ * role's default) — this is the common, no-op case for every company that
+ * hasn't configured any stage restriction at all.
+ */
+export async function assertStageAccess(actor: ActorContext, productionStageId: string) {
+  const allowed = await PermissionService.getAllowedProductionStageIds(actor.userId);
+  if (allowed !== null && !allowed.has(productionStageId)) {
+    throw new BusinessRuleError(
+      "PRODUCTION_STAGE_ACCESS_DENIED",
+      "You do not have access to this production stage.",
+      { productionStageId }
+    );
+  }
+}
+
 export function computeJobOrderStatus(jo: {
   status: JobOrderStatus;
   plannedQuantity: Prisma.Decimal | number | string;
@@ -326,6 +347,7 @@ export async function startLot(actor: ActorContext, lotId: string, input: StartL
       throw new BusinessRuleError("VALIDATION_ERROR", "No active production stages are configured for this company yet.", {});
     }
   }
+  await assertStageAccess(actor, stage.id);
 
   const result = await prisma.$transaction((tx) =>
     postStageTransactionInTx(tx, actor, {
@@ -353,6 +375,7 @@ export async function startLot(actor: ActorContext, lotId: string, input: StartL
 export async function assignWorker(actor: ActorContext, jobOrderId: string, input: CreateJobOrderAssignmentInput) {
   const jobOrder = await JobOrderRepository.findAnyById(actor.companyId, jobOrderId);
   if (!jobOrder) throw new BusinessRuleError("NOT_FOUND", "Job order not found.", { id: jobOrderId });
+  await assertStageAccess(actor, jobOrder.productionStageId);
 
   // Tenant-scoped — an employeeId from another company would otherwise sit
   // unvalidated on the assignment record.
@@ -395,6 +418,7 @@ export async function recordProgressEntry(actor: ActorContext, jobOrderId: strin
   if (jobOrder.status === "CANCELLED") {
     throw new BusinessRuleError("INVALID_STATE_TRANSITION", "Cannot log progress against a cancelled job order.", {});
   }
+  await assertStageAccess(actor, jobOrder.productionStageId);
 
   if (input.jobOrderAssignmentId) {
     const assignment = await JobOrderAssignmentRepository.findAnyById(input.jobOrderAssignmentId);
@@ -453,6 +477,7 @@ export async function recordProgressEntry(actor: ActorContext, jobOrderId: strin
 export async function recordAdjustmentEntry(actor: ActorContext, jobOrderId: string, input: CreateAdjustmentEntryInput) {
   const jobOrder = await JobOrderRepository.findAnyById(actor.companyId, jobOrderId);
   if (!jobOrder) throw new BusinessRuleError("NOT_FOUND", "Job order not found.", { id: jobOrderId });
+  await assertStageAccess(actor, jobOrder.productionStageId);
 
   // An adjustment has no real "worker" — attribute it to the acting user's
   // own linked Employee record if one exists (User.employeeId), else leave
@@ -498,6 +523,10 @@ export async function forwardJobOrder(actor: ActorContext, jobOrderId: string, i
   if (jobOrder.status === "CANCELLED") {
     throw new BusinessRuleError("INVALID_STATE_TRANSITION", "Cannot forward a cancelled job order.", {});
   }
+  // Guarded on the SOURCE stage only — a supervisor moving completed work
+  // along the pipeline to the next stage doesn't need access to that next
+  // stage themselves, matching how a real factory floor hands off work.
+  await assertStageAccess(actor, jobOrder.productionStageId);
   // BUGFIX (previously): this guard used to fire on `status === "COMPLETED"`
   // alone. That's wrong — computeJobOrderStatus() (called by
   // applyJobOrderQuantityDelta on every ordinary progress entry, not just by
@@ -622,6 +651,7 @@ export async function revertJobOrder(actor: ActorContext, jobOrderId: string, in
   if (jobOrder.status === "CANCELLED") {
     throw new BusinessRuleError("INVALID_STATE_TRANSITION", "Cannot revert a cancelled job order.", {});
   }
+  await assertStageAccess(actor, jobOrder.productionStageId);
 
   const targetStage = await findActiveStageById(actor.companyId, input.targetStageId);
   if (!targetStage) throw new BusinessRuleError("NOT_FOUND", "Production stage not found.", { id: input.targetStageId });
@@ -679,6 +709,7 @@ export async function revertJobOrder(actor: ActorContext, jobOrderId: string, in
 export async function recordQcInspection(actor: ActorContext, jobOrderId: string, input: CreateQcInspectionInput) {
   const jobOrder = await JobOrderRepository.findAnyById(actor.companyId, jobOrderId);
   if (!jobOrder) throw new BusinessRuleError("NOT_FOUND", "Job order not found.", { id: jobOrderId });
+  await assertStageAccess(actor, jobOrder.productionStageId);
   // BUGFIX (previously): same false-positive as forwardJobOrder() — see the
   // long comment there. "COMPLETED" alone can mean "100% logged at a
   // perfectly ordinary, non-final stage," not just "already posted to

@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
-vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { assert: vi.fn() } }));
+vi.mock("@/core/rbac/PermissionService", () => ({
+  PermissionService: { assert: vi.fn(), getAllowedProductionStageIds: vi.fn() },
+}));
 vi.mock("@/modules/inventory/inventory.service", () => ({ recordInventoryTransaction: vi.fn() }));
 vi.mock("@/modules/employees/employee.repository", () => ({
   EmployeeRepository: { findById: vi.fn() },
@@ -88,6 +90,7 @@ beforeEach(() => {
   vi.mocked(JobOrderAssignmentRepository.createInTx).mockReset();
   vi.mocked(ProductionOrderRepository.findAnyById).mockReset();
   vi.mocked(PermissionService.assert).mockReset().mockResolvedValue(undefined);
+  vi.mocked(PermissionService.getAllowedProductionStageIds).mockReset().mockResolvedValue(null);
   vi.mocked(JobOrderRepository.findForGuardedUpdateInTx).mockReset();
   vi.mocked(JobOrderRepository.updateInTx).mockReset();
   vi.mocked(JobOrderRepository.createInTx).mockReset();

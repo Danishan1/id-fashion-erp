@@ -134,6 +134,39 @@ class PermissionServiceImpl {
     return keys.has(permissionKey(module, action));
   }
 
+  /**
+   * The set of ProductionStage ids this user is allowed to see/act on, or
+   * `null` meaning unrestricted (every stage). A user's roles are unioned:
+   * if ANY held role has zero rows in `RoleProductionStageAccess` (the
+   * default for every pre-existing role), that role is itself unrestricted
+   * and wins outright — holding one additional narrow role (e.g. a QC
+   * checkpoint scoped to one stage) must never silently shrink what an
+   * otherwise-unrestricted Production Manager can already see. Only when
+   * EVERY held role is individually restricted does the result become the
+   * union of their allowed stages. A user holding no role at all sees
+   * nothing (an empty Set, not null) — matches the fact they'd already fail
+   * every ordinary permission check too.
+   */
+  async getAllowedProductionStageIds(userId: string): Promise<Set<string> | null> {
+    const user = await this.loadLiveUserState(userId);
+    if (user?.isPlatformAdmin) return null;
+
+    const userBranchRoles = await prisma.userBranchRole.findMany({ where: { userId }, select: { roleId: true } });
+    if (userBranchRoles.length === 0) return new Set();
+
+    const roleIds = [...new Set(userBranchRoles.map((ubr) => ubr.roleId))];
+    const restrictions = await prisma.roleProductionStageAccess.findMany({
+      where: { roleId: { in: roleIds } },
+      select: { roleId: true, productionStageId: true },
+    });
+
+    const restrictedRoleIds = new Set(restrictions.map((r) => r.roleId));
+    const hasUnrestrictedRole = roleIds.some((id) => !restrictedRoleIds.has(id));
+    if (hasUnrestrictedRole) return null;
+
+    return new Set(restrictions.map((r) => r.productionStageId));
+  }
+
   /** Throws BusinessRuleError("PERMISSION_DENIED") if the check fails — use in route handlers/services. */
   async assert(
     userId: string,

@@ -31,4 +31,26 @@ export const RoleAdminRepository = {
       prisma.rolePermission.deleteMany({ where: { roleId } }),
       prisma.rolePermission.createMany({ data: permissionIds.map((permissionId) => ({ roleId, permissionId })) }),
     ]),
+
+  // Every active stage for this company, in floor order — the picker list
+  // for the "restrict this role to these stages" UI.
+  findActiveProductionStages: (companyId: string) =>
+    prisma.productionStage.findMany({
+      where: { companyId, isActive: true },
+      select: { id: true, name: true, code: true, sequence: true },
+      orderBy: { sequence: "asc" },
+    }),
+
+  findGrantedStageIds: (roleId: string) =>
+    prisma.roleProductionStageAccess.findMany({ where: { roleId }, select: { productionStageId: true } }),
+
+  // Full replace, one transaction — an empty `stageIds` array means
+  // "unrestricted" (the row set is simply empty), not a no-op — matches
+  // PermissionService.getAllowedProductionStageIds()'s own "zero rows =
+  // unrestricted" contract exactly.
+  replaceStageAccessInTx: (roleId: string, stageIds: string[]) =>
+    prisma.$transaction([
+      prisma.roleProductionStageAccess.deleteMany({ where: { roleId } }),
+      prisma.roleProductionStageAccess.createMany({ data: stageIds.map((productionStageId) => ({ roleId, productionStageId })) }),
+    ]),
 };

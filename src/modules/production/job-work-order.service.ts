@@ -10,7 +10,7 @@ import { ProductRepository } from "@/modules/products/product.repository";
 import { FabricRollRepository } from "@/modules/purchasing/fabric-roll.repository";
 import { SupplierRepository } from "@/modules/suppliers/supplier.repository";
 import type { JobWorkOrderStatus, Prisma } from "@prisma/client";
-import { applyJobOrderQuantityDelta } from "./job-order.service";
+import { applyJobOrderQuantityDelta, assertStageAccess } from "./job-order.service";
 import { JobOrderRepository } from "./production.repository";
 import type { CreateJobWorkOrderInput, ReceiveJobWorkInput } from "./job-work-order.schema";
 import { JobWorkOrderRepository, JobWorkReceiptRepository } from "./job-work-order.repository";
@@ -247,6 +247,7 @@ export async function createJobWorkOrder(actor: ActorContext, input: CreateJobWo
   if (jobOrder.status === "CANCELLED") {
     throw new BusinessRuleError("INVALID_STATE_TRANSITION", "Cannot send a cancelled job order to job-work.", {});
   }
+  await assertStageAccess(actor, jobOrder.productionStageId);
 
   // Tenant-scoped — a supplierId from another company would otherwise sit
   // unvalidated on the record and be embedded in every subsequent read.

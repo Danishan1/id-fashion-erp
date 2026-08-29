@@ -297,12 +297,37 @@ model Role {
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
-  company         Company          @relation(fields: [companyId], references: [id])
-  rolePermissions RolePermission[]
-  userBranchRoles UserBranchRole[]
+  company               Company                     @relation(fields: [companyId], references: [id])
+  rolePermissions       RolePermission[]
+  userBranchRoles       UserBranchRole[]
+  productionStageAccess RoleProductionStageAccess[]
 
   @@unique([companyId, name])
   @@map("roles")
+}
+
+/**
+ * Restricts a Role to specific ProductionStage(s) for floor-level separation
+ * (e.g. a "Cutting Supervisor" role that should never see Stitching's lots) —
+ * layered on top of the existing module/action RBAC, not a replacement for
+ * it. A Role with ZERO rows here is unrestricted (sees every stage) — this
+ * default keeps every pre-existing role (including the seeded
+ * PRODUCTION_SUPERVISOR/PRODUCTION_MANAGER) behaving exactly as before with
+ * no data migration needed. See PermissionService.getAllowedProductionStageIds()
+ * for the read side and job-order.service.ts/lot.service.ts's
+ * assertStageAccess() for the write side.
+ */
+model RoleProductionStageAccess {
+  id                String   @id @default(uuid()) @db.Uuid
+  roleId            String   @map("role_id") @db.Uuid
+  productionStageId String   @map("production_stage_id") @db.Uuid
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  role            Role            @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  productionStage ProductionStage @relation(fields: [productionStageId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, productionStageId])
+  @@map("role_production_stage_access")
 }
 
 model Permission {
@@ -825,6 +850,7 @@ model ProductionStage {
   lotsAtStage          Lot[]                        @relation("LotCurrentStage")
   transactionsFromHere ProductionStageTransaction[] @relation("StageTransactionFromStage")
   transactionsToHere   ProductionStageTransaction[] @relation("StageTransactionToStage")
+  roleAccess           RoleProductionStageAccess[]
 
   @@unique([companyId, code])
   @@map("production_stages")

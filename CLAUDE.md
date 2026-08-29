@@ -2932,6 +2932,100 @@ no test coverage before.
 Migration `20260827130000_add_designation_department` (non-destructive, nullable FK). `npx tsc --noEmit`,
 `npm run lint`, `npm test` (761/761, 13 new), and `npm run build` all clean throughout.
 
+## Platform admin company switcher + per-role Production Stage access (2026-08-27/29)
+
+Two related access-control features, both prompted by direct user questions about who can see what.
+
+**Platform admin company switcher (2026-08-27)** — closes the gap flagged right after multi-company
+creation landed (see the FIX_MASTER_TESTING merge above): a platform admin could provision new companies
+but had no way to actually get into one they didn't sign up under.
+- New `CompanySwitcher` in the Sidebar (platform-admin only) — a `<select>` of every company, switching via
+  NextAuth's session `update()` trigger, which re-scopes `token.companyId` (kept distinct from a new,
+  immutable `token.homeCompanyId`, stamped once at sign-in). Every service/route already derives
+  `actor.companyId` from `session.user.companyId`, so this alone changes which company's data is visible
+  everywhere in the app — zero changes needed to any of the ~285 existing routes.
+- `PermissionService.can()` grants a platform admin full access (including the self-approval bypass) to
+  whichever company is currently active, re-verified live from the DB on every call (`loadLiveUserState`
+  is deliberately uncached) — never trusted from the JWT alone, same discipline `status`/`passwordChangedAt`
+  already use. Company-scoping itself is still enforced entirely at the service/repository layer, never by
+  this class — this bypass is exactly what makes "switch active company" grant real access rather than just
+  relabeling the sidebar.
+- "Back to my own company" shortcut appears whenever `companyId !== homeCompanyId`.
+- Verified live end-to-end: created a second real tenant ("Zenith Textiles Co.") through the actual
+  `/platform/companies/new` form, switched into it from the sidebar with **zero** `UserBranchRole` grant in
+  that company, confirmed full read+write access there (created and deleted a real Customer via the API),
+  confirmed the customer list correctly showed Zenith's own empty data (not the home company's real
+  customers), then switched back and confirmed real data returned and the "back to my own company" link
+  correctly disappeared.
+
+**Per-role Production Stage access (2026-08-29)** — user asked whether different floor roles (Cutting
+Master, Stitching Master, Supervisor, Admin) each see only their own work, so one role's team can't see or
+touch another's. Investigated `src/config/rbac.ts` first rather than assuming: found exactly one generic
+`PRODUCTION_SUPERVISOR` role for the entire floor — RBAC in this app is module-level (can you touch
+`production` at all), with zero concept of restricting a role to specific `ProductionStage`(s). Separately
+confirmed (and had to explain) that custom Role creation + full module/action permission assignment
+**already existed** (`/admin/roles`, built by another contributor, not something this pass added) — so
+"Cutting Supervisor" as a distinct role was already possible; what was missing was restricting any role
+(new or seeded) to only the stage(s) it should act on.
+- **New `RoleProductionStageAccess` join table** (`roleId` × `productionStageId`, migration
+  `20260829090000_add_role_production_stage_access`) — a Role with **zero rows is unrestricted** (sees
+  every stage), the default for every pre-existing role including the seeded `PRODUCTION_SUPERVISOR`/
+  `PRODUCTION_MANAGER` — no backfill needed, matches this project's own `SampleVersion.isCostingLocked`-style
+  "additive, opt-in restriction" precedent.
+- **`PermissionService.getAllowedProductionStageIds(userId)`** — returns `null` (unrestricted) or a `Set` of
+  allowed stage ids. A platform admin always gets `null`. A user's roles are **unioned with "unrestricted
+  wins"** semantics: if ANY held role has zero restriction rows, that role's unrestricted status wins
+  outright — holding one additional narrow role (e.g. a single-stage QC checkpoint) must never silently
+  shrink what an otherwise-unrestricted Production Manager can already see. Only when *every* held role is
+  individually restricted does the result become the union of their allowed stages. A user holding no role
+  at all gets an empty `Set` (sees nothing), matching that they'd already fail every ordinary permission
+  check too.
+- **Write-side enforcement**: a new `assertStageAccess(actor, productionStageId)` guard in
+  `job-order.service.ts` (exported for reuse), called at the top of `startLot`, `assignWorker`,
+  `recordProgressEntry`, `recordAdjustmentEntry`, `forwardJobOrder`, `revertJobOrder`, `recordQcInspection`,
+  and `job-work-order.service.ts`'s `createJobWorkOrder` — every action that mutates a specific stage's Job
+  Order. `forwardJobOrder`/`revertJobOrder` are guarded on the **source** stage only — a supervisor moving
+  completed work along to the next stage doesn't need access to that next stage themselves, matching how a
+  real factory floor hands off work. New `BusinessRuleError` code `PRODUCTION_STAGE_ACCESS_DENIED` (403).
+  Lot split/merge were deliberately left unguarded — already gated behind the higher-privilege
+  `production.approve` action, and stage-restricting a lot-level restructure action wasn't part of the
+  concrete ask (Assign/Log Progress/Forward/Revert/QC/Job-Work).
+- **Read-side filtering**: `getLotById()` (now takes a `userId` third param) drops any `jobOrder` sitting at
+  a stage outside the viewer's allowed set from the response entirely — a restricted "Cutting Supervisor"
+  role doesn't see Stitching's job orders/action buttons on a lot's own detail page any more than they can
+  act on them. The Lot record itself always renders (a lot spans every stage over its life; hiding the whole
+  record would hide the viewer's own stage's work too whenever another stage also has an open job order).
+- **RBAC UI**: new `RoleProductionStageAccessPanel` on `/admin/roles/[id]`, alongside the existing
+  permission-matrix editor — a plain checkbox list of the company's active stages, explicit copy stating
+  "select nothing to leave this role unrestricted." **Deliberately allowed on system roles too** (unlike
+  `updateRolePermissions`, which blocks editing a seeded role's module/action grants) — stage restriction is
+  a purely additive/narrowing dimension that can never widen what a role can do, only which stage(s) it can
+  do it on; blocking it on the seeded `PRODUCTION_SUPERVISOR` would force every company wanting a
+  stage-scoped "Cutting Supervisor" to first clone a brand-new custom role for no safety benefit. New
+  `GET`/`PUT /api/v1/administration/roles/[id]/production-stages`.
+- **Verified live end-to-end** against the real dev DB: created a real "Cutting Supervisor" role (granted
+  `production.view/create/edit`), restricted it to the Cutting stage only via the real API, created a real
+  test user holding that role, logged in as them — confirmed `GET /api/v1/lots/:id` on a lot with both a
+  Cutting and a Stitching job order returned **only** the Cutting one (both via the raw API and the actual
+  rendered Lot detail page, zero console/server errors beyond the expected 403s from this narrowly-scoped
+  role's other missing permissions); confirmed a direct `POST` to assign a worker on the hidden Stitching job
+  order correctly `403 PRODUCTION_STAGE_ACCESS_DENIED`; confirmed the identical call against the Cutting job
+  order passed the stage guard (failed on the next, unrelated validation instead — proving the guard is
+  stage-specific, not a blanket block); switched back to the unrestricted Super Admin and confirmed both job
+  orders render again, unaffected. Test user suspended afterward (no delete-user endpoint exists, matching
+  this project's own established precedent); the "Cutting Supervisor" role itself was kept as a real,
+  working demonstration.
+- 14 new tests (`PermissionService.test.ts` +5, `role-admin.service.test.ts`, new file, +7, plus mock updates
+  to `job-order.service.test.ts`/`job-work-order.service.test.ts`). 790/790 project-wide, `npx tsc --noEmit`
+  and `npx eslint` clean throughout.
+- **Not built this pass** (explicitly out of scope per the concrete ask): stage-restricting Lot split/merge,
+  per-line/station kiosk login (a different, larger idea from this file's own original Domain Reference
+  section — still just a "consider" note, not built), and any UI surfacing of a *rejected* stage-access
+  attempt beyond the raw 403 (e.g. hiding the Assign/Forward/QC buttons client-side when a stage is
+  disallowed — today they're absent because the job order itself is filtered out of the list, which already
+  covers the real UI surfaces; a future pass could add a friendlier inline message if a stale client ever
+  tries anyway).
+
 ## Recommended Stack
 
 Next.js 14+ (App Router) + React + TypeScript + Tailwind CSS (frontend); Next.js API routes/route handlers as REST API; PostgreSQL + Prisma ORM; session-based auth (Auth.js/NextAuth, DB sessions) with RBAC and optional TOTP 2FA; S3-compatible or local file storage for attachments; server-side PDF/Excel export (`exceljs`, `pdf-lib`/`@react-pdf/renderer`).

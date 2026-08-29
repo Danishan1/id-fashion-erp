@@ -13,3 +13,12 @@ export const updateRolePermissionsSchema = z.object({
   grantedKeys: z.array(z.string()),
 });
 export type UpdateRolePermissionsInput = z.infer<typeof updateRolePermissionsSchema>;
+
+// Production stage ids this role is restricted to — validated against the
+// real active-stage set server-side in the service, not just shape-checked
+// here. An empty array means "unrestricted" (sees every stage), not "no
+// change" — a PUT with [] deliberately clears any existing restriction.
+export const updateRoleProductionStagesSchema = z.object({
+  stageIds: z.array(z.string().uuid()),
+});
+export type UpdateRoleProductionStagesInput = z.infer<typeof updateRoleProductionStagesSchema>;

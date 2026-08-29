@@ -16,7 +16,7 @@ vi.mock("@/modules/purchasing/fabric-roll.repository", () => ({
 vi.mock("@/modules/suppliers/supplier.repository", () => ({
   SupplierRepository: { findById: vi.fn() },
 }));
-vi.mock("./job-order.service", () => ({ applyJobOrderQuantityDelta: vi.fn() }));
+vi.mock("./job-order.service", () => ({ applyJobOrderQuantityDelta: vi.fn(), assertStageAccess: vi.fn() }));
 vi.mock("./production.repository", () => ({ JobOrderRepository: { findAnyById: vi.fn() } }));
 vi.mock("./job-work-order.repository", () => ({
   JobWorkOrderRepository: {
@@ -49,7 +49,7 @@ const { ProductRepository } = await import("@/modules/products/product.repositor
 const { LookupRepository } = await import("@/modules/lookups/lookup.repository");
 const { FabricRollRepository } = await import("@/modules/purchasing/fabric-roll.repository");
 const { SupplierRepository } = await import("@/modules/suppliers/supplier.repository");
-const { applyJobOrderQuantityDelta } = await import("./job-order.service");
+const { applyJobOrderQuantityDelta, assertStageAccess } = await import("./job-order.service");
 const { JobOrderRepository } = await import("./production.repository");
 const { JobWorkOrderRepository, JobWorkReceiptRepository } = await import("./job-work-order.repository");
 const {
@@ -101,6 +101,7 @@ beforeEach(() => {
   vi.mocked(FabricRollRepository.guardedDecrementRemaining).mockReset().mockResolvedValue({ count: 1 } as never);
   vi.mocked(FabricRollRepository.incrementRemaining).mockReset();
   vi.mocked(applyJobOrderQuantityDelta).mockReset().mockResolvedValue(undefined as never);
+  vi.mocked(assertStageAccess).mockReset().mockResolvedValue(undefined as never);
   vi.mocked(JobOrderRepository.findAnyById).mockReset();
   vi.mocked(JobWorkOrderRepository.findAnyById).mockReset();
   vi.mocked(JobWorkOrderRepository.createWithMaterialsInTx).mockReset();

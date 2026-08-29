@@ -1,9 +1,10 @@
 import { notFound } from "next/navigation";
 import { auth } from "@/core/auth/auth";
 import { PermissionService } from "@/core/rbac/PermissionService";
-import { getRolePermissionMatrix } from "@/modules/administration/role-admin.service";
+import { getRolePermissionMatrix, getRoleProductionStageAccess } from "@/modules/administration/role-admin.service";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { RolePermissionMatrix } from "./RolePermissionMatrix";
+import { RoleProductionStageAccessPanel } from "./RoleProductionStageAccessPanel";
 
 export default async function RolePermissionsPage({ params }: { params: Promise<{ id: string }> }) {
   const session = await auth();
@@ -12,7 +13,10 @@ export default async function RolePermissionsPage({ params }: { params: Promise<
   );
 
   const { id } = await params;
-  const matrix = await getRolePermissionMatrix(session!.user.companyId, id).catch(() => notFound());
+  const [matrix, stageAccess] = await Promise.all([
+    getRolePermissionMatrix(session!.user.companyId, id).catch(() => notFound()),
+    getRoleProductionStageAccess(session!.user.companyId, id).catch(() => null),
+  ]);
   const canManage = await PermissionService.can(session!.user.id, "administration", "edit");
 
   return (
@@ -35,6 +39,9 @@ export default async function RolePermissionsPage({ params }: { params: Promise<
         isSystemRole={matrix.role.isSystemRole}
         canManage={canManage}
       />
+      {stageAccess && stageAccess.stages.length > 0 && (
+        <RoleProductionStageAccessPanel roleId={id} initialAccess={stageAccess} canManage={canManage} />
+      )}
     </div>
   );
 }

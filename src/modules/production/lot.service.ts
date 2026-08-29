@@ -1,6 +1,7 @@
 import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { prisma } from "@/core/db/client";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
+import { PermissionService } from "@/core/rbac/PermissionService";
 import type { Prisma } from "@prisma/client";
 import { LotRelationRepository, LotRepository, ProductionOrderRepository } from "./production.repository";
 import type { CreateLotInput, MergeLotsInput, SplitLotInput } from "./production.schema";
@@ -24,10 +25,25 @@ async function claimNextLotNumber(tx: Prisma.TransactionClient, productionOrderI
   return `${orderNumber}-L${padLotSuffix(nextLotSequence - 1)}`;
 }
 
-export async function getLotById(companyId: string, id: string) {
+/**
+ * Job orders sitting at a stage outside the viewer's allowed set (see
+ * PermissionService.getAllowedProductionStageIds()) are dropped from the
+ * response entirely — a restricted "Cutting Supervisor" role shouldn't see
+ * Stitching's job orders/action buttons on a lot's own detail page any more
+ * than they can act on them (job-order.service.ts's assertStageAccess()
+ * enforces the write side). The Lot itself always renders — a lot spans
+ * every stage over its life, restricting the whole record would hide the
+ * viewer's own stage's work too whenever another stage happens to also have
+ * an open job order on it.
+ */
+export async function getLotById(companyId: string, id: string, userId: string) {
   const lot = await LotRepository.findByIdWithDetails(companyId, id);
   if (!lot) throw new BusinessRuleError("NOT_FOUND", "Lot not found.", { id });
-  return lot;
+
+  const allowedStageIds = await PermissionService.getAllowedProductionStageIds(userId);
+  if (allowedStageIds === null) return lot;
+
+  return { ...lot, jobOrders: lot.jobOrders.filter((jo) => allowedStageIds.has(jo.productionStage.id)) };
 }
 
 export async function getLotGenealogy(companyId: string, id: string) {

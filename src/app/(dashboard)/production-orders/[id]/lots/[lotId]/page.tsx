@@ -8,7 +8,7 @@ export default async function LotDetailPage({ params }: { params: Promise<{ id: 
   const { id, lotId } = await params;
   const session = await auth();
 
-  const lot = await getLotById(session!.user.companyId, lotId).catch(() => null);
+  const lot = await getLotById(session!.user.companyId, lotId, session!.user.id).catch(() => null);
   if (!lot || lot.productionOrder.id !== id) notFound();
 
   return (
