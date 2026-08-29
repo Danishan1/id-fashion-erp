@@ -3075,6 +3075,51 @@ Verified live: backdrop click no longer closes the dialog; the ✕ button still 
 
 802/802 tests (9 new), `npx tsc --noEmit` and `npx eslint` clean throughout both fixes.
 
+## Dashboard is now role-aware — Platform Overview / My Team / Company views (2026-08-29)
+
+User asked for `/dashboard` to differ by who's logged in: an Admin sees their own company, a platform-level
+Super Admin sees an overall/cross-company view, and a Supervisor sees data scoped to their own employees —
+today it was one flat, identical set of 5 company-wide counts for every role. Investigated first: confirmed
+`page.tsx` had zero role branching at all, and that `Employee.reportsToId` (a self-referencing manager→
+direct-reports FK, existing since Phase 3) was the one ready-made mechanism a "my team" view could be built
+on — nothing else needed inventing.
+
+**New `src/modules/dashboard/dashboard.service.ts`** — a single `getDashboardViewForUser({ userId,
+companyId, isPlatformAdmin })` entry point returns a tagged union (`{ kind: "platform" | "team" | "company",
+... }`), decided by real signals, not a hardcoded role-name check:
+1. **`isPlatformAdmin`** → the new `getPlatformDashboard()` — the one deliberate place in this app that
+   queries with **no** `companyId` filter: sums Companies/Customers/Suppliers/Employees/Users across every
+   active company, plus a per-company breakdown table. Scoped intentionally small (a provisioning/oversight
+   tool, not a second reporting suite — that already exists per-company under `/reports`).
+2. **Else, does this user's own linked Employee (`User.employeeId`) have ≥1 direct report** (`Employee`
+   rows where `reportsToId` equals theirs)? → `getTeamDashboard()` — Team Size, Present Today (via
+   `AttendanceRecord`), Active Job Orders (via `JobOrderAssignment.employeeId`, one level deep — direct
+   reports only, not their reports' reports, matching what a line manager actually means by "my team"),
+   Pending Leave Requests (via `LeaveRequest`) — all filtered to just the direct-report employee ids.
+3. **Else** → the pre-existing 5-tile company-wide view, unchanged — covers Company Admin, MANAGEMENT, and
+   any individual contributor with no reports of their own.
+- Reused this project's own hard-won UTC-day-boundary lesson (`utcDayBoundaries()`, `Date.UTC(...)`, never
+  `new Date(y,m,d)`) for "Present Today," the exact bug class already found and fixed twice before
+  (Executive Dashboard, Daily Attendance) — avoided a third recurrence by design, not by luck.
+- `page.tsx` is now a thin presentational switch over the three `DashboardView` shapes, sharing one
+  `StatTiles` tile-grid component across all three.
+- **Verified live against real data, not fixtures**: Super Admin (also `isPlatformAdmin`) correctly saw
+  "Platform Overview" — 2 companies, summed totals, and an accurate per-company table (15/11/10/4 for
+  Indradhar, 0/0/0/1 for the still-empty Zenith Textiles Co. demo tenant from the platform-admin pass
+  above). Set a real Employee ("Suresh Patil") to report to another ("Ramesh Kumar") via the actual
+  `PATCH /api/v1/employees/:id` endpoint, linked a fresh test User to Ramesh Kumar's Employee record, logged
+  in as them — dashboard correctly showed "My Team" (Team Size: 1, the other three stats correctly 0 with
+  no real attendance/job-order/leave data yet for that employee). Confirmed a company-scoped user with no
+  direct reports still gets the ordinary company view. Test employee relationship and test user reverted/
+  suspended afterward.
+- 9 new tests (`dashboard.service.test.ts`, new file) covering all three branches plus the platform-aggregate
+  summing logic and the zero-reports early-out. 811/811 project-wide, `npx tsc --noEmit` and `npx eslint`
+  clean throughout.
+- **Not built this pass**: a configurable/deeper team hierarchy (e.g. "my team + their teams" — deliberately
+  one level, matching a line manager's literal direct reports), and any drill-down from the Platform Overview
+  table into a given company's own dashboard (the existing Company Switcher already covers "go look at that
+  company directly").
+
 ## Recommended Stack
 
 Next.js 14+ (App Router) + React + TypeScript + Tailwind CSS (frontend); Next.js API routes/route handlers as REST API; PostgreSQL + Prisma ORM; session-based auth (Auth.js/NextAuth, DB sessions) with RBAC and optional TOTP 2FA; S3-compatible or local file storage for attachments; server-side PDF/Excel export (`exceljs`, `pdf-lib`/`@react-pdf/renderer`).
