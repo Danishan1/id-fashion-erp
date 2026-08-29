@@ -178,14 +178,23 @@ export default function AttendanceCorrectionsPage() {
             <textarea id="reason" required value={reason} onChange={(e) => setReason(e.target.value)} className={textInputClass()} rows={2} />
           </FormField>
           {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
-          <button
-            type="button"
-            onClick={submit}
-            disabled={!employeeId || !attendanceDate || !reason || (!punchIn && !punchOut)}
-            className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
-          >
-            Submit
-          </button>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={() => setShowModal(false)}
+              className="rounded-md border border-zinc-300 px-4 py-2 text-sm text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={submit}
+              disabled={!employeeId || !attendanceDate || !reason || (!punchIn && !punchOut)}
+              className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
+            >
+              Submit
+            </button>
+          </div>
         </div>
       </Modal>
 
@@ -194,14 +203,23 @@ export default function AttendanceCorrectionsPage() {
           <FormField label="Reason" htmlFor="rejectReason" required>
             <textarea id="rejectReason" required value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} className={textInputClass()} rows={3} />
           </FormField>
-          <button
-            type="button"
-            onClick={submitReject}
-            disabled={!rejectReason}
-            className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-500 disabled:opacity-60"
-          >
-            Reject
-          </button>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={() => setRejectTarget(null)}
+              className="rounded-md border border-zinc-300 px-4 py-2 text-sm text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={submitReject}
+              disabled={!rejectReason}
+              className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-500 disabled:opacity-60"
+            >
+              Reject
+            </button>
+          </div>
         </div>
       </Modal>
     </div>

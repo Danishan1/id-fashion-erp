@@ -319,9 +319,18 @@ export function LeadWorkflowPanel({ lead }: { lead: LeadDetail }) {
           <FormField label="Details" htmlFor="activityBody">
             <textarea id="activityBody" value={activityBody} onChange={(e) => setActivityBody(e.target.value)} className={textInputClass()} rows={3} />
           </FormField>
-          <button type="button" onClick={submitActivity} className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500">
-            Save Activity
-          </button>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={() => setShowActivityModal(false)}
+              className="rounded-md border border-zinc-300 px-4 py-2 text-sm text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+            >
+              Cancel
+            </button>
+            <button type="button" onClick={submitActivity} className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500">
+              Save Activity
+            </button>
+          </div>
         </div>
       </Modal>
 
@@ -351,14 +360,23 @@ export function LeadWorkflowPanel({ lead }: { lead: LeadDetail }) {
           <FormField label="Notes" htmlFor="followupNotes">
             <textarea id="followupNotes" value={followupNotes} onChange={(e) => setFollowupNotes(e.target.value)} className={textInputClass()} rows={2} />
           </FormField>
-          <button
-            type="button"
-            onClick={submitFollowup}
-            disabled={!followupDate}
-            className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
-          >
-            Save Follow-up
-          </button>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={() => setShowFollowupModal(false)}
+              className="rounded-md border border-zinc-300 px-4 py-2 text-sm text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={submitFollowup}
+              disabled={!followupDate}
+              className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
+            >
+              Save Follow-up
+            </button>
+          </div>
         </div>
       </Modal>
     </div>

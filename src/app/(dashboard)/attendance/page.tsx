@@ -142,14 +142,23 @@ export default function AttendancePage() {
             <input id="remarks" value={remarks} onChange={(e) => setRemarks(e.target.value)} className={textInputClass()} />
           </FormField>
           {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
-          <button
-            type="button"
-            onClick={submit}
-            disabled={!employeeId || !attendanceDate}
-            className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
-          >
-            Save
-          </button>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={() => setShowModal(false)}
+              className="rounded-md border border-zinc-300 px-4 py-2 text-sm text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={submit}
+              disabled={!employeeId || !attendanceDate}
+              className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
+            >
+              Save
+            </button>
+          </div>
         </div>
       </Modal>
     </div>

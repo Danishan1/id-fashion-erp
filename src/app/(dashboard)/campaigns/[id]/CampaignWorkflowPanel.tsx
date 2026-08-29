@@ -404,14 +404,23 @@ export function CampaignWorkflowPanel({ campaign }: { campaign: CampaignDetail }
           <FormField label="Clicks" htmlFor="metricClicks">
             <input id="metricClicks" type="number" min={0} value={metricClicks} onChange={(e) => setMetricClicks(e.target.value)} className={textInputClass()} />
           </FormField>
-          <button
-            type="button"
-            onClick={submitMetric}
-            disabled={!metricDate}
-            className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
-          >
-            Save
-          </button>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={() => setShowMetricModal(false)}
+              className="rounded-md border border-zinc-300 px-4 py-2 text-sm text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={submitMetric}
+              disabled={!metricDate}
+              className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
+            >
+              Save
+            </button>
+          </div>
         </div>
       </Modal>
 
@@ -420,14 +429,23 @@ export function CampaignWorkflowPanel({ campaign }: { campaign: CampaignDetail }
           <FormField label="Reason" htmlFor="rejectReason" required>
             <textarea id="rejectReason" required value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} className={textInputClass()} rows={3} />
           </FormField>
-          <button
-            type="button"
-            disabled={!rejectReason || isBusy}
-            onClick={reject}
-            className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-500 disabled:opacity-60"
-          >
-            Reject Campaign
-          </button>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={() => setShowRejectModal(false)}
+              className="rounded-md border border-zinc-300 px-4 py-2 text-sm text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={!rejectReason || isBusy}
+              onClick={reject}
+              className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-500 disabled:opacity-60"
+            >
+              Reject Campaign
+            </button>
+          </div>
         </div>
       </Modal>
     </div>

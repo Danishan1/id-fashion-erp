@@ -1271,7 +1271,10 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
               ))}
             </select>
           </FormField>
-          <ActionButton label="Add Material" onClick={addMaterial} isBusy={isBusy} disabled={!materialId || !materialQty} />
+          <div className="flex gap-3">
+            <ActionButton label="Cancel" onClick={() => setAddMaterialModalVersionId(null)} isBusy={false} variant="secondary" />
+            <ActionButton label="Add Material" onClick={addMaterial} isBusy={isBusy} disabled={!materialId || !materialQty} />
+          </div>
         </div>
       </Modal>
 
@@ -1304,7 +1307,10 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
               />
             </FormField>
           </div>
-          <ActionButton label="Save Rate" onClick={saveRate} isBusy={isBusy} />
+          <div className="flex gap-3">
+            <ActionButton label="Cancel" onClick={() => setRateModalTarget(null)} isBusy={false} variant="secondary" />
+            <ActionButton label="Save Rate" onClick={saveRate} isBusy={isBusy} />
+          </div>
         </div>
       </Modal>
 
@@ -1326,7 +1332,10 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
           <FormField label="Reason" htmlFor="modalDamageReason">
             <input id="modalDamageReason" value={damageReasonDraft} onChange={(e) => setDamageReasonDraft(e.target.value)} className={textInputClass()} />
           </FormField>
-          <ActionButton label="Save" onClick={saveDamage} isBusy={isBusy} disabled={!damageQtyDraft} />
+          <div className="flex gap-3">
+            <ActionButton label="Cancel" onClick={() => setDamageModalTarget(null)} isBusy={false} variant="secondary" />
+            <ActionButton label="Save" onClick={saveDamage} isBusy={isBusy} disabled={!damageQtyDraft} />
+          </div>
         </div>
       </Modal>
 
@@ -1365,12 +1374,15 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
               className={textInputClass()}
             />
           </FormField>
-          <ActionButton
-            label={chargeModal?.charge ? "Save Charge" : "Add Charge"}
-            onClick={saveCharge}
-            isBusy={isBusy}
-            disabled={!chargeDescription || !chargeAmount}
-          />
+          <div className="flex gap-3">
+            <ActionButton label="Cancel" onClick={() => setChargeModal(null)} isBusy={false} variant="secondary" />
+            <ActionButton
+              label={chargeModal?.charge ? "Save Charge" : "Add Charge"}
+              onClick={saveCharge}
+              isBusy={isBusy}
+              disabled={!chargeDescription || !chargeAmount}
+            />
+          </div>
         </div>
       </Modal>
 
@@ -1433,7 +1445,10 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
               />
             </FormField>
           )}
-          <ActionButton label="Save Costing" onClick={saveCostingSummary} isBusy={isBusy} />
+          <div className="flex gap-3">
+            <ActionButton label="Cancel" onClick={() => setCostingModalVersionId(null)} isBusy={false} variant="secondary" />
+            <ActionButton label="Save Costing" onClick={saveCostingSummary} isBusy={isBusy} />
+          </div>
         </div>
       </Modal>
 
@@ -1469,7 +1484,10 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
               className={textInputClass()}
             />
           </FormField>
-          <ActionButton label="Record Decision" onClick={recordDecision} isBusy={isBusy} />
+          <div className="flex gap-3">
+            <ActionButton label="Cancel" onClick={() => setIsDecisionModalOpen(false)} isBusy={false} variant="secondary" />
+            <ActionButton label="Record Decision" onClick={recordDecision} isBusy={isBusy} />
+          </div>
         </div>
       </Modal>
 
@@ -1486,7 +1504,10 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
               className={textInputClass()}
             />
           </FormField>
-          <ActionButton label="Post" onClick={addComment} isBusy={isBusy} disabled={!commentBody.trim()} />
+          <div className="flex gap-3">
+            <ActionButton label="Cancel" onClick={() => setIsCommentModalOpen(false)} isBusy={false} variant="secondary" />
+            <ActionButton label="Post" onClick={addComment} isBusy={isBusy} disabled={!commentBody.trim()} />
+          </div>
         </div>
       </Modal>
 
@@ -1499,7 +1520,10 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
             className="text-sm text-zinc-600 dark:text-zinc-300"
           />
           <p className="text-xs text-zinc-400">JPEG, PNG, WEBP, PDF, Word, or Excel — up to 20 MB.</p>
-          <ActionButton label="Upload" onClick={uploadAttachment} isBusy={isBusy} disabled={!uploadFile} />
+          <div className="flex gap-3">
+            <ActionButton label="Cancel" onClick={() => setIsUploadModalOpen(false)} isBusy={false} variant="secondary" />
+            <ActionButton label="Upload" onClick={uploadAttachment} isBusy={isBusy} disabled={!uploadFile} />
+          </div>
         </div>
       </Modal>
 
