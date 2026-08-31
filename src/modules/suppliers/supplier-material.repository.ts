@@ -35,17 +35,17 @@ export const SupplierMaterialRepository = {
 
 export const SupplierMaterialCategoryRepository = {
   findGranted: (supplierId: string) =>
-    prisma.supplierMaterialCategory.findMany({ where: { supplierId }, select: { materialCategory: true } }),
+    prisma.supplierMaterialCategory.findMany({ where: { supplierId }, select: { supplierCategoryId: true } }),
 
   // Full replace, one transaction — same shape as RoleProductionStageAccess's
-  // own replaceStageAccessInTx: an empty `categories` array means "supplies
-  // no categories broadly" (not a no-op), matching that table's own
-  // zero-rows-is-a-real-state contract.
-  replaceInTx: (companyId: string, supplierId: string, categories: string[]) =>
+  // own replaceStageAccessInTx: an empty `supplierCategoryIds` array means
+  // "supplies no categories broadly" (not a no-op), matching that table's
+  // own zero-rows-is-a-real-state contract.
+  replaceInTx: (companyId: string, supplierId: string, supplierCategoryIds: string[]) =>
     prisma.$transaction([
       prisma.supplierMaterialCategory.deleteMany({ where: { supplierId } }),
       prisma.supplierMaterialCategory.createMany({
-        data: categories.map((materialCategory) => ({ companyId, supplierId, materialCategory: materialCategory as never })),
+        data: supplierCategoryIds.map((supplierCategoryId) => ({ companyId, supplierId, supplierCategoryId })),
       }),
     ]),
 };

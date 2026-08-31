@@ -19,14 +19,19 @@ const MASTER_SECTIONS = [
   {
     href: "/masters/garment-attributes",
     label: "Garment Attributes",
-    description: "Brand, category, season, fitting, product type, design & pattern",
+    description: "Brand, season, fitting, product type, design & pattern",
+  },
+  {
+    href: "/masters/categories",
+    label: "Categories",
+    description: "Garment, Supplier, and Employee category masters, consolidated in one place",
   },
   {
     href: "/masters/fabric-config",
     label: "Fabric Configuration",
     description: "GSM, dye, weave type, width, and composition for fabric materials",
   },
-  { href: "/masters/hr-config", label: "HR Configuration", description: "Designation, employee category, shifts, and holidays" },
+  { href: "/masters/hr-config", label: "HR Configuration", description: "Designation, shifts, and holidays" },
   { href: "/masters/cost-master", label: "Cost Master", description: "Overhead cost rates for costing" },
   { href: "/masters/finance-config", label: "Finance Configuration", description: "Payment types and bank accounts" },
 ];

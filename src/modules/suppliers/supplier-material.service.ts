@@ -1,7 +1,7 @@
 import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
-import { MATERIAL_CATEGORIES } from "@/modules/products/product.schema";
 import { ProductRepository } from "@/modules/products/product.repository";
+import { GarmentAttributeRepository } from "@/modules/garment-attributes/garment-attributes.repository";
 import { SupplierRepository } from "./supplier.repository";
 import { SupplierMaterialRepository, SupplierMaterialCategoryRepository } from "./supplier-material.repository";
 
@@ -98,29 +98,43 @@ export async function addSuppliedMaterials(actor: ActorContext, supplierId: stri
 /**
  * The coarse "this supplier supplies this whole category" catalog — see the
  * schema comment on SupplierMaterialCategory for why this exists alongside,
- * not instead of, the specific-material catalog above. Returns every real
- * material category (the same 7-value list Product.materialCategory itself
- * is validated against — SERVICES/MACHINERY are Supplier-only concepts, no
- * Product ever carries those, so linking a supplier to them here would be
- * meaningless) with a `granted` flag, matching getRoleProductionStageAccess's
- * own shape.
+ * not instead of, the specific-material catalog above. Sourced dynamically
+ * from the real, per-company SupplierCategory master (not a fixed enum list)
+ * so the checklist grows/shrinks as that master's own rows do, with zero
+ * code change needed here when a category is added/renamed/retired there.
+ * An already-granted category that's since been deactivated is still
+ * included (so it stays visible/removable) — only a *new* grant is limited
+ * to currently-active categories.
  */
 export async function listSuppliedCategories(companyId: string, supplierId: string) {
   await assertSupplierBelongsToCompany(companyId, supplierId);
-  const granted = await SupplierMaterialCategoryRepository.findGranted(supplierId);
-  const grantedSet = new Set(granted.map((g) => g.materialCategory));
-  return MATERIAL_CATEGORIES.map((category) => ({ category, granted: grantedSet.has(category) }));
+
+  const [categories, granted] = await Promise.all([
+    GarmentAttributeRepository.supplierCategory.findMany({ where: { companyId }, orderBy: { name: "asc" } }),
+    SupplierMaterialCategoryRepository.findGranted(supplierId),
+  ]);
+  const grantedSet = new Set(granted.map((g) => g.supplierCategoryId));
+
+  return categories
+    .filter((c) => c.isActive || grantedSet.has(c.id))
+    .map((c) => ({ id: c.id, code: c.code, name: c.name, granted: grantedSet.has(c.id) }));
 }
 
-export async function updateSuppliedCategories(actor: ActorContext, supplierId: string, categories: string[]) {
+export async function updateSuppliedCategories(actor: ActorContext, supplierId: string, supplierCategoryIds: string[]) {
   await assertSupplierBelongsToCompany(actor.companyId, supplierId);
 
-  const invalid = categories.filter((c) => !MATERIAL_CATEGORIES.includes(c as never));
-  if (invalid.length > 0) {
-    throw new BusinessRuleError("VALIDATION_ERROR", `Unknown material category value(s): ${invalid.join(", ")}`, { invalid });
+  const uniqueIds = [...new Set(supplierCategoryIds)];
+  const validCategories = await GarmentAttributeRepository.supplierCategory.findMany({
+    where: { id: { in: uniqueIds }, companyId: actor.companyId },
+    select: { id: true },
+  });
+  const validIds = new Set(validCategories.map((c) => c.id));
+  const invalidIds = uniqueIds.filter((id) => !validIds.has(id));
+  if (invalidIds.length > 0) {
+    throw new BusinessRuleError("NOT_FOUND", `Unknown or non-company supplier category id(s): ${invalidIds.join(", ")}`, { invalidIds });
   }
 
-  await SupplierMaterialCategoryRepository.replaceInTx(actor.companyId, supplierId, [...new Set(categories)]);
+  await SupplierMaterialCategoryRepository.replaceInTx(actor.companyId, supplierId, uniqueIds);
 
   await writeAuditLog({
     companyId: actor.companyId,
@@ -128,7 +142,7 @@ export async function updateSuppliedCategories(actor: ActorContext, supplierId: 
     tableName: "supplier_material_categories",
     recordId: supplierId,
     action: "UPDATE",
-    newValues: { supplierId, categories },
+    newValues: { supplierId, supplierCategoryIds: uniqueIds },
   });
 
   return listSuppliedCategories(actor.companyId, supplierId);

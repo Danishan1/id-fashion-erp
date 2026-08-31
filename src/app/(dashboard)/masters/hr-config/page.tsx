@@ -4,7 +4,7 @@ import { useState } from "react";
 import { SimpleLookupManager } from "@/components/ui/SimpleLookupManager";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 
-const TABS = ["Designations", "Employee Categories", "Shifts", "Holidays"] as const;
+const TABS = ["Designations", "Shifts", "Holidays"] as const;
 type Tab = (typeof TABS)[number];
 
 export default function HrConfigPage() {
@@ -16,8 +16,12 @@ export default function HrConfigPage() {
         <Breadcrumb items={[{ label: "Masters", href: "/masters" }, { label: "HR Configuration" }]} />
         <h1 className="mt-2 text-lg font-semibold text-zinc-900 dark:text-zinc-50">HR Configuration</h1>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-          Designation, employee category, shift, and holiday masters — normalized here since neither reference
-          system (HRMS, Inventory, Royal Jeans) had these as real tables.
+          Designation, shift, and holiday masters — normalized here since neither reference system (HRMS,
+          Inventory, Royal Jeans) had these as real tables. Employee Category moved to the consolidated{" "}
+          <a href="/masters/categories" className="text-indigo-600 hover:underline dark:text-indigo-400">
+            Categories
+          </a>{" "}
+          page.
         </p>
       </div>
 
@@ -44,15 +48,6 @@ export default function HrConfigPage() {
             { key: "code", label: "Code", required: true },
             { key: "name", label: "Name", required: true },
             { key: "departmentId", label: "Department", type: "select", optionsUrl: "/api/v1/departments" },
-          ]}
-        />
-      )}
-      {tab === "Employee Categories" && (
-        <SimpleLookupManager
-          fetchUrl="/api/v1/employee-categories"
-          fields={[
-            { key: "code", label: "Code", required: true },
-            { key: "name", label: "Name", required: true },
           ]}
         />
       )}

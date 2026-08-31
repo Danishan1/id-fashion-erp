@@ -3195,6 +3195,109 @@ generated `LayoutProps` while the dev server was live/mid-restart — resolved d
 race) and confirming it completed with zero errors, rather than continuing to fight the live dev server's
 own type-generation timing. 834/834 tests total, `npx tsc --noEmit`/`npx eslint`/`npx next build` all clean.
 
+## Categories consolidated into one Masters page (2026-08-31)
+
+User asked "kitne type ke category hai" (how many category-type masters exist), then explicitly asked for
+Garment Category, Supplier Category, and Employee Category — previously scattered across
+`/masters/garment-attributes` (as two of its tabs) and `/masters/hr-config` (as one of its tabs) — to live
+together in one dedicated "Categories" module instead.
+
+**Pure UI move, zero schema/service/API changes** — every one of the three `SimpleLookupManager` tabs on
+the new page reuses its exact existing `fetchUrl` (`/api/v1/categories`, `/api/v1/supplier-categories`,
+`/api/v1/employee-categories`) and `fields` shape verbatim, so `Product.categoryId`, `Supplier.categoryId`,
+and every other existing FK/consumer of these three masters is completely unaffected.
+
+- New `src/app/(dashboard)/masters/categories/page.tsx` — a 3-tab page (Garment/Supplier/Employee Category)
+  matching the established tabbed-`SimpleLookupManager` pattern (`garment-attributes`, `hr-config`,
+  `fabric-config`, etc.).
+- `src/app/(dashboard)/masters/garment-attributes/page.tsx` — dropped its "Categories" and "Supplier
+  Categories" tabs (down to 7: Brands, Seasons, Fittings, Product Types, Designs, Design Patterns,
+  Patterns), updated its description to link to the new page.
+- `src/app/(dashboard)/masters/hr-config/page.tsx` — dropped its "Employee Categories" tab (down to 3:
+  Designations, Shifts, Holidays), same description update.
+- `src/app/(dashboard)/masters/page.tsx` — added a "Categories" card to `MASTER_SECTIONS`, trimmed the
+  "Garment Attributes"/"HR Configuration" card descriptions to no longer mention category.
+- Verified live in the browser: all 3 tabs on the new Categories page render their real existing data
+  (9 Garment Categories, 9 Supplier Categories, 6 Employee Categories); the two trimmed pages show exactly
+  their remaining tabs with zero dead code (the now-unreachable `{tab === "Employee Categories" && ...}`
+  render block was deleted from `hr-config/page.tsx`, since `Tab`'s narrowed union would otherwise make that
+  comparison a TypeScript error); the Masters index shows the new card and the two adjusted descriptions;
+  zero console errors throughout. `npx tsc --noEmit`, `npx eslint`, and `npx vitest run` (834/834) all clean.
+
+## Supplier's broad-category grant made dynamic; both catalog actions moved into an Actions bar (2026-08-31)
+
+Two follow-up fixes on the Supplier↔Material catalog feature (built earlier the same day, see above), from
+direct user feedback on the live UI.
+
+**"Categories Supplied (broad)" is now sourced from the real Supplier Category master, not a fixed enum
+list.** `SupplierMaterialCategory` originally stored a `MaterialCategory` enum value (copy-pasted from
+`Product.materialCategory`'s own 7-value list) — but `Supplier.categoryId` had *already* been cut over to a
+real, dynamic, per-company `SupplierCategory` master table earlier (2026-08-27, see that model's own schema
+comment), and the user correctly pointed out the broad-category checklist should track that same master —
+growing/shrinking with it — rather than a second, disconnected fixed list.
+- Migration `20260831130000_supplier_material_category_dynamic`: `SupplierMaterialCategory.materialCategory`
+  (enum) → `supplierCategoryId` (real FK to `SupplierCategory.id`). Hand-authored (not the naive
+  `migrate diff` output, which would have dropped the column and added a `NOT NULL` FK with no backfill) to
+  preserve the one real row that existed (a `FABRIC` grant on a live demo supplier) by matching the old
+  enum's string value against the master's own `code` column — confirmed live via direct SQL that the row
+  survived the migration with its `supplier_category_id` correctly pointing at the `FABRIC` master row, no
+  data loss.
+- `listSuppliedCategories()`/`updateSuppliedCategories()` (`supplier-material.service.ts`) now read/write
+  through `GarmentAttributeRepository.supplierCategory` (the master) instead of the `MATERIAL_CATEGORIES`
+  Zod list. An already-granted category stays visible even if later deactivated (so it can still be seen/
+  removed); only *new* grants are limited to currently-active master rows. Unknown/cross-company category
+  ids are rejected with `NOT_FOUND`, matching `addSuppliedMaterials`' own precedent for the identical shape
+  of check, rather than the old `VALIDATION_ERROR` (which fit a fixed enum-membership check better than a
+  real-row-existence check).
+- API body field renamed `categories` → `supplierCategoryIds` (now real UUIDs, not enum strings) on
+  `PUT /api/v1/suppliers/:id/material-categories`.
+- `SuppliedMaterialsSection.tsx`'s own material-category **grouping** (unrelated — that's each raw
+  material's own `Product.materialCategory`, used only to organize the "Add Material" checklist) was
+  deliberately left untouched; only the Supplier's own broad-grant list changed.
+
+**Both catalog actions moved twice in the same session, settling on the Suppliers list page's own row
+actions.** First moved from the always-visible edit page into an "Actions" bar in that same edit page's
+header — user then corrected this directly: they wanted these between the existing per-row **Edit** link
+and the **Active/Inactive toggle** on the Suppliers **list** page (`/masters/suppliers`), not on the edit
+page at all.
+- `DataTable.tsx` (the shared list component used by ~12 masters) gained a new optional
+  `rowActions?: (row: T) => ReactNode` prop, rendered between the built-in Edit link and the toggle, wrapped
+  in a `div` with its own `onClick={(e) => e.stopPropagation()}` so a click inside it never triggers the
+  row's own click-to-navigate handler — the same guard the Edit link already had individually. Generic and
+  opt-in: every other module's list using `DataTable` is completely unaffected (prop simply absent).
+- `SuppliedCategoriesSection.tsx`/`SuppliedMaterialsSection.tsx` were rewritten to **self-fetch on open**
+  instead of taking `initialCategories`/`initialMaterials` props — a list row has no per-row detail fetch to
+  piggyback on the way the edit page's Server Component did, and eagerly fetching this for every visible row
+  up front would be an unnecessary N+1 read for rows the user never opens. Trigger buttons shrank to compact
+  table-row sizing and dropped their `(N)` count badges (no longer free to compute without a fetch, and not
+  worth one extra read just to show it) — plain "Categories" / "Materials" labels instead.
+- `[id]/page.tsx` (the edit page) reverted to exactly its pre-feature form — no Actions bar, no supplied-
+  materials/categories fetch at all; that data now belongs solely to the list page's row actions.
+- `src/app/(dashboard)/masters/suppliers/page.tsx` passes `rowActions={(row) => <>...</>}` rendering both
+  components per row with `supplierId={row.id}`.
+- Verified live end-to-end: reloaded `/masters/suppliers` and confirmed every row shows
+  "Edit · Categories · Materials · [toggle]" in that exact order; clicked "Categories" on XYZ Textile's row
+  — modal opened without navigating the row, self-fetched, and showed Fabric correctly pre-checked; clicked
+  "Materials" on the same row — modal opened, showed "Loading…" then "No materials linked yet" with the
+  grouped Add-Material checklist; clicked elsewhere on the row afterward and confirmed normal row-click
+  navigation to the Edit page still works, now rendering a clean form with no Actions bar at all; zero
+  console errors throughout. `npx tsc --noEmit`, `npx eslint`, and `npx vitest run` (836/836, 2 new) all
+  clean throughout both placement passes.
+
+**Categories Supplied's UI rewritten a third time to match Materials Supplied's own search+list shape.**
+User's explicit ask: give Categories the same linked-list/search/checklist UX Materials already had, instead
+of the earlier flat "toggle any pill, then a single Save Categories button" design. `SuppliedCategoriesSection.tsx`
+now mirrors `SuppliedMaterialsSection.tsx` structurally: a linked-categories list (each row with its own
+immediate "Remove"), then a bordered search box + scrollable checklist of not-yet-granted categories, with
+an "Add Selected (N)" footer button. **No new backend endpoint** — both Add and Remove submit through the
+same existing full-replace `PUT /material-categories` route, just computing the new full set locally first
+(`[...currently-granted ids, ...newly-checked ids]` for Add; `currently-granted ids minus the removed one`
+for Remove) — the separate "Save Categories" step is gone entirely, every action is now immediate, same as
+Materials. Verified live: searched "zip" (correctly narrowed to just "Zips"), added it (appeared instantly
+in the linked list alongside the pre-existing "Fabric," disappeared from the available checklist), removed
+it again (back to just "Fabric," the original demo state) — zero console errors. `npx tsc --noEmit`,
+`npx eslint`, and `npx vitest run` (836/836) all clean.
+
 ## Recommended Stack
 
 Next.js 14+ (App Router) + React + TypeScript + Tailwind CSS (frontend); Next.js API routes/route handlers as REST API; PostgreSQL + Prisma ORM; session-based auth (Auth.js/NextAuth, DB sessions) with RBAC and optional TOTP 2FA; S3-compatible or local file storage for attachments; server-side PDF/Excel export (`exceljs`, `pdf-lib`/`@react-pdf/renderer`).

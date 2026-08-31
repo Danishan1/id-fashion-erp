@@ -481,8 +481,9 @@ model SupplierCategory {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  company   Company    @relation(fields: [companyId], references: [id])
-  suppliers Supplier[]
+  company                    Company                    @relation(fields: [companyId], references: [id])
+  suppliers                  Supplier[]
+  supplierMaterialCategories SupplierMaterialCategory[]
 
   @@unique([companyId, code])
   @@map("supplier_categories")
@@ -563,18 +564,27 @@ model SupplierMaterial {
  * material's own category being linked broadly) — neither writes to the
  * other, and a supplier can freely mix broad category coverage with a few
  * extra specific materials outside those categories.
+ * FK's to the real, per-company SupplierCategory master (2026-08-31) rather
+ * than the fixed MaterialCategory enum this table originally used — it was
+ * built the same day as SupplierCategory's own cutover from a hardcoded enum
+ * to a dynamic master (see the comment on SupplierCategory) and initially
+ * copy-pasted the old enum shape from Product.materialCategory for
+ * convenience. Once the user asked for this list to grow/shrink with the
+ * real master instead of a fixed set of 7 values, an enum column couldn't
+ * express that — only a real FK to the master can.
  */
 model SupplierMaterialCategory {
-  id               String           @id @default(uuid()) @db.Uuid
-  companyId        String           @map("company_id") @db.Uuid
-  supplierId       String           @map("supplier_id") @db.Uuid
-  materialCategory MaterialCategory @map("material_category")
-  createdAt        DateTime         @default(now()) @map("created_at")
+  id                 String   @id @default(uuid()) @db.Uuid
+  companyId          String   @map("company_id") @db.Uuid
+  supplierId         String   @map("supplier_id") @db.Uuid
+  supplierCategoryId String   @map("supplier_category_id") @db.Uuid
+  createdAt          DateTime @default(now()) @map("created_at")
 
-  company  Company  @relation(fields: [companyId], references: [id])
-  supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  company          Company          @relation(fields: [companyId], references: [id])
+  supplier         Supplier         @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  supplierCategory SupplierCategory @relation(fields: [supplierCategoryId], references: [id], onDelete: Cascade)
 
-  @@unique([supplierId, materialCategory])
+  @@unique([supplierId, supplierCategoryId])
   @@map("supplier_material_categories")
 }
 

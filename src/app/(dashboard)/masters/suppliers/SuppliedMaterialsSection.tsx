@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { MATERIAL_CATEGORIES } from "@/modules/products/product.schema";
 import { formatCategoryLabel } from "@/lib/format-category-label";
 import { textInputClass } from "@/components/ui/FormField";
+import { Modal } from "@/components/ui/Modal";
 
 interface MaterialOption {
   id: string;
@@ -25,7 +26,6 @@ interface SuppliedMaterial {
 
 interface SuppliedMaterialsSectionProps {
   supplierId: string;
-  initialMaterials: SuppliedMaterial[];
 }
 
 /**
@@ -40,9 +40,18 @@ interface SuppliedMaterialsSectionProps {
  * materials (the ordinary case, not an edge case) made repeating that cycle
  * once per material genuinely tedious. Search narrows the list; checking
  * several and hitting "Add Selected" submits them all in one call.
+ *
+ * Rendered as a small row-action button on the Suppliers list (between Edit
+ * and the Active/Inactive toggle, per explicit user placement). Both the
+ * supplier's own linked materials and the full material catalog are fetched
+ * only when the modal opens, not on mount — a list row has no per-row detail
+ * fetch to piggyback on, and fetching this for every visible row up front
+ * would be an unnecessary N+1 read most rows never open.
  */
-export function SuppliedMaterialsSection({ supplierId, initialMaterials }: SuppliedMaterialsSectionProps) {
-  const [links, setLinks] = useState(initialMaterials);
+export function SuppliedMaterialsSection({ supplierId }: SuppliedMaterialsSectionProps) {
+  const [open, setOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [links, setLinks] = useState<SuppliedMaterial[]>([]);
   const [allMaterials, setAllMaterials] = useState<MaterialOption[]>([]);
   const [search, setSearch] = useState("");
   const [checked, setChecked] = useState<Set<string>>(new Set());
@@ -50,12 +59,26 @@ export function SuppliedMaterialsSection({ supplierId, initialMaterials }: Suppl
   const [isAdding, setIsAdding] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetch("/api/v1/materials?pageSize=200")
-      .then((res) => res.json())
-      .then((body) => setAllMaterials(body.data ?? []))
-      .catch(() => setAllMaterials([]));
-  }, []);
+  async function openModal() {
+    setOpen(true);
+    setError(null);
+    setIsLoading(true);
+    try {
+      const [linksRes, materialsRes] = await Promise.all([
+        fetch(`/api/v1/suppliers/${supplierId}/materials`),
+        fetch("/api/v1/materials?pageSize=200"),
+      ]);
+      const linksBody = await linksRes.json();
+      if (!linksRes.ok) throw new Error(linksBody.error?.message ?? "Failed to load linked materials");
+      const materialsBody = await materialsRes.json();
+      setLinks(linksBody.data ?? []);
+      setAllMaterials(materialsBody.data ?? []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load materials");
+    } finally {
+      setIsLoading(false);
+    }
+  }
 
   const availableMaterials = useMemo(() => {
     const linkedMaterialIds = new Set(links.map((l) => l.product.id));
@@ -128,90 +151,115 @@ export function SuppliedMaterialsSection({ supplierId, initialMaterials }: Suppl
   }
 
   return (
-    <div className="max-w-xl space-y-3">
-      <div>
-        <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Materials Supplied</h2>
-        <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-          Every raw material this supplier can be sourced from — separate from a material&apos;s own
-          &ldquo;Default Supplier&rdquo; (which only picks one for auto-suggesting on a new Purchase Order).
-        </p>
-      </div>
+    <>
+      <button
+        type="button"
+        onClick={openModal}
+        className="whitespace-nowrap rounded-md border border-zinc-300 px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+      >
+        Materials
+      </button>
 
-      {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+      <Modal open={open} onClose={() => setOpen(false)} title="Materials Supplied" maxWidthClass="max-w-xl">
+        <div className="space-y-3">
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">
+            Every raw material this supplier can be sourced from — separate from a material&apos;s own
+            &ldquo;Default Supplier&rdquo; (which only picks one for auto-suggesting on a new Purchase Order).
+          </p>
 
-      {links.length === 0 ? (
-        <p className="text-sm text-zinc-500">No materials linked yet.</p>
-      ) : (
-        <ul className="divide-y divide-zinc-100 rounded-md border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
-          {links.map((link) => (
-            <li key={link.id} className="flex items-center justify-between px-3 py-2 text-sm">
-              <div>
-                <span className="font-medium text-zinc-800 dark:text-zinc-100">
-                  {link.product.styleName} <span className="text-zinc-400">({link.product.styleCode})</span>
-                </span>
-                {link.product.materialCategory && (
-                  <span className="ml-2 text-xs text-zinc-500">{formatCategoryLabel(link.product.materialCategory)}</span>
-                )}
-              </div>
-              <button
-                type="button"
-                onClick={() => handleRemove(link)}
-                disabled={removingId === link.id}
-                className="text-sm text-red-600 hover:text-red-500 disabled:opacity-60 dark:text-red-400"
-              >
-                {removingId === link.id ? "Removing…" : "Remove"}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+          {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
 
-      <div className="rounded-md border border-zinc-200 dark:border-zinc-800">
-        <div className="border-b border-zinc-200 p-2 dark:border-zinc-800">
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search materials to add…"
-            className={textInputClass()}
-          />
-        </div>
-        <div className="max-h-64 overflow-y-auto">
-          {groups.length === 0 && <p className="px-3 py-3 text-sm text-zinc-500">No more materials to add.</p>}
-          {groups.map((group) => (
-            <div key={group.category}>
-              <div className="sticky top-0 bg-zinc-100 px-3 py-1 text-xs font-semibold text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-                {formatCategoryLabel(group.category)}
-              </div>
-              {group.items.map((m) => (
-                <label
-                  key={m.id}
-                  className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50 dark:text-zinc-200 dark:hover:bg-zinc-800"
-                >
+          {isLoading ? (
+            <p className="text-sm text-zinc-500">Loading…</p>
+          ) : (
+            <>
+              {links.length === 0 ? (
+                <p className="text-sm text-zinc-500">No materials linked yet.</p>
+              ) : (
+                <ul className="divide-y divide-zinc-100 rounded-md border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
+                  {links.map((link) => (
+                    <li key={link.id} className="flex items-center justify-between px-3 py-2 text-sm">
+                      <div>
+                        <span className="font-medium text-zinc-800 dark:text-zinc-100">
+                          {link.product.styleName} <span className="text-zinc-400">({link.product.styleCode})</span>
+                        </span>
+                        {link.product.materialCategory && (
+                          <span className="ml-2 text-xs text-zinc-500">{formatCategoryLabel(link.product.materialCategory)}</span>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleRemove(link)}
+                        disabled={removingId === link.id}
+                        className="text-sm text-red-600 hover:text-red-500 disabled:opacity-60 dark:text-red-400"
+                      >
+                        {removingId === link.id ? "Removing…" : "Remove"}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              <div className="rounded-md border border-zinc-200 dark:border-zinc-800">
+                <div className="border-b border-zinc-200 p-2 dark:border-zinc-800">
                   <input
-                    type="checkbox"
-                    checked={checked.has(m.id)}
-                    onChange={() => toggle(m.id)}
-                    className="h-4 w-4 rounded border-zinc-300 text-indigo-600 focus:ring-indigo-500 dark:border-zinc-700"
+                    type="text"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder="Search materials to add…"
+                    className={textInputClass()}
                   />
-                  {m.styleName} <span className="text-xs text-zinc-400">({m.styleCode})</span>
-                </label>
-              ))}
-            </div>
-          ))}
+                </div>
+                <div className="max-h-64 overflow-y-auto">
+                  {groups.length === 0 && <p className="px-3 py-3 text-sm text-zinc-500">No more materials to add.</p>}
+                  {groups.map((group) => (
+                    <div key={group.category}>
+                      <div className="sticky top-0 bg-zinc-100 px-3 py-1 text-xs font-semibold text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                        {formatCategoryLabel(group.category)}
+                      </div>
+                      {group.items.map((m) => (
+                        <label
+                          key={m.id}
+                          className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked.has(m.id)}
+                            onChange={() => toggle(m.id)}
+                            className="h-4 w-4 rounded border-zinc-300 text-indigo-600 focus:ring-indigo-500 dark:border-zinc-700"
+                          />
+                          {m.styleName} <span className="text-xs text-zinc-400">({m.styleCode})</span>
+                        </label>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+                <div className="flex items-center justify-between border-t border-zinc-200 p-2 dark:border-zinc-800">
+                  <span className="text-xs text-zinc-500">{checked.size > 0 ? `${checked.size} selected` : "Select one or more"}</span>
+                  <button
+                    type="button"
+                    onClick={handleAddSelected}
+                    disabled={checked.size === 0 || isAdding}
+                    className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
+                  >
+                    {isAdding ? "Adding…" : `Add Selected${checked.size > 0 ? ` (${checked.size})` : ""}`}
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+            >
+              Close
+            </button>
+          </div>
         </div>
-        <div className="flex items-center justify-between border-t border-zinc-200 p-2 dark:border-zinc-800">
-          <span className="text-xs text-zinc-500">{checked.size > 0 ? `${checked.size} selected` : "Select one or more"}</span>
-          <button
-            type="button"
-            onClick={handleAddSelected}
-            disabled={checked.size === 0 || isAdding}
-            className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
-          >
-            {isAdding ? "Adding…" : `Add Selected${checked.size > 0 ? ` (${checked.size})` : ""}`}
-          </button>
-        </div>
-      </div>
-    </div>
+      </Modal>
+    </>
   );
 }

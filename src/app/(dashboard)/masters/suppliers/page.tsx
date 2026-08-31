@@ -2,6 +2,8 @@
 
 import { DataTable } from "@/components/ui/DataTable";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
+import { SuppliedCategoriesSection } from "./SuppliedCategoriesSection";
+import { SuppliedMaterialsSection } from "./SuppliedMaterialsSection";
 
 interface SupplierRow {
   id: string;
@@ -26,6 +28,12 @@ export default function SuppliersListPage() {
         newLabel="New Supplier"
         searchPlaceholder="Search by name or code…"
         rowHref={(row) => `/masters/suppliers/${row.id}`}
+        rowActions={(row) => (
+          <>
+            <SuppliedCategoriesSection supplierId={row.id} />
+            <SuppliedMaterialsSection supplierId={row.id} />
+          </>
+        )}
         columns={[
           { key: "code", header: "Code" },
           { key: "name", header: "Name" },

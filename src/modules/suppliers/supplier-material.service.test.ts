@@ -7,6 +7,9 @@ vi.mock("./supplier.repository", () => ({
 vi.mock("@/modules/products/product.repository", () => ({
   ProductRepository: { findMaterialById: vi.fn() },
 }));
+vi.mock("@/modules/garment-attributes/garment-attributes.repository", () => ({
+  GarmentAttributeRepository: { supplierCategory: { findMany: vi.fn() } },
+}));
 vi.mock("./supplier-material.repository", () => ({
   SupplierMaterialRepository: {
     findMany: vi.fn(),
@@ -25,6 +28,7 @@ vi.mock("./supplier-material.repository", () => ({
 const { writeAuditLog } = await import("@/core/audit/AuditLogger");
 const { SupplierRepository } = await import("./supplier.repository");
 const { ProductRepository } = await import("@/modules/products/product.repository");
+const { GarmentAttributeRepository } = await import("@/modules/garment-attributes/garment-attributes.repository");
 const { SupplierMaterialRepository, SupplierMaterialCategoryRepository } = await import("./supplier-material.repository");
 const {
   listSuppliedMaterials,
@@ -49,6 +53,10 @@ beforeEach(() => {
   vi.mocked(SupplierMaterialRepository.delete).mockReset().mockResolvedValue(undefined as never);
   vi.mocked(SupplierMaterialCategoryRepository.findGranted).mockReset().mockResolvedValue([]);
   vi.mocked(SupplierMaterialCategoryRepository.replaceInTx).mockReset().mockResolvedValue(undefined as never);
+  vi.mocked(GarmentAttributeRepository.supplierCategory.findMany).mockReset().mockResolvedValue([
+    { id: "cat-fabric", code: "FABRIC", name: "Fabric", isActive: true },
+    { id: "cat-trims", code: "TRIMS", name: "Trims", isActive: true },
+  ] as never);
 });
 
 describe("listSuppliedMaterials", () => {
@@ -132,19 +140,35 @@ describe("addSuppliedMaterials (bulk)", () => {
 });
 
 describe("listSuppliedCategories", () => {
-  it("returns every real material category, marking only the granted ones", async () => {
-    vi.mocked(SupplierMaterialCategoryRepository.findGranted).mockResolvedValue([{ materialCategory: "FABRIC" }] as never);
+  it("returns every real, active Supplier Category master row for the company, marking only the granted ones", async () => {
+    vi.mocked(SupplierMaterialCategoryRepository.findGranted).mockResolvedValue([{ supplierCategoryId: "cat-fabric" }] as never);
     const result = await listSuppliedCategories("co-1", "sup-1");
-    expect(result.find((c) => c.category === "FABRIC")?.granted).toBe(true);
-    expect(result.find((c) => c.category === "TRIMS")?.granted).toBe(false);
-    // SERVICES/MACHINERY are Supplier-only concepts — no Product ever carries
-    // them, so they must never appear in this material-category list. (The
-    // category type itself already guarantees this at compile time — this
-    // is the runtime confirmation that the returned list is exactly the 7
-    // real material categories, no more, no fewer.)
-    expect(result.map((c) => c.category).sort()).toEqual(
-      ["FABRIC", "TRIMS", "ZIPS", "BUTTONS", "ACCESSORIES", "PACKAGING", "OTHER"].sort()
-    );
+    expect(result.find((c) => c.id === "cat-fabric")?.granted).toBe(true);
+    expect(result.find((c) => c.id === "cat-trims")?.granted).toBe(false);
+    expect(GarmentAttributeRepository.supplierCategory.findMany).toHaveBeenCalledWith({
+      where: { companyId: "co-1" },
+      orderBy: { name: "asc" },
+    });
+  });
+
+  it("excludes an inactive category that was never granted", async () => {
+    vi.mocked(GarmentAttributeRepository.supplierCategory.findMany).mockResolvedValue([
+      { id: "cat-fabric", code: "FABRIC", name: "Fabric", isActive: true },
+      { id: "cat-old", code: "OLD", name: "Retired", isActive: false },
+    ] as never);
+    vi.mocked(SupplierMaterialCategoryRepository.findGranted).mockResolvedValue([]);
+    const result = await listSuppliedCategories("co-1", "sup-1");
+    expect(result.map((c) => c.id)).toEqual(["cat-fabric"]);
+  });
+
+  it("still includes an already-granted category even once it's been deactivated", async () => {
+    vi.mocked(GarmentAttributeRepository.supplierCategory.findMany).mockResolvedValue([
+      { id: "cat-fabric", code: "FABRIC", name: "Fabric", isActive: true },
+      { id: "cat-old", code: "OLD", name: "Retired", isActive: false },
+    ] as never);
+    vi.mocked(SupplierMaterialCategoryRepository.findGranted).mockResolvedValue([{ supplierCategoryId: "cat-old" }] as never);
+    const result = await listSuppliedCategories("co-1", "sup-1");
+    expect(result.find((c) => c.id === "cat-old")?.granted).toBe(true);
   });
 
   it("throws NOT_FOUND for a supplier that doesn't belong to the company", async () => {
@@ -154,14 +178,14 @@ describe("listSuppliedCategories", () => {
 });
 
 describe("updateSuppliedCategories", () => {
-  it("rejects an unknown category value before writing anything", async () => {
-    await expect(updateSuppliedCategories(actor, "sup-1", ["NOT_A_REAL_CATEGORY"])).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  it("rejects an id that isn't a real Supplier Category of this company, before writing anything", async () => {
+    await expect(updateSuppliedCategories(actor, "sup-1", ["cat-fabric", "cat-unknown"])).rejects.toMatchObject({ code: "NOT_FOUND" });
     expect(SupplierMaterialCategoryRepository.replaceInTx).not.toHaveBeenCalled();
   });
 
   it("deduplicates and full-replaces the granted category set", async () => {
-    await updateSuppliedCategories(actor, "sup-1", ["FABRIC", "FABRIC", "TRIMS"]);
-    expect(SupplierMaterialCategoryRepository.replaceInTx).toHaveBeenCalledWith("co-1", "sup-1", ["FABRIC", "TRIMS"]);
+    await updateSuppliedCategories(actor, "sup-1", ["cat-fabric", "cat-fabric", "cat-trims"]);
+    expect(SupplierMaterialCategoryRepository.replaceInTx).toHaveBeenCalledWith("co-1", "sup-1", ["cat-fabric", "cat-trims"]);
   });
 
   it("accepts an empty array — a real 'supplies no categories broadly' state, not a no-op", async () => {
@@ -170,13 +194,13 @@ describe("updateSuppliedCategories", () => {
   });
 
   it("writes an audit log entry", async () => {
-    await updateSuppliedCategories(actor, "sup-1", ["FABRIC"]);
+    await updateSuppliedCategories(actor, "sup-1", ["cat-fabric"]);
     expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ tableName: "supplier_material_categories", action: "UPDATE" }));
   });
 
   it("throws NOT_FOUND for a supplier that doesn't belong to the company", async () => {
     vi.mocked(SupplierRepository.findById).mockResolvedValue(null);
-    await expect(updateSuppliedCategories(actor, "sup-x", ["FABRIC"])).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(updateSuppliedCategories(actor, "sup-x", ["cat-fabric"])).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 });
 

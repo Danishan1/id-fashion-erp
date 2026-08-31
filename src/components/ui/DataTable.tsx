@@ -21,6 +21,14 @@ interface DataTableProps<T> {
   searchPlaceholder?: string;
   /** Bump to force a refetch (e.g. after an external mutation). */
   refreshKey?: number;
+  /**
+   * Extra per-row action(s) rendered in the Actions column, between the
+   * built-in Edit link and the Active/Inactive toggle — for a module-specific
+   * action that doesn't warrant its own DataTable column (e.g. Suppliers'
+   * "Categories"/"Materials" catalog buttons). Clicks inside this area never
+   * trigger the row's own click-to-edit navigation.
+   */
+  rowActions?: (row: T) => ReactNode;
 }
 
 interface ListResponse<T> {
@@ -36,6 +44,7 @@ export function DataTable<T extends { id: string }>({
   newLabel = "New",
   searchPlaceholder = "Search…",
   refreshKey,
+  rowActions,
 }: DataTableProps<T>) {
   const router = useRouter();
   const [page, setPage] = useState(1);
@@ -190,6 +199,11 @@ export function DataTable<T extends { id: string }>({
                           >
                             Edit
                           </Link>
+                          {rowActions && (
+                            <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                              {rowActions(row)}
+                            </div>
+                          )}
                           {isActive !== undefined && (
                             <ToggleSwitch
                               checked={isActive}

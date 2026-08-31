@@ -4,17 +4,7 @@ import { useState } from "react";
 import { SimpleLookupManager } from "@/components/ui/SimpleLookupManager";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 
-const TABS = [
-  "Brands",
-  "Categories",
-  "Seasons",
-  "Fittings",
-  "Product Types",
-  "Designs",
-  "Design Patterns",
-  "Patterns",
-  "Supplier Categories",
-] as const;
+const TABS = ["Brands", "Seasons", "Fittings", "Product Types", "Designs", "Design Patterns", "Patterns"] as const;
 type Tab = (typeof TABS)[number];
 
 const CODE_NAME_FIELDS = [
@@ -31,9 +21,9 @@ export default function GarmentAttributesPage() {
         <Breadcrumb items={[{ label: "Masters", href: "/masters" }, { label: "Garment Attributes" }]} />
         <h1 className="mt-2 text-lg font-semibold text-zinc-900 dark:text-zinc-50">Garment Attributes</h1>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-          Style-level attribute masters — brand, category, season, fitting, product type, design, and pattern —
-          imported from the Inventory and Royal Jeans reference systems. Supplier Categories classifies what a
-          supplier provides (fabric, trims, packaging, services, ...), used on the Suppliers master.
+          Style-level attribute masters — brand, season, fitting, product type, design, and pattern — imported
+          from the Inventory and Royal Jeans reference systems. Garment/Supplier/Employee Category all moved
+          to the consolidated <a href="/masters/categories" className="text-indigo-600 hover:underline dark:text-indigo-400">Categories</a> page.
         </p>
       </div>
 
@@ -54,14 +44,12 @@ export default function GarmentAttributesPage() {
       </div>
 
       {tab === "Brands" && <SimpleLookupManager fetchUrl="/api/v1/brands" fields={CODE_NAME_FIELDS} />}
-      {tab === "Categories" && <SimpleLookupManager fetchUrl="/api/v1/categories" fields={CODE_NAME_FIELDS} />}
       {tab === "Seasons" && <SimpleLookupManager fetchUrl="/api/v1/seasons" fields={CODE_NAME_FIELDS} />}
       {tab === "Fittings" && <SimpleLookupManager fetchUrl="/api/v1/product-fittings" fields={CODE_NAME_FIELDS} />}
       {tab === "Product Types" && <SimpleLookupManager fetchUrl="/api/v1/product-types" fields={CODE_NAME_FIELDS} />}
       {tab === "Designs" && <SimpleLookupManager fetchUrl="/api/v1/designs" fields={CODE_NAME_FIELDS} />}
       {tab === "Design Patterns" && <SimpleLookupManager fetchUrl="/api/v1/design-patterns" fields={CODE_NAME_FIELDS} />}
       {tab === "Patterns" && <SimpleLookupManager fetchUrl="/api/v1/patterns" fields={CODE_NAME_FIELDS} />}
-      {tab === "Supplier Categories" && <SimpleLookupManager fetchUrl="/api/v1/supplier-categories" fields={CODE_NAME_FIELDS} />}
     </div>
   );
 }
