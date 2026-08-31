@@ -3120,6 +3120,81 @@ companyId, isPlatformAdmin })` entry point returns a tagged union (`{ kind: "pla
   table into a given company's own dashboard (the existing Company Switcher already covers "go look at that
   company directly").
 
+## Supplier ↔ Material catalog — which suppliers can supply which raw materials (2026-08-31)
+
+User asked how "one supplier sells many different raw materials" is modeled — investigated first: confirmed
+`Product.defaultSupplierId` already lets many materials share one default supplier, but there was no way to
+see or edit the *reverse* view (which materials a given Supplier supplies) from the Supplier's own page, and
+no way for a material to have more than one eligible supplier at all. Built a real many-to-many catalog on
+top of, not instead of, the existing single-FK field, confirmed via AskUserQuestion before implementation.
+
+- **New `SupplierMaterial` join table** (migration `20260829110000_add_supplier_materials`) — deliberately
+  separate from `Product.defaultSupplierId`: the default-supplier field stays exactly what it was (a single
+  pointer used only to auto-suggest a supplier when generating a PO from a Material Request shortfall);
+  this table represents the fuller real-world fact that a material routinely has several genuine eligible
+  suppliers (three different suppliers all selling the same Cotton Fabric is the ordinary case). Neither
+  table writes to the other.
+- **New `src/modules/suppliers/supplier-material.{repository,service}.ts`** — `listSuppliedMaterials`,
+  `addSuppliedMaterial`/`removeSuppliedMaterial` (single), and `addSuppliedMaterials` (bulk, see below).
+  Every mutation re-validates the Supplier and each Material genuinely belong to `actor.companyId` and that
+  the Material is a real `RAW_MATERIAL` — the same `findMaterialById` tenant-scoping check every other
+  material cross-reference in this codebase (BOM, PO, Material Request) already uses.
+- **UX pivot mid-build**: the first version reused the existing single-select `MaterialPicker` (search →
+  pick one → click Add), matching how every other "pick a material" field in this app works. Live user
+  feedback ("aaise add karna bahut complicated hai") correctly flagged that repeating a single-pick cycle
+  once per material is genuinely tedious for a supplier that legitimately supplies dozens of materials —
+  rebuilt as a **multi-select checklist** (search-filtered, category-grouped, matching `MaterialPicker`'s own
+  grouping logic) with one "Add Selected (N)" button. New `POST .../materials/bulk` endpoint
+  (`addSuppliedMaterials`) takes `materialIds: string[]`, deduplicates them, validates the whole batch
+  belongs to the company before writing anything, and inserts via `createMany({ skipDuplicates: true })` —
+  forgiving by design, since a user re-checking an already-linked material from the list shouldn't block the
+  rest of their selection. One audit-log entry for the whole batch, not one per material (matches this
+  project's "one row per logical action" convention for bulk operations elsewhere, e.g. Purchase Request's
+  `approveAllLines`).
+- **UI**: new `SuppliedMaterialsSection.tsx` on the Supplier edit page (`/masters/suppliers/[id]`) — a linked-
+  materials list with an inline "Remove" per row, plus the search/checklist/Add-Selected control underneath.
+  Added as a second keyed sibling next to `SupplierForm` on that page, so both correctly needed distinguishing
+  `key={`form-${id}`}`/`key={`materials-${id}`}` prefixes — the exact multi-keyed-sibling rule this project
+  already documented once (Phase 4, Sampling) for the identical "second sibling needing `key={id}` on the
+  same page" shape.
+- **Verified live end-to-end** through the real UI and API together: added 2 materials one at a time via the
+  original single-picker version (confirmed the category label and "Remove" both render correctly, confirmed
+  a direct duplicate-add attempt correctly `409`s); removed one via Remove; then, after the UX rebuild,
+  multi-selected 3 materials across 3 different categories (Fabric/Zips/Packaging) and added them all with
+  one "Add Selected (3)" click — confirmed all 3 appeared, correctly dropped out of the "available to add"
+  checklist, and the checklist/selection state reset; removed all 3 to leave the demo supplier clean. 826/826
+  tests (14 new), `npx tsc --noEmit` and `npx eslint` clean throughout both the initial build and the
+  mid-build UX revision.
+
+**Extension, same day — broad category-level linkage** (`SupplierMaterialCategory`, migration
+`20260831070000_add_supplier_material_categories`): a direct follow-up request — "if a supplier deals in
+Fabric and Trims generally, I shouldn't have to keep picking specific materials one by one every time a new
+one is added, since the Supplier record is only created once." A coarser sibling table, not a replacement:
+ticking a category (e.g. Fabric) treats the supplier as eligible for *every* material in it, including ones
+added to the catalog later, with zero further edits to that Supplier record ever needed for that category
+again. Uses the same 7-value `MATERIAL_CATEGORIES` list `Product.materialCategory` itself is validated
+against (not the fuller 9-value `MaterialCategory` Prisma enum used by `Supplier.category`) — `SERVICES`/
+`MACHINERY` are Supplier-only concepts with no corresponding Product category to ever match against, so
+including them here would be meaningless; a unit test asserts the returned list is exactly those 7, no more.
+Full-replace-on-save semantics (mirrors `RoleProductionStageAccess`'s own contract exactly, including its
+"empty array is a real state, not a no-op" rule) rather than incremental add/remove, since there are only 7
+possible values and this is inherently a single small settings block, not a growing list. New `SuppliedCategoriesSection.tsx`
+(a third keyed sibling on the Supplier edit page — `key={`categories-${id}`}`), rendered above the specific
+"Materials Supplied" list with explicit copy distinguishing the two ("use this when a supplier genuinely
+deals across a whole category; use Materials Supplied below for a supplier that only handles a few specific
+items"). Verified live end-to-end: ticked Fabric+Trims through the real checkbox UI, confirmed via a direct API GET the exact
+`{FABRIC: true, TRIMS: true, everything else: false}` shape, reloaded the page and confirmed both boxes
+stayed checked (real persistence, not client-only state), then cleared back to empty and confirmed via API.
+8 new tests. **Gotcha hit again, same root cause as every prior instance**: after this migration, the
+already-running dev server's stale Prisma client threw the exact `Cannot read properties of undefined
+(reading 'findMany')` error on the new `supplierMaterialCategory` delegate until fully restarted — the
+n-th recurrence of this project's own most-repeated gotcha, immediately recognized and fixed. Separately,
+`npx tsc --noEmit` transiently failed against `.next/dev/types/validator.ts` and then `layout.tsx`'s
+generated `LayoutProps` while the dev server was live/mid-restart — resolved definitively by running a full
+`npx next build` (which regenerates all Next.js types deterministically in one pass, no concurrent rewrite
+race) and confirming it completed with zero errors, rather than continuing to fight the live dev server's
+own type-generation timing. 834/834 tests total, `npx tsc --noEmit`/`npx eslint`/`npx next build` all clean.
+
 ## Recommended Stack
 
 Next.js 14+ (App Router) + React + TypeScript + Tailwind CSS (frontend); Next.js API routes/route handlers as REST API; PostgreSQL + Prisma ORM; session-based auth (Auth.js/NextAuth, DB sessions) with RBAC and optional TOTP 2FA; S3-compatible or local file storage for attachments; server-side PDF/Excel export (`exceljs`, `pdf-lib`/`@react-pdf/renderer`).

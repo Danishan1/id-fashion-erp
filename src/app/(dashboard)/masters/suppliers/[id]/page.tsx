@@ -1,7 +1,10 @@
 import { notFound } from "next/navigation";
 import { auth } from "@/core/auth/auth";
 import { getSupplierById } from "@/modules/suppliers/supplier.service";
+import { listSuppliedMaterials, listSuppliedCategories } from "@/modules/suppliers/supplier-material.service";
 import { SupplierForm } from "../SupplierForm";
+import { SuppliedMaterialsSection } from "../SuppliedMaterialsSection";
+import { SuppliedCategoriesSection } from "../SuppliedCategoriesSection";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 
 export default async function EditSupplierPage({ params }: { params: Promise<{ id: string }> }) {
@@ -10,6 +13,11 @@ export default async function EditSupplierPage({ params }: { params: Promise<{ i
 
   const supplier = await getSupplierById(session!.user.companyId, id).catch(() => null);
   if (!supplier) notFound();
+
+  const [suppliedMaterials, suppliedCategories] = await Promise.all([
+    listSuppliedMaterials(session!.user.companyId, id),
+    listSuppliedCategories(session!.user.companyId, id),
+  ]);
 
   return (
     <div className="space-y-8">
@@ -26,7 +34,7 @@ export default async function EditSupplierPage({ params }: { params: Promise<{ i
       </div>
 
       <SupplierForm
-        key={id}
+        key={`form-${id}`}
         submitUrl={`/api/v1/suppliers/${id}`}
         method="PATCH"
         redirectTo="/masters/suppliers"
@@ -44,6 +52,10 @@ export default async function EditSupplierPage({ params }: { params: Promise<{ i
           isActive: supplier.isActive,
         }}
       />
+
+      <SuppliedCategoriesSection key={`categories-${id}`} supplierId={id} initialCategories={suppliedCategories} />
+
+      <SuppliedMaterialsSection key={`materials-${id}`} supplierId={id} initialMaterials={JSON.parse(JSON.stringify(suppliedMaterials))} />
     </div>
   );
 }

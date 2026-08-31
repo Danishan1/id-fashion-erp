@@ -33,6 +33,8 @@ model Company {
   customers                    Customer[]
   suppliers                    Supplier[]
   supplierCategories           SupplierCategory[]
+  supplierMaterials            SupplierMaterial[]
+  supplierMaterialCategories   SupplierMaterialCategory[]
   departments                  Department[]
   employees                    Employee[]
   products                     Product[]
@@ -505,9 +507,11 @@ model Supplier {
   createdAt           DateTime  @default(now()) @map("created_at")
   updatedAt           DateTime  @updatedAt @map("updated_at")
 
-  company            Company           @relation(fields: [companyId], references: [id])
-  category           SupplierCategory  @relation(fields: [categoryId], references: [id])
+  company            Company                    @relation(fields: [companyId], references: [id])
+  category           SupplierCategory           @relation(fields: [categoryId], references: [id])
   defaultForProducts Product[]
+  suppliedMaterials  SupplierMaterial[]
+  suppliedCategories SupplierMaterialCategory[]
   purchaseOrders     PurchaseOrder[]
   stockMovements     StockMovement[]
   purchaseInvoices   PurchaseInvoice[]
@@ -517,6 +521,61 @@ model Supplier {
 
   @@unique([companyId, code])
   @@map("suppliers")
+}
+
+/**
+ * The full catalog of "which suppliers can supply which materials" — a real
+ * many-to-many, deliberately separate from Product.defaultSupplierId (a
+ * single FK used only for auto-suggesting a supplier when generating a
+ * Purchase Order from a Material Request shortfall). A material routinely
+ * has more than one real-world eligible supplier (three different suppliers
+ * all selling the same Cotton Fabric is the ordinary case, not an edge
+ * case) — this table represents that full set; defaultSupplierId remains
+ * the narrower "which one do we auto-pick" pointer and is untouched by this
+ * table either way.
+ */
+model SupplierMaterial {
+  id         String   @id @default(uuid()) @db.Uuid
+  companyId  String   @map("company_id") @db.Uuid
+  supplierId String   @map("supplier_id") @db.Uuid
+  productId  String   @map("product_id") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  company  Company  @relation(fields: [companyId], references: [id])
+  supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  product  Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([supplierId, productId])
+  @@index([companyId, productId])
+  @@map("supplier_materials")
+}
+
+/**
+ * A coarser sibling to SupplierMaterial — "this supplier can supply ANY
+ * material in this category," including ones that don't exist yet. Exists
+ * specifically for the case a user pointed out directly: a Supplier master
+ * is created once, but new Fabric/Trims materials get added to the catalog
+ * over time — re-opening every existing supplier to tick each new material
+ * individually would be exactly the friction SupplierMaterial's own bulk
+ * multi-select was built to reduce, just one level further. The two tables
+ * are independent and both checked when something ever needs "can this
+ * supplier supply material X" (a specific product-level link OR the
+ * material's own category being linked broadly) — neither writes to the
+ * other, and a supplier can freely mix broad category coverage with a few
+ * extra specific materials outside those categories.
+ */
+model SupplierMaterialCategory {
+  id               String           @id @default(uuid()) @db.Uuid
+  companyId        String           @map("company_id") @db.Uuid
+  supplierId       String           @map("supplier_id") @db.Uuid
+  materialCategory MaterialCategory @map("material_category")
+  createdAt        DateTime         @default(now()) @map("created_at")
+
+  company  Company  @relation(fields: [companyId], references: [id])
+  supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+
+  @@unique([supplierId, materialCategory])
+  @@map("supplier_material_categories")
 }
 
 model Department {
@@ -659,6 +718,7 @@ model Product {
   bom                   Bom?
   bomItemUsages         BomItem[]              @relation("BomItemMaterial")
   materialRequestItems  MaterialRequestItem[]  @relation("MaterialRequestItemMaterial")
+  supplierLinks         SupplierMaterial[]
   productionOrders      ProductionOrder[]
   stockMovementItems    StockMovementItem[]
   salesInvoiceItems     SalesInvoiceItem[]
