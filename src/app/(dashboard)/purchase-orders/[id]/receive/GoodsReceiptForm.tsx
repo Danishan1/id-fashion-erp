@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { todayIsoDate } from "@/lib/date";
 
 interface Line {
   purchaseOrderItemId: string;
@@ -54,7 +55,7 @@ function emptyDraft(): LineDraft {
   return { receivedQuantity: "", warehouseId: "", warehouseLocationId: "", notes: "", rolls: [] };
 }
 
-const TODAY = new Date().toISOString().slice(0, 10);
+const TODAY = todayIsoDate();
 
 export function GoodsReceiptForm({ purchaseOrderId, lines }: { purchaseOrderId: string; lines: Line[] }) {
   const router = useRouter();

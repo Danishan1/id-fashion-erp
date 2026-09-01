@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { textInputClass } from "@/components/ui/FormField";
 import { Modal } from "@/components/ui/Modal";
@@ -19,20 +18,42 @@ interface Buyer {
 
 interface BuyersSectionProps {
   customerId: string;
-  initialBuyers: Buyer[];
 }
 
 const EMPTY_FORM = { code: "", name: "", contactPerson: "", email: "", phone: "" };
 
-export function BuyersSection({ customerId, initialBuyers }: BuyersSectionProps) {
-  const router = useRouter();
-  const [buyers, setBuyers] = useState(initialBuyers);
+/**
+ * Rendered as a small row-action button on the Customers list (between Edit
+ * and the Active/Inactive toggle), mirroring Suppliers' "Categories"/
+ * "Materials" row-action pattern — moved off the Customer edit page per the
+ * 2026-09-01 task ("Add Buyers" no longer lives inline on Edit). Self-fetches
+ * on open rather than taking a server-preloaded prop, since a list row has no
+ * per-row detail fetch to piggyback on.
+ */
+export function BuyersSection({ customerId }: BuyersSectionProps) {
+  const [open, setOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [buyers, setBuyers] = useState<Buyer[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editingBuyer, setEditingBuyer] = useState<Buyer | null>(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [pendingToggle, setPendingToggle] = useState<Buyer | null>(null);
+
+  async function openModal() {
+    setOpen(true);
+    setError(null);
+    setIsLoading(true);
+    const res = await fetch(`/api/v1/customers/${customerId}`);
+    const body = await res.json();
+    setIsLoading(false);
+    if (res.ok) {
+      setBuyers(body.data.buyers ?? []);
+    } else {
+      setError(body?.error?.message ?? "Failed to load buyers.");
+    }
+  }
 
   const openAddForm = () => {
     setEditingBuyer(null);
@@ -76,10 +97,9 @@ export function BuyersSection({ customerId, initialBuyers }: BuyersSectionProps)
     }
 
     const { data } = await res.json();
-    setBuyers(editingBuyer ? buyers.map((b) => (b.id === data.id ? data : b)) : [...buyers, data]);
+    setBuyers((prev) => (editingBuyer ? prev.map((b) => (b.id === data.id ? data : b)) : [...prev, data]));
     setShowForm(false);
     setEditingBuyer(null);
-    router.refresh();
   };
 
   const confirmToggle = async () => {
@@ -98,46 +118,69 @@ export function BuyersSection({ customerId, initialBuyers }: BuyersSectionProps)
     });
     if (res.ok) {
       const { data } = await res.json();
-      setBuyers(buyers.map((b) => (b.id === data.id ? data : b)));
-      router.refresh();
+      setBuyers((prev) => prev.map((b) => (b.id === data.id ? data : b)));
     }
     setPendingToggle(null);
   };
 
   return (
-    <div className="max-w-xl space-y-3">
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Buyers</h2>
-        <button onClick={openAddForm} className="text-sm font-medium text-indigo-600 hover:text-indigo-500">
-          + Add buyer
-        </button>
-      </div>
+    <>
+      <button
+        type="button"
+        onClick={openModal}
+        className="whitespace-nowrap rounded-md border border-zinc-300 px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+      >
+        Buyers
+      </button>
 
-      {error && !showForm && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+      <Modal open={open} onClose={() => setOpen(false)} title="Buyers" maxWidthClass="max-w-xl">
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-zinc-500 dark:text-zinc-400">Contacts/brands under this customer.</p>
+            <button onClick={openAddForm} className="text-sm font-medium text-indigo-600 hover:text-indigo-500">
+              + Add buyer
+            </button>
+          </div>
 
-      {buyers.length === 0 ? (
-        <p className="text-sm text-zinc-500">No buyers yet.</p>
-      ) : (
-        <ul className="divide-y divide-zinc-100 rounded-md border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
-          {buyers.map((buyer) => (
-            <li key={buyer.id} className="flex items-center justify-between px-3 py-2 text-sm">
-              <div>
-                <span className="font-medium text-zinc-800 dark:text-zinc-100">
-                  {buyer.name} <span className="text-zinc-400">({buyer.code})</span>
-                </span>
-                <span className="ml-2 text-zinc-500">{buyer.email ?? buyer.contactPerson ?? ""}</span>
-                {!buyer.isActive && <span className="ml-2 text-xs text-zinc-400">(inactive)</span>}
-              </div>
-              <div className="flex items-center gap-3">
-                <button onClick={() => openEditForm(buyer)} className="text-indigo-600 hover:text-indigo-500">
-                  Edit
-                </button>
-                <ToggleSwitch checked={buyer.isActive} onToggle={() => setPendingToggle(buyer)} />
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
+          {error && !showForm && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+
+          {isLoading ? (
+            <p className="text-sm text-zinc-500">Loading…</p>
+          ) : buyers.length === 0 ? (
+            <p className="text-sm text-zinc-500">No buyers yet.</p>
+          ) : (
+            <ul className="divide-y divide-zinc-100 rounded-md border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
+              {buyers.map((buyer) => (
+                <li key={buyer.id} className="flex items-center justify-between px-3 py-2 text-sm">
+                  <div>
+                    <span className="font-medium text-zinc-800 dark:text-zinc-100">
+                      {buyer.name} <span className="text-zinc-400">({buyer.code})</span>
+                    </span>
+                    <span className="ml-2 text-zinc-500">{buyer.email ?? buyer.contactPerson ?? ""}</span>
+                    {!buyer.isActive && <span className="ml-2 text-xs text-zinc-400">(inactive)</span>}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <button onClick={() => openEditForm(buyer)} className="text-indigo-600 hover:text-indigo-500">
+                      Edit
+                    </button>
+                    <ToggleSwitch checked={buyer.isActive} onToggle={() => setPendingToggle(buyer)} />
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal open={showForm} onClose={() => setShowForm(false)} title={editingBuyer ? "Edit Buyer" : "Add Buyer"}>
         <form onSubmit={handleSubmit} className="space-y-3">
@@ -168,10 +211,11 @@ export function BuyersSection({ customerId, initialBuyers }: BuyersSectionProps)
           </div>
           <div>
             <label htmlFor="buyerContactPerson" className="block text-xs font-medium text-zinc-600 dark:text-zinc-400">
-              Contact Person
+              Contact Person <span className="text-red-500">*</span>
             </label>
             <input
               id="buyerContactPerson"
+              required
               value={form.contactPerson}
               onChange={(e) => setForm({ ...form, contactPerson: e.target.value })}
               className={textInputClass()}
@@ -179,11 +223,12 @@ export function BuyersSection({ customerId, initialBuyers }: BuyersSectionProps)
           </div>
           <div>
             <label htmlFor="buyerEmail" className="block text-xs font-medium text-zinc-600 dark:text-zinc-400">
-              Email
+              Email <span className="text-red-500">*</span>
             </label>
             <input
               id="buyerEmail"
               type="email"
+              required
               value={form.email}
               onChange={(e) => setForm({ ...form, email: e.target.value })}
               className={textInputClass()}
@@ -191,10 +236,12 @@ export function BuyersSection({ customerId, initialBuyers }: BuyersSectionProps)
           </div>
           <div>
             <label htmlFor="buyerPhone" className="block text-xs font-medium text-zinc-600 dark:text-zinc-400">
-              Phone
+              Phone <span className="text-red-500">*</span>
             </label>
             <input
               id="buyerPhone"
+              type="tel"
+              required
               value={form.phone}
               onChange={(e) => setForm({ ...form, phone: e.target.value })}
               className={textInputClass()}
@@ -232,6 +279,6 @@ export function BuyersSection({ customerId, initialBuyers }: BuyersSectionProps)
         onConfirm={confirmToggle}
         onCancel={() => setPendingToggle(null)}
       />
-    </div>
+    </>
   );
 }

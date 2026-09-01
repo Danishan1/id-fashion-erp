@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { textInputClass } from "@/components/ui/FormField";
+import { Modal } from "@/components/ui/Modal";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import { suggestCodeFromName } from "@/lib/code-suggest";
@@ -9,7 +10,7 @@ import { suggestCodeFromName } from "@/lib/code-suggest";
 export interface LookupField {
   key: string;
   label: string;
-  type?: "text" | "number" | "color" | "date" | "select";
+  type?: "text" | "number" | "color" | "date" | "select" | "tel";
   required?: boolean;
   placeholder?: string;
   /** For type "select": static options, or a URL returning {data: {id,name}[]} to fetch options from. */
@@ -29,10 +30,28 @@ interface SimpleLookupManagerProps {
   hasActiveToggle?: boolean;
   /** Prepended to the auto-suggested Code when creating a new record (e.g. "BR-"). */
   codePrefix?: string;
+  /** Singular entity name shown in the Add/Edit modal's title (e.g. "Brand" -> "Add Brand"). */
+  entityLabel?: string;
 }
 
 function emptyValues(fields: LookupField[]): Record<string, string> {
   return Object.fromEntries(fields.map((f) => [f.key, ""]));
+}
+
+/**
+ * String-coerces every field from a raw row/values source into the exact shape the API expects —
+ * a nullable value (e.g. an unset baseUnitId/departmentId) becomes "" rather than being forwarded as
+ * `null`, which Zod's `.optional().or(z.literal(""))` pattern rejects. Shared by handleSubmit and the
+ * Active/Inactive toggle so both submission paths can never drift out of sync on this.
+ */
+function buildSubmitPayload(fields: LookupField[], source: Record<string, unknown>): Record<string, string> {
+  return Object.fromEntries(
+    fields.map((f) => {
+      const raw = source[f.key];
+      const str = raw === null || raw === undefined ? "" : String(raw);
+      return [f.key, f.type === "date" ? str.slice(0, 10) : str];
+    })
+  );
 }
 
 export function SimpleLookupManager({
@@ -41,6 +60,7 @@ export function SimpleLookupManager({
   displayColumns,
   hasActiveToggle = true,
   codePrefix = "",
+  entityLabel = "Record",
 }: SimpleLookupManagerProps) {
   const hasCodeField = fields.some((f) => f.key === "code");
   const [rows, setRows] = useState<LookupRow[]>([]);
@@ -140,7 +160,7 @@ export function SimpleLookupManager({
     const res = await fetch(url, {
       method,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(values),
+      body: JSON.stringify(buildSubmitPayload(fields, values)),
     });
 
     setIsSubmitting(false);
@@ -158,16 +178,26 @@ export function SimpleLookupManager({
   const confirmToggleActive = async () => {
     if (!pendingToggleRow) return;
     setIsToggling(true);
-    await fetch(`${fetchUrl}/${pendingToggleRow.id}`, {
+    setError(null);
+
+    const res = await fetch(`${fetchUrl}/${pendingToggleRow.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        ...Object.fromEntries(fields.map((f) => [f.key, pendingToggleRow[f.key]])),
+        ...buildSubmitPayload(fields, pendingToggleRow),
         isActive: !pendingToggleRow.isActive,
       }),
     });
+
     setIsToggling(false);
     setPendingToggleRow(null);
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      setError(body?.error?.message ?? "Failed to update status.");
+      return;
+    }
+
     load();
   };
 
@@ -181,13 +211,11 @@ export function SimpleLookupManager({
         </button>
       </div>
 
-      {showForm && (
-        <form
-          onSubmit={handleSubmit}
-          className="flex flex-wrap items-end gap-2 rounded-md border border-zinc-200 p-3 dark:border-zinc-800"
-        >
+      <Modal open={showForm} onClose={() => setShowForm(false)} title={editingId ? `Edit ${entityLabel}` : `Add ${entityLabel}`}>
+        <form onSubmit={handleSubmit} className="space-y-3">
+          {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
           {fields.map((f) => (
-            <div key={f.key} className="flex-1 min-w-[120px]">
+            <div key={f.key}>
               <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400">{f.label}</label>
               {f.type === "select" ? (
                 <select
@@ -215,23 +243,25 @@ export function SimpleLookupManager({
               )}
             </div>
           ))}
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
-          >
-            {editingId ? "Update" : "Add"}
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowForm(false)}
-            className="rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-700 dark:border-zinc-700 dark:text-zinc-200"
-          >
-            Cancel
-          </button>
+          <div className="flex justify-end gap-3 pt-2">
+            <button
+              type="button"
+              onClick={() => setShowForm(false)}
+              className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
+            >
+              {isSubmitting ? "Saving…" : editingId ? "Update" : "Add"}
+            </button>
+          </div>
         </form>
-      )}
-      {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+      </Modal>
+      {error && !showForm && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
 
       <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
         <table className="w-full text-sm">

@@ -18,6 +18,13 @@ interface DataTableProps<T> {
   rowHref?: (row: T) => string;
   newHref?: string;
   newLabel?: string;
+  /**
+   * Alternative to newHref for a module whose "New" form is a modal rather
+   * than a separate route — renders as the same-styled button, calling
+   * onClick instead of navigating. Takes precedence over newHref if both are
+   * somehow provided.
+   */
+  newAction?: { label: string; onClick: () => void };
   searchPlaceholder?: string;
   /** Bump to force a refetch (e.g. after an external mutation). */
   refreshKey?: number;
@@ -29,6 +36,13 @@ interface DataTableProps<T> {
    * trigger the row's own click-to-edit navigation.
    */
   rowActions?: (row: T) => ReactNode;
+  /**
+   * Alternative to rowHref for a module with no detail page to navigate to —
+   * renders the built-in "Edit" affordance as a button that opens a modal
+   * (the caller owns the modal/fetch/submit) instead of a Link, and the row
+   * itself is not click-to-navigate. Ignored if rowHref is also provided.
+   */
+  onEditRow?: (row: T) => void;
 }
 
 interface ListResponse<T> {
@@ -42,9 +56,11 @@ export function DataTable<T extends { id: string }>({
   rowHref,
   newHref,
   newLabel = "New",
+  newAction,
   searchPlaceholder = "Search…",
   refreshKey,
   rowActions,
+  onEditRow,
 }: DataTableProps<T>) {
   const router = useRouter();
   const [page, setPage] = useState(1);
@@ -118,13 +134,23 @@ export function DataTable<T extends { id: string }>({
           }}
           className="w-full max-w-sm rounded-md border border-zinc-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-800"
         />
-        {newHref && (
-          <Link
-            href={newHref}
+        {newAction ? (
+          <button
+            type="button"
+            onClick={newAction.onClick}
             className="whitespace-nowrap rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500"
           >
-            {newLabel}
-          </Link>
+            {newAction.label}
+          </button>
+        ) : (
+          newHref && (
+            <Link
+              href={newHref}
+              className="whitespace-nowrap rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500"
+            >
+              {newLabel}
+            </Link>
+          )
         )}
       </div>
 
@@ -137,27 +163,27 @@ export function DataTable<T extends { id: string }>({
                   {col.header}
                 </th>
               ))}
-              {rowHref && <th className="px-4 py-2 font-medium">Actions</th>}
+              {(rowHref || onEditRow) && <th className="px-4 py-2 font-medium">Actions</th>}
             </tr>
           </thead>
           <tbody>
             {error && (
               <tr>
-                <td colSpan={columns.length + (rowHref ? 1 : 0)} className="px-4 py-6 text-center text-red-600 dark:text-red-400">
+                <td colSpan={columns.length + (rowHref || onEditRow ? 1 : 0)} className="px-4 py-6 text-center text-red-600 dark:text-red-400">
                   {error}
                 </td>
               </tr>
             )}
             {!error && isLoading && (
               <tr>
-                <td colSpan={columns.length + (rowHref ? 1 : 0)} className="px-4 py-6 text-center text-zinc-500">
+                <td colSpan={columns.length + (rowHref || onEditRow ? 1 : 0)} className="px-4 py-6 text-center text-zinc-500">
                   Loading…
                 </td>
               </tr>
             )}
             {!error && !isLoading && result?.data.length === 0 && (
               <tr>
-                <td colSpan={columns.length + (rowHref ? 1 : 0)} className="px-4 py-6 text-center text-zinc-500">
+                <td colSpan={columns.length + (rowHref || onEditRow ? 1 : 0)} className="px-4 py-6 text-center text-zinc-500">
                   No records found.
                 </td>
               </tr>
@@ -189,16 +215,29 @@ export function DataTable<T extends { id: string }>({
                     }`}
                   >
                     {cells}
-                    {rowHref && (
+                    {(rowHref || onEditRow) && (
                       <td className="px-4 py-2">
                         <div className="flex items-center gap-3">
-                          <Link
-                            href={href!}
-                            onClick={(e: MouseEvent) => e.stopPropagation()}
-                            className="font-medium text-indigo-600 hover:text-indigo-500"
-                          >
-                            Edit
-                          </Link>
+                          {rowHref ? (
+                            <Link
+                              href={href!}
+                              onClick={(e: MouseEvent) => e.stopPropagation()}
+                              className="font-medium text-indigo-600 hover:text-indigo-500"
+                            >
+                              Edit
+                            </Link>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onEditRow!(row);
+                              }}
+                              className="font-medium text-indigo-600 hover:text-indigo-500"
+                            >
+                              Edit
+                            </button>
+                          )}
                           {rowActions && (
                             <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                               {rowActions(row)}

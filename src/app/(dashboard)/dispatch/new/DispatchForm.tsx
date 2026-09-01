@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { todayIsoDate } from "@/lib/date";
 
 const ELIGIBLE_ORDER_STATUSES = ["CONFIRMED", "PARTIALLY_DISPATCHED", "INVOICED"];
 
@@ -64,7 +65,7 @@ export function DispatchForm({ initialDispatch }: { initialDispatch?: InitialDis
   const [order, setOrder] = useState<OrderDetail | null>(null);
   const [warehouseId, setWarehouseId] = useState(initialDispatch?.warehouseId ?? "");
   const [dispatchDate, setDispatchDate] = useState(
-    initialDispatch?.dispatchDate.slice(0, 10) ?? new Date().toISOString().slice(0, 10)
+    initialDispatch?.dispatchDate.slice(0, 10) ?? todayIsoDate()
   );
   const [deliveryAddress, setDeliveryAddress] = useState(initialDispatch?.deliveryAddress ?? "");
   const [transporterName, setTransporterName] = useState(initialDispatch?.transporterName ?? "");

@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { todayIsoDate } from "@/lib/date";
 
 interface EmployeeOption {
   id: string;
@@ -22,13 +23,19 @@ interface BankAccountOption {
   bankName: string;
 }
 
-export function EmployeeAdvanceForm() {
+interface EmployeeAdvanceFormProps {
+  /** Provided only by the Employee Advances list's "New Advance" modal — when set, a successful create closes the modal instead of navigating. */
+  onSuccess?: () => void;
+  onCancel?: () => void;
+}
+
+export function EmployeeAdvanceForm({ onSuccess, onCancel }: EmployeeAdvanceFormProps = {}) {
   const router = useRouter();
   const [employees, setEmployees] = useState<EmployeeOption[]>([]);
   const [paymentTypes, setPaymentTypes] = useState<PaymentTypeOption[]>([]);
   const [bankAccounts, setBankAccounts] = useState<BankAccountOption[]>([]);
 
-  const [advanceDate, setAdvanceDate] = useState(new Date().toISOString().slice(0, 10));
+  const [advanceDate, setAdvanceDate] = useState(todayIsoDate());
   const [employeeId, setEmployeeId] = useState("");
   const [amount, setAmount] = useState("");
   const [paymentTypeId, setPaymentTypeId] = useState("");
@@ -85,8 +92,12 @@ export function EmployeeAdvanceForm() {
       }
 
       const body = await res.json();
-      router.push(`/accounts/employee-advances/${body.data.id}`);
-      router.refresh();
+      if (onSuccess) {
+        onSuccess();
+      } else {
+        router.push(`/accounts/employee-advances/${body.data.id}`);
+        router.refresh();
+      }
     } catch {
       setError("Could not reach the server. Check your connection and try again — it's safe to resubmit.");
     } finally {
@@ -157,7 +168,7 @@ export function EmployeeAdvanceForm() {
         </button>
         <button
           type="button"
-          onClick={() => router.push("/accounts/employee-advances")}
+          onClick={onCancel ?? (() => router.push("/accounts/employee-advances"))}
           className="rounded-md border border-zinc-300 px-4 py-2 text-sm text-zinc-700 dark:border-zinc-700 dark:text-zinc-200"
         >
           Cancel

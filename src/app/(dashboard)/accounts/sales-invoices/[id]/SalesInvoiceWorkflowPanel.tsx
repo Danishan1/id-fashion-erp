@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
+import { STATUS_LABELS, STATUS_BADGE_CLASS } from "../../invoiceStatusLabels";
 
 interface InvoiceItem {
   id: string;
@@ -33,12 +34,6 @@ interface SalesInvoiceDetail {
   items: InvoiceItem[];
 }
 
-const STATUS_STYLES: Record<string, string> = {
-  DRAFT: "bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400",
-  POSTED: "bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-400",
-  CANCELLED: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
-};
-
 export function SalesInvoiceWorkflowPanel({ invoice }: { invoice: SalesInvoiceDetail }) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
@@ -63,8 +58,8 @@ export function SalesInvoiceWorkflowPanel({ invoice }: { invoice: SalesInvoiceDe
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
-        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[invoice.status] ?? ""}`}>
-          {invoice.status}
+        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_BADGE_CLASS[invoice.status]}`}>
+          {STATUS_LABELS[invoice.status] ?? invoice.status}
         </span>
         {invoice.journal && (
           <span className="text-sm text-zinc-500 dark:text-zinc-400">

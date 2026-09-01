@@ -87,10 +87,117 @@ export const listBrands = brandOps.list;
 export const createBrand = brandOps.create;
 export const updateBrand = brandOps.update;
 
-const categoryOps = makeSimpleLookupService(GarmentAttributeRepository.category, "Category", "categories");
-export const listCategories = categoryOps.list;
-export const createCategory = categoryOps.create;
-export const updateCategory = categoryOps.update;
+// Category is pulled out of the shared factory (unlike its 8 siblings above) —
+// unlimited-depth subcategories need a parentCategoryId field and a cycle
+// guard the generic {code,name,isActive} factory has no room for. Kept as
+// standalone functions rather than growing the factory's shared input type,
+// so Brand/Season/Fitting/ProductType/Design/DesignPattern/Pattern/
+// SupplierCategory are completely unaffected.
+interface CategoryInput {
+  code: string;
+  name: string;
+  isActive: boolean;
+  parentCategoryId?: string | null;
+}
+
+const CATEGORY_ANCESTOR_WALK_LIMIT = 50;
+
+/**
+ * Validates a category's chosen parent belongs to the same company and would
+ * not create a cycle — walks up the candidate parent's own ancestor chain; if
+ * that walk ever reaches `categoryId` (the record being saved), the candidate
+ * parent is one of this category's own descendants (or itself), which would
+ * make it its own ancestor once linked. `categoryId` is null on create, where
+ * no descendants can exist yet, so only the same-company existence check
+ * applies there.
+ */
+async function assertValidParentCategory(companyId: string, categoryId: string | null, parentCategoryId: string | null) {
+  if (!parentCategoryId) return;
+  if (parentCategoryId === categoryId) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "A category cannot be its own parent.");
+  }
+
+  let currentId: string | null = parentCategoryId;
+  for (let hops = 0; currentId; hops++) {
+    if (hops >= CATEGORY_ANCESTOR_WALK_LIMIT) {
+      throw new BusinessRuleError("VALIDATION_ERROR", "Category hierarchy is too deep to validate.");
+    }
+    const current: { id: string; parentCategoryId: string | null } | null = await GarmentAttributeRepository.category.findFirst({
+      where: { id: currentId, companyId },
+      select: { id: true, parentCategoryId: true },
+    });
+    if (!current) {
+      throw new BusinessRuleError("NOT_FOUND", "Parent category not found.", { id: parentCategoryId });
+    }
+    if (categoryId && current.id === categoryId) {
+      throw new BusinessRuleError("VALIDATION_ERROR", "Cannot set a category's parent to one of its own descendants.");
+    }
+    currentId = current.parentCategoryId;
+  }
+}
+
+export const listCategories = (companyId: string) =>
+  GarmentAttributeRepository.category.findMany({ where: { companyId }, orderBy: { name: "asc" } });
+
+export async function createCategory(actor: ActorContext, input: CategoryInput) {
+  const existing = await GarmentAttributeRepository.category.findFirst({
+    where: { companyId: actor.companyId, code: input.code },
+  });
+  if (existing) {
+    throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Category code "${input.code}" is already in use.`);
+  }
+  await assertValidParentCategory(actor.companyId, null, input.parentCategoryId ?? null);
+
+  const record = await GarmentAttributeRepository.category.create({
+    data: {
+      companyId: actor.companyId,
+      code: input.code,
+      name: input.name,
+      isActive: input.isActive,
+      parentCategoryId: input.parentCategoryId || null,
+    },
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "categories",
+    recordId: record.id,
+    action: "CREATE",
+    newValues: record,
+  });
+
+  return record;
+}
+
+export async function updateCategory(actor: ActorContext, id: string, input: CategoryInput) {
+  const existing = await GarmentAttributeRepository.category.findFirst({ where: { id, companyId: actor.companyId } });
+  if (!existing) {
+    throw new BusinessRuleError("NOT_FOUND", "Category not found.", { id });
+  }
+  await assertValidParentCategory(actor.companyId, id, input.parentCategoryId ?? null);
+
+  const updated = await GarmentAttributeRepository.category.update({
+    where: { id },
+    data: {
+      code: input.code,
+      name: input.name,
+      isActive: input.isActive,
+      parentCategoryId: input.parentCategoryId || null,
+    },
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "categories",
+    recordId: id,
+    action: "UPDATE",
+    newValues: updated,
+  });
+
+  return updated;
+}
 
 const seasonOps = makeSimpleLookupService(GarmentAttributeRepository.season, "Season", "seasons");
 export const listSeasons = seasonOps.list;

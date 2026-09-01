@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { Modal } from "@/components/ui/Modal";
+import { todayIsoDate } from "@/lib/date";
 
 const INVOICE_TYPE_OPTIONS = [
   { value: "TAX_INVOICE", label: "Tax Invoice" },
@@ -82,7 +83,7 @@ export function CustomInvoiceForm({ initialInvoice }: { initialInvoice?: Initial
   const [incomeAccounts, setIncomeAccounts] = useState<IncomeAccountOption[]>([]);
   const [incomeAccountId, setIncomeAccountId] = useState(initialInvoice?.incomeAccountId ?? "");
 
-  const [invoiceDate, setInvoiceDate] = useState(initialInvoice?.invoiceDate.slice(0, 10) ?? new Date().toISOString().slice(0, 10));
+  const [invoiceDate, setInvoiceDate] = useState(initialInvoice?.invoiceDate.slice(0, 10) ?? todayIsoDate());
   const [invoiceType, setInvoiceType] = useState(initialInvoice?.invoiceType ?? "TAX_INVOICE");
   const [hasDueDate, setHasDueDate] = useState(initialInvoice?.hasDueDate ?? false);
   const [dueDate, setDueDate] = useState(initialInvoice?.dueDate?.slice(0, 10) ?? "");

@@ -1,10 +1,11 @@
 import { z } from "zod";
+import { optionalPhoneSchema } from "@/lib/validation";
 
 export const createUserSchema = z.object({
   email: z.string().email("Enter a valid email address"),
   fullName: z.string().min(1, "Full name is required").max(200),
   password: z.string().min(8, "Password must be at least 8 characters"),
-  phone: z.string().max(20).optional().or(z.literal("")),
+  phone: optionalPhoneSchema,
   branchId: z.string().uuid("Pick a branch"),
   roleId: z.string().uuid("Pick a role"),
 });
@@ -23,7 +24,7 @@ export type ResetUserPasswordInput = z.infer<typeof resetUserPasswordSchema>;
 export const updateUserSchema = z.object({
   fullName: z.string().min(1, "Full name is required").max(200).optional(),
   email: z.string().email("Enter a valid email address").optional(),
-  phone: z.string().max(20).optional().or(z.literal("")),
+  phone: optionalPhoneSchema,
 });
 export type UpdateUserInput = z.infer<typeof updateUserSchema>;
 

@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { buildCategoryOptions, type FlatCategory } from "@/lib/category-tree";
 
 export interface ProductFormValues {
   styleCode: string;
@@ -57,7 +58,7 @@ export function ProductForm({ initialValues, submitUrl, method, redirectTo }: Pr
   const router = useRouter();
   const [values, setValues] = useState<ProductFormValues>(initialValues ?? EMPTY_VALUES);
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const [categories, setCategories] = useState<NamedOption[]>([]);
+  const [categories, setCategories] = useState<FlatCategory[]>([]);
   const [seasons, setSeasons] = useState<NamedOption[]>([]);
   const [brands, setBrands] = useState<NamedOption[]>([]);
   const [productTypes, setProductTypes] = useState<NamedOption[]>([]);
@@ -177,7 +178,7 @@ export function ProductForm({ initialValues, submitUrl, method, redirectTo }: Pr
       </FormField>
 
       <div className="grid grid-cols-3 gap-4">
-        <FormField label="Category" htmlFor="categoryId">
+        <FormField label="Garment Category" htmlFor="categoryId">
           <select
             id="categoryId"
             value={values.categoryId}
@@ -185,9 +186,9 @@ export function ProductForm({ initialValues, submitUrl, method, redirectTo }: Pr
             className={textInputClass()}
           >
             <option value="">— None —</option>
-            {categories.map((c) => (
+            {buildCategoryOptions(categories).map((c) => (
               <option key={c.id} value={c.id}>
-                {c.name}
+                {c.label}
               </option>
             ))}
           </select>

@@ -6,6 +6,7 @@ import { useState } from "react";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { Modal } from "@/components/ui/Modal";
 import { textInputClass } from "@/components/ui/FormField";
+import { STATUS_LABELS, STATUS_BADGE_CLASS } from "../../simpleDocumentStatusLabels";
 
 interface AllocationRow {
   id: string;
@@ -40,12 +41,6 @@ interface PaymentDetail {
   postedBy: { fullName: string } | null;
   allocations: AllocationRow[];
 }
-
-const STATUS_STYLES: Record<string, string> = {
-  DRAFT: "bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400",
-  POSTED: "bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-400",
-  CANCELLED: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
-};
 
 export function PaymentWorkflowPanel({ payment }: { payment: PaymentDetail }) {
   const router = useRouter();
@@ -125,7 +120,7 @@ export function PaymentWorkflowPanel({ payment }: { payment: PaymentDetail }) {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
-        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[payment.status] ?? ""}`}>{payment.status}</span>
+        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_BADGE_CLASS[payment.status]}`}>{STATUS_LABELS[payment.status] ?? payment.status}</span>
         {payment.journal && (
           <span className="text-sm text-zinc-500 dark:text-zinc-400">
             Journal:{" "}

@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { todayIsoDate } from "@/lib/date";
 
 interface Option {
   id: string;
@@ -10,7 +11,7 @@ interface Option {
   styleName?: string;
 }
 
-const TODAY = new Date().toISOString().slice(0, 10);
+const TODAY = todayIsoDate();
 
 const SOURCE_OPTIONS = [
   { value: "EMAIL", label: "Email" },
@@ -228,6 +229,7 @@ export function BuyerEnquiryForm() {
           <FormField label="Phone" htmlFor="prospectPhone">
             <input
               id="prospectPhone"
+              type="tel"
               value={prospectPhone}
               onChange={(e) => setProspectPhone(e.target.value)}
               className={textInputClass()}

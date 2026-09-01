@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { Modal } from "@/components/ui/Modal";
+import { todayIsoDate } from "@/lib/date";
 import { LOT_STATUS_LABELS, JOB_ORDER_STATUS_LABELS } from "./statusLabels";
 
 type LotStatus = keyof typeof LOT_STATUS_LABELS;
@@ -102,7 +103,7 @@ export function LotWorkflowPanel({
   const [jobWorkTarget, setJobWorkTarget] = useState<JobOrderRow | null>(null);
   const [jobWorkSupplierId, setJobWorkSupplierId] = useState("");
   const [jobWorkQty, setJobWorkQty] = useState("");
-  const [jobWorkIssueDate, setJobWorkIssueDate] = useState(new Date().toISOString().slice(0, 10));
+  const [jobWorkIssueDate, setJobWorkIssueDate] = useState(todayIsoDate());
   const [jobWorkExpectedDate, setJobWorkExpectedDate] = useState("");
   const [jobWorkRemarks, setJobWorkRemarks] = useState("");
   const [createdJobWorkOrderId, setCreatedJobWorkOrderId] = useState<string | null>(null);

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { optionalPhoneSchema } from "@/lib/validation";
 
 export const supplierSchema = z.object({
   code: z.string().min(1, "Code is required").max(30),
@@ -6,7 +7,7 @@ export const supplierSchema = z.object({
   categoryId: z.string().uuid("Category is required"),
   contactPerson: z.string().max(200).optional().or(z.literal("")),
   email: z.string().email().optional().or(z.literal("")),
-  phone: z.string().max(50).optional().or(z.literal("")),
+  phone: optionalPhoneSchema,
   address: z.string().max(500).optional().or(z.literal("")),
   taxRegistrationNo: z.string().max(50).optional().or(z.literal("")),
   paymentTermsDays: z.coerce.number().int().min(0).optional(),

@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { auth } from "@/core/auth/auth";
 import { getWarehouseById } from "@/modules/warehouses/warehouse.service";
-import { WarehouseForm } from "../WarehouseForm";
+import { WarehouseEditFormClient } from "./WarehouseEditFormClient";
 import { LocationsSection } from "../LocationsSection";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 
@@ -26,11 +26,9 @@ export default async function EditWarehousePage({ params }: { params: Promise<{ 
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">Code: {warehouse.code}</p>
       </div>
 
-      <WarehouseForm
+      <WarehouseEditFormClient
         key={`form-${id}`}
-        submitUrl={`/api/v1/warehouses/${id}`}
-        method="PATCH"
-        redirectTo="/masters/warehouses"
+        id={id}
         initialValues={{
           code: warehouse.code,
           name: warehouse.name,

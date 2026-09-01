@@ -7,6 +7,9 @@ import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { Modal } from "@/components/ui/Modal";
 import { FilePreviewModal } from "@/components/ui/FilePreviewModal";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { todayIsoDate } from "@/lib/date";
+import { STATUS_LABELS } from "../statusLabels";
+import { STATUS_LABELS as SETTLEMENT_STATUS_LABELS } from "../../simpleDocumentStatusLabels";
 
 interface SettlementRow {
   id: string;
@@ -205,7 +208,7 @@ export function EmployeeAdvanceWorkflowPanel({ advance }: { advance: EmployeeAdv
   const [taxRates, setTaxRates] = useState<TaxRateOption[]>([]);
   const [showSettlementModal, setShowSettlementModal] = useState(false);
   const [attachmentsForSettlementId, setAttachmentsForSettlementId] = useState<string | null>(null);
-  const [settlementDate, setSettlementDate] = useState(new Date().toISOString().slice(0, 10));
+  const [settlementDate, setSettlementDate] = useState(todayIsoDate());
   const [expenseAccountId, setExpenseAccountId] = useState("");
   const [description, setDescription] = useState("");
   const [settlementAmount, setSettlementAmount] = useState("");
@@ -241,7 +244,7 @@ export function EmployeeAdvanceWorkflowPanel({ advance }: { advance: EmployeeAdv
   };
 
   const openSettlementModal = () => {
-    setSettlementDate(new Date().toISOString().slice(0, 10));
+    setSettlementDate(todayIsoDate());
     setExpenseAccountId("");
     setDescription("");
     setSettlementAmount("");
@@ -285,7 +288,7 @@ export function EmployeeAdvanceWorkflowPanel({ advance }: { advance: EmployeeAdv
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
-        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[advance.status] ?? ""}`}>{advance.status}</span>
+        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[advance.status] ?? ""}`}>{STATUS_LABELS[advance.status] ?? advance.status}</span>
         {advance.journal && (
           <span className="text-sm text-zinc-500 dark:text-zinc-400">
             Journal:{" "}
@@ -388,7 +391,7 @@ export function EmployeeAdvanceWorkflowPanel({ advance }: { advance: EmployeeAdv
                     <td className="px-3 py-2">{s.description}</td>
                     <td className="px-3 py-2">₹{Number(s.totalAmount).toFixed(2)}</td>
                     <td className="px-3 py-2">
-                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[s.status] ?? ""}`}>{s.status}</span>
+                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[s.status] ?? ""}`}>{SETTLEMENT_STATUS_LABELS[s.status] ?? s.status}</span>
                     </td>
                     <td className="px-3 py-2">
                       <div className="flex gap-2">

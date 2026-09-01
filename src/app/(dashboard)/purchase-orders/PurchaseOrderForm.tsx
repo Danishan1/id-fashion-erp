@@ -5,6 +5,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { MaterialPicker } from "@/components/ui/MaterialPicker";
 import { formatCurrency } from "@/lib/currency";
+import { todayIsoDate } from "@/lib/date";
 
 interface Option {
   id: string;
@@ -27,7 +28,7 @@ interface LineItem {
   notes: string;
 }
 
-const TODAY = new Date().toISOString().slice(0, 10);
+const TODAY = todayIsoDate();
 
 function emptyLine(): LineItem {
   return { productId: "", uomId: "", orderedQuantity: "", unitPrice: "", notes: "" };

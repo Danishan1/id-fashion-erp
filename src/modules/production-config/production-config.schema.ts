@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { optionalPhoneSchema } from "@/lib/validation";
 
 export const productionStageSchema = z.object({
   code: z.string().min(1, "Code is required").max(30),
@@ -44,7 +45,7 @@ export const salesAgentSchema = z.object({
   name: z.string().min(1, "Name is required").max(200),
   contactPerson: z.string().max(200).optional().or(z.literal("")),
   email: z.string().email().optional().or(z.literal("")),
-  phone: z.string().max(50).optional().or(z.literal("")),
+  phone: optionalPhoneSchema,
   commissionPercent: z.coerce.number().min(0).max(100).optional(),
   isActive: z.coerce.boolean().default(true),
 });

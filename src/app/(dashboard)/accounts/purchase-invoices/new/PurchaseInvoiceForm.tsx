@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { todayIsoDate } from "@/lib/date";
 
 const ELIGIBLE_PO_STATUSES = ["SENT_TO_SUPPLIER", "PARTIALLY_RECEIVED", "FULLY_RECEIVED", "CLOSED"];
 
@@ -79,7 +80,7 @@ export function PurchaseInvoiceForm() {
   const [order, setOrder] = useState<OrderDetail | null>(null);
   const [supplierId, setSupplierId] = useState("");
   const [supplierInvoiceNumber, setSupplierInvoiceNumber] = useState("");
-  const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().slice(0, 10));
+  const [invoiceDate, setInvoiceDate] = useState(todayIsoDate());
   const [lines, setLines] = useState<Record<string, LineDraft>>({});
   const [directLines, setDirectLines] = useState<DirectLineDraft[]>([]);
   const [error, setError] = useState<string | null>(null);

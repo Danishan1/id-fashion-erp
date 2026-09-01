@@ -2,6 +2,7 @@ import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingService";
 import type { ListQuery } from "@/lib/list-query";
+import { todayIsoDate } from "@/lib/date";
 import { createSampleRequest } from "@/modules/sampling/sample.service";
 import { CustomerRepository } from "@/modules/customers/customer.repository";
 import { ProductRepository } from "@/modules/products/product.repository";
@@ -316,7 +317,7 @@ export async function convertEnquiryLineToSampleRequest(
     styleName: input.styleName,
     sampleType: input.sampleType,
     color: input.color || undefined,
-    requestDate: new Date().toISOString().slice(0, 10),
+    requestDate: todayIsoDate(),
     targetSubmissionDate: input.targetSubmissionDate || undefined,
   });
 

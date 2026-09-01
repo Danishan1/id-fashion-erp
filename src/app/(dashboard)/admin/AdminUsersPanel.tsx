@@ -313,7 +313,7 @@ export function AdminUsersPanel({
             />
           </FormField>
           <FormField label="Phone" htmlFor="phone">
-            <input id="phone" className={textInputClass()} value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+            <input id="phone" type="tel" className={textInputClass()} value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
           </FormField>
           <FormField label="Branch" htmlFor="branchId" required>
             <select id="branchId" className={textInputClass()} value={form.branchId} onChange={(e) => setForm({ ...form, branchId: e.target.value })}>
@@ -374,7 +374,6 @@ export function AdminUsersPanel({
         open={!!resetTarget}
         onClose={() => setResetTarget(null)}
         title={`Reset Password — ${resetTarget?.fullName ?? ""}`}
-        closeOnBackdropClick={false}
       >
         <div className="space-y-3">
           <p className="text-sm text-zinc-500 dark:text-zinc-400">

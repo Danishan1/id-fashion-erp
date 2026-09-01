@@ -2,8 +2,7 @@ import { notFound } from "next/navigation";
 import { auth } from "@/core/auth/auth";
 import { getCustomerById } from "@/modules/customers/customer.service";
 import Link from "next/link";
-import { CustomerForm } from "../CustomerForm";
-import { BuyersSection } from "../BuyersSection";
+import { CustomerEditFormClient } from "./CustomerEditFormClient";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 
 export default async function EditCustomerPage({ params }: { params: Promise<{ id: string }> }) {
@@ -32,11 +31,9 @@ export default async function EditCustomerPage({ params }: { params: Promise<{ i
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">Code: {customer.code}</p>
       </div>
 
-      <CustomerForm
-        key={`form-${id}`}
-        submitUrl={`/api/v1/customers/${id}`}
-        method="PATCH"
-        redirectTo="/masters/customers"
+      <CustomerEditFormClient
+        key={id}
+        id={id}
         initialValues={{
           code: customer.code,
           name: customer.name,
@@ -48,8 +45,6 @@ export default async function EditCustomerPage({ params }: { params: Promise<{ i
           isActive: customer.isActive,
         }}
       />
-
-      <BuyersSection key={`buyers-${id}`} customerId={id} initialBuyers={customer.buyers} />
     </div>
   );
 }

@@ -1,55 +1,11 @@
-"use client";
+import { notFound } from "next/navigation";
+import { auth } from "@/core/auth/auth";
+import { PermissionService } from "@/core/rbac/PermissionService";
+import { PurchaseOrdersListClient } from "./PurchaseOrdersListClient";
 
-import { Breadcrumb } from "@/components/ui/Breadcrumb";
-import { DataTable } from "@/components/ui/DataTable";
-import { formatCurrency } from "@/lib/currency";
-import { STATUS_LABELS } from "./statusLabels";
+export default async function PurchaseOrdersListPage() {
+  const session = await auth();
+  await PermissionService.assert(session!.user.id, "purchasing", "view").catch(() => notFound());
 
-interface PurchaseOrderRow {
-  id: string;
-  orderNumber: string;
-  status: keyof typeof STATUS_LABELS;
-  orderDate: string;
-  totalAmount: string;
-  currencyCode: string;
-  supplier: { name: string } | null;
-  requestedBy: { fullName: string } | null;
-}
-
-export default function PurchaseOrdersListPage() {
-  return (
-    <div className="space-y-4">
-      <Breadcrumb items={[{ label: "Dashboard", href: "/dashboard" }, { label: "Purchase Orders" }]} />
-      <div>
-        <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Purchase Orders</h1>
-        <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-          Raw material and fabric purchase orders, from draft through goods receipt.
-        </p>
-      </div>
-
-      <DataTable<PurchaseOrderRow>
-        fetchUrl="/api/v1/purchase-orders"
-        searchPlaceholder="Search by order number…"
-        newHref="/purchase-orders/new"
-        newLabel="New Purchase Order"
-        rowHref={(row) => `/purchase-orders/${row.id}`}
-        columns={[
-          { key: "orderNumber", header: "Order #" },
-          { key: "supplier", header: "Supplier", render: (row) => row.supplier?.name ?? "—" },
-          { key: "status", header: "Status", render: (row) => STATUS_LABELS[row.status] ?? row.status },
-          {
-            key: "totalAmount",
-            header: "Amount",
-            render: (row) => `${row.currencyCode} ${formatCurrency(row.totalAmount)}`,
-          },
-          { key: "requestedBy", header: "Requested By", render: (row) => row.requestedBy?.fullName ?? "—" },
-          {
-            key: "orderDate",
-            header: "Order Date",
-            render: (row) => new Date(row.orderDate).toLocaleDateString(),
-          },
-        ]}
-      />
-    </div>
-  );
+  return <PurchaseOrdersListClient />;
 }

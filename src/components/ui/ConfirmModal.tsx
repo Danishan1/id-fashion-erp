@@ -10,6 +10,8 @@ interface ConfirmModalProps {
   isBusy?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
+  /** Set to true to allow an outside click to dismiss the dialog — defaults to false, matching Modal.tsx's own default. */
+  closeOnBackdropClick?: boolean;
 }
 
 /** Shared confirmation dialog — use for any destructive or state-changing action (deactivate, delete, cancel, etc). */
@@ -23,6 +25,7 @@ export function ConfirmModal({
   isBusy = false,
   onConfirm,
   onCancel,
+  closeOnBackdropClick = false,
 }: ConfirmModalProps) {
   if (!open) return null;
 
@@ -32,7 +35,7 @@ export function ConfirmModal({
       role="dialog"
       aria-modal="true"
       aria-labelledby="confirm-modal-title"
-      onClick={onCancel}
+      onClick={closeOnBackdropClick ? onCancel : undefined}
     >
       <div
         className="w-full max-w-sm rounded-lg border border-zinc-200 bg-white p-5 shadow-lg dark:border-zinc-800 dark:bg-zinc-900"

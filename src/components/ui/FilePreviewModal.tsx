@@ -11,6 +11,8 @@ interface FilePreviewModalProps {
   downloadUrl: string;
   fileName: string;
   mimeType: string;
+  /** Set to true to allow an outside click to dismiss the preview — defaults to false, matching Modal.tsx's own default. */
+  closeOnBackdropClick?: boolean;
 }
 
 const ZOOM_STEP = 0.25;
@@ -23,7 +25,15 @@ const MAX_ZOOM = 4;
  * controls; PDFs render in the browser's own viewer (which already has zoom);
  * anything else (Word/Excel) has no inline preview, just a download button.
  */
-export function FilePreviewModal({ open, onClose, previewUrl, downloadUrl, fileName, mimeType }: FilePreviewModalProps) {
+export function FilePreviewModal({
+  open,
+  onClose,
+  previewUrl,
+  downloadUrl,
+  fileName,
+  mimeType,
+  closeOnBackdropClick = false,
+}: FilePreviewModalProps) {
   // Zoom/rotation intentionally start fresh via useState's initializer, not a
   // reset effect — the caller is expected to pass a `key` (e.g. the file's id)
   // so switching files remounts this component instead of reusing state.
@@ -50,7 +60,7 @@ export function FilePreviewModal({ open, onClose, previewUrl, downloadUrl, fileN
       role="dialog"
       aria-modal="true"
       aria-label={fileName}
-      onClick={onClose}
+      onClick={closeOnBackdropClick ? onClose : undefined}
     >
       <div
         className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 px-4 py-3"

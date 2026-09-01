@@ -6,6 +6,7 @@ import { useState } from "react";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { Modal } from "@/components/ui/Modal";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { STATUS_LABELS, STATUS_BADGE_CLASS } from "../../simpleDocumentStatusLabels";
 
 interface JournalLine {
   id: string;
@@ -32,11 +33,6 @@ interface JournalDetail {
   lines: JournalLine[];
 }
 
-const STATUS_STYLES: Record<string, string> = {
-  DRAFT: "bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400",
-  POSTED: "bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-400",
-  CANCELLED: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
-};
 
 export function JournalWorkflowPanel({ journal }: { journal: JournalDetail }) {
   const router = useRouter();
@@ -68,7 +64,7 @@ export function JournalWorkflowPanel({ journal }: { journal: JournalDetail }) {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
-        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[journal.status]}`}>{journal.status}</span>
+        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_BADGE_CLASS[journal.status]}`}>{STATUS_LABELS[journal.status] ?? journal.status}</span>
         {journal.reversalOf && (
           <span className="text-sm text-zinc-500 dark:text-zinc-400">
             Reversal of{" "}

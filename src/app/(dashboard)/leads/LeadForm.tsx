@@ -129,7 +129,7 @@ export function LeadForm({ initialLead }: { initialLead?: InitialLead } = {}) {
           <input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={textInputClass()} />
         </FormField>
         <FormField label="Phone" htmlFor="phone">
-          <input id="phone" value={phone} onChange={(e) => setPhone(e.target.value)} className={textInputClass()} />
+          <input id="phone" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} className={textInputClass()} />
         </FormField>
       </div>
 

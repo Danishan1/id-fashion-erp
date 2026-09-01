@@ -14,11 +14,12 @@ export default function SalesAgentsPage() {
 
       <SimpleLookupManager
         fetchUrl="/api/v1/sales-agents"
+        entityLabel="Sales Agent"
         fields={[
           { key: "code", label: "Code", required: true },
           { key: "name", label: "Name", required: true },
           { key: "contactPerson", label: "Contact Person" },
-          { key: "phone", label: "Phone" },
+          { key: "phone", label: "Phone", type: "tel" },
           { key: "email", label: "Email" },
           { key: "commissionPercent", label: "Commission %", type: "number" },
         ]}

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { Modal } from "@/components/ui/Modal";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
+import { todayIsoDate } from "@/lib/date";
 import { JOB_WORK_ORDER_STATUS_LABELS, JOB_WORK_ORDER_STATUS_BADGE_CLASS } from "../../../production-orders/statusLabels";
 
 type JobWorkStatus = keyof typeof JOB_WORK_ORDER_STATUS_LABELS;
@@ -62,7 +63,7 @@ export function JobWorkOrderWorkflowPanel({ jobWorkOrderId, initialOrder }: { jo
   // physical event needing its own key. See CF-5 in the independent
   // hardening audit.
   const [receiveIdempotencyKey, setReceiveIdempotencyKey] = useState(() => crypto.randomUUID());
-  const [receivedDate, setReceivedDate] = useState(new Date().toISOString().slice(0, 10));
+  const [receivedDate, setReceivedDate] = useState(todayIsoDate());
   const [receivedQty, setReceivedQty] = useState(String(order.metrics.pendingQuantity));
   const [rejectedQty, setRejectedQty] = useState("0");
   const [damagedQty, setDamagedQty] = useState("0");

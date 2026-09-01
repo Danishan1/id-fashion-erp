@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { todayIsoDate } from "@/lib/date";
 
 interface SalesOrderOption {
   id: string;
@@ -30,13 +31,19 @@ interface TaxRateOption {
   ratePercentage: string;
 }
 
-export function SalesInvoiceForm() {
+interface SalesInvoiceFormProps {
+  /** Provided only by the Sales Invoices list's "New Invoice" modal — when set, a successful create closes the modal instead of navigating. */
+  onSuccess?: () => void;
+  onCancel?: () => void;
+}
+
+export function SalesInvoiceForm({ onSuccess, onCancel }: SalesInvoiceFormProps = {}) {
   const router = useRouter();
   const [orders, setOrders] = useState<SalesOrderOption[]>([]);
   const [taxRates, setTaxRates] = useState<TaxRateOption[]>([]);
   const [salesOrderId, setSalesOrderId] = useState("");
   const [order, setOrder] = useState<OrderDetail | null>(null);
-  const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().slice(0, 10));
+  const [invoiceDate, setInvoiceDate] = useState(todayIsoDate());
   const [lineTaxRateIds, setLineTaxRateIds] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -111,8 +118,12 @@ export function SalesInvoiceForm() {
       }
 
       const body = await res.json();
-      router.push(`/accounts/sales-invoices/${body.data.id}`);
-      router.refresh();
+      if (onSuccess) {
+        onSuccess();
+      } else {
+        router.push(`/accounts/sales-invoices/${body.data.id}`);
+        router.refresh();
+      }
     } catch {
       setError("Could not reach the server. Check your connection and try again — it's safe to resubmit.");
     } finally {
@@ -221,7 +232,7 @@ export function SalesInvoiceForm() {
         </button>
         <button
           type="button"
-          onClick={() => router.push("/accounts/sales-invoices")}
+          onClick={onCancel ?? (() => router.push("/accounts/sales-invoices"))}
           className="rounded-md border border-zinc-300 px-4 py-2 text-sm text-zinc-700 dark:border-zinc-700 dark:text-zinc-200"
         >
           Cancel

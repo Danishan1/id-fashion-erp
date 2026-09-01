@@ -1,7 +1,11 @@
 "use client";
 
+import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { DataTable } from "@/components/ui/DataTable";
+import { Modal } from "@/components/ui/Modal";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
+import { ExpenseForm } from "./new/ExpenseForm";
 
 interface ExpenseRow {
   id: string;
@@ -31,6 +35,18 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 export function ExpensesListClient() {
+  const router = useRouter();
+  const [modalOpen, setModalOpen] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  const closeModal = () => setModalOpen(false);
+
+  const handleSuccess = () => {
+    closeModal();
+    setRefreshKey((k) => k + 1);
+    router.refresh();
+  };
+
   return (
     <div className="space-y-4">
       <div>
@@ -44,8 +60,8 @@ export function ExpensesListClient() {
 
       <DataTable<ExpenseRow>
         fetchUrl="/api/v1/expenses"
-        newHref="/accounts/expenses/new"
-        newLabel="New Expense"
+        refreshKey={refreshKey}
+        newAction={{ label: "New Expense", onClick: () => setModalOpen(true) }}
         searchPlaceholder="Search by expense number…"
         rowHref={(row) => `/accounts/expenses/${row.id}`}
         columns={[
@@ -66,6 +82,10 @@ export function ExpensesListClient() {
           },
         ]}
       />
+
+      <Modal open={modalOpen} onClose={closeModal} title="New Expense" maxWidthClass="max-w-3xl">
+        <ExpenseForm onSuccess={handleSuccess} onCancel={closeModal} />
+      </Modal>
     </div>
   );
 }

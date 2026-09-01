@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { requiredPhoneSchema } from "@/lib/validation";
 
 export const customerSchema = z.object({
   code: z.string().min(1, "Code is required").max(30),
@@ -16,9 +17,12 @@ export type CustomerInput = z.infer<typeof customerSchema>;
 export const buyerSchema = z.object({
   code: z.string().min(1, "Code is required").max(30),
   name: z.string().min(1, "Name is required").max(200),
-  contactPerson: z.string().max(200).optional().or(z.literal("")),
-  email: z.string().email().optional().or(z.literal("")),
-  phone: z.string().max(50).optional().or(z.literal("")),
+  // Required per the Customer-required-fields analysis (2026-09-01): a Buyer
+  // record with no way to reach them isn't useful — Customer itself stays a
+  // lightweight identity record, so reachability lives here instead.
+  contactPerson: z.string().min(1, "Contact person is required").max(200),
+  email: z.string().min(1, "Email is required").email("Enter a valid email address"),
+  phone: requiredPhoneSchema,
   // No default — omitted means "leave as-is" on update (see updateBuyer);
   // create treats omitted as true. Same reasoning as Color/Size/Unit's own
   // isActive field: a Zod default would silently reactivate a deactivated

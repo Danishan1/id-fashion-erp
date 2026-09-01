@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { formatCurrency } from "@/lib/currency";
+import { todayIsoDate } from "@/lib/date";
 
 interface ChartOfAccountOption {
   id: string;
@@ -50,7 +51,14 @@ interface InitialExpense {
   referenceNumber: string | null;
 }
 
-export function ExpenseForm({ initialExpense }: { initialExpense?: InitialExpense }) {
+interface ExpenseFormProps {
+  initialExpense?: InitialExpense;
+  /** Provided only by the Expenses list's "New Expense" modal — when set, a successful create closes the modal instead of navigating (edit mode always navigates, unaffected). */
+  onSuccess?: () => void;
+  onCancel?: () => void;
+}
+
+export function ExpenseForm({ initialExpense, onSuccess, onCancel }: ExpenseFormProps) {
   const router = useRouter();
   const isEditMode = !!initialExpense;
 
@@ -60,7 +68,7 @@ export function ExpenseForm({ initialExpense }: { initialExpense?: InitialExpens
   const [paymentTypes, setPaymentTypes] = useState<PaymentTypeOption[]>([]);
   const [bankAccounts, setBankAccounts] = useState<BankAccountOption[]>([]);
 
-  const [expenseDate, setExpenseDate] = useState(initialExpense?.expenseDate.slice(0, 10) ?? new Date().toISOString().slice(0, 10));
+  const [expenseDate, setExpenseDate] = useState(initialExpense?.expenseDate.slice(0, 10) ?? todayIsoDate());
   const [accountId, setAccountId] = useState(initialExpense?.accountId ?? "");
   const [supplierId, setSupplierId] = useState(initialExpense?.supplierId ?? "");
   const [description, setDescription] = useState(initialExpense?.description ?? "");
@@ -150,8 +158,12 @@ export function ExpenseForm({ initialExpense }: { initialExpense?: InitialExpens
       }
 
       const body = await res.json();
-      router.push(`/accounts/expenses/${body.data.id}`);
-      router.refresh();
+      if (onSuccess) {
+        onSuccess();
+      } else {
+        router.push(`/accounts/expenses/${body.data.id}`);
+        router.refresh();
+      }
     } catch {
       setError("Could not reach the server. Check your connection and try again — it's safe to resubmit.");
     } finally {
@@ -305,7 +317,7 @@ export function ExpenseForm({ initialExpense }: { initialExpense?: InitialExpens
         </button>
         <button
           type="button"
-          onClick={() => router.push("/accounts/expenses")}
+          onClick={onCancel ?? (() => router.push("/accounts/expenses"))}
           className="rounded-md border border-zinc-300 px-4 py-2 text-sm text-zinc-700 dark:border-zinc-700 dark:text-zinc-200"
         >
           Cancel

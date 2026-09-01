@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { todayIsoDate } from "@/lib/date";
 
 interface AccountOption {
   id: string;
@@ -27,7 +28,7 @@ const EMPTY_LINE: JournalLineFormValue = { accountId: "", debitAmount: "", credi
 
 function emptyValues(): JournalFormValues {
   return {
-    journalDate: new Date().toISOString().slice(0, 10),
+    journalDate: todayIsoDate(),
     narration: "",
     lines: [{ ...EMPTY_LINE }, { ...EMPTY_LINE }],
   };

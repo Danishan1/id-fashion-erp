@@ -610,40 +610,45 @@ model Department {
 }
 
 model Employee {
-  id            String    @id @default(uuid()) @db.Uuid
-  companyId     String    @map("company_id") @db.Uuid
-  branchId      String?   @map("branch_id") @db.Uuid
-  departmentId  String?   @map("department_id") @db.Uuid
-  reportsToId   String?   @map("reports_to_id") @db.Uuid
+  id                 String    @id @default(uuid()) @db.Uuid
+  companyId          String    @map("company_id") @db.Uuid
+  branchId           String?   @map("branch_id") @db.Uuid
+  departmentId       String?   @map("department_id") @db.Uuid
+  reportsToId        String?   @map("reports_to_id") @db.Uuid
   // Nullable — wiring this in is the one deliberate HRMS improvement over
   // the WordPress source, which hardcodes a single 10:15 late-cutoff for
   // every employee company-wide. See CRM_SALES_MARKETING_HRMS_MIGRATION_REPORT.md.
-  shiftId       String?   @map("shift_id") @db.Uuid
+  shiftId            String?   @map("shift_id") @db.Uuid
   // Wired to the real Designation master (HRMS gap-analysis Priority 1 item
   // #1, 2026-08-26) — was a plain free-text string, now a real FK, matching
   // the same string→FK cutover already done once for Product.category/season
   // in Phase 3. The old `designation` string column is intentionally gone
   // (not kept as a shim) — its data was backfilled into `designationId`
   // before the column was dropped, see the migration's own backfill note.
-  designationId String?   @map("designation_id") @db.Uuid
-  employeeCode  String    @map("employee_code")
-  fullName      String    @map("full_name")
-  phone         String?
-  email         String?
-  joinDate      DateTime? @map("join_date")
-  isActive      Boolean   @default(true) @map("is_active")
-  deletedAt     DateTime? @map("deleted_at")
-  createdAt     DateTime  @default(now()) @map("created_at")
-  updatedAt     DateTime  @updatedAt @map("updated_at")
+  designationId      String?   @map("designation_id") @db.Uuid
+  // A sibling to departmentId/designationId, not nested under either — employment
+  // classification (Permanent/Contract/Probation/...) is orthogonal to organizational
+  // placement (which department, what title). See the Item 7 analysis, 2026-09-01.
+  employeeCategoryId String?   @map("employee_category_id") @db.Uuid
+  employeeCode       String    @map("employee_code")
+  fullName           String    @map("full_name")
+  phone              String?
+  email              String?
+  joinDate           DateTime? @map("join_date")
+  isActive           Boolean   @default(true) @map("is_active")
+  deletedAt          DateTime? @map("deleted_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
 
-  company     Company      @relation(fields: [companyId], references: [id])
-  branch      Branch?      @relation(fields: [branchId], references: [id])
-  department  Department?  @relation(fields: [departmentId], references: [id])
-  shift       ShiftMaster? @relation(fields: [shiftId], references: [id])
-  designation Designation? @relation(fields: [designationId], references: [id])
-  reportsTo   Employee?    @relation("EmployeeHierarchy", fields: [reportsToId], references: [id])
-  reports     Employee[]   @relation("EmployeeHierarchy")
-  user        User?
+  company          Company           @relation(fields: [companyId], references: [id])
+  branch           Branch?           @relation(fields: [branchId], references: [id])
+  department       Department?       @relation(fields: [departmentId], references: [id])
+  shift            ShiftMaster?      @relation(fields: [shiftId], references: [id])
+  designation      Designation?      @relation(fields: [designationId], references: [id])
+  employeeCategory EmployeeCategory? @relation(fields: [employeeCategoryId], references: [id])
+  reportsTo        Employee?         @relation("EmployeeHierarchy", fields: [reportsToId], references: [id])
+  reports          Employee[]        @relation("EmployeeHierarchy")
+  user             User?
 
   // Production (Phase 5C) — a worker/operator is always tracked here, never
   // via User, so shop-floor staff never need a login just to be assigned
@@ -990,16 +995,24 @@ model Brand {
 }
 
 model Category {
-  id        String   @id @default(uuid()) @db.Uuid
-  companyId String   @map("company_id") @db.Uuid
-  code      String
-  name      String
-  isActive  Boolean  @default(true) @map("is_active")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id               String   @id @default(uuid()) @db.Uuid
+  companyId        String   @map("company_id") @db.Uuid
+  code             String
+  name             String
+  // Self-relation for unlimited-depth subcategories — same pattern as
+  // ProductionStage.parentStageId/ChartOfAccount.parentAccountId. A Product
+  // may link to a Category at any level (leaf or rollup) — no leaf-only
+  // constraint, matching the pre-existing lack of one before this column
+  // existed.
+  parentCategoryId String?  @map("parent_category_id") @db.Uuid
+  isActive         Boolean  @default(true) @map("is_active")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
 
-  company  Company   @relation(fields: [companyId], references: [id])
-  products Product[]
+  company        Company    @relation(fields: [companyId], references: [id])
+  parentCategory Category?  @relation("CategoryHierarchy", fields: [parentCategoryId], references: [id])
+  subCategories  Category[] @relation("CategoryHierarchy")
+  products       Product[]
 
   @@unique([companyId, code])
   @@map("categories")
@@ -1237,7 +1250,8 @@ model EmployeeCategory {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  company Company @relation(fields: [companyId], references: [id])
+  company   Company    @relation(fields: [companyId], references: [id])
+  employees Employee[]
 
   @@unique([companyId, code])
   @@map("employee_categories")

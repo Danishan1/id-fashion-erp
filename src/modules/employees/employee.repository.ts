@@ -3,7 +3,7 @@ import type { Prisma } from "@prisma/client";
 
 export const EmployeeRepository = {
   findMany: (where: Prisma.EmployeeWhereInput, args: Omit<Prisma.EmployeeFindManyArgs, "where">) =>
-    prisma.employee.findMany({ where, include: { department: true, designation: true }, ...args }),
+    prisma.employee.findMany({ where, include: { department: true, designation: true, employeeCategory: true }, ...args }),
 
   count: (where: Prisma.EmployeeWhereInput) => prisma.employee.count({ where }),
 
@@ -13,6 +13,7 @@ export const EmployeeRepository = {
       include: {
         department: true,
         designation: true,
+        employeeCategory: true,
         reportsTo: { select: { id: true, fullName: true, employeeCode: true } },
         reports: { where: { deletedAt: null }, select: { id: true, fullName: true, employeeCode: true }, orderBy: { fullName: "asc" } },
       },

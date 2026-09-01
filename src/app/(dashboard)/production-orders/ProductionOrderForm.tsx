@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { todayIsoDate } from "@/lib/date";
 
 interface StyleOption {
   id: string;
@@ -21,7 +22,7 @@ interface SalesOrderItemOption {
   product: { id: string; styleName: string; styleCode: string };
 }
 
-const TODAY = new Date().toISOString().slice(0, 10);
+const TODAY = todayIsoDate();
 
 export function ProductionOrderForm() {
   const router = useRouter();

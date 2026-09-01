@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { todayIsoDate } from "@/lib/date";
 
 interface PaymentTypeOption {
   id: string;
@@ -16,12 +17,18 @@ interface BankAccountOption {
   bankName: string;
 }
 
-export function InternalTransferForm() {
+interface InternalTransferFormProps {
+  /** Provided only by the Internal Transfers list's "New Transfer" modal — when set, a successful create closes the modal instead of navigating. */
+  onSuccess?: () => void;
+  onCancel?: () => void;
+}
+
+export function InternalTransferForm({ onSuccess, onCancel }: InternalTransferFormProps = {}) {
   const router = useRouter();
   const [paymentTypes, setPaymentTypes] = useState<PaymentTypeOption[]>([]);
   const [bankAccounts, setBankAccounts] = useState<BankAccountOption[]>([]);
 
-  const [transferDate, setTransferDate] = useState(new Date().toISOString().slice(0, 10));
+  const [transferDate, setTransferDate] = useState(todayIsoDate());
   const [fromPaymentTypeId, setFromPaymentTypeId] = useState("");
   const [fromBankAccountId, setFromBankAccountId] = useState("");
   const [toPaymentTypeId, setToPaymentTypeId] = useState("");
@@ -78,8 +85,12 @@ export function InternalTransferForm() {
       }
 
       const body = await res.json();
-      router.push(`/accounts/internal-transfers/${body.data.id}`);
-      router.refresh();
+      if (onSuccess) {
+        onSuccess();
+      } else {
+        router.push(`/accounts/internal-transfers/${body.data.id}`);
+        router.refresh();
+      }
     } catch {
       setError("Could not reach the server. Check your connection and try again — it's safe to resubmit.");
     } finally {
@@ -169,7 +180,7 @@ export function InternalTransferForm() {
         </button>
         <button
           type="button"
-          onClick={() => router.push("/accounts/internal-transfers")}
+          onClick={onCancel ?? (() => router.push("/accounts/internal-transfers"))}
           className="rounded-md border border-zinc-300 px-4 py-2 text-sm text-zinc-700 dark:border-zinc-700 dark:text-zinc-200"
         >
           Cancel

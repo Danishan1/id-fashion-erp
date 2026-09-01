@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { SAMPLE_TYPES } from "@/modules/sampling/sample.schema";
+import { optionalPhoneSchema } from "@/lib/validation";
 
 export const buyerEnquiryLineSchema = z.object({
   // An existing Style, if picked from the catalog — leave empty for a
@@ -28,7 +29,7 @@ export const buyerEnquirySchema = z.object({
   prospectName: z.string().max(200).optional().or(z.literal("")),
   prospectContactPerson: z.string().max(200).optional().or(z.literal("")),
   prospectEmail: z.string().email().optional().or(z.literal("")),
-  prospectPhone: z.string().max(50).optional().or(z.literal("")),
+  prospectPhone: optionalPhoneSchema,
   prospectCountry: z.string().max(100).optional().or(z.literal("")),
   enquiryDate: z.string().min(1, "Enquiry date is required"),
   source: z.enum(["EMAIL", "PHONE", "TRADE_SHOW", "REFERRAL", "WEBSITE", "OTHER"]).default("OTHER"),

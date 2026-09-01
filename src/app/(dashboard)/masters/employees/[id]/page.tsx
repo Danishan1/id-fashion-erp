@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { auth } from "@/core/auth/auth";
 import { getEmployeeById } from "@/modules/employees/employee.service";
-import { EmployeeForm } from "../EmployeeForm";
+import { EmployeeEditFormClient } from "./EmployeeEditFormClient";
 import { EmployeeAttachmentsSection } from "../EmployeeAttachmentsSection";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 
@@ -26,18 +26,16 @@ export default async function EditEmployeePage({ params }: { params: Promise<{ i
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">Code: {employee.employeeCode}</p>
       </div>
 
-      <EmployeeForm
+      <EmployeeEditFormClient
         key={`form-${id}`}
-        submitUrl={`/api/v1/employees/${id}`}
-        method="PATCH"
-        redirectTo="/masters/employees"
-        excludeEmployeeId={id}
+        id={id}
         initialValues={{
           employeeCode: employee.employeeCode,
           fullName: employee.fullName,
           departmentId: employee.departmentId ?? "",
           shiftId: employee.shiftId ?? "",
           designationId: employee.designationId ?? "",
+          employeeCategoryId: employee.employeeCategoryId ?? "",
           reportsToId: employee.reportsToId ?? "",
           phone: employee.phone ?? "",
           email: employee.email ?? "",

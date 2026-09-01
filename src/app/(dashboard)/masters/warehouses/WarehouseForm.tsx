@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { WAREHOUSE_TYPES } from "@/modules/warehouses/warehouse.schema";
@@ -19,11 +18,11 @@ interface WarehouseFormProps {
   initialValues?: WarehouseFormValues;
   submitUrl: string;
   method: "POST" | "PATCH";
-  redirectTo: string;
+  onSuccess: () => void;
+  onCancel: () => void;
 }
 
-export function WarehouseForm({ initialValues, submitUrl, method, redirectTo }: WarehouseFormProps) {
-  const router = useRouter();
+export function WarehouseForm({ initialValues, submitUrl, method, onSuccess, onCancel }: WarehouseFormProps) {
   const [values, setValues] = useState<WarehouseFormValues>(initialValues ?? EMPTY_VALUES);
   const [isCodeManuallyEdited, setIsCodeManuallyEdited] = useState(Boolean(initialValues));
   const [error, setError] = useState<string | null>(null);
@@ -49,12 +48,11 @@ export function WarehouseForm({ initialValues, submitUrl, method, redirectTo }: 
       return;
     }
 
-    router.push(redirectTo);
-    router.refresh();
+    onSuccess();
   };
 
   return (
-    <form onSubmit={handleSubmit} className="max-w-xl space-y-4">
+    <form onSubmit={handleSubmit} className="space-y-4">
       <div className="grid grid-cols-2 gap-4">
         <FormField label="Code" htmlFor="code" required>
           <input
@@ -108,20 +106,20 @@ export function WarehouseForm({ initialValues, submitUrl, method, redirectTo }: 
 
       {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
 
-      <div className="flex gap-3">
+      <div className="flex justify-end gap-3 pt-2">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+        >
+          Cancel
+        </button>
         <button
           type="submit"
           disabled={isSubmitting}
-          className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
+          className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
         >
           {isSubmitting ? "Saving…" : "Save"}
-        </button>
-        <button
-          type="button"
-          onClick={() => router.push(redirectTo)}
-          className="rounded-md border border-zinc-300 px-4 py-2 text-sm text-zinc-700 dark:border-zinc-700 dark:text-zinc-200"
-        >
-          Cancel
         </button>
       </div>
     </form>

@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { formatCurrency } from "@/lib/currency";
+import { todayIsoDate } from "@/lib/date";
 
 interface Option {
   id: string;
@@ -37,7 +38,7 @@ interface LineItem {
   quantities: Record<string, string>;
 }
 
-const TODAY = new Date().toISOString().slice(0, 10);
+const TODAY = todayIsoDate();
 
 function emptyLine(): LineItem {
   return { productId: "", sampleRequestId: "", unitPrice: "", notes: "", variants: [], quantities: {} };

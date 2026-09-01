@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
+import { STATUS_LABELS, STATUS_BADGE_CLASS } from "../../simpleDocumentStatusLabels";
 
 interface InternalTransferDetail {
   id: string;
@@ -20,12 +21,6 @@ interface InternalTransferDetail {
   createdBy: { fullName: string };
   postedBy: { fullName: string } | null;
 }
-
-const STATUS_STYLES: Record<string, string> = {
-  DRAFT: "bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400",
-  POSTED: "bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-400",
-  CANCELLED: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
-};
 
 export function InternalTransferWorkflowPanel({ transfer }: { transfer: InternalTransferDetail }) {
   const router = useRouter();
@@ -51,7 +46,7 @@ export function InternalTransferWorkflowPanel({ transfer }: { transfer: Internal
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
-        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[transfer.status] ?? ""}`}>{transfer.status}</span>
+        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_BADGE_CLASS[transfer.status]}`}>{STATUS_LABELS[transfer.status] ?? transfer.status}</span>
         {transfer.journal && (
           <span className="text-sm text-zinc-500 dark:text-zinc-400">
             Journal:{" "}

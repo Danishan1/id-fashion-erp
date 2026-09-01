@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { todayIsoDate } from "@/lib/date";
 
 type Direction = "RECEIPT" | "PAYMENT_OUT";
 
@@ -42,7 +43,7 @@ export function PaymentForm() {
   const [paymentTypeId, setPaymentTypeId] = useState("");
   const [bankAccountId, setBankAccountId] = useState("");
   const [referenceNumber, setReferenceNumber] = useState("");
-  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10));
+  const [paymentDate, setPaymentDate] = useState(todayIsoDate());
   const [invoices, setInvoices] = useState<OutstandingInvoice[]>([]);
   const [allocations, setAllocations] = useState<Record<string, string>>({});
   const [isOnAccount, setIsOnAccount] = useState(false);

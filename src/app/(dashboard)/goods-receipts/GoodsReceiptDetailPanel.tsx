@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { FilePreviewModal } from "@/components/ui/FilePreviewModal";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { STATUS_LABELS, STATUS_BADGE_CLASS } from "./statusLabels";
 
 interface Person {
   id: string;
@@ -53,18 +54,12 @@ interface AttachmentRow {
 interface GoodsReceiptDetail {
   id: string;
   receiptNumber: string;
-  status: string;
+  status: keyof typeof STATUS_LABELS;
   receivedDate: string;
   receivedBy: Person;
   purchaseOrder: { id: string; orderNumber: string };
   items: ItemRow[];
 }
-
-const STATUS_LABELS: Record<string, string> = {
-  COMPLETED: "Completed",
-  PARTIALLY_REVERSED: "Partially Reversed",
-  CANCELLED: "Cancelled",
-};
 
 async function parseErrorMessage(res: Response, fallback: string) {
   const body = await res.json().catch(() => null);
@@ -242,7 +237,7 @@ export function GoodsReceiptDetailPanel({
   return (
     <div className="space-y-8">
       <div className="flex items-center gap-3">
-        <span className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+        <span className={`rounded-full px-3 py-1 text-xs font-medium ${STATUS_BADGE_CLASS[receipt.status]}`}>
           {STATUS_LABELS[receipt.status] ?? receipt.status}
         </span>
         {isBusy && <span className="text-xs text-zinc-400">Saving…</span>}

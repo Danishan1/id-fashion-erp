@@ -2,6 +2,7 @@
 
 import { DataTable } from "@/components/ui/DataTable";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
+import { STATUS_LABELS, STATUS_BADGE_CLASS } from "../simpleDocumentStatusLabels";
 
 interface PaymentRow {
   id: string;
@@ -9,7 +10,7 @@ interface PaymentRow {
   direction: "RECEIPT" | "PAYMENT_OUT";
   paymentDate: string;
   amount: string;
-  status: string;
+  status: keyof typeof STATUS_LABELS;
   customer: { name: string } | null;
   supplier: { name: string } | null;
 }
@@ -49,16 +50,8 @@ export function PaymentsListClient() {
             key: "status",
             header: "Status",
             render: (row) => (
-              <span
-                className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                  row.status === "POSTED"
-                    ? "bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-400"
-                    : row.status === "CANCELLED"
-                      ? "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400"
-                      : "bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400"
-                }`}
-              >
-                {row.status}
+              <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_BADGE_CLASS[row.status]}`}>
+                {STATUS_LABELS[row.status] ?? row.status}
               </span>
             ),
           },

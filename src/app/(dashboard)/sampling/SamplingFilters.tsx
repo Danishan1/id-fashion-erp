@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { textInputClass } from "@/components/ui/FormField";
+import { toIsoDate } from "@/lib/date";
 import { STATUS_LABELS } from "./statusLabels";
 
 export interface SamplingFiltersValue {
@@ -42,17 +43,6 @@ function countActive(f: SamplingFiltersValue): number {
     (f.dateFrom || f.dateTo ? 1 : 0) +
     (f.color ? 1 : 0)
   );
-}
-
-// Deliberately reads LOCAL calendar components (never .toISOString(), which
-// converts through UTC) — see the identical fix in crm/page.tsx for the full
-// explanation (ERP-BUG-0001, Phase 10 QA pass): on IST, .toISOString() made
-// "This Month" start one calendar day too early.
-function toIsoDate(d: Date): string {
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
 }
 
 /** "Today"/"This Week"/"This Month" presets — "Custom" is just typing directly into the date inputs, no separate mode needed. */

@@ -54,6 +54,12 @@ async function assertDesignationBelongsToCompany(companyId: string, designationI
   if (!designation) throw new BusinessRuleError("NOT_FOUND", "Designation not found.", { id: designationId });
 }
 
+/** Same tenant-scope discipline as the designation check above. */
+async function assertEmployeeCategoryBelongsToCompany(companyId: string, employeeCategoryId: string) {
+  const category = await HrConfigRepository.employeeCategory.findFirst({ where: { id: employeeCategoryId, companyId } });
+  if (!category) throw new BusinessRuleError("NOT_FOUND", "Employee category not found.", { id: employeeCategoryId });
+}
+
 /** Same tenant-scope discipline as the designation check above, plus the
  * one business rule a reporting hierarchy actually needs: an employee can't
  * report to themselves. Deeper cycle detection (A -> B -> A) isn't checked —
@@ -75,6 +81,7 @@ function toData(input: EmployeeInput) {
     departmentId: input.departmentId || null,
     shiftId: input.shiftId || null,
     designationId: input.designationId || null,
+    employeeCategoryId: input.employeeCategoryId || null,
     reportsToId: input.reportsToId || null,
     phone: input.phone || null,
     email: input.email || null,
@@ -91,6 +98,7 @@ function toUpdateData(input: EmployeeUpdateInput): Prisma.EmployeeUncheckedUpdat
   if (input.departmentId !== undefined) data.departmentId = input.departmentId || null;
   if (input.shiftId !== undefined) data.shiftId = input.shiftId || null;
   if (input.designationId !== undefined) data.designationId = input.designationId || null;
+  if (input.employeeCategoryId !== undefined) data.employeeCategoryId = input.employeeCategoryId || null;
   if (input.reportsToId !== undefined) data.reportsToId = input.reportsToId || null;
   if (input.phone !== undefined) data.phone = input.phone || null;
   if (input.email !== undefined) data.email = input.email || null;
@@ -109,6 +117,9 @@ export async function createEmployee(actor: ActorContext, input: EmployeeInput) 
   }
   if (input.designationId) {
     await assertDesignationBelongsToCompany(actor.companyId, input.designationId);
+  }
+  if (input.employeeCategoryId) {
+    await assertEmployeeCategoryBelongsToCompany(actor.companyId, input.employeeCategoryId);
   }
   if (input.reportsToId) {
     await assertReportsToIsValid(actor.companyId, input.reportsToId);
@@ -144,6 +155,9 @@ export async function updateEmployee(actor: ActorContext, id: string, input: Emp
   }
   if (input.designationId) {
     await assertDesignationBelongsToCompany(actor.companyId, input.designationId);
+  }
+  if (input.employeeCategoryId) {
+    await assertEmployeeCategoryBelongsToCompany(actor.companyId, input.employeeCategoryId);
   }
   if (input.reportsToId) {
     await assertReportsToIsValid(actor.companyId, input.reportsToId, id);

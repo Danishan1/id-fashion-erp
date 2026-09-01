@@ -1,60 +1,11 @@
-"use client";
+import { notFound } from "next/navigation";
+import { auth } from "@/core/auth/auth";
+import { PermissionService } from "@/core/rbac/PermissionService";
+import { SuppliersListClient } from "./SuppliersListClient";
 
-import { DataTable } from "@/components/ui/DataTable";
-import { Breadcrumb } from "@/components/ui/Breadcrumb";
-import { SuppliedCategoriesSection } from "./SuppliedCategoriesSection";
-import { SuppliedMaterialsSection } from "./SuppliedMaterialsSection";
+export default async function SuppliersListPage() {
+  const session = await auth();
+  await PermissionService.assert(session!.user.id, "masters_core", "view").catch(() => notFound());
 
-interface SupplierRow {
-  id: string;
-  code: string;
-  name: string;
-  category: { name: string };
-  isActive: boolean;
-}
-
-export default function SuppliersListPage() {
-  return (
-    <div className="space-y-4">
-      <div>
-        <Breadcrumb items={[{ label: "Masters", href: "/masters" }, { label: "Suppliers" }]} />
-        <h1 className="mt-2 text-lg font-semibold text-zinc-900 dark:text-zinc-50">Suppliers</h1>
-        <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">Fabric, trims, packaging, and service vendors.</p>
-      </div>
-
-      <DataTable<SupplierRow>
-        fetchUrl="/api/v1/suppliers"
-        newHref="/masters/suppliers/new"
-        newLabel="New Supplier"
-        searchPlaceholder="Search by name or code…"
-        rowHref={(row) => `/masters/suppliers/${row.id}`}
-        rowActions={(row) => (
-          <>
-            <SuppliedCategoriesSection supplierId={row.id} />
-            <SuppliedMaterialsSection supplierId={row.id} />
-          </>
-        )}
-        columns={[
-          { key: "code", header: "Code" },
-          { key: "name", header: "Name" },
-          { key: "category", header: "Category", render: (row) => row.category?.name ?? "—" },
-          {
-            key: "isActive",
-            header: "Status",
-            render: (row) => (
-              <span
-                className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                  row.isActive
-                    ? "bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-400"
-                    : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400"
-                }`}
-              >
-                {row.isActive ? "Active" : "Inactive"}
-              </span>
-            ),
-          },
-        ]}
-      />
-    </div>
-  );
+  return <SuppliersListClient />;
 }

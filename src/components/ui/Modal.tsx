@@ -10,11 +10,11 @@ interface ModalProps {
   /** Tailwind max-width class for the dialog card — wider forms (e.g. a multi-field add-row) can pass "max-w-lg"/"max-w-xl". */
   maxWidthClass?: string;
   /**
-   * Set to false for a modal where an accidental outside-click losing typed
-   * input would be genuinely costly (e.g. a freshly-generated/typed
-   * password) — the ✕ button and Escape still close it either way, this
-   * only disables the backdrop-click shortcut. Defaults to true, matching
-   * every other modal in the app.
+   * Set to true to allow an outside click to close the modal — an accidental
+   * outside click losing typed input is the default assumption for every
+   * modal in the app now, so this defaults to false. The ✕ button, Escape,
+   * the modal's own Cancel button, and a successful submit all still close
+   * it regardless of this prop.
    */
   closeOnBackdropClick?: boolean;
 }
@@ -32,7 +32,7 @@ interface ModalProps {
  * (record creation, the detailed workflow panel, a costing/timeline
  * overview) — don't reach for this component there.
  */
-export function Modal({ open, onClose, title, children, maxWidthClass = "max-w-md", closeOnBackdropClick = true }: ModalProps) {
+export function Modal({ open, onClose, title, children, maxWidthClass = "max-w-md", closeOnBackdropClick = false }: ModalProps) {
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (e: KeyboardEvent) => {

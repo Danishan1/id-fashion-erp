@@ -5,6 +5,7 @@ import { PermissionService } from "@/core/rbac/PermissionService";
 import { prisma } from "@/core/db/client";
 import type { ListQuery } from "@/lib/list-query";
 import { convertUomQuantity } from "@/lib/uom-conversion";
+import { todayIsoDate } from "@/lib/date";
 import { BomRepository } from "@/modules/bom-mrp/bom.repository";
 import { getMaterialRequirements } from "@/modules/bom-mrp/mrp.service";
 import { LookupRepository } from "@/modules/lookups/lookup.repository";
@@ -654,7 +655,7 @@ export async function generatePurchaseOrdersForShortfall(
     try {
       const order = await createPurchaseOrder(actor, {
         supplierId,
-        orderDate: new Date().toISOString().slice(0, 10),
+        orderDate: todayIsoDate(),
         expectedDeliveryDate: input.expectedDeliveryDate || "",
         items: lines.map(({ line, purchaseQuantity, unitPrice }) => ({
           productId: line.materialId,

@@ -9,7 +9,11 @@ const codeNameSchema = z.object({
 export const brandSchema = codeNameSchema;
 export type BrandInput = z.infer<typeof brandSchema>;
 
-export const categorySchema = codeNameSchema;
+// Not a bare alias of codeNameSchema like its siblings — gains its own
+// optional parentCategoryId for unlimited-depth subcategories.
+export const categorySchema = codeNameSchema.extend({
+  parentCategoryId: z.string().uuid().optional().or(z.literal("")),
+});
 export type CategoryInput = z.infer<typeof categorySchema>;
 
 export const seasonSchema = codeNameSchema;

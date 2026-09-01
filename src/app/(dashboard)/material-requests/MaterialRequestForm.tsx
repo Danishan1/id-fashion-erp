@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { MaterialPicker } from "@/components/ui/MaterialPicker";
+import { todayIsoDate } from "@/lib/date";
 
 interface Option {
   id: string;
@@ -28,7 +29,7 @@ interface LineItem {
   remarks: string;
 }
 
-const TODAY = new Date().toISOString().slice(0, 10);
+const TODAY = todayIsoDate();
 const REQUEST_TYPES = [
   { value: "PRODUCTION_REQUIREMENT", label: "Production Requirement" },
   { value: "DAMAGE_REPLACEMENT", label: "Damage Replacement" },

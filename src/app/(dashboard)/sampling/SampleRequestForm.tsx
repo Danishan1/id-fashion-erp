@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { SAMPLE_TYPE_LABELS } from "./sampleTypeLabels";
+import { todayIsoDate } from "@/lib/date";
 
 interface Option {
   id: string;
@@ -11,7 +12,7 @@ interface Option {
   styleName?: string;
 }
 
-const TODAY = new Date().toISOString().slice(0, 10);
+const TODAY = todayIsoDate();
 
 export function SampleRequestForm() {
   const router = useRouter();

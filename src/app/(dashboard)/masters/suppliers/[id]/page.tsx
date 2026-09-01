@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { auth } from "@/core/auth/auth";
 import { getSupplierById } from "@/modules/suppliers/supplier.service";
-import { SupplierForm } from "../SupplierForm";
+import { SupplierEditFormClient } from "./SupplierEditFormClient";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 
 export default async function EditSupplierPage({ params }: { params: Promise<{ id: string }> }) {
@@ -25,11 +25,9 @@ export default async function EditSupplierPage({ params }: { params: Promise<{ i
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">Code: {supplier.code}</p>
       </div>
 
-      <SupplierForm
+      <SupplierEditFormClient
         key={`form-${id}`}
-        submitUrl={`/api/v1/suppliers/${id}`}
-        method="PATCH"
-        redirectTo="/masters/suppliers"
+        id={id}
         initialValues={{
           code: supplier.code,
           name: supplier.name,

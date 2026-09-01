@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { Modal } from "@/components/ui/Modal";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { todayIsoDate } from "@/lib/date";
 
 interface InvoiceItem {
   id: string;
@@ -87,11 +88,23 @@ interface PaymentTypeOption {
   name: string;
 }
 
+// Covers 3 distinct local status domains on this one detail page (the
+// Custom Invoice header itself, its Payments, and its Credit Notes) — kept
+// as one flat map here rather than 3 separate files since DRAFT/CANCELLED
+// are the only values shared between domains and nothing outside this page
+// needs any of them.
 const STATUS_STYLES: Record<string, string> = {
   DRAFT: "bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400",
   CANCELLED: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
   RECORDED: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400",
   ISSUED: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400",
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  DRAFT: "Draft",
+  CANCELLED: "Cancelled",
+  RECORDED: "Recorded",
+  ISSUED: "Issued",
 };
 
 const CREDIT_NOTE_TYPE_LABELS: Record<string, string> = {
@@ -108,7 +121,7 @@ export function CustomInvoiceWorkflowPanel({ invoice }: { invoice: CustomInvoice
 
   const [paymentTypes, setPaymentTypes] = useState<PaymentTypeOption[]>([]);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
-  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10));
+  const [paymentDate, setPaymentDate] = useState(todayIsoDate());
   const [paymentAmount, setPaymentAmount] = useState("");
   const [paymentTypeId, setPaymentTypeId] = useState("");
   const [paymentReference, setPaymentReference] = useState("");
@@ -116,7 +129,7 @@ export function CustomInvoiceWorkflowPanel({ invoice }: { invoice: CustomInvoice
   const [isRecordingPayment, setIsRecordingPayment] = useState(false);
 
   const [showCreditNoteModal, setShowCreditNoteModal] = useState(false);
-  const [creditNoteDate, setCreditNoteDate] = useState(new Date().toISOString().slice(0, 10));
+  const [creditNoteDate, setCreditNoteDate] = useState(todayIsoDate());
   const [creditNoteType, setCreditNoteType] = useState<"OVERALL_DISCOUNT" | "PRODUCT_WISE" | "PRODUCT_RETURN">("OVERALL_DISCOUNT");
   const [creditNoteReason, setCreditNoteReason] = useState("");
   const [creditNoteAmount, setCreditNoteAmount] = useState("");
@@ -174,7 +187,7 @@ export function CustomInvoiceWorkflowPanel({ invoice }: { invoice: CustomInvoice
   };
 
   const openPaymentModal = () => {
-    setPaymentDate(new Date().toISOString().slice(0, 10));
+    setPaymentDate(todayIsoDate());
     setPaymentAmount("");
     setPaymentTypeId("");
     setPaymentReference("");
@@ -212,7 +225,7 @@ export function CustomInvoiceWorkflowPanel({ invoice }: { invoice: CustomInvoice
   };
 
   const openCreditNoteModal = () => {
-    setCreditNoteDate(new Date().toISOString().slice(0, 10));
+    setCreditNoteDate(todayIsoDate());
     setCreditNoteType("OVERALL_DISCOUNT");
     setCreditNoteReason("");
     setCreditNoteAmount("");
@@ -273,7 +286,7 @@ export function CustomInvoiceWorkflowPanel({ invoice }: { invoice: CustomInvoice
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
-        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[invoice.status] ?? ""}`}>{invoice.status}</span>
+        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[invoice.status] ?? ""}`}>{STATUS_LABELS[invoice.status] ?? invoice.status}</span>
         <span className="text-sm text-zinc-500 dark:text-zinc-400">
           {invoice.invoiceType === "TAX_INVOICE" ? "Tax Invoice" : "Proforma Invoice"} · Series: {invoice.invoiceSeries.name}
         </span>
@@ -440,7 +453,7 @@ export function CustomInvoiceWorkflowPanel({ invoice }: { invoice: CustomInvoice
                     <td className="px-3 py-2">{p.referenceNote ?? "—"}</td>
                     <td className="px-3 py-2">{p.receivedBy.fullName}</td>
                     <td className="px-3 py-2">
-                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[p.status] ?? ""}`}>{p.status}</span>
+                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[p.status] ?? ""}`}>{STATUS_LABELS[p.status] ?? p.status}</span>
                     </td>
                     <td className="px-3 py-2">
                       {p.status === "RECORDED" && (
@@ -492,7 +505,7 @@ export function CustomInvoiceWorkflowPanel({ invoice }: { invoice: CustomInvoice
                     <td className="px-3 py-2">{cn.reason ?? "—"}</td>
                     <td className="px-3 py-2">₹{Number(cn.totalAmount).toFixed(2)}</td>
                     <td className="px-3 py-2">
-                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[cn.status] ?? ""}`}>{cn.status}</span>
+                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[cn.status] ?? ""}`}>{STATUS_LABELS[cn.status] ?? cn.status}</span>
                     </td>
                     <td className="px-3 py-2">
                       {cn.status === "ISSUED" && (

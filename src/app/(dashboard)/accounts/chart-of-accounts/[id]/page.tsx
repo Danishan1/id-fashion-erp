@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { auth } from "@/core/auth/auth";
 import { getChartOfAccountById } from "@/modules/accounts/chart-of-account.service";
-import { ChartOfAccountForm } from "../ChartOfAccountForm";
+import { ChartOfAccountEditFormClient } from "./ChartOfAccountEditFormClient";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 
 export default async function EditChartOfAccountPage({ params }: { params: Promise<{ id: string }> }) {
@@ -25,12 +25,9 @@ export default async function EditChartOfAccountPage({ params }: { params: Promi
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">Code: {account.code}</p>
       </div>
 
-      <ChartOfAccountForm
+      <ChartOfAccountEditFormClient
         key={id}
-        currentId={id}
-        submitUrl={`/api/v1/chart-of-accounts/${id}`}
-        method="PATCH"
-        redirectTo="/accounts/chart-of-accounts"
+        id={id}
         initialValues={{
           code: account.code,
           name: account.name,

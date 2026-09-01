@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 
@@ -10,6 +9,7 @@ export interface EmployeeFormValues {
   departmentId: string;
   shiftId: string;
   designationId: string;
+  employeeCategoryId: string;
   reportsToId: string;
   phone: string;
   email: string;
@@ -23,6 +23,7 @@ const EMPTY_VALUES: EmployeeFormValues = {
   departmentId: "",
   shiftId: "",
   designationId: "",
+  employeeCategoryId: "",
   reportsToId: "",
   phone: "",
   email: "",
@@ -53,21 +54,27 @@ interface EmployeeOption {
   employeeCode: string;
 }
 
+interface EmployeeCategoryOption {
+  id: string;
+  name: string;
+}
+
 interface EmployeeFormProps {
   initialValues?: EmployeeFormValues;
   submitUrl: string;
   method: "POST" | "PATCH";
-  redirectTo: string;
+  onSuccess: () => void;
+  onCancel: () => void;
   /** Excluded from the "Reports To" options — an employee can't report to themselves. Undefined on create (nothing to exclude yet). */
   excludeEmployeeId?: string;
 }
 
-export function EmployeeForm({ initialValues, submitUrl, method, redirectTo, excludeEmployeeId }: EmployeeFormProps) {
-  const router = useRouter();
+export function EmployeeForm({ initialValues, submitUrl, method, onSuccess, onCancel, excludeEmployeeId }: EmployeeFormProps) {
   const [values, setValues] = useState<EmployeeFormValues>(initialValues ?? EMPTY_VALUES);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [designations, setDesignations] = useState<Designation[]>([]);
+  const [employeeCategories, setEmployeeCategories] = useState<EmployeeCategoryOption[]>([]);
   const [managers, setManagers] = useState<EmployeeOption[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -85,6 +92,10 @@ export function EmployeeForm({ initialValues, submitUrl, method, redirectTo, exc
       .then((res) => res.json())
       .then((body) => setDesignations(body.data ?? []))
       .catch(() => setDesignations([]));
+    fetch("/api/v1/employee-categories?pageSize=200")
+      .then((res) => res.json())
+      .then((body) => setEmployeeCategories(body.data ?? []))
+      .catch(() => setEmployeeCategories([]));
     fetch("/api/v1/employees?pageSize=500")
       .then((res) => res.json())
       .then((body) => setManagers(body.data ?? []))
@@ -139,12 +150,11 @@ export function EmployeeForm({ initialValues, submitUrl, method, redirectTo, exc
       return;
     }
 
-    router.push(redirectTo);
-    router.refresh();
+    onSuccess();
   };
 
   return (
-    <form onSubmit={handleSubmit} className="max-w-xl space-y-4">
+    <form onSubmit={handleSubmit} className="space-y-4">
       <div className="grid grid-cols-2 gap-4">
         <FormField label="Employee Code" htmlFor="employeeCode" required>
           <input
@@ -233,21 +243,39 @@ export function EmployeeForm({ initialValues, submitUrl, method, redirectTo, exc
         </select>
       </FormField>
 
-      <FormField label="Shift" htmlFor="shiftId">
-        <select id="shiftId" value={values.shiftId} onChange={(e) => setValues({ ...values, shiftId: e.target.value })} className={textInputClass()}>
-          <option value="">— None —</option>
-          {shifts.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name} ({s.startTime})
-            </option>
-          ))}
-        </select>
-      </FormField>
+      <div className="grid grid-cols-2 gap-4">
+        <FormField label="Shift" htmlFor="shiftId">
+          <select id="shiftId" value={values.shiftId} onChange={(e) => setValues({ ...values, shiftId: e.target.value })} className={textInputClass()}>
+            <option value="">— None —</option>
+            {shifts.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name} ({s.startTime})
+              </option>
+            ))}
+          </select>
+        </FormField>
+        <FormField label="Employee Category" htmlFor="employeeCategoryId">
+          <select
+            id="employeeCategoryId"
+            value={values.employeeCategoryId}
+            onChange={(e) => setValues({ ...values, employeeCategoryId: e.target.value })}
+            className={textInputClass()}
+          >
+            <option value="">— None —</option>
+            {employeeCategories.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </FormField>
+      </div>
 
       <div className="grid grid-cols-2 gap-4">
         <FormField label="Phone" htmlFor="phone">
           <input
             id="phone"
+            type="tel"
             value={values.phone}
             onChange={(e) => setValues({ ...values, phone: e.target.value })}
             className={textInputClass()}
@@ -275,20 +303,20 @@ export function EmployeeForm({ initialValues, submitUrl, method, redirectTo, exc
 
       {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
 
-      <div className="flex gap-3">
+      <div className="flex justify-end gap-3 pt-2">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+        >
+          Cancel
+        </button>
         <button
           type="submit"
           disabled={isSubmitting}
-          className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
+          className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
         >
           {isSubmitting ? "Saving…" : "Save"}
-        </button>
-        <button
-          type="button"
-          onClick={() => router.push(redirectTo)}
-          className="rounded-md border border-zinc-300 px-4 py-2 text-sm text-zinc-700 dark:border-zinc-700 dark:text-zinc-200"
-        >
-          Cancel
         </button>
       </div>
     </form>

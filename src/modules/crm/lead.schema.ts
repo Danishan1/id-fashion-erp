@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { optionalPhoneSchema } from "@/lib/validation";
 
 // Mirrors the existing EnquirySource enum's values exactly (Lead reuses that
 // enum directly — see the migration report, no new source-taxonomy needed).
@@ -8,7 +9,7 @@ export const LEAD_STATUSES = ["NEW", "CONTACTED", "QUALIFIED", "PROPOSAL", "NEGO
 export const createLeadSchema = z.object({
   name: z.string().min(1, "Name is required").max(150),
   email: z.string().email("Invalid email").optional().or(z.literal("")),
-  phone: z.string().max(40).optional().or(z.literal("")),
+  phone: optionalPhoneSchema,
   companyName: z.string().max(190).optional().or(z.literal("")),
   source: z.enum(LEAD_SOURCES).default("OTHER"),
   campaignId: z.string().uuid().optional().or(z.literal("")),

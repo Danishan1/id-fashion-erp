@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { auth } from "@/core/auth/auth";
 import { getMaterialById } from "@/modules/products/product.service";
 import type { MATERIAL_CATEGORIES } from "@/modules/products/product.schema";
-import { MaterialForm } from "../MaterialForm";
+import { MaterialEditFormClient } from "./MaterialEditFormClient";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 
 export default async function EditMaterialPage({ params }: { params: Promise<{ id: string }> }) {
@@ -26,11 +26,9 @@ export default async function EditMaterialPage({ params }: { params: Promise<{ i
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">Item Code: {material.styleCode}</p>
       </div>
 
-      <MaterialForm
+      <MaterialEditFormClient
         key={id}
-        submitUrl={`/api/v1/materials/${id}`}
-        method="PATCH"
-        redirectTo="/masters/materials"
+        id={id}
         initialValues={{
           styleCode: material.styleCode,
           styleName: material.styleName,
