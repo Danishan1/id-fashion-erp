@@ -6,6 +6,7 @@ import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { FilePreviewModal } from "@/components/ui/FilePreviewModal";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { Modal } from "@/components/ui/Modal";
+import { formatCategoryLabel } from "@/lib/format-category-label";
 import { STATUS_BADGE_CLASS, STATUS_LABELS } from "./statusLabels";
 import { REQUEST_TYPE_BADGE_CLASS, REQUEST_TYPE_LABELS } from "./requestTypeLabels";
 import { MaterialRequestTimeline } from "./MaterialRequestTimeline";
@@ -24,6 +25,13 @@ interface LinkedPurchaseOrderItem {
   purchaseOrder: { id: string; orderNumber: string; status: string };
 }
 
+interface LocationOption {
+  id: string;
+  code: string;
+  materialCategory: string | null;
+  isActive: boolean;
+}
+
 interface LineRow {
   id: string;
   requestedQuantity: string;
@@ -40,6 +48,8 @@ interface LineRow {
   dye: { id: string; name: string; pantone: string | null } | null;
   uom: { id: string; code: string };
   purchaseOrderItems: LinkedPurchaseOrderItem[];
+  /** Most recent pick location — traceability only, see the schema's own comment. */
+  warehouseLocation: { id: string; code: string } | null;
 }
 
 interface AttachmentRow {
@@ -106,6 +116,8 @@ export function MaterialRequestWorkflowPanel({
 
   const [issuingLine, setIssuingLine] = useState<LineRow | null>(null);
   const [issueQty, setIssueQty] = useState("");
+  const [issueLocationId, setIssueLocationId] = useState("");
+  const [locations, setLocations] = useState<LocationOption[]>([]);
 
   const [showGenerate, setShowGenerate] = useState(false);
 
@@ -119,6 +131,17 @@ export function MaterialRequestWorkflowPanel({
       .then((res) => res.json())
       .then((body) => setAttachments(body.data ?? []));
   }, [materialRequestId]);
+
+  // The request's own warehouse never changes across this panel's lifetime,
+  // so this only needs to run once — scoped to that warehouse's locations
+  // for the Issue modal's optional Location picker.
+  useEffect(() => {
+    fetch(`/api/v1/warehouses/${request.warehouse.id}/locations`)
+      .then((res) => res.json())
+      .then((body) => setLocations((body.data ?? []).filter((l: LocationOption) => l.isActive)))
+      .catch(() => setLocations([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const fetchAttachments = async () => {
     const res = await fetch(`/api/v1/material-requests/${materialRequestId}/attachments`);
@@ -169,7 +192,7 @@ export function MaterialRequestWorkflowPanel({
         fetch(`/api/v1/material-requests/lines/${issuingLine.id}/issue`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ issueQuantity: Number(issueQty) }),
+          body: JSON.stringify({ issueQuantity: Number(issueQty), warehouseLocationId: issueLocationId || undefined }),
         }),
       "Failed to issue this line."
     );
@@ -346,6 +369,7 @@ export function MaterialRequestWorkflowPanel({
                 <th className="py-1 pr-3 font-medium">Requested</th>
                 <th className="py-1 pr-3 font-medium">Available Stock</th>
                 <th className="py-1 pr-3 font-medium">Issued</th>
+                <th className="py-1 pr-3 font-medium">Location</th>
                 <th className="py-1 pr-3 font-medium">Purchase-Ordered</th>
                 <th className="py-1 pr-3 font-medium">Purchase-Received</th>
                 <th className="py-1 pr-3 font-medium">Remaining</th>
@@ -383,6 +407,7 @@ export function MaterialRequestWorkflowPanel({
                     <td className="py-2 pr-3 text-zinc-700 dark:text-zinc-200">
                       {line.issuedQuantity} {line.uom.code}
                     </td>
+                    <td className="py-2 pr-3 text-zinc-500">{line.warehouseLocation?.code ?? "—"}</td>
                     <td className="py-2 pr-3 text-zinc-700 dark:text-zinc-200">
                       {line.purchaseOrderedQuantity > 0 ? `${line.purchaseOrderedQuantity} ${line.uom.code}` : "—"}
                     </td>
@@ -402,6 +427,7 @@ export function MaterialRequestWorkflowPanel({
                           onClick={() => {
                             setIssuingLine(line);
                             setIssueQty(String(line.remainingQuantity));
+                            setIssueLocationId("");
                           }}
                           className="text-xs font-medium text-indigo-600 hover:text-indigo-500"
                         >
@@ -505,6 +531,34 @@ export function MaterialRequestWorkflowPanel({
                 onChange={(e) => setIssueQty(e.target.value)}
                 className={textInputClass()}
               />
+            </FormField>
+            <FormField label="Location (optional)" htmlFor="issueLocationId">
+              <select
+                id="issueLocationId"
+                value={issueLocationId}
+                onChange={(e) => setIssueLocationId(e.target.value)}
+                className={textInputClass()}
+              >
+                <option value="">— No specific location —</option>
+                {locations.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.code}
+                    {l.materialCategory ? ` (${formatCategoryLabel(l.materialCategory)})` : ""}
+                  </option>
+                ))}
+              </select>
+              {(() => {
+                const location = locations.find((l) => l.id === issueLocationId);
+                if (!issuingLine.material.materialCategory || !location?.materialCategory) return null;
+                if (issuingLine.material.materialCategory === location.materialCategory) return null;
+                return (
+                  <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                    &ldquo;{location.code}&rdquo; is tagged for {formatCategoryLabel(location.materialCategory)}, but this
+                    material is {formatCategoryLabel(issuingLine.material.materialCategory)}. You can still issue — just
+                    double-check this is intentional.
+                  </p>
+                );
+              })()}
             </FormField>
             <div className="flex justify-end gap-2">
               <button type="button" onClick={() => setIssuingLine(null)} className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800">

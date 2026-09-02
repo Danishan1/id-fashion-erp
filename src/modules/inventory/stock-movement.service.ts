@@ -169,6 +169,7 @@ export async function createStockMovement(actor: ActorContext, input: CreateStoc
           uomId: item.uomId,
           quantity: item.quantity,
           remarks: item.remarks || null,
+          warehouseLocationId: item.warehouseLocationId || null,
         }))
       );
 
@@ -188,6 +189,9 @@ export async function createStockMovement(actor: ActorContext, input: CreateStoc
             quantity: -baseQuantity,
             referenceModule: "STOCK_MOVEMENT",
             referenceRecordId: created.id,
+            // Source-side only — the destination side of a Transfer has no
+            // location field this pass (see the schema's own doc comment).
+            warehouseLocationId: item.warehouseLocationId || null,
           });
           await recordInventoryTransaction(tx, actor, {
             productId: item.productId,
@@ -205,6 +209,7 @@ export async function createStockMovement(actor: ActorContext, input: CreateStoc
             quantity: -baseQuantity,
             referenceModule: "STOCK_MOVEMENT",
             referenceRecordId: created.id,
+            warehouseLocationId: item.warehouseLocationId || null,
           });
         } else {
           // ADJUSTMENT — the item's own signed quantity carries the meaning
@@ -217,6 +222,7 @@ export async function createStockMovement(actor: ActorContext, input: CreateStoc
             quantity: baseQuantity,
             referenceModule: "STOCK_MOVEMENT",
             referenceRecordId: created.id,
+            warehouseLocationId: item.warehouseLocationId || null,
           });
         }
       }

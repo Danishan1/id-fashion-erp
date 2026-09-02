@@ -2,7 +2,7 @@ import type { Prisma } from "@prisma/client";
 import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import type { ListQuery } from "@/lib/list-query";
-import type { WarehouseInput, WarehouseUpdateInput, WarehouseLocationInput } from "./warehouse.schema";
+import type { WarehouseInput, WarehouseUpdateInput, WarehouseLocationInput, WarehouseLocationUpdateInput } from "./warehouse.schema";
 import { WarehouseLocationRepository, WarehouseRepository } from "./warehouse.repository";
 
 interface ActorContext {
@@ -110,6 +110,23 @@ export async function updateWarehouse(actor: ActorContext, id: string, input: Wa
   return updated;
 }
 
+export async function listWarehouseLocations(companyId: string, warehouseId: string) {
+  await getWarehouseById(companyId, warehouseId);
+  return WarehouseLocationRepository.findMany(warehouseId);
+}
+
+/** No companyId column on WarehouseLocation itself — every lookup must go
+ * through the warehouse's own companyId, and the location must actually
+ * belong to the specific warehouse in the URL (not just the same company),
+ * matching this project's own repeated tenant/parent-scoping discipline. */
+async function assertLocationBelongsToWarehouse(companyId: string, warehouseId: string, locationId: string) {
+  const location = await WarehouseLocationRepository.findByIdWithWarehouse(locationId);
+  if (!location || location.warehouseId !== warehouseId || location.warehouse.companyId !== companyId) {
+    throw new BusinessRuleError("NOT_FOUND", "Location not found.", { id: locationId });
+  }
+  return location;
+}
+
 export async function createWarehouseLocation(
   actor: ActorContext,
   warehouseId: string,
@@ -128,6 +145,7 @@ export async function createWarehouseLocation(
     zone: input.zone || null,
     rack: input.rack || null,
     bin: input.bin || null,
+    materialCategory: input.materialCategory || null,
   });
 
   await writeAuditLog({
@@ -140,4 +158,67 @@ export async function createWarehouseLocation(
   });
 
   return location;
+}
+
+export async function updateWarehouseLocation(
+  actor: ActorContext,
+  warehouseId: string,
+  locationId: string,
+  input: WarehouseLocationUpdateInput
+) {
+  const before = await assertLocationBelongsToWarehouse(actor.companyId, warehouseId, locationId);
+
+  if (input.code !== undefined && input.code !== before.code) {
+    const existing = await WarehouseLocationRepository.findByCode(warehouseId, input.code, locationId);
+    if (existing) {
+      throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Location code "${input.code}" already exists in this warehouse.`);
+    }
+  }
+
+  const data: Prisma.WarehouseLocationUncheckedUpdateInput = {};
+  if (input.code !== undefined) data.code = input.code;
+  if (input.zone !== undefined) data.zone = input.zone || null;
+  if (input.rack !== undefined) data.rack = input.rack || null;
+  if (input.bin !== undefined) data.bin = input.bin || null;
+  if (input.materialCategory !== undefined) data.materialCategory = input.materialCategory || null;
+
+  const updated = await WarehouseLocationRepository.update(locationId, data);
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "warehouse_locations",
+    recordId: locationId,
+    action: "UPDATE",
+    oldValues: before,
+    newValues: updated,
+  });
+
+  return updated;
+}
+
+/** Soft-deactivate only — no hard DELETE route. WarehouseLocation rows are
+ * already referenced by real Goods Receipt lines, Fabric Rolls, and ledger
+ * entries; matches every other master's soft-delete convention rather than
+ * risking orphaning that history. */
+export async function setWarehouseLocationActiveStatus(
+  actor: ActorContext,
+  warehouseId: string,
+  locationId: string,
+  isActive: boolean
+) {
+  const before = await assertLocationBelongsToWarehouse(actor.companyId, warehouseId, locationId);
+  const updated = await WarehouseLocationRepository.update(locationId, { isActive });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "warehouse_locations",
+    recordId: locationId,
+    action: "UPDATE",
+    oldValues: { isActive: before.isActive },
+    newValues: { isActive },
+  });
+
+  return updated;
 }

@@ -10,6 +10,7 @@ const DETAIL_INCLUDE = {
     include: {
       product: { select: { id: true, styleName: true, styleCode: true, materialCategory: true } },
       uom: { select: { id: true, code: true } },
+      warehouseLocation: { select: { id: true, code: true, materialCategory: true } },
     },
   },
 } satisfies Prisma.StockMovementInclude;

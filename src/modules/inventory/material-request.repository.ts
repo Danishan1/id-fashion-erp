@@ -21,6 +21,7 @@ const ITEM_INCLUDE = {
   dye: { select: { id: true, name: true, pantone: true } },
   uom: { select: { id: true, code: true, name: true, baseUnitId: true, conversionFactor: true } },
   purchaseOrderItems: ACTIVE_PURCHASE_ORDER_ITEMS_INCLUDE,
+  warehouseLocation: { select: { id: true, code: true, materialCategory: true } },
 } as const;
 
 export const MaterialRequestRepository = {
@@ -142,10 +143,22 @@ export const MaterialRequestItemRepository = {
    * `where` clause so two concurrent issue attempts against the same line
    * can never both succeed past requestedQuantity. Takes `tx` because the
    * guard and the ledger write it protects must commit or roll back together. */
-  guardedIncrementIssued: (tx: Prisma.TransactionClient, lineId: string, requestedQuantity: number, incrementBy: number) =>
+  guardedIncrementIssued: (
+    tx: Prisma.TransactionClient,
+    lineId: string,
+    requestedQuantity: number,
+    incrementBy: number,
+    warehouseLocationId?: string | null
+  ) =>
     tx.materialRequestItem.updateMany({
       where: { id: lineId, issuedQuantity: { lte: requestedQuantity - incrementBy } },
-      data: { issuedQuantity: { increment: incrementBy } },
+      data: {
+        issuedQuantity: { increment: incrementBy },
+        // Traceability only — records the most recent pick location on the
+        // line itself (not a full per-issue history, matching this project's
+        // "cache-only convenience column" precedent, e.g. Lot.currentStageId).
+        ...(warehouseLocationId !== undefined ? { warehouseLocationId } : {}),
+      },
     }),
 
   /** Guarded increment for the Goods-Receipt-linked rollup — same idiom as

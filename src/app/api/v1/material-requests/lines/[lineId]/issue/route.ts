@@ -14,11 +14,12 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
     await PermissionService.assert(session.user.id, "inventory", "edit");
 
     const { lineId } = await params;
-    const { issueQuantity } = issueMaterialRequestLineSchema.parse(await req.json());
+    const { issueQuantity, warehouseLocationId } = issueMaterialRequestLineSchema.parse(await req.json());
     const line = await issueMaterialRequestLine(
       { companyId: session.user.companyId, userId: session.user.id },
       lineId,
-      issueQuantity
+      issueQuantity,
+      warehouseLocationId || null
     );
 
     return NextResponse.json({ data: line });

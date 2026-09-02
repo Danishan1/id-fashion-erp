@@ -433,7 +433,12 @@ export async function updateMaterialRequestLines(actor: ActorContext, id: string
  * is actually on hand at the request's warehouse (checked before the guard,
  * in the material's base UOM since StockBalance is always base-UOM).
  */
-export async function issueMaterialRequestLine(actor: ActorContext, lineId: string, issueQuantity: number) {
+export async function issueMaterialRequestLine(
+  actor: ActorContext,
+  lineId: string,
+  issueQuantity: number,
+  warehouseLocationId?: string | null
+) {
   const line = await MaterialRequestItemRepository.findWithRequestOwner(lineId);
   if (!line || line.materialRequest.companyId !== actor.companyId) {
     throw new BusinessRuleError("NOT_FOUND", "Material request line not found.", { id: lineId });
@@ -485,7 +490,8 @@ export async function issueMaterialRequestLine(actor: ActorContext, lineId: stri
       tx,
       lineId,
       Number(line.requestedQuantity),
-      issueQuantity
+      issueQuantity,
+      warehouseLocationId || null
     );
     if (result.count === 0) {
       throw new BusinessRuleError(
@@ -502,6 +508,7 @@ export async function issueMaterialRequestLine(actor: ActorContext, lineId: stri
       quantity: -baseQuantity,
       referenceModule: "MATERIAL_REQUEST",
       referenceRecordId: lineId,
+      warehouseLocationId: warehouseLocationId || null,
     });
   });
 

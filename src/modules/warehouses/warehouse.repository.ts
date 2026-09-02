@@ -21,7 +21,20 @@ export const WarehouseRepository = {
 };
 
 export const WarehouseLocationRepository = {
-  findByCode: (warehouseId: string, code: string) => prisma.warehouseLocation.findFirst({ where: { warehouseId, code } }),
+  findByCode: (warehouseId: string, code: string, excludeId?: string) =>
+    prisma.warehouseLocation.findFirst({
+      where: { warehouseId, code, ...(excludeId ? { id: { not: excludeId } } : {}) },
+    }),
+
+  findMany: (warehouseId: string) => prisma.warehouseLocation.findMany({ where: { warehouseId }, orderBy: { code: "asc" } }),
+
+  /** No companyId column on this model — company scoping must go through the
+   * included warehouse, never assumed from a bare id lookup. */
+  findByIdWithWarehouse: (id: string) =>
+    prisma.warehouseLocation.findUnique({ where: { id }, include: { warehouse: { select: { id: true, companyId: true } } } }),
 
   create: (data: Prisma.WarehouseLocationUncheckedCreateInput) => prisma.warehouseLocation.create({ data }),
+
+  update: (id: string, data: Prisma.WarehouseLocationUncheckedUpdateInput) =>
+    prisma.warehouseLocation.update({ where: { id }, data }),
 };

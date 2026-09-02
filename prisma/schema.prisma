@@ -891,14 +891,21 @@ model Warehouse {
 }
 
 model WarehouseLocation {
-  id          String   @id @default(uuid()) @db.Uuid
-  warehouseId String   @map("warehouse_id") @db.Uuid
-  code        String
-  zone        String?
-  rack        String?
-  bin         String?
-  isActive    Boolean  @default(true) @map("is_active")
-  createdAt   DateTime @default(now()) @map("created_at")
+  id               String            @id @default(uuid()) @db.Uuid
+  warehouseId      String            @map("warehouse_id") @db.Uuid
+  code             String
+  zone             String?
+  rack             String?
+  bin              String?
+  // Which kind of material this physical room/section is dedicated to (e.g.
+  // "Fabric Room" vs "Raw Material Room" within one Warehouse building) —
+  // nullable, since not every location needs one. Reuses Product's own
+  // MaterialCategory enum (not a new list) — advisory only: nothing rejects
+  // storing a mismatched material here, see the Zod-level warning built for
+  // this in the Goods Receipt / Stock Movement / Material Request UIs.
+  materialCategory MaterialCategory? @map("material_category")
+  isActive         Boolean           @default(true) @map("is_active")
+  createdAt        DateTime          @default(now()) @map("created_at")
 
   // NOTE: no companyId column of its own — any company-scoped lookup on a
   // warehouseLocationId FK must join through warehouse.companyId, never
@@ -907,6 +914,8 @@ model WarehouseLocation {
   goodsReceiptItems     GoodsReceiptItem[]
   fabricRolls           FabricRoll[]
   inventoryTransactions InventoryTransaction[]
+  stockMovementItems    StockMovementItem[]
+  materialRequestItems  MaterialRequestItem[]
 
   @@unique([warehouseId, code])
   @@map("warehouse_locations")
@@ -2875,6 +2884,12 @@ model MaterialRequestItem {
   // convention as MaterialRequest.purpose.
   damageReason             String?  @map("damage_reason")
   remarks                  String?
+  // Which room/section within the request's own warehouse this line should
+  // be issued from — traceability only, same reasoning as
+  // StockMovementItem.warehouseLocationId above (passed through to the
+  // ledger's existing warehouseLocationId; StockBalance has no location
+  // dimension, so getAvailableQuantity() stays warehouse-level).
+  warehouseLocationId      String?  @map("warehouse_location_id") @db.Uuid
   createdAt                DateTime @default(now()) @map("created_at")
   updatedAt                DateTime @updatedAt @map("updated_at")
 
@@ -2883,6 +2898,7 @@ model MaterialRequestItem {
   color              Color?              @relation(fields: [colorId], references: [id])
   dye                FabricDye?          @relation(fields: [dyeId], references: [id])
   uom                UnitOfMeasure       @relation(fields: [uomId], references: [id])
+  warehouseLocation  WarehouseLocation?  @relation(fields: [warehouseLocationId], references: [id])
   // Virtual back-relation only — the authoritative FK lives on
   // PurchaseOrderItem.materialRequestItemId (see that model). A line can
   // legitimately have more than one linked PurchaseOrderItem over its
@@ -3764,19 +3780,27 @@ model StockMovement {
 }
 
 model StockMovementItem {
-  id              String  @id @default(uuid()) @db.Uuid
-  stockMovementId String  @map("stock_movement_id") @db.Uuid
-  productId       String  @map("product_id") @db.Uuid
-  uomId           String  @map("uom_id") @db.Uuid
+  id                  String  @id @default(uuid()) @db.Uuid
+  stockMovementId     String  @map("stock_movement_id") @db.Uuid
+  productId           String  @map("product_id") @db.Uuid
+  uomId               String  @map("uom_id") @db.Uuid
   // TRANSFER / RETURN_TO_SUPPLIER: always positive (the quantity moved or
   // returned). ADJUSTMENT: signed — positive means stock found on a
   // physical count, negative means shrinkage/write-off.
-  quantity        Decimal @db.Decimal(18, 4)
-  remarks         String?
+  quantity            Decimal @db.Decimal(18, 4)
+  remarks             String?
+  // Which room/section within the SOURCE warehouse this line's stock is
+  // coming from — traceability only (passed straight through to the ledger's
+  // own existing warehouseLocationId, exactly like GoodsReceiptItem already
+  // does), not a stock-availability dimension: StockBalance has no location
+  // column, so getAvailableQuantity() stays warehouse-level. The destination
+  // side of a TRANSFER has no location field — out of scope for this pass.
+  warehouseLocationId String? @map("warehouse_location_id") @db.Uuid
 
-  stockMovement StockMovement @relation(fields: [stockMovementId], references: [id])
-  product       Product       @relation(fields: [productId], references: [id])
-  uom           UnitOfMeasure @relation(fields: [uomId], references: [id])
+  stockMovement     StockMovement      @relation(fields: [stockMovementId], references: [id])
+  product           Product            @relation(fields: [productId], references: [id])
+  uom               UnitOfMeasure      @relation(fields: [uomId], references: [id])
+  warehouseLocation WarehouseLocation? @relation(fields: [warehouseLocationId], references: [id])
 
   @@index([stockMovementId])
   @@map("stock_movement_items")

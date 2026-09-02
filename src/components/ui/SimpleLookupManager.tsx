@@ -34,7 +34,9 @@ interface SimpleLookupManagerProps {
   entityLabel?: string;
 }
 
-function emptyValues(fields: LookupField[]): Record<string, string> {
+/** Exported for reuse by ManageChildrenModal/ChildFormModal (src/components/ui/) — same declarative
+ * LookupField shape, generalized to a parent-scoped child collection instead of a global lookup. */
+export function emptyValues(fields: LookupField[]): Record<string, string> {
   return Object.fromEntries(fields.map((f) => [f.key, ""]));
 }
 
@@ -44,7 +46,7 @@ function emptyValues(fields: LookupField[]): Record<string, string> {
  * `null`, which Zod's `.optional().or(z.literal(""))` pattern rejects. Shared by handleSubmit and the
  * Active/Inactive toggle so both submission paths can never drift out of sync on this.
  */
-function buildSubmitPayload(fields: LookupField[], source: Record<string, unknown>): Record<string, string> {
+export function buildSubmitPayload(fields: LookupField[], source: Record<string, unknown>): Record<string, string> {
   return Object.fromEntries(
     fields.map((f) => {
       const raw = source[f.key];

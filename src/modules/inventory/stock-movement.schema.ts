@@ -10,6 +10,13 @@ export const stockMovementItemSchema = z.object({
   // any nonzero number, sign carries the meaning (found vs written off).
   quantity: z.coerce.number().refine((n) => n !== 0, "Quantity cannot be zero"),
   remarks: z.string().max(500).optional().or(z.literal("")),
+  // Which room/section within the SOURCE warehouse this line's stock comes
+  // from — traceability only, passed straight through to the shared ledger's
+  // own existing warehouseLocationId (see inventory.service.ts). Not
+  // validated against real per-location stock (StockBalance has no location
+  // dimension) — see the advisory, non-blocking category-mismatch warning in
+  // the UI instead.
+  warehouseLocationId: z.string().uuid().optional().or(z.literal("")),
 });
 export type StockMovementItemInput = z.infer<typeof stockMovementItemSchema>;
 

@@ -163,27 +163,27 @@ export function DataTable<T extends { id: string }>({
                   {col.header}
                 </th>
               ))}
-              {(rowHref || onEditRow) && <th className="px-4 py-2 font-medium">Actions</th>}
+              {(rowHref || onEditRow || rowActions) && <th className="px-4 py-2 font-medium">Actions</th>}
             </tr>
           </thead>
           <tbody>
             {error && (
               <tr>
-                <td colSpan={columns.length + (rowHref || onEditRow ? 1 : 0)} className="px-4 py-6 text-center text-red-600 dark:text-red-400">
+                <td colSpan={columns.length + (rowHref || onEditRow || rowActions ? 1 : 0)} className="px-4 py-6 text-center text-red-600 dark:text-red-400">
                   {error}
                 </td>
               </tr>
             )}
             {!error && isLoading && (
               <tr>
-                <td colSpan={columns.length + (rowHref || onEditRow ? 1 : 0)} className="px-4 py-6 text-center text-zinc-500">
+                <td colSpan={columns.length + (rowHref || onEditRow || rowActions ? 1 : 0)} className="px-4 py-6 text-center text-zinc-500">
                   Loading…
                 </td>
               </tr>
             )}
             {!error && !isLoading && result?.data.length === 0 && (
               <tr>
-                <td colSpan={columns.length + (rowHref || onEditRow ? 1 : 0)} className="px-4 py-6 text-center text-zinc-500">
+                <td colSpan={columns.length + (rowHref || onEditRow || rowActions ? 1 : 0)} className="px-4 py-6 text-center text-zinc-500">
                   No records found.
                 </td>
               </tr>
@@ -215,7 +215,7 @@ export function DataTable<T extends { id: string }>({
                     }`}
                   >
                     {cells}
-                    {(rowHref || onEditRow) && (
+                    {(rowHref || onEditRow || rowActions) && (
                       <td className="px-4 py-2">
                         <div className="flex items-center gap-3">
                           {rowHref ? (
@@ -226,18 +226,18 @@ export function DataTable<T extends { id: string }>({
                             >
                               Edit
                             </Link>
-                          ) : (
+                          ) : onEditRow ? (
                             <button
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                onEditRow!(row);
+                                onEditRow(row);
                               }}
                               className="font-medium text-indigo-600 hover:text-indigo-500"
                             >
                               Edit
                             </button>
-                          )}
+                          ) : null}
                           {rowActions && (
                             <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                               {rowActions(row)}

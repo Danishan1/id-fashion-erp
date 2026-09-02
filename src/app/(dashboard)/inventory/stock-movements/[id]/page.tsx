@@ -77,6 +77,7 @@ export default async function StockMovementDetailPage({ params }: { params: Prom
                 <th className="px-4 py-2 text-left font-medium text-zinc-500">Material</th>
                 <th className="px-4 py-2 text-left font-medium text-zinc-500">Quantity</th>
                 <th className="px-4 py-2 text-left font-medium text-zinc-500">Unit</th>
+                <th className="px-4 py-2 text-left font-medium text-zinc-500">Location</th>
                 <th className="px-4 py-2 text-left font-medium text-zinc-500">Remarks</th>
               </tr>
             </thead>
@@ -91,6 +92,7 @@ export default async function StockMovementDetailPage({ params }: { params: Prom
                     {Number(item.quantity).toLocaleString()}
                   </td>
                   <td className="px-4 py-2 text-zinc-500">{item.uom.code}</td>
+                  <td className="px-4 py-2 text-zinc-500">{item.warehouseLocation?.code ?? "—"}</td>
                   <td className="px-4 py-2 text-zinc-500">{item.remarks ?? "—"}</td>
                 </tr>
               ))}

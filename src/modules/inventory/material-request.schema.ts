@@ -60,6 +60,12 @@ export type MaterialRequestStatusChangeInput = z.infer<typeof materialRequestSta
 
 export const issueMaterialRequestLineSchema = z.object({
   issueQuantity: z.coerce.number().positive("Quantity must be greater than 0"),
+  // Which room/section within the request's own warehouse this issue is
+  // physically picked from — traceability only (see
+  // MaterialRequestItem.warehouseLocationId's own schema comment). Picked at
+  // issue time by whoever actually pulls the stock, not at request-creation
+  // time by the requester.
+  warehouseLocationId: z.string().uuid().optional().or(z.literal("")),
 });
 export type IssueMaterialRequestLineInput = z.infer<typeof issueMaterialRequestLineSchema>;
 

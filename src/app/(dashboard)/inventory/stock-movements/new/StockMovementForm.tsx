@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { MaterialPicker } from "@/components/ui/MaterialPicker";
+import { formatCategoryLabel } from "@/lib/format-category-label";
 
 interface Option {
   id: string;
@@ -18,11 +19,19 @@ interface MaterialOption extends Option {
   baseUom: { id: string; code: string } | null;
 }
 
+interface LocationOption {
+  id: string;
+  code: string;
+  materialCategory: string | null;
+  isActive: boolean;
+}
+
 interface LineItem {
   productId: string;
   uomId: string;
   quantity: string;
   remarks: string;
+  warehouseLocationId: string;
 }
 
 const MOVEMENT_TYPES = [
@@ -32,7 +41,7 @@ const MOVEMENT_TYPES = [
 ] as const;
 
 function emptyLine(): LineItem {
-  return { productId: "", uomId: "", quantity: "", remarks: "" };
+  return { productId: "", uomId: "", quantity: "", remarks: "", warehouseLocationId: "" };
 }
 
 export function StockMovementForm() {
@@ -49,6 +58,11 @@ export function StockMovementForm() {
   const [suppliers, setSuppliers] = useState<Option[]>([]);
   const [materials, setMaterials] = useState<MaterialOption[]>([]);
   const [units, setUnits] = useState<Option[]>([]);
+  // Locations within the SOURCE warehouse only — a line's stock always
+  // leaves from `warehouseId`, so the picker is scoped to that warehouse
+  // regardless of movement type (even Transfer's destination side has no
+  // location field this pass, see stock-movement.schema.ts).
+  const [locations, setLocations] = useState<LocationOption[]>([]);
 
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -71,8 +85,25 @@ export function StockMovementForm() {
       .then((body) => setUnits(body.data ?? []));
   }, []);
 
+  useEffect(() => {
+    const request = warehouseId
+      ? fetch(`/api/v1/warehouses/${warehouseId}/locations`).then((res) => res.json())
+      : Promise.resolve({ data: [] });
+    request
+      .then((body) => setLocations((body.data ?? []).filter((l: LocationOption) => l.isActive)))
+      .catch(() => setLocations([]));
+  }, [warehouseId]);
+
   const updateLine = (index: number, patch: Partial<LineItem>) => {
     setLines((prev) => prev.map((line, i) => (i === index ? { ...line, ...patch } : line)));
+  };
+
+  // Changing the source warehouse invalidates every line's already-picked
+  // location (it belonged to the old warehouse) — cleared explicitly rather
+  // than silently submitting a stale, cross-warehouse location id.
+  const onWarehouseChange = (value: string) => {
+    setWarehouseId(value);
+    setLines((prev) => prev.map((line) => ({ ...line, warehouseLocationId: "" })));
   };
 
   const onMaterialChange = (index: number, productId: string) => {
@@ -96,6 +127,7 @@ export function StockMovementForm() {
       uomId: line.uomId,
       quantity: Number(line.quantity),
       remarks: line.remarks || undefined,
+      warehouseLocationId: line.warehouseLocationId || undefined,
     }));
 
     try {
@@ -150,7 +182,7 @@ export function StockMovementForm() {
 
       <div className="grid grid-cols-2 gap-4">
         <FormField label={movementType === "TRANSFER" ? "From Warehouse" : "Warehouse"} htmlFor="warehouseId" required>
-          <select id="warehouseId" required value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)} className={textInputClass()}>
+          <select id="warehouseId" required value={warehouseId} onChange={(e) => onWarehouseChange(e.target.value)} className={textInputClass()}>
             <option value="">— Select —</option>
             {warehouses.map((w) => (
               <option key={w.id} value={w.id}>
@@ -269,6 +301,37 @@ export function StockMovementForm() {
                 onChange={(e) => updateLine(index, { quantity: e.target.value })}
                 className={textInputClass()}
               />
+            </FormField>
+
+            <FormField label="Location (optional)" htmlFor={`location-${index}`}>
+              <select
+                id={`location-${index}`}
+                value={line.warehouseLocationId}
+                onChange={(e) => updateLine(index, { warehouseLocationId: e.target.value })}
+                disabled={!warehouseId}
+                className={textInputClass()}
+              >
+                <option value="">{warehouseId ? "— No specific location —" : "Pick a warehouse first"}</option>
+                {locations.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.code}
+                    {l.materialCategory ? ` (${formatCategoryLabel(l.materialCategory)})` : ""}
+                  </option>
+                ))}
+              </select>
+              {(() => {
+                const material = materials.find((m) => m.id === line.productId);
+                const location = locations.find((l) => l.id === line.warehouseLocationId);
+                if (!material?.materialCategory || !location?.materialCategory) return null;
+                if (material.materialCategory === location.materialCategory) return null;
+                return (
+                  <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                    &ldquo;{location.code}&rdquo; is tagged for {formatCategoryLabel(location.materialCategory)}, but this
+                    material is {formatCategoryLabel(material.materialCategory)}. You can still save — just double-check
+                    this is intentional.
+                  </p>
+                );
+              })()}
             </FormField>
 
             <FormField label="Remarks (optional)" htmlFor={`remarks-${index}`}>

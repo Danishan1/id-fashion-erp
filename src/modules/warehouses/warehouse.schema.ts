@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MATERIAL_CATEGORIES } from "@/modules/products/product.schema";
 
 export const WAREHOUSE_TYPES = [
   "RAW_MATERIAL",
@@ -27,5 +28,13 @@ export const warehouseLocationSchema = z.object({
   zone: z.string().max(50).optional().or(z.literal("")),
   rack: z.string().max(50).optional().or(z.literal("")),
   bin: z.string().max(50).optional().or(z.literal("")),
+  // Which kind of material this room/section is dedicated to — reuses
+  // Product's own category list (not a new enum). Advisory only, see
+  // warehouse.service.ts.
+  materialCategory: z.enum(MATERIAL_CATEGORIES).optional().or(z.literal("")),
 });
 export type WarehouseLocationInput = z.infer<typeof warehouseLocationSchema>;
+
+/** Partial variant for PATCH — only fields actually present in the request body are validated/updated. */
+export const warehouseLocationUpdateSchema = warehouseLocationSchema.partial();
+export type WarehouseLocationUpdateInput = z.infer<typeof warehouseLocationUpdateSchema>;
