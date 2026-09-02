@@ -63,5 +63,25 @@ registerReportPageMeta({
   key: "operator-wise-production",
   title: "Operator-wise Production",
   description: "Job Order progress entries aggregated by the Employee who performed the work.",
-  includeDateRange: false,
+});
+
+registerReportPageMeta({
+  category: CATEGORY,
+  key: "worker-output-register",
+  title: "Worker Output Register",
+  description: "Daily, weekly, or monthly output per worker, plus how many self-submitted entries are still Pending/Approved/Rejected.",
+  defaultFilters: { period: "day" },
+  filterFields: [
+    {
+      key: "period",
+      label: "Period",
+      type: "select",
+      options: [
+        { value: "day", label: "Day" },
+        { value: "week", label: "Week" },
+        { value: "month", label: "Month" },
+      ],
+    },
+    { key: "employeeId", label: "Employee", type: "select", optionsUrl: "/api/v1/employees?pageSize=500", optionsLabelKey: "fullName" },
+  ],
 });

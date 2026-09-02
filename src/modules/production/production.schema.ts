@@ -165,6 +165,35 @@ export const createQcInspectionSchema = z
   );
 export type CreateQcInspectionInput = z.infer<typeof createQcInspectionSchema>;
 
+// Worker self-entry (2026-09-02) — deliberately no employeeId/jobOrderAssignmentId
+// field: the service resolves both itself from the caller's own linked
+// Employee, so a worker can never submit progress crediting someone else.
+export const submitSelfProgressEntrySchema = z.object({
+  completedQuantity: z.coerce.number().min(0).default(0),
+  rejectedQuantity: z.coerce.number().min(0).default(0),
+  damagedQuantity: z.coerce.number().min(0).default(0),
+  remarks: z.string().max(500).optional().or(z.literal("")),
+});
+export type SubmitSelfProgressEntryInput = z.infer<typeof submitSelfProgressEntrySchema>;
+
+export const updatePendingProgressEntrySchema = z.object({
+  completedQuantity: z.coerce.number().min(0),
+  rejectedQuantity: z.coerce.number().min(0),
+  damagedQuantity: z.coerce.number().min(0),
+  remarks: z.string().max(500).optional().or(z.literal("")),
+});
+export type UpdatePendingProgressEntryInput = z.infer<typeof updatePendingProgressEntrySchema>;
+
+export const decideProgressEntrySchema = z.object({
+  approvalRemark: z.string().max(500).optional().or(z.literal("")),
+});
+export type DecideProgressEntryInput = z.infer<typeof decideProgressEntrySchema>;
+
+export const rejectProgressEntrySchema = z.object({
+  approvalRemark: z.string().min(1, "A remark is required to reject an entry").max(500),
+});
+export type RejectProgressEntryInput = z.infer<typeof rejectProgressEntrySchema>;
+
 export const defectTypeSchema = z.object({
   code: z.string().min(1).max(20),
   name: z.string().min(1).max(200),

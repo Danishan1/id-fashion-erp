@@ -8,6 +8,11 @@ export const createUserSchema = z.object({
   phone: optionalPhoneSchema,
   branchId: z.string().uuid("Pick a branch"),
   roleId: z.string().uuid("Pick a role"),
+  // Links this login to a real Employee record — the actual mechanism by
+  // which a shop-floor worker gets self-entry access (see
+  // resolveSelfEntryEmployee in job-order.service.ts). Optional: most users
+  // (office staff, management) have no corresponding Employee row to link.
+  employeeId: z.string().uuid().optional().or(z.literal("")),
 });
 export type CreateUserInput = z.infer<typeof createUserSchema>;
 
@@ -25,6 +30,7 @@ export const updateUserSchema = z.object({
   fullName: z.string().min(1, "Full name is required").max(200).optional(),
   email: z.string().email("Enter a valid email address").optional(),
   phone: optionalPhoneSchema,
+  employeeId: z.string().uuid().optional().or(z.literal("")),
 });
 export type UpdateUserInput = z.infer<typeof updateUserSchema>;
 

@@ -92,6 +92,8 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "BOM / MRP", href: "/bom-mrp", modules: ["bom_mrp"] },
       { label: "Production", href: "/production-orders", modules: ["production"] },
       { label: "Job Work Orders", href: "/production/job-work", modules: ["production"] },
+      { label: "My Work", href: "/production/my-work", modules: ["production"] },
+      { label: "Pending Approvals", href: "/production/approvals", modules: ["production"] },
     ],
   },
   {

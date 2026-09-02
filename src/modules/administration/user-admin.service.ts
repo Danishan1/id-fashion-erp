@@ -15,6 +15,21 @@ export async function listUsers(companyId: string) {
   return UserAdminRepository.findMany(companyId);
 }
 
+/** Shared by createUser/updateUser — the Employee must belong to this
+ * company, and (User.employeeId being @unique) must not already be linked to
+ * a different login. `excludeUserId` lets an update re-save a user's own
+ * already-linked employeeId without tripping the "already linked" check. */
+async function assertEmployeeLinkable(companyId: string, employeeId: string, excludeUserId?: string) {
+  const employee = await UserAdminScopeRepository.findEmployeeCompanyId(employeeId);
+  if (!employee || employee.companyId !== companyId) {
+    throw new BusinessRuleError("NOT_FOUND", "Employee not found.", { id: employeeId });
+  }
+  const linkedUser = await UserAdminScopeRepository.findUserIdByEmployeeId(employeeId);
+  if (linkedUser && linkedUser.id !== excludeUserId) {
+    throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", "This Employee is already linked to another user login.", { employeeId });
+  }
+}
+
 /**
  * The only way to create a non-Super-Admin user or assign a real role today
  * — previously there was no such path anywhere in the app (only the
@@ -43,6 +58,9 @@ export async function createUser(actor: ActorContext, input: CreateUserInput) {
   if (!role || role.companyId !== actor.companyId) {
     throw new BusinessRuleError("NOT_FOUND", "Role not found.", { id: input.roleId });
   }
+  if (input.employeeId) {
+    await assertEmployeeLinkable(actor.companyId, input.employeeId);
+  }
 
   const passwordHash = await hashPassword(input.password);
 
@@ -56,6 +74,7 @@ export async function createUser(actor: ActorContext, input: CreateUserInput) {
         passwordHash,
         phone: input.phone || null,
         defaultBranchId: input.branchId,
+        employeeId: input.employeeId || null,
         status: "ACTIVE",
       },
       { branchId: input.branchId, roleId: input.roleId }
@@ -69,7 +88,7 @@ export async function createUser(actor: ActorContext, input: CreateUserInput) {
     recordId: user.id,
     action: "CREATE",
     // Never log the password/hash itself.
-    newValues: { email: input.email, fullName: input.fullName, roleId: input.roleId, branchId: input.branchId },
+    newValues: { email: input.email, fullName: input.fullName, roleId: input.roleId, branchId: input.branchId, employeeId: input.employeeId || null },
   });
 
   return user;
@@ -92,11 +111,15 @@ export async function updateUser(actor: ActorContext, id: string, input: UpdateU
       throw new BusinessRuleError("DUPLICATE_EMAIL_EXISTS", `A user with email "${input.email}" already exists.`, { email: input.email });
     }
   }
+  if (input.employeeId !== undefined && input.employeeId && input.employeeId !== existing.employeeId) {
+    await assertEmployeeLinkable(actor.companyId, input.employeeId, id);
+  }
 
   const updated = await UserAdminRepository.updateProfile(id, {
     ...(input.fullName !== undefined ? { fullName: input.fullName } : {}),
     ...(input.email !== undefined ? { email: input.email } : {}),
     ...(input.phone !== undefined ? { phone: input.phone || null } : {}),
+    ...(input.employeeId !== undefined ? { employeeId: input.employeeId || null } : {}),
   });
 
   await writeAuditLog({
@@ -105,8 +128,8 @@ export async function updateUser(actor: ActorContext, id: string, input: UpdateU
     tableName: "users",
     recordId: id,
     action: "UPDATE",
-    oldValues: { fullName: existing.fullName, email: existing.email, phone: existing.phone },
-    newValues: { fullName: updated.fullName, email: updated.email, phone: updated.phone },
+    oldValues: { fullName: existing.fullName, email: existing.email, phone: existing.phone, employeeId: existing.employeeId },
+    newValues: { fullName: updated.fullName, email: updated.email, phone: updated.phone, employeeId: updated.employeeId },
   });
 
   return updated;

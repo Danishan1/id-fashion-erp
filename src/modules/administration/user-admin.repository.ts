@@ -12,6 +12,8 @@ const USER_SELECT = {
   phone: true,
   status: true,
   defaultBranchId: true,
+  employeeId: true,
+  employee: { select: { id: true, fullName: true, employeeCode: true } },
   createdAt: true,
   updatedAt: true,
   defaultBranch: { select: { id: true, name: true } },
@@ -63,7 +65,7 @@ export const UserAdminRepository = {
   findByIdWithPasswordHash: (id: string) =>
     prisma.user.findUnique({ where: { id }, select: { id: true, passwordHash: true } }),
 
-  updateProfile: (id: string, data: { fullName?: string; email?: string; phone?: string | null }) =>
+  updateProfile: (id: string, data: { fullName?: string; email?: string; phone?: string | null; employeeId?: string | null }) =>
     prisma.user.update({ where: { id }, data, select: USER_SELECT }),
 
   countBranchRoles: (userId: string) => prisma.userBranchRole.count({ where: { userId } }),
@@ -87,4 +89,8 @@ export const UserAdminRepository = {
 export const UserAdminScopeRepository = {
   findBranchCompanyId: (id: string) => prisma.branch.findUnique({ where: { id }, select: { companyId: true } }),
   findRoleCompanyId: (id: string) => prisma.role.findUnique({ where: { id }, select: { companyId: true } }),
+  findEmployeeCompanyId: (id: string) => prisma.employee.findUnique({ where: { id }, select: { companyId: true } }),
+  /** User.employeeId is @unique — this is how createUser()/updateUser() catch
+   * "already linked to a different login" before the DB constraint would. */
+  findUserIdByEmployeeId: (employeeId: string) => prisma.user.findUnique({ where: { employeeId }, select: { id: true } }),
 };

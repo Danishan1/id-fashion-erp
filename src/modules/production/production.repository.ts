@@ -184,11 +184,87 @@ export const JobOrderAssignmentRepository = {
 
   updateInTx: (tx: Prisma.TransactionClient, id: string, data: Prisma.JobOrderAssignmentUncheckedUpdateInput) =>
     tx.jobOrderAssignment.update({ where: { id }, data }),
+
+  /** Used by submitSelfProgressEntry to confirm the caller is actually
+   * assigned to this job order — a worker can't log progress against work
+   * nobody gave them. */
+  findByJobOrderAndEmployee: (jobOrderId: string, employeeId: string) =>
+    prisma.jobOrderAssignment.findFirst({ where: { jobOrderId, employeeId, status: { not: "CANCELLED" } } }),
+
+  /** Every job order this employee is currently, actively assigned to —
+   * backs the worker-facing "My Work" list. Stage-access filtering happens
+   * in the service layer (getAllowedProductionStageIds), not here. */
+  listActiveForEmployee: (companyId: string, employeeId: string) =>
+    prisma.jobOrderAssignment.findMany({
+      where: { employeeId, status: { not: "CANCELLED" }, jobOrder: { companyId, status: { notIn: ["CANCELLED"] } } },
+      include: {
+        jobOrder: {
+          include: {
+            productionStage: { select: { id: true, name: true, code: true } },
+            lot: { select: { id: true, lotNumber: true } },
+          },
+        },
+      },
+      orderBy: { assignedAt: "desc" },
+    }),
 };
 
 export const JobOrderProgressEntryRepository = {
   createInTx: (tx: Prisma.TransactionClient, data: Prisma.JobOrderProgressEntryUncheckedCreateInput) =>
     tx.jobOrderProgressEntry.create({ data }),
+
+  /** No companyId column on this table — every caller must check
+   * `entry.jobOrder.companyId === actor.companyId` itself before acting,
+   * same manual tenant-scoping-via-joined-parent discipline used elsewhere
+   * in this project (e.g. SampleVersionRepository.findWithRequestOwner). */
+  findAnyById: (id: string) =>
+    prisma.jobOrderProgressEntry.findUnique({
+      where: { id },
+      include: { jobOrder: { select: { id: true, companyId: true, productionStageId: true } } },
+    }),
+
+  findPendingForCompany: (companyId: string) =>
+    prisma.jobOrderProgressEntry.findMany({
+      where: { approvalStatus: "PENDING", jobOrder: { companyId } },
+      include: {
+        employee: { select: { id: true, fullName: true, employeeCode: true } },
+        jobOrder: {
+          select: {
+            id: true,
+            jobNumber: true,
+            productionStage: { select: { name: true } },
+            lot: { select: { lotNumber: true } },
+          },
+        },
+      },
+      orderBy: { createdAt: "asc" },
+    }),
+
+  /** Own submissions for the worker-facing "My Submitted Entries" list. */
+  findByEmployeeAndSource: (employeeId: string, enteredBy: "SELF") =>
+    prisma.jobOrderProgressEntry.findMany({
+      where: { employeeId, enteredBy },
+      include: {
+        jobOrder: { select: { jobNumber: true, productionStage: { select: { name: true } } } },
+      },
+      orderBy: { createdAt: "desc" },
+    }),
+
+  update: (id: string, data: Prisma.JobOrderProgressEntryUncheckedUpdateInput) =>
+    prisma.jobOrderProgressEntry.update({ where: { id }, data }),
+
+  updateStatusConditional: (
+    id: string,
+    expectedStatus: "PENDING",
+    data: Prisma.JobOrderProgressEntryUncheckedUpdateInput
+  ) => prisma.jobOrderProgressEntry.updateMany({ where: { id, approvalStatus: expectedStatus }, data }),
+
+  updateStatusConditionalInTx: (
+    tx: Prisma.TransactionClient,
+    id: string,
+    expectedStatus: "PENDING",
+    data: Prisma.JobOrderProgressEntryUncheckedUpdateInput
+  ) => tx.jobOrderProgressEntry.updateMany({ where: { id, approvalStatus: expectedStatus }, data }),
 };
 
 export const ProductionStageTransactionRepository = {

@@ -13,10 +13,15 @@ describe("filterNavSections", () => {
   });
 
   it("keeps a parent section but only its visible children when some, not all, child modules are granted", () => {
-    // Manufacturing: BOM/MRP -> bom_mrp, Production + Job Work Orders -> production.
+    // Manufacturing: BOM/MRP -> bom_mrp, Production + Job Work Orders + My Work + Pending Approvals -> production.
     const result = filterNavSections(NAV_SECTIONS, ["dashboard", "production"]);
     const manufacturing = result.find((s) => s.label === "Manufacturing");
-    expect(manufacturing?.children?.map((c) => c.label)).toEqual(["Production", "Job Work Orders"]);
+    expect(manufacturing?.children?.map((c) => c.label)).toEqual([
+      "Production",
+      "Job Work Orders",
+      "My Work",
+      "Pending Approvals",
+    ]);
   });
 
   it("keeps a section with no href visible via its children even though the section itself has no module of its own reachable directly", () => {

@@ -14,10 +14,13 @@ vi.mock("./user-admin.repository", () => ({
     createWithRoleInTx: vi.fn(),
     updateStatus: vi.fn(),
     updatePasswordHash: vi.fn(),
+    updateProfile: vi.fn(),
   },
   UserAdminScopeRepository: {
     findBranchCompanyId: vi.fn(),
     findRoleCompanyId: vi.fn(),
+    findEmployeeCompanyId: vi.fn(),
+    findUserIdByEmployeeId: vi.fn(),
   },
 }));
 
@@ -25,7 +28,7 @@ const { writeAuditLog } = await import("@/core/audit/AuditLogger");
 const { hashPassword } = await import("@/core/auth/password");
 const { PermissionService } = await import("@/core/rbac/PermissionService");
 const { UserAdminRepository, UserAdminScopeRepository } = await import("./user-admin.repository");
-const { createUser, setUserStatus, resetUserPassword } = await import("./user-admin.service");
+const { createUser, updateUser, setUserStatus, resetUserPassword } = await import("./user-admin.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
 const input = { email: "new@co1.com", fullName: "New User", password: "password123", phone: "", branchId: "br-1", roleId: "role-1" };
@@ -38,8 +41,11 @@ beforeEach(() => {
   vi.mocked(UserAdminRepository.createWithRoleInTx).mockReset().mockResolvedValue({ id: "user-2" } as never);
   vi.mocked(UserAdminRepository.updateStatus).mockReset();
   vi.mocked(UserAdminRepository.updatePasswordHash).mockReset().mockResolvedValue({ id: "user-2" } as never);
+  vi.mocked(UserAdminRepository.updateProfile).mockReset();
   vi.mocked(UserAdminScopeRepository.findBranchCompanyId).mockReset().mockResolvedValue({ companyId: "co-1" } as never);
   vi.mocked(UserAdminScopeRepository.findRoleCompanyId).mockReset().mockResolvedValue({ companyId: "co-1" } as never);
+  vi.mocked(UserAdminScopeRepository.findEmployeeCompanyId).mockReset().mockResolvedValue({ companyId: "co-1" } as never);
+  vi.mocked(UserAdminScopeRepository.findUserIdByEmployeeId).mockReset().mockResolvedValue(null);
   vi.mocked(PermissionService.invalidate).mockReset();
 });
 
@@ -77,6 +83,71 @@ describe("createUser", () => {
       expect.objectContaining({ companyId: "co-1", email: "new@co1.com", passwordHash: "hashed-password" }),
       { branchId: "br-1", roleId: "role-1" }
     );
+  });
+
+  it("rejects an employeeId belonging to another company — the same cross-tenant FK check as branchId/roleId", async () => {
+    vi.mocked(UserAdminScopeRepository.findEmployeeCompanyId).mockResolvedValue({ companyId: "co-2" } as never);
+    await expect(createUser(actor, { ...input, employeeId: "emp-1" })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(UserAdminRepository.createWithRoleInTx).not.toHaveBeenCalled();
+  });
+
+  it("rejects an employeeId already linked to a different user login — User.employeeId is @unique", async () => {
+    vi.mocked(UserAdminScopeRepository.findUserIdByEmployeeId).mockResolvedValue({ id: "some-other-user" } as never);
+    await expect(createUser(actor, { ...input, employeeId: "emp-1" })).rejects.toMatchObject({ code: "DUPLICATE_DOC_NUMBER" });
+    expect(UserAdminRepository.createWithRoleInTx).not.toHaveBeenCalled();
+  });
+
+  it("creates the user with the given employeeId when it belongs to this company and isn't already linked", async () => {
+    await createUser(actor, { ...input, employeeId: "emp-1" });
+    expect(UserAdminRepository.createWithRoleInTx).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({ employeeId: "emp-1" }),
+      { branchId: "br-1", roleId: "role-1" }
+    );
+  });
+
+  it("creates the user with a null employeeId when none is given — most users have no linked Employee", async () => {
+    await createUser(actor, input);
+    expect(UserAdminRepository.createWithRoleInTx).toHaveBeenCalledWith({}, expect.objectContaining({ employeeId: null }), {
+      branchId: "br-1",
+      roleId: "role-1",
+    });
+  });
+});
+
+describe("updateUser", () => {
+  const existingUser = { id: "user-2", fullName: "Old Name", email: "old@co1.com", phone: null, employeeId: null };
+
+  it("rejects an employeeId belonging to another company", async () => {
+    vi.mocked(UserAdminRepository.findById).mockResolvedValue(existingUser as never);
+    vi.mocked(UserAdminScopeRepository.findEmployeeCompanyId).mockResolvedValue({ companyId: "co-2" } as never);
+    await expect(updateUser(actor, "user-2", { employeeId: "emp-1" })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(UserAdminRepository.updateProfile).not.toHaveBeenCalled();
+  });
+
+  it("rejects an employeeId already linked to a different user", async () => {
+    vi.mocked(UserAdminRepository.findById).mockResolvedValue(existingUser as never);
+    vi.mocked(UserAdminScopeRepository.findUserIdByEmployeeId).mockResolvedValue({ id: "user-3" } as never);
+    await expect(updateUser(actor, "user-2", { employeeId: "emp-1" })).rejects.toMatchObject({ code: "DUPLICATE_DOC_NUMBER" });
+    expect(UserAdminRepository.updateProfile).not.toHaveBeenCalled();
+  });
+
+  it("allows re-saving a user's own already-linked employeeId without tripping the 'already linked' check", async () => {
+    vi.mocked(UserAdminRepository.findById).mockResolvedValue({ ...existingUser, employeeId: "emp-1" } as never);
+    vi.mocked(UserAdminScopeRepository.findUserIdByEmployeeId).mockResolvedValue({ id: "user-2" } as never);
+    vi.mocked(UserAdminRepository.updateProfile).mockResolvedValue({ ...existingUser, employeeId: "emp-1" } as never);
+
+    await updateUser(actor, "user-2", { employeeId: "emp-1" });
+    expect(UserAdminRepository.updateProfile).toHaveBeenCalledWith("user-2", expect.objectContaining({ employeeId: "emp-1" }));
+  });
+
+  it("unlinks the Employee when employeeId is explicitly submitted as an empty string", async () => {
+    vi.mocked(UserAdminRepository.findById).mockResolvedValue({ ...existingUser, employeeId: "emp-1" } as never);
+    vi.mocked(UserAdminRepository.updateProfile).mockResolvedValue({ ...existingUser, employeeId: null } as never);
+
+    await updateUser(actor, "user-2", { employeeId: "" });
+    expect(UserAdminRepository.updateProfile).toHaveBeenCalledWith("user-2", expect.objectContaining({ employeeId: null }));
+    expect(UserAdminScopeRepository.findEmployeeCompanyId).not.toHaveBeenCalled();
   });
 });
 

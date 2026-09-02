@@ -54,6 +54,7 @@ export const ROLES = [
   "SAMPLING_MANAGER",
   "PRODUCTION_MANAGER",
   "PRODUCTION_SUPERVISOR",
+  "PRODUCTION_WORKER",
   "QC_MANAGER",
   "STORE_MANAGER",
   "ACCOUNTS_MANAGER",
@@ -169,10 +170,25 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     masters_core: ["view"],
     sales_orders: ["view"],
     bom_mrp: ["view"],
-    production: ["view", "create", "edit"],
+    // "approve" added for the worker self-entry approval queue (2026-09-02) —
+    // a Supervisor approves/rejects a worker's own submitted progress entry
+    // before it counts toward the Job Order's real quantities.
+    production: ["view", "create", "edit", "approve"],
     qc: ["view", "create"],
     inventory: ["view", "create"],
     reports: ["view"],
+  },
+  // A shop-floor worker with their own login (linked via User.employeeId),
+  // added 2026-09-02 for the optional self-entry workflow — see
+  // submitSelfProgressEntry in job-order.service.ts. Deliberately minimal:
+  // "create" here means "submit my own progress entry," never a general
+  // production-editing right — enforced server-side (self-only employeeId,
+  // must be assigned to the job order, Employee.selfEntryEnabled must be
+  // true) rather than by a broader permission grant. Stage scope is further
+  // narrowed per-company via RoleProductionStageAccess, same as any role.
+  PRODUCTION_WORKER: {
+    dashboard: ["view"],
+    production: ["view", "create"],
   },
   QC_MANAGER: {
     dashboard: ["view"],

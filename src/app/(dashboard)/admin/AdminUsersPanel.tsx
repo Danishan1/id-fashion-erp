@@ -22,9 +22,17 @@ interface UserRow {
   status: "ACTIVE" | "SUSPENDED" | "LOCKED";
   defaultBranch: { id: string; name: string } | null;
   branchRoles: Array<{ id: string; role: RoleRef; branch: { id: string; name: string } }>;
+  employeeId: string | null;
+  employee: { id: string; fullName: string; employeeCode: string } | null;
 }
 
-const EMPTY_FORM = { email: "", fullName: "", password: "", phone: "", branchId: "", roleId: "" };
+interface EmployeeOption {
+  id: string;
+  fullName: string;
+  employeeCode: string;
+}
+
+const EMPTY_FORM = { email: "", fullName: "", password: "", phone: "", branchId: "", roleId: "", employeeId: "" };
 
 export function AdminUsersPanel({
   initialUsers,
@@ -42,6 +50,7 @@ export function AdminUsersPanel({
   const [isSaving, setIsSaving] = useState(false);
   const [branches, setBranches] = useState<BranchRef[]>([]);
   const [roles, setRoles] = useState<RoleRef[]>([]);
+  const [employees, setEmployees] = useState<EmployeeOption[]>([]);
   const [pendingToggle, setPendingToggle] = useState<UserRow | null>(null);
   const [resetTarget, setResetTarget] = useState<UserRow | null>(null);
   const [resetPassword, setResetPassword] = useState("");
@@ -49,7 +58,7 @@ export function AdminUsersPanel({
   const [isResetting, setIsResetting] = useState(false);
 
   const [editTarget, setEditTarget] = useState<UserRow | null>(null);
-  const [editForm, setEditForm] = useState({ fullName: "", email: "", phone: "" });
+  const [editForm, setEditForm] = useState({ fullName: "", email: "", phone: "", employeeId: "" });
   const [editError, setEditError] = useState<string | null>(null);
   const [isEditSaving, setIsEditSaving] = useState(false);
 
@@ -60,11 +69,16 @@ export function AdminUsersPanel({
   const [newRoleId, setNewRoleId] = useState("");
 
   async function ensureBranchesAndRoles() {
-    if (branches.length > 0 && roles.length > 0) return;
-    const [branchRes, roleRes] = await Promise.all([fetch("/api/v1/branches"), fetch("/api/v1/roles")]);
-    const [branchBody, roleBody] = await Promise.all([branchRes.json(), roleRes.json()]);
+    if (branches.length > 0 && roles.length > 0 && employees.length > 0) return;
+    const [branchRes, roleRes, employeeRes] = await Promise.all([
+      fetch("/api/v1/branches"),
+      fetch("/api/v1/roles"),
+      fetch("/api/v1/employees?pageSize=500"),
+    ]);
+    const [branchBody, roleBody, employeeBody] = await Promise.all([branchRes.json(), roleRes.json(), employeeRes.json()]);
     setBranches(branchBody.data ?? []);
     setRoles(roleBody.data ?? []);
+    setEmployees(employeeBody.data ?? []);
   }
 
   async function openModal() {
@@ -74,10 +88,11 @@ export function AdminUsersPanel({
     await ensureBranchesAndRoles();
   }
 
-  function openEdit(user: UserRow) {
+  async function openEdit(user: UserRow) {
     setEditTarget(user);
-    setEditForm({ fullName: user.fullName, email: user.email, phone: "" });
+    setEditForm({ fullName: user.fullName, email: user.email, phone: "", employeeId: user.employeeId ?? "" });
     setEditError(null);
+    await ensureBranchesAndRoles();
   }
 
   async function handleEditSave() {
@@ -88,7 +103,7 @@ export function AdminUsersPanel({
       const res = await fetch(`/api/v1/administration/users/${editTarget.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fullName: editForm.fullName, email: editForm.email }),
+        body: JSON.stringify({ fullName: editForm.fullName, email: editForm.email, employeeId: editForm.employeeId }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error?.message ?? "Failed to update user");
@@ -211,6 +226,16 @@ export function AdminUsersPanel({
     }
   }
 
+  // Excludes employees already linked to a DIFFERENT user (server-side
+  // re-validates regardless, via user-admin.service.ts's assertEmployeeLinkable —
+  // this is purely to keep the picker from offering a doomed choice). The
+  // edit target's own currently-linked employee stays selectable so re-saving
+  // the form without changing it doesn't silently drop it from the list.
+  function linkableEmployees(currentUserId?: string) {
+    const linkedElsewhere = new Set(users.filter((u) => u.employeeId && u.id !== currentUserId).map((u) => u.employeeId));
+    return employees.filter((e) => !linkedElsewhere.has(e.id));
+  }
+
   return (
     <div className="space-y-3">
       {canManage && (
@@ -233,6 +258,7 @@ export function AdminUsersPanel({
               <th className="px-3 py-2 text-left font-medium text-zinc-500">Email</th>
               <th className="px-3 py-2 text-left font-medium text-zinc-500">Role(s)</th>
               <th className="px-3 py-2 text-left font-medium text-zinc-500">Branch</th>
+              <th className="px-3 py-2 text-left font-medium text-zinc-500">Employee</th>
               <th className="px-3 py-2 text-left font-medium text-zinc-500">Status</th>
               {canManage && <th className="px-3 py-2 text-left font-medium text-zinc-500">Active</th>}
               {canManage && <th className="px-3 py-2 text-left font-medium text-zinc-500">Actions</th>}
@@ -250,6 +276,9 @@ export function AdminUsersPanel({
                   {u.branchRoles.map((br) => br.role.name).join(", ") || "—"}
                 </td>
                 <td className="px-3 py-2 text-zinc-600 dark:text-zinc-400">{u.defaultBranch?.name ?? "—"}</td>
+                <td className="px-3 py-2 text-zinc-600 dark:text-zinc-400">
+                  {u.employee ? `${u.employee.fullName} (${u.employee.employeeCode})` : "—"}
+                </td>
                 <td className="px-3 py-2 text-zinc-600 dark:text-zinc-400">{u.status}</td>
                 {canManage && (
                   <td className="px-3 py-2">
@@ -334,6 +363,24 @@ export function AdminUsersPanel({
                 </option>
               ))}
             </select>
+          </FormField>
+          <FormField label="Link to Employee (optional)" htmlFor="employeeId">
+            <select
+              id="employeeId"
+              className={textInputClass()}
+              value={form.employeeId}
+              onChange={(e) => setForm({ ...form, employeeId: e.target.value })}
+            >
+              <option value="">— None —</option>
+              {linkableEmployees().map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.fullName} ({e.employeeCode})
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+              Required for a worker to use self-entry (Log My Progress) — leave blank for office/management logins.
+            </p>
           </FormField>
 
           <div className="flex justify-end gap-3 pt-2">
@@ -430,6 +477,24 @@ export function AdminUsersPanel({
               value={editForm.email}
               onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
             />
+          </FormField>
+          <FormField label="Link to Employee (optional)" htmlFor="editEmployeeId">
+            <select
+              id="editEmployeeId"
+              className={textInputClass()}
+              value={editForm.employeeId}
+              onChange={(e) => setEditForm({ ...editForm, employeeId: e.target.value })}
+            >
+              <option value="">— None —</option>
+              {linkableEmployees(editTarget?.id).map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.fullName} ({e.employeeCode})
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+              Required for a worker to use self-entry (Log My Progress) — leave blank for office/management logins.
+            </p>
           </FormField>
           <div className="flex justify-end gap-3 pt-2">
             <button

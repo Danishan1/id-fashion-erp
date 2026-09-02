@@ -7,8 +7,9 @@ import { AdminBranchesPanel } from "./AdminBranchesPanel";
 import { AdminRolesPanel } from "./AdminRolesPanel";
 import { AdminCompanySettingsPanel } from "./AdminCompanySettingsPanel";
 import { AdminDocumentSequencesPanel } from "./AdminDocumentSequencesPanel";
+import { AdminWorkerSettingsPanel } from "./AdminWorkerSettingsPanel";
 
-const TABS = ["Users", "Branches", "Roles", "Company Settings", "Document Numbering", "Audit Log"] as const;
+const TABS = ["Users", "Branches", "Roles", "Worker Settings", "Company Settings", "Document Numbering", "Audit Log"] as const;
 type Tab = (typeof TABS)[number];
 
 interface RoleRef {
@@ -22,6 +23,8 @@ interface UserRow {
   status: "ACTIVE" | "SUSPENDED" | "LOCKED";
   defaultBranch: { id: string; name: string } | null;
   branchRoles: Array<{ id: string; role: RoleRef; branch: { id: string; name: string } }>;
+  employeeId: string | null;
+  employee: { id: string; fullName: string; employeeCode: string } | null;
 }
 
 export function AdminTabs({
@@ -55,6 +58,7 @@ export function AdminTabs({
       {tab === "Users" && <AdminUsersPanel initialUsers={initialUsers} canManage={canManage} currentUserId={currentUserId} />}
       {tab === "Branches" && <AdminBranchesPanel canManage={canManage} />}
       {tab === "Roles" && <AdminRolesPanel canManage={canManage} />}
+      {tab === "Worker Settings" && <AdminWorkerSettingsPanel canManage={canManage} />}
       {tab === "Company Settings" && <AdminCompanySettingsPanel canManage={canManage} />}
       {tab === "Document Numbering" && <AdminDocumentSequencesPanel />}
       {tab === "Audit Log" && <AdminAuditLogPanel />}

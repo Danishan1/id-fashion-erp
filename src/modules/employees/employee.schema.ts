@@ -19,7 +19,31 @@ export const employeeSchema = z.object({
   phone: optionalPhoneSchema,
   email: z.string().email().optional().or(z.literal("")),
   joinDate: z.string().optional().or(z.literal("")),
-  isActive: z.boolean().default(true),
+  // Deliberately `.optional()`, not `.default(true)` — a `.default()` value
+  // still gets injected by Zod even under `employeeUpdateSchema`'s
+  // `.partial()`, so any PATCH that simply omits this field (as the pay-config
+  // and self-entry panels below both do) would silently reactivate an
+  // already-deactivated employee on every unrelated edit. `create*`/`update*`
+  // below apply the true default explicitly instead — same fix already
+  // applied to Color/Size/UnitOfMeasure/hr-config's 4 entities for this exact
+  // bug class (CLAUDE.md, 2026-08-25/27).
+  isActive: z.boolean().optional(),
+  // Pay-config data only (2026-09-02) — storage for Admin's Worker Settings
+  // panel, deliberately NOT a payroll calculation/payslip mechanism (see
+  // CLAUDE.md's worker self-entry feature notes). Both amounts are optional
+  // regardless of payType — a company may set only TA/DA with no base pay
+  // configured yet.
+  payType: z.enum(["FIXED_SALARY", "PIECE_RATE"]).optional().or(z.literal("")),
+  fixedMonthlySalary: z.coerce.number().min(0).optional(),
+  pieceRatePerUnit: z.coerce.number().min(0).optional(),
+  travelAllowance: z.coerce.number().min(0).optional(),
+  dearnessAllowance: z.coerce.number().min(0).optional(),
+  // Admin's per-employee toggle: does this worker log their own progress
+  // (subject to Supervisor approval), or does a Supervisor log it for them
+  // as before. Same `.optional()`-not-`.default()` reasoning as isActive
+  // above — the Pay Config modal's own PATCH never sends this field, and
+  // must never silently reset it.
+  selfEntryEnabled: z.boolean().optional(),
 });
 
 export type EmployeeInput = z.infer<typeof employeeSchema>;

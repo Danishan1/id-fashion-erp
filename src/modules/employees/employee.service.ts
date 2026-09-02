@@ -86,7 +86,13 @@ function toData(input: EmployeeInput) {
     phone: input.phone || null,
     email: input.email || null,
     joinDate: input.joinDate ? new Date(input.joinDate) : null,
-    isActive: input.isActive,
+    isActive: input.isActive ?? true,
+    payType: input.payType || null,
+    fixedMonthlySalary: input.fixedMonthlySalary ?? null,
+    pieceRatePerUnit: input.pieceRatePerUnit ?? null,
+    travelAllowance: input.travelAllowance ?? null,
+    dearnessAllowance: input.dearnessAllowance ?? null,
+    selfEntryEnabled: input.selfEntryEnabled ?? false,
   };
 }
 
@@ -104,6 +110,12 @@ function toUpdateData(input: EmployeeUpdateInput): Prisma.EmployeeUncheckedUpdat
   if (input.email !== undefined) data.email = input.email || null;
   if (input.joinDate !== undefined) data.joinDate = input.joinDate ? new Date(input.joinDate) : null;
   if (input.isActive !== undefined) data.isActive = input.isActive;
+  if (input.payType !== undefined) data.payType = input.payType || null;
+  if (input.fixedMonthlySalary !== undefined) data.fixedMonthlySalary = input.fixedMonthlySalary ?? null;
+  if (input.pieceRatePerUnit !== undefined) data.pieceRatePerUnit = input.pieceRatePerUnit ?? null;
+  if (input.travelAllowance !== undefined) data.travelAllowance = input.travelAllowance ?? null;
+  if (input.dearnessAllowance !== undefined) data.dearnessAllowance = input.dearnessAllowance ?? null;
+  if (input.selfEntryEnabled !== undefined) data.selfEntryEnabled = input.selfEntryEnabled;
   return data;
 }
 

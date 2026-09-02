@@ -55,6 +55,43 @@ describe("createEmployee — reportsToId validation", () => {
   });
 });
 
+describe("createEmployee/updateEmployee — isActive/selfEntryEnabled default-vs-omitted (ERP-BUG regression, 2026-09-02)", () => {
+  // Both fields moved from z.boolean().default(x) to z.boolean().optional()
+  // specifically because a .default() still fires under employeeUpdateSchema's
+  // .partial(), so any PATCH omitting the field (as the Worker Settings pay-
+  // config modal does) would silently reset it. Verified live against the
+  // real dev DB before this fix: saving a Pay Config with no isActive/
+  // selfEntryEnabled in the payload reset selfEntryEnabled from true to false.
+  it("createEmployee defaults isActive=true and selfEntryEnabled=false when both are omitted", async () => {
+    vi.mocked(EmployeeRepository.create).mockResolvedValue({ id: "emp-new" } as never);
+
+    await createEmployee(actor, { employeeCode: "EMP101", fullName: "No Flags Given" } as never);
+
+    expect(EmployeeRepository.create).toHaveBeenCalledWith(expect.objectContaining({ isActive: true, selfEntryEnabled: false }));
+  });
+
+  it("updateEmployee leaves isActive and selfEntryEnabled untouched when the PATCH body omits them entirely", async () => {
+    vi.mocked(EmployeeRepository.findById).mockResolvedValue({ id: "emp-1", employeeCode: "EMP001" } as never);
+    vi.mocked(EmployeeRepository.update).mockResolvedValue({ id: "emp-1" } as never);
+
+    // Mirrors AdminWorkerSettingsPanel's savePay() payload — pay fields only.
+    await updateEmployee(actor, "emp-1", { fixedMonthlySalary: 15000 } as never);
+
+    const [, data] = vi.mocked(EmployeeRepository.update).mock.calls[0];
+    expect(data).not.toHaveProperty("isActive");
+    expect(data).not.toHaveProperty("selfEntryEnabled");
+  });
+
+  it("updateEmployee still applies an explicit isActive/selfEntryEnabled value when the caller does send one", async () => {
+    vi.mocked(EmployeeRepository.findById).mockResolvedValue({ id: "emp-1", employeeCode: "EMP001" } as never);
+    vi.mocked(EmployeeRepository.update).mockResolvedValue({ id: "emp-1" } as never);
+
+    await updateEmployee(actor, "emp-1", { isActive: false, selfEntryEnabled: true } as never);
+
+    expect(EmployeeRepository.update).toHaveBeenCalledWith("emp-1", expect.objectContaining({ isActive: false, selfEntryEnabled: true }));
+  });
+});
+
 describe("updateEmployee — reportsToId validation", () => {
   it("rejects an employee reporting to themselves", async () => {
     vi.mocked(EmployeeRepository.findById).mockResolvedValue({ id: "emp-1", employeeCode: "EMP001" } as never);

@@ -397,9 +397,19 @@ async function getLineWiseProductionDescriptor(companyId: string, generatedByNam
 // own schema comment; adjustment entries with no employeeId are grouped under
 // "Adjustment / Unattributed" rather than dropped).
 // ---------------------------------------------------------------------------
-async function getOperatorWiseProductionDescriptor(companyId: string, generatedByName: string): Promise<ReportDescriptor> {
+async function getOperatorWiseProductionDescriptor(
+  companyId: string,
+  generatedByName: string,
+  filters: Record<string, string>
+): Promise<ReportDescriptor> {
+  const { dateFrom, dateToExclusive } = parseReportDateRange(filters);
   const entries = await prisma.jobOrderProgressEntry.findMany({
-    where: { jobOrder: { companyId } },
+    where: {
+      jobOrder: { companyId },
+      ...(dateFrom || dateToExclusive
+        ? { createdAt: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } }
+        : {}),
+    },
     select: {
       completedQuantity: true,
       rejectedQuantity: true,
@@ -443,7 +453,7 @@ async function getOperatorWiseProductionDescriptor(companyId: string, generatedB
     // comparing the two doesn't mistake the gap for a bug (Phase 10 QA pass).
     subtitle:
       "Job Order progress entries aggregated by the Employee who performed the work. Totals reflect only logged progress entries and will be lower than Production Register/Achievement, which also count quantity forwarded from upstream stages.",
-    filtersApplied: [],
+    filtersApplied: filtersApplied(filters, { dateFrom: "Date From", dateTo: "Date To" }),
     columns: [
       { key: "employeeCode", label: "Employee Code" },
       { key: "fullName", label: "Full Name" },
@@ -456,6 +466,148 @@ async function getOperatorWiseProductionDescriptor(companyId: string, generatedB
       totalCompleted: rows.reduce((s, r) => s + r.totalCompleted, 0),
       totalRejected: rows.reduce((s, r) => s + r.totalRejected, 0),
       totalDamaged: rows.reduce((s, r) => s + r.totalDamaged, 0),
+    },
+    meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
+    generatedAt: new Date().toISOString(),
+    generatedByName,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 8. Worker Output Register — the daily/weekly/monthly per-worker visibility
+// requested for the self-entry feature (2026-09-02): every logged
+// JobOrderProgressEntry (supervisor-direct and worker-self-submitted alike)
+// bucketed by calendar period and Employee, plus how many of that worker's
+// self-submitted entries in the period are still Pending/Approved/Rejected —
+// so a manager sees both real output AND how much is still awaiting review.
+// Period boundaries use UTC calendar components throughout (never a local
+// `new Date(y,m,d)` constructor) — this project's own hard-won lesson from
+// the Phase 9 QA sweep, where a local-timezone boundary on this IST server
+// silently pulled in the wrong UTC calendar day.
+// ---------------------------------------------------------------------------
+type OutputPeriod = "day" | "week" | "month";
+
+function periodKeyFor(date: Date, period: OutputPeriod): string {
+  if (period === "month") {
+    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+  }
+  if (period === "week") {
+    const utcMidnight = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+    const dayOfWeek = new Date(utcMidnight).getUTCDay(); // 0=Sun..6=Sat
+    const diffToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+    return new Date(utcMidnight - diffToMonday * 86_400_000).toISOString().slice(0, 10);
+  }
+  return date.toISOString().slice(0, 10);
+}
+
+async function getWorkerOutputRegisterDescriptor(
+  companyId: string,
+  generatedByName: string,
+  filters: Record<string, string>
+): Promise<ReportDescriptor> {
+  const { dateFrom, dateToExclusive } = parseReportDateRange(filters);
+  const period: OutputPeriod = filters.period === "week" || filters.period === "month" ? filters.period : "day";
+  const employeeId = filters.employeeId || undefined;
+
+  const entries = await prisma.jobOrderProgressEntry.findMany({
+    where: {
+      jobOrder: { companyId },
+      ...(employeeId ? { employeeId } : {}),
+      ...(dateFrom || dateToExclusive
+        ? { createdAt: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } }
+        : {}),
+    },
+    select: {
+      createdAt: true,
+      completedQuantity: true,
+      rejectedQuantity: true,
+      damagedQuantity: true,
+      approvalStatus: true,
+      employee: { select: { employeeCode: true, fullName: true } },
+    },
+    orderBy: { createdAt: "asc" },
+  });
+
+  interface WorkerOutputAgg {
+    period: string;
+    employeeCode: string;
+    fullName: string;
+    completedQty: number;
+    rejectedQty: number;
+    damagedQty: number;
+    pendingCount: number;
+    approvedCount: number;
+    rejectedCount: number;
+  }
+  const byKey = new Map<string, WorkerOutputAgg>();
+  for (const e of entries) {
+    const periodLabel = periodKeyFor(e.createdAt, period);
+    const employeeCode = e.employee?.employeeCode ?? "—";
+    const key = `${periodLabel}|${employeeCode}`;
+    const existing = byKey.get(key) ?? {
+      period: periodLabel,
+      employeeCode,
+      fullName: e.employee?.fullName ?? "Adjustment / Unattributed",
+      completedQty: 0,
+      rejectedQty: 0,
+      damagedQty: 0,
+      pendingCount: 0,
+      approvedCount: 0,
+      rejectedCount: 0,
+    };
+    // A PENDING or REJECTED self-entry never touched the real JobOrder
+    // quantities (see submitSelfProgressEntry/rejectProgressEntry in
+    // job-order.service.ts) — only NOT_REQUIRED (supervisor-direct, always
+    // real) and APPROVED (a self-entry that became real) ever did. Counting
+    // a still-undecided or discarded claim's quantity here would make this
+    // report's own "Completed" total disagree with the JobOrder's real,
+    // already-verified figure — caught live: a 20-unit rejected entry was
+    // inflating a worker's daily total from a real 35 to a wrong 55.
+    if (e.approvalStatus === "NOT_REQUIRED" || e.approvalStatus === "APPROVED") {
+      existing.completedQty += Number(e.completedQuantity);
+      existing.rejectedQty += Number(e.rejectedQuantity);
+      existing.damagedQty += Number(e.damagedQuantity);
+    }
+    // NOT_REQUIRED (the existing supervisor-direct path) contributes to the
+    // quantity totals above but to none of these three submission-status
+    // counts — only a SELF-entered row is ever PENDING/APPROVED/REJECTED.
+    if (e.approvalStatus === "PENDING") existing.pendingCount += 1;
+    else if (e.approvalStatus === "APPROVED") existing.approvedCount += 1;
+    else if (e.approvalStatus === "REJECTED") existing.rejectedCount += 1;
+    byKey.set(key, existing);
+  }
+
+  const rows = [...byKey.values()].sort((a, b) => (a.period === b.period ? a.fullName.localeCompare(b.fullName) : a.period.localeCompare(b.period)));
+
+  return {
+    title: "Worker Output Register",
+    subtitle:
+      "Per-worker output by day, week, or month — completed/rejected/damaged quantity from every entry that actually counted toward the job order (supervisor-direct entries, and self-submitted entries once Approved), plus how many self-submitted entries in that period are still Pending, Approved, or Rejected. A Pending or Rejected self-entry's quantity is excluded from the totals until (and unless) it's approved.",
+    filtersApplied: filtersApplied(filters, {
+      dateFrom: "Date From",
+      dateTo: "Date To",
+      period: "Period",
+      employeeId: "Employee",
+    }),
+    columns: [
+      { key: "period", label: period === "day" ? "Date" : period === "week" ? "Week Of" : "Month" },
+      { key: "employeeCode", label: "Employee Code" },
+      { key: "fullName", label: "Employee Name" },
+      { key: "completedQty", label: "Completed", type: "number", align: "right" },
+      { key: "rejectedQty", label: "Rejected", type: "number", align: "right" },
+      { key: "damagedQty", label: "Damaged", type: "number", align: "right" },
+      { key: "pendingCount", label: "Pending Entries", type: "number", align: "right" },
+      { key: "approvedCount", label: "Approved Entries", type: "number", align: "right" },
+      { key: "rejectedCount", label: "Rejected Entries", type: "number", align: "right" },
+    ],
+    rows: rows as unknown as Record<string, unknown>[],
+    totals: {
+      completedQty: round2(rows.reduce((s, r) => s + r.completedQty, 0)),
+      rejectedQty: round2(rows.reduce((s, r) => s + r.rejectedQty, 0)),
+      damagedQty: round2(rows.reduce((s, r) => s + r.damagedQty, 0)),
+      pendingCount: rows.reduce((s, r) => s + r.pendingCount, 0),
+      approvedCount: rows.reduce((s, r) => s + r.approvedCount, 0),
+      rejectedCount: rows.reduce((s, r) => s + r.rejectedCount, 0),
     },
     meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
     generatedAt: new Date().toISOString(),
@@ -483,5 +635,11 @@ registerReport({
   category: CATEGORY,
   key: "operator-wise-production",
   title: "Operator-wise Production",
-  buildDescriptor: (c, g) => getOperatorWiseProductionDescriptor(c, g),
+  buildDescriptor: getOperatorWiseProductionDescriptor,
+});
+registerReport({
+  category: CATEGORY,
+  key: "worker-output-register",
+  title: "Worker Output Register",
+  buildDescriptor: getWorkerOutputRegisterDescriptor,
 });

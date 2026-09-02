@@ -242,6 +242,7 @@ model User {
   lotRelationsPerformed                LotRelation[]                 @relation("LotRelationPerformedBy")
   jobOrderAssignmentsMade              JobOrderAssignment[]          @relation("JobOrderAssignmentAssignedBy")
   jobOrderProgressEntriesRecorded      JobOrderProgressEntry[]       @relation("JobOrderProgressEntryRecordedBy")
+  jobOrderProgressEntriesApproved      JobOrderProgressEntry[]       @relation("JobOrderProgressEntryApprovedBy")
   productionStageTransactionsPerformed ProductionStageTransaction[]  @relation("ProductionStageTransactionPerformedBy")
   qcInspectionsMade                    QcInspection[]                @relation("QcInspectionInspector")
   leadsAssigned                        Lead[]                        @relation("LeadAssignedTo")
@@ -610,35 +611,50 @@ model Department {
 }
 
 model Employee {
-  id                 String    @id @default(uuid()) @db.Uuid
-  companyId          String    @map("company_id") @db.Uuid
-  branchId           String?   @map("branch_id") @db.Uuid
-  departmentId       String?   @map("department_id") @db.Uuid
-  reportsToId        String?   @map("reports_to_id") @db.Uuid
+  id                 String           @id @default(uuid()) @db.Uuid
+  companyId          String           @map("company_id") @db.Uuid
+  branchId           String?          @map("branch_id") @db.Uuid
+  departmentId       String?          @map("department_id") @db.Uuid
+  reportsToId        String?          @map("reports_to_id") @db.Uuid
   // Nullable — wiring this in is the one deliberate HRMS improvement over
   // the WordPress source, which hardcodes a single 10:15 late-cutoff for
   // every employee company-wide. See CRM_SALES_MARKETING_HRMS_MIGRATION_REPORT.md.
-  shiftId            String?   @map("shift_id") @db.Uuid
+  shiftId            String?          @map("shift_id") @db.Uuid
   // Wired to the real Designation master (HRMS gap-analysis Priority 1 item
   // #1, 2026-08-26) — was a plain free-text string, now a real FK, matching
   // the same string→FK cutover already done once for Product.category/season
   // in Phase 3. The old `designation` string column is intentionally gone
   // (not kept as a shim) — its data was backfilled into `designationId`
   // before the column was dropped, see the migration's own backfill note.
-  designationId      String?   @map("designation_id") @db.Uuid
+  designationId      String?          @map("designation_id") @db.Uuid
   // A sibling to departmentId/designationId, not nested under either — employment
   // classification (Permanent/Contract/Probation/...) is orthogonal to organizational
   // placement (which department, what title). See the Item 7 analysis, 2026-09-01.
-  employeeCategoryId String?   @map("employee_category_id") @db.Uuid
-  employeeCode       String    @map("employee_code")
-  fullName           String    @map("full_name")
+  employeeCategoryId String?          @map("employee_category_id") @db.Uuid
+  employeeCode       String           @map("employee_code")
+  fullName           String           @map("full_name")
   phone              String?
   email              String?
-  joinDate           DateTime? @map("join_date")
-  isActive           Boolean   @default(true) @map("is_active")
-  deletedAt          DateTime? @map("deleted_at")
-  createdAt          DateTime  @default(now()) @map("created_at")
-  updatedAt          DateTime  @updatedAt @map("updated_at")
+  joinDate           DateTime?        @map("join_date")
+  // Pay-basis data only — stored for reference/reporting, no payroll
+  // run/payslip generation exists or is computed from these (deliberate
+  // scope decision, 2026-09-02). Nullable: most existing employees have
+  // never had this set.
+  payType            EmployeePayType? @map("pay_type")
+  fixedMonthlySalary Decimal?         @map("fixed_monthly_salary") @db.Decimal(18, 2)
+  pieceRatePerUnit   Decimal?         @map("piece_rate_per_unit") @db.Decimal(18, 4)
+  travelAllowance    Decimal?         @map("travel_allowance") @db.Decimal(18, 2)
+  dearnessAllowance  Decimal?         @map("dearness_allowance") @db.Decimal(18, 2)
+  // Per-employee Admin toggle: can this worker submit their OWN production
+  // progress (subject to also having a User login linked via
+  // User.employeeId), or must a Supervisor always log it for them (today's
+  // default behavior for every employee). Defaults false so no existing
+  // employee's workflow changes on migration.
+  selfEntryEnabled   Boolean          @default(false) @map("self_entry_enabled")
+  isActive           Boolean          @default(true) @map("is_active")
+  deletedAt          DateTime?        @map("deleted_at")
+  createdAt          DateTime         @default(now()) @map("created_at")
+  updatedAt          DateTime         @updatedAt @map("updated_at")
 
   company          Company           @relation(fields: [companyId], references: [id])
   branch           Branch?           @relation(fields: [branchId], references: [id])
@@ -666,6 +682,11 @@ model Employee {
 
   @@unique([companyId, employeeCode])
   @@map("employees")
+}
+
+enum EmployeePayType {
+  FIXED_SALARY
+  PIECE_RATE
 }
 
 enum ItemType {
@@ -3285,36 +3306,64 @@ model JobOrderAssignment {
 // InventoryTransaction's own signed-reversal convention, rather than ever
 // touching an existing row.
 model JobOrderProgressEntry {
-  id                   String    @id @default(uuid()) @db.Uuid
-  jobOrderId           String    @map("job_order_id") @db.Uuid
-  jobOrderAssignmentId String?   @map("job_order_assignment_id") @db.Uuid
+  id                   String                      @id @default(uuid()) @db.Uuid
+  jobOrderId           String                      @map("job_order_id") @db.Uuid
+  jobOrderAssignmentId String?                     @map("job_order_assignment_id") @db.Uuid
   // Nullable specifically for isAdjustment=true rows: a correction entry has
   // no real "worker" to attribute it to (recordAdjustmentEntry resolves the
   // acting User's own linked Employee via User.employeeId, which most
   // non-floor accounts — e.g. Super Admin — legitimately have none of).
   // Every non-adjustment row still always carries a real Employee.
-  employeeId           String?   @map("employee_id") @db.Uuid
+  employeeId           String?                     @map("employee_id") @db.Uuid
   // Who is logged in and clicked save — may differ from employeeId (the
   // supervisor-entry model recommended for V1; see
   // PRODUCTION_MODULE_DESIGN.md §7).
-  recordedByUserId     String    @map("recorded_by_user_id") @db.Uuid
-  completedQuantity    Decimal   @default(0) @map("completed_quantity") @db.Decimal(18, 4)
-  rejectedQuantity     Decimal   @default(0) @map("rejected_quantity") @db.Decimal(18, 4)
-  damagedQuantity      Decimal   @default(0) @map("damaged_quantity") @db.Decimal(18, 4)
-  isAdjustment         Boolean   @default(false) @map("is_adjustment")
+  recordedByUserId     String                      @map("recorded_by_user_id") @db.Uuid
+  completedQuantity    Decimal                     @default(0) @map("completed_quantity") @db.Decimal(18, 4)
+  rejectedQuantity     Decimal                     @default(0) @map("rejected_quantity") @db.Decimal(18, 4)
+  damagedQuantity      Decimal                     @default(0) @map("damaged_quantity") @db.Decimal(18, 4)
+  isAdjustment         Boolean                     @default(false) @map("is_adjustment")
   remarks              String?
-  startedAt            DateTime? @map("started_at")
-  endedAt              DateTime? @map("ended_at")
-  createdAt            DateTime  @default(now()) @map("created_at")
+  startedAt            DateTime?                   @map("started_at")
+  endedAt              DateTime?                   @map("ended_at")
+  // Discriminates the existing supervisor-direct path (recordProgressEntry,
+  // applied immediately, no approval) from the new worker self-entry path
+  // (submitSelfProgressEntry, held PENDING until a Supervisor decides).
+  // Every pre-existing row and every future supervisor-entered row is
+  // SUPERVISOR/NOT_REQUIRED — this table's original append-only, always-
+  // final behavior is completely unchanged for that path.
+  enteredBy            ProgressEntrySource         @default(SUPERVISOR) @map("entered_by")
+  approvalStatus       ProgressEntryApprovalStatus @default(NOT_REQUIRED) @map("approval_status")
+  approvalRemark       String?                     @map("approval_remark")
+  approvedByUserId     String?                     @map("approved_by_user_id") @db.Uuid
+  approvedAt           DateTime?                   @map("approved_at")
+  createdAt            DateTime                    @default(now()) @map("created_at")
+  // New — the table was purely append-only before; a PENDING self-entry can
+  // now be edited once by a Supervisor prior to their approve/reject decision.
+  updatedAt            DateTime                    @updatedAt @map("updated_at")
 
   jobOrder           JobOrder            @relation(fields: [jobOrderId], references: [id])
   jobOrderAssignment JobOrderAssignment? @relation(fields: [jobOrderAssignmentId], references: [id])
   employee           Employee?           @relation("JobOrderProgressEntryEmployee", fields: [employeeId], references: [id])
   recordedBy         User                @relation("JobOrderProgressEntryRecordedBy", fields: [recordedByUserId], references: [id])
+  approvedBy         User?               @relation("JobOrderProgressEntryApprovedBy", fields: [approvedByUserId], references: [id])
 
   @@index([jobOrderId])
   @@index([employeeId])
+  @@index([approvalStatus])
   @@map("job_order_progress_entries")
+}
+
+enum ProgressEntrySource {
+  SUPERVISOR
+  SELF
+}
+
+enum ProgressEntryApprovalStatus {
+  NOT_REQUIRED
+  PENDING
+  APPROVED
+  REJECTED
 }
 
 enum StageTransactionType {

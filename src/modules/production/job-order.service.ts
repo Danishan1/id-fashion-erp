@@ -19,9 +19,13 @@ import type {
   CreateJobOrderAssignmentInput,
   CreateProgressEntryInput,
   CreateQcInspectionInput,
+  DecideProgressEntryInput,
   ForwardJobOrderInput,
+  RejectProgressEntryInput,
   RevertJobOrderInput,
   StartLotInput,
+  SubmitSelfProgressEntryInput,
+  UpdatePendingProgressEntryInput,
 } from "./production.schema";
 import type { ActorContext } from "./production-order.service";
 
@@ -515,6 +519,265 @@ export async function recordAdjustmentEntry(actor: ActorContext, jobOrderId: str
   });
 
   return updated;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Worker self-entry (2026-09-02) — an additive, parallel path alongside
+// recordProgressEntry above. The existing supervisor-direct flow is
+// completely unchanged: it still applies immediately, no approval. A
+// self-submitted entry instead sits PENDING and does NOT touch the
+// JobOrder's real quantities until a Supervisor approves it (see
+// approveProgressEntry) — a worker's own unverified claim must never count
+// as real production before someone checks it.
+// ─────────────────────────────────────────────────────────────
+
+/** Resolves the acting User's own linked Employee, requiring both the link
+ * and the per-employee Admin toggle to be set — shared by every self-entry
+ * function below so the same two guards can never drift out of sync. */
+async function resolveSelfEntryEmployee(actor: ActorContext) {
+  const actingUser = await prisma.user.findUnique({ where: { id: actor.userId }, select: { employeeId: true } });
+  if (!actingUser?.employeeId) {
+    throw new BusinessRuleError(
+      "VALIDATION_ERROR",
+      "Your login isn't linked to an Employee record yet — ask an Admin to link it before you can log your own progress.",
+      {}
+    );
+  }
+  const employee = await EmployeeRepository.findById(actor.companyId, actingUser.employeeId);
+  if (!employee || !employee.selfEntryEnabled) {
+    throw new BusinessRuleError(
+      "PERMISSION_DENIED",
+      "Self-entry has not been enabled for your Employee record — ask an Admin to enable it.",
+      {}
+    );
+  }
+  return employee;
+}
+
+/** A worker submits their own progress. employeeId/jobOrderAssignmentId are
+ * never taken from client input — always the caller's own resolved Employee
+ * and their own real assignment on this job order, so a worker can never
+ * credit someone else. No quantity delta is applied here; see
+ * approveProgressEntry for where that actually happens. */
+export async function submitSelfProgressEntry(actor: ActorContext, jobOrderId: string, input: SubmitSelfProgressEntryInput) {
+  const jobOrder = await JobOrderRepository.findAnyById(actor.companyId, jobOrderId);
+  if (!jobOrder) throw new BusinessRuleError("NOT_FOUND", "Job order not found.", { id: jobOrderId });
+  if (jobOrder.status === "CANCELLED") {
+    throw new BusinessRuleError("INVALID_STATE_TRANSITION", "Cannot log progress against a cancelled job order.", {});
+  }
+  await assertStageAccess(actor, jobOrder.productionStageId);
+
+  const employee = await resolveSelfEntryEmployee(actor);
+
+  const assignment = await JobOrderAssignmentRepository.findByJobOrderAndEmployee(jobOrderId, employee.id);
+  if (!assignment) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "You are not assigned to this job order.", {});
+  }
+
+  const entry = await JobOrderProgressEntryRepository.createInTx(prisma, {
+    jobOrderId,
+    jobOrderAssignmentId: assignment.id,
+    employeeId: employee.id,
+    recordedByUserId: actor.userId,
+    completedQuantity: input.completedQuantity,
+    rejectedQuantity: input.rejectedQuantity,
+    damagedQuantity: input.damagedQuantity,
+    isAdjustment: false,
+    remarks: input.remarks || null,
+    enteredBy: "SELF",
+    approvalStatus: "PENDING",
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "job_order_progress_entries",
+    recordId: entry.id,
+    action: "CREATE",
+    newValues: {
+      enteredBy: "SELF",
+      approvalStatus: "PENDING",
+      completedQuantity: input.completedQuantity,
+      rejectedQuantity: input.rejectedQuantity,
+      damagedQuantity: input.damagedQuantity,
+    },
+  });
+
+  return entry;
+}
+
+async function loadPendingEntryForCompany(companyId: string, entryId: string) {
+  const entry = await JobOrderProgressEntryRepository.findAnyById(entryId);
+  if (!entry || entry.jobOrder.companyId !== companyId) {
+    throw new BusinessRuleError("NOT_FOUND", "Progress entry not found.", { id: entryId });
+  }
+  return entry;
+}
+
+/** A Supervisor corrects a worker's self-submitted quantities/remarks before
+ * deciding — only while still PENDING (mirrors Expense.updateExpense's
+ * edit-only-while-PENDING_APPROVAL shape). Gated on the same "approve"
+ * action as the decision itself: only someone who could approve/reject this
+ * entry can also correct it first. */
+export async function updatePendingProgressEntry(actor: ActorContext, entryId: string, input: UpdatePendingProgressEntryInput) {
+  const entry = await loadPendingEntryForCompany(actor.companyId, entryId);
+  await PermissionService.assert(actor.userId, "production", "approve");
+
+  if (entry.approvalStatus !== "PENDING") {
+    throw new BusinessRuleError(
+      "INVALID_STATE_TRANSITION",
+      `Cannot edit a progress entry in "${entry.approvalStatus}" status.`,
+      { currentStatus: entry.approvalStatus }
+    );
+  }
+
+  const before = {
+    completedQuantity: entry.completedQuantity,
+    rejectedQuantity: entry.rejectedQuantity,
+    damagedQuantity: entry.damagedQuantity,
+    remarks: entry.remarks,
+  };
+
+  const updated = await JobOrderProgressEntryRepository.update(entryId, {
+    completedQuantity: input.completedQuantity,
+    rejectedQuantity: input.rejectedQuantity,
+    damagedQuantity: input.damagedQuantity,
+    remarks: input.remarks || null,
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "job_order_progress_entries",
+    recordId: entryId,
+    action: "UPDATE",
+    oldValues: before,
+    newValues: {
+      completedQuantity: input.completedQuantity,
+      rejectedQuantity: input.rejectedQuantity,
+      damagedQuantity: input.damagedQuantity,
+      remarks: input.remarks,
+    },
+  });
+
+  return updated;
+}
+
+/** The actual approval decision — this is where the worker's claimed
+ * quantities finally become real, applied via the exact same
+ * applyJobOrderQuantityDelta cap-check every other write path uses,
+ * re-validated against the JobOrder's CURRENT state (which may have moved
+ * since submission). Self-approval-guarded — a Supervisor/Manager can't
+ * approve their own submitted entry — matching Expense.approveExpense's
+ * precedent exactly. */
+export async function approveProgressEntry(actor: ActorContext, entryId: string, input: DecideProgressEntryInput) {
+  const entry = await loadPendingEntryForCompany(actor.companyId, entryId);
+  await PermissionService.assert(actor.userId, "production", "approve", { createdBy: entry.recordedByUserId });
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const guard = await JobOrderProgressEntryRepository.updateStatusConditionalInTx(tx, entryId, "PENDING", {
+      approvalStatus: "APPROVED",
+      approvedByUserId: actor.userId,
+      approvedAt: new Date(),
+      approvalRemark: input.approvalRemark || null,
+    });
+    if (guard.count === 0) {
+      throw new BusinessRuleError(
+        "INVALID_STATE_TRANSITION",
+        `Cannot approve a progress entry in "${entry.approvalStatus}" status.`,
+        { currentStatus: entry.approvalStatus }
+      );
+    }
+
+    await applyJobOrderQuantityDelta(tx, entry.jobOrderId, {
+      completed: Number(entry.completedQuantity),
+      rejected: Number(entry.rejectedQuantity),
+      damaged: Number(entry.damagedQuantity),
+    });
+
+    return tx.jobOrderProgressEntry.findUniqueOrThrow({ where: { id: entryId } });
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "job_order_progress_entries",
+    recordId: entryId,
+    action: "APPROVE",
+    oldValues: { approvalStatus: "PENDING" },
+    newValues: { approvalStatus: "APPROVED", approvalRemark: input.approvalRemark },
+  });
+
+  return updated;
+}
+
+/** Rejects a self-submitted entry — a remark is required (mirrors
+ * Expense.rejectExpense's required rejectionReason). No JobOrder quantity
+ * change; the row stays as a permanent rejected record with the
+ * Supervisor's remark. Deliberately NOT self-approval-guarded, matching
+ * Sampling's/Expense's own precedent that only the Approve branch carries
+ * that guard. */
+export async function rejectProgressEntry(actor: ActorContext, entryId: string, input: RejectProgressEntryInput) {
+  const entry = await loadPendingEntryForCompany(actor.companyId, entryId);
+  await PermissionService.assert(actor.userId, "production", "approve");
+
+  const guard = await JobOrderProgressEntryRepository.updateStatusConditional(entryId, "PENDING", {
+    approvalStatus: "REJECTED",
+    approvedByUserId: actor.userId,
+    approvedAt: new Date(),
+    approvalRemark: input.approvalRemark,
+  });
+  if (guard.count === 0) {
+    throw new BusinessRuleError(
+      "INVALID_STATE_TRANSITION",
+      `Cannot reject a progress entry in "${entry.approvalStatus}" status.`,
+      { currentStatus: entry.approvalStatus }
+    );
+  }
+
+  const updated = await prisma.jobOrderProgressEntry.findUniqueOrThrow({ where: { id: entryId } });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "job_order_progress_entries",
+    recordId: entryId,
+    action: "REJECT",
+    oldValues: { approvalStatus: "PENDING" },
+    newValues: { approvalStatus: "REJECTED", approvalRemark: input.approvalRemark },
+  });
+
+  return updated;
+}
+
+/** Backs the worker-facing "My Work" list — every job order the caller's own
+ * linked Employee is actively assigned to, at a stage their Role allows (same
+ * filtering convention as getLotById in lot.service.ts). Throws the same
+ * "not linked"/"not enabled" errors as submitSelfProgressEntry so the page
+ * can show a clear message instead of a blank/broken list. */
+export async function listMyProductionAssignments(actor: ActorContext) {
+  const employee = await resolveSelfEntryEmployee(actor);
+  const assignments = await JobOrderAssignmentRepository.listActiveForEmployee(actor.companyId, employee.id);
+
+  const allowedStageIds = await PermissionService.getAllowedProductionStageIds(actor.userId);
+  if (allowedStageIds === null) return assignments;
+
+  return assignments.filter((a) => allowedStageIds.has(a.jobOrder.productionStage.id));
+}
+
+/** Backs the "My Submitted Entries" section of the same page — every
+ * self-entry the caller has ever submitted, regardless of stage (a worker
+ * should still see the outcome of an entry even if their stage access was
+ * later narrowed). */
+export async function listMySubmittedProgressEntries(actor: ActorContext) {
+  const employee = await resolveSelfEntryEmployee(actor);
+  return JobOrderProgressEntryRepository.findByEmployeeAndSource(employee.id, "SELF");
+}
+
+/** Backs the Supervisor-facing "Pending Approvals" queue. */
+export async function listPendingProgressEntries(actor: ActorContext) {
+  await PermissionService.assert(actor.userId, "production", "approve");
+  return JobOrderProgressEntryRepository.findPendingForCompany(actor.companyId);
 }
 
 export async function forwardJobOrder(actor: ActorContext, jobOrderId: string, input: ForwardJobOrderInput) {
