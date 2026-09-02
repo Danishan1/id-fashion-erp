@@ -45,7 +45,7 @@ export function MaterialsListClient() {
         rowHref={(row) => `/masters/materials/${row.id}`}
         columns={[
           { key: "styleCode", header: "Item Code" },
-          { key: "styleName", header: "Name" },
+          { key: "styleName", header: "Item Name" },
           { key: "materialCategory", header: "Category", render: (row) => row.materialCategory ?? "—" },
           { key: "baseUom", header: "UOM", render: (row) => row.baseUom?.code ?? "—" },
           { key: "reorderLevel", header: "Reorder Level", render: (row) => row.reorderLevel ?? "—" },
