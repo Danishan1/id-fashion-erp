@@ -1,8 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { DataTable } from "@/components/ui/DataTable";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
+import { Modal } from "@/components/ui/Modal";
+import { ProductForm, type ProductFormValues } from "./ProductForm";
+import { VariantsSection } from "./VariantsSection";
 
 interface ProductRow {
   id: string;
@@ -25,13 +29,66 @@ interface NamedOption {
 
 const EMPTY_FILTERS = { categoryId: "", seasonId: "", brandId: "", productTypeId: "", productFittingId: "", isActive: "" };
 
+/** A raw /api/v1/products/:id response — the shape ProductForm's initialValues are built from. */
+interface ProductDetail {
+  id: string;
+  styleCode: string;
+  styleName: string;
+  designNumber: string | null;
+  categoryId: string | null;
+  seasonId: string | null;
+  brandId: string | null;
+  productTypeId: string | null;
+  productFittingId: string | null;
+  gender: string | null;
+  description: string | null;
+  hsnSacCode: string | null;
+  customerId: string | null;
+  isActive: boolean;
+}
+
+function toFormValues(product: ProductDetail): ProductFormValues {
+  return {
+    styleCode: product.styleCode,
+    styleName: product.styleName,
+    designNumber: product.designNumber ?? "",
+    categoryId: product.categoryId ?? "",
+    seasonId: product.seasonId ?? "",
+    brandId: product.brandId ?? "",
+    productTypeId: product.productTypeId ?? "",
+    productFittingId: product.productFittingId ?? "",
+    gender: product.gender ?? "",
+    description: product.description ?? "",
+    hsnSacCode: product.hsnSacCode ?? "",
+    customerId: product.customerId ?? "",
+    isActive: product.isActive,
+  };
+}
+
 export function ProductsListClient() {
+  return (
+    <Suspense>
+      <ProductsListContent />
+    </Suspense>
+  );
+}
+
+function ProductsListContent() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
   const [categories, setCategories] = useState<NamedOption[]>([]);
   const [seasons, setSeasons] = useState<NamedOption[]>([]);
   const [brands, setBrands] = useState<NamedOption[]>([]);
   const [productTypes, setProductTypes] = useState<NamedOption[]>([]);
   const [productFittings, setProductFittings] = useState<NamedOption[]>([]);
   const [filters, setFilters] = useState(EMPTY_FILTERS);
+
+  const [addOpen, setAddOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState<{ id: string; styleName: string; values: ProductFormValues } | null>(null);
+  const [editLoadError, setEditLoadError] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     fetch("/api/v1/categories?pageSize=200").then((r) => r.json()).then((b) => setCategories(b.data ?? []));
@@ -40,6 +97,44 @@ export function ProductsListClient() {
     fetch("/api/v1/product-types?pageSize=200").then((r) => r.json()).then((b) => setProductTypes(b.data ?? []));
     fetch("/api/v1/product-fittings?pageSize=200").then((r) => r.json()).then((b) => setProductFittings(b.data ?? []));
   }, []);
+
+  const openEdit = async (id: string) => {
+    setEditLoadError(null);
+    const res = await fetch(`/api/v1/products/${id}`);
+    const body = await res.json();
+    if (!res.ok) {
+      setEditLoadError(body?.error?.message ?? "Failed to load this style.");
+      return;
+    }
+    setEditTarget({ id, styleName: body.data.styleName, values: toFormValues(body.data) });
+  };
+
+  // Product's own edit page was removed in favor of this modal, but Sampling/
+  // Reports/etc. still deep-link straight to /masters/products/{id} — that
+  // route now redirects here with ?edit={id}, and this effect auto-opens the
+  // same Edit modal for it, then cleans the param off the URL.
+  useEffect(() => {
+    const id = searchParams.get("edit");
+    if (!id) return;
+    // Deferred a tick so openEdit's own setState calls don't run
+    // synchronously within the effect body itself (react-hooks/set-state-
+    // in-effect) — same idiom used by ManageChildrenModal's own load effect.
+    const timeout = setTimeout(() => {
+      openEdit(id).then(() => router.replace(pathname));
+    }, 0);
+    return () => clearTimeout(timeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
+  const handleCreated = () => {
+    setAddOpen(false);
+    setRefreshKey((k) => k + 1);
+  };
+
+  const handleEdited = () => {
+    setEditTarget(null);
+    setRefreshKey((k) => k + 1);
+  };
 
   const activeFilterCount = Object.values(filters).filter(Boolean).length;
 
@@ -65,6 +160,12 @@ export function ProductsListClient() {
           Download Excel
         </a>
       </div>
+
+      {editLoadError && (
+        <div className="rounded-md border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
+          {editLoadError}
+        </div>
+      )}
 
       <div className="flex flex-wrap items-end gap-3 rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
         <div>
@@ -134,10 +235,11 @@ export function ProductsListClient() {
       <DataTable<ProductRow>
         key={fetchUrl}
         fetchUrl={fetchUrl}
-        newHref="/masters/products/new"
-        newLabel="New Style"
+        refreshKey={refreshKey}
+        newAction={{ label: "New Style", onClick: () => setAddOpen(true) }}
         searchPlaceholder="Search by style name or code…"
-        rowHref={(row) => `/masters/products/${row.id}`}
+        onEditRow={(row) => openEdit(row.id)}
+        rowActions={(row) => <VariantsSection productId={row.id} />}
         columns={[
           {
             key: "imageUrl",
@@ -174,6 +276,28 @@ export function ProductsListClient() {
           },
         ]}
       />
+
+      <Modal open={addOpen} onClose={() => setAddOpen(false)} title="New Style" maxWidthClass="max-w-xl">
+        <ProductForm submitUrl="/api/v1/products" method="POST" onSuccess={handleCreated} onCancel={() => setAddOpen(false)} />
+      </Modal>
+
+      <Modal
+        open={!!editTarget}
+        onClose={() => setEditTarget(null)}
+        title={`Edit Style — ${editTarget?.styleName ?? ""}`}
+        maxWidthClass="max-w-xl"
+      >
+        {editTarget && (
+          <ProductForm
+            key={editTarget.id}
+            initialValues={editTarget.values}
+            submitUrl={`/api/v1/products/${editTarget.id}`}
+            method="PATCH"
+            onSuccess={handleEdited}
+            onCancel={() => setEditTarget(null)}
+          />
+        )}
+      </Modal>
     </div>
   );
 }

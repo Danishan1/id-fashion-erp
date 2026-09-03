@@ -48,6 +48,17 @@ export async function createWarehouse(actor: ActorContext, input: WarehouseInput
     throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Warehouse code "${input.code}" is already in use.`);
   }
 
+  const stagedLocations = input.locations ?? [];
+  if (stagedLocations.length > 0) {
+    const codes = stagedLocations.map((l) => l.code.trim().toLowerCase());
+    if (new Set(codes).size !== codes.length) {
+      throw new BusinessRuleError("VALIDATION_ERROR", "Duplicate location codes in the submitted list.");
+    }
+  }
+
+  // Locations staged before the warehouse has an id (Create's own "add
+  // Storage Locations right here" UI) are created via one nested write —
+  // atomic with the warehouse row itself, not a separate follow-up call.
   const warehouse = await WarehouseRepository.create({
     companyId: actor.companyId,
     branchId: actor.branchId,
@@ -55,6 +66,21 @@ export async function createWarehouse(actor: ActorContext, input: WarehouseInput
     name: input.name,
     type: input.type,
     isActive: input.isActive,
+    ...(stagedLocations.length > 0
+      ? {
+          locations: {
+            createMany: {
+              data: stagedLocations.map((loc) => ({
+                code: loc.code,
+                zone: loc.zone || null,
+                rack: loc.rack || null,
+                bin: loc.bin || null,
+                materialCategory: loc.materialCategory || null,
+              })),
+            },
+          },
+        }
+      : {}),
   });
 
   await writeAuditLog({
@@ -65,6 +91,20 @@ export async function createWarehouse(actor: ActorContext, input: WarehouseInput
     action: "CREATE",
     newValues: warehouse,
   });
+
+  if (stagedLocations.length > 0) {
+    const createdLocations = await WarehouseLocationRepository.findMany(warehouse.id);
+    for (const location of createdLocations) {
+      await writeAuditLog({
+        companyId: actor.companyId,
+        userId: actor.userId,
+        tableName: "warehouse_locations",
+        recordId: location.id,
+        action: "CREATE",
+        newValues: location,
+      });
+    }
+  }
 
   return warehouse;
 }
@@ -92,7 +132,7 @@ export async function updateWarehouse(actor: ActorContext, id: string, input: Wa
   const data: Prisma.WarehouseUncheckedUpdateInput = {};
   if (input.code !== undefined) data.code = input.code;
   if (input.name !== undefined) data.name = input.name;
-  if (input.type !== undefined) data.type = input.type;
+  if (input.type !== undefined) data.type = { set: input.type };
   if (input.isActive !== undefined) data.isActive = input.isActive;
 
   const updated = await WarehouseRepository.update(id, data);

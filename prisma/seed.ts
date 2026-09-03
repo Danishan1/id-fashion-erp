@@ -323,12 +323,12 @@ async function main() {
   console.log("Seeding Warehouses + Locations, Production Stages/Lines, Machines, Sales Agents...");
   await prisma.warehouse.createMany({
     data: [
-      { companyId, branchId, code: "WH01", name: "Raw Material Godam", type: "RAW_MATERIAL" },
-      { companyId, branchId, code: "WH02", name: "Fabric Store", type: "FABRIC" },
-      { companyId, branchId, code: "WH03", name: "WIP Store", type: "WIP" },
-      { companyId, branchId, code: "WH04", name: "Finished Goods Godam", type: "FINISHED_GOODS" },
-      { companyId, branchId, code: "WH05", name: "Trims & Accessories Store", type: "TRIMS" },
-      { companyId, branchId, code: "WH06", name: "Dispatch Yard", type: "DISPATCH" },
+      { companyId, branchId, code: "WH01", name: "Raw Material Godam", type: ["RAW_MATERIAL"] },
+      { companyId, branchId, code: "WH02", name: "Fabric Store", type: ["FABRIC"] },
+      { companyId, branchId, code: "WH03", name: "WIP Store", type: ["WIP"] },
+      { companyId, branchId, code: "WH04", name: "Finished Goods Godam", type: ["FINISHED_GOODS"] },
+      { companyId, branchId, code: "WH05", name: "Trims & Accessories Store", type: ["TRIMS"] },
+      { companyId, branchId, code: "WH06", name: "Dispatch Yard", type: ["DISPATCH"] },
     ],
     skipDuplicates: true,
   });

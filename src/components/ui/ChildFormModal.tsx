@@ -13,21 +13,31 @@ interface ChildFormModalProps {
   fields: LookupField[];
   /** Omit for create (fields start empty); pass the row's own values for edit. */
   initialValues?: Record<string, unknown>;
-  submitUrl: string;
-  method: "POST" | "PATCH";
+  /** Required unless `onSubmitLocal` is given — the fetch-backed submit path. */
+  submitUrl?: string;
+  method?: "POST" | "PATCH";
   onSuccess: (data: unknown) => void;
   submitLabel?: string;
   /** Prepended to the auto-suggested Code when a "name" field changes and "code" hasn't been touched yet — same convention as SimpleLookupManager. */
   codePrefix?: string;
+  /**
+   * When given, submit never hits the network — the built payload is handed
+   * straight to this callback (then `onSuccess`), for staging a child record
+   * client-side before its parent exists yet (e.g. Warehouse's own Create
+   * modal building up a locations list before the warehouse has an id).
+   * `submitUrl`/`method` are ignored when this is present.
+   */
+  onSubmitLocal?: (payload: Record<string, string>) => void;
 }
 
 /**
  * Generic Add/Edit form modal for a flat, declaratively-configured record —
  * the form half of SimpleLookupManager, extracted so it can be reused both
- * standalone and inside ManageChildrenModal (its list half). Shares the exact
- * same LookupField config shape and buildSubmitPayload/emptyValues helpers so
- * a field set behaves identically whether it's a global lookup or a child
- * record's own Add/Edit form.
+ * standalone and inside ManageChildrenModal/ChildrenList (its list half), or
+ * inside LocalChildrenList via `onSubmitLocal` when there's no parent id yet
+ * to submit against. Shares the exact same LookupField config shape and
+ * buildSubmitPayload/emptyValues helpers so a field set behaves identically
+ * whether it's a global lookup or a child record's own Add/Edit form.
  */
 export function ChildFormModal({
   open,
@@ -40,6 +50,7 @@ export function ChildFormModal({
   onSuccess,
   submitLabel,
   codePrefix = "",
+  onSubmitLocal,
 }: ChildFormModalProps) {
   const hasCodeField = fields.some((f) => f.key === "code");
   // Lazily initialized from `initialValues` — the caller is expected to pass
@@ -95,13 +106,22 @@ export function ChildFormModal({
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (isSubmitting) return;
+
+    const payload = buildSubmitPayload(fields, values);
+
+    if (onSubmitLocal) {
+      onSubmitLocal(payload);
+      onSuccess(payload);
+      return;
+    }
+
     setIsSubmitting(true);
     setError(null);
 
-    const res = await fetch(submitUrl, {
+    const res = await fetch(submitUrl!, {
       method,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(buildSubmitPayload(fields, values)),
+      body: JSON.stringify(payload),
     });
 
     setIsSubmitting(false);
@@ -165,7 +185,7 @@ export function ChildFormModal({
             disabled={isSubmitting}
             className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
           >
-            {isSubmitting ? "Saving…" : (submitLabel ?? (method === "POST" ? "Add" : "Update"))}
+            {isSubmitting ? "Saving…" : (submitLabel ?? (initialValues ? "Update" : "Add"))}
           </button>
         </div>
       </form>

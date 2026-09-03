@@ -11,6 +11,12 @@ function filtersApplied(filters: Record<string, string>, labels: Record<string, 
     .map(([k, v]) => ({ label: labels[k] ?? k, value: v }));
 }
 
+/** Warehouse.type is an array (a warehouse can store more than one material
+ * kind) — formatted the same way as the Warehouses master list. */
+function formatWarehouseTypes(types: string[]) {
+  return types.map((t) => t.replace(/_/g, " ")).join(", ") || "—";
+}
+
 // ---------------------------------------------------------------------------
 // 1. Warehouse Stock Summary — per-warehouse rollup, reusing the exact same
 // StockBalance/unitCost/reorderLevel source as the Inventory category's own
@@ -37,7 +43,7 @@ async function getWarehouseStockSummaryDescriptor(companyId: string, generatedBy
   }
   const byWarehouse = new Map<string, WarehouseAgg>();
   for (const w of warehouses) {
-    byWarehouse.set(w.id, { warehouseId: w.id, code: w.code, name: w.name, type: w.type, skuCount: 0, totalQuantity: 0, stockValue: 0, lowStockCount: 0 });
+    byWarehouse.set(w.id, { warehouseId: w.id, code: w.code, name: w.name, type: formatWarehouseTypes(w.type), skuCount: 0, totalQuantity: 0, stockValue: 0, lowStockCount: 0 });
   }
   for (const b of balances) {
     const agg = byWarehouse.get(b.warehouseId);
@@ -107,7 +113,7 @@ async function getWarehouseRegisterDescriptor(companyId: string, generatedByName
     warehouseId: w.id,
     code: w.code,
     name: w.name,
-    type: w.type,
+    type: formatWarehouseTypes(w.type),
     manager: w.managerEmployeeId ? (managerNameById.get(w.managerEmployeeId) ?? "—") : "—",
     locationCount: w._count.locations,
     status: w.isActive ? "Active" : "Inactive",

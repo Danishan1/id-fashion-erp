@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { buildCategoryOptions, type FlatCategory } from "@/lib/category-tree";
@@ -51,11 +50,11 @@ interface ProductFormProps {
   initialValues?: ProductFormValues;
   submitUrl: string;
   method: "POST" | "PATCH";
-  redirectTo: string;
+  onSuccess: () => void;
+  onCancel: () => void;
 }
 
-export function ProductForm({ initialValues, submitUrl, method, redirectTo }: ProductFormProps) {
-  const router = useRouter();
+export function ProductForm({ initialValues, submitUrl, method, onSuccess, onCancel }: ProductFormProps) {
   const [values, setValues] = useState<ProductFormValues>(initialValues ?? EMPTY_VALUES);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [categories, setCategories] = useState<FlatCategory[]>([]);
@@ -124,8 +123,7 @@ export function ProductForm({ initialValues, submitUrl, method, redirectTo }: Pr
       return;
     }
 
-    router.push(redirectTo);
-    router.refresh();
+    onSuccess();
   };
 
   return (
@@ -306,7 +304,7 @@ export function ProductForm({ initialValues, submitUrl, method, redirectTo }: Pr
         </button>
         <button
           type="button"
-          onClick={() => router.push(redirectTo)}
+          onClick={onCancel}
           className="rounded-md border border-zinc-300 px-4 py-2 text-sm text-zinc-700 dark:border-zinc-700 dark:text-zinc-200"
         >
           Cancel

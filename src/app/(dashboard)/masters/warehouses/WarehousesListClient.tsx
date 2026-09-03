@@ -1,10 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { ActionMenu } from "@/components/ui/ActionMenu";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
+import { ChildrenList } from "@/components/ui/ChildrenList";
+import { LocalChildrenList } from "@/components/ui/LocalChildrenList";
 import { DataTable } from "@/components/ui/DataTable";
-import { ManageChildrenModal } from "@/components/ui/ManageChildrenModal";
 import { Modal } from "@/components/ui/Modal";
 import { MATERIAL_CATEGORIES } from "@/modules/products/product.schema";
 import { formatCategoryLabel } from "@/lib/format-category-label";
@@ -28,6 +28,17 @@ interface LocationRow {
   isActive: boolean;
 }
 
+/** Shape of a staged, not-yet-persisted location on the Create modal — plain
+ * strings, matching ChildFormModal's own buildSubmitPayload output. */
+interface StagedLocation {
+  [key: string]: string;
+  code: string;
+  zone: string;
+  rack: string;
+  bin: string;
+  materialCategory: string;
+}
+
 const LOCATION_FIELDS = [
   { key: "code", label: "Code", required: true },
   { key: "zone", label: "Zone" },
@@ -42,25 +53,53 @@ const LOCATION_FIELDS = [
   },
 ];
 
+const LOCATION_COLUMNS = [
+  { key: "code", header: "Code" },
+  { key: "zone", header: "Zone", render: (row: { zone: string | null }) => row.zone || "—" },
+  { key: "rack", header: "Rack", render: (row: { rack: string | null }) => row.rack || "—" },
+  { key: "bin", header: "Bin", render: (row: { bin: string | null }) => row.bin || "—" },
+  {
+    key: "materialCategory",
+    header: "Material Category",
+    render: (row: { materialCategory: string | null }) =>
+      row.materialCategory ? formatCategoryLabel(row.materialCategory) : "—",
+  },
+];
+
+function formatTypes(types: string[]) {
+  return types.map((t) => t.replace(/_/g, " ")).join(", ") || "—";
+}
+
 /**
- * Reference implementation of the ERP-wide List → Actions → Manage-Child
- * modal CRUD standard (Warehouse → Locations). Create and Edit are both
- * modals reusing the existing, navigation-agnostic WarehouseForm; Locations
- * is the new generic ManageChildrenModal/ChildFormModal pair. There is no
- * more `/masters/warehouses/[id]` page — everything happens from this list.
+ * Warehouse → Locations, per the 2026-09-02 UX revisions: Locations
+ * management lives directly inside the same Create/Edit modal as the
+ * warehouse's own fields (not a separate "Locations" action/modal). Create
+ * shows both together from the start — matching Edit exactly — by staging
+ * Locations client-side (LocalChildrenList) and submitting them together
+ * with the warehouse's own fields in one request; Edit already has a real
+ * id, so its Locations section (ChildrenList) talks straight to the API.
+ * Type is a multi-select (WarehouseForm's own checkbox group) since a single
+ * physical warehouse can store more than one material kind.
  */
 export function WarehousesListClient() {
   const [addOpen, setAddOpen] = useState(false);
+  const [stagedLocations, setStagedLocations] = useState<StagedLocation[]>([]);
   const [editTarget, setEditTarget] = useState<WarehouseRow | null>(null);
-  const [locationsTarget, setLocationsTarget] = useState<WarehouseRow | null>(null);
+  const [justSaved, setJustSaved] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
 
-  const handleCreated = () => {
+  const closeAdd = () => {
     setAddOpen(false);
+    setStagedLocations([]);
     setRefreshKey((k) => k + 1);
   };
 
-  const handleEdited = () => {
+  const openEdit = (row: WarehouseRow) => {
+    setJustSaved(false);
+    setEditTarget(row);
+  };
+
+  const closeEdit = () => {
     setEditTarget(null);
     setRefreshKey((k) => k + 1);
   };
@@ -78,18 +117,11 @@ export function WarehousesListClient() {
         refreshKey={refreshKey}
         newAction={{ label: "New Warehouse", onClick: () => setAddOpen(true) }}
         searchPlaceholder="Search by name or code…"
-        rowActions={(row) => (
-          <ActionMenu
-            items={[
-              { label: "Edit", onClick: () => setEditTarget(row) },
-              { label: "Locations", onClick: () => setLocationsTarget(row) },
-            ]}
-          />
-        )}
+        onEditRow={openEdit}
         columns={[
           { key: "code", header: "Code" },
           { key: "name", header: "Name" },
-          { key: "type", header: "Type" },
+          { key: "type", header: "Type", render: (row) => formatTypes(row.type) },
           {
             key: "isActive",
             header: "Status",
@@ -108,50 +140,79 @@ export function WarehousesListClient() {
         ]}
       />
 
-      <Modal open={addOpen} onClose={() => setAddOpen(false)} title="Add Warehouse" maxWidthClass="max-w-xl">
-        <WarehouseForm submitUrl="/api/v1/warehouses" method="POST" onSuccess={handleCreated} onCancel={() => setAddOpen(false)} />
+      <Modal open={addOpen} onClose={closeAdd} title="Add Warehouse" maxWidthClass="max-w-2xl">
+        <div className="space-y-6">
+          <WarehouseForm
+            submitUrl="/api/v1/warehouses"
+            method="POST"
+            extraFields={{ locations: stagedLocations }}
+            onSuccess={closeAdd}
+            onCancel={closeAdd}
+          />
+          <div className="border-t border-zinc-200 pt-4 dark:border-zinc-800">
+            <h2 className="mb-2 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Storage Locations</h2>
+            <p className="mb-2 text-xs text-zinc-500 dark:text-zinc-400">
+              Optional — add any storage locations now; they&rsquo;re created together with the warehouse when
+              you Save above.
+            </p>
+            <LocalChildrenList<StagedLocation>
+              value={stagedLocations}
+              onChange={setStagedLocations}
+              entityLabel="Location"
+              fields={LOCATION_FIELDS}
+              columns={LOCATION_COLUMNS}
+              emptyMessage="No locations added yet."
+            />
+          </div>
+        </div>
       </Modal>
 
       <Modal
         open={!!editTarget}
-        onClose={() => setEditTarget(null)}
+        onClose={closeEdit}
         title={`Edit Warehouse — ${editTarget?.name ?? ""}`}
-        maxWidthClass="max-w-xl"
+        maxWidthClass="max-w-2xl"
       >
         {editTarget && (
-          <WarehouseForm
-            key={editTarget.id}
-            initialValues={{ code: editTarget.code, name: editTarget.name, type: editTarget.type, isActive: editTarget.isActive }}
-            submitUrl={`/api/v1/warehouses/${editTarget.id}`}
-            method="PATCH"
-            onSuccess={handleEdited}
-            onCancel={() => setEditTarget(null)}
-          />
+          <div className="space-y-6">
+            <WarehouseForm
+              key={editTarget.id}
+              initialValues={{ code: editTarget.code, name: editTarget.name, type: editTarget.type, isActive: editTarget.isActive }}
+              submitUrl={`/api/v1/warehouses/${editTarget.id}`}
+              method="PATCH"
+              // Deliberately does NOT close the modal — Locations are right
+              // below, so saving the fields shouldn't kick the user out
+              // before they're done managing those too. Closing is explicit,
+              // via Cancel/Done or the Modal's own X/Escape/outside-click.
+              onSuccess={(saved) => {
+                setJustSaved(true);
+                setEditTarget((prev) => (prev ? { ...prev, code: saved.code, name: saved.name, type: saved.type, isActive: saved.isActive } : prev));
+              }}
+              onCancel={closeEdit}
+            />
+            {justSaved && <p className="text-sm text-green-700 dark:text-green-400">Saved.</p>}
+            <div className="border-t border-zinc-200 pt-4 dark:border-zinc-800">
+              <h2 className="mb-2 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Storage Locations</h2>
+              <ChildrenList<LocationRow>
+                fetchUrl={`/api/v1/warehouses/${editTarget.id}/locations`}
+                entityLabel="Location"
+                fields={LOCATION_FIELDS}
+                columns={LOCATION_COLUMNS}
+                emptyMessage="No locations yet."
+              />
+            </div>
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={closeEdit}
+                className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500"
+              >
+                Done
+              </button>
+            </div>
+          </div>
         )}
       </Modal>
-
-      {locationsTarget && (
-        <ManageChildrenModal<LocationRow>
-          open={!!locationsTarget}
-          onClose={() => setLocationsTarget(null)}
-          title={`Locations — ${locationsTarget.name} (${locationsTarget.code})`}
-          fetchUrl={`/api/v1/warehouses/${locationsTarget.id}/locations`}
-          entityLabel="Location"
-          fields={LOCATION_FIELDS}
-          columns={[
-            { key: "code", header: "Code" },
-            { key: "zone", header: "Zone", render: (row) => row.zone ?? "—" },
-            { key: "rack", header: "Rack", render: (row) => row.rack ?? "—" },
-            { key: "bin", header: "Bin", render: (row) => row.bin ?? "—" },
-            {
-              key: "materialCategory",
-              header: "Material Category",
-              render: (row) => (row.materialCategory ? formatCategoryLabel(row.materialCategory) : "—"),
-            },
-          ]}
-          emptyMessage="No locations yet."
-        />
-      )}
     </div>
   );
 }

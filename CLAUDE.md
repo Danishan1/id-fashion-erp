@@ -3298,6 +3298,101 @@ in the linked list alongside the pre-existing "Fabric," disappeared from the ava
 it again (back to just "Fabric," the original demo state) — zero console errors. `npx tsc --noEmit`,
 `npx eslint`, and `npx vitest run` (836/836) all clean.
 
+## Warehouse Locations moved inline into Create/Edit (reversing the separate-modal pattern) (2026-09-02)
+
+Direct user reversal of part of the just-shipped Warehouse List→Actions→Modal standard: instead of a
+separate "Locations" action opening its own modal, Location management now lives directly inside the same
+Create/Edit modal as the Warehouse's own fields — confirmed via AskUserQuestion ("Save warehouse first, same
+modal then shows Locations").
+
+- **`ChildrenList.tsx`** (new) — extracted from `ManageChildrenModal.tsx`'s own list/add/edit/deactivate
+  content, with no outer `<Modal>` of its own, so it can be embedded directly inside another already-open
+  modal. `ManageChildrenModal.tsx` is now a thin wrapper (`Modal` + `ChildrenList`) — kept available for any
+  future module that still wants the "separate action opens its own modal" shape; Warehouse itself no longer
+  uses it.
+- **Create is a two-phase single modal**: Phase 1 is just `WarehouseForm`; on save, the same modal switches
+  to a "`<name>` created — add its storage locations" view showing `ChildrenList` for Locations, closed via
+  Done. Create has no id to scope a locations list to until the warehouse is actually saved, so this
+  two-phase shape (rather than a second, separate modal) was the explicit, reviewed answer to that.
+- **Edit shows both together**: `WarehouseForm` fields stacked above a "Storage Locations" `ChildrenList`
+  divider, in the same already-open modal. Saving the fields deliberately does **not** close the modal (a
+  "Saved." message shows instead) — Locations are right below, so a field save shouldn't kick the user out
+  before they're done managing those too; closing is explicit, via Cancel/Done or the Modal's own
+  X/Escape/outside-click.
+- **New gotcha variant found during verification, not a code defect**: a brand-new 4-level-deep nested
+  dynamic route (`warehouses/[id]/locations/[locationId]/status/route.ts`) 404'd with Next's own HTML 404
+  page (not a JSON business-logic 404) even after a full dev-server restart — the fix that has resolved
+  every prior instance of this project's stale-Turbopack-cache gotcha family. Confirmed the route file
+  itself was correct (right exports, no typos in the folder names) and that the exact same nesting depth
+  works elsewhere (`goods-receipts/[id]/items/[itemId]/reverse`) — so this wasn't a Next.js routing
+  limitation either. Resolved only by fully deleting `.next` (not just restarting the server) before
+  restarting — worth remembering as a step up from the usual fix: **a brand-new deeply-nested dynamic route
+  may need a full `.next` wipe, not just a dev-server restart, before Turbopack's route discovery picks it
+  up.**
+- Verified live end-to-end through the real UI (not just direct API calls, once the routing gotcha above was
+  resolved): New Warehouse → fill fields → Save → same modal switched to the Locations view → Add Location
+  (Code/Zone/Rack/Bin/Material Category) → appeared in the list → Done → list refreshed showing the new
+  warehouse row; Edit → fields + Locations rendered together → edited the Name and Saved (modal stayed open,
+  "Saved." shown, DB confirmed updated) → edited the location's Rack (confirmed persisted) → toggled it
+  Inactive via the real switch (ConfirmModal → Deactivate → toggle flipped, DB confirmed `isActive: false`)
+  → Done closed the modal. Test warehouse deactivated afterward (soft, matching this project's own
+  soft-delete convention — no hard delete exists for Warehouse). `npx tsc --noEmit`, `npx eslint`, `npx
+  vitest run` (850/850), and `npx next build` all clean throughout.
+
+## Warehouse Create now stages Storage Locations inline; Type becomes multi-select (2026-09-02)
+
+Two more direct follow-ups on the same day: Create's own "add Storage Locations here" ask turned out to
+mean simultaneous, not two-phase — matching Edit's layout exactly, not gated behind an initial save — and a
+real schema change: a warehouse can now be tagged with more than one `WarehouseType` (a physical warehouse
+routinely stores more than one material kind in different rooms/sections, the same real gap the per-Location
+`materialCategory` tagging above was a partial answer to — this makes the warehouse-level signal multi-value
+too, not a replacement for that Location-level tagging).
+
+- **Schema**: `Warehouse.type` — `WarehouseType` (single) → `WarehouseType[]` (migration
+  `20260902130000_warehouse_type_multi_select`, hand-authored add-column/backfill/drop/rename/drop-default
+  since Prisma's own migrate tooling can't run non-interactively in this shell). Every existing row's
+  original value was preserved as a one-element array, verified via a direct query, not trusted from
+  `migrate resolve --applied` alone. `updateWarehouse()` needed `data.type = { set: input.type }` — Prisma's
+  scalar-list replace-in-full shape — not a bare array assignment.
+- **Create is now single-phase, matching Edit exactly**: the two-phase "save fields, then the same modal
+  reveals Locations" design from the same day's earlier entry is gone — Create shows `WarehouseForm` fields
+  and a "Storage Locations" list together from the very start, submitted as one request. Since a Location
+  needs a real `warehouseId` FK that doesn't exist until the warehouse is saved, Locations are staged
+  client-side (new `LocalChildrenList.tsx` — `ChildrenList`'s sibling for a parent with no id yet: same
+  table/Add/Edit shape, Remove instead of a deactivate-with-confirm since undoing a staged, unsaved row is
+  trivial) and submitted together with the warehouse's own fields via a new `WarehouseForm` `extraFields`
+  prop merged into the POST body. `createWarehouse()` creates both in one nested Prisma write
+  (`locations: { createMany: { data } }` inside the same `warehouse.create()` call — atomic by construction,
+  no manual `$transaction` needed), rejects duplicate codes within the staged batch before writing anything,
+  and — after the nested create — refetches the created locations to write one audit-log `CREATE` entry per
+  location, matching `createWarehouseLocation()`'s own granular audit trail exactly rather than leaving the
+  batch path under-logged. `ChildFormModal.tsx` gained an optional `onSubmitLocal` callback (skips the
+  network call entirely, hands the built payload straight to the caller) so `LocalChildrenList` could reuse
+  it as-is instead of forking a second Add/Edit form implementation.
+- **Type is a checkbox multi-select**, not a native `<select multiple>` — `WarehouseForm.tsx`'s own
+  established visual language, same as the Supplier broad-category checklist elsewhere in this app. Zod:
+  `z.array(z.enum(WAREHOUSE_TYPES)).min(1)`; the Save button is also disabled client-side at zero selections
+  as a cheap UX nicety on top of the real server-side check.
+- Both Warehouse reports (`warehouse.reports.ts` — Stock Summary, Register) and the Warehouses master list
+  updated to render the array as a formatted joined string (`"RAW MATERIAL, FABRIC, TRIMS"`), matching the
+  exact label-formatting convention already used for the single-value case.
+- New `warehouse.service.test.ts` (5 tests, first coverage for this module) — justified same as every other
+  test added this project only when real branching/calculation logic exists, not for simple CRUD: the
+  duplicate-code-in-batch rejection, the nested-create shape, the per-location audit-log count, and the
+  `type: { set: [...] }` update shape.
+- **Same `.next`-cache gotcha as the same day's earlier entry, hit again mid-session**: a plain dev-server
+  restart wasn't enough after this schema/route work either — a full `.next` wipe before restarting was
+  needed before the new behavior was reliably picked up.
+- Verified live end-to-end through the real UI: created `WH-MULTI-01` with 3 types checked (Raw Material +
+  Fabric + Trims) and 2 staged locations (ROOM-FABRIC, ROOM-TRIMS) added via the same modal before ever
+  saving — one Save produced exactly one warehouse row, both location rows, and 3 audit-log `CREATE` entries
+  (1 warehouse + 2 locations) at the same instant, confirmed via a direct DB query; the master list rendered
+  `"RAW MATERIAL, FABRIC, TRIMS"` correctly; the Edit modal opened on the same warehouse and pre-checked
+  exactly those 3 type checkboxes with both locations already listed; both Warehouse reports rendered the
+  same joined-type formatting correctly. Test warehouse deactivated afterward (soft, matching this project's
+  convention — no hard delete exists for Warehouse). `npx tsc --noEmit`, `npx eslint`, `npx vitest run`
+  (855/855, 5 new), and `npx next build` all clean throughout.
+
 ## Recommended Stack
 
 Next.js 14+ (App Router) + React + TypeScript + Tailwind CSS (frontend); Next.js API routes/route handlers as REST API; PostgreSQL + Prisma ORM; session-based auth (Auth.js/NextAuth, DB sessions) with RBAC and optional TOTP 2FA; S3-compatible or local file storage for attachments; server-side PDF/Excel export (`exceljs`, `pdf-lib`/`@react-pdf/renderer`).
