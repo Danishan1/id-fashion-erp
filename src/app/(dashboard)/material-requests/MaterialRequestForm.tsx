@@ -5,6 +5,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { MaterialPicker } from "@/components/ui/MaterialPicker";
 import { todayIsoDate } from "@/lib/date";
+import { useSubmoduleVisibility } from "@/lib/use-submodule-visibility";
 
 interface Option {
   id: string;
@@ -66,6 +67,7 @@ export interface InitialMaterialRequest {
 
 export function MaterialRequestForm({ initialRequest }: { initialRequest?: InitialMaterialRequest } = {}) {
   const router = useRouter();
+  const isVisible = useSubmoduleVisibility();
   const [requestType, setRequestType] = useState(initialRequest?.requestType ?? "PRODUCTION_REQUIREMENT");
   const [departmentId, setDepartmentId] = useState(initialRequest?.departmentId ?? "");
   const [warehouseId, setWarehouseId] = useState(initialRequest?.warehouseId ?? "");
@@ -366,22 +368,24 @@ export function MaterialRequestForm({ initialRequest }: { initialRequest?: Initi
                   ))}
                 </select>
               </FormField>
-              <FormField label="Shade / Pantone (optional)" htmlFor={`dye-${index}`}>
-                <select
-                  id={`dye-${index}`}
-                  value={line.dyeId}
-                  onChange={(e) => updateLine(index, { dyeId: e.target.value })}
-                  className={textInputClass()}
-                >
-                  <option value="">— None —</option>
-                  {dyes.map((d) => (
-                    <option key={d.id} value={d.id}>
-                      {d.name}
-                      {d.pantone ? ` (${d.pantone})` : ""}
-                    </option>
-                  ))}
-                </select>
-              </FormField>
+              {isVisible("FABRIC_DYE") && (
+                <FormField label="Shade / Pantone (optional)" htmlFor={`dye-${index}`}>
+                  <select
+                    id={`dye-${index}`}
+                    value={line.dyeId}
+                    onChange={(e) => updateLine(index, { dyeId: e.target.value })}
+                    className={textInputClass()}
+                  >
+                    <option value="">— None —</option>
+                    {dyes.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.name}
+                        {d.pantone ? ` (${d.pantone})` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </FormField>
+              )}
             </div>
 
             <FormField label="Requested Quantity" htmlFor={`qty-${index}`} required>

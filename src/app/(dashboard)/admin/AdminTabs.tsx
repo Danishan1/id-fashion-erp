@@ -8,8 +8,18 @@ import { AdminRolesPanel } from "./AdminRolesPanel";
 import { AdminCompanySettingsPanel } from "./AdminCompanySettingsPanel";
 import { AdminDocumentSequencesPanel } from "./AdminDocumentSequencesPanel";
 import { AdminWorkerSettingsPanel } from "./AdminWorkerSettingsPanel";
+import { AdminModuleVisibilityPanel } from "./AdminModuleVisibilityPanel";
 
-const TABS = ["Users", "Branches", "Roles", "Worker Settings", "Company Settings", "Document Numbering", "Audit Log"] as const;
+const TABS = [
+  "Users",
+  "Branches",
+  "Roles",
+  "Worker Settings",
+  "Company Settings",
+  "Document Numbering",
+  "Module Visibility",
+  "Audit Log",
+] as const;
 type Tab = (typeof TABS)[number];
 
 interface RoleRef {
@@ -61,6 +71,7 @@ export function AdminTabs({
       {tab === "Worker Settings" && <AdminWorkerSettingsPanel canManage={canManage} />}
       {tab === "Company Settings" && <AdminCompanySettingsPanel canManage={canManage} />}
       {tab === "Document Numbering" && <AdminDocumentSequencesPanel />}
+      {tab === "Module Visibility" && <AdminModuleVisibilityPanel canManage={canManage} />}
       {tab === "Audit Log" && <AdminAuditLogPanel />}
     </div>
   );

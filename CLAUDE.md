@@ -3393,6 +3393,71 @@ too, not a replacement for that Location-level tagging).
   convention — no hard delete exists for Warehouse). `npx tsc --noEmit`, `npx eslint`, `npx vitest run`
   (855/855, 5 new), and `npx next build` all clean throughout.
 
+## Submodule Visibility — Super Admin can hide unused Fabric Configuration sub-masters (2026-09-03, branch `fix-03-sep-2026`)
+
+User asked whether a Super Admin could hide/show any Masters module, submodule, or field per company, then gave
+a concrete example: only GSM and Composition are needed under Masters → Fabric Configuration — Dye, Weave
+Type, and Width should hide, and once a submodule already has real data its visibility must lock permanently.
+Confirmed via AskUserQuestion: hiding must apply everywhere the field is used (not just the masters tab), and
+the mechanism should be generic so other tabbed masters (Garment Attributes' 8 tabs, HR Config's 4) can be
+onboarded later. Designed via 3 parallel Explore agents (fabric-config/admin page structure; the 3 consumer
+forms' exact field wiring; BusinessRuleError/Company/migration/RBAC conventions) + a Plan-agent critique before
+implementation.
+
+- **Schema**: new `SubmoduleVisibility` (`companyId`, `submoduleKey`, `isVisible`, `@@unique([companyId,
+  submoduleKey])`) — a missing row means "visible" (the default), so no backfill is needed and no schema
+  change is needed when a future submodule key is registered.
+- **Locking is derived at read time, never stored, and "locked" always wins** — the critique caught a real
+  TOCTOU race in a naive "check row-count, then upsert" write path (two unrelated tables, no shared
+  constraint: a concurrent "first real GSM row created" + "admin hides GSM" pair could both succeed). Fixed
+  by making `getSubmoduleVisibilityMap()`'s read-side derivation force `isVisible = true` whenever the
+  submodule is locked, regardless of what's stored — self-healing against the race, not just relying on
+  `setSubmoduleVisibility()`'s own pre-check (kept anyway, for a clean `SUBMODULE_LOCKED` (409) message).
+  "Has data" is a generic per-key existence-check registry (`submodule-data-checks.ts`, `findFirst` not
+  `count()`) — the one place a future submodule needs a one-line addition. An 8s in-memory per-company cache
+  avoids re-running N existence checks on every page load across a growing registry and 4+ consumer forms,
+  invalidated immediately on write — this is a cached *display* preference, not persisted business state, so
+  it doesn't conflict with this project's "never trust a stored derived flag" discipline (Sampling Hold/
+  Resume, Purchasing cancel-from-ON_HOLD).
+- **Client-safe config registry** (`src/config/submodule-registry.ts`, zero Prisma imports) lists `{label,
+  group}` per key — onboarding a future tabbed-masters group means adding entries here plus one existence-
+  check function, nothing else in the mechanism changes.
+- **API**: `GET /api/v1/submodule-visibility` (no module gate, matches `/api/v1/branches`'s "cross-cutting
+  lookup" convention — every user filling Goods Receipt/Sampling/Material Request needs this regardless of
+  their `administration` grant) and `PATCH /api/v1/submodule-visibility/[key]` gated
+  `administration`/`"create"` — deliberately `"create"`, not `"edit"`, since `admin/page.tsx`'s existing
+  `canManage` boolean (passed to every admin panel) is itself computed via `"create"`; using the same tuple
+  keeps the UI's enabled/disabled toggle state and the API's real gate from silently drifting apart if these
+  two actions are ever split for different roles later.
+- **Admin UI**: new "Module Visibility" tab in `AdminTabs.tsx` → `AdminModuleVisibilityPanel.tsx`, grouped by
+  `SUBMODULE_REGISTRY[key].group`, each row a `ToggleSwitch` + amber "Locked — has existing data" caption,
+  wrapped in the existing `ConfirmModal` — matching the app-wide "every toggle confirms" precedent
+  (`SimpleLookupManager`/`DataTable`'s own Active/Inactive toggles) rather than silently deviating from it.
+- **Consumer hook** (`src/lib/use-submodule-visibility.ts`) fails open by design (unknown key or a still-
+  loading/failed fetch defaults to visible) — a stated, deliberate decision: visibility here is a UI
+  decluttering feature, not a server-enforced rule, since none of the 3 write endpoints (Goods Receipt/
+  Sampling/Material Request) validate against it; the FK columns are already nullable.
+- **Wiring, with a guardrail — wrap only the editable input, never a read-only display**:
+  `FabricConfigClient.tsx` filters its 5 tabs (derived via `manualTab && visibleTabs.includes(manualTab) ?
+  manualTab : visibleTabs[0]`, no effect needed); `GoodsReceiptForm.tsx`'s "Add Roll" sub-form conditionally
+  renders each of its 5 `<select>`s (the Width select's shared flex-div with the ✕ remove-roll button stays
+  unconditional); `SampleWorkflowPanel.tsx`'s and `MaterialRequestForm.tsx`'s "Add Material"/"Add Line" Dye
+  `<FormField>` are each conditional — their own separate read-only Dye-column displays are untouched, so an
+  already-recorded value keeps showing even if Dye is later hidden for new entries.
+- **Verified live**: on the main tenant (all 5 submodules already have real data from years of prior
+  sessions' testing), the API and the real Admin UI both correctly show all 5 as Locked with disabled
+  toggles, and a direct hide attempt on Dye correctly `409 SUBMODULE_LOCKED`s; switched into the empty
+  "Zenith Textiles Co." demo tenant via the existing Company Switcher, hid Dye/Weave Type/Width through the
+  real Admin UI (toggle → `ConfirmModal` → confirm), confirmed Masters → Fabric Configuration correctly
+  dropped to exactly `[GSM, Composition]` tabs, then re-showed Dye through the same real UI flow and
+  confirmed it reappeared in the tab bar live — proving the full hide/lock/show lifecycle end-to-end, not
+  just via direct API calls. Restored Zenith back to fully visible afterward (its original, clean state).
+  `npx tsc --noEmit`, `npx eslint`, `npx vitest run` (863/863, 8 new), and `npx next build` all clean.
+- **Not built this pass**: onboarding Garment Attributes/HR Config's own tabs onto the registry (the
+  mechanism is ready, no consumer added yet), and field-level (as opposed to submodule-level) visibility —
+  explicitly discussed and deferred as too risky (fields carry real validation/FK weight) when this was
+  first scoped.
+
 ## Recommended Stack
 
 Next.js 14+ (App Router) + React + TypeScript + Tailwind CSS (frontend); Next.js API routes/route handlers as REST API; PostgreSQL + Prisma ORM; session-based auth (Auth.js/NextAuth, DB sessions) with RBAC and optional TOTP 2FA; S3-compatible or local file storage for attachments; server-side PDF/Excel export (`exceljs`, `pdf-lib`/`@react-pdf/renderer`).

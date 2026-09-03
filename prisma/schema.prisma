@@ -121,6 +121,7 @@ model Company {
   internalTransfers            InternalTransfer[]
   employeeAdvances             EmployeeAdvance[]
   employeeAdvanceSettlements   EmployeeAdvanceSettlement[]
+  submoduleVisibilities        SubmoduleVisibility[]
 
   @@map("companies")
 }
@@ -5207,4 +5208,27 @@ model DocumentSequence {
 
   @@unique([companyId, branchId, documentType, fiscalYear])
   @@map("document_sequences")
+}
+
+// Lets a Super Admin hide, per company, tabbed-masters submodules this
+// company doesn't use (starting with Fabric Configuration's GSM/Dye/Weave
+// Type/Width/Composition, generic so other tabbed masters can be onboarded
+// later). A missing row means "visible" (the default) -- no backfill
+// needed. Whether a submodule is *locked* (has real data, so its visibility
+// can no longer change) is never stored here -- it's derived live from the
+// underlying table's own row count in SubmoduleVisibilityService, matching
+// this project's "derive real state, don't store a drifting label"
+// discipline (Sampling Hold/Resume, Purchasing cancel-from-ON_HOLD).
+model SubmoduleVisibility {
+  id           String   @id @default(uuid()) @db.Uuid
+  companyId    String   @map("company_id") @db.Uuid
+  submoduleKey String   @map("submodule_key")
+  isVisible    Boolean  @default(true) @map("is_visible")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, submoduleKey])
+  @@map("submodule_visibility")
 }

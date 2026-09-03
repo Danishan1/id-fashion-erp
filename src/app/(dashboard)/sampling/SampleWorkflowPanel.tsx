@@ -7,6 +7,7 @@ import { MaterialPicker } from "@/components/ui/MaterialPicker";
 import { Modal } from "@/components/ui/Modal";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { formatCategoryLabel } from "@/lib/format-category-label";
+import { useSubmoduleVisibility } from "@/lib/use-submodule-visibility";
 import { STATUS_BADGE_CLASS, STATUS_LABELS } from "./statusLabels";
 
 type SampleStatus = keyof typeof STATUS_LABELS;
@@ -153,6 +154,7 @@ async function parseErrorMessage(res: Response, fallback: string) {
 }
 
 export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampleRequestId: string; initialRequest: SampleRequestDetail }) {
+  const isVisible = useSubmoduleVisibility();
   const [request, setRequest] = useState(initialRequest);
   const [materials, setMaterials] = useState<MaterialOption[]>([]);
   const [units, setUnits] = useState<Option[]>([]);
@@ -1260,17 +1262,19 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
               </select>
             </FormField>
           </div>
-          <FormField label="Shade / Pantone (optional)" htmlFor="modalMaterialDye">
-            <select id="modalMaterialDye" value={materialDyeId} onChange={(e) => setMaterialDyeId(e.target.value)} className={textInputClass()}>
-              <option value="">— None —</option>
-              {materialDyes.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name}
-                  {d.pantone ? ` (${d.pantone})` : ""}
-                </option>
-              ))}
-            </select>
-          </FormField>
+          {isVisible("FABRIC_DYE") && (
+            <FormField label="Shade / Pantone (optional)" htmlFor="modalMaterialDye">
+              <select id="modalMaterialDye" value={materialDyeId} onChange={(e) => setMaterialDyeId(e.target.value)} className={textInputClass()}>
+                <option value="">— None —</option>
+                {materialDyes.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name}
+                    {d.pantone ? ` (${d.pantone})` : ""}
+                  </option>
+                ))}
+              </select>
+            </FormField>
+          )}
           <div className="flex gap-3">
             <ActionButton label="Cancel" onClick={() => setAddMaterialModalVersionId(null)} isBusy={false} variant="secondary" />
             <ActionButton label="Add Material" onClick={addMaterial} isBusy={isBusy} disabled={!materialId || !materialQty} />

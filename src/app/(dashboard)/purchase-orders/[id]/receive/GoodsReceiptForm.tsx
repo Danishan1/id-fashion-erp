@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { todayIsoDate } from "@/lib/date";
+import { useSubmoduleVisibility } from "@/lib/use-submodule-visibility";
 
 interface Line {
   purchaseOrderItemId: string;
@@ -59,6 +60,7 @@ const TODAY = todayIsoDate();
 
 export function GoodsReceiptForm({ purchaseOrderId, lines }: { purchaseOrderId: string; lines: Line[] }) {
   const router = useRouter();
+  const isVisible = useSubmoduleVisibility();
   const [receivedDate, setReceivedDate] = useState(TODAY);
   const [drafts, setDrafts] = useState<Record<string, LineDraft>>(
     Object.fromEntries(lines.map((l) => [l.purchaseOrderItemId, emptyDraft()]))
@@ -296,43 +298,49 @@ export function GoodsReceiptForm({ purchaseOrderId, lines }: { purchaseOrderId: 
                         onChange={(e) => updateRoll(line.purchaseOrderItemId, rollIndex, { batchNo: e.target.value })}
                         className={textInputClass()}
                       />
-                      <select
-                        value={roll.gsmId}
-                        onChange={(e) => updateRoll(line.purchaseOrderItemId, rollIndex, { gsmId: e.target.value })}
-                        className={textInputClass()}
-                      >
-                        <option value="">GSM</option>
-                        {gsms.map((g) => (
-                          <option key={g.id} value={g.id}>
-                            {g.name}
-                          </option>
-                        ))}
-                      </select>
-                      <select
-                        value={roll.dyeId}
-                        onChange={(e) => updateRoll(line.purchaseOrderItemId, rollIndex, { dyeId: e.target.value })}
-                        className={textInputClass()}
-                      >
-                        <option value="">Dye/Color</option>
-                        {dyes.map((d) => (
-                          <option key={d.id} value={d.id}>
-                            {d.name}
-                          </option>
-                        ))}
-                      </select>
-                      <div className="flex items-center gap-1">
+                      {isVisible("FABRIC_GSM") && (
                         <select
-                          value={roll.widthId}
-                          onChange={(e) => updateRoll(line.purchaseOrderItemId, rollIndex, { widthId: e.target.value })}
+                          value={roll.gsmId}
+                          onChange={(e) => updateRoll(line.purchaseOrderItemId, rollIndex, { gsmId: e.target.value })}
                           className={textInputClass()}
                         >
-                          <option value="">Width</option>
-                          {widths.map((w) => (
-                            <option key={w.id} value={w.id}>
-                              {w.name}
+                          <option value="">GSM</option>
+                          {gsms.map((g) => (
+                            <option key={g.id} value={g.id}>
+                              {g.name}
                             </option>
                           ))}
                         </select>
+                      )}
+                      {isVisible("FABRIC_DYE") && (
+                        <select
+                          value={roll.dyeId}
+                          onChange={(e) => updateRoll(line.purchaseOrderItemId, rollIndex, { dyeId: e.target.value })}
+                          className={textInputClass()}
+                        >
+                          <option value="">Dye/Color</option>
+                          {dyes.map((d) => (
+                            <option key={d.id} value={d.id}>
+                              {d.name}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                      <div className="flex items-center gap-1">
+                        {isVisible("FABRIC_WIDTH") && (
+                          <select
+                            value={roll.widthId}
+                            onChange={(e) => updateRoll(line.purchaseOrderItemId, rollIndex, { widthId: e.target.value })}
+                            className={textInputClass()}
+                          >
+                            <option value="">Width</option>
+                            {widths.map((w) => (
+                              <option key={w.id} value={w.id}>
+                                {w.name}
+                              </option>
+                            ))}
+                          </select>
+                        )}
                         <button
                           type="button"
                           onClick={() => removeRoll(line.purchaseOrderItemId, rollIndex)}
@@ -341,30 +349,34 @@ export function GoodsReceiptForm({ purchaseOrderId, lines }: { purchaseOrderId: 
                           ✕
                         </button>
                       </div>
-                      <select
-                        value={roll.weaveTypeId}
-                        onChange={(e) => updateRoll(line.purchaseOrderItemId, rollIndex, { weaveTypeId: e.target.value })}
-                        className={`${textInputClass()} col-span-2`}
-                      >
-                        <option value="">Weave Type</option>
-                        {weaveTypes.map((w) => (
-                          <option key={w.id} value={w.id}>
-                            {w.name}
-                          </option>
-                        ))}
-                      </select>
-                      <select
-                        value={roll.compositionId}
-                        onChange={(e) => updateRoll(line.purchaseOrderItemId, rollIndex, { compositionId: e.target.value })}
-                        className={`${textInputClass()} col-span-2`}
-                      >
-                        <option value="">Composition</option>
-                        {compositions.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.name}
-                          </option>
-                        ))}
-                      </select>
+                      {isVisible("FABRIC_WEAVE_TYPE") && (
+                        <select
+                          value={roll.weaveTypeId}
+                          onChange={(e) => updateRoll(line.purchaseOrderItemId, rollIndex, { weaveTypeId: e.target.value })}
+                          className={`${textInputClass()} col-span-2`}
+                        >
+                          <option value="">Weave Type</option>
+                          {weaveTypes.map((w) => (
+                            <option key={w.id} value={w.id}>
+                              {w.name}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                      {isVisible("FABRIC_COMPOSITION") && (
+                        <select
+                          value={roll.compositionId}
+                          onChange={(e) => updateRoll(line.purchaseOrderItemId, rollIndex, { compositionId: e.target.value })}
+                          className={`${textInputClass()} col-span-2`}
+                        >
+                          <option value="">Composition</option>
+                          {compositions.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name}
+                            </option>
+                          ))}
+                        </select>
+                      )}
                     </div>
                   ))}
                 </div>
