@@ -13,6 +13,8 @@ export const SUBMODULE_HAS_DATA_CHECKS: Record<SubmoduleKey, (companyId: string)
     (await prisma.fabricGsm.findFirst({ where: { companyId }, select: { id: true } })) !== null,
   FABRIC_DYE: async (companyId) =>
     (await prisma.fabricDye.findFirst({ where: { companyId }, select: { id: true } })) !== null,
+  FABRIC_DYE_TYPE: async (companyId) =>
+    (await prisma.fabricDyeType.findFirst({ where: { companyId }, select: { id: true } })) !== null,
   FABRIC_WEAVE_TYPE: async (companyId) =>
     (await prisma.fabricWeaveType.findFirst({ where: { companyId }, select: { id: true } })) !== null,
   FABRIC_WIDTH: async (companyId) =>

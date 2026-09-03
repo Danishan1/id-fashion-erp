@@ -5,7 +5,7 @@ import { textInputClass } from "@/components/ui/FormField";
 import { Modal } from "@/components/ui/Modal";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
-import { suggestCodeFromName } from "@/lib/code-suggest";
+import { suggestCodeFromName, makeCodeUnique } from "@/lib/code-suggest";
 
 export interface LookupField {
   key: string;
@@ -144,7 +144,9 @@ export function SimpleLookupManager({
       return;
     }
     if (key === "name" && hasCodeField && !isCodeManuallyEdited) {
-      setValues((prev) => ({ ...prev, name: value, code: suggestCodeFromName(value, codePrefix) }));
+      const baseCode = suggestCodeFromName(value, codePrefix);
+      const code = makeCodeUnique(baseCode, rows.map((r) => String(r.code ?? "")));
+      setValues((prev) => ({ ...prev, name: value, code }));
       return;
     }
     setValues((prev) => ({ ...prev, [key]: value }));

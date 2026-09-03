@@ -6,6 +6,7 @@ const { findManyMock, upsertMock, hasDataMocks } = vi.hoisted(() => ({
   hasDataMocks: {
     FABRIC_GSM: vi.fn(),
     FABRIC_DYE: vi.fn(),
+    FABRIC_DYE_TYPE: vi.fn(),
     FABRIC_WEAVE_TYPE: vi.fn(),
     FABRIC_WIDTH: vi.fn(),
     FABRIC_COMPOSITION: vi.fn(),

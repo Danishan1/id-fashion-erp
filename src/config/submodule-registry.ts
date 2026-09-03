@@ -10,6 +10,7 @@
 export const SUBMODULE_REGISTRY = {
   FABRIC_GSM: { label: "GSM", group: "Fabric Configuration" },
   FABRIC_DYE: { label: "Dye", group: "Fabric Configuration" },
+  FABRIC_DYE_TYPE: { label: "Dye Type", group: "Fabric Configuration" },
   FABRIC_WEAVE_TYPE: { label: "Weave Type", group: "Fabric Configuration" },
   FABRIC_WIDTH: { label: "Width", group: "Fabric Configuration" },
   FABRIC_COMPOSITION: { label: "Composition", group: "Fabric Configuration" },

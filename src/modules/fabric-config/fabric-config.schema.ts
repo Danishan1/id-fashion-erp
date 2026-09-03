@@ -11,9 +11,17 @@ export const fabricDyeSchema = z.object({
   code: z.string().min(1, "Code is required").max(30),
   name: z.string().min(1, "Name is required").max(200),
   pantone: z.string().max(30).optional().or(z.literal("")),
+  dyeTypeId: z.string().uuid().optional().or(z.literal("")),
   isActive: z.coerce.boolean().default(true),
 });
 export type FabricDyeInput = z.infer<typeof fabricDyeSchema>;
+
+export const fabricDyeTypeSchema = z.object({
+  code: z.string().min(1, "Code is required").max(30),
+  name: z.string().min(1, "Name is required").max(200),
+  isActive: z.coerce.boolean().default(true),
+});
+export type FabricDyeTypeInput = z.infer<typeof fabricDyeTypeSchema>;
 
 export const fabricWeaveTypeSchema = z.object({
   code: z.string().min(1, "Code is required").max(30),
@@ -25,7 +33,7 @@ export type FabricWeaveTypeInput = z.infer<typeof fabricWeaveTypeSchema>;
 export const fabricWidthSchema = z.object({
   code: z.string().min(1, "Code is required").max(30),
   name: z.string().min(1, "Name is required").max(200),
-  unit: z.string().max(10).default("cm"),
+  unitId: z.string().uuid().optional().or(z.literal("")),
   isActive: z.coerce.boolean().default(true),
 });
 export type FabricWidthInput = z.infer<typeof fabricWidthSchema>;

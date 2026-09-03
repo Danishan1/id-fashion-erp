@@ -167,6 +167,8 @@ async function main() {
       { code: "SET", name: "Set" },
       { code: "YDS", name: "Yards" },
       { code: "ROL", name: "Roll" },
+      { code: "IN", name: "Inches" },
+      { code: "CM", name: "Centimeters" },
     ],
     skipDuplicates: true,
   });
@@ -537,12 +539,15 @@ async function main() {
     skipDuplicates: true,
   });
 
+  const widthUoms = await prisma.unitOfMeasure.findMany({ where: { code: { in: ["IN", "CM"] } } });
+  const widthUomIdByCode = new Map(widthUoms.map((u) => [u.code, u.id]));
+
   await prisma.fabricWidth.createMany({
     data: [
-      { companyId, code: "W44", name: "44 Inch", unit: "inch" },
-      { companyId, code: "W58", name: "58 Inch", unit: "inch" },
-      { companyId, code: "W60", name: "60 Inch", unit: "inch" },
-      { companyId, code: "W150", name: "150 cm", unit: "cm" },
+      { companyId, code: "W44", name: "44 Inch", unitId: widthUomIdByCode.get("IN") },
+      { companyId, code: "W58", name: "58 Inch", unitId: widthUomIdByCode.get("IN") },
+      { companyId, code: "W60", name: "60 Inch", unitId: widthUomIdByCode.get("IN") },
+      { companyId, code: "W150", name: "150 cm", unitId: widthUomIdByCode.get("CM") },
     ],
     skipDuplicates: true,
   });
