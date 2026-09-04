@@ -11,6 +11,15 @@ interface ActorContext {
   userId: string;
 }
 
+/** The "Other" note is only ever meaningful for a location actually tagged
+ * OTHER — forcing it to null otherwise means a stale note can never survive
+ * a re-tag, even via a direct API call that bypasses the UI's own
+ * clear-on-change behavior (ChildFormModal). */
+function resolveMaterialCategoryOther(materialCategory: string | null, other: string | null | undefined): string | null {
+  if (materialCategory !== "OTHER") return null;
+  return other || null;
+}
+
 export async function listWarehouses(companyId: string, query: ListQuery) {
   const where = {
     companyId,
@@ -76,6 +85,7 @@ export async function createWarehouse(actor: ActorContext, input: WarehouseInput
                 rack: loc.rack || null,
                 bin: loc.bin || null,
                 materialCategory: loc.materialCategory || null,
+                materialCategoryOther: resolveMaterialCategoryOther(loc.materialCategory || null, loc.materialCategoryOther),
               })),
             },
           },
@@ -186,6 +196,7 @@ export async function createWarehouseLocation(
     rack: input.rack || null,
     bin: input.bin || null,
     materialCategory: input.materialCategory || null,
+    materialCategoryOther: resolveMaterialCategoryOther(input.materialCategory || null, input.materialCategoryOther),
   });
 
   await writeAuditLog({
@@ -221,6 +232,15 @@ export async function updateWarehouseLocation(
   if (input.rack !== undefined) data.rack = input.rack || null;
   if (input.bin !== undefined) data.bin = input.bin || null;
   if (input.materialCategory !== undefined) data.materialCategory = input.materialCategory || null;
+  // Recomputed whenever either field is touched, keyed off the EFFECTIVE
+  // category (the new one if this request changes it, else the existing
+  // row's) — so patching only materialCategoryOther on an already-OTHER
+  // location works, and patching only materialCategory away from OTHER
+  // correctly scrubs a note the request itself never mentioned.
+  if (input.materialCategory !== undefined || input.materialCategoryOther !== undefined) {
+    const effectiveCategory = input.materialCategory !== undefined ? input.materialCategory || null : before.materialCategory;
+    data.materialCategoryOther = resolveMaterialCategoryOther(effectiveCategory, input.materialCategoryOther);
+  }
 
   const updated = await WarehouseLocationRepository.update(locationId, data);
 

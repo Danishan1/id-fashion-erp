@@ -469,6 +469,18 @@ enum MaterialCategory {
   SERVICES
   MACHINERY
   OTHER
+  // Added 2026-09-04 so a WarehouseLocation (the only other consumer of this
+  // enum) can tag a room/section for a production STAGE, not just a raw
+  // material sub-category — mirrors 4 of WarehouseType's own 7 values
+  // (RAW_MATERIAL/FABRIC/TRIMS already fit via the values above). Product's
+  // own materialCategory (an actual raw material's type) deliberately never
+  // uses these — its Zod schema (MATERIAL_CATEGORIES) still only allows the
+  // original 9 values above; only WarehouseLocation's own, wider Zod list
+  // (LOCATION_MATERIAL_CATEGORIES) accepts them.
+  WIP
+  FINISHED_GOODS
+  DISPATCH
+  REJECT
 }
 
 /**
@@ -909,13 +921,22 @@ model WarehouseLocation {
   zone             String?
   rack             String?
   bin              String?
-  // Which kind of material this physical room/section is dedicated to (e.g.
-  // "Fabric Room" vs "Raw Material Room" within one Warehouse building) —
-  // nullable, since not every location needs one. Reuses Product's own
-  // MaterialCategory enum (not a new list) — advisory only: nothing rejects
+  // Which kind of material (or, since 2026-09-04, production stage) this
+  // physical room/section is dedicated to (e.g. "Fabric Room" vs "WIP Room"
+  // vs "Finished Goods Room" within one Warehouse building) — nullable,
+  // since not every location needs one. Reuses Product's own
+  // MaterialCategory enum (not a new list) but validated at the Zod layer
+  // against the wider LOCATION_MATERIAL_CATEGORIES list (warehouse.schema.ts),
+  // which is a superset of Product's own MATERIAL_CATEGORIES plus
+  // WIP/FINISHED_GOODS/DISPATCH/REJECT — advisory only: nothing rejects
   // storing a mismatched material here, see the Zod-level warning built for
   // this in the Goods Receipt / Stock Movement / Material Request UIs.
   materialCategory MaterialCategory? @map("material_category")
+  // Free-text note captured only when materialCategory = OTHER (e.g. "Packing
+  // Machine Room") — added 2026-09-04 so "Other" isn't a dead-end label.
+  // Service layer forces this back to null whenever materialCategory is
+  // anything else, so it can never silently go stale after a re-tag.
+  materialCategoryOther String?       @map("material_category_other")
   isActive         Boolean           @default(true) @map("is_active")
   createdAt        DateTime          @default(now()) @map("created_at")
 

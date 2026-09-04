@@ -90,6 +90,21 @@ export function ChildFormModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /** Fields whose showWhen condition no longer holds get their own value
+   * cleared in the same update — otherwise a "Please specify" note typed
+   * while materialCategory=OTHER would silently survive (unsubmitted-but-
+   * still-there) after switching to a different category, only to reappear
+   * if the user picks OTHER again later in the same form session. */
+  const clearStaleDependents = (next: Record<string, string>): Record<string, string> => {
+    let result = next;
+    for (const f of fields) {
+      if (f.showWhen && next[f.showWhen.field] !== f.showWhen.equals && next[f.key]) {
+        result = { ...result, [f.key]: "" };
+      }
+    }
+    return result;
+  };
+
   const handleFieldChange = (key: string, value: string) => {
     if (key === "code") {
       setIsCodeManuallyEdited(true);
@@ -100,7 +115,7 @@ export function ChildFormModal({
       setValues((prev) => ({ ...prev, name: value, code: suggestCodeFromName(value, codePrefix) }));
       return;
     }
-    setValues((prev) => ({ ...prev, [key]: value }));
+    setValues((prev) => clearStaleDependents({ ...prev, [key]: value }));
   };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -140,7 +155,9 @@ export function ChildFormModal({
     <Modal open={open} onClose={onClose} title={title}>
       <form onSubmit={handleSubmit} className="space-y-3">
         {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
-        {fields.map((f) => (
+        {fields
+          .filter((f) => !f.showWhen || values[f.showWhen.field] === f.showWhen.equals)
+          .map((f) => (
           <div key={f.key}>
             <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400">
               {f.label}
@@ -150,7 +167,7 @@ export function ChildFormModal({
               <select
                 required={f.required}
                 value={values[f.key] ?? ""}
-                onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
+                onChange={(e) => handleFieldChange(f.key, e.target.value)}
                 className={textInputClass()}
               >
                 <option value="">{f.placeholder ?? "— Select —"}</option>

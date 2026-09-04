@@ -41,6 +41,7 @@ interface EnquiryDetail {
   status: EnquiryStatus;
   customer: { id: string; name: string } | null;
   buyer: { name: string } | null;
+  prospectName: string | null;
   lines: LineRow[];
 }
 
@@ -113,6 +114,10 @@ export function BuyerEnquiryWorkflowPanel({
       <p className="text-sm text-zinc-600 dark:text-zinc-300">{STATUS_HELP[enquiry.status]}</p>
 
       {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+
+      {!enquiry.customer && enquiry.status !== "CANCELLED" && (
+        <LinkCustomerPanel buyerEnquiryId={buyerEnquiryId} prospectName={enquiry.prospectName} onLinked={refresh} />
+      )}
 
       {(enquiry.status === "OPEN" || enquiry.status === "PARTIALLY_CONVERTED") && (
         <div className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
@@ -239,7 +244,7 @@ function EnquiryLineCard({
                   />
                 ) : (
                   <p className="text-xs text-amber-600 dark:text-amber-400">
-                    Link a real Customer to this enquiry before converting.
+                    Link a real Customer to this enquiry before converting — see the notice above.
                   </p>
                 )}
                 <ActionButton
@@ -401,6 +406,135 @@ function ConvertToSampleForm({
         isBusy={isBusy || isSubmitting}
         disabled={!styleName || !sampleType}
       />
+    </div>
+  );
+}
+
+interface CustomerOption {
+  id: string;
+  name?: string;
+}
+
+/**
+ * The action the create form's own "conversion requires a real Customer"
+ * warning always implied existed but never did (2026-09-04) — a prospect
+ * enquiry has no way to become a real one without this. Shown as a
+ * persistent banner (not hidden behind a toggle) since it's the one thing
+ * blocking every "Approved for Sampling" line from converting.
+ */
+function LinkCustomerPanel({
+  buyerEnquiryId,
+  prospectName,
+  onLinked,
+}: {
+  buyerEnquiryId: string;
+  prospectName: string | null;
+  onLinked: () => Promise<void>;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [customers, setCustomers] = useState<CustomerOption[]>([]);
+  const [buyers, setBuyers] = useState<CustomerOption[]>([]);
+  const [customerId, setCustomerId] = useState("");
+  const [buyerId, setBuyerId] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const openForm = () => {
+    setIsOpen(true);
+    if (customers.length === 0) {
+      fetch("/api/v1/customers?pageSize=200")
+        .then((res) => res.json())
+        .then((body) => setCustomers(body.data ?? []));
+    }
+  };
+
+  const selectCustomer = (id: string) => {
+    setCustomerId(id);
+    setBuyerId("");
+    setBuyers([]);
+    if (!id) return;
+    fetch(`/api/v1/customers/${id}`)
+      .then((res) => res.json())
+      .then((body) => setBuyers(body.data?.buyers ?? []));
+  };
+
+  const handleSubmit = async () => {
+    setIsSubmitting(true);
+    setError(null);
+
+    const res = await fetch(`/api/v1/buyer-enquiries/${buyerEnquiryId}/link-customer`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ customerId, buyerId: buyerId || undefined }),
+    });
+
+    setIsSubmitting(false);
+
+    if (!res.ok) {
+      setError(await parseErrorMessage(res, "Failed to link this Customer."));
+      return;
+    }
+
+    setIsOpen(false);
+    await onLinked();
+  };
+
+  return (
+    <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-900/10">
+      <p className="text-sm text-amber-800 dark:text-amber-300">
+        {prospectName ? `"${prospectName}" is still a prospect` : "This enquiry has no linked Customer"} — a real
+        Customer must be linked before any line here can be converted to a Sample Request.
+      </p>
+
+      {!isOpen ? (
+        <button
+          type="button"
+          onClick={openForm}
+          className="mt-2 rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500"
+        >
+          Link a Customer
+        </button>
+      ) : (
+        <div className="mt-3 max-w-md space-y-2">
+          <FormField label="Customer" htmlFor="link-customer-id" required>
+            <select
+              id="link-customer-id"
+              required
+              value={customerId}
+              onChange={(e) => selectCustomer(e.target.value)}
+              className={textInputClass()}
+            >
+              <option value="">— Select —</option>
+              {customers.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </FormField>
+          <FormField label="Buyer" htmlFor="link-buyer-id">
+            <select
+              id="link-buyer-id"
+              value={buyerId}
+              onChange={(e) => setBuyerId(e.target.value)}
+              disabled={!customerId}
+              className={textInputClass()}
+            >
+              <option value="">— None —</option>
+              {buyers.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name}
+                </option>
+              ))}
+            </select>
+          </FormField>
+          {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
+          <div className="flex gap-2">
+            <ActionButton label="Link Customer" onClick={handleSubmit} isBusy={isSubmitting} disabled={!customerId} />
+            <ActionButton label="Cancel" onClick={() => setIsOpen(false)} isBusy={isSubmitting} variant="secondary" />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

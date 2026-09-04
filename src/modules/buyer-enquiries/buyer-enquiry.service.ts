@@ -10,6 +10,7 @@ import type {
   BuyerEnquiryInput,
   BuyerEnquiryLineStatusChangeInput,
   ConvertEnquiryLineInput,
+  LinkCustomerToEnquiryInput,
 } from "./buyer-enquiry.schema";
 import { BuyerEnquiryLineRepository, BuyerEnquiryRepository } from "./buyer-enquiry.repository";
 import { BuyerEnquiryLineStatus, BuyerEnquiryStatus, type Prisma } from "@prisma/client";
@@ -250,6 +251,63 @@ export async function cancelBuyerEnquiry(actor: ActorContext, id: string) {
     action: "CANCEL",
     oldValues: { status: enquiry.status },
     newValues: { status: "CANCELLED" },
+  });
+
+  return updated;
+}
+
+/**
+ * Promotes a still-prospect enquiry to a real Customer — the action the
+ * create form's own "Convert to Style / conversion requires a real Customer"
+ * warning (and the identical warning on convertEnquiryLineToSampleRequest's
+ * own rejection) always implied existed, but never actually did until now.
+ * Deliberately one-way and only for a genuine prospect: an enquiry that
+ * already has a real customerId cannot be re-linked here — swapping a real
+ * Customer out from under an enquiry with lines that may already be
+ * Approved/Converted is a bigger, unrequested decision (which customer
+ * "owns" the history at that point?) than "a prospect finally has a real
+ * account." Prospect fields are cleared on link, matching createBuyerEnquiry's
+ * own "customerId present -> prospect fields null" normalization exactly.
+ */
+export async function linkCustomerToBuyerEnquiry(actor: ActorContext, id: string, input: LinkCustomerToEnquiryInput) {
+  const enquiry = await BuyerEnquiryRepository.findAnyById(actor.companyId, id);
+  if (!enquiry) throw new BusinessRuleError("NOT_FOUND", "Buyer enquiry not found.", { id });
+
+  if (enquiry.status === "CANCELLED") {
+    throw new BusinessRuleError("INVALID_STATE_TRANSITION", "This enquiry has been cancelled.", { id });
+  }
+  if (enquiry.customerId) {
+    throw new BusinessRuleError(
+      "REFERENCED_RECORD_IN_USE",
+      "This enquiry is already linked to a real Customer.",
+      { customerId: enquiry.customerId }
+    );
+  }
+
+  const customer = await CustomerRepository.findByIdWithBuyers(actor.companyId, input.customerId);
+  if (!customer) throw new BusinessRuleError("NOT_FOUND", "Customer not found.", { id: input.customerId });
+  if (input.buyerId && !customer.buyers.some((b) => b.id === input.buyerId)) {
+    throw new BusinessRuleError("NOT_FOUND", "Buyer not found for this customer.", { id: input.buyerId });
+  }
+
+  const updated = await BuyerEnquiryRepository.update(id, {
+    customerId: input.customerId,
+    buyerId: input.buyerId || null,
+    prospectName: null,
+    prospectContactPerson: null,
+    prospectEmail: null,
+    prospectPhone: null,
+    prospectCountry: null,
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "buyer_enquiries",
+    recordId: id,
+    action: "UPDATE",
+    oldValues: { customerId: enquiry.customerId, prospectName: enquiry.prospectName },
+    newValues: { customerId: input.customerId, buyerId: input.buyerId || null },
   });
 
   return updated;

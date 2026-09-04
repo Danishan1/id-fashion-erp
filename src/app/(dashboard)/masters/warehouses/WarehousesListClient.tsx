@@ -6,7 +6,7 @@ import { ChildrenList } from "@/components/ui/ChildrenList";
 import { LocalChildrenList } from "@/components/ui/LocalChildrenList";
 import { DataTable } from "@/components/ui/DataTable";
 import { Modal } from "@/components/ui/Modal";
-import { MATERIAL_CATEGORIES } from "@/modules/products/product.schema";
+import { LOCATION_MATERIAL_CATEGORIES } from "@/modules/warehouses/warehouse.schema";
 import { formatCategoryLabel } from "@/lib/format-category-label";
 import { WarehouseForm, type WarehouseFormValues } from "./WarehouseForm";
 
@@ -25,6 +25,7 @@ interface LocationRow {
   rack: string | null;
   bin: string | null;
   materialCategory: string | null;
+  materialCategoryOther: string | null;
   isActive: boolean;
 }
 
@@ -37,6 +38,7 @@ interface StagedLocation {
   rack: string;
   bin: string;
   materialCategory: string;
+  materialCategoryOther: string;
 }
 
 const LOCATION_FIELDS = [
@@ -49,9 +51,21 @@ const LOCATION_FIELDS = [
     label: "Material Category",
     type: "select" as const,
     placeholder: "— Not tagged —",
-    options: MATERIAL_CATEGORIES.map((c) => ({ value: c, label: formatCategoryLabel(c) })),
+    options: LOCATION_MATERIAL_CATEGORIES.map((c) => ({ value: c, label: formatCategoryLabel(c) })),
+  },
+  {
+    key: "materialCategoryOther",
+    label: "Please specify",
+    placeholder: "e.g. Packing Machine Room",
+    showWhen: { field: "materialCategory", equals: "OTHER" },
   },
 ];
+
+function formatMaterialCategoryCell(row: { materialCategory: string | null; materialCategoryOther: string | null }) {
+  if (!row.materialCategory) return "—";
+  const label = formatCategoryLabel(row.materialCategory);
+  return row.materialCategory === "OTHER" && row.materialCategoryOther ? `${label} (${row.materialCategoryOther})` : label;
+}
 
 const LOCATION_COLUMNS = [
   { key: "code", header: "Code" },
@@ -61,8 +75,7 @@ const LOCATION_COLUMNS = [
   {
     key: "materialCategory",
     header: "Material Category",
-    render: (row: { materialCategory: string | null }) =>
-      row.materialCategory ? formatCategoryLabel(row.materialCategory) : "—",
+    render: formatMaterialCategoryCell,
   },
 ];
 

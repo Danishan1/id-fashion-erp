@@ -28,7 +28,7 @@ const { generateDocumentNumber } = await import("@/core/numbering/DocumentNumber
 const { CustomerRepository } = await import("@/modules/customers/customer.repository");
 const { ProductRepository } = await import("@/modules/products/product.repository");
 const { BuyerEnquiryRepository } = await import("./buyer-enquiry.repository");
-const { createBuyerEnquiry } = await import("./buyer-enquiry.service");
+const { createBuyerEnquiry, linkCustomerToBuyerEnquiry } = await import("./buyer-enquiry.service");
 
 const actor = { companyId: "co-1", userId: "user-1", branchId: "br-1" };
 
@@ -95,5 +95,83 @@ describe("createBuyerEnquiry", () => {
     expect(BuyerEnquiryRepository.createWithLines).toHaveBeenCalledWith(
       expect.objectContaining({ customerId: "cust-1", buyerId: "buyer-1" })
     );
+  });
+});
+
+// The action the create form's own "conversion requires a real Customer"
+// warning always implied existed but never actually did until 2026-09-04.
+describe("linkCustomerToBuyerEnquiry", () => {
+  beforeEach(() => {
+    vi.mocked(BuyerEnquiryRepository.findAnyById).mockReset();
+    vi.mocked(BuyerEnquiryRepository.update).mockReset();
+  });
+
+  it("links a real Customer to a still-prospect enquiry and clears the prospect fields", async () => {
+    vi.mocked(BuyerEnquiryRepository.findAnyById).mockResolvedValue({
+      id: "enq-1",
+      status: "OPEN",
+      customerId: null,
+      prospectName: "Prospective Co",
+    } as never);
+    vi.mocked(BuyerEnquiryRepository.update).mockResolvedValue({ id: "enq-1", customerId: "cust-1" } as never);
+
+    await linkCustomerToBuyerEnquiry(actor, "enq-1", { customerId: "cust-1", buyerId: "buyer-1" });
+
+    expect(BuyerEnquiryRepository.update).toHaveBeenCalledWith(
+      "enq-1",
+      expect.objectContaining({ customerId: "cust-1", buyerId: "buyer-1", prospectName: null })
+    );
+  });
+
+  it("rejects when the enquiry already has a real Customer linked", async () => {
+    vi.mocked(BuyerEnquiryRepository.findAnyById).mockResolvedValue({
+      id: "enq-1",
+      status: "OPEN",
+      customerId: "cust-existing",
+    } as never);
+
+    await expect(linkCustomerToBuyerEnquiry(actor, "enq-1", { customerId: "cust-1" })).rejects.toMatchObject({
+      code: "REFERENCED_RECORD_IN_USE",
+    });
+    expect(BuyerEnquiryRepository.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects a cancelled enquiry", async () => {
+    vi.mocked(BuyerEnquiryRepository.findAnyById).mockResolvedValue({
+      id: "enq-1",
+      status: "CANCELLED",
+      customerId: null,
+    } as never);
+
+    await expect(linkCustomerToBuyerEnquiry(actor, "enq-1", { customerId: "cust-1" })).rejects.toMatchObject({
+      code: "INVALID_STATE_TRANSITION",
+    });
+  });
+
+  it("rejects a Buyer that doesn't belong to the given Customer", async () => {
+    vi.mocked(BuyerEnquiryRepository.findAnyById).mockResolvedValue({
+      id: "enq-1",
+      status: "OPEN",
+      customerId: null,
+    } as never);
+    vi.mocked(CustomerRepository.findByIdWithBuyers).mockResolvedValue({ id: "cust-1", buyers: [{ id: "buyer-other" }] } as never);
+
+    await expect(linkCustomerToBuyerEnquiry(actor, "enq-1", { customerId: "cust-1", buyerId: "buyer-1" })).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
+    expect(BuyerEnquiryRepository.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects a Customer id that doesn't belong to this company", async () => {
+    vi.mocked(BuyerEnquiryRepository.findAnyById).mockResolvedValue({
+      id: "enq-1",
+      status: "OPEN",
+      customerId: null,
+    } as never);
+    vi.mocked(CustomerRepository.findByIdWithBuyers).mockResolvedValue(null);
+
+    await expect(linkCustomerToBuyerEnquiry(actor, "enq-1", { customerId: "cust-other-tenant" })).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
   });
 });

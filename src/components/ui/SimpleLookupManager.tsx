@@ -16,6 +16,12 @@ export interface LookupField {
   /** For type "select": static options, or a URL returning {data: {id,name}[]} to fetch options from. */
   options?: { value: string; label: string }[];
   optionsUrl?: string;
+  /** Only render this field while another field currently holds a specific
+   * value — e.g. a "Please specify" text box that only appears once a
+   * "materialCategory" select is set to "OTHER". Only implemented by
+   * ChildFormModal today (SimpleLookupManager's own inline form has no
+   * consumer needing this yet). */
+  showWhen?: { field: string; equals: string };
 }
 
 export interface LookupRow {

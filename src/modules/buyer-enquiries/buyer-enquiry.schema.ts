@@ -62,3 +62,13 @@ export const convertEnquiryLineSchema = z.object({
 });
 
 export type ConvertEnquiryLineInput = z.infer<typeof convertEnquiryLineSchema>;
+
+// Promotes a still-prospect enquiry to a real Customer link — the one piece
+// the create form's own "Convert to Style / conversion requires a real
+// Customer" warning never actually had an action behind (2026-09-04).
+export const linkCustomerToEnquirySchema = z.object({
+  customerId: z.string().uuid("A real Customer is required"),
+  buyerId: z.string().uuid().optional().or(z.literal("")),
+});
+
+export type LinkCustomerToEnquiryInput = z.infer<typeof linkCustomerToEnquirySchema>;
