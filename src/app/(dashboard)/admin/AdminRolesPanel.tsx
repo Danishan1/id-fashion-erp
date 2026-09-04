@@ -16,6 +16,7 @@ interface RoleRow {
 
 export function AdminRolesPanel({ canManage }: { canManage: boolean }) {
   const [roles, setRoles] = useState<RoleRow[]>([]);
+  const [search, setSearch] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [form, setForm] = useState({ name: "", description: "" });
@@ -61,15 +62,31 @@ export function AdminRolesPanel({ canManage }: { canManage: boolean }) {
     }
   }
 
+  const term = search.trim().toLowerCase();
+  const filteredRoles = term
+    ? roles.filter((r) => [r.name, r.description ?? ""].join(" ").toLowerCase().includes(term))
+    : roles;
+
   return (
     <div className="space-y-3">
-      {canManage && (
-        <div className="flex justify-end">
-          <button type="button" onClick={openNew} className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500">
+      <div className="flex items-center justify-between gap-3">
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search…"
+          className={`${textInputClass()} max-w-xs`}
+        />
+        {canManage && (
+          <button
+            type="button"
+            onClick={openNew}
+            className="shrink-0 rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500"
+          >
             + New Role
           </button>
-        </div>
-      )}
+        )}
+      </div>
 
       <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
         <table className="min-w-full divide-y divide-zinc-200 text-sm dark:divide-zinc-800">
@@ -90,8 +107,15 @@ export function AdminRolesPanel({ canManage }: { canManage: boolean }) {
                 </td>
               </tr>
             )}
+            {!isLoading && filteredRoles.length === 0 && (
+              <tr>
+                <td colSpan={5} className="px-3 py-4 text-center text-zinc-400">
+                  No roles match your search.
+                </td>
+              </tr>
+            )}
             {!isLoading &&
-              roles.map((r) => (
+              filteredRoles.map((r) => (
                 <tr key={r.id}>
                   <td className="px-3 py-2 text-zinc-900 dark:text-zinc-100">
                     {r.name}

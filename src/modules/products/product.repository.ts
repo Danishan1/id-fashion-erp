@@ -62,4 +62,15 @@ export const ProductVariantRepository = {
 
   createMany: (data: Prisma.ProductVariantCreateManyInput[]) =>
     prisma.productVariant.createMany({ data, skipDuplicates: true }),
+
+  /** Global uniqueness (ProductVariant.skuCode has no companyId scoping) --
+   * used by the Bulk Master Data Import portal's explicit-SKU variant rows. */
+  findBySkuCode: (skuCode: string) => prisma.productVariant.findUnique({ where: { skuCode } }),
+
+  findByProductColorSize: (productId: string, colorId: string, sizeId: string) =>
+    prisma.productVariant.findUnique({ where: { productId_colorId_sizeId: { productId, colorId, sizeId } } }),
+
+  create: (data: Prisma.ProductVariantUncheckedCreateInput) => prisma.productVariant.create({ data }),
+
+  setActiveStatus: (id: string, isActive: boolean) => prisma.productVariant.update({ where: { id }, data: { isActive } }),
 };

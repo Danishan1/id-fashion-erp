@@ -18,6 +18,7 @@ const ALLOWED_MIME_TYPES = new Set([
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "application/msword",
   "application/vnd.ms-excel",
+  "text/csv",
 ]);
 
 const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024; // 20 MB
@@ -30,6 +31,27 @@ const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024; // 20 MB
 // which is the actual threat this check exists to block.
 const LEGACY_OFFICE_CFB_TYPES = new Set(["application/msword", "application/vnd.ms-excel"]);
 const CFB_MIME = "application/x-cfb";
+
+// Plain-text formats have no magic-byte signature at all, by definition --
+// unlike the legacy-CFB case above (occasionally undetectable), a CSV file
+// is ALWAYS undetectable by file-type, so the general "undetectable buffer
+// is suspicious" rule can't apply to it uniformly or CSV storage would be
+// impossible. Narrowly accepted instead: no NUL byte (the one cheap, real
+// signal that a buffer is binary, not text) and valid UTF-8 decoding. The
+// file's actual structure is still fully re-validated row-by-row by the
+// bulk-import parser downstream, so this check only guards against an
+// outright binary file being mislabeled as CSV, not malformed CSV content.
+const PLAIN_TEXT_MIME_TYPES = new Set(["text/csv"]);
+
+function looksLikePlainText(buffer: Buffer): boolean {
+  if (buffer.includes(0)) return false;
+  try {
+    new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export class UnsupportedFileTypeError extends Error {}
 export class FileTooLargeError extends Error {}
@@ -67,15 +89,20 @@ export async function saveFile(
   // suspicious rather than trusted on the client's word.
   const detected = await fileTypeFromBuffer(buffer);
   if (!detected) {
-    throw new UnsupportedFileTypeError(
-      `Could not verify the actual content of "${originalFileName}" — the file may be corrupted, empty, or not a genuinely supported type.`
-    );
-  }
-  const isLegacyOfficeMatch = LEGACY_OFFICE_CFB_TYPES.has(mimeType) && detected.mime === CFB_MIME;
-  if (detected.mime !== mimeType && !isLegacyOfficeMatch) {
-    throw new UnsupportedFileTypeError(
-      `The file's actual content ("${detected.mime}") does not match its declared type ("${mimeType}").`
-    );
+    if (PLAIN_TEXT_MIME_TYPES.has(mimeType) && looksLikePlainText(buffer)) {
+      // Expected and fine — see PLAIN_TEXT_MIME_TYPES' own comment above.
+    } else {
+      throw new UnsupportedFileTypeError(
+        `Could not verify the actual content of "${originalFileName}" — the file may be corrupted, empty, or not a genuinely supported type.`
+      );
+    }
+  } else {
+    const isLegacyOfficeMatch = LEGACY_OFFICE_CFB_TYPES.has(mimeType) && detected.mime === CFB_MIME;
+    if (detected.mime !== mimeType && !isLegacyOfficeMatch) {
+      throw new UnsupportedFileTypeError(
+        `The file's actual content ("${detected.mime}") does not match its declared type ("${mimeType}").`
+      );
+    }
   }
 
   const extension = path.extname(originalFileName);

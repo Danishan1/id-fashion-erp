@@ -23,6 +23,11 @@ export const productSchema = z.object({
   description: z.string().max(1000).optional().or(z.literal("")),
   hsnSacCode: z.string().max(30).optional().or(z.literal("")),
   customerId: z.string().uuid().optional().or(z.literal("")),
+  // Added 2026-09-04 for the Bulk Master Data Import portal's "cost price"
+  // column -- the underlying unitCost column has existed on Product since
+  // before the STYLE/RAW_MATERIAL split, but only materialSchema ever wired
+  // it up; a Style's own cost price was silently dropped until now.
+  unitCost: z.coerce.number().min(0).optional(),
   isActive: z.boolean().default(true),
 });
 export type ProductInput = z.infer<typeof productSchema>;

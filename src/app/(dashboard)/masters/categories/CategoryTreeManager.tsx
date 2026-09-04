@@ -9,6 +9,7 @@ import { suggestCodeFromName } from "@/lib/code-suggest";
 import {
   buildCategoryTree,
   buildCategoryOptions,
+  filterCategoryTree,
   getCategoryAncestorPath,
   type FlatCategory,
   type CategoryTreeNode,
@@ -36,6 +37,7 @@ export function CategoryTreeManager() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [pendingToggle, setPendingToggle] = useState<FlatCategory | null>(null);
   const [isToggling, setIsToggling] = useState(false);
+  const [search, setSearch] = useState("");
 
   const load = () => {
     setIsLoading(true);
@@ -52,6 +54,8 @@ export function CategoryTreeManager() {
   }, []);
 
   const tree = buildCategoryTree(categories);
+  const isSearching = search.trim().length > 0;
+  const displayTree = isSearching ? filterCategoryTree(tree, search.trim()) : tree;
 
   const toggleCollapsed = (id: string) => {
     setCollapsed((prev) => {
@@ -152,7 +156,10 @@ export function CategoryTreeManager() {
 
   const renderNode = (node: CategoryTreeNode): ReactNode => {
     const hasChildren = node.children.length > 0;
-    const isCollapsed = collapsed.has(node.id);
+    // While searching, every node stays expanded regardless of its own
+    // collapsed state — otherwise a match could be hidden behind a
+    // collapsed ancestor the user never explicitly opened.
+    const isCollapsed = !isSearching && collapsed.has(node.id);
     return (
       <div key={node.id}>
         <div
@@ -197,8 +204,15 @@ export function CategoryTreeManager() {
 
   return (
     <div className="max-w-2xl space-y-3">
-      <div className="flex justify-end">
-        <button onClick={openAddRoot} className="text-sm font-medium text-indigo-600 hover:text-indigo-500">
+      <div className="flex items-center justify-between gap-3">
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search…"
+          className={`${textInputClass()} max-w-xs`}
+        />
+        <button onClick={openAddRoot} className="shrink-0 text-sm font-medium text-indigo-600 hover:text-indigo-500">
           + Add Root Category
         </button>
       </div>
@@ -207,8 +221,12 @@ export function CategoryTreeManager() {
 
       <div className="rounded-lg border border-zinc-200 bg-white p-2 dark:border-zinc-800 dark:bg-zinc-900">
         {isLoading && <p className="px-2 py-4 text-center text-sm text-zinc-500">Loading…</p>}
-        {!isLoading && tree.length === 0 && <p className="px-2 py-4 text-center text-sm text-zinc-500">No categories yet.</p>}
-        {!isLoading && tree.map((node) => renderNode(node))}
+        {!isLoading && displayTree.length === 0 && (
+          <p className="px-2 py-4 text-center text-sm text-zinc-500">
+            {isSearching ? "No categories match your search." : "No categories yet."}
+          </p>
+        )}
+        {!isLoading && displayTree.map((node) => renderNode(node))}
       </div>
 
       <Modal

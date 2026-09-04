@@ -62,6 +62,7 @@ function remainingOf(jo: JobOrderRow) {
 export function MyWorkClient() {
   const [assignments, setAssignments] = useState<AssignmentRow[] | null>(null);
   const [entries, setEntries] = useState<SubmittedEntry[]>([]);
+  const [search, setSearch] = useState("");
   const [loadError, setLoadError] = useState<string | null>(null);
   // Bumped after every mutation to re-trigger the load effect below — kept
   // out of the effect body itself (react-hooks/set-state-in-effect: a
@@ -132,6 +133,24 @@ export function MyWorkClient() {
     setRefreshKey((k) => k + 1);
   };
 
+  const term = search.trim().toLowerCase();
+  const filteredAssignments = term
+    ? (assignments ?? []).filter((a) =>
+        [a.jobOrder.jobNumber, a.jobOrder.productionStage.name, a.jobOrder.lot.lotNumber]
+          .join(" ")
+          .toLowerCase()
+          .includes(term)
+      )
+    : (assignments ?? []);
+  const filteredEntries = term
+    ? entries.filter((e) =>
+        [e.jobOrder.jobNumber, e.jobOrder.productionStage.name, APPROVAL_LABELS[e.approvalStatus]]
+          .join(" ")
+          .toLowerCase()
+          .includes(term)
+      )
+    : entries;
+
   return (
     <div className="space-y-6">
       <Breadcrumb items={[{ label: "Dashboard", href: "/dashboard" }, { label: "My Work" }]} />
@@ -142,6 +161,16 @@ export function MyWorkClient() {
           toward the job order.
         </p>
       </div>
+
+      {(assignments === null || assignments.length > 0 || entries.length > 0) && !loadError && (
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search…"
+          className={`${textInputClass()} max-w-xs`}
+        />
+      )}
 
       {loadError && (
         <div className="rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
@@ -155,7 +184,10 @@ export function MyWorkClient() {
           {assignments !== null && assignments.length === 0 && (
             <p className="text-sm text-zinc-500 dark:text-zinc-400">No active job orders are assigned to you right now.</p>
           )}
-          {(assignments ?? []).map((a) => {
+          {assignments !== null && assignments.length > 0 && filteredAssignments.length === 0 && (
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">No assigned job orders match your search.</p>
+          )}
+          {filteredAssignments.map((a) => {
             const jo = a.jobOrder;
             const remaining = remainingOf(jo);
             const canLog = remaining > 0 && jo.status !== "CANCELLED";
@@ -209,7 +241,14 @@ export function MyWorkClient() {
                 </tr>
               </thead>
               <tbody>
-                {entries.map((e) => (
+                {filteredEntries.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="px-3 py-4 text-center text-zinc-400">
+                      No entries match your search.
+                    </td>
+                  </tr>
+                )}
+                {filteredEntries.map((e) => (
                   <tr key={e.id} className="border-t border-zinc-100 dark:border-zinc-800">
                     <td className="px-3 py-2 text-zinc-700 dark:text-zinc-200">
                       {e.jobOrder.productionStage.name} ({e.jobOrder.jobNumber})

@@ -3458,6 +3458,110 @@ implementation.
   explicitly discussed and deferred as too risky (fields carry real validation/FK weight) when this was
   first scoped.
 
+## Live search added to every SimpleLookupManager-based master (2026-09-03)
+
+User pointed out that most small lookup masters (Payment Types, Bank Accounts, Colors, Sizes, Fabric
+Configuration's 6 tabs, Garment Attributes' 7 tabs, HR Config, Production Config, Cost Master — everything
+built on the shared `SimpleLookupManager` component, ~24 entities total) had no search/filter at all, unlike
+the `DataTable`-based "rich" masters (Customers/Suppliers/Warehouses/Products), which already have one.
+
+- **`SimpleLookupManager.tsx`** gained a `search` input above the table, filtering the already-fetched
+  in-memory `rows` (these lists are capped at `pageSize=200` and fully loaded up front, so this is plain
+  client-side filtering on every keystroke — no debounce, no server round-trip needed) against **every
+  visible column's on-screen text**, not just Name/Code.
+- **Search matches the resolved label for `select`-type fields, not the raw stored id** — extracted the
+  existing inline select-label-resolution logic (previously only used by the table body) into a shared
+  `displayValueFor(row, columnKey)` helper, reused by both the table cells and the search filter, so
+  searching e.g. "Centimeters" on the Width tab correctly matches its resolved Unit label, not the
+  underlying UUID. This also closed a small pre-existing inconsistency in passing: the old inline logic only
+  fell back to "—" for an empty *select* field, leaving other empty optional fields (e.g. Dye's Pantone)
+  blank; the unified helper now applies "—" uniformly, matching this app's established empty-value
+  convention elsewhere (`ChildrenList.tsx`'s own `row.zone ?? "—"` pattern).
+- Empty state is now two distinct messages — "No records found." (the table is genuinely empty) vs. "No
+  records match your search." (rows exist, the current search term just doesn't match any) — so a search
+  typo doesn't look identical to a truly empty master.
+- **Verified live** on two different masters sharing the one component: Payment Types (search "card" →
+  narrowed to exactly the Card row; search "cash" → matched both the real Cash Payment Type and a
+  differently-named row purely via its Type value "Cash"; a non-matching term correctly showed "No records
+  match your search."; clearing restored all 6 rows) and Fabric Configuration's Width tab (search
+  "centimeter" correctly matched via the resolved Unit label, not the raw `unitId`). `npx tsc --noEmit`,
+  `npx eslint`, `npx vitest run` (864/864), and `npx next build` all clean.
+- **Not touched**: `DataTable`-based masters already have their own server-side search (`searchPlaceholder`
+  prop, unrelated component) — this pass was scoped exactly to the `SimpleLookupManager` gap the user
+  pointed out, not a broader search-everywhere pass.
+
+## Full-project search/filter audit, then fix the 5 genuine gaps (2026-09-04)
+
+User then asked for filter/search "in every module across the whole project." Rather than guess at scope, 3
+parallel Explore agents audited every list page app-wide (Masters/Sales/Sampling/BOM-MRP;
+Production/Inventory/Purchasing/Dispatch; Accounts/CRM/Marketing/HRMS/Admin/Reports) before any code was
+touched. Result: the app was already well-covered — ~12 `DataTable`-based masters have server-side search,
+~24 `SimpleLookupManager` masters just got search (above), Sampling has an elaborate best-in-class filter
+panel, and all 9 Accounts lists, CRM, Marketing, HRMS, and the generic Report viewer already have working
+search/filter. Confirmed with the user (AskUserQuestion) to fix exactly the 5 **genuinely uncovered** pages
+found, not also widen the narrower order-number-only search on 6-7 `DataTable`-based transactional lists
+(Purchase Orders, Goods Receipts, Material Requests, Stock Movements, Production Orders, Dispatch) — that
+search exists, just doesn't match supplier/customer/status names, and was explicitly left out of scope.
+
+All 5 fixes are pure, local, client-side filtering (`useState` + `.filter()` before `.map()`) — every one of
+these lists is small and already fully loaded up front, so no new API params or debouncing were needed:
+
+- **`src/lib/category-tree.ts`** gained `filterCategoryTree()`, a pure recursive helper — keeps a node if
+  its own name/code matches OR any descendant matches, so a matched leaf's ancestor path stays visible for
+  context rather than being pruned with everything else.
+- **`masters/categories/CategoryTreeManager.tsx`** (the "Garment Category" tab — the one masters sub-page
+  that wasn't `DataTable` or `SimpleLookupManager`, confirmed via the audit as the only real gap in Masters)
+  — added the search input, wired to `filterCategoryTree`; while searching, every node force-expands
+  regardless of its own collapsed state, so a match can never hide behind a collapsed ancestor.
+- **`admin/AdminUsersPanel.tsx`** — filters by name, email, status, branch name, and every assigned role
+  name joined together (matches e.g. "Cutting Supervisor" whether it's in the user's own name or their
+  role).
+- **`admin/AdminRolesPanel.tsx`** — filters by name and description.
+- **`production/approvals/ApprovalsClient.tsx`** (Pending Approvals) — filters by employee name/code, job
+  number, stage name, lot number, and remarks; the search box only renders once real entries exist, matching
+  the page's own existing empty-state convention.
+- **`production/my-work/MyWorkClient.tsx`** (My Work) — one shared search box filtering both of the page's
+  sections independently: the "Assigned to Me" cards (job number/stage/lot) and the "My Submitted Entries"
+  table (job number/stage/approval-status label).
+- Every one of the 5 shows a distinct "no records match your search" message (vs. the page's existing
+  "genuinely empty" message), matching the exact convention just established for `SimpleLookupManager`.
+- **Verified live** on 3 of the 5 with real data: Categories → Garment Category (searched "skinny" —
+  correctly showed only the "Denim → Skinny Fit" branch, correctly pruning the unrelated "Casual Wear" root
+  that has no matching descendants; verified via a direct API check that Denim and Casual Wear are in fact
+  sibling roots, not parent/child, confirming the pruning logic is exactly right rather than coincidentally
+  looking right; also verified code-only search via "cat-fr" → "Formal Wear"), Admin → Users (searched
+  "super" — matched 3 users through two different fields, own name and assigned role name), Admin → Roles
+  (searched "cutting" — matched via both name and description). Pending Approvals and My Work had no real
+  data in this session to exercise live (no pending progress entries; the test account has no linked
+  Employee record) — verified by code review instead, reusing the identical, now 3-times-proven filter
+  pattern; `npx tsc --noEmit` and `npx eslint` both clean gave high confidence given the strongly-typed row
+  interfaces would have caught a field-name mismatch at compile time.
+- `npx tsc --noEmit`, `npx eslint`, `npx vitest run` (864/864), and `npx next build` all clean throughout.
+
+## Cost Master gains a Percentage type (2026-09-04)
+
+User asked how to add a percentage-based rate to Cost Master — investigated first: `CostMasterType` only had
+`HOURLY`/`MONTHLY`/`PER_UNIT`/`FIXED`, no percentage option existed at all. Confirmed `CostMaster` has no
+consumer anywhere else in the codebase (a standalone lookup, matching this file's own earlier note that it
+"has zero FK from any transactional table") — so this was purely a matter of adding the option, not wiring
+up any calculation.
+
+- Added `PERCENTAGE` to the `CostMasterType` enum (migration `20260904090000_add_cost_master_percentage_type`,
+  a plain `ALTER TYPE ... ADD VALUE`) — represents "N% of order value" (e.g. a rate of `5` means 5%), reusing
+  the existing `rate` Decimal column as-is; no new column, since the percentage meaning comes entirely from
+  the type tag.
+- `cost-master.schema.ts`'s Zod enum and `CostMasterClient.tsx`'s Type `<select>` options both updated to
+  include "Percentage"; the Rate field's placeholder now hints `"e.g. 5 for 5% if Type is Percentage"` (a
+  single shared field across all 4 types, per `SimpleLookupManager`'s static-field-config design — not worth
+  extending that shared component for one type-conditional label).
+- **Verified live**: created a real "Commission Overhead" cost rate (Type: Percentage, Rate: 5) via a direct
+  API call (the sandboxed browser's own `SimpleLookupManager` form submission proved unreliable this
+  session, matching this project's own documented tooling-flakiness pattern — verified via the API +
+  reloaded UI instead), confirmed it renders correctly as "Commission Overhead / Percentage / 5" in the real
+  list, and confirmed the live search box (added earlier this session) correctly matches "percentage" as a
+  search term too. Deactivated the test row afterward (soft, matching Cost Master's own no-hard-delete
+  convention). `npx tsc --noEmit`, `npx eslint`, and `npx vitest run` (864/864) all clean.
+
 ## Recommended Stack
 
 Next.js 14+ (App Router) + React + TypeScript + Tailwind CSS (frontend); Next.js API routes/route handlers as REST API; PostgreSQL + Prisma ORM; session-based auth (Auth.js/NextAuth, DB sessions) with RBAC and optional TOTP 2FA; S3-compatible or local file storage for attachments; server-side PDF/Excel export (`exceljs`, `pdf-lib`/`@react-pdf/renderer`).

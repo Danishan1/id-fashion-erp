@@ -398,6 +398,12 @@ model Customer {
   name                String
   type                String    @default("CUSTOMER")
   country             String?
+  // Added 2026-09-04 for the Bulk Master Data Import portal -- matches
+  // Supplier's own existing taxRegistrationNo field exactly; Customer had no
+  // GST/address fields of any kind before this.
+  taxRegistrationNo   String?   @map("tax_registration_no")
+  billingAddress      String?   @map("billing_address")
+  shippingAddress     String?   @map("shipping_address")
   paymentTermsDays    Int?      @map("payment_terms_days")
   creditLimit         Decimal?  @map("credit_limit") @db.Decimal(18, 2)
   defaultCurrencyCode String?   @map("default_currency_code") @db.Char(3)
@@ -1364,6 +1370,10 @@ enum CostMasterType {
   MONTHLY
   PER_UNIT
   FIXED
+  // A percentage of order value (e.g. "5" means 5%) -- rate stays the same
+  // plain Decimal column as every other type; the % meaning comes from
+  // this type tag alone, not a second unit column.
+  PERCENTAGE
 }
 
 model CostMaster {
@@ -5073,6 +5083,11 @@ enum RelatedModule {
   LEAVE_REQUEST
   ATTENDANCE_CORRECTION
   EMPLOYEE_ADVANCE_SETTLEMENT
+  // The Bulk Master Data Import portal (Super Admin only) -- used as the
+  // referenceModule for an Opening Stock row's ledger entry (referencing
+  // the ImportBatch that created it, not a real document of any other
+  // type).
+  IMPORT_BATCH
 }
 
 model Attachment {
@@ -5129,6 +5144,27 @@ enum ImportBatchType {
   LEAD
   DEAL
   CAMPAIGN_DAILY_METRIC
+  // Super Admin -> Bulk Master Data Import portal (2026-09-04).
+  CUSTOMER
+  SUPPLIER
+  PRODUCT
+  PRODUCT_VARIANT
+  OPENING_STOCK
+  CHART_OF_ACCOUNT
+}
+
+// Only meaningful for the Bulk Master Data Import portal's async types
+// (CUSTOMER..CHART_OF_ACCOUNT) -- the original synchronous CRM import
+// (LEAD/DEAL/CAMPAIGN_DAILY_METRIC) creates a batch already in its final
+// COMPLETED state, since it has no queued/processing phase of its own.
+enum ImportBatchStatus {
+  PENDING
+  VALIDATING
+  QUEUED
+  PROCESSING
+  COMPLETED
+  FAILED
+  UNDONE
 }
 
 // "Import history" from the CRM/Marketing enhancement request's own CSV
@@ -5136,27 +5172,54 @@ enum ImportBatchType {
 // the imported Leads/Deals/DailyMetrics are the real rows, this is just the
 // run's own summary + a way to look back at what was imported and when).
 // `failedRowsJson` stores just enough to reconstruct a "download failed
-// rows" CSV after the fact — the original file itself is never persisted
-// (this project's file storage has no import-specific retention policy, and
-// keeping the raw upload would be a real data-retention decision, not a
-// side effect of this feature).
+// rows" CSV after the fact. `originalFileKey`/`jobId`/`status` are new
+// (2026-09-04, Bulk Master Data Import) -- the original CRM import still
+// never persists its source file or has an async status, so both stay
+// nullable and simply unused by that path.
 model ImportBatch {
-  id              String          @id @default(uuid()) @db.Uuid
-  companyId       String          @map("company_id") @db.Uuid
-  importType      ImportBatchType @map("import_type")
-  fileName        String          @map("file_name")
-  totalRows       Int             @map("total_rows")
-  importedCount   Int             @map("imported_count")
-  skippedCount    Int             @map("skipped_count")
-  failedRowsJson  Json?           @map("failed_rows_json")
-  createdByUserId String          @map("created_by_user_id") @db.Uuid
-  createdAt       DateTime        @default(now()) @map("created_at")
+  id              String            @id @default(uuid()) @db.Uuid
+  companyId       String            @map("company_id") @db.Uuid
+  importType      ImportBatchType   @map("import_type")
+  fileName        String            @map("file_name")
+  totalRows       Int               @map("total_rows")
+  importedCount   Int               @map("imported_count")
+  skippedCount    Int               @map("skipped_count")
+  failedRowsJson  Json?             @map("failed_rows_json")
+  status          ImportBatchStatus @default(COMPLETED)
+  // FileStorage storageKey of the originally-uploaded file, kept for audit —
+  // nullable since the original CRM import path never persists its source
+  // file (see the module-level comment above).
+  originalFileKey String?           @map("original_file_key")
+  // BullMQ job id, for polling progress on an in-flight async import.
+  jobId           String?           @map("job_id")
+  createdByUserId String            @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime          @default(now()) @map("created_at")
 
-  company   Company @relation(fields: [companyId], references: [id])
-  createdBy User    @relation(fields: [createdByUserId], references: [id])
+  company   Company             @relation(fields: [companyId], references: [id])
+  createdBy User                @relation(fields: [createdByUserId], references: [id])
+  records   ImportBatchRecord[]
 
   @@index([companyId, importType])
   @@map("import_batches")
+}
+
+// One row per record a Bulk Master Data Import batch actually created —
+// what makes "Undo Batch" possible (look up every record the batch
+// created, call that table's own existing deactivate function on each).
+// `tableName` is a real Postgres table name (e.g. "customers"), matching
+// AuditLog's own convention, not the Prisma model name.
+model ImportBatchRecord {
+  id            String   @id @default(uuid()) @db.Uuid
+  importBatchId String   @map("import_batch_id") @db.Uuid
+  rowNumber     Int      @map("row_number")
+  tableName     String   @map("table_name")
+  recordId      String   @map("record_id") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  importBatch ImportBatch @relation(fields: [importBatchId], references: [id])
+
+  @@index([importBatchId])
+  @@map("import_batch_records")
 }
 
 enum AuditAction {

@@ -10,8 +10,8 @@ export function CostMasterClient() {
         <Breadcrumb items={[{ label: "Masters", href: "/masters" }, { label: "Cost Master" }]} />
         <h1 className="mt-2 text-lg font-semibold text-zinc-900 dark:text-zinc-50">Cost Master</h1>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-          Overhead cost rates (hourly, monthly, per-unit, fixed) — imported from the Inventory reference system,
-          used for costing BOM/production overheads.
+          Overhead cost rates (hourly, monthly, per-unit, fixed, or a percentage of order value) — imported from
+          the Inventory reference system, used for costing BOM/production overheads.
         </p>
       </div>
 
@@ -31,9 +31,10 @@ export function CostMasterClient() {
               { value: "MONTHLY", label: "Monthly" },
               { value: "PER_UNIT", label: "Per Unit" },
               { value: "FIXED", label: "Fixed" },
+              { value: "PERCENTAGE", label: "Percentage" },
             ],
           },
-          { key: "rate", label: "Rate", type: "number", required: true },
+          { key: "rate", label: "Rate", type: "number", required: true, placeholder: "e.g. 5 for 5% if Type is Percentage" },
         ]}
       />
     </div>

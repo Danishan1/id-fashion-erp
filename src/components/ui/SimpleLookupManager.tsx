@@ -76,8 +76,33 @@ export function SimpleLookupManager({
   const [dynamicOptions, setDynamicOptions] = useState<Record<string, { value: string; label: string }[]>>({});
   const [pendingToggleRow, setPendingToggleRow] = useState<LookupRow | null>(null);
   const [isToggling, setIsToggling] = useState(false);
+  const [search, setSearch] = useState("");
 
   const columns = displayColumns ?? fields.map((f) => ({ key: f.key, header: f.label }));
+
+  /** Resolves a column's on-screen text for a row — a select-type field
+   * shows its matched label, not the raw stored id — shared by the table's
+   * own rendering and the live search below so filtering always matches
+   * what's actually visible, not an internal id the user never sees. */
+  const displayValueFor = (row: LookupRow, columnKey: string): string => {
+    const field = fields.find((f) => f.key === columnKey);
+    const rawValue = row[columnKey];
+    if (field?.type === "select") {
+      const selectOptions = field.options ?? dynamicOptions[field.key] ?? [];
+      const match = selectOptions.find((opt) => opt.value === rawValue);
+      return match ? match.label : rawValue ? String(rawValue) : "";
+    }
+    return String(rawValue ?? "");
+  };
+
+  // Local, instant filtering — every row is already fetched up front
+  // (pageSize=200), so there's no need for a debounced server round-trip;
+  // it just narrows what's already in memory as the user types.
+  const filteredRows = search.trim()
+    ? rows.filter((row) =>
+        columns.some((c) => displayValueFor(row, c.key).toLowerCase().includes(search.trim().toLowerCase()))
+      )
+    : rows;
 
   useEffect(() => {
     fields
@@ -209,8 +234,15 @@ export function SimpleLookupManager({
 
   return (
     <div className="max-w-2xl space-y-3">
-      <div className="flex justify-end">
-        <button onClick={startCreate} className="text-sm font-medium text-indigo-600 hover:text-indigo-500">
+      <div className="flex items-center justify-between gap-3">
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search…"
+          className={`${textInputClass()} max-w-xs`}
+        />
+        <button onClick={startCreate} className="shrink-0 text-sm font-medium text-indigo-600 hover:text-indigo-500">
           + Add
         </button>
       </div>
@@ -287,25 +319,18 @@ export function SimpleLookupManager({
                 </td>
               </tr>
             )}
-            {!isLoading && rows.length === 0 && (
+            {!isLoading && filteredRows.length === 0 && (
               <tr>
                 <td colSpan={columns.length + 1} className="px-4 py-6 text-center text-zinc-500">
-                  No records found.
+                  {rows.length === 0 ? "No records found." : "No records match your search."}
                 </td>
               </tr>
             )}
             {!isLoading &&
-              rows.map((row) => (
+              filteredRows.map((row) => (
                 <tr key={row.id} className="border-b border-zinc-100 last:border-0 dark:border-zinc-800">
                   {columns.map((c) => {
-                    const field = fields.find((f) => f.key === c.key);
-                    const rawValue = row[c.key];
-                    let display = String(rawValue ?? "");
-                    if (field?.type === "select") {
-                      const selectOptions = field.options ?? dynamicOptions[field.key] ?? [];
-                      const match = selectOptions.find((opt) => opt.value === rawValue);
-                      display = match ? match.label : rawValue ? display : "—";
-                    }
+                    const display = displayValueFor(row, c.key) || "—";
                     return (
                       <td key={c.key} className="px-4 py-2 text-zinc-700 dark:text-zinc-200">
                         {display}

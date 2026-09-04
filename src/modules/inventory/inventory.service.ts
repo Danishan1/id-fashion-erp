@@ -1,3 +1,4 @@
+import { prisma } from "@/core/db/client";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import type { ListQuery } from "@/lib/list-query";
 import type { InventoryTransactionType, Prisma, RelatedModule } from "@prisma/client";
@@ -105,6 +106,33 @@ export async function recordInventoryTransaction(
 export async function getAvailableQuantity(companyId: string, productId: string, warehouseId: string): Promise<number> {
   const balance = await StockBalanceRepository.findOne(companyId, productId, warehouseId);
   return balance ? Number(balance.quantityOnHand) : 0;
+}
+
+/**
+ * Bulk Master Data Import portal's Opening Stock row handler (2026-09-04) --
+ * the OPENING_BALANCE transaction type has been reserved and unused since
+ * this project's earliest planning; this is its first real caller. Opens
+ * its own transaction (one per row, matching this feature's row-level
+ * isolation) since recordInventoryTransaction() deliberately requires an
+ * external tx and never opens one itself. referenceRecordId is the
+ * ImportBatch's own id -- there is no other real document behind an
+ * opening-stock entry, so the batch that created it IS the reference.
+ */
+export async function importOpeningStockRow(
+  actor: { companyId: string; userId: string; branchId?: string | null },
+  input: { productId: string; warehouseId: string; quantity: number; importBatchId: string }
+): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    await recordInventoryTransaction(tx, actor, {
+      productId: input.productId,
+      warehouseId: input.warehouseId,
+      transactionType: "OPENING_BALANCE",
+      quantity: input.quantity,
+      referenceModule: "IMPORT_BATCH",
+      referenceRecordId: input.importBatchId,
+      notes: "Opening stock — Bulk Master Data Import",
+    });
+  });
 }
 
 /** Returns a Map of productId -> total quantityOnHand across all warehouses,

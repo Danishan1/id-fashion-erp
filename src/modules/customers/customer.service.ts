@@ -59,6 +59,9 @@ export async function createCustomer(actor: ActorContext, input: CustomerInput) 
     name: input.name,
     type: input.type,
     country: input.country || null,
+    taxRegistrationNo: input.taxRegistrationNo || null,
+    billingAddress: input.billingAddress || null,
+    shippingAddress: input.shippingAddress || null,
     paymentTermsDays: input.paymentTermsDays ?? null,
     creditLimit: input.creditLimit ?? null,
     defaultCurrencyCode: input.defaultCurrencyCode || null,
@@ -96,6 +99,9 @@ export async function updateCustomer(actor: ActorContext, id: string, input: Cus
   if (input.name !== undefined) data.name = input.name;
   if (input.type !== undefined) data.type = input.type;
   if (input.country !== undefined) data.country = input.country || null;
+  if (input.taxRegistrationNo !== undefined) data.taxRegistrationNo = input.taxRegistrationNo || null;
+  if (input.billingAddress !== undefined) data.billingAddress = input.billingAddress || null;
+  if (input.shippingAddress !== undefined) data.shippingAddress = input.shippingAddress || null;
   if (input.paymentTermsDays !== undefined) data.paymentTermsDays = input.paymentTermsDays ?? null;
   if (input.creditLimit !== undefined) data.creditLimit = input.creditLimit ?? null;
   if (input.defaultCurrencyCode !== undefined) data.defaultCurrencyCode = input.defaultCurrencyCode || null;

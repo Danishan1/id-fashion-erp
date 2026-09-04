@@ -44,6 +44,7 @@ export function AdminUsersPanel({
   currentUserId: string;
 }) {
   const [users, setUsers] = useState(initialUsers);
+  const [search, setSearch] = useState("");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
   const [error, setError] = useState<string | null>(null);
@@ -236,19 +237,36 @@ export function AdminUsersPanel({
     return employees.filter((e) => !linkedElsewhere.has(e.id));
   }
 
+  const term = search.trim().toLowerCase();
+  const filteredUsers = term
+    ? users.filter((u) =>
+        [u.fullName, u.email, u.status, u.defaultBranch?.name ?? "", u.branchRoles.map((br) => br.role.name).join(" ")]
+          .join(" ")
+          .toLowerCase()
+          .includes(term)
+      )
+    : users;
+
   return (
     <div className="space-y-3">
-      {canManage && (
-        <div className="flex justify-end">
+      <div className="flex items-center justify-between gap-3">
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search…"
+          className={`${textInputClass()} max-w-xs`}
+        />
+        {canManage && (
           <button
             type="button"
             onClick={openModal}
-            className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500"
+            className="shrink-0 rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500"
           >
             + New User
           </button>
-        </div>
-      )}
+        )}
+      </div>
 
       <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
         <table className="min-w-full divide-y divide-zinc-200 text-sm dark:divide-zinc-800">
@@ -265,7 +283,14 @@ export function AdminUsersPanel({
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
-            {users.map((u) => (
+            {filteredUsers.length === 0 && (
+              <tr>
+                <td colSpan={canManage ? 8 : 6} className="px-3 py-4 text-center text-zinc-400">
+                  No users match your search.
+                </td>
+              </tr>
+            )}
+            {filteredUsers.map((u) => (
               <tr key={u.id}>
                 <td className="px-3 py-2 text-zinc-900 dark:text-zinc-100">
                   {u.fullName}

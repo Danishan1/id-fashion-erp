@@ -1,7 +1,7 @@
 import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { prisma } from "@/core/db/client";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
-import type { Prisma } from "@prisma/client";
+import type { ImportBatchType, Prisma } from "@prisma/client";
 import type { ListQuery } from "@/lib/list-query";
 import type { ActorContext } from "@/modules/crm/lead.service";
 import { createDealSchema } from "@/modules/crm/deal.schema";
@@ -28,7 +28,7 @@ export interface RunImportResult {
   failedRows: ImportRowFailure[];
 }
 
-function messageFromError(error: unknown): string {
+export function messageFromError(error: unknown): string {
   if (error instanceof BusinessRuleError) return error.message;
   if (error && typeof error === "object" && "issues" in error && Array.isArray((error as { issues: unknown }).issues)) {
     const zodError = error as { issues: { path: (string | number)[]; message: string }[] };
@@ -43,7 +43,7 @@ function messageFromError(error: unknown): string {
  * `.default()` only substitutes on `undefined`, an empty string still fails
  * a strict `z.enum(...)` check. Numeric fields don't need this: `Number("")`
  * is `0`, which already matches those schemas' own `.default(0)`. */
-function undefinedIfBlank(value: string | undefined): string | undefined {
+export function undefinedIfBlank(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
 }
@@ -205,9 +205,10 @@ export async function runImport(actor: ActorContext, input: RunImportInput): Pro
   };
 }
 
-export async function listImportBatches(companyId: string, query: ListQuery) {
+export async function listImportBatches(companyId: string, query: ListQuery, importTypes?: ImportBatchType[]) {
   const where = {
     companyId,
+    ...(importTypes ? { importType: { in: importTypes } } : {}),
     ...(query.search ? { fileName: { contains: query.search, mode: "insensitive" as const } } : {}),
   };
 

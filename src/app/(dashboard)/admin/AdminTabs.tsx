@@ -9,6 +9,7 @@ import { AdminCompanySettingsPanel } from "./AdminCompanySettingsPanel";
 import { AdminDocumentSequencesPanel } from "./AdminDocumentSequencesPanel";
 import { AdminWorkerSettingsPanel } from "./AdminWorkerSettingsPanel";
 import { AdminModuleVisibilityPanel } from "./AdminModuleVisibilityPanel";
+import { AdminBulkImportPanel } from "./AdminBulkImportPanel";
 
 const TABS = [
   "Users",
@@ -18,6 +19,7 @@ const TABS = [
   "Company Settings",
   "Document Numbering",
   "Module Visibility",
+  "Bulk Import",
   "Audit Log",
 ] as const;
 type Tab = (typeof TABS)[number];
@@ -48,10 +50,18 @@ export function AdminTabs({
 }) {
   const [tab, setTab] = useState<Tab>("Users");
 
+  // Bulk Import is the one tab whose BUTTON itself is only rendered for a
+  // Super Admin (canManage) — unlike every other tab here, which always
+  // renders and just disables its own buttons via canManage. This matches
+  // the feature spec's explicit "must be visible... ONLY to Super Admin"
+  // requirement, deliberately deviating from the Module Visibility tab's
+  // own "always visible, buttons disabled" precedent.
+  const visibleTabs = TABS.filter((t) => t !== "Bulk Import" || canManage);
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap gap-1 border-b border-zinc-200 dark:border-zinc-800">
-        {TABS.map((t) => (
+        {visibleTabs.map((t) => (
           <button
             key={t}
             type="button"
@@ -72,6 +82,7 @@ export function AdminTabs({
       {tab === "Company Settings" && <AdminCompanySettingsPanel canManage={canManage} />}
       {tab === "Document Numbering" && <AdminDocumentSequencesPanel />}
       {tab === "Module Visibility" && <AdminModuleVisibilityPanel canManage={canManage} />}
+      {tab === "Bulk Import" && canManage && <AdminBulkImportPanel />}
       {tab === "Audit Log" && <AdminAuditLogPanel />}
     </div>
   );

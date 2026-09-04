@@ -72,6 +72,22 @@ export function buildCategoryOptions(flat: FlatCategory[], excludeSubtreeOf?: st
   return options;
 }
 
+/** Keeps a node if its own name/code matches (case-insensitive substring) or
+ * any descendant matches, so a matched leaf's ancestor path stays visible
+ * for context rather than being pruned away with it. */
+export function filterCategoryTree(nodes: CategoryTreeNode[], term: string): CategoryTreeNode[] {
+  const lower = term.toLowerCase();
+  const result: CategoryTreeNode[] = [];
+  for (const node of nodes) {
+    const matchesSelf = node.name.toLowerCase().includes(lower) || node.code.toLowerCase().includes(lower);
+    const filteredChildren = filterCategoryTree(node.children, term);
+    if (matchesSelf || filteredChildren.length > 0) {
+      result.push({ ...node, children: filteredChildren });
+    }
+  }
+  return result;
+}
+
 /** Full ancestor path for breadcrumb display, root-first (e.g. ["Trousers", "Denim", "Skinny Fit"]). */
 export function getCategoryAncestorPath(flat: FlatCategory[], categoryId: string): string[] {
   const byId = new Map(flat.map((c) => [c.id, c]));

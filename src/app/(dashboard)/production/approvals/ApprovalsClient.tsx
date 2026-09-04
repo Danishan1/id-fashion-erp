@@ -28,6 +28,7 @@ async function parseErrorMessage(res: Response, fallback: string) {
 
 export function ApprovalsClient() {
   const [entries, setEntries] = useState<PendingEntry[]>([]);
+  const [search, setSearch] = useState("");
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   // Bumped after every mutation to re-trigger the load effect below — see
@@ -140,6 +141,23 @@ export function ApprovalsClient() {
     setRefreshKey((k) => k + 1);
   };
 
+  const term = search.trim().toLowerCase();
+  const filteredEntries = term
+    ? entries.filter((e) =>
+        [
+          e.employee.fullName,
+          e.employee.employeeCode,
+          e.jobOrder.jobNumber,
+          e.jobOrder.productionStage.name,
+          e.jobOrder.lot.lotNumber,
+          e.remarks ?? "",
+        ]
+          .join(" ")
+          .toLowerCase()
+          .includes(term)
+      )
+    : entries;
+
   return (
     <div className="space-y-6">
       <Breadcrumb items={[{ label: "Dashboard", href: "/dashboard" }, { label: "Pending Approvals" }]} />
@@ -162,7 +180,15 @@ export function ApprovalsClient() {
       )}
 
       {entries.length > 0 && (
-        <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+        <div className="space-y-3">
+          <input
+            type="text"
+            value={search}
+            onChange={(ev) => setSearch(ev.target.value)}
+            placeholder="Search…"
+            className={`${textInputClass()} max-w-xs`}
+          />
+          <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
           <table className="w-full text-left text-sm">
             <thead className="bg-zinc-50 text-xs uppercase text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
               <tr>
@@ -177,7 +203,14 @@ export function ApprovalsClient() {
               </tr>
             </thead>
             <tbody>
-              {entries.map((e) => (
+              {filteredEntries.length === 0 && (
+                <tr>
+                  <td colSpan={8} className="px-3 py-4 text-center text-zinc-400">
+                    No entries match your search.
+                  </td>
+                </tr>
+              )}
+              {filteredEntries.map((e) => (
                 <tr key={e.id} className="border-t border-zinc-100 dark:border-zinc-800">
                   <td className="px-3 py-2 text-zinc-500 dark:text-zinc-400">{new Date(e.createdAt).toLocaleString()}</td>
                   <td className="px-3 py-2 text-zinc-700 dark:text-zinc-200">
@@ -223,6 +256,7 @@ export function ApprovalsClient() {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 

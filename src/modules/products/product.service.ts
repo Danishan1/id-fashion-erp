@@ -76,6 +76,7 @@ function toData(input: ProductInput) {
     description: input.description || null,
     hsnSacCode: input.hsnSacCode || null,
     customerId: input.customerId || null,
+    unitCost: input.unitCost ?? null,
     isActive: input.isActive,
   };
 }
@@ -111,6 +112,7 @@ function toUpdateData(input: ProductUpdateInput): Prisma.ProductUncheckedUpdateI
   if (input.description !== undefined) data.description = input.description || null;
   if (input.hsnSacCode !== undefined) data.hsnSacCode = input.hsnSacCode || null;
   if (input.customerId !== undefined) data.customerId = input.customerId || null;
+  if (input.unitCost !== undefined) data.unitCost = input.unitCost ?? null;
   if (input.isActive !== undefined) data.isActive = input.isActive;
   return data;
 }
@@ -333,4 +335,76 @@ export async function generateVariants(actor: ActorContext, productId: string, i
   });
 
   return { created: toCreate.length };
+}
+
+export interface ProductVariantExplicitInput {
+  productId: string;
+  colorId: string;
+  sizeId: string;
+  skuCode: string;
+  barcode?: string | null;
+}
+
+/**
+ * One row = one variant with a caller-supplied SKU/barcode -- distinct from
+ * generateVariants() above, which is a Color x Size combination-generator
+ * with auto-derived SKUs. Added for the Bulk Master Data Import portal
+ * (2026-09-04), which imports one exact SKU/color/size/barcode combination
+ * per row rather than "generate every combination of these colors and
+ * sizes." Modeled on every other master's create-function shape (duplicate
+ * check + create + per-record audit log), unlike generateVariants' own
+ * single per-batch audit summary.
+ */
+export async function createProductVariantExplicit(actor: ActorContext, input: ProductVariantExplicitInput) {
+  const existingSku = await ProductVariantRepository.findBySkuCode(input.skuCode);
+  if (existingSku) {
+    throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `SKU code "${input.skuCode}" is already in use.`, {
+      skuCode: input.skuCode,
+    });
+  }
+
+  const existingCombo = await ProductVariantRepository.findByProductColorSize(input.productId, input.colorId, input.sizeId);
+  if (existingCombo) {
+    throw new BusinessRuleError(
+      "DUPLICATE_DOC_NUMBER",
+      "A variant with this exact Style/Color/Size combination already exists.",
+      { productId: input.productId, colorId: input.colorId, sizeId: input.sizeId }
+    );
+  }
+
+  const variant = await ProductVariantRepository.create({
+    productId: input.productId,
+    colorId: input.colorId,
+    sizeId: input.sizeId,
+    skuCode: input.skuCode,
+    barcode: input.barcode || null,
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "product_variants",
+    recordId: variant.id,
+    action: "CREATE",
+    newValues: variant,
+  });
+
+  return variant;
+}
+
+/** Used by the Bulk Master Data Import portal's "Undo Batch" action -- no
+ * standalone Variant CRUD page exists to have needed this before. */
+export async function setProductVariantActiveStatus(actor: ActorContext, id: string, isActive: boolean) {
+  const updated = await ProductVariantRepository.setActiveStatus(id, isActive);
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "product_variants",
+    recordId: id,
+    action: "UPDATE",
+    newValues: { isActive },
+  });
+
+  return updated;
 }
