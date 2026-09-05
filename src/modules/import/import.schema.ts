@@ -18,10 +18,7 @@ export const BULK_IMPORT_MASTER_TYPES = [
   "CHART_OF_ACCOUNT",
   // Tier 1 + Tier 2 masters added 2026-09-05 — small/simple lookup masters
   // that were previously only reachable one row at a time via
-  // SimpleLookupManager. Warehouse+WarehouseLocation (nested parent/child)
-  // and Employee (self-referencing reportsToId) are deliberately NOT
-  // included here — both need their own dedicated design pass, not a
-  // mechanical extension of this same row-per-record pattern.
+  // SimpleLookupManager.
   "COLOR",
   "SIZE",
   "UNIT",
@@ -53,6 +50,19 @@ export const BULK_IMPORT_MASTER_TYPES = [
   "SALES_AGENT",
   "BANK_ACCOUNT",
   "MATERIAL",
+  // Warehouse+WarehouseLocation (nested parent/child) and Employee
+  // (self-referencing reportsToId) were originally deferred pending their
+  // own design pass — resolved 2026-09-05 by mirroring the exact
+  // PRODUCT->PRODUCT_VARIANT two-tier pattern already proven above: WAREHOUSE
+  // creates the warehouse alone (no inline locations, unlike the manual
+  // Create-modal's own nested-write UI — a flat CSV row has nowhere to stage
+  // a variable-length location list), WAREHOUSE_LOCATION adds one location
+  // to an already-existing warehouse referenced by code. EMPLOYEE's
+  // reportsTo (manager) column resolves by employee code, same in-order/
+  // same-file-caveat as CATEGORY's own self-referencing parent above.
+  "WAREHOUSE",
+  "WAREHOUSE_LOCATION",
+  "EMPLOYEE",
 ] as const;
 export type BulkImportMasterType = (typeof BULK_IMPORT_MASTER_TYPES)[number];
 
@@ -95,6 +105,7 @@ export const BULK_IMPORT_DEPENDENCY_ORDER: BulkImportMasterType[] = [
   "DESIGNATION",
   "EMPLOYEE_CATEGORY",
   "SHIFT_MASTER",
+  "EMPLOYEE",
   "HOLIDAY_MASTER",
   "PRODUCTION_STAGE",
   "PRODUCTION_LINE",
@@ -103,6 +114,8 @@ export const BULK_IMPORT_DEPENDENCY_ORDER: BulkImportMasterType[] = [
   "COST_MASTER",
   "PAYMENT_TYPE",
   "BANK_ACCOUNT",
+  "WAREHOUSE",
+  "WAREHOUSE_LOCATION",
   "PRODUCT",
   "MATERIAL",
   "PRODUCT_VARIANT",
@@ -348,6 +361,41 @@ export const BULK_IMPORT_COLUMNS: Record<BulkImportMasterType, ImportColumnSpec[
     { key: "unitCost", label: "Unit Cost", required: false },
     { key: "hsnSacCode", label: "HSN/SAC Code", required: false },
   ],
+
+  // ── Warehouse + Employee (2026-09-05) ─────────────────────────────────
+  WAREHOUSE: [
+    { key: "code", label: "Code", required: true },
+    { key: "name", label: "Name", required: true },
+    {
+      key: "type",
+      label: "Type(s) — comma-separated (RAW_MATERIAL/FABRIC/TRIMS/WIP/FINISHED_GOODS/DISPATCH/REJECT)",
+      required: true,
+    },
+  ],
+  WAREHOUSE_LOCATION: [
+    { key: "warehouse", label: "Warehouse (existing warehouse code, must already exist)", required: true },
+    { key: "code", label: "Location Code", required: true },
+    { key: "zone", label: "Zone", required: false },
+    { key: "rack", label: "Rack", required: false },
+    { key: "bin", label: "Bin", required: false },
+    {
+      key: "materialCategory",
+      label: "Category (FABRIC/TRIMS/ZIPS/BUTTONS/ACCESSORIES/PACKAGING/OTHER/WIP/FINISHED_GOODS/DISPATCH/REJECT, optional)",
+      required: false,
+    },
+  ],
+  EMPLOYEE: [
+    { key: "employeeCode", label: "Employee Code (leave blank to auto-generate)", required: false },
+    { key: "fullName", label: "Full Name", required: true },
+    { key: "department", label: "Department (existing department code or name, optional)", required: false },
+    { key: "designation", label: "Designation (existing designation code or name, optional)", required: false },
+    { key: "employeeCategory", label: "Employee Category (existing category code or name, optional)", required: false },
+    { key: "shift", label: "Shift (existing shift code or name, optional)", required: false },
+    { key: "reportsTo", label: "Reports To (existing employee code, optional)", required: false },
+    { key: "phone", label: "Phone", required: false },
+    { key: "email", label: "Email", required: false },
+    { key: "joinDate", label: "Join Date (YYYY-MM-DD)", required: false },
+  ],
 };
 
 // One realistic sample row per master type, keyed by the same column `key`s
@@ -455,6 +503,21 @@ export const BULK_IMPORT_SAMPLE_ROWS: Record<BulkImportMasterType, Record<string
     reorderLevel: "50",
     unitCost: "80",
     hsnSacCode: "59039090",
+  },
+
+  WAREHOUSE: { code: "SMPL-WH", name: "Sample Warehouse", type: "RAW_MATERIAL,FABRIC" },
+  WAREHOUSE_LOCATION: { warehouse: "", code: "SMPL-LOC", zone: "A", rack: "A1", bin: "", materialCategory: "" },
+  EMPLOYEE: {
+    employeeCode: "",
+    fullName: "Sample Employee",
+    department: "",
+    designation: "",
+    employeeCategory: "",
+    shift: "",
+    reportsTo: "",
+    phone: "9876543210",
+    email: "sample.employee@example.com",
+    joinDate: "2026-09-05",
   },
 };
 

@@ -44,6 +44,9 @@ const MASTER_TYPE_LABELS: Record<BulkImportMasterType, string> = {
   PAYMENT_TYPE: "Payment Type",
   BANK_ACCOUNT: "Bank Account",
   MATERIAL: "Raw Material",
+  WAREHOUSE: "Warehouse",
+  WAREHOUSE_LOCATION: "Warehouse Location",
+  EMPLOYEE: "Employee",
 };
 
 interface ValidationReport {

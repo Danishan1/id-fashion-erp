@@ -120,6 +120,18 @@ vi.mock("@/modules/lookups/lookup.repository", () => ({
   LookupRepository: { color: { findFirst: vi.fn() }, size: { findFirst: vi.fn() }, unit: { findFirst: vi.fn() } },
 }));
 vi.mock("@/modules/lookups/lookup.service", () => ({ createColor: vi.fn(), createSize: vi.fn(), createUnit: vi.fn() }));
+vi.mock("@/modules/warehouses/warehouse.repository", () => ({
+  WarehouseRepository: { findByCodeInBranch: vi.fn() },
+  WarehouseLocationRepository: { findByCode: vi.fn(), findByIdWithWarehouse: vi.fn() },
+}));
+vi.mock("@/modules/warehouses/warehouse.service", () => ({
+  createWarehouse: vi.fn(),
+  createWarehouseLocation: vi.fn(),
+  setWarehouseActiveStatus: vi.fn(),
+  setWarehouseLocationActiveStatus: vi.fn(),
+}));
+vi.mock("@/modules/employees/employee.repository", () => ({ EmployeeRepository: { findByCode: vi.fn() } }));
+vi.mock("@/modules/employees/employee.service", () => ({ createEmployee: vi.fn(), deactivateEmployee: vi.fn() }));
 
 // A trimmed, real re-implementation (not a mock of behavior) so the two
 // helpers this file genuinely reuses from import.service.ts behave
@@ -178,6 +190,10 @@ const { DepartmentRepository } = await import("@/modules/departments/department.
 const { ProductionConfigRepository } = await import("@/modules/production-config/production-config.repository");
 const { createProductionStage } = await import("@/modules/production-config/production-config.service");
 const { LookupRepository } = await import("@/modules/lookups/lookup.repository");
+const { WarehouseRepository, WarehouseLocationRepository } = await import("@/modules/warehouses/warehouse.repository");
+const { createWarehouse, createWarehouseLocation } = await import("@/modules/warehouses/warehouse.service");
+const { EmployeeRepository } = await import("@/modules/employees/employee.repository");
+const { createEmployee } = await import("@/modules/employees/employee.service");
 const { ImportBatchRepository } = await import("./import.repository");
 
 const {
@@ -235,6 +251,13 @@ beforeEach(() => {
   vi.mocked(createProductionStage).mockReset().mockResolvedValue({ id: "stage-1" } as never);
   vi.mocked(LookupRepository.unit.findFirst).mockReset();
   vi.mocked(createMaterial).mockReset().mockResolvedValue({ id: "mat-1" } as never);
+  vi.mocked(WarehouseRepository.findByCodeInBranch).mockReset();
+  vi.mocked(createWarehouse).mockReset().mockResolvedValue({ id: "wh-1" } as never);
+  vi.mocked(WarehouseLocationRepository.findByCode).mockReset();
+  vi.mocked(WarehouseLocationRepository.findByIdWithWarehouse).mockReset();
+  vi.mocked(createWarehouseLocation).mockReset().mockResolvedValue({ id: "loc-1" } as never);
+  vi.mocked(EmployeeRepository.findByCode).mockReset();
+  vi.mocked(createEmployee).mockReset().mockResolvedValue({ id: "emp-1" } as never);
   vi.mocked(ImportBatchRepository.createQueued)
     .mockReset()
     .mockResolvedValue({ id: "batch-1" } as never);
@@ -641,6 +664,100 @@ describe("makeGenericDeactivate — Undo path for the new 2026-09-05 lookup mast
 
     expect(result.undone).toBe(0);
     expect(result.failures[0].reason).toContain("No undo path");
+  });
+});
+
+// Warehouse + Employee (2026-09-05) — the two masters originally deferred
+// pending their own design pass, mirroring the exact PRODUCT/PRODUCT_VARIANT
+// and CATEGORY-self-reference patterns already covered above.
+describe("importWarehouseRow", () => {
+  it("rejects an invalid Type token before ever touching the repository", async () => {
+    const result = await validateBulkImportRows(actor, "WAREHOUSE", [{ code: "WH-1", name: "Main", type: "NOT_A_TYPE" }]);
+    expect(result.errors[0].reason).toContain("not valid");
+    expect(WarehouseRepository.findByCodeInBranch).not.toHaveBeenCalled();
+  });
+
+  it("parses a comma-separated Type list and reports a real duplicate code as a row error", async () => {
+    vi.mocked(WarehouseRepository.findByCodeInBranch).mockResolvedValueOnce({ id: "existing-wh" } as never);
+    const result = await validateBulkImportRows(actor, "WAREHOUSE", [{ code: "WH-1", name: "Main", type: "raw_material, fabric" }]);
+    expect(WarehouseRepository.findByCodeInBranch).toHaveBeenCalledWith("br-1", "WH-1");
+    expect(result.errors[0].reason).toContain('Warehouse code "WH-1" is already in use');
+    expect(createWarehouse).not.toHaveBeenCalled();
+  });
+
+  it("commits a valid row with the parsed Type array", async () => {
+    await processBulkImportJob("batch-1", "WAREHOUSE", actor, [{ code: "WH-1", name: "Main", type: "RAW_MATERIAL,FABRIC" }], vi.fn());
+    expect(createWarehouse).toHaveBeenCalledWith(
+      { companyId: "co-1", userId: "user-1", branchId: "br-1" },
+      { code: "WH-1", name: "Main", type: ["RAW_MATERIAL", "FABRIC"], isActive: true }
+    );
+  });
+});
+
+describe("importWarehouseLocationRow — dependency-order enforcement", () => {
+  it("rejects the row when the parent warehouse doesn't exist yet", async () => {
+    vi.mocked(WarehouseRepository.findByCodeInBranch).mockResolvedValueOnce(null);
+    const result = await validateBulkImportRows(actor, "WAREHOUSE_LOCATION", [{ warehouse: "WH-99", code: "A1" }]);
+    expect(result.errors[0].reason).toContain('Warehouse "WH-99" not found');
+    expect(WarehouseLocationRepository.findByCode).not.toHaveBeenCalled();
+  });
+
+  it("rejects an invalid materialCategory", async () => {
+    vi.mocked(WarehouseRepository.findByCodeInBranch).mockResolvedValue({ id: "wh-1" } as never);
+    const result = await validateBulkImportRows(actor, "WAREHOUSE_LOCATION", [
+      { warehouse: "WH-1", code: "A1", materialCategory: "NOT_A_CATEGORY" },
+    ]);
+    expect(result.errors[0].reason).toContain("not valid");
+  });
+
+  it("commits a valid row once the parent warehouse resolves", async () => {
+    vi.mocked(WarehouseRepository.findByCodeInBranch).mockResolvedValue({ id: "wh-1" } as never);
+    await processBulkImportJob("batch-1", "WAREHOUSE_LOCATION", actor, [{ warehouse: "WH-1", code: "A1", zone: "A" }], vi.fn());
+    expect(createWarehouseLocation).toHaveBeenCalledWith(
+      { companyId: "co-1", userId: "user-1", branchId: "br-1" },
+      "wh-1",
+      expect.objectContaining({ code: "A1", zone: "A" })
+    );
+  });
+});
+
+describe("importEmployeeRow", () => {
+  it("auto-generates the employee code and rejects when the reporting manager doesn't exist", async () => {
+    vi.mocked(previewNextMasterCode).mockResolvedValueOnce("EMP-00001" as never);
+    vi.mocked(EmployeeRepository.findByCode).mockResolvedValueOnce(null);
+    const result = await validateBulkImportRows(actor, "EMPLOYEE", [{ fullName: "Suresh Patil", reportsTo: "EMP-99" }]);
+    expect(result.errors[0].reason).toContain('Reporting manager "EMP-99" not found');
+    expect(createEmployee).not.toHaveBeenCalled();
+  });
+
+  it("resolves Department/Designation/Shift/Category and the reporting manager, then commits", async () => {
+    vi.mocked(previewNextMasterCode).mockResolvedValue("EMP-00002" as never);
+    vi.mocked(DepartmentRepository.findFirst).mockResolvedValueOnce({ id: "dept-1" } as never);
+    vi.mocked(HrConfigRepository.designation.findFirst).mockResolvedValueOnce({ id: "desg-1" } as never);
+    vi.mocked(HrConfigRepository.employeeCategory.findFirst).mockResolvedValueOnce({ id: "cat-1" } as never);
+    vi.mocked(HrConfigRepository.shiftMaster.findFirst).mockResolvedValueOnce({ id: "shift-1" } as never);
+    vi.mocked(EmployeeRepository.findByCode).mockResolvedValueOnce({ id: "mgr-1" } as never);
+
+    await processBulkImportJob(
+      "batch-1",
+      "EMPLOYEE",
+      actor,
+      [{ fullName: "Suresh Patil", department: "Cutting", designation: "Operator", employeeCategory: "Permanent", shift: "Day", reportsTo: "EMP-01" }],
+      vi.fn()
+    );
+
+    expect(createEmployee).toHaveBeenCalledWith(
+      actor,
+      expect.objectContaining({
+        employeeCode: "EMP-00002",
+        fullName: "Suresh Patil",
+        departmentId: "dept-1",
+        designationId: "desg-1",
+        employeeCategoryId: "cat-1",
+        shiftId: "shift-1",
+        reportsToId: "mgr-1",
+      })
+    );
   });
 });
 

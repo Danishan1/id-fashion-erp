@@ -5206,6 +5206,11 @@ enum ImportBatchType {
   SALES_AGENT
   BANK_ACCOUNT
   MATERIAL
+  // Originally deferred (nested parent/child, self-referencing FK) --
+  // resolved 2026-09-05, see BULK_IMPORT_MASTER_TYPES' own comment.
+  WAREHOUSE
+  WAREHOUSE_LOCATION
+  EMPLOYEE
 }
 
 // Only meaningful for the Bulk Master Data Import portal's async types

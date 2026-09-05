@@ -50,6 +50,11 @@ import { FinanceConfigRepository } from "@/modules/finance-config/finance-config
 import { createBankAccount, createPaymentType } from "@/modules/finance-config/finance-config.service";
 import { DepartmentRepository } from "@/modules/departments/department.repository";
 import { createDepartment } from "@/modules/departments/department.service";
+import { WarehouseRepository, WarehouseLocationRepository } from "@/modules/warehouses/warehouse.repository";
+import { createWarehouse, createWarehouseLocation, setWarehouseActiveStatus, setWarehouseLocationActiveStatus } from "@/modules/warehouses/warehouse.service";
+import { WAREHOUSE_TYPES, LOCATION_MATERIAL_CATEGORIES } from "@/modules/warehouses/warehouse.schema";
+import { EmployeeRepository } from "@/modules/employees/employee.repository";
+import { createEmployee, deactivateEmployee } from "@/modules/employees/employee.service";
 import { ProductionConfigRepository } from "@/modules/production-config/production-config.repository";
 import {
   createMachine,
@@ -823,6 +828,145 @@ const importMaterialRow: BulkImportRowHandler = async (actor, raw, ctx) => {
   return { recordId: material.id, tableName: "products" };
 };
 
+// ---------------------------------------------------------------------------
+// Warehouse + Employee (2026-09-05) — the two masters originally deferred
+// pending their own design pass (nested parent/child, self-referencing FK
+// respectively). Resolved by mirroring patterns already proven above rather
+// than inventing new mechanisms: WAREHOUSE/WAREHOUSE_LOCATION is the exact
+// PRODUCT/PRODUCT_VARIANT two-tier shape (parent-must-exist-first,
+// referenced by code); EMPLOYEE's reportsTo resolves like CATEGORY's own
+// self-referencing parent (by code, same-file in-order caveat applies).
+// ---------------------------------------------------------------------------
+
+/** warehouse.service.ts's own ActorContext requires branchId: string | null
+ * (never undefined) — BulkImportActorContext's is optional, since most
+ * handlers never touch it. Narrows once, here, rather than at every call
+ * site below. */
+function toWarehouseActor(actor: BulkImportActorContext): { companyId: string; userId: string; branchId: string | null } {
+  return { companyId: actor.companyId, userId: actor.userId, branchId: actor.branchId ?? null };
+}
+
+const importWarehouseRow: BulkImportRowHandler = async (actor, raw, ctx) => {
+  const code = raw.code?.trim();
+  const name = raw.name?.trim();
+  if (!code) throw new BusinessRuleError("VALIDATION_ERROR", "Code is required.");
+  if (!name) throw new BusinessRuleError("VALIDATION_ERROR", "Name is required.");
+  if (!actor.branchId) throw new BusinessRuleError("VALIDATION_ERROR", "Your account has no default branch assigned.");
+
+  const typeTokens = (raw.type ?? "")
+    .split(",")
+    .map((t) => t.trim().toUpperCase())
+    .filter(Boolean);
+  if (typeTokens.length === 0) throw new BusinessRuleError("VALIDATION_ERROR", "At least one Type is required.");
+  const invalidTypes = typeTokens.filter((t) => !(WAREHOUSE_TYPES as readonly string[]).includes(t));
+  if (invalidTypes.length > 0) {
+    throw new BusinessRuleError(
+      "VALIDATION_ERROR",
+      `Type(s) "${invalidTypes.join(", ")}" are not valid — must be one of: ${WAREHOUSE_TYPES.join(", ")}.`
+    );
+  }
+
+  if (ctx.dryRun) {
+    const existing = await WarehouseRepository.findByCodeInBranch(actor.branchId, code);
+    if (existing) throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Warehouse code "${code}" is already in use.`);
+    return { recordId: DRY_RUN_PLACEHOLDER_ID, tableName: "warehouses" };
+  }
+
+  const warehouse = await createWarehouse(toWarehouseActor(actor), {
+    code,
+    name,
+    type: typeTokens as (typeof WAREHOUSE_TYPES)[number][],
+    isActive: true,
+  });
+  return { recordId: warehouse.id, tableName: "warehouses" };
+};
+
+const importWarehouseLocationRow: BulkImportRowHandler = async (actor, raw, ctx) => {
+  if (!actor.branchId) throw new BusinessRuleError("VALIDATION_ERROR", "Your account has no default branch assigned.");
+  const warehouseCode = raw.warehouse?.trim();
+  if (!warehouseCode) throw new BusinessRuleError("VALIDATION_ERROR", "Warehouse is required.");
+  const warehouse = await WarehouseRepository.findByCodeInBranch(actor.branchId, warehouseCode);
+  if (!warehouse) throw new BusinessRuleError("NOT_FOUND", `Warehouse "${warehouseCode}" not found — import Warehouse rows first.`);
+
+  const code = raw.code?.trim();
+  if (!code) throw new BusinessRuleError("VALIDATION_ERROR", "Location Code is required.");
+
+  const materialCategory = undefinedIfBlank(raw.materialCategory)?.toUpperCase();
+  if (materialCategory && !(LOCATION_MATERIAL_CATEGORIES as readonly string[]).includes(materialCategory)) {
+    throw new BusinessRuleError(
+      "VALIDATION_ERROR",
+      `Category "${materialCategory}" is not valid — must be one of: ${LOCATION_MATERIAL_CATEGORIES.join(", ")}.`
+    );
+  }
+
+  if (ctx.dryRun) {
+    const existingLoc = await WarehouseLocationRepository.findByCode(warehouse.id, code);
+    if (existingLoc) throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Location code "${code}" already exists in this warehouse.`);
+    return { recordId: DRY_RUN_PLACEHOLDER_ID, tableName: "warehouse_locations" };
+  }
+
+  const location = await createWarehouseLocation(toWarehouseActor(actor), warehouse.id, {
+    code,
+    zone: raw.zone?.trim() ?? "",
+    rack: raw.rack?.trim() ?? "",
+    bin: raw.bin?.trim() ?? "",
+    materialCategory: (materialCategory ?? "") as (typeof LOCATION_MATERIAL_CATEGORIES)[number] | "",
+    materialCategoryOther: "",
+  });
+  return { recordId: location.id, tableName: "warehouse_locations" };
+};
+
+const importEmployeeRow: BulkImportRowHandler = async (actor, raw, ctx) => {
+  const fullName = raw.fullName?.trim();
+  if (!fullName) throw new BusinessRuleError("VALIDATION_ERROR", "Full Name is required.");
+  const employeeCode = undefinedIfBlank(raw.employeeCode) ?? (await previewNextMasterCode(actor.companyId, "EMPLOYEE"));
+
+  const [departmentId, designationId, employeeCategoryId, shiftId] = await Promise.all([
+    resolveCategoryCompanyScopedId(actor.companyId, raw.department, (w) => DepartmentRepository.findFirst({ where: w }), "Department"),
+    resolveCategoryCompanyScopedId(actor.companyId, raw.designation, (w) => HrConfigRepository.designation.findFirst({ where: w }), "Designation"),
+    resolveCategoryCompanyScopedId(
+      actor.companyId,
+      raw.employeeCategory,
+      (w) => HrConfigRepository.employeeCategory.findFirst({ where: w }),
+      "Employee category"
+    ),
+    resolveCategoryCompanyScopedId(actor.companyId, raw.shift, (w) => HrConfigRepository.shiftMaster.findFirst({ where: w }), "Shift"),
+  ]);
+
+  const reportsToCode = undefinedIfBlank(raw.reportsTo);
+  let reportsToId: string | undefined;
+  if (reportsToCode) {
+    // Company-wide by employee code — not company+deletedAt-scoped through
+    // resolveCategoryCompanyScopedId's generic {code|name} shape, since a
+    // manager lookup only ever makes sense by the human-facing employee
+    // code, never by (possibly non-unique) full name.
+    const manager = await EmployeeRepository.findByCode(actor.companyId, reportsToCode);
+    if (!manager) throw new BusinessRuleError("NOT_FOUND", `Reporting manager "${reportsToCode}" not found — import their row first.`);
+    reportsToId = manager.id;
+  }
+
+  if (ctx.dryRun) {
+    const existing = await EmployeeRepository.findByCode(actor.companyId, employeeCode);
+    if (existing) throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Employee code "${employeeCode}" is already in use.`);
+    return { recordId: DRY_RUN_PLACEHOLDER_ID, tableName: "employees" };
+  }
+
+  const employee = await createEmployee(actor, {
+    employeeCode,
+    fullName,
+    departmentId: departmentId ?? "",
+    designationId: designationId ?? "",
+    employeeCategoryId: employeeCategoryId ?? "",
+    shiftId: shiftId ?? "",
+    reportsToId: reportsToId ?? "",
+    phone: raw.phone?.trim() ?? "",
+    email: raw.email?.trim() ?? "",
+    joinDate: raw.joinDate?.trim() ?? "",
+    isActive: true,
+  });
+  return { recordId: employee.id, tableName: "employees" };
+};
+
 const BULK_IMPORTERS: Record<BulkImportMasterType, BulkImportRowHandler> = {
   CUSTOMER: importCustomerRow,
   SUPPLIER: importSupplierRow,
@@ -890,6 +1034,9 @@ const BULK_IMPORTERS: Record<BulkImportMasterType, BulkImportRowHandler> = {
   SALES_AGENT: importSalesAgentRow,
   BANK_ACCOUNT: importBankAccountRow,
   MATERIAL: importMaterialRow,
+  WAREHOUSE: importWarehouseRow,
+  WAREHOUSE_LOCATION: importWarehouseLocationRow,
+  EMPLOYEE: importEmployeeRow,
 };
 
 // ---------------------------------------------------------------------------
@@ -1175,6 +1322,16 @@ const DEACTIVATE_BY_TABLE: Record<string, (actor: BulkImportActorContext, id: st
   production_lines: makeGenericDeactivate(ProductionConfigRepository.line, "production_lines"),
   machines: makeGenericDeactivate(ProductionConfigRepository.machine, "machines"),
   sales_agents: makeGenericDeactivate(ProductionConfigRepository.salesAgent, "sales_agents"),
+  warehouses: (actor, id) => setWarehouseActiveStatus(toWarehouseActor(actor), id, false),
+  // Needs its parent warehouseId first — setWarehouseLocationActiveStatus is
+  // nested under a warehouse route in the manual UI, unlike every other
+  // generic deactivate above.
+  warehouse_locations: async (actor, id) => {
+    const location = await WarehouseLocationRepository.findByIdWithWarehouse(id);
+    if (!location) return null;
+    return setWarehouseLocationActiveStatus(toWarehouseActor(actor), location.warehouseId, id, false);
+  },
+  employees: (actor, id) => deactivateEmployee(actor, id),
   // departments has no isActive column at all — no Undo path, matching the
   // existing "No undo path for this record type" fallback in
   // undoBulkImportBatch below.
