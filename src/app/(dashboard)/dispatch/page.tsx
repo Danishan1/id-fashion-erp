@@ -34,6 +34,7 @@ export default function DispatchListPage() {
 
       <DataTable<DispatchRow>
         fetchUrl="/api/v1/dispatches"
+        exportUrl="/api/v1/dispatches/export/xlsx"
         newHref="/dispatch/new"
         newLabel="New Dispatch"
         searchPlaceholder="Search by dispatch number…"

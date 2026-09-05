@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 
 interface CompanyOption {
@@ -16,7 +15,6 @@ interface CompanyOption {
 // real access to the selected company, not just relabel the sidebar).
 export function CompanySwitcher() {
   const { data: session, update } = useSession();
-  const router = useRouter();
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
   const [switching, setSwitching] = useState(false);
 
@@ -38,12 +36,18 @@ export function CompanySwitcher() {
     if (!companyId || companyId === activeCompanyId || switching) return;
     setSwitching(true);
     await update({ companyId });
-    setSwitching(false);
-    // Server Components (every dashboard page) read the company via
-    // auth() server-side — a client-only session update doesn't re-render
-    // them on its own, so a real refresh is required for the switch to
-    // actually take effect on screen.
-    router.refresh();
+    // A full reload, not router.refresh() — confirmed live (2026-09-05) that
+    // router.refresh() only re-renders the Server Component tree (here, just
+    // the Sidebar's own isPlatformAdmin/viewableModules props). Almost every
+    // list/detail page in this app is a Client Component that self-fetches
+    // its data once on mount via a plain `useEffect(..., [fetchUrl, ...])` —
+    // none of those dependency arrays reference companyId/session, so an
+    // already-mounted page never re-fetches on its own and kept showing the
+    // previous company's data until a hard reload. A full reload remounts
+    // everything and re-fetches with the new company's cookie — the
+    // guaranteed fix, versus auditing and fixing ~40+ individual fetch
+    // effects across the app.
+    window.location.reload();
   }
 
   return (

@@ -297,11 +297,19 @@ export function JobWorkOrderWorkflowPanel({ jobWorkOrderId, initialOrder }: { jo
                     <td className="px-4 py-2 text-zinc-700 dark:text-zinc-300">{r.damagedQuantity}</td>
                     <td className="px-4 py-2 text-zinc-500">{r.status}</td>
                     <td className="px-4 py-2">
-                      {r.status === "COMPLETED" && (
-                        <button type="button" onClick={() => setReverseTarget(r)} className="text-xs font-medium text-red-600 hover:underline dark:text-red-400">
-                          Reverse
-                        </button>
-                      )}
+                      <div className="flex items-center gap-3">
+                        <a
+                          href={`/api/v1/job-work-orders/${order.id}/receipts/${r.id}/slip`}
+                          className="text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400"
+                        >
+                          Slip
+                        </a>
+                        {r.status === "COMPLETED" && (
+                          <button type="button" onClick={() => setReverseTarget(r)} className="text-xs font-medium text-red-600 hover:underline dark:text-red-400">
+                            Reverse
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}

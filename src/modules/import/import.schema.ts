@@ -16,6 +16,43 @@ export const BULK_IMPORT_MASTER_TYPES = [
   "PRODUCT_VARIANT",
   "OPENING_STOCK",
   "CHART_OF_ACCOUNT",
+  // Tier 1 + Tier 2 masters added 2026-09-05 — small/simple lookup masters
+  // that were previously only reachable one row at a time via
+  // SimpleLookupManager. Warehouse+WarehouseLocation (nested parent/child)
+  // and Employee (self-referencing reportsToId) are deliberately NOT
+  // included here — both need their own dedicated design pass, not a
+  // mechanical extension of this same row-per-record pattern.
+  "COLOR",
+  "SIZE",
+  "UNIT",
+  "BRAND",
+  "SEASON",
+  "PRODUCT_FITTING",
+  "PRODUCT_TYPE",
+  "DESIGN",
+  "DESIGN_PATTERN",
+  "PATTERN",
+  "SUPPLIER_CATEGORY",
+  "FABRIC_GSM",
+  "FABRIC_DYE_TYPE",
+  "FABRIC_WEAVE_TYPE",
+  "FABRIC_COMPOSITION",
+  "EMPLOYEE_CATEGORY",
+  "COST_MASTER",
+  "PAYMENT_TYPE",
+  "DEPARTMENT",
+  "CATEGORY",
+  "FABRIC_DYE",
+  "FABRIC_WIDTH",
+  "DESIGNATION",
+  "SHIFT_MASTER",
+  "HOLIDAY_MASTER",
+  "PRODUCTION_STAGE",
+  "PRODUCTION_LINE",
+  "MACHINE",
+  "SALES_AGENT",
+  "BANK_ACCOUNT",
+  "MATERIAL",
 ] as const;
 export type BulkImportMasterType = (typeof BULK_IMPORT_MASTER_TYPES)[number];
 
@@ -24,10 +61,50 @@ export type BulkImportMasterType = (typeof BULK_IMPORT_MASTER_TYPES)[number];
 // SKU (a Product Variant) and Warehouse to already exist. The UI presents
 // tabs in this order; validation independently re-checks each real
 // prerequisite regardless of what order a Super Admin actually uploads in.
+//
+// The Tier 1/2 masters added 2026-09-05 slot in wherever they have a real
+// FK prerequisite among this same list (Unit before Fabric Width/Material,
+// Department before Designation, Fabric Dye Type before Fabric Dye,
+// Supplier before Material, Category supports a self-referencing parent so
+// is listed early but a same-file parent+child pair still only resolves at
+// commit time, not at validate time — see importCategoryRow's own comment).
+// Everything else with no real prerequisite is grouped after its own
+// module's simplest entities, matching BULK_IMPORT_MASTER_TYPES' own order.
 export const BULK_IMPORT_DEPENDENCY_ORDER: BulkImportMasterType[] = [
   "CUSTOMER",
   "SUPPLIER",
+  "UNIT",
+  "COLOR",
+  "SIZE",
+  "BRAND",
+  "SEASON",
+  "PRODUCT_FITTING",
+  "PRODUCT_TYPE",
+  "DESIGN",
+  "DESIGN_PATTERN",
+  "PATTERN",
+  "CATEGORY",
+  "SUPPLIER_CATEGORY",
+  "FABRIC_GSM",
+  "FABRIC_DYE_TYPE",
+  "FABRIC_DYE",
+  "FABRIC_WEAVE_TYPE",
+  "FABRIC_WIDTH",
+  "FABRIC_COMPOSITION",
+  "DEPARTMENT",
+  "DESIGNATION",
+  "EMPLOYEE_CATEGORY",
+  "SHIFT_MASTER",
+  "HOLIDAY_MASTER",
+  "PRODUCTION_STAGE",
+  "PRODUCTION_LINE",
+  "MACHINE",
+  "SALES_AGENT",
+  "COST_MASTER",
+  "PAYMENT_TYPE",
+  "BANK_ACCOUNT",
   "PRODUCT",
+  "MATERIAL",
   "PRODUCT_VARIANT",
   "OPENING_STOCK",
   "CHART_OF_ACCOUNT",
@@ -108,6 +185,169 @@ export const BULK_IMPORT_COLUMNS: Record<BulkImportMasterType, ImportColumnSpec[
     { key: "name", label: "Account Name", required: true },
     { key: "accountType", label: "Account Type (ASSET/LIABILITY/EQUITY/INCOME/EXPENSE)", required: true },
   ],
+
+  // ── Tier 1 + Tier 2 masters (2026-09-05) ──────────────────────────────
+  COLOR: [
+    { key: "code", label: "Code", required: true },
+    { key: "name", label: "Name", required: true },
+    { key: "hexValue", label: "Hex Value (e.g. #FF0000)", required: false },
+  ],
+  SIZE: [
+    { key: "code", label: "Code", required: true },
+    { key: "name", label: "Name", required: true },
+    { key: "sortOrder", label: "Sort Order", required: false },
+  ],
+  UNIT: [
+    { key: "code", label: "Code", required: true },
+    { key: "name", label: "Name", required: true },
+    { key: "conversionFactor", label: "Conversion Factor", required: false },
+    { key: "baseUnit", label: "Base Unit (existing unit code, optional)", required: false },
+  ],
+  BRAND: [
+    { key: "code", label: "Code", required: true },
+    { key: "name", label: "Name", required: true },
+  ],
+  SEASON: [
+    { key: "code", label: "Code", required: true },
+    { key: "name", label: "Name", required: true },
+  ],
+  PRODUCT_FITTING: [
+    { key: "code", label: "Code", required: true },
+    { key: "name", label: "Name", required: true },
+  ],
+  PRODUCT_TYPE: [
+    { key: "code", label: "Code", required: true },
+    { key: "name", label: "Name", required: true },
+  ],
+  DESIGN: [
+    { key: "code", label: "Code", required: true },
+    { key: "name", label: "Name", required: true },
+  ],
+  DESIGN_PATTERN: [
+    { key: "code", label: "Code", required: true },
+    { key: "name", label: "Name", required: true },
+  ],
+  PATTERN: [
+    { key: "code", label: "Code", required: true },
+    { key: "name", label: "Name", required: true },
+  ],
+  SUPPLIER_CATEGORY: [
+    { key: "code", label: "Code", required: true },
+    { key: "name", label: "Name", required: true },
+  ],
+  FABRIC_GSM: [
+    { key: "code", label: "Code", required: true },
+    { key: "name", label: "Name", required: true },
+  ],
+  FABRIC_DYE_TYPE: [
+    { key: "code", label: "Code", required: true },
+    { key: "name", label: "Name", required: true },
+  ],
+  FABRIC_WEAVE_TYPE: [
+    { key: "code", label: "Code", required: true },
+    { key: "name", label: "Name", required: true },
+  ],
+  FABRIC_COMPOSITION: [
+    { key: "code", label: "Code", required: true },
+    { key: "name", label: "Name", required: true },
+  ],
+  EMPLOYEE_CATEGORY: [
+    { key: "code", label: "Code", required: true },
+    { key: "name", label: "Name", required: true },
+  ],
+  COST_MASTER: [
+    { key: "code", label: "Code", required: true },
+    { key: "name", label: "Name", required: true },
+    { key: "type", label: "Type (HOURLY/MONTHLY/PER_UNIT/FIXED/PERCENTAGE)", required: false },
+    { key: "rate", label: "Rate", required: true },
+  ],
+  PAYMENT_TYPE: [
+    { key: "code", label: "Code", required: true },
+    { key: "name", label: "Name", required: true },
+    { key: "type", label: "Type (CASH/BANK/CHEQUE/CARD/UPI/OTHER)", required: false },
+  ],
+  DEPARTMENT: [
+    { key: "code", label: "Code", required: true },
+    { key: "name", label: "Name", required: true },
+  ],
+  CATEGORY: [
+    { key: "code", label: "Code", required: true },
+    { key: "name", label: "Name", required: true },
+    { key: "parentCategory", label: "Parent Category (existing category code or name, optional)", required: false },
+  ],
+  FABRIC_DYE: [
+    { key: "code", label: "Code", required: true },
+    { key: "name", label: "Name", required: true },
+    { key: "pantone", label: "Pantone", required: false },
+    { key: "dyeType", label: "Dye Type (existing dye type code or name, optional)", required: false },
+  ],
+  FABRIC_WIDTH: [
+    { key: "code", label: "Code", required: true },
+    { key: "name", label: "Name", required: true },
+    { key: "unit", label: "Unit (existing unit code or name, optional)", required: false },
+  ],
+  DESIGNATION: [
+    { key: "code", label: "Code", required: true },
+    { key: "name", label: "Name", required: true },
+    { key: "department", label: "Department (existing department code or name, optional)", required: false },
+  ],
+  SHIFT_MASTER: [
+    { key: "code", label: "Code", required: true },
+    { key: "name", label: "Name", required: true },
+    { key: "startTime", label: "Start Time (e.g. 09:00)", required: true },
+    { key: "endTime", label: "End Time (e.g. 18:00)", required: true },
+    { key: "graceMinutes", label: "Grace Minutes", required: false },
+  ],
+  HOLIDAY_MASTER: [
+    { key: "name", label: "Holiday Name", required: true },
+    { key: "date", label: "Date (YYYY-MM-DD)", required: true },
+  ],
+  PRODUCTION_STAGE: [
+    { key: "code", label: "Code", required: true },
+    { key: "name", label: "Name", required: true },
+    { key: "sequence", label: "Sequence", required: false },
+    { key: "isFinal", label: "Is Final Stage (true/false)", required: false },
+    { key: "allowRework", label: "Allow Rework (true/false)", required: false },
+  ],
+  PRODUCTION_LINE: [
+    { key: "code", label: "Code", required: true },
+    { key: "name", label: "Name", required: true },
+    { key: "capacityPerDay", label: "Capacity Per Day", required: false },
+  ],
+  MACHINE: [
+    { key: "code", label: "Code", required: true },
+    { key: "name", label: "Name", required: true },
+    { key: "productionLine", label: "Production Line (existing line code or name, optional)", required: false },
+    { key: "machineType", label: "Machine Type", required: false },
+  ],
+  SALES_AGENT: [
+    { key: "code", label: "Code", required: true },
+    { key: "name", label: "Name", required: true },
+    { key: "contactPerson", label: "Contact Person", required: false },
+    { key: "email", label: "Email", required: false },
+    { key: "phone", label: "Phone", required: false },
+    { key: "commissionPercent", label: "Commission %", required: false },
+  ],
+  BANK_ACCOUNT: [
+    { key: "code", label: "Code", required: true },
+    { key: "name", label: "Name", required: true },
+    { key: "bankName", label: "Bank Name", required: true },
+    { key: "accountNumber", label: "Account Number", required: true },
+    { key: "ifscCode", label: "IFSC Code", required: false },
+    { key: "branch", label: "Branch", required: false },
+    { key: "accountHolderName", label: "Account Holder Name", required: false },
+    { key: "upiId", label: "UPI ID", required: false },
+  ],
+  MATERIAL: [
+    { key: "styleCode", label: "Item Code (leave blank to auto-generate)", required: false },
+    { key: "styleName", label: "Name", required: true },
+    { key: "materialCategory", label: "Category (FABRIC/TRIMS/ZIPS/BUTTONS/ACCESSORIES/PACKAGING/OTHER)", required: true },
+    { key: "baseUnit", label: "Base Unit (existing unit code or name, optional)", required: false },
+    { key: "defaultSupplier", label: "Default Supplier (existing supplier code or name, optional)", required: false },
+    { key: "reorderLevel", label: "Reorder Level", required: false },
+    { key: "unitCost", label: "Unit Cost", required: false },
+    { key: "hsnSacCode", label: "HSN/SAC Code", required: false },
+  ],
 };
 
 // One realistic sample row per master type, keyed by the same column `key`s
@@ -165,6 +405,56 @@ export const BULK_IMPORT_SAMPLE_ROWS: Record<BulkImportMasterType, Record<string
     code: "1999",
     name: "Sample Reserve Account",
     accountType: "ASSET",
+  },
+
+  COLOR: { code: "SMPL-CLR", name: "Sample Navy Blue", hexValue: "#1F2A44" },
+  SIZE: { code: "SMPL-SZ", name: "Sample Medium", sortOrder: "10" },
+  UNIT: { code: "SMPL-UNT", name: "Sample Dozen", conversionFactor: "12", baseUnit: "" },
+  BRAND: { code: "SMPL-BRND", name: "Sample Brand" },
+  SEASON: { code: "SMPL-SSN", name: "Sample Spring/Summer" },
+  PRODUCT_FITTING: { code: "SMPL-FIT", name: "Sample Slim Fit" },
+  PRODUCT_TYPE: { code: "SMPL-PT", name: "Sample Knitwear" },
+  DESIGN: { code: "SMPL-DSN", name: "Sample Floral" },
+  DESIGN_PATTERN: { code: "SMPL-DP", name: "Sample Checked" },
+  PATTERN: { code: "SMPL-PTRN", name: "Sample Striped" },
+  SUPPLIER_CATEGORY: { code: "SMPL-SC", name: "Sample Packaging" },
+  FABRIC_GSM: { code: "SMPL-GSM", name: "Sample 180 GSM" },
+  FABRIC_DYE_TYPE: { code: "SMPL-DT", name: "Sample Reactive" },
+  FABRIC_WEAVE_TYPE: { code: "SMPL-WV", name: "Sample Plain Weave" },
+  FABRIC_COMPOSITION: { code: "SMPL-CMP", name: "Sample 100% Cotton" },
+  EMPLOYEE_CATEGORY: { code: "SMPL-EC", name: "Sample Contract Staff" },
+  COST_MASTER: { code: "SMPL-CM", name: "Sample Overhead Rate", type: "PER_UNIT", rate: "5" },
+  PAYMENT_TYPE: { code: "SMPL-PAY", name: "Sample UPI", type: "UPI" },
+  DEPARTMENT: { code: "SMPL-DPT", name: "Sample Quality Control" },
+  CATEGORY: { code: "SMPL-CAT", name: "Sample Casual Wear", parentCategory: "" },
+  FABRIC_DYE: { code: "SMPL-DYE", name: "Sample Indigo", pantone: "19-3921 TCX", dyeType: "" },
+  FABRIC_WIDTH: { code: "SMPL-WD", name: "Sample 150 cm", unit: "" },
+  DESIGNATION: { code: "SMPL-DSG", name: "Sample Line Supervisor", department: "" },
+  SHIFT_MASTER: { code: "SMPL-SHFT", name: "Sample Day Shift", startTime: "09:00", endTime: "18:00", graceMinutes: "10" },
+  HOLIDAY_MASTER: { name: "Sample Republic Day", date: "2027-01-26" },
+  PRODUCTION_STAGE: { code: "SMPL-STG", name: "Sample Embroidery", sequence: "5", isFinal: "false", allowRework: "true" },
+  PRODUCTION_LINE: { code: "SMPL-LN", name: "Sample Line 3", capacityPerDay: "500" },
+  MACHINE: { code: "SMPL-MC", name: "Sample Overlock Machine", productionLine: "", machineType: "Overlock" },
+  SALES_AGENT: { code: "SMPL-AGT", name: "Sample Agent", contactPerson: "Anil Kumar", email: "anil@sampleagent.example", phone: "9123456780", commissionPercent: "3" },
+  BANK_ACCOUNT: {
+    code: "SMPL-BNK",
+    name: "Sample Current Account",
+    bankName: "Sample Bank of India",
+    accountNumber: "123456789012",
+    ifscCode: "SBIN0001234",
+    branch: "Sample Branch",
+    accountHolderName: "Sample Apparel Manufacturing Pvt Ltd",
+    upiId: "",
+  },
+  MATERIAL: {
+    styleCode: "",
+    styleName: "Sample Interlining Fabric",
+    materialCategory: "FABRIC",
+    baseUnit: "",
+    defaultSupplier: "",
+    reorderLevel: "50",
+    unitCost: "80",
+    hsnSacCode: "59039090",
   },
 };
 

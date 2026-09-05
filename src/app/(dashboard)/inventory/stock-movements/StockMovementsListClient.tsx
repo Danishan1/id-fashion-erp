@@ -34,6 +34,7 @@ export function StockMovementsListClient() {
 
       <DataTable<StockMovementRow>
         fetchUrl="/api/v1/stock-movements"
+        exportUrl="/api/v1/stock-movements/export/xlsx"
         searchPlaceholder="Search by movement number…"
         rowHref={(row) => `/inventory/stock-movements/${row.id}`}
         newHref="/inventory/stock-movements/new"

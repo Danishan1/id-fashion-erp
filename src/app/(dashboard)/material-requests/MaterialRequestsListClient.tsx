@@ -30,6 +30,7 @@ export function MaterialRequestsListClient() {
 
       <DataTable<MaterialRequestRow>
         fetchUrl="/api/v1/material-requests"
+        exportUrl="/api/v1/material-requests/export/xlsx"
         searchPlaceholder="Search by request number…"
         newHref="/material-requests/new"
         newLabel="New Material Request"

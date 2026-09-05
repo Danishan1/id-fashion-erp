@@ -32,7 +32,15 @@ export default async function GoodsReceiptDetailPage({ params }: { params: Promi
             · Received by {receipt.receivedBy.fullName} on {new Date(receipt.receivedDate).toLocaleDateString()}
           </p>
         </div>
-        <Barcode value={receipt.receiptNumber} />
+        <div className="flex flex-col items-end gap-2">
+          <Barcode value={receipt.receiptNumber} />
+          <a
+            href={`/api/v1/goods-receipts/${id}/pdf`}
+            className="whitespace-nowrap rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+          >
+            Download PDF
+          </a>
+        </div>
       </div>
 
       <GoodsReceiptDetailPanel key={id} goodsReceiptId={id} initialReceipt={JSON.parse(JSON.stringify(receipt))} />

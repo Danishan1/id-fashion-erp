@@ -11,7 +11,7 @@ import { CustomerRepository } from "@/modules/customers/customer.repository";
 import { supplierSchema } from "@/modules/suppliers/supplier.schema";
 import { createSupplier, deactivateSupplier } from "@/modules/suppliers/supplier.service";
 import { SupplierRepository } from "@/modules/suppliers/supplier.repository";
-import { productSchema } from "@/modules/products/product.schema";
+import { MATERIAL_CATEGORIES, materialSchema, productSchema } from "@/modules/products/product.schema";
 import { createProduct, createProductVariantExplicit, setProductActiveStatus, setProductVariantActiveStatus } from "@/modules/products/product.service";
 import { ProductRepository, ProductVariantRepository } from "@/modules/products/product.repository";
 import { GarmentAttributeRepository } from "@/modules/garment-attributes/garment-attributes.repository";
@@ -19,6 +19,44 @@ import { chartOfAccountSchema } from "@/modules/accounts/chart-of-account.schema
 import { createChartOfAccount, setChartOfAccountActiveStatus } from "@/modules/accounts/chart-of-account.service";
 import { ChartOfAccountRepository } from "@/modules/accounts/chart-of-account.repository";
 import { importOpeningStockRow } from "@/modules/inventory/inventory.service";
+import { createMaterial } from "@/modules/products/product.service";
+import { LookupRepository } from "@/modules/lookups/lookup.repository";
+import { createColor, createSize, createUnit } from "@/modules/lookups/lookup.service";
+import {
+  createBrand,
+  createCategory,
+  createDesign,
+  createDesignPattern,
+  createPattern,
+  createProductFitting,
+  createProductType,
+  createSeason,
+  createSupplierCategory,
+} from "@/modules/garment-attributes/garment-attributes.service";
+import { FabricConfigRepository } from "@/modules/fabric-config/fabric-config.repository";
+import {
+  createFabricComposition,
+  createFabricDye,
+  createFabricDyeType,
+  createFabricGsm,
+  createFabricWeaveType,
+  createFabricWidth,
+} from "@/modules/fabric-config/fabric-config.service";
+import { HrConfigRepository } from "@/modules/hr-config/hr-config.repository";
+import { createDesignation, createEmployeeCategory, createHolidayMaster, createShiftMaster } from "@/modules/hr-config/hr-config.service";
+import { CostMasterRepository } from "@/modules/cost-master/cost-master.repository";
+import { createCostMaster } from "@/modules/cost-master/cost-master.service";
+import { FinanceConfigRepository } from "@/modules/finance-config/finance-config.repository";
+import { createBankAccount, createPaymentType } from "@/modules/finance-config/finance-config.service";
+import { DepartmentRepository } from "@/modules/departments/department.repository";
+import { createDepartment } from "@/modules/departments/department.service";
+import { ProductionConfigRepository } from "@/modules/production-config/production-config.repository";
+import {
+  createMachine,
+  createProductionLine,
+  createProductionStage,
+  createSalesAgent,
+} from "@/modules/production-config/production-config.service";
 import { parseCsv } from "@/lib/csv";
 import { parseXlsxBuffer } from "@/lib/xlsx-read";
 import { BULK_IMPORT_COLUMNS, type BulkImportMasterType, type ImportColumnSpec } from "./import.schema";
@@ -287,6 +325,504 @@ async function importChartOfAccountRow(actor: BulkImportActorContext, raw: Recor
   return { recordId: account.id, tableName: "chart_of_accounts" };
 }
 
+// ---------------------------------------------------------------------------
+// Tier 1 + Tier 2 masters (2026-09-05) — small lookup masters previously only
+// reachable one row at a time via SimpleLookupManager. Warehouse+
+// WarehouseLocation and Employee are deliberately NOT covered here (see
+// BULK_IMPORT_MASTER_TYPES' own comment).
+// ---------------------------------------------------------------------------
+
+function parseBooleanCell(raw: string | undefined, defaultValue: boolean): boolean {
+  const trimmed = raw?.trim().toLowerCase();
+  if (!trimmed) return defaultValue;
+  return trimmed === "true" || trimmed === "1" || trimmed === "yes";
+}
+
+/** Global (not company-scoped) lookup by code-or-name — UnitOfMeasure has no
+ * companyId column at all (see lookup.schema.ts's own comment), so this is
+ * a separate helper from resolveOptionalId below rather than a variant of it. */
+async function resolveUnitIdByCodeOrName(text: string | undefined, label = "Unit"): Promise<string | undefined> {
+  const trimmed = undefinedIfBlank(text);
+  if (!trimmed) return undefined;
+  const byCode = await LookupRepository.unit.findFirst({ where: { code: trimmed } });
+  if (byCode) return byCode.id;
+  const byName = await LookupRepository.unit.findFirst({ where: { name: { equals: trimmed, mode: "insensitive" } } });
+  if (byName) return byName.id;
+  throw new BusinessRuleError("NOT_FOUND", `${label} "${trimmed}" not found.`);
+}
+
+/**
+ * Covers every plain {code, name, isActive} lookup master (Brand, Season,
+ * Product Fitting, Product Type, Design, Design Pattern, Pattern, Supplier
+ * Category, Fabric GSM, Fabric Dye Type, Fabric Weave Type, Fabric
+ * Composition, Employee Category) — one factory rather than 13 near-
+ * identical handlers, mirroring garment-attributes.service.ts's own
+ * makeSimpleLookupService factory for exactly the same reason. Every new row
+ * is created active (isActive: true) — there is no "existing record" for an
+ * import row to preserve a prior value from.
+ */
+function makeSimpleCodeNameHandler(
+  createFn: (actor: BulkImportActorContext, input: { code: string; name: string; isActive: boolean }) => Promise<{ id: string }>,
+  findByCode: (companyId: string, code: string) => Promise<{ id: string } | null>,
+  tableName: string
+): BulkImportRowHandler {
+  return async (actor, raw, ctx) => {
+    const code = raw.code?.trim();
+    const name = raw.name?.trim();
+    if (!code) throw new BusinessRuleError("VALIDATION_ERROR", "Code is required.");
+    if (!name) throw new BusinessRuleError("VALIDATION_ERROR", "Name is required.");
+
+    if (ctx.dryRun) {
+      const existing = await findByCode(actor.companyId, code);
+      if (existing) throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Code "${code}" is already in use.`);
+      return { recordId: DRY_RUN_PLACEHOLDER_ID, tableName };
+    }
+
+    const record = await createFn(actor, { code, name, isActive: true });
+    return { recordId: record.id, tableName };
+  };
+}
+
+const importColorRow: BulkImportRowHandler = async (actor, raw, ctx) => {
+  const code = raw.code?.trim();
+  const name = raw.name?.trim();
+  if (!code) throw new BusinessRuleError("VALIDATION_ERROR", "Code is required.");
+  if (!name) throw new BusinessRuleError("VALIDATION_ERROR", "Name is required.");
+
+  if (ctx.dryRun) {
+    const existing = await LookupRepository.color.findFirst({ where: { companyId: actor.companyId, code } });
+    if (existing) throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Color code "${code}" is already in use.`);
+    return { recordId: DRY_RUN_PLACEHOLDER_ID, tableName: "colors" };
+  }
+
+  const color = await createColor(actor, { code, name, hexValue: raw.hexValue?.trim() ?? "", isActive: true });
+  return { recordId: color.id, tableName: "colors" };
+};
+
+const importSizeRow: BulkImportRowHandler = async (actor, raw, ctx) => {
+  const code = raw.code?.trim();
+  const name = raw.name?.trim();
+  if (!code) throw new BusinessRuleError("VALIDATION_ERROR", "Code is required.");
+  if (!name) throw new BusinessRuleError("VALIDATION_ERROR", "Name is required.");
+  const sortOrder = raw.sortOrder ? Number(raw.sortOrder) : 0;
+  if (!Number.isFinite(sortOrder)) throw new BusinessRuleError("VALIDATION_ERROR", "Sort Order must be a number.");
+
+  if (ctx.dryRun) {
+    const existing = await LookupRepository.size.findFirst({ where: { companyId: actor.companyId, code } });
+    if (existing) throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Size code "${code}" is already in use.`);
+    return { recordId: DRY_RUN_PLACEHOLDER_ID, tableName: "sizes" };
+  }
+
+  const size = await createSize(actor, { code, name, sortOrder, isActive: true });
+  return { recordId: size.id, tableName: "sizes" };
+};
+
+const importUnitRow: BulkImportRowHandler = async (actor, raw, ctx) => {
+  const code = raw.code?.trim();
+  const name = raw.name?.trim();
+  if (!code) throw new BusinessRuleError("VALIDATION_ERROR", "Code is required.");
+  if (!name) throw new BusinessRuleError("VALIDATION_ERROR", "Name is required.");
+  const conversionFactor = raw.conversionFactor ? Number(raw.conversionFactor) : 1;
+  if (!Number.isFinite(conversionFactor) || conversionFactor <= 0) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "Conversion Factor must be a positive number.");
+  }
+  const baseUnitId = await resolveUnitIdByCodeOrName(raw.baseUnit, "Base Unit");
+
+  if (ctx.dryRun) {
+    // Unit is global, not company-scoped — code uniqueness is checked
+    // company-wide, matching createUnit's own findUnique({where:{code}}).
+    const existing = await LookupRepository.unit.findFirst({ where: { code } });
+    if (existing) throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Unit code "${code}" is already in use.`);
+    return { recordId: DRY_RUN_PLACEHOLDER_ID, tableName: "units_of_measure" };
+  }
+
+  const unit = await createUnit(actor, { code, name, conversionFactor, baseUnitId: baseUnitId ?? "", isActive: true });
+  return { recordId: unit.id, tableName: "units_of_measure" };
+};
+
+async function resolveCategoryCompanyScopedId(
+  companyId: string,
+  text: string | undefined,
+  find: (where: Record<string, unknown>) => Promise<{ id: string } | null>,
+  label: string
+): Promise<string | undefined> {
+  const trimmed = undefinedIfBlank(text);
+  if (!trimmed) return undefined;
+  const byCode = await find({ companyId, code: trimmed });
+  if (byCode) return byCode.id;
+  const byName = await find({ companyId, name: { equals: trimmed, mode: "insensitive" } });
+  if (byName) return byName.id;
+  throw new BusinessRuleError("NOT_FOUND", `${label} "${trimmed}" not found.`);
+}
+
+/**
+ * Supports a parentCategory column referencing an already-existing category
+ * by code or name — including one created by an earlier row in the SAME
+ * file, since commit processing (processBulkImportJob) awaits each row in
+ * sequence, so an earlier row's real create has already landed by the time a
+ * later row's parent lookup runs. Validate-only (dry-run) mode does NOT get
+ * this benefit — each row's dry run is independent and never actually
+ * writes, so a same-file "parent row above, child row below" pair will
+ * report the child as failing at Validate time even though it would
+ * genuinely succeed at Commit time. This mirrors the already-documented,
+ * accepted "two rows claiming the same new code" gap on
+ * validateBulkImportRows itself — not a new class of gap.
+ */
+const importCategoryRow: BulkImportRowHandler = async (actor, raw, ctx) => {
+  const code = raw.code?.trim();
+  const name = raw.name?.trim();
+  if (!code) throw new BusinessRuleError("VALIDATION_ERROR", "Code is required.");
+  if (!name) throw new BusinessRuleError("VALIDATION_ERROR", "Name is required.");
+  const parentCategoryId = await resolveCategoryCompanyScopedId(
+    actor.companyId,
+    raw.parentCategory,
+    (w) => GarmentAttributeRepository.category.findFirst({ where: w }),
+    "Parent category"
+  );
+
+  if (ctx.dryRun) {
+    const existing = await GarmentAttributeRepository.category.findFirst({ where: { companyId: actor.companyId, code } });
+    if (existing) throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Category code "${code}" is already in use.`);
+    return { recordId: DRY_RUN_PLACEHOLDER_ID, tableName: "categories" };
+  }
+
+  const category = await createCategory(actor, { code, name, isActive: true, parentCategoryId: parentCategoryId ?? "" });
+  return { recordId: category.id, tableName: "categories" };
+};
+
+const importFabricDyeRow: BulkImportRowHandler = async (actor, raw, ctx) => {
+  const code = raw.code?.trim();
+  const name = raw.name?.trim();
+  if (!code) throw new BusinessRuleError("VALIDATION_ERROR", "Code is required.");
+  if (!name) throw new BusinessRuleError("VALIDATION_ERROR", "Name is required.");
+  const dyeTypeId = await resolveCategoryCompanyScopedId(
+    actor.companyId,
+    raw.dyeType,
+    (w) => FabricConfigRepository.dyeType.findFirst({ where: w }),
+    "Dye type"
+  );
+
+  if (ctx.dryRun) {
+    const existing = await FabricConfigRepository.dye.findFirst({ where: { companyId: actor.companyId, code } });
+    if (existing) throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Dye code "${code}" is already in use.`);
+    return { recordId: DRY_RUN_PLACEHOLDER_ID, tableName: "fabric_dyes" };
+  }
+
+  const dye = await createFabricDye(actor, { code, name, pantone: raw.pantone?.trim() ?? "", dyeTypeId: dyeTypeId ?? "", isActive: true });
+  return { recordId: dye.id, tableName: "fabric_dyes" };
+};
+
+const importFabricWidthRow: BulkImportRowHandler = async (actor, raw, ctx) => {
+  const code = raw.code?.trim();
+  const name = raw.name?.trim();
+  if (!code) throw new BusinessRuleError("VALIDATION_ERROR", "Code is required.");
+  if (!name) throw new BusinessRuleError("VALIDATION_ERROR", "Name is required.");
+  const unitId = await resolveUnitIdByCodeOrName(raw.unit);
+
+  if (ctx.dryRun) {
+    const existing = await FabricConfigRepository.width.findFirst({ where: { companyId: actor.companyId, code } });
+    if (existing) throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Width code "${code}" is already in use.`);
+    return { recordId: DRY_RUN_PLACEHOLDER_ID, tableName: "fabric_widths" };
+  }
+
+  const width = await createFabricWidth(actor, { code, name, unitId: unitId ?? "", isActive: true });
+  return { recordId: width.id, tableName: "fabric_widths" };
+};
+
+const importEmployeeCategoryRow = makeSimpleCodeNameHandler(
+  (actor, input) => createEmployeeCategory(actor, { ...input, isActive: input.isActive }),
+  (companyId, code) => HrConfigRepository.employeeCategory.findFirst({ where: { companyId, code } }),
+  "employee_categories"
+);
+
+const importDesignationRow: BulkImportRowHandler = async (actor, raw, ctx) => {
+  const code = raw.code?.trim();
+  const name = raw.name?.trim();
+  if (!code) throw new BusinessRuleError("VALIDATION_ERROR", "Code is required.");
+  if (!name) throw new BusinessRuleError("VALIDATION_ERROR", "Name is required.");
+  const departmentId = await resolveCategoryCompanyScopedId(
+    actor.companyId,
+    raw.department,
+    (w) => DepartmentRepository.findFirst({ where: w }),
+    "Department"
+  );
+
+  if (ctx.dryRun) {
+    const existing = await HrConfigRepository.designation.findFirst({ where: { companyId: actor.companyId, code } });
+    if (existing) throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Designation code "${code}" is already in use.`);
+    return { recordId: DRY_RUN_PLACEHOLDER_ID, tableName: "designations" };
+  }
+
+  const designation = await createDesignation(actor, { code, name, departmentId: departmentId ?? "", isActive: true });
+  return { recordId: designation.id, tableName: "designations" };
+};
+
+const importShiftMasterRow: BulkImportRowHandler = async (actor, raw, ctx) => {
+  const code = raw.code?.trim();
+  const name = raw.name?.trim();
+  const startTime = raw.startTime?.trim();
+  const endTime = raw.endTime?.trim();
+  if (!code) throw new BusinessRuleError("VALIDATION_ERROR", "Code is required.");
+  if (!name) throw new BusinessRuleError("VALIDATION_ERROR", "Name is required.");
+  if (!startTime) throw new BusinessRuleError("VALIDATION_ERROR", "Start Time is required.");
+  if (!endTime) throw new BusinessRuleError("VALIDATION_ERROR", "End Time is required.");
+  const graceMinutes = raw.graceMinutes ? Number(raw.graceMinutes) : 0;
+  if (!Number.isFinite(graceMinutes) || graceMinutes < 0) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "Grace Minutes must be a non-negative number.");
+  }
+
+  if (ctx.dryRun) {
+    const existing = await HrConfigRepository.shiftMaster.findFirst({ where: { companyId: actor.companyId, code } });
+    if (existing) throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Shift code "${code}" is already in use.`);
+    return { recordId: DRY_RUN_PLACEHOLDER_ID, tableName: "shift_masters" };
+  }
+
+  const shift = await createShiftMaster(actor, { code, name, startTime, endTime, graceMinutes, isActive: true });
+  return { recordId: shift.id, tableName: "shift_masters" };
+};
+
+const importHolidayMasterRow: BulkImportRowHandler = async (actor, raw, ctx) => {
+  const name = raw.name?.trim();
+  if (!name) throw new BusinessRuleError("VALIDATION_ERROR", "Holiday Name is required.");
+  const date = raw.date?.trim();
+  if (!date) throw new BusinessRuleError("VALIDATION_ERROR", "Date is required.");
+  const parsedDate = new Date(date);
+  if (Number.isNaN(parsedDate.getTime())) throw new BusinessRuleError("VALIDATION_ERROR", "Date must be a valid date (YYYY-MM-DD).");
+
+  if (ctx.dryRun) {
+    const existing = await HrConfigRepository.holidayMaster.findFirst({ where: { companyId: actor.companyId, name, date: parsedDate } });
+    if (existing) throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Holiday "${name}" on this date already exists.`);
+    return { recordId: DRY_RUN_PLACEHOLDER_ID, tableName: "holiday_masters" };
+  }
+
+  const holiday = await createHolidayMaster(actor, { name, date: parsedDate, isActive: true });
+  return { recordId: holiday.id, tableName: "holiday_masters" };
+};
+
+const importCostMasterRow: BulkImportRowHandler = async (actor, raw, ctx) => {
+  const code = raw.code?.trim();
+  const name = raw.name?.trim();
+  if (!code) throw new BusinessRuleError("VALIDATION_ERROR", "Code is required.");
+  if (!name) throw new BusinessRuleError("VALIDATION_ERROR", "Name is required.");
+  const type = (undefinedIfBlank(raw.type)?.toUpperCase() ?? "HOURLY") as "HOURLY" | "MONTHLY" | "PER_UNIT" | "FIXED" | "PERCENTAGE";
+  if (!["HOURLY", "MONTHLY", "PER_UNIT", "FIXED", "PERCENTAGE"].includes(type)) {
+    throw new BusinessRuleError("VALIDATION_ERROR", `Type "${type}" is not a valid cost master type.`);
+  }
+  const rate = Number(raw.rate);
+  if (!Number.isFinite(rate) || rate < 0) throw new BusinessRuleError("VALIDATION_ERROR", "Rate must be a non-negative number.");
+
+  if (ctx.dryRun) {
+    const existing = await CostMasterRepository.findFirst({ where: { companyId: actor.companyId, code } });
+    if (existing) throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Cost master code "${code}" is already in use.`);
+    return { recordId: DRY_RUN_PLACEHOLDER_ID, tableName: "cost_masters" };
+  }
+
+  const costMaster = await createCostMaster(actor, { code, name, type, rate, isActive: true });
+  return { recordId: costMaster.id, tableName: "cost_masters" };
+};
+
+const importPaymentTypeRow: BulkImportRowHandler = async (actor, raw, ctx) => {
+  const code = raw.code?.trim();
+  const name = raw.name?.trim();
+  if (!code) throw new BusinessRuleError("VALIDATION_ERROR", "Code is required.");
+  if (!name) throw new BusinessRuleError("VALIDATION_ERROR", "Name is required.");
+  const type = (undefinedIfBlank(raw.type)?.toUpperCase() ?? "CASH") as "CASH" | "BANK" | "CHEQUE" | "CARD" | "UPI" | "OTHER";
+  if (!["CASH", "BANK", "CHEQUE", "CARD", "UPI", "OTHER"].includes(type)) {
+    throw new BusinessRuleError("VALIDATION_ERROR", `Type "${type}" is not a valid payment type.`);
+  }
+
+  if (ctx.dryRun) {
+    const existing = await FinanceConfigRepository.paymentType.findFirst({ where: { companyId: actor.companyId, code } });
+    if (existing) throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Payment type code "${code}" is already in use.`);
+    return { recordId: DRY_RUN_PLACEHOLDER_ID, tableName: "payment_types" };
+  }
+
+  const paymentType = await createPaymentType(actor, { code, name, type, isActive: true });
+  return { recordId: paymentType.id, tableName: "payment_types" };
+};
+
+const importBankAccountRow: BulkImportRowHandler = async (actor, raw, ctx) => {
+  const code = raw.code?.trim();
+  const name = raw.name?.trim();
+  const bankName = raw.bankName?.trim();
+  const accountNumber = raw.accountNumber?.trim();
+  if (!code) throw new BusinessRuleError("VALIDATION_ERROR", "Code is required.");
+  if (!name) throw new BusinessRuleError("VALIDATION_ERROR", "Name is required.");
+  if (!bankName) throw new BusinessRuleError("VALIDATION_ERROR", "Bank Name is required.");
+  if (!accountNumber) throw new BusinessRuleError("VALIDATION_ERROR", "Account Number is required.");
+
+  if (ctx.dryRun) {
+    const existing = await FinanceConfigRepository.bankAccount.findFirst({ where: { companyId: actor.companyId, code } });
+    if (existing) throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Bank account code "${code}" is already in use.`);
+    return { recordId: DRY_RUN_PLACEHOLDER_ID, tableName: "bank_accounts" };
+  }
+
+  const bankAccount = await createBankAccount(actor, {
+    code,
+    name,
+    bankName,
+    accountNumber,
+    ifscCode: raw.ifscCode?.trim() ?? "",
+    branch: raw.branch?.trim() ?? "",
+    accountHolderName: raw.accountHolderName?.trim() ?? "",
+    upiId: raw.upiId?.trim() ?? "",
+    isActive: true,
+  });
+  return { recordId: bankAccount.id, tableName: "bank_accounts" };
+};
+
+const importDepartmentRow: BulkImportRowHandler = async (actor, raw, ctx) => {
+  const code = raw.code?.trim();
+  const name = raw.name?.trim();
+  if (!code) throw new BusinessRuleError("VALIDATION_ERROR", "Code is required.");
+  if (!name) throw new BusinessRuleError("VALIDATION_ERROR", "Name is required.");
+
+  if (ctx.dryRun) {
+    const existing = await DepartmentRepository.findFirst({ where: { companyId: actor.companyId, code } });
+    if (existing) throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Department code "${code}" is already in use.`);
+    return { recordId: DRY_RUN_PLACEHOLDER_ID, tableName: "departments" };
+  }
+
+  const department = await createDepartment(actor, { code, name });
+  return { recordId: department.id, tableName: "departments" };
+};
+
+const importProductionStageRow: BulkImportRowHandler = async (actor, raw, ctx) => {
+  const code = raw.code?.trim();
+  const name = raw.name?.trim();
+  if (!code) throw new BusinessRuleError("VALIDATION_ERROR", "Code is required.");
+  if (!name) throw new BusinessRuleError("VALIDATION_ERROR", "Name is required.");
+  const sequence = raw.sequence ? Number(raw.sequence) : 0;
+  if (!Number.isFinite(sequence)) throw new BusinessRuleError("VALIDATION_ERROR", "Sequence must be a number.");
+  const isFinal = parseBooleanCell(raw.isFinal, false);
+  const allowRework = parseBooleanCell(raw.allowRework, true);
+
+  if (ctx.dryRun) {
+    const existing = await ProductionConfigRepository.stage.findFirst({ where: { companyId: actor.companyId, code } });
+    if (existing) throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Stage code "${code}" is already in use.`);
+    return { recordId: DRY_RUN_PLACEHOLDER_ID, tableName: "production_stages" };
+  }
+
+  const stage = await createProductionStage(actor, { code, name, sequence, isActive: true, isFinal, allowRework });
+  return { recordId: stage.id, tableName: "production_stages" };
+};
+
+const importProductionLineRow: BulkImportRowHandler = async (actor, raw, ctx) => {
+  const code = raw.code?.trim();
+  const name = raw.name?.trim();
+  if (!code) throw new BusinessRuleError("VALIDATION_ERROR", "Code is required.");
+  if (!name) throw new BusinessRuleError("VALIDATION_ERROR", "Name is required.");
+  const capacityPerDay = undefinedIfBlank(raw.capacityPerDay) ? Number(raw.capacityPerDay) : undefined;
+  if (capacityPerDay !== undefined && (!Number.isFinite(capacityPerDay) || capacityPerDay < 0)) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "Capacity Per Day must be a non-negative number.");
+  }
+
+  if (ctx.dryRun) {
+    const existing = await ProductionConfigRepository.line.findFirst({ where: { companyId: actor.companyId, code } });
+    if (existing) throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Line code "${code}" is already in use.`);
+    return { recordId: DRY_RUN_PLACEHOLDER_ID, tableName: "production_lines" };
+  }
+
+  const line = await createProductionLine(actor, { code, name, capacityPerDay, isActive: true });
+  return { recordId: line.id, tableName: "production_lines" };
+};
+
+const importMachineRow: BulkImportRowHandler = async (actor, raw, ctx) => {
+  const code = raw.code?.trim();
+  const name = raw.name?.trim();
+  if (!code) throw new BusinessRuleError("VALIDATION_ERROR", "Code is required.");
+  if (!name) throw new BusinessRuleError("VALIDATION_ERROR", "Name is required.");
+  const productionLineId = await resolveCategoryCompanyScopedId(
+    actor.companyId,
+    raw.productionLine,
+    (w) => ProductionConfigRepository.line.findFirst({ where: w }),
+    "Production line"
+  );
+
+  if (ctx.dryRun) {
+    const existing = await ProductionConfigRepository.machine.findFirst({ where: { companyId: actor.companyId, code } });
+    if (existing) throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Machine code "${code}" is already in use.`);
+    return { recordId: DRY_RUN_PLACEHOLDER_ID, tableName: "machines" };
+  }
+
+  const machine = await createMachine(actor, {
+    code,
+    name,
+    productionLineId: productionLineId ?? "",
+    machineType: raw.machineType?.trim() ?? "",
+    isActive: true,
+  });
+  return { recordId: machine.id, tableName: "machines" };
+};
+
+const importSalesAgentRow: BulkImportRowHandler = async (actor, raw, ctx) => {
+  const code = raw.code?.trim();
+  const name = raw.name?.trim();
+  if (!code) throw new BusinessRuleError("VALIDATION_ERROR", "Code is required.");
+  if (!name) throw new BusinessRuleError("VALIDATION_ERROR", "Name is required.");
+  const commissionPercent = undefinedIfBlank(raw.commissionPercent) ? Number(raw.commissionPercent) : undefined;
+  if (commissionPercent !== undefined && (!Number.isFinite(commissionPercent) || commissionPercent < 0 || commissionPercent > 100)) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "Commission % must be between 0 and 100.");
+  }
+
+  if (ctx.dryRun) {
+    const existing = await ProductionConfigRepository.salesAgent.findFirst({ where: { companyId: actor.companyId, code } });
+    if (existing) throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Agent code "${code}" is already in use.`);
+    return { recordId: DRY_RUN_PLACEHOLDER_ID, tableName: "sales_agents" };
+  }
+
+  const agent = await createSalesAgent(actor, {
+    code,
+    name,
+    contactPerson: raw.contactPerson?.trim() ?? "",
+    email: raw.email?.trim() ?? "",
+    phone: raw.phone?.trim() ?? "",
+    commissionPercent,
+    isActive: true,
+  });
+  return { recordId: agent.id, tableName: "sales_agents" };
+};
+
+async function resolveMaterialCategory(text: string): Promise<(typeof MATERIAL_CATEGORIES)[number]> {
+  const trimmed = text?.trim().toUpperCase();
+  if (!trimmed || !MATERIAL_CATEGORIES.includes(trimmed as (typeof MATERIAL_CATEGORIES)[number])) {
+    throw new BusinessRuleError(
+      "VALIDATION_ERROR",
+      `Category "${text}" is not valid — must be one of: ${MATERIAL_CATEGORIES.join(", ")}.`
+    );
+  }
+  return trimmed as (typeof MATERIAL_CATEGORIES)[number];
+}
+
+const importMaterialRow: BulkImportRowHandler = async (actor, raw, ctx) => {
+  const styleCode = undefinedIfBlank(raw.styleCode) ?? (await previewNextMasterCode(actor.companyId, "MATERIAL"));
+  const materialCategory = await resolveMaterialCategory(raw.materialCategory);
+  const [baseUomId, defaultSupplierId] = await Promise.all([
+    resolveUnitIdByCodeOrName(raw.baseUnit, "Base Unit"),
+    resolveOptionalId(actor.companyId, raw.defaultSupplier, (w) => prisma.supplier.findFirst({ where: w }), "Default Supplier"),
+  ]);
+
+  const input = materialSchema.parse({
+    styleCode,
+    styleName: raw.styleName?.trim(),
+    materialCategory,
+    baseUomId: baseUomId ?? "",
+    defaultSupplierId: defaultSupplierId ?? "",
+    reorderLevel: raw.reorderLevel,
+    unitCost: raw.unitCost,
+    hsnSacCode: raw.hsnSacCode?.trim() ?? "",
+  });
+
+  if (ctx.dryRun) {
+    const existing = await ProductRepository.findByStyleCode(actor.companyId, input.styleCode);
+    if (existing) throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Item code "${input.styleCode}" is already in use.`);
+    return { recordId: DRY_RUN_PLACEHOLDER_ID, tableName: "products" };
+  }
+
+  const material = await createMaterial(actor, input);
+  return { recordId: material.id, tableName: "products" };
+};
+
 const BULK_IMPORTERS: Record<BulkImportMasterType, BulkImportRowHandler> = {
   CUSTOMER: importCustomerRow,
   SUPPLIER: importSupplierRow,
@@ -294,6 +830,66 @@ const BULK_IMPORTERS: Record<BulkImportMasterType, BulkImportRowHandler> = {
   PRODUCT_VARIANT: importProductVariantRow,
   OPENING_STOCK: importOpeningStockRowHandler,
   CHART_OF_ACCOUNT: importChartOfAccountRow,
+
+  COLOR: importColorRow,
+  SIZE: importSizeRow,
+  UNIT: importUnitRow,
+  BRAND: makeSimpleCodeNameHandler(createBrand, (companyId, code) => GarmentAttributeRepository.brand.findFirst({ where: { companyId, code } }), "brands"),
+  SEASON: makeSimpleCodeNameHandler(createSeason, (companyId, code) => GarmentAttributeRepository.season.findFirst({ where: { companyId, code } }), "seasons"),
+  PRODUCT_FITTING: makeSimpleCodeNameHandler(
+    createProductFitting,
+    (companyId, code) => GarmentAttributeRepository.productFitting.findFirst({ where: { companyId, code } }),
+    "product_fittings"
+  ),
+  PRODUCT_TYPE: makeSimpleCodeNameHandler(
+    createProductType,
+    (companyId, code) => GarmentAttributeRepository.productType.findFirst({ where: { companyId, code } }),
+    "product_types"
+  ),
+  DESIGN: makeSimpleCodeNameHandler(createDesign, (companyId, code) => GarmentAttributeRepository.design.findFirst({ where: { companyId, code } }), "designs"),
+  DESIGN_PATTERN: makeSimpleCodeNameHandler(
+    createDesignPattern,
+    (companyId, code) => GarmentAttributeRepository.designPattern.findFirst({ where: { companyId, code } }),
+    "design_patterns"
+  ),
+  PATTERN: makeSimpleCodeNameHandler(createPattern, (companyId, code) => GarmentAttributeRepository.pattern.findFirst({ where: { companyId, code } }), "patterns"),
+  SUPPLIER_CATEGORY: makeSimpleCodeNameHandler(
+    createSupplierCategory,
+    (companyId, code) => GarmentAttributeRepository.supplierCategory.findFirst({ where: { companyId, code } }),
+    "supplier_categories"
+  ),
+  FABRIC_GSM: makeSimpleCodeNameHandler(createFabricGsm, (companyId, code) => FabricConfigRepository.gsm.findFirst({ where: { companyId, code } }), "fabric_gsms"),
+  FABRIC_DYE_TYPE: makeSimpleCodeNameHandler(
+    createFabricDyeType,
+    (companyId, code) => FabricConfigRepository.dyeType.findFirst({ where: { companyId, code } }),
+    "fabric_dye_types"
+  ),
+  FABRIC_WEAVE_TYPE: makeSimpleCodeNameHandler(
+    createFabricWeaveType,
+    (companyId, code) => FabricConfigRepository.weaveType.findFirst({ where: { companyId, code } }),
+    "fabric_weave_types"
+  ),
+  FABRIC_COMPOSITION: makeSimpleCodeNameHandler(
+    createFabricComposition,
+    (companyId, code) => FabricConfigRepository.composition.findFirst({ where: { companyId, code } }),
+    "fabric_compositions"
+  ),
+  EMPLOYEE_CATEGORY: importEmployeeCategoryRow,
+  COST_MASTER: importCostMasterRow,
+  PAYMENT_TYPE: importPaymentTypeRow,
+  DEPARTMENT: importDepartmentRow,
+  CATEGORY: importCategoryRow,
+  FABRIC_DYE: importFabricDyeRow,
+  FABRIC_WIDTH: importFabricWidthRow,
+  DESIGNATION: importDesignationRow,
+  SHIFT_MASTER: importShiftMasterRow,
+  HOLIDAY_MASTER: importHolidayMasterRow,
+  PRODUCTION_STAGE: importProductionStageRow,
+  PRODUCTION_LINE: importProductionLineRow,
+  MACHINE: importMachineRow,
+  SALES_AGENT: importSalesAgentRow,
+  BANK_ACCOUNT: importBankAccountRow,
+  MATERIAL: importMaterialRow,
 };
 
 // ---------------------------------------------------------------------------
@@ -522,12 +1118,66 @@ export async function processBulkImportJob(
   });
 }
 
+/**
+ * Generic Undo path for the plain {isActive} lookup masters added 2026-09-05
+ * — bypasses each master's own full update() (which expects a complete
+ * code/name/etc payload) and flips isActive directly via the repository
+ * delegate, audit-logged the same way. Safe for Undo specifically: the batch
+ * this runs against is already scoped to the acting company via
+ * ImportBatchRepository.findByIdWithDetails's own companyId filter, so this
+ * doesn't need its own separate ownership re-check the way a public
+ * edit-by-id endpoint would.
+ */
+function makeGenericDeactivate(
+  delegate: { update: (args: { where: { id: string }; data: { isActive: boolean } }) => Promise<{ id: string }> },
+  tableName: string
+) {
+  return async (actor: BulkImportActorContext, id: string) => {
+    const updated = await delegate.update({ where: { id }, data: { isActive: false } });
+    await writeAuditLog({ companyId: actor.companyId, userId: actor.userId, tableName, recordId: id, action: "UPDATE", newValues: { isActive: false } });
+    return updated;
+  };
+}
+
 const DEACTIVATE_BY_TABLE: Record<string, (actor: BulkImportActorContext, id: string) => Promise<unknown>> = {
   customers: (actor, id) => deactivateCustomer(actor, id),
   suppliers: (actor, id) => deactivateSupplier(actor, id),
   products: (actor, id) => setProductActiveStatus(actor, id, false),
   product_variants: (actor, id) => setProductVariantActiveStatus(actor, id, false),
   chart_of_accounts: (actor, id) => setChartOfAccountActiveStatus(actor, id, false),
+
+  colors: makeGenericDeactivate(LookupRepository.color, "colors"),
+  sizes: makeGenericDeactivate(LookupRepository.size, "sizes"),
+  units_of_measure: makeGenericDeactivate(LookupRepository.unit, "units_of_measure"),
+  brands: makeGenericDeactivate(GarmentAttributeRepository.brand, "brands"),
+  categories: makeGenericDeactivate(GarmentAttributeRepository.category, "categories"),
+  seasons: makeGenericDeactivate(GarmentAttributeRepository.season, "seasons"),
+  product_fittings: makeGenericDeactivate(GarmentAttributeRepository.productFitting, "product_fittings"),
+  product_types: makeGenericDeactivate(GarmentAttributeRepository.productType, "product_types"),
+  designs: makeGenericDeactivate(GarmentAttributeRepository.design, "designs"),
+  design_patterns: makeGenericDeactivate(GarmentAttributeRepository.designPattern, "design_patterns"),
+  patterns: makeGenericDeactivate(GarmentAttributeRepository.pattern, "patterns"),
+  supplier_categories: makeGenericDeactivate(GarmentAttributeRepository.supplierCategory, "supplier_categories"),
+  fabric_gsms: makeGenericDeactivate(FabricConfigRepository.gsm, "fabric_gsms"),
+  fabric_dye_types: makeGenericDeactivate(FabricConfigRepository.dyeType, "fabric_dye_types"),
+  fabric_weave_types: makeGenericDeactivate(FabricConfigRepository.weaveType, "fabric_weave_types"),
+  fabric_compositions: makeGenericDeactivate(FabricConfigRepository.composition, "fabric_compositions"),
+  fabric_dyes: makeGenericDeactivate(FabricConfigRepository.dye, "fabric_dyes"),
+  fabric_widths: makeGenericDeactivate(FabricConfigRepository.width, "fabric_widths"),
+  employee_categories: makeGenericDeactivate(HrConfigRepository.employeeCategory, "employee_categories"),
+  designations: makeGenericDeactivate(HrConfigRepository.designation, "designations"),
+  shift_masters: makeGenericDeactivate(HrConfigRepository.shiftMaster, "shift_masters"),
+  holiday_masters: makeGenericDeactivate(HrConfigRepository.holidayMaster, "holiday_masters"),
+  cost_masters: makeGenericDeactivate(CostMasterRepository, "cost_masters"),
+  payment_types: makeGenericDeactivate(FinanceConfigRepository.paymentType, "payment_types"),
+  bank_accounts: makeGenericDeactivate(FinanceConfigRepository.bankAccount, "bank_accounts"),
+  production_stages: makeGenericDeactivate(ProductionConfigRepository.stage, "production_stages"),
+  production_lines: makeGenericDeactivate(ProductionConfigRepository.line, "production_lines"),
+  machines: makeGenericDeactivate(ProductionConfigRepository.machine, "machines"),
+  sales_agents: makeGenericDeactivate(ProductionConfigRepository.salesAgent, "sales_agents"),
+  // departments has no isActive column at all — no Undo path, matching the
+  // existing "No undo path for this record type" fallback in
+  // undoBulkImportBatch below.
 };
 
 export async function undoBulkImportBatch(actor: BulkImportActorContext, batchId: string) {

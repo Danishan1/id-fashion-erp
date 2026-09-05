@@ -11,7 +11,7 @@ export async function GET(req: NextRequest) {
 
     const query = parseListQuery(req.nextUrl.searchParams, "updatedAt");
     const warehouseId = req.nextUrl.searchParams.get("warehouseId") || undefined;
-    const { data, totalCount } = await listStockBalances(session.user.companyId, query, { warehouseId });
+    const { data, totalCount } = await listStockBalances(session.user.companyId, query, { warehouseId }, { includeLocationBreakdown: true });
 
     return NextResponse.json({ data, meta: buildListMeta(totalCount, query.page, query.pageSize) });
   } catch (error) {

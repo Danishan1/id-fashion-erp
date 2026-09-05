@@ -424,6 +424,12 @@ export function LotWorkflowPanel({
                   Assigned: {jo.assignments.map((a) => `${a.employee.fullName} (${a.assignedQuantity})`).join(", ")}
                 </p>
               )}
+              <a
+                href={`/api/v1/lots/${lot.id}/job-orders/${jo.id}/stage-slip`}
+                className="mt-2 inline-block text-xs font-medium text-indigo-600 hover:text-indigo-500"
+              >
+                Download Stage Transfer Slip
+              </a>
               {!isTerminal && (
                 <div className="mt-3 flex flex-wrap gap-3 text-xs font-medium">
                   <button type="button" onClick={() => setAssignTarget(jo)} className="text-indigo-600 hover:text-indigo-500">

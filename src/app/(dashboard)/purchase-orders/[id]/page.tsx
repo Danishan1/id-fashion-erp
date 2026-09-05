@@ -32,7 +32,15 @@ export default async function PurchaseOrderDetailPage({ params }: { params: Prom
               : ""}
           </p>
         </div>
-        <Barcode value={order.orderNumber} />
+        <div className="flex flex-col items-end gap-2">
+          <Barcode value={order.orderNumber} />
+          <a
+            href={`/api/v1/purchase-orders/${id}/pdf`}
+            className="whitespace-nowrap rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+          >
+            Download PDF
+          </a>
+        </div>
       </div>
 
       {/* Decimal/Date fields round-trip through JSON before crossing to the

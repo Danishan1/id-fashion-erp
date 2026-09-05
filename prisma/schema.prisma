@@ -5172,6 +5172,40 @@ enum ImportBatchType {
   PRODUCT_VARIANT
   OPENING_STOCK
   CHART_OF_ACCOUNT
+  // Tier 1 + Tier 2 masters (2026-09-05) -- see BULK_IMPORT_MASTER_TYPES'
+  // own comment in import.schema.ts for what's deliberately excluded
+  // (Warehouse+WarehouseLocation, Employee).
+  COLOR
+  SIZE
+  UNIT
+  BRAND
+  SEASON
+  PRODUCT_FITTING
+  PRODUCT_TYPE
+  DESIGN
+  DESIGN_PATTERN
+  PATTERN
+  SUPPLIER_CATEGORY
+  FABRIC_GSM
+  FABRIC_DYE_TYPE
+  FABRIC_WEAVE_TYPE
+  FABRIC_COMPOSITION
+  EMPLOYEE_CATEGORY
+  COST_MASTER
+  PAYMENT_TYPE
+  DEPARTMENT
+  CATEGORY
+  FABRIC_DYE
+  FABRIC_WIDTH
+  DESIGNATION
+  SHIFT_MASTER
+  HOLIDAY_MASTER
+  PRODUCTION_STAGE
+  PRODUCTION_LINE
+  MACHINE
+  SALES_AGENT
+  BANK_ACCOUNT
+  MATERIAL
 }
 
 // Only meaningful for the Bulk Master Data Import portal's async types

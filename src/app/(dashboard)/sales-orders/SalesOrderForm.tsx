@@ -549,8 +549,12 @@ function VariantQuantityGrid({
 
   const fillInputClass =
     "w-11 rounded border border-dashed border-zinc-300 bg-transparent px-1 py-1 text-center text-xs text-zinc-500 focus:border-indigo-400 focus:outline-none dark:border-zinc-600 dark:text-zinc-400";
+  // w-20 (was w-14) — a 5-digit quantity like "10000" was clipping inside
+  // the old 56px box (2026-09-05); widened to 80px, with the size <col>
+  // below widened to match so the table's own alignment (header/fill-row/
+  // data-rows sharing one <colgroup>) stays consistent.
   const cellInputClass =
-    "w-14 rounded-md border border-zinc-300 bg-white px-1 py-1.5 text-center text-xs text-zinc-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100";
+    "w-20 rounded-md border border-zinc-300 bg-white px-1 py-1.5 text-center text-xs text-zinc-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100";
 
   return (
     <div className="mt-1.5 overflow-x-auto rounded-md border border-zinc-200 dark:border-zinc-800">
@@ -559,7 +563,7 @@ function VariantQuantityGrid({
           <col style={{ width: 108 }} />
           <col style={{ width: 84 }} />
           {sizes.map((size) => (
-            <col key={size.id} style={{ width: 76 }} />
+            <col key={size.id} style={{ width: 96 }} />
           ))}
         </colgroup>
         <thead>

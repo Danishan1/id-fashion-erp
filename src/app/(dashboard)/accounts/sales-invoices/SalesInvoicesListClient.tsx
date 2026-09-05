@@ -42,6 +42,7 @@ export function SalesInvoicesListClient() {
 
       <DataTable<SalesInvoiceRow>
         fetchUrl="/api/v1/sales-invoices"
+        exportUrl="/api/v1/sales-invoices/export/xlsx"
         refreshKey={refreshKey}
         newAction={{ label: "New Invoice", onClick: () => setModalOpen(true) }}
         searchPlaceholder="Search by invoice number…"

@@ -32,6 +32,7 @@ export function SalesOrdersListClient() {
 
       <DataTable<SalesOrderRow>
         fetchUrl="/api/v1/sales-orders"
+        exportUrl="/api/v1/sales-orders/export/xlsx"
         searchPlaceholder="Search by order number…"
         newHref="/sales-orders/new"
         newLabel="New Sales Order"

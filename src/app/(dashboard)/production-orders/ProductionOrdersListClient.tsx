@@ -29,6 +29,7 @@ export function ProductionOrdersListClient() {
 
       <DataTable<ProductionOrderRow>
         fetchUrl="/api/v1/production-orders"
+        exportUrl="/api/v1/production-orders/export/xlsx"
         searchPlaceholder="Search by order number…"
         newHref="/production-orders/new"
         newLabel="New Production Order"

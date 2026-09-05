@@ -144,7 +144,19 @@ export async function sumAvailableByProductIds(companyId: string, productIds: st
   return new Map(rows.map((row) => [row.productId, Number(row._sum.quantityOnHand ?? 0)]));
 }
 
-export async function listStockBalances(companyId: string, query: ListQuery, filters: { warehouseId?: string } = {}) {
+export async function listStockBalances(
+  companyId: string,
+  query: ListQuery,
+  filters: { warehouseId?: string } = {},
+  // Off by default and deliberately NOT used by the Excel export route (up
+  // to EXPORT_ROW_CAP_EXCEL = 20,000 rows) — the on-screen paginated list
+  // (≤100 rows/page) is the only caller that opts in, since this derivation
+  // costs one extra ledger query per row (see
+  // findLocationBreakdownForPair's own doc comment) and running that N+1
+  // pattern against 20,000 rows would be a real performance risk, not a
+  // theoretical one.
+  options: { includeLocationBreakdown?: boolean } = {}
+) {
   const where: Prisma.StockBalanceWhereInput = {
     companyId,
     ...(query.search
@@ -160,7 +172,7 @@ export async function listStockBalances(companyId: string, query: ListQuery, fil
     ...(filters.warehouseId ? { warehouseId: filters.warehouseId } : {}),
   };
 
-  const [data, totalCount] = await Promise.all([
+  const [rows, totalCount] = await Promise.all([
     StockBalanceRepository.findMany(where, {
       orderBy: { [query.sortBy]: query.sortOrder },
       skip: query.skip,
@@ -168,6 +180,20 @@ export async function listStockBalances(companyId: string, query: ListQuery, fil
     }),
     StockBalanceRepository.count(where),
   ]);
+
+  if (!options.includeLocationBreakdown) {
+    return { data: rows, totalCount };
+  }
+
+  // Real per-location net quantity, not a "most recently touched" guess —
+  // one grouped ledger query per row, run in parallel. Fine at this list's
+  // own page size (≤100), not a per-request scan of the whole ledger.
+  const data = await Promise.all(
+    rows.map(async (row) => {
+      const locations = await InventoryTransactionRepository.findLocationBreakdownForPair(companyId, row.productId, row.warehouseId);
+      return { ...row, locations };
+    })
+  );
 
   return { data, totalCount };
 }

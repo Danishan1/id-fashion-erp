@@ -4,12 +4,36 @@ import { useEffect, useState } from "react";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { DataTable } from "@/components/ui/DataTable";
 
+interface LocationBalance {
+  code: string;
+  zone: string | null;
+  rack: string | null;
+  bin: string | null;
+  quantity: number;
+}
+
 interface StockBalanceRow {
   id: string;
   quantityOnHand: string;
   updatedAt: string;
-  product: { styleName: string; styleCode: string } | null;
+  product: { styleName: string; styleCode: string; baseUom: { code: string } | null } | null;
   warehouse: { name: string; code: string } | null;
+  // Real per-location net quantity from the ledger (not a single "most
+  // recently touched" guess) — a product genuinely split across several
+  // locations shows every one of them here, each with its own quantity.
+  // Empty when nothing in the ledger for this pair ever recorded a location.
+  locations: LocationBalance[];
+}
+
+function formatLocations(locations: StockBalanceRow["locations"], unitCode: string): string {
+  if (!locations || locations.length === 0) return "—";
+  return locations
+    .map((loc) => {
+      const parts = [loc.zone, loc.rack, loc.bin].filter(Boolean);
+      const label = parts.length > 0 ? `${loc.code} (${parts.join(" / ")})` : loc.code;
+      return `${label}: ${loc.quantity.toLocaleString("en-IN")}${unitCode ? ` ${unitCode}` : ""}`;
+    })
+    .join(", ");
 }
 
 interface WarehouseOption {
@@ -71,7 +95,19 @@ export function StockBalancesListClient() {
         columns={[
           { key: "product", header: "Material", render: (row) => (row.product ? `${row.product.styleName} (${row.product.styleCode})` : "—") },
           { key: "warehouse", header: "Warehouse", render: (row) => row.warehouse?.name ?? "—" },
-          { key: "quantityOnHand", header: "Quantity On Hand", render: (row) => Number(row.quantityOnHand).toLocaleString() },
+          {
+            key: "locations",
+            header: "Location(s)",
+            render: (row) => formatLocations(row.locations, row.product?.baseUom?.code ?? ""),
+          },
+          {
+            key: "quantityOnHand",
+            header: "Quantity On Hand",
+            render: (row) => {
+              const unit = row.product?.baseUom?.code;
+              return `${Number(row.quantityOnHand).toLocaleString()}${unit ? ` ${unit}` : ""}`;
+            },
+          },
           { key: "updatedAt", header: "Last Updated", render: (row) => new Date(row.updatedAt).toLocaleString() },
         ]}
       />

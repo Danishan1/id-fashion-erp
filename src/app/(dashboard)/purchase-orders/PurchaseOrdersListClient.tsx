@@ -29,6 +29,7 @@ export function PurchaseOrdersListClient() {
 
       <DataTable<PurchaseOrderRow>
         fetchUrl="/api/v1/purchase-orders"
+        exportUrl="/api/v1/purchase-orders/export/xlsx"
         searchPlaceholder="Search by order number…"
         newHref="/purchase-orders/new"
         newLabel="New Purchase Order"

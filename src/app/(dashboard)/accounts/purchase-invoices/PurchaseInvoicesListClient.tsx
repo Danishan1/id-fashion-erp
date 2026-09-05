@@ -30,6 +30,7 @@ export function PurchaseInvoicesListClient() {
 
       <DataTable<PurchaseInvoiceRow>
         fetchUrl="/api/v1/purchase-invoices"
+        exportUrl="/api/v1/purchase-invoices/export/xlsx"
         newHref="/accounts/purchase-invoices/new"
         newLabel="New Invoice"
         searchPlaceholder="Search by invoice number…"

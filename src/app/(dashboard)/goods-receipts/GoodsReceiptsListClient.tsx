@@ -26,6 +26,7 @@ export function GoodsReceiptsListClient() {
 
       <DataTable<GoodsReceiptRow>
         fetchUrl="/api/v1/goods-receipts"
+        exportUrl="/api/v1/goods-receipts/export/xlsx"
         searchPlaceholder="Search by receipt number…"
         rowHref={(row) => `/goods-receipts/${row.id}`}
         columns={[

@@ -29,6 +29,15 @@ interface DataTableProps<T> {
   /** Bump to force a refetch (e.g. after an external mutation). */
   refreshKey?: number;
   /**
+   * When given, renders a "Download Excel" link next to the New button —
+   * the module's own `/export/xlsx` API route (e.g.
+   * "/api/v1/sales-orders/export/xlsx"). A plain `<a>`, not wired to the
+   * table's own live search/page state — it always exports the full,
+   * server-side-capped list, matching every other export link in this app
+   * (Products, Stock Balances, Job Work Orders).
+   */
+  exportUrl?: string;
+  /**
    * Extra per-row action(s) rendered in the Actions column, between the
    * built-in Edit link and the Active/Inactive toggle — for a module-specific
    * action that doesn't warrant its own DataTable column (e.g. Suppliers'
@@ -61,6 +70,7 @@ export function DataTable<T extends { id: string }>({
   refreshKey,
   rowActions,
   onEditRow,
+  exportUrl,
 }: DataTableProps<T>) {
   const router = useRouter();
   const [page, setPage] = useState(1);
@@ -134,24 +144,34 @@ export function DataTable<T extends { id: string }>({
           }}
           className="w-full max-w-sm rounded-md border border-zinc-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-800"
         />
-        {newAction ? (
-          <button
-            type="button"
-            onClick={newAction.onClick}
-            className="whitespace-nowrap rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500"
-          >
-            {newAction.label}
-          </button>
-        ) : (
-          newHref && (
-            <Link
-              href={newHref}
+        <div className="flex shrink-0 items-center gap-2">
+          {exportUrl && (
+            <a
+              href={exportUrl}
+              className="whitespace-nowrap rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+            >
+              Download Excel
+            </a>
+          )}
+          {newAction ? (
+            <button
+              type="button"
+              onClick={newAction.onClick}
               className="whitespace-nowrap rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500"
             >
-              {newLabel}
-            </Link>
-          )
-        )}
+              {newAction.label}
+            </button>
+          ) : (
+            newHref && (
+              <Link
+                href={newHref}
+                className="whitespace-nowrap rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500"
+              >
+                {newLabel}
+              </Link>
+            )
+          )}
+        </div>
       </div>
 
       <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">

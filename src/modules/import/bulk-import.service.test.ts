@@ -10,6 +10,7 @@ vi.mock("@/core/db/client", () => ({
     size: { findFirst: vi.fn() },
     productVariant: { findUnique: vi.fn() },
     warehouse: { findFirst: vi.fn() },
+    supplier: { findFirst: vi.fn() },
   },
 }));
 
@@ -28,6 +29,7 @@ vi.mock("@/modules/products/product.service", () => ({
   createProductVariantExplicit: vi.fn(),
   setProductActiveStatus: vi.fn(),
   setProductVariantActiveStatus: vi.fn(),
+  createMaterial: vi.fn(),
 }));
 vi.mock("@/modules/products/product.repository", () => ({
   ProductRepository: { findByStyleCode: vi.fn() },
@@ -37,8 +39,87 @@ vi.mock("@/modules/accounts/chart-of-account.service", () => ({ createChartOfAcc
 vi.mock("@/modules/accounts/chart-of-account.repository", () => ({ ChartOfAccountRepository: { findByCode: vi.fn() } }));
 vi.mock("@/modules/inventory/inventory.service", () => ({ importOpeningStockRow: vi.fn() }));
 vi.mock("@/modules/garment-attributes/garment-attributes.repository", () => ({
-  GarmentAttributeRepository: { supplierCategory: { findFirst: vi.fn() }, category: { findFirst: vi.fn() }, season: { findFirst: vi.fn() } },
+  GarmentAttributeRepository: {
+    supplierCategory: { findFirst: vi.fn() },
+    category: { findFirst: vi.fn(), update: vi.fn() },
+    season: { findFirst: vi.fn() },
+    brand: { findFirst: vi.fn(), update: vi.fn() },
+    productFitting: { findFirst: vi.fn() },
+    productType: { findFirst: vi.fn() },
+    design: { findFirst: vi.fn() },
+    designPattern: { findFirst: vi.fn() },
+    pattern: { findFirst: vi.fn() },
+  },
 }));
+vi.mock("@/modules/garment-attributes/garment-attributes.service", () => ({
+  createBrand: vi.fn(),
+  createCategory: vi.fn(),
+  createSeason: vi.fn(),
+  createProductFitting: vi.fn(),
+  createProductType: vi.fn(),
+  createDesign: vi.fn(),
+  createDesignPattern: vi.fn(),
+  createPattern: vi.fn(),
+  createSupplierCategory: vi.fn(),
+}));
+vi.mock("@/modules/fabric-config/fabric-config.repository", () => ({
+  FabricConfigRepository: {
+    gsm: { findFirst: vi.fn() },
+    dye: { findFirst: vi.fn() },
+    dyeType: { findFirst: vi.fn() },
+    weaveType: { findFirst: vi.fn() },
+    width: { findFirst: vi.fn() },
+    composition: { findFirst: vi.fn() },
+  },
+}));
+vi.mock("@/modules/fabric-config/fabric-config.service", () => ({
+  createFabricGsm: vi.fn(),
+  createFabricDye: vi.fn(),
+  createFabricDyeType: vi.fn(),
+  createFabricWeaveType: vi.fn(),
+  createFabricWidth: vi.fn(),
+  createFabricComposition: vi.fn(),
+}));
+vi.mock("@/modules/hr-config/hr-config.repository", () => ({
+  HrConfigRepository: {
+    designation: { findFirst: vi.fn() },
+    employeeCategory: { findFirst: vi.fn() },
+    shiftMaster: { findFirst: vi.fn() },
+    holidayMaster: { findFirst: vi.fn() },
+  },
+}));
+vi.mock("@/modules/hr-config/hr-config.service", () => ({
+  createDesignation: vi.fn(),
+  createEmployeeCategory: vi.fn(),
+  createShiftMaster: vi.fn(),
+  createHolidayMaster: vi.fn(),
+}));
+vi.mock("@/modules/cost-master/cost-master.repository", () => ({ CostMasterRepository: { findFirst: vi.fn() } }));
+vi.mock("@/modules/cost-master/cost-master.service", () => ({ createCostMaster: vi.fn() }));
+vi.mock("@/modules/finance-config/finance-config.repository", () => ({
+  FinanceConfigRepository: { paymentType: { findFirst: vi.fn() }, bankAccount: { findFirst: vi.fn() } },
+}));
+vi.mock("@/modules/finance-config/finance-config.service", () => ({ createPaymentType: vi.fn(), createBankAccount: vi.fn() }));
+vi.mock("@/modules/departments/department.repository", () => ({ DepartmentRepository: { findFirst: vi.fn() } }));
+vi.mock("@/modules/departments/department.service", () => ({ createDepartment: vi.fn() }));
+vi.mock("@/modules/production-config/production-config.repository", () => ({
+  ProductionConfigRepository: {
+    stage: { findFirst: vi.fn() },
+    line: { findFirst: vi.fn() },
+    machine: { findFirst: vi.fn() },
+    salesAgent: { findFirst: vi.fn() },
+  },
+}));
+vi.mock("@/modules/production-config/production-config.service", () => ({
+  createProductionStage: vi.fn(),
+  createProductionLine: vi.fn(),
+  createMachine: vi.fn(),
+  createSalesAgent: vi.fn(),
+}));
+vi.mock("@/modules/lookups/lookup.repository", () => ({
+  LookupRepository: { color: { findFirst: vi.fn() }, size: { findFirst: vi.fn() }, unit: { findFirst: vi.fn() } },
+}));
+vi.mock("@/modules/lookups/lookup.service", () => ({ createColor: vi.fn(), createSize: vi.fn(), createUnit: vi.fn() }));
 
 // A trimmed, real re-implementation (not a mock of behavior) so the two
 // helpers this file genuinely reuses from import.service.ts behave
@@ -84,7 +165,19 @@ const { ProductRepository, ProductVariantRepository } = await import("@/modules/
 const { createChartOfAccount, setChartOfAccountActiveStatus } = await import("@/modules/accounts/chart-of-account.service");
 const { ChartOfAccountRepository } = await import("@/modules/accounts/chart-of-account.repository");
 const { importOpeningStockRow } = await import("@/modules/inventory/inventory.service");
+const { createMaterial } = await import("@/modules/products/product.service");
 const { GarmentAttributeRepository } = await import("@/modules/garment-attributes/garment-attributes.repository");
+const { createBrand, createCategory } = await import("@/modules/garment-attributes/garment-attributes.service");
+const { FabricConfigRepository } = await import("@/modules/fabric-config/fabric-config.repository");
+const { HrConfigRepository } = await import("@/modules/hr-config/hr-config.repository");
+const { CostMasterRepository } = await import("@/modules/cost-master/cost-master.repository");
+const { createCostMaster } = await import("@/modules/cost-master/cost-master.service");
+const { FinanceConfigRepository } = await import("@/modules/finance-config/finance-config.repository");
+const { createPaymentType } = await import("@/modules/finance-config/finance-config.service");
+const { DepartmentRepository } = await import("@/modules/departments/department.repository");
+const { ProductionConfigRepository } = await import("@/modules/production-config/production-config.repository");
+const { createProductionStage } = await import("@/modules/production-config/production-config.service");
+const { LookupRepository } = await import("@/modules/lookups/lookup.repository");
 const { ImportBatchRepository } = await import("./import.repository");
 
 const {
@@ -126,6 +219,22 @@ beforeEach(() => {
   vi.mocked(GarmentAttributeRepository.supplierCategory.findFirst).mockReset();
   vi.mocked(GarmentAttributeRepository.category.findFirst).mockReset();
   vi.mocked(GarmentAttributeRepository.season.findFirst).mockReset();
+  vi.mocked(GarmentAttributeRepository.brand.findFirst).mockReset();
+  vi.mocked(createBrand).mockReset().mockResolvedValue({ id: "brand-1" } as never);
+  vi.mocked(createCategory).mockReset().mockResolvedValue({ id: "cat-1" } as never);
+  vi.mocked(FabricConfigRepository.width.findFirst).mockReset();
+  vi.mocked(FabricConfigRepository.dyeType.findFirst).mockReset();
+  vi.mocked(HrConfigRepository.designation.findFirst).mockReset();
+  vi.mocked(HrConfigRepository.holidayMaster.findFirst).mockReset();
+  vi.mocked(DepartmentRepository.findFirst).mockReset();
+  vi.mocked(CostMasterRepository.findFirst).mockReset();
+  vi.mocked(createCostMaster).mockReset().mockResolvedValue({ id: "cm-1" } as never);
+  vi.mocked(FinanceConfigRepository.paymentType.findFirst).mockReset();
+  vi.mocked(createPaymentType).mockReset().mockResolvedValue({ id: "pt-1" } as never);
+  vi.mocked(ProductionConfigRepository.stage.findFirst).mockReset();
+  vi.mocked(createProductionStage).mockReset().mockResolvedValue({ id: "stage-1" } as never);
+  vi.mocked(LookupRepository.unit.findFirst).mockReset();
+  vi.mocked(createMaterial).mockReset().mockResolvedValue({ id: "mat-1" } as never);
   vi.mocked(ImportBatchRepository.createQueued)
     .mockReset()
     .mockResolvedValue({ id: "batch-1" } as never);
@@ -367,6 +476,171 @@ describe("validateBulkImportRows — never calls a real create/write function, f
     expect(createProductVariantExplicit).not.toHaveBeenCalled();
     expect(createChartOfAccount).not.toHaveBeenCalled();
     expect(importOpeningStockRow).not.toHaveBeenCalled();
+  });
+});
+
+// Tier 1 + Tier 2 masters added 2026-09-05 — covers the genuinely new logic
+// (the shared makeSimpleCodeNameHandler factory, FK-by-code-or-name
+// resolution, enum validation, boolean-cell parsing) rather than
+// mechanically re-testing all 31 handlers, matching this project's own
+// "test business logic, don't clone this file per entity" precedent.
+describe("makeSimpleCodeNameHandler (via BRAND)", () => {
+  it("rejects a missing code/name before ever touching the repository", async () => {
+    const result = await validateBulkImportRows(actor, "BRAND", [{ name: "" }]);
+    expect(result.errors[0].reason).toContain("Code is required");
+    expect(GarmentAttributeRepository.brand.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("reports a real duplicate code as a row error without calling createBrand", async () => {
+    vi.mocked(GarmentAttributeRepository.brand.findFirst).mockResolvedValueOnce({ id: "existing" } as never);
+    const result = await validateBulkImportRows(actor, "BRAND", [{ code: "BR-1", name: "Acme" }]);
+    expect(result.errors[0].reason).toContain('Code "BR-1" is already in use');
+    expect(createBrand).not.toHaveBeenCalled();
+  });
+
+  it("commits a valid row by calling createBrand with isActive: true", async () => {
+    await processBulkImportJob("batch-1", "BRAND", actor, [{ code: "BR-1", name: "Acme" }], vi.fn());
+    expect(createBrand).toHaveBeenCalledWith(actor, { code: "BR-1", name: "Acme", isActive: true });
+  });
+});
+
+describe("importCategoryRow — self-referencing parent resolution", () => {
+  it("resolves an existing parent by code or name", async () => {
+    vi.mocked(GarmentAttributeRepository.category.findFirst)
+      .mockResolvedValueOnce({ id: "parent-1" } as never) // parent lookup
+      .mockResolvedValueOnce(null); // duplicate-code check
+    const result = await validateBulkImportRows(actor, "CATEGORY", [{ code: "CAT-1", name: "Casual", parentCategory: "Apparel" }]);
+    expect(result.validCount).toBe(1);
+  });
+
+  it("fails the row with a clear message when the parent category doesn't resolve", async () => {
+    vi.mocked(GarmentAttributeRepository.category.findFirst).mockResolvedValue(null);
+    const result = await validateBulkImportRows(actor, "CATEGORY", [{ code: "CAT-1", name: "Casual", parentCategory: "Nonexistent" }]);
+    expect(result.errors[0].reason).toContain('Parent category "Nonexistent" not found');
+    expect(createCategory).not.toHaveBeenCalled();
+  });
+});
+
+describe("importFabricWidthRow — global Unit resolution", () => {
+  it("resolves an existing unit by code or name and creates the width", async () => {
+    vi.mocked(LookupRepository.unit.findFirst).mockResolvedValueOnce({ id: "unit-1" } as never);
+    vi.mocked(FabricConfigRepository.width.findFirst).mockResolvedValueOnce(null);
+    const result = await validateBulkImportRows(actor, "FABRIC_WIDTH", [{ code: "W-1", name: "150cm", unit: "cm" }]);
+    expect(result.validCount).toBe(1);
+  });
+
+  it("fails with a clear message when the referenced unit doesn't exist", async () => {
+    vi.mocked(LookupRepository.unit.findFirst).mockResolvedValue(null);
+    const result = await validateBulkImportRows(actor, "FABRIC_WIDTH", [{ code: "W-1", name: "150cm", unit: "Nonexistent" }]);
+    expect(result.errors[0].reason).toContain('Unit "Nonexistent" not found');
+  });
+});
+
+describe("importDesignationRow — Department FK resolution", () => {
+  it("resolves an existing department and creates the designation", async () => {
+    vi.mocked(DepartmentRepository.findFirst).mockResolvedValueOnce({ id: "dept-1" } as never);
+    vi.mocked(HrConfigRepository.designation.findFirst).mockResolvedValueOnce(null);
+    const result = await validateBulkImportRows(actor, "DESIGNATION", [{ code: "D-1", name: "Line Supervisor", department: "Cutting" }]);
+    expect(result.validCount).toBe(1);
+  });
+});
+
+describe("importCostMasterRow — enum + numeric validation", () => {
+  it("rejects an invalid cost master type", async () => {
+    const result = await validateBulkImportRows(actor, "COST_MASTER", [{ code: "CM-1", name: "Overhead", type: "BOGUS", rate: "5" }]);
+    expect(result.errors[0].reason).toContain("not a valid cost master type");
+  });
+
+  it("rejects a negative rate", async () => {
+    const result = await validateBulkImportRows(actor, "COST_MASTER", [{ code: "CM-1", name: "Overhead", type: "FIXED", rate: "-5" }]);
+    expect(result.errors[0].reason).toContain("non-negative number");
+  });
+
+  it("commits a valid PERCENTAGE-type row", async () => {
+    await processBulkImportJob("batch-1", "COST_MASTER", actor, [{ code: "CM-1", name: "Commission", type: "percentage", rate: "5" }], vi.fn());
+    expect(createCostMaster).toHaveBeenCalledWith(actor, { code: "CM-1", name: "Commission", type: "PERCENTAGE", rate: 5, isActive: true });
+  });
+});
+
+describe("importPaymentTypeRow — enum validation", () => {
+  it("rejects an invalid payment type", async () => {
+    const result = await validateBulkImportRows(actor, "PAYMENT_TYPE", [{ code: "PT-1", name: "Wallet", type: "CRYPTO" }]);
+    expect(result.errors[0].reason).toContain("not a valid payment type");
+  });
+
+  it("defaults to CASH when Type is blank", async () => {
+    await processBulkImportJob("batch-1", "PAYMENT_TYPE", actor, [{ code: "PT-1", name: "Petty Cash" }], vi.fn());
+    expect(createPaymentType).toHaveBeenCalledWith(actor, { code: "PT-1", name: "Petty Cash", type: "CASH", isActive: true });
+  });
+});
+
+describe("importProductionStageRow — boolean-cell parsing", () => {
+  it("parses true/false text into real booleans, with the documented defaults when blank", async () => {
+    await processBulkImportJob(
+      "batch-1",
+      "PRODUCTION_STAGE",
+      actor,
+      [{ code: "STG-1", name: "Embroidery", sequence: "5", isFinal: "true", allowRework: "false" }],
+      vi.fn()
+    );
+    expect(createProductionStage).toHaveBeenCalledWith(actor, {
+      code: "STG-1",
+      name: "Embroidery",
+      sequence: 5,
+      isActive: true,
+      isFinal: true,
+      allowRework: false,
+    });
+  });
+
+  it("defaults isFinal=false and allowRework=true when both columns are blank", async () => {
+    await processBulkImportJob("batch-1", "PRODUCTION_STAGE", actor, [{ code: "STG-2", name: "QC" }], vi.fn());
+    expect(createProductionStage).toHaveBeenCalledWith(
+      actor,
+      expect.objectContaining({ isFinal: false, allowRework: true, sequence: 0 })
+    );
+  });
+});
+
+describe("importMaterialRow — MATERIAL_CATEGORIES enum validation", () => {
+  it("rejects an invalid material category", async () => {
+    const result = await validateBulkImportRows(actor, "MATERIAL", [{ styleName: "Interlining", materialCategory: "NOT_A_CATEGORY" }]);
+    expect(result.errors[0].reason).toContain("must be one of");
+  });
+
+  it("uppercases and accepts a valid category, auto-generating the item code", async () => {
+    vi.mocked(previewNextMasterCode).mockResolvedValueOnce("MAT-00001" as never);
+    const result = await validateBulkImportRows(actor, "MATERIAL", [{ styleName: "Interlining", materialCategory: "fabric" }]);
+    expect(previewNextMasterCode).toHaveBeenCalledWith("co-1", "MATERIAL");
+    expect(result.validCount).toBe(1);
+    expect(createMaterial).not.toHaveBeenCalled();
+  });
+});
+
+describe("makeGenericDeactivate — Undo path for the new 2026-09-05 lookup masters", () => {
+  it("flips isActive to false via the repository delegate directly, audit-logged, for a tracked Brand record", async () => {
+    vi.mocked(ImportBatchRepository.findByIdWithDetails).mockResolvedValueOnce({ id: "batch-1", status: "COMPLETED" } as never);
+    vi.mocked(ImportBatchRepository.findRecordsForBatch).mockResolvedValueOnce([
+      { id: "r1", importBatchId: "batch-1", rowNumber: 1, tableName: "brands", recordId: "brand-1", createdAt: new Date() },
+    ] as never);
+    vi.mocked(GarmentAttributeRepository.brand.update).mockResolvedValueOnce({ id: "brand-1" } as never);
+
+    const result = await undoBulkImportBatch(actor, "batch-1");
+
+    expect(GarmentAttributeRepository.brand.update).toHaveBeenCalledWith({ where: { id: "brand-1" }, data: { isActive: false } });
+    expect(result).toEqual({ totalRecords: 1, undone: 1, failures: [] });
+  });
+
+  it("reports no undo path for a Department record (no isActive column exists)", async () => {
+    vi.mocked(ImportBatchRepository.findByIdWithDetails).mockResolvedValueOnce({ id: "batch-1", status: "COMPLETED" } as never);
+    vi.mocked(ImportBatchRepository.findRecordsForBatch).mockResolvedValueOnce([
+      { id: "r1", importBatchId: "batch-1", rowNumber: 1, tableName: "departments", recordId: "dept-1", createdAt: new Date() },
+    ] as never);
+
+    const result = await undoBulkImportBatch(actor, "batch-1");
+
+    expect(result.undone).toBe(0);
+    expect(result.failures[0].reason).toContain("No undo path");
   });
 });
 

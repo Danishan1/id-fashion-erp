@@ -9,7 +9,7 @@ import { EXPORT_ROW_CAP_EXCEL as EXPORT_ROW_CAP } from "@/core/reports/constants
 // repository-return-type inference gap, confirmed present at runtime by
 // StockBalanceRepository.findMany's own `include`.
 interface StockBalanceExportRow {
-  product: { styleCode: string; styleName: string };
+  product: { styleCode: string; styleName: string; baseUom: { code: string } | null };
   warehouse: { name: string };
   quantityOnHand: unknown;
 }
@@ -33,12 +33,14 @@ export async function GET(req: NextRequest) {
         { header: "Style Name", key: "styleName", width: 30 },
         { header: "Warehouse", key: "warehouse" },
         { header: "Quantity On Hand", key: "quantityOnHand", type: "number" },
+        { header: "Unit", key: "unit" },
       ],
       (data as unknown as StockBalanceExportRow[]).map((b) => ({
         styleCode: b.product.styleCode,
         styleName: b.product.styleName,
         warehouse: b.warehouse.name,
         quantityOnHand: Number(b.quantityOnHand),
+        unit: b.product.baseUom?.code ?? "",
       }))
     );
 

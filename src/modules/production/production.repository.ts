@@ -281,6 +281,24 @@ export const ProductionStageTransactionRepository = {
       },
       orderBy: { performedAt: "asc" },
     }),
+
+  /** The Stage Transfer Slip PDF's own data source — the most recent
+   * transaction that actually created/fed this JobOrder (a downstream stage
+   * can receive more than one transaction over time via repeated partial
+   * forwards, so "most recent" is the slip a floor worker would want right
+   * now, not an arbitrary historical one). */
+  findLatestByToJobOrderId: (companyId: string, lotId: string, toJobOrderId: string) =>
+    prisma.productionStageTransaction.findFirst({
+      where: { companyId, lotId, toJobOrderId },
+      include: {
+        lot: { select: { id: true, lotNumber: true } },
+        productionOrder: { select: { id: true, orderNumber: true, product: { select: { styleName: true, styleCode: true } } } },
+        fromProductionStage: { select: { id: true, name: true } },
+        toProductionStage: { select: { id: true, name: true } },
+        performedBy: { select: { id: true, fullName: true } },
+      },
+      orderBy: { performedAt: "desc" },
+    }),
 };
 
 export const QcInspectionRepository = {
