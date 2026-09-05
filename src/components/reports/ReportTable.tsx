@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import type { ReportColumn } from "@/core/reports/report-types";
+import { formatDate } from "@/lib/date-format";
 
 function formatCellValue(value: unknown, type?: ReportColumn["type"]): string {
   if (value === null || value === undefined || value === "") return "—";
   if (type === "date") {
     const d = value instanceof Date ? value : new Date(String(value));
-    return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleDateString();
+    return Number.isNaN(d.getTime()) ? String(value) : formatDate(d);
   }
   if (type === "currency") return `₹${Number(value).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   if (type === "percent") return `${Number(value).toFixed(2)}%`;

@@ -3,6 +3,7 @@ import { auth } from "@/core/auth/auth";
 import { getBuyerEnquiryById } from "@/modules/buyer-enquiries/buyer-enquiry.service";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { Barcode } from "@/components/ui/Barcode";
+import { formatDate } from "@/lib/date-format";
 import { BuyerEnquiryWorkflowPanel } from "../BuyerEnquiryWorkflowPanel";
 
 export default async function BuyerEnquiryDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -30,7 +31,7 @@ export default async function BuyerEnquiryDetailPage({ params }: { params: Promi
             {partyName}
             {!enquiry.customer && <span className="text-amber-600 dark:text-amber-400"> (prospect)</span>}
             {enquiry.buyer ? ` — ${enquiry.buyer.name}` : ""} · Requested by {enquiry.requestedBy.fullName} on{" "}
-            {new Date(enquiry.enquiryDate).toLocaleDateString()}
+            {formatDate(enquiry.enquiryDate)}
           </p>
         </div>
         <Barcode value={enquiry.enquiryNumber} />

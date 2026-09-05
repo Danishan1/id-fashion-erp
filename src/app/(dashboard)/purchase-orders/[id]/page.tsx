@@ -3,6 +3,7 @@ import { auth } from "@/core/auth/auth";
 import { getPurchaseOrderById } from "@/modules/purchasing/purchase-order.service";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { Barcode } from "@/components/ui/Barcode";
+import { ClientDateTime } from "@/components/ui/ClientDateTime";
 import { PurchaseOrderWorkflowPanel } from "../PurchaseOrderWorkflowPanel";
 
 export default async function PurchaseOrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -26,10 +27,13 @@ export default async function PurchaseOrderDetailPage({ params }: { params: Prom
           <h1 className="mt-2 text-lg font-semibold text-zinc-900 dark:text-zinc-50">{order.orderNumber}</h1>
           <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
             {order.supplier.name} · Requested by {order.requestedBy.fullName} on{" "}
-            {new Date(order.orderDate).toLocaleDateString()}
-            {order.expectedDeliveryDate
-              ? ` · Expected delivery: ${new Date(order.expectedDeliveryDate).toLocaleDateString()}`
-              : ""}
+            <ClientDateTime value={order.orderDate} mode="date" />
+            {order.expectedDeliveryDate && (
+              <>
+                {" · Expected delivery: "}
+                <ClientDateTime value={order.expectedDeliveryDate} mode="date" />
+              </>
+            )}
           </p>
         </div>
         <div className="flex flex-col items-end gap-2">

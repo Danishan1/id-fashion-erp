@@ -3,6 +3,7 @@ import { auth } from "@/core/auth/auth";
 import { PermissionService } from "@/core/rbac/PermissionService";
 import { getSampleRequestById } from "@/modules/sampling/sample.service";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
+import { formatDate } from "@/lib/date-format";
 import { SampleWorkflowPanel } from "../SampleWorkflowPanel";
 import { SAMPLE_TYPE_LABELS } from "../sampleTypeLabels";
 
@@ -32,8 +33,8 @@ export default async function SampleRequestDetailPage({ params }: { params: Prom
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
           {request.customer.name}
           {request.buyer ? ` — ${request.buyer.name}` : ""} · Requested by {request.requestedBy.fullName} on{" "}
-          {new Date(request.requestDate).toLocaleDateString()}
-          {request.targetSubmissionDate ? ` · Target: ${new Date(request.targetSubmissionDate).toLocaleDateString()}` : ""}
+          {formatDate(request.requestDate)}
+          {request.targetSubmissionDate ? ` · Target: ${formatDate(request.targetSubmissionDate)}` : ""}
         </p>
       </div>
 

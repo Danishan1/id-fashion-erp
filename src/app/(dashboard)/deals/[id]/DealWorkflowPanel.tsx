@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Modal } from "@/components/ui/Modal";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { STAGE_LABELS, NEXT_STAGES } from "../statusLabels";
+import { formatNumber } from "@/lib/currency";
 
 interface DealDetail {
   id: string;
@@ -299,7 +300,7 @@ export function DealWorkflowPanel({ deal }: { deal: DealDetail }) {
         <div>
           <dt className="text-xs font-medium uppercase text-zinc-500">Value / Weighted</dt>
           <dd className="mt-0.5 text-zinc-900 dark:text-zinc-50">
-            ₹{Number(deal.value).toLocaleString()} / ₹{Number(deal.weightedValue).toLocaleString()} ({Number(deal.probabilityPercent)}%)
+            ₹{formatNumber(deal.value)} / ₹{formatNumber(deal.weightedValue)} ({Number(deal.probabilityPercent)}%)
           </dd>
         </div>
         <div>

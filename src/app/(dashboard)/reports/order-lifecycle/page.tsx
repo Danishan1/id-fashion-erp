@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
+import { formatDate } from "@/lib/date-format";
 
 interface OrderOption {
   id: string;
@@ -120,7 +121,7 @@ export default function OrderLifecyclePage() {
           {sections.order ? (
             <Section title={`Order — ${sections.order.orderNumber} (${sections.order.status})`}>
               <p className="text-xs text-zinc-500">
-                {sections.order.customer.name} · {new Date(sections.order.orderDate).toLocaleDateString()} · ₹{sections.order.totalAmount.toLocaleString("en-IN")}
+                {sections.order.customer.name} · {formatDate(sections.order.orderDate)} · ₹{sections.order.totalAmount.toLocaleString("en-IN")}
               </p>
               <ul className="mt-2 space-y-1 text-xs text-zinc-700 dark:text-zinc-300">
                 {sections.order.items.map((it, i) => (
@@ -211,7 +212,7 @@ export default function OrderLifecyclePage() {
                 <ul className="space-y-1 text-xs text-zinc-700 dark:text-zinc-300">
                   {sections.qc.map((q, i) => (
                     <li key={i}>
-                      {new Date(q.inspectedAt).toLocaleDateString()}: inspected {q.inspectedQuantity}, accepted {q.acceptedQuantity}, rejected{" "}
+                      {formatDate(q.inspectedAt)}: inspected {q.inspectedQuantity}, accepted {q.acceptedQuantity}, rejected{" "}
                       {q.rejectedQuantity} — {q.result}
                     </li>
                   ))}
@@ -228,7 +229,7 @@ export default function OrderLifecyclePage() {
                 sections.dispatch.map((d, i) => (
                   <div key={i} className="mb-2 text-xs text-zinc-700 dark:text-zinc-300">
                     <p className="font-medium">
-                      {d.dispatchNumber} — {new Date(d.dispatchDate).toLocaleDateString()} ({d.status}) {d.transporterName ? `via ${d.transporterName}` : ""}
+                      {d.dispatchNumber} — {formatDate(d.dispatchDate)} ({d.status}) {d.transporterName ? `via ${d.transporterName}` : ""}
                     </p>
                     <ul className="ml-3 list-disc">
                       {d.cartons.map((c, j) => (
@@ -251,7 +252,7 @@ export default function OrderLifecyclePage() {
                 <ul className="space-y-1 text-xs text-zinc-700 dark:text-zinc-300">
                   {sections.invoices.map((inv, i) => (
                     <li key={i}>
-                      {inv.invoiceNumber} — {new Date(inv.invoiceDate).toLocaleDateString()}: ₹{inv.totalAmount.toLocaleString("en-IN")} (paid ₹
+                      {inv.invoiceNumber} — {formatDate(inv.invoiceDate)}: ₹{inv.totalAmount.toLocaleString("en-IN")} (paid ₹
                       {inv.paidAmount.toLocaleString("en-IN")}) — {inv.status}
                     </li>
                   ))}
@@ -268,7 +269,7 @@ export default function OrderLifecyclePage() {
                 <ul className="space-y-1 text-xs text-zinc-700 dark:text-zinc-300">
                   {sections.payments.map((p, i) => (
                     <li key={i}>
-                      {p.paymentNumber} — {new Date(p.paymentDate).toLocaleDateString()}: ₹{p.allocatedAmount.toLocaleString("en-IN")} ({p.status})
+                      {p.paymentNumber} — {formatDate(p.paymentDate)}: ₹{p.allocatedAmount.toLocaleString("en-IN")} ({p.status})
                     </li>
                   ))}
                 </ul>

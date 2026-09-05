@@ -3,6 +3,7 @@ import { auth } from "@/core/auth/auth";
 import { getSalesOrderById } from "@/modules/sales-orders/sales-order.service";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { Barcode } from "@/components/ui/Barcode";
+import { formatDate } from "@/lib/date-format";
 import { SalesOrderWorkflowPanel } from "../SalesOrderWorkflowPanel";
 
 export default async function SalesOrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -21,8 +22,8 @@ export default async function SalesOrderDetailPage({ params }: { params: Promise
           <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
             {order.customer.name}
             {order.buyer ? ` — ${order.buyer.name}` : ""} · Requested by {order.requestedBy.fullName} on{" "}
-            {new Date(order.orderDate).toLocaleDateString()}
-            {order.requiredShipDate ? ` · Required ship: ${new Date(order.requiredShipDate).toLocaleDateString()}` : ""}
+            {formatDate(order.orderDate)}
+            {order.requiredShipDate ? ` · Required ship: ${formatDate(order.requiredShipDate)}` : ""}
           </p>
         </div>
         <div className="flex flex-col items-end gap-2">

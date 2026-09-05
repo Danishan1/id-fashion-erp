@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { FilePreviewModal } from "@/components/ui/FilePreviewModal";
+import { ClientDateTime } from "@/components/ui/ClientDateTime";
 import { formatCurrency } from "@/lib/currency";
 import { STATUS_BADGE_CLASS, STATUS_LABELS } from "./statusLabels";
 
@@ -314,7 +315,7 @@ export function PurchaseOrderWorkflowPanel({
             >
               <span className="font-medium text-indigo-600 dark:text-indigo-400">{r.receiptNumber}</span>
               <span className="text-xs text-zinc-500">
-                {new Date(r.receivedDate).toLocaleDateString()} · {r.receivedBy.fullName} · {r.status.replace(/_/g, " ")}
+                <ClientDateTime value={r.receivedDate} mode="date" /> · {r.receivedBy.fullName} · {r.status.replace(/_/g, " ")}
               </span>
             </Link>
           ))}

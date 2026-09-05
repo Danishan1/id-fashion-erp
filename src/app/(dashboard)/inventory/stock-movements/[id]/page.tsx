@@ -3,6 +3,8 @@ import { auth } from "@/core/auth/auth";
 import { getStockMovementById } from "@/modules/inventory/stock-movement.service";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { Barcode } from "@/components/ui/Barcode";
+import { formatDateTime } from "@/lib/date-format";
+import { formatNumber } from "@/lib/currency";
 
 const MOVEMENT_TYPE_LABELS: Record<string, string> = {
   TRANSFER: "Transfer",
@@ -31,7 +33,7 @@ export default async function StockMovementDetailPage({ params }: { params: Prom
           <h1 className="mt-2 text-lg font-semibold text-zinc-900 dark:text-zinc-50">{movement.movementNumber}</h1>
           <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
             {MOVEMENT_TYPE_LABELS[movement.movementType] ?? movement.movementType} · Performed by {movement.performedBy.fullName} on{" "}
-            {new Date(movement.performedAt).toLocaleString()}
+            {formatDateTime(movement.performedAt)}
           </p>
         </div>
         <Barcode value={movement.movementNumber} />
@@ -89,7 +91,7 @@ export default async function StockMovementDetailPage({ params }: { params: Prom
                   </td>
                   <td className={`px-4 py-2 ${Number(item.quantity) < 0 ? "text-red-600 dark:text-red-400" : "text-zinc-900 dark:text-zinc-50"}`}>
                     {Number(item.quantity) > 0 ? "+" : ""}
-                    {Number(item.quantity).toLocaleString()}
+                    {formatNumber(Number(item.quantity))}
                   </td>
                   <td className="px-4 py-2 text-zinc-500">{item.uom.code}</td>
                   <td className="px-4 py-2 text-zinc-500">{item.warehouseLocation?.code ?? "—"}</td>
