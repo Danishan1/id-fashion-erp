@@ -26,12 +26,14 @@ interface LineItem {
   orderedQuantity: string;
   unitPrice: string;
   notes: string;
+  colorId: string;
+  dyeId: string;
 }
 
 const TODAY = todayIsoDate();
 
 function emptyLine(): LineItem {
-  return { productId: "", uomId: "", orderedQuantity: "", unitPrice: "", notes: "" };
+  return { productId: "", uomId: "", orderedQuantity: "", unitPrice: "", notes: "", colorId: "", dyeId: "" };
 }
 
 export interface InitialPurchaseOrderItem {
@@ -40,6 +42,8 @@ export interface InitialPurchaseOrderItem {
   orderedQuantity: string;
   unitPrice: string;
   notes: string | null;
+  colorId?: string | null;
+  dyeId?: string | null;
 }
 
 export interface InitialPurchaseOrder {
@@ -61,6 +65,8 @@ export function PurchaseOrderForm({ initialOrder }: { initialOrder?: InitialPurc
   const [suppliers, setSuppliers] = useState<Option[]>([]);
   const [materials, setMaterials] = useState<MaterialOption[]>([]);
   const [units, setUnits] = useState<Option[]>([]);
+  const [colors, setColors] = useState<Option[]>([]);
+  const [dyes, setDyes] = useState<(Option & { pantone: string | null })[]>([]);
   const [items, setItems] = useState<LineItem[]>(
     initialOrder
       ? initialOrder.items.map((item) => ({
@@ -69,6 +75,8 @@ export function PurchaseOrderForm({ initialOrder }: { initialOrder?: InitialPurc
           orderedQuantity: item.orderedQuantity,
           unitPrice: item.unitPrice,
           notes: item.notes ?? "",
+          colorId: item.colorId ?? "",
+          dyeId: item.dyeId ?? "",
         }))
       : [emptyLine()]
   );
@@ -85,6 +93,12 @@ export function PurchaseOrderForm({ initialOrder }: { initialOrder?: InitialPurc
     fetch("/api/v1/units")
       .then((res) => res.json())
       .then((body) => setUnits(body.data ?? []));
+    fetch("/api/v1/colors?pageSize=200")
+      .then((res) => res.json())
+      .then((body) => setColors(body.data ?? []));
+    fetch("/api/v1/fabric-dyes?pageSize=200")
+      .then((res) => res.json())
+      .then((body) => setDyes(body.data ?? []));
   }, []);
 
   const updateItem = (index: number, patch: Partial<LineItem>) => {
@@ -115,6 +129,8 @@ export function PurchaseOrderForm({ initialOrder }: { initialOrder?: InitialPurc
       orderedQuantity: Number(item.orderedQuantity),
       unitPrice: Number(item.unitPrice),
       notes: item.notes || undefined,
+      colorId: item.colorId || undefined,
+      dyeId: item.dyeId || undefined,
     }));
 
     const url = initialOrder ? `/api/v1/purchase-orders/${initialOrder.id}` : "/api/v1/purchase-orders";
@@ -268,6 +284,40 @@ export function PurchaseOrderForm({ initialOrder }: { initialOrder?: InitialPurc
                   onChange={(e) => updateItem(index, { notes: e.target.value })}
                   className={textInputClass()}
                 />
+              </FormField>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <FormField label="Color (optional)" htmlFor={`color-${index}`}>
+                <select
+                  id={`color-${index}`}
+                  value={item.colorId}
+                  onChange={(e) => updateItem(index, { colorId: e.target.value })}
+                  className={textInputClass()}
+                >
+                  <option value="">— None —</option>
+                  {colors.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </FormField>
+              <FormField label="Shade / Pantone (optional)" htmlFor={`dye-${index}`}>
+                <select
+                  id={`dye-${index}`}
+                  value={item.dyeId}
+                  onChange={(e) => updateItem(index, { dyeId: e.target.value })}
+                  className={textInputClass()}
+                >
+                  <option value="">— None —</option>
+                  {dyes.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.name}
+                      {d.pantone ? ` (${d.pantone})` : ""}
+                    </option>
+                  ))}
+                </select>
               </FormField>
             </div>
 

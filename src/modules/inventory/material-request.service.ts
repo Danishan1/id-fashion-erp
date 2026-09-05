@@ -10,6 +10,7 @@ import { BomRepository } from "@/modules/bom-mrp/bom.repository";
 import { getMaterialRequirements } from "@/modules/bom-mrp/mrp.service";
 import { LookupRepository } from "@/modules/lookups/lookup.repository";
 import { ProductRepository } from "@/modules/products/product.repository";
+import { SalesOrderRepository } from "@/modules/sales-orders/sales-order.repository";
 import { createPurchaseOrder } from "@/modules/purchasing/purchase-order.service";
 import { getAvailableQuantity, recordInventoryTransaction } from "./inventory.service";
 import { MaterialRequestItemRepository, MaterialRequestRepository } from "./material-request.repository";
@@ -87,18 +88,19 @@ function sumActiveOrdered(purchaseOrderItems: StatusLine["purchaseOrderItems"]):
 }
 
 /**
- * A line counts as "fulfilled" once it's either fully issued from stock OR
- * the active (non-cancelled) purchase orders against it actually cover the
- * rest of the requested quantity — NOT merely "some PO item exists", which
- * was the old heuristic. That heuristic stopped being safe once a PO's
- * quantity is user-edited (never forced to equal the shortfall) and a line
- * can be escalated across more than one PO over its lifetime.
+ * A line counts as "fulfilled" only once it has actually been issued from
+ * real, physically-received stock — an active Purchase Order covering the
+ * shortfall is a commitment, not material in hand, so it deliberately does
+ * NOT fulfill a line by itself (direct user feedback, 2026-09-05; an
+ * earlier version of this function did count PO coverage as fulfillment —
+ * see git history — but that let a request show FULFILLED while the goods
+ * were still in transit, before Approve/Send to Supplier/Goods Receipt had
+ * even happened). computeRequiresPurchaseAction below is what tells the UI
+ * "nothing further to purchase" for exactly this in-transit case, without
+ * conflating it with "fulfilled."
  */
 function isLineFulfilled(l: StatusLine): boolean {
-  const requested = Number(l.requestedQuantity);
-  const issued = Number(l.issuedQuantity);
-  if (issued >= requested) return true;
-  return issued + sumActiveOrdered(l.purchaseOrderItems) >= requested;
+  return Number(l.issuedQuantity) >= Number(l.requestedQuantity);
 }
 
 /**
@@ -248,6 +250,17 @@ export async function getMaterialRequestById(companyId: string, id: string) {
 
 export async function createMaterialRequest(actor: ActorContext, input: MaterialRequestInput) {
   await assertLinesHaveConvertibleUom(actor.companyId, input.lines);
+
+  // A direct, user-chosen link now (the manual create form's own optional
+  // Sales Order dropdown, 2026-09-05) — previously this field was only ever
+  // set internally by createMaterialRequestFromShortfall(), which already
+  // derives it from a company-scoped query, so this check was never
+  // reachable before. Same tenant-scope discipline as every other
+  // cross-reference in this codebase (see CLAUDE.md's 2026-08-19 sweep).
+  if (input.salesOrderId) {
+    const order = await SalesOrderRepository.findAnyById(actor.companyId, input.salesOrderId);
+    if (!order) throw new BusinessRuleError("NOT_FOUND", "Sales order not found.", { id: input.salesOrderId });
+  }
 
   // Structural guard, not just a validation check: this function never
   // writes to originalMaterialRequestId's own row, so a DAMAGE_REPLACEMENT

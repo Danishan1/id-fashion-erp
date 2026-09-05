@@ -5,6 +5,7 @@ import { PermissionService } from "@/core/rbac/PermissionService";
 import type { ListQuery } from "@/lib/list-query";
 import { convertUomQuantity } from "@/lib/uom-conversion";
 import { LookupRepository } from "@/modules/lookups/lookup.repository";
+import { FabricConfigRepository } from "@/modules/fabric-config/fabric-config.repository";
 import { MaterialRequestItemRepository } from "@/modules/inventory/material-request.repository";
 import { ProductRepository } from "@/modules/products/product.repository";
 import { SupplierRepository } from "@/modules/suppliers/supplier.repository";
@@ -75,6 +76,27 @@ async function assertMaterialRequestItemsAreValid(companyId: string, items: Purc
 }
 
 /**
+ * Cheap tenant-scope check on a line's chosen Color/Shade (FabricDye) before
+ * it's ever written — the same discipline every other cross-reference in
+ * this codebase already gets (see CLAUDE.md's 2026-08-19 cross-tenant
+ * sweep). Both are a direct user pick on the create/edit form, unlike
+ * materialRequestItemId (system-set only), so an unchecked id here is a
+ * real, reachable gap otherwise.
+ */
+async function assertItemsHaveValidColorAndDye(companyId: string, items: PurchaseOrderItemInput[]) {
+  for (const item of items) {
+    if (item.colorId) {
+      const color = await LookupRepository.color.findFirst({ where: { id: item.colorId, companyId } });
+      if (!color) throw new BusinessRuleError("NOT_FOUND", "Color not found.", { id: item.colorId });
+    }
+    if (item.dyeId) {
+      const dye = await FabricConfigRepository.dye.findFirst({ where: { id: item.dyeId, companyId } });
+      if (!dye) throw new BusinessRuleError("NOT_FOUND", "Shade/Pantone not found.", { id: item.dyeId });
+    }
+  }
+}
+
+/**
  * PARTIALLY_RECEIVED/FULLY_RECEIVED are deliberately absent from every
  * source status's target list — they're only reachable as an automatic side
  * effect of createGoodsReceipt() in goods-receipt.service.ts, same
@@ -135,6 +157,7 @@ export async function createPurchaseOrder(actor: ActorContext, input: PurchaseOr
 
   await assertItemsHaveConvertibleUom(actor.companyId, input.items);
   await assertMaterialRequestItemsAreValid(actor.companyId, input.items);
+  await assertItemsHaveValidColorAndDye(actor.companyId, input.items);
 
   const company = await CompanyRepository.findBaseCurrencyCode(actor.companyId);
   if (!company) throw new BusinessRuleError("NOT_FOUND", "Company not found.", { id: actor.companyId });
@@ -173,6 +196,8 @@ export async function createPurchaseOrder(actor: ActorContext, input: PurchaseOr
         orderedQuantity: item.orderedQuantity,
         unitPrice: item.unitPrice,
         notes: item.notes || null,
+        colorId: item.colorId || null,
+        dyeId: item.dyeId || null,
         materialRequestItemId: item.materialRequestItemId || null,
       })),
     },
@@ -216,6 +241,7 @@ export async function updatePurchaseOrder(actor: ActorContext, id: string, input
   if (!supplier) throw new BusinessRuleError("NOT_FOUND", "Supplier not found.", { id: input.supplierId });
 
   await assertItemsHaveConvertibleUom(actor.companyId, input.items);
+  await assertItemsHaveValidColorAndDye(actor.companyId, input.items);
 
   const totalAmount = computeTotalAmount(input.items);
   const revertsToDraft = existing.status === "APPROVED";
@@ -236,6 +262,8 @@ export async function updatePurchaseOrder(actor: ActorContext, id: string, input
       orderedQuantity: item.orderedQuantity,
       unitPrice: item.unitPrice,
       notes: item.notes || null,
+      colorId: item.colorId || null,
+      dyeId: item.dyeId || null,
     }))
   );
 

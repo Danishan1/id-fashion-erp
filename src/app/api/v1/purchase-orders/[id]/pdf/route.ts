@@ -23,8 +23,12 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
 
     const rows = order.items.map((item) => {
       const amount = Number(item.unitPrice) * Number(item.orderedQuantity);
+      const shadeParts: string[] = [];
+      if (item.color) shadeParts.push(item.color.name);
+      if (item.dye) shadeParts.push(item.dye.pantone ? `${item.dye.name} (${item.dye.pantone})` : item.dye.name);
       return {
         material: `${item.product.styleName} (${item.product.styleCode})`,
+        shade: shadeParts.length > 0 ? shadeParts.join(" / ") : "—",
         qty: `${Number(item.orderedQuantity).toLocaleString("en-IN")} ${item.uom.code}`,
         unitPrice: formatMoney(item.unitPrice, order.currencyCode),
         amount: formatMoney(amount, order.currencyCode),
@@ -52,6 +56,7 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
       ],
       columns: [
         { key: "material", label: "Material" },
+        { key: "shade", label: "Color / Shade" },
         { key: "qty", label: "Qty", align: "right" },
         { key: "unitPrice", label: "Unit Price", align: "right" },
         { key: "amount", label: "Amount", align: "right" },

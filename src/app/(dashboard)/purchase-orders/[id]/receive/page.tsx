@@ -23,6 +23,8 @@ export default async function ReceiveGoodsPage({ params }: { params: Promise<{ i
       styleName: item.product.styleName,
       styleCode: item.product.styleCode,
       materialCategory: item.product.materialCategory,
+      colorName: item.color?.name ?? null,
+      shadeName: item.dye ? (item.dye.pantone ? `${item.dye.name} (${item.dye.pantone})` : item.dye.name) : null,
       uomCode: item.uom.code,
       orderedQuantity: item.orderedQuantity.toString(),
       receivedQuantity: item.receivedQuantity.toString(),

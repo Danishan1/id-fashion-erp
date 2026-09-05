@@ -28,6 +28,8 @@ export default async function EditPurchaseOrderPage({ params }: { params: Promis
       orderedQuantity: item.orderedQuantity.toString(),
       unitPrice: item.unitPrice.toString(),
       notes: item.notes,
+      colorId: item.colorId,
+      dyeId: item.dyeId,
     })),
   };
 

@@ -6,6 +6,12 @@ export const purchaseOrderItemSchema = z.object({
   orderedQuantity: z.coerce.number().positive("Quantity must be greater than 0"),
   unitPrice: z.coerce.number().min(0, "Unit price cannot be negative"),
   notes: z.string().max(500).optional().or(z.literal("")),
+  // Captured at request/creation time, direct user ask (2026-09-05) — plain
+  // columns for the rest of this line's life, so they keep showing through
+  // Approved/Sent to Supplier with no per-status logic needed. Same
+  // two-column shape as SampleMaterial.colorId/dyeId.
+  colorId: z.string().uuid().optional().or(z.literal("")),
+  dyeId: z.string().uuid().optional().or(z.literal("")),
   // Set only by generatePurchaseOrdersForShortfall() in
   // material-request.service.ts — absent from every direct PO creation,
   // which is completely unaffected.
