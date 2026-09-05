@@ -5,6 +5,7 @@ import { Breadcrumb, type BreadcrumbItem } from "@/components/ui/Breadcrumb";
 import { ReportFilterBar, type ReportFilterFieldConfig } from "./ReportFilterBar";
 import { ReportTable } from "./ReportTable";
 import type { ReportDescriptor } from "@/core/reports/report-types";
+import { formatDateTime } from "@/lib/date-format";
 
 export interface ReportPageProps {
   title: string;
@@ -153,7 +154,7 @@ export function ReportPage({
             <ReportTable columns={descriptor.columns} rows={descriptor.rows} totals={descriptor.totals} linkBuilders={linkBuilders} />
           )}
           <p className="text-xs text-zinc-400">
-            Generated {new Date(descriptor.generatedAt).toLocaleString()} by {descriptor.generatedByName}
+            Generated {formatDateTime(descriptor.generatedAt)} by {descriptor.generatedByName}
             {descriptor.meta ? ` — ${descriptor.meta.totalCount} total row(s)` : ""}
           </p>
         </>

@@ -3,6 +3,7 @@ import Link from "next/link";
 import { auth } from "@/core/auth/auth";
 import { listCompanies } from "@/modules/platform/platform-company.service";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
+import { formatDate } from "@/lib/date-format";
 
 export default async function PlatformCompaniesPage() {
   const session = await auth();
@@ -66,7 +67,7 @@ export default async function PlatformCompaniesPage() {
                     {c.isActive ? "Active" : "Inactive"}
                   </span>
                 </td>
-                <td className="px-4 py-2 text-zinc-700 dark:text-zinc-200">{c.createdAt.toLocaleDateString()}</td>
+                <td className="px-4 py-2 text-zinc-700 dark:text-zinc-200">{formatDate(c.createdAt)}</td>
               </tr>
             ))}
           </tbody>

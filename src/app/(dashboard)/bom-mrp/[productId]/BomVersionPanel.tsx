@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
+import { formatDate, formatDateTime } from "@/lib/date-format";
 
 interface VersionRow {
   id: string;
@@ -69,7 +70,7 @@ export function BomVersionPanel({
           <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_BADGE_CLASSES[current.status]}`}>{current.status}</span>
           {current.status === "APPROVED" && current.approvedBy && (
             <span className="text-xs text-zinc-500 dark:text-zinc-400">
-              approved by {current.approvedBy.fullName} on {new Date(current.approvedAt!).toLocaleDateString()}
+              approved by {current.approvedBy.fullName} on {formatDate(current.approvedAt!)}
             </span>
           )}
         </div>
@@ -115,9 +116,9 @@ export function BomVersionPanel({
                     <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_BADGE_CLASSES[v.status]}`}>{v.status}</span>
                   </td>
                   <td className="px-3 py-2 text-zinc-600 dark:text-zinc-400">{v.createdBy.fullName}</td>
-                  <td className="px-3 py-2 text-zinc-600 dark:text-zinc-400">{new Date(v.createdAt).toLocaleString()}</td>
+                  <td className="px-3 py-2 text-zinc-600 dark:text-zinc-400">{formatDateTime(v.createdAt)}</td>
                   <td className="px-3 py-2 text-zinc-600 dark:text-zinc-400">
-                    {v.approvedAt ? `${v.approvedBy?.fullName ?? "—"} · ${new Date(v.approvedAt).toLocaleString()}` : "—"}
+                    {v.approvedAt ? `${v.approvedBy?.fullName ?? "—"} · ${formatDateTime(v.approvedAt)}` : "—"}
                   </td>
                 </tr>
               ))}

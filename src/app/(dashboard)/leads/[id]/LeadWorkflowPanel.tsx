@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Modal } from "@/components/ui/Modal";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { STATUS_LABELS, PRIORITY_LABELS, SOURCE_LABELS } from "../statusLabels";
+import { formatNumber } from "@/lib/currency";
 
 interface LeadDetail {
   id: string;
@@ -188,7 +189,7 @@ export function LeadWorkflowPanel({ lead }: { lead: LeadDetail }) {
         </div>
         <div>
           <dt className="text-xs font-medium uppercase text-zinc-500">Potential Value</dt>
-          <dd className="mt-0.5 text-zinc-900 dark:text-zinc-50">₹{Number(lead.value).toLocaleString()}</dd>
+          <dd className="mt-0.5 text-zinc-900 dark:text-zinc-50">₹{formatNumber(lead.value)}</dd>
         </div>
         <div>
           <dt className="text-xs font-medium uppercase text-zinc-500">Assigned To</dt>
@@ -231,7 +232,7 @@ export function LeadWorkflowPanel({ lead }: { lead: LeadDetail }) {
                 <a href={`/deals/${d.id}`} className="text-indigo-600 hover:underline dark:text-indigo-400">
                   {d.dealNumber}
                 </a>{" "}
-                — {d.title} ({d.stage}, ₹{Number(d.value).toLocaleString()})
+                — {d.title} ({d.stage}, ₹{formatNumber(d.value)})
               </li>
             ))}
           </ul>

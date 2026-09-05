@@ -50,7 +50,7 @@ interface DuplicateEntry {
 }
 
 function formatQty(n: number) {
-  return n.toLocaleString(undefined, { maximumFractionDigits: 4 });
+  return n.toLocaleString("en-IN", { maximumFractionDigits: 4 });
 }
 
 export function MaterialRequirementsClient() {

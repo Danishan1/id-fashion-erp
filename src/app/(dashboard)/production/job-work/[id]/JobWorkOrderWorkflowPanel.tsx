@@ -5,6 +5,7 @@ import { FormField, textInputClass } from "@/components/ui/FormField";
 import { Modal } from "@/components/ui/Modal";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { todayIsoDate } from "@/lib/date";
+import { formatDate } from "@/lib/date-format";
 import { JOB_WORK_ORDER_STATUS_LABELS, JOB_WORK_ORDER_STATUS_BADGE_CLASS } from "../../../production-orders/statusLabels";
 
 type JobWorkStatus = keyof typeof JOB_WORK_ORDER_STATUS_LABELS;
@@ -203,12 +204,12 @@ export function JobWorkOrderWorkflowPanel({ jobWorkOrderId, initialOrder }: { jo
         </div>
         <div>
           <div className="text-xs text-zinc-500">Issue Date</div>
-          <div className="font-medium text-zinc-900 dark:text-zinc-50">{new Date(order.issueDate).toLocaleDateString()}</div>
+          <div className="font-medium text-zinc-900 dark:text-zinc-50">{formatDate(order.issueDate)}</div>
         </div>
         <div>
           <div className="text-xs text-zinc-500">Expected Completion</div>
           <div className="font-medium text-zinc-900 dark:text-zinc-50">
-            {order.expectedCompletionDate ? new Date(order.expectedCompletionDate).toLocaleDateString() : "—"}
+            {order.expectedCompletionDate ? formatDate(order.expectedCompletionDate) : "—"}
           </div>
         </div>
       </div>
@@ -291,7 +292,7 @@ export function JobWorkOrderWorkflowPanel({ jobWorkOrderId, initialOrder }: { jo
                 {order.receipts.map((r) => (
                   <tr key={r.id}>
                     <td className="px-4 py-2 text-zinc-700 dark:text-zinc-300">{r.receiptNumber}</td>
-                    <td className="px-4 py-2 text-zinc-700 dark:text-zinc-300">{new Date(r.receivedDate).toLocaleDateString()}</td>
+                    <td className="px-4 py-2 text-zinc-700 dark:text-zinc-300">{formatDate(r.receivedDate)}</td>
                     <td className="px-4 py-2 text-zinc-700 dark:text-zinc-300">{r.receivedQuantity}</td>
                     <td className="px-4 py-2 text-zinc-700 dark:text-zinc-300">{r.rejectedQuantity}</td>
                     <td className="px-4 py-2 text-zinc-700 dark:text-zinc-300">{r.damagedQuantity}</td>

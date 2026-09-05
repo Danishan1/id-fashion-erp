@@ -4,6 +4,8 @@ import { auth } from "@/core/auth/auth";
 import { getCustomer360 } from "@/modules/customers/customer-360.service";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { humanizeStatus } from "@/lib/humanize-status";
+import { formatNumber } from "@/lib/currency";
+import { formatDate } from "@/lib/date-format";
 
 function Section({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
   return (
@@ -60,9 +62,9 @@ export default async function Customer360Page({ params }: { params: Promise<{ id
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         {[
-          ["Open Pipeline", `₹${openPipeline.toLocaleString()}`],
-          ["Won Value", `₹${wonValue.toLocaleString()}`],
-          ["Sales Orders Value", `₹${orderTotal.toLocaleString()}`],
+          ["Open Pipeline", `₹${formatNumber(openPipeline)}`],
+          ["Won Value", `₹${formatNumber(wonValue)}`],
+          ["Sales Orders Value", `₹${formatNumber(orderTotal)}`],
           ["Sample Requests", sampleRequests.length.toString()],
         ].map(([label, value]) => (
           <div key={label} className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
@@ -115,7 +117,7 @@ export default async function Customer360Page({ params }: { params: Promise<{ id
                     {d.dealNumber} — {d.title}
                   </a>
                   <div className="mt-0.5 text-xs text-zinc-500">
-                    {humanizeStatus(d.stage)} · ₹{Number(d.value).toLocaleString()} · {d.assignedTo?.fullName ?? "Unassigned"}
+                    {humanizeStatus(d.stage)} · ₹{formatNumber(Number(d.value))} · {d.assignedTo?.fullName ?? "Unassigned"}
                     {d.salesAgent ? ` · Agent: ${d.salesAgent.name}` : ""}
                   </div>
                 </li>
@@ -151,7 +153,7 @@ export default async function Customer360Page({ params }: { params: Promise<{ id
                   <a href={`/sales-orders/${o.id}`} className="text-indigo-600 hover:underline dark:text-indigo-400">
                     {o.orderNumber}
                   </a>{" "}
-                  — {o.currencyCode} {Number(o.totalAmount).toLocaleString()} · {humanizeStatus(o.status)}
+                  — {o.currencyCode} {formatNumber(Number(o.totalAmount))} · {humanizeStatus(o.status)}
                 </li>
               ))}
             </ul>
@@ -174,7 +176,7 @@ export default async function Customer360Page({ params }: { params: Promise<{ id
                   )}{" "}
                   {t.campaign ? `(${humanizeStatus(t.campaign.channel)})` : ""} {t.isFirstTouch ? "· First touch" : ""}
                   {t.isLastTouch ? "· Last touch" : ""}
-                  {Number(t.attributedRevenue) > 0 ? ` · ₹${Number(t.attributedRevenue).toLocaleString()} attributed` : ""}
+                  {Number(t.attributedRevenue) > 0 ? ` · ₹${formatNumber(Number(t.attributedRevenue))} attributed` : ""}
                 </li>
               ))}
             </ul>
@@ -188,7 +190,7 @@ export default async function Customer360Page({ params }: { params: Promise<{ id
             <ul className="space-y-1 text-sm">
               {followups.map((f) => (
                 <li key={f.id}>
-                  {new Date(f.followupDate).toLocaleDateString()} · {f.type} · {humanizeStatus(f.status)}
+                  {formatDate(f.followupDate)} · {f.type} · {humanizeStatus(f.status)}
                   {f.notes ? ` — ${f.notes}` : ""}
                 </li>
               ))}
@@ -203,7 +205,7 @@ export default async function Customer360Page({ params }: { params: Promise<{ id
             <ul className="space-y-1 text-sm">
               {activities.map((a) => (
                 <li key={a.id}>
-                  {new Date(a.activityAt).toLocaleDateString()} · {a.activityType} · {a.performedBy.fullName}
+                  {formatDate(a.activityAt)} · {a.activityType} · {a.performedBy.fullName}
                   {a.subject ? ` — ${a.subject}` : ""}
                 </li>
               ))}

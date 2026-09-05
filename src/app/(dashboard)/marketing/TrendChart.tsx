@@ -1,3 +1,5 @@
+import { formatNumber } from "@/lib/currency";
+
 /**
  * A minimal, dependency-free SVG line chart — this project has no charting
  * library installed anywhere, and a 30-point daily series doesn't justify
@@ -9,7 +11,7 @@ export function TrendChart({
   title,
   data,
   color = "#4f46e5",
-  format = (v: number) => v.toLocaleString(),
+  format = (v: number) => formatNumber(v),
 }: {
   title: string;
   data: Array<{ date: string; value: number }>;

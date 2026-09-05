@@ -135,7 +135,7 @@ export function NewPlatformCompanyClient() {
               >
                 {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
                   <option key={m} value={m}>
-                    {new Date(2000, m - 1, 1).toLocaleString("en-US", { month: "long" })}
+                    {new Date(2000, m - 1, 1).toLocaleString("en-IN", { month: "long" })}
                   </option>
                 ))}
               </select>

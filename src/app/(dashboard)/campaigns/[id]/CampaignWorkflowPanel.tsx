@@ -5,6 +5,8 @@ import Link from "next/link";
 import { Modal } from "@/components/ui/Modal";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { CHANNEL_LABELS, STATUS_LABELS, APPROVAL_LABELS, ALERT_TYPE_LABELS } from "../statusLabels";
+import { formatDate, formatDateTime } from "@/lib/date-format";
+import { formatNumber } from "@/lib/currency";
 
 interface DailyMetric {
   id: string;
@@ -236,7 +238,7 @@ export function CampaignWorkflowPanel({ campaign }: { campaign: CampaignDetail }
       {campaign.approvalStatus === "APPROVED" && campaign.approvedBy && (
         <p className="text-xs text-zinc-500 dark:text-zinc-400">
           Approved by {campaign.approvedBy.fullName}
-          {campaign.approvedAt ? ` on ${new Date(campaign.approvedAt).toLocaleString()}` : ""}
+          {campaign.approvedAt ? ` on ${formatDateTime(campaign.approvedAt)}` : ""}
         </p>
       )}
 
@@ -245,12 +247,12 @@ export function CampaignWorkflowPanel({ campaign }: { campaign: CampaignDetail }
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         {[
-          ["Budget", `₹${Number(campaign.budget).toLocaleString()}`],
-          ["Spend", `₹${campaign.metrics.spend.toLocaleString()}`],
+          ["Budget", `₹${formatNumber(campaign.budget)}`],
+          ["Spend", `₹${formatNumber(campaign.metrics.spend)}`],
           ["Leads", campaign.metrics.leads],
           ["Qualified", campaign.metrics.qualifiedLeads],
           ["Customers", campaign.metrics.customers],
-          ["Revenue", `₹${campaign.metrics.revenue.toLocaleString()}`],
+          ["Revenue", `₹${formatNumber(campaign.metrics.revenue)}`],
           ["ROAS", `${roas.toFixed(2)}x`],
           ["CPL", `₹${cpl.toFixed(2)}`],
         ].map(([label, value]) => (
@@ -277,8 +279,8 @@ export function CampaignWorkflowPanel({ campaign }: { campaign: CampaignDetail }
         <div>
           <dt className="text-xs font-medium uppercase text-zinc-500">Dates</dt>
           <dd className="mt-0.5 text-zinc-900 dark:text-zinc-50">
-            {campaign.startDate ? new Date(campaign.startDate).toLocaleDateString() : "—"} –{" "}
-            {campaign.endDate ? new Date(campaign.endDate).toLocaleDateString() : "—"}
+            {campaign.startDate ? formatDate(campaign.startDate) : "—"} –{" "}
+            {campaign.endDate ? formatDate(campaign.endDate) : "—"}
           </dd>
         </div>
         {campaign.notes && (
@@ -352,10 +354,10 @@ export function CampaignWorkflowPanel({ campaign }: { campaign: CampaignDetail }
               <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
                 {dailyMetrics.map((m) => (
                   <tr key={m.id}>
-                    <td className="px-4 py-2 text-zinc-900 dark:text-zinc-50">{new Date(m.metricDate).toLocaleDateString()}</td>
-                    <td className="px-4 py-2 text-zinc-700 dark:text-zinc-300">₹{Number(m.spend).toLocaleString()}</td>
-                    <td className="px-4 py-2 text-zinc-700 dark:text-zinc-300">{Number(m.impressions).toLocaleString()}</td>
-                    <td className="px-4 py-2 text-zinc-700 dark:text-zinc-300">{Number(m.clicks).toLocaleString()}</td>
+                    <td className="px-4 py-2 text-zinc-900 dark:text-zinc-50">{formatDate(m.metricDate)}</td>
+                    <td className="px-4 py-2 text-zinc-700 dark:text-zinc-300">₹{formatNumber(m.spend)}</td>
+                    <td className="px-4 py-2 text-zinc-700 dark:text-zinc-300">{formatNumber(m.impressions)}</td>
+                    <td className="px-4 py-2 text-zinc-700 dark:text-zinc-300">{formatNumber(m.clicks)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -376,14 +378,14 @@ export function CampaignWorkflowPanel({ campaign }: { campaign: CampaignDetail }
                   <span>
                     {a.source ?? "—"} / {a.medium ?? "—"}
                   </span>
-                  <span>{new Date(a.createdAt).toLocaleString()}</span>
+                  <span>{formatDateTime(a.createdAt)}</span>
                 </div>
                 {a.lead && (
                   <a href={`/leads/${a.lead.id}`} className="text-indigo-600 hover:underline dark:text-indigo-400">
                     {a.lead.name} ({a.lead.leadNumber})
                   </a>
                 )}
-                {Number(a.attributedRevenue) > 0 && <p className="text-xs text-zinc-500">Attributed revenue: ₹{Number(a.attributedRevenue).toLocaleString()}</p>}
+                {Number(a.attributedRevenue) > 0 && <p className="text-xs text-zinc-500">Attributed revenue: ₹{formatNumber(a.attributedRevenue)}</p>}
               </li>
             ))}
           </ul>

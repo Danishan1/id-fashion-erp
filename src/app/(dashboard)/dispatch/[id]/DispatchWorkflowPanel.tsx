@@ -8,6 +8,7 @@ import { Modal } from "@/components/ui/Modal";
 import { FilePreviewModal } from "@/components/ui/FilePreviewModal";
 import { Barcode } from "@/components/ui/Barcode";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { ClientDateTime } from "@/components/ui/ClientDateTime";
 
 interface DispatchItemRow {
   id: string;
@@ -98,22 +99,6 @@ function formatFileSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-/**
- * `toLocaleString()` on a Date rendered directly from a server-passed prop
- * (unlike the attachments list below, which only ever renders dates from a
- * useEffect-populated state that starts empty) runs once during SSR — in
- * the server's own locale — and again during client hydration in the
- * browser's locale, producing a text mismatch React can't reconcile.
- * `suppressHydrationWarning` is React's own documented escape hatch for
- * exactly this "content is expected to legitimately differ between server
- * and client" case (locale/timezone-formatted dates) — the DOM still
- * updates to the correct client-locale value after hydration, this only
- * silences the mismatch warning for this one text node.
- */
-function ClientDateTime({ value }: { value: string }) {
-  return <span suppressHydrationWarning>{new Date(value).toLocaleString()}</span>;
 }
 
 export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }) {

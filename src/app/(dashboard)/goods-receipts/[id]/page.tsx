@@ -3,6 +3,7 @@ import { auth } from "@/core/auth/auth";
 import { getGoodsReceiptById } from "@/modules/purchasing/goods-receipt.service";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { Barcode } from "@/components/ui/Barcode";
+import { formatDate } from "@/lib/date-format";
 import { GoodsReceiptDetailPanel } from "../GoodsReceiptDetailPanel";
 
 export default async function GoodsReceiptDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -29,7 +30,7 @@ export default async function GoodsReceiptDetailPage({ params }: { params: Promi
             <a href={`/purchase-orders/${receipt.purchaseOrder.id}`} className="text-indigo-600 hover:underline dark:text-indigo-400">
               {receipt.purchaseOrder.orderNumber}
             </a>{" "}
-            · Received by {receipt.receivedBy.fullName} on {new Date(receipt.receivedDate).toLocaleDateString()}
+            · Received by {receipt.receivedBy.fullName} on {formatDate(receipt.receivedDate)}
           </p>
         </div>
         <div className="flex flex-col items-end gap-2">

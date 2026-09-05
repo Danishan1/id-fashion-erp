@@ -7,6 +7,7 @@ import { MaterialPicker } from "@/components/ui/MaterialPicker";
 import { Modal } from "@/components/ui/Modal";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { formatCategoryLabel } from "@/lib/format-category-label";
+import { formatDate, formatDateTime } from "@/lib/date-format";
 import { useSubmoduleVisibility } from "@/lib/use-submodule-visibility";
 import { STATUS_BADGE_CLASS, STATUS_LABELS } from "./statusLabels";
 
@@ -945,7 +946,7 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
                     Version {version.versionNumber} — {version.status}
                   </p>
                   <p className="text-xs text-zinc-500">
-                    by {version.createdBy.fullName} on {new Date(version.createdAt).toLocaleDateString()}
+                    by {version.createdBy.fullName} on {formatDate(version.createdAt)}
                   </p>
                 </div>
                 {version.techPackNotes && <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">{version.techPackNotes}</p>}
@@ -1166,7 +1167,7 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
                     {version.approvals.map((a) => (
                       <p key={a.id} className="text-xs text-zinc-600 dark:text-zinc-300">
                         <span className="font-medium">{a.decision.replace("_", " ")}</span> by {a.decidedBy.fullName} on{" "}
-                        {new Date(a.decidedAt).toLocaleDateString()}
+                        {formatDate(a.decidedAt)}
                         {a.customerContactName ? ` — contact: ${a.customerContactName}` : ""}
                         {a.decisionNotes ? ` — "${a.decisionNotes}"` : ""}
                       </p>
@@ -1191,7 +1192,7 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
             <div key={c.id} className="rounded-md border border-zinc-200 p-2 text-sm dark:border-zinc-800">
               <p className="text-zinc-700 dark:text-zinc-200">{c.body}</p>
               <p className="mt-1 text-xs text-zinc-400">
-                {c.author.fullName} — {new Date(c.createdAt).toLocaleString()}
+                {c.author.fullName} — {formatDateTime(c.createdAt)}
               </p>
             </div>
           ))}

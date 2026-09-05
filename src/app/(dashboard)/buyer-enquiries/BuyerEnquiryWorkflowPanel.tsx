@@ -10,6 +10,7 @@ import {
   STATUS_LABELS,
 } from "./statusLabels";
 import { SAMPLE_TYPE_LABELS } from "../sampling/sampleTypeLabels";
+import { formatDate } from "@/lib/date-format";
 
 type EnquiryStatus = keyof typeof STATUS_LABELS;
 type LineStatus = keyof typeof LINE_STATUS_LABELS;
@@ -196,7 +197,7 @@ function EnquiryLineCard({
         </div>
         <div>
           <dt className="text-zinc-400">Target Delivery</dt>
-          <dd>{line.targetDeliveryDate ? new Date(line.targetDeliveryDate).toLocaleDateString() : "—"}</dd>
+          <dd>{line.targetDeliveryDate ? formatDate(line.targetDeliveryDate) : "—"}</dd>
         </div>
       </dl>
       {line.remarks && <p className="mt-2 text-xs text-zinc-500">Remarks: {line.remarks}</p>}
