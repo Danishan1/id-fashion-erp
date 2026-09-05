@@ -684,6 +684,8 @@ export async function generatePurchaseOrdersForShortfall(
           unitPrice,
           notes: `Shortfall for Material Request ${request.requestNumber}`,
           materialRequestItemId: line.id,
+          colorId: line.colorId ?? undefined,
+          dyeId: line.dyeId ?? undefined,
         })),
       });
       results.push({ supplierId, status: "success", orderId: order.id, orderNumber: order.orderNumber });
