@@ -802,6 +802,7 @@ model Color {
   sampleMaterials      SampleMaterial[]
   bomItems             BomItem[]
   materialRequestItems MaterialRequestItem[]
+  purchaseOrderItems   PurchaseOrderItem[]
 
   @@unique([companyId, code])
   @@map("colors")
@@ -1206,6 +1207,7 @@ model FabricDye {
   fabricRolls          FabricRoll[]
   sampleMaterials      SampleMaterial[]
   materialRequestItems MaterialRequestItem[]
+  purchaseOrderItems   PurchaseOrderItem[]
 
   @@unique([companyId, code])
   @@map("fabric_dyes")
@@ -2801,6 +2803,15 @@ model PurchaseOrderItem {
   // this column, so it can never drop below what's already been invoiced.
   invoicedQuantity      Decimal  @default(0) @map("invoiced_quantity") @db.Decimal(18, 4)
   notes                 String?
+  // Which Colors-master color this line is for, and (optionally) the exact
+  // physical shade/Pantone within it — same two-column shape already proven
+  // on SampleMaterial.colorId/dyeId, captured at request/creation time and
+  // then just plain columns for the rest of this PO's own lifecycle (no
+  // per-status logic needed for it to keep showing through Approved and
+  // Sent to Supplier). Direct user ask (2026-09-05), scoped to Purchase
+  // Order only — not threaded through Material Request/BOM-generated POs.
+  colorId               String?  @map("color_id") @db.Uuid
+  dyeId                 String?  @map("dye_id") @db.Uuid
   createdAt             DateTime @default(now()) @map("created_at")
   // The authoritative FK for the optional Material Request -> Purchase Order
   // link (mirrors BuyerEnquiryLine.sampleRequestId's shape) — set only by
@@ -2814,6 +2825,8 @@ model PurchaseOrderItem {
   purchaseOrder        PurchaseOrder         @relation(fields: [purchaseOrderId], references: [id])
   product              Product               @relation(fields: [productId], references: [id])
   uom                  UnitOfMeasure         @relation(fields: [uomId], references: [id])
+  color                Color?                @relation(fields: [colorId], references: [id])
+  dye                  FabricDye?            @relation(fields: [dyeId], references: [id])
   goodsReceiptItems    GoodsReceiptItem[]
   materialRequestItem  MaterialRequestItem?  @relation(fields: [materialRequestItemId], references: [id])
   purchaseInvoiceItems PurchaseInvoiceItem[]

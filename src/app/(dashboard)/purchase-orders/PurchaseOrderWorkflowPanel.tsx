@@ -21,7 +21,16 @@ interface ItemRow {
   notes: string | null;
   product: { id: string; styleName: string; styleCode: string; materialCategory: string | null };
   uom: { id: string; code: string };
+  color: { id: string; name: string; hexValue: string | null } | null;
+  dye: { id: string; name: string; pantone: string | null } | null;
   materialRequestItem: { id: string; materialRequest: { id: string; requestNumber: string } } | null;
+}
+
+function formatShade(item: ItemRow): string {
+  const parts: string[] = [];
+  if (item.color) parts.push(item.color.name);
+  if (item.dye) parts.push(item.dye.pantone ? `${item.dye.name} (${item.dye.pantone})` : item.dye.name);
+  return parts.length > 0 ? parts.join(" / ") : "—";
 }
 
 interface ReceiptRow {
@@ -269,6 +278,7 @@ export function PurchaseOrderWorkflowPanel({
           <thead>
             <tr className="text-left text-xs text-zinc-500">
               <th className="py-1 pr-3 font-medium">Material</th>
+              <th className="py-1 pr-3 font-medium">Color / Shade</th>
               <th className="py-1 pr-3 font-medium">Unit</th>
               <th className="py-1 pr-3 font-medium">Ordered</th>
               <th className="py-1 pr-3 font-medium">Received</th>
@@ -286,6 +296,15 @@ export function PurchaseOrderWorkflowPanel({
                       Fabric
                     </span>
                   )}
+                </td>
+                <td className="py-2 pr-3 text-zinc-700 dark:text-zinc-200">
+                  {item.color?.hexValue ? (
+                    <span
+                      className="mr-1 inline-block h-2.5 w-2.5 rounded-full border border-zinc-300 align-middle"
+                      style={{ backgroundColor: item.color.hexValue }}
+                    />
+                  ) : null}
+                  {formatShade(item)}
                 </td>
                 <td className="py-2 pr-3 text-zinc-700 dark:text-zinc-200">{item.uom.code}</td>
                 <td className="py-2 pr-3 text-zinc-700 dark:text-zinc-200">{item.orderedQuantity}</td>

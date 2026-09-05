@@ -5,7 +5,10 @@ vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/numbering/DocumentNumberingService", () => ({ generateDocumentNumber: vi.fn() }));
 vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { assert: vi.fn() } }));
 vi.mock("@/modules/lookups/lookup.repository", () => ({
-  LookupRepository: { unit: { findUnique: vi.fn() } },
+  LookupRepository: { unit: { findUnique: vi.fn() }, color: { findFirst: vi.fn() } },
+}));
+vi.mock("@/modules/fabric-config/fabric-config.repository", () => ({
+  FabricConfigRepository: { dye: { findFirst: vi.fn() } },
 }));
 vi.mock("@/modules/inventory/material-request.repository", () => ({
   MaterialRequestItemRepository: { findWithRequestOwner: vi.fn() },
@@ -35,6 +38,7 @@ vi.mock("./purchase-order.repository", () => ({
 const { PermissionService } = await import("@/core/rbac/PermissionService");
 const { generateDocumentNumber } = await import("@/core/numbering/DocumentNumberingService");
 const { LookupRepository } = await import("@/modules/lookups/lookup.repository");
+const { FabricConfigRepository } = await import("@/modules/fabric-config/fabric-config.repository");
 const { MaterialRequestItemRepository } = await import("@/modules/inventory/material-request.repository");
 const { ProductRepository } = await import("@/modules/products/product.repository");
 const { SupplierRepository } = await import("@/modules/suppliers/supplier.repository");
@@ -69,6 +73,8 @@ beforeEach(() => {
     .mockReset()
     .mockResolvedValue({ id: "mat-1", styleName: "Test Material", baseUom: BASE_UOM } as never);
   vi.mocked(LookupRepository.unit.findUnique).mockReset();
+  vi.mocked(LookupRepository.color.findFirst).mockReset();
+  vi.mocked(FabricConfigRepository.dye.findFirst).mockReset();
   vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockReset();
   vi.mocked(CompanyRepository.findBaseCurrencyCode).mockReset().mockResolvedValue({ baseCurrencyCode: "INR" } as never);
   vi.mocked(PurchaseOrderRepository.createWithItems).mockReset().mockResolvedValue({ id: "po-1", items: [] } as never);
@@ -121,6 +127,48 @@ describe("createPurchaseOrder", () => {
         items: [oneItem({ materialRequestItemId: "mri-1" })],
       })
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("rejects a colorId that doesn't belong to this company", async () => {
+    vi.mocked(LookupRepository.color.findFirst).mockResolvedValue(null);
+    await expect(
+      createPurchaseOrder(actor, {
+        supplierId: "sup-1",
+        orderDate: "2026-08-24",
+        expectedDeliveryDate: "",
+        items: [oneItem({ colorId: "color-x" })],
+      })
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(PurchaseOrderRepository.createWithItems).not.toHaveBeenCalled();
+  });
+
+  it("rejects a dyeId (Shade/Pantone) that doesn't belong to this company", async () => {
+    vi.mocked(FabricConfigRepository.dye.findFirst).mockResolvedValue(null);
+    await expect(
+      createPurchaseOrder(actor, {
+        supplierId: "sup-1",
+        orderDate: "2026-08-24",
+        expectedDeliveryDate: "",
+        items: [oneItem({ dyeId: "dye-x" })],
+      })
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(PurchaseOrderRepository.createWithItems).not.toHaveBeenCalled();
+  });
+
+  it("persists a real colorId/dyeId through to the created item", async () => {
+    vi.mocked(LookupRepository.color.findFirst).mockResolvedValue({ id: "color-1" } as never);
+    vi.mocked(FabricConfigRepository.dye.findFirst).mockResolvedValue({ id: "dye-1" } as never);
+
+    await createPurchaseOrder(actor, {
+      supplierId: "sup-1",
+      orderDate: "2026-08-24",
+      expectedDeliveryDate: "",
+      items: [oneItem({ colorId: "color-1", dyeId: "dye-1" })],
+    });
+
+    expect(PurchaseOrderRepository.createWithItems).toHaveBeenCalledWith(
+      expect.objectContaining({ items: { create: [expect.objectContaining({ colorId: "color-1", dyeId: "dye-1" })] } })
+    );
   });
 
   it("always forces currencyCode to the company's own base currency, never a supplier-specific one", async () => {

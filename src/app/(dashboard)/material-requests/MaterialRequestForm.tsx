@@ -71,16 +71,21 @@ export function MaterialRequestForm({ initialRequest }: { initialRequest?: Initi
   const [requestType, setRequestType] = useState(initialRequest?.requestType ?? "PRODUCTION_REQUIREMENT");
   const [departmentId, setDepartmentId] = useState(initialRequest?.departmentId ?? "");
   const [warehouseId, setWarehouseId] = useState(initialRequest?.warehouseId ?? "");
-  const [requiredDate, setRequiredDate] = useState(initialRequest?.requiredDate?.slice(0, 10) ?? "");
+  const [requiredDate, setRequiredDate] = useState(initialRequest?.requiredDate?.slice(0, 10) ?? TODAY);
   const [purpose, setPurpose] = useState(initialRequest?.purpose ?? "");
   const [remarks, setRemarks] = useState(initialRequest?.remarks ?? "");
 
-  // Pass-through, not directly editable here — set only by the BOM/MRP
-  // "Generate Material Request" flow. Kept in state (not just re-read from
-  // initialRequest at submit time) purely so a full-replace edit doesn't
-  // silently null out traceability that flow already established.
-  const [salesOrderId] = useState(initialRequest?.salesOrderId ?? "");
+  // User-editable only when creating a fresh request (see the Sales Order
+  // FormField below) — an already-linked request (set by the BOM/MRP
+  // "Generate Material Request" flow) keeps its own link read-only on edit,
+  // since bomId is only meaningful alongside the specific Sales Order it was
+  // derived from; changing one without the other would desync them. Kept in
+  // state either way (not just re-read from initialRequest at submit time)
+  // so a full-replace edit never silently nulls out traceability that flow
+  // already established.
+  const [salesOrderId, setSalesOrderId] = useState(initialRequest?.salesOrderId ?? "");
   const [bomId] = useState(initialRequest?.bomId ?? "");
+  const [salesOrders, setSalesOrders] = useState<Array<{ id: string; orderNumber: string; customer: { name: string } | null }>>([]);
 
   const [originalMaterialRequestId, setOriginalMaterialRequestId] = useState(initialRequest?.originalMaterialRequestId ?? "");
   const [originalRequestSearch, setOriginalRequestSearch] = useState(initialRequest?.originalMaterialRequestNumber ?? "");
@@ -140,6 +145,9 @@ export function MaterialRequestForm({ initialRequest }: { initialRequest?: Initi
     fetch("/api/v1/fabric-dyes")
       .then((res) => res.json())
       .then((body) => setDyes(body.data ?? []));
+    fetch("/api/v1/sales-orders?pageSize=200")
+      .then((res) => res.json())
+      .then((body) => setSalesOrders(body.data ?? []));
   }, []);
 
   const updateLine = (index: number, patch: Partial<LineItem>) => {
@@ -221,6 +229,25 @@ export function MaterialRequestForm({ initialRequest }: { initialRequest?: Initi
           ))}
         </select>
       </FormField>
+
+      {!initialRequest && (
+        <FormField label="Sales Order (optional)" htmlFor="salesOrderId">
+          <select
+            id="salesOrderId"
+            value={salesOrderId}
+            onChange={(e) => setSalesOrderId(e.target.value)}
+            className={textInputClass()}
+          >
+            <option value="">— None —</option>
+            {salesOrders.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.orderNumber}
+                {o.customer ? ` — ${o.customer.name}` : ""}
+              </option>
+            ))}
+          </select>
+        </FormField>
+      )}
 
       {requestType === "DAMAGE_REPLACEMENT" && (
         <FormField label="Original Material Request" htmlFor="originalMaterialRequestId" required>

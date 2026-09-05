@@ -36,6 +36,8 @@ export const PurchaseOrderRepository = {
               },
             },
             uom: { select: { id: true, code: true, name: true, baseUnitId: true, conversionFactor: true } },
+            color: { select: { id: true, name: true, hexValue: true } },
+            dye: { select: { id: true, name: true, pantone: true } },
             materialRequestItem: {
               select: { id: true, materialRequest: { select: { id: true, requestNumber: true } } },
             },
@@ -81,6 +83,8 @@ export const PurchaseOrderRepository = {
       orderedQuantity: number;
       unitPrice: number;
       notes: string | null;
+      colorId: string | null;
+      dyeId: string | null;
     }>
   ) =>
     prisma.$transaction(async (tx) => {

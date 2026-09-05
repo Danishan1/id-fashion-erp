@@ -424,12 +424,14 @@ export function MaterialRequestWorkflowPanel({
                       {canIssue && line.remainingQuantity > 0 && (
                         <button
                           type="button"
+                          disabled={line.availableStockQuantity <= 0}
+                          title={line.availableStockQuantity <= 0 ? "No stock available at this warehouse yet" : undefined}
                           onClick={() => {
                             setIssuingLine(line);
                             setIssueQty(String(line.remainingQuantity));
                             setIssueLocationId("");
                           }}
-                          className="text-xs font-medium text-indigo-600 hover:text-indigo-500"
+                          className="text-xs font-medium text-indigo-600 hover:text-indigo-500 disabled:cursor-not-allowed disabled:text-zinc-400 disabled:hover:text-zinc-400 dark:disabled:text-zinc-600 dark:disabled:hover:text-zinc-600"
                         >
                           Issue
                         </button>

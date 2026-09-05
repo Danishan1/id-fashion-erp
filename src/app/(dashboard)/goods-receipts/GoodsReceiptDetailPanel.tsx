@@ -284,7 +284,6 @@ export function GoodsReceiptDetailPanel({
                     <tr className="text-left text-zinc-500">
                       <th className="py-1 pr-3 font-medium">Roll #</th>
                       <th className="py-1 pr-3 font-medium">Qty</th>
-                      <th className="py-1 pr-3 font-medium">Remaining</th>
                       <th className="py-1 pr-3 font-medium">Batch</th>
                       <th className="py-1 pr-3 font-medium">Attributes</th>
                       <th className="py-1 pr-3 font-medium">Status</th>
@@ -296,7 +295,6 @@ export function GoodsReceiptDetailPanel({
                       <tr key={roll.id} className="border-t border-zinc-100 align-top dark:border-zinc-800">
                         <td className="py-1.5 pr-3 text-zinc-700 dark:text-zinc-200">{roll.rollNumber}</td>
                         <td className="py-1.5 pr-3 text-zinc-700 dark:text-zinc-200">{roll.rollQuantity}</td>
-                        <td className="py-1.5 pr-3 text-zinc-700 dark:text-zinc-200">{roll.remainingQuantity}</td>
                         <td className="py-1.5 pr-3 text-zinc-700 dark:text-zinc-200">{roll.batchNo ?? "—"}</td>
                         <td className="py-1.5 pr-3 text-zinc-500">
                           {[roll.gsm?.name, roll.dye?.name, roll.weaveType?.name, roll.width?.name, roll.composition?.name]

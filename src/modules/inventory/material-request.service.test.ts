@@ -8,6 +8,7 @@ vi.mock("@/modules/purchasing/purchase-order.service", () => ({ createPurchaseOr
 vi.mock("@/modules/bom-mrp/mrp.service", () => ({ getMaterialRequirements: vi.fn() }));
 vi.mock("@/modules/bom-mrp/bom.repository", () => ({ BomRepository: { findByProductId: vi.fn() } }));
 vi.mock("@/modules/products/product.repository", () => ({ ProductRepository: { findMaterialById: vi.fn() } }));
+vi.mock("@/modules/sales-orders/sales-order.repository", () => ({ SalesOrderRepository: { findAnyById: vi.fn() } }));
 vi.mock("@/modules/lookups/lookup.repository", () => ({ LookupRepository: { unit: { findUnique: vi.fn() } } }));
 vi.mock("./inventory.service", () => ({ getAvailableQuantity: vi.fn(), recordInventoryTransaction: vi.fn() }));
 vi.mock("./material-request.repository", () => ({
@@ -30,10 +31,12 @@ vi.mock("./material-request.repository", () => ({
 
 const { MaterialRequestRepository, MaterialRequestItemRepository } = await import("./material-request.repository");
 const { PermissionService } = await import("@/core/rbac/PermissionService");
+const { generateDocumentNumber } = await import("@/core/numbering/DocumentNumberingService");
 const { createPurchaseOrder } = await import("@/modules/purchasing/purchase-order.service");
 const { getMaterialRequirements } = await import("@/modules/bom-mrp/mrp.service");
 const { BomRepository } = await import("@/modules/bom-mrp/bom.repository");
 const { ProductRepository } = await import("@/modules/products/product.repository");
+const { SalesOrderRepository } = await import("@/modules/sales-orders/sales-order.repository");
 const {
   computeMaterialRequestStatus,
   computeRequiresPurchaseAction,
@@ -41,6 +44,7 @@ const {
   generatePurchaseOrdersForShortfall,
   findDuplicateMaterialRequests,
   createMaterialRequestFromShortfall,
+  createMaterialRequest,
 } = await import("./material-request.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
@@ -62,6 +66,15 @@ beforeEach(() => {
   vi.mocked(createPurchaseOrder).mockReset();
   vi.mocked(getMaterialRequirements).mockReset();
   vi.mocked(BomRepository.findByProductId).mockReset();
+  // Defaults to "found" — every pre-existing createMaterialRequestFromShortfall
+  // test passes a real salesOrderId and doesn't care about this new check;
+  // only the dedicated describe block below overrides it to null.
+  vi.mocked(SalesOrderRepository.findAnyById).mockReset().mockResolvedValue({ id: "so-1" } as never);
+  vi.mocked(generateDocumentNumber).mockReset().mockResolvedValue("MR-2026-00001");
+  vi.mocked(MaterialRequestRepository.createWithLines).mockResolvedValue({ id: "mr-1" } as never);
+  vi.mocked(ProductRepository.findMaterialById)
+    .mockReset()
+    .mockResolvedValue({ id: "mat-1", styleName: "Test Material", baseUom: { id: "uom-1", baseUnitId: null, conversionFactor: 1 } } as never);
 });
 
 describe("computeMaterialRequestStatus", () => {
@@ -82,33 +95,38 @@ describe("computeMaterialRequestStatus", () => {
     expect(computeMaterialRequestStatus(lines)).toBe("PARTIALLY_FULFILLED");
   });
 
-  it("treats a line as fulfilled once active PO quantity covers the remaining gap", () => {
+  it("does NOT treat a line as fulfilled merely because active PO quantity covers the remaining gap — a PO is a commitment, not material in hand (direct user feedback, 2026-09-05)", () => {
     const lines = [{ requestedQuantity: "10", issuedQuantity: "0", purchaseOrderItems: [activePoItem("10")] }];
-    expect(computeMaterialRequestStatus(lines)).toBe("FULFILLED");
+    expect(computeMaterialRequestStatus(lines)).toBe("OPEN");
   });
 
-  it("does NOT treat a line as fulfilled when the active PO only covers part of the gap", () => {
-    // The old "any linked PO item exists" heuristic would have wrongly
-    // reported this as fulfilled — PO quantity is user-edited and no longer
-    // guaranteed to equal the shortfall.
+  it("still does not fulfill a line when the active PO only covers part of the gap", () => {
     const lines = [{ requestedQuantity: "10", issuedQuantity: "0", purchaseOrderItems: [activePoItem("4")] }];
     expect(computeMaterialRequestStatus(lines)).toBe("OPEN");
   });
 
-  it("ignores a CANCELLED purchase order's quantity when checking fulfillment", () => {
+  it("ignores PO quantity entirely (active or cancelled) when checking fulfillment — only issuedQuantity counts now", () => {
     const lines = [{ requestedQuantity: "10", issuedQuantity: "0", purchaseOrderItems: [activePoItem("10", "CANCELLED")] }];
     expect(computeMaterialRequestStatus(lines)).toBe("OPEN");
   });
 
-  it("sums multiple active PO items against the same line", () => {
+  it("does not fulfill a line from PO quantity even once issuedQuantity plus active PO quantity would cover it", () => {
     const lines = [{ requestedQuantity: "10", issuedQuantity: "2", purchaseOrderItems: [activePoItem("4"), activePoItem("4")] }];
-    expect(computeMaterialRequestStatus(lines)).toBe("FULFILLED");
+    expect(computeMaterialRequestStatus(lines)).toBe("OPEN");
   });
 
-  it("reports FULFILLED only when every line is either fully issued or fully covered", () => {
+  it("reports FULFILLED only when every line has actually been fully issued, regardless of any PO on the other line", () => {
     const lines = [
       { requestedQuantity: "10", issuedQuantity: "10", purchaseOrderItems: [] },
       { requestedQuantity: "5", issuedQuantity: "2", purchaseOrderItems: [activePoItem("3")] },
+    ];
+    expect(computeMaterialRequestStatus(lines)).toBe("PARTIALLY_FULFILLED");
+  });
+
+  it("reports FULFILLED once every line is actually fully issued from real received stock", () => {
+    const lines = [
+      { requestedQuantity: "10", issuedQuantity: "10", purchaseOrderItems: [] },
+      { requestedQuantity: "5", issuedQuantity: "5", purchaseOrderItems: [activePoItem("5")] },
     ];
     expect(computeMaterialRequestStatus(lines)).toBe("FULFILLED");
   });
@@ -380,5 +398,42 @@ describe("createMaterialRequestFromShortfall", () => {
     });
 
     expect(MaterialRequestRepository.createWithLines).toHaveBeenCalled();
+  });
+});
+
+// The manual create form's own optional Sales Order dropdown (2026-09-05) —
+// previously salesOrderId was only ever set internally by
+// createMaterialRequestFromShortfall (already company-scoped via
+// getMaterialRequirements), so this check was never reachable before.
+describe("createMaterialRequest — Sales Order link", () => {
+  const oneLine = { materialId: "mat-1", uomId: "uom-1", requestedQuantity: 5 };
+
+  it("rejects a salesOrderId that doesn't belong to this company", async () => {
+    vi.mocked(SalesOrderRepository.findAnyById).mockResolvedValue(null);
+
+    await expect(
+      createMaterialRequest(actor, { requestType: "PRODUCTION_REQUIREMENT", warehouseId: "wh-1", salesOrderId: "so-x", lines: [oneLine] } as never)
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(MaterialRequestRepository.createWithLines).not.toHaveBeenCalled();
+  });
+
+  it("persists a real salesOrderId through to the created request", async () => {
+    vi.mocked(SalesOrderRepository.findAnyById).mockResolvedValue({ id: "so-1" } as never);
+
+    await createMaterialRequest(actor, {
+      requestType: "PRODUCTION_REQUIREMENT",
+      warehouseId: "wh-1",
+      salesOrderId: "so-1",
+      lines: [oneLine],
+    } as never);
+
+    expect(MaterialRequestRepository.createWithLines).toHaveBeenCalledWith(expect.objectContaining({ salesOrderId: "so-1" }));
+  });
+
+  it("skips the Sales Order check entirely when none is supplied — the plain, order-independent case", async () => {
+    await createMaterialRequest(actor, { requestType: "PRODUCTION_REQUIREMENT", warehouseId: "wh-1", lines: [oneLine] } as never);
+
+    expect(SalesOrderRepository.findAnyById).not.toHaveBeenCalled();
+    expect(MaterialRequestRepository.createWithLines).toHaveBeenCalledWith(expect.objectContaining({ salesOrderId: null }));
   });
 });
