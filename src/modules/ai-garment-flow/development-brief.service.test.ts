@@ -35,6 +35,7 @@ vi.mock("./development-brief.repository", () => ({
     update: vi.fn(),
     recomputeRecommendations: vi.fn(),
     countByStatus: vi.fn(),
+    findById: vi.fn(),
   },
   AiGarmentDevelopmentBriefRunRepository: {
     create: vi.fn(),
@@ -138,6 +139,7 @@ beforeEach(() => {
   vi.mocked(AiGarmentDesignDirectionRepository.findByProjectId).mockReset().mockResolvedValue([] as never);
   vi.mocked(AiGarmentDesignDirectionRepository.findWithProjectOwner).mockReset();
   vi.mocked(AiGarmentDesignDirectionRepository.update).mockReset();
+  vi.mocked(AiGarmentDesignDirectionRepository.findById).mockReset();
 });
 
 describe("createDevelopmentBrief", () => {
@@ -211,14 +213,20 @@ describe("editDesignDirection", () => {
 
   it("reverts an APPROVED direction back to GENERATED when a content field is edited", async () => {
     vi.mocked(AiGarmentDesignDirectionRepository.findWithProjectOwner).mockResolvedValue(owned() as never);
+    // The row update() itself returns is a stale, pre-recompute snapshot in a
+    // real DB (isRecommendedForVisualisation still true here); findById()'s
+    // post-recompute re-fetch is the one the caller must actually get back.
+    vi.mocked(AiGarmentDesignDirectionRepository.update).mockResolvedValue({ id: "dir-1", isRecommendedForVisualisation: true } as never);
+    vi.mocked(AiGarmentDesignDirectionRepository.findById).mockResolvedValue({ id: "dir-1", isRecommendedForVisualisation: false } as never);
 
-    await editDesignDirection(actor, "dir-1", { silhouette: "Updated silhouette" });
+    const result = await editDesignDirection(actor, "dir-1", { silhouette: "Updated silhouette" });
 
     expect(AiGarmentDesignDirectionRepository.update).toHaveBeenCalledWith(
       "dir-1",
       expect.objectContaining({ silhouette: "Updated silhouette", userEdited: true, status: "GENERATED" })
     );
     expect(AiGarmentDesignDirectionRepository.recomputeRecommendations).toHaveBeenCalledWith("proj-1");
+    expect(result).toEqual({ id: "dir-1", isRecommendedForVisualisation: false });
   });
 
   it("editing only userNotes does not revert status or force userEdited", async () => {
@@ -234,18 +242,25 @@ describe("editDesignDirection", () => {
 });
 
 describe("decideDesignDirection", () => {
-  it("recomputes recommendations after every decision, including reject", async () => {
+  it("recomputes recommendations after every decision, including reject, and returns the POST-recompute row (regression: a rejected direction must never be reported back as still recommended)", async () => {
     vi.mocked(AiGarmentDesignDirectionRepository.findWithProjectOwner).mockResolvedValue({
       id: "dir-1",
       projectId: "proj-1",
       status: "GENERATED",
       project: { companyId: "co-1" },
     } as never);
+    // update() itself returns whatever the row looked like before this
+    // decision's own recomputeRecommendations() call ran — isRecommendedFor-
+    // Visualisation still true here is exactly the stale value a real DB
+    // update() would hand back; findById()'s later re-fetch reflects reality.
+    vi.mocked(AiGarmentDesignDirectionRepository.update).mockResolvedValue({ id: "dir-1", status: "REJECTED", isRecommendedForVisualisation: true } as never);
+    vi.mocked(AiGarmentDesignDirectionRepository.findById).mockResolvedValue({ id: "dir-1", status: "REJECTED", isRecommendedForVisualisation: false } as never);
 
-    await decideDesignDirection(actor, "dir-1", { decision: "REJECT" });
+    const result = await decideDesignDirection(actor, "dir-1", { decision: "REJECT" });
 
     expect(AiGarmentDesignDirectionRepository.update).toHaveBeenCalledWith("dir-1", { status: "REJECTED" });
     expect(AiGarmentDesignDirectionRepository.recomputeRecommendations).toHaveBeenCalledWith("proj-1");
+    expect(result.isRecommendedForVisualisation).toBe(false);
   });
 });
 
@@ -266,8 +281,12 @@ describe("regenerateDesignDirection", () => {
       contextSnapshotJson: {},
     } as never);
     vi.mocked(aiRegenerate).mockResolvedValue({ direction: fakeDirection, model: "claude-sonnet-5", rawResponse: {} } as never);
+    // update() itself returns whatever the row looked like before this
+    // regeneration's own recomputeRecommendations() call ran; findById()'s
+    // later re-fetch is the one that must actually come back to the caller.
+    vi.mocked(AiGarmentDesignDirectionRepository.findById).mockResolvedValue({ id: "dir-1", designDirectionName: "Direction 1", isRecommendedForVisualisation: true } as never);
 
-    await regenerateDesignDirection(actor, "dir-1");
+    const result = await regenerateDesignDirection(actor, "dir-1");
 
     expect(AiGarmentDesignDirectionRepository.update).toHaveBeenCalledWith(
       "dir-1",
@@ -280,6 +299,7 @@ describe("regenerateDesignDirection", () => {
       })
     );
     expect(AiGarmentDesignDirectionRepository.recomputeRecommendations).toHaveBeenCalledWith("proj-1");
+    expect(result).toEqual({ id: "dir-1", designDirectionName: "Direction 1", isRecommendedForVisualisation: true });
   });
 
   it("maps a regeneration failure without persisting a partial/fabricated result", async () => {

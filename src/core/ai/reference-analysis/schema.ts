@@ -15,6 +15,27 @@ const observationSchema = z.object({
 });
 export type ObservationOutput = z.infer<typeof observationSchema>;
 
+/**
+ * Deliberately FLAT — every field that was originally grouped under a nested
+ * sub-object (sleeve.*, fabricObservations.*, printPattern.*,
+ * constructionComplexity.*) is now its own top-level key. This flattening
+ * does NOT by itself fix Anthropic's "compiled grammar is too large" 400 —
+ * confirmed live, twice: the request is still rejected in `strict: true`
+ * mode even with this flat shape, since that limit scales with the schema's
+ * total node count (36 observation objects × their fields), not nesting
+ * depth. `strict: false` is the actual fix in place today (see anthropic.ts's
+ * `requestStructuredVisionOutput()` comment) — the Zod `validate()` +
+ * one-shot corrective retry is the real safety net for shape correctness.
+ * Flattening is still kept, and still worth doing, for an independent
+ * reason: under `strict: false` the earlier NESTED shape had the model
+ * routinely return a plain string where a nested "sleeve" object was
+ * required (confirmed live: "sleeve: Invalid input: expected object,
+ * received string") — flattening removes that specific failure mode by
+ * removing the nested object it was about.
+ * `readAtPath()`/`flattenToObservations()` below already walk a path array
+ * of any length generically, so FEATURE_REGISTRY's own `path` entries are
+ * the only other place this rename needed to happen (see feature-registry.ts).
+ */
 export const referenceAnalysisResponseSchema = z.object({
   garmentCategory: observationSchema,
   silhouette: observationSchema,
@@ -22,12 +43,10 @@ export const referenceAnalysisResponseSchema = z.object({
   fit: observationSchema,
   neckline: observationSchema,
   collar: observationSchema,
-  sleeve: z.object({
-    type: observationSchema,
-    length: observationSchema,
-    volume: observationSchema,
-    cuff: observationSchema,
-  }),
+  sleeveType: observationSchema,
+  sleeveLength: observationSchema,
+  sleeveVolume: observationSchema,
+  sleeveCuff: observationSchema,
   shoulderConstruction: observationSchema,
   frontConstruction: observationSchema,
   backConstruction: observationSchema,
@@ -43,25 +62,19 @@ export const referenceAnalysisResponseSchema = z.object({
   hem: observationSchema,
   trims: observationSchema,
   decorativeDetails: observationSchema,
-  fabricObservations: z.object({
-    weight: observationSchema,
-    drape: observationSchema,
-    texture: observationSchema,
-    stretchAppearance: observationSchema,
-    transparency: observationSchema,
-    surfaceCharacter: observationSchema,
-  }),
-  printPattern: z.object({
-    type: observationSchema,
-    scale: observationSchema,
-    direction: observationSchema,
-    placement: observationSchema,
-    repeatAppearance: observationSchema,
-  }),
-  constructionComplexity: z.object({
-    level: z.enum(COMPLEXITY_VALUES),
-    explanation: z.string().min(1),
-  }),
+  fabricWeight: observationSchema,
+  fabricDrape: observationSchema,
+  fabricTexture: observationSchema,
+  fabricStretchAppearance: observationSchema,
+  fabricTransparency: observationSchema,
+  fabricSurfaceCharacter: observationSchema,
+  printPatternType: observationSchema,
+  printPatternScale: observationSchema,
+  printPatternDirection: observationSchema,
+  printPatternPlacement: observationSchema,
+  printPatternRepeatAppearance: observationSchema,
+  constructionComplexityLevel: z.enum(COMPLEXITY_VALUES),
+  constructionComplexityExplanation: z.string().min(1),
   manufacturingChallenges: z.array(z.string()),
   keyDesignLanguageFeatures: z.array(z.string()),
   featuresForFurtherDevelopment: z.array(z.string()),

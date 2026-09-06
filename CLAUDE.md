@@ -53,7 +53,7 @@ Update the status column and add a short dated note under the relevant phase sec
 
 **CRM/Marketing enhancement pass, on top of the migration above — all 14 planned items complete (2026-08-24)** — tracked in full in [CRM_MARKETING_ENHANCEMENT_AUDIT_AND_PLAN.md](CRM_MARKETING_ENHANCEMENT_AUDIT_AND_PLAN.md): Deal→Customer conversion, Customer 360, CRM Kanban, CRM Dashboard, Follow-up Management/Notifications, configurable Lead Priority, Campaign Approval workflow, Marketing Dashboard trend charts, Channel Performance report, Customer Segmentation, Marketing Automation triggers, CSV Import (Leads/Deals/Campaign Daily Metrics), Meta/Google Ads Integration, and an AI-readiness audit of every aggregation function. The one open thread: Meta/Google Ads Integration's OAuth/token-exchange/sync code is built and unit-tested but has **no real credentials to verify the live external API calls against yet** — see that file's own Item 13 note before assuming it's been exercised against the real Meta/Google APIs, and before touching `AdAccountConnection`/`AdCampaignLink`/`ImportBatch`/`CrmSettings` or the `src/modules/marketing/ad-integrations/`/`src/modules/import/` modules.
 
-**AI Garment Flow (separate initiative, not part of the 11 phases above) — foundation + Process 1 (Reference Garment Analysis) complete, live browser verification still pending (2026-09-06)** — a new product-development workflow module (reference/fabric upload → AI-assisted design → costing → sampling), full detail in its own two dated sections further down this file. The existing `Product` model remains the single Style Master (not duplicated); a new `AiGarmentProject` header is a pre-Style record that manually graduates into a real `Product` via `convertProjectToStyle()`, mirroring Sampling's own `convertSampleToStyle()`. BOM/Costing steps require this graduation and then reuse the existing BOM/MRP and Sampling-costing modules — no parallel schema. Process 1 (Reference Garment Analysis) is a real Anthropic vision integration (`@anthropic-ai/sdk`, model names from env config) analysing an uploaded reference image into 36 individually-tracked, editable, approvable observations — see that section before touching `AiGarmentReferenceAnalysis`/`AiGarmentReferenceObservation`/`AiGarmentReferenceAnalysisRun`, `src/core/ai/reference-analysis/`, or `src/core/ai/providers/anthropic.ts`. Every other AI Garment Flow step still returns "AI integration not connected." (`src/core/ai/AIService.ts`'s `NullAIProvider`) — only Reference Analysis has a real provider wired up so far.
+**AI Garment Flow (separate initiative, not part of the 11 phases above) — foundation + Process 1 (Reference Garment Analysis) + Process 2 (Commercial Design Development Brief) complete and live-verified against the real Anthropic API (2026-09-06)** — a new product-development workflow module (reference/fabric upload → AI-assisted design → costing → sampling), full detail in its own dated sections further down this file. The existing `Product` model remains the single Style Master (not duplicated); a new `AiGarmentProject` header is a pre-Style record that manually graduates into a real `Product` via `convertProjectToStyle()`, mirroring Sampling's own `convertSampleToStyle()`. BOM/Costing steps require this graduation and then reuse the existing BOM/MRP and Sampling-costing modules — no parallel schema. Process 1 (Reference Garment Analysis) is a real Anthropic vision integration analysing an uploaded reference image into 36 individually-tracked, editable, approvable observations. Process 2 (Commercial Design Development Brief) is a real Anthropic text integration that, once that analysis is approved, generates 3/6/9 differentiated commercial `AiGarmentDesignDirection` records (each individually editable/approvable/rejectable/regeneratable, each scored 0-100) — see those sections before touching `AiGarmentReferenceAnalysis`/`AiGarmentReferenceObservation`/`AiGarmentReferenceAnalysisRun`/`AiGarmentDevelopmentBriefRun`/`AiGarmentDesignDirection`, `src/core/ai/reference-analysis/`, `src/core/ai/development-brief/`, or `src/core/ai/providers/anthropic.ts`. Every step past Process 2 (Generate Variations onward) still returns "AI integration not connected." (`AiPlaceholderButton` in the workflow panel) — only Reference Analysis and Development Brief have a real provider wired up so far. `src/core/ai/AIService.ts`'s `NullAIProvider`/`getAIService()` are dead code, unreferenced by either real process — don't wire a future process through that file, follow the Process 1/2 file-layout pattern (`schema.ts`/`prompt.ts`/`generate.ts` or `analyze.ts`) instead.
 
 ### Phase 2 notes (2026-08-16)
 - Next.js 16 scaffold, Prisma 7 schema (Organization/Auth + Masters + System, 24 models), NextAuth v5 Credentials auth (JWT sessions), RBAC `PermissionService`, document numbering, audit logging, local file storage, `BusinessRuleError`, sidebar/topbar shell, login page, DB-backed dashboard placeholder, and full seed data (roles/permissions/Super Admin) are all in place and verified end-to-end in the browser (login → dashboard showing real DB counts).
@@ -3671,9 +3671,9 @@ in this module.
 ## AI Garment Flow — Process 1: Reference Garment Analysis (2026-09-06)
 
 First real AI process built on the foundation above, inside the existing Start From Reference workflow's
-UPLOAD_REFERENCE and REFERENCE_ANALYSIS steps only (per explicit scope: no Development Brief, no Process 2).
-The brief again assumed Supabase; per the same "reuse the existing stack" instruction as the foundation
-phase, this uses the real stack (Prisma/Postgres, the existing local-disk `Attachment`/`AttachmentService`,
+UPLOAD_REFERENCE and REFERENCE_ANALYSIS steps (Process 2, Development Brief, followed directly after — see
+its own dated section below). The brief again assumed Supabase; per the same "reuse the existing stack"
+instruction as the foundation phase, this uses the real stack (Prisma/Postgres, the existing local-disk `Attachment`/`AttachmentService`,
 NextAuth-based company-scoping in place of RLS) — flagged clearly, not silently substituted.
 
 **Real Anthropic integration, not a placeholder**: `@anthropic-ai/sdk` added (pinned to an exact version,
@@ -3771,9 +3771,198 @@ confirmed directly against the installed SDK's own `Model` type union that `clau
   (`ANTHROPIC_API_KEY` is empty in `.env`), so the actual external API call itself — steps like "confirm
   structured JSON is returned," "confirm the Anthropic request works" — could not be executed for real and
   are honestly reported as NOT TESTED, not claimed as passing.
-- **Not built this phase**: Development Brief and everything past it (explicitly out of scope), any garment
-  image generation (explicitly out of scope for Process 1), a background job queue for the analysis run
-  (the in-progress guard's 3-minute staleness window is the accepted, documented trade-off in its absence).
+- **Not built this phase**: any garment image generation (explicitly out of scope for Process 1), a
+  background job queue for the analysis run (the in-progress guard's 3-minute staleness window is the
+  accepted, documented trade-off in its absence). Development Brief (Process 2) followed directly after —
+  see its own dated section below.
+
+## AI Garment Flow — Process 2: Commercial Design Development Brief (2026-09-06)
+
+Builds directly on Process 1 above — starts only once the Reference Garment Analysis is `APPROVED`. Found
+already fully implemented (schema, migration, AI prompt module, service/repository, routes, UI, unit tests)
+when this session picked the task up — this section documents what was verified, the two real bugs found
+and fixed, and brings the two stale "not built" claims from the sections above back in line with reality.
+
+**AI layer** (`src/core/ai/development-brief/{schema,prompt,generate}.ts`) follows Process 1's exact 3-file
+hidden-prompt pattern (`schema.ts`/`prompt.ts` own zero Prisma/SDK imports; `generate.ts` is the one entry
+point, zero DB access). `PROMPT_VERSION = "development-brief-v1"`. The hidden system prompt
+(`buildSystemPrompt()`) is verbatim per spec: senior product-development-director framing, "the objective is
+NOT to reproduce the reference garment," the full 24-field-per-direction list, `Do not create images` /
+`Do not invent exact garment consumption` / `Do not invent exact manufacturing costs`, and the 6-category
+0-10 scoring + 0-100 overall score. Forced via Anthropic's `tool_choice`+`strict: true` (never free-text
+JSON), with exactly one corrective retry on a validation failure and never a fabricated/partial result on
+final failure — same `requestStructuredTextOutput()` machinery Process 1's vision call already proved.
+`AiGarmentDevelopmentBriefRun` is the append-only attempt log (mirrors `AiGarmentReferenceAnalysisRun`); a
+run stuck `IN_PROGRESS` past 5 minutes (longer than Process 1's 3 — a 9-direction batch takes longer) is
+treated as abandoned, not a permanent lock.
+
+**Schema**: `AiGarmentDesignDirection` — one row per direction, mutated in place (not append-only), 25
+content columns + 6 category scores + `overallScore` + `isRecommendedForVisualisation`. Recommendation is
+**always derived, never hand-set**: `recomputeRecommendations()` (`development-brief.repository.ts`) runs in
+one transaction, flags the top ~30% (min 1) by `overallScore` among every non-REJECTED direction, and is
+re-run after every create/edit/decide/regenerate — a REJECTED direction can never stay flagged recommended,
+and approving/rejecting one changes what "top 30%" means for the rest.
+
+**Two real bugs found via live testing against the real Anthropic API + real Postgres (not just unit tests),
+both fixed**:
+1. **Workflow-step gate bypass** (`ai-garment-project.service.ts`'s `saveWorkflowStep`) — both Process 2
+   gates ("Development Brief needs an approved analysis," "leaving Development Brief needs ≥1 approved
+   direction") were keyed on an exact `stepKey` match (`=== "DEVELOPMENT_BRIEF"`, or
+   `currentStepKey === "DEVELOPMENT_BRIEF" && stepKey === "GENERATE_VARIATIONS"`). The stepper lets a user
+   click any step directly, not just the immediate next one — jumping straight from `REFERENCE_ANALYSIS` to
+   e.g. `SELECT_DESIGN` skipped both gates entirely, since neither exact match ever fired. Fixed by keying
+   both gates on the **target step's position** in `stepsForSourceType()`'s sequence instead
+   (`targetIndex >= developmentBriefIndex` for the analysis-approved gate, `targetIndex >
+   developmentBriefIndex` for the approved-direction gate) — closes the bypass regardless of the current
+   step or how many steps are skipped at once. 5 new regression tests in `ai-garment-project.service.test.ts`
+   (the two mocked repositories this fix newly depends on, `AiGarmentReferenceAnalysisRepository`/
+   `AiGarmentDesignDirectionRepository`, had no mocks in this test file at all before — added them).
+2. **Stale `isRecommendedForVisualisation` in the return value of `editDesignDirection`/
+   `decideDesignDirection`/`regenerateDesignDirection`** — all three call `AiGarmentDesignDirectionRepository
+   .update()` then separately `recomputeRecommendations()`, but were returning `update()`'s own result
+   directly — which reflects the row's state **before** the recompute, not after. Caught live, not by a unit
+   test: rejecting a direction that had been flagged recommended returned an object still claiming
+   `isRecommendedForVisualisation: true`, even though the database itself was correctly updated moments
+   later by the recompute. The real UI is unaffected (`DesignDirectionCard.tsx` discards the POST response
+   body and always does a full reload via `onChanged()`), but the service-level bug is real for any other
+   caller and is exactly the "never trust a value computed before a subsequent side effect" class of bug this
+   project has hit and fixed several times before (Sampling's Hold/Resume, Purchasing's cancel-from-`ON_HOLD`).
+   Fixed by adding `AiGarmentDesignDirectionRepository.findById()` and re-fetching through it after every
+   recompute in all three functions, returning the genuinely-current row. 3 regression tests updated in
+   `development-brief.service.test.ts` to assert the returned value reflects the post-recompute state, not
+   the stale pre-recompute one.
+
+**Verified live end-to-end against the real Anthropic API and real Postgres**, exactly per the requested test
+plan: created a project, confirmed both gates block with no approved analysis, seeded a realistic APPROVED
+Reference Analysis, confirmed both gates now block on zero approved directions (including the bypass paths
+above), called `createDevelopmentBrief` for 6 directions/`BALANCED` — the real model returned 6 genuinely
+differentiated directions with a real classification spread (2 `SAFE_COMMERCIAL`/2 `BALANCED`/2
+`FASHION_FORWARD` on one run), correct `LOW`/`MEDIUM`/`HIGH` complexity ratings, every required field
+populated with real non-placeholder content, and the top-scored direction correctly flagged recommended —
+edited one direction's silhouette (confirmed `userEdited`/status-reset to `GENERATED`, confirmed the
+AI-original value is preserved untouched in `aiRawJson` for audit), rejected one (confirmed it lost the
+recommended flag), approved three, reloaded via a fresh `listDesignDirections` call and confirmed every
+edit/decision survived the round-trip, then confirmed the `GENERATE_VARIATIONS` gate now passes. Re-ran the
+same scenario a second time after the two fixes above to reconfirm both are actually closed (13/13 checks
+passed on the second run, including the specific rejected-direction-recommendation-flag check that failed
+before the fix). `npx tsc --noEmit` (clean apart from the documented, pre-existing `.next/dev/types` stale-
+cache artifact from another session's concurrently-running dev server — not this module's code), `npx
+eslint` (clean on every touched file), and `npx vitest run` (1005/1005, no regressions) all clean.
+
+**Not built this phase** (explicitly out of scope per the spec): image generation for any design direction
+(the spec's own "Do not generate images yet. Stop after Process 2 works." instruction) — that's Process 3,
+"Generate Variations," the very next step this workflow already points at.
+
+## AI Garment Flow — Process 1 bugfix: real 502 on reference analysis, root-caused and fixed (2026-09-06)
+
+A user reported a live `502` calling `POST .../reference-analysis/run` against a real project via curl — the
+first genuine live exercise of Process 1's actual Anthropic vision call against a real uploaded image (the
+verification note in that section above had correctly flagged the external call itself as NOT TESTED at the
+time). Root-caused via a standalone diagnostic script (`AI_DEBUG=1` env flag added to
+`requestStructuredToolCall()`, logging the raw SDK error and both attempts' raw tool input on a validation
+failure) run directly against the real project, not guessed from the stack trace.
+
+- **Root cause**: the original `referenceAnalysisResponseSchema`/`buildToolInputSchema()` grouped 15 of the
+  36 observation fields under 4 nested sub-objects (`sleeve.*`, `fabricObservations.*`, `printPattern.*`,
+  `constructionComplexity.*`). Anthropic's `strict: true` tool mode rejected the resulting tool schema
+  outright with `400 "The compiled grammar is too large... Simplify your tool schemas or reduce the number
+  of strict tools."` — a real, confirmed-live size/complexity limit on the constrained-decoding grammar
+  compiler, not a bug in this codebase's request-building.
+- **First fix attempt, confirmed live to make things worse**: flattening the 4 nested groups into flat
+  top-level keys (`schema.ts`/`feature-registry.ts`/`prompt.ts`/`reference-analysis.service.ts`) did NOT
+  remove the 400 — confirmed by re-running the same diagnostic after flattening and getting the identical
+  "compiled grammar is too large" rejection. The limit scales with the schema's total node count (36
+  observation objects × their fields), not nesting depth, so flattening alone was never going to fix it.
+  Disabling `strict` on the *original nested* schema was tried even earlier and made things worse in a
+  different way: without the server-side shape guarantee, the model routinely returned a plain string where
+  a nested object was required (confirmed live: `"sleeve: Invalid input: expected object, received string"`).
+- **Actual fix**: `requestStructuredVisionOutput()` (`src/core/ai/providers/anthropic.ts`) now calls with
+  `strict: false` — the only viable option for this schema's real size — combined with the flattened schema
+  from the first attempt, which is still kept and still worth it: it removes the specific nested-object
+  wrong-shape failure mode above, so `strict: false`'s only remaining safety net (the existing Zod
+  `validate()` + one-shot corrective retry already built into `requestStructuredToolCall()`) has less to
+  catch. Also bumped `VISION_MAX_OUTPUT_TOKENS` 8000 → 16000 (confirmed live: a real 36-field vision analysis
+  with rich per-field prose was genuinely truncated mid-schema at 8000, a second, independent contributor to
+  the original failure — matches Process 2's own already-proven-safe bound for a comparably large structured
+  response).
+- **Verified live end-to-end against the real project** (`4b0e71c4-9676-459d-b4b2-0a9bd7587bda`) after the
+  fix: the first attempt still occasionally returns a partial tool call (confirmed live: one real run
+  returned only `garmentCategory` before stopping) — the existing one-shot corrective retry recovered it on
+  the very next attempt, producing a `SUCCESS` run with all 36 observations populated and a real, coherent
+  `designDnaSummary`. Confirmed via a direct DB query — analysis status `AI_ANALYSED`, `observations.length
+  === 36` — not just a 200 status code.
+- Fixed a stale unit-test mock in `reference-analysis.service.test.ts` that still used the old nested
+  response shape (`sleeve: {...}`, `fabricObservations: {...}`, etc.) — updated to the flat shape the schema
+  now actually produces; this was the one thing the flattening change (done before this bug report, already
+  in the working tree) had left unreconciled with its own test.
+- `npx tsc --noEmit`, `npx eslint .`, and `npx vitest run` (1019/1019) all clean.
+
+## AI Garment Flow — Process 3: Garment Design Visual Generation (2026-09-06)
+
+Builds on Process 2 — starts once at least one `AiGarmentDesignDirection` is `APPROVED`. Per the spec, uses
+only APPROVED design directions and builds a modular, provider-agnostic image-generation service — no
+provider's SDK is imported anywhere except one file under `providers/`, so a second provider (e.g. "The New
+Black AI") can be added later with zero caller changes.
+
+- **`src/core/ai/image-generation/`**: `types.ts` (the `ImageGenerationProvider` interface,
+  `ImageGenerationServiceError` + 9-category `ImageGenErrorCategory` covering every error class the spec
+  named — API unavailable, credits exhausted, generation failed, unsafe/unsupported input, timeout, invalid
+  image response — plus `MISSING_CONFIG`/`RATE_LIMIT`/`UNSUPPORTED_OPERATION`), `config.ts`
+  (`getOpenAiImageConfig()`), `providers/openai.ts` (the sole `openai` npm package importer, pinned to an
+  exact version `7.10.0` matching this project's own `next-auth`-pinning precedent), `factory.ts`
+  (`getImageGenerationProvider()`), `prompt.ts` (`buildImageGenerationPrompt()`/`buildVariationPrompt()` — the
+  exact, verbatim hidden template with placeholders for category/silhouette/fit/length/neckline/collar/
+  sleeve/shoulder/front/back/closure/pocket/waist/hem/feature/fabric/customer/market/season/
+  commercial_position, built from the approved design direction's own structured fields — never shown to end
+  users, never free-typed).
+- **OpenAI Images API specifics, confirmed against the installed SDK**: `gpt-image-1` always returns
+  `b64_json` (never a URL) — chosen specifically to avoid a "URL expired before we saved it" failure mode,
+  since every generated image is immediately persisted through the existing `AttachmentService`/
+  `FileStorage`, never kept as an external URL. Error classes (`APIError`/`APIConnectionError`/
+  `APIConnectionTimeoutError`/`AuthenticationError`/`PermissionDeniedError`/`RateLimitError`/
+  `BadRequestError`) are top-level named exports from `"openai"`, not static members of the `OpenAI` class
+  (a real distinction from `@anthropic-ai/sdk`'s own convention). The real exhausted-credits shape, confirmed
+  live against a real zero-balance account: `RateLimitError`, `status: 429`, `err.type ===
+  "insufficient_quota"`, `err.code === "credit_balance_exhausted"` — `mapSdkError()` checks both fields.
+- **Schema** (migration `20260906160000_add_ai_garment_visual_generation`): `AiGarmentImageGenerationRun`
+  (the run/audit-log row — created BEFORE the provider is even resolved, matching Process 1/2's own run-log
+  discipline exactly, so a `MISSING_CONFIG` failure from a missing API key gets logged as a `FAILED` run like
+  any other provider error, not silently skipped) and `AiGarmentGeneratedImage` (Generation ID/Prompt
+  version/Provider/Date/Image attachment/Parent Design Direction/decision/user notes, `decision` enum
+  `PENDING/SELECTED/REJECTED`). Every "Regenerate"/"Create Variation" inserts brand-new rows — nothing is
+  ever overwritten except `decision`/`userNotes` via explicit Select/Reject actions, giving full version
+  history for free. Style Master association is derived at read time (`image → project →
+  project.productId`), never a stored FK, since a project may not have graduated to a real Style yet at
+  generation time — the same "derive, don't duplicate" discipline used throughout this codebase.
+- **`visual-generation.service.ts`**: `generateVisuals()` (1/3/4 images per request, per the spec),
+  `createVariation()` (image-to-image off one existing generated image), `decideImage()` (Select requires an
+  explicit `confirmed: true` flag validated server-side, matching the spec's "require confirmation" —
+  Reject does not, matching this project's established Approve/Reject asymmetry), `listGeneratedImages()`.
+  `runGeneration()` is the shared helper both `generateVisuals()`/`createVariation()` use — creates the run
+  row using env-derived provider/model string constants *before* resolving the actual provider instance, so
+  a `MISSING_CONFIG` throw from `getImageGenerationProvider()` still gets logged; the real provider call and
+  every image-row insert happen inside the same try/catch that calls `markFailed()` on any error.
+- **UI**: `VisualGenerationPanel.tsx` — per approved design direction, shows Name/Commercial Score/Brief
+  Summary + a "GENERATE VISUAL" button with a 1/3/4-image count selector; each generated image shows
+  Select/Reject/Regenerate/Create Variation actions and a Compare view; Select opens a confirmation dialog
+  before committing (never a silent single click). Wired into `AiGarmentProjectWorkflowPanel.tsx`'s
+  `GENERATE_VARIATIONS` step (split apart from the placeholder `GENERATE_DESIGNS` branch it previously
+  shared).
+- **13 new unit tests** (`visual-generation.service.test.ts`) covering the error-mapping table, the
+  run-created-before-provider-resolved ordering, the confirmed-Select requirement, and never-overwrite
+  version history. 1019/1019 tests project-wide, `npx tsc --noEmit` and `npx eslint .` clean.
+- **Live end-to-end verification blocked, not a code defect**: the real OpenAI account configured in this
+  environment returned `credit_balance_exhausted` on every attempted generation — confirmed via
+  `mapSdkError()`'s own `CREDITS_EXHAUSTED` path returning the correct user-facing message, and via a run row
+  correctly logged `FAILED`/`CREDITS_EXHAUSTED` in the real dev DB. The explicit test requirement (generate
+  for at least two design directions, select one, confirm it's attached correctly to the Style Master) could
+  not be completed for real as a result — this needs the user to add billing credits at
+  `https://platform.openai.com/settings/organization/billing/` before it can be exercised live. All code-side
+  verification (unit tests, schema, error mapping, run-log discipline) is complete and correct; only the real
+  external API call and the resulting live walkthrough remain unverified.
+- **Not built this phase**: any second image-generation provider (the architecture supports adding one with
+  zero caller changes, none was requested this phase), controlled feature changes past visual generation —
+  per the spec's own explicit "Do not yet implement controlled feature changes. Stop." instruction.
 
 ## Recommended Stack
 

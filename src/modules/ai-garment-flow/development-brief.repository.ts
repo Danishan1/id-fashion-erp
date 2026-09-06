@@ -60,4 +60,7 @@ export const AiGarmentDesignDirectionRepository = {
     }),
 
   countByStatus: (projectId: string, status: "APPROVED") => prisma.aiGarmentDesignDirection.count({ where: { projectId, status } }),
+
+  /** A plain re-fetch by id — used to return the truly current row after a call that mutates it and then separately recomputes isRecommendedForVisualisation across the project, so the caller never returns a row whose flag predates that recompute. */
+  findById: (id: string) => prisma.aiGarmentDesignDirection.findUnique({ where: { id } }),
 };

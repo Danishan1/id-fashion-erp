@@ -128,6 +128,8 @@ model Company {
   aiGarmentReferenceAnalysisRuns AiGarmentReferenceAnalysisRun[]
   aiGarmentDevelopmentBriefRuns  AiGarmentDevelopmentBriefRun[]
   aiGarmentDesignDirections      AiGarmentDesignDirection[]
+  aiGarmentImageGenerationRuns   AiGarmentImageGenerationRun[]
+  aiGarmentGeneratedImages       AiGarmentGeneratedImage[]
 
   @@map("companies")
 }
@@ -303,6 +305,8 @@ model User {
   aiGarmentReferenceAnalysisRunsCreated  AiGarmentReferenceAnalysisRun[] @relation("AiGarmentReferenceAnalysisRunCreatedBy")
   aiGarmentDevelopmentBriefRunsCreated   AiGarmentDevelopmentBriefRun[]  @relation("AiGarmentDevelopmentBriefRunCreatedBy")
   aiGarmentDesignDirectionsCreated       AiGarmentDesignDirection[]      @relation("AiGarmentDesignDirectionCreatedBy")
+  aiGarmentImageGenerationRunsCreated    AiGarmentImageGenerationRun[]   @relation("AiGarmentImageGenerationRunCreatedBy")
+  aiGarmentGeneratedImagesCreated        AiGarmentGeneratedImage[]       @relation("AiGarmentGeneratedImageCreatedBy")
 
   @@map("users")
 }
@@ -5229,6 +5233,8 @@ model AiGarmentProject {
   referenceAnalysisRuns AiGarmentReferenceAnalysisRun[]
   developmentBriefRuns  AiGarmentDevelopmentBriefRun[]
   designDirections      AiGarmentDesignDirection[]
+  imageGenerationRuns   AiGarmentImageGenerationRun[]
+  generatedImages       AiGarmentGeneratedImage[]
 
   @@unique([companyId, projectNumber])
   @@index([companyId, status])
@@ -5581,13 +5587,103 @@ model AiGarmentDesignDirection {
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
-  company             Company                      @relation(fields: [companyId], references: [id])
-  project             AiGarmentProject             @relation(fields: [projectId], references: [id])
-  developmentBriefRun AiGarmentDevelopmentBriefRun @relation(fields: [developmentBriefRunId], references: [id])
-  createdBy           User                         @relation("AiGarmentDesignDirectionCreatedBy", fields: [createdByUserId], references: [id])
+  company             Company                       @relation(fields: [companyId], references: [id])
+  project             AiGarmentProject              @relation(fields: [projectId], references: [id])
+  developmentBriefRun AiGarmentDevelopmentBriefRun  @relation(fields: [developmentBriefRunId], references: [id])
+  createdBy           User                          @relation("AiGarmentDesignDirectionCreatedBy", fields: [createdByUserId], references: [id])
+  imageGenerationRuns AiGarmentImageGenerationRun[]
+  generatedImages     AiGarmentGeneratedImage[]
 
   @@index([projectId, status])
   @@map("ai_garment_design_directions")
+}
+
+// ─────────────────────────────────────────────────────────────
+// AI Garment Flow — Process 3: Garment Design Visual Generation (2026-09-06)
+//
+// Provider-agnostic by construction: neither table stores anything about a
+// specific vendor's request/response shape (that lives entirely behind
+// src/core/ai/image-generation/'s ImageGenerationProvider interface) — only
+// `provider`/`model` strings for audit, matching AiGarmentDevelopmentBriefRun's
+// own precedent. Reuses AiGarmentAnalysisRunStatus (IN_PROGRESS/SUCCESS/FAILED)
+// a third time — same generic AI-call-lifecycle concept, no new enum needed.
+//
+// Never overwritten, never deleted: a "Regenerate" or "Create Variation" is
+// always a new AiGarmentImageGenerationRun + new AiGarmentGeneratedImage rows,
+// never an update to an existing image's own imageAttachmentId — full version
+// history is simply every row that ever existed for a design direction.
+// ─────────────────────────────────────────────────────────────
+
+enum AiGarmentGeneratedImageDecision {
+  PENDING
+  SELECTED
+  REJECTED
+}
+
+// One row per "Generate Visual" click (a batch of 1/3/4 images for one design
+// direction) or per "Create Variation" (image-to-image, parentGeneratedImageId
+// set) — mirrors AiGarmentDevelopmentBriefRun's own run-log shape exactly.
+model AiGarmentImageGenerationRun {
+  id                     String                     @id @default(uuid()) @db.Uuid
+  companyId              String                     @map("company_id") @db.Uuid
+  projectId              String                     @map("project_id") @db.Uuid
+  designDirectionId      String                     @map("design_direction_id") @db.Uuid
+  provider               String
+  model                  String
+  promptVersion          String                     @map("prompt_version")
+  // The fully-resolved prompt text actually sent -- kept for audit/
+  // reproducibility, the same reasoning AiGarmentReferenceAnalysis keeps the
+  // complete raw AI response for.
+  promptText             String                     @map("prompt_text")
+  requestedImageCount    Int                        @map("requested_image_count")
+  // Set only for "Create Variation" -- the specific prior generated image
+  // this run was an image-to-image variation OF. Null for an ordinary
+  // Generate Visual / Regenerate batch.
+  parentGeneratedImageId String?                    @map("parent_generated_image_id") @db.Uuid
+  status                 AiGarmentAnalysisRunStatus @default(IN_PROGRESS)
+  errorCategory          String?                    @map("error_category")
+  errorMessage           String?                    @map("error_message")
+  requestedAt            DateTime                   @default(now()) @map("requested_at")
+  completedAt            DateTime?                  @map("completed_at")
+  createdByUserId        String                     @map("created_by_user_id") @db.Uuid
+
+  company         Company                   @relation(fields: [companyId], references: [id])
+  project         AiGarmentProject          @relation(fields: [projectId], references: [id])
+  designDirection AiGarmentDesignDirection  @relation(fields: [designDirectionId], references: [id])
+  createdBy       User                      @relation("AiGarmentImageGenerationRunCreatedBy", fields: [createdByUserId], references: [id])
+  images          AiGarmentGeneratedImage[]
+
+  @@index([projectId, designDirectionId, status])
+  @@map("ai_garment_image_generation_runs")
+}
+
+model AiGarmentGeneratedImage {
+  id                String                          @id @default(uuid()) @db.Uuid
+  companyId         String                          @map("company_id") @db.Uuid
+  projectId         String                          @map("project_id") @db.Uuid
+  designDirectionId String                          @map("design_direction_id") @db.Uuid
+  generationRunId   String                          @map("generation_run_id") @db.Uuid
+  promptVersion     String                          @map("prompt_version")
+  provider          String
+  model             String
+  // Soft reference to Attachment.id -- no hard FK, same convention as
+  // AiGarmentProject.referenceImageAttachmentId / AiGarmentDesignOption.imageAttachmentId.
+  imageAttachmentId String                          @map("image_attachment_id") @db.Uuid
+  decision          AiGarmentGeneratedImageDecision @default(PENDING)
+  userNotes         String?                         @map("user_notes")
+  createdByUserId   String                          @map("created_by_user_id") @db.Uuid
+  createdAt         DateTime                        @default(now()) @map("created_at")
+  updatedAt         DateTime                        @updatedAt @map("updated_at")
+
+  company         Company                     @relation(fields: [companyId], references: [id])
+  project         AiGarmentProject            @relation(fields: [projectId], references: [id])
+  designDirection AiGarmentDesignDirection    @relation(fields: [designDirectionId], references: [id])
+  generationRun   AiGarmentImageGenerationRun @relation(fields: [generationRunId], references: [id])
+  createdBy       User                        @relation("AiGarmentGeneratedImageCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@index([projectId, designDirectionId])
+  @@index([designDirectionId, decision])
+  @@map("ai_garment_generated_images")
 }
 
 // ─────────────────────────────────────────────────────────────

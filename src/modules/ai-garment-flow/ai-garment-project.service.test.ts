@@ -54,11 +54,19 @@ vi.mock("./ai-garment-project.repository", () => ({
     selectExclusive: vi.fn(),
   },
 }));
+vi.mock("./reference-analysis.repository", () => ({
+  AiGarmentReferenceAnalysisRepository: { findByProjectId: vi.fn() },
+}));
+vi.mock("./development-brief.repository", () => ({
+  AiGarmentDesignDirectionRepository: { countByStatus: vi.fn() },
+}));
 
 const { generateDocumentNumber, advanceMasterCodeSequence } = await import("@/core/numbering/DocumentNumberingService");
 const { ProductRepository } = await import("@/modules/products/product.repository");
 const { createSampleRequest } = await import("@/modules/sampling/sample.service");
 const { AiGarmentProjectRepository, AiGarmentDesignOptionRepository } = await import("./ai-garment-project.repository");
+const { AiGarmentReferenceAnalysisRepository } = await import("./reference-analysis.repository");
+const { AiGarmentDesignDirectionRepository } = await import("./development-brief.repository");
 const {
   createAiGarmentProject,
   saveWorkflowStep,
@@ -85,6 +93,11 @@ beforeEach(() => {
   vi.mocked(createSampleRequest).mockReset().mockResolvedValue({ id: "sam-1", requestNumber: "SAM-2026-00001" } as never);
   vi.mocked(AiGarmentDesignOptionRepository.findWithProjectOwner).mockReset();
   vi.mocked(AiGarmentDesignOptionRepository.selectExclusive).mockReset();
+  // Default to "already past both Process 2 gates" so tests unrelated to those
+  // gates (e.g. plain status-advance/never-regress checks) don't each need
+  // their own setup — the gate-specific tests below override these.
+  vi.mocked(AiGarmentReferenceAnalysisRepository.findByProjectId).mockReset().mockResolvedValue({ status: "APPROVED" } as never);
+  vi.mocked(AiGarmentDesignDirectionRepository.countByStatus).mockReset().mockResolvedValue(1);
 });
 
 describe("createAiGarmentProject", () => {
@@ -166,6 +179,92 @@ describe("saveWorkflowStep — the state machine", () => {
 
     await expect(saveWorkflowStep(actor, "proj-1", { stepKey: "PROJECT_INFO" })).rejects.toMatchObject({
       code: "INVALID_STATE_TRANSITION",
+    });
+  });
+
+  describe("Process 2 gates apply to any step at or past DEVELOPMENT_BRIEF, not just the exact next transition", () => {
+    it("blocks entering DEVELOPMENT_BRIEF itself without an approved Reference Analysis", async () => {
+      vi.mocked(AiGarmentProjectRepository.findAnyById).mockResolvedValue({
+        id: "proj-1",
+        sourceType: "REFERENCE",
+        status: "REFERENCE_ANALYSIS",
+        completedStepKeys: ["PROJECT_INFO", "UPLOAD_REFERENCE", "REFERENCE_ANALYSIS"],
+      } as never);
+      vi.mocked(AiGarmentReferenceAnalysisRepository.findByProjectId).mockResolvedValue(null);
+
+      await expect(saveWorkflowStep(actor, "proj-1", { stepKey: "DEVELOPMENT_BRIEF" })).rejects.toMatchObject({
+        code: "INVALID_STATE_TRANSITION",
+      });
+    });
+
+    it("blocks jumping straight PAST DEVELOPMENT_BRIEF to a later step without an approved Reference Analysis (the bypass this gate closes)", async () => {
+      vi.mocked(AiGarmentProjectRepository.findAnyById).mockResolvedValue({
+        id: "proj-1",
+        sourceType: "REFERENCE",
+        status: "REFERENCE_ANALYSIS",
+        completedStepKeys: ["PROJECT_INFO", "UPLOAD_REFERENCE", "REFERENCE_ANALYSIS"],
+      } as never);
+      vi.mocked(AiGarmentReferenceAnalysisRepository.findByProjectId).mockResolvedValue(null);
+
+      // Jumping directly to SELECT_DESIGN (well past DEVELOPMENT_BRIEF) used to
+      // slip past this gate entirely, since the old check only matched the
+      // literal stepKey "DEVELOPMENT_BRIEF".
+      await expect(saveWorkflowStep(actor, "proj-1", { stepKey: "SELECT_DESIGN" })).rejects.toMatchObject({
+        code: "INVALID_STATE_TRANSITION",
+      });
+      expect(AiGarmentProjectRepository.update).not.toHaveBeenCalled();
+    });
+
+    it("blocks jumping straight past DEVELOPMENT_BRIEF with zero approved design directions (the bypass this gate closes)", async () => {
+      vi.mocked(AiGarmentProjectRepository.findAnyById).mockResolvedValue({
+        id: "proj-1",
+        sourceType: "REFERENCE",
+        status: "DESIGN_DEVELOPMENT",
+        completedStepKeys: ["PROJECT_INFO", "UPLOAD_REFERENCE", "REFERENCE_ANALYSIS", "DEVELOPMENT_BRIEF"],
+      } as never);
+      vi.mocked(AiGarmentDesignDirectionRepository.countByStatus).mockResolvedValue(0);
+
+      // Jumping directly to COMMERCIAL_EVALUATION (not the immediate next step,
+      // GENERATE_VARIATIONS) used to slip past this gate entirely, since the
+      // old check only matched the literal stepKey "GENERATE_VARIATIONS".
+      await expect(saveWorkflowStep(actor, "proj-1", { stepKey: "COMMERCIAL_EVALUATION" })).rejects.toMatchObject({
+        code: "INVALID_STATE_TRANSITION",
+      });
+      expect(AiGarmentProjectRepository.update).not.toHaveBeenCalled();
+    });
+
+    it("allows jumping past DEVELOPMENT_BRIEF once both gates are satisfied", async () => {
+      vi.mocked(AiGarmentProjectRepository.findAnyById).mockResolvedValue({
+        id: "proj-1",
+        sourceType: "REFERENCE",
+        status: "DESIGN_DEVELOPMENT",
+        completedStepKeys: ["PROJECT_INFO", "UPLOAD_REFERENCE", "REFERENCE_ANALYSIS", "DEVELOPMENT_BRIEF"],
+      } as never);
+
+      await saveWorkflowStep(actor, "proj-1", { stepKey: "COMMERCIAL_EVALUATION" });
+
+      expect(AiGarmentProjectRepository.update).toHaveBeenCalledWith(
+        "proj-1",
+        expect.objectContaining({ currentStepKey: "COMMERCIAL_EVALUATION" })
+      );
+    });
+
+    it("does not gate steps before DEVELOPMENT_BRIEF at all", async () => {
+      vi.mocked(AiGarmentProjectRepository.findAnyById).mockResolvedValue({
+        id: "proj-1",
+        sourceType: "REFERENCE",
+        status: "IDEA",
+        completedStepKeys: [],
+      } as never);
+      vi.mocked(AiGarmentReferenceAnalysisRepository.findByProjectId).mockResolvedValue(null);
+
+      await saveWorkflowStep(actor, "proj-1", { stepKey: "UPLOAD_REFERENCE" });
+
+      expect(AiGarmentReferenceAnalysisRepository.findByProjectId).not.toHaveBeenCalled();
+      expect(AiGarmentProjectRepository.update).toHaveBeenCalledWith(
+        "proj-1",
+        expect.objectContaining({ currentStepKey: "UPLOAD_REFERENCE" })
+      );
     });
   });
 });

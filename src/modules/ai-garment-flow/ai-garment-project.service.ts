@@ -268,7 +268,8 @@ export async function saveWorkflowStep(actor: ActorContext, id: string, input: S
     });
   }
 
-  const validKeys = new Set(stepsForSourceType(project.sourceType).map((s) => s.key));
+  const steps = stepsForSourceType(project.sourceType);
+  const validKeys = new Set(steps.map((s) => s.key));
   if (!validKeys.has(input.stepKey)) {
     throw new BusinessRuleError(
       "VALIDATION_ERROR",
@@ -277,10 +278,22 @@ export async function saveWorkflowStep(actor: ActorContext, id: string, input: S
     );
   }
 
+  // Both Process 2 gates below are keyed on the TARGET step's position in the
+  // sequence, not on an exact from->to transition match. The stepper lets a
+  // user click any step directly (not just "Save & Continue" to the very next
+  // one), so a transition-shaped check (e.g. "currentStepKey === X && stepKey
+  // === Y") can be bypassed simply by jumping two steps at once — landing on
+  // stepKey Z instead of Y skips a check that only ever looks for Y. Checking
+  // "is the destination at-or-past the gated step" instead closes that
+  // regardless of the current step or how many steps are being skipped at once.
+  const developmentBriefIndex = steps.findIndex((s) => s.key === "DEVELOPMENT_BRIEF");
+  const targetIndex = steps.findIndex((s) => s.key === input.stepKey);
+
   // Process 2 (Development Brief) starts only once the Reference Garment
   // Analysis has been approved — checked here, not just left as a UI
-  // affordance, so a direct API call can't skip the gate either.
-  if (input.stepKey === "DEVELOPMENT_BRIEF") {
+  // affordance, so a direct API call can't skip the gate either. Applies to
+  // DEVELOPMENT_BRIEF itself and to jumping straight past it.
+  if (developmentBriefIndex !== -1 && targetIndex >= developmentBriefIndex) {
     const analysis = await AiGarmentReferenceAnalysisRepository.findByProjectId(id);
     if (!analysis || analysis.status !== "APPROVED") {
       throw new BusinessRuleError(
@@ -292,14 +305,15 @@ export async function saveWorkflowStep(actor: ActorContext, id: string, input: S
   }
 
   // The "APPROVE DESIGN DIRECTIONS" final button is this same generic
-  // advance, specifically leaving DEVELOPMENT_BRIEF forward — gated on at
-  // least one individually-approved design direction existing.
-  if (project.currentStepKey === "DEVELOPMENT_BRIEF" && input.stepKey === "GENERATE_VARIATIONS") {
+  // advance, gated on at least one individually-approved design direction
+  // existing whenever the destination is any step after DEVELOPMENT_BRIEF —
+  // not only the immediate next one.
+  if (developmentBriefIndex !== -1 && targetIndex > developmentBriefIndex) {
     const approvedCount = await AiGarmentDesignDirectionRepository.countByStatus(id, "APPROVED");
     if (approvedCount === 0) {
       throw new BusinessRuleError(
         "INVALID_STATE_TRANSITION",
-        "Approve at least one design direction before continuing to Generate Variations."
+        "Approve at least one design direction before continuing past the Development Brief."
       );
     }
   }

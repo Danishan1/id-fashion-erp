@@ -10,6 +10,7 @@ import { AiGarmentProjectForm } from "./AiGarmentProjectForm";
 import { ReferenceImageUploader } from "./ReferenceImageUploader";
 import { ReferenceAnalysisPanel } from "./ReferenceAnalysisPanel";
 import { DevelopmentBriefPanel } from "./DevelopmentBriefPanel";
+import { VisualGenerationPanel } from "./VisualGenerationPanel";
 
 const SAMPLE_TYPES = ["FIT", "PROTO", "PP", "TOP", "SHIPMENT", "PHOTOSHOOT", "SMS", "OTHER"] as const;
 
@@ -83,7 +84,7 @@ const STEP_HELP: Partial<Record<AiGarmentStepKey, string>> = {
   REFERENCE_ANALYSIS: "AI would analyse the uploaded reference here once connected.",
   FABRIC_ANALYSIS: "AI would analyse the uploaded fabric here once connected.",
   DEVELOPMENT_BRIEF: "Generate differentiated commercial design directions from the approved reference analysis, then review, correct, and approve at least one to continue.",
-  GENERATE_VARIATIONS: "AI would generate design variations here once connected — add candidates manually for now.",
+  GENERATE_VARIATIONS: "Generate real garment visuals for each approved design direction, then Select, Reject, Regenerate, or Create a Variation of any image.",
   GENERATE_DESIGNS: "AI would generate design directions here once connected — add candidates manually for now.",
   PRODUCT_SUITABILITY: "AI would assess which garment types suit this fabric here once connected.",
   PRODUCT_DIRECTIONS: "AI would suggest concrete product directions here once connected.",
@@ -365,7 +366,11 @@ function StepContent({
     return wrap(<AiPlaceholderButton label={aiButtonLabel(key)} />);
   }
 
-  if (key === "GENERATE_VARIATIONS" || key === "GENERATE_DESIGNS") {
+  if (key === "GENERATE_VARIATIONS") {
+    return wrap(<VisualGenerationPanel projectId={project.id} />);
+  }
+
+  if (key === "GENERATE_DESIGNS") {
     return wrap(
       <>
         <AiPlaceholderButton label="Generate Designs" />

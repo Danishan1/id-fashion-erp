@@ -277,14 +277,19 @@ export async function editDesignDirection(actor: ActorContext, directionId: stri
   const { userNotes, ...contentFields } = input;
   const hasContentEdit = Object.values(contentFields).some((v) => v !== undefined);
 
-  const updated = await AiGarmentDesignDirectionRepository.update(directionId, {
+  let updated = await AiGarmentDesignDirectionRepository.update(directionId, {
     ...contentFields,
     ...(userNotes !== undefined ? { userNotes: userNotes || null } : {}),
     ...(hasContentEdit ? { userEdited: true, status: "GENERATED" } : {}),
   });
 
   if (hasContentEdit) {
+    // Reverting to GENERATED (from APPROVED/REJECTED) changes which rows are
+    // eligible for "top 30%", so re-derive isRecommendedForVisualisation —
+    // and re-fetch afterward, since `updated` above still carries whatever
+    // that flag was BEFORE this recompute, not after.
     await AiGarmentDesignDirectionRepository.recomputeRecommendations(direction.projectId);
+    updated = (await AiGarmentDesignDirectionRepository.findById(directionId))!;
   }
 
   await writeAuditLog({
@@ -303,11 +308,14 @@ export async function decideDesignDirection(actor: ActorContext, directionId: st
   const direction = await getOwnedDirection(actor.companyId, directionId);
 
   const status = input.decision === "APPROVE" ? "APPROVED" : input.decision === "REJECT" ? "REJECTED" : "SAVED_FOR_LATER";
-  const updated = await AiGarmentDesignDirectionRepository.update(directionId, { status });
+  await AiGarmentDesignDirectionRepository.update(directionId, { status });
 
   // A REJECTED direction must never remain marked recommended, and rejecting
-  // one changes what "top 30%" means among the rest — recompute either way.
+  // one changes what "top 30%" means among the rest — recompute either way,
+  // then re-fetch: the row returned by update() above still carries whatever
+  // isRecommendedForVisualisation was BEFORE this recompute, not after.
   await AiGarmentDesignDirectionRepository.recomputeRecommendations(direction.projectId);
+  const updated = (await AiGarmentDesignDirectionRepository.findById(directionId))!;
 
   await writeAuditLog({
     companyId: actor.companyId,
@@ -340,7 +348,7 @@ export async function regenerateDesignDirection(actor: ActorContext, directionId
 
   try {
     const result = await aiRegenerateDesignDirection(context);
-    const updated = await AiGarmentDesignDirectionRepository.update(directionId, {
+    await AiGarmentDesignDirectionRepository.update(directionId, {
       ...directionToRow(result.direction, {
         companyId: actor.companyId,
         projectId: direction.projectId,
@@ -355,7 +363,12 @@ export async function regenerateDesignDirection(actor: ActorContext, directionId
       userNotes: direction.userNotes,
     });
 
+    // The regenerated score may change which rows are eligible for "top 30%" —
+    // recompute, then re-fetch: the row returned by update() above still
+    // carries whatever isRecommendedForVisualisation was BEFORE this
+    // recompute, not after.
     await AiGarmentDesignDirectionRepository.recomputeRecommendations(direction.projectId);
+    const updated = (await AiGarmentDesignDirectionRepository.findById(directionId))!;
 
     await writeAuditLog({
       companyId: actor.companyId,

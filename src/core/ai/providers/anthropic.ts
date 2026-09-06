@@ -137,9 +137,24 @@ async function requestStructuredToolCall<T>(params: {
   content: Anthropic.ContentBlockParam[];
   appendCorrectiveText: (content: Anthropic.ContentBlockParam[], instruction: string) => Anthropic.ContentBlockParam[];
   tool: ToolSchema<T>;
+  /**
+   * `strict: true` forces Anthropic's constrained-decoding grammar compiler
+   * to guarantee schema-valid output, but that compiler has a real size
+   * limit — confirmed live: Process 1's 36-nested-feature reference-analysis
+   * schema is rejected outright with a 400 "The compiled grammar is too
+   * large... Simplify your tool schemas or reduce the number of strict
+   * tools," which no amount of Zod-side validation can work around, since
+   * the request itself never succeeds. Defaults to true (Process 2's
+   * smaller, flatter schema compiles fine); a caller with an oversized
+   * schema passes `false` instead — the existing Zod `validate()` +
+   * one-shot corrective retry is still the real safety net either way, just
+   * no longer backed by a server-side grammar guarantee for that call.
+   */
+  strict?: boolean;
 }): Promise<StructuredToolCallResult<T>> {
   const config = getAnthropicConfig();
   const client = anthropicClient(config.apiKey);
+  const strict = params.strict ?? true;
 
   async function attempt(content: Anthropic.ContentBlockParam[]) {
     let response;
@@ -153,8 +168,10 @@ async function requestStructuredToolCall<T>(params: {
           {
             name: params.tool.toolName,
             description: params.tool.toolDescription,
-            input_schema: sanitizeForStrictToolSchema(params.tool.inputSchema) as Anthropic.Tool.InputSchema,
-            strict: true,
+            input_schema: (strict
+              ? sanitizeForStrictToolSchema(params.tool.inputSchema)
+              : params.tool.inputSchema) as Anthropic.Tool.InputSchema,
+            strict,
           },
         ],
         tool_choice: { type: "tool", name: params.tool.toolName },
@@ -177,6 +194,11 @@ async function requestStructuredToolCall<T>(params: {
       ? ({ success: false, error: "The model did not return a structured tool response." } as const)
       : params.tool.validate(result.input);
 
+  if (process.env.AI_DEBUG === "1" && !validated.success) {
+    console.error("[AI_DEBUG] first attempt validation error:", validated.error);
+    console.error("[AI_DEBUG] first attempt raw tool input:", JSON.stringify(result.input));
+  }
+
   if (!validated.success) {
     const correctiveContent = params.appendCorrectiveText(
       params.content,
@@ -187,6 +209,11 @@ async function requestStructuredToolCall<T>(params: {
       result.input === undefined
         ? ({ success: false, error: "The model did not return a structured tool response." } as const)
         : params.tool.validate(result.input);
+
+    if (process.env.AI_DEBUG === "1" && !validated.success) {
+      console.error("[AI_DEBUG] corrective attempt validation error:", validated.error);
+      console.error("[AI_DEBUG] corrective attempt raw tool input:", JSON.stringify(result.input));
+    }
   }
 
   if (!validated.success) {
@@ -215,9 +242,36 @@ interface RequestStructuredVisionOutputParams<T> extends ToolSchema<T> {
   userText: string;
 }
 
-const VISION_MAX_OUTPUT_TOKENS = 8000;
+/**
+ * 8000 was too short for a real workload, confirmed live: a genuine
+ * 36-field vision analysis with rich per-field prose was truncated
+ * mid-schema (the model never reached the final couple of required
+ * fields), which is exactly what caused the AI_INVALID_RESPONSE failure
+ * that first surfaced this whole issue. 16000 matches Process 2's own
+ * proven-safe bound for a comparably large structured response.
+ */
+const VISION_MAX_OUTPUT_TOKENS = 16000;
 
-/** Uses ANTHROPIC_VISION_MODEL — the strongest available model, for garment image analysis (Process 1). */
+/**
+ * Uses ANTHROPIC_VISION_MODEL — the strongest available model, for garment
+ * image analysis (Process 1). `strict: false` — confirmed live, twice, even
+ * AFTER flattening reference-analysis/schema.ts's nested groups
+ * (sleeve/fabricObservations/printPattern/constructionComplexity → flat
+ * top-level keys): the request still gets rejected with the same 400 "The
+ * compiled grammar is too large... Simplify your tool schemas or reduce the
+ * number of strict tools." This schema's total size — 36 separate
+ * observation objects, each with its own enum + two string fields — is what
+ * exceeds Anthropic's strict-mode grammar-compiler limit, not the nesting
+ * depth; flattening changed the JSON shape but not the total node count, so
+ * it did not fix the rejection. `strict: false` is therefore the only viable
+ * option for this specific schema today (Process 2's development-brief
+ * schema is smaller and keeps `strict: true`) — the existing Zod
+ * `validate()` + one-shot corrective retry is the real safety net for shape
+ * correctness in its place, and the earlier flattening work still pays off
+ * here: the previously-observed wrong-shape failure ("sleeve: expected
+ * object, received string") was specifically about a *nested* sub-object,
+ * which no longer exists in this flat schema.
+ */
 export async function requestStructuredVisionOutput<T>(
   params: RequestStructuredVisionOutputParams<T>
 ): Promise<StructuredToolCallResult<T>> {
@@ -232,6 +286,7 @@ export async function requestStructuredVisionOutput<T>(
     ],
     appendCorrectiveText: appendTextToLastTextBlock,
     tool: { toolName: params.toolName, toolDescription: params.toolDescription, inputSchema: params.inputSchema, validate: params.validate },
+    strict: false,
   });
 }
 

@@ -187,7 +187,7 @@ Return ONLY data matching the required structured JSON schema.`;
  * literal strings the tool's input_schema enforces.
  */
 const TOOL_CONTRACT_ADDENDUM = `
-You must respond by calling the provided tool exactly once. Every "confidence" field must be exactly one of: CONFIRMED_VISUALLY, LIKELY_INFERRED, NOT_DETERMINABLE. The "constructionComplexity.level" field must be exactly one of: LOW, MEDIUM, HIGH. Every field in the schema is required — for a field you cannot determine, still provide an observation object with confidence NOT_DETERMINABLE and a brief note explaining why, rather than omitting the field.`;
+You must respond by calling the provided tool exactly once. Every "confidence" field must be exactly one of: CONFIRMED_VISUALLY, LIKELY_INFERRED, NOT_DETERMINABLE. The "constructionComplexityLevel" field must be exactly one of: LOW, MEDIUM, HIGH. Every field in the schema is required — for a field you cannot determine, still provide an observation object with confidence NOT_DETERMINABLE and a brief note explaining why, rather than omitting the field.`;
 
 export function buildSystemPrompt(): string {
   return `${REFERENCE_ANALYSIS_SYSTEM_PROMPT}\n${TOOL_CONTRACT_ADDENDUM}`;
@@ -246,52 +246,44 @@ const SIMPLE_OBSERVATION_KEYS = [
   "decorativeDetails",
 ] as const;
 
-/** Built once from CONFIDENCE_VALUES/COMPLEXITY_VALUES + the shared key lists — cannot drift from schema.ts's Zod shape since both read from the same constants. */
+const GROUPED_OBSERVATION_KEYS = [
+  "sleeveType",
+  "sleeveLength",
+  "sleeveVolume",
+  "sleeveCuff",
+  "fabricWeight",
+  "fabricDrape",
+  "fabricTexture",
+  "fabricStretchAppearance",
+  "fabricTransparency",
+  "fabricSurfaceCharacter",
+  "printPatternType",
+  "printPatternScale",
+  "printPatternDirection",
+  "printPatternPlacement",
+  "printPatternRepeatAppearance",
+] as const;
+
+/**
+ * Built once from CONFIDENCE_VALUES/COMPLEXITY_VALUES + the shared key
+ * lists — cannot drift from schema.ts's Zod shape since both read from the
+ * same constants. Deliberately flat (no sleeve/fabricObservations/
+ * printPattern/constructionComplexity sub-objects) — confirmed live against
+ * the real API that the original nested shape made this schema too large
+ * for Anthropic's `strict: true` grammar compiler ("The compiled grammar is
+ * too large... Simplify your tool schemas"); flattening removes the nesting
+ * that was driving that size, so `strict: true` (a real server-side
+ * schema-shape guarantee) can stay on rather than being disabled — see
+ * schema.ts's own comment for the full story, including why disabling
+ * strict mode instead was tried first and made things worse.
+ */
 export function buildToolInputSchema() {
   const properties: Record<string, unknown> = {};
   for (const key of SIMPLE_OBSERVATION_KEYS) properties[key] = observationNode();
+  for (const key of GROUPED_OBSERVATION_KEYS) properties[key] = observationNode();
 
-  properties.sleeve = {
-    type: "object",
-    properties: {
-      type: observationNode(),
-      length: observationNode(),
-      volume: observationNode(),
-      cuff: observationNode(),
-    },
-    required: ["type", "length", "volume", "cuff"],
-  };
-  properties.fabricObservations = {
-    type: "object",
-    properties: {
-      weight: observationNode(),
-      drape: observationNode(),
-      texture: observationNode(),
-      stretchAppearance: observationNode(),
-      transparency: observationNode(),
-      surfaceCharacter: observationNode(),
-    },
-    required: ["weight", "drape", "texture", "stretchAppearance", "transparency", "surfaceCharacter"],
-  };
-  properties.printPattern = {
-    type: "object",
-    properties: {
-      type: observationNode(),
-      scale: observationNode(),
-      direction: observationNode(),
-      placement: observationNode(),
-      repeatAppearance: observationNode(),
-    },
-    required: ["type", "scale", "direction", "placement", "repeatAppearance"],
-  };
-  properties.constructionComplexity = {
-    type: "object",
-    properties: {
-      level: { type: "string", enum: [...COMPLEXITY_VALUES] },
-      explanation: { type: "string" },
-    },
-    required: ["level", "explanation"],
-  };
+  properties.constructionComplexityLevel = { type: "string", enum: [...COMPLEXITY_VALUES] };
+  properties.constructionComplexityExplanation = { type: "string" };
   properties.manufacturingChallenges = { type: "array", items: { type: "string" } };
   properties.keyDesignLanguageFeatures = { type: "array", items: { type: "string" } };
   properties.featuresForFurtherDevelopment = { type: "array", items: { type: "string" } };
@@ -301,10 +293,9 @@ export function buildToolInputSchema() {
 
   const required = [
     ...SIMPLE_OBSERVATION_KEYS,
-    "sleeve",
-    "fabricObservations",
-    "printPattern",
-    "constructionComplexity",
+    ...GROUPED_OBSERVATION_KEYS,
+    "constructionComplexityLevel",
+    "constructionComplexityExplanation",
     "manufacturingChallenges",
     "keyDesignLanguageFeatures",
     "featuresForFurtherDevelopment",
