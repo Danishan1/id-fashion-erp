@@ -30,6 +30,7 @@ const PREFIX_BY_DOCUMENT_TYPE: Record<DocumentType, string> = {
   INTERNAL_TRANSFER: "TRF",
   EMPLOYEE_ADVANCE: "ADV",
   EMPLOYEE_ADVANCE_SETTLEMENT: "ADVS",
+  AI_GARMENT_PROJECT: "AGF",
 };
 
 /** DocumentTypes that represent master-data codes, not transactional documents. */

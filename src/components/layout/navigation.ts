@@ -36,6 +36,16 @@ export interface NavSection {
 
 export const NAV_SECTIONS: NavSection[] = [
   { label: "Dashboard", href: "/dashboard", modules: ["dashboard"] },
+  {
+    label: "AI Garment Flow",
+    href: "/ai-garment-flow",
+    modules: ["ai_garment_flow"],
+    children: [
+      { label: "Dashboard", href: "/ai-garment-flow", modules: ["ai_garment_flow"] },
+      { label: "New Project", href: "/ai-garment-flow/projects/new", modules: ["ai_garment_flow"] },
+      { label: "Projects", href: "/ai-garment-flow/projects", modules: ["ai_garment_flow"] },
+    ],
+  },
   { label: "Masters", href: "/masters", modules: ["masters_core", "masters_finance"] },
   {
     label: "CRM",

@@ -26,103 +26,108 @@ model Company {
   createdAt            DateTime @default(now()) @map("created_at")
   updatedAt            DateTime @updatedAt @map("updated_at")
 
-  baseCurrency                 Currency                      @relation(fields: [baseCurrencyCode], references: [code])
-  branches                     Branch[]
-  users                        User[]
-  roles                        Role[]
-  customers                    Customer[]
-  suppliers                    Supplier[]
-  supplierCategories           SupplierCategory[]
-  supplierMaterials            SupplierMaterial[]
-  supplierMaterialCategories   SupplierMaterialCategory[]
-  departments                  Department[]
-  employees                    Employee[]
-  products                     Product[]
-  colors                       Color[]
-  sizes                        Size[]
-  warehouses                   Warehouse[]
-  productionStages             ProductionStage[]
-  productionLines              ProductionLine[]
-  salesAgents                  SalesAgent[]
-  brands                       Brand[]
-  categories                   Category[]
-  seasons                      Season[]
-  productFittings              ProductFitting[]
-  productTypes                 ProductType[]
-  designs                      Design[]
-  designPatterns               DesignPattern[]
-  patterns                     Pattern[]
-  fabricGsms                   FabricGsm[]
-  fabricDyes                   FabricDye[]
-  fabricDyeTypes               FabricDyeType[]
-  fabricWeaveTypes             FabricWeaveType[]
-  fabricWidths                 FabricWidth[]
-  fabricCompositions           FabricComposition[]
-  machines                     Machine[]
-  designations                 Designation[]
-  employeeCategories           EmployeeCategory[]
-  shiftMasters                 ShiftMaster[]
-  holidayMasters               HolidayMaster[]
-  costMasters                  CostMaster[]
-  paymentTypes                 PaymentType[]
-  bankAccounts                 BankAccount[]
-  sampleRequests               SampleRequest[]
-  buyerEnquiries               BuyerEnquiry[]
-  salesOrders                  SalesOrder[]
-  boms                         Bom[]
-  purchaseOrders               PurchaseOrder[]
-  materialRequests             MaterialRequest[]
-  goodsReceipts                GoodsReceipt[]
-  fabricRolls                  FabricRoll[]
-  inventoryTransactions        InventoryTransaction[]
-  stockBalances                StockBalance[]
-  stockMovements               StockMovement[]
-  productionOrders             ProductionOrder[]
-  lots                         Lot[]
-  lotRelations                 LotRelation[]
-  jobOrders                    JobOrder[]
-  productionStageTransactions  ProductionStageTransaction[]
-  qcInspections                QcInspection[]
-  defectTypes                  DefectType[]
-  documentSequences            DocumentSequence[]
-  auditLogs                    AuditLog[]
-  notifications                Notification[]
-  attachments                  Attachment[]
-  leads                        Lead[]
-  deals                        Deal[]
-  crmActivities                CrmActivity[]
-  crmFollowups                 CrmFollowup[]
-  crmRoundRobinState           CrmRoundRobinState?
-  crmSettings                  CrmSettings?
-  importBatches                ImportBatch[]
-  campaigns                    Campaign[]
-  campaignAttributions         CampaignAttribution[]
-  campaignAlerts               CampaignAlert[]
-  adAccountConnections         AdAccountConnection[]
-  attendanceRecords            AttendanceRecord[]
-  attendanceCorrectionRequests AttendanceCorrectionRequest[]
-  leaveTypes                   LeaveType[]
-  leaveRequests                LeaveRequest[]
-  leaveBalanceCarryForwards    LeaveBalanceCarryForward[]
-  chartOfAccounts              ChartOfAccount[]
-  taxTypes                     TaxType[]
-  taxRates                     TaxRate[]
-  journals                     Journal[]
-  salesInvoices                SalesInvoice[]
-  purchaseInvoices             PurchaseInvoice[]
-  payments                     Payment[]
-  expenses                     Expense[]
-  dispatches                   Dispatch[]
-  jobWorkOrders                JobWorkOrder[]
-  jobWorkReceipts              JobWorkReceipt[]
-  invoiceSeries                InvoiceSeries[]
-  customInvoices               CustomInvoice[]
-  customInvoicePayments        CustomInvoicePayment[]
-  customInvoiceCreditNotes     CustomInvoiceCreditNote[]
-  internalTransfers            InternalTransfer[]
-  employeeAdvances             EmployeeAdvance[]
-  employeeAdvanceSettlements   EmployeeAdvanceSettlement[]
-  submoduleVisibilities        SubmoduleVisibility[]
+  baseCurrency                   Currency                        @relation(fields: [baseCurrencyCode], references: [code])
+  branches                       Branch[]
+  users                          User[]
+  roles                          Role[]
+  customers                      Customer[]
+  suppliers                      Supplier[]
+  supplierCategories             SupplierCategory[]
+  supplierMaterials              SupplierMaterial[]
+  supplierMaterialCategories     SupplierMaterialCategory[]
+  departments                    Department[]
+  employees                      Employee[]
+  products                       Product[]
+  colors                         Color[]
+  sizes                          Size[]
+  warehouses                     Warehouse[]
+  productionStages               ProductionStage[]
+  productionLines                ProductionLine[]
+  salesAgents                    SalesAgent[]
+  brands                         Brand[]
+  categories                     Category[]
+  seasons                        Season[]
+  productFittings                ProductFitting[]
+  productTypes                   ProductType[]
+  designs                        Design[]
+  designPatterns                 DesignPattern[]
+  patterns                       Pattern[]
+  fabricGsms                     FabricGsm[]
+  fabricDyes                     FabricDye[]
+  fabricDyeTypes                 FabricDyeType[]
+  fabricWeaveTypes               FabricWeaveType[]
+  fabricWidths                   FabricWidth[]
+  fabricCompositions             FabricComposition[]
+  machines                       Machine[]
+  designations                   Designation[]
+  employeeCategories             EmployeeCategory[]
+  shiftMasters                   ShiftMaster[]
+  holidayMasters                 HolidayMaster[]
+  costMasters                    CostMaster[]
+  paymentTypes                   PaymentType[]
+  bankAccounts                   BankAccount[]
+  sampleRequests                 SampleRequest[]
+  buyerEnquiries                 BuyerEnquiry[]
+  salesOrders                    SalesOrder[]
+  boms                           Bom[]
+  purchaseOrders                 PurchaseOrder[]
+  materialRequests               MaterialRequest[]
+  goodsReceipts                  GoodsReceipt[]
+  fabricRolls                    FabricRoll[]
+  inventoryTransactions          InventoryTransaction[]
+  stockBalances                  StockBalance[]
+  stockMovements                 StockMovement[]
+  productionOrders               ProductionOrder[]
+  lots                           Lot[]
+  lotRelations                   LotRelation[]
+  jobOrders                      JobOrder[]
+  productionStageTransactions    ProductionStageTransaction[]
+  qcInspections                  QcInspection[]
+  defectTypes                    DefectType[]
+  documentSequences              DocumentSequence[]
+  auditLogs                      AuditLog[]
+  notifications                  Notification[]
+  attachments                    Attachment[]
+  leads                          Lead[]
+  deals                          Deal[]
+  crmActivities                  CrmActivity[]
+  crmFollowups                   CrmFollowup[]
+  crmRoundRobinState             CrmRoundRobinState?
+  crmSettings                    CrmSettings?
+  importBatches                  ImportBatch[]
+  campaigns                      Campaign[]
+  campaignAttributions           CampaignAttribution[]
+  campaignAlerts                 CampaignAlert[]
+  adAccountConnections           AdAccountConnection[]
+  attendanceRecords              AttendanceRecord[]
+  attendanceCorrectionRequests   AttendanceCorrectionRequest[]
+  leaveTypes                     LeaveType[]
+  leaveRequests                  LeaveRequest[]
+  leaveBalanceCarryForwards      LeaveBalanceCarryForward[]
+  chartOfAccounts                ChartOfAccount[]
+  taxTypes                       TaxType[]
+  taxRates                       TaxRate[]
+  journals                       Journal[]
+  salesInvoices                  SalesInvoice[]
+  purchaseInvoices               PurchaseInvoice[]
+  payments                       Payment[]
+  expenses                       Expense[]
+  dispatches                     Dispatch[]
+  jobWorkOrders                  JobWorkOrder[]
+  jobWorkReceipts                JobWorkReceipt[]
+  invoiceSeries                  InvoiceSeries[]
+  customInvoices                 CustomInvoice[]
+  customInvoicePayments          CustomInvoicePayment[]
+  customInvoiceCreditNotes       CustomInvoiceCreditNote[]
+  internalTransfers              InternalTransfer[]
+  employeeAdvances               EmployeeAdvance[]
+  employeeAdvanceSettlements     EmployeeAdvanceSettlement[]
+  submoduleVisibilities          SubmoduleVisibility[]
+  aiGarmentProjects              AiGarmentProject[]
+  aiGarmentReferenceAnalyses     AiGarmentReferenceAnalysis[]
+  aiGarmentReferenceAnalysisRuns AiGarmentReferenceAnalysisRun[]
+  aiGarmentDevelopmentBriefRuns  AiGarmentDevelopmentBriefRun[]
+  aiGarmentDesignDirections      AiGarmentDesignDirection[]
 
   @@map("companies")
 }
@@ -175,6 +180,7 @@ model Branch {
   customInvoices        CustomInvoice[]
   internalTransfers     InternalTransfer[]
   employeeAdvances      EmployeeAdvance[]
+  aiGarmentProjects     AiGarmentProject[]
 
   @@unique([companyId, code])
   @@map("branches")
@@ -218,77 +224,85 @@ model User {
   createdAt         DateTime   @default(now()) @map("created_at")
   updatedAt         DateTime   @updatedAt @map("updated_at")
 
-  company                              Company                       @relation(fields: [companyId], references: [id])
-  defaultBranch                        Branch?                       @relation("UserDefaultBranch", fields: [defaultBranchId], references: [id])
-  employee                             Employee?                     @relation(fields: [employeeId], references: [id])
-  branchRoles                          UserBranchRole[]
-  auditLogs                            AuditLog[]
-  notifications                        Notification[]
-  uploadedFiles                        Attachment[]
-  sampleRequestsMade                   SampleRequest[]               @relation("SampleRequestedBy")
-  buyerEnquiriesMade                   BuyerEnquiry[]                @relation("BuyerEnquiryRequestedBy")
-  salesOrdersRequested                 SalesOrder[]                  @relation("SalesOrderRequestedBy")
-  purchaseOrdersRequested              PurchaseOrder[]               @relation("PurchaseOrderRequestedBy")
-  materialRequestsMade                 MaterialRequest[]             @relation("MaterialRequestRequestedBy")
-  goodsReceiptsReceived                GoodsReceipt[]                @relation("GoodsReceiptReceivedBy")
-  inventoryTransactionsPerformed       InventoryTransaction[]        @relation("InventoryTransactionPerformedBy")
-  stockMovementsPerformed              StockMovement[]               @relation("StockMovementPerformedBy")
-  sampleVersionsCreated                SampleVersion[]               @relation("SampleVersionCreatedBy")
-  sampleVersionsCostingLocked          SampleVersion[]               @relation("SampleVersionCostingLockedBy")
-  bomVersionsCreated                   BomVersion[]                  @relation("BomVersionCreatedBy")
-  bomVersionsApproved                  BomVersion[]                  @relation("BomVersionApprovedBy")
-  sampleApprovalsMade                  SampleApproval[]              @relation("SampleApprovalDecidedBy")
-  sampleCommentsMade                   SampleComment[]               @relation("SampleCommentAuthor")
-  productionOrdersRequested            ProductionOrder[]             @relation("ProductionOrderRequestedBy")
-  lotsCreated                          Lot[]                         @relation("LotCreatedBy")
-  lotRelationsPerformed                LotRelation[]                 @relation("LotRelationPerformedBy")
-  jobOrderAssignmentsMade              JobOrderAssignment[]          @relation("JobOrderAssignmentAssignedBy")
-  jobOrderProgressEntriesRecorded      JobOrderProgressEntry[]       @relation("JobOrderProgressEntryRecordedBy")
-  jobOrderProgressEntriesApproved      JobOrderProgressEntry[]       @relation("JobOrderProgressEntryApprovedBy")
-  productionStageTransactionsPerformed ProductionStageTransaction[]  @relation("ProductionStageTransactionPerformedBy")
-  qcInspectionsMade                    QcInspection[]                @relation("QcInspectionInspector")
-  leadsAssigned                        Lead[]                        @relation("LeadAssignedTo")
-  leadsCreated                         Lead[]                        @relation("LeadCreatedBy")
-  dealsAssigned                        Deal[]                        @relation("DealAssignedTo")
-  dealsCreated                         Deal[]                        @relation("DealCreatedBy")
-  crmActivitiesPerformed               CrmActivity[]                 @relation("CrmActivityPerformedBy")
-  crmFollowupsAssigned                 CrmFollowup[]                 @relation("CrmFollowupAssignedTo")
-  crmFollowupsCreated                  CrmFollowup[]                 @relation("CrmFollowupCreatedBy")
-  campaignsOwned                       Campaign[]                    @relation("CampaignOwner")
-  campaignsCreated                     Campaign[]                    @relation("CampaignCreatedBy")
-  campaignsApproved                    Campaign[]                    @relation("CampaignApprovedBy")
-  campaignDailyMetricsRecorded         CampaignDailyMetric[]
-  crmSettingsUpdated                   CrmSettings[]
-  importBatchesCreated                 ImportBatch[]
-  adAccountConnectionsCreated          AdAccountConnection[]
-  attendanceRecordsRecorded            AttendanceRecord[]
-  attendanceCorrectionsApproved        AttendanceCorrectionRequest[] @relation("AttendanceCorrectionApprovedBy")
-  attendanceCorrectionsCreated         AttendanceCorrectionRequest[] @relation("AttendanceCorrectionCreatedBy")
-  leaveRequestsApproved                LeaveRequest[]                @relation("LeaveRequestApprovedBy")
-  leaveRequestsCreated                 LeaveRequest[]                @relation("LeaveRequestCreatedBy")
-  leaveBalanceCarryForwardsCreated     LeaveBalanceCarryForward[]
-  journalsCreated                      Journal[]                     @relation("JournalCreatedBy")
-  journalsPosted                       Journal[]                     @relation("JournalPostedBy")
-  salesInvoicesCreated                 SalesInvoice[]                @relation("SalesInvoiceCreatedBy")
-  salesInvoicesPosted                  SalesInvoice[]                @relation("SalesInvoicePostedBy")
-  purchaseInvoicesCreated              PurchaseInvoice[]             @relation("PurchaseInvoiceCreatedBy")
-  purchaseInvoicesPosted               PurchaseInvoice[]             @relation("PurchaseInvoicePostedBy")
-  paymentsCreated                      Payment[]                     @relation("PaymentCreatedBy")
-  paymentsPosted                       Payment[]                     @relation("PaymentPostedBy")
-  expensesCreated                      Expense[]                     @relation("ExpenseCreatedBy")
-  expensesPosted                       Expense[]                     @relation("ExpensePostedBy")
-  expensesApproved                     Expense[]                     @relation("ExpenseApprovedBy")
-  expensesRejected                     Expense[]                     @relation("ExpenseRejectedBy")
-  dispatchesRequested                  Dispatch[]                    @relation("DispatchRequestedBy")
-  jobWorkOrdersRequested               JobWorkOrder[]
-  jobWorkReceiptsReceived              JobWorkReceipt[]
-  customInvoicesCreated                CustomInvoice[]
-  customInvoicePaymentsReceived        CustomInvoicePayment[]
-  customInvoiceCreditNotesCreated      CustomInvoiceCreditNote[]
-  internalTransfersCreated             InternalTransfer[]            @relation("InternalTransferCreatedBy")
-  internalTransfersPosted              InternalTransfer[]            @relation("InternalTransferPostedBy")
-  employeeAdvancesCreated              EmployeeAdvance[]             @relation("EmployeeAdvanceCreatedBy")
-  employeeAdvanceSettlementsCreated    EmployeeAdvanceSettlement[]   @relation("EmployeeAdvanceSettlementCreatedBy")
+  company                                Company                         @relation(fields: [companyId], references: [id])
+  defaultBranch                          Branch?                         @relation("UserDefaultBranch", fields: [defaultBranchId], references: [id])
+  employee                               Employee?                       @relation(fields: [employeeId], references: [id])
+  branchRoles                            UserBranchRole[]
+  auditLogs                              AuditLog[]
+  notifications                          Notification[]
+  uploadedFiles                          Attachment[]
+  sampleRequestsMade                     SampleRequest[]                 @relation("SampleRequestedBy")
+  buyerEnquiriesMade                     BuyerEnquiry[]                  @relation("BuyerEnquiryRequestedBy")
+  salesOrdersRequested                   SalesOrder[]                    @relation("SalesOrderRequestedBy")
+  purchaseOrdersRequested                PurchaseOrder[]                 @relation("PurchaseOrderRequestedBy")
+  materialRequestsMade                   MaterialRequest[]               @relation("MaterialRequestRequestedBy")
+  goodsReceiptsReceived                  GoodsReceipt[]                  @relation("GoodsReceiptReceivedBy")
+  inventoryTransactionsPerformed         InventoryTransaction[]          @relation("InventoryTransactionPerformedBy")
+  stockMovementsPerformed                StockMovement[]                 @relation("StockMovementPerformedBy")
+  sampleVersionsCreated                  SampleVersion[]                 @relation("SampleVersionCreatedBy")
+  sampleVersionsCostingLocked            SampleVersion[]                 @relation("SampleVersionCostingLockedBy")
+  bomVersionsCreated                     BomVersion[]                    @relation("BomVersionCreatedBy")
+  bomVersionsApproved                    BomVersion[]                    @relation("BomVersionApprovedBy")
+  sampleApprovalsMade                    SampleApproval[]                @relation("SampleApprovalDecidedBy")
+  sampleCommentsMade                     SampleComment[]                 @relation("SampleCommentAuthor")
+  productionOrdersRequested              ProductionOrder[]               @relation("ProductionOrderRequestedBy")
+  lotsCreated                            Lot[]                           @relation("LotCreatedBy")
+  lotRelationsPerformed                  LotRelation[]                   @relation("LotRelationPerformedBy")
+  jobOrderAssignmentsMade                JobOrderAssignment[]            @relation("JobOrderAssignmentAssignedBy")
+  jobOrderProgressEntriesRecorded        JobOrderProgressEntry[]         @relation("JobOrderProgressEntryRecordedBy")
+  jobOrderProgressEntriesApproved        JobOrderProgressEntry[]         @relation("JobOrderProgressEntryApprovedBy")
+  productionStageTransactionsPerformed   ProductionStageTransaction[]    @relation("ProductionStageTransactionPerformedBy")
+  qcInspectionsMade                      QcInspection[]                  @relation("QcInspectionInspector")
+  leadsAssigned                          Lead[]                          @relation("LeadAssignedTo")
+  leadsCreated                           Lead[]                          @relation("LeadCreatedBy")
+  dealsAssigned                          Deal[]                          @relation("DealAssignedTo")
+  dealsCreated                           Deal[]                          @relation("DealCreatedBy")
+  crmActivitiesPerformed                 CrmActivity[]                   @relation("CrmActivityPerformedBy")
+  crmFollowupsAssigned                   CrmFollowup[]                   @relation("CrmFollowupAssignedTo")
+  crmFollowupsCreated                    CrmFollowup[]                   @relation("CrmFollowupCreatedBy")
+  campaignsOwned                         Campaign[]                      @relation("CampaignOwner")
+  campaignsCreated                       Campaign[]                      @relation("CampaignCreatedBy")
+  campaignsApproved                      Campaign[]                      @relation("CampaignApprovedBy")
+  campaignDailyMetricsRecorded           CampaignDailyMetric[]
+  crmSettingsUpdated                     CrmSettings[]
+  importBatchesCreated                   ImportBatch[]
+  adAccountConnectionsCreated            AdAccountConnection[]
+  attendanceRecordsRecorded              AttendanceRecord[]
+  attendanceCorrectionsApproved          AttendanceCorrectionRequest[]   @relation("AttendanceCorrectionApprovedBy")
+  attendanceCorrectionsCreated           AttendanceCorrectionRequest[]   @relation("AttendanceCorrectionCreatedBy")
+  leaveRequestsApproved                  LeaveRequest[]                  @relation("LeaveRequestApprovedBy")
+  leaveRequestsCreated                   LeaveRequest[]                  @relation("LeaveRequestCreatedBy")
+  leaveBalanceCarryForwardsCreated       LeaveBalanceCarryForward[]
+  journalsCreated                        Journal[]                       @relation("JournalCreatedBy")
+  journalsPosted                         Journal[]                       @relation("JournalPostedBy")
+  salesInvoicesCreated                   SalesInvoice[]                  @relation("SalesInvoiceCreatedBy")
+  salesInvoicesPosted                    SalesInvoice[]                  @relation("SalesInvoicePostedBy")
+  purchaseInvoicesCreated                PurchaseInvoice[]               @relation("PurchaseInvoiceCreatedBy")
+  purchaseInvoicesPosted                 PurchaseInvoice[]               @relation("PurchaseInvoicePostedBy")
+  paymentsCreated                        Payment[]                       @relation("PaymentCreatedBy")
+  paymentsPosted                         Payment[]                       @relation("PaymentPostedBy")
+  expensesCreated                        Expense[]                       @relation("ExpenseCreatedBy")
+  expensesPosted                         Expense[]                       @relation("ExpensePostedBy")
+  expensesApproved                       Expense[]                       @relation("ExpenseApprovedBy")
+  expensesRejected                       Expense[]                       @relation("ExpenseRejectedBy")
+  dispatchesRequested                    Dispatch[]                      @relation("DispatchRequestedBy")
+  jobWorkOrdersRequested                 JobWorkOrder[]
+  jobWorkReceiptsReceived                JobWorkReceipt[]
+  customInvoicesCreated                  CustomInvoice[]
+  customInvoicePaymentsReceived          CustomInvoicePayment[]
+  customInvoiceCreditNotesCreated        CustomInvoiceCreditNote[]
+  internalTransfersCreated               InternalTransfer[]              @relation("InternalTransferCreatedBy")
+  internalTransfersPosted                InternalTransfer[]              @relation("InternalTransferPostedBy")
+  employeeAdvancesCreated                EmployeeAdvance[]               @relation("EmployeeAdvanceCreatedBy")
+  employeeAdvanceSettlementsCreated      EmployeeAdvanceSettlement[]     @relation("EmployeeAdvanceSettlementCreatedBy")
+  aiGarmentProjectsCreated               AiGarmentProject[]              @relation("AiGarmentProjectCreatedBy")
+  aiGarmentDesignOptionsCreated          AiGarmentDesignOption[]         @relation("AiGarmentDesignOptionCreatedBy")
+  aiGarmentReferenceAnalysesApproved     AiGarmentReferenceAnalysis[]    @relation("AiGarmentReferenceAnalysisApprovedBy")
+  aiGarmentReferenceAnalysesCreated      AiGarmentReferenceAnalysis[]    @relation("AiGarmentReferenceAnalysisCreatedBy")
+  aiGarmentReferenceObservationsApproved AiGarmentReferenceObservation[] @relation("AiGarmentReferenceObservationApprovedBy")
+  aiGarmentReferenceAnalysisRunsCreated  AiGarmentReferenceAnalysisRun[] @relation("AiGarmentReferenceAnalysisRunCreatedBy")
+  aiGarmentDevelopmentBriefRunsCreated   AiGarmentDevelopmentBriefRun[]  @relation("AiGarmentDevelopmentBriefRunCreatedBy")
+  aiGarmentDesignDirectionsCreated       AiGarmentDesignDirection[]      @relation("AiGarmentDesignDirectionCreatedBy")
 
   @@map("users")
 }
@@ -412,17 +426,18 @@ model Customer {
   createdAt           DateTime  @default(now()) @map("created_at")
   updatedAt           DateTime  @updatedAt @map("updated_at")
 
-  company        Company         @relation(fields: [companyId], references: [id])
-  buyers         Buyer[]
-  products       Product[]
-  sampleRequests SampleRequest[]
-  buyerEnquiries BuyerEnquiry[]
-  salesOrders    SalesOrder[]
-  deals          Deal[]
-  salesInvoices  SalesInvoice[]
-  payments       Payment[]
-  dispatches     Dispatch[]
-  customInvoices CustomInvoice[]
+  company           Company            @relation(fields: [companyId], references: [id])
+  buyers            Buyer[]
+  products          Product[]
+  sampleRequests    SampleRequest[]
+  buyerEnquiries    BuyerEnquiry[]
+  salesOrders       SalesOrder[]
+  deals             Deal[]
+  salesInvoices     SalesInvoice[]
+  payments          Payment[]
+  dispatches        Dispatch[]
+  customInvoices    CustomInvoice[]
+  aiGarmentProjects AiGarmentProject[]
 
   @@unique([companyId, code])
   @@map("customers")
@@ -441,10 +456,11 @@ model Buyer {
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
-  customer       Customer        @relation(fields: [customerId], references: [id])
-  sampleRequests SampleRequest[]
-  buyerEnquiries BuyerEnquiry[]
-  salesOrders    SalesOrder[]
+  customer          Customer           @relation(fields: [customerId], references: [id])
+  sampleRequests    SampleRequest[]
+  buyerEnquiries    BuyerEnquiry[]
+  salesOrders       SalesOrder[]
+  aiGarmentProjects AiGarmentProject[]
 
   @@unique([customerId, code])
   @@map("buyers")
@@ -529,17 +545,18 @@ model Supplier {
   createdAt           DateTime  @default(now()) @map("created_at")
   updatedAt           DateTime  @updatedAt @map("updated_at")
 
-  company            Company                    @relation(fields: [companyId], references: [id])
-  category           SupplierCategory           @relation(fields: [categoryId], references: [id])
-  defaultForProducts Product[]
-  suppliedMaterials  SupplierMaterial[]
-  suppliedCategories SupplierMaterialCategory[]
-  purchaseOrders     PurchaseOrder[]
-  stockMovements     StockMovement[]
-  purchaseInvoices   PurchaseInvoice[]
-  payments           Payment[]
-  expenses           Expense[]
-  jobWorkOrders      JobWorkOrder[]
+  company                Company                    @relation(fields: [companyId], references: [id])
+  category               SupplierCategory           @relation(fields: [categoryId], references: [id])
+  defaultForProducts     Product[]
+  suppliedMaterials      SupplierMaterial[]
+  suppliedCategories     SupplierMaterialCategory[]
+  purchaseOrders         PurchaseOrder[]
+  stockMovements         StockMovement[]
+  purchaseInvoices       PurchaseInvoice[]
+  payments               Payment[]
+  expenses               Expense[]
+  jobWorkOrders          JobWorkOrder[]
+  aiGarmentFabricDetails AiGarmentFabricDetail[]
 
   @@unique([companyId, code])
   @@map("suppliers")
@@ -782,6 +799,9 @@ model Product {
   dispatchItems         DispatchItem[]
   jobWorkOrderMaterials JobWorkOrderMaterial[]
   customInvoiceItems    CustomInvoiceItem[]
+  // Virtual back-relation only — the single authoritative FK lives on
+  // AiGarmentProject.productId (@unique), set once by convertProjectToStyle().
+  aiGarmentProject      AiGarmentProject?
 
   @@unique([companyId, styleCode])
   @@map("products")
@@ -797,12 +817,13 @@ model Color {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  company              Company               @relation(fields: [companyId], references: [id])
-  variants             ProductVariant[]
-  sampleMaterials      SampleMaterial[]
-  bomItems             BomItem[]
-  materialRequestItems MaterialRequestItem[]
-  purchaseOrderItems   PurchaseOrderItem[]
+  company                Company                 @relation(fields: [companyId], references: [id])
+  variants               ProductVariant[]
+  sampleMaterials        SampleMaterial[]
+  bomItems               BomItem[]
+  materialRequestItems   MaterialRequestItem[]
+  purchaseOrderItems     PurchaseOrderItem[]
+  aiGarmentFabricDetails AiGarmentFabricDetail[]
 
   @@unique([companyId, code])
   @@map("colors")
@@ -885,19 +906,19 @@ enum WarehouseType {
 }
 
 model Warehouse {
-  id                String        @id @default(uuid()) @db.Uuid
-  companyId         String        @map("company_id") @db.Uuid
-  branchId          String        @map("branch_id") @db.Uuid
+  id                String          @id @default(uuid()) @db.Uuid
+  companyId         String          @map("company_id") @db.Uuid
+  branchId          String          @map("branch_id") @db.Uuid
   code              String
   name              String
   // Array, not a single value — a physical warehouse routinely stores more
   // than one material kind in different rooms/sections (2026-09-02). Existing
   // single-value rows migrate to a one-element array, never dropped.
   type              WarehouseType[]
-  managerEmployeeId String?       @map("manager_employee_id") @db.Uuid
-  isActive          Boolean       @default(true) @map("is_active")
-  createdAt         DateTime      @default(now()) @map("created_at")
-  updatedAt         DateTime      @updatedAt @map("updated_at")
+  managerEmployeeId String?         @map("manager_employee_id") @db.Uuid
+  isActive          Boolean         @default(true) @map("is_active")
+  createdAt         DateTime        @default(now()) @map("created_at")
+  updatedAt         DateTime        @updatedAt @map("updated_at")
 
   company               Company                @relation(fields: [companyId], references: [id])
   branch                Branch                 @relation(fields: [branchId], references: [id])
@@ -916,12 +937,12 @@ model Warehouse {
 }
 
 model WarehouseLocation {
-  id               String            @id @default(uuid()) @db.Uuid
-  warehouseId      String            @map("warehouse_id") @db.Uuid
-  code             String
-  zone             String?
-  rack             String?
-  bin              String?
+  id                    String            @id @default(uuid()) @db.Uuid
+  warehouseId           String            @map("warehouse_id") @db.Uuid
+  code                  String
+  zone                  String?
+  rack                  String?
+  bin                   String?
   // Which kind of material (or, since 2026-09-04, production stage) this
   // physical room/section is dedicated to (e.g. "Fabric Room" vs "WIP Room"
   // vs "Finished Goods Room" within one Warehouse building) — nullable,
@@ -932,14 +953,14 @@ model WarehouseLocation {
   // WIP/FINISHED_GOODS/DISPATCH/REJECT — advisory only: nothing rejects
   // storing a mismatched material here, see the Zod-level warning built for
   // this in the Goods Receipt / Stock Movement / Material Request UIs.
-  materialCategory MaterialCategory? @map("material_category")
+  materialCategory      MaterialCategory? @map("material_category")
   // Free-text note captured only when materialCategory = OTHER (e.g. "Packing
   // Machine Room") — added 2026-09-04 so "Other" isn't a dead-end label.
   // Service layer forces this back to null whenever materialCategory is
   // anything else, so it can never silently go stale after a re-tag.
-  materialCategoryOther String?       @map("material_category_other")
-  isActive         Boolean           @default(true) @map("is_active")
-  createdAt        DateTime          @default(now()) @map("created_at")
+  materialCategoryOther String?           @map("material_category_other")
+  isActive              Boolean           @default(true) @map("is_active")
+  createdAt             DateTime          @default(now()) @map("created_at")
 
   // NOTE: no companyId column of its own — any company-scoped lookup on a
   // warehouseLocationId FK must join through warehouse.companyId, never
@@ -1051,8 +1072,9 @@ model Brand {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  company  Company   @relation(fields: [companyId], references: [id])
-  products Product[]
+  company           Company            @relation(fields: [companyId], references: [id])
+  products          Product[]
+  aiGarmentProjects AiGarmentProject[]
 
   @@unique([companyId, code])
   @@map("brands")
@@ -1073,10 +1095,11 @@ model Category {
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
 
-  company        Company    @relation(fields: [companyId], references: [id])
-  parentCategory Category?  @relation("CategoryHierarchy", fields: [parentCategoryId], references: [id])
-  subCategories  Category[] @relation("CategoryHierarchy")
-  products       Product[]
+  company           Company            @relation(fields: [companyId], references: [id])
+  parentCategory    Category?          @relation("CategoryHierarchy", fields: [parentCategoryId], references: [id])
+  subCategories     Category[]         @relation("CategoryHierarchy")
+  products          Product[]
+  aiGarmentProjects AiGarmentProject[]
 
   @@unique([companyId, code])
   @@map("categories")
@@ -1091,8 +1114,9 @@ model Season {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  company  Company   @relation(fields: [companyId], references: [id])
-  products Product[]
+  company           Company            @relation(fields: [companyId], references: [id])
+  products          Product[]
+  aiGarmentProjects AiGarmentProject[]
 
   @@unique([companyId, code])
   @@map("seasons")
@@ -1184,8 +1208,9 @@ model FabricGsm {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  company     Company      @relation(fields: [companyId], references: [id])
-  fabricRolls FabricRoll[]
+  company                Company                 @relation(fields: [companyId], references: [id])
+  fabricRolls            FabricRoll[]
+  aiGarmentFabricDetails AiGarmentFabricDetail[]
 
   @@unique([companyId, code])
   @@map("fabric_gsms")
@@ -1202,12 +1227,13 @@ model FabricDye {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  company              Company               @relation(fields: [companyId], references: [id])
-  dyeType              FabricDyeType?        @relation(fields: [dyeTypeId], references: [id])
-  fabricRolls          FabricRoll[]
-  sampleMaterials      SampleMaterial[]
-  materialRequestItems MaterialRequestItem[]
-  purchaseOrderItems   PurchaseOrderItem[]
+  company                Company                 @relation(fields: [companyId], references: [id])
+  dyeType                FabricDyeType?          @relation(fields: [dyeTypeId], references: [id])
+  fabricRolls            FabricRoll[]
+  sampleMaterials        SampleMaterial[]
+  materialRequestItems   MaterialRequestItem[]
+  purchaseOrderItems     PurchaseOrderItem[]
+  aiGarmentFabricDetails AiGarmentFabricDetail[]
 
   @@unique([companyId, code])
   @@map("fabric_dyes")
@@ -1227,8 +1253,8 @@ model FabricDyeType {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  company     Company     @relation(fields: [companyId], references: [id])
-  fabricDyes  FabricDye[]
+  company    Company     @relation(fields: [companyId], references: [id])
+  fabricDyes FabricDye[]
 
   @@unique([companyId, code])
   @@map("fabric_dye_types")
@@ -1243,8 +1269,9 @@ model FabricWeaveType {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  company     Company      @relation(fields: [companyId], references: [id])
-  fabricRolls FabricRoll[]
+  company                Company                 @relation(fields: [companyId], references: [id])
+  fabricRolls            FabricRoll[]
+  aiGarmentFabricDetails AiGarmentFabricDetail[]
 
   @@unique([companyId, code])
   @@map("fabric_weave_types")
@@ -1260,9 +1287,10 @@ model FabricWidth {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  company     Company        @relation(fields: [companyId], references: [id])
-  unit        UnitOfMeasure? @relation(fields: [unitId], references: [id])
-  fabricRolls FabricRoll[]
+  company                Company                 @relation(fields: [companyId], references: [id])
+  unit                   UnitOfMeasure?          @relation(fields: [unitId], references: [id])
+  fabricRolls            FabricRoll[]
+  aiGarmentFabricDetails AiGarmentFabricDetail[]
 
   @@unique([companyId, code])
   @@map("fabric_widths")
@@ -1277,8 +1305,9 @@ model FabricComposition {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  company     Company      @relation(fields: [companyId], references: [id])
-  fabricRolls FabricRoll[]
+  company                Company                 @relation(fields: [companyId], references: [id])
+  fabricRolls            FabricRoll[]
+  aiGarmentFabricDetails AiGarmentFabricDetail[]
 
   @@unique([companyId, code])
   @@map("fabric_compositions")
@@ -1582,6 +1611,9 @@ model SampleRequest {
   // that model); this is purely how a Sample's detail page can show "this
   // originated from Enquiry ENQ-..." without a second, redundant FK here.
   buyerEnquiryLine BuyerEnquiryLine?
+  // Same virtual-back-relation shape, for AiGarmentProject.sampleRequestId
+  // (@unique), set once by createSampleRequestFromProject().
+  aiGarmentProject AiGarmentProject?
 
   @@unique([companyId, requestNumber])
   @@map("sample_requests")
@@ -2578,6 +2610,11 @@ model SalesOrder {
   materialRequests MaterialRequest[]
   salesInvoices    SalesInvoice[]
   dispatches       Dispatch[]
+  // Reserved, unused this phase — AiGarmentProject.salesOrderId is a nullable
+  // FK not yet written by any code path (no Sales Order linkage exists yet
+  // for AI Garment Flow); documented placeholder, same precedent as
+  // ProductionOrderStatus.MATERIAL_ALLOCATED.
+  aiGarmentProject AiGarmentProject?
 
   @@unique([companyId, orderNumber])
   @@map("sales_orders")
@@ -5088,6 +5125,472 @@ model EmployeeAdvanceSettlement {
 }
 
 // ─────────────────────────────────────────────────────────────
+// AI Garment Flow (2026-09-06)
+//
+// A pre-Style development/ideation workflow -- NOT a second Style Master.
+// AiGarmentProject is a resumable header that starts before any real Style
+// exists (an uploaded reference photo or fabric swatch, no style code yet)
+// and later, deliberately and manually, graduates into a real Product row
+// (itemType STYLE) via convertProjectToStyle() -- the exact same shape
+// already proven twice in this codebase: BuyerEnquiryLine -> SampleRequest
+// (convertEnquiryLineToSampleRequest) and SampleRequest -> Product
+// (convertSampleToStyle). BOM and Costing steps require this graduation and
+// then reuse the existing BOM/MRP module and Sampling's own costing engine
+// -- no parallel BOM/costing schema exists here.
+// ─────────────────────────────────────────────────────────────
+
+enum AiGarmentSourceType {
+  REFERENCE
+  FABRIC
+}
+
+enum AiGarmentProjectStatus {
+  IDEA
+  REFERENCE_ANALYSIS
+  DESIGN_DEVELOPMENT
+  DESIGN_SELECTED
+  TECHNICAL_DEVELOPMENT
+  COSTING
+  SAMPLING
+  BUYER_REVIEW
+  APPROVED
+  PRODUCTION
+  COMPLETED
+  REJECTED
+  ON_HOLD
+  CANCELLED
+}
+
+model AiGarmentProject {
+  id                         String                  @id @default(uuid()) @db.Uuid
+  companyId                  String                  @map("company_id") @db.Uuid
+  branchId                   String?                 @map("branch_id") @db.Uuid
+  projectNumber              String                  @map("project_number")
+  projectName                String                  @map("project_name")
+  sourceType                 AiGarmentSourceType     @map("source_type")
+  customerId                 String?                 @map("customer_id") @db.Uuid
+  buyerId                    String?                 @map("buyer_id") @db.Uuid
+  brandId                    String?                 @map("brand_id") @db.Uuid
+  seasonId                   String?                 @map("season_id") @db.Uuid
+  categoryId                 String?                 @map("category_id") @db.Uuid
+  // Free text -- no "Market" master exists anywhere in this ERP today; a
+  // deliberate foundation-stage simplification, same reasoning already used
+  // for SampleRequest.color.
+  targetMarket               String?                 @map("target_market")
+  // A descriptive demographic/positioning note, distinct from the real
+  // customerId/buyerId FKs above -- no existing master fits this.
+  targetCustomerProfile      String?                 @map("target_customer_profile")
+  targetSellingPrice         Decimal?                @map("target_selling_price") @db.Decimal(18, 2)
+  // Soft-matched against Currency.code, same non-FK convention
+  // Customer.defaultCurrencyCode already uses -- not a real @relation.
+  currencyCode               String?                 @map("currency_code") @db.Char(3)
+  orderQuantityEstimate      Decimal?                @map("order_quantity_estimate") @db.Decimal(18, 2)
+  status                     AiGarmentProjectStatus  @default(IDEA)
+  statusBeforeHold           AiGarmentProjectStatus? @map("status_before_hold")
+  // Drives wizard resumability -- e.g. "PROJECT_INFO", "UPLOAD_REFERENCE",
+  // "COSTING". Save-and-leave-and-return reads/writes this, not a session.
+  currentStepKey             String                  @map("current_step_key")
+  // Native Postgres array -- drives the progress-stepper UI's completed ticks.
+  completedStepKeys          String[]                @map("completed_step_keys")
+  // Set once, only by convertProjectToStyle() -- mirrors SampleRequest.productId.
+  productId                  String?                 @unique @map("product_id") @db.Uuid
+  // Set once, only by createSampleRequestFromProject() -- mirrors
+  // BuyerEnquiryLine.sampleRequestId.
+  sampleRequestId            String?                 @unique @map("sample_request_id") @db.Uuid
+  // Reserved, unused this phase -- see the schema comment on SalesOrder's own
+  // aiGarmentProject back-relation. @unique since the back-relation there is
+  // singular (one Sales Order can be reserved-linked from at most one project).
+  salesOrderId               String?                 @unique @map("sales_order_id") @db.Uuid
+  // Soft reference to an Attachment.id -- no hard FK, same convention as
+  // AiGarmentDesignOption.imageAttachmentId. Points at whichever reference
+  // image is CURRENT for this project (a single-image "Replace"/"Delete"
+  // model, not a gallery) -- uploading a new one replaces this pointer and
+  // the old Attachment row/file are removed.
+  referenceImageAttachmentId String?                 @map("reference_image_attachment_id") @db.Uuid
+  notes                      String?
+  createdByUserId            String                  @map("created_by_user_id") @db.Uuid
+  createdAt                  DateTime                @default(now()) @map("created_at")
+  updatedAt                  DateTime                @updatedAt @map("updated_at")
+
+  company               Company                         @relation(fields: [companyId], references: [id])
+  branch                Branch?                         @relation(fields: [branchId], references: [id])
+  customer              Customer?                       @relation(fields: [customerId], references: [id])
+  buyer                 Buyer?                          @relation(fields: [buyerId], references: [id])
+  brand                 Brand?                          @relation(fields: [brandId], references: [id])
+  season                Season?                         @relation(fields: [seasonId], references: [id])
+  category              Category?                       @relation(fields: [categoryId], references: [id])
+  product               Product?                        @relation(fields: [productId], references: [id])
+  sampleRequest         SampleRequest?                  @relation(fields: [sampleRequestId], references: [id])
+  salesOrder            SalesOrder?                     @relation(fields: [salesOrderId], references: [id])
+  createdBy             User                            @relation("AiGarmentProjectCreatedBy", fields: [createdByUserId], references: [id])
+  fabricDetail          AiGarmentFabricDetail?
+  designOptions         AiGarmentDesignOption[]
+  referenceAnalysis     AiGarmentReferenceAnalysis?
+  referenceAnalysisRuns AiGarmentReferenceAnalysisRun[]
+  developmentBriefRuns  AiGarmentDevelopmentBriefRun[]
+  designDirections      AiGarmentDesignDirection[]
+
+  @@unique([companyId, projectNumber])
+  @@index([companyId, status])
+  @@map("ai_garment_projects")
+}
+
+// 1:1 child, mirroring Bom.productId's @unique 1:1 pattern -- used by both
+// workflows' fabric-related steps ("Fabric Information" in Start From
+// Fabric, "Apply Fabric" in Start From Reference). Reuses the existing
+// fabric sub-masters (Phase 3) instead of free-text/Decimal fields, the
+// same masters already wired into Purchasing's FabricRoll.
+model AiGarmentFabricDetail {
+  id            String   @id @default(uuid()) @db.Uuid
+  projectId     String   @unique @map("project_id") @db.Uuid
+  gsmId         String?  @map("gsm_id") @db.Uuid
+  dyeId         String?  @map("dye_id") @db.Uuid
+  weaveTypeId   String?  @map("weave_type_id") @db.Uuid
+  widthId       String?  @map("width_id") @db.Uuid
+  compositionId String?  @map("composition_id") @db.Uuid
+  colorId       String?  @map("color_id") @db.Uuid
+  supplierId    String?  @map("supplier_id") @db.Uuid
+  notes         String?
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  project     AiGarmentProject   @relation(fields: [projectId], references: [id])
+  gsm         FabricGsm?         @relation(fields: [gsmId], references: [id])
+  dye         FabricDye?         @relation(fields: [dyeId], references: [id])
+  weaveType   FabricWeaveType?   @relation(fields: [weaveTypeId], references: [id])
+  width       FabricWidth?       @relation(fields: [widthId], references: [id])
+  composition FabricComposition? @relation(fields: [compositionId], references: [id])
+  color       Color?             @relation(fields: [colorId], references: [id])
+  supplier    Supplier?          @relation(fields: [supplierId], references: [id])
+
+  @@map("ai_garment_fabric_details")
+}
+
+// Supports "Generate Variations"/"Generate Designs" and "Select Design" --
+// one row per design candidate. aiMetadata is a placeholder for a future
+// real AI response (prompt/model/confidence); empty/unused this phase, no
+// fabricated AI output is ever written here.
+model AiGarmentDesignOption {
+  id                String   @id @default(uuid()) @db.Uuid
+  projectId         String   @map("project_id") @db.Uuid
+  label             String?
+  notes             String?
+  isSelected        Boolean  @default(false) @map("is_selected")
+  // Soft reference to an Attachment.id -- no hard FK, deliberately mirroring
+  // Attachment.relatedRecordId's own existing "no DB-enforced polymorphic
+  // FK, app-layer validated" convention already used throughout this codebase.
+  imageAttachmentId String?  @map("image_attachment_id") @db.Uuid
+  aiMetadata        Json?    @map("ai_metadata")
+  createdByUserId   String   @map("created_by_user_id") @db.Uuid
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  project   AiGarmentProject @relation(fields: [projectId], references: [id])
+  createdBy User             @relation("AiGarmentDesignOptionCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@index([projectId])
+  @@map("ai_garment_design_options")
+}
+
+// ─────────────────────────────────────────────────────────────
+// AI Garment Flow — Process 1: Reference Garment Analysis (2026-09-06)
+//
+// Hierarchy this schema enforces structurally: Reference Image -> AI
+// Original Analysis -> Human Review -> Final Approved Analysis -> future
+// processes. AiGarmentReferenceObservation keeps `aiObservation` (never
+// overwritten) and `approvedObservation` (starts equal to the AI value,
+// diverges once a user edits it) as two separate columns for exactly this
+// reason -- a later process reads `approvedObservation`, never
+// `aiObservation`, so "bypass the approved analysis and silently use the
+// uncorrected AI output" is impossible by construction, not just by
+// convention.
+// ─────────────────────────────────────────────────────────────
+
+enum AiGarmentAnalysisConfidence {
+  CONFIRMED_VISUALLY
+  LIKELY_INFERRED
+  NOT_DETERMINABLE
+}
+
+enum AiGarmentConstructionComplexity {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+// DRAFT: no successful AI run yet. AI_ANALYSED: a run completed, nothing
+// edited yet. UNDER_REVIEW: at least one observation has been user-edited.
+// APPROVED: the explicit "Approve Analysis & Continue" action fired. STALE:
+// the reference image was replaced after this analysis existed -- the
+// analysis row and its observations are kept (audit value) but every
+// further edit/approve action is blocked until a fresh AI run replaces them,
+// so a replaced image can never leave a stale APPROVED analysis silently
+// trusted by a later process.
+enum AiGarmentReferenceAnalysisStatus {
+  DRAFT
+  AI_ANALYSED
+  UNDER_REVIEW
+  APPROVED
+  STALE
+}
+
+enum AiGarmentAnalysisRunStatus {
+  IN_PROGRESS
+  SUCCESS
+  FAILED
+}
+
+// The current analysis for a project -- 1:1, always fully replaced (its
+// observations deleted and recreated) by the next successful AI run, not
+// versioned/append-only like SampleVersion. `rawResponseJson` keeps the
+// complete original AI response for audit/debugging, but per explicit
+// instruction is never the only usable data structure -- every individual
+// observation is also a real row in AiGarmentReferenceObservation.
+model AiGarmentReferenceAnalysis {
+  id                                 String                           @id @default(uuid()) @db.Uuid
+  companyId                          String                           @map("company_id") @db.Uuid
+  projectId                          String                           @unique @map("project_id") @db.Uuid
+  // Soft reference to the Attachment this analysis was actually run against
+  // -- kept even if the project's own current reference image is later
+  // replaced, so a STALE analysis still records what it was analysing.
+  referenceAttachmentId              String                           @map("reference_attachment_id") @db.Uuid
+  status                             AiGarmentReferenceAnalysisStatus @default(DRAFT)
+  analysisVersion                    Int                              @default(0) @map("analysis_version")
+  promptVersion                      String                           @map("prompt_version")
+  provider                           String
+  model                              String
+  rawResponseJson                    Json                             @map("raw_response_json")
+  constructionComplexityLevel        AiGarmentConstructionComplexity? @map("construction_complexity_level")
+  constructionComplexityExplanation  String?                          @map("construction_complexity_explanation")
+  manufacturingChallenges            String[]                         @map("manufacturing_challenges")
+  keyDesignLanguageFeatures          String[]                         @map("key_design_language_features")
+  featuresForFurtherDevelopment      String[]                         @map("features_for_further_development")
+  featuresToChangeForDifferentiation String[]                         @map("features_to_change_for_differentiation")
+  missingInformation                 String[]                         @map("missing_information")
+  designDnaSummary                   String?                          @map("design_dna_summary")
+  approvedByUserId                   String?                          @map("approved_by_user_id") @db.Uuid
+  approvedAt                         DateTime?                        @map("approved_at")
+  createdByUserId                    String                           @map("created_by_user_id") @db.Uuid
+  createdAt                          DateTime                         @default(now()) @map("created_at")
+  updatedAt                          DateTime                         @updatedAt @map("updated_at")
+
+  company              Company                         @relation(fields: [companyId], references: [id])
+  project              AiGarmentProject                @relation(fields: [projectId], references: [id])
+  approvedBy           User?                           @relation("AiGarmentReferenceAnalysisApprovedBy", fields: [approvedByUserId], references: [id])
+  createdBy            User                            @relation("AiGarmentReferenceAnalysisCreatedBy", fields: [createdByUserId], references: [id])
+  observations         AiGarmentReferenceObservation[]
+  runs                 AiGarmentReferenceAnalysisRun[]
+  developmentBriefRuns AiGarmentDevelopmentBriefRun[]
+
+  @@map("ai_garment_reference_analyses")
+}
+
+// One row per analysed feature (garmentCategory, silhouette, sleeve.type,
+// fabricObservations.weight, ...) -- 36 rows per analysis, matching the AI
+// prompt's own 24 top-level + sleeve's 4 + fabricObservations' 6 +
+// printPattern's 5 sub-keys. featureKey is the dotted path (e.g.
+// "sleeve.type"); its display label/grouping is derived from a shared
+// constant map (src/core/ai/reference-analysis/feature-registry.ts), not
+// stored here, to avoid duplicating data that never varies per row.
+model AiGarmentReferenceObservation {
+  id                       String                      @id @default(uuid()) @db.Uuid
+  analysisId               String                      @map("analysis_id") @db.Uuid
+  featureKey               String                      @map("feature_key")
+  aiObservation            String                      @map("ai_observation")
+  aiConfidence             AiGarmentAnalysisConfidence @map("ai_confidence")
+  aiManufacturingRelevance String                      @map("ai_manufacturing_relevance")
+  // Defaults to aiObservation at creation (nothing corrected yet) --
+  // "final approved observation" always has a value for a later process to
+  // read, even before a human has touched it.
+  approvedObservation      String                      @map("approved_observation")
+  userEdited               Boolean                     @default(false) @map("user_edited")
+  approvedByUserId         String?                     @map("approved_by_user_id") @db.Uuid
+  approvedAt               DateTime?                   @map("approved_at")
+  createdAt                DateTime                    @default(now()) @map("created_at")
+  updatedAt                DateTime                    @updatedAt @map("updated_at")
+
+  analysis   AiGarmentReferenceAnalysis @relation(fields: [analysisId], references: [id])
+  approvedBy User?                      @relation("AiGarmentReferenceObservationApprovedBy", fields: [approvedByUserId], references: [id])
+
+  @@unique([analysisId, featureKey])
+  @@map("ai_garment_reference_observations")
+}
+
+// Append-only log of every AI analysis attempt for a project, success or
+// failure -- distinct from AiGarmentReferenceAnalysis (the one current,
+// mutable "result") since a failed attempt must never overwrite a
+// previously successful analysis, and every attempt (including failures)
+// needs its own audit trail per explicit instruction.
+model AiGarmentReferenceAnalysisRun {
+  id                    String                     @id @default(uuid()) @db.Uuid
+  companyId             String                     @map("company_id") @db.Uuid
+  projectId             String                     @map("project_id") @db.Uuid
+  analysisId            String?                    @map("analysis_id") @db.Uuid
+  referenceAttachmentId String                     @map("reference_attachment_id") @db.Uuid
+  provider              String
+  model                 String
+  promptVersion         String                     @map("prompt_version")
+  analysisVersion       Int                        @map("analysis_version")
+  status                AiGarmentAnalysisRunStatus @default(IN_PROGRESS)
+  errorCategory         String?                    @map("error_category")
+  errorMessage          String?                    @map("error_message")
+  requestedAt           DateTime                   @default(now()) @map("requested_at")
+  completedAt           DateTime?                  @map("completed_at")
+  createdByUserId       String                     @map("created_by_user_id") @db.Uuid
+
+  company   Company                     @relation(fields: [companyId], references: [id])
+  project   AiGarmentProject            @relation(fields: [projectId], references: [id])
+  analysis  AiGarmentReferenceAnalysis? @relation(fields: [analysisId], references: [id])
+  createdBy User                        @relation("AiGarmentReferenceAnalysisRunCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@index([projectId, status])
+  @@map("ai_garment_reference_analysis_runs")
+}
+
+// ─────────────────────────────────────────────────────────────
+// AI Garment Flow — Process 2: Commercial Design Development Brief (2026-09-06)
+//
+// Starts only once AiGarmentReferenceAnalysis.status = APPROVED (enforced in
+// saveWorkflowStep). Every design direction is its own row, mutated in place
+// on Edit/Regenerate (a `version` counter tracks regenerations, matching the
+// brief's own explicit field list) rather than versioned/append-only like
+// SampleVersion -- the brief asks for "Version" as a field ON the record,
+// not "one row per version". `aiRawJson` keeps the complete original AI
+// response per direction for audit, same precedent as AiGarmentReferenceAnalysis
+// .rawResponseJson; the scalar columns are the current (possibly
+// user-edited) content future processes (Generate Variations onward) read.
+// ─────────────────────────────────────────────────────────────
+
+enum AiGarmentDesignBalance {
+  COMMERCIAL_LOWER_RISK
+  BALANCED
+  FASHION_FORWARD
+}
+
+enum AiGarmentCommercialClassification {
+  SAFE_COMMERCIAL
+  BALANCED
+  FASHION_FORWARD
+}
+
+// Shared 3-tier rating used by Process 2's own Production Complexity /
+// Expected Fabric Consumption / Target Price Compatibility fields --
+// deliberately a new, generically-named enum rather than reusing Process
+// 1's AiGarmentConstructionComplexity (same LOW/MEDIUM/HIGH values, but that
+// enum's own name is specific to construction complexity; reusing it here
+// would read confusingly on an unrelated column).
+enum AiGarmentRatingLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum AiGarmentDesignDirectionStatus {
+  GENERATED
+  APPROVED
+  REJECTED
+  SAVED_FOR_LATER
+}
+
+// One row per "Create Development Brief" click (batch of N directions) or
+// per single-direction Regenerate -- reuses AiGarmentAnalysisRunStatus
+// (IN_PROGRESS/SUCCESS/FAILED) from Process 1 verbatim, same generic
+// AI-call-lifecycle concept. contextSnapshotJson captures the short form's
+// resolved market/customer/season/category/price/currency/buyer/preferred-
+// fabric/factory-capabilities at request time -- the user may override any
+// of these for just this one brief without permanently changing the Style
+// Master (Screen 1 already owns that), so this is the only place that
+// exact input combination is ever recoverable for audit.
+model AiGarmentDevelopmentBriefRun {
+  id                      String                     @id @default(uuid()) @db.Uuid
+  companyId               String                     @map("company_id") @db.Uuid
+  projectId               String                     @map("project_id") @db.Uuid
+  referenceAnalysisId     String                     @map("reference_analysis_id") @db.Uuid
+  provider                String
+  model                   String
+  promptVersion           String                     @map("prompt_version")
+  requestedDirectionCount Int                        @map("requested_direction_count")
+  designBalance           AiGarmentDesignBalance     @map("design_balance")
+  contextSnapshotJson     Json                       @map("context_snapshot_json")
+  status                  AiGarmentAnalysisRunStatus @default(IN_PROGRESS)
+  errorCategory           String?                    @map("error_category")
+  errorMessage            String?                    @map("error_message")
+  requestedAt             DateTime                   @default(now()) @map("requested_at")
+  completedAt             DateTime?                  @map("completed_at")
+  createdByUserId         String                     @map("created_by_user_id") @db.Uuid
+
+  company           Company                    @relation(fields: [companyId], references: [id])
+  project           AiGarmentProject           @relation(fields: [projectId], references: [id])
+  referenceAnalysis AiGarmentReferenceAnalysis @relation(fields: [referenceAnalysisId], references: [id])
+  createdBy         User                       @relation("AiGarmentDevelopmentBriefRunCreatedBy", fields: [createdByUserId], references: [id])
+  directions        AiGarmentDesignDirection[]
+
+  @@index([projectId, status])
+  @@map("ai_garment_development_brief_runs")
+}
+
+model AiGarmentDesignDirection {
+  id                    String                         @id @default(uuid()) @db.Uuid
+  companyId             String                         @map("company_id") @db.Uuid
+  projectId             String                         @map("project_id") @db.Uuid
+  developmentBriefRunId String                         @map("development_brief_run_id") @db.Uuid
+  version               Int                            @default(1)
+  status                AiGarmentDesignDirectionStatus @default(GENERATED)
+  aiGeneratedAt         DateTime                       @default(now()) @map("ai_generated_at")
+  userNotes             String?                        @map("user_notes")
+  userEdited            Boolean                        @default(false) @map("user_edited")
+
+  designDirectionName           String                            @map("design_direction_name")
+  commercialClassification      AiGarmentCommercialClassification @map("commercial_classification")
+  targetConsumer                String                            @map("target_consumer")
+  silhouette                    String
+  garmentLength                 String                            @map("garment_length")
+  fit                           String
+  neckline                      String
+  collar                        String
+  sleeve                        String
+  shoulderConstruction          String                            @map("shoulder_construction")
+  frontConstruction             String                            @map("front_construction")
+  backConstruction              String                            @map("back_construction")
+  closure                       String
+  pocket                        String
+  waistTreatment                String                            @map("waist_treatment")
+  hem                           String
+  keyNewDesignFeature           String                            @map("key_new_design_feature")
+  suggestedFabricCharacter      String                            @map("suggested_fabric_character")
+  suggestedTrims                String                            @map("suggested_trims")
+  productionComplexity          AiGarmentRatingLevel              @map("production_complexity")
+  expectedFabricConsumption     AiGarmentRatingLevel              @map("expected_fabric_consumption")
+  targetPriceCompatibilityLevel AiGarmentRatingLevel              @map("target_price_compatibility_level")
+  commercialRationale           String                            @map("commercial_rationale")
+  manufacturingRisk             String                            @map("manufacturing_risk")
+  differentiationFromReference  String                            @map("differentiation_from_reference")
+
+  commercialPotentialScore      Int     @map("commercial_potential_score")
+  buyerFitScore                 Int     @map("buyer_fit_score")
+  manufacturingEaseScore        Int     @map("manufacturing_ease_score")
+  targetPriceCompatibilityScore Int     @map("target_price_compatibility_score")
+  fabricEfficiencyScore         Int     @map("fabric_efficiency_score")
+  designFreshnessScore          Int     @map("design_freshness_score")
+  overallScore                  Int     @map("overall_score")
+  isRecommendedForVisualisation Boolean @default(false) @map("is_recommended_for_visualisation")
+
+  aiRawJson Json @map("ai_raw_json")
+
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  company             Company                      @relation(fields: [companyId], references: [id])
+  project             AiGarmentProject             @relation(fields: [projectId], references: [id])
+  developmentBriefRun AiGarmentDevelopmentBriefRun @relation(fields: [developmentBriefRunId], references: [id])
+  createdBy           User                         @relation("AiGarmentDesignDirectionCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@index([projectId, status])
+  @@map("ai_garment_design_directions")
+}
+
+// ─────────────────────────────────────────────────────────────
 // System
 // ─────────────────────────────────────────────────────────────
 
@@ -5122,6 +5625,13 @@ enum RelatedModule {
   // the ImportBatch that created it, not a real document of any other
   // type).
   IMPORT_BATCH
+  // AI Garment Flow (2026-09-06) -- every file uploaded anywhere in a
+  // project's workflow (reference images, fabric swatches, generated design
+  // images, technical flats, etc.) attaches at the project header level
+  // (relatedRecordId = AiGarmentProject.id), disambiguated by Attachment's
+  // own contextLabel reused as an asset-type tag -- matching Sampling's own
+  // precedent of keeping attachments at the header level, not per-child-row.
+  AI_GARMENT_PROJECT
 }
 
 model Attachment {
@@ -5353,6 +5863,7 @@ enum DocumentType {
   INTERNAL_TRANSFER
   EMPLOYEE_ADVANCE
   EMPLOYEE_ADVANCE_SETTLEMENT
+  AI_GARMENT_PROJECT
 }
 
 model DocumentSequence {

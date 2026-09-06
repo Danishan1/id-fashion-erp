@@ -1,0 +1,13 @@
+import { PrismaClient } from "@prisma/client";
+import { PrismaPg } from "@prisma/adapter-pg";
+const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
+const prisma = new PrismaClient({ adapter });
+const projectId = "31f1ca06-ec94-4fdc-9eb9-7bae688e3a19";
+const analysisId = "739b6386-d5c6-484d-ba25-5e7de5eed451";
+await prisma.aiGarmentDesignDirection.deleteMany({ where: { projectId } });
+await prisma.aiGarmentDevelopmentBriefRun.deleteMany({ where: { projectId } });
+await prisma.aiGarmentReferenceObservation.deleteMany({ where: { analysisId } });
+await prisma.aiGarmentReferenceAnalysis.deleteMany({ where: { id: analysisId } });
+await prisma.aiGarmentProject.deleteMany({ where: { id: projectId } });
+console.log("cleaned up");
+await prisma.$disconnect();

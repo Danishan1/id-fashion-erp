@@ -30,6 +30,7 @@ export const MODULES = [
   "dispatch",
   "reports",
   "administration",
+  "ai_garment_flow",
 ] as const;
 export type Module = (typeof MODULES)[number];
 
@@ -117,6 +118,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     dispatch: ["view", "export"],
     reports: ["view", "export", "print"],
     administration: ["view"],
+    ai_garment_flow: ["view"],
   },
   MERCHANDISER: {
     dashboard: ["view"],
@@ -134,6 +136,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     inventory: ["view", "create", "edit"],
     purchasing: ["view", "create"],
     reports: ["view", "export", "print"],
+    ai_garment_flow: ["view", "create", "edit", "delete", "cancel", "export", "print"],
   },
   SAMPLING_MANAGER: {
     dashboard: ["view"],

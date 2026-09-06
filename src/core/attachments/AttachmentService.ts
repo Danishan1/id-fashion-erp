@@ -79,6 +79,16 @@ export async function listAttachments(companyId: string, relatedModule: RelatedM
   });
 }
 
+/** Metadata only, no file read — for a caller that only needs to display fileName/size/mimeType/uploadedBy, not the bytes. */
+export async function getAttachmentMetadata(companyId: string, attachmentId: string) {
+  const attachment = await prisma.attachment.findFirst({
+    where: { id: attachmentId, companyId },
+    include: { uploadedBy: { select: { id: true, fullName: true } } },
+  });
+  if (!attachment) throw new BusinessRuleError("NOT_FOUND", "Attachment not found.", { id: attachmentId });
+  return attachment;
+}
+
 export async function getAttachmentForDownload(companyId: string, attachmentId: string) {
   const attachment = await prisma.attachment.findFirst({ where: { id: attachmentId, companyId } });
   if (!attachment) throw new BusinessRuleError("NOT_FOUND", "Attachment not found.", { id: attachmentId });

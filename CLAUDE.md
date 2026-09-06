@@ -53,6 +53,8 @@ Update the status column and add a short dated note under the relevant phase sec
 
 **CRM/Marketing enhancement pass, on top of the migration above — all 14 planned items complete (2026-08-24)** — tracked in full in [CRM_MARKETING_ENHANCEMENT_AUDIT_AND_PLAN.md](CRM_MARKETING_ENHANCEMENT_AUDIT_AND_PLAN.md): Deal→Customer conversion, Customer 360, CRM Kanban, CRM Dashboard, Follow-up Management/Notifications, configurable Lead Priority, Campaign Approval workflow, Marketing Dashboard trend charts, Channel Performance report, Customer Segmentation, Marketing Automation triggers, CSV Import (Leads/Deals/Campaign Daily Metrics), Meta/Google Ads Integration, and an AI-readiness audit of every aggregation function. The one open thread: Meta/Google Ads Integration's OAuth/token-exchange/sync code is built and unit-tested but has **no real credentials to verify the live external API calls against yet** — see that file's own Item 13 note before assuming it's been exercised against the real Meta/Google APIs, and before touching `AdAccountConnection`/`AdCampaignLink`/`ImportBatch`/`CrmSettings` or the `src/modules/marketing/ad-integrations/`/`src/modules/import/` modules.
 
+**AI Garment Flow (separate initiative, not part of the 11 phases above) — foundation + Process 1 (Reference Garment Analysis) complete, live browser verification still pending (2026-09-06)** — a new product-development workflow module (reference/fabric upload → AI-assisted design → costing → sampling), full detail in its own two dated sections further down this file. The existing `Product` model remains the single Style Master (not duplicated); a new `AiGarmentProject` header is a pre-Style record that manually graduates into a real `Product` via `convertProjectToStyle()`, mirroring Sampling's own `convertSampleToStyle()`. BOM/Costing steps require this graduation and then reuse the existing BOM/MRP and Sampling-costing modules — no parallel schema. Process 1 (Reference Garment Analysis) is a real Anthropic vision integration (`@anthropic-ai/sdk`, model names from env config) analysing an uploaded reference image into 36 individually-tracked, editable, approvable observations — see that section before touching `AiGarmentReferenceAnalysis`/`AiGarmentReferenceObservation`/`AiGarmentReferenceAnalysisRun`, `src/core/ai/reference-analysis/`, or `src/core/ai/providers/anthropic.ts`. Every other AI Garment Flow step still returns "AI integration not connected." (`src/core/ai/AIService.ts`'s `NullAIProvider`) — only Reference Analysis has a real provider wired up so far.
+
 ### Phase 2 notes (2026-08-16)
 - Next.js 16 scaffold, Prisma 7 schema (Organization/Auth + Masters + System, 24 models), NextAuth v5 Credentials auth (JWT sessions), RBAC `PermissionService`, document numbering, audit logging, local file storage, `BusinessRuleError`, sidebar/topbar shell, login page, DB-backed dashboard placeholder, and full seed data (roles/permissions/Super Admin) are all in place and verified end-to-end in the browser (login → dashboard showing real DB counts).
 - Prisma 7 deviation from the original plan: `datasource.url` in `schema.prisma` is no longer supported — connection config now lives in `prisma.config.ts`, and `PrismaClient` is instantiated with a `@prisma/adapter-pg` driver adapter (see `src/core/db/client.ts`). Keep this in mind for any future Prisma schema changes.
@@ -3561,6 +3563,217 @@ up any calculation.
   list, and confirmed the live search box (added earlier this session) correctly matches "percentage" as a
   search term too. Deactivated the test row afterward (soft, matching Cost Master's own no-hard-delete
   convention). `npx tsc --noEmit`, `npx eslint`, and `npx vitest run` (864/864) all clean.
+
+## AI Garment Flow — foundation (2026-09-06)
+
+A new, separate initiative (not one of the 11 phases above): "AI Garment Flow" is a product-development
+workflow — reference/fabric upload → AI-assisted design directions → costing → sampling — requested as a new
+module inside this same app. The brief was written assuming a Supabase-based stack; a 3-agent audit first
+(hard evidence, zero ambiguity: `grep -ri supabase` across the whole repo returns zero hits) confirmed this
+codebase has no Supabase anywhere — the real stack (Next.js 16 + Prisma 7/`@prisma/adapter-pg` + plain
+PostgreSQL + NextAuth v5 JWT/Credentials + local-disk file storage) was used instead, per the brief's own
+"reuse existing architecture" instruction.
+
+**The central architectural decision**: the existing `Product` model (`itemType: STYLE`, wired to
+`Brand`/`Category`/`Season`/`ProductFitting`/`ProductType`, with `ProductVariant` color×size) remains the one
+true Style Master — **not duplicated**. A new `AiGarmentProject` header is a pre-Style
+development/ideation record that starts before any real Style exists and later, deliberately and manually,
+**graduates** into a real `Product` via `convertProjectToStyle()` — the exact same shape already proven
+twice in this codebase (`BuyerEnquiryLine` → `SampleRequest`, `SampleRequest` → `Product`). Per an explicit
+user decision (AskUserQuestion), BOM and Costing steps require this graduation and then deep-link into the
+**existing** BOM/MRP module and Sampling's existing costing engine — no parallel BOM/costing schema exists
+in this module.
+
+- **Schema** (migration `20260906120000_add_ai_garment_flow`, applied via `prisma migrate deploy` after
+  `prisma migrate dev` hit unrelated pre-existing migration-history drift — never ran `migrate reset`, which
+  would have dropped all data; every new table/column independently re-verified via a direct Prisma query
+  against the live dev DB, not trusted from the migration output alone): `AiGarmentProject`
+  (`ai_garment_projects` — `projectNumber` via the existing `generateDocumentNumber()`/`document_sequences`
+  engine, prefix `AGF`; `customerId`/`buyerId`/`brandId`/`seasonId`/`categoryId` all reuse existing masters;
+  `targetMarket`/`targetCustomerProfile` are deliberately free text — no "Market" master exists anywhere in
+  this ERP and inventing one now would be premature; `currentStepKey`/`completedStepKeys` drive wizard
+  resumability; `productId`/`sampleRequestId` are both nullable-then-set-once `@unique` FKs, guarded against
+  concurrent double-conversion exactly like `BuyerEnquiryLine.sampleRequestId`; `salesOrderId` is a reserved,
+  unused-this-phase FK, same "documented reserved value" precedent as `ProductionOrderStatus
+  .MATERIAL_ALLOCATED`), `AiGarmentFabricDetail` (1:1 child, reuses the existing `FabricGsm`/`FabricDye`/
+  `FabricWeaveType`/`FabricWidth`/`FabricComposition` masters — the exact same masters already wired into
+  Purchasing's `FabricRoll` — instead of free-text/Decimal fields), `AiGarmentDesignOption` (design
+  candidates for "Generate Variations"/"Select Design", `isSelected` flipped exclusively within one
+  transaction, `aiMetadata Json?` unused placeholder for a future real AI response). One new
+  `RelatedModule.AI_GARMENT_PROJECT` value — every file upload (reference images, fabric swatches, generated
+  designs, technical flats, etc.) attaches at the **project header level**, matching Sampling's own
+  established "attachments live on the header, not per-child-row" precedent, disambiguated by `Attachment
+  .contextLabel` reused as an asset-type tag rather than its usual workflow-stage-snapshot meaning. One new
+  `DocumentType.AI_GARMENT_PROJECT` value (prefix `AGF`).
+- **Module** (`src/modules/ai-garment-flow/`) follows the exact file convention already established by
+  `src/modules/buyer-enquiries/` (the closest existing precedent — an optional, resumable, later-converting
+  workflow header): `schema.ts`/`repository.ts`/`service.ts`/`service.test.ts`. The status enum
+  (`AiGarmentProjectStatus`: `IDEA…COMPLETED/REJECTED/ON_HOLD/CANCELLED`) is a coarse milestone tracker
+  derived from the workflow step being saved (`nextStatusForStep()`, ordered via `STATUS_ORDER`, never
+  regresses when an earlier step is revisited) — decoupled from, not a duplicate of, the real state machines
+  Product/SampleRequest/BOM already have. Reuses the proven `statusBeforeHold` Hold/Resume idiom.
+  `convertProjectToStyle()` mirrors `convertSampleToStyle()` line-for-line (same style-code uniqueness check,
+  same `advanceMasterCodeSequence()` call, same single-shot guarded FK write).
+  `createSampleRequestFromProject()` mirrors `convertEnquiryLineToSampleRequest()` — calls the *existing,
+  unchanged* `createSampleRequest()` from Sampling, gated on the project already having graduated to a real
+  Style and having a real linked Customer.
+- **RBAC/nav**: one new `ai_garment_flow` module added to `src/config/rbac.ts`'s `MODULES` (view/create/
+  edit/delete/cancel/export/print granted to `MERCHANDISER`, matching its existing full ownership of
+  `sampling`/`buyer_enquiries`; view-only to `MANAGEMENT`; `SUPER_ADMIN`/`VIEWER` get it automatically via
+  the existing `MODULES.map(...)` mechanism). Since `prisma db seed` isn't safe to re-run against this dev
+  DB (documented project-wide gotcha), the new module's `Permission`/`role_permissions` rows were backfilled
+  via the same idempotent one-off-script pattern already used for Expenses/Dispatch/marketing/hrms_*. One
+  new top-level `NavSection` ("AI Garment Flow") added to `src/components/layout/navigation.ts` — deliberately
+  does **not** add new nav entries for Buyers/Orders/Purchase/Production/Inventory/Quality/Dispatch, which
+  already have their own sections; the project detail page instead links out to them once the relevant
+  linkage exists (e.g. "View Style" once `productId` is set).
+- **AI service placeholder**: `src/core/ai/AIService.ts` — a provider-agnostic interface
+  (`analyseReference`/`analyseFabric`/`createDevelopmentBrief`/`generateDesigns`/`compareDesigns`/
+  `applyFabric`/`createTechnicalFlat`/`generateDraftBOM`/`analyseCost`) plus a `NullAIProvider` default whose
+  every method returns `{available: false, message: "AI integration not connected."}` — zero network calls,
+  zero fabricated results, per explicit instruction. Kept in `src/core/` (not inside the module) since it's
+  framed as reusable across any future AI-driven area, matching this codebase's "cross-cutting concern →
+  `src/core/*`" convention.
+- **UI** (`src/app/(dashboard)/ai-garment-flow/`): a dashboard (two "Start From Reference"/"Start From
+  Fabric" action cards + a Recent Projects table), a full project list, a New Project (Step 1) form, and a
+  project detail page (Server Component + one big Client `AiGarmentProjectWorkflowPanel`, the established
+  "Server Component page + Client workflow panel" split already used by Sampling/Buyer Enquiry/Sales Orders)
+  rendering a progress stepper across all 11 (Reference) / 12 (Fabric) steps driven by `currentStepKey`/
+  `completedStepKeys`. AI-driven steps (Reference/Fabric Analysis, Development Brief, Generate Designs,
+  Compare Designs, Apply Fabric's AI assist, Create Technical Flat, Generate Draft BOM, Analyse Cost) each
+  render their real non-AI parts (forms, file upload, design-option add/select) alongside one inert button
+  that shows the literal text "AI integration not connected." on click — no fake AI output is ever generated.
+  Technical Development/BOM/Costing show a "Convert to Style" gate until `productId` is set, then deep-link
+  into the real `/bom-mrp/[productId]` editor and a "Create Sample Request" action that deep-links into that
+  Sample Request's own existing detail page (with Sampling's full costing engine already built there).
+- **Two `react-hooks/set-state-in-effect` lint errors hit and fixed**, same rule this project has hit many
+  times before: the Buyer-list-reset-on-Customer-clear moved into the `<select>`'s own `onChange` instead of
+  an effect branch, and the attachment list's mount-effect was rewritten to inline its own fetch+`.then()`
+  chain instead of calling a named `async load()` function from the effect body — both match this project's
+  own established fix pattern exactly.
+- **Verification**: `npx tsc --noEmit`, `npx eslint .` (both project-wide), and `npx vitest run` (971/971,
+  22 new in `ai-garment-project.service.test.ts` covering the Hold/Resume state machine, the
+  `convertProjectToStyle()` graduation guard including the lost-race case, and `createSampleRequestFromProject()`'s
+  guards) all clean. Every new table/enum/column independently re-verified via a direct query against the
+  live dev DB. **Live in-browser verification was not completed this pass** — this session's own dev server
+  could not start: another chat session on this same machine already had its own `next dev` running against
+  this exact working directory, and Next.js's own single-instance-per-directory lock file blocks a second
+  `next dev` regardless of port (confirmed live — a different port was tried first, per the user's own
+  choice, and still hit the same lock). Recommended next step: run the existing `erp-tester`/`erp-qa-uat`
+  agent-based browser walkthrough once no other session holds the dev server, per the manual test plan
+  already laid out in this feature's own plan file.
+- **Not built this phase** (explicitly out of scope per the brief's own "build only the foundation... stop
+  before Process 1" instruction): any real AI provider integration, real BOM/costing computation inside this
+  module (deliberately deferred to the existing BOM/MRP and Sampling-costing modules once a project
+  graduates), a dedicated "Designer" role (no role needs one yet; the existing custom-role admin UI can add
+  one later with zero schema changes), and a "Market" master table (kept as free text, documented above).
+
+## AI Garment Flow — Process 1: Reference Garment Analysis (2026-09-06)
+
+First real AI process built on the foundation above, inside the existing Start From Reference workflow's
+UPLOAD_REFERENCE and REFERENCE_ANALYSIS steps only (per explicit scope: no Development Brief, no Process 2).
+The brief again assumed Supabase; per the same "reuse the existing stack" instruction as the foundation
+phase, this uses the real stack (Prisma/Postgres, the existing local-disk `Attachment`/`AttachmentService`,
+NextAuth-based company-scoping in place of RLS) — flagged clearly, not silently substituted.
+
+**Real Anthropic integration, not a placeholder**: `@anthropic-ai/sdk` added (pinned to an exact version,
+matching this project's own `next-auth`-pinning precedent — a routine `npm ci` should never silently pull an
+unreviewed SDK update into a security/business-critical integration). Model names are read from
+`ANTHROPIC_DEFAULT_MODEL`/`ANTHROPIC_VISION_MODEL` env vars (`AI_PROVIDER=anthropic` selects the provider) —
+confirmed directly against the installed SDK's own `Model` type union that `claude-sonnet-5`/`claude-opus-5`
+(the current Claude 5 family) are genuinely valid model identifiers, not guessed from stale training data.
+
+- **`src/core/ai/providers/anthropic.ts`** — the only file that imports `@anthropic-ai/sdk` directly.
+  `requestStructuredVisionOutput()` forces a single structured tool call via Anthropic's `tool_choice` +
+  `strict: true` (server-side schema enforcement, confirmed from the SDK's own type definitions) rather than
+  asking for free-text JSON — far more reliable, and still independently re-validated against the caller's
+  own Zod schema before anything is trusted. Retries exactly once with a corrective follow-up on a validation
+  failure; never returns a fabricated/partial result on failure, always throws `AiServiceError` (mapped from
+  the real SDK error classes — `APIConnectionTimeoutError`/`AuthenticationError`/`RateLimitError`/`APIError`)
+  or `AiInvalidResponseError`.
+- **`src/core/ai/reference-analysis/`** — `feature-registry.ts` (the 36 individually-tracked observation
+  slots — 24 top-level + sleeve's 4 + fabricObservations' 6 + printPattern's 5 sub-keys — each mapped to a
+  display label/section/dotted-path, zero Prisma imports so both server and client import the same file, no
+  label ever duplicated), `schema.ts` (the Zod schema matching the brief's recommended JSON structure
+  exactly, plus `flattenToObservations()` walking the registry to turn one validated response into 36 DB
+  rows), `prompt.ts` (the hidden business/system prompt, verbatim from the brief, never shown to end users;
+  `PROMPT_VERSION = "reference-analysis-v1"`; `buildToolInputSchema()` built once from the same
+  confidence/complexity enum constants the Zod schema uses, so the two can't drift apart), `analyze.ts` (the
+  one real entry point — zero database access, "image + context in, validated structured analysis out or a
+  thrown error").
+- **Schema** (migration `20260906140000_add_ai_garment_reference_analysis`): `AiGarmentProject` gains
+  `referenceImageAttachmentId` (soft ref, mirrors `AiGarmentDesignOption.imageAttachmentId`'s existing
+  convention) — a single **current** reference image with Replace/Delete semantics, not the foundation
+  phase's generic multi-file gallery (that generic upload flow is kept, unchanged, for the Fabric workflow's
+  own swatch step). `AiGarmentReferenceAnalysis` (header, 1:1 per project, fully replaced — not versioned/
+  append-only like `SampleVersion` — by each successful re-analysis; keeps the complete raw AI JSON for
+  audit, but per explicit instruction is never the only usable data structure). `AiGarmentReferenceObservation`
+  (36 rows per analysis — `aiObservation`/`aiConfidence`/`aiManufacturingRelevance` never overwritten;
+  `approvedObservation` starts equal to `aiObservation` and is the only field a later process ever reads,
+  making "bypass the approved analysis and use the uncorrected AI output" structurally impossible, not just
+  disallowed by convention). `AiGarmentReferenceAnalysisRun` (append-only audit log of every attempt,
+  success or failure — a failed attempt can never overwrite a previously-successful analysis, since it's a
+  wholly separate table). New enums `AiGarmentAnalysisConfidence`/`AiGarmentConstructionComplexity`/
+  `AiGarmentReferenceAnalysisStatus` (`DRAFT/AI_ANALYSED/UNDER_REVIEW/APPROVED/STALE`)/
+  `AiGarmentAnalysisRunStatus`. Two new `BusinessRuleError` codes, `AI_SERVICE_ERROR`/`AI_INVALID_RESPONSE`
+  (both 502).
+- **STALE status closes a real gap the brief explicitly flagged**: replacing or deleting the reference image
+  flips any existing analysis to `STALE` (kept for audit, but every further edit/approve action is blocked
+  until a fresh analysis replaces it) — the same "derive real state, never trust a stored label that can
+  silently drift" discipline this project has already learned the hard way more than once (Sampling's
+  Hold/Resume bug, Purchasing's cancel-from-`ON_HOLD` bug).
+- **Approval requiring reapproval on edit**: per the brief's own "if a previously approved analysis is
+  edited later, handle the status logically," editing or resetting **any** observation on an `APPROVED`
+  analysis pushes it back to `UNDER_REVIEW` — applied uniformly to every field rather than trying to classify
+  which edits are "material" (a distinction the brief didn't concretely specify, and easy to get wrong in the
+  unsafe direction). `approveReferenceAnalysis()` bulk-stamps both the header and every observation row with
+  the same `approvedByUserId`/`approvedAt` in one transaction.
+- **Duplicate-request guard, real and server-side, not just a disabled button**: `runReferenceAnalysis()`
+  writes an `IN_PROGRESS` run row *before* ever calling the AI, and rejects a new request while one is
+  already in progress — a stuck row older than 3 minutes (safely past the provider's own 90s timeout plus one
+  retry) is treated as abandoned (e.g. a crashed request) rather than a permanent lock, since this feature has
+  no background-job queue to reap it otherwise.
+- **API routes** under `/api/v1/ai-garment-projects/`: `[id]/reference-image` (GET/POST/DELETE — the
+  brief's own narrower JPG/PNG/WEBP allowlist, layered on top of `FileStorage`'s broader shared allowlist,
+  so a PDF is rejected here even though the shared layer would accept it for other modules),
+  `[id]/reference-analysis` (GET), `[id]/reference-analysis/run` (POST), `[id]/reference-analysis/approve`
+  (POST), `reference-analysis/observations/[observationId]` (PATCH) and `.../reset` (POST).
+  `AttachmentService` gained `getAttachmentMetadata()` — a metadata-only read (no file buffer) for the
+  uploader's own display needs, alongside the existing `getAttachmentForDownload()`.
+- **UI**: `ReferenceImageUploader.tsx` (Screen 2 — single current image, Upload/Preview/Replace/Delete, the
+  brief's exact disclaimer text, client-side format/size checks as a fast-feedback courtesy on top of the
+  server's own real gate), `ReferenceAnalysisPanel.tsx` (Screen 3 — the "ANALYSE REFERENCE WITH AI" button
+  disabled with no image, the "Analysing garment structure and design details…" loading state, every section
+  the brief specified — Garment Overview/Design Details/Fabric Observations/Construction/Manufacturing
+  Considerations/Design DNA/Missing Information — plus the bottom sortable Feature/Observation/Confidence/
+  Manufacturing-Relevance table with inline edit-and-reset-to-AI per observation and the
+  "APPROVE ANALYSIS & CONTINUE" control), `ConfidenceBadge.tsx` (symbol + text label together, never relying
+  on color alone). `AiGarmentProjectForm.tsx` extended to dual create/edit mode (Screen 1's own "Save / Edit
+  / Continue" requirement — previously creation-only) and gained the missing Currency field.
+- **Verification**: `npx tsc --noEmit`, `npx eslint .` (both project-wide), and `npx vitest run` (990/990, 40
+  new — 18 mocked unit tests for the service layer's guards/error-mapping, plus the existing 22 from the
+  foundation phase) all clean. A 22-check script exercised every real (non-mocked) code path against the
+  live dev DB and real local file storage — project creation, Screen 1 save, all four upload-rejection cases
+  (corrupt/mislabeled, unsupported format, oversized, then a genuinely valid PNG), the missing-credentials
+  failure path (the one failure mode fully exercisable for real without a live API key — confirmed the exact
+  user-facing message, confirmed the failed attempt is logged as its own audit run row, confirmed a second
+  attempt isn't wrongly blocked as "already in progress," confirmed nothing invalid was ever saved as an
+  analysis), then a simulated-successful-analysis seed (the exact same 36-row shape a real AI response
+  produces) to verify edit/reset/approve/replace-marks-STALE end-to-end against real Postgres. One real bug
+  caught and fixed via this script: a transient failure deleting a replaced image's old attachment was being
+  fully silently swallowed, orphaning a stored file with zero visibility — now logged via the existing
+  structured logger (`src/core/logging/logger.ts`) instead of disappearing without a trace; the replace
+  action itself still never blocks on this, by design.
+- **Live in-browser verification was not completed, again** — the same shared-dev-server constraint as the
+  foundation phase (another chat session's `next dev` holds the only usable port and Next.js's own
+  single-instance-per-directory lock in this exact working directory), tried again with a different port per
+  the user's own choice and hit the identical lock. **No real Anthropic API key exists in this environment**
+  (`ANTHROPIC_API_KEY` is empty in `.env`), so the actual external API call itself — steps like "confirm
+  structured JSON is returned," "confirm the Anthropic request works" — could not be executed for real and
+  are honestly reported as NOT TESTED, not claimed as passing.
+- **Not built this phase**: Development Brief and everything past it (explicitly out of scope), any garment
+  image generation (explicitly out of scope for Process 1), a background job queue for the analysis run
+  (the in-progress guard's 3-minute staleness window is the accepted, documented trade-off in its absence).
 
 ## Recommended Stack
 
