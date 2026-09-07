@@ -15,6 +15,7 @@ import { CommercialEvaluationPanel } from "./CommercialEvaluationPanel";
 import { FabricApplicationPanel } from "./FabricApplicationPanel";
 import { TechnicalFlatPanel } from "./TechnicalFlatPanel";
 import { BomSuggestionPanel } from "./BomSuggestionPanel";
+import { CostAnalysisPanel } from "./CostAnalysisPanel";
 
 const SAMPLE_TYPES = ["FIT", "PROTO", "PP", "TOP", "SHIPMENT", "PHOTOSHOOT", "SMS", "OTHER"] as const;
 
@@ -68,6 +69,7 @@ interface Project {
   targetSellingPrice: string | number | null;
   currencyCode: string | null;
   orderQuantityEstimate: string | number | null;
+  costingCompletedAt: string | null;
 }
 
 interface Attachment {
@@ -100,7 +102,8 @@ const STEP_HELP: Partial<Record<AiGarmentStepKey, string>> = {
   TECHNICAL_DEVELOPMENT:
     "Convert this project into a real Style once a design is settled, and generate a technical flat (a CAD-style construction drawing) from the approved garment visual, to continue into BOM and Costing.",
   BOM: "Generate AI-suggested draft BOM lines, then resolve each into the real BOM (built on the graduated Style, using the existing BOM/MRP module) before continuing to Costing.",
-  COSTING: "Costing runs on a linked Sample Request, using Sampling's existing costing engine.",
+  COSTING:
+    "Costing runs on a linked Sample Request, using Sampling's existing costing engine. Get an early AI cost estimate/commentary alongside it, then mark this project's own workflow complete once real costing is done.",
 };
 
 async function postJson(url: string, body?: unknown) {
@@ -441,7 +444,7 @@ function StepContent({
     return wrap(
       <>
         <CostingSection project={project} setError={setError} reloadProject={reloadProject} />
-        <AiPlaceholderButton label="Analyse Cost" />
+        <CostAnalysisPanel projectId={project.id} currencyCode={project.currencyCode} setError={setError} reloadProject={reloadProject} />
       </>
     );
   }

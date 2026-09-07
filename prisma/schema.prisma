@@ -140,6 +140,8 @@ model Company {
   aiGarmentTechnicalFlats           AiGarmentTechnicalFlat[]
   aiGarmentBomSuggestionRuns        AiGarmentBomSuggestionRun[]
   aiGarmentBomSuggestions           AiGarmentBomSuggestion[]
+  aiGarmentCostAnalysisRuns         AiGarmentCostAnalysisRun[]
+  aiGarmentCostAnalyses             AiGarmentCostAnalysis[]
 
   @@map("companies")
 }
@@ -329,6 +331,9 @@ model User {
   aiGarmentTechnicalFlatsCreated           AiGarmentTechnicalFlat[]           @relation("AiGarmentTechnicalFlatCreatedBy")
   aiGarmentProjectsApprovedTechFlatBy      AiGarmentProject[]                 @relation("AiGarmentProjectApprovedTechnicalFlatBy")
   aiGarmentBomSuggestionRunsCreated        AiGarmentBomSuggestionRun[]        @relation("AiGarmentBomSuggestionRunCreatedBy")
+  aiGarmentCostAnalysisRunsCreated         AiGarmentCostAnalysisRun[]         @relation("AiGarmentCostAnalysisRunCreatedBy")
+  aiGarmentCostAnalysesCreated             AiGarmentCostAnalysis[]            @relation("AiGarmentCostAnalysisCreatedBy")
+  aiGarmentProjectsCostingCompletedBy      AiGarmentProject[]                 @relation("AiGarmentProjectCostingCompletedBy")
 
   @@map("users")
 }
@@ -5259,6 +5264,17 @@ model AiGarmentProject {
   approvedTechnicalFlatId           String?                 @map("approved_technical_flat_id") @db.Uuid
   approvedTechnicalFlatAt           DateTime?               @map("approved_technical_flat_at")
   approvedTechnicalFlatByUserId     String?                 @map("approved_technical_flat_by_user_id") @db.Uuid
+  // Process 9 (Cost Analysis)'s own "Mark Costing Complete" outcome -- unlike
+  // selectedDesignDirectionId/approvedFabricApplicationId/approvedTechnicalFlatId
+  // above (each deliberately mutable), this one is genuinely one-way: COSTING
+  // is the last step in both stepsForSourceType() sequences, so completing it
+  // is this project's own terminal milestone. Guarded via a single
+  // updateMany keyed on `status != COMPLETED` -- the same "precondition in
+  // the WHERE clause" idiom already used by setProductIdGuarded/
+  // setSampleRequestIdGuarded, just guarding against a double-click rather
+  // than a race between two different actors.
+  costingCompletedAt                DateTime?               @map("costing_completed_at")
+  costingCompletedByUserId          String?                 @map("costing_completed_by_user_id") @db.Uuid
   createdByUserId                   String                  @map("created_by_user_id") @db.Uuid
   createdAt                         DateTime                @default(now()) @map("created_at")
   updatedAt                         DateTime                @updatedAt @map("updated_at")
@@ -5280,6 +5296,7 @@ model AiGarmentProject {
   approvedFabricApplicationBy User?                              @relation("AiGarmentProjectApprovedFabricApplicationBy", fields: [approvedFabricApplicationByUserId], references: [id])
   approvedTechnicalFlat       AiGarmentTechnicalFlat?            @relation("AiGarmentProjectApprovedTechnicalFlat", fields: [approvedTechnicalFlatId], references: [id])
   approvedTechnicalFlatBy     User?                              @relation("AiGarmentProjectApprovedTechnicalFlatBy", fields: [approvedTechnicalFlatByUserId], references: [id])
+  costingCompletedBy          User?                              @relation("AiGarmentProjectCostingCompletedBy", fields: [costingCompletedByUserId], references: [id])
   fabricDetail                AiGarmentFabricDetail?
   designOptions               AiGarmentDesignOption[]
   referenceAnalysis           AiGarmentReferenceAnalysis?
@@ -5298,6 +5315,8 @@ model AiGarmentProject {
   technicalFlats              AiGarmentTechnicalFlat[]           @relation("AiGarmentTechnicalFlatsOfProject")
   bomSuggestionRuns           AiGarmentBomSuggestionRun[]
   bomSuggestions              AiGarmentBomSuggestion[]
+  costAnalysisRuns            AiGarmentCostAnalysisRun[]
+  costAnalyses                AiGarmentCostAnalysis[]
 
   @@unique([companyId, projectNumber])
   @@index([companyId, status])
@@ -6289,6 +6308,74 @@ model AiGarmentBomSuggestion {
 
   @@index([designDirectionId, decision])
   @@map("ai_garment_bom_suggestions")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Process 9 (Cost Analysis) -- an advisory AI cost estimate/commentary over
+// the project's own approved design + resolved BOM (if any) + known fabric
+// detail + real Sampling costing figures (if a linked Sample Request's
+// current version is already priced). Deliberately never writes to, and
+// never duplicates, Sampling's own real costing engine (SampleVersion
+// .costSubtotal/finalTotal/marginPercent/commissionPercent/freightAmount,
+// isCostingLocked) -- the exact same "advisory suggestion, real numbers
+// live in the existing module" shape Process 8's BOM Suggestion already
+// established, just for commentary instead of a resolvable line item.
+// ─────────────────────────────────────────────────────────────
+
+// One row per "ANALYSE COST WITH AI" click -- mirrors every other AI
+// Garment Flow run-log table exactly (created before the provider is even
+// resolved). Reuses AiGarmentAnalysisRunStatus rather than a sixth
+// identical PENDING/IN_PROGRESS/SUCCESS/FAILED enum.
+model AiGarmentCostAnalysisRun {
+  id                  String                     @id @default(uuid()) @db.Uuid
+  companyId           String                     @map("company_id") @db.Uuid
+  projectId           String                     @map("project_id") @db.Uuid
+  provider            String
+  model               String
+  promptVersion       String                     @map("prompt_version")
+  promptText          String                     @map("prompt_text")
+  contextSnapshotJson Json                       @map("context_snapshot_json")
+  status              AiGarmentAnalysisRunStatus @default(IN_PROGRESS)
+  errorCategory       String?                    @map("error_category")
+  errorMessage        String?                    @map("error_message")
+  requestedAt         DateTime                   @default(now()) @map("requested_at")
+  completedAt         DateTime?                  @map("completed_at")
+  createdByUserId     String                     @map("created_by_user_id") @db.Uuid
+
+  company   Company                @relation(fields: [companyId], references: [id])
+  project   AiGarmentProject       @relation(fields: [projectId], references: [id])
+  createdBy User                   @relation("AiGarmentCostAnalysisRunCreatedBy", fields: [createdByUserId], references: [id])
+  analysis  AiGarmentCostAnalysis?
+
+  @@index([projectId, status])
+  @@map("ai_garment_cost_analysis_runs")
+}
+
+// One row per successful "ANALYSE COST WITH AI" run -- append-only, the
+// same "full history stays inspectable, only the most recent is surfaced in
+// the UI" precedent AiGarmentCommercialEvaluation already established: a
+// re-run always creates a new analysis, never overwrites a prior one.
+model AiGarmentCostAnalysis {
+  id                           String   @id @default(uuid()) @db.Uuid
+  companyId                    String   @map("company_id") @db.Uuid
+  projectId                    String   @map("project_id") @db.Uuid
+  runId                        String   @unique @map("run_id") @db.Uuid
+  estimatedCostPerUnitLow      Decimal  @map("estimated_cost_per_unit_low") @db.Decimal(18, 2)
+  estimatedCostPerUnitHigh     Decimal  @map("estimated_cost_per_unit_high") @db.Decimal(18, 2)
+  costBreakdownCommentary      String   @map("cost_breakdown_commentary")
+  pricePositioningCommentary   String   @map("price_positioning_commentary")
+  marginFeasibilityCommentary  String   @map("margin_feasibility_commentary")
+  riskNotes                    String   @map("risk_notes")
+  createdByUserId              String   @map("created_by_user_id") @db.Uuid
+  createdAt                    DateTime @default(now()) @map("created_at")
+
+  company   Company                  @relation(fields: [companyId], references: [id])
+  project   AiGarmentProject         @relation(fields: [projectId], references: [id])
+  run       AiGarmentCostAnalysisRun @relation(fields: [runId], references: [id])
+  createdBy User                     @relation("AiGarmentCostAnalysisCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@index([projectId])
+  @@map("ai_garment_cost_analyses")
 }
 
 // ─────────────────────────────────────────────────────────────
