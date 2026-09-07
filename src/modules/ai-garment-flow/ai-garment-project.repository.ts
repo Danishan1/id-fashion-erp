@@ -64,6 +64,13 @@ export const AiGarmentProjectRepository = {
 
   setSampleRequestIdGuarded: (id: string, sampleRequestId: string) =>
     prisma.aiGarmentProject.updateMany({ where: { id, sampleRequestId: null }, data: { sampleRequestId } }),
+
+  /** Guarded against a double-click, not a cross-actor race — same idiom as setProductIdGuarded/setSampleRequestIdGuarded above. */
+  markCostingComplete: (id: string, userId: string) =>
+    prisma.aiGarmentProject.updateMany({
+      where: { id, status: { not: "COMPLETED" } },
+      data: { status: "COMPLETED", costingCompletedAt: new Date(), costingCompletedByUserId: userId },
+    }),
 };
 
 export const AiGarmentFabricDetailRepository = {
