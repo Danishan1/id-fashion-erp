@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { Modal } from "@/components/ui/Modal";
 import {
   LINE_STATUS_BADGE_CLASS,
   LINE_STATUS_LABELS,
@@ -11,6 +12,7 @@ import {
 } from "./statusLabels";
 import { SAMPLE_TYPE_LABELS } from "../sampling/sampleTypeLabels";
 import { formatDate } from "@/lib/date-format";
+import { suggestCodeFromName } from "@/lib/code-suggest";
 
 type EnquiryStatus = keyof typeof STATUS_LABELS;
 type LineStatus = keyof typeof LINE_STATUS_LABELS;
@@ -43,6 +45,10 @@ interface EnquiryDetail {
   customer: { id: string; name: string } | null;
   buyer: { name: string } | null;
   prospectName: string | null;
+  prospectContactPerson: string | null;
+  prospectEmail: string | null;
+  prospectPhone: string | null;
+  prospectCountry: string | null;
   lines: LineRow[];
 }
 
@@ -117,7 +123,15 @@ export function BuyerEnquiryWorkflowPanel({
       {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
 
       {!enquiry.customer && enquiry.status !== "CANCELLED" && (
-        <LinkCustomerPanel buyerEnquiryId={buyerEnquiryId} prospectName={enquiry.prospectName} onLinked={refresh} />
+        <LinkCustomerPanel
+          buyerEnquiryId={buyerEnquiryId}
+          prospectName={enquiry.prospectName}
+          prospectContactPerson={enquiry.prospectContactPerson}
+          prospectEmail={enquiry.prospectEmail}
+          prospectPhone={enquiry.prospectPhone}
+          prospectCountry={enquiry.prospectCountry}
+          onLinked={refresh}
+        />
       )}
 
       {(enquiry.status === "OPEN" || enquiry.status === "PARTIALLY_CONVERTED") && (
@@ -426,10 +440,18 @@ interface CustomerOption {
 function LinkCustomerPanel({
   buyerEnquiryId,
   prospectName,
+  prospectContactPerson,
+  prospectEmail,
+  prospectPhone,
+  prospectCountry,
   onLinked,
 }: {
   buyerEnquiryId: string;
   prospectName: string | null;
+  prospectContactPerson: string | null;
+  prospectEmail: string | null;
+  prospectPhone: string | null;
+  prospectCountry: string | null;
   onLinked: () => Promise<void>;
 }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -480,6 +502,8 @@ function LinkCustomerPanel({
     await onLinked();
   };
 
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
+
   return (
     <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-900/10">
       <p className="text-sm text-amber-800 dark:text-amber-300">
@@ -488,13 +512,22 @@ function LinkCustomerPanel({
       </p>
 
       {!isOpen ? (
-        <button
-          type="button"
-          onClick={openForm}
-          className="mt-2 rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500"
-        >
-          Link a Customer
-        </button>
+        <div className="mt-2 flex gap-2">
+          <button
+            type="button"
+            onClick={openForm}
+            className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500"
+          >
+            Link a Customer
+          </button>
+          <button
+            type="button"
+            onClick={() => setIsCreateOpen(true)}
+            className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+          >
+            Create Customer
+          </button>
+        </div>
       ) : (
         <div className="mt-3 max-w-md space-y-2">
           <FormField label="Customer" htmlFor="link-customer-id" required>
@@ -536,7 +569,200 @@ function LinkCustomerPanel({
           </div>
         </div>
       )}
+
+      <CreateCustomerModal
+        open={isCreateOpen}
+        onClose={() => setIsCreateOpen(false)}
+        prospectName={prospectName}
+        prospectContactPerson={prospectContactPerson}
+        prospectEmail={prospectEmail}
+        prospectPhone={prospectPhone}
+        prospectCountry={prospectCountry}
+        buyerEnquiryId={buyerEnquiryId}
+        onCreated={async () => {
+          setIsCreateOpen(false);
+          await onLinked();
+        }}
+      />
     </div>
+  );
+}
+
+/**
+ * "Create Customer" next to "Link a Customer" (2026-09-07) — a prospect
+ * enquiry's own captured lead data (name/contact/email/phone/country) had
+ * nowhere to go before this except a manual detour to Masters -> Customers,
+ * retyping everything by hand. Pre-fills from that same data and, when a
+ * contact person/email/phone were actually captured, also creates the
+ * matching Buyer (Customer itself has no contact-person/email/phone fields
+ * of its own — Buyer is where reachability lives, same shape as the
+ * standalone "Add Buyer" form on a Customer's own page) — then links the
+ * new Customer (+ Buyer, if created) straight back to this enquiry in one
+ * action, through the exact same existing endpoints those flows already
+ * use (no new orchestration endpoint).
+ */
+function CreateCustomerModal({
+  open,
+  onClose,
+  prospectName,
+  prospectContactPerson,
+  prospectEmail,
+  prospectPhone,
+  prospectCountry,
+  buyerEnquiryId,
+  onCreated,
+}: {
+  open: boolean;
+  onClose: () => void;
+  prospectName: string | null;
+  prospectContactPerson: string | null;
+  prospectEmail: string | null;
+  prospectPhone: string | null;
+  prospectCountry: string | null;
+  buyerEnquiryId: string;
+  onCreated: () => Promise<void>;
+}) {
+  const [customerCode, setCustomerCode] = useState("");
+  const [customerName, setCustomerName] = useState("");
+  const [country, setCountry] = useState("");
+  const [buyerCode, setBuyerCode] = useState("");
+  const [buyerName, setBuyerName] = useState("");
+  const [contactPerson, setContactPerson] = useState("");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Re-seed every field fresh on each open — pre-filled from the prospect's
+  // own captured data, never from whatever was left over in a previous
+  // open/cancel of this same modal.
+  const openKey = open ? "open" : "closed";
+  const [lastOpenKey, setLastOpenKey] = useState(openKey);
+  if (open && lastOpenKey !== openKey) {
+    setLastOpenKey(openKey);
+    setCustomerName(prospectName ?? "");
+    setCountry(prospectCountry ?? "");
+    setContactPerson(prospectContactPerson ?? "");
+    setEmail(prospectEmail ?? "");
+    setPhone(prospectPhone ?? "");
+    setBuyerName(prospectContactPerson || prospectName || "");
+    setBuyerCode(suggestCodeFromName(prospectContactPerson || prospectName || ""));
+    setError(null);
+    fetch("/api/v1/customers/next-code")
+      .then((res) => res.json())
+      .then((body) => setCustomerCode(body.data?.code ?? ""));
+  }
+  if (!open && lastOpenKey !== openKey) setLastOpenKey(openKey);
+
+  // A Buyer requires contactPerson/email/phone (all three) — only attempt
+  // creating one when the prospect actually captured at least one; an
+  // enquiry logged with just a name has nothing to make a Buyer out of.
+  const wantsBuyer = contactPerson.trim() !== "" || email.trim() !== "" || phone.trim() !== "";
+
+  const handleSubmit = async () => {
+    setIsSubmitting(true);
+    setError(null);
+
+    const customerRes = await fetch("/api/v1/customers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: customerCode, name: customerName, type: "CUSTOMER", country: country || undefined }),
+    });
+    if (!customerRes.ok) {
+      setIsSubmitting(false);
+      setError(await parseErrorMessage(customerRes, "Failed to create the Customer."));
+      return;
+    }
+    const customer = (await customerRes.json()).data;
+
+    let newBuyerId: string | undefined;
+    if (wantsBuyer) {
+      if (!contactPerson.trim() || !email.trim() || !phone.trim()) {
+        setIsSubmitting(false);
+        setError("Contact Person, Email, and Phone are all required to also create a Buyer — clear all three to skip creating one.");
+        return;
+      }
+      const buyerRes = await fetch(`/api/v1/customers/${customer.id}/buyers`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: buyerCode, name: buyerName, contactPerson, email, phone }),
+      });
+      if (buyerRes.ok) {
+        newBuyerId = (await buyerRes.json()).data.id;
+      } else {
+        // The Customer already exists at this point — don't lose that
+        // progress over a failed Buyer; surface it and still link the
+        // Customer alone, same as a plain "Link a Customer" with no Buyer.
+        setError(await parseErrorMessage(buyerRes, "Customer created, but failed to create the Buyer — linking the Customer alone."));
+      }
+    }
+
+    const linkRes = await fetch(`/api/v1/buyer-enquiries/${buyerEnquiryId}/link-customer`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ customerId: customer.id, buyerId: newBuyerId }),
+    });
+    setIsSubmitting(false);
+
+    if (!linkRes.ok) {
+      setError(await parseErrorMessage(linkRes, "Customer created, but failed to link it to this enquiry."));
+      return;
+    }
+    await onCreated();
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} title="Create Customer from Prospect">
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 gap-3">
+          <FormField label="Customer Code" htmlFor="newCustomerCode" required>
+            <input id="newCustomerCode" value={customerCode} onChange={(e) => setCustomerCode(e.target.value)} className={textInputClass()} />
+          </FormField>
+          <FormField label="Customer Name" htmlFor="newCustomerName" required>
+            <input id="newCustomerName" value={customerName} onChange={(e) => setCustomerName(e.target.value)} className={textInputClass()} />
+          </FormField>
+        </div>
+        <FormField label="Country" htmlFor="newCustomerCountry">
+          <input id="newCustomerCountry" value={country} onChange={(e) => setCountry(e.target.value)} className={textInputClass()} />
+        </FormField>
+
+        <div className="border-t border-zinc-200 pt-3 dark:border-zinc-800">
+          <p className="mb-2 text-xs font-medium uppercase text-zinc-500">
+            Primary Contact {wantsBuyer ? "(creates a Buyer)" : "(leave blank to skip creating a Buyer)"}
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <FormField label="Buyer Code" htmlFor="newBuyerCode" required={wantsBuyer}>
+              <input id="newBuyerCode" value={buyerCode} onChange={(e) => setBuyerCode(e.target.value)} className={textInputClass()} />
+            </FormField>
+            <FormField label="Buyer Name" htmlFor="newBuyerName" required={wantsBuyer}>
+              <input id="newBuyerName" value={buyerName} onChange={(e) => setBuyerName(e.target.value)} className={textInputClass()} />
+            </FormField>
+          </div>
+          <div className="mt-3 grid grid-cols-3 gap-3">
+            <FormField label="Contact Person" htmlFor="newContactPerson" required={wantsBuyer}>
+              <input id="newContactPerson" value={contactPerson} onChange={(e) => setContactPerson(e.target.value)} className={textInputClass()} />
+            </FormField>
+            <FormField label="Email" htmlFor="newEmail" required={wantsBuyer}>
+              <input id="newEmail" type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={textInputClass()} />
+            </FormField>
+            <FormField label="Phone" htmlFor="newPhone" required={wantsBuyer}>
+              <input id="newPhone" value={phone} onChange={(e) => setPhone(e.target.value)} className={textInputClass()} />
+            </FormField>
+          </div>
+        </div>
+
+        {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+        <div className="flex gap-2">
+          <ActionButton
+            label="Create & Link Customer"
+            onClick={handleSubmit}
+            isBusy={isSubmitting}
+            disabled={!customerCode || !customerName}
+          />
+          <ActionButton label="Cancel" onClick={onClose} isBusy={isSubmitting} variant="secondary" />
+        </div>
+      </div>
+    </Modal>
   );
 }
 
