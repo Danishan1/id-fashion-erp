@@ -26,6 +26,10 @@ export const AiGarmentDesignDirectionRepository = {
   findByProjectId: (projectId: string) =>
     prisma.aiGarmentDesignDirection.findMany({ where: { projectId }, orderBy: { overallScore: "desc" } }),
 
+  /** Used by Process 5 (Commercial Design Evaluation) to load exactly the 2-8 designs the user selected for comparison, scoped to this project so a cross-project id can't be smuggled in. */
+  findManyByIds: (projectId: string, ids: string[]) =>
+    prisma.aiGarmentDesignDirection.findMany({ where: { projectId, id: { in: ids } } }),
+
   /** Verify tenant ownership before any scoped action — same pattern as SampleMaterialRepository.findWithRequestOwner. */
   findWithProjectOwner: (id: string) =>
     prisma.aiGarmentDesignDirection.findUnique({ where: { id }, include: { project: true } }),

@@ -53,7 +53,7 @@ Update the status column and add a short dated note under the relevant phase sec
 
 **CRM/Marketing enhancement pass, on top of the migration above — all 14 planned items complete (2026-08-24)** — tracked in full in [CRM_MARKETING_ENHANCEMENT_AUDIT_AND_PLAN.md](CRM_MARKETING_ENHANCEMENT_AUDIT_AND_PLAN.md): Deal→Customer conversion, Customer 360, CRM Kanban, CRM Dashboard, Follow-up Management/Notifications, configurable Lead Priority, Campaign Approval workflow, Marketing Dashboard trend charts, Channel Performance report, Customer Segmentation, Marketing Automation triggers, CSV Import (Leads/Deals/Campaign Daily Metrics), Meta/Google Ads Integration, and an AI-readiness audit of every aggregation function. The one open thread: Meta/Google Ads Integration's OAuth/token-exchange/sync code is built and unit-tested but has **no real credentials to verify the live external API calls against yet** — see that file's own Item 13 note before assuming it's been exercised against the real Meta/Google APIs, and before touching `AdAccountConnection`/`AdCampaignLink`/`ImportBatch`/`CrmSettings` or the `src/modules/marketing/ad-integrations/`/`src/modules/import/` modules.
 
-**AI Garment Flow (separate initiative, not part of the 11 phases above) — foundation + Process 1 (Reference Garment Analysis) + Process 2 (Commercial Design Development Brief) + Process 3 (Garment Design Visual Generation) + Process 4 (Controlled Design Variation) complete; live image-generation verification blocked on the configured OpenAI account's exhausted billing credits (2026-09-06/07)** — a new product-development workflow module (reference/fabric upload → AI-assisted design → costing → sampling), full detail in its own dated sections further down this file. The existing `Product` model remains the single Style Master (not duplicated); a new `AiGarmentProject` header is a pre-Style record that manually graduates into a real `Product` via `convertProjectToStyle()`, mirroring Sampling's own `convertSampleToStyle()`. BOM/Costing steps require this graduation and then reuse the existing BOM/MRP and Sampling-costing modules — no parallel schema. Process 1 (Reference Garment Analysis) is a real Anthropic vision integration analysing an uploaded reference image into 36 individually-tracked, editable, approvable observations. Process 2 (Commercial Design Development Brief) is a real Anthropic text integration that, once that analysis is approved, generates 3/6/9 differentiated commercial `AiGarmentDesignDirection` records (each individually editable/approvable/rejectable/regeneratable, each scored 0-100). Process 3 (Garment Design Visual Generation) is a real, provider-agnostic OpenAI Images integration turning each APPROVED design direction into 1/3/4 generated visuals with full version history and a Select/Reject/Regenerate/Create Variation workflow. Process 4 (Controlled Design Variation) is a real image-to-image integration that regenerates just one named feature (Neckline/Collar/Sleeve/.../Other) of an existing generated image while preserving everything else, with its own version-controlled variation history and a Select Variation/Keep Original/Create Another Variation workflow — see those sections before touching `AiGarmentReferenceAnalysis`/`AiGarmentReferenceObservation`/`AiGarmentReferenceAnalysisRun`/`AiGarmentDevelopmentBriefRun`/`AiGarmentDesignDirection`/`AiGarmentImageGenerationRun`/`AiGarmentGeneratedImage`/`AiGarmentDesignVariationRun`/`AiGarmentDesignVariation`, `src/core/ai/reference-analysis/`, `src/core/ai/development-brief/`, `src/core/ai/image-generation/`, `src/core/ai/design-variation/`, `src/core/ai/providers/anthropic.ts`, or `src/modules/ai-garment-flow/`. `src/core/ai/AIService.ts`'s `NullAIProvider`/`getAIService()` are dead code, unreferenced by any real process — don't wire a future process through that file, follow the established per-process file-layout pattern (`schema.ts`/`prompt.ts`/`generate.ts` or `analyze.ts`) instead.
+**AI Garment Flow (separate initiative, not part of the 11 phases above) — foundation + Process 1 (Reference Garment Analysis) + Process 2 (Commercial Design Development Brief) + Process 3 (Garment Design Visual Generation) + Process 4 (Controlled Design Variation) + Process 5 (Commercial Design Evaluation) complete; live image-generation verification (Process 3/4) still blocked on the configured OpenAI account's exhausted billing credits, but every Anthropic-backed process (1/2/5) is fully live-verified (2026-09-06/07)** — a new product-development workflow module (reference/fabric upload → AI-assisted design → costing → sampling), full detail in its own dated sections further down this file. The existing `Product` model remains the single Style Master (not duplicated); a new `AiGarmentProject` header is a pre-Style record that manually graduates into a real `Product` via `convertProjectToStyle()`, mirroring Sampling's own `convertSampleToStyle()`. BOM/Costing steps require this graduation and then reuse the existing BOM/MRP and Sampling-costing modules — no parallel schema. Process 1 (Reference Garment Analysis) is a real Anthropic vision integration analysing an uploaded reference image into 36 individually-tracked, editable, approvable observations. Process 2 (Commercial Design Development Brief) is a real Anthropic text integration that, once that analysis is approved, generates 3/6/9 differentiated commercial `AiGarmentDesignDirection` records (each individually editable/approvable/rejectable/regeneratable, each scored 0-100). Process 3 (Garment Design Visual Generation) is a real, provider-agnostic OpenAI Images integration turning each APPROVED design direction into 1/3/4 generated visuals with full version history and a Select/Reject/Regenerate/Create Variation workflow. Process 4 (Controlled Design Variation) is a real image-to-image integration that regenerates just one named feature (Neckline/Collar/Sleeve/.../Other) of an existing generated image while preserving everything else, with its own version-controlled variation history and a Select Variation/Keep Original/Create Another Variation workflow. Process 5 (Commercial Design Evaluation) is a real Anthropic text integration that compares 2-8 APPROVED design directions on a 12-criterion weighted commercial rubric, letting the user override the AI's ranking and always requiring explicit confirmation before recording a SELECTED DESIGN and advancing the workflow to Apply Fabric (or Technical Development, for a fabric-sourced project) — see those sections before touching `AiGarmentReferenceAnalysis`/`AiGarmentReferenceObservation`/`AiGarmentReferenceAnalysisRun`/`AiGarmentDevelopmentBriefRun`/`AiGarmentDesignDirection`/`AiGarmentImageGenerationRun`/`AiGarmentGeneratedImage`/`AiGarmentDesignVariationRun`/`AiGarmentDesignVariation`/`AiGarmentCommercialEvaluationRun`/`AiGarmentCommercialEvaluation`/`AiGarmentCommercialEvaluationItem`, `src/core/ai/reference-analysis/`, `src/core/ai/development-brief/`, `src/core/ai/image-generation/`, `src/core/ai/design-variation/`, `src/core/ai/commercial-evaluation/`, `src/core/ai/providers/anthropic.ts`, or `src/modules/ai-garment-flow/`. `src/core/ai/AIService.ts`'s `NullAIProvider`/`getAIService()` are dead code, unreferenced by any real process — don't wire a future process through that file, follow the established per-process file-layout pattern (`schema.ts`/`prompt.ts`/`generate.ts` or `analyze.ts`) instead.
 
 ### Phase 2 notes (2026-08-16)
 - Next.js 16 scaffold, Prisma 7 schema (Organization/Auth + Masters + System, 24 models), NextAuth v5 Credentials auth (JWT sessions), RBAC `PermissionService`, document numbering, audit logging, local file storage, `BusinessRuleError`, sidebar/topbar shell, login page, DB-backed dashboard placeholder, and full seed data (roles/permissions/Super Admin) are all in place and verified end-to-end in the browser (login → dashboard showing real DB counts).
@@ -4031,6 +4031,105 @@ feature, per the spec's own hidden prompt template.
 - **Not built this phase**: chaining a variation into a further variation (see the scope note above), any
   second image-generation provider, controlled feature changes beyond this process — per the spec's own
   "Stop after Process 4" instruction.
+
+## AI Garment Flow — Process 5: Commercial Design Evaluation (2026-09-07)
+
+Builds on Process 2 — compares 2-8 of a project's own APPROVED `AiGarmentDesignDirection` rows (the real
+named "designs," not a raw image or variation — those are visual renderings OF a design, not the design
+itself) on the spec's own 12-criterion commercial rubric, using a real Anthropic text call. Unlike Process 3/4
+(OpenAI image generation, blocked by the account's exhausted credits), this call uses `ANTHROPIC_API_KEY`
+— present and working — so it was **fully live-verified end-to-end**, not just unit-tested.
+
+- **Schema** (migration `20260907130000_add_ai_garment_commercial_evaluation`): `AiGarmentCommercialEvaluationRun`
+  (the run/audit-log row, mirrors every other AI Garment Flow run-log table — created before the provider is
+  resolved), `AiGarmentCommercialEvaluation` (header, append-only — a re-run always creates a new evaluation,
+  never overwrites a prior one, same "full history stays inspectable" precedent as `AiGarmentDesignDirection`
+  itself), `AiGarmentCommercialEvaluationItem` (one row per compared design — the 12 raw 1-10 scores, the
+  server-computed `commercialDevelopmentScore` /100, Strengths/Weaknesses/Manufacturing Risks/Potential Cost
+  Risks/Suggested Improvement, `aiRank`, and a nullable `userRank` override). `AiGarmentProject` gained
+  `selectedDesignDirectionId`/`selectedDesignAt`/`selectedDesignByUserId` — "SELECTED DESIGN" is recorded on
+  the project itself (not a real `Product`/Style Master row, which may not exist yet at this stage of the
+  workflow — graduation via `convertProjectToStyle()` is a later, still-manual step required only once BOM/
+  Costing begin) and is deliberately **not** a guarded "set once" write like `productId`/`sampleRequestId` —
+  a merchandiser revisiting this step to pick a different design later is a legitimate correction, not a
+  graduation to protect.
+- **`commercialDevelopmentScore` is always computed server-side**, never trusted from the AI's own
+  arithmetic (the same "never trust a computed total from the client/model" discipline used everywhere else
+  — Sales Order/Journal/MRP totals, etc.): `computeCommercialDevelopmentScore()` in
+  `src/core/ai/commercial-evaluation/schema.ts` applies the spec's exact weights (Commercial Appeal/Buyer
+  Fit/Target Price Compatibility each 15%, Manufacturing Simplicity/Fabric Suitability/Consumption
+  Efficiency/Scalability/Design Freshness each 10%). The spec names 12 criteria but only gives explicit
+  weights for 8 — the remaining 4 (Target Customer Fit, Pattern Making Complexity, Sewing Complexity, Trim
+  Complexity) are read as together comprising the spec's own "Other Technical Factors 5%" bucket: their
+  average is weighted 5%, giving a max score of exactly 100. Every criterion, including the three
+  "complexity" ones, is instructed (in the hidden prompt's own technical addendum) to use the same
+  higher-is-better scale — a 10 on a complexity criterion means LOW complexity — so one weighted sum is
+  meaningful across all twelve without inverting any of them.
+- **The AI's response is positional, never id-keyed** — `src/core/ai/commercial-evaluation/prompt.ts` numbers
+  each design "DESIGN 1", "DESIGN 2", etc. in the exact order requested, the model returns exactly that many
+  items in that same order (enforced by `buildCommercialEvaluationResponseSchema(designCount)`'s `.length()`
+  check, `strict: true`'s array-length keywords being silently stripped per the same confirmed-live Anthropic
+  limitation Process 2 already documented), and the service zips the response back to the real design ids by
+  array position — the model is never given a real database id it could hallucinate or misreport.
+  `buildCommercialEvaluationResponseSchema()`'s own `superRefine` also enforces exactly one FIRST_CHOICE
+  always, one SECOND_CHOICE whenever ≥2 designs are compared, and one THIRD_CHOICE whenever ≥3 are — this is
+  the actual safety net for that constraint, not just prompt wording.
+- **Auto-pulled context** (Buyer/Market/Customer/Season/Target Price/Fabric if known/Order Quantity if
+  known/Factory Capability) reuses `AiGarmentProjectRepository.findByIdWithDetails()`'s existing eager-loaded
+  relations exactly as Development Brief's own `buildContext()` does — Customer's name is included this time
+  (Process 2 never bothered pulling it in), and "Fabric if known" is a readable string built from
+  `AiGarmentFabricDetail`'s own GSM/composition/weave/width/dye/color names when that record already exists
+  for the project (commonly absent at this stage, since Apply Fabric hasn't necessarily happened yet — the
+  field is simply omitted). "Factory Capability" has no schema field anywhere in this ERP (confirmed by
+  grep) — it's a free-text runtime input, never persisted on the project, the same non-persisted-override
+  convention Development Brief's own `factoryCapabilities` field already established.
+- **"Allow user to override AI ranking"**: `overrideCommercialRank()` needs no confirmation at all (it
+  commits nothing — a display-only re-ranking), gated by
+  `AiGarmentCommercialEvaluationItemRepository.setUserRankExclusive()`, which clears any sibling item in the
+  same evaluation currently holding that same rank before setting the new one, in one transaction — two
+  items can never both show FIRST_CHOICE. **"Final choice must always be user-approved"**:
+  `selectDesignForDevelopment()` is a wholly separate action from ranking, always requires `confirmed: true`
+  (the client shows a `ConfirmModal` first), and the design being selected does not have to match either
+  ranking shown — a user can select their own 3rd-ranked design and the system does not object.
+- **"Move workflow to Apply Fabric" read literally per source type, not assumed universal**: the REFERENCE
+  workflow has a real `APPLY_FABRIC` step right after `SELECT_DESIGN`; the FABRIC workflow has none (fabric
+  is already known for that path — confirmed by reading `AI_GARMENT_FABRIC_STEPS`), so the natural next step
+  there is `TECHNICAL_DEVELOPMENT` instead. `selectDesignForDevelopment()` reuses the existing, unchanged
+  `saveWorkflowStep()` twice — once for `SELECT_DESIGN` itself (so it's recorded as a completed step), then
+  once more for whichever step genuinely follows it in `stepsForSourceType(project.sourceType)` — rather than
+  duplicating any step-advance logic or hardcoding "APPLY_FABRIC" unconditionally.
+- **UI**: `CommercialEvaluationPanel.tsx` replaces the `COMMERCIAL_EVALUATION` step's old `AiPlaceholderButton`
+  stub — a design picker (2-8 checkboxes + optional Factory Capability text field) and a "COMPARE
+  COMMERCIALLY" button; once an evaluation exists, a comparison table (one row per design, all 12 scores +
+  the computed total + effective rank badge) plus one detail card per design (Strengths/Weaknesses/Risks/
+  Improvement, a rank-override dropdown, and its own "SELECT DESIGN FOR DEVELOPMENT" button behind a
+  `ConfirmModal`). Only the most recent evaluation is shown — older ones stay in the database (append-only)
+  for audit, not yet surfaced in this view; a documented, deliberate MVP scope choice.
+- **20 new unit tests** (`commercial-evaluation.service.test.ts`) covering the eligibility filter (APPROVED
+  only), the active-run guard, the not-found/not-approved validation on both the compare and select actions,
+  the error-mapping table, the positional zip-back-to-real-ids behavior, an exact hand-verified
+  `commercialDevelopmentScore` calculation (79 from a known set of inputs), the rank-override exclusivity,
+  and both source-type branches of the post-selection workflow advance. 1052/1052 tests project-wide, `npx
+  tsc --noEmit` and `npx eslint .` clean.
+- **Live end-to-end verification, real Postgres + the real Anthropic API — 21/21 checks passed**, genuinely
+  end-to-end this time (unlike Process 3/4's OpenAI-credits blocker): seeded 3 real APPROVED design
+  directions (a classic tee, an oversized streetwear tee, a ringer tee) with real project-level commercial
+  context (target market/price/order quantity + a Factory Capability override), then called
+  `createCommercialEvaluation()` for real. The model returned exactly 3 items, one FIRST/SECOND/THIRD_CHOICE
+  each, every one of the 12 scores a real integer 1-10, real non-placeholder Strengths/Weaknesses/Risks/
+  Improvement text, and a genuine comparative rationale — confirmed the server-computed
+  `commercialDevelopmentScore` lands in the valid 0-100 range for all three (the oversized streetwear design
+  scored lowest and was ranked THIRD_CHOICE, consistent with its own higher manufacturing/consumption
+  complexity). Then exercised `overrideCommercialRank()` (confirmed no duplicate FIRST_CHOICE across
+  siblings), confirmed `selectDesignForDevelopment()` correctly rejects an unconfirmed call, then confirmed a
+  confirmed call records `selectedDesignDirectionId` on the real project row AND correctly advances
+  `currentStepKey` to `APPLY_FABRIC` with both `SELECT_DESIGN` and `APPLY_FABRIC` recorded in
+  `completedStepKeys`. All fixture data (directions, brief run, evaluation, attachment, and the project's own
+  mutated fields) was cleaned up afterward, restoring the real pre-existing Reference Analysis's own status
+  exactly as found.
+- **Not built this phase**: surfacing prior (non-latest) evaluations in the UI, any UI treatment for the
+  eligibility gate beyond a plain "approve at least two directions first" message — per the spec's own "Stop"
+  instruction after Process 5.
 
 ## Recommended Stack
 

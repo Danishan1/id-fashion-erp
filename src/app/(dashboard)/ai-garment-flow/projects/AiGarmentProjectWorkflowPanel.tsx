@@ -11,6 +11,7 @@ import { ReferenceImageUploader } from "./ReferenceImageUploader";
 import { ReferenceAnalysisPanel } from "./ReferenceAnalysisPanel";
 import { DevelopmentBriefPanel } from "./DevelopmentBriefPanel";
 import { VisualGenerationPanel } from "./VisualGenerationPanel";
+import { CommercialEvaluationPanel } from "./CommercialEvaluationPanel";
 
 const SAMPLE_TYPES = ["FIT", "PROTO", "PP", "TOP", "SHIPMENT", "PHOTOSHOOT", "SMS", "OTHER"] as const;
 
@@ -88,7 +89,7 @@ const STEP_HELP: Partial<Record<AiGarmentStepKey, string>> = {
   GENERATE_DESIGNS: "AI would generate design directions here once connected — add candidates manually for now.",
   PRODUCT_SUITABILITY: "AI would assess which garment types suit this fabric here once connected.",
   PRODUCT_DIRECTIONS: "AI would suggest concrete product directions here once connected.",
-  COMMERCIAL_EVALUATION: "Review the target price/quantity and note any commercial concerns before selecting a design.",
+  COMMERCIAL_EVALUATION: "Select 2–8 approved design directions and compare them on a 12-criterion commercial rubric, then select the one to carry into development — a confirmed, user-approved choice.",
   SELECT_DESIGN: "Pick the one design candidate to carry forward.",
   APPLY_FABRIC: "Record which fabric this design will use. AI would suggest a fit here once connected.",
   FABRIC_INFORMATION: "Record the fabric's GSM, dye/shade, weave, width, composition, color and supplier.",
@@ -380,7 +381,7 @@ function StepContent({
   }
 
   if (key === "COMMERCIAL_EVALUATION") {
-    return wrap(<AiPlaceholderButton label="Compare Designs" />);
+    return wrap(<CommercialEvaluationPanel projectId={project.id} setError={setError} reloadProject={reloadProject} />);
   }
 
   if (key === "SELECT_DESIGN") {
