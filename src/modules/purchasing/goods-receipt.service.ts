@@ -156,35 +156,19 @@ export async function createGoodsReceipt(actor: ActorContext, purchaseOrderId: s
   let receipt;
   try {
     receipt = await prisma.$transaction(async (tx) => {
-      // Over-receipt guard: atomic per-line updateMany, not a separate
-      // read-then-write — safe against two concurrent receipts against the
-      // same line (orderedQuantity is frozen once SENT_TO_SUPPLIER, since
-      // updatePurchaseOrder() blocks edits past that point).
+      // No over-receipt block — the person entering the receipt records
+      // whatever actually physically arrived, whether that's short of or
+      // beyond the ordered quantity (a real, common warehouse scenario, not
+      // a data-entry mistake to reject). The atomic increment itself is
+      // still the accumulator's only writer, just with no upper-bound
+      // condition left to enforce.
       for (const inputItem of input.items) {
         const poItem = itemsById.get(inputItem.purchaseOrderItemId)!;
-        const result = await PurchaseOrderItemRepository.guardedIncrementReceived(
-          tx,
-          poItem.id,
-          Number(poItem.orderedQuantity),
-          inputItem.receivedQuantity
-        );
+        const result = await PurchaseOrderItemRepository.incrementReceived(tx, poItem.id, inputItem.receivedQuantity);
         if (result.count === 0) {
-          // remaining is read from the pre-transaction snapshot, purely for
-          // message quality — the atomic guardedIncrementReceived above is
-          // what actually enforces the cap under concurrency; this can't
-          // under-reject, only occasionally show a slightly stale number if
-          // another request also modified this line in the same instant.
-          const remaining = Number(poItem.orderedQuantity) - Number(poItem.receivedQuantity);
-          throw new BusinessRuleError(
-            "OVER_RECEIPT_NOT_ALLOWED",
-            `Receiving ${inputItem.receivedQuantity} of "${poItem.product.styleName}" would exceed the ordered quantity — only ${remaining} remains. Ordered: ${poItem.orderedQuantity}, Already received: ${poItem.receivedQuantity}.`,
-            {
-              purchaseOrderItemId: poItem.id,
-              orderedQuantity: Number(poItem.orderedQuantity),
-              alreadyReceived: Number(poItem.receivedQuantity),
-              remaining,
-            }
-          );
+          throw new BusinessRuleError("NOT_FOUND", `Purchase order line "${poItem.product.styleName}" no longer exists.`, {
+            purchaseOrderItemId: poItem.id,
+          });
         }
       }
 
@@ -267,9 +251,12 @@ export async function createGoodsReceipt(actor: ActorContext, purchaseOrderId: s
 
         // Material Request rollup — purely a secondary traceability mirror,
         // never a reason to block a legitimate goods receipt. Fails soft: a
-        // missing/unconvertible unit or a lost concurrency race just skips the
-        // rollup for this line, since the real over-receipt protection already
-        // happened above via guardedIncrementReceived.
+        // missing/unconvertible unit, a lost concurrency race, or the line
+        // genuinely over-receiving past what was ordered (this rollup's own
+        // cap is still the sum of ordered quantities, deliberately left
+        // as-is — see incrementReceived's own comment for why the real,
+        // unrelated PO-item accumulator has no such cap any more) just skips
+        // the rollup for this line without affecting the receipt itself.
         const poItem = itemsById.get(createdItem.purchaseOrderItemId)!;
         if (poItem.materialRequestItemId) {
           const mrLine = await MaterialRequestItemRepository.findForReceiptRollupInTx(tx, poItem.materialRequestItemId);

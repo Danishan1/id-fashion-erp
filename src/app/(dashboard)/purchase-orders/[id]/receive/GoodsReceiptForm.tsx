@@ -74,6 +74,7 @@ export function GoodsReceiptForm({ purchaseOrderId, lines }: { purchaseOrderId: 
   const [weaveTypes, setWeaveTypes] = useState<Option[]>([]);
   const [widths, setWidths] = useState<Option[]>([]);
   const [compositions, setCompositions] = useState<Option[]>([]);
+  const [invoiceFile, setInvoiceFile] = useState<File | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   // One value for the lifetime of this mounted form — reused on every submit
@@ -164,6 +165,26 @@ export function GoodsReceiptForm({ purchaseOrderId, lines }: { purchaseOrderId: 
       }
 
       const { data } = await res.json();
+
+      // Uploaded after the receipt itself is created, since the attachment
+      // route is scoped to a real receipt id — a failed upload here is
+      // surfaced but never rolls back the (already-successful) receipt; the
+      // user can always attach the invoice/slip again from the receipt's own
+      // detail page.
+      if (invoiceFile) {
+        const formData = new FormData();
+        formData.append("file", invoiceFile);
+        const uploadRes = await fetch(`/api/v1/goods-receipts/${data.id}/attachments`, { method: "POST", body: formData });
+        if (!uploadRes.ok) {
+          const body = await uploadRes.json().catch(() => null);
+          setError(
+            `Goods receipt ${data.receiptNumber ?? ""} was recorded, but the attachment failed to upload: ${body?.error?.message ?? "unknown error"}. You can upload it again from the receipt's own page.`
+          );
+          setIsSubmitting(false);
+          return;
+        }
+      }
+
       router.push(`/goods-receipts/${data.id}`);
       router.refresh();
     } catch {
@@ -191,6 +212,15 @@ export function GoodsReceiptForm({ purchaseOrderId, lines }: { purchaseOrderId: 
           value={receivedDate}
           onChange={(e) => setReceivedDate(e.target.value)}
           className={textInputClass()}
+        />
+      </FormField>
+
+      <FormField label="Invoice / Delivery Slip (optional)" htmlFor="invoiceFile">
+        <input
+          id="invoiceFile"
+          type="file"
+          onChange={(e) => setInvoiceFile(e.target.files?.[0] ?? null)}
+          className="block w-full text-sm text-zinc-600 file:mr-3 file:rounded-md file:border-0 file:bg-indigo-50 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-indigo-600 hover:file:bg-indigo-100 dark:text-zinc-300 dark:file:bg-indigo-500/10 dark:file:text-indigo-300"
         />
       </FormField>
 
@@ -233,6 +263,20 @@ export function GoodsReceiptForm({ purchaseOrderId, lines }: { purchaseOrderId: 
                     onChange={(e) => updateDraft(line.purchaseOrderItemId, { receivedQuantity: e.target.value })}
                     className={textInputClass()}
                   />
+                  {/* Enter exactly what physically arrived — no cap against
+                      what's still "remaining" on the order. This is purely
+                      an informational readout of the gap, never a block. */}
+                  {draft.receivedQuantity !== "" &&
+                    (() => {
+                      const variance = Number(draft.receivedQuantity) - Number(line.remainingQuantity);
+                      if (!Number.isFinite(variance) || variance === 0) return null;
+                      const short = variance < 0;
+                      return (
+                        <p className={`mt-1 text-xs font-medium ${short ? "text-amber-600 dark:text-amber-400" : "text-sky-600 dark:text-sky-400"}`}>
+                          {short ? `Short by ${Math.abs(variance)}` : `Extra by ${variance}`} {line.uomCode}
+                        </p>
+                      );
+                    })()}
                 </FormField>
                 <FormField label="Warehouse" htmlFor={`warehouse-${line.purchaseOrderItemId}`}>
                   <select
