@@ -24,3 +24,25 @@ export function getOpenAiImageConfig(): OpenAiImageConfig {
     model: process.env.OPENAI_IMAGE_MODEL || "gpt-image-1",
   };
 }
+
+export interface GeminiImageConfig {
+  apiKey: string;
+  model: string;
+}
+
+/** A second provider, added for free/low-cost testing once the configured OpenAI account's credits were exhausted (see AI Garment Flow Process 3/4/6 notes) — Gemini's free tier is genuinely usable for functional testing, not just a trial credit. */
+export function getGeminiImageConfig(): GeminiImageConfig {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new ImageGenConfigMissingError(
+      "Image generation is not configured — GEMINI_API_KEY is missing. Add it to your environment to enable garment visual generation."
+    );
+  }
+  return {
+    apiKey,
+    // gemini-2.5-flash-image ("nano banana") is the current Gemini model with native
+    // multi-image input/editing support — the one capability this provider needs for
+    // generateVariation()/applyFabric(), not just plain text-to-image.
+    model: process.env.GEMINI_IMAGE_MODEL || "gemini-2.5-flash-image",
+  };
+}

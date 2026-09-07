@@ -4219,6 +4219,58 @@ live end-to-end.
   supports adding one with zero caller changes), the technical flat itself — per the spec's own explicit "Do
   not build technical flat yet. Stop." instruction.
 
+## AI Garment Flow — a second, free-tier image-generation provider (Gemini) (2026-09-07)
+
+The configured OpenAI account has stayed `CREDITS_EXHAUSTED` throughout Processes 3/4/6, blocking any real
+live test of their success paths. Rather than wait on billing, added **Google's Gemini API** as a genuine
+second `ImageGenerationProvider` implementation — exactly the "add one new file under `providers/` and one
+`factory.ts` case" extension point that architecture was built for (zero changes needed in
+`visual-generation.service.ts`/`design-variation.service.ts`/`fabric-application.service.ts`, or any route/
+UI file, since they only ever talk to the interface).
+
+- **`@google/genai@2.21.0`** added (pinned to an exact version, matching this project's own `openai`/
+  `@anthropic-ai/sdk`/`next-auth` pinning precedent). `src/core/ai/image-generation/providers/gemini.ts` is
+  the sole importer, same discipline as the OpenAI provider file.
+- **Model: `gemini-2.5-flash-image`** ("nano banana") — chosen specifically because it accepts arbitrary
+  multi-image input via the ordinary `generateContent` call (each reference image as its own `Part` with
+  `inlineData`), not the separate Imagen-only `generateImages`/`editImage` methods (confirmed from the
+  installed SDK's own type definitions, `node_modules/@google/genai/dist/genai.d.ts`, not assumed) — those
+  don't accept two arbitrary photos composed together the way `generateVariation()`/`applyFabric()` need.
+- **`count` requested images are generated via `count` sequential calls, not `Promise.all`/`candidateCount`**
+  — Gemini's free tier has a low requests-per-minute ceiling, and this provider exists specifically to be
+  testable on that tier, so bursting concurrent calls would defeat the point; `candidateCount` is also not a
+  reliably-documented way to get N *distinct* images from an image-output model, unlike OpenAI's own `n`
+  parameter. Each call is validated to return exactly one image (via `extractSingleImage()`, checking
+  `promptFeedback.blockReason` and safety-related `FinishReason`s before falling through to
+  `INVALID_IMAGE_RESPONSE`) before being pushed into the aggregate result.
+- **Error mapping is honest about being less precise than OpenAI's own** — `ApiError` (the one exported
+  SDK error class, carrying only `status`/`message`) is the sole signal available; Gemini's free tier reuses
+  HTTP 429 for both ordinary rate-limiting and a genuinely exhausted quota, with no separate exported error
+  subclass or machine-readable code field to tell them apart the way OpenAI's `RateLimitError.type`/`.code`
+  did — `mapSdkError()` falls back to a `/quota|resource_exhausted/i` regex over the response's own message
+  text, documented in-code as a real limitation rather than a hidden guess. Genuine network timeouts are
+  caught by name/message pattern-matching too, since the SDK's own internal timeout classes
+  (`RequestTimeoutError`, etc.) are declared but not exported.
+- **`IMAGE_GENERATION_PROVIDER=gemini`** (plus `GEMINI_API_KEY`, obtained free from
+  `https://aistudio.google.com/apikey`) switches Processes 3/4/6 onto this provider; `.env.example` gained
+  documentation for this and the pre-existing-but-previously-undocumented `OPENAI_API_KEY`/
+  `OPENAI_IMAGE_MODEL`/`IMAGE_GENERATION_PROVIDER` vars (a gap from when Process 3 first shipped, closed in
+  passing).
+- **Verified**: `npx tsc --noEmit`, `npx eslint .`, and `npx vitest run` (1071/1071, no regressions — no new
+  test file was added for the provider itself, matching the existing precedent that `openai.ts` has none
+  either; both are exercised only via the service-layer tests that mock `getImageGenerationProvider()`) all
+  clean. `getImageGenerationProvider()`'s config-missing path was live-exercised end-to-end (confirmed the
+  exact clean `GEMINI_API_KEY is missing` error, matching the OpenAI provider's own equivalent message shape)
+  — the real network call (`generate`/`generateVariation`/`applyFabric` against the live API) could **not**
+  be exercised in this session, since no real `GEMINI_API_KEY` exists in this environment; a ready-to-run
+  standalone verification script exists in this session's own scratchpad (imports the real provider file via
+  `tsx`, calls all three methods against the real API, saves each result image for inspection) for whoever
+  adds a key next.
+- **Not done this pass**: switching the *default* provider away from `openai` (kept as the default, since
+  it's still the documented/intended production choice — Gemini is opt-in specifically for free-tier
+  testing), and no UI/admin surface was added to choose the provider per-request — this remains a single
+  env-var-driven, process-wide setting like every other AI provider config in this codebase.
+
 ## Recommended Stack
 
 Next.js 14+ (App Router) + React + TypeScript + Tailwind CSS (frontend); Next.js API routes/route handlers as REST API; PostgreSQL + Prisma ORM; session-based auth (Auth.js/NextAuth, DB sessions) with RBAC and optional TOTP 2FA; S3-compatible or local file storage for attachments; server-side PDF/Excel export (`exceljs`, `pdf-lib`/`@react-pdf/renderer`).
