@@ -46,3 +46,38 @@ export function getGeminiImageConfig(): GeminiImageConfig {
     model: process.env.GEMINI_IMAGE_MODEL || "gemini-2.5-flash-image",
   };
 }
+
+export interface CloudflareImageConfig {
+  accountId: string;
+  apiToken: string;
+  model: string;
+}
+
+/**
+ * A third provider, text-to-image only (see providers/cloudflare.ts's own
+ * comment for why it can't cover Process 4/6's two-image composition needs).
+ * Added because Google restricted gemini-2.5-flash-image's free tier to 0
+ * requests/day some time after the Gemini provider above was written (a
+ * live, external, Google-side change — confirmed via a direct API probe
+ * returning "generativelanguage.googleapis.com/generate_content_free_tier_requests,
+ * limit: 0" — not a bug in this codebase). Cloudflare Workers AI's free
+ * allocation (10,000 "neurons"/day) has no such image-model carve-out as of
+ * this writing.
+ */
+export function getCloudflareImageConfig(): CloudflareImageConfig {
+  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
+  const apiToken = process.env.CLOUDFLARE_API_TOKEN;
+  if (!accountId || !apiToken) {
+    throw new ImageGenConfigMissingError(
+      "Image generation is not configured — CLOUDFLARE_ACCOUNT_ID and/or CLOUDFLARE_API_TOKEN is missing. Add them to your environment to enable garment visual generation."
+    );
+  }
+  return {
+    accountId,
+    apiToken,
+    // flux-1-schnell returns a single base64 image in a plain JSON envelope —
+    // easier to handle uniformly than stable-diffusion-xl's raw-binary-or-
+    // JSON-error response shape, and is itself on Workers AI's free tier.
+    model: process.env.CLOUDFLARE_IMAGE_MODEL || "@cf/black-forest-labs/flux-1-schnell",
+  };
+}
