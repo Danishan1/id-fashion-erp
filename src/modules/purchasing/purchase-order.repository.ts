@@ -131,16 +131,18 @@ export const CompanyRepository = {
 
 /**
  * PurchaseOrderItem's own accumulator mutations — colocated here since they
- * operate on a table this module owns. The guarded increment is the
- * over-receipt guard itself: expressing the cap directly in the `where`
- * clause (not a separate read-then-write) makes the check-and-write atomic
- * under concurrent receipts against the same line, which a plain read then
- * `increment` would not be.
+ * operate on a table this module owns. incrementReceived is deliberately
+ * uncapped against orderedQuantity — a supplier routinely ships more (or
+ * less) than what was ordered, and the warehouse must be able to record
+ * exactly what physically arrived rather than being blocked at the ordered
+ * figure (see goods-receipt.service.ts's own short/extra-quantity handling).
+ * Still a plain atomic row update (Postgres's own `SET x = x + delta` has no
+ * lost-update race), just with no upper-bound condition left to express.
  */
 export const PurchaseOrderItemRepository = {
-  guardedIncrementReceived: (tx: Prisma.TransactionClient, itemId: string, orderedQuantity: number, incrementBy: number) =>
+  incrementReceived: (tx: Prisma.TransactionClient, itemId: string, incrementBy: number) =>
     tx.purchaseOrderItem.updateMany({
-      where: { id: itemId, receivedQuantity: { lte: orderedQuantity - incrementBy } },
+      where: { id: itemId },
       data: { receivedQuantity: { increment: incrementBy } },
     }),
 

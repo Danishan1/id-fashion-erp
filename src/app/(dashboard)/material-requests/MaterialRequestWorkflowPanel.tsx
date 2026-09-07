@@ -428,8 +428,12 @@ export function MaterialRequestWorkflowPanel({
                           title={line.availableStockQuantity <= 0 ? "No stock available at this warehouse yet" : undefined}
                           onClick={() => {
                             setIssuingLine(line);
-                            setIssueQty(String(line.remainingQuantity));
+                            // Pre-fill with whatever's actually issuable, not
+                            // just what's still requested — never suggest a
+                            // quantity the warehouse doesn't have on hand.
+                            setIssueQty(String(Math.min(line.remainingQuantity, line.availableStockQuantity)));
                             setIssueLocationId("");
+                            setError(null);
                           }}
                           className="text-xs font-medium text-indigo-600 hover:text-indigo-500 disabled:cursor-not-allowed disabled:text-zinc-400 disabled:hover:text-zinc-400 dark:disabled:text-zinc-600 dark:disabled:hover:text-zinc-600"
                         >
@@ -519,49 +523,62 @@ export function MaterialRequestWorkflowPanel({
         {issuingLine && (
           <div className="space-y-4">
             <p className="text-sm text-zinc-600 dark:text-zinc-300">
-              {issuingLine.material.styleName} — {issuingLine.remainingQuantity} {issuingLine.uom.code} remaining at{" "}
-              {request.warehouse.name}
+              {issuingLine.material.styleName} — {issuingLine.remainingQuantity} {issuingLine.uom.code} remaining ·{" "}
+              {issuingLine.availableStockQuantity} {issuingLine.uom.code} in stock at {request.warehouse.name}
             </p>
             <FormField label="Issue Quantity" htmlFor="issueQty" required>
               <input
                 id="issueQty"
                 type="number"
                 min={0}
-                max={issuingLine.remainingQuantity}
+                // Capped by whichever is smaller — the request's own
+                // remaining need, or what's actually on hand. Issuing more
+                // than physical stock exists would drive the ledger
+                // negative; the server's own guard is the real backstop,
+                // this just stops the mistake from being enterable at all.
+                max={Math.min(issuingLine.remainingQuantity, issuingLine.availableStockQuantity)}
                 step="0.0001"
                 value={issueQty}
-                onChange={(e) => setIssueQty(e.target.value)}
+                onChange={(e) => {
+                  const cap = Math.min(issuingLine.remainingQuantity, issuingLine.availableStockQuantity);
+                  const next = Number(e.target.value);
+                  setIssueQty(e.target.value !== "" && Number.isFinite(next) && next > cap ? String(cap) : e.target.value);
+                }}
                 className={textInputClass()}
               />
             </FormField>
             <FormField label="Location (optional)" htmlFor="issueLocationId">
-              <select
-                id="issueLocationId"
-                value={issueLocationId}
-                onChange={(e) => setIssueLocationId(e.target.value)}
-                className={textInputClass()}
-              >
-                <option value="">— No specific location —</option>
-                {locations.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.code}
-                    {l.materialCategory ? ` (${formatCategoryLabel(l.materialCategory)})` : ""}
-                  </option>
-                ))}
-              </select>
               {(() => {
-                const location = locations.find((l) => l.id === issueLocationId);
-                if (!issuingLine.material.materialCategory || !location?.materialCategory) return null;
-                if (issuingLine.material.materialCategory === location.materialCategory) return null;
+                // Only offer locations that actually make sense for this
+                // material — general-purpose locations (no category tag) or
+                // ones tagged for this exact material category. A location
+                // tagged for a different category is no longer even
+                // selectable here, rather than just warned about after the
+                // fact once picked.
+                const matchingLocations = locations.filter(
+                  (l) => !l.materialCategory || !issuingLine.material.materialCategory || l.materialCategory === issuingLine.material.materialCategory
+                );
                 return (
-                  <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
-                    &ldquo;{location.code}&rdquo; is tagged for {formatCategoryLabel(location.materialCategory)}, but this
-                    material is {formatCategoryLabel(issuingLine.material.materialCategory)}. You can still issue — just
-                    double-check this is intentional.
-                  </p>
+                  <select
+                    id="issueLocationId"
+                    value={issueLocationId}
+                    onChange={(e) => setIssueLocationId(e.target.value)}
+                    className={textInputClass()}
+                  >
+                    <option value="">— No specific location —</option>
+                    {matchingLocations.map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {l.code}
+                        {l.materialCategory ? ` (${formatCategoryLabel(l.materialCategory)})` : ""}
+                      </option>
+                    ))}
+                  </select>
                 );
               })()}
             </FormField>
+
+            {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+
             <div className="flex justify-end gap-2">
               <button type="button" onClick={() => setIssuingLine(null)} className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800">
                 Cancel
@@ -569,7 +586,7 @@ export function MaterialRequestWorkflowPanel({
               <button
                 type="button"
                 onClick={submitIssue}
-                disabled={isBusy}
+                disabled={isBusy || !(Number(issueQty) > 0)}
                 className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
               >
                 {isBusy ? "Saving…" : "Issue"}
