@@ -12,6 +12,7 @@ import { ReferenceAnalysisPanel } from "./ReferenceAnalysisPanel";
 import { DevelopmentBriefPanel } from "./DevelopmentBriefPanel";
 import { VisualGenerationPanel } from "./VisualGenerationPanel";
 import { CommercialEvaluationPanel } from "./CommercialEvaluationPanel";
+import { FabricApplicationPanel } from "./FabricApplicationPanel";
 
 const SAMPLE_TYPES = ["FIT", "PROTO", "PP", "TOP", "SHIPMENT", "PHOTOSHOOT", "SMS", "OTHER"] as const;
 
@@ -91,7 +92,8 @@ const STEP_HELP: Partial<Record<AiGarmentStepKey, string>> = {
   PRODUCT_DIRECTIONS: "AI would suggest concrete product directions here once connected.",
   COMMERCIAL_EVALUATION: "Select 2–8 approved design directions and compare them on a 12-criterion commercial rubric, then select the one to carry into development — a confirmed, user-approved choice.",
   SELECT_DESIGN: "Pick the one design candidate to carry forward.",
-  APPLY_FABRIC: "Record which fabric this design will use. AI would suggest a fit here once connected.",
+  APPLY_FABRIC:
+    "Record which fabric master this design will use, then upload a real fabric swatch to see it applied onto the selected garment visual — approve a version, then APPROVE DESIGN & FABRIC to continue.",
   FABRIC_INFORMATION: "Record the fabric's GSM, dye/shade, weave, width, composition, color and supplier.",
   TECHNICAL_DEVELOPMENT: "Convert this project into a real Style once a design is settled, to continue into BOM and Costing.",
   BOM: "BOM is built on the graduated Style, using the existing BOM/MRP module.",
@@ -392,7 +394,11 @@ function StepContent({
     return wrap(
       <>
         <FabricDetailForm project={project} setError={setError} reloadProject={reloadProject} />
-        {key === "APPLY_FABRIC" && <AiPlaceholderButton label="Apply Fabric" />}
+        {key === "APPLY_FABRIC" && (
+          <div className="mt-4">
+            <FabricApplicationPanel projectId={project.id} setError={setError} reloadProject={reloadProject} />
+          </div>
+        )}
       </>
     );
   }

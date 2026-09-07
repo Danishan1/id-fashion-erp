@@ -29,6 +29,10 @@ export const AiGarmentDesignVariationRepository = {
       orderBy: { variationNumber: "asc" },
     }),
 
+  /** Used by Process 6 (Apply Actual Fabric) to check every variation across every image of a design direction for one currently SELECTED — a variation may supersede its own parent image as "the chosen visual." */
+  findByDesignDirectionId: (designDirectionId: string) =>
+    prisma.aiGarmentDesignVariation.findMany({ where: { designDirectionId } }),
+
   countByParentImageId: (parentGeneratedImageId: string) => prisma.aiGarmentDesignVariation.count({ where: { parentGeneratedImageId } }),
 
   /** Verify tenant ownership before any scoped action — same pattern as AiGarmentGeneratedImageRepository.findWithProjectOwner. */

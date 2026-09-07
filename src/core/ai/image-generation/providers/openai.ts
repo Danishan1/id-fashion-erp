@@ -134,5 +134,30 @@ export function createOpenAiImageProvider(): ImageGenerationProvider {
         throw mapSdkError(err);
       }
     },
+
+    // gpt-image-1's edit endpoint accepts an array of up to 16 input images
+    // (confirmed from the installed SDK's own type definitions,
+    // node_modules/openai/resources/images.d.ts) -- passing both the base
+    // garment image and the fabric swatch lets the model use the swatch as a
+    // genuine second visual reference, rather than only being able to
+    // describe it in the text prompt.
+    async applyFabric({ prompt, count, baseImage, swatchImage }): Promise<GenerateImagesResult> {
+      try {
+        const baseFile = await toFile(baseImage.buffer, "base-garment.png", { type: baseImage.mimeType });
+        const swatchFile = await toFile(swatchImage.buffer, "fabric-swatch.png", { type: swatchImage.mimeType });
+        const response = await openai.images.edit({
+          model: config.model,
+          image: [baseFile, swatchFile],
+          prompt,
+          n: count,
+          size: DEFAULT_SIZE,
+          quality: DEFAULT_QUALITY,
+        });
+        return { images: extractBuffers(response.data, count), model: config.model, raw: response };
+      } catch (err) {
+        if (err instanceof ImageGenerationServiceError) throw err;
+        throw mapSdkError(err);
+      }
+    },
   };
 }

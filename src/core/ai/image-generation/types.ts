@@ -59,4 +59,20 @@ export interface ImageGenerationProvider {
     count: number;
     parentImage: { buffer: Buffer; mimeType: string };
   }): Promise<GenerateImagesResult>;
+
+  /**
+   * Applies a fabric swatch image onto an existing garment image (AI Garment
+   * Flow Process 6) — a genuine two-image composition, distinct from
+   * `generateVariation`'s single-image edit. Optional, same
+   * check-before-use/UNSUPPORTED_OPERATION discipline as `generateVariation`
+   * — a provider with no multi-image editing capability simply omits this
+   * method rather than approximating it with a single-image call that would
+   * silently ignore the swatch.
+   */
+  applyFabric?(params: {
+    prompt: string;
+    count: number;
+    baseImage: { buffer: Buffer; mimeType: string };
+    swatchImage: { buffer: Buffer; mimeType: string };
+  }): Promise<GenerateImagesResult>;
 }
