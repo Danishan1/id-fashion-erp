@@ -6,8 +6,7 @@ import { ImageGenConfigMissingError } from "@/core/ai/image-generation/config";
 import { ImageGenerationServiceError } from "@/core/ai/image-generation/types";
 import { buildFabricApplicationPrompt, FABRIC_APPLICATION_PROMPT_VERSION } from "@/core/ai/fabric-application/prompt";
 import { AiGarmentProjectRepository } from "./ai-garment-project.repository";
-import { AiGarmentGeneratedImageRepository } from "./visual-generation.repository";
-import { AiGarmentDesignVariationRepository } from "./design-variation.repository";
+import { resolveSelectedGarmentImage } from "./selected-garment-image";
 import { stepsForSourceType } from "./ai-garment-project.schema";
 import { saveWorkflowStep } from "./ai-garment-project.service";
 import { AiGarmentFabricApplicationRunRepository, AiGarmentFabricApplicationRepository } from "./fabric-application.repository";
@@ -50,44 +49,6 @@ function mapImageGenError(err: unknown): never {
     throw new BusinessRuleError("AI_SERVICE_ERROR", err.message);
   }
   throw err;
-}
-
-/**
- * "Start from the SELECTED DESIGN" — resolves the specific garment image to
- * apply fabric to. Checks every image AND every variation across the
- * selected design direction for whichever was most recently marked
- * SELECTED (a variation can supersede its own parent image as "the chosen
- * visual," so both pools are checked rather than assuming one always wins),
- * never guessing which one to use when the signal is ambiguous or absent.
- */
-async function resolveSelectedGarmentImage(companyId: string, projectId: string) {
-  const project = await AiGarmentProjectRepository.findAnyById(companyId, projectId);
-  if (!project) throw new BusinessRuleError("NOT_FOUND", "AI Garment Flow project not found.", { id: projectId });
-  if (!project.selectedDesignDirectionId) {
-    throw new BusinessRuleError(
-      "VALIDATION_ERROR",
-      "Select a design for development first (Commercial Evaluation step) before applying fabric."
-    );
-  }
-
-  const [images, variations] = await Promise.all([
-    AiGarmentGeneratedImageRepository.findByDesignDirectionId(project.selectedDesignDirectionId),
-    AiGarmentDesignVariationRepository.findByDesignDirectionId(project.selectedDesignDirectionId),
-  ]);
-
-  const candidates = [
-    ...images.filter((i) => i.decision === "SELECTED").map((i) => ({ imageAttachmentId: i.imageAttachmentId, at: i.updatedAt })),
-    ...variations.filter((v) => v.decision === "SELECTED").map((v) => ({ imageAttachmentId: v.imageAttachmentId, at: v.updatedAt })),
-  ].sort((a, b) => b.at.getTime() - a.at.getTime());
-
-  if (candidates.length === 0) {
-    throw new BusinessRuleError(
-      "VALIDATION_ERROR",
-      "No visual has been selected for this design yet — select one on the Generate Variations step first."
-    );
-  }
-
-  return { project, designDirectionId: project.selectedDesignDirectionId, baseImageAttachmentId: candidates[0].imageAttachmentId };
 }
 
 function textFieldsOf(input: CreateFabricApplicationInput) {

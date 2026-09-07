@@ -169,5 +169,17 @@ export function createGeminiImageProvider(): ImageGenerationProvider {
         count
       );
     },
+
+    async generateTechnicalFlat({ prompt, count, baseImage }): Promise<GenerateImagesResult> {
+      return generateSequentially(
+        [
+          {
+            role: "user",
+            parts: [{ inlineData: { data: baseImage.buffer.toString("base64"), mimeType: baseImage.mimeType } }, { text: prompt }],
+          },
+        ],
+        count
+      );
+    },
   };
 }

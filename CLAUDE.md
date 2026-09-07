@@ -53,7 +53,7 @@ Update the status column and add a short dated note under the relevant phase sec
 
 **CRM/Marketing enhancement pass, on top of the migration above — all 14 planned items complete (2026-08-24)** — tracked in full in [CRM_MARKETING_ENHANCEMENT_AUDIT_AND_PLAN.md](CRM_MARKETING_ENHANCEMENT_AUDIT_AND_PLAN.md): Deal→Customer conversion, Customer 360, CRM Kanban, CRM Dashboard, Follow-up Management/Notifications, configurable Lead Priority, Campaign Approval workflow, Marketing Dashboard trend charts, Channel Performance report, Customer Segmentation, Marketing Automation triggers, CSV Import (Leads/Deals/Campaign Daily Metrics), Meta/Google Ads Integration, and an AI-readiness audit of every aggregation function. The one open thread: Meta/Google Ads Integration's OAuth/token-exchange/sync code is built and unit-tested but has **no real credentials to verify the live external API calls against yet** — see that file's own Item 13 note before assuming it's been exercised against the real Meta/Google APIs, and before touching `AdAccountConnection`/`AdCampaignLink`/`ImportBatch`/`CrmSettings` or the `src/modules/marketing/ad-integrations/`/`src/modules/import/` modules.
 
-**AI Garment Flow (separate initiative, not part of the 11 phases above) — foundation + Process 1 (Reference Garment Analysis) + Process 2 (Commercial Design Development Brief) + Process 3 (Garment Design Visual Generation) + Process 4 (Controlled Design Variation) + Process 5 (Commercial Design Evaluation) + Process 6 (Apply Actual Fabric) complete; live image-generation verification (Process 3/4/6) still blocked on the configured OpenAI account's exhausted billing credits, but every Anthropic-backed process (1/2/5) is fully live-verified (2026-09-06/07)** — a new product-development workflow module (reference/fabric upload → AI-assisted design → costing → sampling), full detail in its own dated sections further down this file. The existing `Product` model remains the single Style Master (not duplicated); a new `AiGarmentProject` header is a pre-Style record that manually graduates into a real `Product` via `convertProjectToStyle()`, mirroring Sampling's own `convertSampleToStyle()`. BOM/Costing steps require this graduation and then reuse the existing BOM/MRP and Sampling-costing modules — no parallel schema. Process 1 (Reference Garment Analysis) is a real Anthropic vision integration analysing an uploaded reference image into 36 individually-tracked, editable, approvable observations. Process 2 (Commercial Design Development Brief) is a real Anthropic text integration that, once that analysis is approved, generates 3/6/9 differentiated commercial `AiGarmentDesignDirection` records (each individually editable/approvable/rejectable/regeneratable, each scored 0-100). Process 3 (Garment Design Visual Generation) is a real, provider-agnostic OpenAI Images integration turning each APPROVED design direction into 1/3/4 generated visuals with full version history and a Select/Reject/Regenerate/Create Variation workflow. Process 4 (Controlled Design Variation) is a real image-to-image integration that regenerates just one named feature (Neckline/Collar/Sleeve/.../Other) of an existing generated image while preserving everything else, with its own version-controlled variation history and a Select Variation/Keep Original/Create Another Variation workflow. Process 5 (Commercial Design Evaluation) is a real Anthropic text integration that compares 2-8 APPROVED design directions on a 12-criterion weighted commercial rubric, letting the user override the AI's ranking and always requiring explicit confirmation before recording a SELECTED DESIGN and advancing the workflow to Apply Fabric (or Technical Development, for a fabric-sourced project). Process 6 (Apply Actual Fabric) is a real two-image OpenAI edit integration that applies a user-uploaded fabric swatch onto the selected design's currently SELECTED garment visual, with its own Before/After version history, a two-tier Approve/APPROVE-DESIGN-&-FABRIC confirmation flow, and a workflow advance to Technical Development — see those sections before touching `AiGarmentReferenceAnalysis`/`AiGarmentReferenceObservation`/`AiGarmentReferenceAnalysisRun`/`AiGarmentDevelopmentBriefRun`/`AiGarmentDesignDirection`/`AiGarmentImageGenerationRun`/`AiGarmentGeneratedImage`/`AiGarmentDesignVariationRun`/`AiGarmentDesignVariation`/`AiGarmentCommercialEvaluationRun`/`AiGarmentCommercialEvaluation`/`AiGarmentCommercialEvaluationItem`/`AiGarmentFabricApplicationRun`/`AiGarmentFabricApplication`, `src/core/ai/reference-analysis/`, `src/core/ai/development-brief/`, `src/core/ai/image-generation/`, `src/core/ai/design-variation/`, `src/core/ai/commercial-evaluation/`, `src/core/ai/fabric-application/`, `src/core/ai/providers/anthropic.ts`, or `src/modules/ai-garment-flow/`. `src/core/ai/AIService.ts`'s `NullAIProvider`/`getAIService()` are dead code, unreferenced by any real process — don't wire a future process through that file, follow the established per-process file-layout pattern (`schema.ts`/`prompt.ts`/`generate.ts` or `analyze.ts`) instead.
+**AI Garment Flow (separate initiative, not part of the 11 phases above) — foundation + Process 1 (Reference Garment Analysis) + Process 2 (Commercial Design Development Brief) + Process 3 (Garment Design Visual Generation) + Process 4 (Controlled Design Variation) + Process 5 (Commercial Design Evaluation) + Process 6 (Apply Actual Fabric) + Process 7 (Technical Development) complete; live image-generation verification (Process 3/4/6/7) still blocked on the configured OpenAI account's exhausted billing credits (a second, free-tier Gemini provider was added 2026-09-07 specifically to unblock this once a key is supplied), but every Anthropic-backed process (1/2/5) is fully live-verified (2026-09-06/07)** — a new product-development workflow module (reference/fabric upload → AI-assisted design → costing → sampling), full detail in its own dated sections further down this file. The existing `Product` model remains the single Style Master (not duplicated); a new `AiGarmentProject` header is a pre-Style record that manually graduates into a real `Product` via `convertProjectToStyle()`, mirroring Sampling's own `convertSampleToStyle()`. BOM/Costing steps require this graduation and then reuse the existing BOM/MRP and Sampling-costing modules — no parallel schema. Process 1 (Reference Garment Analysis) is a real Anthropic vision integration analysing an uploaded reference image into 36 individually-tracked, editable, approvable observations. Process 2 (Commercial Design Development Brief) is a real Anthropic text integration that, once that analysis is approved, generates 3/6/9 differentiated commercial `AiGarmentDesignDirection` records (each individually editable/approvable/rejectable/regeneratable, each scored 0-100). Process 3 (Garment Design Visual Generation) is a real, provider-agnostic OpenAI Images integration turning each APPROVED design direction into 1/3/4 generated visuals with full version history and a Select/Reject/Regenerate/Create Variation workflow. Process 4 (Controlled Design Variation) is a real image-to-image integration that regenerates just one named feature (Neckline/Collar/Sleeve/.../Other) of an existing generated image while preserving everything else, with its own version-controlled variation history and a Select Variation/Keep Original/Create Another Variation workflow. Process 5 (Commercial Design Evaluation) is a real Anthropic text integration that compares 2-8 APPROVED design directions on a 12-criterion weighted commercial rubric, letting the user override the AI's ranking and always requiring explicit confirmation before recording a SELECTED DESIGN and advancing the workflow to Apply Fabric (or Technical Development, for a fabric-sourced project). Process 6 (Apply Actual Fabric) is a real two-image OpenAI edit integration that applies a user-uploaded fabric swatch onto the selected design's currently SELECTED garment visual, with its own Before/After version history, a two-tier Approve/APPROVE-DESIGN-&-FABRIC confirmation flow, and a workflow advance to Technical Development. Process 7 (Technical Development) is a real image-to-image integration that regenerates the currently selected garment visual (preferring an approved fabric application's result) as a professional flat/CAD-style technical line drawing, with its own version-controlled history, a two-tier Approve/APPROVE-TECHNICAL-FLAT confirmation flow, and a workflow advance to BOM — see those sections before touching `AiGarmentReferenceAnalysis`/`AiGarmentReferenceObservation`/`AiGarmentReferenceAnalysisRun`/`AiGarmentDevelopmentBriefRun`/`AiGarmentDesignDirection`/`AiGarmentImageGenerationRun`/`AiGarmentGeneratedImage`/`AiGarmentDesignVariationRun`/`AiGarmentDesignVariation`/`AiGarmentCommercialEvaluationRun`/`AiGarmentCommercialEvaluation`/`AiGarmentCommercialEvaluationItem`/`AiGarmentFabricApplicationRun`/`AiGarmentFabricApplication`/`AiGarmentTechnicalFlatRun`/`AiGarmentTechnicalFlat`, `src/core/ai/reference-analysis/`, `src/core/ai/development-brief/`, `src/core/ai/image-generation/`, `src/core/ai/design-variation/`, `src/core/ai/commercial-evaluation/`, `src/core/ai/fabric-application/`, `src/core/ai/technical-development/`, `src/core/ai/providers/anthropic.ts`, or `src/modules/ai-garment-flow/`. `src/core/ai/AIService.ts`'s `NullAIProvider`/`getAIService()` are dead code, unreferenced by any real process — don't wire a future process through that file, follow the established per-process file-layout pattern (`schema.ts`/`prompt.ts`/`generate.ts` or `analyze.ts`) instead.
 
 ### Phase 2 notes (2026-08-16)
 - Next.js 16 scaffold, Prisma 7 schema (Organization/Auth + Masters + System, 24 models), NextAuth v5 Credentials auth (JWT sessions), RBAC `PermissionService`, document numbering, audit logging, local file storage, `BusinessRuleError`, sidebar/topbar shell, login page, DB-backed dashboard placeholder, and full seed data (roles/permissions/Super Admin) are all in place and verified end-to-end in the browser (login → dashboard showing real DB counts).
@@ -4270,6 +4270,98 @@ UI file, since they only ever talk to the interface).
   it's still the documented/intended production choice — Gemini is opt-in specifically for free-tier
   testing), and no UI/admin surface was added to choose the provider per-request — this remains a single
   env-var-driven, process-wide setting like every other AI provider config in this codebase.
+
+## AI Garment Flow — Process 7: Technical Development (2026-09-07)
+
+Builds on Process 6 (or directly on Process 5's SELECT_DESIGN for a FABRIC-sourced project, which has no
+Apply Fabric step at all) — the user's own spec for this process was just its name, "PROCESS 7: TECHNICAL
+DEVELOPMENT," unlike the exhaustive verbatim specs given for Processes 1-6. Rather than guess at a hidden
+prompt from nothing, the existing scaffolding was investigated first: the `TECHNICAL_DEVELOPMENT` step
+already rendered a real, working "Convert to Style" form plus one dead placeholder button explicitly
+labelled **"Create Technical Flat"**, and `AIService.ts`'s own unused interface already had a
+`createTechnicalFlat(input: { designOptionId })` placeholder method — both together make the intended
+deliverable unambiguous: a **technical flat** (a CAD-style construction line drawing, front + back, the
+standard tech-pack deliverable used for manufacturing reference) — genuinely different in *kind* from
+Processes 3/4/6's photorealistic renders, not just another photorealistic variation.
+
+- **Schema** (migration `20260907170000_add_ai_garment_technical_development`): `AiGarmentTechnicalFlatRun`
+  (run/audit-log, mirrors every other process's run-log table exactly) and `AiGarmentTechnicalFlat`
+  (version-controlled result — never edited/deleted, "Approve" only ever changes `decision`) — the identical
+  two-table, two-tier-approval shape Process 6's `AiGarmentFabricApplication` already established, since this
+  is the same "regenerate an existing visual, keep full history" pattern. `AiGarmentProject` gained
+  `approvedTechnicalFlatId`/`approvedTechnicalFlatAt`/`approvedTechnicalFlatByUserId` — the "APPROVE
+  TECHNICAL FLAT" outcome, recorded on the project itself (same "not a real Style Master row yet, mutable"
+  reasoning as `approvedFabricApplicationId`/`selectedDesignDirectionId`). Reuses the existing
+  `AiGarmentAnalysisRunStatus` enum rather than a fourth identical PENDING/IN_PROGRESS/SUCCESS/FAILED enum.
+- **Resolving "the currently selected garment"**: `resolveSelectedGarmentImage()` was extracted out of
+  Process 6's `fabric-application.service.ts` into a new shared `selected-garment-image.ts` — both Process
+  6 and Process 7 need "whichever garment visual is currently the chosen one" as their own starting point, so
+  duplicating that resolution logic a second time would have violated this codebase's own "derive, don't
+  duplicate" discipline. Process 7's own `resolveGarmentImageForTechnicalDevelopment()` wraps it: prefers an
+  **approved fabric application's result image** when `project.approvedFabricApplicationId` is set (the more
+  finished representation of the garment), falling back to the plain selected visual otherwise — correctly
+  covering both a REFERENCE-sourced project that reached this step in the intended order (fabric already
+  approved) and a FABRIC-sourced project (which never has an `APPLY_FABRIC` step at all, per
+  `stepsForSourceType()`).
+- **One new optional `ImageGenerationProvider` method, `generateTechnicalFlat`** — same single-base-image
+  shape as `generateVariation`, but deliberately named and implemented separately rather than reusing
+  `generateVariation`: the two are semantically different operations (photorealistic-to-technical-line-art
+  vs. "change one named feature, preserve everything else") that only coincidentally share a parameter
+  shape — conflating them would have made a future reader wonder why "regenerate as a technical flat" is
+  calling a method named for feature-level variation. Implemented in **both** `openai.ts` and the
+  just-added `gemini.ts` (2026-09-07, see above) — the first process built after Gemini existed as a second
+  provider, so it was free to wire into both from day one rather than needing a follow-up pass.
+- **The one user input this process takes**: an optional free-text `additionalNotes` field (e.g. "show the
+  back yoke seam") appended to the hidden prompt — deliberately minimal, since the deliverable is a visual
+  re-render, not a data-collection form the way Process 6's 12 textile fields are. The hidden prompt itself
+  instructs a clean two-view (front+back) black-line-art technical drawing on a plain white background,
+  explicitly **not** rendering real fabric texture/color/print (flats are conventionally clean line art
+  regardless of the garment's real fabric, so manufacturing staff can read the construction clearly) and
+  preserving every existing construction detail exactly, never redesigning anything.
+- **UI**: `TechnicalFlatPanel.tsx` replaces the `TECHNICAL_DEVELOPMENT` step's old `AiPlaceholderButton`,
+  rendered alongside the pre-existing, unchanged `ConvertToStyleSection` (the two are independent actions on
+  the same step — Convert to Style has no bearing on generating a technical flat, and vice versa). Mirrors
+  `FabricApplicationPanel.tsx`'s shape (a create form, a list of past attempts each with a Before/After
+  image pair, per-attempt Approve, and a final "APPROVE TECHNICAL FLAT" button once one attempt is
+  approved) but simplified — a plain JSON POST body instead of multipart form data, since there's no file
+  upload involved.
+- **"Move to BOM" reuses the existing, unchanged `saveWorkflowStep()` twice** — once for
+  `TECHNICAL_DEVELOPMENT` itself, then once more for whichever step genuinely follows it via
+  `stepsForSourceType()` (`BOM`, in both source-type workflows) — the exact pattern Processes 5/6 already
+  established, rather than hardcoding `"BOM"` unconditionally.
+- **19 new unit tests** (`technical-development.service.test.ts`) covering the fabric-application-preferred
+  vs. plain-selected-image resolution branches, the active-run guard, the error-mapping table (missing
+  config, unsupported operation, a genuine provider failure), the additionalNotes-in-prompt behavior, both
+  approval tiers, and the workflow advance for both source types. `fabric-application.service.test.ts`'s own
+  19 tests were re-verified passing unchanged after the `resolveSelectedGarmentImage` extraction (Vitest's
+  module mocking is resolved-path-based, not importer-based, so the existing
+  `vi.mock("./visual-generation.repository", ...)`/`vi.mock("./design-variation.repository", ...)` calls in
+  that test file transparently cover the function's new home with zero test-file changes needed).
+- **Verified**: `npx tsc --noEmit`, `npx eslint .`, and `npx vitest run` (1090/1090, 19 new) all clean. Every
+  new column/table independently re-verified via a direct query against the live dev DB, not trusted from
+  `migrate resolve --applied` alone, per this project's own established gotcha.
+- **Live end-to-end verification, real Postgres + the real (still credit-exhausted) OpenAI account — 8/8
+  checks passed**: built a full real fixture chain (Development Brief Run → Design Direction → Image
+  Generation Run → Generated Image marked SELECTED, uploaded via the real `uploadAttachment()`, not a raw
+  DB insert) against the real `4b0e71c4-9676-459d-b4b2-0a9bd7587bda` test project, then called
+  `createTechnicalFlat()` for real — confirmed it genuinely reached the real OpenAI API and was correctly
+  rejected with the real `CREDITS_EXHAUSTED` category (the same blocker documented for Processes 3/4/6),
+  confirmed exactly one `AiGarmentTechnicalFlatRun` row was created and marked `FAILED` with the submitted
+  `additionalNotes` text present in its stored prompt, confirmed zero `AiGarmentTechnicalFlat` rows exist
+  for the failed attempt, and confirmed the "no design selected" guard correctly rejects with
+  `VALIDATION_ERROR`. All fixture data (the direction, brief run, image, attachment, and the project's own
+  mutated `selectedDesignDirectionId`) was cleaned up afterward, restoring the real test project to its
+  original state. Once real image-generation credits exist (either provider), only the success path (an
+  actual technical flat image + its own Approve/APPROVE-TECHNICAL-FLAT flow) remains to be exercised — the
+  unit tests already cover that code path's correctness with a mocked provider.
+- **Not built this phase**: any structured tech-pack data (measurement charts, construction notes, a trim
+  list) beyond the technical flat image itself — the user's own brief for this process was just its name, and
+  the existing scaffolding (the placeholder button's own label, `createTechnicalFlat`'s own signature) pointed
+  specifically at the visual deliverable, not a data-entry form; a structured tech-pack table can be added
+  later as its own scoped addition if actually requested. Also not built: any UI for reviewing which
+  fabric-application-vs-plain-selected-image branch was used for a given flat (the resolution is silent and
+  automatic, matching Process 6's own "never require the user to guess" resolution logic for its own base
+  image).
 
 ## Recommended Stack
 

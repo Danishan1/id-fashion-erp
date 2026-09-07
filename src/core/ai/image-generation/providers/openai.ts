@@ -159,5 +159,23 @@ export function createOpenAiImageProvider(): ImageGenerationProvider {
         throw mapSdkError(err);
       }
     },
+
+    async generateTechnicalFlat({ prompt, count, baseImage }): Promise<GenerateImagesResult> {
+      try {
+        const file = await toFile(baseImage.buffer, "base-garment.png", { type: baseImage.mimeType });
+        const response = await openai.images.edit({
+          model: config.model,
+          image: file,
+          prompt,
+          n: count,
+          size: DEFAULT_SIZE,
+          quality: DEFAULT_QUALITY,
+        });
+        return { images: extractBuffers(response.data, count), model: config.model, raw: response };
+      } catch (err) {
+        if (err instanceof ImageGenerationServiceError) throw err;
+        throw mapSdkError(err);
+      }
+    },
   };
 }

@@ -136,6 +136,8 @@ model Company {
   aiGarmentCommercialEvaluations    AiGarmentCommercialEvaluation[]
   aiGarmentFabricApplicationRuns    AiGarmentFabricApplicationRun[]
   aiGarmentFabricApplications       AiGarmentFabricApplication[]
+  aiGarmentTechnicalFlatRuns        AiGarmentTechnicalFlatRun[]
+  aiGarmentTechnicalFlats           AiGarmentTechnicalFlat[]
 
   @@map("companies")
 }
@@ -321,6 +323,9 @@ model User {
   aiGarmentFabricApplicationRunsCreated    AiGarmentFabricApplicationRun[]    @relation("AiGarmentFabricApplicationRunCreatedBy")
   aiGarmentFabricApplicationsCreated       AiGarmentFabricApplication[]       @relation("AiGarmentFabricApplicationCreatedBy")
   aiGarmentProjectsApprovedFabricAppBy     AiGarmentProject[]                 @relation("AiGarmentProjectApprovedFabricApplicationBy")
+  aiGarmentTechnicalFlatRunsCreated        AiGarmentTechnicalFlatRun[]        @relation("AiGarmentTechnicalFlatRunCreatedBy")
+  aiGarmentTechnicalFlatsCreated           AiGarmentTechnicalFlat[]           @relation("AiGarmentTechnicalFlatCreatedBy")
+  aiGarmentProjectsApprovedTechFlatBy      AiGarmentProject[]                 @relation("AiGarmentProjectApprovedTechnicalFlatBy")
 
   @@map("users")
 }
@@ -5245,6 +5250,12 @@ model AiGarmentProject {
   approvedFabricApplicationId       String?                 @map("approved_fabric_application_id") @db.Uuid
   approvedFabricApplicationAt       DateTime?               @map("approved_fabric_application_at")
   approvedFabricApplicationByUserId String?                 @map("approved_fabric_application_by_user_id") @db.Uuid
+  // Process 7 (Technical Development)'s own "APPROVE TECHNICAL FLAT" outcome --
+  // same "recorded on the project itself, mutable, not a guarded set-once
+  // graduation write" reasoning as approvedFabricApplicationId above.
+  approvedTechnicalFlatId           String?                 @map("approved_technical_flat_id") @db.Uuid
+  approvedTechnicalFlatAt           DateTime?               @map("approved_technical_flat_at")
+  approvedTechnicalFlatByUserId     String?                 @map("approved_technical_flat_by_user_id") @db.Uuid
   createdByUserId                   String                  @map("created_by_user_id") @db.Uuid
   createdAt                         DateTime                @default(now()) @map("created_at")
   updatedAt                         DateTime                @updatedAt @map("updated_at")
@@ -5264,6 +5275,8 @@ model AiGarmentProject {
   selectedDesignBy            User?                              @relation("AiGarmentProjectSelectedDesignBy", fields: [selectedDesignByUserId], references: [id])
   approvedFabricApplication   AiGarmentFabricApplication?        @relation("AiGarmentProjectApprovedFabricApplication", fields: [approvedFabricApplicationId], references: [id])
   approvedFabricApplicationBy User?                              @relation("AiGarmentProjectApprovedFabricApplicationBy", fields: [approvedFabricApplicationByUserId], references: [id])
+  approvedTechnicalFlat       AiGarmentTechnicalFlat?            @relation("AiGarmentProjectApprovedTechnicalFlat", fields: [approvedTechnicalFlatId], references: [id])
+  approvedTechnicalFlatBy     User?                              @relation("AiGarmentProjectApprovedTechnicalFlatBy", fields: [approvedTechnicalFlatByUserId], references: [id])
   fabricDetail                AiGarmentFabricDetail?
   designOptions               AiGarmentDesignOption[]
   referenceAnalysis           AiGarmentReferenceAnalysis?
@@ -5278,6 +5291,8 @@ model AiGarmentProject {
   commercialEvaluations       AiGarmentCommercialEvaluation[]
   fabricApplicationRuns       AiGarmentFabricApplicationRun[]
   fabricApplications          AiGarmentFabricApplication[]       @relation("AiGarmentFabricApplicationsOfProject")
+  technicalFlatRuns           AiGarmentTechnicalFlatRun[]
+  technicalFlats              AiGarmentTechnicalFlat[]           @relation("AiGarmentTechnicalFlatsOfProject")
 
   @@unique([companyId, projectNumber])
   @@index([companyId, status])
@@ -5642,6 +5657,8 @@ model AiGarmentDesignDirection {
   selectedByProjects        AiGarmentProject[]                  @relation("AiGarmentProjectSelectedDesign")
   fabricApplicationRuns     AiGarmentFabricApplicationRun[]
   fabricApplications        AiGarmentFabricApplication[]
+  technicalFlatRuns         AiGarmentTechnicalFlatRun[]
+  technicalFlats            AiGarmentTechnicalFlat[]
 
   @@index([projectId, status])
   @@map("ai_garment_design_directions")
@@ -6089,6 +6106,93 @@ model AiGarmentFabricApplication {
 
   @@index([designDirectionId, decision])
   @@map("ai_garment_fabric_applications")
+}
+
+// ─────────────────────────────────────────────────────────────
+// AI Garment Flow — Process 7: Technical Development (2026-09-07)
+//
+// "Create Technical Flat" -- regenerates the currently selected garment
+// visual (preferring an approved fabric-applied result, falling back to the
+// plain selected design visual for FABRIC-sourced projects, which never go
+// through Apply Fabric) as a professional flat/CAD-style technical line
+// drawing (front + back, construction/seam/trim callouts, no photorealistic
+// rendering) -- the standard tech-pack deliverable, distinct in kind from
+// Processes 3/4/6's photorealistic renders. Mirrors AiGarmentFabricApplication's
+// shape exactly (a run/audit-log table + a version-controlled result table,
+// never edited/deleted, two-tier Approve/APPROVE-TECHNICAL-FLAT confirmation)
+// since it's the same "regenerate an existing visual, keep full history"
+// pattern -- reuses AiGarmentAnalysisRunStatus rather than a fourth identical
+// PENDING/IN_PROGRESS/SUCCESS/FAILED enum.
+// ─────────────────────────────────────────────────────────────
+
+enum AiGarmentTechnicalFlatDecision {
+  PENDING
+  APPROVED
+}
+
+// One row per "CREATE TECHNICAL FLAT" submission (initial generation or
+// Regenerate).
+model AiGarmentTechnicalFlatRun {
+  id                    String                     @id @default(uuid()) @db.Uuid
+  companyId             String                     @map("company_id") @db.Uuid
+  projectId             String                     @map("project_id") @db.Uuid
+  designDirectionId     String                     @map("design_direction_id") @db.Uuid
+  baseImageAttachmentId String                     @map("base_image_attachment_id") @db.Uuid
+  // The one optional user input this process takes -- a free-text note to
+  // guide which construction details to call out (e.g. "show the back yoke
+  // seam"), never a required field, since the deliverable is a visual
+  // re-render, not a data-collection form the way Process 6's textile
+  // fields are.
+  additionalNotes       String?                    @map("additional_notes")
+  provider              String
+  model                 String
+  promptVersion         String                     @map("prompt_version")
+  promptText            String                     @map("prompt_text")
+  status                AiGarmentAnalysisRunStatus @default(IN_PROGRESS)
+  errorCategory         String?                    @map("error_category")
+  errorMessage          String?                    @map("error_message")
+  requestedAt           DateTime                   @default(now()) @map("requested_at")
+  completedAt           DateTime?                  @map("completed_at")
+  createdByUserId       String                     @map("created_by_user_id") @db.Uuid
+
+  company         Company                  @relation(fields: [companyId], references: [id])
+  project         AiGarmentProject         @relation(fields: [projectId], references: [id])
+  designDirection AiGarmentDesignDirection @relation(fields: [designDirectionId], references: [id])
+  createdBy       User                     @relation("AiGarmentTechnicalFlatRunCreatedBy", fields: [createdByUserId], references: [id])
+  flat            AiGarmentTechnicalFlat?
+
+  @@index([designDirectionId, status])
+  @@map("ai_garment_technical_flat_runs")
+}
+
+// One row per successful "CREATE TECHNICAL FLAT" attempt -- version control
+// mirroring AiGarmentFabricApplication's own shape: never edited/deleted,
+// "Approve" only ever changes `decision`. `baseImageAttachmentId` is what it
+// was generated from (kept for a side-by-side comparison), `resultImageAttachmentId`
+// is the technical flat image itself.
+model AiGarmentTechnicalFlat {
+  id                      String                         @id @default(uuid()) @db.Uuid
+  companyId               String                         @map("company_id") @db.Uuid
+  projectId               String                         @map("project_id") @db.Uuid
+  designDirectionId       String                         @map("design_direction_id") @db.Uuid
+  runId                   String                         @unique @map("run_id") @db.Uuid
+  baseImageAttachmentId   String                         @map("base_image_attachment_id") @db.Uuid
+  resultImageAttachmentId String                         @map("result_image_attachment_id") @db.Uuid
+  additionalNotes         String?                        @map("additional_notes")
+  decision                AiGarmentTechnicalFlatDecision @default(PENDING)
+  createdByUserId         String                         @map("created_by_user_id") @db.Uuid
+  createdAt               DateTime                       @default(now()) @map("created_at")
+  updatedAt               DateTime                       @updatedAt @map("updated_at")
+
+  company            Company                   @relation(fields: [companyId], references: [id])
+  project            AiGarmentProject          @relation("AiGarmentTechnicalFlatsOfProject", fields: [projectId], references: [id])
+  designDirection    AiGarmentDesignDirection  @relation(fields: [designDirectionId], references: [id])
+  run                AiGarmentTechnicalFlatRun @relation(fields: [runId], references: [id])
+  createdBy          User                      @relation("AiGarmentTechnicalFlatCreatedBy", fields: [createdByUserId], references: [id])
+  approvedByProjects AiGarmentProject[]        @relation("AiGarmentProjectApprovedTechnicalFlat")
+
+  @@index([designDirectionId, decision])
+  @@map("ai_garment_technical_flats")
 }
 
 // ─────────────────────────────────────────────────────────────

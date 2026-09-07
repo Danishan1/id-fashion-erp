@@ -13,6 +13,7 @@ import { DevelopmentBriefPanel } from "./DevelopmentBriefPanel";
 import { VisualGenerationPanel } from "./VisualGenerationPanel";
 import { CommercialEvaluationPanel } from "./CommercialEvaluationPanel";
 import { FabricApplicationPanel } from "./FabricApplicationPanel";
+import { TechnicalFlatPanel } from "./TechnicalFlatPanel";
 
 const SAMPLE_TYPES = ["FIT", "PROTO", "PP", "TOP", "SHIPMENT", "PHOTOSHOOT", "SMS", "OTHER"] as const;
 
@@ -95,7 +96,8 @@ const STEP_HELP: Partial<Record<AiGarmentStepKey, string>> = {
   APPLY_FABRIC:
     "Record which fabric master this design will use, then upload a real fabric swatch to see it applied onto the selected garment visual — approve a version, then APPROVE DESIGN & FABRIC to continue.",
   FABRIC_INFORMATION: "Record the fabric's GSM, dye/shade, weave, width, composition, color and supplier.",
-  TECHNICAL_DEVELOPMENT: "Convert this project into a real Style once a design is settled, to continue into BOM and Costing.",
+  TECHNICAL_DEVELOPMENT:
+    "Convert this project into a real Style once a design is settled, and generate a technical flat (a CAD-style construction drawing) from the approved garment visual, to continue into BOM and Costing.",
   BOM: "BOM is built on the graduated Style, using the existing BOM/MRP module.",
   COSTING: "Costing runs on a linked Sample Request, using Sampling's existing costing engine.",
 };
@@ -407,7 +409,9 @@ function StepContent({
     return wrap(
       <>
         <ConvertToStyleSection project={project} setError={setError} reloadProject={reloadProject} />
-        <AiPlaceholderButton label="Create Technical Flat" />
+        <div className="mt-4">
+          <TechnicalFlatPanel projectId={project.id} setError={setError} reloadProject={reloadProject} />
+        </div>
       </>
     );
   }

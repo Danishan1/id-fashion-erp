@@ -75,4 +75,21 @@ export interface ImageGenerationProvider {
     baseImage: { buffer: Buffer; mimeType: string };
     swatchImage: { buffer: Buffer; mimeType: string };
   }): Promise<GenerateImagesResult>;
+
+  /**
+   * Regenerates an existing garment image as a technical flat / CAD-style
+   * line drawing (AI Garment Flow Process 7) — the same single-base-image
+   * shape as `generateVariation`, but named distinctly since the
+   * transformation is a different kind (photorealistic-to-technical-line-art,
+   * not "change one named feature") — never reuse `generateVariation` for
+   * this, to avoid conflating two semantically different operations that
+   * happen to share a parameter shape. Optional, same
+   * check-before-use/UNSUPPORTED_OPERATION discipline as the other optional
+   * capabilities above.
+   */
+  generateTechnicalFlat?(params: {
+    prompt: string;
+    count: number;
+    baseImage: { buffer: Buffer; mimeType: string };
+  }): Promise<GenerateImagesResult>;
 }
