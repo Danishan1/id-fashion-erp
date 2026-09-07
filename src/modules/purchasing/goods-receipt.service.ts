@@ -42,6 +42,90 @@ export async function getGoodsReceiptById(companyId: string, id: string) {
   return receipt;
 }
 
+export interface MaterialRateHistoryEntry {
+  // The GoodsReceiptItem's own id — the real unique identity of one row
+  // here. purchaseOrderItemId is NOT unique across entries: the same PO
+  // line can legitimately be received across more than one Goods Receipt
+  // (e.g. two partial receipts), which would collide as a React list key.
+  id: string;
+  purchaseOrderItemId: string;
+  unitPrice: number;
+  receivedDate: string;
+  receiptNumber: string;
+  orderNumber: string;
+  supplierName: string;
+}
+
+export interface MaterialRateHistoryResult {
+  history: MaterialRateHistoryEntry[];
+  fallbackUnitCost: number | null;
+}
+
+/**
+ * Real purchase-rate history for a material, anchored on Goods Receipt (not
+ * just Purchase Order creation) — a PO can be raised and never actually
+ * arrive, so "how many times has this material come into stock" is a
+ * GoodsReceiptItem question, not a PurchaseOrderItem one. Each receipt line
+ * carries its own commercial rate via the PurchaseOrderItem it was received
+ * against. Scoped by colorId/dyeId when the caller supplies them (a Sample
+ * Material line pinned to one shade shouldn't be suggested a rate paid for a
+ * different one) — same shade-matters reasoning already applied to
+ * available-stock-by-dye. A cancelled receipt is excluded (never a real
+ * transaction); most-recent-received first, so a stale rate from years ago
+ * doesn't outrank what was actually paid last time.
+ *
+ * `fallbackUnitCost` is the Material master's own manually-maintained
+ * default (Product.unitCost) — a different, non-history source, surfaced
+ * only for the case with zero real purchase history to suggest from at all.
+ */
+export async function getMaterialRateHistory(
+  companyId: string,
+  materialId: string,
+  colorId?: string | null,
+  dyeId?: string | null
+): Promise<MaterialRateHistoryResult> {
+  const [receiptItems, material] = await Promise.all([
+    prisma.goodsReceiptItem.findMany({
+      where: {
+        productId: materialId,
+        goodsReceipt: { companyId, status: { not: "CANCELLED" } },
+        purchaseOrderItem: {
+          ...(colorId ? { colorId } : {}),
+          ...(dyeId ? { dyeId } : {}),
+        },
+      },
+      select: {
+        id: true,
+        goodsReceipt: { select: { receiptNumber: true, receivedDate: true } },
+        purchaseOrderItem: {
+          select: {
+            id: true,
+            unitPrice: true,
+            purchaseOrder: { select: { orderNumber: true, supplier: { select: { name: true } } } },
+          },
+        },
+      },
+      orderBy: { goodsReceipt: { receivedDate: "desc" } },
+    }),
+    prisma.product.findFirst({ where: { id: materialId, companyId }, select: { unitCost: true } }),
+  ]);
+
+  const history: MaterialRateHistoryEntry[] = receiptItems.map((item) => ({
+    id: item.id,
+    purchaseOrderItemId: item.purchaseOrderItem.id,
+    unitPrice: Number(item.purchaseOrderItem.unitPrice),
+    receivedDate: item.goodsReceipt.receivedDate.toISOString(),
+    receiptNumber: item.goodsReceipt.receiptNumber,
+    orderNumber: item.purchaseOrderItem.purchaseOrder.orderNumber,
+    supplierName: item.purchaseOrderItem.purchaseOrder.supplier.name,
+  }));
+
+  return {
+    history,
+    fallbackUnitCost: material?.unitCost === null || material?.unitCost === undefined ? null : Number(material.unitCost),
+  };
+}
+
 /**
  * Deliberately opens its own prisma.$transaction here rather than pushing it
  * into a single repository function — this orchestration spans PurchaseOrderItem,

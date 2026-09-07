@@ -122,6 +122,7 @@ export type SampleCostingInput = z.infer<typeof sampleCostingSchema>;
 export const sampleApprovalSchema = z.object({
   decision: z.enum(["APPROVED", "REJECTED", "REVISION_REQUESTED"]),
   customerContactName: z.string().max(200).optional().or(z.literal("")),
+  customerContactPhone: z.string().max(30).optional().or(z.literal("")),
   decisionNotes: z.string().max(2000).optional().or(z.literal("")),
 });
 

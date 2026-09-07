@@ -12,7 +12,7 @@ import { LookupRepository } from "@/modules/lookups/lookup.repository";
 import { ProductRepository } from "@/modules/products/product.repository";
 import { SalesOrderRepository } from "@/modules/sales-orders/sales-order.repository";
 import { createPurchaseOrder } from "@/modules/purchasing/purchase-order.service";
-import { getAvailableQuantity, recordInventoryTransaction } from "./inventory.service";
+import { getAvailableQuantity, getAvailableQuantityByDye, recordInventoryTransaction } from "./inventory.service";
 import { MaterialRequestItemRepository, MaterialRequestRepository } from "./material-request.repository";
 import type { MaterialRequestInput, MaterialRequestItemInput, UpdateMaterialRequestInput } from "./material-request.schema";
 import { Prisma, type MaterialRequestStatus } from "@prisma/client";
@@ -33,6 +33,26 @@ function mapLineInput(line: MaterialRequestItemInput) {
     damageReason: line.damageReason || null,
     remarks: line.remarks || null,
   };
+}
+
+/**
+ * "Available Stock" for a request line — scoped to the line's own dye/shade
+ * when possible, since a line pinned to one shade can't actually use stock
+ * of a different shade even though the flat material-level total includes
+ * it. Only FABRIC materials get FabricRoll rows at all (the only place a
+ * shade is tracked per physical unit of stock), so this only narrows for
+ * that case; anything else falls back to the flat, material-wide total —
+ * the same number as before, not a regression for materials this can't help.
+ */
+async function getLineAvailableStock(
+  companyId: string,
+  warehouseId: string,
+  line: { materialId: string; dyeId: string | null; material: { materialCategory: string | null } }
+): Promise<number> {
+  if (line.dyeId && line.material.materialCategory === "FABRIC") {
+    return getAvailableQuantityByDye(companyId, line.materialId, warehouseId, line.dyeId);
+  }
+  return getAvailableQuantity(companyId, line.materialId, warehouseId);
 }
 
 /**
@@ -237,7 +257,7 @@ export async function getMaterialRequestById(companyId: string, id: string) {
     request.lines.map(async (line) => ({
       ...line,
       ...projectLineQuantities(line),
-      availableStockQuantity: await getAvailableQuantity(companyId, line.materialId, request.warehouseId),
+      availableStockQuantity: await getLineAvailableStock(companyId, request.warehouseId, line),
     }))
   );
 
@@ -489,7 +509,7 @@ export async function issueMaterialRequestLine(
     );
   }
 
-  const available = await getAvailableQuantity(actor.companyId, line.materialId, line.materialRequest.warehouseId);
+  const available = await getLineAvailableStock(actor.companyId, line.materialRequest.warehouseId, line);
   if (baseQuantity > available) {
     throw new BusinessRuleError(
       "INSUFFICIENT_RAW_MATERIAL_STOCK",
@@ -583,7 +603,7 @@ export async function getGeneratePurchaseOrdersReview(actor: ActorContext, id: s
     const projection = projectLineQuantities(line);
     if (projection.availableToOrderQuantity <= 0) continue;
 
-    const availableStockQuantity = await getAvailableQuantity(actor.companyId, line.materialId, request.warehouseId);
+    const availableStockQuantity = await getLineAvailableStock(actor.companyId, request.warehouseId, line);
     review.push({
       materialRequestItemId: line.id,
       materialId: line.materialId,
@@ -684,6 +704,8 @@ export async function generatePurchaseOrdersForShortfall(
           unitPrice,
           notes: `Shortfall for Material Request ${request.requestNumber}`,
           materialRequestItemId: line.id,
+          colorId: line.colorId ?? undefined,
+          dyeId: line.dyeId ?? undefined,
         })),
       });
       results.push({ supplierId, status: "success", orderId: order.id, orderNumber: order.orderNumber });

@@ -35,6 +35,16 @@ interface SampleMaterialRow {
   dye: { id: string; name: string; pantone: string | null } | null;
 }
 
+interface RateHistoryEntry {
+  id: string;
+  purchaseOrderItemId: string;
+  unitPrice: number;
+  receivedDate: string;
+  receiptNumber: string;
+  orderNumber: string;
+  supplierName: string;
+}
+
 interface SampleOtherChargeRow {
   id: string;
   costHead: "PROCESS" | "FABRICATION" | "OTHER";
@@ -47,6 +57,7 @@ interface SampleApprovalRow {
   id: string;
   decision: "APPROVED" | "REJECTED" | "REVISION_REQUESTED";
   customerContactName: string | null;
+  customerContactPhone: string | null;
   decisionNotes: string | null;
   decidedAt: string;
   decidedBy: Person;
@@ -99,6 +110,7 @@ interface SampleRequestDetail {
   styleName: string | null;
   color: string | null;
   productId: string | null;
+  buyer: { name: string; contactPerson: string | null; phone: string | null } | null;
   versions: SampleVersionRow[];
   comments: SampleCommentRow[];
 }
@@ -181,6 +193,7 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
   const [decision, setDecision] = useState<"APPROVED" | "REJECTED" | "REVISION_REQUESTED">("APPROVED");
   const [decisionNotes, setDecisionNotes] = useState("");
   const [customerContactName, setCustomerContactName] = useState("");
+  const [customerContactPhone, setCustomerContactPhone] = useState("");
 
   // Comments — the thread stays visible on the page; only composing a new
   // one opens a Modal.
@@ -206,6 +219,11 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
   const [rateModalTarget, setRateModalTarget] = useState<SampleMaterialRow | null>(null);
   const [rateDraft, setRateDraft] = useState("");
   const [gstDraft, setGstDraft] = useState("");
+  // Real purchase-rate suggestions for whichever material/shade the Rate
+  // modal is currently open for — fetched fresh per open, never persisted.
+  const [rateHistory, setRateHistory] = useState<RateHistoryEntry[]>([]);
+  const [rateHistoryFallback, setRateHistoryFallback] = useState<number | null>(null);
+  const [isLoadingRateHistory, setIsLoadingRateHistory] = useState(false);
 
   // Add/Edit Other Charge — one Modal covers both modes: charge === null is
   // "add", charge set is "edit", so there's one set of draft fields instead
@@ -392,6 +410,29 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
     setRateModalTarget(m);
     setRateDraft(m.rate ?? "");
     setGstDraft(m.gstPercentage ?? "");
+    setRateHistory([]);
+    setRateHistoryFallback(null);
+
+    const params = new URLSearchParams();
+    if (m.color) params.set("colorId", m.color.id);
+    if (m.dye) params.set("dyeId", m.dye.id);
+    setIsLoadingRateHistory(true);
+    fetch(`/api/v1/materials/${m.material.id}/rate-history?${params.toString()}`)
+      .then((res) => res.json())
+      .then((body) => {
+        const history: RateHistoryEntry[] = body.data?.history ?? [];
+        const fallbackUnitCost: number | null = body.data?.fallbackUnitCost ?? null;
+        setRateHistory(history);
+        setRateHistoryFallback(fallbackUnitCost);
+
+        // Only ever auto-fill an EMPTY rate — never silently overwrite a
+        // rate this material already has recorded.
+        if (m.rate === null) {
+          if (history.length === 1) setRateDraft(String(history[0].unitPrice));
+          else if (history.length === 0 && fallbackUnitCost !== null) setRateDraft(String(fallbackUnitCost));
+        }
+      })
+      .finally(() => setIsLoadingRateHistory(false));
   };
 
   const saveRate = () => {
@@ -492,7 +533,11 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
   const openDecisionModal = () => {
     setDecision("APPROVED");
     setDecisionNotes("");
-    setCustomerContactName("");
+    // Defaults from the request's own linked Buyer — editable afterwards,
+    // since the person who actually calls back with the decision may not
+    // be the Buyer master's own saved contact.
+    setCustomerContactName(request.buyer?.contactPerson || request.buyer?.name || "");
+    setCustomerContactPhone(request.buyer?.phone || "");
     setIsDecisionModalOpen(true);
   };
 
@@ -506,6 +551,7 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
           body: JSON.stringify({
             decision,
             customerContactName: customerContactName || undefined,
+            customerContactPhone: customerContactPhone || undefined,
             decisionNotes: decisionNotes || undefined,
           }),
         }),
@@ -1169,6 +1215,7 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
                         <span className="font-medium">{a.decision.replace("_", " ")}</span> by {a.decidedBy.fullName} on{" "}
                         {formatDate(a.decidedAt)}
                         {a.customerContactName ? ` — contact: ${a.customerContactName}` : ""}
+                        {a.customerContactPhone ? ` (${a.customerContactPhone})` : ""}
                         {a.decisionNotes ? ` — "${a.decisionNotes}"` : ""}
                       </p>
                     ))}
@@ -1312,6 +1359,49 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
               />
             </FormField>
           </div>
+
+          {isLoadingRateHistory && <p className="text-xs text-zinc-400">Checking purchase history…</p>}
+
+          {!isLoadingRateHistory && rateHistory.length > 1 && (
+            <FormField label="Suggested rate (from purchase history)" htmlFor="modalRateSuggestion">
+              <select
+                id="modalRateSuggestion"
+                value=""
+                onChange={(e) => {
+                  if (e.target.value) setRateDraft(e.target.value);
+                }}
+                className={textInputClass()}
+              >
+                <option value="">— Pick a past rate to use —</option>
+                {rateHistory.map((h) => (
+                  <option key={h.id} value={h.unitPrice}>
+                    ₹{h.unitPrice} — {h.supplierName} — {formatDate(h.receivedDate)} ({h.orderNumber})
+                  </option>
+                ))}
+              </select>
+            </FormField>
+          )}
+
+          {!isLoadingRateHistory && rateHistory.length === 1 && (
+            <p className="text-xs text-zinc-500">
+              {rateModalTarget?.rate === null ? "Rate auto-filled from" : "Matches"} the only past purchase of this material{rateModalTarget?.color || rateModalTarget?.dye ? " in this shade" : ""}: {rateHistory[0].supplierName} on{" "}
+              {formatDate(rateHistory[0].receivedDate)} ({rateHistory[0].orderNumber}).
+            </p>
+          )}
+
+          {!isLoadingRateHistory && rateHistory.length === 0 && rateHistoryFallback !== null && (
+            <p className="text-xs text-zinc-500">
+              No purchase history{rateModalTarget?.color || rateModalTarget?.dye ? " for this shade" : ""}
+              {rateModalTarget?.rate === null ? " — rate auto-filled from this material's default cost (Masters → Materials)." : " — this material's default cost (Masters → Materials) is available above."}
+            </p>
+          )}
+
+          {!isLoadingRateHistory && rateHistory.length === 0 && rateHistoryFallback === null && (
+            <p className="text-xs text-zinc-500">
+              No purchase history{rateModalTarget?.color || rateModalTarget?.dye ? " for this shade" : ""} and no default cost set for this material — enter the rate manually.
+            </p>
+          )}
+
           <div className="flex gap-3">
             <ActionButton label="Cancel" onClick={() => setRateModalTarget(null)} isBusy={false} variant="secondary" />
             <ActionButton label="Save Rate" onClick={saveRate} isBusy={isBusy} />
@@ -1472,14 +1562,24 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
               <option value="REVISION_REQUESTED">Revision Requested</option>
             </select>
           </FormField>
-          <FormField label="Customer Contact Name" htmlFor="modalContactName">
-            <input
-              id="modalContactName"
-              value={customerContactName}
-              onChange={(e) => setCustomerContactName(e.target.value)}
-              className={textInputClass()}
-            />
-          </FormField>
+          <div className="grid grid-cols-2 gap-3">
+            <FormField label="Customer Contact Name" htmlFor="modalContactName">
+              <input
+                id="modalContactName"
+                value={customerContactName}
+                onChange={(e) => setCustomerContactName(e.target.value)}
+                className={textInputClass()}
+              />
+            </FormField>
+            <FormField label="Customer Phone" htmlFor="modalContactPhone">
+              <input
+                id="modalContactPhone"
+                value={customerContactPhone}
+                onChange={(e) => setCustomerContactPhone(e.target.value)}
+                className={textInputClass()}
+              />
+            </FormField>
+          </div>
           <FormField label="Notes" htmlFor="modalDecisionNotes">
             <textarea
               id="modalDecisionNotes"
