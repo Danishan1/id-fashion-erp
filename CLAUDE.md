@@ -53,7 +53,7 @@ Update the status column and add a short dated note under the relevant phase sec
 
 **CRM/Marketing enhancement pass, on top of the migration above — all 14 planned items complete (2026-08-24)** — tracked in full in [CRM_MARKETING_ENHANCEMENT_AUDIT_AND_PLAN.md](CRM_MARKETING_ENHANCEMENT_AUDIT_AND_PLAN.md): Deal→Customer conversion, Customer 360, CRM Kanban, CRM Dashboard, Follow-up Management/Notifications, configurable Lead Priority, Campaign Approval workflow, Marketing Dashboard trend charts, Channel Performance report, Customer Segmentation, Marketing Automation triggers, CSV Import (Leads/Deals/Campaign Daily Metrics), Meta/Google Ads Integration, and an AI-readiness audit of every aggregation function. The one open thread: Meta/Google Ads Integration's OAuth/token-exchange/sync code is built and unit-tested but has **no real credentials to verify the live external API calls against yet** — see that file's own Item 13 note before assuming it's been exercised against the real Meta/Google APIs, and before touching `AdAccountConnection`/`AdCampaignLink`/`ImportBatch`/`CrmSettings` or the `src/modules/marketing/ad-integrations/`/`src/modules/import/` modules.
 
-**AI Garment Flow (separate initiative, not part of the 11 phases above) — foundation + Process 1 (Reference Garment Analysis) + Process 2 (Commercial Design Development Brief) + Process 3 (Garment Design Visual Generation) + Process 4 (Controlled Design Variation) + Process 5 (Commercial Design Evaluation) + Process 6 (Apply Actual Fabric) + Process 7 (Technical Development) complete; live image-generation verification (Process 3/4/6/7) still blocked on the configured OpenAI account's exhausted billing credits (a second, free-tier Gemini provider was added 2026-09-07 specifically to unblock this once a key is supplied), but every Anthropic-backed process (1/2/5) is fully live-verified (2026-09-06/07)** — a new product-development workflow module (reference/fabric upload → AI-assisted design → costing → sampling), full detail in its own dated sections further down this file. The existing `Product` model remains the single Style Master (not duplicated); a new `AiGarmentProject` header is a pre-Style record that manually graduates into a real `Product` via `convertProjectToStyle()`, mirroring Sampling's own `convertSampleToStyle()`. BOM/Costing steps require this graduation and then reuse the existing BOM/MRP and Sampling-costing modules — no parallel schema. Process 1 (Reference Garment Analysis) is a real Anthropic vision integration analysing an uploaded reference image into 36 individually-tracked, editable, approvable observations. Process 2 (Commercial Design Development Brief) is a real Anthropic text integration that, once that analysis is approved, generates 3/6/9 differentiated commercial `AiGarmentDesignDirection` records (each individually editable/approvable/rejectable/regeneratable, each scored 0-100). Process 3 (Garment Design Visual Generation) is a real, provider-agnostic OpenAI Images integration turning each APPROVED design direction into 1/3/4 generated visuals with full version history and a Select/Reject/Regenerate/Create Variation workflow. Process 4 (Controlled Design Variation) is a real image-to-image integration that regenerates just one named feature (Neckline/Collar/Sleeve/.../Other) of an existing generated image while preserving everything else, with its own version-controlled variation history and a Select Variation/Keep Original/Create Another Variation workflow. Process 5 (Commercial Design Evaluation) is a real Anthropic text integration that compares 2-8 APPROVED design directions on a 12-criterion weighted commercial rubric, letting the user override the AI's ranking and always requiring explicit confirmation before recording a SELECTED DESIGN and advancing the workflow to Apply Fabric (or Technical Development, for a fabric-sourced project). Process 6 (Apply Actual Fabric) is a real two-image OpenAI edit integration that applies a user-uploaded fabric swatch onto the selected design's currently SELECTED garment visual, with its own Before/After version history, a two-tier Approve/APPROVE-DESIGN-&-FABRIC confirmation flow, and a workflow advance to Technical Development. Process 7 (Technical Development) is a real image-to-image integration that regenerates the currently selected garment visual (preferring an approved fabric application's result) as a professional flat/CAD-style technical line drawing, with its own version-controlled history, a two-tier Approve/APPROVE-TECHNICAL-FLAT confirmation flow, and a workflow advance to BOM — see those sections before touching `AiGarmentReferenceAnalysis`/`AiGarmentReferenceObservation`/`AiGarmentReferenceAnalysisRun`/`AiGarmentDevelopmentBriefRun`/`AiGarmentDesignDirection`/`AiGarmentImageGenerationRun`/`AiGarmentGeneratedImage`/`AiGarmentDesignVariationRun`/`AiGarmentDesignVariation`/`AiGarmentCommercialEvaluationRun`/`AiGarmentCommercialEvaluation`/`AiGarmentCommercialEvaluationItem`/`AiGarmentFabricApplicationRun`/`AiGarmentFabricApplication`/`AiGarmentTechnicalFlatRun`/`AiGarmentTechnicalFlat`, `src/core/ai/reference-analysis/`, `src/core/ai/development-brief/`, `src/core/ai/image-generation/`, `src/core/ai/design-variation/`, `src/core/ai/commercial-evaluation/`, `src/core/ai/fabric-application/`, `src/core/ai/technical-development/`, `src/core/ai/providers/anthropic.ts`, or `src/modules/ai-garment-flow/`. `src/core/ai/AIService.ts`'s `NullAIProvider`/`getAIService()` are dead code, unreferenced by any real process — don't wire a future process through that file, follow the established per-process file-layout pattern (`schema.ts`/`prompt.ts`/`generate.ts` or `analyze.ts`) instead.
+**AI Garment Flow (separate initiative, not part of the 11 phases above) — foundation + Process 1 (Reference Garment Analysis) + Process 2 (Commercial Design Development Brief) + Process 3 (Garment Design Visual Generation) + Process 4 (Controlled Design Variation) + Process 5 (Commercial Design Evaluation) + Process 6 (Apply Actual Fabric) + Process 7 (Technical Development) + Process 8 (BOM Suggestion) complete; live image-generation verification (Process 3/4/6/7) still blocked on the configured OpenAI account's exhausted billing credits (a second, free-tier Gemini provider was added 2026-09-07 specifically to unblock this once a key is supplied), but every Anthropic-backed process (1/2/5/8) is fully live-verified (2026-09-06/07)** — a new product-development workflow module (reference/fabric upload → AI-assisted design → costing → sampling), full detail in its own dated sections further down this file. The existing `Product` model remains the single Style Master (not duplicated); a new `AiGarmentProject` header is a pre-Style record that manually graduates into a real `Product` via `convertProjectToStyle()`, mirroring Sampling's own `convertSampleToStyle()`. BOM/Costing steps require this graduation and then reuse the existing BOM/MRP and Sampling-costing modules — no parallel schema. Process 1 (Reference Garment Analysis) is a real Anthropic vision integration analysing an uploaded reference image into 36 individually-tracked, editable, approvable observations. Process 2 (Commercial Design Development Brief) is a real Anthropic text integration that, once that analysis is approved, generates 3/6/9 differentiated commercial `AiGarmentDesignDirection` records (each individually editable/approvable/rejectable/regeneratable, each scored 0-100). Process 3 (Garment Design Visual Generation) is a real, provider-agnostic OpenAI Images integration turning each APPROVED design direction into 1/3/4 generated visuals with full version history and a Select/Reject/Regenerate/Create Variation workflow. Process 4 (Controlled Design Variation) is a real image-to-image integration that regenerates just one named feature (Neckline/Collar/Sleeve/.../Other) of an existing generated image while preserving everything else, with its own version-controlled variation history and a Select Variation/Keep Original/Create Another Variation workflow. Process 5 (Commercial Design Evaluation) is a real Anthropic text integration that compares 2-8 APPROVED design directions on a 12-criterion weighted commercial rubric, letting the user override the AI's ranking and always requiring explicit confirmation before recording a SELECTED DESIGN and advancing the workflow to Apply Fabric (or Technical Development, for a fabric-sourced project). Process 6 (Apply Actual Fabric) is a real two-image OpenAI edit integration that applies a user-uploaded fabric swatch onto the selected design's currently SELECTED garment visual, with its own Before/After version history, a two-tier Approve/APPROVE-DESIGN-&-FABRIC confirmation flow, and a workflow advance to Technical Development. Process 7 (Technical Development) is a real image-to-image integration that regenerates the currently selected garment visual (preferring an approved fabric application's result) as a professional flat/CAD-style technical line drawing, with its own version-controlled history, a two-tier Approve/APPROVE-TECHNICAL-FLAT confirmation flow, and a workflow advance to BOM. Process 8 (BOM Suggestion) is a real Anthropic text integration that suggests a draft Bill of Materials for one finished garment from the approved design's own structured fields, letting the user resolve each advisory suggestion into a real `BomItem` via the existing, unchanged bom-mrp `upsertBom()` (never a parallel BOM schema), and advancing to Costing once that style's real BOM is approved — see those sections before touching `AiGarmentReferenceAnalysis`/`AiGarmentReferenceObservation`/`AiGarmentReferenceAnalysisRun`/`AiGarmentDevelopmentBriefRun`/`AiGarmentDesignDirection`/`AiGarmentImageGenerationRun`/`AiGarmentGeneratedImage`/`AiGarmentDesignVariationRun`/`AiGarmentDesignVariation`/`AiGarmentCommercialEvaluationRun`/`AiGarmentCommercialEvaluation`/`AiGarmentCommercialEvaluationItem`/`AiGarmentFabricApplicationRun`/`AiGarmentFabricApplication`/`AiGarmentTechnicalFlatRun`/`AiGarmentTechnicalFlat`/`AiGarmentBomSuggestionRun`/`AiGarmentBomSuggestion`, `src/core/ai/reference-analysis/`, `src/core/ai/development-brief/`, `src/core/ai/image-generation/`, `src/core/ai/design-variation/`, `src/core/ai/commercial-evaluation/`, `src/core/ai/fabric-application/`, `src/core/ai/technical-development/`, `src/core/ai/bom-suggestion/`, `src/core/ai/providers/anthropic.ts`, or `src/modules/ai-garment-flow/`. `src/core/ai/AIService.ts`'s `NullAIProvider`/`getAIService()` are dead code, unreferenced by any real process — don't wire a future process through that file, follow the established per-process file-layout pattern (`schema.ts`/`prompt.ts`/`generate.ts` or `analyze.ts`) instead.
 
 ### Phase 2 notes (2026-08-16)
 - Next.js 16 scaffold, Prisma 7 schema (Organization/Auth + Masters + System, 24 models), NextAuth v5 Credentials auth (JWT sessions), RBAC `PermissionService`, document numbering, audit logging, local file storage, `BusinessRuleError`, sidebar/topbar shell, login page, DB-backed dashboard placeholder, and full seed data (roles/permissions/Super Admin) are all in place and verified end-to-end in the browser (login → dashboard showing real DB counts).
@@ -4362,6 +4362,102 @@ Processes 3/4/6's photorealistic renders, not just another photorealistic variat
   fabric-application-vs-plain-selected-image branch was used for a given flat (the resolution is silent and
   automatic, matching Process 6's own "never require the user to guess" resolution logic for its own base
   image).
+
+## AI Garment Flow — Process 8: BOM Suggestion (2026-09-07)
+
+Builds on Technical Development — like Process 7, only the process title was given, not a full spec, so the
+design was scoped from existing scaffolding: the `BOM` step had zero AI scaffolding at all (unlike every
+prior step, it was a pure "Convert to Style, then deep-link to `/bom-mrp/[productId]`" gate), and
+`AIService.ts`'s dead `generateDraftBOM(input: { productId })` placeholder was the one signal for what a
+real Process 8 should do.
+
+**The central architectural decision, confirmed by reading the real BOM/MRP module first**: BOM/Costing were
+architected from the foundation phase onward to require graduation to a real Style and then reuse the
+*existing* `Bom`/`BomVersion`/`BomItem` schema and its own `upsertBom()`/`approveBomVersion()` actions — no
+parallel BOM schema in this module. So this process's real deliverable is never written to a schema of its
+own: what it adds is only the **AI's own advisory suggestions** (free-text material descriptions/estimated
+quantities) plus a run/audit log. A suggestion is never itself a real `BomItem` — resolving one always goes
+through bom-mrp's own real `upsertBom()`, read-merge-write orchestrated around it exactly the way Material
+Request's `generatePurchaseOrdersForShortfall()` already calls `createPurchaseOrder()` unchanged.
+
+- **Schema** (migration `20260907190000_add_ai_garment_bom_suggestion`): `AiGarmentBomSuggestionRun`
+  (run/audit-log, mirrors every other process's run-log table) and `AiGarmentBomSuggestion` (one row per
+  suggested line — `materialDescription`/`materialCategory` (the real `MaterialCategory` Prisma enum, not a
+  duplicate) /`suggestedQuantityPerUnit`/`suggestedUom` (free text — the AI has no knowledge of this
+  company's real `UnitOfMeasure` rows) /`suggestedWastagePercentage`/`colorNote`/`reasoning`/`decision`
+  (`PENDING`/`ADDED`/`DISMISSED`) /`resolvedBomItemId`). `resolvedBomItemId` is a **soft reference only, no
+  hard FK** — `upsertBom()` deletes and recreates every `BomItem` row on each save (confirmed by reading
+  `bom.repository.ts`'s `saveDraftWithItems`), so a real FK would dangle the moment that style's BOM is next
+  edited through the ordinary BOM editor, completely independent of this module. No new field was added to
+  `AiGarmentProject` for "BOM complete" the way Processes 5/6/7 added `selectedDesignDirectionId`/
+  `approvedFabricApplicationId`/`approvedTechnicalFlatId` — whether the BOM is ready to move past is already
+  a real, existing fact this module derives rather than duplicates: bom-mrp's own `Bom.approvedVersionId`,
+  the exact gate MRP/Production already consume.
+- **`src/core/ai/bom-suggestion/`** follows the established 3-file pattern (`schema.ts`/`prompt.ts`/
+  `generate.ts`). The hidden system prompt (written for this process, not verbatim from a spec) asks for a
+  realistic draft BOM for ONE finished garment piece — main fabric(s), lining if applicable, and every trim/
+  accessory/packaging item the design actually calls for — scaled to the design's own structured fields
+  (silhouette/neckline/collar/sleeve/closure/etc. from the approved Development Brief direction) plus fabric
+  detail if known, never inventing an exact cost, and stating plainly that quantities are commercial
+  estimates pending real technical measurement. `materialCategory` in both the Zod schema and the tool
+  schema reuses the existing `MATERIAL_CATEGORIES` list `Product.materialCategory` is itself validated
+  against, rather than inventing a second list.
+- **A real, live-confirmed Anthropic tool-schema limitation, found and fixed during verification**: the tool
+  schema's `suggestedQuantityPerUnit` field originally used `{ type: "number", exclusiveMinimum: 0 }` —
+  Anthropic's tool-schema validator rejected this outright live: `"tools.0.custom: For 'number' type,
+  property 'exclusiveMinimum' is not supported"`. Fixed by dropping the bound entirely from the tool schema
+  (`{ type: "number" }`) and relying on the Zod schema for the real positivity constraint — the same "the
+  tool schema states shape, the Zod layer states the real constraints" split Process 2/5 already established
+  for array-length bounds. Plain `minimum`/`maximum` (non-exclusive, used on `suggestedWastagePercentage`)
+  were already confirmed working live by Process 5's own scoring fields, so only the exclusive-bound field
+  needed fixing.
+- **`bom-suggestion.service.ts`**: `generateBomSuggestions()` (gated on a design being selected, NOT on
+  `productId` — suggesting materials is useful before a Style formally exists too), `listBomSuggestions()`,
+  `resolveBomSuggestion()` (the one real BOM-writing action — reads the graduated Style's current real BOM
+  via bom-mrp's own `getBomByProductId()`, appends the one user-confirmed line — every value editable, never
+  blindly trusted from the AI's own suggestion — and calls the existing, unchanged `upsertBom()` with the
+  merged item list; explicitly asserts `bom_mrp`/`edit` internally, the permission the actual write needs,
+  not just the `ai_garment_flow` one the route sits under, matching Material Request's own precedent for
+  exactly this cross-module-action shape), `dismissBomSuggestion()`, and `completeBomStep()` ("Continue to
+  Costing" — checks `Bom.approvedVersionId` is genuinely set, then reuses the existing, unchanged
+  `saveWorkflowStep()` twice, the pattern Processes 5/6/7 established).
+- **`resolveSelectedGarmentImage`'s sibling extraction, generalized further**: `describeFabricDetail()`
+  (Process 5's own "Fabric if known" formatter) was extracted out of `commercial-evaluation.service.ts` into
+  a new shared `fabric-detail-description.ts`, since Process 8 needed the identical formatting for its own
+  prompt context — the same "derive, don't duplicate" discipline already applied once this session for
+  `resolveSelectedGarmentImage`.
+- **UI**: `BomSuggestionPanel.tsx` sits alongside the pre-existing, unchanged BOM Editor deep-link on the
+  `BOM` step — a "GENERATE DRAFT BOM" button (with an optional free-text "additional guidance" field), a list
+  of suggestions each showing the AI's own description/category/quantity/wastage/reasoning, "Add to BOM"
+  (opens a `Modal` reusing the exact same Material/Color/Qty/Unit/Wastage/Notes fields `BomEditor.tsx`
+  already collects, pre-filled from the suggestion's own values but every field editable) and "Dismiss"
+  (behind a `ConfirmModal`), and a "Continue to Costing" button (behind a `ConfirmModal`) whose real gate is
+  entirely server-side (the BOM's own approval state), not any client-side suggestion-resolution count.
+- **20 new unit tests** (`bom-suggestion.service.test.ts`). 1110/1110 tests project-wide, `npx tsc --noEmit`
+  and `npx eslint .` clean.
+- **Live end-to-end verification, real Postgres + the real Anthropic API (not blocked by the OpenAI credits
+  issue Processes 3/4/6/7 have) — 16/16 checks passed, genuinely covering the success path this time**: built
+  a real fixture design direction on the real test project, confirmed the "no design selected" guard, then
+  called `generateBomSuggestions()` for real — the model returned 9 genuinely well-reasoned, differentiated
+  lines for a basic crew-neck tee (main fabric, rib neckband, sewing thread, three separate label lines, hang
+  tag, poly bag, shoulder-seam interlining tape), each with a valid `materialCategory` and non-empty
+  reasoning. Confirmed `resolveBomSuggestion()`/`completeBomStep()` both correctly reject before the project
+  has graduated to a real Style; then graduated a real temporary Style, confirmed `resolveBomSuggestion()`
+  genuinely appended a real `BomItem` via the unchanged `upsertBom()` (this dev DB currently has zero
+  pre-existing raw materials fixtured at all — confirmed via a direct query — so one temporary real
+  material was created for this check and deleted afterward), confirmed `dismissBomSuggestion()` marks a
+  suggestion `DISMISSED` for real, confirmed `completeBomStep()` still rejects while the BOM is unapproved,
+  then confirmed it correctly advances the real workflow to `COSTING` once the real, unchanged
+  `approveBomVersion()` was called. All fixture data (direction, brief run, suggestions, run rows, the
+  temporary Style, its BOM, and the temporary material) was cleaned up afterward, restoring the real test
+  project to its exact original state (`currentStepKey`/`completedStepKeys` captured before any mutation and
+  restored verbatim, not assumed).
+- **Not built this phase**: any UI to edit or delete a past AI run's suggestions once generated (Dismiss is
+  the only correction available — generating again simply adds a fresh batch), and no attempt to fuzzy-match
+  an AI-suggested material description against a real `Product` row automatically — confirmed no such
+  mechanism exists anywhere in this codebase today (`MaterialPicker` is a plain client-side substring
+  filter), and building one was judged out of scope for a single process's own pass; a user always picks the
+  real material themselves via the existing picker.
 
 ## Recommended Stack
 

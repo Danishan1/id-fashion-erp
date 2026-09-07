@@ -12,6 +12,7 @@ import { computeCommercialDevelopmentScore, type CommercialEvaluationItemOutput 
 import type { Prisma } from "@prisma/client";
 import { AiGarmentProjectRepository } from "./ai-garment-project.repository";
 import { AiGarmentDesignDirectionRepository } from "./development-brief.repository";
+import { describeFabricDetail } from "./fabric-detail-description";
 import { stepsForSourceType } from "./ai-garment-project.schema";
 import { saveWorkflowStep } from "./ai-garment-project.service";
 import {
@@ -51,21 +52,6 @@ async function getOwnedProject(companyId: string, projectId: string) {
   const project = await AiGarmentProjectRepository.findByIdWithDetails(companyId, projectId);
   if (!project) throw new BusinessRuleError("NOT_FOUND", "AI Garment Flow project not found.", { id: projectId });
   return project;
-}
-
-type ProjectWithDetails = NonNullable<Awaited<ReturnType<typeof AiGarmentProjectRepository.findByIdWithDetails>>>;
-
-/** "Fabric if known" per the spec — only included when AiGarmentFabricDetail already exists for this project (Apply Fabric hasn't necessarily happened yet at this point in the workflow, so this is commonly absent, which is fine — the field is simply omitted from the prompt). */
-function describeFabricDetail(fabricDetail: ProjectWithDetails["fabricDetail"]): string | null {
-  if (!fabricDetail) return null;
-  const parts: string[] = [];
-  if (fabricDetail.gsm) parts.push(`${fabricDetail.gsm.name} GSM`);
-  if (fabricDetail.composition) parts.push(fabricDetail.composition.name);
-  if (fabricDetail.weaveType) parts.push(fabricDetail.weaveType.name);
-  if (fabricDetail.width) parts.push(`${fabricDetail.width.name} width`);
-  if (fabricDetail.dye) parts.push(fabricDetail.dye.pantone ? `${fabricDetail.dye.name} (${fabricDetail.dye.pantone})` : fabricDetail.dye.name);
-  if (fabricDetail.color) parts.push(fabricDetail.color.name);
-  return parts.length > 0 ? parts.join(", ") : null;
 }
 
 /** Only APPROVED design directions are real, proven-out candidates for a commercial commitment — the same eligibility gate Process 3 (Generate Visuals) already applies. */

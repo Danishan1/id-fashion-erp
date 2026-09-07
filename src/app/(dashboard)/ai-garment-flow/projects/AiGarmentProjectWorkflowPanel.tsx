@@ -14,6 +14,7 @@ import { VisualGenerationPanel } from "./VisualGenerationPanel";
 import { CommercialEvaluationPanel } from "./CommercialEvaluationPanel";
 import { FabricApplicationPanel } from "./FabricApplicationPanel";
 import { TechnicalFlatPanel } from "./TechnicalFlatPanel";
+import { BomSuggestionPanel } from "./BomSuggestionPanel";
 
 const SAMPLE_TYPES = ["FIT", "PROTO", "PP", "TOP", "SHIPMENT", "PHOTOSHOOT", "SMS", "OTHER"] as const;
 
@@ -98,7 +99,7 @@ const STEP_HELP: Partial<Record<AiGarmentStepKey, string>> = {
   FABRIC_INFORMATION: "Record the fabric's GSM, dye/shade, weave, width, composition, color and supplier.",
   TECHNICAL_DEVELOPMENT:
     "Convert this project into a real Style once a design is settled, and generate a technical flat (a CAD-style construction drawing) from the approved garment visual, to continue into BOM and Costing.",
-  BOM: "BOM is built on the graduated Style, using the existing BOM/MRP module.",
+  BOM: "Generate AI-suggested draft BOM lines, then resolve each into the real BOM (built on the graduated Style, using the existing BOM/MRP module) before continuing to Costing.",
   COSTING: "Costing runs on a linked Sample Request, using Sampling's existing costing engine.",
 };
 
@@ -418,16 +419,21 @@ function StepContent({
 
   if (key === "BOM") {
     return wrap(
-      project.productId ? (
-        <Link
-          href={`/bom-mrp/${project.productId}`}
-          className="inline-block rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500"
-        >
-          Open BOM Editor for {project.product?.styleCode}
-        </Link>
-      ) : (
-        <p className="text-sm text-amber-700 dark:text-amber-400">Convert this project to a Style first (Technical Development step).</p>
-      )
+      <>
+        {project.productId ? (
+          <Link
+            href={`/bom-mrp/${project.productId}`}
+            className="inline-block rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500"
+          >
+            Open BOM Editor for {project.product?.styleCode}
+          </Link>
+        ) : (
+          <p className="text-sm text-amber-700 dark:text-amber-400">Convert this project to a Style first (Technical Development step).</p>
+        )}
+        <div className="mt-4">
+          <BomSuggestionPanel projectId={project.id} setError={setError} reloadProject={reloadProject} />
+        </div>
+      </>
     );
   }
 

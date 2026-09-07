@@ -138,6 +138,8 @@ model Company {
   aiGarmentFabricApplications       AiGarmentFabricApplication[]
   aiGarmentTechnicalFlatRuns        AiGarmentTechnicalFlatRun[]
   aiGarmentTechnicalFlats           AiGarmentTechnicalFlat[]
+  aiGarmentBomSuggestionRuns        AiGarmentBomSuggestionRun[]
+  aiGarmentBomSuggestions           AiGarmentBomSuggestion[]
 
   @@map("companies")
 }
@@ -326,6 +328,7 @@ model User {
   aiGarmentTechnicalFlatRunsCreated        AiGarmentTechnicalFlatRun[]        @relation("AiGarmentTechnicalFlatRunCreatedBy")
   aiGarmentTechnicalFlatsCreated           AiGarmentTechnicalFlat[]           @relation("AiGarmentTechnicalFlatCreatedBy")
   aiGarmentProjectsApprovedTechFlatBy      AiGarmentProject[]                 @relation("AiGarmentProjectApprovedTechnicalFlatBy")
+  aiGarmentBomSuggestionRunsCreated        AiGarmentBomSuggestionRun[]        @relation("AiGarmentBomSuggestionRunCreatedBy")
 
   @@map("users")
 }
@@ -5293,6 +5296,8 @@ model AiGarmentProject {
   fabricApplications          AiGarmentFabricApplication[]       @relation("AiGarmentFabricApplicationsOfProject")
   technicalFlatRuns           AiGarmentTechnicalFlatRun[]
   technicalFlats              AiGarmentTechnicalFlat[]           @relation("AiGarmentTechnicalFlatsOfProject")
+  bomSuggestionRuns           AiGarmentBomSuggestionRun[]
+  bomSuggestions              AiGarmentBomSuggestion[]
 
   @@unique([companyId, projectNumber])
   @@index([companyId, status])
@@ -5659,6 +5664,8 @@ model AiGarmentDesignDirection {
   fabricApplications        AiGarmentFabricApplication[]
   technicalFlatRuns         AiGarmentTechnicalFlatRun[]
   technicalFlats            AiGarmentTechnicalFlat[]
+  bomSuggestionRuns         AiGarmentBomSuggestionRun[]
+  bomSuggestions            AiGarmentBomSuggestion[]
 
   @@index([projectId, status])
   @@map("ai_garment_design_directions")
@@ -6193,6 +6200,95 @@ model AiGarmentTechnicalFlat {
 
   @@index([designDirectionId, decision])
   @@map("ai_garment_technical_flats")
+}
+
+// ─────────────────────────────────────────────────────────────
+// AI Garment Flow — Process 8: BOM Suggestion (2026-09-07)
+//
+// "Generate Draft BOM" -- unlike every prior process, this one's real
+// deliverable is never written to a schema of its own: BOM/Costing steps
+// were architected from the foundation phase onward to require graduation
+// to a real Style and then reuse the EXISTING bom-mrp module's Bom/
+// BomVersion/BomItem tables and its own upsertBom()/approveBomVersion()
+// actions, with no parallel BOM schema in this module. What this section
+// adds is only the AI's own advisory suggestions (free-text material
+// descriptions/estimated quantities the model proposes) plus the run/audit
+// log -- a suggestion is never itself a real BomItem; resolving one always
+// goes through bom-mrp's own real upsertBom() (bom-suggestion.service.ts's
+// resolveBomSuggestion() reads the current real BOM, appends the one
+// user-confirmed line, and calls upsertBom() unchanged -- the exact
+// "reuse an existing module's real write path, orchestrate around it"
+// shape already used by Material Request's generatePurchaseOrdersForShortfall()
+// calling createPurchaseOrder()).
+// ─────────────────────────────────────────────────────────────
+
+// One row per "GENERATE DRAFT BOM" submission.
+model AiGarmentBomSuggestionRun {
+  id                String                     @id @default(uuid()) @db.Uuid
+  companyId         String                     @map("company_id") @db.Uuid
+  projectId         String                     @map("project_id") @db.Uuid
+  designDirectionId String                     @map("design_direction_id") @db.Uuid
+  provider          String
+  model             String
+  promptVersion     String                     @map("prompt_version")
+  promptText        String                     @map("prompt_text")
+  status            AiGarmentAnalysisRunStatus @default(IN_PROGRESS)
+  errorCategory     String?                    @map("error_category")
+  errorMessage      String?                    @map("error_message")
+  requestedAt       DateTime                   @default(now()) @map("requested_at")
+  completedAt       DateTime?                  @map("completed_at")
+  createdByUserId   String                     @map("created_by_user_id") @db.Uuid
+
+  company         Company                  @relation(fields: [companyId], references: [id])
+  project         AiGarmentProject         @relation(fields: [projectId], references: [id])
+  designDirection AiGarmentDesignDirection @relation(fields: [designDirectionId], references: [id])
+  createdBy       User                     @relation("AiGarmentBomSuggestionRunCreatedBy", fields: [createdByUserId], references: [id])
+  suggestions     AiGarmentBomSuggestion[]
+
+  @@index([designDirectionId, status])
+  @@map("ai_garment_bom_suggestion_runs")
+}
+
+enum AiGarmentBomSuggestionDecision {
+  PENDING
+  ADDED
+  DISMISSED
+}
+
+// One row per AI-suggested draft BOM line. Never itself a real BomItem --
+// PENDING is purely advisory; ADDED means a user reviewed it (optionally
+// editing every value) and resolveBomSuggestion() wrote a real BomItem via
+// the existing upsertBom(); DISMISSED means the user decided not to use it.
+// `resolvedBomItemId` is a soft reference only (no hard FK) -- upsertBom()
+// deletes and recreates every BomItem row on each save (see
+// bom.repository.ts's saveDraftWithItems), so a real FK to a BomItem would
+// dangle the moment that style's BOM is next edited through the ordinary
+// BOM editor, completely independent of this module.
+model AiGarmentBomSuggestion {
+  id                         String                         @id @default(uuid()) @db.Uuid
+  companyId                  String                         @map("company_id") @db.Uuid
+  projectId                  String                         @map("project_id") @db.Uuid
+  designDirectionId          String                         @map("design_direction_id") @db.Uuid
+  runId                      String                         @map("run_id") @db.Uuid
+  materialDescription        String                         @map("material_description")
+  materialCategory           MaterialCategory               @map("material_category")
+  suggestedQuantityPerUnit   Decimal                        @map("suggested_quantity_per_unit") @db.Decimal(18, 4)
+  suggestedUom               String                         @map("suggested_uom")
+  suggestedWastagePercentage Decimal                        @map("suggested_wastage_percentage") @db.Decimal(5, 2)
+  colorNote                  String?                        @map("color_note")
+  reasoning                  String
+  decision                   AiGarmentBomSuggestionDecision @default(PENDING)
+  resolvedBomItemId          String?                        @map("resolved_bom_item_id") @db.Uuid
+  createdAt                  DateTime                       @default(now()) @map("created_at")
+  updatedAt                  DateTime                       @updatedAt @map("updated_at")
+
+  company         Company                   @relation(fields: [companyId], references: [id])
+  project         AiGarmentProject          @relation(fields: [projectId], references: [id])
+  designDirection AiGarmentDesignDirection  @relation(fields: [designDirectionId], references: [id])
+  run             AiGarmentBomSuggestionRun @relation(fields: [runId], references: [id])
+
+  @@index([designDirectionId, decision])
+  @@map("ai_garment_bom_suggestions")
 }
 
 // ─────────────────────────────────────────────────────────────
