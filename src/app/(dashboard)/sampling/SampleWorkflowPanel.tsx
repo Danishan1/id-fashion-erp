@@ -35,6 +35,16 @@ interface SampleMaterialRow {
   dye: { id: string; name: string; pantone: string | null } | null;
 }
 
+interface RateHistoryEntry {
+  id: string;
+  purchaseOrderItemId: string;
+  unitPrice: number;
+  receivedDate: string;
+  receiptNumber: string;
+  orderNumber: string;
+  supplierName: string;
+}
+
 interface SampleOtherChargeRow {
   id: string;
   costHead: "PROCESS" | "FABRICATION" | "OTHER";
@@ -206,6 +216,11 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
   const [rateModalTarget, setRateModalTarget] = useState<SampleMaterialRow | null>(null);
   const [rateDraft, setRateDraft] = useState("");
   const [gstDraft, setGstDraft] = useState("");
+  // Real purchase-rate suggestions for whichever material/shade the Rate
+  // modal is currently open for — fetched fresh per open, never persisted.
+  const [rateHistory, setRateHistory] = useState<RateHistoryEntry[]>([]);
+  const [rateHistoryFallback, setRateHistoryFallback] = useState<number | null>(null);
+  const [isLoadingRateHistory, setIsLoadingRateHistory] = useState(false);
 
   // Add/Edit Other Charge — one Modal covers both modes: charge === null is
   // "add", charge set is "edit", so there's one set of draft fields instead
@@ -392,6 +407,29 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
     setRateModalTarget(m);
     setRateDraft(m.rate ?? "");
     setGstDraft(m.gstPercentage ?? "");
+    setRateHistory([]);
+    setRateHistoryFallback(null);
+
+    const params = new URLSearchParams();
+    if (m.color) params.set("colorId", m.color.id);
+    if (m.dye) params.set("dyeId", m.dye.id);
+    setIsLoadingRateHistory(true);
+    fetch(`/api/v1/materials/${m.material.id}/rate-history?${params.toString()}`)
+      .then((res) => res.json())
+      .then((body) => {
+        const history: RateHistoryEntry[] = body.data?.history ?? [];
+        const fallbackUnitCost: number | null = body.data?.fallbackUnitCost ?? null;
+        setRateHistory(history);
+        setRateHistoryFallback(fallbackUnitCost);
+
+        // Only ever auto-fill an EMPTY rate — never silently overwrite a
+        // rate this material already has recorded.
+        if (m.rate === null) {
+          if (history.length === 1) setRateDraft(String(history[0].unitPrice));
+          else if (history.length === 0 && fallbackUnitCost !== null) setRateDraft(String(fallbackUnitCost));
+        }
+      })
+      .finally(() => setIsLoadingRateHistory(false));
   };
 
   const saveRate = () => {
@@ -1312,6 +1350,49 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
               />
             </FormField>
           </div>
+
+          {isLoadingRateHistory && <p className="text-xs text-zinc-400">Checking purchase history…</p>}
+
+          {!isLoadingRateHistory && rateHistory.length > 1 && (
+            <FormField label="Suggested rate (from purchase history)" htmlFor="modalRateSuggestion">
+              <select
+                id="modalRateSuggestion"
+                value=""
+                onChange={(e) => {
+                  if (e.target.value) setRateDraft(e.target.value);
+                }}
+                className={textInputClass()}
+              >
+                <option value="">— Pick a past rate to use —</option>
+                {rateHistory.map((h) => (
+                  <option key={h.id} value={h.unitPrice}>
+                    ₹{h.unitPrice} — {h.supplierName} — {formatDate(h.receivedDate)} ({h.orderNumber})
+                  </option>
+                ))}
+              </select>
+            </FormField>
+          )}
+
+          {!isLoadingRateHistory && rateHistory.length === 1 && (
+            <p className="text-xs text-zinc-500">
+              {rateModalTarget?.rate === null ? "Rate auto-filled from" : "Matches"} the only past purchase of this material{rateModalTarget?.color || rateModalTarget?.dye ? " in this shade" : ""}: {rateHistory[0].supplierName} on{" "}
+              {formatDate(rateHistory[0].receivedDate)} ({rateHistory[0].orderNumber}).
+            </p>
+          )}
+
+          {!isLoadingRateHistory && rateHistory.length === 0 && rateHistoryFallback !== null && (
+            <p className="text-xs text-zinc-500">
+              No purchase history{rateModalTarget?.color || rateModalTarget?.dye ? " for this shade" : ""}
+              {rateModalTarget?.rate === null ? " — rate auto-filled from this material's default cost (Masters → Materials)." : " — this material's default cost (Masters → Materials) is available above."}
+            </p>
+          )}
+
+          {!isLoadingRateHistory && rateHistory.length === 0 && rateHistoryFallback === null && (
+            <p className="text-xs text-zinc-500">
+              No purchase history{rateModalTarget?.color || rateModalTarget?.dye ? " for this shade" : ""} and no default cost set for this material — enter the rate manually.
+            </p>
+          )}
+
           <div className="flex gap-3">
             <ActionButton label="Cancel" onClick={() => setRateModalTarget(null)} isBusy={false} variant="secondary" />
             <ActionButton label="Save Rate" onClick={saveRate} isBusy={isBusy} />
