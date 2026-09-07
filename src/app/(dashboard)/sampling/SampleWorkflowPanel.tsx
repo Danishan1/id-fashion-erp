@@ -57,6 +57,7 @@ interface SampleApprovalRow {
   id: string;
   decision: "APPROVED" | "REJECTED" | "REVISION_REQUESTED";
   customerContactName: string | null;
+  customerContactPhone: string | null;
   decisionNotes: string | null;
   decidedAt: string;
   decidedBy: Person;
@@ -109,6 +110,7 @@ interface SampleRequestDetail {
   styleName: string | null;
   color: string | null;
   productId: string | null;
+  buyer: { name: string; contactPerson: string | null; phone: string | null } | null;
   versions: SampleVersionRow[];
   comments: SampleCommentRow[];
 }
@@ -191,6 +193,7 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
   const [decision, setDecision] = useState<"APPROVED" | "REJECTED" | "REVISION_REQUESTED">("APPROVED");
   const [decisionNotes, setDecisionNotes] = useState("");
   const [customerContactName, setCustomerContactName] = useState("");
+  const [customerContactPhone, setCustomerContactPhone] = useState("");
 
   // Comments — the thread stays visible on the page; only composing a new
   // one opens a Modal.
@@ -530,7 +533,11 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
   const openDecisionModal = () => {
     setDecision("APPROVED");
     setDecisionNotes("");
-    setCustomerContactName("");
+    // Defaults from the request's own linked Buyer — editable afterwards,
+    // since the person who actually calls back with the decision may not
+    // be the Buyer master's own saved contact.
+    setCustomerContactName(request.buyer?.contactPerson || request.buyer?.name || "");
+    setCustomerContactPhone(request.buyer?.phone || "");
     setIsDecisionModalOpen(true);
   };
 
@@ -544,6 +551,7 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
           body: JSON.stringify({
             decision,
             customerContactName: customerContactName || undefined,
+            customerContactPhone: customerContactPhone || undefined,
             decisionNotes: decisionNotes || undefined,
           }),
         }),
@@ -1207,6 +1215,7 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
                         <span className="font-medium">{a.decision.replace("_", " ")}</span> by {a.decidedBy.fullName} on{" "}
                         {formatDate(a.decidedAt)}
                         {a.customerContactName ? ` — contact: ${a.customerContactName}` : ""}
+                        {a.customerContactPhone ? ` (${a.customerContactPhone})` : ""}
                         {a.decisionNotes ? ` — "${a.decisionNotes}"` : ""}
                       </p>
                     ))}
@@ -1553,14 +1562,24 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
               <option value="REVISION_REQUESTED">Revision Requested</option>
             </select>
           </FormField>
-          <FormField label="Customer Contact Name" htmlFor="modalContactName">
-            <input
-              id="modalContactName"
-              value={customerContactName}
-              onChange={(e) => setCustomerContactName(e.target.value)}
-              className={textInputClass()}
-            />
-          </FormField>
+          <div className="grid grid-cols-2 gap-3">
+            <FormField label="Customer Contact Name" htmlFor="modalContactName">
+              <input
+                id="modalContactName"
+                value={customerContactName}
+                onChange={(e) => setCustomerContactName(e.target.value)}
+                className={textInputClass()}
+              />
+            </FormField>
+            <FormField label="Customer Phone" htmlFor="modalContactPhone">
+              <input
+                id="modalContactPhone"
+                value={customerContactPhone}
+                onChange={(e) => setCustomerContactPhone(e.target.value)}
+                className={textInputClass()}
+              />
+            </FormField>
+          </div>
           <FormField label="Notes" htmlFor="modalDecisionNotes">
             <textarea
               id="modalDecisionNotes"

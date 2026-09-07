@@ -1712,6 +1712,11 @@ model SampleApproval {
   decision            SampleDecision
   decidedByUserId     String         @map("decided_by_user_id") @db.Uuid
   customerContactName String?        @map("customer_contact_name")
+  // Free text, not FK'd to Buyer.phone — the request's own linked Buyer is
+  // only a default (see the create form), since the person who actually
+  // called back with the decision may differ from the Buyer master's own
+  // saved contact, same reasoning as customerContactName above.
+  customerContactPhone String?       @map("customer_contact_phone")
   decisionNotes       String?        @map("decision_notes")
   decidedAt           DateTime       @default(now()) @map("decided_at")
 

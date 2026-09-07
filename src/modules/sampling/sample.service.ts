@@ -898,6 +898,7 @@ export async function recordSampleApproval(actor: ActorContext, sampleVersionId:
     decision: input.decision,
     decidedByUserId: actor.userId,
     customerContactName: input.customerContactName || null,
+    customerContactPhone: input.customerContactPhone || null,
     decisionNotes: input.decisionNotes || null,
   });
 
