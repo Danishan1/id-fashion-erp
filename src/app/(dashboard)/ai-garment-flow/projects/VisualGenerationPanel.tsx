@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { FilePreviewModal } from "@/components/ui/FilePreviewModal";
+import { Modal } from "@/components/ui/Modal";
+import { DESIGN_FEATURE_VALUES, DESIGN_FEATURE_LABELS, type DesignFeature } from "@/core/ai/design-variation/feature-registry";
 
 const IMAGE_COUNT_OPTIONS = [1, 3, 4] as const;
 
@@ -25,6 +27,19 @@ interface GeneratedImage {
   userNotes: string | null;
   createdAt: string;
   generationRun: { id: string; parentGeneratedImageId: string | null; requestedImageCount: number };
+}
+
+interface DesignVariation {
+  id: string;
+  parentGeneratedImageId: string;
+  variationNumber: number;
+  featureKey: DesignFeature;
+  previousValue: string;
+  newValue: string;
+  additionalInstructions: string | null;
+  imageAttachmentId: string;
+  decision: "PENDING" | "SELECTED" | "KEPT_ORIGINAL";
+  createdAt: string;
 }
 
 function imageUrl(attachmentId: string): string {
@@ -215,6 +230,9 @@ function GeneratedImageThumb({
   const [preview, setPreview] = useState(false);
   const [editingNotes, setEditingNotes] = useState(false);
   const [notesDraft, setNotesDraft] = useState(image.userNotes ?? "");
+  const [modifyOpen, setModifyOpen] = useState(false);
+  const [variationsOpen, setVariationsOpen] = useState(false);
+  const [variations, setVariations] = useState<DesignVariation[] | undefined>(undefined);
 
   const DECISION_BADGE: Record<GeneratedImage["decision"], string> = {
     PENDING: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
@@ -292,6 +310,39 @@ function GeneratedImageThumb({
       const body = await res.json();
       if (!res.ok) throw new Error(body?.error?.message ?? "Failed to create a variation.");
       await onChanged();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function loadVariations() {
+    const res = await fetch(`/api/v1/ai-garment-projects/generated-images/${image.id}/design-variations`);
+    const body = await res.json();
+    if (res.ok) setVariations(body.data ?? []);
+  }
+
+  function toggleVariations() {
+    setVariationsOpen((open) => {
+      const next = !open;
+      if (next && variations === undefined) void loadVariations();
+      return next;
+    });
+  }
+
+  async function decideVariation(variationId: string, decision: "SELECT" | "KEEP_ORIGINAL") {
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/v1/ai-garment-projects/design-variations/${variationId}/decision`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(decision === "SELECT" ? { decision, confirmed: true } : { decision }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body?.error?.message ?? "Failed to update this variation.");
+      await loadVariations();
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -404,7 +455,57 @@ function GeneratedImageThumb({
         >
           Create Variation
         </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => setModifyOpen(true)}
+          className="rounded bg-purple-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-purple-500 disabled:opacity-50"
+        >
+          MODIFY DESIGN
+        </button>
       </div>
+
+      <button
+        type="button"
+        onClick={toggleVariations}
+        className="block w-full text-left text-[10px] font-medium text-indigo-600 hover:underline dark:text-indigo-400"
+      >
+        {variationsOpen ? "Hide" : "Show"} design variations{variations ? ` (${variations.length})` : ""}
+      </button>
+
+      {variationsOpen && (
+        <div className="space-y-2 rounded-md border border-zinc-200 bg-zinc-50 p-2 dark:border-zinc-800 dark:bg-zinc-900/50">
+          {variations === undefined ? (
+            <p className="text-[10px] text-zinc-500 dark:text-zinc-400">Loading…</p>
+          ) : variations.length === 0 ? (
+            <p className="text-[10px] text-zinc-500 dark:text-zinc-400">No design variations yet — use MODIFY DESIGN above.</p>
+          ) : (
+            variations.map((v) => (
+              <DesignVariationRow
+                key={v.id}
+                originalImage={image}
+                variation={v}
+                busy={busy}
+                onSelect={() => decideVariation(v.id, "SELECT")}
+                onKeepOriginal={() => decideVariation(v.id, "KEEP_ORIGINAL")}
+                onCreateAnother={() => setModifyOpen(true)}
+              />
+            ))
+          )}
+        </div>
+      )}
+
+      <DesignVariationModifyForm
+        open={modifyOpen}
+        parentImageId={image.id}
+        onClose={() => setModifyOpen(false)}
+        onCreated={async () => {
+          setModifyOpen(false);
+          setVariationsOpen(true);
+          await loadVariations();
+        }}
+        setError={setError}
+      />
 
       <ConfirmModal
         open={confirmSelectOpen}
@@ -428,5 +529,214 @@ function GeneratedImageThumb({
         />
       )}
     </div>
+  );
+}
+
+const VARIATION_DECISION_BADGE: Record<DesignVariation["decision"], string> = {
+  PENDING: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
+  SELECTED: "bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-300",
+  KEPT_ORIGINAL: "bg-zinc-200 text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300",
+};
+
+/** Original / Variation side by side, per the spec — the original image is never touched by any action here. */
+function DesignVariationRow({
+  originalImage,
+  variation,
+  busy,
+  onSelect,
+  onKeepOriginal,
+  onCreateAnother,
+}: {
+  originalImage: GeneratedImage;
+  variation: DesignVariation;
+  busy: boolean;
+  onSelect: () => void;
+  onKeepOriginal: () => void;
+  onCreateAnother: () => void;
+}) {
+  const [confirmSelectOpen, setConfirmSelectOpen] = useState(false);
+
+  return (
+    <div className="space-y-1.5 rounded border border-zinc-200 bg-white p-2 dark:border-zinc-700 dark:bg-zinc-900">
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <p className="mb-1 text-[9px] font-semibold uppercase tracking-wide text-zinc-400">Original</p>
+          <img src={imageUrl(originalImage.imageAttachmentId)} alt="Original design" className="w-full rounded border border-zinc-200 dark:border-zinc-700" />
+        </div>
+        <div>
+          <p className="mb-1 text-[9px] font-semibold uppercase tracking-wide text-zinc-400">Variation {variation.variationNumber}</p>
+          <img src={imageUrl(variation.imageAttachmentId)} alt={`Variation ${variation.variationNumber}`} className="w-full rounded border border-zinc-200 dark:border-zinc-700" />
+        </div>
+      </div>
+
+      <div className="space-y-0.5 text-[10px] text-zinc-600 dark:text-zinc-300">
+        <p>
+          <span className="font-medium">{DESIGN_FEATURE_LABELS[variation.featureKey]}</span> changed:{" "}
+          <span className="text-zinc-500 dark:text-zinc-400">{variation.previousValue}</span> →{" "}
+          <span className="text-zinc-500 dark:text-zinc-400">{variation.newValue}</span>
+        </p>
+        <p className="text-zinc-400 dark:text-zinc-500">Created {new Date(variation.createdAt).toLocaleString()}</p>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-1 pt-0.5">
+        <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-medium ${VARIATION_DECISION_BADGE[variation.decision]}`}>
+          {variation.decision === "KEPT_ORIGINAL" ? "KEPT ORIGINAL" : variation.decision}
+        </span>
+        <button
+          type="button"
+          disabled={busy || variation.decision === "SELECTED"}
+          onClick={() => setConfirmSelectOpen(true)}
+          className="rounded bg-green-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-green-500 disabled:opacity-50"
+        >
+          Select Variation
+        </button>
+        <button
+          type="button"
+          disabled={busy || variation.decision === "KEPT_ORIGINAL"}
+          onClick={onKeepOriginal}
+          className="rounded border border-zinc-300 px-1.5 py-0.5 text-[10px] font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+        >
+          Keep Original
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onCreateAnother}
+          className="rounded border border-zinc-300 px-1.5 py-0.5 text-[10px] font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+        >
+          Create Another Variation
+        </button>
+      </div>
+
+      <ConfirmModal
+        open={confirmSelectOpen}
+        title="Select this variation?"
+        message="This marks this variation as the preferred version of the design. The original image is never deleted — you can always come back and select it again later."
+        confirmLabel="Select This Variation"
+        isBusy={busy}
+        onConfirm={() => {
+          setConfirmSelectOpen(false);
+          onSelect();
+        }}
+        onCancel={() => setConfirmSelectOpen(false)}
+      />
+    </div>
+  );
+}
+
+const EMPTY_VARIATION_FORM = { featureKey: "SLEEVE" as DesignFeature, currentFeatureValue: "", newRequirement: "", additionalInstructions: "" };
+
+/** The "MODIFY DESIGN" form — Feature to Change / Current Feature / New Requirement / Additional Instructions. The hidden AI image prompt is built entirely server-side from these fields; nothing here is ever shown to or free-typed as a raw prompt by the user. */
+function DesignVariationModifyForm({
+  open,
+  parentImageId,
+  onClose,
+  onCreated,
+  setError,
+}: {
+  open: boolean;
+  parentImageId: string;
+  onClose: () => void;
+  onCreated: () => Promise<void>;
+  setError: (e: string | null) => void;
+}) {
+  const [form, setForm] = useState(EMPTY_VARIATION_FORM);
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  async function submit() {
+    setFormError(null);
+    setSubmitting(true);
+    try {
+      const res = await fetch(`/api/v1/ai-garment-projects/generated-images/${parentImageId}/design-variations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body?.error?.message ?? "Failed to generate this design variation.");
+      setForm(EMPTY_VARIATION_FORM);
+      await onCreated();
+    } catch (err) {
+      const message = (err as Error).message;
+      setFormError(message);
+      setError(message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} title="Modify Design" maxWidthClass="max-w-lg">
+      <div className="space-y-3">
+        {formError && <p className="rounded-md bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-500/10 dark:text-red-300">{formError}</p>}
+
+        <div>
+          <label className="mb-1 block text-xs font-medium text-zinc-700 dark:text-zinc-300">Feature to Change</label>
+          <select
+            value={form.featureKey}
+            onChange={(e) => setForm((f) => ({ ...f, featureKey: e.target.value as DesignFeature }))}
+            className="w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+          >
+            {DESIGN_FEATURE_VALUES.map((key) => (
+              <option key={key} value={key}>
+                {DESIGN_FEATURE_LABELS[key]}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label className="mb-1 block text-xs font-medium text-zinc-700 dark:text-zinc-300">Current Feature</label>
+          <input
+            type="text"
+            value={form.currentFeatureValue}
+            onChange={(e) => setForm((f) => ({ ...f, currentFeatureValue: e.target.value }))}
+            placeholder="Describe the feature as it appears in the image now"
+            className="w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+          />
+        </div>
+
+        <div>
+          <label className="mb-1 block text-xs font-medium text-zinc-700 dark:text-zinc-300">New Requirement</label>
+          <textarea
+            rows={2}
+            value={form.newRequirement}
+            onChange={(e) => setForm((f) => ({ ...f, newRequirement: e.target.value }))}
+            placeholder="Describe what the feature should become"
+            className="w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+          />
+        </div>
+
+        <div>
+          <label className="mb-1 block text-xs font-medium text-zinc-700 dark:text-zinc-300">Additional Instructions (optional)</label>
+          <textarea
+            rows={2}
+            value={form.additionalInstructions}
+            onChange={(e) => setForm((f) => ({ ...f, additionalInstructions: e.target.value }))}
+            placeholder="Any further detail the AI should take into account"
+            className="w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+          />
+        </div>
+
+        <div className="flex justify-end gap-2 pt-1">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={submitting || !form.currentFeatureValue.trim() || !form.newRequirement.trim()}
+            onClick={submit}
+            className="rounded-md bg-purple-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-purple-500 disabled:opacity-50"
+          >
+            {submitting ? "Generating…" : "Generate Variation"}
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 }

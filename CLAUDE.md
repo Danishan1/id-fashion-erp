@@ -53,7 +53,7 @@ Update the status column and add a short dated note under the relevant phase sec
 
 **CRM/Marketing enhancement pass, on top of the migration above — all 14 planned items complete (2026-08-24)** — tracked in full in [CRM_MARKETING_ENHANCEMENT_AUDIT_AND_PLAN.md](CRM_MARKETING_ENHANCEMENT_AUDIT_AND_PLAN.md): Deal→Customer conversion, Customer 360, CRM Kanban, CRM Dashboard, Follow-up Management/Notifications, configurable Lead Priority, Campaign Approval workflow, Marketing Dashboard trend charts, Channel Performance report, Customer Segmentation, Marketing Automation triggers, CSV Import (Leads/Deals/Campaign Daily Metrics), Meta/Google Ads Integration, and an AI-readiness audit of every aggregation function. The one open thread: Meta/Google Ads Integration's OAuth/token-exchange/sync code is built and unit-tested but has **no real credentials to verify the live external API calls against yet** — see that file's own Item 13 note before assuming it's been exercised against the real Meta/Google APIs, and before touching `AdAccountConnection`/`AdCampaignLink`/`ImportBatch`/`CrmSettings` or the `src/modules/marketing/ad-integrations/`/`src/modules/import/` modules.
 
-**AI Garment Flow (separate initiative, not part of the 11 phases above) — foundation + Process 1 (Reference Garment Analysis) + Process 2 (Commercial Design Development Brief) complete and live-verified against the real Anthropic API (2026-09-06)** — a new product-development workflow module (reference/fabric upload → AI-assisted design → costing → sampling), full detail in its own dated sections further down this file. The existing `Product` model remains the single Style Master (not duplicated); a new `AiGarmentProject` header is a pre-Style record that manually graduates into a real `Product` via `convertProjectToStyle()`, mirroring Sampling's own `convertSampleToStyle()`. BOM/Costing steps require this graduation and then reuse the existing BOM/MRP and Sampling-costing modules — no parallel schema. Process 1 (Reference Garment Analysis) is a real Anthropic vision integration analysing an uploaded reference image into 36 individually-tracked, editable, approvable observations. Process 2 (Commercial Design Development Brief) is a real Anthropic text integration that, once that analysis is approved, generates 3/6/9 differentiated commercial `AiGarmentDesignDirection` records (each individually editable/approvable/rejectable/regeneratable, each scored 0-100) — see those sections before touching `AiGarmentReferenceAnalysis`/`AiGarmentReferenceObservation`/`AiGarmentReferenceAnalysisRun`/`AiGarmentDevelopmentBriefRun`/`AiGarmentDesignDirection`, `src/core/ai/reference-analysis/`, `src/core/ai/development-brief/`, or `src/core/ai/providers/anthropic.ts`. Every step past Process 2 (Generate Variations onward) still returns "AI integration not connected." (`AiPlaceholderButton` in the workflow panel) — only Reference Analysis and Development Brief have a real provider wired up so far. `src/core/ai/AIService.ts`'s `NullAIProvider`/`getAIService()` are dead code, unreferenced by either real process — don't wire a future process through that file, follow the Process 1/2 file-layout pattern (`schema.ts`/`prompt.ts`/`generate.ts` or `analyze.ts`) instead.
+**AI Garment Flow (separate initiative, not part of the 11 phases above) — foundation + Process 1 (Reference Garment Analysis) + Process 2 (Commercial Design Development Brief) + Process 3 (Garment Design Visual Generation) + Process 4 (Controlled Design Variation) complete; live image-generation verification blocked on the configured OpenAI account's exhausted billing credits (2026-09-06/07)** — a new product-development workflow module (reference/fabric upload → AI-assisted design → costing → sampling), full detail in its own dated sections further down this file. The existing `Product` model remains the single Style Master (not duplicated); a new `AiGarmentProject` header is a pre-Style record that manually graduates into a real `Product` via `convertProjectToStyle()`, mirroring Sampling's own `convertSampleToStyle()`. BOM/Costing steps require this graduation and then reuse the existing BOM/MRP and Sampling-costing modules — no parallel schema. Process 1 (Reference Garment Analysis) is a real Anthropic vision integration analysing an uploaded reference image into 36 individually-tracked, editable, approvable observations. Process 2 (Commercial Design Development Brief) is a real Anthropic text integration that, once that analysis is approved, generates 3/6/9 differentiated commercial `AiGarmentDesignDirection` records (each individually editable/approvable/rejectable/regeneratable, each scored 0-100). Process 3 (Garment Design Visual Generation) is a real, provider-agnostic OpenAI Images integration turning each APPROVED design direction into 1/3/4 generated visuals with full version history and a Select/Reject/Regenerate/Create Variation workflow. Process 4 (Controlled Design Variation) is a real image-to-image integration that regenerates just one named feature (Neckline/Collar/Sleeve/.../Other) of an existing generated image while preserving everything else, with its own version-controlled variation history and a Select Variation/Keep Original/Create Another Variation workflow — see those sections before touching `AiGarmentReferenceAnalysis`/`AiGarmentReferenceObservation`/`AiGarmentReferenceAnalysisRun`/`AiGarmentDevelopmentBriefRun`/`AiGarmentDesignDirection`/`AiGarmentImageGenerationRun`/`AiGarmentGeneratedImage`/`AiGarmentDesignVariationRun`/`AiGarmentDesignVariation`, `src/core/ai/reference-analysis/`, `src/core/ai/development-brief/`, `src/core/ai/image-generation/`, `src/core/ai/design-variation/`, `src/core/ai/providers/anthropic.ts`, or `src/modules/ai-garment-flow/`. `src/core/ai/AIService.ts`'s `NullAIProvider`/`getAIService()` are dead code, unreferenced by any real process — don't wire a future process through that file, follow the established per-process file-layout pattern (`schema.ts`/`prompt.ts`/`generate.ts` or `analyze.ts`) instead.
 
 ### Phase 2 notes (2026-08-16)
 - Next.js 16 scaffold, Prisma 7 schema (Organization/Auth + Masters + System, 24 models), NextAuth v5 Credentials auth (JWT sessions), RBAC `PermissionService`, document numbering, audit logging, local file storage, `BusinessRuleError`, sidebar/topbar shell, login page, DB-backed dashboard placeholder, and full seed data (roles/permissions/Super Admin) are all in place and verified end-to-end in the browser (login → dashboard showing real DB counts).
@@ -3963,6 +3963,74 @@ Black AI") can be added later with zero caller changes.
 - **Not built this phase**: any second image-generation provider (the architecture supports adding one with
   zero caller changes, none was requested this phase), controlled feature changes past visual generation —
   per the spec's own explicit "Do not yet implement controlled feature changes. Stop." instruction.
+
+## AI Garment Flow — Process 4: Controlled Design Variation (2026-09-07)
+
+Builds on Process 3 — starts from one existing `AiGarmentGeneratedImage` (never edited or deleted by this
+process — "the original"). Adds a "MODIFY DESIGN" button opening a form (Feature to Change / Current
+Feature / New Requirement / Additional Instructions) that image-to-image regenerates just the named
+feature, per the spec's own hidden prompt template.
+
+- **Deliberately one level deep, not a chain** — every `AiGarmentDesignVariation.parentGeneratedImageId`
+  always points at the SAME original image, never at a prior variation; `variationNumber` increments per
+  parent image starting at 1. "Create Another Variation" means "try a different feature/requirement against
+  the same original," not "iterate on the variation I just made" — a simpler, easier-to-reason-about scope
+  than open-ended chaining, matching this project's own repeated "explicit MVP simplification, documented
+  not silently dropped" precedent. Revisit only if real usage shows chaining is actually needed.
+- **Schema** (migration `20260907090000_add_ai_garment_design_variations`): a fixed `AiGarmentDesignFeature`
+  enum (`NECKLINE/COLLAR/SLEEVE/SLEEVE_LENGTH/CUFF/GARMENT_LENGTH/FIT/SILHOUETTE/POCKET/CLOSURE/WAIST/HEM/
+  OTHER`, exactly the spec's own picklist), `AiGarmentDesignVariationRun` (the run/audit-log row, mirrors
+  `AiGarmentImageGenerationRun` exactly — created BEFORE the provider is even resolved so a `MISSING_CONFIG`
+  failure is still logged), and `AiGarmentDesignVariation` (version control per the spec: Parent Image ID/
+  Variation Number/Changed Feature/Previous Value/New Value/Created Date — `decision` enum `PENDING/
+  SELECTED/KEPT_ORIGINAL`, never edited/deleted, only ever inserted). "Never delete the original" holds
+  structurally: nothing in this module ever writes to `AiGarmentGeneratedImage` at all.
+- **`src/core/ai/design-variation/`**: `feature-registry.ts` (the client-safe feature label map, same
+  zero-Prisma-imports convention as `reference-analysis/feature-registry.ts`), `prompt.ts`
+  (`buildFeatureChangePrompt()` — the exact, verbatim hidden template: "Keep the selected garment design as
+  unchanged as possible... Change ONLY: Feature/Current/New Requirement... Preserve: overall silhouette
+  unless silhouette is the selected change, fabric appearance, colour, print scale, garment category,
+  remaining construction, model, pose, background... Do not independently redesign other garment
+  features..." — never shown to end users, never free-typed by a user; "Additional instructions from the
+  user" is appended only when the optional field is actually supplied).
+- **`design-variation.service.ts`**: `createDesignVariation()` mirrors `visual-generation.service.ts`'s own
+  `runGeneration()` shape (run row created first, provider resolved and called inside the same try/catch,
+  `markFailed()` on any error including `UNSUPPORTED_OPERATION` for a provider with no `generateVariation`
+  capability) — reusing the parent image's real bytes via the existing `getAttachmentForDownload()` and
+  `provider.generateVariation()` (the same image-to-image capability Process 3's own "Create Variation"
+  already proved), never a fresh text-only `generate()` call, since the whole point is regenerating *from*
+  the original image. `decideDesignVariation()`: `SELECT` requires `confirmed: true` (a `ConfirmModal` on
+  the client), `KEEP_ORIGINAL` is a lighter one-click action — the same Approve/Reject asymmetry precedent
+  already used throughout this project (Sampling, Development Brief, Process 3's own Select/Reject).
+- **UI** (`VisualGenerationPanel.tsx`, extended in place — no new page): each generated-image thumbnail
+  gained a "MODIFY DESIGN" button opening the feature-change form in a `Modal`, and a "Show/Hide design
+  variations (N)" toggle (self-fetches on first open, matching this project's established
+  self-fetch-on-open convention) revealing every variation as a card: Original | Variation images
+  side-by-side, the changed feature/previous→new values, created date, and three actions — **Select
+  Variation** (behind a `ConfirmModal`), **Keep Original**, **Create Another Variation** (reopens the same
+  Modify Design form against the same parent image).
+- **13 new unit tests** (`design-variation.service.test.ts`) covering the error-mapping table, the
+  run-created-before-provider-resolved ordering, the confirmed-Select requirement, the prompt actually
+  containing the submitted feature/current/new values and the optional additional-instructions paragraph,
+  and version-number incrementing off `countByParentImageId`. 1032/1032 tests project-wide, `npx tsc
+  --noEmit` and `npx eslint` clean.
+- **Live verification, real Postgres + the real (still credit-exhausted) OpenAI account**: the explicit test
+  requirement (change Sleeve, Neckline, Length; confirm other major features stay consistent) could not be
+  completed for real — a fresh probe confirmed the configured OpenAI account is still `CREDITS_EXHAUSTED`,
+  the same blocker Process 3 hit. What WAS verified live, end-to-end, not just mocked: built a full real
+  fixture chain (Reference Analysis → Development Brief Run → Design Direction → Image Generation Run →
+  Generated Image, all in the real dev DB) and ran `createDesignVariation()` for real against all three
+  spec-named features (Sleeve/Neckline/Garment Length) — confirmed each attempt genuinely reached the real
+  OpenAI API and was correctly rejected with the real `CREDITS_EXHAUSTED` category, confirmed exactly 3 run
+  rows were created and marked `FAILED` (one per attempt, with the real submitted feature/current/new values
+  recorded on each), confirmed zero `AiGarmentDesignVariation` rows were created for any failed attempt, and
+  confirmed the original generated image itself was never modified. All 9 of these checks passed. Once
+  credits are added, only the success path (an actual regenerated image + the side-by-side visual
+  comparison) remains to be exercised — the unit tests already cover that code path's correctness with a
+  mocked provider.
+- **Not built this phase**: chaining a variation into a further variation (see the scope note above), any
+  second image-generation provider, controlled feature changes beyond this process — per the spec's own
+  "Stop after Process 4" instruction.
 
 ## Recommended Stack
 
