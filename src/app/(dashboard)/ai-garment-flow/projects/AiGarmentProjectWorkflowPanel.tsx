@@ -23,6 +23,7 @@ import { CostAnalysisPanel } from "./CostAnalysisPanel";
 import { ValueEngineeringPanel } from "./ValueEngineeringPanel";
 import { ProductionHandoffPanel } from "./ProductionHandoffPanel";
 import { BuyerCommentsPanel } from "./BuyerCommentsPanel";
+import { MerchandisingActionSheetPanel } from "./MerchandisingActionSheetPanel";
 
 const SAMPLE_TYPES = ["FIT", "PROTO", "PP", "TOP", "SHIPMENT", "PHOTOSHOOT", "SMS", "OTHER"] as const;
 
@@ -251,6 +252,8 @@ export function AiGarmentProjectWorkflowPanel({ projectId, initialProject }: { p
           );
         })}
       </ol>
+
+      <MerchandisingActionSheetPanel projectId={projectId} />
 
       {(isTerminal || isOnHold) ? (
         <p className="rounded-md bg-zinc-50 px-3 py-2 text-sm text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
