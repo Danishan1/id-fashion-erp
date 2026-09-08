@@ -35,6 +35,16 @@ interface SampleMaterialRow {
   dye: { id: string; name: string; pantone: string | null } | null;
 }
 
+interface RateHistoryEntry {
+  id: string;
+  purchaseOrderItemId: string;
+  unitPrice: number;
+  receivedDate: string;
+  receiptNumber: string;
+  orderNumber: string;
+  supplierName: string;
+}
+
 interface SampleOtherChargeRow {
   id: string;
   costHead: "PROCESS" | "FABRICATION" | "OTHER";
@@ -47,6 +57,7 @@ interface SampleApprovalRow {
   id: string;
   decision: "APPROVED" | "REJECTED" | "REVISION_REQUESTED";
   customerContactName: string | null;
+  customerContactPhone: string | null;
   decisionNotes: string | null;
   decidedAt: string;
   decidedBy: Person;
@@ -99,6 +110,7 @@ interface SampleRequestDetail {
   styleName: string | null;
   color: string | null;
   productId: string | null;
+  buyer: { name: string; contactPerson: string | null; phone: string | null } | null;
   versions: SampleVersionRow[];
   comments: SampleCommentRow[];
 }
@@ -165,15 +177,22 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
 
   const [versionNotes, setVersionNotes] = useState("");
   const [versionCost, setVersionCost] = useState("");
+  const [versionFile, setVersionFile] = useState<File | null>(null);
 
-  // Add Material — small focused CRUD, shown in a Modal triggered per-version.
+  // Add/Edit Material — one Modal covers both modes, same "nullable target"
+  // shape already used by Add/Edit Other Charge below: editMaterialTarget
+  // null + addMaterialModalVersionId set means "add"; editMaterialTarget set
+  // means "edit that row's own core fields" (its version is implied by the
+  // row itself, so addMaterialModalVersionId is left null in that mode).
   const [addMaterialModalVersionId, setAddMaterialModalVersionId] = useState<string | null>(null);
+  const [editMaterialTarget, setEditMaterialTarget] = useState<SampleMaterialRow | null>(null);
   const [materialId, setMaterialId] = useState("");
   const [materialQty, setMaterialQty] = useState("");
   const [materialUomId, setMaterialUomId] = useState("");
   const [materialColorId, setMaterialColorId] = useState("");
   const [materialDyes, setMaterialDyes] = useState<DyeOption[]>([]);
   const [materialDyeId, setMaterialDyeId] = useState("");
+  const [materialNotes, setMaterialNotes] = useState("");
 
   // Customer Decision (Approval/Rejection confirmation) — small focused
   // action, shown in a Modal rather than an always-visible form.
@@ -181,6 +200,7 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
   const [decision, setDecision] = useState<"APPROVED" | "REJECTED" | "REVISION_REQUESTED">("APPROVED");
   const [decisionNotes, setDecisionNotes] = useState("");
   const [customerContactName, setCustomerContactName] = useState("");
+  const [customerContactPhone, setCustomerContactPhone] = useState("");
 
   // Comments — the thread stays visible on the page; only composing a new
   // one opens a Modal.
@@ -206,6 +226,11 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
   const [rateModalTarget, setRateModalTarget] = useState<SampleMaterialRow | null>(null);
   const [rateDraft, setRateDraft] = useState("");
   const [gstDraft, setGstDraft] = useState("");
+  // Real purchase-rate suggestions for whichever material/shade the Rate
+  // modal is currently open for — fetched fresh per open, never persisted.
+  const [rateHistory, setRateHistory] = useState<RateHistoryEntry[]>([]);
+  const [rateHistoryFallback, setRateHistoryFallback] = useState<number | null>(null);
+  const [isLoadingRateHistory, setIsLoadingRateHistory] = useState(false);
 
   // Add/Edit Other Charge — one Modal covers both modes: charge === null is
   // "add", charge set is "edit", so there's one set of draft fields instead
@@ -319,48 +344,108 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
       "Failed to update color."
     ).then(() => setIsEditingColor(false));
 
-  const addVersion = () =>
-    run(() => {
-      const payload: Record<string, unknown> = {};
-      if (versionNotes) payload.techPackNotes = versionNotes;
-      if (versionCost) payload.estimatedCostPerUnit = Number(versionCost);
-      return fetch(`/api/v1/sampling/${sampleRequestId}/versions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-    }, "Failed to save version.").then(() => {
-      setVersionNotes("");
-      setVersionCost("");
-    });
+  const addVersion = async () => {
+    const payload: Record<string, unknown> = {};
+    if (versionNotes) payload.techPackNotes = versionNotes;
+    if (versionCost) payload.estimatedCostPerUnit = Number(versionCost);
+
+    const ok = await run(
+      () =>
+        fetch(`/api/v1/sampling/${sampleRequestId}/versions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        }),
+      "Failed to save version."
+    );
+    if (!ok) return;
+
+    // Uploaded right alongside the tech pack notes/version, rather than
+    // requiring a second, separate trip to the Attachments section below —
+    // the file still lands as an ordinary sample-request-level attachment
+    // (this project's own established scope for attachments, see the
+    // Attachments section's own comment), just started from this one form.
+    if (versionFile) {
+      setIsBusy(true);
+      const formData = new FormData();
+      formData.append("file", versionFile);
+      const uploadRes = await fetch(`/api/v1/sampling/${sampleRequestId}/attachments`, { method: "POST", body: formData });
+      if (!uploadRes.ok) {
+        setError(await parseErrorMessage(uploadRes, "Version was saved, but the attachment failed to upload — you can upload it again below."));
+      } else {
+        await fetchAttachments();
+      }
+      setIsBusy(false);
+    }
+
+    setVersionNotes("");
+    setVersionCost("");
+    setVersionFile(null);
+  };
 
   const openAddMaterialModal = (versionId: string) => {
+    setEditMaterialTarget(null);
     setMaterialId("");
     setMaterialQty("");
     setMaterialUomId("");
     setMaterialColorId("");
     setMaterialDyeId("");
+    setMaterialNotes("");
     setAddMaterialModalVersionId(versionId);
   };
 
-  const addMaterial = () => {
+  const openEditMaterialModal = (m: SampleMaterialRow) => {
+    setAddMaterialModalVersionId(null);
+    setMaterialId(m.material.id);
+    setMaterialQty(m.plannedQuantity);
+    setMaterialUomId(m.uom?.id ?? "");
+    setMaterialColorId(m.color?.id ?? "");
+    setMaterialDyeId(m.dye?.id ?? "");
+    setMaterialNotes(m.notes ?? "");
+    setEditMaterialTarget(m);
+  };
+
+  const closeMaterialModal = () => {
+    setAddMaterialModalVersionId(null);
+    setEditMaterialTarget(null);
+  };
+
+  const submitMaterial = () => {
+    const payload = {
+      materialId,
+      plannedQuantity: Number(materialQty),
+      uomId: materialUomId || undefined,
+      colorId: materialColorId || undefined,
+      dyeId: materialDyeId || undefined,
+      notes: materialNotes || undefined,
+    };
+
+    if (editMaterialTarget) {
+      run(
+        () =>
+          fetch(`/api/v1/sampling/materials/${editMaterialTarget.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          }),
+        "Failed to save this material line."
+      ).then((ok) => {
+        if (ok) closeMaterialModal();
+      });
+      return;
+    }
+
     if (!addMaterialModalVersionId) return;
     run(
       () =>
         fetch(`/api/v1/sampling/versions/${addMaterialModalVersionId}/materials`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            materialId,
-            plannedQuantity: Number(materialQty),
-            uomId: materialUomId || undefined,
-            colorId: materialColorId || undefined,
-            dyeId: materialDyeId || undefined,
-          }),
+          body: JSON.stringify(payload),
         }),
       "Failed to add material."
     ).then((ok) => {
-      if (ok) setAddMaterialModalVersionId(null);
+      if (ok) closeMaterialModal();
     });
   };
 
@@ -392,6 +477,29 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
     setRateModalTarget(m);
     setRateDraft(m.rate ?? "");
     setGstDraft(m.gstPercentage ?? "");
+    setRateHistory([]);
+    setRateHistoryFallback(null);
+
+    const params = new URLSearchParams();
+    if (m.color) params.set("colorId", m.color.id);
+    if (m.dye) params.set("dyeId", m.dye.id);
+    setIsLoadingRateHistory(true);
+    fetch(`/api/v1/materials/${m.material.id}/rate-history?${params.toString()}`)
+      .then((res) => res.json())
+      .then((body) => {
+        const history: RateHistoryEntry[] = body.data?.history ?? [];
+        const fallbackUnitCost: number | null = body.data?.fallbackUnitCost ?? null;
+        setRateHistory(history);
+        setRateHistoryFallback(fallbackUnitCost);
+
+        // Only ever auto-fill an EMPTY rate — never silently overwrite a
+        // rate this material already has recorded.
+        if (m.rate === null) {
+          if (history.length === 1) setRateDraft(String(history[0].unitPrice));
+          else if (history.length === 0 && fallbackUnitCost !== null) setRateDraft(String(fallbackUnitCost));
+        }
+      })
+      .finally(() => setIsLoadingRateHistory(false));
   };
 
   const saveRate = () => {
@@ -492,7 +600,11 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
   const openDecisionModal = () => {
     setDecision("APPROVED");
     setDecisionNotes("");
-    setCustomerContactName("");
+    // Defaults from the request's own linked Buyer — editable afterwards,
+    // since the person who actually calls back with the decision may not
+    // be the Buyer master's own saved contact.
+    setCustomerContactName(request.buyer?.contactPerson || request.buyer?.name || "");
+    setCustomerContactPhone(request.buyer?.phone || "");
     setIsDecisionModalOpen(true);
   };
 
@@ -506,6 +618,7 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
           body: JSON.stringify({
             decision,
             customerContactName: customerContactName || undefined,
+            customerContactPhone: customerContactPhone || undefined,
             decisionNotes: decisionNotes || undefined,
           }),
         }),
@@ -717,6 +830,8 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
             setNotes={setVersionNotes}
             cost={versionCost}
             setCost={setVersionCost}
+            file={versionFile}
+            setFile={setVersionFile}
             onSubmit={addVersion}
             isBusy={isBusy}
             submitLabel="Save Version 1"
@@ -760,6 +875,8 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
             setNotes={setVersionNotes}
             cost={versionCost}
             setCost={setVersionCost}
+            file={versionFile}
+            setFile={setVersionFile}
             onSubmit={addVersion}
             isBusy={isBusy}
             submitLabel="Save Revision"
@@ -967,7 +1084,8 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
                         <th className="py-1 pr-3 font-medium">Quantity</th>
                         <th className="py-1 pr-3 font-medium">Unit</th>
                         <th className="py-1 pr-3 font-medium">Rate / GST %</th>
-                        <th className="py-1 font-medium">Damaged / Wasted</th>
+                        <th className="py-1 pr-3 font-medium">Damaged / Wasted</th>
+                        {canAddMaterial && <th className="py-1 font-medium">Actions</th>}
                       </tr>
                     </thead>
                     <tbody>
@@ -1019,7 +1137,7 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
                               </button>
                             )}
                           </td>
-                          <td className="py-1 text-zinc-700 dark:text-zinc-200">
+                          <td className="py-1 pr-3 text-zinc-700 dark:text-zinc-200">
                             {m.damagedQuantity !== null ? (
                               <span className="flex items-center gap-1.5">
                                 <span className="text-amber-600 dark:text-amber-400">
@@ -1044,6 +1162,17 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
                               </button>
                             )}
                           </td>
+                          {canAddMaterial && (
+                            <td className="py-1 text-zinc-700 dark:text-zinc-200">
+                              <button
+                                type="button"
+                                onClick={() => openEditMaterialModal(m)}
+                                className="font-medium text-indigo-600 hover:text-indigo-500"
+                              >
+                                Edit
+                              </button>
+                            </td>
+                          )}
                         </tr>
                       ))}
                     </tbody>
@@ -1169,6 +1298,7 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
                         <span className="font-medium">{a.decision.replace("_", " ")}</span> by {a.decidedBy.fullName} on{" "}
                         {formatDate(a.decidedAt)}
                         {a.customerContactName ? ` — contact: ${a.customerContactName}` : ""}
+                        {a.customerContactPhone ? ` (${a.customerContactPhone})` : ""}
                         {a.decisionNotes ? ` — "${a.decisionNotes}"` : ""}
                       </p>
                     ))}
@@ -1212,7 +1342,12 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
       )}
 
       {/* Add Material */}
-      <Modal open={addMaterialModalVersionId !== null} onClose={() => setAddMaterialModalVersionId(null)} title="Add Material" maxWidthClass="max-w-lg">
+      <Modal
+        open={addMaterialModalVersionId !== null || editMaterialTarget !== null}
+        onClose={closeMaterialModal}
+        title={editMaterialTarget ? `Edit Material — ${editMaterialTarget.material.styleName}` : "Add Material"}
+        maxWidthClass="max-w-lg"
+      >
         <div className="space-y-3">
           <FormField label="Material" htmlFor="modalMaterialId" required>
             <MaterialPicker
@@ -1276,9 +1411,22 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
               </select>
             </FormField>
           )}
+          <FormField label="Notes (optional)" htmlFor="modalMaterialNotes">
+            <input
+              id="modalMaterialNotes"
+              value={materialNotes}
+              onChange={(e) => setMaterialNotes(e.target.value)}
+              className={textInputClass()}
+            />
+          </FormField>
           <div className="flex gap-3">
-            <ActionButton label="Cancel" onClick={() => setAddMaterialModalVersionId(null)} isBusy={false} variant="secondary" />
-            <ActionButton label="Add Material" onClick={addMaterial} isBusy={isBusy} disabled={!materialId || !materialQty} />
+            <ActionButton label="Cancel" onClick={closeMaterialModal} isBusy={false} variant="secondary" />
+            <ActionButton
+              label={editMaterialTarget ? "Save Changes" : "Add Material"}
+              onClick={submitMaterial}
+              isBusy={isBusy}
+              disabled={!materialId || !materialQty}
+            />
           </div>
         </div>
       </Modal>
@@ -1312,6 +1460,49 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
               />
             </FormField>
           </div>
+
+          {isLoadingRateHistory && <p className="text-xs text-zinc-400">Checking purchase history…</p>}
+
+          {!isLoadingRateHistory && rateHistory.length > 1 && (
+            <FormField label="Suggested rate (from purchase history)" htmlFor="modalRateSuggestion">
+              <select
+                id="modalRateSuggestion"
+                value=""
+                onChange={(e) => {
+                  if (e.target.value) setRateDraft(e.target.value);
+                }}
+                className={textInputClass()}
+              >
+                <option value="">— Pick a past rate to use —</option>
+                {rateHistory.map((h) => (
+                  <option key={h.id} value={h.unitPrice}>
+                    ₹{h.unitPrice} — {h.supplierName} — {formatDate(h.receivedDate)} ({h.orderNumber})
+                  </option>
+                ))}
+              </select>
+            </FormField>
+          )}
+
+          {!isLoadingRateHistory && rateHistory.length === 1 && (
+            <p className="text-xs text-zinc-500">
+              {rateModalTarget?.rate === null ? "Rate auto-filled from" : "Matches"} the only past purchase of this material{rateModalTarget?.color || rateModalTarget?.dye ? " in this shade" : ""}: {rateHistory[0].supplierName} on{" "}
+              {formatDate(rateHistory[0].receivedDate)} ({rateHistory[0].orderNumber}).
+            </p>
+          )}
+
+          {!isLoadingRateHistory && rateHistory.length === 0 && rateHistoryFallback !== null && (
+            <p className="text-xs text-zinc-500">
+              No purchase history{rateModalTarget?.color || rateModalTarget?.dye ? " for this shade" : ""}
+              {rateModalTarget?.rate === null ? " — rate auto-filled from this material's default cost (Masters → Materials)." : " — this material's default cost (Masters → Materials) is available above."}
+            </p>
+          )}
+
+          {!isLoadingRateHistory && rateHistory.length === 0 && rateHistoryFallback === null && (
+            <p className="text-xs text-zinc-500">
+              No purchase history{rateModalTarget?.color || rateModalTarget?.dye ? " for this shade" : ""} and no default cost set for this material — enter the rate manually.
+            </p>
+          )}
+
           <div className="flex gap-3">
             <ActionButton label="Cancel" onClick={() => setRateModalTarget(null)} isBusy={false} variant="secondary" />
             <ActionButton label="Save Rate" onClick={saveRate} isBusy={isBusy} />
@@ -1472,14 +1663,24 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
               <option value="REVISION_REQUESTED">Revision Requested</option>
             </select>
           </FormField>
-          <FormField label="Customer Contact Name" htmlFor="modalContactName">
-            <input
-              id="modalContactName"
-              value={customerContactName}
-              onChange={(e) => setCustomerContactName(e.target.value)}
-              className={textInputClass()}
-            />
-          </FormField>
+          <div className="grid grid-cols-2 gap-3">
+            <FormField label="Customer Contact Name" htmlFor="modalContactName">
+              <input
+                id="modalContactName"
+                value={customerContactName}
+                onChange={(e) => setCustomerContactName(e.target.value)}
+                className={textInputClass()}
+              />
+            </FormField>
+            <FormField label="Customer Phone" htmlFor="modalContactPhone">
+              <input
+                id="modalContactPhone"
+                value={customerContactPhone}
+                onChange={(e) => setCustomerContactPhone(e.target.value)}
+                className={textInputClass()}
+              />
+            </FormField>
+          </div>
           <FormField label="Notes" htmlFor="modalDecisionNotes">
             <textarea
               id="modalDecisionNotes"
@@ -1597,6 +1798,8 @@ function VersionForm({
   setNotes,
   cost,
   setCost,
+  file,
+  setFile,
   onSubmit,
   isBusy,
   submitLabel,
@@ -1606,6 +1809,8 @@ function VersionForm({
   setNotes: (v: string) => void;
   cost: string;
   setCost: (v: string) => void;
+  file: File | null;
+  setFile: (f: File | null) => void;
   onSubmit: () => void;
   isBusy: boolean;
   submitLabel: string;
@@ -1626,6 +1831,15 @@ function VersionForm({
           onChange={(e) => setCost(e.target.value)}
           className={textInputClass()}
         />
+      </FormField>
+      <FormField label="Attach Tech Pack File (optional)" htmlFor="versionFile">
+        <input
+          id="versionFile"
+          type="file"
+          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+          className="block w-full text-sm text-zinc-600 dark:text-zinc-300"
+        />
+        {file && <p className="mt-1 text-xs text-zinc-400">Selected: {file.name}</p>}
       </FormField>
       <ActionButton label={submitLabel} onClick={onSubmit} isBusy={isBusy} />
     </div>

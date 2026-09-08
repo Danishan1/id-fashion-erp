@@ -42,6 +42,90 @@ export async function getGoodsReceiptById(companyId: string, id: string) {
   return receipt;
 }
 
+export interface MaterialRateHistoryEntry {
+  // The GoodsReceiptItem's own id — the real unique identity of one row
+  // here. purchaseOrderItemId is NOT unique across entries: the same PO
+  // line can legitimately be received across more than one Goods Receipt
+  // (e.g. two partial receipts), which would collide as a React list key.
+  id: string;
+  purchaseOrderItemId: string;
+  unitPrice: number;
+  receivedDate: string;
+  receiptNumber: string;
+  orderNumber: string;
+  supplierName: string;
+}
+
+export interface MaterialRateHistoryResult {
+  history: MaterialRateHistoryEntry[];
+  fallbackUnitCost: number | null;
+}
+
+/**
+ * Real purchase-rate history for a material, anchored on Goods Receipt (not
+ * just Purchase Order creation) — a PO can be raised and never actually
+ * arrive, so "how many times has this material come into stock" is a
+ * GoodsReceiptItem question, not a PurchaseOrderItem one. Each receipt line
+ * carries its own commercial rate via the PurchaseOrderItem it was received
+ * against. Scoped by colorId/dyeId when the caller supplies them (a Sample
+ * Material line pinned to one shade shouldn't be suggested a rate paid for a
+ * different one) — same shade-matters reasoning already applied to
+ * available-stock-by-dye. A cancelled receipt is excluded (never a real
+ * transaction); most-recent-received first, so a stale rate from years ago
+ * doesn't outrank what was actually paid last time.
+ *
+ * `fallbackUnitCost` is the Material master's own manually-maintained
+ * default (Product.unitCost) — a different, non-history source, surfaced
+ * only for the case with zero real purchase history to suggest from at all.
+ */
+export async function getMaterialRateHistory(
+  companyId: string,
+  materialId: string,
+  colorId?: string | null,
+  dyeId?: string | null
+): Promise<MaterialRateHistoryResult> {
+  const [receiptItems, material] = await Promise.all([
+    prisma.goodsReceiptItem.findMany({
+      where: {
+        productId: materialId,
+        goodsReceipt: { companyId, status: { not: "CANCELLED" } },
+        purchaseOrderItem: {
+          ...(colorId ? { colorId } : {}),
+          ...(dyeId ? { dyeId } : {}),
+        },
+      },
+      select: {
+        id: true,
+        goodsReceipt: { select: { receiptNumber: true, receivedDate: true } },
+        purchaseOrderItem: {
+          select: {
+            id: true,
+            unitPrice: true,
+            purchaseOrder: { select: { orderNumber: true, supplier: { select: { name: true } } } },
+          },
+        },
+      },
+      orderBy: { goodsReceipt: { receivedDate: "desc" } },
+    }),
+    prisma.product.findFirst({ where: { id: materialId, companyId }, select: { unitCost: true } }),
+  ]);
+
+  const history: MaterialRateHistoryEntry[] = receiptItems.map((item) => ({
+    id: item.id,
+    purchaseOrderItemId: item.purchaseOrderItem.id,
+    unitPrice: Number(item.purchaseOrderItem.unitPrice),
+    receivedDate: item.goodsReceipt.receivedDate.toISOString(),
+    receiptNumber: item.goodsReceipt.receiptNumber,
+    orderNumber: item.purchaseOrderItem.purchaseOrder.orderNumber,
+    supplierName: item.purchaseOrderItem.purchaseOrder.supplier.name,
+  }));
+
+  return {
+    history,
+    fallbackUnitCost: material?.unitCost === null || material?.unitCost === undefined ? null : Number(material.unitCost),
+  };
+}
+
 /**
  * Deliberately opens its own prisma.$transaction here rather than pushing it
  * into a single repository function — this orchestration spans PurchaseOrderItem,
@@ -156,35 +240,19 @@ export async function createGoodsReceipt(actor: ActorContext, purchaseOrderId: s
   let receipt;
   try {
     receipt = await prisma.$transaction(async (tx) => {
-      // Over-receipt guard: atomic per-line updateMany, not a separate
-      // read-then-write — safe against two concurrent receipts against the
-      // same line (orderedQuantity is frozen once SENT_TO_SUPPLIER, since
-      // updatePurchaseOrder() blocks edits past that point).
+      // No over-receipt block — the person entering the receipt records
+      // whatever actually physically arrived, whether that's short of or
+      // beyond the ordered quantity (a real, common warehouse scenario, not
+      // a data-entry mistake to reject). The atomic increment itself is
+      // still the accumulator's only writer, just with no upper-bound
+      // condition left to enforce.
       for (const inputItem of input.items) {
         const poItem = itemsById.get(inputItem.purchaseOrderItemId)!;
-        const result = await PurchaseOrderItemRepository.guardedIncrementReceived(
-          tx,
-          poItem.id,
-          Number(poItem.orderedQuantity),
-          inputItem.receivedQuantity
-        );
+        const result = await PurchaseOrderItemRepository.incrementReceived(tx, poItem.id, inputItem.receivedQuantity);
         if (result.count === 0) {
-          // remaining is read from the pre-transaction snapshot, purely for
-          // message quality — the atomic guardedIncrementReceived above is
-          // what actually enforces the cap under concurrency; this can't
-          // under-reject, only occasionally show a slightly stale number if
-          // another request also modified this line in the same instant.
-          const remaining = Number(poItem.orderedQuantity) - Number(poItem.receivedQuantity);
-          throw new BusinessRuleError(
-            "OVER_RECEIPT_NOT_ALLOWED",
-            `Receiving ${inputItem.receivedQuantity} of "${poItem.product.styleName}" would exceed the ordered quantity — only ${remaining} remains. Ordered: ${poItem.orderedQuantity}, Already received: ${poItem.receivedQuantity}.`,
-            {
-              purchaseOrderItemId: poItem.id,
-              orderedQuantity: Number(poItem.orderedQuantity),
-              alreadyReceived: Number(poItem.receivedQuantity),
-              remaining,
-            }
-          );
+          throw new BusinessRuleError("NOT_FOUND", `Purchase order line "${poItem.product.styleName}" no longer exists.`, {
+            purchaseOrderItemId: poItem.id,
+          });
         }
       }
 
@@ -267,9 +335,12 @@ export async function createGoodsReceipt(actor: ActorContext, purchaseOrderId: s
 
         // Material Request rollup — purely a secondary traceability mirror,
         // never a reason to block a legitimate goods receipt. Fails soft: a
-        // missing/unconvertible unit or a lost concurrency race just skips the
-        // rollup for this line, since the real over-receipt protection already
-        // happened above via guardedIncrementReceived.
+        // missing/unconvertible unit, a lost concurrency race, or the line
+        // genuinely over-receiving past what was ordered (this rollup's own
+        // cap is still the sum of ordered quantities, deliberately left
+        // as-is — see incrementReceived's own comment for why the real,
+        // unrelated PO-item accumulator has no such cap any more) just skips
+        // the rollup for this line without affecting the receipt itself.
         const poItem = itemsById.get(createdItem.purchaseOrderItemId)!;
         if (poItem.materialRequestItemId) {
           const mrLine = await MaterialRequestItemRepository.findForReceiptRollupInTx(tx, poItem.materialRequestItemId);

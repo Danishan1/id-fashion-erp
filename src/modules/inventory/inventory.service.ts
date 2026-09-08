@@ -109,6 +109,39 @@ export async function getAvailableQuantity(companyId: string, productId: string,
 }
 
 /**
+ * Dye/shade-scoped stock for a fabric material — the flat StockBalance total
+ * above is the material's whole stock across every color/shade combined,
+ * which overstates what's actually usable for a request line pinned to one
+ * shade (e.g. "Available Stock: 100 Mtr" when none of that 100 is actually
+ * the requested shade). Only FabricRoll tracks a shade per physical unit of
+ * stock, so this sums remaining roll quantity for rolls of this exact dye at
+ * this warehouse — via the roll's own GoodsReceiptItem, which carries a
+ * required warehouseId (a roll's own warehouseLocationId is optional and
+ * can't be relied on for this). Callers should only use this when the
+ * material is genuinely a FABRIC (the only category FabricRoll rows exist
+ * for) and the line actually specifies a dye — otherwise this would return 0
+ * for materials plainly never tracked by the roll, not because none is
+ * actually in stock.
+ */
+export async function getAvailableQuantityByDye(
+  companyId: string,
+  productId: string,
+  warehouseId: string,
+  dyeId: string
+): Promise<number> {
+  const result = await prisma.fabricRoll.aggregate({
+    where: {
+      companyId,
+      dyeId,
+      status: "IN_STOCK",
+      goodsReceiptItem: { productId, warehouseId },
+    },
+    _sum: { remainingQuantity: true },
+  });
+  return Number(result._sum.remainingQuantity ?? 0);
+}
+
+/**
  * Bulk Master Data Import portal's Opening Stock row handler (2026-09-04) --
  * the OPENING_BALANCE transaction type has been reserved and unused since
  * this project's earliest planning; this is its first real caller. Opens

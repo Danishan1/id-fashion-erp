@@ -34,7 +34,7 @@ vi.mock("./goods-receipt.repository", () => ({
 vi.mock("./purchase-order.repository", () => ({
   PurchaseOrderRepository: { findByIdWithDetails: vi.fn(), updateStatusInTx: vi.fn() },
   PurchaseOrderItemRepository: {
-    guardedIncrementReceived: vi.fn(),
+    incrementReceived: vi.fn(),
     guardedDecrementReceived: vi.fn(),
     findManyForStatusRecompute: vi.fn(),
   },
@@ -96,7 +96,7 @@ beforeEach(() => {
   vi.mocked(GoodsReceiptItemRepository.findManyByReceiptIdInTx).mockReset().mockResolvedValue([]);
   vi.mocked(PurchaseOrderRepository.findByIdWithDetails).mockReset().mockResolvedValue(poWithOneItem() as never);
   vi.mocked(PurchaseOrderRepository.updateStatusInTx).mockReset();
-  vi.mocked(PurchaseOrderItemRepository.guardedIncrementReceived).mockReset().mockResolvedValue({ count: 1 } as never);
+  vi.mocked(PurchaseOrderItemRepository.incrementReceived).mockReset().mockResolvedValue({ count: 1 } as never);
   vi.mocked(PurchaseOrderItemRepository.guardedDecrementReceived).mockReset().mockResolvedValue(1 as never);
   vi.mocked(PurchaseOrderItemRepository.findManyForStatusRecompute).mockReset().mockResolvedValue([{ orderedQuantity: 100, receivedQuantity: 50 }] as never);
 });
@@ -140,11 +140,34 @@ describe("createGoodsReceipt", () => {
     });
   });
 
-  it("rejects an over-receipt before the goods receipt is created", async () => {
-    vi.mocked(PurchaseOrderItemRepository.guardedIncrementReceived).mockResolvedValue({ count: 0 } as never);
+  it("allows receiving more than the ordered quantity — no over-receipt block", async () => {
+    // A real, common warehouse scenario (supplier shipped extra), not a
+    // mistake to reject — incrementReceived is deliberately uncapped now.
+    vi.mocked(GoodsReceiptRepository.createWithItemsAndRolls).mockResolvedValue({
+      id: "gr-1",
+      receiptNumber: "REC-2026-00001",
+      items: [{ id: "gri-1", purchaseOrderItemId: "poi-1", productId: "mat-1", warehouseId: "wh-1", warehouseLocationId: null, receivedQuantity: 500, rolls: [] }],
+    } as never);
+
+    await createGoodsReceipt(actor, "po-1", {
+      receivedDate: "2026-08-24",
+      items: [
+        oneRollItem({
+          receivedQuantity: 500,
+          rolls: [{ rollNumber: "R1", rollQuantity: 500, batchNo: "", gsmId: "", dyeId: "", weaveTypeId: "", widthId: "", compositionId: "", warehouseLocationId: "", notes: "" }],
+        }),
+      ],
+    });
+
+    expect(PurchaseOrderItemRepository.incrementReceived).toHaveBeenCalledWith(expect.anything(), "poi-1", 500);
+    expect(GoodsReceiptRepository.createWithItemsAndRolls).toHaveBeenCalled();
+  });
+
+  it("rejects only when the purchase order line itself no longer exists", async () => {
+    vi.mocked(PurchaseOrderItemRepository.incrementReceived).mockResolvedValue({ count: 0 } as never);
 
     await expect(createGoodsReceipt(actor, "po-1", { receivedDate: "2026-08-24", items: [oneRollItem()] })).rejects.toMatchObject({
-      code: "OVER_RECEIPT_NOT_ALLOWED",
+      code: "NOT_FOUND",
     });
     expect(GoodsReceiptRepository.createWithItemsAndRolls).not.toHaveBeenCalled();
   });

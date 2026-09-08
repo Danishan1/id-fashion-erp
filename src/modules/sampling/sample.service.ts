@@ -589,6 +589,62 @@ export async function addSampleMaterial(actor: ActorContext, sampleVersionId: st
   return SampleMaterialRepository.findByVersionId(sampleVersionId);
 }
 
+/**
+ * Edits an already-added material line's own core fields — the one gap
+ * addSampleMaterial()'s merge-on-add design didn't cover: correcting a
+ * mis-picked material/color/shade/unit, or setting an absolute quantity
+ * (re-adding only ever adds to the existing quantity, it can't set a lower
+ * one or clear notes to empty). Deliberately a plain absolute set, not a
+ * second merge check against MATERIAL_MERGE_KEY_FIELDS — editing one line to
+ * accidentally collide with a second, already-distinct line is a rare enough
+ * edge case that it isn't worth this action's own merge logic; the two rows
+ * would simply coexist as before.
+ */
+export async function updateSampleMaterial(actor: ActorContext, sampleMaterialId: string, input: SampleMaterialInput) {
+  const material = await SampleMaterialRepository.findWithRequestOwner(sampleMaterialId);
+  if (!material || material.sampleVersion.sampleRequest.companyId !== actor.companyId) {
+    throw new BusinessRuleError("NOT_FOUND", "Sample material not found.", { id: sampleMaterialId });
+  }
+
+  const updated = await SampleMaterialRepository.update(sampleMaterialId, {
+    materialId: input.materialId,
+    plannedQuantity: input.plannedQuantity,
+    uomId: input.uomId || null,
+    colorId: input.colorId || null,
+    dyeId: input.dyeId || null,
+    notes: input.notes || null,
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "sample_materials",
+    recordId: sampleMaterialId,
+    action: "UPDATE",
+    oldValues: {
+      materialId: material.materialId,
+      plannedQuantity: material.plannedQuantity,
+      uomId: material.uomId,
+      colorId: material.colorId,
+      dyeId: material.dyeId,
+    },
+    newValues: {
+      materialId: updated.materialId,
+      plannedQuantity: updated.plannedQuantity,
+      uomId: updated.uomId,
+      colorId: updated.colorId,
+      dyeId: updated.dyeId,
+    },
+  });
+
+  // Same non-blocking reasoning as addSampleMaterial() — editing quantity
+  // must keep a since-priced line's rollup in sync, but must never itself be
+  // blocked by a costing lock (rate isn't part of this payload at all).
+  await recalculateSampleVersionCosting(prisma, material.sampleVersionId, { throwIfBlocked: false });
+
+  return SampleMaterialRepository.findByVersionId(material.sampleVersionId);
+}
+
 // Damage/wastage is discovered after a material line already exists (during
 // cutting/stitching, not at planning time), so this is a separate scoped
 // update rather than something addSampleMaterial captures upfront.
@@ -898,6 +954,7 @@ export async function recordSampleApproval(actor: ActorContext, sampleVersionId:
     decision: input.decision,
     decidedByUserId: actor.userId,
     customerContactName: input.customerContactName || null,
+    customerContactPhone: input.customerContactPhone || null,
     decisionNotes: input.decisionNotes || null,
   });
 

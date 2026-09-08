@@ -69,6 +69,12 @@ export const sampleMaterialSchema = z.object({
 
 export type SampleMaterialInput = z.infer<typeof sampleMaterialSchema>;
 
+// Editing an existing line's own core fields (as opposed to addSampleMaterial's
+// create/merge payload above) — same shape, reused rather than duplicated,
+// since every field is exactly the same identity/quantity data either way.
+export const sampleMaterialUpdateSchema = sampleMaterialSchema;
+export type SampleMaterialUpdateInput = z.infer<typeof sampleMaterialUpdateSchema>;
+
 // Scoped to one existing material line — recorded once damage/wastage is
 // actually discovered, independent of the line's planned quantity.
 export const sampleMaterialDamageSchema = z.object({
@@ -122,6 +128,7 @@ export type SampleCostingInput = z.infer<typeof sampleCostingSchema>;
 export const sampleApprovalSchema = z.object({
   decision: z.enum(["APPROVED", "REJECTED", "REVISION_REQUESTED"]),
   customerContactName: z.string().max(200).optional().or(z.literal("")),
+  customerContactPhone: z.string().max(30).optional().or(z.literal("")),
   decisionNotes: z.string().max(2000).optional().or(z.literal("")),
 });
 

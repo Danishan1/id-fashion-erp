@@ -133,7 +133,7 @@ export const MaterialRequestItemRepository = {
     prisma.materialRequestItem.findUnique({
       where: { id },
       include: {
-        material: { select: { id: true, styleName: true, baseUomId: true, baseUom: true } },
+        material: { select: { id: true, styleName: true, materialCategory: true, baseUomId: true, baseUom: true } },
         uom: true,
         materialRequest: { select: { id: true, companyId: true, warehouseId: true, status: true } },
       },
@@ -206,7 +206,7 @@ export const MaterialRequestItemRepository = {
     prisma.materialRequestItem.findMany({
       where: { materialRequestId },
       include: {
-        material: { select: { id: true, styleName: true, styleCode: true, defaultSupplierId: true, unitCost: true } },
+        material: { select: { id: true, styleName: true, styleCode: true, materialCategory: true, defaultSupplierId: true, unitCost: true } },
         uom: { select: { id: true, code: true } },
         purchaseOrderItems: ACTIVE_PURCHASE_ORDER_ITEMS_INCLUDE,
       },
