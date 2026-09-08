@@ -18,6 +18,7 @@ import {
 } from "./ai-garment-project.repository";
 import { AiGarmentReferenceAnalysisRepository } from "./reference-analysis.repository";
 import { AiGarmentFabricAnalysisRepository } from "./fabric-analysis.repository";
+import { AiGarmentProductSuitabilityRepository } from "./product-suitability.repository";
 import { AiGarmentDesignDirectionRepository } from "./development-brief.repository";
 import {
   stepsForSourceType,
@@ -392,6 +393,36 @@ export async function saveWorkflowStep(actor: ActorContext, id: string, input: S
         "INVALID_STATE_TRANSITION",
         "Approve the Fabric Analysis before continuing to Product Suitability.",
         { analysisStatus: fabricAnalysis?.status ?? "DRAFT" }
+      );
+    }
+  }
+
+  // The user's own process 8 (Product/Fabric Suitability)'s own gate,
+  // mirroring the one above exactly, one step further down the FABRIC
+  // workflow: PRODUCT_DIRECTIONS only exists in AI_GARMENT_FABRIC_STEPS, so
+  // productDirectionsIndex is -1 (and this whole block a no-op) for a
+  // REFERENCE-sourced project, the same idiom used throughout this function.
+  const productDirectionsIndex = steps.findIndex((s) => s.key === "PRODUCT_DIRECTIONS");
+  if (productDirectionsIndex !== -1 && targetIndex >= productDirectionsIndex) {
+    const suitability = await AiGarmentProductSuitabilityRepository.findByProjectId(id);
+    if (!suitability || suitability.status !== "APPROVED") {
+      throw new BusinessRuleError(
+        "INVALID_STATE_TRANSITION",
+        "Approve the Product Suitability assessment before continuing to Product Directions.",
+        { analysisStatus: suitability?.status ?? "DRAFT" }
+      );
+    }
+  }
+
+  // The user's own process 9 (Fabric-to-Garment Development)'s own gate,
+  // mirroring the DEVELOPMENT_BRIEF "at least one approved design direction"
+  // gate above exactly, for the FABRIC workflow's own equivalent step.
+  if (productDirectionsIndex !== -1 && targetIndex > productDirectionsIndex) {
+    const approvedCount = await AiGarmentDesignDirectionRepository.countByStatus(id, "APPROVED");
+    if (approvedCount === 0) {
+      throw new BusinessRuleError(
+        "INVALID_STATE_TRANSITION",
+        "Approve at least one design direction before continuing past Product Directions."
       );
     }
   }

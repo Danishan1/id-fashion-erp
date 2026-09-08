@@ -10,6 +10,8 @@ import { ReferenceImageUploader } from "./ReferenceImageUploader";
 import { ReferenceAnalysisPanel } from "./ReferenceAnalysisPanel";
 import { FabricSwatchImageUploader } from "./FabricSwatchImageUploader";
 import { FabricAnalysisPanel } from "./FabricAnalysisPanel";
+import { ProductSuitabilityPanel } from "./ProductSuitabilityPanel";
+import { FabricDevelopmentBriefPanel } from "./FabricDevelopmentBriefPanel";
 import { DevelopmentBriefPanel } from "./DevelopmentBriefPanel";
 import { VisualGenerationPanel } from "./VisualGenerationPanel";
 import { CommercialEvaluationPanel } from "./CommercialEvaluationPanel";
@@ -87,9 +89,9 @@ const STEP_HELP: Partial<Record<AiGarmentStepKey, string>> = {
   FABRIC_ANALYSIS: "Analyse the uploaded fabric swatch with AI, then review, correct, and approve to continue.",
   DEVELOPMENT_BRIEF: "Generate differentiated commercial design directions from the approved reference analysis, then review, correct, and approve at least one to continue.",
   GENERATE_VARIATIONS: "Generate real garment visuals for each approved design direction, then Select, Reject, Regenerate, or Create a Variation of any image.",
-  GENERATE_DESIGNS: "AI would generate design directions here once connected — add candidates manually for now.",
-  PRODUCT_SUITABILITY: "AI would assess which garment types suit this fabric here once connected.",
-  PRODUCT_DIRECTIONS: "AI would suggest concrete product directions here once connected.",
+  GENERATE_DESIGNS: "Generate real garment visuals for each approved design direction, then Select, Reject, Regenerate, or Create a Variation of any image.",
+  PRODUCT_SUITABILITY: "Assess which of this company's garment types suit the approved fabric with AI, then review, correct, and approve to continue.",
+  PRODUCT_DIRECTIONS: "Generate differentiated commercial design directions from the approved Fabric Analysis and Product Suitability assessment — only for garment types already rated suitable — then review, correct, and approve at least one to continue.",
   COMMERCIAL_EVALUATION: "Select 2–8 approved design directions and compare them on a 12-criterion commercial rubric, then select the one to carry into development — a confirmed, user-approved choice.",
   SELECT_DESIGN: "Pick the one design candidate to carry forward.",
   APPLY_FABRIC:
@@ -377,21 +379,36 @@ function StepContent({
     );
   }
 
-  if (["PRODUCT_SUITABILITY", "PRODUCT_DIRECTIONS"].includes(key)) {
-    return wrap(<AiPlaceholderButton label={aiButtonLabel(key)} />);
+  if (key === "PRODUCT_SUITABILITY") {
+    return wrap(<ProductSuitabilityPanel projectId={project.id} />);
   }
 
-  if (key === "GENERATE_VARIATIONS") {
-    return wrap(<VisualGenerationPanel projectId={project.id} />);
-  }
-
-  if (key === "GENERATE_DESIGNS") {
+  if (key === "PRODUCT_DIRECTIONS") {
     return wrap(
-      <>
-        <AiPlaceholderButton label="Generate Designs" />
-        <DesignOptionsSection project={project} setError={setError} reloadProject={reloadProject} allowAdd allowSelect={false} />
-      </>
+      <FabricDevelopmentBriefPanel
+        projectId={project.id}
+        project={{
+          targetMarket: project.targetMarket,
+          targetCustomerProfile: project.targetCustomerProfile,
+          seasonId: project.seasonId,
+          targetSellingPrice: project.targetSellingPrice,
+          currencyCode: project.currencyCode,
+          buyerId: project.buyerId,
+          customerId: project.customerId,
+        }}
+      />
     );
+  }
+
+  if (key === "GENERATE_VARIATIONS" || key === "GENERATE_DESIGNS") {
+    // GENERATE_DESIGNS is the FABRIC workflow's own equivalent of
+    // GENERATE_VARIATIONS — now that Fabric-to-Garment Development produces
+    // real AiGarmentDesignDirection rows too, this already-source-agnostic
+    // panel (keyed only on projectId, reading whichever directions exist)
+    // is the correct, zero-new-code reuse for it, replacing the old
+    // "add candidates manually" placeholder that predates real directions
+    // existing for a FABRIC-sourced project at all.
+    return wrap(<VisualGenerationPanel projectId={project.id} />);
   }
 
   if (key === "COMMERCIAL_EVALUATION") {
@@ -538,38 +555,6 @@ function SamplingReviewSection({
       >
         {busy ? "Continuing…" : "Continue to Production"}
       </button>
-    </div>
-  );
-}
-
-function aiButtonLabel(key: AiGarmentStepKey): string {
-  switch (key) {
-    case "REFERENCE_ANALYSIS":
-    case "FABRIC_ANALYSIS":
-      return "Analyse with AI";
-    case "DEVELOPMENT_BRIEF":
-      return "Create Development Brief";
-    case "PRODUCT_SUITABILITY":
-      return "Assess Product Suitability";
-    case "PRODUCT_DIRECTIONS":
-      return "Suggest Product Directions";
-    default:
-      return "Analyse with AI";
-  }
-}
-
-function AiPlaceholderButton({ label }: { label: string }) {
-  const [clicked, setClicked] = useState(false);
-  return (
-    <div>
-      <button
-        type="button"
-        onClick={() => setClicked(true)}
-        className="rounded-md border border-dashed border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-500 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
-      >
-        {label}
-      </button>
-      {clicked && <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">AI integration not connected.</p>}
     </div>
   );
 }

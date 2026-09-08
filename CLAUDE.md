@@ -53,7 +53,7 @@ Update the status column and add a short dated note under the relevant phase sec
 
 **CRM/Marketing enhancement pass, on top of the migration above — all 14 planned items complete (2026-08-24)** — tracked in full in [CRM_MARKETING_ENHANCEMENT_AUDIT_AND_PLAN.md](CRM_MARKETING_ENHANCEMENT_AUDIT_AND_PLAN.md): Deal→Customer conversion, Customer 360, CRM Kanban, CRM Dashboard, Follow-up Management/Notifications, configurable Lead Priority, Campaign Approval workflow, Marketing Dashboard trend charts, Channel Performance report, Customer Segmentation, Marketing Automation triggers, CSV Import (Leads/Deals/Campaign Daily Metrics), Meta/Google Ads Integration, and an AI-readiness audit of every aggregation function. The one open thread: Meta/Google Ads Integration's OAuth/token-exchange/sync code is built and unit-tested but has **no real credentials to verify the live external API calls against yet** — see that file's own Item 13 note before assuming it's been exercised against the real Meta/Google APIs, and before touching `AdAccountConnection`/`AdCampaignLink`/`ImportBatch`/`CrmSettings` or the `src/modules/marketing/ad-integrations/`/`src/modules/import/` modules.
 
-**AI Garment Flow (separate initiative, not part of the 11 phases above) — foundation + Process 1 (Reference Garment Analysis) + Process 2 (Commercial Design Development Brief) + Process 3 (Garment Design Visual Generation) + Process 4 (Controlled Design Variation) + Process 5 (Commercial Design Evaluation) + Process 6 (Apply Actual Fabric) + Process 7 (Technical Development) + Process 8 (BOM Suggestion) + Process 9 (Cost Analysis) + Process 10 (Production Handoff) complete — the full 10-process workflow is now built end to end; live image-generation verification (Process 3/4/6/7) still blocked on the configured OpenAI account's exhausted billing credits (a second, free-tier Gemini provider was added 2026-09-07 specifically to unblock this once a key is supplied), but every Anthropic-backed/pure-orchestration process (1/2/5/8/9/10) is fully live-verified (2026-09-06/07)** — a new product-development workflow module (reference/fabric upload → AI-assisted design → costing → sampling), full detail in its own dated sections further down this file. The existing `Product` model remains the single Style Master (not duplicated); a new `AiGarmentProject` header is a pre-Style record that manually graduates into a real `Product` via `convertProjectToStyle()`, mirroring Sampling's own `convertSampleToStyle()`. BOM/Costing steps require this graduation and then reuse the existing BOM/MRP and Sampling-costing modules — no parallel schema. Process 1 (Reference Garment Analysis) is a real Anthropic vision integration analysing an uploaded reference image into 36 individually-tracked, editable, approvable observations. Process 2 (Commercial Design Development Brief) is a real Anthropic text integration that, once that analysis is approved, generates 3/6/9 differentiated commercial `AiGarmentDesignDirection` records (each individually editable/approvable/rejectable/regeneratable, each scored 0-100). Process 3 (Garment Design Visual Generation) is a real, provider-agnostic OpenAI Images integration turning each APPROVED design direction into 1/3/4 generated visuals with full version history and a Select/Reject/Regenerate/Create Variation workflow. Process 4 (Controlled Design Variation) is a real image-to-image integration that regenerates just one named feature (Neckline/Collar/Sleeve/.../Other) of an existing generated image while preserving everything else, with its own version-controlled variation history and a Select Variation/Keep Original/Create Another Variation workflow. Process 5 (Commercial Design Evaluation) is a real Anthropic text integration that compares 2-8 APPROVED design directions on a 12-criterion weighted commercial rubric, letting the user override the AI's ranking and always requiring explicit confirmation before recording a SELECTED DESIGN and advancing the workflow to Apply Fabric (or Technical Development, for a fabric-sourced project). Process 6 (Apply Actual Fabric) is a real two-image OpenAI edit integration that applies a user-uploaded fabric swatch onto the selected design's currently SELECTED garment visual, with its own Before/After version history, a two-tier Approve/APPROVE-DESIGN-&-FABRIC confirmation flow, and a workflow advance to Technical Development. Process 7 (Technical Development) is a real image-to-image integration that regenerates the currently selected garment visual (preferring an approved fabric application's result) as a professional flat/CAD-style technical line drawing, with its own version-controlled history, a two-tier Approve/APPROVE-TECHNICAL-FLAT confirmation flow, and a workflow advance to BOM. Process 8 (BOM Suggestion) is a real Anthropic text integration that suggests a draft Bill of Materials for one finished garment from the approved design's own structured fields, letting the user resolve each advisory suggestion into a real `BomItem` via the existing, unchanged bom-mrp `upsertBom()` (never a parallel BOM schema), and advancing to Costing once that style's real BOM is approved. Process 9 (Cost Analysis) is a real Anthropic text integration that produces an advisory cost-per-unit range and breakdown/pricing/margin/risk commentary from the approved design (plus any resolved BOM, fabric detail, and real Sampling costing already entered), never writing to or duplicating Sampling's own real costing engine, and advances the workflow into Sampling & Buyer Review once the linked Sample Request's current version is genuinely priced. Process 10 (Production Handoff) wires up the previously-reserved SAMPLING/BUYER_REVIEW/APPROVED/PRODUCTION statuses without a parallel state machine — SAMPLING/BUYER_REVIEW/APPROVED are derived live from the linked Sample Request's own real status (never stored authoritatively), and once genuinely approved the user links an already-created Sales Order back to the project (Sales Order/Production Order creation are never reimplemented, only deep-linked to their existing real forms) and marks the project complete once a real, non-cancelled Production Order exists for it — PRODUCTION is now the workflow's true final step. **The user's own authoritative process list (16 items, superseding the informal "Process 1-10" numbering above) has one further item built so far: Fabric Analysis (their own item 7, 2026-09-08)** — the FABRIC-sourced workflow's own analogue to Process 1, a real Anthropic vision integration analysing an uploaded fabric swatch photo into 17 individually-tracked, editable, approvable observations (fabric structure/visual characteristics/performance estimates/manufacturing considerations), deliberately never suggesting which garments suit the fabric (that's the separate, still-unbuilt Product Suitability item). See those sections before touching `AiGarmentReferenceAnalysis`/`AiGarmentReferenceObservation`/`AiGarmentReferenceAnalysisRun`/`AiGarmentFabricAnalysis`/`AiGarmentFabricObservation`/`AiGarmentFabricAnalysisRun`/`AiGarmentDevelopmentBriefRun`/`AiGarmentDesignDirection`/`AiGarmentImageGenerationRun`/`AiGarmentGeneratedImage`/`AiGarmentDesignVariationRun`/`AiGarmentDesignVariation`/`AiGarmentCommercialEvaluationRun`/`AiGarmentCommercialEvaluation`/`AiGarmentCommercialEvaluationItem`/`AiGarmentFabricApplicationRun`/`AiGarmentFabricApplication`/`AiGarmentTechnicalFlatRun`/`AiGarmentTechnicalFlat`/`AiGarmentBomSuggestionRun`/`AiGarmentBomSuggestion`/`AiGarmentCostAnalysisRun`/`AiGarmentCostAnalysis`, `src/core/ai/reference-analysis/`, `src/core/ai/fabric-analysis/`, `src/core/ai/development-brief/`, `src/core/ai/image-generation/`, `src/core/ai/design-variation/`, `src/core/ai/commercial-evaluation/`, `src/core/ai/fabric-application/`, `src/core/ai/technical-development/`, `src/core/ai/bom-suggestion/`, `src/core/ai/cost-analysis/`, `src/core/ai/providers/anthropic.ts`, or `src/modules/ai-garment-flow/`. `src/core/ai/AIService.ts`'s `NullAIProvider`/`getAIService()` are dead code, unreferenced by any real process — don't wire a future process through that file, follow the established per-process file-layout pattern (`schema.ts`/`prompt.ts`/`generate.ts` or `analyze.ts`) instead.
+**AI Garment Flow (separate initiative, not part of the 11 phases above) — foundation + Process 1 (Reference Garment Analysis) + Process 2 (Commercial Design Development Brief) + Process 3 (Garment Design Visual Generation) + Process 4 (Controlled Design Variation) + Process 5 (Commercial Design Evaluation) + Process 6 (Apply Actual Fabric) + Process 7 (Technical Development) + Process 8 (BOM Suggestion) + Process 9 (Cost Analysis) + Process 10 (Production Handoff) complete — the full 10-process workflow is now built end to end; live image-generation verification (Process 3/4/6/7) still blocked on the configured OpenAI account's exhausted billing credits (a second, free-tier Gemini provider was added 2026-09-07 specifically to unblock this once a key is supplied), but every Anthropic-backed/pure-orchestration process (1/2/5/8/9/10) is fully live-verified (2026-09-06/07)** — a new product-development workflow module (reference/fabric upload → AI-assisted design → costing → sampling), full detail in its own dated sections further down this file. The existing `Product` model remains the single Style Master (not duplicated); a new `AiGarmentProject` header is a pre-Style record that manually graduates into a real `Product` via `convertProjectToStyle()`, mirroring Sampling's own `convertSampleToStyle()`. BOM/Costing steps require this graduation and then reuse the existing BOM/MRP and Sampling-costing modules — no parallel schema. Process 1 (Reference Garment Analysis) is a real Anthropic vision integration analysing an uploaded reference image into 36 individually-tracked, editable, approvable observations. Process 2 (Commercial Design Development Brief) is a real Anthropic text integration that, once that analysis is approved, generates 3/6/9 differentiated commercial `AiGarmentDesignDirection` records (each individually editable/approvable/rejectable/regeneratable, each scored 0-100). Process 3 (Garment Design Visual Generation) is a real, provider-agnostic OpenAI Images integration turning each APPROVED design direction into 1/3/4 generated visuals with full version history and a Select/Reject/Regenerate/Create Variation workflow. Process 4 (Controlled Design Variation) is a real image-to-image integration that regenerates just one named feature (Neckline/Collar/Sleeve/.../Other) of an existing generated image while preserving everything else, with its own version-controlled variation history and a Select Variation/Keep Original/Create Another Variation workflow. Process 5 (Commercial Design Evaluation) is a real Anthropic text integration that compares 2-8 APPROVED design directions on a 12-criterion weighted commercial rubric, letting the user override the AI's ranking and always requiring explicit confirmation before recording a SELECTED DESIGN and advancing the workflow to Apply Fabric (or Technical Development, for a fabric-sourced project). Process 6 (Apply Actual Fabric) is a real two-image OpenAI edit integration that applies a user-uploaded fabric swatch onto the selected design's currently SELECTED garment visual, with its own Before/After version history, a two-tier Approve/APPROVE-DESIGN-&-FABRIC confirmation flow, and a workflow advance to Technical Development. Process 7 (Technical Development) is a real image-to-image integration that regenerates the currently selected garment visual (preferring an approved fabric application's result) as a professional flat/CAD-style technical line drawing, with its own version-controlled history, a two-tier Approve/APPROVE-TECHNICAL-FLAT confirmation flow, and a workflow advance to BOM. Process 8 (BOM Suggestion) is a real Anthropic text integration that suggests a draft Bill of Materials for one finished garment from the approved design's own structured fields, letting the user resolve each advisory suggestion into a real `BomItem` via the existing, unchanged bom-mrp `upsertBom()` (never a parallel BOM schema), and advancing to Costing once that style's real BOM is approved. Process 9 (Cost Analysis) is a real Anthropic text integration that produces an advisory cost-per-unit range and breakdown/pricing/margin/risk commentary from the approved design (plus any resolved BOM, fabric detail, and real Sampling costing already entered), never writing to or duplicating Sampling's own real costing engine, and advances the workflow into Sampling & Buyer Review once the linked Sample Request's current version is genuinely priced. Process 10 (Production Handoff) wires up the previously-reserved SAMPLING/BUYER_REVIEW/APPROVED/PRODUCTION statuses without a parallel state machine — SAMPLING/BUYER_REVIEW/APPROVED are derived live from the linked Sample Request's own real status (never stored authoritatively), and once genuinely approved the user links an already-created Sales Order back to the project (Sales Order/Production Order creation are never reimplemented, only deep-linked to their existing real forms) and marks the project complete once a real, non-cancelled Production Order exists for it — PRODUCTION is now the workflow's true final step. **The user's own authoritative process list (16 items, superseding the informal "Process 1-10" numbering above) has three further items built so far: Fabric Analysis (their own item 7), Product/Fabric Suitability (their own item 8), and Fabric-to-Garment Development (their own item 9), all 2026-09-08** — Fabric Analysis is the FABRIC-sourced workflow's own analogue to Process 1, a real Anthropic vision integration analysing an uploaded fabric swatch photo into 17 individually-tracked, editable, approvable observations (fabric structure/visual characteristics/performance estimates/manufacturing considerations), deliberately never suggesting which garments suit the fabric. Product/Fabric Suitability builds directly on it — a real Anthropic text integration (not vision — it reasons only from the already-approved fabric observations) assessing every one of the company's own real `ProductType` master rows for suitability, with per-item edit/approve and a positional zip-back to real ids (the same discipline Process 5 already established), deliberately never suggesting a specific silhouette or design detail. Fabric-to-Garment Development builds directly on that: a real Anthropic text integration generating full, first-class `AiGarmentDesignDirection` design directions (the exact same 24-field/scored shape Process 2 already produces) scoped only to the garment types just rated Highly Suitable/Suitable, via a widened FK on `AiGarmentDesignDirection` (now reachable from either a Development Brief run OR a Fabric Development run, enforced by a CHECK constraint) rather than a parallel design-direction concept — the user's own explicit choice, confirmed via AskUserQuestion, meaning Processes 3/4/5/6/7 above needed zero changes to already work for a FABRIC-sourced project's directions too. See those sections before touching `AiGarmentReferenceAnalysis`/`AiGarmentReferenceObservation`/`AiGarmentReferenceAnalysisRun`/`AiGarmentFabricAnalysis`/`AiGarmentFabricObservation`/`AiGarmentFabricAnalysisRun`/`AiGarmentProductSuitability`/`AiGarmentProductSuitabilityItem`/`AiGarmentProductSuitabilityRun`/`AiGarmentDevelopmentBriefRun`/`AiGarmentFabricDevelopmentRun`/`AiGarmentDesignDirection`/`AiGarmentImageGenerationRun`/`AiGarmentGeneratedImage`/`AiGarmentDesignVariationRun`/`AiGarmentDesignVariation`/`AiGarmentCommercialEvaluationRun`/`AiGarmentCommercialEvaluation`/`AiGarmentCommercialEvaluationItem`/`AiGarmentFabricApplicationRun`/`AiGarmentFabricApplication`/`AiGarmentTechnicalFlatRun`/`AiGarmentTechnicalFlat`/`AiGarmentBomSuggestionRun`/`AiGarmentBomSuggestion`/`AiGarmentCostAnalysisRun`/`AiGarmentCostAnalysis`, `src/core/ai/reference-analysis/`, `src/core/ai/fabric-analysis/`, `src/core/ai/product-suitability/`, `src/core/ai/development-brief/`, `src/core/ai/fabric-development-brief/`, `src/core/ai/image-generation/`, `src/core/ai/design-variation/`, `src/core/ai/commercial-evaluation/`, `src/core/ai/fabric-application/`, `src/core/ai/technical-development/`, `src/core/ai/bom-suggestion/`, `src/core/ai/cost-analysis/`, `src/core/ai/providers/anthropic.ts`, or `src/modules/ai-garment-flow/`. `src/core/ai/AIService.ts`'s `NullAIProvider`/`getAIService()` are dead code, unreferenced by any real process — don't wire a future process through that file, follow the established per-process file-layout pattern (`schema.ts`/`prompt.ts`/`generate.ts` or `analyze.ts`) instead.
 
 ### Phase 2 notes (2026-08-16)
 - Next.js 16 scaffold, Prisma 7 schema (Organization/Auth + Masters + System, 24 models), NextAuth v5 Credentials auth (JWT sessions), RBAC `PermissionService`, document numbering, audit logging, local file storage, `BusinessRuleError`, sidebar/topbar shell, login page, DB-backed dashboard placeholder, and full seed data (roles/permissions/Super Admin) are all in place and verified end-to-end in the browser (login → dashboard showing real DB counts).
@@ -4753,6 +4753,196 @@ to describe at this stage of the workflow, only the fabric itself.
   7" scoping; Value Engineering, Technical Specification (structured tech-pack data beyond the existing
   visual technical flat), and Buyer Comments / Merchandising Action Sheet (the user's own items 11/14/16)
   have zero code or schema anywhere in this codebase — confirmed by grep, not merely unmentioned.
+
+**Correction, 2026-09-08**: Product Suitability (the user's own item 8) was built the same day, immediately
+following Fabric Analysis — see its own dated section immediately below.
+
+## AI Garment Flow — Product/Fabric Suitability (the user's own process 8) (2026-09-08)
+
+Builds directly on Fabric Analysis — assesses which of the company's own real `ProductType` master rows
+(T-Shirt, Jacket, Trouser, Blazer, ...) the just-approved fabric is commercially and technically suited
+for, using ONLY the fabric's own 17 approved observations as evidence. Investigated the dead placeholder's
+own inline copy first ("AI would assess which garment types suit this fabric here once connected") to
+confirm scope, then confirmed `ProductType` — not a new master, not free text — is exactly what "garment
+types" already means in this ERP (a real, company-configurable list; this dev DB has 20 real seeded rows:
+T-Shirt, Jacket, Jeans, Blazer, Kurta, etc.).
+
+- **A text call, not a vision call** — reasons entirely from the already-analysed fabric characteristics
+  (never a raw image), so it uses `requestStructuredTextOutput()`, matching Process 2/5/8/9's own text-only
+  AI calls rather than Process 1/7's vision variant.
+- **Schema** (migration `20260908110000_add_ai_garment_product_suitability`): a fourth independent 5-state
+  `AiGarmentSuitabilityStatus` enum (same "each process's own states evolve independently" reasoning already
+  given twice for the Fabric/Reference Analysis enums), `AiGarmentProductSuitability` (header, 1:1 per
+  project, fully replaced by each re-run — same shape as Fabric/Reference Analysis, not append-only like
+  Commercial Evaluation, since per-item edit/approve matters here and the "item set" is fixed by the
+  company's own ProductType list rather than varying per comparison), `AiGarmentProductSuitabilityItem` (one
+  row per assessed ProductType — a **real hard FK** to `ProductType`, unlike `AiGarmentDesignOption`'s own
+  soft-reference-to-Attachment convention, since ProductType is a genuine permanent master, not a polymorphic
+  attachment; `aiRating`/`aiReasoning` never overwritten, `approvedRating` starts equal and is the only field
+  a later process ever reads — `aiReasoning` itself stays a fixed read-only annotation even when
+  `approvedRating` is overridden, mirroring `AiGarmentFabricObservation.aiManufacturingRelevance`'s own
+  "never independently editable" shape exactly), `AiGarmentProductSuitabilityRun` (append-only audit log,
+  reusing `AiGarmentAnalysisRunStatus` verbatim). **Deliberately no automatic cascading STALE** if the
+  underlying Fabric Analysis is later re-approved with different values — matches this project's own
+  established precedent (BOM Suggestion doesn't cascade-stale off an edited Development Brief direction
+  either); re-running the assessment is a deliberate user action.
+- **The positional zip-back pattern, reused from Process 5**: the AI is given the company's active
+  ProductType rows as "GARMENT TYPE 1", "GARMENT TYPE 2", etc. and must return exactly that many assessments
+  in that same order — never given a real database id it could mishandle. `buildProductSuitabilityResponseSchema(count).length(count)`
+  is the real enforcement (Anthropic's own array-length tool-schema keywords are unreliable, per Process 5's
+  own documented finding), backed by the existing corrective-retry mechanism.
+- **A real, direct data-dependency check inside the service itself** — `runProductSuitability()` checks
+  `AiGarmentFabricAnalysisRepository.findByProjectId(id).status === "APPROVED"` directly, not just relying on
+  `saveWorkflowStep()`'s own gate, mirroring Process 2's own `buildContext()` precedent (a service that
+  genuinely needs upstream data checks it itself, since a caller could reach the service directly without
+  ever having saved the gated workflow step). Also rejects cleanly (`VALIDATION_ERROR`) if the company has
+  zero active `ProductType` rows, naming exactly where to add one (Masters → Garment Attributes → Product
+  Types) — a genuine prerequisite check, not overreach.
+- **New `saveWorkflowStep()` gate**: `PRODUCT_DIRECTIONS` (and anything past it) requires the Product
+  Suitability assessment to be `APPROVED` first — the third instance of this exact gate shape (Reference
+  Analysis→Development Brief, Fabric Analysis→Product Suitability, now Product Suitability→Product
+  Directions), keyed on the target step's position so a direct jump past the gate can't bypass it, and a
+  correct no-op for a REFERENCE-sourced project (`PRODUCT_DIRECTIONS` only exists in
+  `AI_GARMENT_FABRIC_STEPS`).
+- **UI**: `ProductSuitabilityPanel.tsx` mirrors `FabricAnalysisPanel.tsx`'s own AI-assess/status-badge/
+  Approve shape, with a per-item rating override (`<select>` of the 4 rating values, always paired with a
+  symbol+text badge — never color alone, matching `ConfidenceBadge`'s own convention) and a one-click
+  "Reset to AI rating."
+- **22 new unit tests** (`product-suitability.service.test.ts`, plus 4 new gate tests in
+  `ai-garment-project.service.test.ts`). 1187/1187 tests project-wide, `npx tsc --noEmit` and `npx eslint .`
+  clean.
+- **Live end-to-end verification, real Postgres + the real Anthropic API — 16/16 checks passed**: confirmed
+  the `PRODUCT_DIRECTIONS` gate blocks with no Fabric Analysis, confirmed `runProductSuitability()` itself
+  independently rejects with no approved Fabric Analysis; seeded a real approved 17-observation Fabric
+  Analysis (a medium-weight cotton-elastane single-jersey knit) and called the real assessment against all
+  20 of this dev DB's real active `ProductType` rows — the model correctly, specifically rated Blazer/Cargo
+  Pant `NOT_SUITABLE` ("needs a crisp, structured, firm-handle fabric that holds a tailored shape"/"requires
+  a stable, sturdy fabric... that") and Cardigan/Casual Shirt `MARGINALLY_SUITABLE`, with trait-grounded
+  reasoning throughout, not generic boilerplate; edited one item's rating (confirmed status bumps to
+  `UNDER_REVIEW`, the AI's own original stays untouched), reset it back, approved (confirmed the bulk-stamp
+  on the header and every item), confirmed re-approving an already-`APPROVED` assessment is rejected,
+  confirmed the `PRODUCT_DIRECTIONS` gate now passes, confirmed a fresh `GET` returns the approved data. All
+  fixture data (project, fabric analysis + observations, suitability + items, run rows, attachment) deleted
+  afterward.
+- **Not built this phase**: Product Directions or Generate Designs for the FABRIC workflow (the user's own
+  item 9 and the FABRIC-workflow's own design-generation step) — both remain the foundation phase's original
+  inert placeholders; Value Engineering, Technical Specification, and Buyer Comments / Merchandising Action
+  Sheet (items 11/14/16) still have zero code or schema anywhere in this codebase.
+
+**Correction, 2026-09-08**: the closing "Not built this phase" note above became stale the same day —
+Product Directions (item 9) was built immediately afterward; see its own dated section directly below.
+
+## AI Garment Flow — Fabric-to-Garment Development (the user's own process 9) (2026-09-08)
+
+Builds directly on Product/Fabric Suitability — generates real, commercial `AiGarmentDesignDirection`
+design directions from the approved fabric, but scoped only to the garment types the previous process
+already rated `HIGHLY_SUITABLE`/`SUITABLE` (no reference photo exists in this workflow at all, so there is
+no single garment shape to riff on the way Process 2 has — a design direction here must itself specify
+which garment type it's proposing).
+
+- **The central architectural fork, resolved via AskUserQuestion before writing any code**:
+  `AiGarmentDesignDirection`'s only FK back to its own originating run was, until this process,
+  `developmentBriefRunId` — a required, REFERENCE-only field. Two options were presented: (a) invent a
+  second, parallel, lighter "product direction" concept scoped just to this workflow, or (b) widen the same
+  rich 24-field `AiGarmentDesignDirection` table so a FABRIC-sourced project produces genuinely identical,
+  first-class rows, reusing Commercial Evaluation (Process 5), Visual Generation (Process 3), Controlled
+  Variation (Process 4), Apply Fabric (Process 6), and Technical Development (Process 7) completely
+  unchanged. The user chose **(b), "Full design directions,"** explicitly — this is why every one of
+  Processes 3-7's own dated sections above already read as source-type-agnostic without amendment: they were
+  never touched by this process at all, because the schema fork made touching them unnecessary.
+- **Schema** (migration `20260908130000_add_ai_garment_fabric_development`): `AiGarmentDesignDirection`
+  gained a second nullable `fabricDevelopmentRunId` alongside the now-also-nullable `developmentBriefRunId`,
+  enforced by a hand-written CHECK constraint (`ai_garment_design_directions_exactly_one_source_check`,
+  `(development_brief_run_id IS NOT NULL) != (fabric_development_run_id IS NOT NULL)`) — the same
+  two-nullable-FK XOR pattern already proven three times in this codebase (`payment_allocations`,
+  `purchase_invoice_items`, `job_orders`). New `AiGarmentFabricDevelopmentRun` (the run/audit-log row,
+  mirroring every other AI Garment Flow run-log table exactly, plus its own `fabricAnalysisId`/
+  `productSuitabilityId` FKs so a run always records exactly which two approved analyses it was generated
+  from). Two existing shared columns, `suggestedFabricCharacter`/`differentiationFromReference`, gained a
+  documented **adapted-meaning-per-source** (not a new column): for a REFERENCE-sourced direction the former
+  suggests a fabric, the latter compares against the reference photo; for a FABRIC-sourced direction the
+  fabric is already fixed and known, so the former describes how it behaves in this specific design and the
+  latter compares against the *other directions in the same batch* — the same "reuse an existing column with
+  a documented per-source meaning" discipline already used for `STEP_TO_STATUS`'s own
+  `FABRIC_ANALYSIS: "REFERENCE_ANALYSIS"` entry.
+- **`buildFabricContext()`** (`fabric-development-brief.service.ts`) re-verifies both the Fabric Analysis and
+  Product Suitability are genuinely `APPROVED` on every call (never trusting `saveWorkflowStep()`'s own gate
+  alone, matching Process 2's `buildContext()` precedent exactly), filters the suitability's own items down
+  to `HIGHLY_SUITABLE`/`SUITABLE` only, and rejects with a clean `VALIDATION_ERROR` if that filtered set is
+  empty. The hidden system prompt (`src/core/ai/fabric-development-brief/prompt.ts`) explicitly states no
+  reference image exists, restricts proposals to the pre-approved garment-type list only, instructs the
+  model to describe how the already-fixed fabric behaves rather than suggest an alternative, and requires
+  each direction's own name to state the specific garment type (e.g. "Classic Crew Neck T-Shirt," not just
+  "Design 1") — confirmed live, every generated name did exactly this. `buildToolInputSchema` is re-exported
+  directly from `@/core/ai/development-brief/prompt` (not duplicated) since the output shape is genuinely
+  identical to Process 2's own.
+- **A real self-caught architectural mistake during design, not a tool error**: an early draft bundled
+  "rebuild context" and "call the AI" into one `regenerateFabricDirectionForRun()` helper for the regenerate
+  path — recognized before writing the caller that this would change `regenerateDesignDirection()`'s own
+  error-handling boundary for the FABRIC branch only (REFERENCE keeps "build context" outside its try/catch,
+  where a stale-analysis error throws directly, and "call the AI" inside it, where an AI-service error gets
+  mapped). Split into `buildFabricContextForRegenerate()` (context-build only, called outside the try) and a
+  separately re-exported raw AI-call function `regenerateFabricDesignDirectionAi` (called inside it), keeping
+  both branches of `development-brief.service.ts`'s `regenerateDesignDirection()` structurally identical.
+- **`directionToRow()` extracted into a new neutral file**, `design-direction-row.ts` — both
+  `development-brief.service.ts` and `fabric-development-brief.service.ts` need the identical 24-field
+  mapping, and importing directly from each other would have been circular.
+- **A real cross-cutting TS2345 error, found via `tsc`, not guessed at**: widening
+  `developmentBriefRunId` to nullable broke `visual-generation.service.ts`'s own `buildContext()`, which
+  looked up the originating run unconditionally by that field. Fixed by branching the run-lookup on whichever
+  FK is actually set (mirroring the same branching already used in `regenerateDesignDirection()`) — a
+  `category` field correctly falls back to `""` for a FABRIC-sourced direction, since no `garmentCategory`
+  concept exists in that snapshot. A full clean `tsc --noEmit` pass confirmed this was the *only* other place
+  in the codebase the FK widening reached — Commercial Evaluation, BOM Suggestion, Cost Analysis, Fabric
+  Application, and Technical Development all consume `AiGarmentDesignDirection` only via its own scalar
+  fields/id, never via `developmentBriefRunId`.
+- **New `saveWorkflowStep()` gate**: `PRODUCT_DIRECTIONS` itself gets the pre-existing Process 8 gate
+  (Product Suitability must be approved); a **second, new** gate requires at least one `APPROVED` design
+  direction before continuing *past* `PRODUCT_DIRECTIONS` — the fourth instance of this exact "approve at
+  least one direction" shape (mirroring Process 2's own `DEVELOPMENT_BRIEF`→`GENERATE_VARIATIONS` gate
+  precisely), keyed on the target step's position so a direct jump can't bypass it, and a correct no-op for a
+  REFERENCE-sourced project.
+- **UI**: `FabricDevelopmentBriefRequestForm.tsx`/`FabricDevelopmentBriefPanel.tsx` mirror
+  `DevelopmentBriefRequestForm.tsx`/`DevelopmentBriefPanel.tsx` exactly, minus the Garment Category and
+  Preferred Fabric fields (neither applies — Product Suitability already determined which garment types are
+  viable, and the fabric is already fixed) — reusing the **existing, unchanged** `/development-brief/directions`
+  GET route and `DesignDirectionCard` component verbatim, since both were already source-type-agnostic.
+  `GENERATE_VARIATIONS` and `GENERATE_DESIGNS` were merged into one shared render branch reusing Process 3's
+  own `VisualGenerationPanel` for both — a documented judgment call, not separately re-confirmed with the
+  user: `GENERATE_DESIGNS` previously showed a stale "add candidates manually" placeholder that predates real
+  `AiGarmentDesignDirection` rows existing for a FABRIC-sourced project at all, and `VisualGenerationPanel` is
+  already keyed only on `projectId` with zero source-type assumptions, so this is zero-new-code reuse, not
+  new AI-process scope.
+- **62 new/revised unit tests** (60 in `fabric-development-brief.service.test.ts` — `buildFabricContext`'s
+  three rejection branches plus the HIGHLY_SUITABLE/SUITABLE filter, the active-run duplicate guard, both AI
+  error-mapping paths, the fabricDevelopmentRunId-not-developmentBriefRunId tagging, and
+  `buildFabricContextForRegenerate`'s own not-found/1-direction/designBalance-preserved behavior; 6 new gate
+  tests in `ai-garment-project.service.test.ts`, including one confirming the new gate is a genuine no-op for
+  a REFERENCE-sourced project). Two genuinely dead functions (`aiButtonLabel`/`AiPlaceholderButton` in
+  `AiGarmentProjectWorkflowPanel.tsx`, orphaned once every AI step gained a real panel) were deleted rather
+  than left as unused-var lint warnings. 1201/1201 tests project-wide, `npx tsc --noEmit` and `npx eslint .`
+  both clean.
+- **Live end-to-end verification, real Postgres + the real Anthropic API — 12/12 checks passed**: seeded a
+  real approved Fabric Analysis (180 GSM combed cotton jersey) and a real approved Product Suitability
+  assessment (T-Shirt rated `HIGHLY_SUITABLE`) on a fresh FABRIC-sourced test project, confirmed the new gate
+  blocks `GENERATE_DESIGNS` beforehand, then called `createFabricDevelopmentBrief()` for real — the model
+  returned 3 genuinely differentiated, garment-type-named directions ("Classic Crew Neck T-Shirt" score 85/
+  LOW complexity, "Boxy Drop-Shoulder Oversized T-Shirt" score 75/MEDIUM, "Asymmetric Twist-Seam Fashion
+  T-Shirt" score 55/HIGH) — confirmed every row carried `fabricDevelopmentRunId` set and
+  `developmentBriefRunId` null, confirmed the top-scored direction was flagged recommended; confirmed
+  `editDesignDirection`/`decideDesignDirection` both work unchanged on a FABRIC-sourced direction; confirmed
+  the new gate now passes once one direction is `APPROVED`; confirmed `regenerateDesignDirection()`'s FABRIC
+  branch succeeds against the real API and correctly preserves `fabricDevelopmentRunId`/bumps version;
+  confirmed `AiGarmentFabricDevelopmentRunRepository.findById()` resolves a real run with its own
+  `contextSnapshotJson` for the direction `visual-generation.service.ts`'s `buildContext()` branch would read
+  from. All fixture data (project, fabric analysis + observation, suitability + item, design directions, run
+  rows, attachment) deleted afterward.
+- **Not built this phase**: Commercial Design Evaluation/Apply Fabric/Technical Development/BOM/Costing/
+  Production Handoff for a FABRIC-sourced project were **not separately re-verified live in this pass** —
+  they were already proven source-type-agnostic by their own original build/verification passes (Processes
+  5-10 above), and this process's own design confirms it introduces zero new touchpoints into any of them;
+  Value Engineering, Technical Specification, and Buyer Comments / Merchandising Action Sheet (the user's own
+  items 11/14/16) still have zero code or schema anywhere in this codebase.
 
 ## Recommended Stack
 

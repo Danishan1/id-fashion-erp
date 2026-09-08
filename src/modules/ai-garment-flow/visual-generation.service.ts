@@ -12,6 +12,7 @@ import {
   type VisualGenerationContext,
 } from "@/core/ai/image-generation/prompt";
 import { AiGarmentDesignDirectionRepository, AiGarmentDevelopmentBriefRunRepository } from "./development-brief.repository";
+import { AiGarmentFabricDevelopmentRunRepository } from "./fabric-development-brief.repository";
 import { AiGarmentImageGenerationRunRepository, AiGarmentGeneratedImageRepository } from "./visual-generation.repository";
 import type { GenerateVisualsInput, CreateVariationInput, ImageDecisionInput, UpdateImageNotesInput } from "./visual-generation.schema";
 
@@ -77,10 +78,31 @@ async function assertNoActiveRun(designDirectionId: string) {
   }
 }
 
-/** Every field maps to a real, already-approved structured value — never free text a user types for this prompt. Market/season/category come from the brief's own context snapshot (the resolved values at brief-generation time), not re-derived from the project's possibly-since-changed live state. */
+/**
+ * Every field maps to a real, already-approved structured value — never free
+ * text a user types for this prompt. Market/season/category come from the
+ * originating run's own context snapshot (the resolved values at
+ * brief-generation time), not re-derived from the project's possibly-since-
+ * changed live state. Branches on which FK is set (same "derive from the
+ * real state" discipline as regenerateDesignDirection's own branch) — a
+ * FABRIC-sourced direction's own snapshot has no garmentCategory field at
+ * all (that concept doesn't apply the same way; the specific garment type
+ * is already woven into the direction's own designDirectionName/silhouette
+ * text instead), so `category` simply falls back to "" for it, same as the
+ * existing fallback already handles a missing/null value.
+ */
 async function buildContext(direction: OwnedDirection): Promise<VisualGenerationContext> {
-  const run = await AiGarmentDevelopmentBriefRunRepository.findById(direction.developmentBriefRunId);
-  const snapshot = (run?.contextSnapshotJson as Record<string, unknown> | null) ?? {};
+  const snapshot = direction.developmentBriefRunId
+    ? ((await AiGarmentDevelopmentBriefRunRepository.findById(direction.developmentBriefRunId))?.contextSnapshotJson as Record<
+        string,
+        unknown
+      > | null) ?? {}
+    : direction.fabricDevelopmentRunId
+      ? ((await AiGarmentFabricDevelopmentRunRepository.findById(direction.fabricDevelopmentRunId))?.contextSnapshotJson as Record<
+          string,
+          unknown
+        > | null) ?? {}
+      : {};
 
   return {
     category: (snapshot.garmentCategory as string | null) ?? "",

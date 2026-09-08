@@ -9,7 +9,6 @@ import {
   PROMPT_VERSION,
 } from "@/core/ai/development-brief/generate";
 import type { DevelopmentBriefContext } from "@/core/ai/development-brief/prompt";
-import type { DesignDirectionOutput } from "@/core/ai/development-brief/schema";
 import type { Prisma } from "@prisma/client";
 import { AiGarmentProjectRepository } from "./ai-garment-project.repository";
 import { AiGarmentReferenceAnalysisRepository } from "./reference-analysis.repository";
@@ -19,6 +18,8 @@ import {
   AiGarmentDesignDirectionRepository,
   AiGarmentDevelopmentBriefRunRepository,
 } from "./development-brief.repository";
+import { directionToRow } from "./design-direction-row";
+import { buildFabricContextForRegenerate, regenerateFabricDesignDirectionAi } from "./fabric-development-brief.service";
 import type {
   CreateDevelopmentBriefInput,
   EditDesignDirectionInput,
@@ -143,52 +144,10 @@ async function buildContext(
   return { context, referenceAnalysisId: analysis.id, contextSnapshot };
 }
 
-function directionToRow(
-  d: DesignDirectionOutput,
-  common: {
-    companyId: string;
-    projectId: string;
-    developmentBriefRunId: string;
-    createdByUserId: string;
-    aiRawJson: Prisma.InputJsonValue;
-  }
-) {
-  return {
-    ...common,
-    designDirectionName: d.designDirectionName,
-    commercialClassification: d.commercialClassification,
-    targetConsumer: d.targetConsumer,
-    silhouette: d.silhouette,
-    garmentLength: d.garmentLength,
-    fit: d.fit,
-    neckline: d.neckline,
-    collar: d.collar,
-    sleeve: d.sleeve,
-    shoulderConstruction: d.shoulderConstruction,
-    frontConstruction: d.frontConstruction,
-    backConstruction: d.backConstruction,
-    closure: d.closure,
-    pocket: d.pocket,
-    waistTreatment: d.waistTreatment,
-    hem: d.hem,
-    keyNewDesignFeature: d.keyNewDesignFeature,
-    suggestedFabricCharacter: d.suggestedFabricCharacter,
-    suggestedTrims: d.suggestedTrims,
-    productionComplexity: d.productionComplexity,
-    expectedFabricConsumption: d.expectedFabricConsumption,
-    targetPriceCompatibilityLevel: d.targetPriceCompatibilityLevel,
-    commercialRationale: d.commercialRationale,
-    manufacturingRisk: d.manufacturingRisk,
-    differentiationFromReference: d.differentiationFromReference,
-    commercialPotentialScore: d.scores.commercialPotential,
-    buyerFitScore: d.scores.buyerFit,
-    manufacturingEaseScore: d.scores.manufacturingEase,
-    targetPriceCompatibilityScore: d.scores.targetPriceCompatibility,
-    fabricEfficiencyScore: d.scores.fabricEfficiency,
-    designFreshnessScore: d.scores.designFreshness,
-    overallScore: d.overallScore,
-  };
-}
+// directionToRow lives in ./design-direction-row.ts now — shared with
+// fabric-development-brief.service.ts, which produces the exact same
+// 24-field shape into the exact same table. Kept in a neutral file so
+// neither service needs to import the other for it.
 
 export async function createDevelopmentBrief(actor: ActorContext, projectId: string, input: CreateDevelopmentBriefInput) {
   const { context, referenceAnalysisId, contextSnapshot } = await buildContext(actor.companyId, projectId, input);
@@ -330,29 +289,57 @@ export async function decideDesignDirection(actor: ActorContext, directionId: st
   return updated;
 }
 
+/**
+ * Branches purely on which FK is set on the direction being regenerated —
+ * the same "derive from the real state, never assume" discipline used
+ * throughout this codebase. Each branch's own context-build step stays
+ * OUTSIDE the try/catch below (a stale-analysis BusinessRuleError should
+ * propagate directly, not be reinterpreted as an AI-service error) and only
+ * the actual AI call goes inside it — exactly the boundary the original
+ * REFERENCE-only version of this function already had, now preserved for
+ * both sources rather than narrowed for either.
+ */
 export async function regenerateDesignDirection(actor: ActorContext, directionId: string) {
   const direction = await getOwnedDirection(actor.companyId, directionId);
-  const run = await AiGarmentDevelopmentBriefRunRepository.findById(direction.developmentBriefRunId);
-  if (!run) throw new BusinessRuleError("NOT_FOUND", "The originating development brief run could not be found.");
 
-  const { context } = await buildContext(actor.companyId, direction.projectId, {
-    targetMarket: (run.contextSnapshotJson as Record<string, unknown>).targetMarket as string | undefined,
-    targetCustomerProfile: (run.contextSnapshotJson as Record<string, unknown>).targetCustomerProfile as string | undefined,
-    preferredFabric: (run.contextSnapshotJson as Record<string, unknown>).preferredFabric as string | undefined,
-    factoryCapabilities: (run.contextSnapshotJson as Record<string, unknown>).factoryCapabilities as string | undefined,
-    targetSellingPrice: (run.contextSnapshotJson as Record<string, unknown>).targetSellingPrice as number | undefined,
-    currencyCode: (run.contextSnapshotJson as Record<string, unknown>).currencyCode as string | undefined,
-    directionCount: 1,
-    designBalance: run.designBalance,
-  });
+  let callAi: () => ReturnType<typeof aiRegenerateDesignDirection>;
+  let runFk: { developmentBriefRunId?: string; fabricDevelopmentRunId?: string };
+
+  if (direction.developmentBriefRunId) {
+    const run = await AiGarmentDevelopmentBriefRunRepository.findById(direction.developmentBriefRunId);
+    if (!run) throw new BusinessRuleError("NOT_FOUND", "The originating development brief run could not be found.");
+
+    const { context } = await buildContext(actor.companyId, direction.projectId, {
+      targetMarket: (run.contextSnapshotJson as Record<string, unknown>).targetMarket as string | undefined,
+      targetCustomerProfile: (run.contextSnapshotJson as Record<string, unknown>).targetCustomerProfile as string | undefined,
+      preferredFabric: (run.contextSnapshotJson as Record<string, unknown>).preferredFabric as string | undefined,
+      factoryCapabilities: (run.contextSnapshotJson as Record<string, unknown>).factoryCapabilities as string | undefined,
+      targetSellingPrice: (run.contextSnapshotJson as Record<string, unknown>).targetSellingPrice as number | undefined,
+      currencyCode: (run.contextSnapshotJson as Record<string, unknown>).currencyCode as string | undefined,
+      directionCount: 1,
+      designBalance: run.designBalance,
+    });
+    callAi = () => aiRegenerateDesignDirection(context);
+    runFk = { developmentBriefRunId: direction.developmentBriefRunId };
+  } else if (direction.fabricDevelopmentRunId) {
+    const { context } = await buildFabricContextForRegenerate(actor.companyId, direction.fabricDevelopmentRunId);
+    callAi = () => regenerateFabricDesignDirectionAi(context);
+    runFk = { fabricDevelopmentRunId: direction.fabricDevelopmentRunId };
+  } else {
+    // Structurally unreachable given the DB's own exactly-one-source CHECK
+    // constraint — kept as a defensive backstop, matching this codebase's
+    // own "the DB is the real guarantee, the app-layer check is a clean
+    // error message on top of it" convention.
+    throw new BusinessRuleError("VALIDATION_ERROR", "This design direction has no originating generation run.");
+  }
 
   try {
-    const result = await aiRegenerateDesignDirection(context);
+    const result = await callAi();
     await AiGarmentDesignDirectionRepository.update(directionId, {
       ...directionToRow(result.direction, {
         companyId: actor.companyId,
         projectId: direction.projectId,
-        developmentBriefRunId: direction.developmentBriefRunId,
+        ...runFk,
         createdByUserId: actor.userId,
         aiRawJson: result.direction,
       }),

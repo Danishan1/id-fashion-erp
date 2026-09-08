@@ -67,6 +67,9 @@ vi.mock("./reference-analysis.repository", () => ({
 vi.mock("./fabric-analysis.repository", () => ({
   AiGarmentFabricAnalysisRepository: { findByProjectId: vi.fn() },
 }));
+vi.mock("./product-suitability.repository", () => ({
+  AiGarmentProductSuitabilityRepository: { findByProjectId: vi.fn() },
+}));
 vi.mock("./development-brief.repository", () => ({
   AiGarmentDesignDirectionRepository: { countByStatus: vi.fn() },
 }));
@@ -78,6 +81,7 @@ const { SalesOrderRepository } = await import("@/modules/sales-orders/sales-orde
 const { AiGarmentProjectRepository, AiGarmentDesignOptionRepository } = await import("./ai-garment-project.repository");
 const { AiGarmentReferenceAnalysisRepository } = await import("./reference-analysis.repository");
 const { AiGarmentFabricAnalysisRepository } = await import("./fabric-analysis.repository");
+const { AiGarmentProductSuitabilityRepository } = await import("./product-suitability.repository");
 const { AiGarmentDesignDirectionRepository } = await import("./development-brief.repository");
 const {
   createAiGarmentProject,
@@ -124,6 +128,9 @@ beforeEach(() => {
   // Same "default to already-past-the-gate" convenience as the Reference
   // Analysis mock above, for tests unrelated to Process 7's own gate.
   vi.mocked(AiGarmentFabricAnalysisRepository.findByProjectId).mockReset().mockResolvedValue({ status: "APPROVED" } as never);
+  // Same "default to already-past-the-gate" convenience as the other two AI
+  // analysis mocks above, for tests unrelated to this gate.
+  vi.mocked(AiGarmentProductSuitabilityRepository.findByProjectId).mockReset().mockResolvedValue({ status: "APPROVED" } as never);
 });
 
 describe("createAiGarmentProject", () => {
@@ -370,6 +377,139 @@ describe("saveWorkflowStep — the state machine", () => {
         "proj-1",
         expect.objectContaining({ currentStepKey: "UPLOAD_FABRIC" })
       );
+    });
+  });
+
+  describe("Process 8's own PRODUCT_DIRECTIONS gate mirrors the PRODUCT_SUITABILITY one exactly", () => {
+    it("blocks entering PRODUCT_DIRECTIONS itself without an approved suitability assessment", async () => {
+      vi.mocked(AiGarmentProjectRepository.findAnyById).mockResolvedValue({
+        id: "proj-1",
+        sourceType: "FABRIC",
+        status: "DESIGN_DEVELOPMENT",
+        completedStepKeys: ["PROJECT_INFO", "UPLOAD_FABRIC", "FABRIC_ANALYSIS", "PRODUCT_SUITABILITY"],
+      } as never);
+      vi.mocked(AiGarmentProductSuitabilityRepository.findByProjectId).mockResolvedValue(null);
+
+      await expect(saveWorkflowStep(actor, "proj-1", { stepKey: "PRODUCT_DIRECTIONS" })).rejects.toMatchObject({
+        code: "INVALID_STATE_TRANSITION",
+      });
+    });
+
+    it("blocks jumping straight PAST PRODUCT_DIRECTIONS to a later step without an approved suitability assessment (the bypass this gate closes)", async () => {
+      vi.mocked(AiGarmentProjectRepository.findAnyById).mockResolvedValue({
+        id: "proj-1",
+        sourceType: "FABRIC",
+        status: "DESIGN_DEVELOPMENT",
+        completedStepKeys: ["PROJECT_INFO", "UPLOAD_FABRIC", "FABRIC_ANALYSIS", "PRODUCT_SUITABILITY"],
+      } as never);
+      vi.mocked(AiGarmentProductSuitabilityRepository.findByProjectId).mockResolvedValue(null);
+
+      await expect(saveWorkflowStep(actor, "proj-1", { stepKey: "GENERATE_DESIGNS" })).rejects.toMatchObject({
+        code: "INVALID_STATE_TRANSITION",
+      });
+      expect(AiGarmentProjectRepository.update).not.toHaveBeenCalled();
+    });
+
+    it("allows continuing to PRODUCT_DIRECTIONS once the suitability assessment is approved", async () => {
+      vi.mocked(AiGarmentProjectRepository.findAnyById).mockResolvedValue({
+        id: "proj-1",
+        sourceType: "FABRIC",
+        status: "DESIGN_DEVELOPMENT",
+        completedStepKeys: ["PROJECT_INFO", "UPLOAD_FABRIC", "FABRIC_ANALYSIS", "PRODUCT_SUITABILITY"],
+      } as never);
+
+      await saveWorkflowStep(actor, "proj-1", { stepKey: "PRODUCT_DIRECTIONS" });
+
+      expect(AiGarmentProjectRepository.update).toHaveBeenCalledWith(
+        "proj-1",
+        expect.objectContaining({ currentStepKey: "PRODUCT_DIRECTIONS" })
+      );
+    });
+
+    it("does not apply to a REFERENCE-sourced project at all (PRODUCT_DIRECTIONS isn't one of its steps)", async () => {
+      vi.mocked(AiGarmentProjectRepository.findAnyById).mockResolvedValue({
+        id: "proj-1",
+        sourceType: "REFERENCE",
+        status: "DESIGN_DEVELOPMENT",
+        completedStepKeys: ["PROJECT_INFO", "UPLOAD_REFERENCE", "REFERENCE_ANALYSIS", "DEVELOPMENT_BRIEF"],
+      } as never);
+      vi.mocked(AiGarmentProductSuitabilityRepository.findByProjectId).mockResolvedValue(null);
+
+      await saveWorkflowStep(actor, "proj-1", { stepKey: "COMMERCIAL_EVALUATION" });
+
+      expect(AiGarmentProductSuitabilityRepository.findByProjectId).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Process 9's own gate mirrors the DEVELOPMENT_BRIEF 'at least one approved design direction' gate exactly, for the FABRIC workflow's own equivalent step", () => {
+    it("blocks jumping straight past PRODUCT_DIRECTIONS with zero approved design directions (the bypass this gate closes)", async () => {
+      vi.mocked(AiGarmentProjectRepository.findAnyById).mockResolvedValue({
+        id: "proj-1",
+        sourceType: "FABRIC",
+        status: "DESIGN_DEVELOPMENT",
+        completedStepKeys: ["PROJECT_INFO", "UPLOAD_FABRIC", "FABRIC_ANALYSIS", "PRODUCT_SUITABILITY", "PRODUCT_DIRECTIONS"],
+      } as never);
+      vi.mocked(AiGarmentDesignDirectionRepository.countByStatus).mockResolvedValue(0);
+
+      // Jumping directly to COMMERCIAL_EVALUATION (not the immediate next
+      // step, GENERATE_DESIGNS) must still be blocked, not just an exact
+      // stepKey === "GENERATE_DESIGNS" match.
+      await expect(saveWorkflowStep(actor, "proj-1", { stepKey: "COMMERCIAL_EVALUATION" })).rejects.toMatchObject({
+        code: "INVALID_STATE_TRANSITION",
+      });
+      expect(AiGarmentProjectRepository.update).not.toHaveBeenCalled();
+    });
+
+    it("allows continuing past PRODUCT_DIRECTIONS once at least one design direction is approved", async () => {
+      vi.mocked(AiGarmentProjectRepository.findAnyById).mockResolvedValue({
+        id: "proj-1",
+        sourceType: "FABRIC",
+        status: "DESIGN_DEVELOPMENT",
+        completedStepKeys: ["PROJECT_INFO", "UPLOAD_FABRIC", "FABRIC_ANALYSIS", "PRODUCT_SUITABILITY", "PRODUCT_DIRECTIONS"],
+      } as never);
+      vi.mocked(AiGarmentDesignDirectionRepository.countByStatus).mockResolvedValue(1);
+
+      await saveWorkflowStep(actor, "proj-1", { stepKey: "GENERATE_DESIGNS" });
+
+      expect(AiGarmentProjectRepository.update).toHaveBeenCalledWith(
+        "proj-1",
+        expect.objectContaining({ currentStepKey: "GENERATE_DESIGNS" })
+      );
+    });
+
+    it("does not block re-entering PRODUCT_DIRECTIONS itself (only steps strictly past it)", async () => {
+      vi.mocked(AiGarmentProjectRepository.findAnyById).mockResolvedValue({
+        id: "proj-1",
+        sourceType: "FABRIC",
+        status: "DESIGN_DEVELOPMENT",
+        completedStepKeys: ["PROJECT_INFO", "UPLOAD_FABRIC", "FABRIC_ANALYSIS", "PRODUCT_SUITABILITY"],
+      } as never);
+      vi.mocked(AiGarmentDesignDirectionRepository.countByStatus).mockResolvedValue(0);
+
+      await saveWorkflowStep(actor, "proj-1", { stepKey: "PRODUCT_DIRECTIONS" });
+
+      expect(AiGarmentProjectRepository.update).toHaveBeenCalledWith(
+        "proj-1",
+        expect.objectContaining({ currentStepKey: "PRODUCT_DIRECTIONS" })
+      );
+    });
+
+    it("does not apply to a REFERENCE-sourced project at all", async () => {
+      vi.mocked(AiGarmentProjectRepository.findAnyById).mockResolvedValue({
+        id: "proj-1",
+        sourceType: "REFERENCE",
+        status: "DESIGN_DEVELOPMENT",
+        completedStepKeys: ["PROJECT_INFO", "UPLOAD_REFERENCE", "REFERENCE_ANALYSIS", "DEVELOPMENT_BRIEF"],
+      } as never);
+      vi.mocked(AiGarmentDesignDirectionRepository.countByStatus).mockResolvedValue(1);
+
+      await saveWorkflowStep(actor, "proj-1", { stepKey: "COMMERCIAL_EVALUATION" });
+
+      // The pre-existing DEVELOPMENT_BRIEF gate is what calls countByStatus
+      // here for the REFERENCE workflow — confirm it's called exactly once
+      // (by that gate), not twice (which would mean this FABRIC-only gate
+      // wrongly fired a second, redundant check for a REFERENCE project).
+      expect(AiGarmentDesignDirectionRepository.countByStatus).toHaveBeenCalledTimes(1);
     });
   });
 });
