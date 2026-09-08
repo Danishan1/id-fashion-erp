@@ -13,6 +13,7 @@ import { SampleVersionRepository } from "@/modules/sampling/sample.repository";
 import { AiGarmentProjectRepository } from "./ai-garment-project.repository";
 import { AiGarmentDesignDirectionRepository } from "./development-brief.repository";
 import { describeFabricDetail } from "./fabric-detail-description";
+import { stepsForSourceType } from "./ai-garment-project.schema";
 import { saveWorkflowStep } from "./ai-garment-project.service";
 import { AiGarmentCostAnalysisRunRepository, AiGarmentCostAnalysisRepository } from "./cost-analysis.repository";
 import type { GenerateCostAnalysisInput } from "./cost-analysis.schema";
@@ -183,22 +184,21 @@ export async function getLatestCostAnalysis(companyId: string, projectId: string
 }
 
 /**
- * "Mark Costing Complete" — the one genuinely terminal action in this
- * workflow: COSTING is the last step in both stepsForSourceType() sequences,
- * so there is no "next step" to advance to the way completeBomStep() does.
- * Requires a linked Sample Request whose current version has actually been
- * priced (SampleVersion.finalTotal set) — the real, existing fact this
- * module derives rather than duplicates, the same "bom-mrp's own
- * Bom.approvedVersionId" reasoning completeBomStep() already established,
- * just reading Sampling's costing state instead of bom-mrp's approval
- * state. Reuses the existing, unchanged saveWorkflowStep() to record COSTING
- * as completed, then a single guarded write flips the project's own status
- * to COMPLETED and stamps who/when — a legitimate forward move per
- * STATUS_ORDER (skipping the reserved, not-yet-wired SAMPLING/BUYER_REVIEW/
- * APPROVED/PRODUCTION statuses, the same "reserved enum value" precedent
- * already established elsewhere in this codebase), guarded against a
- * double-click the same way setProductIdGuarded/setSampleRequestIdGuarded
- * guard graduation.
+ * "Mark Costing Complete" — advances from COSTING into Process 10's own
+ * SAMPLING_REVIEW step (the real handoff into Sampling's own state machine
+ * and, eventually, Production). Requires a linked Sample Request whose
+ * current version has actually been priced (SampleVersion.finalTotal set) —
+ * the real, existing fact this module derives rather than duplicates, the
+ * same "bom-mrp's own Bom.approvedVersionId" reasoning completeBomStep()
+ * already established, just reading Sampling's costing state instead of
+ * bom-mrp's approval state. Stamps the one-time "costing reviewed"
+ * milestone (never re-stamped on a later re-run of the AI analysis — see
+ * markCostingReviewed's own guard) and reuses the existing, unchanged
+ * saveWorkflowStep() twice, the same completeBomStep()/
+ * completeSamplingReviewStep() "advance to the next real step" pattern —
+ * this is no longer this project's own terminal action (Process 10 added
+ * real steps after COSTING; see the schema comment on
+ * productionHandoffCompletedAt for the real terminal milestone).
  */
 export async function completeCostingStep(actor: ActorContext, projectId: string) {
   const project = await AiGarmentProjectRepository.findAnyById(actor.companyId, projectId);
@@ -216,15 +216,14 @@ export async function completeCostingStep(actor: ActorContext, projectId: string
   }
 
   await saveWorkflowStep(actor, projectId, { stepKey: "COSTING" });
+  await AiGarmentProjectRepository.markCostingReviewed(projectId, actor.userId);
 
-  // COSTING is confirmed the last step in both stepsForSourceType() sequences
-  // — no "next step" to advance to the way completeBomStep() does, so this
-  // call directly marks the project's own milestone complete instead. The
-  // guarded updateMany is idempotent by design: if it loses a race to a
-  // concurrent duplicate request, the end state (COMPLETED, stamped once by
-  // whichever request won) is identical either way, so a `count === 0` here
-  // is not an error worth surfacing.
-  await AiGarmentProjectRepository.markCostingComplete(projectId, actor.userId);
+  const steps = stepsForSourceType(project.sourceType);
+  const currentIndex = steps.findIndex((s) => s.key === "COSTING");
+  const nextStep = steps[currentIndex + 1];
+  if (nextStep) {
+    await saveWorkflowStep(actor, projectId, { stepKey: nextStep.key });
+  }
 
   await writeAuditLog({
     companyId: actor.companyId,
@@ -232,7 +231,7 @@ export async function completeCostingStep(actor: ActorContext, projectId: string
     tableName: "ai_garment_projects",
     recordId: projectId,
     action: "UPDATE",
-    newValues: { costingCompleted: true, finalTotal: Number(version.finalTotal) },
+    newValues: { costingReviewed: true, finalTotal: Number(version.finalTotal) },
   });
 
   return AiGarmentProjectRepository.findAnyById(actor.companyId, projectId);

@@ -4,6 +4,7 @@ import { generateDocumentNumber, advanceMasterCodeSequence } from "@/core/number
 import type { ListQuery } from "@/lib/list-query";
 import { todayIsoDate } from "@/lib/date";
 import { createSampleRequest } from "@/modules/sampling/sample.service";
+import { SalesOrderRepository } from "@/modules/sales-orders/sales-order.repository";
 import { CustomerRepository } from "@/modules/customers/customer.repository";
 import { ProductRepository } from "@/modules/products/product.repository";
 import { SupplierRepository } from "@/modules/suppliers/supplier.repository";
@@ -25,6 +26,7 @@ import {
   type CreateDesignOptionInput,
   type CreateSampleRequestFromProjectInput,
   type FabricDetailInput,
+  type LinkSalesOrderToProjectInput,
   type SaveWorkflowStepInput,
 } from "./ai-garment-project.schema";
 import { AiGarmentProjectStatus, type Prisma } from "@prisma/client";
@@ -89,7 +91,50 @@ const STEP_TO_STATUS: Partial<Record<string, AiGarmentProjectStatus>> = {
   TECHNICAL_DEVELOPMENT: "TECHNICAL_DEVELOPMENT",
   BOM: "TECHNICAL_DEVELOPMENT",
   COSTING: "COSTING",
+  // Entering this step means the physical sample is now in progress. The
+  // BUYER_REVIEW/APPROVED sub-states within it are never reached via a step
+  // save at all -- they're derived live from the linked SampleRequest's own
+  // real status by getAiGarmentProjectById() (see deriveStatusFromSample()
+  // below), since that decision happens entirely inside Sampling's own
+  // workflow, outside this wizard's control.
+  SAMPLING_REVIEW: "SAMPLING",
+  PRODUCTION: "PRODUCTION",
 };
+
+/**
+ * SAMPLING/BUYER_REVIEW/APPROVED aren't reached by saving a step -- they
+ * happen inside Sampling's own state machine, entirely outside this
+ * wizard's control (see recordSampleApproval() in sample.service.ts). This
+ * derives the correct AiGarmentProjectStatus from the linked SampleRequest's
+ * own real status, the same "derive real state, never trust a stored label
+ * that can drift" discipline this project has used since Sampling's own
+ * Hold/Resume bug. Returns null when no confident mapping applies (DRAFT/
+ * ON_HOLD/CANCELLED-before-ever-submitting) so the caller leaves the current
+ * status untouched rather than guessing.
+ */
+function deriveStatusFromSampleStatus(sampleStatus: string): AiGarmentProjectStatus | null {
+  switch (sampleStatus) {
+    case "REQUESTED":
+    case "TECH_PACK_READY":
+    case "IN_DEVELOPMENT":
+    case "INTERNAL_QC":
+      return "SAMPLING";
+    case "SUBMITTED_TO_CUSTOMER":
+    case "CUSTOMER_FEEDBACK_RECEIVED":
+    case "REVISION_REQUESTED":
+      return "BUYER_REVIEW";
+    case "APPROVED":
+      return "APPROVED";
+    case "REJECTED":
+      // The sample's own CANCELLED status is deliberately NOT mapped here --
+      // a cancelled Sample Request doesn't mean the project itself is
+      // rejected (the merchandiser may raise a fresh one), whereas a real
+      // buyer REJECTED decision does end this project's own path forward.
+      return "REJECTED";
+    default:
+      return null;
+  }
+}
 
 function nextStatusForStep(current: AiGarmentProjectStatus, stepKey: string): AiGarmentProjectStatus {
   const mapped = STEP_TO_STATUS[stepKey];
@@ -158,8 +203,22 @@ export async function listAiGarmentProjects(companyId: string, query: ListQuery,
 }
 
 export async function getAiGarmentProjectById(companyId: string, id: string) {
-  const project = await AiGarmentProjectRepository.findByIdWithDetails(companyId, id);
+  let project = await AiGarmentProjectRepository.findByIdWithDetails(companyId, id);
   if (!project) throw new BusinessRuleError("NOT_FOUND", "AI Garment Flow project not found.", { id });
+
+  // Self-healing derivation at read time, the same "never trust a stored
+  // label that can silently drift from real state" discipline already
+  // proven by SubmoduleVisibility's own locking logic — only while genuinely
+  // in-flight (SAMPLING/BUYER_REVIEW), never touching a status this project
+  // has already moved past on its own (APPROVED/COMPLETED/REJECTED/etc.).
+  if (project.sampleRequest && (project.status === "SAMPLING" || project.status === "BUYER_REVIEW")) {
+    const derived = deriveStatusFromSampleStatus(project.sampleRequest.status);
+    if (derived && derived !== project.status) {
+      await AiGarmentProjectRepository.update(id, { status: derived });
+      project = (await AiGarmentProjectRepository.findByIdWithDetails(companyId, id)) ?? project;
+    }
+  }
+
   return project;
 }
 
@@ -639,4 +698,147 @@ export async function createSampleRequestFromProject(
 
   const updated = await AiGarmentProjectRepository.findAnyById(actor.companyId, id);
   return { project: updated, sampleRequest };
+}
+
+/**
+ * "Continue to Production" — SAMPLING_REVIEW's own advance. Re-fetches
+ * through getAiGarmentProjectById() first so the derived status (see
+ * deriveStatusFromSampleStatus above) is freshest before gating on it,
+ * rather than trusting a possibly-stale value the caller already had.
+ * Requires the real, derived "APPROVED" status — never a separate stored
+ * flag — the same "gate on the real fact, not a label" discipline
+ * completeBomStep()/completeCostingStep() already established for
+ * Bom.approvedVersionId/SampleVersion.finalTotal.
+ */
+export async function completeSamplingReviewStep(actor: ActorContext, id: string) {
+  const project = await getAiGarmentProjectById(actor.companyId, id);
+  if (project.status !== "APPROVED") {
+    throw new BusinessRuleError(
+      "VALIDATION_ERROR",
+      "The buyer must approve the sample (recorded on the Sample Request's own detail page) before continuing to Production.",
+      { status: project.status }
+    );
+  }
+
+  await saveWorkflowStep(actor, id, { stepKey: "SAMPLING_REVIEW" });
+
+  const steps = stepsForSourceType(project.sourceType);
+  const currentIndex = steps.findIndex((s) => s.key === "SAMPLING_REVIEW");
+  const nextStep = steps[currentIndex + 1];
+  if (nextStep) {
+    await saveWorkflowStep(actor, id, { stepKey: nextStep.key });
+  }
+
+  return AiGarmentProjectRepository.findAnyById(actor.companyId, id);
+}
+
+/**
+ * Links an already-created Sales Order back to this project. Sales Order
+ * creation itself is never reimplemented here — see the schema comment on
+ * linkSalesOrderToProjectSchema for why (real commercial input the AI
+ * Garment Flow wizard can't sensibly default). A concurrent double-link
+ * attempt is closed two ways: setSalesOrderIdGuarded's own `where` clause
+ * (re-asserts "still unlinked" on THIS project) plus the DB's own `@unique`
+ * constraint on AiGarmentProject.salesOrderId (a P2002 if a second project
+ * tries to claim an order already linked elsewhere) — caught and mapped to
+ * a clean error rather than a raw 500.
+ */
+export async function linkSalesOrderToProject(actor: ActorContext, id: string, input: LinkSalesOrderToProjectInput) {
+  const project = await AiGarmentProjectRepository.findAnyById(actor.companyId, id);
+  if (!project) throw new BusinessRuleError("NOT_FOUND", "AI Garment Flow project not found.", { id });
+  if (project.salesOrderId) {
+    throw new BusinessRuleError("REFERENCED_RECORD_IN_USE", "This project already has a linked Sales Order.", {
+      salesOrderId: project.salesOrderId,
+    });
+  }
+
+  const salesOrder = await SalesOrderRepository.findAnyById(actor.companyId, input.salesOrderId);
+  if (!salesOrder) throw new BusinessRuleError("NOT_FOUND", "Sales Order not found.", { id: input.salesOrderId });
+
+  let guarded: { count: number };
+  try {
+    guarded = await AiGarmentProjectRepository.setSalesOrderIdGuarded(id, salesOrder.id);
+  } catch (err) {
+    if ((err as { code?: string }).code === "P2002") {
+      throw new BusinessRuleError("REFERENCED_RECORD_IN_USE", "This Sales Order is already linked to a different AI Garment Flow project.", {
+        salesOrderId: salesOrder.id,
+      });
+    }
+    throw err;
+  }
+  if (guarded.count === 0) {
+    throw new BusinessRuleError(
+      "REFERENCED_RECORD_IN_USE",
+      "This project was linked by another request just now.",
+      { id }
+    );
+  }
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "ai_garment_projects",
+    recordId: id,
+    action: "UPDATE",
+    newValues: { salesOrderId: salesOrder.id },
+  });
+
+  return AiGarmentProjectRepository.findAnyById(actor.companyId, id);
+}
+
+/**
+ * Derives "has real production actually started" purely from ProductionOrder
+ * itself (via countActiveProductionOrdersForSalesOrder) — never a stored
+ * flag on this project. Empty/false, not an error, whenever no Sales Order
+ * is linked yet, matching every other AI Garment Flow read endpoint's own
+ * empty-state convention.
+ */
+export async function getProductionStatusForProject(companyId: string, id: string) {
+  const project = await AiGarmentProjectRepository.findAnyById(companyId, id);
+  if (!project) throw new BusinessRuleError("NOT_FOUND", "AI Garment Flow project not found.", { id });
+  if (!project.salesOrderId) return { hasSalesOrder: false, hasProductionOrder: false };
+
+  const count = await AiGarmentProjectRepository.countActiveProductionOrdersForSalesOrder(project.salesOrderId);
+  return { hasSalesOrder: true, hasProductionOrder: count > 0 };
+}
+
+/**
+ * "Mark Project Complete" — PRODUCTION's own advance, and this project's
+ * real terminal milestone (see productionHandoffCompletedAt's schema
+ * comment). Requires a real Sales Order linked AND at least one real,
+ * non-cancelled Production Order to already exist for it — the exact
+ * "gate on the next real module's own meaningful state, never a client-side
+ * count" discipline completeBomStep()/completeCostingStep() already
+ * established. Once real, the project genuinely leaves this wizard's own
+ * scope — Production's own Lot/JobOrder/QC lifecycle takes over entirely
+ * inside the existing Production module, unchanged.
+ */
+export async function completeProjectWorkflow(actor: ActorContext, id: string) {
+  const project = await AiGarmentProjectRepository.findAnyById(actor.companyId, id);
+  if (!project) throw new BusinessRuleError("NOT_FOUND", "AI Garment Flow project not found.", { id });
+  if (!project.salesOrderId) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "Link a Sales Order to this project before marking it complete.");
+  }
+
+  const productionCount = await AiGarmentProjectRepository.countActiveProductionOrdersForSalesOrder(project.salesOrderId);
+  if (productionCount === 0) {
+    throw new BusinessRuleError(
+      "VALIDATION_ERROR",
+      "Create a real Production Order for this style (in the Production module) before marking this project complete."
+    );
+  }
+
+  await saveWorkflowStep(actor, id, { stepKey: "PRODUCTION" });
+  await AiGarmentProjectRepository.markProductionHandoffComplete(id, actor.userId);
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "ai_garment_projects",
+    recordId: id,
+    action: "UPDATE",
+    newValues: { status: "COMPLETED" },
+  });
+
+  return AiGarmentProjectRepository.findAnyById(actor.companyId, id);
 }

@@ -53,7 +53,7 @@ Update the status column and add a short dated note under the relevant phase sec
 
 **CRM/Marketing enhancement pass, on top of the migration above — all 14 planned items complete (2026-08-24)** — tracked in full in [CRM_MARKETING_ENHANCEMENT_AUDIT_AND_PLAN.md](CRM_MARKETING_ENHANCEMENT_AUDIT_AND_PLAN.md): Deal→Customer conversion, Customer 360, CRM Kanban, CRM Dashboard, Follow-up Management/Notifications, configurable Lead Priority, Campaign Approval workflow, Marketing Dashboard trend charts, Channel Performance report, Customer Segmentation, Marketing Automation triggers, CSV Import (Leads/Deals/Campaign Daily Metrics), Meta/Google Ads Integration, and an AI-readiness audit of every aggregation function. The one open thread: Meta/Google Ads Integration's OAuth/token-exchange/sync code is built and unit-tested but has **no real credentials to verify the live external API calls against yet** — see that file's own Item 13 note before assuming it's been exercised against the real Meta/Google APIs, and before touching `AdAccountConnection`/`AdCampaignLink`/`ImportBatch`/`CrmSettings` or the `src/modules/marketing/ad-integrations/`/`src/modules/import/` modules.
 
-**AI Garment Flow (separate initiative, not part of the 11 phases above) — foundation + Process 1 (Reference Garment Analysis) + Process 2 (Commercial Design Development Brief) + Process 3 (Garment Design Visual Generation) + Process 4 (Controlled Design Variation) + Process 5 (Commercial Design Evaluation) + Process 6 (Apply Actual Fabric) + Process 7 (Technical Development) + Process 8 (BOM Suggestion) + Process 9 (Cost Analysis) complete; live image-generation verification (Process 3/4/6/7) still blocked on the configured OpenAI account's exhausted billing credits (a second, free-tier Gemini provider was added 2026-09-07 specifically to unblock this once a key is supplied), but every Anthropic-backed process (1/2/5/8/9) is fully live-verified (2026-09-06/07)** — a new product-development workflow module (reference/fabric upload → AI-assisted design → costing → sampling), full detail in its own dated sections further down this file. The existing `Product` model remains the single Style Master (not duplicated); a new `AiGarmentProject` header is a pre-Style record that manually graduates into a real `Product` via `convertProjectToStyle()`, mirroring Sampling's own `convertSampleToStyle()`. BOM/Costing steps require this graduation and then reuse the existing BOM/MRP and Sampling-costing modules — no parallel schema. Process 1 (Reference Garment Analysis) is a real Anthropic vision integration analysing an uploaded reference image into 36 individually-tracked, editable, approvable observations. Process 2 (Commercial Design Development Brief) is a real Anthropic text integration that, once that analysis is approved, generates 3/6/9 differentiated commercial `AiGarmentDesignDirection` records (each individually editable/approvable/rejectable/regeneratable, each scored 0-100). Process 3 (Garment Design Visual Generation) is a real, provider-agnostic OpenAI Images integration turning each APPROVED design direction into 1/3/4 generated visuals with full version history and a Select/Reject/Regenerate/Create Variation workflow. Process 4 (Controlled Design Variation) is a real image-to-image integration that regenerates just one named feature (Neckline/Collar/Sleeve/.../Other) of an existing generated image while preserving everything else, with its own version-controlled variation history and a Select Variation/Keep Original/Create Another Variation workflow. Process 5 (Commercial Design Evaluation) is a real Anthropic text integration that compares 2-8 APPROVED design directions on a 12-criterion weighted commercial rubric, letting the user override the AI's ranking and always requiring explicit confirmation before recording a SELECTED DESIGN and advancing the workflow to Apply Fabric (or Technical Development, for a fabric-sourced project). Process 6 (Apply Actual Fabric) is a real two-image OpenAI edit integration that applies a user-uploaded fabric swatch onto the selected design's currently SELECTED garment visual, with its own Before/After version history, a two-tier Approve/APPROVE-DESIGN-&-FABRIC confirmation flow, and a workflow advance to Technical Development. Process 7 (Technical Development) is a real image-to-image integration that regenerates the currently selected garment visual (preferring an approved fabric application's result) as a professional flat/CAD-style technical line drawing, with its own version-controlled history, a two-tier Approve/APPROVE-TECHNICAL-FLAT confirmation flow, and a workflow advance to BOM. Process 8 (BOM Suggestion) is a real Anthropic text integration that suggests a draft Bill of Materials for one finished garment from the approved design's own structured fields, letting the user resolve each advisory suggestion into a real `BomItem` via the existing, unchanged bom-mrp `upsertBom()` (never a parallel BOM schema), and advancing to Costing once that style's real BOM is approved. Process 9 (Cost Analysis) is a real Anthropic text integration that produces an advisory cost-per-unit range and breakdown/pricing/margin/risk commentary from the approved design (plus any resolved BOM, fabric detail, and real Sampling costing already entered), never writing to or duplicating Sampling's own real costing engine, and a "Mark Costing Complete" action — the one genuinely terminal step in this workflow, since COSTING is the last step in both `stepsForSourceType()` sequences — that requires the linked Sample Request's current version to already be priced before flipping the project's own status to COMPLETED — see those sections before touching `AiGarmentReferenceAnalysis`/`AiGarmentReferenceObservation`/`AiGarmentReferenceAnalysisRun`/`AiGarmentDevelopmentBriefRun`/`AiGarmentDesignDirection`/`AiGarmentImageGenerationRun`/`AiGarmentGeneratedImage`/`AiGarmentDesignVariationRun`/`AiGarmentDesignVariation`/`AiGarmentCommercialEvaluationRun`/`AiGarmentCommercialEvaluation`/`AiGarmentCommercialEvaluationItem`/`AiGarmentFabricApplicationRun`/`AiGarmentFabricApplication`/`AiGarmentTechnicalFlatRun`/`AiGarmentTechnicalFlat`/`AiGarmentBomSuggestionRun`/`AiGarmentBomSuggestion`/`AiGarmentCostAnalysisRun`/`AiGarmentCostAnalysis`, `src/core/ai/reference-analysis/`, `src/core/ai/development-brief/`, `src/core/ai/image-generation/`, `src/core/ai/design-variation/`, `src/core/ai/commercial-evaluation/`, `src/core/ai/fabric-application/`, `src/core/ai/technical-development/`, `src/core/ai/bom-suggestion/`, `src/core/ai/cost-analysis/`, `src/core/ai/providers/anthropic.ts`, or `src/modules/ai-garment-flow/`. `src/core/ai/AIService.ts`'s `NullAIProvider`/`getAIService()` are dead code, unreferenced by any real process — don't wire a future process through that file, follow the established per-process file-layout pattern (`schema.ts`/`prompt.ts`/`generate.ts` or `analyze.ts`) instead.
+**AI Garment Flow (separate initiative, not part of the 11 phases above) — foundation + Process 1 (Reference Garment Analysis) + Process 2 (Commercial Design Development Brief) + Process 3 (Garment Design Visual Generation) + Process 4 (Controlled Design Variation) + Process 5 (Commercial Design Evaluation) + Process 6 (Apply Actual Fabric) + Process 7 (Technical Development) + Process 8 (BOM Suggestion) + Process 9 (Cost Analysis) + Process 10 (Production Handoff) complete — the full 10-process workflow is now built end to end; live image-generation verification (Process 3/4/6/7) still blocked on the configured OpenAI account's exhausted billing credits (a second, free-tier Gemini provider was added 2026-09-07 specifically to unblock this once a key is supplied), but every Anthropic-backed/pure-orchestration process (1/2/5/8/9/10) is fully live-verified (2026-09-06/07)** — a new product-development workflow module (reference/fabric upload → AI-assisted design → costing → sampling), full detail in its own dated sections further down this file. The existing `Product` model remains the single Style Master (not duplicated); a new `AiGarmentProject` header is a pre-Style record that manually graduates into a real `Product` via `convertProjectToStyle()`, mirroring Sampling's own `convertSampleToStyle()`. BOM/Costing steps require this graduation and then reuse the existing BOM/MRP and Sampling-costing modules — no parallel schema. Process 1 (Reference Garment Analysis) is a real Anthropic vision integration analysing an uploaded reference image into 36 individually-tracked, editable, approvable observations. Process 2 (Commercial Design Development Brief) is a real Anthropic text integration that, once that analysis is approved, generates 3/6/9 differentiated commercial `AiGarmentDesignDirection` records (each individually editable/approvable/rejectable/regeneratable, each scored 0-100). Process 3 (Garment Design Visual Generation) is a real, provider-agnostic OpenAI Images integration turning each APPROVED design direction into 1/3/4 generated visuals with full version history and a Select/Reject/Regenerate/Create Variation workflow. Process 4 (Controlled Design Variation) is a real image-to-image integration that regenerates just one named feature (Neckline/Collar/Sleeve/.../Other) of an existing generated image while preserving everything else, with its own version-controlled variation history and a Select Variation/Keep Original/Create Another Variation workflow. Process 5 (Commercial Design Evaluation) is a real Anthropic text integration that compares 2-8 APPROVED design directions on a 12-criterion weighted commercial rubric, letting the user override the AI's ranking and always requiring explicit confirmation before recording a SELECTED DESIGN and advancing the workflow to Apply Fabric (or Technical Development, for a fabric-sourced project). Process 6 (Apply Actual Fabric) is a real two-image OpenAI edit integration that applies a user-uploaded fabric swatch onto the selected design's currently SELECTED garment visual, with its own Before/After version history, a two-tier Approve/APPROVE-DESIGN-&-FABRIC confirmation flow, and a workflow advance to Technical Development. Process 7 (Technical Development) is a real image-to-image integration that regenerates the currently selected garment visual (preferring an approved fabric application's result) as a professional flat/CAD-style technical line drawing, with its own version-controlled history, a two-tier Approve/APPROVE-TECHNICAL-FLAT confirmation flow, and a workflow advance to BOM. Process 8 (BOM Suggestion) is a real Anthropic text integration that suggests a draft Bill of Materials for one finished garment from the approved design's own structured fields, letting the user resolve each advisory suggestion into a real `BomItem` via the existing, unchanged bom-mrp `upsertBom()` (never a parallel BOM schema), and advancing to Costing once that style's real BOM is approved. Process 9 (Cost Analysis) is a real Anthropic text integration that produces an advisory cost-per-unit range and breakdown/pricing/margin/risk commentary from the approved design (plus any resolved BOM, fabric detail, and real Sampling costing already entered), never writing to or duplicating Sampling's own real costing engine, and advances the workflow into Sampling & Buyer Review once the linked Sample Request's current version is genuinely priced. Process 10 (Production Handoff) wires up the previously-reserved SAMPLING/BUYER_REVIEW/APPROVED/PRODUCTION statuses without a parallel state machine — SAMPLING/BUYER_REVIEW/APPROVED are derived live from the linked Sample Request's own real status (never stored authoritatively), and once genuinely approved the user links an already-created Sales Order back to the project (Sales Order/Production Order creation are never reimplemented, only deep-linked to their existing real forms) and marks the project complete once a real, non-cancelled Production Order exists for it — PRODUCTION is now the workflow's true final step — see those sections before touching `AiGarmentReferenceAnalysis`/`AiGarmentReferenceObservation`/`AiGarmentReferenceAnalysisRun`/`AiGarmentDevelopmentBriefRun`/`AiGarmentDesignDirection`/`AiGarmentImageGenerationRun`/`AiGarmentGeneratedImage`/`AiGarmentDesignVariationRun`/`AiGarmentDesignVariation`/`AiGarmentCommercialEvaluationRun`/`AiGarmentCommercialEvaluation`/`AiGarmentCommercialEvaluationItem`/`AiGarmentFabricApplicationRun`/`AiGarmentFabricApplication`/`AiGarmentTechnicalFlatRun`/`AiGarmentTechnicalFlat`/`AiGarmentBomSuggestionRun`/`AiGarmentBomSuggestion`/`AiGarmentCostAnalysisRun`/`AiGarmentCostAnalysis`, `src/core/ai/reference-analysis/`, `src/core/ai/development-brief/`, `src/core/ai/image-generation/`, `src/core/ai/design-variation/`, `src/core/ai/commercial-evaluation/`, `src/core/ai/fabric-application/`, `src/core/ai/technical-development/`, `src/core/ai/bom-suggestion/`, `src/core/ai/cost-analysis/`, `src/core/ai/providers/anthropic.ts`, or `src/modules/ai-garment-flow/`. `src/core/ai/AIService.ts`'s `NullAIProvider`/`getAIService()` are dead code, unreferenced by any real process — don't wire a future process through that file, follow the established per-process file-layout pattern (`schema.ts`/`prompt.ts`/`generate.ts` or `analyze.ts`) instead.
 
 ### Phase 2 notes (2026-08-16)
 - Next.js 16 scaffold, Prisma 7 schema (Organization/Auth + Masters + System, 24 models), NextAuth v5 Credentials auth (JWT sessions), RBAC `PermissionService`, document numbering, audit logging, local file storage, `BusinessRuleError`, sidebar/topbar shell, login page, DB-backed dashboard placeholder, and full seed data (roles/permissions/Super Admin) are all in place and verified end-to-end in the browser (login → dashboard showing real DB counts).
@@ -4547,9 +4547,131 @@ explicitly instructs the model to treat real Sampling figures as ground truth, n
   the commentary is prose, not resolvable line items, matching the fact that COSTING is this workflow's own
   final step and Sampling's costing UI is where the real numbers are entered by a human either way.
 
-**AI Garment Flow's own 9-process build (Foundation through Cost Analysis) is now complete** — every step
-across both the Reference and Fabric source-type workflows has either a real AI integration or a real
-deep-link into an existing module, with COSTING as the workflow's own genuine terminal step.
+**Correction, 2026-09-07 (Process 10)**: the paragraph above's own closing line ("COSTING as the workflow's
+own genuine terminal step") was accurate the day it was written, but was superseded the same day — Process
+10 (below) extended real steps (SAMPLING_REVIEW, PRODUCTION) past COSTING, wiring up the reserved
+SAMPLING/BUYER_REVIEW/APPROVED/PRODUCTION statuses this section's own "Not built this phase" note left open.
+`completeCostingStep()` (this section, above) was revised accordingly — it advances into SAMPLING_REVIEW
+rather than completing the project directly; see Process 10's own section for the full design and the
+reasoning for keeping this file's own historical note intact rather than rewriting it.
+
+## AI Garment Flow — Process 10: Production Handoff (Sampling/Buyer Review/Production wired up) (2026-09-07)
+
+Builds on Process 9 — "continue with Process 10" was given with no scaffolding to research this time (unlike
+every prior bare-title process): COSTING was genuinely confirmed the last step in both `stepsForSourceType()`
+sequences, and `AIService.ts`'s dead interface had exactly 9 methods, none unused. Rather than invent scope,
+this was put to the user directly (AskUserQuestion): **wire up the reserved post-COSTING statuses**
+(`SAMPLING`/`BUYER_REVIEW`/`APPROVED`/`PRODUCTION` — enum values that had existed in `AiGarmentProjectStatus`
+since the foundation phase but were never reached by any code path) was the confirmed answer.
+
+**The central architectural decision**: none of these four statuses gets its own duplicate state machine.
+`SAMPLING`/`BUYER_REVIEW`/`APPROVED` are **derived, never stored authoritatively** from the linked
+`SampleRequest`'s own real, already-fully-built state machine (`recordSampleApproval()` in
+`sample.service.ts`, unchanged) — the exact "derive real state, never trust a stored label that can drift"
+discipline this project has used since Sampling's own Hold/Resume bug, applied here for the first time
+*across* two modules rather than within one. `PRODUCTION`'s own readiness ("has real production actually
+started") is likewise derived by querying `ProductionOrder` directly, never a stored flag.
+
+- **Schema** (migration `20260907230000_add_ai_garment_production_handoff`): only two new nullable columns
+  on `AiGarmentProject` — `productionHandoffCompletedAt`/`productionHandoffCompletedByUserId` (this project's
+  real terminal milestone now, superseding Process 9's own `costingCompletedAt`, which is repurposed in
+  place to mean only "the AI-assisted costing phase was reviewed," not "the whole workflow is done" — its
+  schema comment was updated to say so explicitly rather than left stale). No new Prisma enum values were
+  needed at all — `SAMPLING`/`BUYER_REVIEW`/`APPROVED`/`PRODUCTION` already existed in
+  `AiGarmentProjectStatus` since the foundation phase, confirmed unused by every prior process's own build.
+- **Two new step keys**, `SAMPLING_REVIEW` and `PRODUCTION`, appended to both `AI_GARMENT_REFERENCE_STEPS`
+  and `AI_GARMENT_FABRIC_STEPS` after `COSTING`. `STEP_TO_STATUS` maps `SAMPLING_REVIEW → "SAMPLING"` and
+  `PRODUCTION → "PRODUCTION"` — but `BUYER_REVIEW`/`APPROVED` are deliberately **not** in this map at all,
+  since they're never reached by a step save; they're only ever reached by `getAiGarmentProjectById()`'s own
+  `deriveStatusFromSampleStatus()` helper (see below).
+- **`getAiGarmentProjectById()`'s own self-healing derivation, the actual mechanism that makes cross-module
+  status tracking work without polling or a background job**: whenever the project is read (every page load,
+  every `reloadProject()`) and its status is currently `SAMPLING` or `BUYER_REVIEW` (i.e., genuinely
+  in-flight — never touched once `APPROVED`/`COMPLETED`/`REJECTED`/etc.), it re-derives the correct status
+  from the linked `SampleRequest.status` and persists it if changed, before returning. This is the same
+  "locked/visibility state is derived at read time, never stored, self-healing" precedent
+  `SubmoduleVisibility` already established (2026-09-03) — applied here for the first time to a genuinely
+  cross-module state instead of a single table's own display flag. A real `SampleRequest.REJECTED` decision
+  correctly terminates the AI Garment Flow project too (mapped to the already-existing `REJECTED` terminal
+  status) — a `CANCELLED` sample deliberately does **not** terminate the project (a merchandiser might raise
+  a fresh sample request instead), a distinction stated explicitly in the derivation function's own comment
+  rather than left for a future reader to puzzle out.
+- **`completeSamplingReviewStep()`** ("Continue to Production") re-fetches through
+  `getAiGarmentProjectById()` first (so the derived status is freshest before gating on it) and requires the
+  real, derived `"APPROVED"` status — never a separate stored flag — mirroring
+  `completeBomStep()`/`completeCostingStep()`'s own "gate on the real fact" discipline exactly.
+- **Sales Order linkage, deliberately NOT a `createSalesOrderFromProject()` the way Sampling's own
+  `createSampleRequestFromProject()` reuses `createSampleRequest()` unchanged**: a real Sales Order needs
+  genuine commercial input (unit price, per-variant quantities against real `ProductVariant` rows that don't
+  auto-exist for a freshly-graduated Style) that can't be sensibly defaulted the way Sample Request
+  creation's optional fields could. Instead, `linkSalesOrderToProject()` links an **already-created** Sales
+  Order back by id — the merchandiser creates it through the existing, unchanged Sales Order form (deep-link
+  provided), then links it back on the AI Garment Flow project's own PRODUCTION step by typing its order
+  number (the UI resolves this via the existing `GET /api/v1/sales-orders?search=` endpoint, reusing its
+  already-existing `orderNumber` search filter — zero backend changes to the Sales Orders module were
+  needed). Guarded two ways against a concurrent double-link: `setSalesOrderIdGuarded`'s own `where` clause
+  (re-asserts "still unlinked" on this project) plus the DB's own `@unique` constraint on
+  `AiGarmentProject.salesOrderId` (a P2002 if a second project tries to claim an order already linked
+  elsewhere) — caught and mapped to a clean `REFERENCED_RECORD_IN_USE` rather than a raw 500.
+- **`getProductionStatusForProject()`** derives `hasProductionOrder` purely from
+  `prisma.productionOrder.count({ where: { status: { not: "CANCELLED" }, salesOrderItem: { salesOrderId } } })`
+  — no `productionOrderId` field was added to `AiGarmentProject` at all, since `ProductionOrder` already has
+  a real FK to `SalesOrderItem`, which is itself already scoped to `project.salesOrderId` the moment that's
+  linked. Production Order creation itself is likewise never reimplemented — a deep-link to the existing
+  `/production-orders/new` page, matching the exact "reuse the existing module's real UI, don't rebuild it"
+  precedent BOM's own "Open BOM Editor" link and Sampling's own "View Sample Request" link already
+  established.
+- **`completeProjectWorkflow()`** ("Mark Project Complete") — this project's real terminal action now —
+  requires a linked Sales Order **and** at least one real, non-cancelled Production Order to already exist
+  for it, the exact "gate on the next real module's own meaningful state, never a client-side count"
+  discipline `completeBomStep()`/`completeCostingStep()` already established. Once genuinely complete, the
+  style continues forward entirely through the Production module's own Lot/JobOrder/QC lifecycle, unchanged.
+- **UI**: `SamplingReviewSection` (inlined in `AiGarmentProjectWorkflowPanel.tsx`, matching `CostingSection`'s
+  own inline-section convention) shows the linked Sample Request's link and a plain-English hint per its
+  current real status, with a "Continue to Production" button enabled only once derived-`APPROVED`. A new
+  `ProductionHandoffPanel.tsx` (its own component, matching `CostAnalysisPanel.tsx`'s convention — more
+  interactive state than a plain inline section) handles the order-number-linking form, the derived
+  Production Order status display, and the final "Mark Project Complete" confirmation. `CostAnalysisPanel
+  .tsx`'s own "Mark Costing Complete" button/copy was corrected in the same pass — it now reads "Continue to
+  Sampling & Buyer Review," matching what the action actually does since it no longer completes the project.
+- **20 revised/new unit tests**: `ai-garment-project.service.test.ts` gained 16 covering the derivation
+  helper's every branch (SAMPLING→BUYER_REVIEW→APPROVED→REJECTED, and the two "leave untouched" cases),
+  `completeSamplingReviewStep`'s gate, `linkSalesOrderToProject`'s guards including the P2002 mapping, and
+  `completeProjectWorkflow`'s two gates plus its success path; `cost-analysis.service.test.ts`'s own
+  `completeCostingStep` test was revised for the new two-step advance instead of the old direct-completion
+  behaviour. 1139/1139 tests project-wide, `npx tsc --noEmit` and `npx eslint .` clean (hit this session's
+  own now-thoroughly-documented low-memory gotcha twice more running `tsc` — resolved each time by waiting
+  for the auto-backgrounded job rather than launching a competing one, though once genuinely by accident).
+- **Live end-to-end verification, real Postgres, real cross-module calls — 21/21 checks passed**: built a
+  full real fixture chain (Attachment → Reference Analysis → Development Brief Run → Design Direction, all
+  `APPROVED`, plus a graduated Style with a real generated `ProductVariant`) on a fresh test project, then
+  exercised the entire chain for real: `completeCostingStep()` correctly advanced status to `SAMPLING` and
+  stamped the (non-terminal) `costingCompletedAt` milestone; flipping the fixture Sample Request through
+  `SUBMITTED_TO_CUSTOMER` then `APPROVED` and re-reading via `getAiGarmentProjectById()` correctly derived
+  `BUYER_REVIEW` then `APPROVED` each time; `completeSamplingReviewStep()` correctly rejected before approval
+  and correctly advanced to `PRODUCTION` after; created a **real** Sales Order via the existing, unchanged
+  `createSalesOrder()` (200 units, a real generated variant, confirmed via `confirmSalesOrder()` too) and
+  linked it back by order number, confirming both the not-found and already-linked rejections; confirmed
+  `completeProjectWorkflow()` correctly rejected with no Production Order yet; created a **real** Production
+  Order via the existing, unchanged `createProductionOrder()` against the confirmed order's own
+  `SalesOrderItem`; confirmed `getProductionStatusForProject()` correctly flipped to `hasProductionOrder:
+  true`; confirmed `completeProjectWorkflow()` now succeeds, stamping `productionHandoffCompletedAt`/
+  `ByUserId` and flipping status to `COMPLETED`; confirmed a second completion attempt correctly
+  `409`s (`INVALID_STATE_TRANSITION`, via `saveWorkflowStep()`'s own existing terminal-status guard). All
+  fixture data (project, sample, sales order + items + breakdown, production order, dev brief run, design
+  direction, attachment, reference analysis, product + variant) was fully deleted afterward — a wholly fresh
+  chain, not the shared demo project, so no restore-to-original-state step was needed.
+- **Not built this phase**: any UI for the merchandiser to browse/search Sales Orders by anything other than
+  exact order number (a dropdown filtered by customer would need a new `customerId` query param on the
+  shared Sales Orders list endpoint — deliberately not added, to avoid touching a working, well-tested
+  module's shared list query for this one caller), and no attempt to auto-create a Production Order from
+  this wizard (Production Order creation needs its own real planned-quantity/priority input the same way
+  Sales Order creation does, so it's deep-linked, not reimplemented, matching the same reasoning).
+
+**AI Garment Flow's own 10-process build (Foundation through Production Handoff) is now genuinely complete
+end to end** — every step across both the Reference and Fabric source-type workflows has either a real AI
+integration or a real deep-link into an existing module, and PRODUCTION is now the workflow's own true
+terminal step, handing the style fully into the existing Production module's own unchanged lifecycle.
 
 ## Recommended Stack
 

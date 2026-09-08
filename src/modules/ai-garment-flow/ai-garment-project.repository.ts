@@ -31,6 +31,7 @@ export const AiGarmentProjectRepository = {
         category: { select: { id: true, name: true } },
         product: { select: { id: true, styleCode: true, styleName: true } },
         sampleRequest: { select: { id: true, requestNumber: true, status: true } },
+        salesOrder: { select: { id: true, orderNumber: true, status: true } },
         createdBy: { select: { id: true, fullName: true } },
         fabricDetail: {
           include: {
@@ -65,12 +66,31 @@ export const AiGarmentProjectRepository = {
   setSampleRequestIdGuarded: (id: string, sampleRequestId: string) =>
     prisma.aiGarmentProject.updateMany({ where: { id, sampleRequestId: null }, data: { sampleRequestId } }),
 
-  /** Guarded against a double-click, not a cross-actor race — same idiom as setProductIdGuarded/setSampleRequestIdGuarded above. */
-  markCostingComplete: (id: string, userId: string) =>
+  setSalesOrderIdGuarded: (id: string, salesOrderId: string) =>
+    prisma.aiGarmentProject.updateMany({ where: { id, salesOrderId: null }, data: { salesOrderId } }),
+
+  /**
+   * Stamps the one-time "costing was reviewed" milestone only — no longer
+   * flips status to COMPLETED (Process 10 added real steps after COSTING).
+   * Guarded on `costingCompletedAt: null` so only the FIRST review stamps
+   * who/when; a later re-run of the AI analysis doesn't reset this.
+   */
+  markCostingReviewed: (id: string, userId: string) =>
+    prisma.aiGarmentProject.updateMany({
+      where: { id, costingCompletedAt: null },
+      data: { costingCompletedAt: new Date(), costingCompletedByUserId: userId },
+    }),
+
+  /** Guarded against a double-click, not a cross-actor race — same idiom as setProductIdGuarded/setSampleRequestIdGuarded above. The real terminal milestone (see productionHandoffCompletedAt's schema comment). */
+  markProductionHandoffComplete: (id: string, userId: string) =>
     prisma.aiGarmentProject.updateMany({
       where: { id, status: { not: "COMPLETED" } },
-      data: { status: "COMPLETED", costingCompletedAt: new Date(), costingCompletedByUserId: userId },
+      data: { status: "COMPLETED", productionHandoffCompletedAt: new Date(), productionHandoffCompletedByUserId: userId },
     }),
+
+  /** Derives "has real production actually started" from ProductionOrder itself — never a stored flag on this project, the same "derive, don't duplicate" discipline as every other cross-module check in this module. */
+  countActiveProductionOrdersForSalesOrder: (salesOrderId: string) =>
+    prisma.productionOrder.count({ where: { status: { not: "CANCELLED" }, salesOrderItem: { salesOrderId } } }),
 };
 
 export const AiGarmentFabricDetailRepository = {

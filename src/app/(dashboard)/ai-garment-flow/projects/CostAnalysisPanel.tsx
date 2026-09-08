@@ -29,7 +29,7 @@ export function CostAnalysisPanel({
   const [additionalGuidance, setAdditionalGuidance] = useState("");
   const [generating, setGenerating] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [confirmComplete, setConfirmComplete] = useState(false);
+  const [confirmContinue, setConfirmContinue] = useState(false);
 
   async function load() {
     const res = await fetch(`/api/v1/ai-garment-projects/${projectId}/cost-analysis`);
@@ -62,14 +62,14 @@ export function CostAnalysisPanel({
     }
   }
 
-  async function markComplete() {
+  async function continueToSampling() {
     setError(null);
     setBusy(true);
     try {
       const res = await fetch(`/api/v1/ai-garment-projects/${projectId}/complete-costing-step`, { method: "POST" });
       const body = await res.json();
-      if (!res.ok) throw new Error(body?.error?.message ?? "Failed to mark costing complete.");
-      setConfirmComplete(false);
+      if (!res.ok) throw new Error(body?.error?.message ?? "Failed to continue to Sampling & Buyer Review.");
+      setConfirmContinue(false);
       await reloadProject();
     } catch (err) {
       setError((err as Error).message);
@@ -143,20 +143,20 @@ export function CostAnalysisPanel({
       <button
         type="button"
         disabled={busy}
-        onClick={() => setConfirmComplete(true)}
+        onClick={() => setConfirmContinue(true)}
         className="rounded-md bg-purple-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-purple-500 disabled:opacity-50"
       >
-        Mark Costing Complete
+        Continue to Sampling & Buyer Review
       </button>
 
       <ConfirmModal
-        open={confirmComplete}
-        title="Mark costing complete?"
-        message="This requires real costing to already be entered and calculated on the linked Sample Request. Marks this AI Garment Flow project's own workflow as complete — the style continues forward through Sampling, buyer approval, and Production as usual, outside this wizard."
-        confirmLabel="Mark Complete"
+        open={confirmContinue}
+        title="Continue to Sampling & Buyer Review?"
+        message="This requires real costing to already be entered and calculated on the linked Sample Request. Moves this project's workflow forward — the physical sample's own progress and the buyer's decision are then tracked automatically from the linked Sample Request."
+        confirmLabel="Continue"
         isBusy={busy}
-        onConfirm={markComplete}
-        onCancel={() => setConfirmComplete(false)}
+        onConfirm={continueToSampling}
+        onCancel={() => setConfirmContinue(false)}
       />
     </div>
   );

@@ -19,7 +19,7 @@ vi.mock("@/modules/sampling/sample.repository", () => ({
   SampleVersionRepository: { findLatest: vi.fn() },
 }));
 vi.mock("./ai-garment-project.repository", () => ({
-  AiGarmentProjectRepository: { findByIdWithDetails: vi.fn(), findAnyById: vi.fn(), markCostingComplete: vi.fn() },
+  AiGarmentProjectRepository: { findByIdWithDetails: vi.fn(), findAnyById: vi.fn(), markCostingReviewed: vi.fn() },
 }));
 vi.mock("./development-brief.repository", () => ({
   AiGarmentDesignDirectionRepository: { findById: vi.fn() },
@@ -211,13 +211,14 @@ describe("completeCostingStep", () => {
     expect(saveWorkflowStep).not.toHaveBeenCalled();
   });
 
-  it("marks the project's own workflow complete once real costing exists", async () => {
+  it("stamps the costing-reviewed milestone and advances to SAMPLING_REVIEW once real costing exists", async () => {
     (AiGarmentProjectRepository.findAnyById as ReturnType<typeof vi.fn>).mockResolvedValue({ ...baseProject, sampleRequestId: "sam-1" });
     (SampleVersionRepository.findLatest as ReturnType<typeof vi.fn>).mockResolvedValue({ finalTotal: "345" });
 
     await completeCostingStep(actor, "proj-1");
 
-    expect(saveWorkflowStep).toHaveBeenCalledWith(actor, "proj-1", { stepKey: "COSTING" });
-    expect(AiGarmentProjectRepository.markCostingComplete).toHaveBeenCalledWith("proj-1", "user-1");
+    expect(saveWorkflowStep).toHaveBeenNthCalledWith(1, actor, "proj-1", { stepKey: "COSTING" });
+    expect(saveWorkflowStep).toHaveBeenNthCalledWith(2, actor, "proj-1", { stepKey: "SAMPLING_REVIEW" });
+    expect(AiGarmentProjectRepository.markCostingReviewed).toHaveBeenCalledWith("proj-1", "user-1");
   });
 });

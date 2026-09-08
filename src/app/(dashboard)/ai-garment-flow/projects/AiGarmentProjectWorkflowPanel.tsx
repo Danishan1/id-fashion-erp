@@ -16,6 +16,7 @@ import { FabricApplicationPanel } from "./FabricApplicationPanel";
 import { TechnicalFlatPanel } from "./TechnicalFlatPanel";
 import { BomSuggestionPanel } from "./BomSuggestionPanel";
 import { CostAnalysisPanel } from "./CostAnalysisPanel";
+import { ProductionHandoffPanel } from "./ProductionHandoffPanel";
 
 const SAMPLE_TYPES = ["FIT", "PROTO", "PP", "TOP", "SHIPMENT", "PHOTOSHOOT", "SMS", "OTHER"] as const;
 
@@ -53,9 +54,11 @@ interface Project {
   completedStepKeys: AiGarmentStepKey[];
   productId: string | null;
   sampleRequestId: string | null;
+  salesOrderId: string | null;
   referenceImageAttachmentId: string | null;
   product: { id: string; styleCode: string; styleName: string } | null;
   sampleRequest: { id: string; requestNumber: string; status: string } | null;
+  salesOrder: { id: string; orderNumber: string; status: string } | null;
   designOptions: DesignOption[];
   fabricDetail: FabricDetail;
   notes: string | null;
@@ -103,7 +106,11 @@ const STEP_HELP: Partial<Record<AiGarmentStepKey, string>> = {
     "Convert this project into a real Style once a design is settled, and generate a technical flat (a CAD-style construction drawing) from the approved garment visual, to continue into BOM and Costing.",
   BOM: "Generate AI-suggested draft BOM lines, then resolve each into the real BOM (built on the graduated Style, using the existing BOM/MRP module) before continuing to Costing.",
   COSTING:
-    "Costing runs on a linked Sample Request, using Sampling's existing costing engine. Get an early AI cost estimate/commentary alongside it, then mark this project's own workflow complete once real costing is done.",
+    "Costing runs on a linked Sample Request, using Sampling's existing costing engine. Get an early AI cost estimate/commentary alongside it, then continue to Sampling & Buyer Review once real costing is done.",
+  SAMPLING_REVIEW:
+    "The physical sample now runs entirely through Sampling's own workflow (open its detail page to log development, submit it, and record the buyer's decision) — this status updates automatically to reflect it. Continue once the buyer has approved it.",
+  PRODUCTION:
+    "Link the real Sales Order for this style (created through the existing Sales Order form) and confirm a real Production Order exists for it, then mark this project complete — the style continues forward entirely through the Production module from here.",
 };
 
 async function postJson(url: string, body?: unknown) {
@@ -449,7 +456,91 @@ function StepContent({
     );
   }
 
+  if (key === "SAMPLING_REVIEW") {
+    return wrap(<SamplingReviewSection project={project} setError={setError} reloadProject={reloadProject} />);
+  }
+
+  if (key === "PRODUCTION") {
+    return wrap(
+      <ProductionHandoffPanel
+        projectId={project.id}
+        productId={project.productId}
+        styleCode={project.product?.styleCode ?? null}
+        salesOrder={project.salesOrder}
+        setError={setError}
+        reloadProject={reloadProject}
+      />
+    );
+  }
+
   return wrap(null);
+}
+
+const SAMPLE_STATUS_HINT: Record<string, string> = {
+  DRAFT: "Not yet requested.",
+  REQUESTED: "Sample requested — waiting for the tech pack.",
+  TECH_PACK_READY: "Tech pack ready — development can begin.",
+  IN_DEVELOPMENT: "Sample is being made.",
+  INTERNAL_QC: "Sample is in internal QC.",
+  SUBMITTED_TO_CUSTOMER: "Submitted to the buyer — awaiting their decision.",
+  CUSTOMER_FEEDBACK_RECEIVED: "Buyer feedback received.",
+  REVISION_REQUESTED: "Buyer requested a revision — a new version is needed.",
+  APPROVED: "Buyer approved the sample.",
+  REJECTED: "Buyer rejected the sample.",
+  ON_HOLD: "On hold.",
+  CANCELLED: "Cancelled.",
+};
+
+function SamplingReviewSection({
+  project,
+  setError,
+  reloadProject,
+}: {
+  project: Project;
+  setError: (e: string | null) => void;
+  reloadProject: () => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+
+  if (!project.sampleRequestId || !project.sampleRequest) {
+    return <p className="text-sm text-amber-700 dark:text-amber-400">No Sample Request is linked to this project yet — go back to the Costing step to create one.</p>;
+  }
+
+  async function continueToProduction() {
+    setError(null);
+    setBusy(true);
+    try {
+      await postJson(`/api/v1/ai-garment-projects/${project.id}/complete-sampling-review-step`);
+      await reloadProject();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const canContinue = project.status === "APPROVED";
+
+  return (
+    <div className="space-y-3 rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
+      <p className="text-sm text-zinc-700 dark:text-zinc-300">
+        Sample Request{" "}
+        <Link href={`/sampling/${project.sampleRequestId}`} className="font-medium underline">
+          {project.sampleRequest.requestNumber}
+        </Link>
+      </p>
+      <p className="text-sm text-zinc-500 dark:text-zinc-400">{SAMPLE_STATUS_HINT[project.sampleRequest.status] ?? project.sampleRequest.status}</p>
+      <button
+        type="button"
+        disabled={!canContinue || busy}
+        onClick={continueToProduction}
+        className="rounded-md bg-purple-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-purple-500 disabled:opacity-50"
+        title={canContinue ? undefined : "Waiting for the buyer to approve the sample"}
+      >
+        {busy ? "Continuing…" : "Continue to Production"}
+      </button>
+    </div>
+  );
 }
 
 function aiButtonLabel(key: AiGarmentStepKey): string {

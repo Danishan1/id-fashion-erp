@@ -6,6 +6,9 @@ vi.mock("@/core/numbering/DocumentNumberingService", () => ({
   advanceMasterCodeSequence: vi.fn(),
 }));
 vi.mock("@/modules/sampling/sample.service", () => ({ createSampleRequest: vi.fn() }));
+vi.mock("@/modules/sales-orders/sales-order.repository", () => ({
+  SalesOrderRepository: { findAnyById: vi.fn() },
+}));
 vi.mock("@/modules/customers/customer.repository", () => ({
   CustomerRepository: { findByIdWithBuyers: vi.fn() },
 }));
@@ -44,6 +47,10 @@ vi.mock("./ai-garment-project.repository", () => ({
     update: vi.fn(),
     setProductIdGuarded: vi.fn(),
     setSampleRequestIdGuarded: vi.fn(),
+    setSalesOrderIdGuarded: vi.fn(),
+    markCostingReviewed: vi.fn(),
+    markProductionHandoffComplete: vi.fn(),
+    countActiveProductionOrdersForSalesOrder: vi.fn(),
   },
   AiGarmentFabricDetailRepository: { findByProjectId: vi.fn(), upsert: vi.fn() },
   AiGarmentDesignOptionRepository: {
@@ -64,6 +71,7 @@ vi.mock("./development-brief.repository", () => ({
 const { generateDocumentNumber, advanceMasterCodeSequence } = await import("@/core/numbering/DocumentNumberingService");
 const { ProductRepository } = await import("@/modules/products/product.repository");
 const { createSampleRequest } = await import("@/modules/sampling/sample.service");
+const { SalesOrderRepository } = await import("@/modules/sales-orders/sales-order.repository");
 const { AiGarmentProjectRepository, AiGarmentDesignOptionRepository } = await import("./ai-garment-project.repository");
 const { AiGarmentReferenceAnalysisRepository } = await import("./reference-analysis.repository");
 const { AiGarmentDesignDirectionRepository } = await import("./development-brief.repository");
@@ -76,6 +84,11 @@ const {
   convertProjectToStyle,
   createSampleRequestFromProject,
   selectDesignOption,
+  getAiGarmentProjectById,
+  completeSamplingReviewStep,
+  linkSalesOrderToProject,
+  getProductionStatusForProject,
+  completeProjectWorkflow,
 } = await import("./ai-garment-project.service");
 
 const actor = { companyId: "co-1", userId: "user-1", branchId: "br-1" };
@@ -88,9 +101,15 @@ beforeEach(() => {
   vi.mocked(AiGarmentProjectRepository.update).mockReset().mockImplementation(((id: string, data: Record<string, unknown>) => Promise.resolve({ id, ...data })) as never);
   vi.mocked(AiGarmentProjectRepository.setProductIdGuarded).mockReset().mockResolvedValue({ count: 1 } as never);
   vi.mocked(AiGarmentProjectRepository.setSampleRequestIdGuarded).mockReset().mockResolvedValue({ count: 1 } as never);
+  vi.mocked(AiGarmentProjectRepository.setSalesOrderIdGuarded).mockReset().mockResolvedValue({ count: 1 } as never);
+  vi.mocked(AiGarmentProjectRepository.markCostingReviewed).mockReset().mockResolvedValue({ count: 1 } as never);
+  vi.mocked(AiGarmentProjectRepository.markProductionHandoffComplete).mockReset().mockResolvedValue({ count: 1 } as never);
+  vi.mocked(AiGarmentProjectRepository.countActiveProductionOrdersForSalesOrder).mockReset().mockResolvedValue(0);
+  vi.mocked(AiGarmentProjectRepository.findByIdWithDetails).mockReset();
   vi.mocked(ProductRepository.findByStyleCode).mockReset().mockResolvedValue(null);
   vi.mocked(ProductRepository.create).mockReset().mockResolvedValue({ id: "prod-1", styleCode: "ST-001" } as never);
   vi.mocked(createSampleRequest).mockReset().mockResolvedValue({ id: "sam-1", requestNumber: "SAM-2026-00001" } as never);
+  vi.mocked(SalesOrderRepository.findAnyById).mockReset();
   vi.mocked(AiGarmentDesignOptionRepository.findWithProjectOwner).mockReset();
   vi.mocked(AiGarmentDesignOptionRepository.selectExclusive).mockReset();
   // Default to "already past both Process 2 gates" so tests unrelated to those
@@ -450,5 +469,189 @@ describe("selectDesignOption", () => {
     await selectDesignOption(actor, "opt-1");
 
     expect(AiGarmentDesignOptionRepository.selectExclusive).toHaveBeenCalledWith("proj-1", "opt-1");
+  });
+});
+
+describe("getAiGarmentProjectById — deriving status from the linked Sample Request", () => {
+  it("advances SAMPLING to BUYER_REVIEW once the sample is submitted to the buyer, and persists it", async () => {
+    vi.mocked(AiGarmentProjectRepository.findByIdWithDetails)
+      .mockResolvedValueOnce({ id: "proj-1", status: "SAMPLING", sampleRequest: { status: "SUBMITTED_TO_CUSTOMER" } } as never)
+      .mockResolvedValueOnce({ id: "proj-1", status: "BUYER_REVIEW", sampleRequest: { status: "SUBMITTED_TO_CUSTOMER" } } as never);
+
+    const result = await getAiGarmentProjectById("co-1", "proj-1");
+
+    expect(AiGarmentProjectRepository.update).toHaveBeenCalledWith("proj-1", { status: "BUYER_REVIEW" });
+    expect(result.status).toBe("BUYER_REVIEW");
+  });
+
+  it("advances all the way to APPROVED once the buyer has approved the sample", async () => {
+    vi.mocked(AiGarmentProjectRepository.findByIdWithDetails)
+      .mockResolvedValueOnce({ id: "proj-1", status: "BUYER_REVIEW", sampleRequest: { status: "APPROVED" } } as never)
+      .mockResolvedValueOnce({ id: "proj-1", status: "APPROVED", sampleRequest: { status: "APPROVED" } } as never);
+
+    const result = await getAiGarmentProjectById("co-1", "proj-1");
+
+    expect(AiGarmentProjectRepository.update).toHaveBeenCalledWith("proj-1", { status: "APPROVED" });
+    expect(result.status).toBe("APPROVED");
+  });
+
+  it("terminates the project as REJECTED once the buyer has rejected the sample", async () => {
+    vi.mocked(AiGarmentProjectRepository.findByIdWithDetails)
+      .mockResolvedValueOnce({ id: "proj-1", status: "BUYER_REVIEW", sampleRequest: { status: "REJECTED" } } as never)
+      .mockResolvedValueOnce({ id: "proj-1", status: "REJECTED", sampleRequest: { status: "REJECTED" } } as never);
+
+    const result = await getAiGarmentProjectById("co-1", "proj-1");
+
+    expect(result.status).toBe("REJECTED");
+  });
+
+  it("does not touch status once it's already past the in-flight SAMPLING/BUYER_REVIEW window", async () => {
+    vi.mocked(AiGarmentProjectRepository.findByIdWithDetails).mockResolvedValueOnce({
+      id: "proj-1",
+      status: "APPROVED",
+      sampleRequest: { status: "APPROVED" },
+    } as never);
+
+    await getAiGarmentProjectById("co-1", "proj-1");
+
+    expect(AiGarmentProjectRepository.update).not.toHaveBeenCalled();
+  });
+
+  it("leaves status untouched when the sample has no confident mapping (e.g. still ON_HOLD)", async () => {
+    vi.mocked(AiGarmentProjectRepository.findByIdWithDetails).mockResolvedValueOnce({
+      id: "proj-1",
+      status: "SAMPLING",
+      sampleRequest: { status: "ON_HOLD" },
+    } as never);
+
+    await getAiGarmentProjectById("co-1", "proj-1");
+
+    expect(AiGarmentProjectRepository.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("completeSamplingReviewStep", () => {
+  it("rejects while the sample hasn't been approved yet", async () => {
+    vi.mocked(AiGarmentProjectRepository.findByIdWithDetails).mockResolvedValueOnce({
+      id: "proj-1",
+      status: "BUYER_REVIEW",
+      sampleRequest: { status: "SUBMITTED_TO_CUSTOMER" },
+    } as never);
+
+    await expect(completeSamplingReviewStep(actor, "proj-1")).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(AiGarmentProjectRepository.update).not.toHaveBeenCalledWith("proj-1", expect.objectContaining({ currentStepKey: "PRODUCTION" }));
+  });
+
+  it("advances from SAMPLING_REVIEW straight to PRODUCTION once the sample is genuinely approved", async () => {
+    vi.mocked(AiGarmentProjectRepository.findByIdWithDetails).mockResolvedValueOnce({
+      id: "proj-1",
+      status: "APPROVED",
+      sourceType: "REFERENCE",
+      sampleRequest: { status: "APPROVED" },
+    } as never);
+    vi.mocked(AiGarmentProjectRepository.findAnyById).mockResolvedValue({
+      id: "proj-1",
+      sourceType: "REFERENCE",
+      status: "APPROVED",
+      completedStepKeys: ["COSTING"],
+    } as never);
+
+    await completeSamplingReviewStep(actor, "proj-1");
+
+    expect(AiGarmentProjectRepository.update).toHaveBeenCalledWith(
+      "proj-1",
+      expect.objectContaining({ currentStepKey: "SAMPLING_REVIEW" })
+    );
+    expect(AiGarmentProjectRepository.update).toHaveBeenCalledWith(
+      "proj-1",
+      expect.objectContaining({ currentStepKey: "PRODUCTION", status: "PRODUCTION" })
+    );
+  });
+});
+
+describe("linkSalesOrderToProject", () => {
+  it("rejects a project that already has a linked Sales Order", async () => {
+    vi.mocked(AiGarmentProjectRepository.findAnyById).mockResolvedValue({ id: "proj-1", salesOrderId: "so-existing" } as never);
+    await expect(linkSalesOrderToProject(actor, "proj-1", { salesOrderId: "so-1" })).rejects.toMatchObject({
+      code: "REFERENCED_RECORD_IN_USE",
+    });
+  });
+
+  it("rejects a Sales Order that doesn't belong to this company", async () => {
+    vi.mocked(AiGarmentProjectRepository.findAnyById).mockResolvedValue({ id: "proj-1", salesOrderId: null } as never);
+    vi.mocked(SalesOrderRepository.findAnyById).mockResolvedValue(null);
+    await expect(linkSalesOrderToProject(actor, "proj-1", { salesOrderId: "so-1" })).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("links the Sales Order once every guard passes", async () => {
+    vi.mocked(AiGarmentProjectRepository.findAnyById)
+      .mockResolvedValueOnce({ id: "proj-1", salesOrderId: null } as never)
+      .mockResolvedValueOnce({ id: "proj-1", salesOrderId: "so-1" } as never);
+    vi.mocked(SalesOrderRepository.findAnyById).mockResolvedValue({ id: "so-1", orderNumber: "ORD-2026-00001" } as never);
+
+    const result = await linkSalesOrderToProject(actor, "proj-1", { salesOrderId: "so-1" });
+
+    expect(AiGarmentProjectRepository.setSalesOrderIdGuarded).toHaveBeenCalledWith("proj-1", "so-1");
+    expect(result?.salesOrderId).toBe("so-1");
+  });
+
+  it("maps a concurrent double-link (a P2002 from the DB's own unique constraint) to a clean error", async () => {
+    vi.mocked(AiGarmentProjectRepository.findAnyById).mockResolvedValue({ id: "proj-1", salesOrderId: null } as never);
+    vi.mocked(SalesOrderRepository.findAnyById).mockResolvedValue({ id: "so-1", orderNumber: "ORD-2026-00001" } as never);
+    vi.mocked(AiGarmentProjectRepository.setSalesOrderIdGuarded).mockRejectedValue(
+      Object.assign(new Error("Unique constraint failed"), { code: "P2002" })
+    );
+
+    await expect(linkSalesOrderToProject(actor, "proj-1", { salesOrderId: "so-1" })).rejects.toMatchObject({
+      code: "REFERENCED_RECORD_IN_USE",
+    });
+  });
+});
+
+describe("getProductionStatusForProject", () => {
+  it("reports no Sales Order, not an error, when none is linked yet", async () => {
+    vi.mocked(AiGarmentProjectRepository.findAnyById).mockResolvedValue({ id: "proj-1", salesOrderId: null } as never);
+    const result = await getProductionStatusForProject("co-1", "proj-1");
+    expect(result).toEqual({ hasSalesOrder: false, hasProductionOrder: false });
+  });
+
+  it("derives hasProductionOrder from a real, non-cancelled ProductionOrder count", async () => {
+    vi.mocked(AiGarmentProjectRepository.findAnyById).mockResolvedValue({ id: "proj-1", salesOrderId: "so-1" } as never);
+    vi.mocked(AiGarmentProjectRepository.countActiveProductionOrdersForSalesOrder).mockResolvedValue(1);
+
+    const result = await getProductionStatusForProject("co-1", "proj-1");
+
+    expect(AiGarmentProjectRepository.countActiveProductionOrdersForSalesOrder).toHaveBeenCalledWith("so-1");
+    expect(result).toEqual({ hasSalesOrder: true, hasProductionOrder: true });
+  });
+});
+
+describe("completeProjectWorkflow", () => {
+  it("rejects without a linked Sales Order", async () => {
+    vi.mocked(AiGarmentProjectRepository.findAnyById).mockResolvedValue({ id: "proj-1", salesOrderId: null } as never);
+    await expect(completeProjectWorkflow(actor, "proj-1")).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(AiGarmentProjectRepository.markProductionHandoffComplete).not.toHaveBeenCalled();
+  });
+
+  it("rejects without a real Production Order existing yet", async () => {
+    vi.mocked(AiGarmentProjectRepository.findAnyById).mockResolvedValue({ id: "proj-1", salesOrderId: "so-1" } as never);
+    vi.mocked(AiGarmentProjectRepository.countActiveProductionOrdersForSalesOrder).mockResolvedValue(0);
+    await expect(completeProjectWorkflow(actor, "proj-1")).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(AiGarmentProjectRepository.markProductionHandoffComplete).not.toHaveBeenCalled();
+  });
+
+  it("marks the project complete once a real Sales Order and Production Order both exist", async () => {
+    vi.mocked(AiGarmentProjectRepository.findAnyById).mockResolvedValue({
+      id: "proj-1",
+      sourceType: "REFERENCE",
+      status: "PRODUCTION",
+      salesOrderId: "so-1",
+      completedStepKeys: ["SAMPLING_REVIEW"],
+    } as never);
+    vi.mocked(AiGarmentProjectRepository.countActiveProductionOrdersForSalesOrder).mockResolvedValue(1);
+
+    await completeProjectWorkflow(actor, "proj-1");
+
+    expect(AiGarmentProjectRepository.markProductionHandoffComplete).toHaveBeenCalledWith("proj-1", "user-1");
   });
 });

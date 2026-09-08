@@ -27,6 +27,8 @@ export const AI_GARMENT_STEP_KEYS = [
   "TECHNICAL_DEVELOPMENT",
   "BOM",
   "COSTING",
+  "SAMPLING_REVIEW",
+  "PRODUCTION",
 ] as const;
 export type AiGarmentStepKey = (typeof AI_GARMENT_STEP_KEYS)[number];
 
@@ -47,6 +49,8 @@ export const AI_GARMENT_REFERENCE_STEPS: StepDef[] = [
   { key: "TECHNICAL_DEVELOPMENT", label: "Technical Development" },
   { key: "BOM", label: "BOM" },
   { key: "COSTING", label: "Costing" },
+  { key: "SAMPLING_REVIEW", label: "Sampling & Buyer Review" },
+  { key: "PRODUCTION", label: "Production Handoff" },
 ];
 
 export const AI_GARMENT_FABRIC_STEPS: StepDef[] = [
@@ -62,6 +66,8 @@ export const AI_GARMENT_FABRIC_STEPS: StepDef[] = [
   { key: "TECHNICAL_DEVELOPMENT", label: "Technical Development" },
   { key: "BOM", label: "BOM" },
   { key: "COSTING", label: "Costing" },
+  { key: "SAMPLING_REVIEW", label: "Sampling & Buyer Review" },
+  { key: "PRODUCTION", label: "Production Handoff" },
 ];
 
 export function stepsForSourceType(sourceType: "REFERENCE" | "FABRIC"): StepDef[] {
@@ -134,3 +140,14 @@ export const createSampleRequestFromProjectSchema = z.object({
   targetSubmissionDate: z.string().optional().or(z.literal("")),
 });
 export type CreateSampleRequestFromProjectInput = z.infer<typeof createSampleRequestFromProjectSchema>;
+
+// Links an already-created Sales Order back to this project — Sales Order
+// creation itself is never reimplemented here (it needs real commercial
+// input — unit price, per-variant quantities — that can't be sensibly
+// defaulted the way Sample Request creation's optional fields could), so a
+// merchandiser creates it through the existing Sales Order form and links
+// it back by number.
+export const linkSalesOrderToProjectSchema = z.object({
+  salesOrderId: z.string().uuid("Sales Order is required"),
+});
+export type LinkSalesOrderToProjectInput = z.infer<typeof linkSalesOrderToProjectSchema>;
