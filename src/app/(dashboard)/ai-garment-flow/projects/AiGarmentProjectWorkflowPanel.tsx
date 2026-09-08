@@ -22,6 +22,7 @@ import { BomSuggestionPanel } from "./BomSuggestionPanel";
 import { CostAnalysisPanel } from "./CostAnalysisPanel";
 import { ValueEngineeringPanel } from "./ValueEngineeringPanel";
 import { ProductionHandoffPanel } from "./ProductionHandoffPanel";
+import { BuyerCommentsPanel } from "./BuyerCommentsPanel";
 
 const SAMPLE_TYPES = ["FIT", "PROTO", "PP", "TOP", "SHIPMENT", "PHOTOSHOOT", "SMS", "OTHER"] as const;
 
@@ -479,7 +480,12 @@ function StepContent({
   }
 
   if (key === "SAMPLING_REVIEW") {
-    return wrap(<SamplingReviewSection project={project} setError={setError} reloadProject={reloadProject} />);
+    return wrap(
+      <>
+        <SamplingReviewSection project={project} setError={setError} reloadProject={reloadProject} />
+        <BuyerCommentsPanel projectId={project.id} setError={setError} />
+      </>
+    );
   }
 
   if (key === "PRODUCTION") {

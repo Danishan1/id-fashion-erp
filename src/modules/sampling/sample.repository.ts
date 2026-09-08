@@ -175,8 +175,23 @@ export const SampleOtherChargeRepository = {
 
 export const SampleApprovalRepository = {
   create: (data: Prisma.SampleApprovalUncheckedCreateInput) => prisma.sampleApproval.create({ data }),
+
+  /** Every decision recorded across every version of a sample request, newest first — a minimal additive read, used by AI Garment Flow's own Buyer Comments summary (read-only, never mutating). */
+  findAllForRequest: (sampleRequestId: string) =>
+    prisma.sampleApproval.findMany({
+      where: { sampleVersion: { sampleRequestId } },
+      orderBy: { decidedAt: "desc" },
+    }),
 };
 
 export const SampleCommentRepository = {
   create: (data: Prisma.SampleCommentUncheckedCreateInput) => prisma.sampleComment.create({ data }),
+
+  /** Every comment across the whole sample request (any version), oldest first — a minimal additive read, used by AI Garment Flow's own Buyer Comments summary (read-only, never mutating). */
+  findAllForRequest: (sampleRequestId: string) =>
+    prisma.sampleComment.findMany({
+      where: { sampleRequestId },
+      orderBy: { createdAt: "asc" },
+      include: { author: { select: { id: true, fullName: true } } },
+    }),
 };

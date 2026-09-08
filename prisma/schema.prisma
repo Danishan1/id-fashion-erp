@@ -151,6 +151,8 @@ model Company {
   aiGarmentCostAnalyses               AiGarmentCostAnalysis[]
   aiGarmentValueEngineeringRuns       AiGarmentValueEngineeringRun[]
   aiGarmentValueEngineeringAnalyses   AiGarmentValueEngineeringAnalysis[]
+  aiGarmentBuyerCommentsRuns          AiGarmentBuyerCommentsRun[]
+  aiGarmentBuyerCommentsAnalyses      AiGarmentBuyerCommentsAnalysis[]
 
   @@map("companies")
 }
@@ -356,6 +358,8 @@ model User {
   aiGarmentCostAnalysesCreated               AiGarmentCostAnalysis[]              @relation("AiGarmentCostAnalysisCreatedBy")
   aiGarmentValueEngineeringRunsCreated       AiGarmentValueEngineeringRun[]       @relation("AiGarmentValueEngineeringRunCreatedBy")
   aiGarmentValueEngineeringAnalysesCreated   AiGarmentValueEngineeringAnalysis[]  @relation("AiGarmentValueEngineeringAnalysisCreatedBy")
+  aiGarmentBuyerCommentsRunsCreated          AiGarmentBuyerCommentsRun[]          @relation("AiGarmentBuyerCommentsRunCreatedBy")
+  aiGarmentBuyerCommentsAnalysesCreated      AiGarmentBuyerCommentsAnalysis[]     @relation("AiGarmentBuyerCommentsAnalysisCreatedBy")
   aiGarmentProjectsCostingCompletedBy        AiGarmentProject[]                   @relation("AiGarmentProjectCostingCompletedBy")
   aiGarmentProjectsProductionHandoffBy       AiGarmentProject[]                   @relation("AiGarmentProjectProductionHandoffCompletedBy")
 
@@ -5375,6 +5379,8 @@ model AiGarmentProject {
   costAnalyses                     AiGarmentCostAnalysis[]
   valueEngineeringRuns             AiGarmentValueEngineeringRun[]
   valueEngineeringAnalyses         AiGarmentValueEngineeringAnalysis[]
+  buyerCommentsRuns                AiGarmentBuyerCommentsRun[]
+  buyerCommentsAnalyses            AiGarmentBuyerCommentsAnalysis[]
   aiGarmentProductSuitability      AiGarmentProductSuitability?
   aiGarmentProductSuitabilityRuns  AiGarmentProductSuitabilityRun[]
   aiGarmentFabricDevelopmentRuns   AiGarmentFabricDevelopmentRun[]
@@ -6975,6 +6981,96 @@ model AiGarmentValueEngineeringSuggestion {
   analysis AiGarmentValueEngineeringAnalysis @relation(fields: [analysisId], references: [id])
 
   @@map("ai_garment_value_engineering_suggestions")
+}
+
+// ─────────────────────────────────────────────────────────────
+// AI Garment Flow — Buyer Comments (the user's own process 16) (2026-09-08)
+//
+// Scoped via AskUserQuestion ("AI summary of the real Sampling feedback",
+// over a separate pre-sample comment log) since the real buyer feedback
+// already lives in Sampling -- SampleComment's own thread and
+// SampleApproval.decisionNotes on the linked Sample Request -- once it's
+// been submitted for buyer review. This process never invents feedback
+// that wasn't actually given: it reads the real comment thread and decision
+// notes for the project's linked Sample Request and produces a structured,
+// categorized summary of what the buyer is actually asking to change --
+// read-only insight over real data, the same "advisory, never a substitute
+// for the real record" discipline every other AI Garment Flow process in
+// this file already applies to its own upstream source.
+model AiGarmentBuyerCommentsRun {
+  id              String                     @id @default(uuid()) @db.Uuid
+  companyId       String                     @map("company_id") @db.Uuid
+  projectId       String                     @map("project_id") @db.Uuid
+  provider        String
+  model           String
+  promptVersion   String                     @map("prompt_version")
+  promptText      String                     @map("prompt_text")
+  status          AiGarmentAnalysisRunStatus @default(IN_PROGRESS)
+  errorCategory   String?                    @map("error_category")
+  errorMessage    String?                    @map("error_message")
+  requestedAt     DateTime                   @default(now()) @map("requested_at")
+  completedAt     DateTime?                  @map("completed_at")
+  createdByUserId String                     @map("created_by_user_id") @db.Uuid
+
+  company   Company                         @relation(fields: [companyId], references: [id])
+  project   AiGarmentProject                @relation(fields: [projectId], references: [id])
+  createdBy User                            @relation("AiGarmentBuyerCommentsRunCreatedBy", fields: [createdByUserId], references: [id])
+  analysis  AiGarmentBuyerCommentsAnalysis?
+
+  @@index([projectId, status])
+  @@map("ai_garment_buyer_comments_runs")
+}
+
+enum AiGarmentBuyerCommentCategory {
+  FIT
+  CONSTRUCTION
+  FABRIC
+  COLOR
+  TRIM
+  PRICING
+  OTHER
+}
+
+// One row per successful "SUMMARISE BUYER COMMENTS" run -- append-only, the
+// same "full history stays inspectable, only the most recent surfaced in
+// the UI" precedent Cost Analysis/Value Engineering already established,
+// since the real underlying feedback keeps growing over time (a fresh
+// summary each time reflects whatever's been recorded so far, not a
+// decision to resolve).
+model AiGarmentBuyerCommentsAnalysis {
+  id              String   @id @default(uuid()) @db.Uuid
+  companyId       String   @map("company_id") @db.Uuid
+  projectId       String   @map("project_id") @db.Uuid
+  runId           String   @unique @map("run_id") @db.Uuid
+  overallSummary  String   @map("overall_summary")
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  company    Company                                @relation(fields: [companyId], references: [id])
+  project    AiGarmentProject                       @relation(fields: [projectId], references: [id])
+  run        AiGarmentBuyerCommentsRun              @relation(fields: [runId], references: [id])
+  createdBy  User                                   @relation("AiGarmentBuyerCommentsAnalysisCreatedBy", fields: [createdByUserId], references: [id])
+  categories AiGarmentBuyerCommentCategorySummary[]
+
+  @@index([projectId])
+  @@map("ai_garment_buyer_comments_analyses")
+}
+
+model AiGarmentBuyerCommentCategorySummary {
+  id              String                        @id @default(uuid()) @db.Uuid
+  analysisId      String                        @map("analysis_id") @db.Uuid
+  category        AiGarmentBuyerCommentCategory
+  summary         String
+  // A short quoted/paraphrased excerpt of the real comment(s)/decision notes
+  // this summary was drawn from -- kept for traceability back to the real
+  // source, so a reader is never asked to just trust an ungrounded claim.
+  evidenceExcerpt String                        @map("evidence_excerpt")
+  sortOrder       Int                           @default(0) @map("sort_order")
+  createdAt       DateTime                      @default(now()) @map("created_at")
+
+  analysis AiGarmentBuyerCommentsAnalysis @relation(fields: [analysisId], references: [id])
+
+  @@map("ai_garment_buyer_comment_category_summaries")
 }
 
 // ─────────────────────────────────────────────────────────────
