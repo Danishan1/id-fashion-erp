@@ -20,6 +20,9 @@ vi.mock("@/modules/accounts/sales-invoice.repository", () => ({
 vi.mock("@/modules/dispatch/dispatch.repository", () => ({
   DispatchRepository: { findAnyByOrderId: vi.fn() },
 }));
+vi.mock("@/modules/production/production-progress.service", () => ({
+  getSalesOrderItemProductionSummary: vi.fn(),
+}));
 vi.mock("./sales-order.repository", () => ({
   CompanyRepository: { findBaseCurrencyCode: vi.fn() },
   SalesOrderRepository: {
@@ -41,10 +44,16 @@ const { ProductRepository } = await import("@/modules/products/product.repositor
 const { SampleRequestRepository } = await import("@/modules/sampling/sample.repository");
 const { SalesInvoiceRepository } = await import("@/modules/accounts/sales-invoice.repository");
 const { DispatchRepository } = await import("@/modules/dispatch/dispatch.repository");
+const { getSalesOrderItemProductionSummary } = await import("@/modules/production/production-progress.service");
 const { CompanyRepository, SalesOrderRepository } = await import("./sales-order.repository");
-const { createSalesOrder, updateSalesOrder, confirmSalesOrder, transitionSalesOrderStatus, resumeSalesOrderFromHold } = await import(
-  "./sales-order.service"
-);
+const {
+  createSalesOrder,
+  updateSalesOrder,
+  confirmSalesOrder,
+  transitionSalesOrderStatus,
+  resumeSalesOrderFromHold,
+  getSalesOrderById,
+} = await import("./sales-order.service");
 
 const actor = { companyId: "co-1", userId: "user-1", branchId: "br-1" };
 
@@ -68,6 +77,7 @@ beforeEach(() => {
   vi.mocked(SalesOrderRepository.update).mockReset();
   vi.mocked(SalesOrderRepository.updateStatusConditional).mockReset();
   vi.mocked(SalesOrderRepository.replaceItems).mockReset();
+  vi.mocked(getSalesOrderItemProductionSummary).mockReset().mockResolvedValue({ orderedTotal: 0 } as never);
   vi.mocked(SalesInvoiceRepository.findActiveByOrderId).mockReset().mockResolvedValue(null);
   vi.mocked(DispatchRepository.findAnyByOrderId).mockReset().mockResolvedValue(null);
   vi.mocked(SampleRequestRepository.findMany).mockReset().mockResolvedValue([]);
@@ -281,5 +291,32 @@ describe("resumeSalesOrderFromHold", () => {
   it("rejects resuming an order that isn't on hold", async () => {
     vi.mocked(SalesOrderRepository.findAnyById).mockResolvedValue({ id: "so-1", status: "DRAFT", statusBeforeHold: null } as never);
     await expect(resumeSalesOrderFromHold(actor, "so-1")).rejects.toThrow(BusinessRuleError);
+  });
+});
+
+describe("getSalesOrderById", () => {
+  it("attaches a production summary onto each item, keyed by that item's own id", async () => {
+    vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue({
+      id: "so-1",
+      items: [
+        { id: "item-1", productId: "style-1" },
+        { id: "item-2", productId: "style-2" },
+      ],
+    } as never);
+    vi.mocked(getSalesOrderItemProductionSummary)
+      .mockResolvedValueOnce({ salesOrderItemId: "item-1", orderedTotal: 100 } as never)
+      .mockResolvedValueOnce({ salesOrderItemId: "item-2", orderedTotal: 50 } as never);
+
+    const order = await getSalesOrderById("co-1", "so-1");
+
+    expect(getSalesOrderItemProductionSummary).toHaveBeenCalledWith("co-1", "item-1");
+    expect(getSalesOrderItemProductionSummary).toHaveBeenCalledWith("co-1", "item-2");
+    expect(order.items[0].productionSummary).toEqual({ salesOrderItemId: "item-1", orderedTotal: 100 });
+    expect(order.items[1].productionSummary).toEqual({ salesOrderItemId: "item-2", orderedTotal: 50 });
+  });
+
+  it("rejects a sales order that doesn't exist", async () => {
+    vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue(null);
+    await expect(getSalesOrderById("co-1", "missing")).rejects.toThrow(BusinessRuleError);
   });
 });

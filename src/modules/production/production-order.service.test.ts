@@ -4,6 +4,7 @@ vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/numbering/DocumentNumberingService", () => ({ generateDocumentNumber: vi.fn() }));
 vi.mock("@/modules/bom-mrp/bom.repository", () => ({ BomRepository: { findByProductId: vi.fn() } }));
 vi.mock("@/modules/bom-mrp/mrp.service", () => ({ getStyleMaterialRequirement: vi.fn() }));
+vi.mock("./production-progress.service", () => ({ getProductionOrderProgress: vi.fn() }));
 vi.mock("@/modules/inventory/material-request.service", () => ({ createMaterialRequest: vi.fn() }));
 vi.mock("@/modules/products/product.repository", () => ({ ProductRepository: { findStyleById: vi.fn() } }));
 vi.mock("./production.repository", () => ({
@@ -26,6 +27,7 @@ vi.mock("@/core/db/client", () => ({
 const { generateDocumentNumber } = await import("@/core/numbering/DocumentNumberingService");
 const { ProductRepository } = await import("@/modules/products/product.repository");
 const { getStyleMaterialRequirement } = await import("@/modules/bom-mrp/mrp.service");
+const { getProductionOrderProgress } = await import("./production-progress.service");
 const { createMaterialRequest } = await import("@/modules/inventory/material-request.service");
 const { LotRepository, ProductionOrderRepository } = await import("./production.repository");
 const { prisma } = await import("@/core/db/client");
@@ -49,6 +51,7 @@ beforeEach(() => {
   vi.mocked(LotRepository.findByProductionOrderId).mockReset().mockResolvedValue([] as never);
   vi.mocked(prisma.salesOrderItem.findFirst).mockReset();
   vi.mocked(prisma.productionOrder.aggregate).mockReset().mockResolvedValue({ _sum: { plannedQuantity: null } } as never);
+  vi.mocked(getProductionOrderProgress).mockReset().mockResolvedValue({ progressStatus: "PLANNED" } as never);
 });
 
 describe("createProductionOrder", () => {
@@ -149,6 +152,16 @@ describe("getProductionOrderById", () => {
   it("rejects a production order that doesn't exist", async () => {
     vi.mocked(ProductionOrderRepository.findByIdWithDetails).mockResolvedValue(null);
     await expect(getProductionOrderById("co-1", "missing")).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("attaches the derived progress summary", async () => {
+    vi.mocked(ProductionOrderRepository.findByIdWithDetails).mockResolvedValue({ id: "po-1", salesOrderItemId: null } as never);
+    vi.mocked(getProductionOrderProgress).mockResolvedValue({ progressStatus: "IN_PRODUCTION", producedQuantity: 40 } as never);
+
+    const order = await getProductionOrderById("co-1", "po-1");
+
+    expect(getProductionOrderProgress).toHaveBeenCalledWith("co-1", "po-1");
+    expect(order.progress).toEqual({ progressStatus: "IN_PRODUCTION", producedQuantity: 40 });
   });
 });
 

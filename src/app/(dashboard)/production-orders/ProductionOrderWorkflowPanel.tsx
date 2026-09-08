@@ -6,10 +6,17 @@ import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { Modal } from "@/components/ui/Modal";
 import { MaterialRequirementPreview } from "./MaterialRequirementPreview";
-import { STATUS_BADGE_CLASS, STATUS_LABELS, LOT_STATUS_LABELS } from "./statusLabels";
+import {
+  STATUS_BADGE_CLASS,
+  STATUS_LABELS,
+  LOT_STATUS_LABELS,
+  PROGRESS_STATUS_BADGE_CLASS,
+  PROGRESS_STATUS_LABELS,
+} from "./statusLabels";
 
 type ProductionOrderStatus = keyof typeof STATUS_LABELS;
 type LotStatus = keyof typeof LOT_STATUS_LABELS;
+type ProgressStatus = keyof typeof PROGRESS_STATUS_LABELS;
 
 interface LotRow {
   id: string;
@@ -26,6 +33,26 @@ interface SalesOrderContext {
   remaining: number;
 }
 
+interface LotProgressRow {
+  lotId: string;
+  lotNumber: string;
+  plannedQuantity: number;
+  producedQuantity: number;
+  rejectedQuantity: number;
+  status: string;
+}
+
+interface ProductionProgress {
+  plannedQuantity: number;
+  producedQuantity: number;
+  rejectedQuantity: number;
+  balanceQuantity: number;
+  overProductionQuantity: number;
+  progressPercent: number;
+  progressStatus: ProgressStatus;
+  lots: LotProgressRow[];
+}
+
 interface OrderDetail {
   id: string;
   orderNumber: string;
@@ -35,6 +62,7 @@ interface OrderDetail {
   productId: string;
   salesOrderItemId: string | null;
   salesOrderContext: SalesOrderContext | null;
+  progress: ProductionProgress;
   lots: LotRow[];
 }
 
@@ -236,8 +264,8 @@ export function ProductionOrderWorkflowPanel({
         <span className={`rounded-full px-3 py-1 text-xs font-medium ${STATUS_BADGE_CLASS[order.status]}`}>
           {STATUS_LABELS[order.status]}
         </span>
-        <span className="text-sm text-zinc-700 dark:text-zinc-200">
-          Planned Quantity: <span className="font-medium">{order.plannedQuantity}</span>
+        <span className={`rounded-full px-3 py-1 text-xs font-medium ${PROGRESS_STATUS_BADGE_CLASS[order.progress.progressStatus]}`}>
+          {PROGRESS_STATUS_LABELS[order.progress.progressStatus]}
         </span>
         {isBusy && <span className="text-xs text-zinc-400">Saving…</span>}
       </div>
@@ -248,22 +276,44 @@ export function ProductionOrderWorkflowPanel({
           : STATUS_HELP[order.status]}
       </p>
 
-      {order.salesOrderContext && (
-        <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-xs text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
-          <p>
-            Sales Order Quantity (fixed): <span className="font-medium">{order.salesOrderContext.orderedTotal}</span> · This
-            Production Order: <span className="font-medium">{order.plannedQuantity}</span>
-            {order.salesOrderContext.otherCommitted > 0 && (
-              <>
-                {" "}
-                · Planned on other Production Order(s): <span className="font-medium">{order.salesOrderContext.otherCommitted}</span>
-              </>
-            )}
-          </p>
-        </div>
-      )}
-
       {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+
+      <div className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
+        <h2 className="mb-3 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Production Summary</h2>
+        <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+          {order.salesOrderContext && (
+            <SummaryStat label="Sales Order Qty" value={order.salesOrderContext.orderedTotal} />
+          )}
+          <SummaryStat label="Planned Production Qty" value={order.progress.plannedQuantity} />
+          <SummaryStat label="Produced Qty" value={order.progress.producedQuantity} tone="positive" />
+          <SummaryStat label="Rejected Qty" value={order.progress.rejectedQuantity} tone={order.progress.rejectedQuantity > 0 ? "negative" : undefined} />
+          <SummaryStat label="Balance Qty" value={order.progress.balanceQuantity} />
+          {order.progress.overProductionQuantity > 0 && (
+            <SummaryStat label="Over Production Qty" value={order.progress.overProductionQuantity} tone="attention" />
+          )}
+        </dl>
+
+        <div className="mt-4">
+          <div className="mb-1 flex items-center justify-between text-xs text-zinc-500">
+            <span>Progress</span>
+            <span className="font-medium text-zinc-700 dark:text-zinc-200">{order.progress.progressPercent}%</span>
+          </div>
+          <div className="h-2 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
+            <div
+              className={`h-full rounded-full ${order.progress.overProductionQuantity > 0 ? "bg-purple-500" : "bg-indigo-500"}`}
+              style={{ width: `${Math.min(100, order.progress.progressPercent)}%` }}
+            />
+          </div>
+        </div>
+
+        {order.salesOrderContext && (
+          <p className="mt-3 text-xs text-zinc-400">
+            Sales Order Qty is fixed and never changed by this Production Order.
+            {order.salesOrderContext.otherCommitted > 0 &&
+              ` Planned on other Production Order(s) against the same Sales Order line: ${order.salesOrderContext.otherCommitted}.`}
+          </p>
+        )}
+      </div>
 
       <MaterialRequirementPreview productId={order.productId} quantity={Number(order.plannedQuantity)} />
 
@@ -335,49 +385,58 @@ export function ProductionOrderWorkflowPanel({
               <tr className="text-left text-xs text-zinc-500">
                 <th className="py-1 pr-2 font-medium"></th>
                 <th className="py-1 pr-3 font-medium">Lot Number</th>
-                <th className="py-1 pr-3 font-medium">Quantity</th>
+                <th className="py-1 pr-3 font-medium">Planned</th>
+                <th className="py-1 pr-3 font-medium">Produced</th>
+                <th className="py-1 pr-3 font-medium">Rejected</th>
                 <th className="py-1 pr-3 font-medium">Status</th>
                 <th className="py-1 pr-3 font-medium">Current Stage</th>
                 <th className="py-1 font-medium"></th>
               </tr>
             </thead>
             <tbody>
-              {order.lots.map((lot) => (
-                <tr key={lot.id} className="border-t border-zinc-100 dark:border-zinc-800">
-                  <td className="py-2 pr-2">
-                    {(lot.status === "PLANNED" || lot.status === "IN_PROGRESS") && (
-                      <input type="checkbox" checked={selectedLotIds.has(lot.id)} onChange={() => toggleLotSelected(lot.id)} />
-                    )}
-                  </td>
-                  <td className="py-2 pr-3 text-zinc-700 dark:text-zinc-200">
-                    <Link href={`/production-orders/${productionOrderId}/lots/${lot.id}`} className="text-indigo-600 hover:underline dark:text-indigo-400">
-                      {lot.lotNumber}
-                    </Link>
-                  </td>
-                  <td className="py-2 pr-3 text-zinc-700 dark:text-zinc-200">
-                    {lot.quantity} {lot.uom.code}
-                  </td>
-                  <td className="py-2 pr-3 text-zinc-700 dark:text-zinc-200">{LOT_STATUS_LABELS[lot.status] ?? lot.status}</td>
-                  <td className="py-2 pr-3 text-zinc-700 dark:text-zinc-200">{lot.currentStage?.name ?? "—"}</td>
-                  <td className="py-2 text-right">
-                    {(lot.status === "PLANNED" || lot.status === "IN_PROGRESS") && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSplitLotTarget(lot);
-                          setSplitChildren(["", ""]);
-                        }}
-                        className="text-xs font-medium text-indigo-600 hover:text-indigo-500"
-                      >
-                        Split
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
+              {order.lots.map((lot) => {
+                const progress = order.progress.lots.find((l) => l.lotId === lot.id);
+                return (
+                  <tr key={lot.id} className="border-t border-zinc-100 dark:border-zinc-800">
+                    <td className="py-2 pr-2">
+                      {(lot.status === "PLANNED" || lot.status === "IN_PROGRESS") && (
+                        <input type="checkbox" checked={selectedLotIds.has(lot.id)} onChange={() => toggleLotSelected(lot.id)} />
+                      )}
+                    </td>
+                    <td className="py-2 pr-3 text-zinc-700 dark:text-zinc-200">
+                      <Link href={`/production-orders/${productionOrderId}/lots/${lot.id}`} className="text-indigo-600 hover:underline dark:text-indigo-400">
+                        {lot.lotNumber}
+                      </Link>
+                    </td>
+                    <td className="py-2 pr-3 text-zinc-700 dark:text-zinc-200">
+                      {lot.quantity} {lot.uom.code}
+                    </td>
+                    <td className="py-2 pr-3 text-zinc-700 dark:text-zinc-200">{progress ? `${progress.producedQuantity} ${lot.uom.code}` : "—"}</td>
+                    <td className={`py-2 pr-3 ${progress && progress.rejectedQuantity > 0 ? "font-medium text-red-600 dark:text-red-400" : "text-zinc-700 dark:text-zinc-200"}`}>
+                      {progress ? `${progress.rejectedQuantity} ${lot.uom.code}` : "—"}
+                    </td>
+                    <td className="py-2 pr-3 text-zinc-700 dark:text-zinc-200">{LOT_STATUS_LABELS[lot.status] ?? lot.status}</td>
+                    <td className="py-2 pr-3 text-zinc-700 dark:text-zinc-200">{lot.currentStage?.name ?? "—"}</td>
+                    <td className="py-2 text-right">
+                      {(lot.status === "PLANNED" || lot.status === "IN_PROGRESS") && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSplitLotTarget(lot);
+                            setSplitChildren(["", ""]);
+                          }}
+                          className="text-xs font-medium text-indigo-600 hover:text-indigo-500"
+                        >
+                          Split
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
               {order.lots.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="py-4 text-center text-sm text-zinc-500">
+                  <td colSpan={8} className="py-4 text-center text-sm text-zinc-500">
                     No lots yet.
                   </td>
                 </tr>
@@ -589,6 +648,32 @@ export function ProductionOrderWorkflowPanel({
           </div>
         )}
       </Modal>
+    </div>
+  );
+}
+
+function SummaryStat({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone?: "positive" | "negative" | "attention";
+}) {
+  const toneClass =
+    tone === "positive"
+      ? "text-green-600 dark:text-green-400"
+      : tone === "negative"
+        ? "text-red-600 dark:text-red-400"
+        : tone === "attention"
+          ? "text-purple-600 dark:text-purple-400"
+          : "text-zinc-900 dark:text-zinc-50";
+
+  return (
+    <div>
+      <dt className="text-xs text-zinc-500">{label}</dt>
+      <dd className={`text-base font-semibold ${toneClass}`}>{value}</dd>
     </div>
   );
 }

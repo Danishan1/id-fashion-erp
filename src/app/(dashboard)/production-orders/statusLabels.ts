@@ -16,6 +16,26 @@ export const STATUS_BADGE_CLASS: Record<keyof typeof STATUS_LABELS, string> = {
   CLOSED: "bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-300",
 };
 
+// Purely derived from real production quantities (see
+// production-progress.service.ts) — a distinct dimension from the real
+// lifecycle STATUS_LABELS above (which governs Hold/Cancel/Close actions).
+// Shown alongside it, never in place of it, so the two can never contradict.
+export const PROGRESS_STATUS_LABELS = {
+  PLANNED: "Planned",
+  IN_PRODUCTION: "In Production",
+  PARTIALLY_COMPLETED: "Partially Completed",
+  COMPLETED: "Completed",
+  OVER_PRODUCED: "Over Produced",
+} as const;
+
+export const PROGRESS_STATUS_BADGE_CLASS: Record<keyof typeof PROGRESS_STATUS_LABELS, string> = {
+  PLANNED: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
+  IN_PRODUCTION: "bg-indigo-100 text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-300",
+  PARTIALLY_COMPLETED: "bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300",
+  COMPLETED: "bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-300",
+  OVER_PRODUCED: "bg-purple-100 text-purple-700 dark:bg-purple-500/10 dark:text-purple-300",
+};
+
 export const LOT_STATUS_LABELS = {
   PLANNED: "Planned",
   IN_PROGRESS: "In Progress",

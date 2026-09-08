@@ -9,6 +9,7 @@ import { createMaterialRequest } from "@/modules/inventory/material-request.serv
 import { ProductRepository } from "@/modules/products/product.repository";
 import type { Prisma, ProductionOrderStatus } from "@prisma/client";
 import { LotRepository, ProductionOrderRepository } from "./production.repository";
+import { getProductionOrderProgress } from "./production-progress.service";
 import type { CreateProductionOrderInput, GenerateMaterialRequestInput } from "./production.schema";
 
 export interface ActorContext {
@@ -118,8 +119,9 @@ export async function getProductionOrderById(companyId: string, id: string) {
   const salesOrderContext = order.salesOrderItemId
     ? await getSalesOrderLineCommitment(companyId, order.salesOrderItemId, id)
     : null;
+  const progress = await getProductionOrderProgress(companyId, id);
 
-  return { ...order, salesOrderContext };
+  return { ...order, salesOrderContext, progress };
 }
 
 export async function createProductionOrder(actor: ActorContext, input: CreateProductionOrderInput) {

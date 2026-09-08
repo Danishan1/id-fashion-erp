@@ -7,15 +7,6 @@ import { LotRelationRepository, LotRepository, ProductionOrderRepository } from 
 import type { CreateLotInput, MergeLotsInput, SplitLotInput } from "./production.schema";
 import type { ActorContext } from "./production-order.service";
 
-const EPSILON = 0.0001;
-
-// Lots that no longer represent "live" quantity against the order's plan —
-// a SPLIT lot's quantity now lives entirely in its children, and a MERGED
-// lot's quantity now lives entirely in the lot it was merged into. Counting
-// either alongside their replacement would double-count the same physical
-// pieces.
-const SUPERSEDED_LOT_STATUSES = ["CANCELLED", "SPLIT", "MERGED"] as const;
-
 function padLotSuffix(n: number) {
   return String(n).padStart(2, "0");
 }
@@ -76,21 +67,17 @@ export async function createLot(actor: ActorContext, productionOrderId: string, 
     // now-committed sibling Lots before it sums them).
     const lotNumber = await claimNextLotNumber(tx, order.id, order.orderNumber);
 
-    const existingSum = await tx.lot.aggregate({
-      where: { productionOrderId: order.id, status: { notIn: [...SUPERSEDED_LOT_STATUSES] } },
-      _sum: { quantity: true },
-    });
-    const alreadyPlanned = Number(existingSum._sum.quantity ?? 0);
-    const plannedQuantity = Number(order.plannedQuantity);
-    const newTotal = alreadyPlanned + input.quantity;
-    if (newTotal > plannedQuantity + EPSILON) {
-      throw new BusinessRuleError(
-        "OVER_PRODUCTION_NOT_ALLOWED",
-        `Cannot create a lot of ${input.quantity} — existing lots already total ${alreadyPlanned}, and this would bring the total to ${newTotal}, above the production order's planned quantity of ${plannedQuantity}.`,
-        { alreadyPlanned, attempted: input.quantity, plannedQuantity }
-      );
-    }
-
+    // Deliberately NOT capped against the Production Order's own
+    // plannedQuantity — over-production is a real, allowed business outcome
+    // (future demand, replacements; see the Production Progress Tracking
+    // spec), so lot quantities summing past the plan must be creatable, not
+    // rejected. This mirrors the identical "informational, never a cap"
+    // principle already applied one level up, at Production-Order-vs-
+    // Sales-Order-quantity (see createProductionOrder/getSalesOrderLineCommitment
+    // in production-order.service.ts) — the real over-production figure the
+    // user actually sees is always derived fresh from completed production
+    // (production-progress.service.ts's getProductionOrderProgress), never
+    // gated at lot-creation time.
     const created = await LotRepository.createInTx(tx, {
       companyId: actor.companyId,
       branchId: actor.branchId || null,

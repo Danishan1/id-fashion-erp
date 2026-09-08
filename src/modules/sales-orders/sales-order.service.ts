@@ -9,6 +9,7 @@ import { ProductRepository } from "@/modules/products/product.repository";
 import { SampleRequestRepository } from "@/modules/sampling/sample.repository";
 import { SalesInvoiceRepository } from "@/modules/accounts/sales-invoice.repository";
 import { DispatchRepository } from "@/modules/dispatch/dispatch.repository";
+import { getSalesOrderItemProductionSummary } from "@/modules/production/production-progress.service";
 import type { ConfirmSalesOrderInput, SalesOrderInput, UpdateSalesOrderInput } from "./sales-order.schema";
 import { CompanyRepository, SalesOrderRepository } from "./sales-order.repository";
 import { SalesOrderStatus, type Prisma } from "@prisma/client";
@@ -60,7 +61,18 @@ export async function listSalesOrders(companyId: string, query: ListQuery) {
 export async function getSalesOrderById(companyId: string, id: string) {
   const order = await SalesOrderRepository.findByIdWithDetails(companyId, id);
   if (!order) throw new BusinessRuleError("NOT_FOUND", "Sales order not found.", { id });
-  return order;
+
+  // Per-line rollup of every Production Order linked to it — how much has
+  // been planned/produced/rejected against what was actually ordered.
+  // Purely informational (never a cap on this order itself, see
+  // getSalesOrderItemProductionSummary's own doc comment) — attached directly
+  // onto each item (not a separate parallel array) so the detail page gets
+  // it in the same server-rendered payload with no index-matching needed.
+  const items = await Promise.all(
+    order.items.map(async (item) => ({ ...item, productionSummary: await getSalesOrderItemProductionSummary(companyId, item.id) }))
+  );
+
+  return { ...order, items };
 }
 
 /**
