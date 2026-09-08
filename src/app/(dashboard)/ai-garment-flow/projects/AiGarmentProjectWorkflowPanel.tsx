@@ -17,6 +17,7 @@ import { VisualGenerationPanel } from "./VisualGenerationPanel";
 import { CommercialEvaluationPanel } from "./CommercialEvaluationPanel";
 import { FabricApplicationPanel } from "./FabricApplicationPanel";
 import { TechnicalFlatPanel } from "./TechnicalFlatPanel";
+import { TechnicalSpecificationPanel } from "./TechnicalSpecificationPanel";
 import { BomSuggestionPanel } from "./BomSuggestionPanel";
 import { CostAnalysisPanel } from "./CostAnalysisPanel";
 import { ProductionHandoffPanel } from "./ProductionHandoffPanel";
@@ -98,7 +99,7 @@ const STEP_HELP: Partial<Record<AiGarmentStepKey, string>> = {
     "Record which fabric master this design will use, then upload a real fabric swatch to see it applied onto the selected garment visual — approve a version, then APPROVE DESIGN & FABRIC to continue.",
   FABRIC_INFORMATION: "Record the fabric's GSM, dye/shade, weave, width, composition, color and supplier.",
   TECHNICAL_DEVELOPMENT:
-    "Convert this project into a real Style once a design is settled, and generate a technical flat (a CAD-style construction drawing) from the approved garment visual, to continue into BOM and Costing.",
+    "Convert this project into a real Style once a design is settled, generate a technical flat (a CAD-style construction drawing) from the approved garment visual, and draft a Point-of-Measure specification graded across your own sizes — an advisory chart pending real technical measurement — to continue into BOM and Costing.",
   BOM: "Generate AI-suggested draft BOM lines, then resolve each into the real BOM (built on the graduated Style, using the existing BOM/MRP module) before continuing to Costing.",
   COSTING:
     "Costing runs on a linked Sample Request, using Sampling's existing costing engine. Get an early AI cost estimate/commentary alongside it, then continue to Sampling & Buyer Review once real costing is done.",
@@ -438,6 +439,9 @@ function StepContent({
         <ConvertToStyleSection project={project} setError={setError} reloadProject={reloadProject} />
         <div className="mt-4">
           <TechnicalFlatPanel projectId={project.id} setError={setError} reloadProject={reloadProject} />
+        </div>
+        <div className="mt-4">
+          <TechnicalSpecificationPanel projectId={project.id} setError={setError} reloadProject={reloadProject} />
         </div>
       </>
     );
