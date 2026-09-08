@@ -5,13 +5,13 @@ vi.mock("@/modules/sales-orders/sales-order.repository", () => ({
   SalesOrderRepository: { findByIdWithDetails: vi.fn() },
 }));
 vi.mock("./bom.repository", () => ({
-  BomRepository: { findManyByProductIds: vi.fn() },
+  BomRepository: { findManyByProductIds: vi.fn(), findByProductId: vi.fn() },
 }));
 
 const { sumAvailableByProductIds } = await import("@/modules/inventory/inventory.service");
 const { SalesOrderRepository } = await import("@/modules/sales-orders/sales-order.repository");
 const { BomRepository } = await import("./bom.repository");
-const { getMaterialRequirements } = await import("./mrp.service");
+const { getMaterialRequirements, getStyleMaterialRequirement } = await import("./mrp.service");
 
 const MTR = { id: "uom-mtr", code: "MTR", name: "Meter", baseUnitId: null, conversionFactor: 1 };
 const ROL = { id: "uom-rol", code: "ROL", name: "Roll", baseUnitId: null, conversionFactor: 1 };
@@ -203,5 +203,60 @@ describe("getMaterialRequirements", () => {
 
     expect(cotton.neededQuantity).toBe(0.3);
     expect(cotton.contributingStyles[0].neededQuantity).toBe(0.3);
+  });
+});
+
+describe("getStyleMaterialRequirement", () => {
+  beforeEach(() => {
+    vi.mocked(BomRepository.findByProductId)
+      .mockReset()
+      .mockResolvedValue(bomFixture("style-1", [cottonBomItem(), threadBomItem()]) as never);
+  });
+
+  it("reports no approved BOM as hasApprovedBom: false, with everything else empty/null", async () => {
+    vi.mocked(BomRepository.findByProductId).mockResolvedValue(bomFixture("style-1", null) as never);
+
+    const result = await getStyleMaterialRequirement("co-1", "style-1", 100);
+
+    expect(result).toMatchObject({ hasApprovedBom: false, materials: [], totalMaterialCost: null, materialCostPerUnit: null });
+  });
+
+  it("scales BOM quantities by the given flat quantity, not any Sales Order breakdown", async () => {
+    const result = await getStyleMaterialRequirement("co-1", "style-1", 600);
+    const cotton = result.materials.find((m) => m.materialId === "mat-cotton")!;
+
+    // 1.2 * 1.10 wastage * 600 = 792, matching the same hand-verified figure
+    // getMaterialRequirements' own suite already trusts for this same fixture.
+    expect(cotton.neededQuantity).toBe(792);
+  });
+
+  it("computes lineCost/totalMaterialCost/materialCostPerUnit from the material's own unitCost", async () => {
+    vi.mocked(BomRepository.findByProductId).mockResolvedValue(bomFixture("style-1", [cottonBomItem()]) as never);
+    vi.mocked(sumAvailableByProductIds).mockResolvedValue(new Map([["mat-cotton", 0]]));
+
+    const result = await getStyleMaterialRequirement("co-1", "style-1", 100);
+    const cotton = result.materials[0];
+
+    // 1.2 * 1.10 * 100 = 132 MTR needed, unitCost 50 => lineCost 6600.
+    expect(cotton.neededQuantity).toBe(132);
+    expect(cotton.lineCost).toBe(6600);
+    expect(result.totalMaterialCost).toBe(6600);
+    expect(result.materialCostPerUnit).toBe(66);
+  });
+
+  it("reports totalMaterialCost as null (never an undercounted number) when any material has no unitCost", async () => {
+    // threadBomItem's material.unitCost is null in this fixture set.
+    const result = await getStyleMaterialRequirement("co-1", "style-1", 100);
+
+    expect(result.totalMaterialCost).toBeNull();
+    expect(result.materialCostPerUnit).toBeNull();
+    const thread = result.materials.find((m) => m.materialId === "mat-thread")!;
+    expect(thread.unitCost).toBeNull();
+    expect(thread.lineCost).toBeNull();
+  });
+
+  it("carries the BOM header's own id through for callers that need it (e.g. raising a Material Request)", async () => {
+    const result = await getStyleMaterialRequirement("co-1", "style-1", 100);
+    expect(result.bomId).toBe("bom-style-1");
   });
 });

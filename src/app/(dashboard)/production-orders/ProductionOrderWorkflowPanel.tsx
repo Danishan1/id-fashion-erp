@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { Modal } from "@/components/ui/Modal";
+import { MaterialRequirementPreview } from "./MaterialRequirementPreview";
 import { STATUS_BADGE_CLASS, STATUS_LABELS, LOT_STATUS_LABELS } from "./statusLabels";
 
 type ProductionOrderStatus = keyof typeof STATUS_LABELS;
@@ -19,12 +20,21 @@ interface LotRow {
   currentStage: { id: string; name: string } | null;
 }
 
+interface SalesOrderContext {
+  orderedTotal: number;
+  otherCommitted: number;
+  remaining: number;
+}
+
 interface OrderDetail {
   id: string;
   orderNumber: string;
   status: ProductionOrderStatus;
   statusBeforeHold: ProductionOrderStatus | null;
   plannedQuantity: string;
+  productId: string;
+  salesOrderItemId: string | null;
+  salesOrderContext: SalesOrderContext | null;
   lots: LotRow[];
 }
 
@@ -78,6 +88,9 @@ export function ProductionOrderWorkflowPanel({
   const [splitChildren, setSplitChildren] = useState<string[]>(["", ""]);
 
   const [selectedLotIds, setSelectedLotIds] = useState<Set<string>>(new Set());
+
+  const [showEditQuantity, setShowEditQuantity] = useState(false);
+  const [editQuantity, setEditQuantity] = useState("");
 
   useEffect(() => {
     fetch("/api/v1/units")
@@ -156,6 +169,19 @@ export function ProductionOrderWorkflowPanel({
     setMrResult(data.requestNumber);
   };
 
+  const submitEditQuantity = async () => {
+    const ok = await run(
+      () =>
+        fetch(`/api/v1/production-orders/${productionOrderId}/quantity`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ plannedQuantity: Number(editQuantity) }),
+        }),
+      "Failed to update quantity."
+    );
+    if (ok) setShowEditQuantity(false);
+  };
+
   const submitSplit = async () => {
     if (!splitLotTarget) return;
     const children = splitChildren.filter((q) => q).map((q) => ({ quantity: Number(q) }));
@@ -198,12 +224,20 @@ export function ProductionOrderWorkflowPanel({
 
   const canAct = order.status !== "CANCELLED" && order.status !== "CLOSED";
   const allLotsDone = order.lots.length > 0 && order.lots.every((l) => l.status === "COMPLETED" || l.status === "CANCELLED");
+  // Quantity is only ever editable before any real production activity —
+  // once a Lot exists, everything derived from the original plannedQuantity
+  // (Material Requests, JobOrders) would silently go stale against a later
+  // change, same guard the server enforces (see updateProductionOrderQuantity).
+  const canEditQuantity = canAct && order.lots.length === 0;
 
   return (
     <div className="space-y-8">
       <div className="flex flex-wrap items-center gap-3">
         <span className={`rounded-full px-3 py-1 text-xs font-medium ${STATUS_BADGE_CLASS[order.status]}`}>
           {STATUS_LABELS[order.status]}
+        </span>
+        <span className="text-sm text-zinc-700 dark:text-zinc-200">
+          Planned Quantity: <span className="font-medium">{order.plannedQuantity}</span>
         </span>
         {isBusy && <span className="text-xs text-zinc-400">Saving…</span>}
       </div>
@@ -214,12 +248,40 @@ export function ProductionOrderWorkflowPanel({
           : STATUS_HELP[order.status]}
       </p>
 
+      {order.salesOrderContext && (
+        <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-xs text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
+          <p>
+            Sales Order Quantity (fixed): <span className="font-medium">{order.salesOrderContext.orderedTotal}</span> · This
+            Production Order: <span className="font-medium">{order.plannedQuantity}</span>
+            {order.salesOrderContext.otherCommitted > 0 && (
+              <>
+                {" "}
+                · Planned on other Production Order(s): <span className="font-medium">{order.salesOrderContext.otherCommitted}</span>
+              </>
+            )}
+          </p>
+        </div>
+      )}
+
       {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+
+      <MaterialRequirementPreview productId={order.productId} quantity={Number(order.plannedQuantity)} />
 
       <div className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
         <h2 className="mb-3 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Actions</h2>
         {canAct && order.status !== "ON_HOLD" && (
           <div className="flex flex-wrap gap-2">
+            {canEditQuantity && (
+              <ActionButton
+                label="Edit Quantity"
+                onClick={() => {
+                  setEditQuantity(order.plannedQuantity);
+                  setShowEditQuantity(true);
+                }}
+                isBusy={isBusy}
+                variant="secondary"
+              />
+            )}
             <ActionButton label="Generate Material Request" onClick={() => setShowGenerateMr(true)} isBusy={isBusy} variant="secondary" />
             <ActionButton label="Add Lot" onClick={() => setShowAddLot(true)} isBusy={isBusy} />
             {selectedLotIds.size >= 2 && (
@@ -339,6 +401,44 @@ export function ProductionOrderWorkflowPanel({
           onCancel={() => setConfirmAction(null)}
         />
       )}
+
+      <Modal open={showEditQuantity} onClose={() => setShowEditQuantity(false)} title="Edit Production Order Quantity">
+        <div className="space-y-4">
+          <p className="text-sm text-zinc-600 dark:text-zinc-300">
+            This can be more or less than the Sales Order quantity — the Sales Order itself never changes. Material
+            requirement and estimated cost below recalculate as you type.
+          </p>
+          <FormField label="Planned Quantity" htmlFor="editQuantity" required>
+            <input
+              id="editQuantity"
+              type="number"
+              min={0}
+              step="1"
+              value={editQuantity}
+              onChange={(e) => setEditQuantity(e.target.value)}
+              className={textInputClass()}
+            />
+          </FormField>
+          {order.productId && <MaterialRequirementPreview productId={order.productId} quantity={Number(editQuantity) || 0} />}
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setShowEditQuantity(false)}
+              className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={submitEditQuantity}
+              disabled={isBusy || !editQuantity || Number(editQuantity) <= 0}
+              className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
+            >
+              {isBusy ? "Saving…" : "Save Quantity"}
+            </button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal open={showAddLot} onClose={() => setShowAddLot(false)} title="Add Lot">
         <div className="space-y-4">

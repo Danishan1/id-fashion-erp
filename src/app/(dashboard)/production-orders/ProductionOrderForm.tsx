@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { todayIsoDate } from "@/lib/date";
+import { MaterialRequirementPreview } from "./MaterialRequirementPreview";
 
 interface StyleOption {
   id: string;
@@ -20,6 +21,13 @@ interface SalesOrderOption {
 interface SalesOrderItemOption {
   id: string;
   product: { id: string; styleName: string; styleCode: string };
+  breakdown: Array<{ orderedQuantity: number; productVariant: { color: { name: string }; size: { name: string } } }>;
+}
+
+interface CommitmentInfo {
+  orderedTotal: number;
+  otherCommitted: number;
+  remaining: number;
 }
 
 const TODAY = todayIsoDate();
@@ -31,6 +39,7 @@ export function ProductionOrderForm() {
   const [salesOrderId, setSalesOrderId] = useState("");
   const [salesOrderItems, setSalesOrderItems] = useState<SalesOrderItemOption[]>([]);
   const [salesOrderItemId, setSalesOrderItemId] = useState("");
+  const [commitment, setCommitment] = useState<CommitmentInfo | null>(null);
   const [productId, setProductId] = useState("");
   const [plannedQuantity, setPlannedQuantity] = useState("");
   const [priority, setPriority] = useState("NORMAL");
@@ -53,6 +62,7 @@ export function ProductionOrderForm() {
     setSalesOrderId(id);
     setSalesOrderItemId("");
     setSalesOrderItems([]);
+    setCommitment(null);
     if (!id) return;
     fetch(`/api/v1/sales-orders/${id}`)
       .then((res) => res.json())
@@ -61,9 +71,29 @@ export function ProductionOrderForm() {
 
   const onSalesOrderItemChange = (id: string) => {
     setSalesOrderItemId(id);
+    setCommitment(null);
     const item = salesOrderItems.find((i) => i.id === id);
-    if (item) setProductId(item.product.id);
+    if (!item) return;
+    setProductId(item.product.id);
+    fetch(`/api/v1/production-orders/sales-order-commitment?salesOrderItemId=${id}`)
+      .then((res) => res.json())
+      .then((body) => {
+        const info: CommitmentInfo = body.data;
+        setCommitment(info);
+        // Default only — never overwrites a quantity the user already typed.
+        // Prefers what's actually still unplanned on this line; falls back
+        // to the full ordered quantity once nothing's left (e.g. a repeat
+        // run against an already-fulfilled line).
+        if (!plannedQuantity) {
+          const defaultQty = info.remaining > 0 ? info.remaining : info.orderedTotal;
+          if (defaultQty > 0) setPlannedQuantity(String(defaultQty));
+        }
+      });
   };
+
+  const selectedItem = salesOrderItems.find((i) => i.id === salesOrderItemId);
+  const colors = selectedItem ? [...new Set(selectedItem.breakdown.map((b) => b.productVariant.color.name))] : [];
+  const sizes = selectedItem ? [...new Set(selectedItem.breakdown.map((b) => b.productVariant.size.name))] : [];
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -124,6 +154,36 @@ export function ProductionOrderForm() {
         </FormField>
       )}
 
+      {selectedItem && commitment && (
+        <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-xs text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
+          <p>
+            Ordered Quantity: <span className="font-medium">{commitment.orderedTotal}</span>
+            {colors.length > 0 && (
+              <>
+                {" "}
+                · Colors: <span className="font-medium">{colors.join(", ")}</span>
+              </>
+            )}
+            {sizes.length > 0 && (
+              <>
+                {" "}
+                · Sizes: <span className="font-medium">{sizes.join(", ")}</span>
+              </>
+            )}
+          </p>
+          {commitment.otherCommitted > 0 && (
+            <p className="mt-1">
+              Already planned on other Production Order(s): <span className="font-medium">{commitment.otherCommitted}</span> ·
+              Remaining unplanned: <span className="font-medium">{commitment.remaining}</span>
+            </p>
+          )}
+          <p className="mt-1 text-zinc-400">
+            This Production Order&apos;s own quantity below is independent — it can be more or less than the Sales Order
+            quantity, which never changes.
+          </p>
+        </div>
+      )}
+
       <FormField label="Style" htmlFor="productId" required>
         <select id="productId" required value={productId} onChange={(e) => setProductId(e.target.value)} className={textInputClass()}>
           <option value="">— Select —</option>
@@ -157,6 +217,8 @@ export function ProductionOrderForm() {
           </select>
         </FormField>
       </div>
+
+      {productId && <MaterialRequirementPreview productId={productId} quantity={Number(plannedQuantity) || 0} />}
 
       <div className="grid grid-cols-2 gap-4">
         <FormField label="Planned Start Date" htmlFor="plannedStartDate">

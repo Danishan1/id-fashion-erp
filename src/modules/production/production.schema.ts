@@ -11,6 +11,15 @@ export const createProductionOrderSchema = z.object({
 });
 export type CreateProductionOrderInput = z.infer<typeof createProductionOrderSchema>;
 
+// Scoped single-field update, matching this project's established sub-route
+// convention (Sample Request's /color, /damage, /costing) — a Production
+// Order's quantity is deliberately not editable through the same route as
+// its status/dates, since it needs its own "no lots yet" business guard.
+export const updateProductionOrderQuantitySchema = z.object({
+  plannedQuantity: z.coerce.number().positive("Planned quantity must be greater than 0"),
+});
+export type UpdateProductionOrderQuantityInput = z.infer<typeof updateProductionOrderQuantitySchema>;
+
 export const productionOrderStatusChangeSchema = z.object({
   status: z.enum(["ON_HOLD", "CANCELLED", "CLOSED"]),
 });

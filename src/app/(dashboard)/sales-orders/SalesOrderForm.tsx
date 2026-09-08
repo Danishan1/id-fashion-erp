@@ -20,6 +20,9 @@ interface SampleOption {
   id: string;
   requestNumber: string;
   product: { id: string } | null;
+  // Current version's own costing only — see sample.repository.ts's
+  // findMany include. Null until the sample has been costed at all.
+  versions: { estimatedCostPerUnit: string | null }[];
 }
 
 interface VariantOption {
@@ -371,7 +374,18 @@ export function SalesOrderForm({
                 <select
                   id={`sample-${index}`}
                   value={item.sampleRequestId}
-                  onChange={(e) => updateItem(index, { sampleRequestId: e.target.value })}
+                  onChange={(e) => {
+                    const sampleRequestId = e.target.value;
+                    const selected = approvedSamples.find((s) => s.id === sampleRequestId);
+                    const sampleCost = selected?.versions[0]?.estimatedCostPerUnit ?? null;
+                    // Default, not enforced — only fills a still-empty Unit
+                    // Price, same "suggest but never overwrite" convention
+                    // already used for Add Material's Unit default in Sampling.
+                    updateItem(index, {
+                      sampleRequestId,
+                      ...(sampleCost && !item.unitPrice ? { unitPrice: sampleCost } : {}),
+                    });
+                  }}
                   disabled={(!searchAllCustomers && !customerId) || !item.productId}
                   className={textInputClass()}
                 >
@@ -388,11 +402,21 @@ export function SalesOrderForm({
                   <p className="mt-1 text-xs text-zinc-400">Pick a Customer first, or search all customers above.</p>
                 ) : !item.productId ? (
                   <p className="mt-1 text-xs text-zinc-400">Pick a Style first.</p>
-                ) : (
-                  approvedSamples.filter((s) => s.product?.id === item.productId).length === 0 && (
-                    <p className="mt-1 text-xs text-zinc-400">No approved samples for this style yet.</p>
-                  )
-                )}
+                ) : approvedSamples.filter((s) => s.product?.id === item.productId).length === 0 ? (
+                  <p className="mt-1 text-xs text-zinc-400">No approved samples for this style yet.</p>
+                ) : item.sampleRequestId ? (
+                  (() => {
+                    const selected = approvedSamples.find((s) => s.id === item.sampleRequestId);
+                    const sampleCost = selected?.versions[0]?.estimatedCostPerUnit ?? null;
+                    return sampleCost ? (
+                      <p className="mt-1 text-xs text-emerald-600 dark:text-emerald-400">
+                        Sample cost/unit: {formatAmount(Number(sampleCost))}
+                      </p>
+                    ) : (
+                      <p className="mt-1 text-xs text-zinc-400">This sample has not been costed yet.</p>
+                    );
+                  })()
+                ) : null}
               </FormField>
             </div>
 

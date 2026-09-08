@@ -5,7 +5,19 @@ const PRODUCTION_ORDER_INCLUDE = {
   product: { select: { id: true, styleName: true, styleCode: true } },
   bom: { select: { id: true } },
   salesOrderItem: {
-    select: { id: true, salesOrder: { select: { id: true, orderNumber: true } } },
+    select: {
+      id: true,
+      salesOrder: { select: { id: true, orderNumber: true } },
+      // For the "Sales Order data" reference block on the detail page —
+      // ordered quantity and the color/size mix, never re-derived from a
+      // second query.
+      breakdown: {
+        select: {
+          orderedQuantity: true,
+          productVariant: { select: { color: { select: { name: true } }, size: { select: { name: true } } } },
+        },
+      },
+    },
   },
   requestedBy: { select: { id: true, fullName: true } },
 } as const;

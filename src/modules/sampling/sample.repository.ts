@@ -10,6 +10,15 @@ export const SampleRequestRepository = {
         buyer: { select: { id: true, name: true } },
         product: { select: { id: true, styleName: true, styleCode: true } },
         requestedBy: { select: { id: true, fullName: true } },
+        // The current (highest version number) version's own costing only —
+        // callers like the Sales Order form's "Linked Sample" picker need a
+        // quick price reference, not the full costing/materials/approvals
+        // detail already served by findByIdWithDetails.
+        versions: {
+          orderBy: { versionNumber: "desc" },
+          take: 1,
+          select: { estimatedCostPerUnit: true },
+        },
       },
       ...args,
     }),
