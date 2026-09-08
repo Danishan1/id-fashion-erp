@@ -149,6 +149,8 @@ model Company {
   aiGarmentBomSuggestions             AiGarmentBomSuggestion[]
   aiGarmentCostAnalysisRuns           AiGarmentCostAnalysisRun[]
   aiGarmentCostAnalyses               AiGarmentCostAnalysis[]
+  aiGarmentValueEngineeringRuns       AiGarmentValueEngineeringRun[]
+  aiGarmentValueEngineeringAnalyses   AiGarmentValueEngineeringAnalysis[]
 
   @@map("companies")
 }
@@ -352,6 +354,8 @@ model User {
   aiGarmentBomSuggestionRunsCreated          AiGarmentBomSuggestionRun[]          @relation("AiGarmentBomSuggestionRunCreatedBy")
   aiGarmentCostAnalysisRunsCreated           AiGarmentCostAnalysisRun[]           @relation("AiGarmentCostAnalysisRunCreatedBy")
   aiGarmentCostAnalysesCreated               AiGarmentCostAnalysis[]              @relation("AiGarmentCostAnalysisCreatedBy")
+  aiGarmentValueEngineeringRunsCreated       AiGarmentValueEngineeringRun[]       @relation("AiGarmentValueEngineeringRunCreatedBy")
+  aiGarmentValueEngineeringAnalysesCreated   AiGarmentValueEngineeringAnalysis[]  @relation("AiGarmentValueEngineeringAnalysisCreatedBy")
   aiGarmentProjectsCostingCompletedBy        AiGarmentProject[]                   @relation("AiGarmentProjectCostingCompletedBy")
   aiGarmentProjectsProductionHandoffBy       AiGarmentProject[]                   @relation("AiGarmentProjectProductionHandoffCompletedBy")
 
@@ -5369,6 +5373,8 @@ model AiGarmentProject {
   bomSuggestions                   AiGarmentBomSuggestion[]
   costAnalysisRuns                 AiGarmentCostAnalysisRun[]
   costAnalyses                     AiGarmentCostAnalysis[]
+  valueEngineeringRuns             AiGarmentValueEngineeringRun[]
+  valueEngineeringAnalyses         AiGarmentValueEngineeringAnalysis[]
   aiGarmentProductSuitability      AiGarmentProductSuitability?
   aiGarmentProductSuitabilityRuns  AiGarmentProductSuitabilityRun[]
   aiGarmentFabricDevelopmentRuns   AiGarmentFabricDevelopmentRun[]
@@ -6880,6 +6886,95 @@ model AiGarmentCostAnalysis {
 
   @@index([projectId])
   @@map("ai_garment_cost_analyses")
+}
+
+// ─────────────────────────────────────────────────────────────
+// AI Garment Flow — Value Engineering (the user's own process 14) (2026-09-08)
+//
+// Scoped via AskUserQuestion ("cost-reduction suggestions against the real
+// BOM", over a broader design-level pass) since this process, unlike every
+// other one in this module, genuinely REQUIRES the real, graduated Style's
+// approved BOM to already exist -- it reviews real BomItem lines (material/
+// quantity/wastage, plus a real per-piece cost contribution wherever the
+// material's own Product.unitCost is set), never a pre-graduation design's
+// own structured fields alone. Purely advisory and read-only by design: no
+// suggestion here is ever resolved into a real BomItem write (unlike BOM
+// Suggestion's own resolvedBomItemId/upsertBom() flow) -- a human decides
+// whether to actually apply an idea by editing the real BOM themselves in
+// the existing BOM editor, so no bomItemId reference (soft or hard) is
+// stored at all; each suggestion simply echoes the material description it
+// was about as plain text for display.
+model AiGarmentValueEngineeringRun {
+  id              String                     @id @default(uuid()) @db.Uuid
+  companyId       String                     @map("company_id") @db.Uuid
+  projectId       String                     @map("project_id") @db.Uuid
+  provider        String
+  model           String
+  promptVersion   String                     @map("prompt_version")
+  promptText      String                     @map("prompt_text")
+  status          AiGarmentAnalysisRunStatus @default(IN_PROGRESS)
+  errorCategory   String?                    @map("error_category")
+  errorMessage    String?                    @map("error_message")
+  requestedAt     DateTime                   @default(now()) @map("requested_at")
+  completedAt     DateTime?                  @map("completed_at")
+  createdByUserId String                     @map("created_by_user_id") @db.Uuid
+
+  company   Company                            @relation(fields: [companyId], references: [id])
+  project   AiGarmentProject                   @relation(fields: [projectId], references: [id])
+  createdBy User                               @relation("AiGarmentValueEngineeringRunCreatedBy", fields: [createdByUserId], references: [id])
+  analysis  AiGarmentValueEngineeringAnalysis?
+
+  @@index([projectId, status])
+  @@map("ai_garment_value_engineering_runs")
+}
+
+enum AiGarmentCostImpactDirection {
+  LOWER
+  SIMILAR
+  HIGHER
+}
+
+// One row per successful "ANALYSE FOR VALUE ENGINEERING" run -- append-only,
+// the same "full history stays inspectable, only the most recent surfaced
+// in the UI" precedent AiGarmentCostAnalysis already established, since
+// there's no per-suggestion decision/resolution to track here at all.
+model AiGarmentValueEngineeringAnalysis {
+  id              String   @id @default(uuid()) @db.Uuid
+  companyId       String   @map("company_id") @db.Uuid
+  projectId       String   @map("project_id") @db.Uuid
+  runId           String   @unique @map("run_id") @db.Uuid
+  // Holistic commentary not tied to any one BOM line (e.g. "the bulk of
+  // this style's cost sits in the fabric itself, not trims").
+  overallSummary  String   @map("overall_summary")
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  company     Company                               @relation(fields: [companyId], references: [id])
+  project     AiGarmentProject                      @relation(fields: [projectId], references: [id])
+  run         AiGarmentValueEngineeringRun          @relation(fields: [runId], references: [id])
+  createdBy   User                                  @relation("AiGarmentValueEngineeringAnalysisCreatedBy", fields: [createdByUserId], references: [id])
+  suggestions AiGarmentValueEngineeringSuggestion[]
+
+  @@index([projectId])
+  @@map("ai_garment_value_engineering_analyses")
+}
+
+model AiGarmentValueEngineeringSuggestion {
+  id                  String                       @id @default(uuid()) @db.Uuid
+  analysisId          String                       @map("analysis_id") @db.Uuid
+  // Plain-text echo of the real BOM line this suggestion is about -- never a
+  // stored reference to the real BomItem (see the module comment above).
+  materialDescription String                       @map("material_description")
+  suggestedChange     String                       @map("suggested_change")
+  costImpactDirection AiGarmentCostImpactDirection @map("cost_impact_direction")
+  qualityRiskNotes    String                       @map("quality_risk_notes")
+  reasoning           String
+  sortOrder           Int                          @default(0) @map("sort_order")
+  createdAt           DateTime                     @default(now()) @map("created_at")
+
+  analysis AiGarmentValueEngineeringAnalysis @relation(fields: [analysisId], references: [id])
+
+  @@map("ai_garment_value_engineering_suggestions")
 }
 
 // ─────────────────────────────────────────────────────────────

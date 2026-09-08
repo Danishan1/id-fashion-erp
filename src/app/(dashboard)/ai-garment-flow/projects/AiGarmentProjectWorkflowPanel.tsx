@@ -20,6 +20,7 @@ import { TechnicalFlatPanel } from "./TechnicalFlatPanel";
 import { TechnicalSpecificationPanel } from "./TechnicalSpecificationPanel";
 import { BomSuggestionPanel } from "./BomSuggestionPanel";
 import { CostAnalysisPanel } from "./CostAnalysisPanel";
+import { ValueEngineeringPanel } from "./ValueEngineeringPanel";
 import { ProductionHandoffPanel } from "./ProductionHandoffPanel";
 
 const SAMPLE_TYPES = ["FIT", "PROTO", "PP", "TOP", "SHIPMENT", "PHOTOSHOOT", "SMS", "OTHER"] as const;
@@ -102,7 +103,7 @@ const STEP_HELP: Partial<Record<AiGarmentStepKey, string>> = {
     "Convert this project into a real Style once a design is settled, generate a technical flat (a CAD-style construction drawing) from the approved garment visual, and draft a Point-of-Measure specification graded across your own sizes — an advisory chart pending real technical measurement — to continue into BOM and Costing.",
   BOM: "Generate AI-suggested draft BOM lines, then resolve each into the real BOM (built on the graduated Style, using the existing BOM/MRP module) before continuing to Costing.",
   COSTING:
-    "Costing runs on a linked Sample Request, using Sampling's existing costing engine. Get an early AI cost estimate/commentary alongside it, then continue to Sampling & Buyer Review once real costing is done.",
+    "Costing runs on a linked Sample Request, using Sampling's existing costing engine. Get an early AI cost estimate/commentary alongside it, review the approved BOM for AI-suggested cost-reduction ideas, then continue to Sampling & Buyer Review once real costing is done.",
   SAMPLING_REVIEW:
     "The physical sample now runs entirely through Sampling's own workflow (open its detail page to log development, submit it, and record the buyer's decision) — this status updates automatically to reflect it. Continue once the buyer has approved it.",
   PRODUCTION:
@@ -472,6 +473,7 @@ function StepContent({
       <>
         <CostingSection project={project} setError={setError} reloadProject={reloadProject} />
         <CostAnalysisPanel projectId={project.id} currencyCode={project.currencyCode} setError={setError} reloadProject={reloadProject} />
+        <ValueEngineeringPanel projectId={project.id} setError={setError} />
       </>
     );
   }
