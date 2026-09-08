@@ -64,6 +64,9 @@ vi.mock("./ai-garment-project.repository", () => ({
 vi.mock("./reference-analysis.repository", () => ({
   AiGarmentReferenceAnalysisRepository: { findByProjectId: vi.fn() },
 }));
+vi.mock("./fabric-analysis.repository", () => ({
+  AiGarmentFabricAnalysisRepository: { findByProjectId: vi.fn() },
+}));
 vi.mock("./development-brief.repository", () => ({
   AiGarmentDesignDirectionRepository: { countByStatus: vi.fn() },
 }));
@@ -74,6 +77,7 @@ const { createSampleRequest } = await import("@/modules/sampling/sample.service"
 const { SalesOrderRepository } = await import("@/modules/sales-orders/sales-order.repository");
 const { AiGarmentProjectRepository, AiGarmentDesignOptionRepository } = await import("./ai-garment-project.repository");
 const { AiGarmentReferenceAnalysisRepository } = await import("./reference-analysis.repository");
+const { AiGarmentFabricAnalysisRepository } = await import("./fabric-analysis.repository");
 const { AiGarmentDesignDirectionRepository } = await import("./development-brief.repository");
 const {
   createAiGarmentProject,
@@ -117,6 +121,9 @@ beforeEach(() => {
   // their own setup — the gate-specific tests below override these.
   vi.mocked(AiGarmentReferenceAnalysisRepository.findByProjectId).mockReset().mockResolvedValue({ status: "APPROVED" } as never);
   vi.mocked(AiGarmentDesignDirectionRepository.countByStatus).mockReset().mockResolvedValue(1);
+  // Same "default to already-past-the-gate" convenience as the Reference
+  // Analysis mock above, for tests unrelated to Process 7's own gate.
+  vi.mocked(AiGarmentFabricAnalysisRepository.findByProjectId).mockReset().mockResolvedValue({ status: "APPROVED" } as never);
 });
 
 describe("createAiGarmentProject", () => {
@@ -283,6 +290,85 @@ describe("saveWorkflowStep — the state machine", () => {
       expect(AiGarmentProjectRepository.update).toHaveBeenCalledWith(
         "proj-1",
         expect.objectContaining({ currentStepKey: "UPLOAD_REFERENCE" })
+      );
+    });
+  });
+
+  describe("Process 7's own PRODUCT_SUITABILITY gate mirrors the DEVELOPMENT_BRIEF one exactly, scoped to the FABRIC workflow", () => {
+    it("blocks entering PRODUCT_SUITABILITY itself without an approved Fabric Analysis", async () => {
+      vi.mocked(AiGarmentProjectRepository.findAnyById).mockResolvedValue({
+        id: "proj-1",
+        sourceType: "FABRIC",
+        status: "REFERENCE_ANALYSIS",
+        completedStepKeys: ["PROJECT_INFO", "UPLOAD_FABRIC", "FABRIC_ANALYSIS"],
+      } as never);
+      vi.mocked(AiGarmentFabricAnalysisRepository.findByProjectId).mockResolvedValue(null);
+
+      await expect(saveWorkflowStep(actor, "proj-1", { stepKey: "PRODUCT_SUITABILITY" })).rejects.toMatchObject({
+        code: "INVALID_STATE_TRANSITION",
+      });
+    });
+
+    it("blocks jumping straight PAST PRODUCT_SUITABILITY to a later step without an approved Fabric Analysis (the bypass this gate closes)", async () => {
+      vi.mocked(AiGarmentProjectRepository.findAnyById).mockResolvedValue({
+        id: "proj-1",
+        sourceType: "FABRIC",
+        status: "REFERENCE_ANALYSIS",
+        completedStepKeys: ["PROJECT_INFO", "UPLOAD_FABRIC", "FABRIC_ANALYSIS"],
+      } as never);
+      vi.mocked(AiGarmentFabricAnalysisRepository.findByProjectId).mockResolvedValue(null);
+
+      await expect(saveWorkflowStep(actor, "proj-1", { stepKey: "SELECT_DESIGN" })).rejects.toMatchObject({
+        code: "INVALID_STATE_TRANSITION",
+      });
+      expect(AiGarmentProjectRepository.update).not.toHaveBeenCalled();
+    });
+
+    it("allows continuing to PRODUCT_SUITABILITY once the Fabric Analysis is approved", async () => {
+      vi.mocked(AiGarmentProjectRepository.findAnyById).mockResolvedValue({
+        id: "proj-1",
+        sourceType: "FABRIC",
+        status: "REFERENCE_ANALYSIS",
+        completedStepKeys: ["PROJECT_INFO", "UPLOAD_FABRIC", "FABRIC_ANALYSIS"],
+      } as never);
+
+      await saveWorkflowStep(actor, "proj-1", { stepKey: "PRODUCT_SUITABILITY" });
+
+      expect(AiGarmentProjectRepository.update).toHaveBeenCalledWith(
+        "proj-1",
+        expect.objectContaining({ currentStepKey: "PRODUCT_SUITABILITY" })
+      );
+    });
+
+    it("does not apply to a REFERENCE-sourced project at all (PRODUCT_SUITABILITY isn't one of its steps)", async () => {
+      vi.mocked(AiGarmentProjectRepository.findAnyById).mockResolvedValue({
+        id: "proj-1",
+        sourceType: "REFERENCE",
+        status: "DESIGN_DEVELOPMENT",
+        completedStepKeys: ["PROJECT_INFO", "UPLOAD_REFERENCE", "REFERENCE_ANALYSIS", "DEVELOPMENT_BRIEF"],
+      } as never);
+      vi.mocked(AiGarmentFabricAnalysisRepository.findByProjectId).mockResolvedValue(null);
+
+      await saveWorkflowStep(actor, "proj-1", { stepKey: "COMMERCIAL_EVALUATION" });
+
+      expect(AiGarmentFabricAnalysisRepository.findByProjectId).not.toHaveBeenCalled();
+    });
+
+    it("does not gate steps before PRODUCT_SUITABILITY on the FABRIC workflow", async () => {
+      vi.mocked(AiGarmentProjectRepository.findAnyById).mockResolvedValue({
+        id: "proj-1",
+        sourceType: "FABRIC",
+        status: "IDEA",
+        completedStepKeys: [],
+      } as never);
+      vi.mocked(AiGarmentFabricAnalysisRepository.findByProjectId).mockResolvedValue(null);
+
+      await saveWorkflowStep(actor, "proj-1", { stepKey: "UPLOAD_FABRIC" });
+
+      expect(AiGarmentFabricAnalysisRepository.findByProjectId).not.toHaveBeenCalled();
+      expect(AiGarmentProjectRepository.update).toHaveBeenCalledWith(
+        "proj-1",
+        expect.objectContaining({ currentStepKey: "UPLOAD_FABRIC" })
       );
     });
   });

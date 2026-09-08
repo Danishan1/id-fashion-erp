@@ -126,6 +126,8 @@ model Company {
   aiGarmentProjects                 AiGarmentProject[]
   aiGarmentReferenceAnalyses        AiGarmentReferenceAnalysis[]
   aiGarmentReferenceAnalysisRuns    AiGarmentReferenceAnalysisRun[]
+  aiGarmentFabricAnalyses           AiGarmentFabricAnalysis[]
+  aiGarmentFabricAnalysisRuns       AiGarmentFabricAnalysisRun[]
   aiGarmentDevelopmentBriefRuns     AiGarmentDevelopmentBriefRun[]
   aiGarmentDesignDirections         AiGarmentDesignDirection[]
   aiGarmentImageGenerationRuns      AiGarmentImageGenerationRun[]
@@ -315,6 +317,10 @@ model User {
   aiGarmentReferenceAnalysesCreated        AiGarmentReferenceAnalysis[]       @relation("AiGarmentReferenceAnalysisCreatedBy")
   aiGarmentReferenceObservationsApproved   AiGarmentReferenceObservation[]    @relation("AiGarmentReferenceObservationApprovedBy")
   aiGarmentReferenceAnalysisRunsCreated    AiGarmentReferenceAnalysisRun[]    @relation("AiGarmentReferenceAnalysisRunCreatedBy")
+  aiGarmentFabricAnalysesApproved          AiGarmentFabricAnalysis[]          @relation("AiGarmentFabricAnalysisApprovedBy")
+  aiGarmentFabricAnalysesCreated           AiGarmentFabricAnalysis[]          @relation("AiGarmentFabricAnalysisCreatedBy")
+  aiGarmentFabricObservationsApproved      AiGarmentFabricObservation[]       @relation("AiGarmentFabricObservationApprovedBy")
+  aiGarmentFabricAnalysisRunsCreated       AiGarmentFabricAnalysisRun[]       @relation("AiGarmentFabricAnalysisRunCreatedBy")
   aiGarmentDevelopmentBriefRunsCreated     AiGarmentDevelopmentBriefRun[]     @relation("AiGarmentDevelopmentBriefRunCreatedBy")
   aiGarmentDesignDirectionsCreated         AiGarmentDesignDirection[]         @relation("AiGarmentDesignDirectionCreatedBy")
   aiGarmentImageGenerationRunsCreated      AiGarmentImageGenerationRun[]      @relation("AiGarmentImageGenerationRunCreatedBy")
@@ -1771,18 +1777,18 @@ model SampleOtherCharge {
 }
 
 model SampleApproval {
-  id                  String         @id @default(uuid()) @db.Uuid
-  sampleVersionId     String         @map("sample_version_id") @db.Uuid
-  decision            SampleDecision
-  decidedByUserId     String         @map("decided_by_user_id") @db.Uuid
-  customerContactName String?        @map("customer_contact_name")
+  id                   String         @id @default(uuid()) @db.Uuid
+  sampleVersionId      String         @map("sample_version_id") @db.Uuid
+  decision             SampleDecision
+  decidedByUserId      String         @map("decided_by_user_id") @db.Uuid
+  customerContactName  String?        @map("customer_contact_name")
   // Free text, not FK'd to Buyer.phone — the request's own linked Buyer is
   // only a default (see the create form), since the person who actually
   // called back with the decision may differ from the Buyer master's own
   // saved contact, same reasoning as customerContactName above.
-  customerContactPhone String?       @map("customer_contact_phone")
-  decisionNotes       String?        @map("decision_notes")
-  decidedAt           DateTime       @default(now()) @map("decided_at")
+  customerContactPhone String?        @map("customer_contact_phone")
+  decisionNotes        String?        @map("decision_notes")
+  decidedAt            DateTime       @default(now()) @map("decided_at")
 
   sampleVersion SampleVersion @relation(fields: [sampleVersionId], references: [id])
   decidedBy     User          @relation("SampleApprovalDecidedBy", fields: [decidedByUserId], references: [id])
@@ -5199,52 +5205,56 @@ enum AiGarmentProjectStatus {
 }
 
 model AiGarmentProject {
-  id                                String                  @id @default(uuid()) @db.Uuid
-  companyId                         String                  @map("company_id") @db.Uuid
-  branchId                          String?                 @map("branch_id") @db.Uuid
-  projectNumber                     String                  @map("project_number")
-  projectName                       String                  @map("project_name")
-  sourceType                        AiGarmentSourceType     @map("source_type")
-  customerId                        String?                 @map("customer_id") @db.Uuid
-  buyerId                           String?                 @map("buyer_id") @db.Uuid
-  brandId                           String?                 @map("brand_id") @db.Uuid
-  seasonId                          String?                 @map("season_id") @db.Uuid
-  categoryId                        String?                 @map("category_id") @db.Uuid
+  id                                 String                  @id @default(uuid()) @db.Uuid
+  companyId                          String                  @map("company_id") @db.Uuid
+  branchId                           String?                 @map("branch_id") @db.Uuid
+  projectNumber                      String                  @map("project_number")
+  projectName                        String                  @map("project_name")
+  sourceType                         AiGarmentSourceType     @map("source_type")
+  customerId                         String?                 @map("customer_id") @db.Uuid
+  buyerId                            String?                 @map("buyer_id") @db.Uuid
+  brandId                            String?                 @map("brand_id") @db.Uuid
+  seasonId                           String?                 @map("season_id") @db.Uuid
+  categoryId                         String?                 @map("category_id") @db.Uuid
   // Free text -- no "Market" master exists anywhere in this ERP today; a
   // deliberate foundation-stage simplification, same reasoning already used
   // for SampleRequest.color.
-  targetMarket                      String?                 @map("target_market")
+  targetMarket                       String?                 @map("target_market")
   // A descriptive demographic/positioning note, distinct from the real
   // customerId/buyerId FKs above -- no existing master fits this.
-  targetCustomerProfile             String?                 @map("target_customer_profile")
-  targetSellingPrice                Decimal?                @map("target_selling_price") @db.Decimal(18, 2)
+  targetCustomerProfile              String?                 @map("target_customer_profile")
+  targetSellingPrice                 Decimal?                @map("target_selling_price") @db.Decimal(18, 2)
   // Soft-matched against Currency.code, same non-FK convention
   // Customer.defaultCurrencyCode already uses -- not a real @relation.
-  currencyCode                      String?                 @map("currency_code") @db.Char(3)
-  orderQuantityEstimate             Decimal?                @map("order_quantity_estimate") @db.Decimal(18, 2)
-  status                            AiGarmentProjectStatus  @default(IDEA)
-  statusBeforeHold                  AiGarmentProjectStatus? @map("status_before_hold")
+  currencyCode                       String?                 @map("currency_code") @db.Char(3)
+  orderQuantityEstimate              Decimal?                @map("order_quantity_estimate") @db.Decimal(18, 2)
+  status                             AiGarmentProjectStatus  @default(IDEA)
+  statusBeforeHold                   AiGarmentProjectStatus? @map("status_before_hold")
   // Drives wizard resumability -- e.g. "PROJECT_INFO", "UPLOAD_REFERENCE",
   // "COSTING". Save-and-leave-and-return reads/writes this, not a session.
-  currentStepKey                    String                  @map("current_step_key")
+  currentStepKey                     String                  @map("current_step_key")
   // Native Postgres array -- drives the progress-stepper UI's completed ticks.
-  completedStepKeys                 String[]                @map("completed_step_keys")
+  completedStepKeys                  String[]                @map("completed_step_keys")
   // Set once, only by convertProjectToStyle() -- mirrors SampleRequest.productId.
-  productId                         String?                 @unique @map("product_id") @db.Uuid
+  productId                          String?                 @unique @map("product_id") @db.Uuid
   // Set once, only by createSampleRequestFromProject() -- mirrors
   // BuyerEnquiryLine.sampleRequestId.
-  sampleRequestId                   String?                 @unique @map("sample_request_id") @db.Uuid
+  sampleRequestId                    String?                 @unique @map("sample_request_id") @db.Uuid
   // Reserved, unused this phase -- see the schema comment on SalesOrder's own
   // aiGarmentProject back-relation. @unique since the back-relation there is
   // singular (one Sales Order can be reserved-linked from at most one project).
-  salesOrderId                      String?                 @unique @map("sales_order_id") @db.Uuid
+  salesOrderId                       String?                 @unique @map("sales_order_id") @db.Uuid
   // Soft reference to an Attachment.id -- no hard FK, same convention as
   // AiGarmentDesignOption.imageAttachmentId. Points at whichever reference
   // image is CURRENT for this project (a single-image "Replace"/"Delete"
   // model, not a gallery) -- uploading a new one replaces this pointer and
   // the old Attachment row/file are removed.
-  referenceImageAttachmentId        String?                 @map("reference_image_attachment_id") @db.Uuid
-  notes                             String?
+  referenceImageAttachmentId         String?                 @map("reference_image_attachment_id") @db.Uuid
+  // Soft reference to an Attachment.id, mirroring referenceImageAttachmentId's
+  // exact "single current image, Replace/Delete" shape -- the Fabric-sourced
+  // workflow's own starting swatch photo (Process 7's own analysis subject).
+  fabricSwatchImageAttachmentId      String?                 @map("fabric_swatch_image_attachment_id") @db.Uuid
+  notes                              String?
   // Process 5 (Commercial Design Evaluation)'s own "SELECT DESIGN FOR
   // DEVELOPMENT" outcome -- set once, via selectDesignForDevelopment(),
   // never by any other path. This project record IS the pre-Style form of
@@ -5253,23 +5263,23 @@ model AiGarmentProject {
   // row is deliberate, since a Product/Style may not exist yet at this stage
   // of the workflow (graduation via convertProjectToStyle() is a later,
   // separate, still-manual step required only once BOM/Costing begin).
-  selectedDesignDirectionId         String?                 @map("selected_design_direction_id") @db.Uuid
-  selectedDesignAt                  DateTime?               @map("selected_design_at")
-  selectedDesignByUserId            String?                 @map("selected_design_by_user_id") @db.Uuid
+  selectedDesignDirectionId          String?                 @map("selected_design_direction_id") @db.Uuid
+  selectedDesignAt                   DateTime?               @map("selected_design_at")
+  selectedDesignByUserId             String?                 @map("selected_design_by_user_id") @db.Uuid
   // Process 6 (Apply Actual Fabric)'s own "APPROVE DESIGN & FABRIC" outcome --
   // set once, via approveDesignAndFabric(), same "recorded on the project
   // itself, not a real Style Master row yet" reasoning as
   // selectedDesignDirectionId above, and same "mutable, not a guarded
   // set-once graduation write" choice.
-  approvedFabricApplicationId       String?                 @map("approved_fabric_application_id") @db.Uuid
-  approvedFabricApplicationAt       DateTime?               @map("approved_fabric_application_at")
-  approvedFabricApplicationByUserId String?                 @map("approved_fabric_application_by_user_id") @db.Uuid
+  approvedFabricApplicationId        String?                 @map("approved_fabric_application_id") @db.Uuid
+  approvedFabricApplicationAt        DateTime?               @map("approved_fabric_application_at")
+  approvedFabricApplicationByUserId  String?                 @map("approved_fabric_application_by_user_id") @db.Uuid
   // Process 7 (Technical Development)'s own "APPROVE TECHNICAL FLAT" outcome --
   // same "recorded on the project itself, mutable, not a guarded set-once
   // graduation write" reasoning as approvedFabricApplicationId above.
-  approvedTechnicalFlatId           String?                 @map("approved_technical_flat_id") @db.Uuid
-  approvedTechnicalFlatAt           DateTime?               @map("approved_technical_flat_at")
-  approvedTechnicalFlatByUserId     String?                 @map("approved_technical_flat_by_user_id") @db.Uuid
+  approvedTechnicalFlatId            String?                 @map("approved_technical_flat_id") @db.Uuid
+  approvedTechnicalFlatAt            DateTime?               @map("approved_technical_flat_at")
+  approvedTechnicalFlatByUserId      String?                 @map("approved_technical_flat_by_user_id") @db.Uuid
   // Process 9 (Cost Analysis)'s own "Mark Costing Complete" outcome -- a
   // one-time milestone stamp (guarded so only the FIRST review stamps it,
   // via `where: { costingCompletedAt: null }`), but NOT this project's own
@@ -5278,8 +5288,8 @@ model AiGarmentProject {
   // AI-assisted costing phase was reviewed," never "the whole workflow is
   // done" -- see productionHandoffCompletedAt below for the real terminal
   // milestone.
-  costingCompletedAt                DateTime?               @map("costing_completed_at")
-  costingCompletedByUserId          String?                 @map("costing_completed_by_user_id") @db.Uuid
+  costingCompletedAt                 DateTime?               @map("costing_completed_at")
+  costingCompletedByUserId           String?                 @map("costing_completed_by_user_id") @db.Uuid
   // Process 10's own "Mark Project Complete" outcome -- PRODUCTION is the
   // genuinely last step in both stepsForSourceType() sequences, so this is
   // this project's real terminal milestone. Guarded via a single updateMany
@@ -5289,49 +5299,51 @@ model AiGarmentProject {
   // than a race between two different actors.
   productionHandoffCompletedAt       DateTime?               @map("production_handoff_completed_at")
   productionHandoffCompletedByUserId String?                 @map("production_handoff_completed_by_user_id") @db.Uuid
-  createdByUserId                   String                  @map("created_by_user_id") @db.Uuid
-  createdAt                         DateTime                @default(now()) @map("created_at")
-  updatedAt                         DateTime                @updatedAt @map("updated_at")
+  createdByUserId                    String                  @map("created_by_user_id") @db.Uuid
+  createdAt                          DateTime                @default(now()) @map("created_at")
+  updatedAt                          DateTime                @updatedAt @map("updated_at")
 
-  company                     Company                            @relation(fields: [companyId], references: [id])
-  branch                      Branch?                            @relation(fields: [branchId], references: [id])
-  customer                    Customer?                          @relation(fields: [customerId], references: [id])
-  buyer                       Buyer?                             @relation(fields: [buyerId], references: [id])
-  brand                       Brand?                             @relation(fields: [brandId], references: [id])
-  season                      Season?                            @relation(fields: [seasonId], references: [id])
-  category                    Category?                          @relation(fields: [categoryId], references: [id])
-  product                     Product?                           @relation(fields: [productId], references: [id])
-  sampleRequest               SampleRequest?                     @relation(fields: [sampleRequestId], references: [id])
-  salesOrder                  SalesOrder?                        @relation(fields: [salesOrderId], references: [id])
-  createdBy                   User                               @relation("AiGarmentProjectCreatedBy", fields: [createdByUserId], references: [id])
-  selectedDesignDirection     AiGarmentDesignDirection?          @relation("AiGarmentProjectSelectedDesign", fields: [selectedDesignDirectionId], references: [id])
-  selectedDesignBy            User?                              @relation("AiGarmentProjectSelectedDesignBy", fields: [selectedDesignByUserId], references: [id])
-  approvedFabricApplication   AiGarmentFabricApplication?        @relation("AiGarmentProjectApprovedFabricApplication", fields: [approvedFabricApplicationId], references: [id])
-  approvedFabricApplicationBy User?                              @relation("AiGarmentProjectApprovedFabricApplicationBy", fields: [approvedFabricApplicationByUserId], references: [id])
-  approvedTechnicalFlat       AiGarmentTechnicalFlat?            @relation("AiGarmentProjectApprovedTechnicalFlat", fields: [approvedTechnicalFlatId], references: [id])
-  approvedTechnicalFlatBy     User?                              @relation("AiGarmentProjectApprovedTechnicalFlatBy", fields: [approvedTechnicalFlatByUserId], references: [id])
-  costingCompletedBy          User?                              @relation("AiGarmentProjectCostingCompletedBy", fields: [costingCompletedByUserId], references: [id])
-  productionHandoffCompletedBy User?                             @relation("AiGarmentProjectProductionHandoffCompletedBy", fields: [productionHandoffCompletedByUserId], references: [id])
-  fabricDetail                AiGarmentFabricDetail?
-  designOptions               AiGarmentDesignOption[]
-  referenceAnalysis           AiGarmentReferenceAnalysis?
-  referenceAnalysisRuns       AiGarmentReferenceAnalysisRun[]
-  developmentBriefRuns        AiGarmentDevelopmentBriefRun[]
-  designDirections            AiGarmentDesignDirection[]
-  imageGenerationRuns         AiGarmentImageGenerationRun[]
-  generatedImages             AiGarmentGeneratedImage[]
-  designVariationRuns         AiGarmentDesignVariationRun[]
-  designVariations            AiGarmentDesignVariation[]
-  commercialEvaluationRuns    AiGarmentCommercialEvaluationRun[]
-  commercialEvaluations       AiGarmentCommercialEvaluation[]
-  fabricApplicationRuns       AiGarmentFabricApplicationRun[]
-  fabricApplications          AiGarmentFabricApplication[]       @relation("AiGarmentFabricApplicationsOfProject")
-  technicalFlatRuns           AiGarmentTechnicalFlatRun[]
-  technicalFlats              AiGarmentTechnicalFlat[]           @relation("AiGarmentTechnicalFlatsOfProject")
-  bomSuggestionRuns           AiGarmentBomSuggestionRun[]
-  bomSuggestions              AiGarmentBomSuggestion[]
-  costAnalysisRuns            AiGarmentCostAnalysisRun[]
-  costAnalyses                AiGarmentCostAnalysis[]
+  company                      Company                            @relation(fields: [companyId], references: [id])
+  branch                       Branch?                            @relation(fields: [branchId], references: [id])
+  customer                     Customer?                          @relation(fields: [customerId], references: [id])
+  buyer                        Buyer?                             @relation(fields: [buyerId], references: [id])
+  brand                        Brand?                             @relation(fields: [brandId], references: [id])
+  season                       Season?                            @relation(fields: [seasonId], references: [id])
+  category                     Category?                          @relation(fields: [categoryId], references: [id])
+  product                      Product?                           @relation(fields: [productId], references: [id])
+  sampleRequest                SampleRequest?                     @relation(fields: [sampleRequestId], references: [id])
+  salesOrder                   SalesOrder?                        @relation(fields: [salesOrderId], references: [id])
+  createdBy                    User                               @relation("AiGarmentProjectCreatedBy", fields: [createdByUserId], references: [id])
+  selectedDesignDirection      AiGarmentDesignDirection?          @relation("AiGarmentProjectSelectedDesign", fields: [selectedDesignDirectionId], references: [id])
+  selectedDesignBy             User?                              @relation("AiGarmentProjectSelectedDesignBy", fields: [selectedDesignByUserId], references: [id])
+  approvedFabricApplication    AiGarmentFabricApplication?        @relation("AiGarmentProjectApprovedFabricApplication", fields: [approvedFabricApplicationId], references: [id])
+  approvedFabricApplicationBy  User?                              @relation("AiGarmentProjectApprovedFabricApplicationBy", fields: [approvedFabricApplicationByUserId], references: [id])
+  approvedTechnicalFlat        AiGarmentTechnicalFlat?            @relation("AiGarmentProjectApprovedTechnicalFlat", fields: [approvedTechnicalFlatId], references: [id])
+  approvedTechnicalFlatBy      User?                              @relation("AiGarmentProjectApprovedTechnicalFlatBy", fields: [approvedTechnicalFlatByUserId], references: [id])
+  costingCompletedBy           User?                              @relation("AiGarmentProjectCostingCompletedBy", fields: [costingCompletedByUserId], references: [id])
+  productionHandoffCompletedBy User?                              @relation("AiGarmentProjectProductionHandoffCompletedBy", fields: [productionHandoffCompletedByUserId], references: [id])
+  fabricDetail                 AiGarmentFabricDetail?
+  designOptions                AiGarmentDesignOption[]
+  referenceAnalysis            AiGarmentReferenceAnalysis?
+  referenceAnalysisRuns        AiGarmentReferenceAnalysisRun[]
+  fabricAnalysis               AiGarmentFabricAnalysis?
+  fabricAnalysisRuns           AiGarmentFabricAnalysisRun[]
+  developmentBriefRuns         AiGarmentDevelopmentBriefRun[]
+  designDirections             AiGarmentDesignDirection[]
+  imageGenerationRuns          AiGarmentImageGenerationRun[]
+  generatedImages              AiGarmentGeneratedImage[]
+  designVariationRuns          AiGarmentDesignVariationRun[]
+  designVariations             AiGarmentDesignVariation[]
+  commercialEvaluationRuns     AiGarmentCommercialEvaluationRun[]
+  commercialEvaluations        AiGarmentCommercialEvaluation[]
+  fabricApplicationRuns        AiGarmentFabricApplicationRun[]
+  fabricApplications           AiGarmentFabricApplication[]       @relation("AiGarmentFabricApplicationsOfProject")
+  technicalFlatRuns            AiGarmentTechnicalFlatRun[]
+  technicalFlats               AiGarmentTechnicalFlat[]           @relation("AiGarmentTechnicalFlatsOfProject")
+  bomSuggestionRuns            AiGarmentBomSuggestionRun[]
+  bomSuggestions               AiGarmentBomSuggestion[]
+  costAnalysisRuns             AiGarmentCostAnalysisRun[]
+  costAnalyses                 AiGarmentCostAnalysis[]
 
   @@unique([companyId, projectNumber])
   @@index([companyId, status])
@@ -5548,6 +5560,121 @@ model AiGarmentReferenceAnalysisRun {
 
   @@index([projectId, status])
   @@map("ai_garment_reference_analysis_runs")
+}
+
+// ─────────────────────────────────────────────────────────────
+// AI Garment Flow — Process 7: Fabric Analysis (2026-09-08)
+//
+// Mirrors Process 1 (Reference Garment Analysis)'s exact architecture --
+// single-current-swatch-image + STALE-on-replace + per-field
+// approve/edit/reset discipline -- scoped narrower (17 fields, not 36),
+// since there is no garment yet to describe, only the fabric itself.
+// Reuses AiGarmentAnalysisConfidence/AiGarmentAnalysisRunStatus verbatim --
+// both are already generic enough (no garment-specific meaning baked in).
+// Deliberately does NOT suggest which garments suit this fabric -- that is
+// the separate Product Suitability process's own job, not this one's.
+// ─────────────────────────────────────────────────────────────
+
+// Identical state shape to AiGarmentReferenceAnalysisStatus (a second enum,
+// not a shared one, so each process's own status values can evolve
+// independently without the other silently gaining/losing a state).
+enum AiGarmentFabricAnalysisStatus {
+  DRAFT
+  AI_ANALYSED
+  UNDER_REVIEW
+  APPROVED
+  STALE
+}
+
+// The current fabric analysis for a project -- 1:1, always fully replaced
+// (its observations deleted and recreated) by the next successful AI run,
+// same "never versioned/append-only" shape as AiGarmentReferenceAnalysis.
+model AiGarmentFabricAnalysis {
+  id                 String                        @id @default(uuid()) @db.Uuid
+  companyId          String                        @map("company_id") @db.Uuid
+  projectId          String                        @unique @map("project_id") @db.Uuid
+  // Soft reference to the Attachment this analysis was actually run against
+  // -- kept even if the project's own current swatch is later replaced, so
+  // a STALE analysis still records what it was analysing.
+  swatchAttachmentId String                        @map("swatch_attachment_id") @db.Uuid
+  status             AiGarmentFabricAnalysisStatus @default(DRAFT)
+  analysisVersion    Int                           @default(0) @map("analysis_version")
+  promptVersion      String                        @map("prompt_version")
+  provider           String
+  model              String
+  rawResponseJson    Json                          @map("raw_response_json")
+  // A short narrative summary, analogous to AiGarmentReferenceAnalysis's own
+  // designDnaSummary -- max ~150 words per the hidden prompt.
+  fabricSummary      String?                       @map("fabric_summary")
+  missingInformation String[]                      @map("missing_information")
+  approvedByUserId   String?                       @map("approved_by_user_id") @db.Uuid
+  approvedAt         DateTime?                     @map("approved_at")
+  createdByUserId    String                        @map("created_by_user_id") @db.Uuid
+  createdAt          DateTime                      @default(now()) @map("created_at")
+  updatedAt          DateTime                      @updatedAt @map("updated_at")
+
+  company      Company                      @relation(fields: [companyId], references: [id])
+  project      AiGarmentProject             @relation(fields: [projectId], references: [id])
+  approvedBy   User?                        @relation("AiGarmentFabricAnalysisApprovedBy", fields: [approvedByUserId], references: [id])
+  createdBy    User                         @relation("AiGarmentFabricAnalysisCreatedBy", fields: [createdByUserId], references: [id])
+  observations AiGarmentFabricObservation[]
+  runs         AiGarmentFabricAnalysisRun[]
+
+  @@map("ai_garment_fabric_analyses")
+}
+
+// One row per analysed fabric feature -- 17 rows per analysis (see
+// src/core/ai/fabric-analysis/feature-registry.ts). Same two-column
+// aiObservation (never overwritten) / approvedObservation (starts equal,
+// diverges on edit) shape as AiGarmentReferenceObservation, for the same
+// "a later process can never silently bypass the approved value" reason.
+model AiGarmentFabricObservation {
+  id                       String                      @id @default(uuid()) @db.Uuid
+  analysisId               String                      @map("analysis_id") @db.Uuid
+  featureKey               String                      @map("feature_key")
+  aiObservation            String                      @map("ai_observation")
+  aiConfidence             AiGarmentAnalysisConfidence @map("ai_confidence")
+  aiManufacturingRelevance String                      @map("ai_manufacturing_relevance")
+  approvedObservation      String                      @map("approved_observation")
+  userEdited               Boolean                     @default(false) @map("user_edited")
+  approvedByUserId         String?                     @map("approved_by_user_id") @db.Uuid
+  approvedAt               DateTime?                   @map("approved_at")
+  createdAt                DateTime                    @default(now()) @map("created_at")
+  updatedAt                DateTime                    @updatedAt @map("updated_at")
+
+  analysis   AiGarmentFabricAnalysis @relation(fields: [analysisId], references: [id])
+  approvedBy User?                   @relation("AiGarmentFabricObservationApprovedBy", fields: [approvedByUserId], references: [id])
+
+  @@unique([analysisId, featureKey])
+  @@map("ai_garment_fabric_observations")
+}
+
+// Append-only log of every AI fabric-analysis attempt, success or failure --
+// mirrors AiGarmentReferenceAnalysisRun exactly.
+model AiGarmentFabricAnalysisRun {
+  id                 String                     @id @default(uuid()) @db.Uuid
+  companyId          String                     @map("company_id") @db.Uuid
+  projectId          String                     @map("project_id") @db.Uuid
+  analysisId         String?                    @map("analysis_id") @db.Uuid
+  swatchAttachmentId String                     @map("swatch_attachment_id") @db.Uuid
+  provider           String
+  model              String
+  promptVersion      String                     @map("prompt_version")
+  analysisVersion    Int                        @map("analysis_version")
+  status             AiGarmentAnalysisRunStatus @default(IN_PROGRESS)
+  errorCategory      String?                    @map("error_category")
+  errorMessage       String?                    @map("error_message")
+  requestedAt        DateTime                   @default(now()) @map("requested_at")
+  completedAt        DateTime?                  @map("completed_at")
+  createdByUserId    String                     @map("created_by_user_id") @db.Uuid
+
+  company   Company                  @relation(fields: [companyId], references: [id])
+  project   AiGarmentProject         @relation(fields: [projectId], references: [id])
+  analysis  AiGarmentFabricAnalysis? @relation(fields: [analysisId], references: [id])
+  createdBy User                     @relation("AiGarmentFabricAnalysisRunCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@index([projectId, status])
+  @@map("ai_garment_fabric_analysis_runs")
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -6371,18 +6498,18 @@ model AiGarmentCostAnalysisRun {
 // the UI" precedent AiGarmentCommercialEvaluation already established: a
 // re-run always creates a new analysis, never overwrites a prior one.
 model AiGarmentCostAnalysis {
-  id                           String   @id @default(uuid()) @db.Uuid
-  companyId                    String   @map("company_id") @db.Uuid
-  projectId                    String   @map("project_id") @db.Uuid
-  runId                        String   @unique @map("run_id") @db.Uuid
-  estimatedCostPerUnitLow      Decimal  @map("estimated_cost_per_unit_low") @db.Decimal(18, 2)
-  estimatedCostPerUnitHigh     Decimal  @map("estimated_cost_per_unit_high") @db.Decimal(18, 2)
-  costBreakdownCommentary      String   @map("cost_breakdown_commentary")
-  pricePositioningCommentary   String   @map("price_positioning_commentary")
-  marginFeasibilityCommentary  String   @map("margin_feasibility_commentary")
-  riskNotes                    String   @map("risk_notes")
-  createdByUserId              String   @map("created_by_user_id") @db.Uuid
-  createdAt                    DateTime @default(now()) @map("created_at")
+  id                          String   @id @default(uuid()) @db.Uuid
+  companyId                   String   @map("company_id") @db.Uuid
+  projectId                   String   @map("project_id") @db.Uuid
+  runId                       String   @unique @map("run_id") @db.Uuid
+  estimatedCostPerUnitLow     Decimal  @map("estimated_cost_per_unit_low") @db.Decimal(18, 2)
+  estimatedCostPerUnitHigh    Decimal  @map("estimated_cost_per_unit_high") @db.Decimal(18, 2)
+  costBreakdownCommentary     String   @map("cost_breakdown_commentary")
+  pricePositioningCommentary  String   @map("price_positioning_commentary")
+  marginFeasibilityCommentary String   @map("margin_feasibility_commentary")
+  riskNotes                   String   @map("risk_notes")
+  createdByUserId             String   @map("created_by_user_id") @db.Uuid
+  createdAt                   DateTime @default(now()) @map("created_at")
 
   company   Company                  @relation(fields: [companyId], references: [id])
   project   AiGarmentProject         @relation(fields: [projectId], references: [id])

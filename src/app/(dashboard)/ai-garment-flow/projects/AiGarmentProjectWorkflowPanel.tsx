@@ -3,12 +3,13 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { FormField, textInputClass } from "@/components/ui/FormField";
-import { FilePreviewModal } from "@/components/ui/FilePreviewModal";
 import { stepsForSourceType, type AiGarmentStepKey } from "@/modules/ai-garment-flow/ai-garment-project.schema";
 import { STATUS_LABELS, STATUS_BADGE_CLASS } from "../statusLabels";
 import { AiGarmentProjectForm } from "./AiGarmentProjectForm";
 import { ReferenceImageUploader } from "./ReferenceImageUploader";
 import { ReferenceAnalysisPanel } from "./ReferenceAnalysisPanel";
+import { FabricSwatchImageUploader } from "./FabricSwatchImageUploader";
+import { FabricAnalysisPanel } from "./FabricAnalysisPanel";
 import { DevelopmentBriefPanel } from "./DevelopmentBriefPanel";
 import { VisualGenerationPanel } from "./VisualGenerationPanel";
 import { CommercialEvaluationPanel } from "./CommercialEvaluationPanel";
@@ -56,6 +57,7 @@ interface Project {
   sampleRequestId: string | null;
   salesOrderId: string | null;
   referenceImageAttachmentId: string | null;
+  fabricSwatchImageAttachmentId: string | null;
   product: { id: string; styleCode: string; styleName: string } | null;
   sampleRequest: { id: string; requestNumber: string; status: string } | null;
   salesOrder: { id: string; orderNumber: string; status: string } | null;
@@ -75,15 +77,6 @@ interface Project {
   costingCompletedAt: string | null;
 }
 
-interface Attachment {
-  id: string;
-  fileName: string;
-  mimeType: string;
-  contextLabel: string | null;
-  uploadedAt: string;
-  uploadedBy: { fullName: string } | null;
-}
-
 const TERMINAL_STATUSES = ["COMPLETED", "REJECTED", "CANCELLED"];
 
 const STEP_HELP: Partial<Record<AiGarmentStepKey, string>> = {
@@ -91,7 +84,7 @@ const STEP_HELP: Partial<Record<AiGarmentStepKey, string>> = {
   UPLOAD_REFERENCE: "Upload the reference photo, buyer image, or inspiration file this project is based on.",
   UPLOAD_FABRIC: "Upload a photo of the fabric swatch this project is based on.",
   REFERENCE_ANALYSIS: "AI would analyse the uploaded reference here once connected.",
-  FABRIC_ANALYSIS: "AI would analyse the uploaded fabric here once connected.",
+  FABRIC_ANALYSIS: "Analyse the uploaded fabric swatch with AI, then review, correct, and approve to continue.",
   DEVELOPMENT_BRIEF: "Generate differentiated commercial design directions from the approved reference analysis, then review, correct, and approve at least one to continue.",
   GENERATE_VARIATIONS: "Generate real garment visuals for each approved design direction, then Select, Reject, Regenerate, or Create a Variation of any image.",
   GENERATE_DESIGNS: "AI would generate design directions here once connected — add candidates manually for now.",
@@ -349,7 +342,7 @@ function StepContent({
   }
 
   if (key === "UPLOAD_FABRIC") {
-    return wrap(<UploadStep projectId={project.id} assetType="FABRIC_SWATCH" setError={setError} />);
+    return wrap(<FabricSwatchImageUploader projectId={project.id} onChanged={() => void reloadProject()} />);
   }
 
   if (key === "UPLOAD_REFERENCE") {
@@ -378,7 +371,13 @@ function StepContent({
     );
   }
 
-  if (["FABRIC_ANALYSIS", "PRODUCT_SUITABILITY", "PRODUCT_DIRECTIONS"].includes(key)) {
+  if (key === "FABRIC_ANALYSIS") {
+    return wrap(
+      <FabricAnalysisPanel projectId={project.id} hasFabricSwatchImage={Boolean(project.fabricSwatchImageAttachmentId)} />
+    );
+  }
+
+  if (["PRODUCT_SUITABILITY", "PRODUCT_DIRECTIONS"].includes(key)) {
     return wrap(<AiPlaceholderButton label={aiButtonLabel(key)} />);
   }
 
@@ -571,92 +570,6 @@ function AiPlaceholderButton({ label }: { label: string }) {
         {label}
       </button>
       {clicked && <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">AI integration not connected.</p>}
-    </div>
-  );
-}
-
-function UploadStep({ projectId, assetType, setError }: { projectId: string; assetType: string; setError: (e: string | null) => void }) {
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
-  const [file, setFile] = useState<File | null>(null);
-  const [inputKey, setInputKey] = useState(0);
-  const [uploading, setUploading] = useState(false);
-  const [preview, setPreview] = useState<Attachment | null>(null);
-
-  async function load() {
-    const res = await fetch(`/api/v1/ai-garment-projects/${projectId}/attachments`);
-    const body = await res.json();
-    if (res.ok) setAttachments(body.data ?? []);
-  }
-
-  useEffect(() => {
-    fetch(`/api/v1/ai-garment-projects/${projectId}/attachments`)
-      .then((res) => res.json())
-      .then((body) => setAttachments(body.data ?? []));
-  }, [projectId]);
-
-  async function upload() {
-    if (!file) return;
-    setError(null);
-    setUploading(true);
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("assetType", assetType);
-      const res = await fetch(`/api/v1/ai-garment-projects/${projectId}/attachments`, { method: "POST", body: formData });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body?.error?.message ?? "Upload failed.");
-      setFile(null);
-      setInputKey((k) => k + 1);
-      await load();
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setUploading(false);
-    }
-  }
-
-  const relevant = attachments.filter((a) => a.contextLabel === assetType);
-
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-2">
-        <input key={inputKey} type="file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="text-sm" />
-        <button
-          type="button"
-          disabled={!file || uploading}
-          onClick={upload}
-          className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
-        >
-          {uploading ? "Uploading…" : "Upload"}
-        </button>
-      </div>
-      {relevant.length === 0 ? (
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">No files uploaded yet.</p>
-      ) : (
-        <ul className="divide-y divide-zinc-200 rounded-md border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
-          {relevant.map((a) => (
-            <li key={a.id} className="flex items-center justify-between px-3 py-2 text-sm">
-              <button type="button" className="text-indigo-600 hover:underline dark:text-indigo-400" onClick={() => setPreview(a)}>
-                {a.fileName}
-              </button>
-              <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                {a.uploadedBy?.fullName} · {new Date(a.uploadedAt).toLocaleString()}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-      {preview && (
-        <FilePreviewModal
-          key={preview.id}
-          open
-          onClose={() => setPreview(null)}
-          previewUrl={`/api/v1/ai-garment-projects/attachments/${preview.id}/download?disposition=inline`}
-          downloadUrl={`/api/v1/ai-garment-projects/attachments/${preview.id}/download`}
-          fileName={preview.fileName}
-          mimeType={preview.mimeType}
-        />
-      )}
     </div>
   );
 }

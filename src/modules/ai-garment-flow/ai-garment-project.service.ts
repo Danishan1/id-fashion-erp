@@ -17,6 +17,7 @@ import {
   AiGarmentProjectRepository,
 } from "./ai-garment-project.repository";
 import { AiGarmentReferenceAnalysisRepository } from "./reference-analysis.repository";
+import { AiGarmentFabricAnalysisRepository } from "./fabric-analysis.repository";
 import { AiGarmentDesignDirectionRepository } from "./development-brief.repository";
 import {
   stepsForSourceType,
@@ -373,6 +374,24 @@ export async function saveWorkflowStep(actor: ActorContext, id: string, input: S
       throw new BusinessRuleError(
         "INVALID_STATE_TRANSITION",
         "Approve at least one design direction before continuing past the Development Brief."
+      );
+    }
+  }
+
+  // Process 7's own gate, the Fabric-workflow's mirror of the two above:
+  // PRODUCT_SUITABILITY only exists in AI_GARMENT_FABRIC_STEPS, so
+  // productSuitabilityIndex is -1 (and this whole block a no-op) for a
+  // REFERENCE-sourced project, the same "findIndex returns -1 on the other
+  // workflow's own steps" idiom the developmentBriefIndex check above
+  // already relies on.
+  const productSuitabilityIndex = steps.findIndex((s) => s.key === "PRODUCT_SUITABILITY");
+  if (productSuitabilityIndex !== -1 && targetIndex >= productSuitabilityIndex) {
+    const fabricAnalysis = await AiGarmentFabricAnalysisRepository.findByProjectId(id);
+    if (!fabricAnalysis || fabricAnalysis.status !== "APPROVED") {
+      throw new BusinessRuleError(
+        "INVALID_STATE_TRANSITION",
+        "Approve the Fabric Analysis before continuing to Product Suitability.",
+        { analysisStatus: fabricAnalysis?.status ?? "DRAFT" }
       );
     }
   }
