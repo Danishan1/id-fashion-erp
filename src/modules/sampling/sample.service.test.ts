@@ -45,6 +45,7 @@ vi.mock("./sample.repository", () => ({
     findByVersionAndMergeKey: vi.fn(),
     findWithRequestOwner: vi.fn(),
     update: vi.fn(),
+    delete: vi.fn(),
     updateCosting: vi.fn(),
     findByVersionIdTx: vi.fn(),
     updatePlannedQuantityInTx: vi.fn(),
@@ -77,6 +78,7 @@ const {
   recordSampleApproval,
   addSampleVersion,
   updateSampleBomMaterials,
+  removeSampleMaterial,
 } = await import("./sample.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
@@ -106,6 +108,7 @@ beforeEach(() => {
   vi.mocked(SampleVersionRepository.create).mockReset();
   vi.mocked(SampleMaterialRepository.createMany).mockReset();
   vi.mocked(SampleMaterialRepository.updatePlannedQuantityInTx).mockReset();
+  vi.mocked(SampleMaterialRepository.delete).mockReset();
   vi.mocked(BomRepository.findByProductId).mockReset();
 });
 
@@ -557,5 +560,61 @@ describe("updateSampleBomMaterials — 'Update BOM', never touches the Style's r
     // fires as part of this action, matching addSampleMaterial's own
     // "never blocked by a costing lock" tolerance (throwIfBlocked: false).
     expect(SampleVersionRepository.updateCostingIfUnlocked).toHaveBeenCalled();
+  });
+});
+
+describe("removeSampleMaterial", () => {
+  const material = { id: "sm-1", sampleVersionId: "ver-1", materialId: "mat-1", plannedQuantity: "1.2" };
+
+  beforeEach(() => {
+    vi.mocked(SampleVersionRepository.findByIdTx).mockResolvedValue({
+      id: "ver-1",
+      marginPercent: null,
+      commissionPercent: null,
+      freightAmount: null,
+    } as never);
+    vi.mocked(SampleMaterialRepository.findByVersionIdTx).mockResolvedValue([] as never);
+    vi.mocked(SampleOtherChargeRepository.findByVersionIdTx).mockResolvedValue([] as never);
+  });
+
+  it("rejects a materialId belonging to another company", async () => {
+    vi.mocked(SampleMaterialRepository.findWithRequestOwner).mockResolvedValue({
+      ...material,
+      sampleVersion: { sampleRequest: { companyId: "co-other" } },
+    } as never);
+
+    await expect(removeSampleMaterial(actor, "sm-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(SampleMaterialRepository.delete).not.toHaveBeenCalled();
+  });
+
+  it("deletes the line and recalculates costing when unlocked", async () => {
+    vi.mocked(SampleMaterialRepository.findWithRequestOwner).mockResolvedValue({
+      ...material,
+      sampleVersion: { sampleRequest: { companyId: "co-1" } },
+    } as never);
+    vi.mocked(SampleMaterialRepository.delete).mockResolvedValue({} as never);
+    vi.mocked(SampleVersionRepository.updateCostingIfUnlocked).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(SampleMaterialRepository.findByVersionId).mockResolvedValue([] as never);
+
+    await removeSampleMaterial(actor, "sm-1");
+
+    expect(SampleMaterialRepository.delete).toHaveBeenCalledWith(expect.anything(), "sm-1");
+    expect(SampleVersionRepository.updateCostingIfUnlocked).toHaveBeenCalled();
+  });
+
+  // Unlike add/edit (which never block on a costing lock), removal is a
+  // structural change — same "blocked while locked" reasoning already
+  // proven for deleteSampleOtherCharge. The real Postgres transaction rolls
+  // the delete back too when this guard fails; this test only asserts the
+  // thrown error, which is all a mocked $transaction can verify.
+  it("rejects when the version's costing is locked", async () => {
+    vi.mocked(SampleMaterialRepository.findWithRequestOwner).mockResolvedValue({
+      ...material,
+      sampleVersion: { sampleRequest: { companyId: "co-1" } },
+    } as never);
+    vi.mocked(SampleMaterialRepository.delete).mockResolvedValue({} as never);
+    vi.mocked(SampleVersionRepository.updateCostingIfUnlocked).mockResolvedValue({ count: 0 } as never);
+
+    await expect(removeSampleMaterial(actor, "sm-1")).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
   });
 });

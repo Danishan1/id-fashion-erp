@@ -256,11 +256,12 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
   const [freightDraft, setFreightDraft] = useState("");
   const [manualEstimateDraft, setManualEstimateDraft] = useState("");
 
-  // Deleting a charge or an attachment is permanent (a real DB delete, and
-  // for attachments the file is removed from disk too — neither is
-  // recoverable through the app), so both go through this same confirmation
-  // step rather than firing on a single click.
+  // Deleting a charge, a material line, or an attachment is permanent (a
+  // real DB delete, and for attachments the file is removed from disk too —
+  // none of these are recoverable through the app), so all three go through
+  // this same confirmation step rather than firing on a single click.
   const [deleteChargeTarget, setDeleteChargeTarget] = useState<SampleOtherChargeRow | null>(null);
+  const [deleteMaterialTarget, setDeleteMaterialTarget] = useState<SampleMaterialRow | null>(null);
   const [deleteAttachmentTarget, setDeleteAttachmentTarget] = useState<AttachmentRow | null>(null);
 
   const [attachments, setAttachments] = useState<AttachmentRow[]>([]);
@@ -570,6 +571,14 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
       () => fetch(`/api/v1/sampling/charges/${deleteChargeTarget.id}`, { method: "DELETE" }),
       "Failed to delete the charge."
     ).then(() => setDeleteChargeTarget(null));
+  };
+
+  const confirmDeleteMaterial = () => {
+    if (!deleteMaterialTarget) return;
+    run(
+      () => fetch(`/api/v1/sampling/materials/${deleteMaterialTarget.id}`, { method: "DELETE" }),
+      "Failed to remove the material."
+    ).then(() => setDeleteMaterialTarget(null));
   };
 
   const openCostingModal = (versionId: string) => {
@@ -1205,13 +1214,22 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
                           </td>
                           {canAddMaterial && (
                             <td className="py-1 text-zinc-700 dark:text-zinc-200">
-                              <button
-                                type="button"
-                                onClick={() => openEditMaterialModal(m)}
-                                className="font-medium text-indigo-600 hover:text-indigo-500"
-                              >
-                                Edit
-                              </button>
+                              <div className="flex items-center gap-3">
+                                <button
+                                  type="button"
+                                  onClick={() => openEditMaterialModal(m)}
+                                  className="font-medium text-indigo-600 hover:text-indigo-500"
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setDeleteMaterialTarget(m)}
+                                  className="font-medium text-red-600 hover:text-red-500"
+                                >
+                                  Remove
+                                </button>
+                              </div>
                             </td>
                           )}
                         </tr>
@@ -1813,9 +1831,10 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
         </div>
       </Modal>
 
-      {/* Deleting a charge or an attachment is a real, permanent delete — no
-          soft-delete column on either table, and an attachment's file is
-          also removed from disk — so both are confirmed before firing. */}
+      {/* Deleting a charge, a material line, or an attachment is a real,
+          permanent delete — no soft-delete column on any of these tables,
+          and an attachment's file is also removed from disk — so all three
+          are confirmed before firing. */}
       <ConfirmModal
         open={deleteChargeTarget !== null}
         title="Remove this charge?"
@@ -1825,6 +1844,16 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
         isBusy={isBusy}
         onConfirm={confirmDeleteCharge}
         onCancel={() => setDeleteChargeTarget(null)}
+      />
+      <ConfirmModal
+        open={deleteMaterialTarget !== null}
+        title="Remove this material?"
+        message={`"${deleteMaterialTarget?.material.styleName ?? ""}" will be permanently removed from this version's material list and the costing total recalculated. This cannot be undone.`}
+        confirmLabel="Remove"
+        isDangerous
+        isBusy={isBusy}
+        onConfirm={confirmDeleteMaterial}
+        onCancel={() => setDeleteMaterialTarget(null)}
       />
       <ConfirmModal
         open={deleteAttachmentTarget !== null}

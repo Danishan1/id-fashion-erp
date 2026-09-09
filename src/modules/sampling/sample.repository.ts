@@ -139,6 +139,11 @@ export const SampleMaterialRepository = {
   update: (id: string, data: Prisma.SampleMaterialUncheckedUpdateInput) =>
     prisma.sampleMaterial.update({ where: { id }, data }),
 
+  /** Permanently removes one line, inside the caller's transaction — see
+   * removeSampleMaterial() in sample.service.ts, which recomputes costing in
+   * the same transaction so a removed priced line's cost drops out too. */
+  delete: (tx: Prisma.TransactionClient, id: string) => tx.sampleMaterial.delete({ where: { id } }),
+
   /**
    * Sets/clears rate+GST on one line, inside the caller's transaction.
    * Deliberately unconditional (not guarded directly) — the lock/supersede

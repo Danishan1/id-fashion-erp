@@ -756,6 +756,37 @@ export async function updateSampleMaterial(actor: ActorContext, sampleMaterialId
   return SampleMaterialRepository.findByVersionId(material.sampleVersionId);
 }
 
+/**
+ * Permanently drops one line from a version's material list — e.g. a
+ * material auto-copied in from the Style's BOM (see addSampleVersion) that
+ * this particular sample doesn't actually need. Unlike add/edit (which never
+ * block on a costing lock, since a lock only ever protects the *priced*
+ * numbers), removing a line is a structural change to what's being costed at
+ * all — same "blocked while locked" reasoning as deleteSampleOtherCharge.
+ */
+export async function removeSampleMaterial(actor: ActorContext, sampleMaterialId: string) {
+  const material = await SampleMaterialRepository.findWithRequestOwner(sampleMaterialId);
+  if (!material || material.sampleVersion.sampleRequest.companyId !== actor.companyId) {
+    throw new BusinessRuleError("NOT_FOUND", "Sample material not found.", { id: sampleMaterialId });
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await SampleMaterialRepository.delete(tx, sampleMaterialId);
+    await recalculateSampleVersionCosting(tx, material.sampleVersionId, { throwIfBlocked: true });
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "sample_materials",
+    recordId: sampleMaterialId,
+    action: "DELETE",
+    oldValues: { materialId: material.materialId, plannedQuantity: material.plannedQuantity },
+  });
+
+  return SampleMaterialRepository.findByVersionId(material.sampleVersionId);
+}
+
 // Damage/wastage is discovered after a material line already exists (during
 // cutting/stitching, not at planning time), so this is a separate scoped
 // update rather than something addSampleMaterial captures upfront.
