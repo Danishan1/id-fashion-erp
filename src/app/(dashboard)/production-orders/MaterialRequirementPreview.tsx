@@ -16,6 +16,9 @@ interface RequirementRow {
 
 interface RequirementResult {
   hasApprovedBom: boolean;
+  /** Set only when this requirement was sourced from a linked Sample's own
+   * material list instead of the Style's real BOM. */
+  sampleRequestId: string | null;
   materials: RequirementRow[];
   totalMaterialCost: number | null;
   materialCostPerUnit: number | null;
@@ -27,14 +30,26 @@ function formatAmount(amount: number) {
 
 /**
  * Live material-requirement + estimated-material-cost preview, recalculated
- * from the BOM's own approved version every time productId/quantity changes
- * — the same calculation (getStyleMaterialRequirement) used both here and by
- * generateMaterialRequestForOrder, so a shortfall/cost figure a user sees
- * here can never disagree with what a later "Generate Material Request"
- * action actually raises. Debounced so typing a quantity doesn't fire one
- * request per keystroke.
+ * every time productId/quantity/salesOrderItemId changes — the same
+ * resolution (getMaterialRequirementForOrderLine: the linked Sample's own
+ * material list when the Sales Order line has one, otherwise the Style's own
+ * approved BOM) used both here and by generateMaterialRequestForOrder, so a
+ * shortfall/cost figure a user sees here can never disagree with what a
+ * later "Generate Material Request" action actually raises. Debounced so
+ * typing a quantity doesn't fire one request per keystroke.
  */
-export function MaterialRequirementPreview({ productId, quantity }: { productId: string; quantity: number }) {
+export function MaterialRequirementPreview({
+  productId,
+  quantity,
+  salesOrderItemId,
+}: {
+  productId: string;
+  quantity: number;
+  /** When set, the preview resolves the same way generateMaterialRequestForOrder's
+   * real execution will — the linked Sample's own material list if that
+   * Sales Order line has one, otherwise the Style's own real BOM. */
+  salesOrderItemId?: string;
+}) {
   const [result, setResult] = useState<RequirementResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Derived, not a separate state variable — never set synchronously inside
@@ -47,7 +62,9 @@ export function MaterialRequirementPreview({ productId, quantity }: { productId:
   useEffect(() => {
     if (!productId || !quantity || quantity <= 0) return;
     const timer = setTimeout(() => {
-      fetch(`/api/v1/bom-mrp/style-requirement?productId=${productId}&quantity=${quantity}`)
+      const params = new URLSearchParams({ productId, quantity: String(quantity) });
+      if (salesOrderItemId) params.set("salesOrderItemId", salesOrderItemId);
+      fetch(`/api/v1/bom-mrp/style-requirement?${params.toString()}`)
         .then(async (res) => {
           if (!res.ok) {
             const body = await res.json().catch(() => null);
@@ -62,17 +79,26 @@ export function MaterialRequirementPreview({ productId, quantity }: { productId:
         .catch((err) => setError(err instanceof Error ? err.message : "Failed to load material requirements."));
     }, 400);
     return () => clearTimeout(timer);
-  }, [productId, quantity]);
+  }, [productId, quantity, salesOrderItemId]);
 
   if (!productId || !quantity || quantity <= 0) return null;
 
   return (
     <div className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
       <h3 className="mb-3 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Material Requirement &amp; Estimated Cost</h3>
+      {result && (
+        <p className="mb-2 text-xs text-zinc-500">
+          {result.sampleRequestId ? "Sourced from the linked Sample's material list." : "Sourced from the Style's own approved BOM."}
+        </p>
+      )}
       {isLoading && !result && <p className="text-sm text-zinc-500">Calculating…</p>}
       {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
       {result && !result.hasApprovedBom && (
-        <p className="text-sm text-zinc-500">This style has no approved BOM yet — material requirement and costing can&apos;t be calculated.</p>
+        <p className="text-sm text-zinc-500">
+          {result.sampleRequestId
+            ? "The linked sample has no materials recorded yet — material requirement and costing can't be calculated."
+            : "This style has no approved BOM yet — material requirement and costing can't be calculated."}
+        </p>
       )}
       {result && result.hasApprovedBom && (
         <>

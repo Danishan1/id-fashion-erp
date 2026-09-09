@@ -156,6 +156,52 @@ export const SampleMaterialRepository = {
       where: { sampleVersionId },
       select: { plannedQuantity: true, rate: true, gstPercentage: true },
     }),
+
+  /** Sets an absolute plannedQuantity on one line, inside the caller's
+   * transaction — used by updateSampleBomMaterials ("Update BOM"), which
+   * bulk-confirms actual raw-material usage together with a costing
+   * recompute in one transaction. */
+  updatePlannedQuantityInTx: (tx: Prisma.TransactionClient, id: string, plannedQuantity: number) =>
+    tx.sampleMaterial.update({ where: { id }, data: { plannedQuantity } }),
+
+  /**
+   * The current (highest version number) version's materials, shaped like
+   * bom.repository.ts's own ITEMS_INCLUDE (material.baseUom included) so
+   * mrp.service.ts's UOM-conversion code can treat a sample's material list
+   * as an alternate, interchangeable BOM-explosion source — used whenever a
+   * Sales Order line or Production Order has a linked Sample instead of
+   * relying on the Style's own real Bom/BomItem rows.
+   */
+  findLatestVersionMaterialsForRequirement: async (sampleRequestId: string) => {
+    const latest = await prisma.sampleVersion.findFirst({
+      where: { sampleRequestId },
+      orderBy: { versionNumber: "desc" },
+      select: { id: true },
+    });
+    if (!latest) return [];
+
+    return prisma.sampleMaterial.findMany({
+      where: { sampleVersionId: latest.id },
+      select: {
+        materialId: true,
+        plannedQuantity: true,
+        uomId: true,
+        colorId: true,
+        uom: { select: { id: true, code: true, name: true, baseUnitId: true, conversionFactor: true } },
+        material: {
+          select: {
+            id: true,
+            styleName: true,
+            styleCode: true,
+            baseUomId: true,
+            baseUom: { select: { id: true, name: true, code: true, baseUnitId: true, conversionFactor: true } },
+            defaultSupplierId: true,
+            unitCost: true,
+          },
+        },
+      },
+    });
+  },
 };
 
 export const SampleOtherChargeRepository = {

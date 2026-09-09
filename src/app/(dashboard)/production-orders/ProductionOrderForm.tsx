@@ -218,7 +218,13 @@ export function ProductionOrderForm() {
         </FormField>
       </div>
 
-      {productId && <MaterialRequirementPreview productId={productId} quantity={Number(plannedQuantity) || 0} />}
+      {productId && (
+        <MaterialRequirementPreview
+          productId={productId}
+          quantity={Number(plannedQuantity) || 0}
+          salesOrderItemId={salesOrderItemId || undefined}
+        />
+      )}
 
       <div className="grid grid-cols-2 gap-4">
         <FormField label="Planned Start Date" htmlFor="plannedStartDate">

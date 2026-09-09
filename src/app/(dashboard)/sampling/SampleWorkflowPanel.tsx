@@ -226,6 +226,13 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
   const [rateModalTarget, setRateModalTarget] = useState<SampleMaterialRow | null>(null);
   const [rateDraft, setRateDraft] = useState("");
   const [gstDraft, setGstDraft] = useState("");
+
+  // "Update BOM" — bulk-confirms the actual raw-material quantities used
+  // during sampling (once Approved). One draft quantity per current-version
+  // material line; Confirm sends every line together. Never touches the
+  // Style's own real BOM — see updateSampleBomMaterials() in sample.service.ts.
+  const [isUpdateBomModalOpen, setIsUpdateBomModalOpen] = useState(false);
+  const [updateBomDrafts, setUpdateBomDrafts] = useState<Record<string, string>>({});
   // Real purchase-rate suggestions for whichever material/shade the Rate
   // modal is currently open for — fetched fresh per open, never persisted.
   const [rateHistory, setRateHistory] = useState<RateHistoryEntry[]>([]);
@@ -662,6 +669,31 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
       "Failed to convert this sample into a Style."
     );
 
+  const openUpdateBomModal = () => {
+    const drafts: Record<string, string> = {};
+    for (const m of latestVersion?.materials ?? []) drafts[m.id] = m.plannedQuantity;
+    setUpdateBomDrafts(drafts);
+    setIsUpdateBomModalOpen(true);
+  };
+
+  const saveUpdateBom = () =>
+    run(
+      () =>
+        fetch(`/api/v1/sampling/${sampleRequestId}/bom-materials`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            updates: Object.entries(updateBomDrafts).map(([sampleMaterialId, plannedQuantity]) => ({
+              sampleMaterialId,
+              plannedQuantity: Number(plannedQuantity),
+            })),
+          }),
+        }),
+      "Failed to update the BOM."
+    ).then((ok) => {
+      if (ok) setIsUpdateBomModalOpen(false);
+    });
+
   const openUploadModal = () => {
     setUploadFile(null);
     setIsUploadModalOpen(true);
@@ -980,12 +1012,21 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
 
       {request.status === "APPROVED" && request.productId && (
         <div className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
-          <p className="text-sm text-zinc-600 dark:text-zinc-300">
-            This sample is linked to a Style master —{" "}
-            <a href={`/masters/products/${request.productId}`} className="font-medium text-indigo-600 hover:text-indigo-500">
-              open it to add Color × Size variants
-            </a>
-            .
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-zinc-600 dark:text-zinc-300">
+              This sample is linked to a Style master —{" "}
+              <a href={`/masters/products/${request.productId}`} className="font-medium text-indigo-600 hover:text-indigo-500">
+                open it to add Color × Size variants
+              </a>
+              .
+            </p>
+            {latestVersion && latestVersion.materials.length > 0 && (
+              <ActionButton label="Update BOM" onClick={openUpdateBomModal} isBusy={isBusy} variant="secondary" />
+            )}
+          </div>
+          <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+            &quot;Update BOM&quot; confirms this sample&apos;s own raw-material quantities as actually used during
+            sampling — it never changes the Style&apos;s own real BOM.
           </p>
         </div>
       )}
@@ -1531,6 +1572,45 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
           <div className="flex gap-3">
             <ActionButton label="Cancel" onClick={() => setDamageModalTarget(null)} isBusy={false} variant="secondary" />
             <ActionButton label="Save" onClick={saveDamage} isBusy={isBusy} disabled={!damageQtyDraft} />
+          </div>
+        </div>
+      </Modal>
+
+      {/* Update BOM — bulk-confirm actual raw-material usage for the current
+          version, once Approved. Never writes to the Style's own real BOM. */}
+      <Modal open={isUpdateBomModalOpen} onClose={() => setIsUpdateBomModalOpen(false)} title="Update BOM — Confirm Materials Used">
+        <div className="space-y-3">
+          <p className="text-sm text-zinc-600 dark:text-zinc-300">
+            Edit each quantity below to match what was actually used during sampling, then Confirm. This only updates
+            this sample&apos;s own material list — the Style&apos;s real BOM is never changed.
+          </p>
+          <div className="max-h-80 space-y-2 overflow-y-auto">
+            {(latestVersion?.materials ?? []).map((m) => (
+              <div key={m.id} className="flex items-center gap-3 rounded-md border border-zinc-200 p-2 dark:border-zinc-800">
+                <div className="flex-1 text-sm text-zinc-700 dark:text-zinc-200">
+                  {m.material.styleName}
+                  {m.color ? ` · ${m.color.name}` : ""}
+                </div>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.0001"
+                  value={updateBomDrafts[m.id] ?? ""}
+                  onChange={(e) => setUpdateBomDrafts((prev) => ({ ...prev, [m.id]: e.target.value }))}
+                  className={`${textInputClass()} w-28`}
+                />
+                <span className="w-10 text-xs text-zinc-500">{m.uom?.code ?? ""}</span>
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-3">
+            <ActionButton label="Cancel" onClick={() => setIsUpdateBomModalOpen(false)} isBusy={false} variant="secondary" />
+            <ActionButton
+              label="Confirm"
+              onClick={saveUpdateBom}
+              isBusy={isBusy}
+              disabled={Object.values(updateBomDrafts).some((v) => !v || Number(v) <= 0)}
+            />
           </div>
         </div>
       </Modal>

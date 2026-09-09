@@ -96,6 +96,26 @@ export const sampleMaterialCostingSchema = z.object({
 
 export type SampleMaterialCostingInput = z.infer<typeof sampleMaterialCostingSchema>;
 
+// "Update BOM" — bulk-confirms the actual raw-material quantities used during
+// sampling (which routinely differ from what was copied in from the Style's
+// BOM at version-1 creation). One row per already-existing SampleMaterial
+// line on the current version; every quantity is edited/confirmed together
+// rather than one line at a time, matching the "confirmation and edit
+// option" the feature was asked for. Never touches the Style's own real BOM
+// — see updateSampleBomMaterials() in sample.service.ts.
+export const sampleBomUpdateSchema = z.object({
+  updates: z
+    .array(
+      z.object({
+        sampleMaterialId: z.string().uuid(),
+        plannedQuantity: z.coerce.number().positive("Quantity must be greater than 0"),
+      })
+    )
+    .min(1, "At least one material is required"),
+});
+
+export type SampleBomUpdateInput = z.infer<typeof sampleBomUpdateSchema>;
+
 export const SAMPLE_OTHER_CHARGE_COST_HEADS = ["PROCESS", "FABRICATION", "OTHER"] as const;
 
 // A flat lump-sum labor/process/overhead cost line — deliberately simpler

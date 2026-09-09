@@ -239,7 +239,17 @@ function ProductsListContent() {
         newAction={{ label: "New Style", onClick: () => setAddOpen(true) }}
         searchPlaceholder="Search by style name or code…"
         onEditRow={(row) => openEdit(row.id)}
-        rowActions={(row) => <VariantsSection productId={row.id} />}
+        rowActions={(row) => (
+          <>
+            <a
+              href={`/bom-mrp/${row.id}`}
+              className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400"
+            >
+              BOM
+            </a>
+            <VariantsSection productId={row.id} />
+          </>
+        )}
         columns={[
           {
             key: "imageUrl",

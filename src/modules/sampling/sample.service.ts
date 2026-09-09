@@ -26,8 +26,10 @@ import {
 } from "./sample.repository";
 import { ProductRepository } from "@/modules/products/product.repository";
 import { CustomerRepository } from "@/modules/customers/customer.repository";
+import { BomRepository } from "@/modules/bom-mrp/bom.repository";
 import { advanceMasterCodeSequence } from "@/core/numbering/DocumentNumberingService";
 import { SampleStatus, SampleType, type Prisma, type SampleVersionStatus } from "@prisma/client";
+import type { SampleBomUpdateInput } from "./sample.schema";
 
 // The header's own status is the real state — this mirrors it onto the
 // current (latest, still-live) version's display-only status field for the
@@ -385,6 +387,18 @@ export async function addSampleVersion(actor: ActorContext, sampleRequestId: str
     createdByUserId: actor.userId,
   });
 
+  // Version 1 of a sample raised against an EXISTING Style starts pre-filled
+  // from that Style's own real, approved BOM — a starting point only, never
+  // a live link: from here on the sample's own material list is edited
+  // freely (actual sampling usage routinely differs from the plan) and the
+  // Style's real Bom/BomItem rows are never written back to by anything in
+  // this module (see updateSampleBomMaterials below). A brand-new style
+  // (productId null) or a style with no approved BOM yet simply starts empty,
+  // exactly as before this feature existed.
+  if (isFirstVersion && request.productId) {
+    await copyStyleBomIntoSampleVersion(actor, version.id, request.productId);
+  }
+
   const updatedRequest = await SampleRequestRepository.update(sampleRequestId, {
     currentVersionNumber: nextVersionNumber,
     status: isFirstVersion ? "TECH_PACK_READY" : "IN_DEVELOPMENT",
@@ -400,6 +414,103 @@ export async function addSampleVersion(actor: ActorContext, sampleRequestId: str
   });
 
   return { version, request: updatedRequest };
+}
+
+/**
+ * One-time starting point, not a live sync: copies every line of the Style's
+ * currently APPROVED BOM version into fresh SampleMaterial rows on the given
+ * (brand-new, empty) sample version. Silently does nothing if the style has
+ * no BOM yet, or no version of it has ever been approved — the sample simply
+ * starts empty, matching this function's behavior before this feature
+ * existed. `plannedQuantity` is seeded from the BOM's own `quantityPerUnit`
+ * (a sample is normally made 1 piece at a time; wastage% isn't copied since
+ * SampleMaterial has no such column) — every value is freely editable
+ * afterward via the ordinary Add/Edit Material actions or the "Update BOM"
+ * bulk-confirm action below.
+ */
+async function copyStyleBomIntoSampleVersion(actor: ActorContext, sampleVersionId: string, productId: string) {
+  const bom = await BomRepository.findByProductId(actor.companyId, productId);
+  const approvedItems = bom?.approvedVersion?.items ?? [];
+  if (approvedItems.length === 0) return;
+
+  await SampleMaterialRepository.createMany(
+    approvedItems.map((item) => ({
+      sampleVersionId,
+      materialId: item.materialId,
+      plannedQuantity: item.quantityPerUnit,
+      uomId: item.uomId,
+      colorId: item.colorId,
+      notes: item.notes ? `From Style BOM: ${item.notes}` : "Copied from Style BOM",
+    }))
+  );
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "sample_materials",
+    recordId: sampleVersionId,
+    action: "CREATE",
+    newValues: { copiedFromBomId: bom!.id, materialCount: approvedItems.length },
+  });
+}
+
+/**
+ * "Update BOM" — bulk-confirms the actual raw-material quantities used
+ * during sampling, once sampling is complete (APPROVED). Edits only the
+ * quantity of already-existing SampleMaterial lines on the current version
+ * (never adds/removes a line, and never touches material/color/unit
+ * identity — that stays the ordinary Add/Edit Material actions' job).
+ * Deliberately does NOT write anything back to the Style's real Bom/BomItem
+ * — per the user's own explicit instruction, only the sample's own material
+ * list ("the sample's BOM") is updated; the Style master is untouched.
+ */
+export async function updateSampleBomMaterials(actor: ActorContext, sampleRequestId: string, input: SampleBomUpdateInput) {
+  const request = await SampleRequestRepository.findAnyById(actor.companyId, sampleRequestId);
+  if (!request) throw new BusinessRuleError("NOT_FOUND", "Sample request not found.", { id: sampleRequestId });
+
+  if (request.status !== "APPROVED") {
+    throw new BusinessRuleError(
+      "INVALID_STATE_TRANSITION",
+      `The BOM can only be updated once sampling is complete (Approved), not while "${request.status}".`,
+      { currentStatus: request.status }
+    );
+  }
+
+  const latest = await SampleVersionRepository.findLatest(sampleRequestId);
+  if (!latest) throw new BusinessRuleError("NOT_FOUND", "This sample has no version to update.", { id: sampleRequestId });
+
+  const existingMaterials = await SampleMaterialRepository.findByVersionId(latest.id);
+  const existingById = new Map(existingMaterials.map((m) => [m.id, m]));
+
+  for (const update of input.updates) {
+    if (!existingById.has(update.sampleMaterialId)) {
+      throw new BusinessRuleError("NOT_FOUND", "One of these materials doesn't belong to this sample's current version.", {
+        sampleMaterialId: update.sampleMaterialId,
+      });
+    }
+  }
+
+  await prisma.$transaction(async (tx) => {
+    for (const update of input.updates) {
+      await SampleMaterialRepository.updatePlannedQuantityInTx(tx, update.sampleMaterialId, update.plannedQuantity);
+    }
+    // Never blocked by a costing lock — an approved sample's costing is very
+    // often already locked, and this action is about correcting raw-material
+    // usage, not re-opening costing; the rollup simply doesn't apply if locked.
+    await recalculateSampleVersionCosting(tx, latest.id, { throwIfBlocked: false });
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "sample_materials",
+    recordId: latest.id,
+    action: "UPDATE",
+    oldValues: { quantities: input.updates.map((u) => ({ id: u.sampleMaterialId, before: existingById.get(u.sampleMaterialId)?.plannedQuantity })) },
+    newValues: { quantities: input.updates },
+  });
+
+  return SampleMaterialRepository.findByVersionId(latest.id);
 }
 
 /**

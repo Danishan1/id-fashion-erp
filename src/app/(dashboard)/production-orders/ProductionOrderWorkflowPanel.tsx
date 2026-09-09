@@ -315,7 +315,11 @@ export function ProductionOrderWorkflowPanel({
         )}
       </div>
 
-      <MaterialRequirementPreview productId={order.productId} quantity={Number(order.plannedQuantity)} />
+      <MaterialRequirementPreview
+        productId={order.productId}
+        quantity={Number(order.plannedQuantity)}
+        salesOrderItemId={order.salesOrderItemId || undefined}
+      />
 
       <div className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
         <h2 className="mb-3 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Actions</h2>
@@ -478,7 +482,13 @@ export function ProductionOrderWorkflowPanel({
               className={textInputClass()}
             />
           </FormField>
-          {order.productId && <MaterialRequirementPreview productId={order.productId} quantity={Number(editQuantity) || 0} />}
+          {order.productId && (
+            <MaterialRequirementPreview
+              productId={order.productId}
+              quantity={Number(editQuantity) || 0}
+              salesOrderItemId={order.salesOrderItemId || undefined}
+            />
+          )}
           <div className="flex justify-end gap-2">
             <button
               type="button"

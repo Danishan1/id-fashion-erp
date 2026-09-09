@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/numbering/DocumentNumberingService", () => ({ generateDocumentNumber: vi.fn() }));
 vi.mock("@/modules/bom-mrp/bom.repository", () => ({ BomRepository: { findByProductId: vi.fn() } }));
-vi.mock("@/modules/bom-mrp/mrp.service", () => ({ getStyleMaterialRequirement: vi.fn() }));
+vi.mock("@/modules/bom-mrp/mrp.service", () => ({ getMaterialRequirementForOrderLine: vi.fn() }));
 vi.mock("./production-progress.service", () => ({ getProductionOrderProgress: vi.fn() }));
 vi.mock("@/modules/inventory/material-request.service", () => ({ createMaterialRequest: vi.fn() }));
 vi.mock("@/modules/products/product.repository", () => ({ ProductRepository: { findStyleById: vi.fn() } }));
@@ -26,7 +26,7 @@ vi.mock("@/core/db/client", () => ({
 
 const { generateDocumentNumber } = await import("@/core/numbering/DocumentNumberingService");
 const { ProductRepository } = await import("@/modules/products/product.repository");
-const { getStyleMaterialRequirement } = await import("@/modules/bom-mrp/mrp.service");
+const { getMaterialRequirementForOrderLine } = await import("@/modules/bom-mrp/mrp.service");
 const { getProductionOrderProgress } = await import("./production-progress.service");
 const { createMaterialRequest } = await import("@/modules/inventory/material-request.service");
 const { LotRepository, ProductionOrderRepository } = await import("./production.repository");
@@ -203,7 +203,12 @@ describe("generateMaterialRequestForOrder", () => {
   });
 
   it("rejects when the style has no approved BOM", async () => {
-    vi.mocked(getStyleMaterialRequirement).mockResolvedValue({ hasApprovedBom: false, bomId: null, materials: [] } as never);
+    vi.mocked(getMaterialRequirementForOrderLine).mockResolvedValue({
+      hasApprovedBom: false,
+      bomId: null,
+      sampleRequestId: null,
+      materials: [],
+    } as never);
 
     await expect(generateMaterialRequestForOrder(actor, "po-1", { warehouseId: "wh-1" })).rejects.toMatchObject({
       code: "VALIDATION_ERROR",
@@ -211,10 +216,25 @@ describe("generateMaterialRequestForOrder", () => {
     expect(createMaterialRequest).not.toHaveBeenCalled();
   });
 
+  it("names the linked sample (not the Style/BOM) as the rejection cause when a sample-sourced requirement has no materials", async () => {
+    vi.mocked(getMaterialRequirementForOrderLine).mockResolvedValue({
+      hasApprovedBom: false,
+      bomId: null,
+      sampleRequestId: "sam-1",
+      materials: [],
+    } as never);
+
+    await expect(generateMaterialRequestForOrder(actor, "po-1", { warehouseId: "wh-1" })).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("linked sample"),
+    });
+  });
+
   it("rejects when nothing is short", async () => {
-    vi.mocked(getStyleMaterialRequirement).mockResolvedValue({
+    vi.mocked(getMaterialRequirementForOrderLine).mockResolvedValue({
       hasApprovedBom: true,
       bomId: "bom-1",
+      sampleRequestId: null,
       materials: [{ materialId: "mat-1", uomId: "uom-1", shortfallQuantity: 0 }],
     } as never);
 
@@ -224,9 +244,10 @@ describe("generateMaterialRequestForOrder", () => {
   });
 
   it("raises a Material Request for exactly the shortfall lines, using the shared calc's own bomId/uomId", async () => {
-    vi.mocked(getStyleMaterialRequirement).mockResolvedValue({
+    vi.mocked(getMaterialRequirementForOrderLine).mockResolvedValue({
       hasApprovedBom: true,
       bomId: "bom-1",
+      sampleRequestId: null,
       materials: [
         { materialId: "mat-1", uomId: "uom-1", shortfallQuantity: 40 },
         { materialId: "mat-2", uomId: "uom-2", shortfallQuantity: 0 },
@@ -235,7 +256,11 @@ describe("generateMaterialRequestForOrder", () => {
 
     await generateMaterialRequestForOrder(actor, "po-1", { warehouseId: "wh-1" });
 
-    expect(getStyleMaterialRequirement).toHaveBeenCalledWith("co-1", "prod-1", 100);
+    expect(getMaterialRequirementForOrderLine).toHaveBeenCalledWith("co-1", {
+      salesOrderItemId: undefined,
+      productId: "prod-1",
+      quantity: 100,
+    });
     expect(createMaterialRequest).toHaveBeenCalledWith(
       actor,
       expect.objectContaining({
@@ -244,5 +269,32 @@ describe("generateMaterialRequestForOrder", () => {
         lines: [{ materialId: "mat-1", uomId: "uom-1", requestedQuantity: 40 }],
       })
     );
+  });
+
+  it("passes this order's own linked salesOrderItemId through, so the shared calc can resolve a linked Sample", async () => {
+    vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue({
+      id: "po-1",
+      productId: "prod-1",
+      plannedQuantity: 100,
+      salesOrderItemId: "soi-1",
+    } as never);
+    vi.mocked(getMaterialRequirementForOrderLine).mockResolvedValue({
+      hasApprovedBom: true,
+      bomId: null,
+      sampleRequestId: "sam-1",
+      materials: [{ materialId: "mat-1", uomId: "uom-1", shortfallQuantity: 40 }],
+    } as never);
+
+    await generateMaterialRequestForOrder(actor, "po-1", { warehouseId: "wh-1" });
+
+    expect(getMaterialRequirementForOrderLine).toHaveBeenCalledWith("co-1", {
+      salesOrderItemId: "soi-1",
+      productId: "prod-1",
+      quantity: 100,
+    });
+    // A sample-sourced requirement has no real Bom row — bomId must pass
+    // through as undefined (createMaterialRequest's own schema field), never
+    // a stray non-null-asserted null.
+    expect(createMaterialRequest).toHaveBeenCalledWith(actor, expect.objectContaining({ bomId: undefined }));
   });
 });
