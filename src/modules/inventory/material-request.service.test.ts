@@ -19,6 +19,8 @@ vi.mock("./material-request.repository", () => ({
     update: vi.fn(),
     countLinkedPurchaseOrderItems: vi.fn(),
     countIssuedLines: vi.fn(),
+    countLockedLines: vi.fn(),
+    replaceLines: vi.fn(),
     findOpenDuplicateLines: vi.fn(),
   },
   MaterialRequestItemRepository: {
@@ -45,6 +47,7 @@ const {
   findDuplicateMaterialRequests,
   createMaterialRequestFromShortfall,
   createMaterialRequest,
+  updateMaterialRequestLines,
 } = await import("./material-request.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
@@ -60,6 +63,8 @@ beforeEach(() => {
   vi.mocked(MaterialRequestRepository.update).mockReset();
   vi.mocked(MaterialRequestRepository.countLinkedPurchaseOrderItems).mockReset().mockResolvedValue(0);
   vi.mocked(MaterialRequestRepository.countIssuedLines).mockReset().mockResolvedValue(0);
+  vi.mocked(MaterialRequestRepository.countLockedLines).mockReset().mockResolvedValue(0);
+  vi.mocked(MaterialRequestRepository.replaceLines).mockReset();
   vi.mocked(MaterialRequestRepository.findOpenDuplicateLines).mockReset().mockResolvedValue([]);
   vi.mocked(MaterialRequestItemRepository.findLinesForShortfallGeneration).mockReset();
   vi.mocked(PermissionService.assert).mockReset().mockResolvedValue(undefined);
@@ -205,6 +210,99 @@ describe("transitionMaterialRequestStatus", () => {
     await expect(transitionMaterialRequestStatus(actor, "mr-1", "ON_HOLD")).rejects.toMatchObject({
       code: "INVALID_STATE_TRANSITION",
     });
+  });
+});
+
+describe("updateMaterialRequestLines — line-level editability", () => {
+  const editInput = {
+    requestType: "PRODUCTION_REQUIREMENT" as const,
+    departmentId: "",
+    warehouseId: "wh-1",
+    requiredDate: "",
+    purpose: "",
+    salesOrderId: "",
+    productionOrderId: "",
+    bomId: "",
+    originalMaterialRequestId: "",
+    remarks: "",
+    lines: [{ materialId: "mat-1", colorId: "", dyeId: "", uomId: "uom-1", requestedQuantity: 5, damageReason: "", remarks: "" }],
+  };
+
+  it("rejects editing a CANCELLED or CLOSED request outright — unchanged, request-level guard", async () => {
+    vi.mocked(MaterialRequestRepository.findAnyById).mockResolvedValue({ id: "mr-1", companyId: "co-1", status: "CLOSED" } as never);
+
+    await expect(updateMaterialRequestLines(actor, "mr-1", editInput)).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+    expect(MaterialRequestRepository.replaceLines).not.toHaveBeenCalled();
+  });
+
+  it("succeeds on a request with zero locked lines — the ordinary, pre-existing case still works", async () => {
+    vi.mocked(MaterialRequestRepository.findAnyById).mockResolvedValue({ id: "mr-1", companyId: "co-1", status: "OPEN" } as never);
+    vi.mocked(MaterialRequestRepository.countLockedLines).mockResolvedValue(0);
+    vi.mocked(MaterialRequestRepository.replaceLines).mockResolvedValue({ id: "mr-1", lines: [{ id: "line-1" }] } as never);
+
+    await updateMaterialRequestLines(actor, "mr-1", editInput);
+
+    expect(MaterialRequestRepository.replaceLines).toHaveBeenCalledWith(
+      "mr-1",
+      expect.objectContaining({ warehouseId: "wh-1" }),
+      expect.arrayContaining([expect.objectContaining({ materialId: "mat-1", requestedQuantity: 5 })])
+    );
+  });
+
+  it("succeeds even when OTHER lines on the same request are already locked — the actual fix: no whole-request block anymore", async () => {
+    vi.mocked(MaterialRequestRepository.findAnyById).mockResolvedValue({
+      id: "mr-1",
+      companyId: "co-1",
+      status: "PARTIALLY_FULFILLED",
+    } as never);
+    vi.mocked(MaterialRequestRepository.countLockedLines).mockResolvedValue(1); // one sibling line already issued
+    vi.mocked(MaterialRequestRepository.replaceLines).mockResolvedValue({ id: "mr-1", lines: [{ id: "line-2" }] } as never);
+
+    await updateMaterialRequestLines(actor, "mr-1", editInput);
+
+    // The submitted line array is only ever the still-unlocked portion —
+    // replaceLines itself is what leaves the locked sibling line untouched
+    // (see material-request.repository.ts's own UNLOCKED_LINE_WHERE).
+    expect(MaterialRequestRepository.replaceLines).toHaveBeenCalledWith(
+      "mr-1",
+      expect.anything(),
+      expect.arrayContaining([expect.objectContaining({ materialId: "mat-1" })])
+    );
+  });
+
+  it("lets the substitute material/color/quantity through unchanged from the client's submitted values — no substitution concept, just an ordinary field edit", async () => {
+    vi.mocked(MaterialRequestRepository.findAnyById).mockResolvedValue({ id: "mr-1", companyId: "co-1", status: "OPEN" } as never);
+    vi.mocked(MaterialRequestRepository.countLockedLines).mockResolvedValue(0);
+    vi.mocked(MaterialRequestRepository.replaceLines).mockResolvedValue({ id: "mr-1", lines: [] } as never);
+
+    await updateMaterialRequestLines(actor, "mr-1", {
+      ...editInput,
+      lines: [{ materialId: "mat-2", colorId: "color-9", dyeId: "", uomId: "uom-1", requestedQuantity: 12, damageReason: "", remarks: "" }],
+    });
+
+    expect(MaterialRequestRepository.replaceLines).toHaveBeenCalledWith(
+      "mr-1",
+      expect.anything(),
+      expect.arrayContaining([expect.objectContaining({ materialId: "mat-2", colorId: "color-9", requestedQuantity: 12 })])
+    );
+  });
+
+  it("rejects an edit that would leave the request with zero lines total (no locked lines to fall back on, and nothing submitted)", async () => {
+    vi.mocked(MaterialRequestRepository.findAnyById).mockResolvedValue({ id: "mr-1", companyId: "co-1", status: "OPEN" } as never);
+    vi.mocked(MaterialRequestRepository.countLockedLines).mockResolvedValue(0);
+
+    await expect(updateMaterialRequestLines(actor, "mr-1", { ...editInput, lines: [] })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(MaterialRequestRepository.replaceLines).not.toHaveBeenCalled();
+  });
+
+  it("allows submitting zero lines when locked lines already cover the request — removing the last remaining editable line is legitimate", async () => {
+    vi.mocked(MaterialRequestRepository.findAnyById).mockResolvedValue({ id: "mr-1", companyId: "co-1", status: "PARTIALLY_FULFILLED" } as never);
+    vi.mocked(MaterialRequestRepository.countLockedLines).mockResolvedValue(1);
+    vi.mocked(MaterialRequestRepository.replaceLines).mockResolvedValue({ id: "mr-1", lines: [] } as never);
+
+    await updateMaterialRequestLines(actor, "mr-1", { ...editInput, lines: [] });
+
+    expect(MaterialRequestRepository.replaceLines).toHaveBeenCalledWith("mr-1", expect.anything(), []);
   });
 });
 

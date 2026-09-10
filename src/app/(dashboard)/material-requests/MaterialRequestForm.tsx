@@ -50,6 +50,20 @@ export interface InitialMaterialRequestItem {
   remarks: string | null;
 }
 
+/** A line that's already had real stock issued or a shortfall escalated to
+ * a Purchase Order — display only, never submitted back to the server (see
+ * updateMaterialRequestLines/replaceLines, which only ever replace a
+ * request's still-unlocked lines). Shown read-only so the user still sees
+ * the full request while editing the rest of it. */
+export interface LockedMaterialRequestItem {
+  materialName: string;
+  colorName: string | null;
+  uomCode: string;
+  requestedQuantity: string;
+  issuedQuantity: string;
+  lockedReason: string;
+}
+
 export interface InitialMaterialRequest {
   id: string;
   requestType?: string;
@@ -63,6 +77,7 @@ export interface InitialMaterialRequest {
   originalMaterialRequestNumber?: string | null;
   remarks: string | null;
   lines: InitialMaterialRequestItem[];
+  lockedLines?: LockedMaterialRequestItem[];
 }
 
 export function MaterialRequestForm({ initialRequest }: { initialRequest?: InitialMaterialRequest } = {}) {
@@ -334,13 +349,41 @@ export function MaterialRequestForm({ initialRequest }: { initialRequest?: Initi
         <textarea id="remarks" value={remarks} onChange={(e) => setRemarks(e.target.value)} className={textInputClass()} rows={2} />
       </FormField>
 
+      {initialRequest?.lockedLines && initialRequest.lockedLines.length > 0 && (
+        <div className="space-y-2">
+          <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
+            Already Actioned Lines <span className="font-normal text-zinc-500">(cannot be edited)</span>
+          </h2>
+          {initialRequest.lockedLines.map((line, index) => (
+            <div
+              key={index}
+              className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-sm dark:border-zinc-800 dark:bg-zinc-900"
+            >
+              <span className="text-zinc-700 dark:text-zinc-200">
+                {line.materialName}
+                {line.colorName ? ` — ${line.colorName}` : ""} · {line.requestedQuantity} {line.uomCode} requested, {line.issuedQuantity}{" "}
+                {line.uomCode} issued
+              </span>
+              <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                Locked — {line.lockedReason}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="space-y-4">
-        <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Line Items</h2>
+        <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
+          Line Items{initialRequest?.lockedLines && initialRequest.lockedLines.length > 0 ? " (editable)" : ""}
+        </h2>
         {lines.map((line, index) => (
           <div key={index} className="space-y-3 rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium text-zinc-500">Line {index + 1}</span>
-              {lines.length > 1 && (
+              {/* Can remove down to zero editable lines when locked lines already
+                  cover the "at least one line total" requirement — otherwise, same
+                  as before, at least one editable line must remain. */}
+              {(lines.length > 1 || (initialRequest?.lockedLines?.length ?? 0) > 0) && (
                 <button
                   type="button"
                   onClick={() => removeLine(index)}
