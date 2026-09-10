@@ -19,10 +19,25 @@ interface StyleOption extends Option {
 interface SampleOption {
   id: string;
   requestNumber: string;
-  product: { id: string } | null;
+  // The sample's own identifying name (Sampling's "styleName" field — same
+  // one shown as the header on the Sample Request's own detail page, e.g.
+  // "SAM-2026-00018 — V-Neck T-Shirt"), so this dropdown reads as a name a
+  // merchandiser actually recognizes instead of a bare document number.
+  styleName: string | null;
+  product: { id: string; styleName: string } | null;
   // Current version's own costing only — see sample.repository.ts's
   // findMany include. Null until the sample has been costed at all.
   versions: { estimatedCostPerUnit: string | null }[];
+}
+
+/** styleName is nullable at the DB level (pre-existing rows) — falls back to
+ * the linked Style's own current name, which every sample reachable in this
+ * dropdown always has (it's filtered to `product.id === the selected Style`
+ * already). requestNumber is the very thing this dropdown used to show
+ * alone — kept in brackets so it's still visible for traceability. */
+function sampleDisplayLabel(s: SampleOption): string {
+  const name = s.styleName ?? s.product?.styleName;
+  return name ? `${name} (${s.requestNumber})` : s.requestNumber;
 }
 
 interface VariantOption {
@@ -394,7 +409,7 @@ export function SalesOrderForm({
                     .filter((s) => s.product?.id === item.productId)
                     .map((s) => (
                       <option key={s.id} value={s.id}>
-                        {s.requestNumber}
+                        {sampleDisplayLabel(s)}
                       </option>
                     ))}
                 </select>
