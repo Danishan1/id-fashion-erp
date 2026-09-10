@@ -59,6 +59,15 @@ jobs:
       - name: Apply migrations to a real Postgres instance
         run: npx prisma migrate deploy
 
+      # RootLayout's `LayoutProps<"/">` (src/app/layout.tsx) is one of
+      # Next.js's own generated ambient types, written to .next/types — only
+      # produced by `next dev`/`next build`, neither of which has run yet at
+      # this point in the job. `next typegen` produces the same generated
+      # types without a full build, so a standalone `tsc --noEmit` (which
+      # has to run before Build, to fail fast) can actually resolve it.
+      - name: Generate Next.js route types
+        run: npx next typegen
+
       - name: Type check
         run: npx tsc --noEmit
 

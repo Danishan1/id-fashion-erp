@@ -40,7 +40,9 @@ const materialRequestBaseSchema = z.object({
 
 const damageReplacementRefineOptions = {
   message: "A Damage Replacement request requires the original request and a damage reason on every line.",
-  path: ["originalMaterialRequestId"] as const,
+  // Not `as const` — Zod's refine `path` option wants a mutable
+  // PropertyKey[], which a readonly tuple isn't assignable to.
+  path: ["originalMaterialRequestId"],
 };
 
 export const materialRequestSchema = materialRequestBaseSchema
