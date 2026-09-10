@@ -314,10 +314,23 @@ async function importOpeningStockRowHandler(actor: BulkImportActorContext, raw: 
 }
 
 async function importChartOfAccountRow(actor: BulkImportActorContext, raw: Record<string, string>, ctx: RowContext): Promise<BulkImportRowResult> {
+  // Supports a parentAccount column referencing an already-existing account
+  // by code or name — including one created by an earlier row in the SAME
+  // file, since commit processing awaits each row in sequence (same
+  // same-file ordering benefit already documented on importCategoryRow's own
+  // parentCategory resolution above; Validate/dry-run mode does not get it).
+  const parentAccountId = await resolveCategoryCompanyScopedId(
+    actor.companyId,
+    raw.parentAccount,
+    (w) => prisma.chartOfAccount.findFirst({ where: w }),
+    "Parent account"
+  );
+
   const input = chartOfAccountSchema.parse({
     code: raw.code?.trim(),
     name: raw.name?.trim(),
     accountType: undefinedIfBlank(raw.accountType)?.toUpperCase(),
+    parentAccountId: parentAccountId ?? "",
   });
 
   if (ctx.dryRun) {

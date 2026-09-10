@@ -11,6 +11,7 @@ vi.mock("@/core/db/client", () => ({
     productVariant: { findUnique: vi.fn() },
     warehouse: { findFirst: vi.fn() },
     supplier: { findFirst: vi.fn() },
+    chartOfAccount: { findFirst: vi.fn() },
   },
 }));
 
@@ -231,6 +232,7 @@ beforeEach(() => {
   vi.mocked(createChartOfAccount).mockReset().mockResolvedValue({ id: "coa-1" } as never);
   vi.mocked(ChartOfAccountRepository.findByCode).mockReset().mockResolvedValue(null);
   vi.mocked(setChartOfAccountActiveStatus).mockReset();
+  vi.mocked(prisma.chartOfAccount.findFirst).mockReset();
   vi.mocked(importOpeningStockRow).mockReset();
   vi.mocked(GarmentAttributeRepository.supplierCategory.findFirst).mockReset();
   vi.mocked(GarmentAttributeRepository.category.findFirst).mockReset();
@@ -457,6 +459,44 @@ describe("importChartOfAccountRow", () => {
     const result = await validateBulkImportRows(actor, "CHART_OF_ACCOUNT", [{ code: "1000", name: "Cash", accountType: "asset" }]);
 
     expect(result.errors[0].reason).toContain('Account code "1000" is already in use');
+  });
+
+  // Regression coverage for the reported gap: Parent Account was entirely
+  // absent from the template/parser — mirrors importCategoryRow's own
+  // parentCategory resolution (same helper, same by-code-or-name lookup).
+  it("resolves an existing parent account by code or name and passes it through to createChartOfAccount", async () => {
+    const parentId = "11111111-1111-4111-8111-111111111111";
+    vi.mocked(prisma.chartOfAccount.findFirst).mockResolvedValueOnce({ id: parentId } as never);
+
+    await processBulkImportJob(
+      "batch-1",
+      "CHART_OF_ACCOUNT",
+      actor,
+      [{ code: "1010", name: "Petty Cash", accountType: "ASSET", parentAccount: "Cash" }],
+      vi.fn()
+    );
+
+    expect(createChartOfAccount).toHaveBeenCalledWith(
+      actor,
+      expect.objectContaining({ code: "1010", name: "Petty Cash", accountType: "ASSET", parentAccountId: parentId })
+    );
+  });
+
+  it("fails the row with a clear message when the parent account doesn't resolve", async () => {
+    vi.mocked(prisma.chartOfAccount.findFirst).mockResolvedValue(null);
+
+    const result = await validateBulkImportRows(actor, "CHART_OF_ACCOUNT", [
+      { code: "1010", name: "Petty Cash", accountType: "ASSET", parentAccount: "Nonexistent" },
+    ]);
+
+    expect(result.errors[0].reason).toContain('Parent account "Nonexistent" not found');
+    expect(createChartOfAccount).not.toHaveBeenCalled();
+  });
+
+  it("leaves parentAccountId unset when the column is blank, unaffected by the new lookup", async () => {
+    const result = await validateBulkImportRows(actor, "CHART_OF_ACCOUNT", [{ code: "2000", name: "Bank", accountType: "asset" }]);
+    expect(result.validCount).toBe(1);
+    expect(prisma.chartOfAccount.findFirst).not.toHaveBeenCalled();
   });
 });
 
