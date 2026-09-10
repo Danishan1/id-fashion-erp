@@ -54,6 +54,15 @@ export const SampleRequestRepository = {
           orderBy: { createdAt: "asc" },
           include: { author: { select: { id: true, fullName: true } } },
         },
+        // Read-only — the buyer's own Target Price, captured once at Buyer
+        // Enquiry intake and never re-entered in Sampling itself. Only ever
+        // set for a sample that actually originated from a converted
+        // enquiry line (see BuyerEnquiryLine.sampleRequestId's own schema
+        // comment) — null for every directly-created sample, same as every
+        // other optional traceability relation on this model.
+        buyerEnquiryLine: {
+          select: { targetUnitPrice: true, buyerEnquiry: { select: { id: true, enquiryNumber: true } } },
+        },
       },
     }),
 
