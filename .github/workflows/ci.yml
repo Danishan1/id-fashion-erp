@@ -12,6 +12,15 @@ jobs:
       DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/fashion_erp"
       NEXTAUTH_SECRET: "ci-placeholder-secret-not-used-for-anything-real"
       NEXTAUTH_URL: "http://localhost:3000"
+      # This codebase has grown large enough that a plain default-heap
+      # `tsc`/`eslint` invocation can hit V8's own ~2GB old-space ceiling —
+      # already well-documented as a local-dev gotcha (see CLAUDE.md), now
+      # also hit on the GitHub-hosted runner's default Node heap (confirmed
+      # live: `tsc --noEmit` OOM'd right around that ~2GB ceiling). 4096
+      # gives real headroom over that without crowding out the runner's own
+      # ~7GB total RAM alongside the Postgres service container. Job-level
+      # so every step (Type check/Lint/Build) gets it, not just one.
+      NODE_OPTIONS: "--max-old-space-size=4096"
     # Matches the documented local dev Postgres version (CLAUDE.md: "PostgreSQL
     # 16 installed locally via winget"). Every existing test mocks the
     # Prisma/repository layer — this container's sole purpose is the
