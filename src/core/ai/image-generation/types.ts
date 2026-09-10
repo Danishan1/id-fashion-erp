@@ -92,4 +92,30 @@ export interface ImageGenerationProvider {
     count: number;
     baseImage: { buffer: Buffer; mimeType: string };
   }): Promise<GenerateImagesResult>;
+
+  /**
+   * Generates a brand-new garment image using a supplied fabric photo as the
+   * PRIMARY, exact visual reference for the fabric's print/pattern/colour/
+   * texture — AI Designer's own Step 9 "Generate Design". Distinct from
+   * `applyFabric` (which needs an already-existing base garment image to
+   * apply a swatch onto) — here there is no garment image yet at all, only
+   * the fabric photo plus a text brief (customer/category/design/model/
+   * environment) describing what to create with it. Also distinct from
+   * `generateVariation` (which means "take an existing full design and
+   * change one described aspect, preserving everything else") even though
+   * both happen to be a single-image + prompt call under the hood — reusing
+   * either would conflate two genuinely different operations that only
+   * coincidentally share a parameter shape, the same reasoning already
+   * applied to `generateTechnicalFlat` above. Optional, same
+   * check-before-use/UNSUPPORTED_OPERATION discipline as every other
+   * optional capability here — a provider with no image-input capability at
+   * all (e.g. a pure text-to-image model) must omit this rather than
+   * silently falling back to a text-only call that would ignore the fabric
+   * image entirely.
+   */
+  generateFromFabricReference?(params: {
+    prompt: string;
+    count: number;
+    fabricImage: { buffer: Buffer; mimeType: string };
+  }): Promise<GenerateImagesResult>;
 }

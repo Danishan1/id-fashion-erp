@@ -15,42 +15,63 @@ export const materialRequestItemSchema = z.object({
 });
 export type MaterialRequestItemInput = z.infer<typeof materialRequestItemSchema>;
 
-export const materialRequestSchema = z
-  .object({
-    requestType: z.enum(MATERIAL_REQUEST_TYPES).default("PRODUCTION_REQUIREMENT"),
-    departmentId: z.string().uuid().optional().or(z.literal("")),
-    // Where the material will be issued from — required, since Material Issue
-    // must decrement a specific warehouse's real stock balance.
-    warehouseId: z.string().uuid("Warehouse is required"),
-    requiredDate: z.string().optional().or(z.literal("")),
-    purpose: z.string().max(500).optional().or(z.literal("")),
-    salesOrderId: z.string().uuid().optional().or(z.literal("")),
-    // Nullable traceability to the Production Order this requirement was
-    // generated for (Phase 5C) — can be set alongside or instead of
-    // salesOrderId.
-    productionOrderId: z.string().uuid().optional().or(z.literal("")),
-    bomId: z.string().uuid().optional().or(z.literal("")),
-    // Required, and only meaningful, when requestType = DAMAGE_REPLACEMENT —
-    // the original requirement this damage relates to.
-    originalMaterialRequestId: z.string().uuid().optional().or(z.literal("")),
-    remarks: z.string().max(1000).optional().or(z.literal("")),
-    lines: z.array(materialRequestItemSchema).min(1, "At least one line item is required"),
-  })
+// Shared by both create and update — only the `lines` constraint and the
+// DAMAGE_REPLACEMENT refine differ between them (see below), so the header
+// fields themselves live in one place rather than being duplicated twice.
+const materialRequestBaseSchema = z.object({
+  requestType: z.enum(MATERIAL_REQUEST_TYPES).default("PRODUCTION_REQUIREMENT"),
+  departmentId: z.string().uuid().optional().or(z.literal("")),
+  // Where the material will be issued from — required, since Material Issue
+  // must decrement a specific warehouse's real stock balance.
+  warehouseId: z.string().uuid("Warehouse is required"),
+  requiredDate: z.string().optional().or(z.literal("")),
+  purpose: z.string().max(500).optional().or(z.literal("")),
+  salesOrderId: z.string().uuid().optional().or(z.literal("")),
+  // Nullable traceability to the Production Order this requirement was
+  // generated for (Phase 5C) — can be set alongside or instead of
+  // salesOrderId.
+  productionOrderId: z.string().uuid().optional().or(z.literal("")),
+  bomId: z.string().uuid().optional().or(z.literal("")),
+  // Required, and only meaningful, when requestType = DAMAGE_REPLACEMENT —
+  // the original requirement this damage relates to.
+  originalMaterialRequestId: z.string().uuid().optional().or(z.literal("")),
+  remarks: z.string().max(1000).optional().or(z.literal("")),
+});
+
+const damageReplacementRefineOptions = {
+  message: "A Damage Replacement request requires the original request and a damage reason on every line.",
+  // Not `as const` — Zod's refine `path` option wants a mutable
+  // PropertyKey[], which a readonly tuple isn't assignable to.
+  path: ["originalMaterialRequestId"],
+};
+
+export const materialRequestSchema = materialRequestBaseSchema
+  .extend({ lines: z.array(materialRequestItemSchema).min(1, "At least one line item is required") })
   .refine(
     (input) =>
       input.requestType !== "DAMAGE_REPLACEMENT" ||
       (!!input.originalMaterialRequestId && input.lines.every((line) => !!line.damageReason)),
-    {
-      message: "A Damage Replacement request requires the original request and a damage reason on every line.",
-      path: ["originalMaterialRequestId"],
-    }
+    damageReplacementRefineOptions
   );
 export type MaterialRequestInput = z.infer<typeof materialRequestSchema>;
 
-// Same shape as create — full replace-in-a-transaction, blocked once
-// anything on the request has actually been issued or escalated (see
-// updateMaterialRequestLines in material-request.service.ts).
-export const updateMaterialRequestSchema = materialRequestSchema;
+// Same header shape as create, but `lines` here represents only the
+// request's still-unlocked lines (see material-request.repository.ts's
+// UNLOCKED_LINE_WHERE/replaceLines) — a line that's already had stock
+// issued or a shortfall escalated to a Purchase Order is preserved
+// untouched server-side and never appears in this array at all, so unlike
+// create, an empty array is a valid submission here (e.g. removing the one
+// remaining unlocked line on a request that already has other, locked
+// lines). The service itself still rejects if the FINAL total (locked +
+// submitted) would be zero — see updateMaterialRequestLines.
+export const updateMaterialRequestSchema = materialRequestBaseSchema
+  .extend({ lines: z.array(materialRequestItemSchema) })
+  .refine(
+    (input) =>
+      input.requestType !== "DAMAGE_REPLACEMENT" ||
+      (!!input.originalMaterialRequestId && input.lines.every((line) => !!line.damageReason)),
+    damageReplacementRefineOptions
+  );
 export type UpdateMaterialRequestInput = z.infer<typeof updateMaterialRequestSchema>;
 
 export const materialRequestStatusChangeSchema = z.object({

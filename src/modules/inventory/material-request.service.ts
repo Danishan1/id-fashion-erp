@@ -212,11 +212,13 @@ const CANCEL_TARGETS_BY_STATUS: Record<MaterialRequestStatus, MaterialRequestSta
   CANCELLED: [],
 };
 
-/** Real, not just label-based: blocks editing/cancelling once any line has
- * actually had stock issued or a shortfall escalated to a Purchase Order —
- * the same "check the real state, not the status label" lesson this project
- * has already learned twice (Sampling's Hold/Resume bug, Purchasing's
- * cancel-from-ON_HOLD bug). */
+/** Real, not just label-based: blocks cancelling the WHOLE request once any
+ * line has actually had stock issued or a shortfall escalated to a Purchase
+ * Order — the same "check the real state, not the status label" lesson this
+ * project has already learned twice (Sampling's Hold/Resume bug,
+ * Purchasing's cancel-from-ON_HOLD bug). Cancel is a request-wide action, so
+ * this stays request-level; editing is gated per line instead (see
+ * updateMaterialRequestLines/MaterialRequestRepository.countLockedLines). */
 async function assertNothingIssuedOrEscalated(materialRequestId: string, action: string) {
   const [issuedCount, linkedCount] = await Promise.all([
     MaterialRequestRepository.countIssuedLines(materialRequestId),
@@ -411,10 +413,19 @@ export async function createMaterialRequestFromShortfall(
   });
 }
 
-/** Full replace of a request's lines, blocked once anything has actually
- * been issued or escalated — there's no approval gate here to check instead
- * (this module deliberately has none), so the real-state guard above is the
- * only thing protecting against editing a request that's already moved. */
+/**
+ * Line-level replace, not request-level: a line that's already had real
+ * stock issued or a shortfall escalated to a Purchase Order is locked and
+ * preserved untouched (see replaceLines/UNLOCKED_LINE_WHERE); every other
+ * line on the request stays freely editable — material, color, dye, unit,
+ * quantity, remarks — regardless of what's happened on a sibling line.
+ * `input.lines` represents the desired FINAL state of just the unlocked
+ * portion (the client never sends locked lines back at all), so this is
+ * still a full replace, just scoped to a subset instead of the whole
+ * request. No new "who can do this" concept either — the existing
+ * `inventory`/`edit` permission already covers the requester, whoever
+ * issues stock, and an admin uniformly (see the route).
+ */
 export async function updateMaterialRequestLines(actor: ActorContext, id: string, input: UpdateMaterialRequestInput) {
   const existing = await MaterialRequestRepository.findAnyById(actor.companyId, id);
   if (!existing) throw new BusinessRuleError("NOT_FOUND", "Material request not found.", { id });
@@ -426,7 +437,15 @@ export async function updateMaterialRequestLines(actor: ActorContext, id: string
       { currentStatus: existing.status }
     );
   }
-  await assertNothingIssuedOrEscalated(id, "edit this material request");
+
+  // The only request-level check left: don't let an edit leave the request
+  // with zero lines total once its locked lines (never part of `input.lines`
+  // at all) are counted back in.
+  const lockedLineCount = await MaterialRequestRepository.countLockedLines(id);
+  if (lockedLineCount + input.lines.length === 0) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "A material request must have at least one line item.", {});
+  }
+
   await assertLinesHaveConvertibleUom(actor.companyId, input.lines);
 
   const updated = await MaterialRequestRepository.replaceLines(

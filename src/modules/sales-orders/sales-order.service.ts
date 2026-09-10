@@ -58,6 +58,18 @@ export async function listSalesOrders(companyId: string, query: ListQuery) {
   return { data, totalCount };
 }
 
+/** The "Last Order Price" hint on the create/edit form — what this exact
+ * customer was actually charged the last time they ordered this exact
+ * style, so a merchandiser can default a repeat order to real negotiated
+ * history instead of a generic sample-costing estimate. Returns null when
+ * there's no prior order at all (the common case for a first-time line) —
+ * the form shows nothing rather than a "no prior order" message for that. */
+export async function getLastOrderedPrice(companyId: string, customerId: string, productId: string, excludeOrderId?: string) {
+  const item = await SalesOrderRepository.findLastOrderedItem(companyId, customerId, productId, excludeOrderId);
+  if (!item) return null;
+  return { unitPrice: item.unitPrice.toString(), orderNumber: item.salesOrder.orderNumber, orderDate: item.salesOrder.orderDate };
+}
+
 export async function getSalesOrderById(companyId: string, id: string) {
   const order = await SalesOrderRepository.findByIdWithDetails(companyId, id);
   if (!order) throw new BusinessRuleError("NOT_FOUND", "Sales order not found.", { id });

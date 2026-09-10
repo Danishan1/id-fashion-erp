@@ -10,6 +10,7 @@ import { AdminDocumentSequencesPanel } from "./AdminDocumentSequencesPanel";
 import { AdminWorkerSettingsPanel } from "./AdminWorkerSettingsPanel";
 import { AdminModuleVisibilityPanel } from "./AdminModuleVisibilityPanel";
 import { AdminBulkImportPanel } from "./AdminBulkImportPanel";
+import { AdminAiProvidersPanel } from "./AdminAiProvidersPanel";
 
 const TABS = [
   "Users",
@@ -19,6 +20,7 @@ const TABS = [
   "Company Settings",
   "Document Numbering",
   "Module Visibility",
+  "AI Configuration",
   "Bulk Import",
   "Audit Log",
 ] as const;
@@ -82,6 +84,7 @@ export function AdminTabs({
       {tab === "Company Settings" && <AdminCompanySettingsPanel canManage={canManage} />}
       {tab === "Document Numbering" && <AdminDocumentSequencesPanel />}
       {tab === "Module Visibility" && <AdminModuleVisibilityPanel canManage={canManage} />}
+      {tab === "AI Configuration" && <AdminAiProvidersPanel canManage={canManage} />}
       {tab === "Bulk Import" && canManage && <AdminBulkImportPanel />}
       {tab === "Audit Log" && <AdminAuditLogPanel />}
     </div>

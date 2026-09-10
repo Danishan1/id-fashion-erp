@@ -162,7 +162,7 @@ export function SampleRequestForm() {
         </select>
       </FormField>
 
-      <FormField label="Style Name" htmlFor="styleName" required>
+      <FormField label="Design Name" htmlFor="styleName" required>
         <input
           id="styleName"
           required

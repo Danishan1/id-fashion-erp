@@ -34,6 +34,7 @@ vi.mock("./sales-order.repository", () => ({
     update: vi.fn(),
     updateStatusConditional: vi.fn(),
     replaceItems: vi.fn(),
+    findLastOrderedItem: vi.fn(),
   },
 }));
 
@@ -53,6 +54,7 @@ const {
   transitionSalesOrderStatus,
   resumeSalesOrderFromHold,
   getSalesOrderById,
+  getLastOrderedPrice,
 } = await import("./sales-order.service");
 
 const actor = { companyId: "co-1", userId: "user-1", branchId: "br-1" };
@@ -318,5 +320,31 @@ describe("getSalesOrderById", () => {
   it("rejects a sales order that doesn't exist", async () => {
     vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue(null);
     await expect(getSalesOrderById("co-1", "missing")).rejects.toThrow(BusinessRuleError);
+  });
+});
+
+describe("getLastOrderedPrice", () => {
+  it("returns the price/order details from the most recent prior item, delegated straight to the repository", async () => {
+    vi.mocked(SalesOrderRepository.findLastOrderedItem).mockResolvedValue({
+      unitPrice: { toString: () => "320" },
+      salesOrder: { orderNumber: "ORD-2026-00014", orderDate: new Date("2026-09-10") },
+    } as never);
+
+    const result = await getLastOrderedPrice("co-1", "cust-1", "style-1");
+
+    expect(SalesOrderRepository.findLastOrderedItem).toHaveBeenCalledWith("co-1", "cust-1", "style-1", undefined);
+    expect(result).toEqual({ unitPrice: "320", orderNumber: "ORD-2026-00014", orderDate: new Date("2026-09-10") });
+  });
+
+  it("passes excludeOrderId through, so an in-progress edit never suggests its own not-yet-saved price back to itself", async () => {
+    vi.mocked(SalesOrderRepository.findLastOrderedItem).mockResolvedValue(null);
+    await getLastOrderedPrice("co-1", "cust-1", "style-1", "so-being-edited");
+    expect(SalesOrderRepository.findLastOrderedItem).toHaveBeenCalledWith("co-1", "cust-1", "style-1", "so-being-edited");
+  });
+
+  it("returns null (not an error) when there's no prior order at all — the common, expected case for a first-time line", async () => {
+    vi.mocked(SalesOrderRepository.findLastOrderedItem).mockResolvedValue(null);
+    const result = await getLastOrderedPrice("co-1", "cust-1", "style-1");
+    expect(result).toBeNull();
   });
 });

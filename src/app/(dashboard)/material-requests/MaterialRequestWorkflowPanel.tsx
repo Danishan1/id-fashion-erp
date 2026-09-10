@@ -241,10 +241,12 @@ export function MaterialRequestWorkflowPanel({
   const canAct = request.status !== "CANCELLED" && request.status !== "CLOSED" && request.status !== "FULFILLED";
   const canIssue = canAct && request.status !== "ON_HOLD";
   const hasShortfallCandidates = request.lines.some((l) => l.availableToOrderQuantity > 0);
-  // Matches the edit page's own real-state guard — editing is blocked the
-  // moment anything has actually been issued or escalated, regardless of
-  // the header's derived status label.
-  const hasActivity = request.lines.some((l) => Number(l.issuedQuantity) > 0 || l.purchaseOrderItems.length > 0);
+  // Matches the edit page's own real-state guard, applied per line — a line
+  // is locked once anything has actually been issued or escalated against
+  // it, but that never blocks editing a different, still-untouched line on
+  // the same request (e.g. a PARTIALLY_FULFILLED request can still have
+  // editable lines).
+  const hasEditableLine = request.lines.some((l) => Number(l.issuedQuantity) <= 0 && l.purchaseOrderItems.length === 0);
 
   return (
     <div className="space-y-8">
@@ -309,7 +311,7 @@ export function MaterialRequestWorkflowPanel({
             {hasShortfallCandidates && (
               <ActionButton label="Generate Purchase Order(s)" onClick={() => setShowGenerate(true)} isBusy={isBusy} variant="secondary" />
             )}
-            {!hasActivity && <EditLink materialRequestId={materialRequestId} />}
+            {hasEditableLine && <EditLink materialRequestId={materialRequestId} />}
             {request.status === "PARTIALLY_FULFILLED" && (
               <ActionButton label="Close Request" onClick={closeRequest} isBusy={isBusy} variant="secondary" />
             )}

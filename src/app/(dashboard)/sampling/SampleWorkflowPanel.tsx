@@ -111,6 +111,10 @@ interface SampleRequestDetail {
   color: string | null;
   productId: string | null;
   buyer: { name: string; contactPerson: string | null; phone: string | null } | null;
+  // Only set for a sample that originated from a converted Buyer Enquiry
+  // line — null for every directly-created sample. Read-only here; the
+  // price itself is only ever entered at Buyer Enquiry intake.
+  buyerEnquiryLine: { targetUnitPrice: string | null; buyerEnquiry: { id: string; enquiryNumber: string } } | null;
   versions: SampleVersionRow[];
   comments: SampleCommentRow[];
 }
@@ -825,6 +829,17 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
           </>
         )}
       </div>
+
+      {request.buyerEnquiryLine && (
+        <div className="flex items-center gap-2 text-sm">
+          <span className="font-medium text-zinc-700 dark:text-zinc-200">
+            Target Price <span className="font-normal text-zinc-400">(from Buyer Enquiry {request.buyerEnquiryLine.buyerEnquiry.enquiryNumber})</span>:
+          </span>
+          <span className="text-zinc-600 dark:text-zinc-300">
+            {request.buyerEnquiryLine.targetUnitPrice !== null ? `₹${request.buyerEnquiryLine.targetUnitPrice}` : "Not specified"}
+          </span>
+        </div>
+      )}
 
       {stepIndex >= 0 && (
         <div className="flex flex-wrap items-center gap-y-2">

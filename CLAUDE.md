@@ -5266,6 +5266,270 @@ and unit-tested with their live success path blocked only on the configured Open
 item 15) intentionally covered via a deep-link into the existing Sampling module rather than a new dedicated
 process.
 
+## AI Designer — a new, genuinely separate module from AI Garment Flow (2026-09-10)
+
+User asked for a brand-new "AI Designer" module: a guided wizard (Fabric Selection → Analyze Fabric with AI
+→ Target Customer → Age Group → Product Category → Product Design → Model → Environment → Generate Design →
+Edit Design → Save Project → Export) generating premium fashion catalogue images from a fabric. This heavily
+overlaps with the already-built AI Garment Flow module — flagged explicitly via AskUserQuestion before any
+code was written, offering "merge into AI Garment Flow" / "share only generic AI infrastructure" / "genuinely
+separate module (as specified)." **The user chose the third option** — build it exactly as specified, fully
+isolated, with zero shared business logic, even though the two modules overlap in what they do by deliberate
+choice. Built on its own branch (`feature/ai-designer-module`, off a freshly-fetched `origin/main`).
+
+**Isolation, confirmed structurally, not just by convention**: 5 new `ai_`-prefixed tables (`ai_projects`,
+`ai_prompts`, `ai_generations`, `ai_images`, `ai_versions` — the user's own exact naming, given verbatim in
+Hindi: "iske jitne bhi tables bnenge sbme prefix ai_ lg hona chahiye"), a new `src/modules/ai-designer/`
+module, a new `src/core/ai-designer/` support tree, its own `/api/v1/ai-designer/...` route family, its own
+`ai_designer` RBAC module/sidebar section — zero imports from `ai-garment-flow` anywhere (confirmed via
+grep). The only 2 FKs anywhere in this module that reach into pre-existing ERP tables are
+`AiDesignerProject.fabricProductId` (→ `Product`, the real Fabric Master) and `.fabricSupplierId` (→
+`Supplier`) — both read-only references, auto-filled once, never written back to. The **shared, generic,
+zero-business-logic AI infrastructure** (`src/core/ai/providers/anthropic.ts`'s
+`requestStructuredVisionOutput`, `src/core/ai/image-generation/{types,factory}.ts`'s
+`ImageGenerationProvider`/`getImageGenerationProvider()`) is reused as infrastructure, not forked — correct
+engineering, not a violation of "isolated," since isolation applies to this module's own schema/prompts/
+business logic, all of which are new. AI Designer's own hidden prompt templates
+(`src/core/ai-designer/fabric-analysis/prompt.ts`, `.../image-generation/prompt.ts`) and catalogs
+(`src/core/ai-designer/catalogs/*`) are deliberately duplicated from, not imported from, AI Garment Flow's
+near-identical equivalents built the day before — an accepted, explicit consequence of "genuinely separate
+module, zero shared code."
+
+**Real Fabric Master gap, handled honestly, not glossed over**: confirmed before writing any schema that the
+ERP's real Fabric Master (`Product`, `itemType: RAW_MATERIAL`) carries only Name/Code/default Supplier/unit
+cost — no GSM/Composition/Width/Color columns exist there (those sub-master tables wire only to `FabricRoll`
+and to AI Garment Flow's own `AiGarmentFabricDetail`, never to `Product` itself). `selectExistingFabric()`
+therefore auto-fills only `fabricName`/`fabricCode`/`fabricSupplierId` from the real `Product` row, leaving
+GSM/Composition/Width/Weave/Stretch/Opacity/Texture/PatternType/PrintType/SuitableSeason/
+RecommendedGarments/Color blank and user-editable — the identical honest-gap-handling precedent this
+codebase already uses for the same underlying schema limitation elsewhere.
+
+**Fabric Analysis (Step 2) is a real Anthropic vision integration**, deliberately minimal per the brief's own
+explicit instruction — exactly 12 plain-string fields (Fabric Name/Composition/GSM/Width/Weave/Stretch/
+Opacity/Texture/Pattern Type/Print Type/Suitable Season/Recommended Garments), **no confidence scores, no
+per-field metadata, no AI badge/machinery of any kind** — a deliberately simpler schema than AI Garment
+Flow's own 17-field Fabric Analysis (which does carry per-field confidence). Only runs when a fabric image
+was actually uploaded (`fabricSource: UPLOADED`) — picking an existing Fabric Master fabric has no photo to
+analyze, so `runFabricAnalysis()` throws a clean, honest `VALIDATION_ERROR` pointing the user at manual entry
+instead, rather than pretending analysis ran. `updateFabricAnalysisField()` supports plain manual correction
+of any one of the 12 fields, no versioning/approval workflow — matches the brief's own "minimal interface."
+
+**Generate Design (Step 9) / Edit Design (Step 10) build the AI prompt entirely server-side** from the
+project's own structured fields (`{fabric, customer, product, design, model, environment}`) — the user never
+writes a prompt, per the brief's explicit instruction. `generateDesign()` is gated by `assertReadyToGenerate()`
+— fabric/customer/age/category/model/environment must all be filled before the real image-generation call is
+attempted, naming exactly what's missing. Both reuse the *existing* `ImageGenerationProvider` interface
+(the same `getImageGenerationProvider()` factory AI Garment Flow's own Processes 3/4/6/7 use) — `generate()`
+for the initial batch, `generateVariation()` for an edit — so both providers (`openai`/`gemini`) work here
+with zero new provider code. `editDesign()`'s hidden prompt (`buildEditPrompt()`) drops whichever fixed
+Preserve-list item matches the aspect actually being changed (Color/Background/Environment/Model/Pose),
+avoiding the self-contradiction of instructing the AI to both change and preserve the same thing.
+
+**Own, wholly separate resumable-wizard machinery** — `AiDesignerProject.currentStep`/`completedSteps`
+mirror the *shape* of AI Garment Flow's `currentStepKey`/`completedStepKeys`, not shared code.
+`WIZARD_STEP_ORDER` (`FABRIC_SELECTION → FABRIC_ANALYSIS → TARGET_CUSTOMER → AGE_GROUP → PRODUCT_CATEGORY →
+PRODUCT_DESIGN → MODEL → ENVIRONMENT → GENERATE → EDIT → EXPORT`) drives `computeCurrentStep()` (always the
+first not-yet-completed step) — forgiving/resumable rather than a hard sequential gate, since nothing in the
+brief asked for AI Garment Flow's own stricter step-blocking; the one real gate that matters
+(`assertReadyToGenerate()` before the actual AI image call) is enforced directly, not via step-order alone.
+
+**Version history**: version 1 is created by the first successful `generateDesign()` call (from the first
+returned image); every successful `editDesign()` creates version N+1, carrying a plain-English
+`changeSummary` (e.g. "Changed Collar: Mandarin Collar") and a full `designSnapshotJson` — inspectable even
+as the project's own "current" fields move on. `AiDesignerProject.currentVersionId` is nullable-then-set-
+once, the same precedent as `AiGarmentProject.selectedDesignDirectionId`.
+
+**Export (Step 12)**: PNG/JPG return the current version's raw generated-image bytes unmodified; PDF renders
+through a brand-new `src/core/ai-designer/export/tech-pack-pdf.tsx` (`@react-pdf/renderer`'s own `Image`
+component, confirmed unused-but-supported anywhere else in this repo before this) — a fresh sibling
+template, not an extension of the existing table-shaped report/document PDF renderers, which don't fit an
+image+metadata layout. DXF export and a full structured Tech Pack export are the brief's own explicit
+"Future Support" items — not built now.
+
+**RBAC/nav**: new `ai_designer` module in `src/config/rbac.ts`, grants mirroring `ai_garment_flow`'s own
+exact shape (`MANAGEMENT: ["view"]`, `MERCHANDISER`: full CRUD+cancel+export+print; `SUPER_ADMIN`/`VIEWER`
+get it automatically via the existing `MODULES.map(...)` mechanism). New "AI Designer" `NavSection` in
+`src/components/layout/navigation.ts` (Dashboard/New Project/Projects), mirroring "AI Garment Flow"'s own
+shape. Since `prisma db seed` isn't safe to re-run against the dev DB (this project's own long-documented
+gotcha), the new module's `Permission`/`role_permissions` rows were backfilled via the established
+idempotent one-off-script pattern (re-running only `seed.ts`'s own additive `Permission.createMany
+({skipDuplicates:true})`/`RolePermission.upsert` logic, scoped to `ai_designer` and every company's own
+matching Role rows) — independently re-verified via a direct SQL query (10 permission rows, 38
+role_permission rows across `SUPER_ADMIN`/`MANAGEMENT`/`MERCHANDISER`/`VIEWER`), script deleted afterward.
+
+**Migration applied via this project's own established non-interactive workaround** (`prisma migrate dev`
+can't run in this shell): `prisma migrate diff --from-config-datasource ... --to-schema ... --script` →
+hand-placed into `prisma/migrations/20260910100000_add_ai_designer_module/migration.sql` → `prisma db execute
+--file` → `prisma migrate resolve --applied` → independently re-verified via a direct SQL query (all 5
+tables + 6 enums confirmed present, and the sibling `ai-garment-flow` branch's own tables/enum values
+confirmed completely untouched) — never trusted from `resolve --applied` alone, per this project's own
+established gotcha.
+
+**Live browser walkthrough (2026-09-10, once the shared dev server freed up) — real end-to-end run, not
+mocked, and found + fixed 3 real bugs along the way**: created `AID-2026-00001` through the real UI, picked
+an existing Fabric Master fabric (confirmed live: Name/Code/Supplier auto-filled, GSM/Composition/Width/
+Color genuinely stayed blank), manually corrected GSM to "180" (confirmed persisted via a direct DB query),
+stepped through Target Customer → Age Group → Product Category → Product Design → Model → Environment (every
+dynamic per-customer catalog — age groups, categories, design attributes — rendered and persisted correctly,
+independently confirmed via direct SQL after each step, not just trusted from the UI's own re-render), then
+clicked **Generate Design** — the configured `IMAGE_GENERATION_PROVIDER` (`cloudflare`) had real, working
+credits and returned a genuine image on the first attempt, creating version 1 exactly as designed. Also
+exercised the honest failure path for free: `editDesign()` correctly rejected with a clean
+`UNSUPPORTED_OPERATION` message ("cloudflare" has no `generateVariation` capability) instead of a crash, with
+zero spurious version created — confirmed via DB that `ai_versions` still had only v1 afterward.
+- **Bug 1 (real, found live)**: after Select/Reject, the image card kept showing "PENDING" until a full page
+  reload — `reload()` only ever seeded `generatedImages` once from `currentVersion.currentImage`, so it had
+  no way to refresh an already-tracked image's decision. Fixed by adding a dedicated `decideImageAction()`
+  helper that updates the decided image's state directly from the API response, and hiding the Select/Reject
+  button whose own action would be a no-op once that decision is already recorded.
+- **Bug 2 (real, found live)**: a fresh page load left the Step 9 gallery completely empty — `generatedImages`
+  was only ever populated by an in-session generate/edit call, never loaded from the server on mount, so a
+  reload silently lost every earlier generation's images from view (only the Version History/Export sections,
+  which read `currentVersion` directly, still showed the current one). Fixed with a real
+  `listImages()`/`GET /api/v1/ai-designer/projects/:id/images` endpoint (backed by the repository's own
+  already-existing `findByProjectId`, previously unused) and a mount-time fetch — confirmed live, a reload now
+  correctly shows "SELECTED" with the Select button correctly hidden, not "PENDING" again.
+- **Bug 3 (real, found live)**: `?format=png`/`?format=jpg` never actually converted anything — they returned
+  the stored image's raw bytes and real `mimeType` unmodified regardless of which format was requested,
+  so a "AID-2026-00001.png" download could silently contain JPEG bytes (confirmed live: the `cloudflare`
+  provider's own real output is JPEG, so every "png" export was mislabeled). Fixed by adding `sharp` (already
+  present as a transitive dependency of `next`, pinned as a direct one to match this project's own
+  exact-pin-for-critical-libraries precedent) and genuinely converting via `sharp(buffer).png()`/`.jpeg()`
+  before returning — verified live via raw magic-byte inspection (`89 50 4E 47...` for png, `FF D8 FF DB...`
+  for jpg) that the two exports are now genuinely different byte streams in the correct real format, not the
+  same bytes with a relabeled extension. Also caught and fixed a **pre-existing but previously-undetected
+  TypeScript mock-typing bug in the test file itself** (`.mockImplementation(async (...) => (...) as never)`
+  casts only the return value, not the whole function, and fails a strict Prisma-fluent-client return-type
+  check that a plain `Promise` can't satisfy) — fixed by casting the whole function expression to `never`
+  instead, matching the exact working pattern already used in `ai-garment-project.service.test.ts`.
+- PDF export verified live too: real 316KB PDF, correct `%PDF-` magic bytes, correct headers/filename.
+- **Verified overall**: `npx prisma validate` clean; `npx tsc --noEmit` clean project-wide; `npx eslint .`
+  clean, 0 errors, 0 new warnings; `npx vitest run` **1334/1334** passing (13 in `ai-designer.service.test.ts`
+  after the export-format tests were rewritten to assert against real image magic bytes instead of "bytes
+  pass through unmodified," which stopped being true — and correctly so — once real conversion was added).
+  Server logs and browser console clean throughout the live walkthrough (aside from one unrelated 502 from
+  a different, concurrently-open module, not traceable to any AI Designer request). `AID-2026-00001` was kept
+  in the dev DB as a real, working, fully-exercised demo project — its own owner (the user) was also
+  concurrently testing the module live in a separate browser session during this pass (`AID-2026-00002`),
+  confirming atomic per-company document numbering held up correctly under genuine concurrent use.
+
+## AI Designer — critical fix: generation now uses the ACTUAL fabric image, not just its text description (2026-09-10)
+
+User reported (correctly) that the module built above never actually used the selected/uploaded fabric
+photo as a visual reference — Generate Design always produced an AI-invented fabric pattern that merely
+matched the fabric's *text* fields (name/composition/GSM/color), never the real print/motif/pattern. Per
+explicit instruction, this was investigated from first principles before any fix — confirmed by reading the
+actual code, not assumed:
+
+- **`generateDesign()` never fetched or sent any image at all** — it called
+  `provider.generate({ prompt, count })`, a pure text-to-image call, built from `buildFabricDescription()`
+  (a plain string like `"Cotton Fabric, 100% Cotton, 180 GSM, Blue"`). The real fabric photo
+  (`AiDesignerProject.fabricImageAttachmentId`, when uploaded) was stored correctly but never read back for
+  generation — confirmed by grep: `generateDesign` had zero calls to `getAttachmentForDownload`.
+- **The real Fabric Master (`Product`, itemType `RAW_MATERIAL`) has no photo field used anywhere** —
+  `Product.imageUrl` exists in the schema but is dead, unwired code (confirmed: zero references anywhere in
+  `src/modules/products/` or any Masters UI). So picking an "existing" fabric could **never** have a real
+  image to reference in the first place — a structural gap, not a bug in the generation call alone.
+- **The configured provider (`cloudflare`, `flux-1-schnell`) is structurally text-to-image only** — its own
+  REST call body is `{ prompt }`, no image field exists in Cloudflare Workers AI's API for this model at all
+  (confirmed by reading `providers/cloudflare.ts`, which already documented this in its own header comment
+  from when it was built). No code change to AI Designer could make this specific provider preserve an
+  exact fabric image — this is a genuine capability ceiling of the currently-selected model, not something
+  fixable by better prompting.
+
+**Fix — the fabric image is now a real, required input to the generation call, not optional text:**
+- **Schema-level field-independence fix**: `selectExistingFabric()` no longer clears `fabricImageAttachmentId`,
+  and `uploadFabricImage()` no longer clears `fabricProductId`/`fabricSupplierId` — metadata (from the Fabric
+  Master) and the real reference photo are now two independent pieces of state that can coexist, since the
+  Fabric Master has no photo of its own. `fabricSource` is set only by whichever fabric action happens
+  first, never overwritten by the second.
+- **A real fabric photo is now a hard requirement to generate at all** — `assertReadyToGenerate()` requires
+  `fabricImageAttachmentId`, not `fabricName`. Fabric text metadata alone (name/composition/GSM/color, even
+  fully filled in) is explicitly insufficient and blocked with a clear message naming exactly what's missing
+  — this is the direct fix for the acceptance criterion "fabric metadata alone is NOT considered sufficient."
+- **New `ImageGenerationProvider.generateFromFabricReference(params: {prompt, count, fabricImage})`**
+  (`src/core/ai/image-generation/types.ts`) — a new optional capability, deliberately distinct from
+  `generateVariation` (means "take an existing full design and change one described aspect") and
+  `applyFabric` (needs an already-existing *base garment* image to apply a swatch onto — AI Designer has no
+  garment image yet on first generation, only the fabric photo). Implemented for `openai.ts`
+  (`images.edit()` with the fabric photo as the single input image — the same endpoint `generateVariation`
+  already uses, proven live) and `gemini.ts` (`generateContent` with the fabric photo as an inlineData Part
+  — the same shape `generateVariation`/`applyFabric` already use, both proven live for AI Garment Flow's own
+  Processes 3/4/6). **Deliberately NOT implemented for `cloudflare.ts`** — omitted rather than faked, per
+  the explicit instruction not to pretend text prompting is sufficient; its own header comment was updated
+  to document why. `generateDesign()` now checks for this capability and throws a clean, honest
+  `AI_SERVICE_ERROR` naming the limitation and suggesting a provider switch if it's missing, exactly
+  mirroring `editDesign()`'s own pre-existing `generateVariation` capability check.
+- **New hidden prompt (`src/core/ai-designer/image-generation/prompt.ts`, bumped to
+  `ai-designer-image-generation-v2`)** — leads with the exact fabric-preservation instruction given in the
+  requirement ("Use the supplied fabric reference image as the exact fabric source... Preserve the fabric's
+  actual print, motif, pattern arrangement, colors, texture... Do not invent, redesign, simplify, or
+  substitute the fabric pattern"), and explicitly states the fabric image is the ONLY source of truth for
+  the fabric's appearance — the text specification below it now only ever describes garment type/fit/model/
+  environment, never anything about what the fabric looks like. `fabricDescription` was removed from the
+  prompt context entirely — there is no longer a text-described fabric appearance to send at all.
+- **Lazy-loaded `@react-pdf/renderer`** in `exportProject()`'s pdf branch (was a static top-level import) —
+  found and fixed while writing a standalone verification script: a static import of the whole
+  `ai-designer.service.ts` module pulled in `@react-pdf/hyphenate`'s subpath-export resolution, which fails
+  under plain Node/tsx module resolution outside Next's own bundler. Also a genuine improvement on its own
+  merits — no reason to eagerly load a PDF-rendering library for every other function in this module.
+
+**Tests** (`ai-designer.service.test.ts`, 23 tests, up from 12): new coverage for exactly the acceptance
+criteria given — selecting a fabric preserves an already-uploaded reference image and vice versa (proving
+the two are now independent); generation is blocked with full text metadata but no real photo (fabric
+metadata alone is NOT sufficient); the real fabric image bytes/mimeType (not a text description) are what
+reaches the provider, asserted via `toHaveBeenCalledWith(expect.objectContaining({ fabricImage: {...} }))`,
+and that the provider's own plain `generate()` is never called for this flow; a clean, honest error when the
+configured provider lacks image-reference capability (mirrors the real cloudflare case exactly); Select/
+Reject (previously untested at the service layer); and the `listImages()` gallery-persistence function (the
+Bug 2 fix from the earlier live-testing pass, also previously untested).
+
+**Real end-to-end verification attempted, both configured real providers genuinely blocked right now — not
+faked, reported honestly per explicit instruction**: built a standalone script that (1) generated a
+genuinely distinctive, unambiguous test fabric — a magenta 5-petal-flower-with-yellow-center print,
+evenly gridded on a blue ground, rasterized via `sharp` from an SVG (chosen so a real visual comparison
+would be unambiguous by eye); (2) created a real `AiDesignerProject` and called the real, unmocked
+`uploadFabricImage()` — confirmed live via direct SQL that `fabricImageAttachmentId` was genuinely set on
+the real row, not just in memory; (3) filled every other gated field for a Women's Kurti via the real
+`saveWizardSelections()`; (4) called the real, unmocked `generateDesign()` — confirmed the call genuinely
+reached both real external APIs (not a mock, not a stub): OpenAI returned a real, authenticated
+`credit_balance_exhausted` (zero balance, matching this project's own long-documented state for that
+account) and Gemini returned a real, authenticated `RESOURCE_EXHAUSTED` with `limit: 0` specifically for
+`gemini-2.5-flash-preview-image` on the free tier (a genuine zero allocation for this image model on this
+account, confirmed via a direct raw-SDK probe with a 20s retry — not a short-term rate limit that clears
+with a brief wait). Both are real account/billing states, not bugs in this fix — the exact same category of
+honest, live-confirmed limitation already documented repeatedly in this file for AI Garment Flow's own
+Processes 3/4/6/7. **The fact that both calls reached the real provider APIs and were rejected specifically
+on billing/quota grounds (not a malformed-request or connection error) is itself strong evidence the
+image-conditioned call path is wired correctly end-to-end** — a bad payload would have failed differently
+(a 400, not an authenticated 429 tied to the account's real balance). Confirmed zero orphan data was created
+by the failed attempts (no `AiDesignerImage`/`AiDesignerVersion` rows), then fully cleaned up (deleted the
+2 test projects, their prompt/generation audit rows, and their stored fabric-image files) — the pre-existing
+demo projects (`AID-2026-00001`/`00002`) were untouched.
+- **A genuine, pre-existing, unrelated numbering bug was found while writing the verification script** (not
+  part of this fix, flagged here for awareness, not fixed): `document_sequences` has two independent rows
+  for the same `(companyId, AI_DESIGNER_PROJECT, 2026)` — one keyed to a real `branchId`, one keyed to
+  `branchId: null` — because `generateDocumentNumber()` scopes its counter by branch but
+  `AiDesignerProject`'s own `@@unique([companyId, projectNumber])` constraint is company-wide, not
+  branch-scoped. Any caller that passes an inconsistent `branchId` (including this script's own first,
+  uncorrected attempt) can draw a number that collides with one from the other counter. Not fixed in this
+  pass — it's a `DocumentNumberingService`-level architectural mismatch shared by every document type in
+  this app, not something isolated to AI Designer, and fixing it safely means auditing every one of that
+  shared service's ~20 other callers, well outside this fix's scope.
+- **Acceptance criteria honestly assessed against what was actually verified**: generation now genuinely
+  sends the real fabric image bytes as a primary visual reference to a real, capable model (OpenAI/Gemini),
+  confirmed via real (non-mocked) API calls reaching both providers with the correct payload shape — the
+  ONE thing not yet confirmed is the actual visual output ("does the returned kurti visibly show the
+  supplied floral print"), purely because both real providers are currently blocked on billing/quota, not
+  because of anything in this fix. That last visual confirmation is the necessary next step once either
+  account has real credits — not claimed as done here.
+
+`npx tsc --noEmit`, `npx eslint .`, and `npx vitest run` (**1344/1344**, 23 in `ai-designer.service.test.ts`)
+all clean. Changes to the shared `src/core/ai/image-generation/{types.ts,providers/*.ts}` files are strictly
+additive (one new optional method, zero changes to any existing method) — confirmed the full project test
+suite, including every AI Garment Flow test file that also depends on these shared provider files, stays
+green with no regressions.
+
 ## Recommended Stack
 
 Next.js 14+ (App Router) + React + TypeScript + Tailwind CSS (frontend); Next.js API routes/route handlers as REST API; PostgreSQL + Prisma ORM; session-based auth (Auth.js/NextAuth, DB sessions) with RBAC and optional TOTP 2FA; S3-compatible or local file storage for attachments; server-side PDF/Excel export (`exceljs`, `pdf-lib`/`@react-pdf/renderer`).

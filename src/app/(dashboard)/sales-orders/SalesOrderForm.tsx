@@ -5,6 +5,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { formatCurrency } from "@/lib/currency";
 import { todayIsoDate } from "@/lib/date";
+import { formatDate } from "@/lib/date-format";
 
 interface Option {
   id: string;
@@ -19,10 +20,25 @@ interface StyleOption extends Option {
 interface SampleOption {
   id: string;
   requestNumber: string;
-  product: { id: string } | null;
+  // The sample's own identifying name (Sampling's "styleName" field — same
+  // one shown as the header on the Sample Request's own detail page, e.g.
+  // "SAM-2026-00018 — V-Neck T-Shirt"), so this dropdown reads as a name a
+  // merchandiser actually recognizes instead of a bare document number.
+  styleName: string | null;
+  product: { id: string; styleName: string } | null;
   // Current version's own costing only — see sample.repository.ts's
   // findMany include. Null until the sample has been costed at all.
   versions: { estimatedCostPerUnit: string | null }[];
+}
+
+/** styleName is nullable at the DB level (pre-existing rows) — falls back to
+ * the linked Style's own current name, which every sample reachable in this
+ * dropdown always has (it's filtered to `product.id === the selected Style`
+ * already). requestNumber is the very thing this dropdown used to show
+ * alone — kept in brackets so it's still visible for traceability. */
+function sampleDisplayLabel(s: SampleOption): string {
+  const name = s.styleName ?? s.product?.styleName;
+  return name ? `${name} (${s.requestNumber})` : s.requestNumber;
 }
 
 interface VariantOption {
@@ -87,6 +103,11 @@ export function SalesOrderForm({
   const [colors, setColors] = useState<Option[]>([]);
   const [sizes, setSizes] = useState<Option[]>([]);
   const [approvedSamples, setApprovedSamples] = useState<SampleOption[]>([]);
+  // Keyed by line index — the same customer's own most recent price for
+  // that line's Style, if any. See the dedicated effect below.
+  const [lastOrderPrices, setLastOrderPrices] = useState<
+    Record<number, { unitPrice: string; orderNumber: string; orderDate: string } | null>
+  >({});
   // Off by default (the common case: reference this order's own customer's
   // approved samples) — on, when a customer wants to order based on a
   // sample that was actually made/approved for a different customer.
@@ -174,6 +195,40 @@ export function SalesOrderForm({
         .then((body) => updateItem(index, { variants: body.data?.variants ?? [] }));
     });
   }, [initialOrder]);
+
+  // "Last Order Price" — what this exact customer was actually charged the
+  // last time they ordered this exact style, so a repeat order defaults to
+  // real negotiated history instead of a generic sample-costing estimate.
+  // Re-runs whenever the customer or any line's own Style changes (not on
+  // every keystroke — the productId-list dependency key below is stable
+  // across quantity/price edits). Default-fills Unit Price only while it's
+  // still empty (never overwrites), the same "suggest, never enforce"
+  // convention already used for the linked sample's own costing default —
+  // since this fetch is triggered by Style selection, which always happens
+  // before a Sample can even be picked, a real last-order price naturally
+  // wins the race and fills the field first.
+  const productIdsKey = items.map((item) => item.productId).join(",");
+  useEffect(() => {
+    // Reset-on-clear lives in the Customer <select>'s own onChange (see
+    // below), not here — calling setState synchronously in an effect body
+    // trips this project's react-hooks/set-state-in-effect rule; every
+    // setState in this effect happens inside a fetch .then() instead.
+    if (!customerId) return;
+    items.forEach((item, index) => {
+      if (!item.productId) return;
+      const params = new URLSearchParams({ customerId, productId: item.productId });
+      if (initialOrder) params.set("excludeOrderId", initialOrder.id);
+      fetch(`/api/v1/sales-orders/last-price?${params}`)
+        .then((res) => res.json())
+        .then((body) => {
+          setLastOrderPrices((prev) => ({ ...prev, [index]: body.data ?? null }));
+          if (body.data?.unitPrice) {
+            setItems((prev) => prev.map((it, i) => (i === index && !it.unitPrice ? { ...it, unitPrice: body.data.unitPrice } : it)));
+          }
+        });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customerId, productIdsKey]);
 
   const setQuantities = (index: number, patch: Record<string, string>) => {
     setItems((prev) =>
@@ -269,6 +324,7 @@ export function SalesOrderForm({
               // Company-wide sample search is independent of the customer,
               // so only reset the pool when scoped search is actually in use.
               if (!searchAllCustomers) setApprovedSamples([]);
+              setLastOrderPrices({});
             }}
             className={textInputClass()}
           >
@@ -370,7 +426,7 @@ export function SalesOrderForm({
                 </select>
               </FormField>
 
-              <FormField label="Linked Sample (optional)" htmlFor={`sample-${index}`}>
+              <FormField label="Design Name / Linked Sample (optional)" htmlFor={`sample-${index}`}>
                 <select
                   id={`sample-${index}`}
                   value={item.sampleRequestId}
@@ -394,7 +450,7 @@ export function SalesOrderForm({
                     .filter((s) => s.product?.id === item.productId)
                     .map((s) => (
                       <option key={s.id} value={s.id}>
-                        {s.requestNumber}
+                        {sampleDisplayLabel(s)}
                       </option>
                     ))}
                 </select>
@@ -432,6 +488,12 @@ export function SalesOrderForm({
                   onChange={(e) => updateItem(index, { unitPrice: e.target.value })}
                   className={textInputClass()}
                 />
+                {lastOrderPrices[index] && (
+                  <p className="mt-1 text-xs text-emerald-600 dark:text-emerald-400">
+                    Last order price: {formatAmount(Number(lastOrderPrices[index]!.unitPrice))} ({lastOrderPrices[index]!.orderNumber} on{" "}
+                    {formatDate(lastOrderPrices[index]!.orderDate)})
+                  </p>
+                )}
               </FormField>
               <FormField label="Notes" htmlFor={`notes-${index}`}>
                 <input

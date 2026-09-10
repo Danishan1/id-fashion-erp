@@ -105,11 +105,45 @@ interface RowContext {
    * after, so there is no write to roll back in the first place.
    */
   dryRun: boolean;
+  /**
+   * Validate-only same-file lookahead for the small set of self-referencing-
+   * parent imports (Chart of Account/parentAccount, Category/parentCategory,
+   * Employee/reportsTo) — since dry-run never writes anything, a child row's
+   * DB lookup for a parent created by an earlier row in the SAME file would
+   * otherwise report a false "not found" at Validate time even though Commit
+   * (which processes rows sequentially and really writes each one) would
+   * genuinely succeed. Populated only by validateBulkImportRows, keyed by a
+   * resource tag (e.g. "categories"), each row registering its own
+   * lowercased code/name here immediately after passing its own duplicate
+   * check — i.e., only once dry-run has confirmed this row really would
+   * create a new record. registerDryRunCandidate/hasDryRunCandidate below
+   * are the only things that touch this map.
+   */
+  dryRunRegistry?: Map<string, Set<string>>;
 }
 
 type BulkImportRowHandler = (actor: BulkImportActorContext, raw: Record<string, string>, ctx: RowContext) => Promise<BulkImportRowResult>;
 
 const DRY_RUN_PLACEHOLDER_ID = "00000000-0000-0000-0000-000000000000";
+
+/** Registers this row's own identifiers as "will exist once this batch commits" — see RowContext.dryRunRegistry's own doc comment. No-op outside dry-run (or when the registry wasn't supplied). */
+function registerDryRunCandidate(ctx: RowContext, tag: string, ...values: (string | undefined)[]): void {
+  if (!ctx.dryRun || !ctx.dryRunRegistry) return;
+  let set = ctx.dryRunRegistry.get(tag);
+  if (!set) {
+    set = new Set();
+    ctx.dryRunRegistry.set(tag, set);
+  }
+  for (const value of values) {
+    const trimmed = value?.trim();
+    if (trimmed) set.add(trimmed.toLowerCase());
+  }
+}
+
+/** Fallback check for a self-referencing parent reference the real DB lookup missed — see RowContext.dryRunRegistry's own doc comment. */
+function hasDryRunCandidate(ctx: RowContext, tag: string, text: string): boolean {
+  return ctx.dryRunRegistry?.get(tag)?.has(text.trim().toLowerCase()) ?? false;
+}
 
 // ---------------------------------------------------------------------------
 // Per-master-type row handlers — each resolves its own real prerequisites
@@ -316,14 +350,15 @@ async function importOpeningStockRowHandler(actor: BulkImportActorContext, raw: 
 async function importChartOfAccountRow(actor: BulkImportActorContext, raw: Record<string, string>, ctx: RowContext): Promise<BulkImportRowResult> {
   // Supports a parentAccount column referencing an already-existing account
   // by code or name — including one created by an earlier row in the SAME
-  // file, since commit processing awaits each row in sequence (same
-  // same-file ordering benefit already documented on importCategoryRow's own
-  // parentCategory resolution above; Validate/dry-run mode does not get it).
+  // file, since commit processing awaits each row in sequence AND (now)
+  // Validate/dry-run mode gets the same same-file lookahead via
+  // dryRunRegistry — see RowContext's own doc comment.
   const parentAccountId = await resolveCategoryCompanyScopedId(
     actor.companyId,
     raw.parentAccount,
     (w) => prisma.chartOfAccount.findFirst({ where: w }),
-    "Parent account"
+    "Parent account",
+    { ctx, tag: "chart_of_accounts" }
   );
 
   const input = chartOfAccountSchema.parse({
@@ -336,6 +371,7 @@ async function importChartOfAccountRow(actor: BulkImportActorContext, raw: Recor
   if (ctx.dryRun) {
     const existing = await ChartOfAccountRepository.findByCode(actor.companyId, input.code);
     if (existing) throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Account code "${input.code}" is already in use.`);
+    registerDryRunCandidate(ctx, "chart_of_accounts", input.code, input.name);
     return { recordId: DRY_RUN_PLACEHOLDER_ID, tableName: "chart_of_accounts" };
   }
 
@@ -462,7 +498,12 @@ async function resolveCategoryCompanyScopedId(
   companyId: string,
   text: string | undefined,
   find: (where: Record<string, unknown>) => Promise<{ id: string } | null>,
-  label: string
+  label: string,
+  /** Only passed by the self-referencing-parent callers (Category/Chart of
+   * Account) — see RowContext.dryRunRegistry's own doc comment. Every other
+   * caller of this function resolves against a different, already-existing
+   * master, so a same-file lookahead would never be meaningful there. */
+  dryRunFallback?: { ctx: RowContext; tag: string }
 ): Promise<string | undefined> {
   const trimmed = undefinedIfBlank(text);
   if (!trimmed) return undefined;
@@ -470,6 +511,9 @@ async function resolveCategoryCompanyScopedId(
   if (byCode) return byCode.id;
   const byName = await find({ companyId, name: { equals: trimmed, mode: "insensitive" } });
   if (byName) return byName.id;
+  if (dryRunFallback && hasDryRunCandidate(dryRunFallback.ctx, dryRunFallback.tag, trimmed)) {
+    return DRY_RUN_PLACEHOLDER_ID;
+  }
   throw new BusinessRuleError("NOT_FOUND", `${label} "${trimmed}" not found.`);
 }
 
@@ -477,14 +521,8 @@ async function resolveCategoryCompanyScopedId(
  * Supports a parentCategory column referencing an already-existing category
  * by code or name — including one created by an earlier row in the SAME
  * file, since commit processing (processBulkImportJob) awaits each row in
- * sequence, so an earlier row's real create has already landed by the time a
- * later row's parent lookup runs. Validate-only (dry-run) mode does NOT get
- * this benefit — each row's dry run is independent and never actually
- * writes, so a same-file "parent row above, child row below" pair will
- * report the child as failing at Validate time even though it would
- * genuinely succeed at Commit time. This mirrors the already-documented,
- * accepted "two rows claiming the same new code" gap on
- * validateBulkImportRows itself — not a new class of gap.
+ * sequence AND (now) Validate/dry-run mode gets the same same-file lookahead
+ * via dryRunRegistry — see RowContext's own doc comment.
  */
 const importCategoryRow: BulkImportRowHandler = async (actor, raw, ctx) => {
   const code = raw.code?.trim();
@@ -495,12 +533,14 @@ const importCategoryRow: BulkImportRowHandler = async (actor, raw, ctx) => {
     actor.companyId,
     raw.parentCategory,
     (w) => GarmentAttributeRepository.category.findFirst({ where: w }),
-    "Parent category"
+    "Parent category",
+    { ctx, tag: "categories" }
   );
 
   if (ctx.dryRun) {
     const existing = await GarmentAttributeRepository.category.findFirst({ where: { companyId: actor.companyId, code } });
     if (existing) throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Category code "${code}" is already in use.`);
+    registerDryRunCandidate(ctx, "categories", code, name);
     return { recordId: DRY_RUN_PLACEHOLDER_ID, tableName: "categories" };
   }
 
@@ -954,13 +994,23 @@ const importEmployeeRow: BulkImportRowHandler = async (actor, raw, ctx) => {
     // manager lookup only ever makes sense by the human-facing employee
     // code, never by (possibly non-unique) full name.
     const manager = await EmployeeRepository.findByCode(actor.companyId, reportsToCode);
-    if (!manager) throw new BusinessRuleError("NOT_FOUND", `Reporting manager "${reportsToCode}" not found — import their row first.`);
-    reportsToId = manager.id;
+    if (manager) {
+      reportsToId = manager.id;
+    } else if (hasDryRunCandidate(ctx, "employees", reportsToCode)) {
+      // Same-file lookahead — see RowContext.dryRunRegistry's own doc
+      // comment. Only reachable during Validate; never used for real (a
+      // real commit's DB lookup above would already have found the manager
+      // row an earlier row in this same batch just created).
+      reportsToId = DRY_RUN_PLACEHOLDER_ID;
+    } else {
+      throw new BusinessRuleError("NOT_FOUND", `Reporting manager "${reportsToCode}" not found — import their row first.`);
+    }
   }
 
   if (ctx.dryRun) {
     const existing = await EmployeeRepository.findByCode(actor.companyId, employeeCode);
     if (existing) throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Employee code "${employeeCode}" is already in use.`);
+    registerDryRunCandidate(ctx, "employees", employeeCode);
     return { recordId: DRY_RUN_PLACEHOLDER_ID, tableName: "employees" };
   }
 
@@ -1171,10 +1221,15 @@ export async function validateBulkImportRows(
 ): Promise<BulkImportValidationResult> {
   const errors: { rowNumber: number; reason: string }[] = [];
   const importRow = BULK_IMPORTERS[masterType];
+  // One registry per validation pass, threaded through every row so a
+  // self-referencing-parent row (Chart of Account/Category/Employee) can see
+  // what an earlier row in this SAME file would create — see RowContext's
+  // own doc comment.
+  const dryRunRegistry = new Map<string, Set<string>>();
 
   for (let i = 0; i < rows.length; i++) {
     try {
-      await importRow(actor, rows[i], { importBatchId: DRY_RUN_PLACEHOLDER_ID, dryRun: true });
+      await importRow(actor, rows[i], { importBatchId: DRY_RUN_PLACEHOLDER_ID, dryRun: true, dryRunRegistry });
     } catch (error) {
       errors.push({ rowNumber: i + 1, reason: messageFromError(error) });
     }
