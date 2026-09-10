@@ -385,7 +385,7 @@ export function SalesOrderForm({
                 </select>
               </FormField>
 
-              <FormField label="Linked Sample (optional)" htmlFor={`sample-${index}`}>
+              <FormField label="Design Name / Linked Sample (optional)" htmlFor={`sample-${index}`}>
                 <select
                   id={`sample-${index}`}
                   value={item.sampleRequestId}
