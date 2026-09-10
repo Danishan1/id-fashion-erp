@@ -123,6 +123,14 @@ model Company {
   employeeAdvances                    EmployeeAdvance[]
   employeeAdvanceSettlements          EmployeeAdvanceSettlement[]
   submoduleVisibilities               SubmoduleVisibility[]
+  aiDesignerProjects                  AiDesignerProject[]
+  aiDesignerPrompts                   AiDesignerPrompt[]
+  aiDesignerGenerations               AiDesignerGeneration[]
+  aiDesignerImages                    AiDesignerImage[]
+  aiDesignerVersions                  AiDesignerVersion[]
+  aiProviders                         AIProvider[]
+  aiProviderUsage                     AIProviderUsage[]
+  aiFailoverLogs                      AIFailoverLog[]
   aiGarmentProjects                   AiGarmentProject[]
   aiGarmentReferenceAnalyses          AiGarmentReferenceAnalysis[]
   aiGarmentReferenceAnalysisRuns      AiGarmentReferenceAnalysisRun[]
@@ -327,6 +335,13 @@ model User {
   aiGarmentReferenceObservationsApproved     AiGarmentReferenceObservation[]      @relation("AiGarmentReferenceObservationApprovedBy")
   aiGarmentReferenceAnalysisRunsCreated      AiGarmentReferenceAnalysisRun[]      @relation("AiGarmentReferenceAnalysisRunCreatedBy")
   aiGarmentFabricAnalysesApproved            AiGarmentFabricAnalysis[]            @relation("AiGarmentFabricAnalysisApprovedBy")
+  aiDesignerProjectsCreated                  AiDesignerProject[]                  @relation("AiDesignerProjectCreatedBy")
+  aiDesignerPromptsCreated                   AiDesignerPrompt[]                   @relation("AiDesignerPromptCreatedBy")
+  aiDesignerGenerationsCreated               AiDesignerGeneration[]               @relation("AiDesignerGenerationCreatedBy")
+  aiDesignerImagesCreated                    AiDesignerImage[]                    @relation("AiDesignerImageCreatedBy")
+  aiDesignerVersionsCreated                  AiDesignerVersion[]                  @relation("AiDesignerVersionCreatedBy")
+  aiProvidersCreated                         AIProvider[]                         @relation("AIProviderCreatedBy")
+  aiProviderUsageAsUser                      AIProviderUsage[]                    @relation("AIProviderUsageUser")
   aiGarmentFabricAnalysesCreated             AiGarmentFabricAnalysis[]            @relation("AiGarmentFabricAnalysisCreatedBy")
   aiGarmentFabricObservationsApproved        AiGarmentFabricObservation[]         @relation("AiGarmentFabricObservationApprovedBy")
   aiGarmentFabricAnalysisRunsCreated         AiGarmentFabricAnalysisRun[]         @relation("AiGarmentFabricAnalysisRunCreatedBy")
@@ -616,6 +631,7 @@ model Supplier {
   expenses               Expense[]
   jobWorkOrders          JobWorkOrder[]
   aiGarmentFabricDetails AiGarmentFabricDetail[]
+  aiDesignerProjects     AiDesignerProject[]
 
   @@unique([companyId, code])
   @@map("suppliers")
@@ -861,6 +877,10 @@ model Product {
   // Virtual back-relation only — the single authoritative FK lives on
   // AiGarmentProject.productId (@unique), set once by convertProjectToStyle().
   aiGarmentProject      AiGarmentProject?
+  // AI Designer's own read-only reference when a project picks this row as
+  // its "existing fabric" — many AI Designer projects may point at the same
+  // material, so this is a plain array, not a unique back-relation.
+  aiDesignerProjects    AiDesignerProject[]
 
   @@unique([companyId, styleCode])
   @@map("products")
@@ -7115,6 +7135,13 @@ enum RelatedModule {
   // own contextLabel reused as an asset-type tag -- matching Sampling's own
   // precedent of keeping attachments at the header level, not per-child-row.
   AI_GARMENT_PROJECT
+  // AI Designer (2026-09-10) -- a genuinely separate module from AI Garment
+  // Flow (own ai_-prefixed schema, own APIs, zero shared business logic, per
+  // explicit user decision). Every file uploaded in an AI Designer project
+  // (uploaded fabric image, exported PNG/JPG/PDF) attaches at the project
+  // header level (relatedRecordId = AiDesignerProject.id) -- same "attach at
+  // the header, not per-child-row" precedent as every other module here.
+  AI_DESIGNER_PROJECT
 }
 
 model Attachment {
@@ -7347,6 +7374,7 @@ enum DocumentType {
   EMPLOYEE_ADVANCE
   EMPLOYEE_ADVANCE_SETTLEMENT
   AI_GARMENT_PROJECT
+  AI_DESIGNER_PROJECT
 }
 
 model DocumentSequence {
@@ -7387,4 +7415,458 @@ model SubmoduleVisibility {
 
   @@unique([companyId, submoduleKey])
   @@map("submodule_visibility")
+}
+
+// ─────────────────────────────────────────────────────────────
+// AI Designer (2026-09-10)
+//
+// A brand-new, fully isolated module -- NOT the same thing as "AI Garment
+// Flow" above, despite doing a similar job (fabric -> guided wizard ->
+// generated design image). Confirmed explicitly with the user: genuinely
+// separate, ai_-prefixed tables, zero shared business logic, its own API
+// route family and sidebar entry. The only two FKs anywhere in this module
+// that point into pre-existing ERP tables are AiDesignerProject.fabricProductId
+// (-> Product, the real Fabric Master, itemType RAW_MATERIAL) and
+// .fabricSupplierId (-> Supplier) -- both read-only references (auto-filled
+// once when an existing fabric is picked), never written back to.
+//
+// Exactly 5 tables, matching the user's own explicit naming: ai_projects,
+// ai_prompts, ai_generations, ai_images, ai_versions. Flat columns on the
+// project header (not a deep per-observation table) since nothing in this
+// module's own spec asked for that granularity -- Product/Composition/GSM
+// etc. are a short, fixed field list the user explicitly wants kept minimal.
+enum AiDesignerFabricSource {
+  EXISTING
+  UPLOADED
+}
+
+enum AiDesignerTargetCustomer {
+  MEN
+  WOMEN
+  BOYS
+  GIRLS
+  BABY
+  UNISEX
+}
+
+enum AiDesignerProjectStatus {
+  DRAFT
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum AiDesignerPromptType {
+  FABRIC_ANALYSIS
+  IMAGE_GENERATE
+  IMAGE_EDIT
+}
+
+enum AiDesignerRunStatus {
+  IN_PROGRESS
+  SUCCESS
+  FAILED
+}
+
+enum AiDesignerImageDecision {
+  PENDING
+  SELECTED
+  REJECTED
+}
+
+model AiDesignerProject {
+  id            String                  @id @default(uuid()) @db.Uuid
+  companyId     String                  @map("company_id") @db.Uuid
+  projectNumber String                  @map("project_number")
+  projectName   String                  @map("project_name")
+  status        AiDesignerProjectStatus @default(DRAFT)
+
+  // Own, wholly separate resumable-wizard position -- mirrors the *shape* of
+  // AiGarmentProject's currentStepKey/completedStepKeys, not shared code.
+  currentStep    String   @default("FABRIC_SELECTION") @map("current_step")
+  completedSteps String[] @map("completed_steps")
+
+  // Step 1/2 -- fabric. fabricProductId/fabricSupplierId are read-only refs
+  // into the real ERP Fabric Master; every other fabric* field is a plain
+  // snapshot column -- auto-filled from Product when fabricSource=EXISTING
+  // (Name/Code/Supplier/unit cost only -- confirmed the real Product row
+  // carries nothing else), left blank/user-editable otherwise (Composition/
+  // GSM/Width/Weave/Stretch/Opacity/Texture/PatternType/PrintType/
+  // SuitableSeason/RecommendedGarments/Color), same honest-gap handling this
+  // codebase already uses for the identical problem in the sibling module.
+  fabricSource              AiDesignerFabricSource? @map("fabric_source")
+  fabricProductId           String?                 @map("fabric_product_id") @db.Uuid
+  fabricImageAttachmentId   String?                 @map("fabric_image_attachment_id")
+  fabricName                String?                 @map("fabric_name")
+  fabricCode                String?                 @map("fabric_code")
+  fabricComposition         String?                 @map("fabric_composition")
+  fabricGsm                 String?                 @map("fabric_gsm")
+  fabricWidth               String?                 @map("fabric_width")
+  fabricWeave               String?                 @map("fabric_weave")
+  fabricStretch             String?                 @map("fabric_stretch")
+  fabricOpacity             String?                 @map("fabric_opacity")
+  fabricTexture             String?                 @map("fabric_texture")
+  fabricPatternType         String?                 @map("fabric_pattern_type")
+  fabricPrintType           String?                 @map("fabric_print_type")
+  fabricSuitableSeason      String?                 @map("fabric_suitable_season")
+  fabricRecommendedGarments String?                 @map("fabric_recommended_garments")
+  fabricColor               String?                 @map("fabric_color")
+  fabricSupplierId          String?                 @map("fabric_supplier_id") @db.Uuid
+
+  // Step 3-6 -- customer/product/design
+  targetCustomer       AiDesignerTargetCustomer? @map("target_customer")
+  ageGroup             String?                   @map("age_group")
+  productCategory      String?                   @map("product_category")
+  designSelectionsJson Json?                     @map("design_selections_json")
+
+  // Step 7 -- model
+  modelGender   String? @map("model_gender")
+  modelBodyType String? @map("model_body_type")
+  modelPose     String? @map("model_pose")
+
+  // Step 8 -- environment
+  environmentKey      String? @map("environment_key")
+  environmentLabel    String? @map("environment_label")
+  isCustomEnvironment Boolean @default(false) @map("is_custom_environment")
+
+  // Set once version 1 exists (nullable-then-set-later, same precedent as
+  // AiGarmentProject.selectedDesignDirectionId elsewhere in this schema).
+  currentVersionId String? @unique @map("current_version_id") @db.Uuid
+
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  company        Company            @relation(fields: [companyId], references: [id])
+  fabricProduct  Product?           @relation(fields: [fabricProductId], references: [id])
+  fabricSupplier Supplier?          @relation(fields: [fabricSupplierId], references: [id])
+  currentVersion AiDesignerVersion? @relation("AiDesignerProjectCurrentVersion", fields: [currentVersionId], references: [id])
+  createdBy      User               @relation("AiDesignerProjectCreatedBy", fields: [createdByUserId], references: [id])
+
+  prompts       AiDesignerPrompt[]
+  generations   AiDesignerGeneration[]
+  images        AiDesignerImage[]
+  versions      AiDesignerVersion[]    @relation("AiDesignerVersionsOfProject")
+  providerUsage AIProviderUsage[]
+
+  @@unique([companyId, projectNumber])
+  @@map("ai_projects")
+}
+
+// One row per AI call attempt of ANY kind (fabric analysis, generate, edit) --
+// the single unified audit/run log for the whole module. specJson is the
+// {fabric,customer,product,design,model,environment} structured JSON built
+// server-side from the project's own fields; promptText is what was actually
+// sent to the AI. Never surfaced to the end user as something they write.
+model AiDesignerPrompt {
+  id            String               @id @default(uuid()) @db.Uuid
+  companyId     String               @map("company_id") @db.Uuid
+  projectId     String               @map("project_id") @db.Uuid
+  promptType    AiDesignerPromptType @map("prompt_type")
+  promptVersion String               @map("prompt_version")
+  specJson      Json                 @map("spec_json")
+  promptText    String               @map("prompt_text")
+  provider      String
+  model         String
+  status        AiDesignerRunStatus  @default(IN_PROGRESS)
+  errorCategory String?              @map("error_category")
+  errorMessage  String?              @map("error_message")
+  requestedAt   DateTime             @default(now()) @map("requested_at")
+  completedAt   DateTime?            @map("completed_at")
+
+  createdByUserId String @map("created_by_user_id") @db.Uuid
+
+  company    Company               @relation(fields: [companyId], references: [id])
+  project    AiDesignerProject     @relation(fields: [projectId], references: [id])
+  createdBy  User                  @relation("AiDesignerPromptCreatedBy", fields: [createdByUserId], references: [id])
+  generation AiDesignerGeneration?
+
+  @@map("ai_prompts")
+}
+
+// One row per image-producing AI call (initial generate, or an edit/
+// regenerate -- parentImageId + editedFeature are set only for an edit).
+// 1:1 with the AiDesignerPrompt that produced it.
+model AiDesignerGeneration {
+  id                  String              @id @default(uuid()) @db.Uuid
+  companyId           String              @map("company_id") @db.Uuid
+  projectId           String              @map("project_id") @db.Uuid
+  promptId            String              @unique @map("prompt_id") @db.Uuid
+  parentImageId       String?             @map("parent_image_id") @db.Uuid
+  editedFeature       String?             @map("edited_feature")
+  requestedImageCount Int                 @default(1) @map("requested_image_count")
+  status              AiDesignerRunStatus @default(IN_PROGRESS)
+
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  company     Company           @relation(fields: [companyId], references: [id])
+  project     AiDesignerProject @relation(fields: [projectId], references: [id])
+  prompt      AiDesignerPrompt  @relation(fields: [promptId], references: [id])
+  parentImage AiDesignerImage?  @relation("AiDesignerGenerationParentImage", fields: [parentImageId], references: [id])
+  createdBy   User              @relation("AiDesignerGenerationCreatedBy", fields: [createdByUserId], references: [id])
+
+  images AiDesignerImage[] @relation("AiDesignerImagesOfGeneration")
+
+  @@map("ai_generations")
+}
+
+// One row per actual image file a generation produced (a generation can
+// request 1/3/4). imageAttachmentId is a soft reference into the existing,
+// generic Attachment table (RelatedModule.AI_DESIGNER_PROJECT -- never the
+// sibling module's own AI_GARMENT_PROJECT value, which would wrongly couple
+// the two).
+model AiDesignerImage {
+  id                String                  @id @default(uuid()) @db.Uuid
+  companyId         String                  @map("company_id") @db.Uuid
+  projectId         String                  @map("project_id") @db.Uuid
+  generationId      String                  @map("generation_id") @db.Uuid
+  imageAttachmentId String                  @map("image_attachment_id")
+  decision          AiDesignerImageDecision @default(PENDING)
+
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  company    Company              @relation(fields: [companyId], references: [id])
+  project    AiDesignerProject    @relation(fields: [projectId], references: [id])
+  generation AiDesignerGeneration @relation("AiDesignerImagesOfGeneration", fields: [generationId], references: [id])
+  createdBy  User                 @relation("AiDesignerImageCreatedBy", fields: [createdByUserId], references: [id])
+
+  usedAsParentFor    AiDesignerGeneration[] @relation("AiDesignerGenerationParentImage")
+  currentForVersions AiDesignerVersion[]
+
+  @@map("ai_images")
+}
+
+// Version history for "Save Project -> Versions/History": version 1 is
+// created by the first successful generate; every edit that changes the
+// "current" image creates version N+1, with a plain-English changeSummary
+// and a full designSnapshotJson so history stays inspectable even if the
+// project's own "current" fields move on later.
+model AiDesignerVersion {
+  id                 String  @id @default(uuid()) @db.Uuid
+  companyId          String  @map("company_id") @db.Uuid
+  projectId          String  @map("project_id") @db.Uuid
+  versionNumber      Int     @map("version_number")
+  currentImageId     String  @map("current_image_id") @db.Uuid
+  changeSummary      String? @map("change_summary")
+  designSnapshotJson Json    @map("design_snapshot_json")
+
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  company      Company           @relation(fields: [companyId], references: [id])
+  project      AiDesignerProject @relation("AiDesignerVersionsOfProject", fields: [projectId], references: [id])
+  currentImage AiDesignerImage   @relation(fields: [currentImageId], references: [id])
+  createdBy    User              @relation("AiDesignerVersionCreatedBy", fields: [createdByUserId], references: [id])
+
+  currentForProject AiDesignerProject? @relation("AiDesignerProjectCurrentVersion")
+
+  @@unique([projectId, versionNumber])
+  @@map("ai_versions")
+}
+
+// -----------------------------------------------------------------------------
+// AI Provider & API Management + Automatic Failover (2026-09-10)
+//
+// A genuinely new area (confirmed via a dedicated research pass before
+// writing this: grep across the whole schema for any Provider/AIConfig/
+// ApiKey/Credential/Usage/Failover/Health model name returned zero
+// matches). Extends, rather than duplicates, what already exists: reuses
+// src/core/security/encryption.ts's encryptSecret/decryptSecret verbatim
+// for apiKeyEncrypted (the same NEXTAUTH_SECRET-derived key
+// AdAccountConnection's OAuth tokens already use -- no new key to manage),
+// reuses the existing ImageGenerationProvider interface/ImageGenErrorCategory
+// taxonomy as the runtime contract every provider still implements, and is
+// gated behind the existing "administration" RBAC module (matching every
+// other admin-only settings tab -- Company Settings, Worker Settings,
+// Module Visibility -- none of which got their own RBAC module either).
+//
+// Scoping decision, made explicitly rather than left implicit: AIProvider
+// rows are per-company only (companyId required, not nullable). No genuine
+// "global config row + per-company override" pattern exists anywhere in
+// this codebase today (SubmoduleVisibility's own "global default" is a
+// hardcoded true fallback in code, not a queryable global row -- see
+// SubmoduleVisibilityService) -- inventing one here, unproven need, would
+// have added exactly the kind of complexity this project's own conventions
+// warn against. Every company independently configures its own providers,
+// consistent with every other admin-managed entity in this app (Company
+// Settings, Branches, Document Sequences, Module Visibility are all
+// per-company). A true global-default tier can be added later as a
+// proven-needed extension without breaking this shape.
+//
+// Consolidation decision: the original suggested table list named 6 tables
+// (AIProvider, AIProviderCredential, AIProviderModel, AIProviderUsage,
+// AIProviderHealth, AIFailoverLog), 3 of which (Credential/Model/Health)
+// are genuinely 1:1 with a single AIProvider row, not a real one-to-many
+// relationship -- splitting them into separate tables would have meant a
+// join for every single read with no real data-modeling benefit. Merged
+// into AIProvider itself; AIProviderUsage and AIFailoverLog remain separate
+// since they are genuinely one-to-many (many usage/failover events per
+// provider over time).
+
+enum AIProviderType {
+  OPENAI
+  GEMINI
+  CLOUDFLARE
+  QWEN_LOCAL
+}
+
+/**
+ * Matches the 3 capabilities the AI Designer generation pipeline actually distinguishes today -- not a speculative larger taxonomy.
+ */
+enum AIProviderCapability {
+  TEXT_TO_IMAGE
+  IMAGE_EDIT
+  FABRIC_REFERENCE
+}
+
+/**
+ * Runtime health/quota state, distinct from the static isActive admin toggle -- a provider can be isActive:true but currently QUOTA_EXHAUSTED (in cooldown), or isActive:false (an admin deliberately disabled it, never even attempted).
+ */
+enum AIProviderHealthStatus {
+  HEALTHY
+  RATE_LIMITED
+  QUOTA_EXHAUSTED
+  UNAVAILABLE
+  AUTH_ERROR
+  DISABLED
+}
+
+/**
+ * The normalized error taxonomy AIProviderManager classifies every
+ * provider failure into -- deliberately a superset of the existing,
+ * narrower ImageGenErrorCategory (src/core/ai/image-generation/types.ts),
+ * since that one predates and does not distinguish "should this trigger
+ * failover" (it has no separate content-policy-vs-auth-failure split).
+ * Kept as its own enum rather than widening the existing one, since
+ * ImageGenErrorCategory is a provider-SDK-facing contract
+ * (UNSUPPORTED_OPERATION, INVALID_IMAGE_RESPONSE describe the SDK response
+ * shape, not failover eligibility) -- AIUsageErrorCategory is specifically
+ * about "what should the failover engine do next," a different concern at
+ * a different layer.
+ */
+enum AIUsageErrorCategory {
+  QUOTA_EXHAUSTED
+  RATE_LIMITED
+  PROVIDER_UNAVAILABLE
+  TIMEOUT
+  AUTH_ERROR
+  INVALID_REQUEST
+  CONTENT_POLICY
+  INTERNAL_ERROR
+}
+
+model AIProvider {
+  id           String         @id @default(uuid()) @db.Uuid
+  companyId    String         @map("company_id") @db.Uuid
+  name         String
+  providerType AIProviderType @map("provider_type")
+
+  // Encrypted via src/core/security/encryption.ts's encryptSecret -- never
+  // the plain key. Nullable because QWEN_LOCAL (a self-hosted endpoint) may
+  // need no API key at all, only a baseUrl.
+  apiKeyEncrypted String? @map("api_key_encrypted")
+  model           String
+  baseUrl         String? @map("base_url")
+
+  isActive               Boolean @default(true) @map("is_active")
+  // Lower number = tried first. Deliberately a plain Int, not a unique
+  // constraint -- two providers legitimately sharing a priority is fine
+  // (stable-sorted by createdAt as the tiebreaker); forcing strict
+  // uniqueness would only add friction for no real benefit.
+  priority               Int     @default(100)
+  autoFailoverEnabled    Boolean @default(true) @map("auto_failover_enabled")
+  dailyGenerationLimit   Int?    @map("daily_generation_limit")
+  monthlyGenerationLimit Int?    @map("monthly_generation_limit")
+  requestTimeoutMs       Int     @default(120000) @map("request_timeout_ms")
+  maxRetryCount          Int     @default(1) @map("max_retry_count")
+
+  capabilities AIProviderCapability[]
+
+  // Runtime health/cooldown state -- mutated by AIProviderManager after
+  // every real call, not by any admin action directly (the admin can only
+  // force it back to HEALTHY via a manual "Reset" action, or DISABLED via
+  // the isActive toggle).
+  healthStatus      AIProviderHealthStatus @default(HEALTHY) @map("health_status")
+  cooldownUntil     DateTime?              @map("cooldown_until")
+  lastHealthCheckAt DateTime?              @map("last_health_check_at")
+  lastErrorMessage  String?                @map("last_error_message")
+
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  company   Company @relation(fields: [companyId], references: [id])
+  createdBy User    @relation("AIProviderCreatedBy", fields: [createdByUserId], references: [id])
+
+  usageLogs               AIProviderUsage[]
+  failoverLogsAsRequested AIFailoverLog[]   @relation("AIFailoverRequestedProvider")
+  failoverLogsAsFallback  AIFailoverLog[]   @relation("AIFailoverFallbackProvider")
+
+  @@unique([companyId, name])
+  @@map("ai_providers")
+}
+
+/**
+ * One row per real generation attempt (success or failure) that reached
+ * AIProviderManager -- providerId is nullable for the "no compatible
+ * provider was even found" case (the request never reached any real API at
+ * all, still worth recording so the usage dashboard/failover history is
+ * complete). estimatedCost/tokenUsage are populated only when the
+ * provider's own real response actually carries that information.
+ */
+model AIProviderUsage {
+  id                  String  @id @default(uuid()) @db.Uuid
+  companyId           String  @map("company_id") @db.Uuid
+  providerId          String? @map("provider_id") @db.Uuid
+  userId              String? @map("user_id") @db.Uuid
+  aiDesignerProjectId String? @map("ai_designer_project_id") @db.Uuid
+
+  generationType AIProviderCapability @map("generation_type")
+  requestedAt    DateTime             @default(now()) @map("requested_at")
+  durationMs     Int?                 @map("duration_ms")
+  success        Boolean
+
+  errorCategory AIUsageErrorCategory? @map("error_category")
+  errorMessage  String?               @map("error_message")
+
+  providerRequestId String?  @map("provider_request_id")
+  inputImagePresent Boolean  @default(false) @map("input_image_present")
+  outputCount       Int      @default(0) @map("output_count")
+  tokenUsage        Int?     @map("token_usage")
+  estimatedCost     Decimal? @map("estimated_cost") @db.Decimal(10, 4)
+
+  company  Company            @relation(fields: [companyId], references: [id])
+  provider AIProvider?        @relation(fields: [providerId], references: [id])
+  user     User?              @relation("AIProviderUsageUser", fields: [userId], references: [id])
+  project  AiDesignerProject? @relation(fields: [aiDesignerProjectId], references: [id])
+
+  @@map("ai_provider_usage")
+}
+
+/**
+ * One row per automatic failover attempt AIProviderManager makes --
+ * "attempt", not just "success": a failed fallback that itself fails over
+ * to a third provider produces two rows (OpenAI to Gemini, then Gemini to
+ * Qwen), each independently showing its own result. requestedProviderId/
+ * fallbackProviderId are both nullable: the former for a genuinely
+ * unattributable case, the latter for the terminal "no more candidates
+ * left" case (no fallback exists to name).
+ */
+model AIFailoverLog {
+  id                  String               @id @default(uuid()) @db.Uuid
+  companyId           String               @map("company_id") @db.Uuid
+  requestedProviderId String?              @map("requested_provider_id") @db.Uuid
+  fallbackProviderId  String?              @map("fallback_provider_id") @db.Uuid
+  reason              AIUsageErrorCategory
+  generationContext   String               @map("generation_context")
+  result              String
+  createdAt           DateTime             @default(now()) @map("created_at")
+
+  company           Company     @relation(fields: [companyId], references: [id])
+  requestedProvider AIProvider? @relation("AIFailoverRequestedProvider", fields: [requestedProviderId], references: [id])
+  fallbackProvider  AIProvider? @relation("AIFailoverFallbackProvider", fields: [fallbackProviderId], references: [id])
+
+  @@map("ai_failover_logs")
 }
