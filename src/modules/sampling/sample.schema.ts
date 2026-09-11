@@ -49,6 +49,20 @@ export const sampleRequestColorSchema = z.object({
 
 export type SampleRequestColorInput = z.infer<typeof sampleRequestColorSchema>;
 
+// Same shape/reasoning as color above — styleName ("Design Name") was never
+// actually marked immutable by design (the neighbouring comment on the
+// create schema above describes sampleType, not this field — confirmed
+// against schema.prisma's own per-field comments), it simply never had an
+// edit path built. A name entered early (e.g. copied from a Buyer Enquiry
+// line before the buyer had confirmed anything) routinely needs correcting
+// well after the sample is logged, the same real-world timing color already
+// has to support.
+export const sampleRequestDesignNameSchema = z.object({
+  styleName: z.string().min(1, "Design name is required").max(200),
+});
+
+export type SampleRequestDesignNameInput = z.infer<typeof sampleRequestDesignNameSchema>;
+
 export const sampleVersionSchema = z.object({
   techPackNotes: z.string().max(4000).optional().or(z.literal("")),
   estimatedCostPerUnit: z.coerce.number().min(0).optional(),
