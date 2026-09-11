@@ -1741,13 +1741,17 @@ model SampleVersion {
   costingLockedAt       DateTime? @map("costing_locked_at")
   costingLockedByUserId String?   @map("costing_locked_by_user_id") @db.Uuid
 
-  sampleRequest   SampleRequest       @relation(fields: [sampleRequestId], references: [id])
-  createdBy       User                @relation("SampleVersionCreatedBy", fields: [createdByUserId], references: [id])
-  costingLockedBy User?               @relation("SampleVersionCostingLockedBy", fields: [costingLockedByUserId], references: [id])
-  materials       SampleMaterial[]
-  approvals       SampleApproval[]
-  comments        SampleComment[]
-  otherCharges    SampleOtherCharge[]
+  sampleRequest    SampleRequest       @relation(fields: [sampleRequestId], references: [id])
+  createdBy        User                @relation("SampleVersionCreatedBy", fields: [createdByUserId], references: [id])
+  costingLockedBy  User?               @relation("SampleVersionCostingLockedBy", fields: [costingLockedByUserId], references: [id])
+  materials        SampleMaterial[]
+  approvals        SampleApproval[]
+  comments         SampleComment[]
+  otherCharges     SampleOtherCharge[]
+  // Virtual back-relation only — no column on this table. A version can have
+  // more than one over time (a soft duplicate-warning, not a hard cap — see
+  // findMaterialRequestsBySampleVersion in material-request.service.ts).
+  materialRequests MaterialRequest[]
 
   @@unique([sampleRequestId, versionNumber])
   @@map("sample_versions")
@@ -2991,6 +2995,11 @@ enum MaterialRequestType {
   // never modifies the original request/BOM, always a new document that
   // references it via originalMaterialRequestId.
   DAMAGE_REPLACEMENT
+  // Raw material genuinely needed for a Sample Request's own development —
+  // generated from one SampleVersion's own SampleMaterial rows (see
+  // sampleVersionId on MaterialRequest below), issued through the exact same
+  // Inventory-checks-stock flow as every other Material Request.
+  SAMPLING_REQUIREMENT
 }
 
 model MaterialRequest {
@@ -3026,6 +3035,11 @@ model MaterialRequest {
   // ProductionOrder FK, since no Production module exists yet (same
   // reasoning already applied above to salesOrderId).
   originalMaterialRequestId String?                @map("original_material_request_id") @db.Uuid
+  // Nullable traceability to the SampleVersion this requirement's raw
+  // materials were generated from (requestType = SAMPLING_REQUIREMENT) — the
+  // Sampling equivalent of bomId above; a request raised any other way
+  // simply leaves this null.
+  sampleVersionId           String?                @map("sample_version_id") @db.Uuid
   remarks                   String?
   // Derived from lines except the manual ON_HOLD/CANCELLED/CLOSED
   // transitions — never hand-set to PARTIALLY_FULFILLED/FULFILLED.
@@ -3044,6 +3058,7 @@ model MaterialRequest {
   bom                     Bom?                  @relation(fields: [bomId], references: [id])
   originalMaterialRequest MaterialRequest?      @relation("MaterialRequestReplacementOrigin", fields: [originalMaterialRequestId], references: [id])
   replacementRequests     MaterialRequest[]     @relation("MaterialRequestReplacementOrigin")
+  sampleVersion           SampleVersion?        @relation(fields: [sampleVersionId], references: [id])
   requestedBy             User                  @relation("MaterialRequestRequestedBy", fields: [requestedByUserId], references: [id])
   lines                   MaterialRequestItem[]
 
@@ -3051,6 +3066,7 @@ model MaterialRequest {
   @@index([companyId, status])
   @@index([companyId, requestType])
   @@index([productionOrderId])
+  @@index([sampleVersionId])
   @@map("material_requests")
 }
 

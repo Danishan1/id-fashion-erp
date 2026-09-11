@@ -240,6 +240,22 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
   // Style's own real BOM — see updateSampleBomMaterials() in sample.service.ts.
   const [isUpdateBomModalOpen, setIsUpdateBomModalOpen] = useState(false);
   const [updateBomDrafts, setUpdateBomDrafts] = useState<Record<string, string>>({});
+
+  // "Generate Material Request" — raw material selected during development
+  // genuinely gets used for the physical sample, so this raises a real
+  // Inventory Material Request (see createMaterialRequestFromSampleVersion)
+  // rather than any separate tracking of its own. Proactively checks for an
+  // already-existing request on open (same "warn, don't hard-block" pattern
+  // as BOM/MRP's own "Generate Material Request" button), and clears once
+  // the modal closes so a stale warning never carries over to a different
+  // version.
+  const [materialRequestModalVersionId, setMaterialRequestModalVersionId] = useState<string | null>(null);
+  const [mrWarehouseId, setMrWarehouseId] = useState("");
+  const [mrExistingRequests, setMrExistingRequests] = useState<
+    Array<{ id: string; requestNumber: string; status: string }>
+  >([]);
+  const [mrIsChecking, setMrIsChecking] = useState(false);
+  const [warehouses, setWarehouses] = useState<Option[]>([]);
   // Real purchase-rate suggestions for whichever material/shade the Rate
   // modal is currently open for — fetched fresh per open, never persisted.
   const [rateHistory, setRateHistory] = useState<RateHistoryEntry[]>([]);
@@ -312,6 +328,9 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
       .then((body) => {
         if (body?.data?.code) setConvertStyleCode(body.data.code);
       });
+    fetch("/api/v1/warehouses?pageSize=200")
+      .then((res) => res.json())
+      .then((body) => setWarehouses(body.data ?? []));
   }, []);
 
   const refresh = async () => {
@@ -720,6 +739,35 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
     ).then((ok) => {
       if (ok) setIsUpdateBomModalOpen(false);
     });
+
+  const openGenerateMaterialRequestModal = (versionId: string) => {
+    setMaterialRequestModalVersionId(versionId);
+    setMrWarehouseId("");
+    setMrExistingRequests([]);
+    setMrIsChecking(true);
+    fetch(`/api/v1/sampling/versions/${versionId}/material-requests`)
+      .then((res) => res.json())
+      .then((body) => setMrExistingRequests(body.data ?? []))
+      .finally(() => setMrIsChecking(false));
+  };
+
+  const generateMaterialRequest = () => {
+    if (!materialRequestModalVersionId) return;
+    run(
+      () =>
+        fetch(`/api/v1/sampling/versions/${materialRequestModalVersionId}/generate-material-request`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            warehouseId: mrWarehouseId,
+            overrideDuplicateCheck: mrExistingRequests.length > 0,
+          }),
+        }),
+      "Failed to generate the material request."
+    ).then((ok) => {
+      if (ok) setMaterialRequestModalVersionId(null);
+    });
+  };
 
   const openUploadModal = () => {
     setUploadFile(null);
@@ -1311,9 +1359,19 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
                   </table>
                 )}
 
-                {canAddMaterial && (
-                  <div className="mt-3 border-t border-zinc-100 pt-3 dark:border-zinc-800">
-                    <ActionButton label="+ Add Material" onClick={() => openAddMaterialModal(version.id)} isBusy={isBusy} variant="secondary" />
+                {(canAddMaterial || version.materials.length > 0) && (
+                  <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-zinc-100 pt-3 dark:border-zinc-800">
+                    {canAddMaterial && (
+                      <ActionButton label="+ Add Material" onClick={() => openAddMaterialModal(version.id)} isBusy={isBusy} variant="secondary" />
+                    )}
+                    {version.materials.length > 0 && (
+                      <ActionButton
+                        label="Generate Material Request"
+                        onClick={() => openGenerateMaterialRequestModal(version.id)}
+                        isBusy={isBusy}
+                        variant="secondary"
+                      />
+                    )}
                   </div>
                 )}
 
@@ -1701,6 +1759,67 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
               onClick={saveUpdateBom}
               isBusy={isBusy}
               disabled={Object.values(updateBomDrafts).some((v) => !v || Number(v) <= 0)}
+            />
+          </div>
+        </div>
+      </Modal>
+
+      {/* Generate Material Request — raises a real Inventory Material
+          Request (requestType SAMPLING_REQUIREMENT) from this version's own
+          materials, so the raw material genuinely used for the physical
+          sample gets issued from real stock through the exact same
+          Inventory-checks-stock flow every other requirement in this app
+          uses. Never issues stock directly from here — the created request
+          still needs a separate Issue action in Inventory, matching the
+          rest of this module's own two-step design. */}
+      <Modal
+        open={materialRequestModalVersionId !== null}
+        onClose={() => setMaterialRequestModalVersionId(null)}
+        title="Generate Material Request"
+      >
+        <div className="space-y-3">
+          <p className="text-sm text-zinc-600 dark:text-zinc-300">
+            Creates a Material Request for every material on this version — Inventory will check real stock and
+            issue it from there, same as any other request.
+          </p>
+          {mrIsChecking && <p className="text-xs text-zinc-500">Checking for an existing request…</p>}
+          {!mrIsChecking && mrExistingRequests.length > 0 && (
+            <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+              A Material Request already exists for this version:{" "}
+              {mrExistingRequests.map((r, i) => (
+                <span key={r.id}>
+                  {i > 0 && ", "}
+                  <a href={`/material-requests/${r.id}`} className="font-medium underline">
+                    {r.requestNumber}
+                  </a>{" "}
+                  ({r.status})
+                </span>
+              ))}
+              . Generating again will create an additional request.
+            </div>
+          )}
+          <FormField label="Warehouse" htmlFor="mrWarehouseId">
+            <select
+              id="mrWarehouseId"
+              value={mrWarehouseId}
+              onChange={(e) => setMrWarehouseId(e.target.value)}
+              className={textInputClass()}
+            >
+              <option value="">Select a warehouse…</option>
+              {warehouses.map((w) => (
+                <option key={w.id} value={w.id}>
+                  {w.name}
+                </option>
+              ))}
+            </select>
+          </FormField>
+          <div className="flex gap-3">
+            <ActionButton label="Cancel" onClick={() => setMaterialRequestModalVersionId(null)} isBusy={false} variant="secondary" />
+            <ActionButton
+              label={mrExistingRequests.length > 0 ? "Generate Anyway" : "Generate"}
+              onClick={generateMaterialRequest}
+              isBusy={isBusy}
+              disabled={!mrWarehouseId || mrIsChecking}
             />
           </div>
         </div>

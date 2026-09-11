@@ -150,6 +150,19 @@ export const MaterialRequestRepository = {
         materialRequest: { select: { id: true, requestNumber: true } },
       },
     }),
+
+  /** Not-CANCELLED/CLOSED requests already generated from this exact Sample
+   * Version — the candidate set for the Sampling equivalent of the
+   * duplicate-request warning above. A flat per-version check, not per-line:
+   * a version's own material list doesn't have the shortfall/coverage math a
+   * Sales Order's BOM explosion does, so "has anything already been
+   * requested for this version" is the right granularity here. */
+  findOpenBySampleVersion: (companyId: string, sampleVersionId: string) =>
+    prisma.materialRequest.findMany({
+      where: { companyId, sampleVersionId, status: { notIn: ["CANCELLED", "CLOSED"] } },
+      select: { id: true, requestNumber: true, status: true, createdAt: true },
+      orderBy: { createdAt: "desc" },
+    }),
 };
 
 export const MaterialRequestItemRepository = {

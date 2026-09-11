@@ -11,6 +11,7 @@ import { getMaterialRequirements } from "@/modules/bom-mrp/mrp.service";
 import { LookupRepository } from "@/modules/lookups/lookup.repository";
 import { ProductRepository } from "@/modules/products/product.repository";
 import { SalesOrderRepository } from "@/modules/sales-orders/sales-order.repository";
+import { SampleMaterialRepository, SampleVersionRepository } from "@/modules/sampling/sample.repository";
 import { createPurchaseOrder } from "@/modules/purchasing/purchase-order.service";
 import { getAvailableQuantity, getAvailableQuantityByDye, recordInventoryTransaction } from "./inventory.service";
 import { MaterialRequestItemRepository, MaterialRequestRepository } from "./material-request.repository";
@@ -317,6 +318,7 @@ export async function createMaterialRequest(actor: ActorContext, input: Material
     productionOrderId: input.productionOrderId || null,
     bomId: input.bomId || null,
     originalMaterialRequestId: input.originalMaterialRequestId || null,
+    sampleVersionId: input.sampleVersionId || null,
     remarks: input.remarks || null,
     status: "OPEN",
     requestedByUserId: actor.userId,
@@ -413,6 +415,80 @@ export async function createMaterialRequestFromShortfall(
   });
 }
 
+/** Not-CANCELLED/CLOSED requests already generated from this exact Sample
+ * Version — proactive advisory data for Sampling's own "Generate Material
+ * Request" button, and the same check createMaterialRequestFromSampleVersion
+ * enforces (with an override) before actually creating a request. */
+export async function findMaterialRequestsBySampleVersion(companyId: string, sampleVersionId: string) {
+  return MaterialRequestRepository.findOpenBySampleVersion(companyId, sampleVersionId);
+}
+
+/**
+ * Powers the "Generate Material Request" action on a Sample Version's own
+ * materials list in Sampling — the raw material selected during
+ * development genuinely gets used/consumed for the physical sample, so it
+ * goes through the exact same real Material Request -> Inventory-checks-
+ * stock -> Issue flow as every other requirement in this app, not a
+ * separate mechanism. Every SampleMaterial line on the version becomes one
+ * request line (never a selected subset — a version's material list is
+ * already a small, deliberately-curated set, unlike BOM/MRP's shortfall
+ * rows); a line with no uomId of its own falls back to its material's real
+ * base unit, matching what the Add Material UI already defaults new lines
+ * to.
+ */
+export async function createMaterialRequestFromSampleVersion(
+  actor: ActorContext,
+  input: { sampleVersionId: string; warehouseId: string; overrideDuplicateCheck?: boolean }
+) {
+  const version = await SampleVersionRepository.findWithRequestOwner(input.sampleVersionId);
+  if (!version || version.sampleRequest.companyId !== actor.companyId) {
+    throw new BusinessRuleError("NOT_FOUND", "Sample version not found.", { id: input.sampleVersionId });
+  }
+
+  const materials = await SampleMaterialRepository.findByVersionIdForMaterialRequest(input.sampleVersionId);
+  if (materials.length === 0) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "This sample version has no materials to request.", {
+      sampleVersionId: input.sampleVersionId,
+    });
+  }
+
+  if (!input.overrideDuplicateCheck) {
+    const existing = await findMaterialRequestsBySampleVersion(actor.companyId, input.sampleVersionId);
+    if (existing.length > 0) {
+      throw new BusinessRuleError(
+        "DUPLICATE_MATERIAL_REQUEST_EXISTS",
+        `A Material Request already exists for this sample version (${existing.map((r) => r.requestNumber).join(", ")}).`,
+        { existing }
+      );
+    }
+  }
+
+  const lines = materials.map((m) => {
+    const uomId = m.uomId ?? m.material.baseUomId;
+    if (!uomId) {
+      throw new BusinessRuleError(
+        "VALIDATION_ERROR",
+        `"${m.material.styleName}" has no unit set on this material line and no base unit configured for it — set one before generating a Material Request.`,
+        { sampleMaterialId: m.id }
+      );
+    }
+    return {
+      materialId: m.materialId,
+      colorId: m.colorId ?? undefined,
+      dyeId: m.dyeId ?? undefined,
+      uomId,
+      requestedQuantity: Number(m.plannedQuantity),
+    };
+  });
+
+  return createMaterialRequest(actor, {
+    requestType: "SAMPLING_REQUIREMENT",
+    warehouseId: input.warehouseId,
+    sampleVersionId: input.sampleVersionId,
+    lines,
+  });
+}
+
 /**
  * Line-level replace, not request-level: a line that's already had real
  * stock issued or a shortfall escalated to a Purchase Order is locked and
@@ -460,6 +536,7 @@ export async function updateMaterialRequestLines(actor: ActorContext, id: string
       productionOrderId: input.productionOrderId || null,
       bomId: input.bomId || null,
       originalMaterialRequestId: input.originalMaterialRequestId || null,
+      sampleVersionId: input.sampleVersionId || null,
       remarks: input.remarks || null,
     },
     input.lines.map(mapLineInput)
