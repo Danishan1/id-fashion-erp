@@ -221,7 +221,7 @@ describe("runFabricAnalysis", () => {
     expect(AiGarmentFabricAnalysisRepository.replaceForProject).not.toHaveBeenCalled();
   });
 
-  it("persists a full 17-observation set and marks the run SUCCESS on a valid response", async () => {
+  it("persists a full 13-observation set and marks the run SUCCESS on a valid response", async () => {
     vi.mocked(AiGarmentProjectRepository.findByIdWithDetails).mockResolvedValue({
       ...baseProject,
       fabricSwatchImageAttachmentId: "att-1",
@@ -252,10 +252,6 @@ describe("runFabricAnalysis", () => {
         estimatedStretch: fakeObservation,
         estimatedDrape: fakeObservation,
         estimatedRecovery: fakeObservation,
-        cuttingConsiderations: fakeObservation,
-        sewingConsiderations: fakeObservation,
-        careConsiderations: fakeObservation,
-        potentialQualityRisks: fakeObservation,
         missingInformation: ["Exact GSM"],
         fabricSummary: "A medium-weight cotton-blend single jersey knit.",
       },
@@ -272,7 +268,7 @@ describe("runFabricAnalysis", () => {
       ])
     );
     const observationsArg = vi.mocked(AiGarmentFabricAnalysisRepository.replaceForProject).mock.calls[0][2];
-    expect(observationsArg).toHaveLength(17);
+    expect(observationsArg).toHaveLength(13);
     expect(AiGarmentFabricAnalysisRunRepository.markSuccess).toHaveBeenCalledWith("run-1", "analysis-1");
     expect(result).toEqual({ id: "analysis-1", observations: [] });
   });

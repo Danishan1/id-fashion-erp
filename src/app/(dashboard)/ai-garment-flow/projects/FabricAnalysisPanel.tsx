@@ -2,7 +2,39 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { FABRIC_FEATURE_REGISTRY, type FabricAnalysisSection } from "@/core/ai/fabric-analysis/feature-registry";
-import { ConfidenceBadge, type AnalysisConfidence } from "./ConfidenceBadge";
+import type { AnalysisConfidence } from "./ConfidenceBadge";
+
+// A local, fabric-scoped restyle of the shared ConfidenceBadge — deliberately
+// NOT imported from ./ConfidenceBadge (only its type is), since that shared
+// component is also used by ReferenceAnalysisPanel.tsx and must keep its own
+// default visual presentation untouched by this warm-theme pass.
+const FABRIC_CONFIDENCE_META: Record<AnalysisConfidence, { label: string; symbol: string; className: string }> = {
+  CONFIRMED_VISUALLY: {
+    label: "Confirmed Visually",
+    symbol: "✓",
+    className: "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-300",
+  },
+  LIKELY_INFERRED: {
+    label: "Likely / Inferred",
+    symbol: "~",
+    className: "bg-amber-100 text-amber-800 dark:bg-amber-500/10 dark:text-amber-300",
+  },
+  NOT_DETERMINABLE: {
+    label: "Not Determinable",
+    symbol: "?",
+    className: "bg-stone-200 text-stone-600 dark:bg-stone-700 dark:text-stone-300",
+  },
+};
+
+function FabricConfidenceBadge({ confidence }: { confidence: AnalysisConfidence }) {
+  const meta = FABRIC_CONFIDENCE_META[confidence] ?? FABRIC_CONFIDENCE_META.NOT_DETERMINABLE;
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${meta.className}`}>
+      <span aria-hidden="true">{meta.symbol}</span>
+      {meta.label}
+    </span>
+  );
+}
 
 interface FabricObservation {
   id: string;
@@ -35,19 +67,18 @@ const ANALYSIS_STATUS_LABELS: Record<FabricAnalysis["status"], string> = {
 };
 
 const ANALYSIS_STATUS_BADGE_CLASS: Record<FabricAnalysis["status"], string> = {
-  DRAFT: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
-  AI_ANALYSED: "bg-blue-100 text-blue-700 dark:bg-blue-500/10 dark:text-blue-300",
+  DRAFT: "bg-stone-100 text-stone-700 dark:bg-stone-800 dark:text-stone-300",
+  AI_ANALYSED: "bg-sky-100 text-sky-700 dark:bg-sky-500/10 dark:text-sky-300",
   UNDER_REVIEW: "bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300",
-  APPROVED: "bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-300",
-  STALE: "bg-red-100 text-red-700 dark:bg-red-500/10 dark:text-red-300",
+  APPROVED: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300",
+  STALE: "bg-rose-100 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300",
 };
 
-const SECTION_ORDER: FabricAnalysisSection[] = ["STRUCTURE", "VISUAL", "PERFORMANCE", "MANUFACTURING"];
+const SECTION_ORDER: FabricAnalysisSection[] = ["STRUCTURE", "VISUAL", "PERFORMANCE"];
 const SECTION_TITLES: Record<FabricAnalysisSection, string> = {
   STRUCTURE: "Fabric Structure",
   VISUAL: "Visual Characteristics",
   PERFORMANCE: "Performance Estimates",
-  MANUFACTURING: "Manufacturing Considerations",
 };
 
 type SortColumn = "feature" | "confidence";
@@ -55,10 +86,11 @@ type SortColumn = "feature" | "confidence";
 /**
  * Mirrors ReferenceAnalysisPanel.tsx's exact shape — the same AI-analyse
  * button / status badge / per-observation edit-and-reset / Approve flow,
- * scoped to Process 7's own 17 fabric fields instead of Process 1's 36
- * garment-construction fields, and with no "suggested garment types"
- * section — that decision belongs to the separate Product Suitability
- * process, not this one.
+ * scoped to Process 7's own 13 fabric fields (Structure/Visual/Performance
+ * only — the original Manufacturing Considerations section was dropped per
+ * explicit user feedback) instead of Process 1's 36 garment-construction
+ * fields, and with no "suggested garment types" section — that decision
+ * belongs to the separate Product Suitability process, not this one.
  */
 export function FabricAnalysisPanel({ projectId, hasFabricSwatchImage }: { projectId: string; hasFabricSwatchImage: boolean }) {
   const [analysis, setAnalysis] = useState<FabricAnalysis | null | undefined>(undefined);
@@ -110,13 +142,15 @@ export function FabricAnalysisPanel({ projectId, hasFabricSwatchImage }: { proje
   }
 
   if (analysis === undefined) {
-    return <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>;
+    return <p className="text-sm text-stone-500 dark:text-stone-400">Loading…</p>;
   }
 
   return (
     <div className="space-y-5">
       {error && (
-        <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-500/10 dark:text-red-300">{error}</p>
+        <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-900 dark:bg-rose-500/10 dark:text-rose-300">
+          {error}
+        </p>
       )}
 
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -125,7 +159,7 @@ export function FabricAnalysisPanel({ projectId, hasFabricSwatchImage }: { proje
             type="button"
             disabled={!hasFabricSwatchImage || analysing}
             onClick={runAnalysis}
-            className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+            className="rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-stone-800 disabled:opacity-50 dark:bg-amber-500 dark:text-stone-950 dark:hover:bg-amber-400"
           >
             {analysing ? "Analysing fabric structure and characteristics…" : "ANALYSE FABRIC WITH AI"}
           </button>
@@ -143,7 +177,7 @@ export function FabricAnalysisPanel({ projectId, hasFabricSwatchImage }: { proje
       {analysis && (
         <>
           {analysis.status === "STALE" && (
-            <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-500/10 dark:text-red-300">
+            <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-900 dark:bg-rose-500/10 dark:text-rose-300">
               The fabric swatch image was replaced since this analysis was run — it is kept for reference only. Run a
               fresh analysis before continuing.
             </p>
@@ -156,14 +190,14 @@ export function FabricAnalysisPanel({ projectId, hasFabricSwatchImage }: { proje
           ))}
 
           <AnalysisSection title="Fabric Summary">
-            <p className="text-sm italic text-zinc-700 dark:text-zinc-300">{analysis.fabricSummary}</p>
+            <p className="text-sm italic text-stone-700 dark:text-stone-300">{analysis.fabricSummary}</p>
           </AnalysisSection>
 
           <AnalysisSection title="Missing Information">
             {analysis.missingInformation.length === 0 ? (
-              <p className="text-sm text-zinc-500 dark:text-zinc-400">None noted.</p>
+              <p className="text-sm text-stone-500 dark:text-stone-400">None noted.</p>
             ) : (
-              <ul className="list-inside list-disc text-sm text-zinc-600 dark:text-zinc-300">
+              <ul className="list-inside list-disc text-sm text-stone-600 dark:text-stone-300">
                 {analysis.missingInformation.map((m, i) => (
                   <li key={i}>{m}</li>
                 ))}
@@ -184,8 +218,8 @@ export function FabricAnalysisPanel({ projectId, hasFabricSwatchImage }: { proje
 
 function AnalysisSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
-      <h3 className="mb-3 text-sm font-semibold text-zinc-900 dark:text-zinc-50">{title}</h3>
+    <section className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm dark:border-stone-700 dark:bg-stone-900/40">
+      <h3 className="mb-3 text-sm font-semibold text-stone-900 dark:text-stone-50">{title}</h3>
       {children}
     </section>
   );
@@ -208,7 +242,7 @@ function ObservationGrid({
     .filter((o): o is FabricObservation => Boolean(o));
 
   if (rows.length === 0) {
-    return <p className="text-sm text-zinc-500 dark:text-zinc-400">No observations in this section.</p>;
+    return <p className="text-sm text-stone-500 dark:text-stone-400">No observations in this section.</p>;
   }
 
   return (
@@ -274,17 +308,17 @@ function EditableObservation({
   }
 
   return (
-    <div className="rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
+    <div className="rounded-lg border border-stone-200 bg-stone-50/40 p-3 dark:border-stone-700 dark:bg-stone-900/40">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400">{feature?.label ?? observation.featureKey}</p>
-        <ConfidenceBadge confidence={observation.aiConfidence} />
+        <p className="text-xs font-medium text-stone-500 dark:text-stone-400">{feature?.label ?? observation.featureKey}</p>
+        <FabricConfidenceBadge confidence={observation.aiConfidence} />
       </div>
 
       {editing ? (
         <div className="mt-2 space-y-2">
           <textarea
             rows={2}
-            className="block w-full rounded-md border border-zinc-300 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+            className="block w-full rounded-lg border border-stone-300 px-2 py-1 text-sm dark:border-stone-700 dark:bg-stone-800 dark:text-stone-100"
             value={value}
             onChange={(e) => setValue(e.target.value)}
           />
@@ -293,7 +327,7 @@ function EditableObservation({
               type="button"
               disabled={busy}
               onClick={save}
-              className="rounded-md bg-indigo-600 px-3 py-1 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+              className="rounded-lg bg-stone-900 px-3 py-1 text-xs font-medium text-white hover:bg-stone-800 disabled:opacity-50 dark:bg-amber-500 dark:text-stone-950 dark:hover:bg-amber-400"
             >
               Save Correction
             </button>
@@ -304,7 +338,7 @@ function EditableObservation({
                 setValue(observation.approvedObservation);
                 setEditing(false);
               }}
-              className="rounded-md border border-zinc-300 px-3 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              className="rounded-lg border border-stone-300 px-3 py-1 text-xs font-medium text-stone-700 hover:bg-stone-50 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-stone-800"
             >
               Cancel
             </button>
@@ -312,18 +346,18 @@ function EditableObservation({
         </div>
       ) : (
         <div className="mt-2">
-          <p className="text-sm text-zinc-900 dark:text-zinc-50">{observation.approvedObservation}</p>
+          <p className="text-sm text-stone-900 dark:text-stone-50">{observation.approvedObservation}</p>
           {observation.userEdited && (
-            <p className="mt-1 text-xs text-indigo-600 dark:text-indigo-400">
+            <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
               Edited — AI original: <span className="italic">&ldquo;{observation.aiObservation}&rdquo;</span>
             </p>
           )}
-          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{observation.aiManufacturingRelevance}</p>
+          <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">{observation.aiManufacturingRelevance}</p>
           <div className="mt-2 flex gap-2">
             <button
               type="button"
               onClick={() => setEditing(true)}
-              className="text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400"
+              className="text-xs font-medium text-amber-700 hover:underline dark:text-amber-400"
             >
               Edit
             </button>
@@ -332,7 +366,7 @@ function EditableObservation({
                 type="button"
                 disabled={busy}
                 onClick={resetToAi}
-                className="text-xs font-medium text-zinc-500 hover:underline dark:text-zinc-400"
+                className="text-xs font-medium text-stone-500 hover:underline dark:text-stone-400"
               >
                 Reset to AI observation
               </button>
@@ -372,31 +406,31 @@ function AnalysisCard({ observations }: { observations: FabricObservation[] }) {
 
   return (
     <div className="overflow-x-auto">
-      <table className="min-w-full divide-y divide-zinc-200 text-sm dark:divide-zinc-800">
+      <table className="min-w-full divide-y divide-stone-200 text-sm dark:divide-stone-800">
         <thead>
           <tr>
-            <th className="cursor-pointer px-3 py-2 text-left font-medium text-zinc-500 dark:text-zinc-400" onClick={() => toggleSort("feature")}>
+            <th className="cursor-pointer px-3 py-2 text-left font-medium text-stone-500 dark:text-stone-400" onClick={() => toggleSort("feature")}>
               Feature {sortColumn === "feature" && (sortDir === "asc" ? "▲" : "▼")}
             </th>
-            <th className="px-3 py-2 text-left font-medium text-zinc-500 dark:text-zinc-400">Observation</th>
-            <th className="cursor-pointer px-3 py-2 text-left font-medium text-zinc-500 dark:text-zinc-400" onClick={() => toggleSort("confidence")}>
+            <th className="px-3 py-2 text-left font-medium text-stone-500 dark:text-stone-400">Observation</th>
+            <th className="cursor-pointer px-3 py-2 text-left font-medium text-stone-500 dark:text-stone-400" onClick={() => toggleSort("confidence")}>
               Confidence {sortColumn === "confidence" && (sortDir === "asc" ? "▲" : "▼")}
             </th>
-            <th className="px-3 py-2 text-left font-medium text-zinc-500 dark:text-zinc-400">Manufacturing Relevance</th>
+            <th className="px-3 py-2 text-left font-medium text-stone-500 dark:text-stone-400">Manufacturing Relevance</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+        <tbody className="divide-y divide-stone-100 dark:divide-stone-800">
           {rows.map((row) => (
             <tr key={row.id}>
-              <td className="px-3 py-2 font-medium text-zinc-900 dark:text-zinc-50">{row.label}</td>
-              <td className="px-3 py-2 text-zinc-700 dark:text-zinc-300">
+              <td className="px-3 py-2 font-medium text-stone-900 dark:text-stone-50">{row.label}</td>
+              <td className="px-3 py-2 text-stone-700 dark:text-stone-300">
                 {row.approvedObservation}
-                {row.userEdited && <span className="ml-1 text-xs text-indigo-600 dark:text-indigo-400">(edited)</span>}
+                {row.userEdited && <span className="ml-1 text-xs text-amber-700 dark:text-amber-400">(edited)</span>}
               </td>
               <td className="px-3 py-2">
-                <ConfidenceBadge confidence={row.aiConfidence} />
+                <FabricConfidenceBadge confidence={row.aiConfidence} />
               </td>
-              <td className="px-3 py-2 text-zinc-600 dark:text-zinc-400">{row.aiManufacturingRelevance}</td>
+              <td className="px-3 py-2 text-stone-600 dark:text-stone-400">{row.aiManufacturingRelevance}</td>
             </tr>
           ))}
         </tbody>
@@ -417,8 +451,8 @@ function ApprovalControls({
   const canApprove = analysis.status === "AI_ANALYSED" || analysis.status === "UNDER_REVIEW";
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
-      <div className="text-sm text-zinc-600 dark:text-zinc-300">
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-stone-200 bg-white p-4 shadow-sm dark:border-stone-700 dark:bg-stone-900/40">
+      <div className="text-sm text-stone-600 dark:text-stone-300">
         {analysis.status === "APPROVED" ? (
           <span>
             Approved by {analysis.approvedBy?.fullName ?? "—"} on{" "}
@@ -432,7 +466,7 @@ function ApprovalControls({
         type="button"
         disabled={!canApprove || approving}
         onClick={onApprove}
-        className="rounded-md bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-500 disabled:opacity-50"
+        className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-emerald-500 disabled:opacity-50"
       >
         {approving ? "Approving…" : analysis.status === "APPROVED" ? "Approved" : "APPROVE ANALYSIS & CONTINUE"}
       </button>

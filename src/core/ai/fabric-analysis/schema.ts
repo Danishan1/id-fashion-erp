@@ -18,8 +18,10 @@ export type FabricObservationOutput = z.infer<typeof observationSchema>;
  * documents at length why a nested shape (sleeve.*, fabricObservations.*)
  * blew past Anthropic's tool-schema size limit and had to be flattened
  * after the fact; this process starts flat rather than repeating that
- * discovery. 17 fields total is comfortably smaller than reference
- * analysis's 36 either way.
+ * discovery. 13 fields total is comfortably smaller than reference
+ * analysis's 36 either way. Originally 17 fields — the 4-field Manufacturing
+ * Considerations group (cutting/sewing/care/quality-risk prose) was removed
+ * per explicit user feedback that it wasn't "fabric details."
  */
 export const fabricAnalysisResponseSchema = z.object({
   fabricType: observationSchema,
@@ -35,10 +37,6 @@ export const fabricAnalysisResponseSchema = z.object({
   estimatedStretch: observationSchema,
   estimatedDrape: observationSchema,
   estimatedRecovery: observationSchema,
-  cuttingConsiderations: observationSchema,
-  sewingConsiderations: observationSchema,
-  careConsiderations: observationSchema,
-  potentialQualityRisks: observationSchema,
   missingInformation: z.array(z.string()),
   fabricSummary: z.string().min(1),
 });
@@ -65,7 +63,7 @@ export interface FlattenedFabricObservation {
   aiManufacturingRelevance: string;
 }
 
-/** Walks the shared FABRIC_FEATURE_REGISTRY to turn one validated AI response into the 17 rows AiGarmentFabricObservation stores. */
+/** Walks the shared FABRIC_FEATURE_REGISTRY to turn one validated AI response into the 13 rows AiGarmentFabricObservation stores. */
 export function flattenToFabricObservations(
   data: FabricAnalysisResponse,
   featureRegistry: { key: string; path: string[] }[]

@@ -101,35 +101,37 @@ export function FabricSwatchImageUploader({ projectId, onChanged }: { projectId:
   return (
     <div className="space-y-3">
       {error && (
-        <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-500/10 dark:text-red-300">{error}</p>
+        <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-900 dark:bg-rose-500/10 dark:text-rose-300">
+          {error}
+        </p>
       )}
 
       {image === undefined ? (
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>
+        <p className="text-sm text-stone-500 dark:text-stone-400">Loading…</p>
       ) : image ? (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200/70 bg-amber-50/40 p-3 shadow-sm dark:border-stone-700 dark:bg-stone-900/40">
           <div className="flex items-center gap-3">
             <button
               type="button"
               onClick={() => setShowPreview(true)}
-              className="rounded border border-zinc-200 dark:border-zinc-700"
+              className="overflow-hidden rounded-lg border border-amber-200 shadow-sm dark:border-stone-700"
             >
               <img
                 src={`/api/v1/ai-garment-projects/attachments/${image.id}/download?disposition=inline`}
                 alt={image.fileName}
-                className="h-16 w-16 rounded object-cover"
+                className="h-20 w-20 object-cover"
               />
             </button>
             <div className="text-sm">
-              <p className="font-medium text-zinc-900 dark:text-zinc-50">{image.fileName}</p>
-              <p className="text-xs text-zinc-500 dark:text-zinc-400">
+              <p className="font-medium text-stone-900 dark:text-stone-50">{image.fileName}</p>
+              <p className="text-xs text-stone-500 dark:text-stone-400">
                 {formatBytes(image.fileSizeBytes)} · uploaded by {image.uploadedBy?.fullName ?? "—"} on{" "}
                 {new Date(image.uploadedAt).toLocaleString()}
               </p>
             </div>
           </div>
           <div className="flex gap-2">
-            <label className="cursor-pointer rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800">
+            <label className="cursor-pointer rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-amber-50 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-300 dark:hover:bg-stone-800">
               {busy ? "Working…" : "Replace"}
               <input
                 key={inputKey}
@@ -147,15 +149,25 @@ export function FabricSwatchImageUploader({ projectId, onChanged }: { projectId:
               type="button"
               disabled={busy}
               onClick={handleDelete}
-              className="rounded-md border border-red-300 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-500/10"
+              className="rounded-lg border border-rose-300 px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-800 dark:text-rose-300 dark:hover:bg-rose-500/10"
             >
               Delete
             </button>
           </div>
         </div>
       ) : (
-        <label className="flex cursor-pointer flex-col items-center justify-center rounded-md border-2 border-dashed border-zinc-300 p-8 text-sm text-zinc-500 hover:border-indigo-400 hover:text-indigo-600 dark:border-zinc-700 dark:text-zinc-400">
-          {busy ? "Uploading…" : "Click to upload a fabric swatch photo (JPG, JPEG, PNG, or WEBP)"}
+        <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-amber-300 bg-amber-50/40 p-10 text-center text-sm text-stone-600 transition hover:border-amber-500 hover:bg-amber-50 dark:border-stone-700 dark:bg-stone-900/40 dark:text-stone-400 dark:hover:border-amber-600">
+          <svg viewBox="0 0 24 24" fill="none" className="h-8 w-8 text-amber-500" aria-hidden="true">
+            <path
+              d="M12 16V4m0 0L7 9m5-5l5 5M5 20h14"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+          <span className="font-medium">{busy ? "Uploading…" : "Click to upload a fabric swatch photo"}</span>
+          <span className="text-xs text-stone-400 dark:text-stone-500">JPG, JPEG, PNG, or WEBP</span>
           <input
             key={inputKey}
             type="file"
@@ -170,7 +182,7 @@ export function FabricSwatchImageUploader({ projectId, onChanged }: { projectId:
         </label>
       )}
 
-      <p className="text-xs text-zinc-500 dark:text-zinc-400">
+      <p className="text-xs text-stone-500 dark:text-stone-400">
         This should be a clear, well-lit photo of the physical fabric swatch this project is based on.
       </p>
 
