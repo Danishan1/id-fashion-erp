@@ -30,6 +30,7 @@ interface BreakdownRow {
 interface SampleRequestRef {
   id: string;
   requestNumber: string;
+  styleName: string | null;
   status: string;
   customer: { name: string } | null;
 }
@@ -321,7 +322,8 @@ export function SalesOrderWorkflowPanel({
               </div>
               {item.sampleRequest && (
                 <p className="mt-1 text-xs text-zinc-500">
-                  Linked sample: {item.sampleRequest.requestNumber}
+                  Design Name: {item.sampleRequest.styleName ? `${item.sampleRequest.styleName} ` : ""}(
+                  {item.sampleRequest.requestNumber})
                   {item.sampleRequest.customer && item.sampleRequest.customer.name !== order.customer.name && (
                     <span className="text-zinc-400"> (Customer: {item.sampleRequest.customer.name})</span>
                   )}{" "}
