@@ -40,6 +40,11 @@ yarn-error.log*
 /storage
 /uploads
 
+# AI Designer's generated Product Design reference photos (scripts/generate-ai-designer-reference-images.ts)
+# -- a re-generatable cache, not source; DesignOptionImage falls back to the clipart icon when a file is
+# missing, so any environment can run the script independently rather than committing generated images.
+/public/ai-designer-reference
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

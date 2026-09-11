@@ -159,3 +159,36 @@ export function buildEditPrompt(ctx: AiDesignerEditContext): string {
 
   return lines.join("\n");
 }
+
+const APPLY_AREA_LABELS: Record<string, string> = {
+  YOKE: "the yoke / neckline-shoulder area",
+  SLEEVES: "the sleeves",
+  BORDERS: "the borders / hemline",
+  CONTRAST_PANELS: "contrast panels added to the garment",
+};
+
+/**
+ * Multi-Fabric — a genuine two-image composition (the current design image
+ * + a second fabric swatch photo), sent to `ImageGenerationProvider
+ * .applyFabric`. Distinct from Edit Design's single-image
+ * `generateVariation` call: this one supplies a SECOND real fabric photo as
+ * its own visual reference, the same "the image is the source of truth,
+ * never a text description" discipline as the primary fabric already uses.
+ */
+export function buildSecondFabricPrompt(applyAreas: readonly string[]): string {
+  const areaLabels = applyAreas.map((a) => APPLY_AREA_LABELS[a] ?? a).join(", ");
+
+  return [
+    "Use the supplied SECOND fabric reference image as the exact fabric source for a contrasting fabric application on this garment.",
+    "",
+    `Apply this second fabric ONLY to: ${areaLabels}.`,
+    "",
+    "Preserve everything else exactly as it already is in the current design image: the primary fabric everywhere else on the garment, the overall silhouette, construction, model, pose, and background/environment.",
+    "",
+    "Do not invent, redesign, simplify, or substitute either fabric's actual print, pattern, or colour — both fabrics must visibly match their own real reference photos.",
+    "",
+    "The result must be technically plausible and commercially manufacturable — a real two-fabric combination garment, not a fantasy composite.",
+    "",
+    "Generate a clean revised image suitable for direct comparison with the previous version.",
+  ].join("\n");
+}

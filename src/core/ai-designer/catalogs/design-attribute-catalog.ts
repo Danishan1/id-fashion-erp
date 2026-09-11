@@ -7,6 +7,28 @@
  *
  * Every attribute also allows a free-text "Other" override in the UI —
  * handled generically by the picker component, not encoded per entry here.
+ *
+ * Expanded 2026-09-11 against a competitor reference (richer per-category
+ * attributes, e.g. a separate Back Neckline picker) — two fields are now
+ * universal across every category, added once here rather than duplicated
+ * per entry:
+ * - `surface` (Surface / Finish) — a genuinely new concern (plain vs.
+ *   embroidered/printed/sequinned/quilted/textured), independent of cut.
+ * - `accentColor` (Accent / Trim Color) — deliberately NOT a general
+ *   "Colors" picker for the whole garment: the actual garment's base color
+ *   is already, and remains, driven entirely by the real uploaded fabric
+ *   photo (see image-generation/prompt.ts's own "the fabric image is the
+ *   ONLY source of truth for color" instruction) — a generic Colors field
+ *   here would silently conflict with that. This field is scoped narrowly
+ *   to accent/trim/contrast-stitch color choices instead, with "Same as
+ *   Fabric" as the safe default option, so it can never contradict the
+ *   fabric-driven base color.
+ * Dress additionally gained the full richer set a "Back Neckline"-style
+ * picker implies (Back Neck, Bodice, Body Cut-Outs, Waist Add-On, Waist
+ * Line, Shoulders, Straps, Flare Variation, Slit Length, Slit Type) — this
+ * is the exact category shown in the reference; Blouse/Top/Kurti/Frock (the
+ * other dress-like categories) got a lighter, plausible subset rather than
+ * the full set, to avoid fields that don't make sense for their own silhouette.
  */
 
 export interface DesignAttributeDef {
@@ -15,7 +37,15 @@ export interface DesignAttributeDef {
   options: string[];
 }
 
-export const PRODUCT_DESIGN_ATTRIBUTES_BY_CATEGORY: Record<string, DesignAttributeDef[]> = {
+const SURFACE_OPTIONS = ["Plain", "Embroidered", "Printed", "Sequinned", "Quilted", "Textured"];
+const ACCENT_COLOR_OPTIONS = ["Same as Fabric", "Black", "White", "Navy Blue", "Red", "Gold", "Contrast Piping"];
+
+const UNIVERSAL_ATTRIBUTES: DesignAttributeDef[] = [
+  { key: "surface", label: "Surface / Finish", options: SURFACE_OPTIONS },
+  { key: "accentColor", label: "Accent / Trim Color", options: ACCENT_COLOR_OPTIONS },
+];
+
+const BASE_CATEGORY_ATTRIBUTES: Record<string, DesignAttributeDef[]> = {
   Shirt: [
     { key: "collar", label: "Collar", options: ["Classic", "Mandarin", "Spread", "Button-Down", "Cuban", "Round Neck"] },
     { key: "sleeve", label: "Sleeve", options: ["Full Sleeve", "Half Sleeve", "Roll-Up Sleeve", "Sleeveless"] },
@@ -76,23 +106,35 @@ export const PRODUCT_DESIGN_ATTRIBUTES_BY_CATEGORY: Record<string, DesignAttribu
     { key: "fit", label: "Fit", options: ["Slim", "Regular", "Relaxed"] },
   ],
   Dress: [
-    { key: "neckline", label: "Neckline", options: ["Round Neck", "V-Neck", "Halter", "Off-Shoulder", "Square Neck"] },
-    { key: "sleeve", label: "Sleeve", options: ["Sleeveless", "Cap Sleeve", "Half Sleeve", "Full Sleeve"] },
+    { key: "neckline", label: "Front Neck", options: ["Round Neck", "V-Neck", "Halter", "Off-Shoulder", "Square Neck"] },
+    { key: "backNeck", label: "Back Neck", options: ["Criss-Cross Back Cut-Out", "Deep Back Cut-Out", "Open Back Cut-Out", "Oval Back Cut-Out", "Tie-Back Cut-Out", "Regular Back"] },
+    { key: "sleeve", label: "Sleeves", options: ["Sleeveless", "Cap Sleeve", "Half Sleeve", "Full Sleeve"] },
     { key: "silhouette", label: "Silhouette", options: ["A-Line", "Bodycon", "Fit & Flare", "Wrap", "Shift"] },
     { key: "length", label: "Length", options: ["Mini", "Knee Length", "Midi", "Maxi"] },
     { key: "closure", label: "Closure", options: ["Zipper", "Button", "Pull-On"] },
+    { key: "bodice", label: "Bodice", options: ["Fitted Bodice", "Empire Bodice", "Corset Bodice", "Draped Bodice"] },
+    { key: "bodyCutouts", label: "Body Cut-Outs", options: ["No Cut-Outs", "Waist Cut-Out", "Side Cut-Out", "Shoulder Cut-Out"] },
+    { key: "waistAddOn", label: "Waist Add-On", options: ["None", "Tie Belt", "Fabric Belt", "Waist Tie Knot"] },
+    { key: "waistLine", label: "Waist Line", options: ["Natural Waist", "High Waist", "Drop Waist", "Empire Waist"] },
+    { key: "shoulders", label: "Shoulders", options: ["Regular Shoulders", "Puff Shoulders", "Padded Shoulders", "Cold Shoulder"] },
+    { key: "straps", label: "Straps", options: ["No Straps", "Thin Straps", "Wide Straps", "Halter Straps", "Crisscross Straps"] },
+    { key: "flareVariation", label: "Flare Variation", options: ["No Flare", "Subtle Flare", "Full Flare", "Godet Flare"] },
+    { key: "slitLength", label: "Slit Length", options: ["No Slit", "Knee-High Slit", "Thigh-High Slit", "Full-Length Slit"] },
+    { key: "slitType", label: "Slit Type", options: ["No Slit", "Front Slit", "Side Slit", "Back Slit"] },
   ],
   Top: [
-    { key: "neckline", label: "Neckline", options: ["Round Neck", "V-Neck", "Square Neck", "Halter", "Off-Shoulder"] },
+    { key: "neckline", label: "Front Neck", options: ["Round Neck", "V-Neck", "Square Neck", "Halter", "Off-Shoulder"] },
     { key: "sleeve", label: "Sleeve", options: ["Sleeveless", "Cap Sleeve", "Half Sleeve", "Full Sleeve", "Bell Sleeve"] },
     { key: "fit", label: "Fit", options: ["Fitted", "Regular", "Loose", "Crop"] },
     { key: "hem", label: "Hem", options: ["Straight Hem", "Curved Hem", "Peplum"] },
+    { key: "bodyCutouts", label: "Body Cut-Outs", options: ["No Cut-Outs", "Waist Cut-Out", "Side Cut-Out"] },
   ],
   Kurti: [
-    { key: "neckline", label: "Neckline", options: ["Round Neck", "V-Neck", "Mandarin Collar", "Boat Neck"] },
+    { key: "neckline", label: "Front Neck", options: ["Round Neck", "V-Neck", "Mandarin Collar", "Boat Neck"] },
     { key: "sleeve", label: "Sleeve", options: ["Full Sleeve", "Three-Quarter Sleeve", "Half Sleeve", "Sleeveless"] },
     { key: "length", label: "Length", options: ["Short", "Knee Length", "Below Knee"] },
     { key: "fit", label: "Fit", options: ["A-Line", "Straight", "Anarkali", "Flared"] },
+    { key: "slitType", label: "Slit Type", options: ["No Slit", "Front Slit", "Side Slit"] },
   ],
   Skirt: [
     { key: "silhouette", label: "Silhouette", options: ["A-Line", "Straight / Pencil", "Flared", "Pleated", "Wrap"] },
@@ -101,10 +143,12 @@ export const PRODUCT_DESIGN_ATTRIBUTES_BY_CATEGORY: Record<string, DesignAttribu
     { key: "closure", label: "Closure", options: ["Zipper", "Elastic Waist"] },
   ],
   Blouse: [
-    { key: "neckline", label: "Neckline", options: ["Round Neck", "V-Neck", "Sweetheart", "Boat Neck"] },
+    { key: "neckline", label: "Front Neck", options: ["Round Neck", "V-Neck", "Sweetheart", "Boat Neck"] },
     { key: "sleeve", label: "Sleeve", options: ["Sleeveless", "Cap Sleeve", "Half Sleeve", "Full Sleeve"] },
-    { key: "backStyle", label: "Back Style", options: ["Regular Back", "Deep Back", "Tie-Back"] },
+    { key: "backStyle", label: "Back Neck", options: ["Regular Back", "Deep Back", "Tie-Back", "Criss-Cross Back", "Open Back"] },
     { key: "fit", label: "Fit", options: ["Fitted", "Regular"] },
+    { key: "straps", label: "Straps", options: ["No Straps", "Thin Straps", "Wide Straps"] },
+    { key: "bodyCutouts", label: "Body Cut-Outs", options: ["No Cut-Outs", "Waist Cut-Out", "Side Cut-Out"] },
   ],
   "Co-ord": [
     { key: "topStyle", label: "Top Style", options: ["Shirt", "Crop Top", "T-Shirt", "Blouse"] },
@@ -112,10 +156,11 @@ export const PRODUCT_DESIGN_ATTRIBUTES_BY_CATEGORY: Record<string, DesignAttribu
     { key: "fit", label: "Fit", options: ["Slim", "Regular", "Relaxed"] },
   ],
   Frock: [
-    { key: "neckline", label: "Neckline", options: ["Round Neck", "Peter Pan Collar", "Halter"] },
+    { key: "neckline", label: "Front Neck", options: ["Round Neck", "Peter Pan Collar", "Halter"] },
     { key: "sleeve", label: "Sleeve", options: ["Sleeveless", "Puff Sleeve", "Half Sleeve"] },
     { key: "silhouette", label: "Silhouette", options: ["A-Line", "Flared", "Layered"] },
     { key: "length", label: "Length", options: ["Above Knee", "Knee Length"] },
+    { key: "waistAddOn", label: "Waist Add-On", options: ["None", "Tie Belt", "Fabric Belt"] },
   ],
   Onesie: [
     { key: "neckline", label: "Neckline", options: ["Round Neck", "Envelope Neck"] },
@@ -157,6 +202,10 @@ export const PRODUCT_DESIGN_ATTRIBUTES_BY_CATEGORY: Record<string, DesignAttribu
     { key: "cuff", label: "Cuff", options: ["Ribbed Cuff", "Open Hem"] },
   ],
 };
+
+export const PRODUCT_DESIGN_ATTRIBUTES_BY_CATEGORY: Record<string, DesignAttributeDef[]> = Object.fromEntries(
+  Object.entries(BASE_CATEGORY_ATTRIBUTES).map(([category, attrs]) => [category, [...attrs, ...UNIVERSAL_ATTRIBUTES]])
+);
 
 export function getDesignAttributesForCategory(categoryName: string): DesignAttributeDef[] {
   return PRODUCT_DESIGN_ATTRIBUTES_BY_CATEGORY[categoryName] ?? [];

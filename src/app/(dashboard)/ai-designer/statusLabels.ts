@@ -22,10 +22,15 @@ export const WIZARD_STEP_LABELS: Record<string, string> = {
   MODEL: "Model",
   ENVIRONMENT: "Environment",
   GENERATE: "Generate Design",
+  MULTI_FABRIC: "Multi-Fabric",
   EDIT: "Edit Design",
+  TECH_PACK: "Tech Pack",
   EXPORT: "Export",
 };
 
+// Mirrors ai-designer.service.ts's own WIZARD_STEP_ORDER exactly (a
+// duplicated, client-safe copy, same convention as every other
+// client/server pair in this app — this file has zero Prisma imports).
 export const WIZARD_STEP_ORDER = [
   "FABRIC_SELECTION",
   "FABRIC_ANALYSIS",
@@ -36,6 +41,8 @@ export const WIZARD_STEP_ORDER = [
   "MODEL",
   "ENVIRONMENT",
   "GENERATE",
+  "MULTI_FABRIC",
   "EDIT",
+  "TECH_PACK",
   "EXPORT",
 ] as const;

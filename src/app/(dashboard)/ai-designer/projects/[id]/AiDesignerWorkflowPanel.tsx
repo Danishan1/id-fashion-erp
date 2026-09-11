@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { Modal } from "@/components/ui/Modal";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
@@ -14,9 +14,11 @@ import {
   type TargetCustomer,
 } from "@/core/ai-designer/catalogs/customer-catalog";
 import { getDesignAttributesForCategory } from "@/core/ai-designer/catalogs/design-attribute-catalog";
+import { DesignOptionImage } from "@/core/ai-designer/catalogs/design-icon-catalog";
 import { ENVIRONMENTS } from "@/core/ai-designer/catalogs/environment-catalog";
 import { BODY_TYPES, MODEL_GENDERS, POSES } from "@/core/ai-designer/catalogs/model-catalog";
 import { FABRIC_FIELD_KEYS, type FabricFieldKey } from "@/modules/ai-designer/ai-designer.schema";
+import { useAiDesignerDisplayMode } from "@/lib/use-ai-designer-display-mode";
 import { STATUS_BADGE_CLASS, STATUS_LABELS, WIZARD_STEP_LABELS, WIZARD_STEP_ORDER } from "../../statusLabels";
 
 const FABRIC_FIELD_LABELS: Record<FabricFieldKey, string> = {
@@ -77,10 +79,28 @@ interface AiDesignerProjectData {
   environmentKey: string | null;
   environmentLabel: string | null;
   isCustomEnvironment: boolean;
+  secondFabricImageAttachmentId: string | null;
+  secondFabricApplyAreas: string[];
   currentVersion: { currentImage: AiDesignerImageRow } | null;
   versions: { versionNumber: number; changeSummary: string | null; currentImage: AiDesignerImageRow }[];
   fabricProduct: { id: string; styleName: string; styleCode: string } | null;
 }
+
+interface TechPackData {
+  id: string;
+  status: "IN_PROGRESS" | "SUCCESS" | "FAILED";
+  flatSketchImageAttachmentId: string | null;
+  measurementsJson: { points: { pointName: string; howToMeasure: string; toleranceCm: string; values: Record<string, string> }[]; generalNotes: string } | null;
+  bomJson: { items: { materialDescription: string; materialCategory: string; suggestedQuantityPerUnit: number; suggestedUom: string; reasoning: string }[] } | null;
+  errorMessage: string | null;
+}
+
+const SECOND_FABRIC_APPLY_AREA_LABELS: Record<string, string> = {
+  YOKE: "Yoke",
+  SLEEVES: "Sleeves",
+  BORDERS: "Borders / Hem",
+  CONTRAST_PANELS: "Contrast Panels",
+};
 
 function imageUrl(attachmentId: string) {
   return `/api/v1/ai-designer/attachments/${attachmentId}/download?disposition=inline`;
@@ -90,6 +110,79 @@ async function parseJson(res: Response) {
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body?.error?.message ?? "Request failed.");
   return body;
+}
+
+/**
+ * A single wizard-step tab panel — pure presentation, matches the numbered-
+ * circle step-tracker language already used by Sampling's own
+ * `SampleWorkflowPanel.tsx`. Only the one step selected via the stepper above
+ * is ever mounted at all (direct user feedback: even a collapsed accordion
+ * row for all 11 steps added up to real scrolling; true one-panel-at-a-time
+ * tabs have none of that, and the stepper itself already doubles as the tab
+ * strip, so there is no separate per-panel toggle control here). Never
+ * touches the underlying wizard state (currentStep/completedSteps) — only
+ * which already-rendered step's content exists in the DOM at once.
+ */
+function WizardSection({
+  sectionRef,
+  index,
+  title,
+  isDone,
+  isCurrent,
+  isOpen,
+  children,
+}: {
+  sectionRef: (el: HTMLElement | null) => void;
+  index: number;
+  title: string;
+  isDone: boolean;
+  isCurrent: boolean;
+  isOpen: boolean;
+  children: React.ReactNode;
+}) {
+  if (!isOpen) return null;
+  return (
+    <section ref={sectionRef} className="scroll-mt-20 rounded-lg border border-zinc-200 dark:border-zinc-800">
+      <div className="flex items-center gap-3 px-4 py-3">
+        <span
+          className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-medium ${
+            isDone
+              ? "bg-green-600 text-white"
+              : isCurrent
+                ? "bg-indigo-600 text-white"
+                : "bg-zinc-200 text-zinc-500 dark:bg-zinc-700 dark:text-zinc-400"
+          }`}
+        >
+          {isDone ? "✓" : index}
+        </span>
+        <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">{title}</h2>
+      </div>
+      <div className="border-t border-zinc-200 px-4 py-4 dark:border-zinc-800">{children}</div>
+    </section>
+  );
+}
+
+/**
+ * The one and only way a step's content ever moves the wizard forward now
+ * (see `goToNextStep` in the main component) — a step's own field changes
+ * save immediately but never navigate on their own. Renders nothing on the
+ * last step (`step` has no successor in `WIZARD_STEP_ORDER`).
+ */
+function StepNextButton({ step, onNext }: { step: string; onNext: (afterStep: string) => void }) {
+  const idx = WIZARD_STEP_ORDER.indexOf(step as (typeof WIZARD_STEP_ORDER)[number]);
+  const next = idx >= 0 ? WIZARD_STEP_ORDER[idx + 1] : undefined;
+  if (!next) return null;
+  return (
+    <div className="mt-4 flex justify-end border-t border-zinc-100 pt-3 dark:border-zinc-800">
+      <button
+        type="button"
+        onClick={() => onNext(step)}
+        className="rounded-md bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-500"
+      >
+        Next: {WIZARD_STEP_LABELS[next]} →
+      </button>
+    </div>
+  );
 }
 
 export function AiDesignerWorkflowPanel({ projectId, initialProject }: { projectId: string; initialProject: AiDesignerProjectData }) {
@@ -104,6 +197,44 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
   const [editInstructions, setEditInstructions] = useState("");
   const [pendingSelectImage, setPendingSelectImage] = useState<string | null>(null);
   const [generatedImages, setGeneratedImages] = useState<AiDesignerImageRow[]>([]);
+  const [secondFabricSelectedAreas, setSecondFabricSelectedAreas] = useState<string[]>([]);
+  const [techPack, setTechPack] = useState<TechPackData | null>(null);
+
+  // Which single wizard step is currently the active "tab" — purely a display
+  // concern, has no bearing on the real `currentStep`/`completedSteps` wizard
+  // state. Only the real current step starts open, so a project that's
+  // already progressed through several steps doesn't load as one long wall
+  // of content. Exactly one step (or none) at a time, not a Set of
+  // independently-toggled sections — switching steps is only ever done via
+  // the stepper pills above (see jumpToStep), which both selects the new
+  // step and deselects whatever was previously shown, the same way a tab
+  // strip works. (Direct user feedback moved this twice: first from "every
+  // step always visible" to a collapsible accordion where any number of rows
+  // could be open at once, then to this single-active-tab model, since even
+  // an all-collapsed accordion's 11 header rows still added up to real
+  // scrolling.)
+  const [expandedStep, setExpandedStep] = useState<string | null>(initialProject.currentStep);
+  const [versionsOpen, setVersionsOpen] = useState(false);
+  const sectionRefs = useRef<Record<string, HTMLElement | null>>({});
+
+  const jumpToStep = (step: string) => {
+    setExpandedStep(step);
+    requestAnimationFrame(() => sectionRefs.current[step]?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  };
+
+  // Explicit forward navigation only, per direct user feedback: saving a
+  // single field (e.g. picking one Product Design attribute out of several,
+  // or one Target Customer button) used to immediately snap the whole panel
+  // to whatever step the backend's `currentStep` recomputed to next — before
+  // the user had finished with the current step, or had a chance to review
+  // what they'd just picked. Every step's own explicit "Next →" button (below)
+  // is now the only thing that ever advances `expandedStep` after the initial
+  // load; saving a field no longer moves the view at all (see `reload`).
+  const goToNextStep = (afterStep: string) => {
+    const idx = WIZARD_STEP_ORDER.indexOf(afterStep as (typeof WIZARD_STEP_ORDER)[number]);
+    const next = idx >= 0 ? WIZARD_STEP_ORDER[idx + 1] : undefined;
+    if (next) jumpToStep(next);
+  };
 
   useEffect(() => {
     fetch("/api/v1/materials?pageSize=200")
@@ -123,6 +254,19 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
       .catch(() => {});
   }, [projectId]);
 
+  /** The Tech Pack step's own data survives a reload the same way the Step 9 image gallery does — reload() only ever refreshes the flat `project` row, which has nowhere to carry this. */
+  useEffect(() => {
+    fetch(`/api/v1/ai-designer/projects/${projectId}/tech-pack`)
+      .then((r) => r.json())
+      .then((body) => setTechPack(body.data ?? null))
+      .catch(() => {});
+  }, [projectId]);
+
+  // Deliberately does NOT move `expandedStep` — the panel stays on whatever
+  // step the user is currently looking at after any save, even though the
+  // reloaded `project.currentStep`/`completedSteps` (driving the checkmarks
+  // in the stepper above) may have already advanced. Moving forward is only
+  // ever done by the user themselves, via a step's own "Next →" button.
   const reload = async () => {
     const body = await parseJson(await fetch(`/api/v1/ai-designer/projects/${projectId}`));
     setProject(body.data);
@@ -172,6 +316,7 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
   const productCategories = project.targetCustomer ? PRODUCT_CATEGORIES_BY_CUSTOMER[project.targetCustomer] : [];
   const designAttributes = useMemo(() => getDesignAttributesForCategory(project.productCategory ?? ""), [project.productCategory]);
   const designSelections = project.designSelectionsJson ?? {};
+  const designDisplayMode = useAiDesignerDisplayMode();
 
   const currentImage = project.currentVersion?.currentImage ?? null;
 
@@ -196,25 +341,31 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
         </span>
       </div>
 
-      {/* Progress stepper */}
+      {/* Progress stepper — each pill is a real control now: click to jump to
+          (and expand) that step's section below, instead of purely decorative
+          status text with no navigation behind it. */}
       <div className="flex flex-wrap gap-2 text-xs">
-        {WIZARD_STEP_ORDER.map((step) => {
+        {WIZARD_STEP_ORDER.map((step, i) => {
           const done = project.completedSteps.includes(step);
           const current = project.currentStep === step;
           return (
-            <span
+            <button
               key={step}
-              className={`rounded-full px-2 py-1 ${
+              type="button"
+              onClick={() => jumpToStep(step)}
+              aria-current={current ? "step" : undefined}
+              title={`Go to ${WIZARD_STEP_LABELS[step]}`}
+              className={`rounded-full px-2 py-1 transition hover:opacity-80 ${
                 done
                   ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300"
                   : current
-                    ? "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300"
+                    ? "bg-indigo-100 text-indigo-700 ring-1 ring-indigo-400 dark:bg-indigo-900/40 dark:text-indigo-300"
                     : "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
               }`}
             >
-              {done ? "✓ " : ""}
+              {done ? "✓ " : `${i + 1}. `}
               {WIZARD_STEP_LABELS[step]}
-            </span>
+            </button>
           );
         })}
       </div>
@@ -222,9 +373,15 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
       {error && <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-300">{error}</p>}
 
       {/* Step 1 — Fabric Selection */}
-      <section className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
-        <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Step 1 — Fabric Selection</h2>
-        <div className="mt-3 grid gap-4 md:grid-cols-2">
+      <WizardSection
+        sectionRef={(el) => (sectionRefs.current.FABRIC_SELECTION = el)}
+        index={1}
+        title="Fabric Selection"
+        isDone={project.completedSteps.includes("FABRIC_SELECTION")}
+        isCurrent={project.currentStep === "FABRIC_SELECTION"}
+        isOpen={expandedStep === "FABRIC_SELECTION"}
+      >
+        <div className="grid gap-4 md:grid-cols-2">
           <div>
             <p className="text-xs font-medium text-zinc-500">Pick from Fabric Master (name/code/supplier only — optional)</p>
             <div className="mt-1">
@@ -282,12 +439,19 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
             )}
           </div>
         </div>
-      </section>
+        <StepNextButton step="FABRIC_SELECTION" onNext={goToNextStep} />
+      </WizardSection>
 
       {/* Step 2 — Analyze Fabric with AI */}
-      <section className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
-        <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Step 2 — Analyze Fabric with AI</h2>
-        <p className="mt-1 text-xs text-zinc-500">Fabric Name, Composition, GSM, Width, Weave, Stretch, Opacity, Texture, Pattern Type, Print Type, Suitable Season, Recommended Garments.</p>
+      <WizardSection
+        sectionRef={(el) => (sectionRefs.current.FABRIC_ANALYSIS = el)}
+        index={2}
+        title="Analyze Fabric with AI"
+        isDone={project.completedSteps.includes("FABRIC_ANALYSIS")}
+        isCurrent={project.currentStep === "FABRIC_ANALYSIS"}
+        isOpen={expandedStep === "FABRIC_ANALYSIS"}
+      >
+        <p className="text-xs text-zinc-500">Fabric Name, Composition, GSM, Width, Weave, Stretch, Opacity, Texture, Pattern Type, Print Type, Suitable Season, Recommended Garments.</p>
         <button
           type="button"
           disabled={busy === "analyze" || !project.fabricImageAttachmentId}
@@ -318,12 +482,19 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
             </FormField>
           ))}
         </div>
-      </section>
+        <StepNextButton step="FABRIC_ANALYSIS" onNext={goToNextStep} />
+      </WizardSection>
 
       {/* Step 3 — Target Customer */}
-      <section className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
-        <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Step 3 — Target Customer</h2>
-        <div className="mt-2 flex flex-wrap gap-2">
+      <WizardSection
+        sectionRef={(el) => (sectionRefs.current.TARGET_CUSTOMER = el)}
+        index={3}
+        title="Target Customer"
+        isDone={project.completedSteps.includes("TARGET_CUSTOMER")}
+        isCurrent={project.currentStep === "TARGET_CUSTOMER"}
+        isOpen={expandedStep === "TARGET_CUSTOMER"}
+      >
+        <div className="flex flex-wrap gap-2">
           {TARGET_CUSTOMER_VALUES.map((c) => (
             <button
               key={c}
@@ -339,12 +510,19 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
             </button>
           ))}
         </div>
-      </section>
+        <StepNextButton step="TARGET_CUSTOMER" onNext={goToNextStep} />
+      </WizardSection>
 
       {/* Step 4 — Age Group */}
-      <section className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
-        <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Step 4 — Age Group</h2>
-        {!project.targetCustomer && <p className="mt-1 text-xs text-zinc-500">Pick a Target Customer first.</p>}
+      <WizardSection
+        sectionRef={(el) => (sectionRefs.current.AGE_GROUP = el)}
+        index={4}
+        title="Age Group"
+        isDone={project.completedSteps.includes("AGE_GROUP")}
+        isCurrent={project.currentStep === "AGE_GROUP"}
+        isOpen={expandedStep === "AGE_GROUP"}
+      >
+        {!project.targetCustomer && <p className="text-xs text-zinc-500">Pick a Target Customer first.</p>}
         <div className="mt-2 flex flex-wrap gap-2">
           {ageGroups.map((a) => (
             <button
@@ -361,12 +539,19 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
             </button>
           ))}
         </div>
-      </section>
+        <StepNextButton step="AGE_GROUP" onNext={goToNextStep} />
+      </WizardSection>
 
       {/* Step 5 — Product Category */}
-      <section className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
-        <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Step 5 — Product Category</h2>
-        {!project.targetCustomer && <p className="mt-1 text-xs text-zinc-500">Pick a Target Customer first.</p>}
+      <WizardSection
+        sectionRef={(el) => (sectionRefs.current.PRODUCT_CATEGORY = el)}
+        index={5}
+        title="Product Category"
+        isDone={project.completedSteps.includes("PRODUCT_CATEGORY")}
+        isCurrent={project.currentStep === "PRODUCT_CATEGORY"}
+        isOpen={expandedStep === "PRODUCT_CATEGORY"}
+      >
+        {!project.targetCustomer && <p className="text-xs text-zinc-500">Pick a Target Customer first.</p>}
         <div className="mt-2 flex flex-wrap gap-2">
           {productCategories.map((c) => (
             <button
@@ -383,37 +568,74 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
             </button>
           ))}
         </div>
-      </section>
+        <StepNextButton step="PRODUCT_CATEGORY" onNext={goToNextStep} />
+      </WizardSection>
 
       {/* Step 6 — Product Design */}
-      <section className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
-        <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Step 6 — Product Design</h2>
-        {!project.productCategory && <p className="mt-1 text-xs text-zinc-500">Pick a Product Category first.</p>}
-        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+      <WizardSection
+        sectionRef={(el) => (sectionRefs.current.PRODUCT_DESIGN = el)}
+        index={6}
+        title="Product Design"
+        isDone={project.completedSteps.includes("PRODUCT_DESIGN")}
+        isCurrent={project.currentStep === "PRODUCT_DESIGN"}
+        isOpen={expandedStep === "PRODUCT_DESIGN"}
+      >
+        {!project.productCategory && <p className="text-xs text-zinc-500">Pick a Product Category first.</p>}
+        <div className="mt-3 space-y-4">
           {designAttributes.map((attr) => (
-            <FormField key={attr.key} label={attr.label} htmlFor={attr.key}>
-              <select
-                id={attr.key}
-                className={textInputClass()}
-                value={designSelections[attr.key] ?? ""}
-                onChange={(e) => run("design", () => patchWizard({ designSelections: { [attr.key]: e.target.value } }))}
+            <div key={attr.key}>
+              <p className="mb-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-300">{attr.label}</p>
+              <div
+                className={
+                  designDisplayMode === "TEXT"
+                    ? "flex flex-wrap gap-2"
+                    : "grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4"
+                }
               >
-                <option value="">— Select —</option>
-                {attr.options.map((opt) => (
-                  <option key={opt} value={opt}>
-                    {opt}
-                  </option>
-                ))}
-              </select>
-            </FormField>
+                {attr.options.map((opt) => {
+                  const selected = designSelections[attr.key] === opt;
+                  return (
+                    <button
+                      key={opt}
+                      type="button"
+                      aria-pressed={selected}
+                      onClick={() => run("design", () => patchWizard({ designSelections: { [attr.key]: opt } }))}
+                      className={
+                        designDisplayMode === "TEXT"
+                          ? `rounded-md border px-3 py-1.5 text-xs transition ${
+                              selected
+                                ? "border-indigo-600 bg-indigo-600 text-white"
+                                : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-900/40"
+                            }`
+                          : `flex flex-col items-center gap-1.5 rounded-md border px-2 py-3 text-center transition ${
+                              selected
+                                ? "border-indigo-600 bg-indigo-600 text-white"
+                                : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-900/40"
+                            }`
+                      }
+                    >
+                      {designDisplayMode === "CLIPART" && <DesignOptionImage value={opt} />}
+                      <span className="text-xs leading-tight">{opt}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           ))}
         </div>
-      </section>
+        <StepNextButton step="PRODUCT_DESIGN" onNext={goToNextStep} />
+      </WizardSection>
 
       {/* Step 7 — Model */}
-      <section className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
-        <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Step 7 — Model</h2>
-        <div className="mt-2 grid gap-3 sm:grid-cols-3">
+      <WizardSection
+        sectionRef={(el) => (sectionRefs.current.MODEL = el)}
+        index={7}
+        title="Model"
+        isDone={project.completedSteps.includes("MODEL")}
+        isCurrent={project.currentStep === "MODEL"}
+        isOpen={expandedStep === "MODEL"}
+      >
+        <div className="grid gap-3 sm:grid-cols-3">
           <FormField label="Gender" htmlFor="modelGender">
             <select
               id="modelGender"
@@ -460,12 +682,19 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
             </select>
           </FormField>
         </div>
-      </section>
+        <StepNextButton step="MODEL" onNext={goToNextStep} />
+      </WizardSection>
 
       {/* Step 8 — Environment */}
-      <section className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
-        <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Step 8 — Environment</h2>
-        <div className="mt-2 flex flex-wrap gap-2">
+      <WizardSection
+        sectionRef={(el) => (sectionRefs.current.ENVIRONMENT = el)}
+        index={8}
+        title="Environment"
+        isDone={project.completedSteps.includes("ENVIRONMENT")}
+        isCurrent={project.currentStep === "ENVIRONMENT"}
+        isOpen={expandedStep === "ENVIRONMENT"}
+      >
+        <div className="flex flex-wrap gap-2">
           {ENVIRONMENTS.map((env) => (
             <button
               key={env.key}
@@ -495,12 +724,19 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
             />
           </FormField>
         </div>
-      </section>
+        <StepNextButton step="ENVIRONMENT" onNext={goToNextStep} />
+      </WizardSection>
 
       {/* Step 9 — Generate Design */}
-      <section className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
-        <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Step 9 — Generate Design</h2>
-        <div className="mt-2 flex gap-2">
+      <WizardSection
+        sectionRef={(el) => (sectionRefs.current.GENERATE = el)}
+        index={9}
+        title="Generate Design"
+        isDone={project.completedSteps.includes("GENERATE")}
+        isCurrent={project.currentStep === "GENERATE"}
+        isOpen={expandedStep === "GENERATE"}
+      >
+        <div className="flex gap-2">
           {[1, 3, 4].map((n) => (
             <button
               key={n}
@@ -564,13 +800,120 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
             ))}
           </div>
         )}
-      </section>
+        <StepNextButton step="GENERATE" onNext={goToNextStep} />
+      </WizardSection>
 
-      {/* Step 10 — Edit Design */}
+      {/* Step 10 — Multi-Fabric */}
       {currentImage && (
-        <section className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
-          <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Step 10 — Edit Design</h2>
-          <p className="mt-1 text-xs text-zinc-500">Change one aspect of the current design (Collar, Sleeves, Length, Pocket, Buttons, Logo, Embroidery, Color, Background, Environment, Model, Pose) — only the affected area is regenerated.</p>
+        <WizardSection
+          sectionRef={(el) => (sectionRefs.current.MULTI_FABRIC = el)}
+          index={10}
+          title="Multi-Fabric"
+          isDone={project.completedSteps.includes("MULTI_FABRIC")}
+          isCurrent={project.currentStep === "MULTI_FABRIC"}
+          isOpen={expandedStep === "MULTI_FABRIC"}
+        >
+          <p className="text-xs text-zinc-500">
+            Optional. Apply a second fabric to specific area(s) of the current design — e.g. a contrast yoke, sleeves,
+            borders, or panels.
+          </p>
+          <div className="mt-3 grid gap-4 md:grid-cols-2">
+            <div>
+              <p className="text-xs font-medium text-zinc-900 dark:text-zinc-100">Second Fabric</p>
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                className="mt-2 block w-full text-sm"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  const formData = new FormData();
+                  formData.append("file", file);
+                  run("upload-second-fabric", () =>
+                    fetch(`/api/v1/ai-designer/projects/${projectId}/second-fabric-image`, { method: "POST", body: formData }).then(parseJson)
+                  );
+                  e.target.value = "";
+                }}
+              />
+              {project.secondFabricImageAttachmentId && (
+                <div className="mt-2 flex items-center gap-3">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={imageUrl(project.secondFabricImageAttachmentId)}
+                    alt="Second fabric reference"
+                    className="h-24 w-24 rounded border object-cover"
+                  />
+                  <button
+                    type="button"
+                    className="text-xs text-red-600 hover:underline"
+                    onClick={() =>
+                      run("delete-second-fabric", () =>
+                        fetch(`/api/v1/ai-designer/projects/${projectId}/second-fabric-image`, { method: "DELETE" }).then(parseJson)
+                      )
+                    }
+                  >
+                    Remove
+                  </button>
+                </div>
+              )}
+            </div>
+            <div>
+              <p className="mb-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-300">Apply Second Fabric To</p>
+              <div className="grid grid-cols-2 gap-2">
+                {Object.entries(SECOND_FABRIC_APPLY_AREA_LABELS).map(([area, label]) => {
+                  const selected = secondFabricSelectedAreas.includes(area);
+                  return (
+                    <button
+                      key={area}
+                      type="button"
+                      aria-pressed={selected}
+                      onClick={() =>
+                        setSecondFabricSelectedAreas((prev) => (selected ? prev.filter((a) => a !== area) : [...prev, area]))
+                      }
+                      className={`rounded-md border px-3 py-1.5 text-left text-sm ${
+                        selected
+                          ? "border-indigo-600 bg-indigo-600 text-white"
+                          : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+              <button
+                type="button"
+                disabled={busy === "apply-second-fabric" || !project.secondFabricImageAttachmentId || secondFabricSelectedAreas.length === 0}
+                onClick={() =>
+                  run("apply-second-fabric", () =>
+                    fetch(`/api/v1/ai-designer/projects/${projectId}/apply-second-fabric`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ applyAreas: secondFabricSelectedAreas }),
+                    }).then(parseJson)
+                  )
+                }
+                className="mt-3 rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+              >
+                {busy === "apply-second-fabric" ? "Applying…" : "Apply Second Fabric"}
+              </button>
+            </div>
+          </div>
+          <StepNextButton step="MULTI_FABRIC" onNext={goToNextStep} />
+        </WizardSection>
+      )}
+
+      {/* Step 11 — Edit Design */}
+      {currentImage && (
+        <WizardSection
+          sectionRef={(el) => (sectionRefs.current.EDIT = el)}
+          index={11}
+          title="Edit Design"
+          isDone={project.completedSteps.includes("EDIT")}
+          isCurrent={project.currentStep === "EDIT"}
+          isOpen={expandedStep === "EDIT"}
+        >
+          <p className="text-xs text-zinc-500">Change one aspect of the current design (Collar, Sleeves, Length, Pocket, Buttons, Logo, Embroidery, Color, Background, Environment, Model, Pose) — only the affected area is regenerated.</p>
           <div className="mt-3 flex items-center gap-3">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={imageUrl(currentImage.imageAttachmentId)} alt="Current design" className="h-32 w-32 rounded border object-cover" />
@@ -588,31 +931,179 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
               Edit Design
             </button>
           </div>
-        </section>
+          <StepNextButton step="EDIT" onNext={goToNextStep} />
+        </WizardSection>
       )}
 
-      {/* Step 11 — Versions */}
-      {project.versions.length > 0 && (
-        <section className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
-          <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Version History</h2>
-          <div className="mt-3 space-y-2">
-            {project.versions.map((v) => (
-              <div key={v.versionNumber} className="flex items-center gap-3 text-sm">
-                <span className="w-16 shrink-0 font-medium">v{v.versionNumber}</span>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={imageUrl(v.currentImage.imageAttachmentId)} alt={`Version ${v.versionNumber}`} className="h-10 w-10 rounded border object-cover" />
-                <span className="text-zinc-500">{v.changeSummary}</span>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* Step 12 — Export */}
+      {/* Step 12 — Tech Pack */}
       {currentImage && (
-        <section className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
-          <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Step 12 — Export</h2>
-          <div className="mt-2 flex gap-2">
+        <WizardSection
+          sectionRef={(el) => (sectionRefs.current.TECH_PACK = el)}
+          index={12}
+          title="Tech Pack"
+          isDone={project.completedSteps.includes("TECH_PACK")}
+          isCurrent={project.currentStep === "TECH_PACK"}
+          isOpen={expandedStep === "TECH_PACK"}
+        >
+          <p className="text-xs text-zinc-500">
+            One combined action — a graded measurement chart, a draft Bill of Materials, and a technical flat sketch,
+            all from the current design.
+          </p>
+          <button
+            type="button"
+            disabled={busy === "tech-pack"}
+            onClick={() =>
+              run("tech-pack", async () => {
+                const body = await parseJson(await fetch(`/api/v1/ai-designer/projects/${projectId}/tech-pack`, { method: "POST" }));
+                setTechPack(body.data);
+              })
+            }
+            className="mt-2 rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+          >
+            {busy === "tech-pack" ? "Crafting your tech pack…" : "Generate Tech Pack"}
+          </button>
+          {busy === "tech-pack" && (
+            <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
+              Please wait — this usually takes 1-2 minutes. Analyzing design, calculating graded measurements, and
+              drawing the flat sketch…
+            </p>
+          )}
+
+          {techPack && techPack.status === "FAILED" && (
+            <p className="mt-3 text-xs text-red-600 dark:text-red-400">{techPack.errorMessage || "Tech pack generation failed."}</p>
+          )}
+
+          {techPack && techPack.status === "SUCCESS" && (
+            <div className="mt-4 space-y-4">
+              {techPack.flatSketchImageAttachmentId && (
+                <div>
+                  <p className="mb-1 text-xs font-medium text-zinc-700 dark:text-zinc-300">Technical Flat Sketch</p>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={imageUrl(techPack.flatSketchImageAttachmentId)}
+                    alt="Technical flat sketch"
+                    className="h-56 w-56 rounded border object-contain bg-white"
+                  />
+                </div>
+              )}
+
+              {techPack.measurementsJson && (
+                <div>
+                  <p className="mb-1 text-xs font-medium text-zinc-700 dark:text-zinc-300">Graded Measurements</p>
+                  <div className="overflow-x-auto rounded border border-zinc-200 dark:border-zinc-800">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b border-zinc-200 bg-zinc-50 text-left dark:border-zinc-800 dark:bg-zinc-900">
+                          <th className="px-2 py-1.5 font-medium">Point</th>
+                          <th className="px-2 py-1.5 font-medium">Tolerance</th>
+                          {Object.keys(techPack.measurementsJson.points[0]?.values ?? {}).map((size) => (
+                            <th key={size} className="px-2 py-1.5 font-medium">
+                              {size}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {techPack.measurementsJson.points.map((p) => (
+                          <tr key={p.pointName} className="border-b border-zinc-100 last:border-0 dark:border-zinc-800">
+                            <td className="px-2 py-1.5" title={p.howToMeasure}>
+                              {p.pointName}
+                            </td>
+                            <td className="px-2 py-1.5 text-zinc-500">{p.toleranceCm}</td>
+                            {Object.entries(p.values).map(([size, value]) => (
+                              <td key={size} className="px-2 py-1.5">
+                                {value}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <p className="mt-1 text-xs text-zinc-400">{techPack.measurementsJson.generalNotes}</p>
+                </div>
+              )}
+
+              {techPack.bomJson && (
+                <div>
+                  <p className="mb-1 text-xs font-medium text-zinc-700 dark:text-zinc-300">Draft Bill of Materials</p>
+                  <div className="overflow-x-auto rounded border border-zinc-200 dark:border-zinc-800">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b border-zinc-200 bg-zinc-50 text-left dark:border-zinc-800 dark:bg-zinc-900">
+                          <th className="px-2 py-1.5 font-medium">Material</th>
+                          <th className="px-2 py-1.5 font-medium">Category</th>
+                          <th className="px-2 py-1.5 font-medium">Qty / Unit</th>
+                          <th className="px-2 py-1.5 font-medium">Notes</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {techPack.bomJson.items.map((item, i) => (
+                          <tr key={i} className="border-b border-zinc-100 last:border-0 dark:border-zinc-800">
+                            <td className="px-2 py-1.5">{item.materialDescription}</td>
+                            <td className="px-2 py-1.5 text-zinc-500">{item.materialCategory}</td>
+                            <td className="px-2 py-1.5">
+                              {item.suggestedQuantityPerUnit} {item.suggestedUom}
+                            </td>
+                            <td className="px-2 py-1.5 text-zinc-500">{item.reasoning}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          <StepNextButton step="TECH_PACK" onNext={goToNextStep} />
+        </WizardSection>
+      )}
+
+      {/* Version History — supplementary, read-only; not part of the numbered
+          wizard sequence above, so it gets its own lightweight disclosure
+          rather than a numbered-circle WizardSection. */}
+      {project.versions.length > 0 && (
+        <section className="rounded-lg border border-zinc-200 dark:border-zinc-800">
+          <button
+            type="button"
+            onClick={() => setVersionsOpen((v) => !v)}
+            aria-expanded={versionsOpen}
+            className="flex w-full items-center gap-3 rounded-lg px-4 py-3 text-left hover:bg-zinc-50 dark:hover:bg-zinc-900/40"
+          >
+            <h2 className="flex-1 text-sm font-semibold text-zinc-900 dark:text-zinc-50">
+              Version History <span className="font-normal text-zinc-400">({project.versions.length})</span>
+            </h2>
+            <span className={`shrink-0 text-zinc-400 transition-transform ${versionsOpen ? "rotate-180" : ""}`} aria-hidden="true">
+              ▾
+            </span>
+          </button>
+          {versionsOpen && (
+            <div className="space-y-2 border-t border-zinc-200 px-4 py-4 dark:border-zinc-800">
+              {project.versions.map((v) => (
+                <div key={v.versionNumber} className="flex items-center gap-3 text-sm">
+                  <span className="w-16 shrink-0 font-medium">v{v.versionNumber}</span>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={imageUrl(v.currentImage.imageAttachmentId)} alt={`Version ${v.versionNumber}`} className="h-10 w-10 rounded border object-cover" />
+                  <span className="text-zinc-500">{v.changeSummary}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* Step 13 — Export */}
+      {currentImage && (
+        <WizardSection
+          sectionRef={(el) => (sectionRefs.current.EXPORT = el)}
+          index={13}
+          title="Export"
+          isDone={project.completedSteps.includes("EXPORT")}
+          isCurrent={project.currentStep === "EXPORT"}
+          isOpen={expandedStep === "EXPORT"}
+        >
+          <div className="flex gap-2">
             {(["png", "jpg", "pdf"] as const).map((fmt) => (
               <a
                 key={fmt}
@@ -624,7 +1115,7 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
             ))}
           </div>
           <p className="mt-2 text-xs text-zinc-500">DXF export and a full Tech Pack export are future support.</p>
-        </section>
+        </WizardSection>
       )}
 
       <Modal open={editModalOpen} onClose={() => setEditModalOpen(false)} title="Edit Design">

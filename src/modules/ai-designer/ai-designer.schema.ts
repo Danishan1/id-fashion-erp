@@ -8,6 +8,13 @@ export const createProjectSchema = z.object({
 
 export type CreateProjectInput = z.infer<typeof createProjectSchema>;
 
+/** Admin-only: switches the Product Design step's attribute pickers between clipart icons and plain text buttons, company-wide. */
+export const updateDisplayModeSchema = z.object({
+  productDesignDisplayMode: z.enum(["CLIPART", "TEXT"]),
+});
+
+export type UpdateDisplayModeInput = z.infer<typeof updateDisplayModeSchema>;
+
 /** Step 1, "pick an existing fabric" branch — auto-fills Name/Code/Supplier from the real Fabric Master (Product, itemType RAW_MATERIAL), leaves every other fabric* field blank/editable. */
 export const selectExistingFabricSchema = z.object({
   fabricProductId: z.string().uuid("A fabric must be selected"),
@@ -92,3 +99,23 @@ export type DecideImageInput = z.infer<typeof decideImageSchema>;
 
 export const EXPORT_FORMATS = ["png", "jpg", "pdf"] as const;
 export type ExportFormat = (typeof EXPORT_FORMATS)[number];
+
+/**
+ * Multi-Fabric — applies a second fabric photo onto specific area(s) of the
+ * currently generated design (Yoke/Sleeves/Borders/Contrast Panels), a real
+ * two-image composition distinct from Edit Design's single-image change.
+ * `applyAreas` is a plain fixed const list, not a DB enum (see the schema
+ * comment on `AiDesignerProject.secondFabricApplyAreas`).
+ */
+export const SECOND_FABRIC_APPLY_AREAS = ["YOKE", "SLEEVES", "BORDERS", "CONTRAST_PANELS"] as const;
+export type SecondFabricApplyArea = (typeof SECOND_FABRIC_APPLY_AREAS)[number];
+
+export const applySecondFabricSchema = z.object({
+  applyAreas: z.array(z.enum(SECOND_FABRIC_APPLY_AREAS)).min(1, "Pick at least one area to apply the second fabric to"),
+});
+
+export type ApplySecondFabricInput = z.infer<typeof applySecondFabricSchema>;
+
+/** Tech Pack — no user input at all; every field comes from the project's own already-recorded design. */
+export const generateTechPackSchema = z.object({});
+export type GenerateTechPackInput = z.infer<typeof generateTechPackSchema>;

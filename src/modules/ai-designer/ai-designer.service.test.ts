@@ -12,6 +12,7 @@ vi.mock("@/core/attachments/AttachmentService", () => ({
 vi.mock("@/core/ai-designer/fabric-analysis/analyze", () => ({ analyzeFabric: vi.fn() }));
 vi.mock("@/core/ai/provider-manager/AIProviderManager", () => ({ runWithFailover: vi.fn() }));
 vi.mock("@/core/ai-designer/export/tech-pack-pdf", () => ({ renderTechPackPdf: vi.fn().mockResolvedValue(Buffer.from("pdf")) }));
+vi.mock("@/core/ai-designer/tech-pack/generate", () => ({ generateGrading: vi.fn(), generateTechPackBom: vi.fn() }));
 vi.mock("@/modules/products/product.repository", () => ({
   ProductRepository: { findMaterialById: vi.fn() },
 }));
@@ -49,11 +50,18 @@ vi.mock("./ai-designer.repository", () => ({
     findByProjectId: vi.fn(),
     count: vi.fn(),
   },
+  AiDesignerTechPackRepository: {
+    create: vi.fn(),
+    markSuccess: vi.fn(),
+    markFailed: vi.fn(),
+    findLatestByProjectId: vi.fn(),
+  },
 }));
 
 const { generateDocumentNumber } = await import("@/core/numbering/DocumentNumberingService");
 const { uploadAttachment, getAttachmentForDownload } = await import("@/core/attachments/AttachmentService");
 const { runWithFailover } = await import("@/core/ai/provider-manager/AIProviderManager");
+const { generateGrading, generateTechPackBom } = await import("@/core/ai-designer/tech-pack/generate");
 const { ProductRepository } = await import("@/modules/products/product.repository");
 const {
   AiDesignerProjectRepository,
@@ -61,6 +69,7 @@ const {
   AiDesignerGenerationRepository,
   AiDesignerImageRepository,
   AiDesignerVersionRepository,
+  AiDesignerTechPackRepository,
 } = await import("./ai-designer.repository");
 const {
   createProject,
@@ -68,6 +77,8 @@ const {
   uploadFabricImage,
   generateDesign,
   editDesign,
+  applySecondFabric,
+  generateTechPack,
   decideImage,
   listImages,
   exportProject,
@@ -132,6 +143,12 @@ beforeEach(() => {
   vi.mocked(uploadAttachment).mockReset().mockResolvedValue({ id: "attachment-1" } as never);
   vi.mocked(getAttachmentForDownload).mockReset();
   vi.mocked(runWithFailover).mockReset();
+  vi.mocked(AiDesignerTechPackRepository.create).mockReset().mockResolvedValue({ id: "techpack-1" } as never);
+  vi.mocked(AiDesignerTechPackRepository.markSuccess).mockReset();
+  vi.mocked(AiDesignerTechPackRepository.markFailed).mockReset();
+  vi.mocked(AiDesignerTechPackRepository.findLatestByProjectId).mockReset();
+  vi.mocked(generateGrading).mockReset();
+  vi.mocked(generateTechPackBom).mockReset();
 });
 
 describe("createProject", () => {
@@ -558,5 +575,157 @@ describe("exportProject", () => {
 
     expect(result.mimeType).toBe("application/pdf");
     expect(result.buffer.toString()).toBe("pdf");
+  });
+});
+
+describe("applySecondFabric", () => {
+  it("requires a design to already exist", async () => {
+    vi.mocked(AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(
+      baseProject({ currentVersion: null }) as never
+    );
+
+    await expect(applySecondFabric(actor, "proj-1", { applyAreas: ["YOKE"] })).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+    });
+  });
+
+  it("requires a second fabric image to already be uploaded", async () => {
+    vi.mocked(AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(
+      baseProject({
+        currentVersion: { currentImage: { id: "img-parent", imageAttachmentId: "att-parent" } },
+        secondFabricImageAttachmentId: null,
+      }) as never
+    );
+
+    await expect(applySecondFabric(actor, "proj-1", { applyAreas: ["YOKE"] })).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+    });
+  });
+
+  it("applies the second fabric via provider.applyFabric and bumps a new version", async () => {
+    vi.mocked(AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(
+      baseProject({
+        currentVersion: { currentImage: { id: "img-parent", imageAttachmentId: "att-parent" } },
+        secondFabricImageAttachmentId: "att-second-fabric",
+      }) as never
+    );
+    vi.mocked(getAttachmentForDownload).mockImplementation(async (_companyId: string, id: string) => ({
+      attachment: { mimeType: "image/png" },
+      buffer: Buffer.from(id),
+    }) as never);
+    const applyFabric = vi
+      .fn()
+      .mockResolvedValue({ images: [{ buffer: Buffer.from("composed"), mimeType: "image/png" }], model: "gpt-image-1", raw: {} });
+    vi.mocked(runWithFailover).mockImplementation(async (params) => {
+      const result = await params.call({ name: "openai", model: "gpt-image-1", generate: vi.fn(), applyFabric } as never);
+      return { images: result.images, model: result.model, raw: result.raw, providerId: "provider-1", providerName: "openai" };
+    });
+    vi.mocked(AiDesignerImageRepository.findByGenerationId).mockResolvedValue([{ id: "img-composed" }] as never);
+    vi.mocked(AiDesignerVersionRepository.count).mockResolvedValue(1);
+    vi.mocked(AiDesignerVersionRepository.create).mockResolvedValue({ id: "version-2", versionNumber: 2 } as never);
+
+    const result = await applySecondFabric(actor, "proj-1", { applyAreas: ["YOKE", "SLEEVES"] });
+
+    expect(runWithFailover).toHaveBeenCalledWith(expect.objectContaining({ capability: "MULTI_FABRIC" }));
+    expect(applyFabric).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseImage: { buffer: Buffer.from("att-parent"), mimeType: "image/png" },
+        swatchImage: { buffer: Buffer.from("att-second-fabric"), mimeType: "image/png" },
+      })
+    );
+    expect(AiDesignerGenerationRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({ parentImageId: "img-parent", editedFeature: "Second Fabric Application: YOKE, SLEEVES" })
+    );
+    expect(result.version.versionNumber).toBe(2);
+  });
+
+  it("throws a clean error when the configured provider has no applyFabric capability", async () => {
+    vi.mocked(AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(
+      baseProject({
+        currentVersion: { currentImage: { id: "img-parent", imageAttachmentId: "att-parent" } },
+        secondFabricImageAttachmentId: "att-second-fabric",
+      }) as never
+    );
+    vi.mocked(getAttachmentForDownload).mockResolvedValue({ attachment: { mimeType: "image/png" }, buffer: Buffer.from("x") } as never);
+    vi.mocked(runWithFailover).mockImplementation(async (params) => {
+      // No applyFabric on this provider — the call itself should throw before runWithFailover ever resolves.
+      await params.call({ name: "cloudflare", model: "flux-1-schnell", generate: vi.fn() } as never);
+      throw new Error("unreachable");
+    });
+
+    await expect(applySecondFabric(actor, "proj-1", { applyAreas: ["YOKE"] })).rejects.toThrow(
+      /does not support applying a second fabric/
+    );
+  });
+});
+
+describe("generateTechPack", () => {
+  it("requires a design to already exist", async () => {
+    vi.mocked(AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(baseProject({ currentVersion: null }) as never);
+
+    await expect(generateTechPack(actor, "proj-1")).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("produces graded measurements, a draft BOM, and a flat sketch in one success", async () => {
+    vi.mocked(AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(
+      baseProject({
+        productCategory: "Dress",
+        currentVersion: { currentImage: { id: "img-1", imageAttachmentId: "att-1" } },
+      }) as never
+    );
+    vi.mocked(getAttachmentForDownload).mockResolvedValue({ attachment: { mimeType: "image/png" }, buffer: Buffer.from("x") } as never);
+    vi.mocked(generateGrading).mockResolvedValue({
+      data: { points: [{ pointName: "Bust", howToMeasure: "Flat across", toleranceCm: "±1", values: { XS: "80", S: "84", M: "88", L: "92", XL: "96", XXL: "100" } }], generalNotes: "Draft only." },
+      model: "claude-sonnet-5",
+    } as never);
+    vi.mocked(generateTechPackBom).mockResolvedValue({
+      data: { items: [{ materialDescription: "Cotton Fabric", materialCategory: "FABRIC", suggestedQuantityPerUnit: 1.5, suggestedUom: "MTR", reasoning: "Main body." }] },
+      model: "claude-sonnet-5",
+    } as never);
+    const generateTechnicalFlat = vi
+      .fn()
+      .mockResolvedValue({ images: [{ buffer: Buffer.from("flat"), mimeType: "image/png" }], model: "flux-1-schnell", raw: {} });
+    vi.mocked(runWithFailover).mockImplementation(async (params) => {
+      const result = await params.call({ name: "cloudflare", model: "flux-1-schnell", generate: vi.fn(), generateTechnicalFlat } as never);
+      return { images: result.images, model: result.model, raw: result.raw, providerId: "provider-1", providerName: "cloudflare" };
+    });
+    vi.mocked(AiDesignerTechPackRepository.markSuccess).mockResolvedValue({ id: "techpack-1", status: "SUCCESS" } as never);
+
+    const result = await generateTechPack(actor, "proj-1");
+
+    expect(generateGrading).toHaveBeenCalled();
+    expect(generateTechPackBom).toHaveBeenCalled();
+    expect(runWithFailover).toHaveBeenCalledWith(expect.objectContaining({ capability: "TECHNICAL_FLAT" }));
+    expect(generateTechnicalFlat).toHaveBeenCalled();
+    expect(AiDesignerTechPackRepository.markSuccess).toHaveBeenCalledWith(
+      "techpack-1",
+      expect.objectContaining({ flatSketchImageAttachmentId: "attachment-1" })
+    );
+    expect(AiDesignerProjectRepository.update).toHaveBeenCalledWith(
+      "proj-1",
+      expect.objectContaining({ completedSteps: expect.arrayContaining(["TECH_PACK"]) })
+    );
+    expect(result.status).toBe("SUCCESS");
+  });
+
+  it("marks the run FAILED, not partially successful, when the grading call fails", async () => {
+    vi.mocked(AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(
+      baseProject({ currentVersion: { currentImage: { id: "img-1", imageAttachmentId: "att-1" } } }) as never
+    );
+    vi.mocked(getAttachmentForDownload).mockResolvedValue({ attachment: { mimeType: "image/png" }, buffer: Buffer.from("x") } as never);
+    vi.mocked(generateGrading).mockRejectedValue(new Error("Anthropic call failed"));
+    vi.mocked(generateTechPackBom).mockResolvedValue({ data: { items: [] }, model: "claude-sonnet-5" } as never);
+    vi.mocked(runWithFailover).mockResolvedValue({
+      images: [{ buffer: Buffer.from("flat"), mimeType: "image/png" }],
+      model: "flux-1-schnell",
+      raw: {},
+      providerId: "p1",
+      providerName: "cloudflare",
+    } as never);
+
+    await expect(generateTechPack(actor, "proj-1")).rejects.toThrow();
+
+    expect(AiDesignerTechPackRepository.markFailed).toHaveBeenCalledWith("techpack-1", expect.stringContaining("Anthropic call failed"));
+    expect(AiDesignerTechPackRepository.markSuccess).not.toHaveBeenCalled();
   });
 });

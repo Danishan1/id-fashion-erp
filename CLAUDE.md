@@ -5530,6 +5530,198 @@ additive (one new optional method, zero changes to any existing method) — conf
 suite, including every AI Garment Flow test file that also depends on these shared provider files, stays
 green with no regressions.
 
+## AI Designer — Product Design clipart-vs-text is now an admin-controlled setting (2026-09-11)
+
+Direct follow-up to the clipart-icon UI pass above: the user asked for the Product Design step's icon
+display to be a real setting ("clicp art me chahiye ya text me chahiye"), then clarified it must be
+**admin-controlled** ("admin set krega"), not a per-viewer preference.
+
+- **Schema** (migration `20260911100000_add_ai_designer_settings`): new `AiDesignerAttributeDisplayMode`
+  enum (`CLIPART`/`TEXT`) and `AiDesignerSettings` (`companyId` unique, one flat row per company — a missing
+  row means `CLIPART`, no backfill needed). Deliberately simpler than the `SubmoduleVisibility` precedent it
+  otherwise mirrors — no lock/has-data logic, since nothing about this choice becomes unsafe once real
+  project data exists; it's a pure display preference.
+- **Service** (`src/modules/ai-designer/ai-designer-settings.service.ts`): `getProductDesignDisplayMode`/
+  `setProductDesignDisplayMode`, a plain `findUnique`/`upsert` — no caching needed at this scale.
+- **Routes** (`/api/v1/ai-designer/settings`): `GET` is deliberately **no-module-gated** (same
+  `/api/v1/submodule-visibility` precedent) — every AI Designer user needs to read this to know which style
+  to render, regardless of their `administration` grant. `PATCH` is gated `administration`/`"create"`,
+  matching `AdminModuleVisibilityPanel`'s/`AdminCompanySettingsPanel`'s own `canManage` derivation exactly
+  (`page.tsx`'s `canManage = PermissionService.can(..., "administration", "create")`).
+- **Client hook** (`src/lib/use-ai-designer-display-mode.ts`) mirrors `useSubmoduleVisibility()`'s own
+  fail-open-to-the-original-default convention (fails open to `CLIPART`, the pre-setting behavior, while
+  loading or on a failed fetch).
+- **UI**: a new "Product Design Attribute Display" toggle at the top of `AdminAiProvidersPanel.tsx`'s "AI
+  Configuration" admin tab (already the home for every other AI-Designer-related admin setting) — a plain
+  `ToggleSwitch`, no confirmation modal (unlike Module Visibility's hide toggle, flipping this is fully
+  reversible and affects nothing but presentation). `AiDesignerWorkflowPanel.tsx`'s Product Design step reads
+  the setting and renders either the existing clipart-icon grid or a plain flex-wrapped row of text-only
+  buttons — same `onClick`/`patchWizard` call either way, pure presentation branch.
+- **Verified live end-to-end**: toggled to `TEXT` via the real Admin UI, confirmed via direct DOM inspection
+  on the real project `AID-2026-00005` that Product Design's option buttons render with zero `<svg>` icons in
+  a `flex flex-wrap` layout; toggled back to `CLIPART` and confirmed the icon grid returns; confirmed
+  previously-saved selections (V-Neck/Cap Sleeve/Bodycon/Knee Length/Button) stay correctly highlighted in
+  both modes. `npx tsc --noEmit`, `npx eslint`, and `npx vitest run` (1403/1403, no regressions) all clean.
+
+## AI Designer wizard — no more auto-jump on selection; explicit "Next" per step; bigger/colored clipart icons (2026-09-11)
+
+Two more direct user reports against the same wizard: (1) picking any single option (a Target Customer
+button, one Product Design attribute out of several, one Model dropdown, ...) immediately snapped the whole
+panel to whatever step the backend recomputed as `currentStep` next — before the user had finished with the
+current step or had a chance to review their pick; (2) the clipart icons from the earlier pass were still too
+small/thin to reliably tell apart.
+
+- **Root cause of the auto-jump**: `saveWizardSelections()` (unchanged, still correct) marks a whole step
+  complete and recomputes `currentStep` the moment ANY one of its fields is touched — by design, since
+  `completedSteps` also drives the stepper's green checkmarks. The bug was purely client-side:
+  `AiDesignerWorkflowPanel.tsx`'s `reload()` (called after every save via `run()`) called
+  `expandCurrentStep(body.data.currentStep)` unconditionally, snapping the visible tab to that freshly
+  recomputed step on every single field save.
+- **Fix, purely client-side, no backend change**: `reload()` no longer moves `expandedStep` at all — a save
+  still updates `project`/the stepper's checkmarks, but the panel stays exactly where the user left it. A new
+  `goToNextStep(afterStep)` (looks up `afterStep`'s position in `WIZARD_STEP_ORDER` and jumps to the next one)
+  is now the only thing that ever advances the view, wired to a new `StepNextButton` rendered at the bottom of
+  every step's content (all 11 — `StepNextButton` itself renders nothing on `EXPORT`, the last step, so no
+  special-casing was needed at any call site). Confirmed live: selecting "Women" under Target Customer no
+  longer moves off that step; the "Next: Age Group →" button underneath does, and only when clicked.
+- **Clipart icons, per the user's own explicit choice between "bigger + colorful now" vs. "real AI-generated
+  images per attribute (10-20+ min, consumes provider quota)"** (asked via AskUserQuestion, since it's a real
+  time/cost tradeoff): went with the immediate option. `design-icon-catalog.tsx`'s shared `Svg` wrapper
+  (which every one of the 144 icons renders through) now renders roughly 1.6-2x larger (`h-9 w-9 sm:h-11
+  sm:w-11`, was `h-7 w-7`) with a thicker stroke (1.75, was 1.4), plus a light-indigo circular backdrop chip
+  behind every icon so each one reads as a small colored badge instead of a thin gray line. **Bug caught and
+  fixed during live verification, not shipped**: the very first version left the icon's own stroke on
+  `currentColor` (inherited from the button's text color) — on a *selected* button (solid indigo-600
+  background, white text) this made the glyph render white-on-near-white against the light backdrop chip,
+  effectively invisible. Fixed by giving the glyph its own fixed color (`text-indigo-700 dark:text-indigo-300`
+  on the `<svg>` itself, overriding inheritance) completely decoupled from the button's selected/unselected
+  state — confirmed live via screenshot that "Off-Shoulder"/"Cap Sleeve" (both selected, solid indigo buttons)
+  render exactly as legibly as their unselected siblings. `AiDesignerWorkflowPanel.tsx`'s Product Design grid
+  was also widened (`grid-cols-2 sm:grid-cols-3 md:grid-cols-4`, was 3/4/5 columns) to give the bigger icons
+  room. `npx tsc --noEmit`, `npx eslint`, and `npx vitest run` (1403/1403, no regressions) all clean; verified
+  live end-to-end on the real `AID-2026-00005` project (screenshot + DOM inspection) for both fixes together.
+
+## AI Designer — Multi-Fabric, Tech Pack, expanded attributes, real reference photos (2026-09-11)
+
+User asked for a feature-parity check against a competitor reference ("Fashdeck") — 4 screenshots showing a
+richer per-category attribute picker with real reference PHOTOS (not icons), a "Multi-Fabric" second-fabric
+composition tab, and an AI "Tech Pack" (graded measurements + BOM + flat sketch) action. Confirmed via code
+search that Multi-Fabric and Tech Pack were completely absent, and the attribute catalog was noticeably
+thinner than the reference (no separate Back Neck, Bodice, Body Cut-Outs, Waist Add-On, Shoulders, Straps,
+etc.). Scoped via AskUserQuestion: build all three, and — reversing the same day's own earlier "bigger
+clipart icons, no AI cost" decision — use real AI-generated reference photos this time, since the user
+explicitly wants the photo-reference look now that a concrete competitor benchmark exists.
+
+**Wizard reordered**: `WIZARD_STEP_ORDER` (duplicated in both `ai-designer.service.ts` and the client-safe
+`statusLabels.ts`, kept in sync by hand per this module's own established convention) gained `MULTI_FABRIC`
+(after `GENERATE`) and `TECH_PACK` (after `EDIT`) — both optional/skippable steps: nothing downstream
+requires either to be completed, so a project that never uses them simply never marks them complete (this
+only affects the display-only "current step" highlight, never navigation, which stays entirely user-driven
+via each step's own Next button from the earlier pass this same day).
+
+**Multi-Fabric** — `AiDesignerProject` gained `secondFabricImageAttachmentId`/`secondFabricApplyAreas`
+(plain `String[]`, validated in Zod against a small fixed const list `SECOND_FABRIC_APPLY_AREAS` — `YOKE`/
+`SLEEVES`/`BORDERS`/`CONTRAST_PANELS` — not a DB enum, since nothing else needs to reference or constrain
+it). `applySecondFabric()` reuses the *exact same* `AiDesignerPrompt`/`AiDesignerGeneration`/
+`AiDesignerImage`/version-bump machinery Edit Design already has (deliberately reusing the `IMAGE_EDIT`
+promptType/concurrency-gate too, rather than minting a new enum value purely for bookkeeping — the
+gating behavior it buys, never running two concurrent image-mutating calls against one project, is exactly
+what's wanted here as well) — the only real difference is which provider method it calls
+(`ImageGenerationProvider.applyFabric`, a genuine two-image base+swatch composition, already built for AI
+Garment Flow's own Process 6 and reused here as shared, zero-business-logic infrastructure) and its own
+prompt (`buildSecondFabricPrompt()`, new in `image-generation/prompt.ts`).
+
+**Tech Pack** — a new, wholly isolated feature (own schema, own prompts — zero reuse of AI Garment Flow's own
+much richer Technical Specification/BOM Suggestion/Technical Development processes, matching this module's
+established isolation). New `AiDesignerTechPack` table (append-only, one row per attempt, mirrors every
+other AI Designer run-log table) with `measurementsJson`/`bomJson`/`flatSketchImageAttachmentId`. Deliberately
+simpler than AI Garment Flow's own equivalent: graded across a small fixed size set (`STANDARD_SIZES` = XS
+through XXL in `tech-pack/schema.ts`), not the company's real Size master, and the BOM is purely advisory —
+AI Designer has no Style-graduation/BOM-mrp integration for a real BOM to attach to. `generateTechPack()`
+runs three calls together via `Promise.all` (two Anthropic text calls via the shared, generic
+`requestStructuredTextOutput()` — grading and BOM, each with their own isolated prompt/schema under
+`src/core/ai-designer/tech-pack/` — plus one Cloudflare/OpenAI/Gemini image call via the existing
+`generateTechnicalFlat` provider method) and is deliberately all-or-nothing: any one of the three failing
+marks the whole attempt `FAILED` with that error, never a partially-successful row — simpler to reason about,
+and a retry is cheap for this manual, low-frequency action.
+
+**New `AIProviderCapability` values, `MULTI_FABRIC`/`TECHNICAL_FLAT`** — both `applyFabric`/
+`generateTechnicalFlat` needed their own capability flag distinct from the existing `IMAGE_EDIT` (confirmed
+live: the Cloudflare provider implements `generateTechnicalFlat` but deliberately omits `applyFabric` — a
+provider capable of one is not necessarily capable of the other). `capabilityLabel()`'s exhaustive switch in
+`AIProviderManager.ts` and the admin UI's `CAPABILITY_VALUES` list both updated — the admin capability
+checkboxes render generically from that list, so no UI code changes were needed there beyond the constant.
+
+**Attribute catalog expanded** (`design-attribute-catalog.ts`) — two fields added to literally every
+category (`surface`/"Surface / Finish" and `accentColor`/"Accent / Trim Color") via a small
+`UNIVERSAL_ATTRIBUTES` array merged onto every category's own list at module-load time, rather than
+duplicated into all 21 entries by hand. **`accentColor` is deliberately NOT a general "Colors" picker for
+the whole garment** — the garment's actual base color is already, and remains, driven entirely by the real
+uploaded fabric photo (`image-generation/prompt.ts`'s own "the fabric image is the ONLY source of truth for
+color" instruction); a generic Colors field here would silently contradict that, so this one is scoped
+narrowly to accent/trim/contrast-stitch choices, with "Same as Fabric" as the safe default. **Dress** (the
+exact category shown in the reference) additionally gained the full richer set the reference's own picker
+implies: Back Neck (with the reference's own 5 real option names — Criss-Cross/Deep/Open/Oval/Tie-Back
+Cut-Out — plus Regular Back), Bodice, Body Cut-Outs, Waist Add-On, Waist Line, Shoulders, Straps, Flare
+Variation, Slit Length, Slit Type. Blouse/Top/Kurti/Frock (the other dress-like categories) got a lighter,
+plausible subset rather than the full set, to avoid a field that doesn't make sense for their own silhouette
+(e.g. no "Waist Add-On" on a Kurti). Every existing field KEY was preserved exactly (only some LABELS
+changed, e.g. `neckline` relabeled "Front Neck" for the dress-like categories) — this was deliberate, so
+already-saved `designSelectionsJson` data on real, pre-existing projects keeps rendering/highlighting
+correctly with zero migration needed (`designSelections` is validated as a generic `z.record(string, string)`
+in the schema, so the new fields needed zero backend changes at all — purely a catalog/UI addition).
+
+**Real reference photos, per the user's own reversed choice, with a fully generic template (not a
+hand-authored prompt per option value)** — `reference-image-prompt.ts` builds one prompt template from any
+option value string, and `slugifyDesignOptionValue()`/`referenceImageUrlForValue()` derive a stable
+`/ai-designer-reference/<slug>.jpg` URL for it (reusing the icon system's own `normalizeDesignOptionKey`, so
+the same option value always maps to the same slug and photo regardless of which category/field it's
+attached to — this is what makes the mechanism scale to new categories/attributes added later with zero code
+changes). New `DesignOptionImage` component (`design-icon-catalog.tsx`) tries the real photo first and falls
+back to the existing `DesignOptionIcon` via a plain `<img onError>` — deliberately not a server-side
+existence check/manifest, so newly-generated photos "light up" automatically the next time the component
+mounts. A new re-runnable content-generation tool, `scripts/generate-ai-designer-reference-images.ts`
+(`npx tsx scripts/generate-ai-designer-reference-images.ts [cap]`), walks the whole attribute catalog,
+dedupes by normalized value, and calls whichever provider `IMAGE_GENERATION_PROVIDER` selects to generate and
+cache each one as a real JPEG under `public/ai-designer-reference/` (gitignored — a re-generatable cache, not
+source) — resumable (skips any slug that already has a file) and stops itself after 3 consecutive failures
+rather than grinding through the whole ~195-value catalog uselessly when a provider is genuinely out of
+credits (a real bug caught and fixed during this pass's own live run — the original cap only limited
+successes, so a fully-exhausted provider burned through every single value before the cap ever got a chance
+to stop it).
+
+**Verified live end-to-end** (real Postgres, real running dev server, a temporary fixture project built via
+a scratch script since real image generation is currently blocked — see below): confirmed the reordered
+13-step stepper renders with correct labels in the real UI; confirmed the expanded Dress attribute catalog
+renders all 17 fields with the exact reference option names, and that a pre-existing real project's saved
+selections (V-Neck/Cap Sleeve/Bodycon/Knee Length/Button) still highlight correctly; confirmed
+`DesignOptionImage`'s onError fallback genuinely swaps to the clipart icon (no real photos exist yet) with
+zero broken-image artifacts, just the expected one console 404 per missing photo; enabled `TECHNICAL_FLAT`
+on the Cloudflare admin provider row (a real, correct capability — Cloudflare's own provider file already
+implements it) and confirmed `Apply Second Fabric` correctly reaches the real `AIProviderManager` pipeline
+and cleanly reports `UNSUPPORTED_OPERATION` for Cloudflare (which never implements `applyFabric`, by
+design); confirmed `Generate Tech Pack` correctly reaches the real pipeline and cleanly fails (502) rather
+than crashing, with the `AiDesignerTechPack` row correctly left `FAILED`/no orphan partial data, and
+`completedSteps` correctly excluding both `MULTI_FABRIC`/`TECH_PACK` since both attempts failed. Fixture
+project and its attachments fully deleted afterward; the Cloudflare provider's own capability list was
+corrected afterward too (kept `TECHNICAL_FLAT`, a genuinely real capability; removed the `MULTI_FABRIC` flag
+this verification pass had added for a probe, since Cloudflare will never support that method). `npx tsc
+--noEmit`, `npx eslint`, and `npx vitest run` (1410/1410, 7 new) all clean throughout.
+
+**Known, honestly-reported limitation, not a code defect**: this dev environment's configured providers are
+all currently out of usable credit/quota for actual image generation — OpenAI/Gemini already documented
+elsewhere in this file as `CREDITS_EXHAUSTED`, and Cloudflare (confirmed via a real, direct script run this
+pass) also returns `credits are exhausted` for plain `generate()` calls and a real `AUTH_ERROR`-categorized
+failure specifically for `generateTechnicalFlat`'s own separate img2img model. This means: (a) the real
+reference-photo batch script has generated zero real photos yet — every Product Design option currently
+falls back to its clipart icon, correctly, but the "photo-first" experience the user asked for isn't visibly
+different from before until a provider has real credits; (b) Multi-Fabric's actual composition and Tech
+Pack's actual flat-sketch/measurements/BOM content remain unverified beyond "reaches the real API and fails
+cleanly" — the exact same honest bar this file has already documented repeatedly for AI Garment Flow's own
+image-generation processes. Once any configured provider has real credits, re-running the batch script (or
+retrying Multi-Fabric/Tech Pack from the real UI) is the only remaining step — no further code changes are
+expected to be needed.
+
 ## Recommended Stack
 
 Next.js 14+ (App Router) + React + TypeScript + Tailwind CSS (frontend); Next.js API routes/route handlers as REST API; PostgreSQL + Prisma ORM; session-based auth (Auth.js/NextAuth, DB sessions) with RBAC and optional TOTP 2FA; S3-compatible or local file storage for attachments; server-side PDF/Excel export (`exceljs`, `pdf-lib`/`@react-pdf/renderer`).
