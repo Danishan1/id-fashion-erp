@@ -111,3 +111,29 @@ export const AiDesignerTechPackRepository = {
   findLatestByProjectId: (projectId: string) =>
     prisma.aiDesignerTechPack.findFirst({ where: { projectId }, orderBy: { createdAt: "desc" } }),
 };
+
+export const AiDesignerProductDesignAttributeRepository = {
+  findMany: (companyId: string) =>
+    prisma.aiDesignerProductDesignAttribute.findMany({
+      where: { companyId },
+      orderBy: [{ categoryName: "asc" }, { sortOrder: "asc" }],
+    }),
+
+  findActiveByCategory: (companyId: string, categoryName: string) =>
+    prisma.aiDesignerProductDesignAttribute.findMany({
+      where: { companyId, categoryName, isActive: true },
+      orderBy: { sortOrder: "asc" },
+    }),
+
+  findAnyById: (companyId: string, id: string) =>
+    prisma.aiDesignerProductDesignAttribute.findFirst({ where: { id, companyId } }),
+
+  findByKey: (companyId: string, categoryName: string, attributeKey: string) =>
+    prisma.aiDesignerProductDesignAttribute.findFirst({ where: { companyId, categoryName, attributeKey } }),
+
+  create: (data: Prisma.AiDesignerProductDesignAttributeUncheckedCreateInput) =>
+    prisma.aiDesignerProductDesignAttribute.create({ data }),
+
+  update: (id: string, data: Prisma.AiDesignerProductDesignAttributeUncheckedUpdateInput) =>
+    prisma.aiDesignerProductDesignAttribute.update({ where: { id }, data }),
+};

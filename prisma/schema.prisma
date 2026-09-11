@@ -130,6 +130,7 @@ model Company {
   aiDesignerVersions                  AiDesignerVersion[]
   aiDesignerSettings                  AiDesignerSettings?
   aiDesignerTechPacks                 AiDesignerTechPack[]
+  aiDesignerProductDesignAttributes   AiDesignerProductDesignAttribute[]
   aiProviders                         AIProvider[]
   aiProviderUsage                     AIProviderUsage[]
   aiFailoverLogs                      AIFailoverLog[]
@@ -343,6 +344,7 @@ model User {
   aiDesignerImagesCreated                    AiDesignerImage[]                    @relation("AiDesignerImageCreatedBy")
   aiDesignerVersionsCreated                  AiDesignerVersion[]                  @relation("AiDesignerVersionCreatedBy")
   aiDesignerTechPacksCreated                 AiDesignerTechPack[]                 @relation("AiDesignerTechPackCreatedBy")
+  aiDesignerProductDesignAttributesCreated   AiDesignerProductDesignAttribute[]   @relation("AiDesignerProductDesignAttributeCreatedBy")
   aiProvidersCreated                         AIProvider[]                         @relation("AIProviderCreatedBy")
   aiProviderUsageAsUser                      AIProviderUsage[]                    @relation("AIProviderUsageUser")
   aiGarmentFabricAnalysesCreated             AiGarmentFabricAnalysis[]            @relation("AiGarmentFabricAnalysisCreatedBy")
@@ -7713,6 +7715,48 @@ model AiDesignerTechPack {
   createdBy User              @relation("AiDesignerTechPackCreatedBy", fields: [createdByUserId], references: [id])
 
   @@map("ai_tech_packs")
+}
+
+// Product Design attribute master (2026-09-11) -- was a hardcoded, code-only
+// catalog (design-attribute-catalog.ts); the user asked for it to become a
+// real, editable Masters entity (Masters -> AI Design -> Product Design), the
+// same way every other lookup in this ERP is company-configurable rather
+// than baked into a constant.
+//
+// Deliberately "DB overrides the static default per category, not a merge":
+// getEffectiveDesignAttributesForCategory() returns this company's own real
+// rows for a category the moment ANY exist for it (ordered by sortOrder),
+// and only falls back to the original static PRODUCT_DESIGN_ATTRIBUTES_BY_
+// CATEGORY entry when the company has never customized that category at
+// all -- the same "a missing row means the default, no backfill needed"
+// precedent as SubmoduleVisibility/AiDesignerSettings elsewhere in this
+// schema. This means every existing company keeps working unchanged with
+// zero seeding, and an admin who edits/adds even one attribute for a
+// category takes full ownership of that category's list from then on --
+// simpler and more predictable than a per-attribute merge.
+//
+// `options` is a plain String[], not a child table -- matches the original
+// DesignAttributeDef.options shape exactly (no independent option-level
+// metadata like its own sortOrder/isActive was ever needed).
+model AiDesignerProductDesignAttribute {
+  id             String  @id @default(uuid()) @db.Uuid
+  companyId      String  @map("company_id") @db.Uuid
+  categoryName   String  @map("category_name")
+  attributeKey   String  @map("attribute_key")
+  attributeLabel String  @map("attribute_label")
+  options        String[]
+  sortOrder      Int     @default(0) @map("sort_order")
+  isActive       Boolean @default(true) @map("is_active")
+
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  company   Company @relation(fields: [companyId], references: [id])
+  createdBy User    @relation("AiDesignerProductDesignAttributeCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@unique([companyId, categoryName, attributeKey])
+  @@map("ai_product_design_attributes")
 }
 
 enum AiDesignerAttributeDisplayMode {
