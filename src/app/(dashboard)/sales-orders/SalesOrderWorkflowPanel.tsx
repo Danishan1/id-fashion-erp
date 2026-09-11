@@ -64,6 +64,33 @@ interface ItemRow {
   productionSummary?: ItemProductionSummary;
 }
 
+interface MaterialPreviewRow {
+  materialId: string;
+  materialName: string;
+  materialCode: string;
+  uomCode: string;
+  quantityPerUnit: number;
+  neededQuantity: number;
+  unitCost: number | null;
+  lineCost: number | null;
+}
+
+interface MaterialPreviewItem {
+  salesOrderItemId: string;
+  styleName: string;
+  sampleStyleName: string | null;
+  orderedQuantity: number;
+  hasApprovedBom: boolean;
+  materials: MaterialPreviewRow[];
+  unconvertibleLines: Array<{ materialId: string; materialName: string; reason: string }>;
+  totalMaterialCost: number | null;
+}
+
+interface MaterialPreview {
+  items: MaterialPreviewItem[];
+  grandTotalMaterialCost: number | null;
+}
+
 interface AttachmentRow {
   id: string;
   fileName: string;
@@ -123,6 +150,9 @@ export function SalesOrderWorkflowPanel({
   const [uploadInputKey, setUploadInputKey] = useState(0);
   const [previewAttachment, setPreviewAttachment] = useState<AttachmentRow | null>(null);
 
+  const [materialPreview, setMaterialPreview] = useState<MaterialPreview | null>(null);
+  const [materialPreviewError, setMaterialPreviewError] = useState<string | null>(null);
+
   const fetchAttachments = async () => {
     const res = await fetch(`/api/v1/sales-orders/${salesOrderId}/attachments`);
     const body = await res.json();
@@ -133,6 +163,16 @@ export function SalesOrderWorkflowPanel({
     fetch(`/api/v1/sales-orders/${salesOrderId}/attachments`)
       .then((res) => res.json())
       .then((body) => setAttachments(body.data ?? []));
+  }, [salesOrderId]);
+
+  useEffect(() => {
+    fetch(`/api/v1/sales-orders/${salesOrderId}/material-preview`)
+      .then(async (res) => {
+        const body = await res.json();
+        if (!res.ok) throw new Error(body?.error?.message ?? "Failed to load the material cost estimate.");
+        setMaterialPreview(body.data);
+      })
+      .catch((err) => setMaterialPreviewError((err as Error).message));
   }, [salesOrderId]);
 
   const refresh = async () => {
@@ -425,6 +465,77 @@ export function SalesOrderWorkflowPanel({
         <p className="mt-3 text-sm font-medium text-zinc-900 dark:text-zinc-50">
           Order Amount: {order.currencyCode} {formatCurrency(order.totalAmount)}
         </p>
+
+        {/* Advisory only — reuses the same BOM/Sample resolution and cost
+            math the Material Request/MRP flows already use, never a second,
+            diverging calculation. Shows "Not available" (never a silent
+            undercount) whenever any style line has an unpriced material or
+            an unconvertible UOM somewhere in its own chain. */}
+        {materialPreviewError && <p className="mt-1 text-xs text-red-600 dark:text-red-400">{materialPreviewError}</p>}
+        {materialPreview && (
+          <div className="mt-4 rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
+            <p className="text-sm font-medium text-zinc-900 dark:text-zinc-50">
+              Estimated Material Cost:{" "}
+              {materialPreview.grandTotalMaterialCost !== null
+                ? `${order.currencyCode} ${formatCurrency(materialPreview.grandTotalMaterialCost)}`
+                : "Not fully available (see per-style detail below)"}
+            </p>
+            <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+              Advisory only, from each style&apos;s approved BOM (or its linked sample&apos;s materials) — not a
+              stock reservation.
+            </p>
+            <div className="mt-3 space-y-3">
+              {materialPreview.items.map((item) => (
+                <div key={item.salesOrderItemId} className="rounded-md border border-zinc-100 bg-zinc-50 p-3 text-xs dark:border-zinc-800 dark:bg-zinc-900">
+                  <div className="flex items-center justify-between">
+                    <p className="font-medium text-zinc-700 dark:text-zinc-200">
+                      {item.sampleStyleName ? `Design Name: ${item.sampleStyleName}` : item.styleName} · Ordered: {item.orderedQuantity}
+                    </p>
+                    <p className="font-medium text-zinc-900 dark:text-zinc-50">
+                      {item.totalMaterialCost !== null ? `${order.currencyCode} ${formatCurrency(item.totalMaterialCost)}` : "Not available"}
+                    </p>
+                  </div>
+                  {!item.hasApprovedBom && (
+                    <p className="mt-1 text-zinc-500">No approved BOM or sample materials recorded for this style yet.</p>
+                  )}
+                  {item.materials.length > 0 && (
+                    <table className="mt-2 w-full">
+                      <thead>
+                        <tr className="text-left text-zinc-500">
+                          <th className="py-1 pr-3 font-medium">Material</th>
+                          <th className="py-1 pr-3 font-medium">Qty × Per Unit</th>
+                          <th className="py-1 pr-3 font-medium">Needed</th>
+                          <th className="py-1 font-medium">Cost</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {item.materials.map((m) => (
+                          <tr key={m.materialId} className="border-t border-zinc-200 dark:border-zinc-800">
+                            <td className="py-1 pr-3 text-zinc-700 dark:text-zinc-200">{m.materialName}</td>
+                            <td className="py-1 pr-3 text-zinc-700 dark:text-zinc-200">
+                              {item.orderedQuantity} × {m.quantityPerUnit} {m.uomCode}
+                            </td>
+                            <td className="py-1 pr-3 text-zinc-700 dark:text-zinc-200">
+                              {m.neededQuantity} {m.uomCode}
+                            </td>
+                            <td className="py-1 text-zinc-700 dark:text-zinc-200">
+                              {m.lineCost !== null ? `${order.currencyCode} ${formatCurrency(m.lineCost)}` : "—"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                  {item.unconvertibleLines.length > 0 && (
+                    <p className="mt-1 text-amber-600 dark:text-amber-400">
+                      {item.unconvertibleLines.map((u) => `${u.materialName}: ${u.reason}`).join("; ")}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* PO copies, buyer reference images, etc. — same shared attachment

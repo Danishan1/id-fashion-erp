@@ -22,6 +22,7 @@ export const salesOrderSchema = z.object({
   buyerId: z.string().uuid().optional().or(z.literal("")),
   orderDate: z.string().min(1, "Order date is required"),
   requiredShipDate: z.string().optional().or(z.literal("")),
+  customerPoNumber: z.string().trim().max(100).optional().or(z.literal("")),
   // Closes the Deal→Customer→SalesOrder chain — set only when this order is
   // created from a Won Deal's own "Create Sales Order" action; the column
   // has existed on SalesOrder since Phase 1 planning but had zero writers
