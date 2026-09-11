@@ -191,6 +191,64 @@ describe("getMaterialRequirements", () => {
     expect(result.stylesWithoutBom).toHaveLength(0);
   });
 
+  // Regression for a real reported bug: SampleMaterial.colorId means "this
+  // raw material's own shade/dye" (e.g. a thread color), not "this line only
+  // applies to this ordered garment-color variant" (BomItem.colorId's real
+  // meaning). A shade id essentially never matches a real style-variant
+  // color id on the order's own breakdown, so passing it through unchanged
+  // used to filter the line's orderedQty to 0 and silently drop it from the
+  // requirement list entirely.
+  it("does not drop a sample material whose own shade colorId doesn't match any of the order's style-variant colors", async () => {
+    vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue(
+      order({
+        items: [
+          {
+            productId: "style-1",
+            sampleRequestId: "sam-1",
+            product: { styleName: "Round Neck T-Shirt" },
+            breakdown: [
+              { orderedQuantity: 200, productVariant: { color: { id: "black" } } },
+              { orderedQuantity: 400, productVariant: { color: { id: "navy" } } },
+            ],
+          },
+        ],
+      }) as never
+    );
+    vi.mocked(SampleMaterialRepository.findLatestVersionMaterialsForRequirement).mockResolvedValue([
+      {
+        materialId: "mat-cotton",
+        plannedQuantity: 2.5,
+        uomId: "uom-mtr",
+        colorId: null,
+        uom: MTR,
+        material: { id: "mat-cotton", styleName: "Viscose Crepe", styleCode: "MAT-COT", baseUomId: "uom-mtr", baseUom: MTR, defaultSupplierId: "sup-1", unitCost: 50 },
+      },
+      {
+        materialId: "mat-thread",
+        plannedQuantity: 1,
+        uomId: "uom-rol",
+        // A shade/dye id that is NOT one of the order's real style-variant
+        // color ids ("black"/"navy" above) -- the exact real-world shape of
+        // the bug: a thread's own shade happens to be named "navy-thread",
+        // not "navy".
+        colorId: "navy-thread",
+        uom: ROL,
+        material: { id: "mat-thread", styleName: "Silk Thread", styleCode: "MAT-THR", baseUomId: "uom-rol", baseUom: ROL, defaultSupplierId: null, unitCost: null },
+      },
+    ] as never);
+
+    const result = await getMaterialRequirements("co-1", "so-1");
+
+    const thread = result.materials.find((m) => m.materialId === "mat-thread");
+    expect(thread).toBeDefined();
+    // 1 (no wastage) * 600 (200 black + 400 navy) = 600, same full ordered
+    // quantity a colorId: null line would get -- confirming the sample's own
+    // shade never gates the quantity.
+    expect(thread!.neededQuantity).toBe(600);
+    const cotton = result.materials.find((m) => m.materialId === "mat-cotton")!;
+    expect(cotton.neededQuantity).toBe(1500);
+  });
+
   it("reports a sample-linked line with no recorded materials separately, naming the sample as the cause", async () => {
     vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue(
       order({

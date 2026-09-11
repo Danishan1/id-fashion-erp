@@ -200,7 +200,18 @@ export async function getMaterialRequirements(companyId: string, salesOrderId: s
       const sampleMaterials = sampleMaterialsById.get(orderItem.sampleRequestId) ?? [];
       explosionItems = sampleMaterials.map((m) => ({
         materialId: m.materialId,
-        colorId: m.colorId,
+        // SampleMaterial.colorId means "this raw material's own shade/dye"
+        // (e.g. thread color) -- an entirely different concept from
+        // BomItem.colorId ("this line only applies to this ordered
+        // garment-color variant"), which is what
+        // explodeItemsForOrderItem's own filter below actually implements.
+        // Passing the sample's shade through as colorId would silently
+        // filter this line's orderedQty to 0 (the shade id essentially
+        // never matches a real style-variant color id), dropping the whole
+        // line with zero error reported. Always null here so the full
+        // ordered quantity applies regardless of the sample material's own
+        // shade color.
+        colorId: null,
         quantityPerUnit: Number(m.plannedQuantity),
         // SampleMaterial has no wastage% column — the sample's own recorded
         // quantity is treated as the effective (already-wastage-inclusive)
