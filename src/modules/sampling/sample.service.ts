@@ -259,6 +259,30 @@ export async function updateSampleRequestColor(actor: ActorContext, id: string, 
   return updated;
 }
 
+// Same "editable at any status" reasoning as color above — a Design Name
+// entered early (often copied from a Buyer Enquiry line's own free-text
+// placeholder, before the buyer had confirmed anything real) routinely
+// needs correcting later. Never touches productId/Convert-to-Style's own
+// draft — that flow re-prefills from this field fresh each time it opens.
+export async function updateSampleRequestDesignName(actor: ActorContext, id: string, styleName: string) {
+  const existing = await SampleRequestRepository.findAnyById(actor.companyId, id);
+  if (!existing) throw new BusinessRuleError("NOT_FOUND", "Sample request not found.", { id });
+
+  const updated = await SampleRequestRepository.update(id, { styleName });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "sample_requests",
+    recordId: id,
+    action: "UPDATE",
+    oldValues: { styleName: existing.styleName },
+    newValues: { styleName: updated.styleName },
+  });
+
+  return updated;
+}
+
 export async function transitionSampleStatus(actor: ActorContext, id: string, targetStatus: SampleStatus) {
   const before = await SampleRequestRepository.findAnyById(actor.companyId, id);
   if (!before) throw new BusinessRuleError("NOT_FOUND", "Sample request not found.", { id });

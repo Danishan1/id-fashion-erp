@@ -5774,6 +5774,40 @@ AI Design -> Product Design**.
   17-field built-in default. `npx tsc --noEmit`, `npx eslint`, and `npx vitest run` (1418/1418, 7 new) all
   clean throughout.
 
+## Sampling — "Design Name" is now editable, same pattern as Color (2026-09-11)
+
+User-reported real workflow gap: a Buyer Enquiry line's free-text "Style Name / Description (if new)" gets
+carried into `SampleRequest.styleName` ("Design Name") when converted to a Sample Request — often just a
+rough placeholder, since the buyer hasn't confirmed anything yet. There was no way to correct it later.
+Investigated before building anything (per the user's own "let's discuss first" request): confirmed no
+auto-creation of a Style/Product ever happens from Buyer Enquiry or Sample Request creation — the only place
+a real `Product` row is ever created is the existing, explicit "Convert to Style" action on an `APPROVED`
+sample. Also confirmed, by reading the actual schema comments (not assumed), that `styleName`'s apparent
+"immutable, no edit endpoint" framing in a neighbouring code comment actually describes the sibling
+`sampleType` field, not `styleName` itself — there was never a deliberate reason this field couldn't be
+edited, it simply had no edit path built. Confirmed scope with the user (edit-only, not also a "link to an
+existing Style" picker — that's a separate, bigger feature, deliberately not built this pass).
+
+- New `updateSampleRequestDesignName()` (`sample.service.ts`), `sampleRequestDesignNameSchema` (`sample
+  .schema.ts`), and `PATCH /api/v1/sampling/[id]/design-name` — line-for-line the same shape as the existing
+  `color` field's own scoped-sub-route pattern (editable at any status, no state-machine restriction,
+  audit-logged with old/new values) — the one difference being `styleName` stays required/non-blank on edit,
+  matching its own required-at-creation rule (`color` is optional).
+- UI: `SampleWorkflowPanel.tsx` gained a "Design Name: <value> Edit" inline control identical to the
+  existing Color control, placed directly above it.
+- **Known, deliberately unaddressed edge case**: the "Convert to Style" form's own Style Name draft
+  (`convertStyleName`) is only ever initialized once from `initialRequest.styleName` at page load, not kept
+  in sync with a live edit made via this new control in the same session — a user who edits Design Name and,
+  without reloading the page, immediately opens the always-visible Convert-to-Style section (only shown once
+  `APPROVED`) would still see the pre-edit name there. A page reload always shows the correct current value.
+  Flagged rather than silently left unmentioned; not fixed this pass since it's a narrow, easily-worked-around
+  case outside the user's own confirmed scope.
+- **Verified live end-to-end** on a real request (`SAM-2026-00012`): edited Design Name through the actual
+  UI, confirmed it persisted (`GET` round-trip), confirmed both the edit and a restore-to-original PATCH were
+  correctly audit-logged with old/new values, reverted the test edit. `npx tsc --noEmit`, `npx eslint`, and
+  `npx vitest run` (1419/1419, no regressions) all clean — no new unit test added, matching the sibling
+  `updateSampleRequestColor()` function's own existing (untested) coverage level.
+
 ## Recommended Stack
 
 Next.js 14+ (App Router) + React + TypeScript + Tailwind CSS (frontend); Next.js API routes/route handlers as REST API; PostgreSQL + Prisma ORM; session-based auth (Auth.js/NextAuth, DB sessions) with RBAC and optional TOTP 2FA; S3-compatible or local file storage for attachments; server-side PDF/Excel export (`exceljs`, `pdf-lib`/`@react-pdf/renderer`).

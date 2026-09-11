@@ -221,6 +221,9 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
   const [isEditingColor, setIsEditingColor] = useState(false);
   const [colorDraft, setColorDraft] = useState(initialRequest.color ?? "");
 
+  const [isEditingDesignName, setIsEditingDesignName] = useState(false);
+  const [designNameDraft, setDesignNameDraft] = useState(initialRequest.styleName ?? "");
+
   // Report/Edit Damage — small focused CRUD on one existing material line.
   const [damageModalTarget, setDamageModalTarget] = useState<SampleMaterialRow | null>(null);
   const [damageQtyDraft, setDamageQtyDraft] = useState("");
@@ -355,6 +358,17 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
         }),
       "Failed to update color."
     ).then(() => setIsEditingColor(false));
+
+  const saveDesignName = () =>
+    run(
+      () =>
+        fetch(`/api/v1/sampling/${sampleRequestId}/design-name`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ styleName: designNameDraft }),
+        }),
+      "Failed to update design name."
+    ).then(() => setIsEditingDesignName(false));
 
   const addVersion = async () => {
     const payload: Record<string, unknown> = {};
@@ -784,6 +798,50 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
           {STATUS_LABELS[request.status]}
         </span>
         {isBusy && <span className="text-xs text-zinc-400">Saving…</span>}
+      </div>
+
+      <div className="flex items-center gap-2 text-sm">
+        <span className="font-medium text-zinc-700 dark:text-zinc-200">Design Name:</span>
+        {isEditingDesignName ? (
+          <>
+            <input
+              value={designNameDraft}
+              onChange={(e) => setDesignNameDraft(e.target.value)}
+              placeholder="e.g. Floral Wrap Dress"
+              autoFocus
+              className={`${textInputClass()} max-w-[240px]`}
+            />
+            <button
+              type="button"
+              onClick={saveDesignName}
+              disabled={isBusy || !designNameDraft.trim()}
+              className="text-xs font-medium text-indigo-600 hover:text-indigo-500 disabled:opacity-50"
+            >
+              Save
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setDesignNameDraft(request.styleName ?? "");
+                setIsEditingDesignName(false);
+              }}
+              className="text-xs text-zinc-500 hover:text-zinc-400"
+            >
+              Cancel
+            </button>
+          </>
+        ) : (
+          <>
+            <span className="text-zinc-600 dark:text-zinc-300">{request.styleName || "Not specified yet"}</span>
+            <button
+              type="button"
+              onClick={() => setIsEditingDesignName(true)}
+              className="text-xs font-medium text-indigo-600 hover:text-indigo-500"
+            >
+              Edit
+            </button>
+          </>
+        )}
       </div>
 
       <div className="flex items-center gap-2 text-sm">
