@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { Modal } from "@/components/ui/Modal";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
@@ -13,7 +13,7 @@ import {
   TARGET_CUSTOMER_VALUES,
   type TargetCustomer,
 } from "@/core/ai-designer/catalogs/customer-catalog";
-import { getDesignAttributesForCategory } from "@/core/ai-designer/catalogs/design-attribute-catalog";
+import type { DesignAttributeDef } from "@/core/ai-designer/catalogs/design-attribute-catalog";
 import { DesignOptionImage } from "@/core/ai-designer/catalogs/design-icon-catalog";
 import { ENVIRONMENTS } from "@/core/ai-designer/catalogs/environment-catalog";
 import { BODY_TYPES, MODEL_GENDERS, POSES } from "@/core/ai-designer/catalogs/model-catalog";
@@ -199,6 +199,7 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
   const [generatedImages, setGeneratedImages] = useState<AiDesignerImageRow[]>([]);
   const [secondFabricSelectedAreas, setSecondFabricSelectedAreas] = useState<string[]>([]);
   const [techPack, setTechPack] = useState<TechPackData | null>(null);
+  const [designAttributes, setDesignAttributes] = useState<DesignAttributeDef[]>([]);
 
   // Which single wizard step is currently the active "tab" — purely a display
   // concern, has no bearing on the real `currentStep`/`completedSteps` wizard
@@ -262,6 +263,19 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
       .catch(() => {});
   }, [projectId]);
 
+  // Product Design's own attribute list is now a real, per-company master
+  // (Masters -> AI Design -> Product Design), not a static import — this
+  // company's own customized rows for the category once any exist, else the
+  // original built-in defaults (see ai-designer-attribute-master.service.ts).
+  useEffect(() => {
+    const category = project.productCategory;
+    if (!category) return;
+    fetch(`/api/v1/ai-designer/product-design-attributes/effective?category=${encodeURIComponent(category)}`)
+      .then((r) => r.json())
+      .then((body) => setDesignAttributes(body.data ?? []))
+      .catch(() => setDesignAttributes([]));
+  }, [project.productCategory]);
+
   // Deliberately does NOT move `expandedStep` — the panel stays on whatever
   // step the user is currently looking at after any save, even though the
   // reloaded `project.currentStep`/`completedSteps` (driving the checkmarks
@@ -314,7 +328,6 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
 
   const ageGroups = project.targetCustomer ? AGE_GROUPS_BY_CUSTOMER[project.targetCustomer] : [];
   const productCategories = project.targetCustomer ? PRODUCT_CATEGORIES_BY_CUSTOMER[project.targetCustomer] : [];
-  const designAttributes = useMemo(() => getDesignAttributesForCategory(project.productCategory ?? ""), [project.productCategory]);
   const designSelections = project.designSelectionsJson ?? {};
   const designDisplayMode = useAiDesignerDisplayMode();
 

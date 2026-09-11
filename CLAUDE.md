@@ -5722,6 +5722,58 @@ image-generation processes. Once any configured provider has real credits, re-ru
 retrying Multi-Fabric/Tech Pack from the real UI) is the only remaining step — no further code changes are
 expected to be needed.
 
+## AI Designer — Product Design attribute catalog is now a real Masters entity (2026-09-11)
+
+Direct follow-up user request: the Product Design attribute catalog (Neckline/Sleeve/Silhouette/... per
+category) was still a hardcoded, code-only constant (`design-attribute-catalog.ts`) — the one place in this
+module that wasn't editable like every other lookup in this ERP. User asked for a real master: **Masters ->
+AI Design -> Product Design**.
+
+- **Schema**: new `AiDesignerProductDesignAttribute` (`ai_product_design_attributes`, company-scoped,
+  `@@unique([companyId, categoryName, attributeKey])`). `options` is a plain `String[]` column, not a child
+  table — matches the original `DesignAttributeDef.options` shape exactly (no option ever needed its own
+  independent sortOrder/isActive).
+- **"DB overrides the static default per category, not a merge"** — `getEffectiveDesignAttributesForCategory
+  (companyId, categoryName)` returns this company's own real rows for a category the moment ANY exist for it
+  (ordered by `sortOrder`), and only falls back to the original hardcoded `PRODUCT_DESIGN_ATTRIBUTES_BY_
+  CATEGORY` entry when the company has never customized that category at all — the same "a missing row means
+  the default, no backfill needed" precedent as `SubmoduleVisibility`/`AiDesignerSettings` elsewhere in this
+  schema. Every existing company keeps working unchanged with zero seeding; an admin who adds even one
+  attribute for a category takes full ownership of that category's whole list from then on (confirmed live:
+  adding one "Sleeve Length" row to Dress made the wizard show *only* that field, not that field plus the 17
+  built-in ones — deliberate, not a bug, and worth remembering before customizing a category the wizard is
+  actively used for).
+- **RBAC reuses the existing `ai_designer` module's own actions** (view/create/edit — already fully granted
+  to `MERCHANDISER`, view-only to `MANAGEMENT`) rather than gating this under `administration` like the
+  clipart/text toggle — this is master data *for* AI Designer, which `MERCHANDISER` already owns full CRUD
+  on, not a company-wide admin setting.
+- **Wizard refactor**: `AiDesignerWorkflowPanel.tsx`'s Product Design step switched from a synchronous
+  `useMemo(() => getDesignAttributesForCategory(...))` static-import call to a real `useEffect` fetch against
+  `GET /product-design-attributes/effective?category=...` — the first place in this module where the
+  attribute list is genuinely dynamic per company rather than baked into the client bundle.
+- **UI**: a new bespoke Masters page (`/masters/ai-design`, tabbed for future extensibility — "Product
+  Design" is the only tab today) — doesn't fit `SimpleLookupManager`'s flat-field-type model (an attribute's
+  options are a whole list, not one value), so it gets its own component, matching the `CategoryTreeManager`
+  precedent that not every master is forced through the generic lookup manager. Attributes are grouped by
+  category; uncustomized known categories (from the existing `PRODUCT_CATEGORIES_BY_CUSTOMER` catalog) are
+  listed as one-click "start customizing" shortcuts. Add/Edit is a small `Modal` (Category — free text with a
+  `<datalist>` of known categories, Key/Label immutable once created, Options as a comma/newline-separated
+  textarea); the existing Active/Inactive `ToggleSwitch` + `ConfirmModal` pattern is reused verbatim for
+  deactivation.
+- **`scripts/generate-ai-designer-reference-images.ts` was deliberately NOT changed** to read from this new
+  master — it still walks the static catalog file, which remains every company's real default. A company
+  that customizes/extends a category's options won't get reference photos for its own new values from this
+  script yet; flagged here as a known, scoped-out follow-up rather than silently left unmentioned.
+- 7 new unit tests (`ai-designer-attribute-master.service.test.ts`) covering the DB-overrides-default
+  fallback (including the "unknown category, no custom rows" empty-list case), the duplicate-`(category,key)`
+  rejection, and the cross-company `NOT_FOUND` guard on update. **Verified live end-to-end**: added a real
+  "Sleeve Length" attribute for Dress through the actual Masters UI, confirmed it appeared correctly grouped
+  and Dress dropped out of the "not yet customized" list, confirmed the real AI Designer wizard (`AID-2026-
+  00005`) immediately reflected it (showing *only* Sleeve Length, not the built-in set) with zero code
+  redeploy needed, then removed the test row and confirmed the wizard correctly self-healed back to the full
+  17-field built-in default. `npx tsc --noEmit`, `npx eslint`, and `npx vitest run` (1418/1418, 7 new) all
+  clean throughout.
+
 ## Recommended Stack
 
 Next.js 14+ (App Router) + React + TypeScript + Tailwind CSS (frontend); Next.js API routes/route handlers as REST API; PostgreSQL + Prisma ORM; session-based auth (Auth.js/NextAuth, DB sessions) with RBAC and optional TOTP 2FA; S3-compatible or local file storage for attachments; server-side PDF/Excel export (`exceljs`, `pdf-lib`/`@react-pdf/renderer`).
