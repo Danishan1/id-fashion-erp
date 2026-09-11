@@ -166,6 +166,10 @@ function capabilityLabel(capability: AIProviderCapability): string {
       return "image editing";
     case "TEXT_TO_IMAGE":
       return "image generation";
+    case "MULTI_FABRIC":
+      return "multi-fabric application";
+    case "TECHNICAL_FLAT":
+      return "technical flat sketch generation";
   }
 }
 

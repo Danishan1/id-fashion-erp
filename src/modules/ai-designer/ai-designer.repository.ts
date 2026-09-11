@@ -97,3 +97,17 @@ export const AiDesignerVersionRepository = {
 
   count: (projectId: string) => prisma.aiDesignerVersion.count({ where: { projectId } }),
 };
+
+export const AiDesignerTechPackRepository = {
+  create: (data: Prisma.AiDesignerTechPackUncheckedCreateInput) => prisma.aiDesignerTechPack.create({ data }),
+
+  markSuccess: (id: string, data: { flatSketchImageAttachmentId: string; measurementsJson: Prisma.InputJsonValue; bomJson: Prisma.InputJsonValue }) =>
+    prisma.aiDesignerTechPack.update({ where: { id }, data: { status: "SUCCESS", ...data } }),
+
+  markFailed: (id: string, errorMessage: string) =>
+    prisma.aiDesignerTechPack.update({ where: { id }, data: { status: "FAILED", errorMessage } }),
+
+  /** Only the most recent attempt is ever surfaced in the UI — older attempts stay in the database for audit (append-only, same convention as every other AI Designer run-log table). */
+  findLatestByProjectId: (projectId: string) =>
+    prisma.aiDesignerTechPack.findFirst({ where: { projectId }, orderBy: { createdAt: "desc" } }),
+};

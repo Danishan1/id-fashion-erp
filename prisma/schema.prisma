@@ -128,6 +128,8 @@ model Company {
   aiDesignerGenerations               AiDesignerGeneration[]
   aiDesignerImages                    AiDesignerImage[]
   aiDesignerVersions                  AiDesignerVersion[]
+  aiDesignerSettings                  AiDesignerSettings?
+  aiDesignerTechPacks                 AiDesignerTechPack[]
   aiProviders                         AIProvider[]
   aiProviderUsage                     AIProviderUsage[]
   aiFailoverLogs                      AIFailoverLog[]
@@ -340,6 +342,7 @@ model User {
   aiDesignerGenerationsCreated               AiDesignerGeneration[]               @relation("AiDesignerGenerationCreatedBy")
   aiDesignerImagesCreated                    AiDesignerImage[]                    @relation("AiDesignerImageCreatedBy")
   aiDesignerVersionsCreated                  AiDesignerVersion[]                  @relation("AiDesignerVersionCreatedBy")
+  aiDesignerTechPacksCreated                 AiDesignerTechPack[]                 @relation("AiDesignerTechPackCreatedBy")
   aiProvidersCreated                         AIProvider[]                         @relation("AIProviderCreatedBy")
   aiProviderUsageAsUser                      AIProviderUsage[]                    @relation("AIProviderUsageUser")
   aiGarmentFabricAnalysesCreated             AiGarmentFabricAnalysis[]            @relation("AiGarmentFabricAnalysisCreatedBy")
@@ -7529,6 +7532,16 @@ model AiDesignerProject {
   environmentLabel    String? @map("environment_label")
   isCustomEnvironment Boolean @default(false) @map("is_custom_environment")
 
+  // Step 9b -- Multi-Fabric (optional, only usable once a design already
+  // exists -- applies a second fabric photo onto specific area(s) of the
+  // currently generated garment image, e.g. yoke/sleeves/borders/contrast
+  // panels). secondFabricApplyAreas is a plain String[] validated in Zod
+  // against a small fixed const list (SECOND_FABRIC_APPLY_AREAS), not a DB
+  // enum -- this is a UI-facing tag list, not a value anything else in the
+  // schema needs to reference or constrain at the database level.
+  secondFabricImageAttachmentId String?  @map("second_fabric_image_attachment_id")
+  secondFabricApplyAreas        String[] @map("second_fabric_apply_areas")
+
   // Set once version 1 exists (nullable-then-set-later, same precedent as
   // AiGarmentProject.selectedDesignDirectionId elsewhere in this schema).
   currentVersionId String? @unique @map("current_version_id") @db.Uuid
@@ -7548,6 +7561,7 @@ model AiDesignerProject {
   images        AiDesignerImage[]
   versions      AiDesignerVersion[]    @relation("AiDesignerVersionsOfProject")
   providerUsage AIProviderUsage[]
+  techPacks     AiDesignerTechPack[]
 
   @@unique([companyId, projectNumber])
   @@map("ai_projects")
@@ -7666,6 +7680,66 @@ model AiDesignerVersion {
   @@map("ai_versions")
 }
 
+// Tech Pack (2026-09-11) -- a new, isolated AI Designer feature: one combined
+// action producing a graded measurement chart, a draft BOM, and a technical
+// flat sketch from the project's current generated design. Genuinely
+// isolated from AI Garment Flow's own, much richer equivalent processes
+// (Technical Specification/BOM Suggestion/Technical Development) -- same
+// reasoning as everywhere else in this module: this reuses only the
+// shared, zero-business-logic AI provider infrastructure
+// (requestStructuredTextOutput, ImageGenerationProvider.generateTechnicalFlat),
+// never AI Garment Flow's own schema, prompts, or service code. Deliberately
+// simpler than that module's own version: graded across a small fixed set of
+// standard sizes (not the company's real Size master), and the BOM is purely
+// advisory free-form JSON -- AI Designer has no Style-graduation mechanic at
+// all for a real BOM to attach to. Append-only (one row per attempt, mirrors
+// every other AI Designer run-log table) -- only the most recent is shown in
+// the UI, older attempts stay in the database for audit.
+model AiDesignerTechPack {
+  id                          String              @id @default(uuid()) @db.Uuid
+  companyId                   String              @map("company_id") @db.Uuid
+  projectId                   String              @map("project_id") @db.Uuid
+  status                      AiDesignerRunStatus @default(IN_PROGRESS)
+  flatSketchImageAttachmentId String?             @map("flat_sketch_image_attachment_id")
+  measurementsJson            Json?               @map("measurements_json")
+  bomJson                     Json?               @map("bom_json")
+  errorMessage                String?             @map("error_message")
+
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  company   Company           @relation(fields: [companyId], references: [id])
+  project   AiDesignerProject @relation(fields: [projectId], references: [id])
+  createdBy User              @relation("AiDesignerTechPackCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@map("ai_tech_packs")
+}
+
+enum AiDesignerAttributeDisplayMode {
+  CLIPART
+  TEXT
+}
+
+// Company-wide, Super-Admin-controlled setting: whether the Product Design
+// step's attribute pickers (Neckline/Sleeve/Silhouette/...) render as clipart
+// icons (the original, default behavior) or plain text buttons. A missing
+// row means CLIPART -- no backfill needed. Deliberately a single flat row
+// per company (not a per-submodule map like SubmoduleVisibility, since
+// there is exactly one thing this toggle controls today) and deliberately
+// no lock/has-data logic (unlike SubmoduleVisibility, nothing about this
+// choice becomes unsafe once real project data exists).
+model AiDesignerSettings {
+  id                       String                         @id @default(uuid()) @db.Uuid
+  companyId                String                         @unique @map("company_id") @db.Uuid
+  productDesignDisplayMode AiDesignerAttributeDisplayMode @default(CLIPART) @map("product_design_display_mode")
+  createdAt                DateTime                       @default(now()) @map("created_at")
+  updatedAt                DateTime                       @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@map("ai_designer_settings")
+}
+
 // -----------------------------------------------------------------------------
 // AI Provider & API Management + Automatic Failover (2026-09-10)
 //
@@ -7719,6 +7793,19 @@ enum AIProviderCapability {
   TEXT_TO_IMAGE
   IMAGE_EDIT
   FABRIC_REFERENCE
+  // Applies a SECOND fabric image onto specific area(s) of an already-
+  // generated design (Multi-Fabric) -- routed to ImageGenerationProvider's
+  // own `applyFabric` (a genuine two-image composition), distinct from
+  // IMAGE_EDIT's single-image `generateVariation` -- a provider capable of
+  // one is not necessarily capable of the other (confirmed: the Cloudflare
+  // provider implements generateVariation but deliberately omits
+  // applyFabric).
+  MULTI_FABRIC
+  // Regenerates the current design as a graded technical flat / CAD-style
+  // line drawing (AI Designer's own Tech Pack feature) -- routed to
+  // `generateTechnicalFlat`, a single-base-image transform distinct in kind
+  // from IMAGE_EDIT's "change one named aspect" semantics.
+  TECHNICAL_FLAT
 }
 
 /**

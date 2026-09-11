@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const PROVIDER_TYPE_VALUES = ["OPENAI", "GEMINI", "CLOUDFLARE", "QWEN_LOCAL"] as const;
-export const CAPABILITY_VALUES = ["TEXT_TO_IMAGE", "IMAGE_EDIT", "FABRIC_REFERENCE"] as const;
+export const CAPABILITY_VALUES = ["TEXT_TO_IMAGE", "IMAGE_EDIT", "FABRIC_REFERENCE", "MULTI_FABRIC", "TECHNICAL_FLAT"] as const;
 
 export const createAIProviderSchema = z.object({
   name: z.string().min(1, "Name is required").max(100),
