@@ -2681,6 +2681,11 @@ model SalesOrder {
   originatingDealId String?           @map("originating_deal_id") @db.Uuid
   orderDate         DateTime          @map("order_date") @db.Date
   requiredShipDate  DateTime?         @map("required_ship_date") @db.Date
+  // The buyer's own PO reference number, free text — this app's real
+  // ORD-2026-00001 numbering is unrelated and unaffected; a buyer's PO
+  // document (the file itself) attaches via the existing generic Attachment
+  // mechanism (RelatedModule.SALES_ORDER), not a dedicated column here.
+  customerPoNumber  String?           @map("customer_po_number")
   status            SalesOrderStatus  @default(DRAFT)
   statusBeforeHold  SalesOrderStatus? @map("status_before_hold")
   // Frozen at creation (no live FX picker — multi-currency UI is deferred

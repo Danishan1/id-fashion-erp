@@ -30,6 +30,31 @@ interface LineItem {
   remarks: string;
 }
 
+interface OrderPreviewMaterial {
+  materialId: string;
+  materialName: string;
+  materialCode: string;
+  uomId: string;
+  uomCode: string;
+  quantityPerUnit: number;
+  neededQuantity: number;
+  lineCost: number | null;
+}
+
+interface OrderPreviewItem {
+  salesOrderItemId: string;
+  styleName: string;
+  sampleStyleName: string | null;
+  orderedQuantity: number;
+  hasApprovedBom: boolean;
+  materials: OrderPreviewMaterial[];
+}
+
+interface OrderPreview {
+  items: OrderPreviewItem[];
+  grandTotalMaterialCost: number | null;
+}
+
 const TODAY = todayIsoDate();
 const REQUEST_TYPES = [
   { value: "PRODUCTION_REQUIREMENT", label: "Production Requirement" },
@@ -101,6 +126,16 @@ export function MaterialRequestForm({ initialRequest }: { initialRequest?: Initi
   const [salesOrderId, setSalesOrderId] = useState(initialRequest?.salesOrderId ?? "");
   const [bomId] = useState(initialRequest?.bomId ?? "");
   const [salesOrders, setSalesOrders] = useState<Array<{ id: string; orderNumber: string; customer: { name: string } | null }>>([]);
+  // "Add items from the order's BOM" preview — self-fetched whenever an
+  // (only-on-create) Sales Order is picked, per the user's own explicit
+  // rule: a style line with no linked sample uses the Style's own approved
+  // BOM, a line with a linked sample uses that sample's own materials
+  // instead (getMaterialRequirementForOrderLine already resolves this).
+  // Nothing here is submitted automatically — Add Selected Items below
+  // turns a checked/edited row into a normal, freely editable request line.
+  const [orderPreview, setOrderPreview] = useState<OrderPreview | null>(null);
+  const [orderPreviewError, setOrderPreviewError] = useState<string | null>(null);
+  const [previewSelections, setPreviewSelections] = useState<Record<string, { checked: boolean; qty: string }>>({});
 
   const [originalMaterialRequestId, setOriginalMaterialRequestId] = useState(initialRequest?.originalMaterialRequestId ?? "");
   const [originalRequestSearch, setOriginalRequestSearch] = useState(initialRequest?.originalMaterialRequestNumber ?? "");
@@ -165,6 +200,34 @@ export function MaterialRequestForm({ initialRequest }: { initialRequest?: Initi
       .then((body) => setSalesOrders(body.data ?? []));
   }, []);
 
+  useEffect(() => {
+    if (!salesOrderId) {
+      setOrderPreview(null);
+      setOrderPreviewError(null);
+      setPreviewSelections({});
+      return;
+    }
+    fetch(`/api/v1/sales-orders/${salesOrderId}/material-preview`)
+      .then(async (res) => {
+        const body = await res.json();
+        if (!res.ok) throw new Error(body?.error?.message ?? "Failed to load this order's material breakdown.");
+        const data: OrderPreview = body.data;
+        setOrderPreview(data);
+        setOrderPreviewError(null);
+        const initial: Record<string, { checked: boolean; qty: string }> = {};
+        data.items.forEach((item) => {
+          item.materials.forEach((m) => {
+            initial[`${item.salesOrderItemId}:${m.materialId}`] = { checked: true, qty: String(m.neededQuantity) };
+          });
+        });
+        setPreviewSelections(initial);
+      })
+      .catch((err) => {
+        setOrderPreview(null);
+        setOrderPreviewError((err as Error).message);
+      });
+  }, [salesOrderId]);
+
   const updateLine = (index: number, patch: Partial<LineItem>) => {
     setLines((prev) => prev.map((line, i) => (i === index ? { ...line, ...patch } : line)));
   };
@@ -176,6 +239,39 @@ export function MaterialRequestForm({ initialRequest }: { initialRequest?: Initi
 
   const addLine = () => setLines((prev) => [...prev, emptyLine()]);
   const removeLine = (index: number) => setLines((prev) => prev.filter((_, i) => i !== index));
+
+  // Turns every checked/edited preview row into a normal request line —
+  // after this, they're indistinguishable from a manually-typed line: the
+  // user can still edit the quantity, remove them, or add more by hand.
+  // Replaces the form's still-untouched starting blank line rather than
+  // leaving it dangling (its own `required` fields would otherwise block
+  // submission), but never discards anything the user has already typed.
+  const addPreviewMaterialsToRequest = () => {
+    if (!orderPreview) return;
+    const newLines: LineItem[] = [];
+    orderPreview.items.forEach((item) => {
+      item.materials.forEach((m) => {
+        const sel = previewSelections[`${item.salesOrderItemId}:${m.materialId}`];
+        if (!sel?.checked) return;
+        const qty = Number(sel.qty);
+        if (!qty || qty <= 0) return;
+        newLines.push({
+          materialId: m.materialId,
+          colorId: "",
+          dyeId: "",
+          uomId: m.uomId,
+          requestedQuantity: sel.qty,
+          damageReason: "",
+          remarks: item.sampleStyleName ? `From Design: ${item.sampleStyleName}` : `From Style: ${item.styleName}`,
+        });
+      });
+    });
+    if (newLines.length === 0) return;
+    setLines((prev) => {
+      const isPristine = prev.length === 1 && !prev[0].materialId && !prev[0].requestedQuantity;
+      return isPristine ? newLines : [...prev, ...newLines];
+    });
+  };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -262,6 +358,66 @@ export function MaterialRequestForm({ initialRequest }: { initialRequest?: Initi
             ))}
           </select>
         </FormField>
+      )}
+
+      {!initialRequest && salesOrderId && (
+        <div className="space-y-3 rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
+          <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Materials from this Order&apos;s BOM</p>
+          {orderPreviewError && <p className="text-xs text-red-600 dark:text-red-400">{orderPreviewError}</p>}
+          {orderPreview && orderPreview.items.length === 0 && (
+            <p className="text-xs text-zinc-500">This order has no style lines.</p>
+          )}
+          {orderPreview?.items.map((item) => (
+            <div key={item.salesOrderItemId} className="space-y-1.5">
+              <p className="text-xs font-medium text-zinc-700 dark:text-zinc-200">
+                {item.sampleStyleName ? `Design Name: ${item.sampleStyleName}` : item.styleName} · Ordered: {item.orderedQuantity}
+              </p>
+              {!item.hasApprovedBom && (
+                <p className="text-xs text-zinc-500">No approved BOM or sample materials recorded for this style yet.</p>
+              )}
+              {item.materials.map((m) => {
+                const key = `${item.salesOrderItemId}:${m.materialId}`;
+                const sel = previewSelections[key] ?? { checked: true, qty: String(m.neededQuantity) };
+                return (
+                  <div key={key} className="flex flex-wrap items-center gap-2 text-xs">
+                    <input
+                      type="checkbox"
+                      checked={sel.checked}
+                      onChange={(e) => setPreviewSelections((prev) => ({ ...prev, [key]: { ...sel, checked: e.target.checked } }))}
+                    />
+                    <span className="text-zinc-700 dark:text-zinc-200">
+                      {m.materialName} — {item.orderedQuantity} × {m.quantityPerUnit} {m.uomCode} =
+                    </span>
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.0001"
+                      value={sel.qty}
+                      onChange={(e) => setPreviewSelections((prev) => ({ ...prev, [key]: { ...sel, qty: e.target.value } }))}
+                      className="w-24 rounded-md border border-zinc-300 px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-800"
+                    />
+                    <span className="text-zinc-500">{m.uomCode}</span>
+                    {m.lineCost !== null && <span className="text-zinc-400">(~{m.lineCost})</span>}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+          {orderPreview && orderPreview.grandTotalMaterialCost !== null && (
+            <p className="text-xs font-medium text-zinc-900 dark:text-zinc-50">
+              Estimated Total Material Cost: {orderPreview.grandTotalMaterialCost}
+            </p>
+          )}
+          {orderPreview?.items.some((i) => i.materials.length > 0) && (
+            <button
+              type="button"
+              onClick={addPreviewMaterialsToRequest}
+              className="rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+            >
+              Add Selected Items to Request
+            </button>
+          )}
+        </div>
       )}
 
       {requestType === "DAMAGE_REPLACEMENT" && (

@@ -23,6 +23,7 @@ export default async function EditSalesOrderPage({ params }: { params: Promise<{
     buyerId: order.buyerId,
     orderDate: order.orderDate.toISOString(),
     requiredShipDate: order.requiredShipDate ? order.requiredShipDate.toISOString() : null,
+    customerPoNumber: order.customerPoNumber,
     items: order.items.map((item) => ({
       productId: item.productId,
       sampleRequestId: item.sampleRequestId,

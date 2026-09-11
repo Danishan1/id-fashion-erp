@@ -78,6 +78,7 @@ export interface InitialOrder {
   buyerId: string | null;
   orderDate: string;
   requiredShipDate: string | null;
+  customerPoNumber?: string | null;
   items: InitialOrderItem[];
 }
 
@@ -97,6 +98,7 @@ export function SalesOrderForm({
   const [buyerId, setBuyerId] = useState(initialOrder?.buyerId ?? "");
   const [orderDate, setOrderDate] = useState(initialOrder ? initialOrder.orderDate.slice(0, 10) : TODAY);
   const [requiredShipDate, setRequiredShipDate] = useState(initialOrder?.requiredShipDate?.slice(0, 10) ?? "");
+  const [customerPoNumber, setCustomerPoNumber] = useState(initialOrder?.customerPoNumber ?? "");
   const [customers, setCustomers] = useState<Option[]>([]);
   const [buyers, setBuyers] = useState<Option[]>([]);
   const [styles, setStyles] = useState<StyleOption[]>([]);
@@ -275,6 +277,7 @@ export function SalesOrderForm({
         buyerId: buyerId || undefined,
         orderDate,
         requiredShipDate: requiredShipDate || undefined,
+        customerPoNumber: customerPoNumber || undefined,
         originatingDealId: !initialOrder && originatingDealId ? originatingDealId : undefined,
         items: payloadItems,
         overrideReason: initialOrder && useOverride ? overrideReason : undefined,
@@ -376,6 +379,23 @@ export function SalesOrderForm({
           />
         </FormField>
       </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <FormField label="Customer PO Number (optional)" htmlFor="customerPoNumber">
+          <input
+            id="customerPoNumber"
+            value={customerPoNumber}
+            onChange={(e) => setCustomerPoNumber(e.target.value)}
+            placeholder="Buyer's own purchase order reference"
+            className={textInputClass()}
+          />
+        </FormField>
+      </div>
+      {!initialOrder && (
+        <p className="text-xs text-zinc-500 dark:text-zinc-400">
+          You can upload the buyer&apos;s PO document as an attachment from the order&apos;s detail page once it&apos;s created.
+        </p>
+      )}
 
       <div className="space-y-4">
         <div className="flex items-center justify-between">

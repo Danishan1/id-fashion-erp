@@ -24,6 +24,7 @@ export default async function SalesOrderDetailPage({ params }: { params: Promise
             {order.buyer ? ` — ${order.buyer.name}` : ""} · Requested by {order.requestedBy.fullName} on{" "}
             {formatDate(order.orderDate)}
             {order.requiredShipDate ? ` · Required ship: ${formatDate(order.requiredShipDate)}` : ""}
+            {order.customerPoNumber ? ` · Customer PO: ${order.customerPoNumber}` : ""}
           </p>
         </div>
         <div className="flex flex-col items-end gap-2">
