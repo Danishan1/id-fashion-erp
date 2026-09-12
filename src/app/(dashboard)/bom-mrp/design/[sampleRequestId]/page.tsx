@@ -23,6 +23,7 @@ export default async function DesignBomPage({ params }: { params: Promise<{ samp
   if (!request) notFound();
 
   const currentVersion = request.versions[0] ?? null;
+  const canEditMaterials = await PermissionService.can(session!.user.id, "sampling", "edit");
   const canViewStyleBom = request.productId
     ? await PermissionService.can(session!.user.id, "bom_mrp", "view")
     : false;
@@ -85,6 +86,7 @@ export default async function DesignBomPage({ params }: { params: Promise<{ samp
         productId={request.productId && canViewStyleBom ? request.productId : null}
         styleLabel={styleName ? `${styleName} (${styleCode})` : null}
         materials={JSON.parse(JSON.stringify(currentVersion?.materials ?? []))}
+        canEditMaterials={canEditMaterials}
         styleBomVersions={JSON.parse(JSON.stringify(styleBomVersions))}
         styleBomCurrentVersionNumber={styleBomCurrentVersionNumber}
         canApproveBom={canApproveBom}
