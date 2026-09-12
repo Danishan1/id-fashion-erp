@@ -5957,6 +5957,84 @@ Three more direct refinements, same day, on the inline BOM/MRP editing above.
   both times, not just the UI's own re-render. Zero console errors. `npx tsc --noEmit`, `npx eslint`, and
   `npx vitest run` (1427/1427, no regressions) all clean.
 
+## Material Request Issue — color/shade roll picker for fabric materials (2026-09-12)
+
+User-reported real workflow gap on `/material-requests/[id]` (`http://localhost:3000/material-requests/...`):
+Line Items' "Available Stock" only shows a value when the requested Material AND Color/Shade both match a
+real stock row exactly — but often the exact shade isn't recorded on the request, and the actual physical
+stock for that material sits in several different colors/rolls. Asked (per the user's own "phle btao abhi
+code mt kro" — explain first, don't code yet) to explain the options before building anything: the
+explanation walked through why `StockBalance` has no color dimension at all (it's the flat, material+
+warehouse-level total this whole ledger design already documents) and that the only place real per-color
+stock genuinely exists in this schema is `FabricRoll` (roll-level, tracks `dyeId`/shade, FABRIC materials
+only) — landing on **Option B**: show the color-wise breakdown and let the warehouse person pick which one
+to issue. The user then confirmed **B**, with one addition of their own: "issue time me select kre konsa
+color de rha hai" — the color/shade choice belongs on the Issue action itself, not just as a display.
+
+- **`FabricRollRepository.findAvailableForMaterial(companyId, productId, warehouseId)`** — every `IN_STOCK`,
+  `remainingQuantity > 0` roll for that material at that specific warehouse (joined through
+  `goodsReceiptItem.productId`/`.warehouseId`, the same relation `FabricRoll` has always had since Phase 6),
+  ordered by dye name then roll number. `getAvailableRollsForLine(actor, lineId)` (new export in
+  `material-request.service.ts`) resolves the line's own material/warehouse first (company-scoped via the
+  existing `findWithRequestOwner`), then calls it — backing a new `GET /api/v1/material-requests/lines/
+  [lineId]/available-rolls` route (same `inventory`/`edit` gate as the Issue action itself, since it's only
+  ever fetched right before issuing).
+- **`issueMaterialRequestLine()` gained a 5th, optional `fabricRollId` param.** When supplied, the function
+  validates the roll (`findByIdWithContext` — company/material/warehouse/`IN_STOCK` all re-checked, never
+  trusted from the client) and uses **that roll's own `remainingQuantity`** as the issue-quantity cap instead
+  of the flat `getLineAvailableStock()` figure — the material fix the user actually asked for, since two
+  different physical rolls of the same material can have very different remaining amounts. When no
+  `fabricRollId` is given (a non-fabric material, or a fabric material with no roll-level stock recorded),
+  behavior is completely unchanged — the existing flat-stock path is the fallback, not replaced.
+- **A genuine pre-existing bug, found while building this, not introduced by it**: `issueMaterialRequestLine()`
+  had never once touched `FabricRoll.remainingQuantity` at all since the day this whole module was built —
+  only the flat `StockBalance` was ever decremented on issue. Every fabric roll's own "remaining" number has
+  therefore been silently drifting out of sync with the material's real total stock for as long as Material
+  Request issuance has existed. Fixed as part of this same change: passing a `fabricRollId` now also calls
+  `FabricRollRepository.guardedDecrementRemaining(tx, roll.id, baseQuantity)` inside the same transaction as
+  the ledger write (`recordInventoryTransaction(..., { fabricRollId: roll.id })`, which already accepted this
+  field for traceability but had no caller ever supplying it) — the same atomic guarded-`updateMany` idiom
+  every other accumulator in this codebase uses, with its own dedicated guard-failure error rather than
+  silently under/over-decrementing on a lost race.
+- **Issue button is no longer disabled just because flat Available Stock reads 0** — `line.availableStockQuantity
+  <= 0` used to disable Issue outright for *any* material, which was actively wrong for a FABRIC material
+  whose exact requested shade has zero stock but a different roll of the same material genuinely does. The
+  disable condition is now `line.material.materialCategory !== "FABRIC" && line.availableStockQuantity <= 0`
+  — a non-fabric material keeps the exact old behavior; a fabric material always opens the modal, which then
+  either shows the real roll picker or an honest "no roll-level stock recorded for this material at this
+  warehouse — this will issue against the general stock total instead" fallback message when the material
+  genuinely has no rolls at that specific warehouse (confirmed live on a real request where the material's
+  only real `FabricRoll` rows exist at a *different* warehouse than the one being issued from).
+- **UI** (`MaterialRequestWorkflowPanel.tsx`): the Issue modal fetches `available-rolls` only for FABRIC
+  lines, computes `isFabric`/`selectedRoll`/`effectiveAvailable`/`cap`/`mustPickRoll` via a small IIFE, and
+  renders a "Color / Shade" `<select>` (`{dye.name} ({dye.pantone}) — {remainingQuantity} {uom} available`
+  per roll) whenever real rolls exist. The Issue Quantity input is `disabled={mustPickRoll}` (a fabric line
+  with real rolls can't be issued before a specific one is chosen) with its `max` following the selected
+  roll's own remaining quantity, not the flat total.
+- 7 new unit tests (`material-request.service.test.ts`) covering: `issueMaterialRequestLine` with a roll
+  selected (uses the roll's own remaining as the cap, decrements the specific roll, passes `fabricRollId`
+  through to the ledger), a roll belonging to a different company/material/warehouse each correctly rejected,
+  an already-`CANCELLED` roll rejected, the guard-failure path on a lost race, and `getAvailableRollsForLine`
+  scoping correctly by warehouse and rejecting a cross-company line.
+- **Verified live end-to-end** through the real UI and direct API calls together, against real seeded data
+  (not fixtures): opened Issue on `MR-2026-00009`'s Cotton Cambric line at "Dharam Colony" (0 Mtr flat
+  Available Stock) and confirmed the Issue button was now correctly enabled with the honest "no roll-level
+  stock at this warehouse, will issue against the general total (0 Mtr available)" message; opened the same
+  material's line on `MR-2026-00007` at "E-52 Palam Vihar" (where it genuinely has 4 real `FabricRoll` rows —
+  hand-verified via a direct query: "102"/Classic Blue/50, "103"/Lighter Blue/50, "121221"/no dye/65,
+  "121222"/no dye/60, summing to the flat 225 Available Stock shown) and confirmed the picker listed all 4
+  correctly; selected "Classic Blue (19-4052 TCX) — 50 Mtr available", issued 10 Mtr, and confirmed via a
+  follow-up API call that **only** that roll's `remainingQuantity` dropped 50→40 (the other 3 rolls
+  untouched — the exact per-roll-not-blanket decrement this fix exists for), `MaterialRequestItem
+  .issuedQuantity` incremented to 10/`remainingQuantity` correctly 70, and available stock decremented
+  225→215. Zero console/server errors throughout. `npx tsc --noEmit`, `npx eslint .` (0 errors), and
+  `npx vitest run` (1434/1434) all clean.
+- **Not built this pass** (out of scope for the confirmed ask): color/shade selection on any other module's
+  Issue-shaped action (Job Work Order's own material issuance, Stock Movement) — this was scoped specifically
+  to Material Request's own Issue action; a per-color reservation/allocation mechanism (the picker shows a
+  live snapshot at click time, not a held reservation, matching this project's own already-accepted "manual,
+  low-frequency action, a pre-check is enough" tradeoff used everywhere else in Inventory).
+
 ## Recommended Stack
 
 Next.js 14+ (App Router) + React + TypeScript + Tailwind CSS (frontend); Next.js API routes/route handlers as REST API; PostgreSQL + Prisma ORM; session-based auth (Auth.js/NextAuth, DB sessions) with RBAC and optional TOTP 2FA; S3-compatible or local file storage for attachments; server-side PDF/Excel export (`exceljs`, `pdf-lib`/`@react-pdf/renderer`).
