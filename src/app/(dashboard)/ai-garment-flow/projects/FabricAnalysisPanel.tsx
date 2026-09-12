@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { FABRIC_FEATURE_REGISTRY, type FabricAnalysisSection } from "@/core/ai/fabric-analysis/feature-registry";
 import type { AnalysisConfidence } from "./ConfidenceBadge";
 
@@ -81,8 +81,6 @@ const SECTION_TITLES: Record<FabricAnalysisSection, string> = {
   PERFORMANCE: "Performance Estimates",
 };
 
-type SortColumn = "feature" | "confidence";
-
 /**
  * Mirrors ReferenceAnalysisPanel.tsx's exact shape — the same AI-analyse
  * button / status badge / per-observation edit-and-reset / Approve flow,
@@ -91,12 +89,18 @@ type SortColumn = "feature" | "confidence";
  * explicit user feedback) instead of Process 1's 36 garment-construction
  * fields, and with no "suggested garment types" section — that decision
  * belongs to the separate Product Suitability process, not this one.
+ *
+ * Default view is a clean name/value summary (no confidence badges, no
+ * separate duplicate table) — the full per-observation confidence/edit/reset
+ * detail is still there, just tucked behind a collapsed "Edit details"
+ * disclosure for corrections, rather than shown up front.
  */
 export function FabricAnalysisPanel({ projectId, hasFabricSwatchImage }: { projectId: string; hasFabricSwatchImage: boolean }) {
   const [analysis, setAnalysis] = useState<FabricAnalysis | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [analysing, setAnalysing] = useState(false);
   const [approving, setApproving] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
 
   async function load() {
     const res = await fetch(`/api/v1/ai-garment-projects/${projectId}/fabric-analysis`);
@@ -183,36 +187,68 @@ export function FabricAnalysisPanel({ projectId, hasFabricSwatchImage }: { proje
             </p>
           )}
 
-          {SECTION_ORDER.map((section) => (
-            <AnalysisSection key={section} title={SECTION_TITLES[section]}>
-              <ObservationGrid analysis={analysis} section={section} onChanged={load} setError={setError} />
+          <FabricSummaryCard analysis={analysis} />
+
+          {analysis.fabricSummary && (
+            <AnalysisSection title="Fabric Summary">
+              <p className="text-sm italic text-stone-700 dark:text-stone-300">{analysis.fabricSummary}</p>
             </AnalysisSection>
-          ))}
+          )}
 
-          <AnalysisSection title="Fabric Summary">
-            <p className="text-sm italic text-stone-700 dark:text-stone-300">{analysis.fabricSummary}</p>
-          </AnalysisSection>
-
-          <AnalysisSection title="Missing Information">
-            {analysis.missingInformation.length === 0 ? (
-              <p className="text-sm text-stone-500 dark:text-stone-400">None noted.</p>
-            ) : (
+          {analysis.missingInformation.length > 0 && (
+            <AnalysisSection title="Missing Information">
               <ul className="list-inside list-disc text-sm text-stone-600 dark:text-stone-300">
                 {analysis.missingInformation.map((m, i) => (
                   <li key={i}>{m}</li>
                 ))}
               </ul>
-            )}
-          </AnalysisSection>
+            </AnalysisSection>
+          )}
 
-          <AnalysisSection title="Fabric Analysis">
-            <AnalysisCard observations={analysis.observations} />
-          </AnalysisSection>
+          <div className="rounded-xl border border-stone-200 dark:border-stone-700">
+            <button
+              type="button"
+              onClick={() => setEditOpen((v) => !v)}
+              className="flex w-full items-center justify-between px-4 py-3 text-left text-sm font-medium text-stone-700 dark:text-stone-200"
+            >
+              <span>Edit details</span>
+              <span className="text-stone-400">{editOpen ? "▲" : "▼"}</span>
+            </button>
+            {editOpen && (
+              <div className="space-y-4 border-t border-stone-200 p-4 dark:border-stone-700">
+                {SECTION_ORDER.map((section) => (
+                  <AnalysisSection key={section} title={SECTION_TITLES[section]}>
+                    <ObservationGrid analysis={analysis} section={section} onChanged={load} setError={setError} />
+                  </AnalysisSection>
+                ))}
+              </div>
+            )}
+          </div>
 
           <ApprovalControls analysis={analysis} approving={approving} onApprove={approve} />
         </>
       )}
     </div>
+  );
+}
+
+function FabricSummaryCard({ analysis }: { analysis: FabricAnalysis }) {
+  const rows = FABRIC_FEATURE_REGISTRY.map((feature) => ({
+    feature,
+    observation: analysis.observations.find((o) => o.featureKey === feature.key),
+  })).filter((r) => r.observation);
+
+  return (
+    <section className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm dark:border-stone-700 dark:bg-stone-900/40">
+      <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
+        {rows.map(({ feature, observation }) => (
+          <div key={feature.key}>
+            <dt className="text-xs font-medium text-stone-500 dark:text-stone-400">{feature.label}</dt>
+            <dd className="text-sm text-stone-900 dark:text-stone-50">{observation!.approvedObservation}</dd>
+          </div>
+        ))}
+      </dl>
+    </section>
   );
 }
 
@@ -374,67 +410,6 @@ function EditableObservation({
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-function AnalysisCard({ observations }: { observations: FabricObservation[] }) {
-  const [sortColumn, setSortColumn] = useState<SortColumn>("feature");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
-
-  const rows = useMemo(() => {
-    const withLabels = observations.map((o) => ({
-      ...o,
-      label: FABRIC_FEATURE_REGISTRY.find((f) => f.key === o.featureKey)?.label ?? o.featureKey,
-      order: FABRIC_FEATURE_REGISTRY.findIndex((f) => f.key === o.featureKey),
-    }));
-    const sorted = [...withLabels].sort((a, b) => {
-      if (sortColumn === "confidence") return a.aiConfidence.localeCompare(b.aiConfidence);
-      return a.order - b.order;
-    });
-    return sortDir === "asc" ? sorted : sorted.reverse();
-  }, [observations, sortColumn, sortDir]);
-
-  function toggleSort(column: SortColumn) {
-    if (sortColumn === column) {
-      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    } else {
-      setSortColumn(column);
-      setSortDir("asc");
-    }
-  }
-
-  return (
-    <div className="overflow-x-auto">
-      <table className="min-w-full divide-y divide-stone-200 text-sm dark:divide-stone-800">
-        <thead>
-          <tr>
-            <th className="cursor-pointer px-3 py-2 text-left font-medium text-stone-500 dark:text-stone-400" onClick={() => toggleSort("feature")}>
-              Feature {sortColumn === "feature" && (sortDir === "asc" ? "▲" : "▼")}
-            </th>
-            <th className="px-3 py-2 text-left font-medium text-stone-500 dark:text-stone-400">Observation</th>
-            <th className="cursor-pointer px-3 py-2 text-left font-medium text-stone-500 dark:text-stone-400" onClick={() => toggleSort("confidence")}>
-              Confidence {sortColumn === "confidence" && (sortDir === "asc" ? "▲" : "▼")}
-            </th>
-            <th className="px-3 py-2 text-left font-medium text-stone-500 dark:text-stone-400">Manufacturing Relevance</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-stone-100 dark:divide-stone-800">
-          {rows.map((row) => (
-            <tr key={row.id}>
-              <td className="px-3 py-2 font-medium text-stone-900 dark:text-stone-50">{row.label}</td>
-              <td className="px-3 py-2 text-stone-700 dark:text-stone-300">
-                {row.approvedObservation}
-                {row.userEdited && <span className="ml-1 text-xs text-amber-700 dark:text-amber-400">(edited)</span>}
-              </td>
-              <td className="px-3 py-2">
-                <FabricConfidenceBadge confidence={row.aiConfidence} />
-              </td>
-              <td className="px-3 py-2 text-stone-600 dark:text-stone-400">{row.aiManufacturingRelevance}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
     </div>
   );
 }
