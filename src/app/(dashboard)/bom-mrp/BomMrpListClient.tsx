@@ -4,10 +4,11 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { DataTable } from "@/components/ui/DataTable";
+import { Modal } from "@/components/ui/Modal";
 import { STATUS_LABELS, STATUS_BADGE_CLASS } from "../sampling/statusLabels";
 import { BomVersionPanel } from "./[productId]/BomVersionPanel";
 import { BomEditor } from "./BomEditor";
-import { DesignBomTabs } from "./design/[sampleRequestId]/DesignBomTabs";
+import { DesignBomMaterialsPanel } from "./design/[sampleRequestId]/DesignBomMaterialsPanel";
 
 interface StyleRow {
   id: string;
@@ -56,16 +57,20 @@ interface StyleBomData {
 // the Sampling worklist itself is built on, just projected through the
 // generic DataTable instead of that page's own bespoke filter panel, since
 // this tab only needs a quick way to reach a design's BOM, not the full
-// Sampling worklist experience.
+// Sampling worklist experience. Scoped to APPROVED samples only — a
+// design's material list is only treated as "the design's BOM" worth
+// reviewing/adjusting here once sampling is actually finalized; earlier
+// statuses are still being figured out and are edited from the Sample
+// Request's own page instead.
 //
-// Both tabs edit inline, on this same page — selecting a row expands its
-// editable BOM directly below the list (client-fetched via the same GET
-// endpoints the dedicated /bom-mrp/[productId] and /bom-mrp/design/[id]
-// pages use), rather than navigating away to either of those routes. Those
-// two standalone pages are kept as-is for their own direct entry points
-// (deep links from AI Garment Flow/Products/Material Request, and
-// Sampling's own "Design BOM" list link) — this view is purely a second,
-// faster way to reach the exact same editors without leaving /bom-mrp.
+// Both tabs edit in a Modal, on this same page — selecting a row opens its
+// real, editable BOM in a popup (client-fetched via the same GET endpoints
+// the dedicated /bom-mrp/[productId] and /bom-mrp/design/[id] pages use),
+// rather than navigating away to either of those routes. Those two
+// standalone pages are kept as-is for their own direct entry points (deep
+// links from AI Garment Flow/Products/Material Request, and Sampling's own
+// "Design BOM" list link) — this view is purely a second, faster way to
+// reach the exact same editors without leaving /bom-mrp.
 export function BomMrpListClient({
   canViewDesignBom,
   canEditSampleMaterials,
@@ -125,94 +130,73 @@ export function BomMrpListClient({
       </div>
 
       {tab === "style" && (
-        <div className="space-y-4">
-          <DataTable<StyleRow>
-            fetchUrl="/api/v1/bom-mrp"
-            searchPlaceholder="Search by style name or code…"
-            onEditRow={(row) => setSelectedStyleId(row.id)}
-            columns={[
-              { key: "styleName", header: "Style" },
-              { key: "styleCode", header: "Code" },
-              {
-                key: "bomItemCount",
-                header: "BOM Lines",
-                render: (row) =>
-                  row.bomItemCount > 0 ? (
-                    `${row.bomItemCount} line${row.bomItemCount === 1 ? "" : "s"}`
-                  ) : (
-                    <span className="text-zinc-400">No BOM yet</span>
-                  ),
-              },
-            ]}
-          />
-          {selectedStyleId && (
-            <InlineStyleBom
-              key={selectedStyleId}
-              productId={selectedStyleId}
-              canApproveBom={canApproveBom}
-              onClose={() => setSelectedStyleId(null)}
-            />
-          )}
-        </div>
+        <DataTable<StyleRow>
+          fetchUrl="/api/v1/bom-mrp"
+          searchPlaceholder="Search by style name or code…"
+          onEditRow={(row) => setSelectedStyleId(row.id)}
+          columns={[
+            { key: "styleName", header: "Style" },
+            { key: "styleCode", header: "Code" },
+            {
+              key: "bomItemCount",
+              header: "BOM Lines",
+              render: (row) =>
+                row.bomItemCount > 0 ? (
+                  `${row.bomItemCount} line${row.bomItemCount === 1 ? "" : "s"}`
+                ) : (
+                  <span className="text-zinc-400">No BOM yet</span>
+                ),
+            },
+          ]}
+        />
       )}
 
       {tab === "design" && canViewDesignBom && (
-        <div className="space-y-4">
-          <DataTable<SampleRequestRow>
-            fetchUrl="/api/v1/sampling"
-            searchPlaceholder="Search by request number…"
-            onEditRow={(row) => setSelectedSampleRequestId(row.id)}
-            columns={[
-              { key: "requestNumber", header: "Request #" },
-              { key: "styleName", header: "Design Name", render: (row) => row.styleName ?? "—" },
-              { key: "product", header: "Style", render: (row) => row.product?.styleName ?? "—" },
-              { key: "customer", header: "Customer", render: (row) => row.customer?.name ?? "—" },
-              {
-                key: "status",
-                header: "Status",
-                render: (row) => (
-                  <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_BADGE_CLASS[row.status]}`}>
-                    {STATUS_LABELS[row.status] ?? row.status}
-                  </span>
-                ),
-              },
-              { key: "requestDate", header: "Request Date", render: (row) => new Date(row.requestDate).toLocaleDateString() },
-            ]}
-          />
-          {selectedSampleRequestId && (
-            <InlineDesignBom
-              key={selectedSampleRequestId}
-              sampleRequestId={selectedSampleRequestId}
-              canEditMaterials={canEditSampleMaterials}
-              canApproveBom={canApproveBom}
-              onClose={() => setSelectedSampleRequestId(null)}
-            />
-          )}
-        </div>
+        <DataTable<SampleRequestRow>
+          fetchUrl="/api/v1/sampling?status=APPROVED"
+          searchPlaceholder="Search by request number…"
+          onEditRow={(row) => setSelectedSampleRequestId(row.id)}
+          columns={[
+            { key: "requestNumber", header: "Request #" },
+            { key: "styleName", header: "Design Name", render: (row) => row.styleName ?? "—" },
+            { key: "product", header: "Style", render: (row) => row.product?.styleName ?? "—" },
+            { key: "customer", header: "Customer", render: (row) => row.customer?.name ?? "—" },
+            {
+              key: "status",
+              header: "Status",
+              render: (row) => (
+                <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_BADGE_CLASS[row.status]}`}>
+                  {STATUS_LABELS[row.status] ?? row.status}
+                </span>
+              ),
+            },
+            { key: "requestDate", header: "Request Date", render: (row) => new Date(row.requestDate).toLocaleDateString() },
+          ]}
+        />
+      )}
+
+      {selectedStyleId && (
+        <StyleBomModal
+          key={selectedStyleId}
+          productId={selectedStyleId}
+          canApproveBom={canApproveBom}
+          onClose={() => setSelectedStyleId(null)}
+        />
+      )}
+
+      {selectedSampleRequestId && (
+        <DesignBomModal
+          key={selectedSampleRequestId}
+          sampleRequestId={selectedSampleRequestId}
+          canEditMaterials={canEditSampleMaterials}
+          onClose={() => setSelectedSampleRequestId(null)}
+        />
       )}
     </div>
   );
 }
 
-function SectionCard({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
-  return (
-    <div className="rounded-xl border border-indigo-200 bg-indigo-50/30 p-4 dark:border-indigo-900 dark:bg-indigo-500/5">
-      <div className="mb-4 flex items-center justify-between gap-4">
-        <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">{title}</h2>
-        <button
-          type="button"
-          onClick={onClose}
-          className="text-xs font-medium text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
-        >
-          ✕ Close
-        </button>
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function InlineStyleBom({
+function StyleBomModal({
   productId,
   canApproveBom,
   onClose,
@@ -238,23 +222,25 @@ function InlineStyleBom({
     };
   }, [productId]);
 
+  const title = data?.product ? `Style BOM — ${data.product.styleName} (${data.product.styleCode})` : "Style BOM";
+
   if (data === undefined) {
     return (
-      <SectionCard title="Style BOM" onClose={onClose}>
+      <Modal open onClose={onClose} title={title} maxWidthClass="max-w-4xl">
         <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>
-      </SectionCard>
+      </Modal>
     );
   }
 
   if (!data || !data.product) {
     return (
-      <SectionCard title="Style BOM" onClose={onClose}>
+      <Modal open onClose={onClose} title={title} maxWidthClass="max-w-4xl">
         <p className="text-sm text-red-600 dark:text-red-400">Failed to load this style&rsquo;s BOM.</p>
-      </SectionCard>
+      </Modal>
     );
   }
 
-  const { product, bom } = data;
+  const { bom } = data;
   const currentVersion = bom?.versions.find((v) => v.versionNumber === bom.currentVersionNumber) ?? null;
   const initialItems = (currentVersion?.items ?? []).map((item) => ({
     materialId: item.materialId,
@@ -266,7 +252,7 @@ function InlineStyleBom({
   }));
 
   return (
-    <SectionCard title={`Style BOM — ${product.styleName} (${product.styleCode})`} onClose={onClose}>
+    <Modal open onClose={onClose} title={title} maxWidthClass="max-w-4xl">
       <div className="space-y-4">
         <BomVersionPanel
           productId={productId}
@@ -282,37 +268,27 @@ function InlineStyleBom({
           currentVersionNumber={bom?.currentVersionNumber ?? 0}
         />
       </div>
-    </SectionCard>
+    </Modal>
   );
 }
 
-function InlineDesignBom({
+function DesignBomModal({
   sampleRequestId,
   canEditMaterials,
-  canApproveBom,
   onClose,
 }: {
   sampleRequestId: string;
   canEditMaterials: boolean;
-  canApproveBom: boolean;
   onClose: () => void;
 }) {
   const [request, setRequest] = useState<Record<string, unknown> | null | undefined>(undefined);
-  const [styleBom, setStyleBom] = useState<StyleBomData | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     fetch(`/api/v1/sampling/${sampleRequestId}`)
       .then((res) => res.json())
-      .then(async (body) => {
-        if (cancelled) return;
-        const data = body.data ?? null;
-        setRequest(data);
-        if (data?.productId) {
-          const bomRes = await fetch(`/api/v1/bom-mrp/${data.productId}`);
-          const bomBody = await bomRes.json();
-          if (!cancelled) setStyleBom(bomBody.data ?? null);
-        }
+      .then((body) => {
+        if (!cancelled) setRequest(body.data ?? null);
       })
       .catch(() => {
         if (!cancelled) setRequest(null);
@@ -322,53 +298,36 @@ function InlineDesignBom({
     };
   }, [sampleRequestId]);
 
+  const title =
+    request && typeof request.requestNumber === "string"
+      ? `Design BOM — ${(request.styleName as string | null) ?? request.requestNumber} (${request.requestNumber})`
+      : "Design BOM";
+
   if (request === undefined) {
     return (
-      <SectionCard title="Design BOM" onClose={onClose}>
+      <Modal open onClose={onClose} title={title} maxWidthClass="max-w-3xl">
         <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>
-      </SectionCard>
+      </Modal>
     );
   }
 
   if (!request) {
     return (
-      <SectionCard title="Design BOM" onClose={onClose}>
+      <Modal open onClose={onClose} title={title} maxWidthClass="max-w-3xl">
         <p className="text-sm text-red-600 dark:text-red-400">Failed to load this design&rsquo;s BOM.</p>
-      </SectionCard>
+      </Modal>
     );
   }
 
   const versions = (request.versions as { materials: unknown[] }[] | undefined) ?? [];
   const currentVersion = versions[0] ?? null;
-  const styleBomVersions = styleBom?.bom?.versions ?? [];
-  const styleBomCurrentVersionNumber = styleBom?.bom?.currentVersionNumber ?? 0;
-  const currentStyleVersion = styleBomVersions.find((v) => v.versionNumber === styleBomCurrentVersionNumber);
-  const initialStyleItems = (currentStyleVersion?.items ?? []).map((item) => ({
-    materialId: item.materialId,
-    colorId: item.colorId,
-    quantityPerUnit: item.quantityPerUnit.toString(),
-    wastagePercentage: item.wastagePercentage.toString(),
-    uomId: item.uomId,
-    notes: item.notes,
-  }));
 
   return (
-    <SectionCard
-      title={`Design BOM — ${(request.styleName as string | null) ?? (request.requestNumber as string)} (${request.requestNumber as string})`}
-      onClose={onClose}
-    >
-      <DesignBomTabs
-        productId={(request.productId as string | null) ?? null}
-        styleLabel={styleBom?.product ? `${styleBom.product.styleName} (${styleBom.product.styleCode})` : null}
+    <Modal open onClose={onClose} title={title} maxWidthClass="max-w-3xl">
+      <DesignBomMaterialsPanel
         materials={(currentVersion?.materials as never[]) ?? []}
         canEditMaterials={canEditMaterials}
-        styleBomVersions={styleBomVersions}
-        styleBomCurrentVersionNumber={styleBomCurrentVersionNumber}
-        canApproveBom={canApproveBom}
-        initialStyleNotes={currentStyleVersion?.notes ?? ""}
-        initialStyleItems={initialStyleItems}
-        isStyleVersionLocked={currentStyleVersion?.status === "APPROVED"}
       />
-    </SectionCard>
+    </Modal>
   );
 }

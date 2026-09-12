@@ -5,8 +5,6 @@ import { Modal } from "@/components/ui/Modal";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { MaterialPicker, type MaterialPickerOption } from "@/components/ui/MaterialPicker";
-import { BomVersionPanel } from "../../[productId]/BomVersionPanel";
-import { BomEditor } from "../../BomEditor";
 
 interface DesignMaterialRow {
   id: string;
@@ -18,139 +16,29 @@ interface DesignMaterialRow {
   uom: { id: string; code: string; name: string } | null;
 }
 
-interface StyleBomVersionRow {
-  id: string;
-  versionNumber: number;
-  status: "DRAFT" | "APPROVED" | "SUPERSEDED";
-  notes: string | null;
-  createdAt: string;
-  createdBy: { fullName: string };
-  approvedAt: string | null;
-  approvedBy: { fullName: string } | null;
-  items: unknown[];
-}
-
-interface StyleBomItemInput {
-  materialId: string;
-  colorId: string | null;
-  quantityPerUnit: string;
-  wastagePercentage: string;
-  uomId: string;
-  notes: string | null;
-}
-
 interface Option {
   id: string;
   name?: string;
   code?: string;
 }
 
-// The one place a design's "sample BOM" (its own SampleMaterial list) and
-// its real Style BOM (once linked) are shown together — neither view
-// duplicates the other's logic: the Design BOM tab edits through Sampling's
-// own existing updateSampleMaterial()/removeSampleMaterial() endpoints
-// (the same ones SampleWorkflowPanel's own Edit/Remove actions use — no new
-// business logic here, just a second place to reach them from), and the
-// Style BOM tab reuses BomVersionPanel/BomEditor completely unchanged, the
-// exact same components the dedicated /bom-mrp/[productId] page renders.
-export function DesignBomTabs({
-  productId,
-  styleLabel,
+// A design's "Design BOM" is simply its own current-version SampleMaterial
+// list — this panel edits through Sampling's own existing
+// updateSampleMaterial()/removeSampleMaterial() endpoints (the exact same
+// ones SampleWorkflowPanel's own Edit/Remove actions call — no new business
+// logic here, just a second place to reach them from). Deliberately does
+// NOT show the linked Style's own real BOM alongside it — that already has
+// its own dedicated surfaces (the "Style" tab on /bom-mrp, and the
+// standalone /bom-mrp/[productId] page), and embedding it here read as
+// confusing/redundant rather than useful.
+export function DesignBomMaterialsPanel({
   materials: initialMaterials,
   canEditMaterials,
-  styleBomVersions,
-  styleBomCurrentVersionNumber,
-  canApproveBom,
-  initialStyleNotes,
-  initialStyleItems,
-  isStyleVersionLocked,
 }: {
-  productId: string | null;
-  styleLabel: string | null;
   materials: DesignMaterialRow[];
   canEditMaterials: boolean;
-  styleBomVersions: StyleBomVersionRow[];
-  styleBomCurrentVersionNumber: number;
-  canApproveBom: boolean;
-  initialStyleNotes: string;
-  initialStyleItems: StyleBomItemInput[];
-  isStyleVersionLocked: boolean;
 }) {
-  const [tab, setTab] = useState<"design" | "style">("design");
   const [materials, setMaterials] = useState<DesignMaterialRow[]>(initialMaterials);
-
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap gap-1 border-b border-zinc-200 dark:border-zinc-800">
-        <button
-          type="button"
-          onClick={() => setTab("design")}
-          className={`px-3 py-2 text-sm font-medium ${
-            tab === "design"
-              ? "border-b-2 border-indigo-600 text-indigo-600"
-              : "text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
-          }`}
-        >
-          Design BOM
-        </button>
-        {productId ? (
-          <button
-            type="button"
-            onClick={() => setTab("style")}
-            className={`px-3 py-2 text-sm font-medium ${
-              tab === "style"
-                ? "border-b-2 border-indigo-600 text-indigo-600"
-                : "text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
-            }`}
-          >
-            Style BOM{styleLabel ? ` — ${styleLabel}` : ""}
-          </button>
-        ) : (
-          <span
-            className="cursor-not-allowed px-3 py-2 text-sm font-medium text-zinc-400 dark:text-zinc-600"
-            title="This design has not been converted to a Style yet."
-          >
-            Style BOM
-          </span>
-        )}
-      </div>
-
-      {tab === "design" && (
-        <DesignBomTable materials={materials} canEdit={canEditMaterials} onChanged={setMaterials} />
-      )}
-
-      {tab === "style" && productId && (
-        <div className="space-y-4">
-          <BomVersionPanel
-            key={productId}
-            productId={productId}
-            versions={styleBomVersions}
-            currentVersionNumber={styleBomCurrentVersionNumber}
-            canApprove={canApproveBom}
-          />
-          <BomEditor
-            key={`editor-${productId}`}
-            productId={productId}
-            initialNotes={initialStyleNotes}
-            initialItems={initialStyleItems}
-            isCurrentVersionLocked={isStyleVersionLocked}
-            currentVersionNumber={styleBomCurrentVersionNumber}
-          />
-        </div>
-      )}
-    </div>
-  );
-}
-
-function DesignBomTable({
-  materials,
-  canEdit,
-  onChanged,
-}: {
-  materials: DesignMaterialRow[];
-  canEdit: boolean;
-  onChanged: (materials: DesignMaterialRow[]) => void;
-}) {
   const [editTarget, setEditTarget] = useState<DesignMaterialRow | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DesignMaterialRow | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -164,7 +52,7 @@ function DesignBomTable({
       const res = await fetch(`/api/v1/sampling/materials/${deleteTarget.id}`, { method: "DELETE" });
       const body = await res.json();
       if (!res.ok) throw new Error(body?.error?.message ?? "Failed to remove this material line.");
-      onChanged(body.data);
+      setMaterials(body.data);
       setDeleteTarget(null);
     } catch (err) {
       setError((err as Error).message);
@@ -196,7 +84,7 @@ function DesignBomTable({
               <th className="px-3 py-2 text-left font-medium text-zinc-500 dark:text-zinc-400">Quantity</th>
               <th className="px-3 py-2 text-left font-medium text-zinc-500 dark:text-zinc-400">Unit</th>
               <th className="px-3 py-2 text-left font-medium text-zinc-500 dark:text-zinc-400">Notes</th>
-              {canEdit && <th className="px-3 py-2 text-left font-medium text-zinc-500 dark:text-zinc-400">Actions</th>}
+              {canEditMaterials && <th className="px-3 py-2 text-left font-medium text-zinc-500 dark:text-zinc-400">Actions</th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
@@ -226,7 +114,7 @@ function DesignBomTable({
                 <td className="px-3 py-2 text-zinc-700 dark:text-zinc-300">{m.plannedQuantity}</td>
                 <td className="px-3 py-2 text-zinc-700 dark:text-zinc-300">{m.uom?.code ?? "—"}</td>
                 <td className="px-3 py-2 text-zinc-600 dark:text-zinc-400">{m.notes ?? "—"}</td>
-                {canEdit && (
+                {canEditMaterials && (
                   <td className="px-3 py-2">
                     <div className="flex items-center gap-3">
                       <button
@@ -253,7 +141,7 @@ function DesignBomTable({
       </div>
 
       {editTarget && (
-        <EditMaterialModal material={editTarget} onClose={() => setEditTarget(null)} onSaved={onChanged} />
+        <EditMaterialModal material={editTarget} onClose={() => setEditTarget(null)} onSaved={setMaterials} />
       )}
 
       <ConfirmModal
