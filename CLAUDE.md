@@ -5895,6 +5895,37 @@ Two direct follow-up requests on the Design BOM feature from earlier the same da
   BOM/MRP tabs render real data with correct links. Zero console errors throughout. `npx tsc --noEmit`,
   `npx eslint`, and `npx vitest run` (1427/1427, no regressions) all clean.
 
+## BOM/MRP: Style and Design BOM now edit inline on `/bom-mrp`, no navigation (2026-09-12)
+
+Direct follow-up, same day: the two tabs above still navigated away (to `/bom-mrp/[productId]` or
+`/bom-mrp/design/[sampleRequestId]`) when a row was clicked — the user wanted both editable right there on
+`/bom-mrp` itself.
+
+- **Master-detail on one page, not two routes**: selecting a row in either tab now expands that row's real,
+  editable BOM directly below the list on `/bom-mrp` — client-fetched via the exact same `GET` endpoints the
+  two standalone pages already use (`/api/v1/bom-mrp/:productId`, `/api/v1/sampling/:id`), then rendered
+  through the exact same `BomVersionPanel`/`BomEditor`/`DesignBomTabs` components those pages already use,
+  completely unchanged. No BOM logic duplicated anywhere — this only changes how the same editors are
+  reached from this one list page. `DataTable`'s existing `onEditRow` callback (previously used only for
+  modal-opening call sites elsewhere in the app) is repurposed here to just set "which row is selected"
+  local state instead, since it already meant "don't navigate, the caller owns what happens next."
+- **The two standalone pages are deliberately untouched** — confirmed via grep that `/bom-mrp/[productId]`
+  is still linked directly from AI Garment Flow's own BOM step ("Open BOM Editor for &lt;styleCode&gt;"),
+  Masters → Products' style list, and Material Request's own BOM link, and
+  `/bom-mrp/design/[sampleRequestId]` is still Sampling's own "Design BOM" list link — none of those deep
+  links go through `/bom-mrp` at all, so removing either standalone route would have broken them. Only
+  `/bom-mrp`'s own list page changed.
+- **`page.tsx` now computes three permission booleans up front** (`canViewDesignBom`, `canEditSampleMaterials`,
+  `canApproveBom`) and passes them down — the client component has no server-side `PermissionService` access
+  of its own, so anything permission-gated has to be decided once, server-side, at page load.
+- **Verified live**: clicked "Edit" on a real Style row (Kids Froock, ST-00010, 4 real BOM lines, currently
+  APPROVED) — the full `BomVersionPanel`+`BomEditor` expanded inline on `/bom-mrp` with the correct
+  pre-filled quantities (1.5/0.1/1.5/0.1/1/0/4/0 across the 4 lines' Qty/Wastage pairs), no navigation;
+  clicked "Edit" on a real Design BOM row (SAM-2026-00009) — the Design BOM table + its own Style BOM tab
+  expanded inline; edited a real material's quantity (1→3, then back to 1) through the inline Edit modal and
+  confirmed both saves persisted correctly. Zero console errors throughout. `npx tsc --noEmit`, `npx eslint`,
+  and `npx vitest run` (1427/1427, no regressions) all clean.
+
 ## Recommended Stack
 
 Next.js 14+ (App Router) + React + TypeScript + Tailwind CSS (frontend); Next.js API routes/route handlers as REST API; PostgreSQL + Prisma ORM; session-based auth (Auth.js/NextAuth, DB sessions) with RBAC and optional TOTP 2FA; S3-compatible or local file storage for attachments; server-side PDF/Excel export (`exceljs`, `pdf-lib`/`@react-pdf/renderer`).
