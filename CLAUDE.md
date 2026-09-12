@@ -5926,6 +5926,37 @@ Direct follow-up, same day: the two tabs above still navigated away (to `/bom-mr
   confirmed both saves persisted correctly. Zero console errors throughout. `npx tsc --noEmit`, `npx eslint`,
   and `npx vitest run` (1427/1427, no regressions) all clean.
 
+## Design BOM: Approved-only list, opens in a Modal, no Style BOM tab (2026-09-12)
+
+Three more direct refinements, same day, on the inline BOM/MRP editing above.
+
+- **Design BOM tab now only lists APPROVED sample requests** — a design's own material list is only treated
+  as "the design's BOM" worth reviewing/adjusting from `/bom-mrp` once sampling is actually finalized;
+  earlier statuses are still edited from the Sample Request's own page. `fetchUrl="/api/v1/sampling?status=APPROVED"`
+  reuses the list endpoint's own existing comma-separated `status` filter param — no new API surface.
+- **Both tabs now open in a real `Modal` on "Edit"**, instead of expanding inline below the list — confirmed
+  live via `role="dialog"`/`aria-modal="true"`, not just visually.
+- **Dropped the embedded "Style BOM" tab from the Design BOM view entirely** — `DesignBomTabs.tsx` (which
+  held both the Design and Style BOM tabs) was renamed to `DesignBomMaterialsPanel.tsx` and stripped down to
+  just the materials table with Edit/Remove, no tab bar left at all. The linked Style's real BOM already has
+  its own dedicated surfaces (the "Style" tab on `/bom-mrp`, and the standalone `/bom-mrp/[productId]` page)
+  — embedding it a third time inside Design BOM read as confusing/redundant rather than useful. The
+  standalone `/bom-mrp/design/[sampleRequestId]` page was simplified to match (dropped its own Style-BOM
+  fetching/props entirely, not just hid the tab).
+- **A real bug caught and fixed during this pass's own live verification**: the first attempt to revert a
+  test edit back to its original value silently failed — the page navigated away instead of saving, and a
+  direct DB query confirmed the edit never reverted. Root cause never fully isolated (a stale button
+  reference from an earlier `querySelectorAll` call, most likely, given the modal had been closed and
+  reopened in between) — re-run more carefully (re-querying the DOM fresh at each step, confirming state via
+  a direct DB read after every step) succeeded and is now the confirmed-working state. Worth remembering
+  for any future live verification through this tool: after closing and reopening a modal, always re-query
+  its buttons fresh rather than reusing an earlier reference.
+- **Verified live**: Design BOM tab correctly showed only 5 Approved samples (down from all 8); both tabs'
+  "Edit" opened genuine modal dialogs; the Design BOM modal showed only the materials table, no Style BOM
+  tab; a real material's quantity edit persisted and reverted correctly, confirmed via direct DB queries
+  both times, not just the UI's own re-render. Zero console errors. `npx tsc --noEmit`, `npx eslint`, and
+  `npx vitest run` (1427/1427, no regressions) all clean.
+
 ## Recommended Stack
 
 Next.js 14+ (App Router) + React + TypeScript + Tailwind CSS (frontend); Next.js API routes/route handlers as REST API; PostgreSQL + Prisma ORM; session-based auth (Auth.js/NextAuth, DB sessions) with RBAC and optional TOTP 2FA; S3-compatible or local file storage for attachments; server-side PDF/Excel export (`exceljs`, `pdf-lib`/`@react-pdf/renderer`).
