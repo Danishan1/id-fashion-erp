@@ -230,9 +230,19 @@ export function SamplingListClient() {
                   </td>
                   <td className="px-4 py-2 text-zinc-700 dark:text-zinc-200">{row.requestedBy?.fullName ?? "—"}</td>
                   <td className="px-4 py-2">
-                    <Link href={`/sampling/${row.id}`} className="font-medium text-indigo-600 hover:text-indigo-500">
-                      Edit
-                    </Link>
+                    <div className="flex items-center gap-3">
+                      <Link href={`/sampling/${row.id}`} className="font-medium text-indigo-600 hover:text-indigo-500">
+                        Edit
+                      </Link>
+                      <Link
+                        href={`/bom-mrp/design/${row.id}`}
+                        className="font-medium text-indigo-600 hover:text-indigo-500"
+                        title="View this design's Bill of Materials"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        Design BOM
+                      </Link>
+                    </div>
                   </td>
                 </tr>
               ))}
