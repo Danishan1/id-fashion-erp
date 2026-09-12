@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 
 interface Option {
   id: string;
@@ -103,24 +104,22 @@ export function DealForm({ initialDeal }: { initialDeal?: InitialDeal } = {}) {
 
       <div className="grid grid-cols-2 gap-4">
         <FormField label="Lead (optional)" htmlFor="leadId">
-          <select id="leadId" value={leadId} onChange={(e) => setLeadId(e.target.value)} className={textInputClass()}>
-            <option value="">— None —</option>
-            {leads.map((l) => (
-              <option key={l.id} value={l.id}>
-                {l.name} ({l.leadNumber})
-              </option>
-            ))}
-          </select>
+          <SearchableSelect
+            id="leadId"
+            value={leadId}
+            onChange={setLeadId}
+            options={leads.map((l) => ({ id: l.id, label: l.name ?? "", sublabel: l.leadNumber }))}
+            placeholder="Search lead…"
+          />
         </FormField>
         <FormField label="Customer (optional)" htmlFor="customerId">
-          <select id="customerId" value={customerId} onChange={(e) => setCustomerId(e.target.value)} className={textInputClass()}>
-            <option value="">— None —</option>
-            {customers.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
+          <SearchableSelect
+            id="customerId"
+            value={customerId}
+            onChange={setCustomerId}
+            options={customers.map((c) => ({ id: c.id, label: c.name ?? "" }))}
+            placeholder="Search customer…"
+          />
         </FormField>
       </div>
 
@@ -143,24 +142,22 @@ export function DealForm({ initialDeal }: { initialDeal?: InitialDeal } = {}) {
 
       <div className="grid grid-cols-2 gap-4">
         <FormField label="Owner (User)" htmlFor="assignedToUserId">
-          <select id="assignedToUserId" value={assignedToUserId} onChange={(e) => setAssignedToUserId(e.target.value)} className={textInputClass()}>
-            <option value="">— None —</option>
-            {users.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.fullName}
-              </option>
-            ))}
-          </select>
+          <SearchableSelect
+            id="assignedToUserId"
+            value={assignedToUserId}
+            onChange={setAssignedToUserId}
+            options={users.map((u) => ({ id: u.id, label: u.fullName ?? "" }))}
+            placeholder="Search user…"
+          />
         </FormField>
         <FormField label="Sales Agent (commission)" htmlFor="salesAgentId">
-          <select id="salesAgentId" value={salesAgentId} onChange={(e) => setSalesAgentId(e.target.value)} className={textInputClass()}>
-            <option value="">— None —</option>
-            {salesAgents.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
+          <SearchableSelect
+            id="salesAgentId"
+            value={salesAgentId}
+            onChange={setSalesAgentId}
+            options={salesAgents.map((s) => ({ id: s.id, label: s.name ?? "" }))}
+            placeholder="Search sales agent…"
+          />
         </FormField>
       </div>
 

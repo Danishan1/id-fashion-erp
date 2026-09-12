@@ -6,6 +6,7 @@ import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { FilePreviewModal } from "@/components/ui/FilePreviewModal";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { Modal } from "@/components/ui/Modal";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { formatCategoryLabel } from "@/lib/format-category-label";
 import { STATUS_BADGE_CLASS, STATUS_LABELS } from "./statusLabels";
 import { REQUEST_TYPE_BADGE_CLASS, REQUEST_TYPE_LABELS } from "./requestTypeLabels";
@@ -852,19 +853,16 @@ function GeneratePurchaseOrdersModal({
                           />
                         </td>
                         <td className="py-2">
-                          <select
-                            disabled={!row.included}
-                            value={row.supplierId}
-                            onChange={(e) => updateRow(l.materialRequestItemId, { supplierId: e.target.value })}
-                            className={`${textInputClass()} w-40`}
-                          >
-                            <option value="">Pick a supplier…</option>
-                            {suppliers.map((s) => (
-                              <option key={s.id} value={s.id}>
-                                {s.name}
-                              </option>
-                            ))}
-                          </select>
+                          <div className="w-40">
+                            <SearchableSelect
+                              disabled={!row.included}
+                              value={row.supplierId}
+                              onChange={(supplierId) => updateRow(l.materialRequestItemId, { supplierId })}
+                              options={suppliers.map((s) => ({ id: s.id, label: s.name }))}
+                              placeholder="Search supplier…"
+                              emptyOptionLabel="Pick a supplier…"
+                            />
+                          </div>
                         </td>
                       </tr>
                     );

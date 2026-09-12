@@ -6,6 +6,7 @@ import { useState } from "react";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { Modal } from "@/components/ui/Modal";
 import { textInputClass } from "@/components/ui/FormField";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { STATUS_LABELS, STATUS_BADGE_CLASS } from "../../simpleDocumentStatusLabels";
 
 interface AllocationRow {
@@ -277,14 +278,18 @@ export function PaymentWorkflowPanel({ payment }: { payment: PaymentDetail }) {
           <p className="text-sm text-zinc-500 dark:text-zinc-400">Unallocated remaining: ₹{unallocated.toFixed(2)}</p>
           <div>
             <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300">Invoice</label>
-            <select value={allocateInvoiceId} onChange={(e) => setAllocateInvoiceId(e.target.value)} className={`mt-1 ${textInputClass()}`}>
-              <option value="">— Select an outstanding invoice —</option>
-              {outstandingInvoices.map((inv) => (
-                <option key={inv.id} value={inv.id}>
-                  {inv.invoiceNumber} — outstanding ₹{(Number(inv.totalAmount) - Number(inv.paidAmount)).toFixed(2)}
-                </option>
-              ))}
-            </select>
+            <div className="mt-1">
+              <SearchableSelect
+                value={allocateInvoiceId}
+                onChange={setAllocateInvoiceId}
+                options={outstandingInvoices.map((inv) => ({
+                  id: inv.id,
+                  label: inv.invoiceNumber,
+                  sublabel: `outstanding ₹${(Number(inv.totalAmount) - Number(inv.paidAmount)).toFixed(2)}`,
+                }))}
+                placeholder="Search invoice…"
+              />
+            </div>
           </div>
           <div>
             <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300">Amount to Allocate</label>

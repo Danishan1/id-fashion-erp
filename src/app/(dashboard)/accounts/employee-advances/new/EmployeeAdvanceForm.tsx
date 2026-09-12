@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { todayIsoDate } from "@/lib/date";
 
 interface EmployeeOption {
@@ -112,14 +113,14 @@ export function EmployeeAdvanceForm({ onSuccess, onCancel }: EmployeeAdvanceForm
           <input id="advanceDate" type="date" required value={advanceDate} onChange={(e) => setAdvanceDate(e.target.value)} className={textInputClass()} />
         </FormField>
         <FormField label="Employee" htmlFor="employeeId" required>
-          <select id="employeeId" required value={employeeId} onChange={(e) => setEmployeeId(e.target.value)} className={textInputClass()}>
-            <option value="">— Select —</option>
-            {employees.map((e) => (
-              <option key={e.id} value={e.id}>
-                {e.fullName} ({e.employeeCode})
-              </option>
-            ))}
-          </select>
+          <SearchableSelect
+            id="employeeId"
+            required
+            value={employeeId}
+            onChange={setEmployeeId}
+            options={employees.map((e) => ({ id: e.id, label: e.fullName, sublabel: e.employeeCode }))}
+            placeholder="Search employee…"
+          />
         </FormField>
       </div>
 

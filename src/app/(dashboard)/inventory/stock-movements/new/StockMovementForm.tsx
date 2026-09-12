@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { MaterialPicker } from "@/components/ui/MaterialPicker";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { formatCategoryLabel } from "@/lib/format-category-label";
 
 interface Option {
@@ -182,47 +183,39 @@ export function StockMovementForm() {
 
       <div className="grid grid-cols-2 gap-4">
         <FormField label={movementType === "TRANSFER" ? "From Warehouse" : "Warehouse"} htmlFor="warehouseId" required>
-          <select id="warehouseId" required value={warehouseId} onChange={(e) => onWarehouseChange(e.target.value)} className={textInputClass()}>
-            <option value="">— Select —</option>
-            {warehouses.map((w) => (
-              <option key={w.id} value={w.id}>
-                {w.name}
-              </option>
-            ))}
-          </select>
+          <SearchableSelect
+            id="warehouseId"
+            required
+            value={warehouseId}
+            onChange={onWarehouseChange}
+            options={warehouses.map((w) => ({ id: w.id, label: w.name ?? "" }))}
+            placeholder="Search warehouse…"
+          />
         </FormField>
 
         {movementType === "TRANSFER" && (
           <FormField label="To Warehouse" htmlFor="toWarehouseId" required>
-            <select
+            <SearchableSelect
               id="toWarehouseId"
               required
               value={toWarehouseId}
-              onChange={(e) => setToWarehouseId(e.target.value)}
-              className={textInputClass()}
-            >
-              <option value="">— Select —</option>
-              {warehouses
-                .filter((w) => w.id !== warehouseId)
-                .map((w) => (
-                  <option key={w.id} value={w.id}>
-                    {w.name}
-                  </option>
-                ))}
-            </select>
+              onChange={setToWarehouseId}
+              options={warehouses.filter((w) => w.id !== warehouseId).map((w) => ({ id: w.id, label: w.name ?? "" }))}
+              placeholder="Search warehouse…"
+            />
           </FormField>
         )}
 
         {movementType === "RETURN_TO_SUPPLIER" && (
           <FormField label="Supplier" htmlFor="supplierId" required>
-            <select id="supplierId" required value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className={textInputClass()}>
-              <option value="">— Select —</option>
-              {suppliers.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
+            <SearchableSelect
+              id="supplierId"
+              required
+              value={supplierId}
+              onChange={setSupplierId}
+              options={suppliers.map((s) => ({ id: s.id, label: s.name ?? "" }))}
+              placeholder="Search supplier…"
+            />
           </FormField>
         )}
       </div>

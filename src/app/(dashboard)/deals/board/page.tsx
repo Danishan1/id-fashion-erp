@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { STAGE_LABELS } from "../statusLabels";
 
 type Stage = keyof typeof STAGE_LABELS;
@@ -123,18 +124,15 @@ export default function DealsBoardPage() {
           onChange={(e) => setSearch(e.target.value)}
           className="w-64 rounded-md border border-zinc-300 px-3 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
         />
-        <select
-          value={ownerFilter}
-          onChange={(e) => setOwnerFilter(e.target.value)}
-          className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-        >
-          <option value="">All owners</option>
-          {owners.map(([id, name]) => (
-            <option key={id} value={id}>
-              {name}
-            </option>
-          ))}
-        </select>
+        <div className="w-56">
+          <SearchableSelect
+            value={ownerFilter}
+            onChange={setOwnerFilter}
+            options={owners.map(([id, name]) => ({ id, label: name }))}
+            placeholder="Search owner…"
+            emptyOptionLabel="All owners"
+          />
+        </div>
       </div>
 
       {dragError && <p className="text-sm text-red-600 dark:text-red-400">{dragError}</p>}

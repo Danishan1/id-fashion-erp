@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { todayIsoDate } from "@/lib/date";
 
 interface AccountOption {
@@ -153,18 +154,12 @@ export function JournalForm({ initialValues, submitUrl, method, redirectBase }: 
               {values.lines.map((line, index) => (
                 <tr key={index} className="border-b border-zinc-100 last:border-0 dark:border-zinc-800">
                   <td className="px-3 py-2">
-                    <select
+                    <SearchableSelect
                       value={line.accountId}
-                      onChange={(e) => updateLine(index, { accountId: e.target.value })}
-                      className={textInputClass()}
-                    >
-                      <option value="">— Select account —</option>
-                      {accounts.map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.code} — {a.name}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={(id) => updateLine(index, { accountId: id })}
+                      options={accounts.map((a) => ({ id: a.id, label: a.name, sublabel: a.code }))}
+                      placeholder="Search account…"
+                    />
                   </td>
                   <td className="px-3 py-2">
                     <input

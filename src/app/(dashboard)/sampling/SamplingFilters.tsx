@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { textInputClass } from "@/components/ui/FormField";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { toIsoDate } from "@/lib/date";
 import { STATUS_LABELS } from "./statusLabels";
 
@@ -125,38 +126,32 @@ export function SamplingFilters({
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <div>
               <label className="block text-xs font-medium text-zinc-500 dark:text-zinc-400">Customer</label>
-              <select
-                value={draft.customerId}
-                onChange={(e) => {
-                  setDraft((d) => ({ ...d, customerId: e.target.value, buyerId: "" }));
-                  setBuyers([]);
-                }}
-                className={`${textInputClass()} mt-1`}
-              >
-                <option value="">— Any —</option>
-                {customers.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
+              <div className="mt-1">
+                <SearchableSelect
+                  value={draft.customerId}
+                  onChange={(customerId) => {
+                    setDraft((d) => ({ ...d, customerId, buyerId: "" }));
+                    setBuyers([]);
+                  }}
+                  options={customers.map((c) => ({ id: c.id, label: c.name ?? "" }))}
+                  placeholder="Search customer…"
+                  emptyOptionLabel="— Any —"
+                />
+              </div>
             </div>
 
             <div>
               <label className="block text-xs font-medium text-zinc-500 dark:text-zinc-400">Buyer</label>
-              <select
-                value={draft.buyerId}
-                onChange={(e) => setDraft((d) => ({ ...d, buyerId: e.target.value }))}
-                disabled={!draft.customerId}
-                className={`${textInputClass()} mt-1`}
-              >
-                <option value="">— Any —</option>
-                {buyers.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.name}
-                  </option>
-                ))}
-              </select>
+              <div className="mt-1">
+                <SearchableSelect
+                  value={draft.buyerId}
+                  onChange={(buyerId) => setDraft((d) => ({ ...d, buyerId }))}
+                  disabled={!draft.customerId}
+                  options={buyers.map((b) => ({ id: b.id, label: b.name ?? "" }))}
+                  placeholder="Search buyer…"
+                  emptyOptionLabel="— Any —"
+                />
+              </div>
               {!draft.customerId && <p className="mt-1 text-xs text-zinc-400">Pick a Customer first.</p>}
             </div>
 
@@ -172,18 +167,15 @@ export function SamplingFilters({
 
             <div>
               <label className="block text-xs font-medium text-zinc-500 dark:text-zinc-400">Requested By</label>
-              <select
-                value={draft.requestedByUserId}
-                onChange={(e) => setDraft((d) => ({ ...d, requestedByUserId: e.target.value }))}
-                className={`${textInputClass()} mt-1`}
-              >
-                <option value="">— Any —</option>
-                {users.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.fullName}
-                  </option>
-                ))}
-              </select>
+              <div className="mt-1">
+                <SearchableSelect
+                  value={draft.requestedByUserId}
+                  onChange={(requestedByUserId) => setDraft((d) => ({ ...d, requestedByUserId }))}
+                  options={users.map((u) => ({ id: u.id, label: u.fullName ?? "" }))}
+                  placeholder="Search user…"
+                  emptyOptionLabel="— Any —"
+                />
+              </div>
             </div>
 
             <div>

@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
-import { FormField, textInputClass } from "@/components/ui/FormField";
+import { FormField } from "@/components/ui/FormField";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 
 interface CustomerOption {
   id: string;
@@ -82,23 +83,17 @@ export function ClientLedgerClient() {
 
       <div className="max-w-sm">
         <FormField label="Select Client" htmlFor="customerId">
-          <select
+          <SearchableSelect
             id="customerId"
             value={customerId}
-            onChange={(e) => {
+            onChange={(next) => {
               setLedger(null);
               setError(null);
-              setCustomerId(e.target.value);
+              setCustomerId(next);
             }}
-            className={textInputClass()}
-          >
-            <option value="">Choose a client...</option>
-            {customers.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name} ({c.code})
-              </option>
-            ))}
-          </select>
+            options={customers.map((c) => ({ id: c.id, label: c.name, sublabel: c.code }))}
+            placeholder="Search client…"
+          />
         </FormField>
       </div>
 

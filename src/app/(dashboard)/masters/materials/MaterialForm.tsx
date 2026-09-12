@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { MATERIAL_CATEGORIES } from "@/modules/products/product.schema";
 
 export interface MaterialFormValues {
@@ -155,19 +156,13 @@ export function MaterialForm({ initialValues, submitUrl, method, onSuccess, onCa
           </select>
         </FormField>
         <FormField label="Default Supplier" htmlFor="defaultSupplierId">
-          <select
+          <SearchableSelect
             id="defaultSupplierId"
             value={values.defaultSupplierId}
-            onChange={(e) => setValues({ ...values, defaultSupplierId: e.target.value })}
-            className={textInputClass()}
-          >
-            <option value="">— None —</option>
-            {suppliers.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
+            onChange={(defaultSupplierId) => setValues({ ...values, defaultSupplierId })}
+            options={suppliers.map((s) => ({ id: s.id, label: s.name ?? "" }))}
+            placeholder="Search supplier…"
+          />
         </FormField>
       </div>
 

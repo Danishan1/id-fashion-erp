@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { todayIsoDate } from "@/lib/date";
 
 const ELIGIBLE_ORDER_STATUSES = ["CONFIRMED", "PARTIALLY_DISPATCHED", "INVOICED"];
@@ -164,31 +165,25 @@ export function DispatchForm({ initialDispatch }: { initialDispatch?: InitialDis
           {isEditMode ? (
             <input disabled value={order?.orderNumber ?? "…"} className={textInputClass()} />
           ) : (
-            <select
+            <SearchableSelect
               id="salesOrderId"
               required
               value={salesOrderId}
-              onChange={(e) => selectOrder(e.target.value)}
-              className={textInputClass()}
-            >
-              <option value="">— Select an eligible order —</option>
-              {orders.map((o) => (
-                <option key={o.id} value={o.id}>
-                  {o.orderNumber}
-                </option>
-              ))}
-            </select>
+              onChange={selectOrder}
+              options={orders.map((o) => ({ id: o.id, label: o.orderNumber }))}
+              placeholder="Search eligible order…"
+            />
           )}
         </FormField>
         <FormField label="Warehouse" htmlFor="warehouseId" required>
-          <select id="warehouseId" required value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)} className={textInputClass()}>
-            <option value="">— Select —</option>
-            {warehouses.map((w) => (
-              <option key={w.id} value={w.id}>
-                {w.code} — {w.name}
-              </option>
-            ))}
-          </select>
+          <SearchableSelect
+            id="warehouseId"
+            required
+            value={warehouseId}
+            onChange={setWarehouseId}
+            options={warehouses.map((w) => ({ id: w.id, label: w.name }))}
+            placeholder="Search warehouse…"
+          />
         </FormField>
         <FormField label="Dispatch Date" htmlFor="dispatchDate" required>
           <input

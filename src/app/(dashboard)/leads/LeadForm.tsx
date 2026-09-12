@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { SOURCE_LABELS, STATUS_LABELS } from "./statusLabels";
 
 interface Option {
@@ -155,40 +156,39 @@ export function LeadForm({ initialLead }: { initialLead?: InitialLead } = {}) {
           </FormField>
         ) : (
           <FormField label="Assigned To (optional — auto-assigned if blank)" htmlFor="assignedToUserId">
-            <select id="assignedToUserId" value={assignedToUserId} onChange={(e) => setAssignedToUserId(e.target.value)} className={textInputClass()}>
-              <option value="">Auto Assign</option>
-              {users.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.fullName}
-                </option>
-              ))}
-            </select>
+            <SearchableSelect
+              id="assignedToUserId"
+              value={assignedToUserId}
+              onChange={setAssignedToUserId}
+              options={users.map((u) => ({ id: u.id, label: u.fullName ?? "" }))}
+              placeholder="Search user…"
+              emptyOptionLabel="Auto Assign"
+            />
           </FormField>
         )}
       </div>
 
       {initialLead && (
         <FormField label="Assigned To" htmlFor="assignedToUserId">
-          <select id="assignedToUserId" value={assignedToUserId} onChange={(e) => setAssignedToUserId(e.target.value)} className={textInputClass()}>
-            <option value="">Unassigned</option>
-            {users.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.fullName}
-              </option>
-            ))}
-          </select>
+          <SearchableSelect
+            id="assignedToUserId"
+            value={assignedToUserId}
+            onChange={setAssignedToUserId}
+            options={users.map((u) => ({ id: u.id, label: u.fullName ?? "" }))}
+            placeholder="Search user…"
+            emptyOptionLabel="Unassigned"
+          />
         </FormField>
       )}
 
       <FormField label="Campaign (optional)" htmlFor="campaignId">
-        <select id="campaignId" value={campaignId} onChange={(e) => setCampaignId(e.target.value)} className={textInputClass()}>
-          <option value="">— None —</option>
-          {campaigns.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name} ({c.campaignNumber})
-            </option>
-          ))}
-        </select>
+        <SearchableSelect
+          id="campaignId"
+          value={campaignId}
+          onChange={setCampaignId}
+          options={campaigns.map((c) => ({ id: c.id, label: c.name, sublabel: c.campaignNumber }))}
+          placeholder="Search campaign…"
+        />
       </FormField>
 
       <div className="grid grid-cols-3 gap-4">

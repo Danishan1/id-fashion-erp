@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { todayIsoDate } from "@/lib/date";
 import { useSubmoduleVisibility } from "@/lib/use-submodule-visibility";
 
@@ -279,19 +280,13 @@ export function GoodsReceiptForm({ purchaseOrderId, lines }: { purchaseOrderId: 
                     })()}
                 </FormField>
                 <FormField label="Warehouse" htmlFor={`warehouse-${line.purchaseOrderItemId}`}>
-                  <select
+                  <SearchableSelect
                     id={`warehouse-${line.purchaseOrderItemId}`}
                     value={draft.warehouseId}
-                    onChange={(e) => onWarehouseChange(line.purchaseOrderItemId, e.target.value)}
-                    className={textInputClass()}
-                  >
-                    <option value="">— Select —</option>
-                    {warehouses.map((w) => (
-                      <option key={w.id} value={w.id}>
-                        {w.name}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={(warehouseId) => onWarehouseChange(line.purchaseOrderItemId, warehouseId)}
+                    options={warehouses.map((w) => ({ id: w.id, label: w.name }))}
+                    placeholder="Search warehouse…"
+                  />
                 </FormField>
                 <FormField label="Location (optional)" htmlFor={`location-${line.purchaseOrderItemId}`}>
                   <select

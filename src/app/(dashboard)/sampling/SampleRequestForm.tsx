@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { SAMPLE_TYPE_LABELS } from "./sampleTypeLabels";
 import { todayIsoDate } from "@/lib/date";
 
@@ -87,62 +88,44 @@ export function SampleRequestForm() {
   return (
     <form onSubmit={handleSubmit} className="max-w-xl space-y-4">
       <FormField label="Customer" htmlFor="customerId" required>
-        <select
+        <SearchableSelect
           id="customerId"
           required
           value={customerId}
-          onChange={(e) => {
-            setCustomerId(e.target.value);
+          onChange={(next) => {
+            setCustomerId(next);
             setBuyerId("");
             setBuyers([]);
           }}
-          className={textInputClass()}
-        >
-          <option value="">— Select —</option>
-          {customers.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </select>
+          options={customers.map((c) => ({ id: c.id, label: c.name ?? "" }))}
+          placeholder="Search customer…"
+        />
       </FormField>
 
       <FormField label="Buyer" htmlFor="buyerId">
-        <select
+        <SearchableSelect
           id="buyerId"
           value={buyerId}
-          onChange={(e) => setBuyerId(e.target.value)}
+          onChange={setBuyerId}
           disabled={!customerId}
-          className={textInputClass()}
-        >
-          <option value="">— None —</option>
-          {buyers.map((b) => (
-            <option key={b.id} value={b.id}>
-              {b.name}
-            </option>
-          ))}
-        </select>
+          options={buyers.map((b) => ({ id: b.id, label: b.name ?? "" }))}
+          placeholder="Search buyer…"
+        />
       </FormField>
 
       <FormField label="Link to an existing Style (optional)" htmlFor="productId">
-        <select
+        <SearchableSelect
           id="productId"
           value={productId}
-          onChange={(e) => {
-            const value = e.target.value;
+          onChange={(value) => {
             setProductId(value);
             const linked = products.find((p) => p.id === value);
             if (linked?.styleName) setStyleName(linked.styleName);
           }}
-          className={textInputClass()}
-        >
-          <option value="">— New / not yet in Styles —</option>
-          {products.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.styleName}
-            </option>
-          ))}
-        </select>
+          options={products.map((p) => ({ id: p.id, label: p.styleName ?? "" }))}
+          placeholder="Search style…"
+          emptyOptionLabel="— New / not yet in Styles —"
+        />
       </FormField>
 
       <FormField label="Sample Type" htmlFor="sampleType" required>

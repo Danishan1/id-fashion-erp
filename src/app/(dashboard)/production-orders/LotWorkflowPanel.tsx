@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { Modal } from "@/components/ui/Modal";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { todayIsoDate } from "@/lib/date";
 import { LOT_STATUS_LABELS, JOB_ORDER_STATUS_LABELS } from "./statusLabels";
 
@@ -530,14 +531,14 @@ export function LotWorkflowPanel({
         {assignTarget && (
           <div className="space-y-4">
             <FormField label="Employee" htmlFor="assignEmployeeId" required>
-              <select id="assignEmployeeId" required value={assignEmployeeId} onChange={(e) => setAssignEmployeeId(e.target.value)} className={textInputClass()}>
-                <option value="">— Select —</option>
-                {employees.map((e) => (
-                  <option key={e.id} value={e.id}>
-                    {e.fullName} ({e.employeeCode})
-                  </option>
-                ))}
-              </select>
+              <SearchableSelect
+                id="assignEmployeeId"
+                required
+                value={assignEmployeeId}
+                onChange={setAssignEmployeeId}
+                options={employees.map((e) => ({ id: e.id, label: e.fullName, sublabel: e.employeeCode }))}
+                placeholder="Search employee…"
+              />
             </FormField>
             <FormField label="Assigned Quantity" htmlFor="assignQty" required>
               <input id="assignQty" type="number" min={0} step="0.0001" required value={assignQty} onChange={(e) => setAssignQty(e.target.value)} className={textInputClass()} />
@@ -558,14 +559,14 @@ export function LotWorkflowPanel({
         {progressTarget && (
           <div className="space-y-4">
             <FormField label="Worker" htmlFor="progressEmployeeId" required>
-              <select id="progressEmployeeId" required value={progressEmployeeId} onChange={(e) => setProgressEmployeeId(e.target.value)} className={textInputClass()}>
-                <option value="">— Select —</option>
-                {employees.map((e) => (
-                  <option key={e.id} value={e.id}>
-                    {e.fullName} ({e.employeeCode})
-                  </option>
-                ))}
-              </select>
+              <SearchableSelect
+                id="progressEmployeeId"
+                required
+                value={progressEmployeeId}
+                onChange={setProgressEmployeeId}
+                options={employees.map((e) => ({ id: e.id, label: e.fullName, sublabel: e.employeeCode }))}
+                placeholder="Search employee…"
+              />
             </FormField>
             <div className="grid grid-cols-3 gap-3">
               <FormField label="Completed" htmlFor="progressCompleted">
@@ -620,14 +621,14 @@ export function LotWorkflowPanel({
                 : nextStageAfter(forwardTarget.productionStage.sequence);
               return target?.isFinal ? (
                 <FormField label="Finished Goods Warehouse" htmlFor="forwardFgWarehouseId" required>
-                  <select id="forwardFgWarehouseId" required value={forwardFgWarehouseId} onChange={(e) => setForwardFgWarehouseId(e.target.value)} className={textInputClass()}>
-                    <option value="">— Select —</option>
-                    {warehouses.map((w) => (
-                      <option key={w.id} value={w.id}>
-                        {w.name}
-                      </option>
-                    ))}
-                  </select>
+                  <SearchableSelect
+                    id="forwardFgWarehouseId"
+                    required
+                    value={forwardFgWarehouseId}
+                    onChange={setForwardFgWarehouseId}
+                    options={warehouses.map((w) => ({ id: w.id, label: w.name }))}
+                    placeholder="Search warehouse…"
+                  />
                 </FormField>
               ) : null;
             })()}
@@ -711,14 +712,14 @@ export function LotWorkflowPanel({
               const next = nextStageAfter(qcTarget.productionStage.sequence);
               return next?.isFinal ? (
                 <FormField label="Finished Goods Warehouse (accepted quantity completes the lot)" htmlFor="qcFgWarehouseId" required>
-                  <select id="qcFgWarehouseId" required value={qcFgWarehouseId} onChange={(e) => setQcFgWarehouseId(e.target.value)} className={textInputClass()}>
-                    <option value="">— Select —</option>
-                    {warehouses.map((w) => (
-                      <option key={w.id} value={w.id}>
-                        {w.name}
-                      </option>
-                    ))}
-                  </select>
+                  <SearchableSelect
+                    id="qcFgWarehouseId"
+                    required
+                    value={qcFgWarehouseId}
+                    onChange={setQcFgWarehouseId}
+                    options={warehouses.map((w) => ({ id: w.id, label: w.name }))}
+                    placeholder="Search warehouse…"
+                  />
                 </FormField>
               ) : null;
             })()}
@@ -739,14 +740,14 @@ export function LotWorkflowPanel({
             )}
             {Number(qcDamaged) > 0 && (
               <FormField label="Damage Warehouse (write-off, fully damaged)" htmlFor="qcDamageWarehouseId" required>
-                <select id="qcDamageWarehouseId" required value={qcDamageWarehouseId} onChange={(e) => setQcDamageWarehouseId(e.target.value)} className={textInputClass()}>
-                  <option value="">— Select —</option>
-                  {warehouses.map((w) => (
-                    <option key={w.id} value={w.id}>
-                      {w.name}
-                    </option>
-                  ))}
-                </select>
+                <SearchableSelect
+                  id="qcDamageWarehouseId"
+                  required
+                  value={qcDamageWarehouseId}
+                  onChange={setQcDamageWarehouseId}
+                  options={warehouses.map((w) => ({ id: w.id, label: w.name }))}
+                  placeholder="Search warehouse…"
+                />
               </FormField>
             )}
             {defectTypes.length > 0 && (
@@ -775,14 +776,14 @@ export function LotWorkflowPanel({
               completes this quantity exactly like an internal progress entry would — QC and Forward remain available on it either way.
             </p>
             <FormField label="Contractor" htmlFor="jobWorkSupplierId" required>
-              <select id="jobWorkSupplierId" required value={jobWorkSupplierId} onChange={(e) => setJobWorkSupplierId(e.target.value)} className={textInputClass()}>
-                <option value="">— Select —</option>
-                {suppliers.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
+              <SearchableSelect
+                id="jobWorkSupplierId"
+                required
+                value={jobWorkSupplierId}
+                onChange={setJobWorkSupplierId}
+                options={suppliers.map((s) => ({ id: s.id, label: s.name }))}
+                placeholder="Search contractor…"
+              />
             </FormField>
             <FormField label={`Quantity (${lot.uom.code})`} htmlFor="jobWorkQty" required>
               <input id="jobWorkQty" type="number" min={0} step="0.0001" required value={jobWorkQty} onChange={(e) => setJobWorkQty(e.target.value)} className={textInputClass()} />

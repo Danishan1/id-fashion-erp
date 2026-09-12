@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { todayIsoDate } from "@/lib/date";
 
 type Direction = "RECEIPT" | "PAYMENT_OUT";
@@ -186,14 +187,14 @@ export function PaymentForm() {
 
       <div className="grid grid-cols-3 gap-4">
         <FormField label={direction === "RECEIPT" ? "Customer" : "Supplier"} htmlFor="partyId" required>
-          <select id="partyId" required value={partyId} onChange={(e) => selectParty(e.target.value)} className={textInputClass()}>
-            <option value="">— Select —</option>
-            {(direction === "RECEIPT" ? customers : suppliers).map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
+          <SearchableSelect
+            id="partyId"
+            required
+            value={partyId}
+            onChange={selectParty}
+            options={(direction === "RECEIPT" ? customers : suppliers).map((p) => ({ id: p.id, label: p.name }))}
+            placeholder={direction === "RECEIPT" ? "Search customer…" : "Search supplier…"}
+          />
         </FormField>
         <FormField label="Payment Date" htmlFor="paymentDate" required>
           <input
