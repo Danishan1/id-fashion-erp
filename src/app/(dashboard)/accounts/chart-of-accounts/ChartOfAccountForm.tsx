@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { ACCOUNT_TYPES } from "@/modules/accounts/chart-of-account.schema";
 
 export interface ChartOfAccountFormValues {
@@ -103,19 +104,13 @@ export function ChartOfAccountForm({ initialValues, currentId, submitUrl, method
       </FormField>
 
       <FormField label="Parent Account" htmlFor="parentAccountId">
-        <select
+        <SearchableSelect
           id="parentAccountId"
           value={values.parentAccountId}
-          onChange={(e) => setValues({ ...values, parentAccountId: e.target.value })}
-          className={textInputClass()}
-        >
-          <option value="">— None —</option>
-          {accounts.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.code} — {a.name}
-            </option>
-          ))}
-        </select>
+          onChange={(parentAccountId) => setValues({ ...values, parentAccountId })}
+          options={accounts.map((a) => ({ id: a.id, label: a.name, sublabel: a.code }))}
+          placeholder="Search account…"
+        />
       </FormField>
 
       {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}

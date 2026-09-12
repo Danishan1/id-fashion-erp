@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { MaterialPicker } from "@/components/ui/MaterialPicker";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { todayIsoDate } from "@/lib/date";
 import { useSubmoduleVisibility } from "@/lib/use-submodule-visibility";
 
@@ -201,12 +202,11 @@ export function MaterialRequestForm({ initialRequest }: { initialRequest?: Initi
   }, []);
 
   useEffect(() => {
-    if (!salesOrderId) {
-      setOrderPreview(null);
-      setOrderPreviewError(null);
-      setPreviewSelections({});
-      return;
-    }
+    // The clear-on-empty reset lives in the Sales Order field's own onChange
+    // (see below) — calling setState synchronously at the top of an effect
+    // body trips this project's own established react-hooks/set-state-in-effect
+    // rule; only the async fetch path belongs here.
+    if (!salesOrderId) return;
     fetch(`/api/v1/sales-orders/${salesOrderId}/material-preview`)
       .then(async (res) => {
         const body = await res.json();
@@ -343,20 +343,20 @@ export function MaterialRequestForm({ initialRequest }: { initialRequest?: Initi
 
       {!initialRequest && (
         <FormField label="Sales Order (optional)" htmlFor="salesOrderId">
-          <select
+          <SearchableSelect
             id="salesOrderId"
             value={salesOrderId}
-            onChange={(e) => setSalesOrderId(e.target.value)}
-            className={textInputClass()}
-          >
-            <option value="">— None —</option>
-            {salesOrders.map((o) => (
-              <option key={o.id} value={o.id}>
-                {o.orderNumber}
-                {o.customer ? ` — ${o.customer.name}` : ""}
-              </option>
-            ))}
-          </select>
+            onChange={(next) => {
+              setSalesOrderId(next);
+              if (!next) {
+                setOrderPreview(null);
+                setOrderPreviewError(null);
+                setPreviewSelections({});
+              }
+            }}
+            options={salesOrders.map((o) => ({ id: o.id, label: o.orderNumber, sublabel: o.customer?.name }))}
+            placeholder="Search sales order…"
+          />
         </FormField>
       )}
 
@@ -468,20 +468,14 @@ export function MaterialRequestForm({ initialRequest }: { initialRequest?: Initi
           </select>
         </FormField>
         <FormField label="Issue From (Warehouse)" htmlFor="warehouseId" required>
-          <select
+          <SearchableSelect
             id="warehouseId"
             required
             value={warehouseId}
-            onChange={(e) => setWarehouseId(e.target.value)}
-            className={textInputClass()}
-          >
-            <option value="">— Select —</option>
-            {warehouses.map((w) => (
-              <option key={w.id} value={w.id}>
-                {w.name}
-              </option>
-            ))}
-          </select>
+            onChange={setWarehouseId}
+            options={warehouses.map((w) => ({ id: w.id, label: w.name ?? "" }))}
+            placeholder="Search warehouse…"
+          />
         </FormField>
       </div>
 

@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { Modal } from "@/components/ui/Modal";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { todayIsoDate } from "@/lib/date";
 
 const INVOICE_TYPE_OPTIONS = [
@@ -378,14 +379,14 @@ export function CustomInvoiceForm({ initialInvoice }: { initialInvoice?: Initial
       <div className="grid grid-cols-2 gap-4">
         <FormField label="Select Client" htmlFor="customerId" required>
           <div className="flex gap-2">
-            <select id="customerId" required value={customerId} onChange={(e) => setCustomerId(e.target.value)} className={textInputClass()}>
-              <option value="">Choose a client...</option>
-              {customers.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name} ({c.code})
-                </option>
-              ))}
-            </select>
+            <SearchableSelect
+              id="customerId"
+              required
+              value={customerId}
+              onChange={setCustomerId}
+              options={customers.map((c) => ({ id: c.id, label: c.name, sublabel: c.code }))}
+              placeholder="Search client…"
+            />
           </div>
           <button
             type="button"
@@ -410,14 +411,13 @@ export function CustomInvoiceForm({ initialInvoice }: { initialInvoice?: Initial
       </div>
 
       <FormField label="Income Category (optional)" htmlFor="incomeAccountId">
-        <select id="incomeAccountId" value={incomeAccountId} onChange={(e) => setIncomeAccountId(e.target.value)} className={textInputClass()}>
-          <option value="">— None —</option>
-          {incomeAccounts.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.code} — {a.name}
-            </option>
-          ))}
-        </select>
+        <SearchableSelect
+          id="incomeAccountId"
+          value={incomeAccountId}
+          onChange={setIncomeAccountId}
+          options={incomeAccounts.map((a) => ({ id: a.id, label: a.name, sublabel: a.code }))}
+          placeholder="Search account…"
+        />
         <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
           Classifies this invoice&apos;s revenue against your Chart of Accounts, for reporting only.
         </p>
@@ -438,27 +438,14 @@ export function CustomInvoiceForm({ initialInvoice }: { initialInvoice?: Initial
                 </div>
                 <div className="mt-2 grid grid-cols-2 gap-3 md:grid-cols-3">
                   <FormField label="Link to Product/Material (optional)" htmlFor={`link-${index}`}>
-                    <select id={`link-${index}`} value={item.productId} onChange={(e) => applyItemLink(index, e.target.value)} className={textInputClass()}>
-                      <option value="">— Free text item —</option>
-                      <optgroup label="Styles">
-                        {itemLinkOptions
-                          .filter((o) => o.kind === "Style")
-                          .map((o) => (
-                            <option key={o.id} value={o.id}>
-                              {o.styleName}
-                            </option>
-                          ))}
-                      </optgroup>
-                      <optgroup label="Materials">
-                        {itemLinkOptions
-                          .filter((o) => o.kind === "Material")
-                          .map((o) => (
-                            <option key={o.id} value={o.id}>
-                              {o.styleName}
-                            </option>
-                          ))}
-                      </optgroup>
-                    </select>
+                    <SearchableSelect
+                      id={`link-${index}`}
+                      value={item.productId}
+                      onChange={(next) => applyItemLink(index, next)}
+                      options={itemLinkOptions.map((o) => ({ id: o.id, label: o.styleName, sublabel: o.kind }))}
+                      placeholder="Search style / material…"
+                      emptyOptionLabel="— Free text item —"
+                    />
                   </FormField>
                   <FormField label="Name" htmlFor={`name-${index}`} required>
                     <input

@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { Fragment, useEffect, useState } from "react";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
-import { FormField, textInputClass } from "@/components/ui/FormField";
+import { FormField } from "@/components/ui/FormField";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 
 interface SalesOrderOption {
   id: string;
@@ -170,14 +171,13 @@ export function MaterialRequirementsClient() {
 
       <div className="max-w-md">
         <FormField label="Sales Order" htmlFor="salesOrderId">
-          <select id="salesOrderId" value={salesOrderId} onChange={(e) => loadRequirements(e.target.value)} className={textInputClass()}>
-            <option value="">— Select —</option>
-            {salesOrders.map((o) => (
-              <option key={o.id} value={o.id}>
-                {o.orderNumber} — {o.customer?.name ?? "—"}
-              </option>
-            ))}
-          </select>
+          <SearchableSelect
+            id="salesOrderId"
+            value={salesOrderId}
+            onChange={loadRequirements}
+            options={salesOrders.map((o) => ({ id: o.id, label: o.orderNumber, sublabel: o.customer?.name }))}
+            placeholder="Search sales order…"
+          />
         </FormField>
       </div>
 
@@ -292,20 +292,14 @@ export function MaterialRequirementsClient() {
 
               <div className="mb-3 max-w-xs">
                 <FormField label="Issue From (Warehouse)" htmlFor="mrpWarehouseId" required>
-                  <select
+                  <SearchableSelect
                     id="mrpWarehouseId"
                     required
                     value={warehouseId}
-                    onChange={(e) => setWarehouseId(e.target.value)}
-                    className={textInputClass()}
-                  >
-                    <option value="">— Select —</option>
-                    {warehouses.map((w) => (
-                      <option key={w.id} value={w.id}>
-                        {w.name}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={setWarehouseId}
+                    options={warehouses.map((w) => ({ id: w.id, label: w.name }))}
+                    placeholder="Search warehouse…"
+                  />
                 </FormField>
               </div>
 

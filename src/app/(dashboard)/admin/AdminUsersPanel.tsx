@@ -5,6 +5,7 @@ import { Modal } from "@/components/ui/Modal";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 
 interface RoleRef {
   id: string;
@@ -390,19 +391,13 @@ export function AdminUsersPanel({
             </select>
           </FormField>
           <FormField label="Link to Employee (optional)" htmlFor="employeeId">
-            <select
+            <SearchableSelect
               id="employeeId"
-              className={textInputClass()}
               value={form.employeeId}
-              onChange={(e) => setForm({ ...form, employeeId: e.target.value })}
-            >
-              <option value="">— None —</option>
-              {linkableEmployees().map((e) => (
-                <option key={e.id} value={e.id}>
-                  {e.fullName} ({e.employeeCode})
-                </option>
-              ))}
-            </select>
+              onChange={(employeeId) => setForm({ ...form, employeeId })}
+              options={linkableEmployees().map((e) => ({ id: e.id, label: e.fullName, sublabel: e.employeeCode }))}
+              placeholder="Search employee…"
+            />
             <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
               Required for a worker to use self-entry (Log My Progress) — leave blank for office/management logins.
             </p>
@@ -504,19 +499,13 @@ export function AdminUsersPanel({
             />
           </FormField>
           <FormField label="Link to Employee (optional)" htmlFor="editEmployeeId">
-            <select
+            <SearchableSelect
               id="editEmployeeId"
-              className={textInputClass()}
               value={editForm.employeeId}
-              onChange={(e) => setEditForm({ ...editForm, employeeId: e.target.value })}
-            >
-              <option value="">— None —</option>
-              {linkableEmployees(editTarget?.id).map((e) => (
-                <option key={e.id} value={e.id}>
-                  {e.fullName} ({e.employeeCode})
-                </option>
-              ))}
-            </select>
+              onChange={(employeeId) => setEditForm({ ...editForm, employeeId })}
+              options={linkableEmployees(editTarget?.id).map((e) => ({ id: e.id, label: e.fullName, sublabel: e.employeeCode }))}
+              placeholder="Search employee…"
+            />
             <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
               Required for a worker to use self-entry (Log My Progress) — leave blank for office/management logins.
             </p>

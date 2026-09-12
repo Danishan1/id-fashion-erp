@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { todayIsoDate } from "@/lib/date";
 
 interface Option {
@@ -162,40 +163,28 @@ export function BuyerEnquiryForm() {
       {!isProspect ? (
         <div className="grid grid-cols-2 gap-4">
           <FormField label="Customer" htmlFor="customerId" required>
-            <select
+            <SearchableSelect
               id="customerId"
               required={!isProspect}
               value={customerId}
-              onChange={(e) => {
-                setCustomerId(e.target.value);
+              onChange={(next) => {
+                setCustomerId(next);
                 setBuyerId("");
                 setBuyers([]);
               }}
-              className={textInputClass()}
-            >
-              <option value="">— Select —</option>
-              {customers.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
+              options={customers.map((c) => ({ id: c.id, label: c.name ?? "" }))}
+              placeholder="Search customer…"
+            />
           </FormField>
           <FormField label="Buyer" htmlFor="buyerId">
-            <select
+            <SearchableSelect
               id="buyerId"
               value={buyerId}
-              onChange={(e) => setBuyerId(e.target.value)}
+              onChange={setBuyerId}
               disabled={!customerId}
-              className={textInputClass()}
-            >
-              <option value="">— None —</option>
-              {buyers.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name}
-                </option>
-              ))}
-            </select>
+              options={buyers.map((b) => ({ id: b.id, label: b.name ?? "" }))}
+              placeholder="Search buyer…"
+            />
           </FormField>
         </div>
       ) : (
@@ -294,19 +283,14 @@ export function BuyerEnquiryForm() {
 
             <div className="grid grid-cols-2 gap-3">
               <FormField label="Existing Style (optional)" htmlFor={`style-${index}`}>
-                <select
+                <SearchableSelect
                   id={`style-${index}`}
                   value={line.productId}
-                  onChange={(e) => updateLine(index, { productId: e.target.value })}
-                  className={textInputClass()}
-                >
-                  <option value="">— None, describe below —</option>
-                  {styles.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.styleName}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(productId) => updateLine(index, { productId })}
+                  options={styles.map((s) => ({ id: s.id, label: s.styleName ?? "" }))}
+                  placeholder="Search style…"
+                  emptyOptionLabel="— None, describe below —"
+                />
               </FormField>
               <FormField label="Style Name / Description (if new)" htmlFor={`styleName-${index}`}>
                 <input

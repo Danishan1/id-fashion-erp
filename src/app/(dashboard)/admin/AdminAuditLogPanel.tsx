@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Modal } from "@/components/ui/Modal";
 import { textInputClass } from "@/components/ui/FormField";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 
 interface AuditLogRow {
   id: string;
@@ -145,14 +146,13 @@ export function AdminAuditLogPanel() {
           </div>
           <div>
             <label className="block text-xs font-medium text-zinc-500 dark:text-zinc-400">User</label>
-            <select className={textInputClass()} value={draft.userId} onChange={(e) => setDraft({ ...draft, userId: e.target.value })}>
-              <option value="">All users</option>
-              {users.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.fullName}
-                </option>
-              ))}
-            </select>
+            <SearchableSelect
+              value={draft.userId}
+              onChange={(userId) => setDraft({ ...draft, userId })}
+              options={users.map((u) => ({ id: u.id, label: u.fullName }))}
+              placeholder="All users"
+              emptyOptionLabel="All users"
+            />
           </div>
           <div>
             <label className="block text-xs font-medium text-zinc-500 dark:text-zinc-400">Record ID</label>

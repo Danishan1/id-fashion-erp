@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { todayIsoDate } from "@/lib/date";
 
 interface SalesOrderOption {
@@ -135,20 +136,14 @@ export function SalesInvoiceForm({ onSuccess, onCancel }: SalesInvoiceFormProps 
     <form onSubmit={handleSubmit} className="max-w-4xl space-y-4">
       <div className="grid grid-cols-2 gap-4">
         <FormField label="Sales Order" htmlFor="salesOrderId" required>
-          <select
+          <SearchableSelect
             id="salesOrderId"
             required
             value={salesOrderId}
-            onChange={(e) => setSalesOrderId(e.target.value)}
-            className={textInputClass()}
-          >
-            <option value="">— Select a confirmed order —</option>
-            {orders.map((o) => (
-              <option key={o.id} value={o.id}>
-                {o.orderNumber}
-              </option>
-            ))}
-          </select>
+            onChange={setSalesOrderId}
+            options={orders.map((o) => ({ id: o.id, label: o.orderNumber }))}
+            placeholder="Search sales order…"
+          />
         </FormField>
         <FormField label="Invoice Date" htmlFor="invoiceDate" required>
           <input

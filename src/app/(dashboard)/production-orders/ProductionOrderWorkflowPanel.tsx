@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { Modal } from "@/components/ui/Modal";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { MaterialRequirementPreview } from "./MaterialRequirementPreview";
 import {
   STATUS_BADGE_CLASS,
@@ -564,14 +565,14 @@ export function ProductionOrderWorkflowPanel({
                 short in stock.
               </p>
               <FormField label="Issue From (Warehouse)" htmlFor="mrWarehouseId" required>
-                <select id="mrWarehouseId" value={mrWarehouseId} onChange={(e) => setMrWarehouseId(e.target.value)} className={textInputClass()}>
-                  <option value="">— Select —</option>
-                  {warehouses.map((w) => (
-                    <option key={w.id} value={w.id}>
-                      {w.name}
-                    </option>
-                  ))}
-                </select>
+                <SearchableSelect
+                  id="mrWarehouseId"
+                  required
+                  value={mrWarehouseId}
+                  onChange={setMrWarehouseId}
+                  options={warehouses.map((w) => ({ id: w.id, label: w.name }))}
+                  placeholder="Search warehouse…"
+                />
               </FormField>
               <div className="flex justify-end gap-2">
                 <button type="button" onClick={() => setShowGenerateMr(false)} className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800">

@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { buildCategoryOptions, type FlatCategory } from "@/lib/category-tree";
 
 export interface ProductFormValues {
@@ -139,19 +140,13 @@ export function ProductForm({ initialValues, submitUrl, method, onSuccess, onCan
           />
         </FormField>
         <FormField label="Customer" htmlFor="customerId">
-          <select
+          <SearchableSelect
             id="customerId"
             value={values.customerId}
-            onChange={(e) => setValues({ ...values, customerId: e.target.value })}
-            className={textInputClass()}
-          >
-            <option value="">— None —</option>
-            {customers.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
+            onChange={(customerId) => setValues({ ...values, customerId })}
+            options={customers.map((c) => ({ id: c.id, label: c.name }))}
+            placeholder="Search customer…"
+          />
         </FormField>
       </div>
 

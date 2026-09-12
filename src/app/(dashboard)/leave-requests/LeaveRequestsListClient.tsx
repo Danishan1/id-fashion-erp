@@ -5,6 +5,7 @@ import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { DataTable } from "@/components/ui/DataTable";
 import { Modal } from "@/components/ui/Modal";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { STATUS_LABELS, STATUS_BADGE_CLASS } from "@/lib/hr-approval-status-labels";
 
 interface Option {
@@ -164,14 +165,14 @@ export function LeaveRequestsListClient() {
       <Modal open={showModal} onClose={() => setShowModal(false)} title="New Leave Request">
         <div className="space-y-3">
           <FormField label="Employee" htmlFor="employeeId" required>
-            <select id="employeeId" required value={employeeId} onChange={(e) => setEmployeeId(e.target.value)} className={textInputClass()}>
-              <option value="">— Select —</option>
-              {employees.map((e) => (
-                <option key={e.id} value={e.id}>
-                  {e.fullName} ({e.employeeCode})
-                </option>
-              ))}
-            </select>
+            <SearchableSelect
+              id="employeeId"
+              required
+              value={employeeId}
+              onChange={setEmployeeId}
+              options={employees.map((e) => ({ id: e.id, label: e.fullName ?? "", sublabel: e.employeeCode }))}
+              placeholder="Search employee…"
+            />
           </FormField>
           <FormField label="Leave Type" htmlFor="leaveTypeId" required>
             <select id="leaveTypeId" required value={leaveTypeId} onChange={(e) => setLeaveTypeId(e.target.value)} className={textInputClass()}>

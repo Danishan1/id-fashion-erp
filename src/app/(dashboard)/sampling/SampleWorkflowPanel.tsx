@@ -6,6 +6,7 @@ import { FilePreviewModal } from "@/components/ui/FilePreviewModal";
 import { MaterialPicker } from "@/components/ui/MaterialPicker";
 import { Modal } from "@/components/ui/Modal";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { formatCategoryLabel } from "@/lib/format-category-label";
 import { formatDate, formatDateTime } from "@/lib/date-format";
 import { useSubmoduleVisibility } from "@/lib/use-submodule-visibility";
@@ -1799,19 +1800,14 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
             </div>
           )}
           <FormField label="Warehouse" htmlFor="mrWarehouseId">
-            <select
+            <SearchableSelect
               id="mrWarehouseId"
               value={mrWarehouseId}
-              onChange={(e) => setMrWarehouseId(e.target.value)}
-              className={textInputClass()}
-            >
-              <option value="">Select a warehouse…</option>
-              {warehouses.map((w) => (
-                <option key={w.id} value={w.id}>
-                  {w.name}
-                </option>
-              ))}
-            </select>
+              onChange={setMrWarehouseId}
+              options={warehouses.map((w) => ({ id: w.id, label: w.name ?? "" }))}
+              placeholder="Search warehouse…"
+              emptyOptionLabel="Select a warehouse…"
+            />
           </FormField>
           <div className="flex gap-3">
             <ActionButton label="Cancel" onClick={() => setMaterialRequestModalVersionId(null)} isBusy={false} variant="secondary" />

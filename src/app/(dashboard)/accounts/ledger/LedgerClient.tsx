@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { textInputClass } from "@/components/ui/FormField";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 
 interface AccountOption {
   id: string;
@@ -66,14 +67,12 @@ export function LedgerClient() {
       <div className="flex flex-wrap items-end gap-3">
         <div className="min-w-[220px]">
           <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400">Account</label>
-          <select value={accountId} onChange={(e) => setAccountId(e.target.value)} className={textInputClass()}>
-            <option value="">— Select account —</option>
-            {accounts.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.code} — {a.name}
-              </option>
-            ))}
-          </select>
+          <SearchableSelect
+            value={accountId}
+            onChange={setAccountId}
+            options={accounts.map((a) => ({ id: a.id, label: a.name, sublabel: a.code }))}
+            placeholder="Search account…"
+          />
         </div>
         <div>
           <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400">From</label>
