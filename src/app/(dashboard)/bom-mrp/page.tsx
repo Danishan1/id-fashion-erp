@@ -8,6 +8,14 @@ export default async function BomMrpListPage() {
   await PermissionService.assert(session!.user.id, "bom_mrp", "view").catch(() => notFound());
 
   const canViewDesignBom = await PermissionService.can(session!.user.id, "sampling", "view");
+  const canEditSampleMaterials = await PermissionService.can(session!.user.id, "sampling", "edit");
+  const canApproveBom = await PermissionService.can(session!.user.id, "bom_mrp", "approve");
 
-  return <BomMrpListClient canViewDesignBom={canViewDesignBom} />;
+  return (
+    <BomMrpListClient
+      canViewDesignBom={canViewDesignBom}
+      canEditSampleMaterials={canEditSampleMaterials}
+      canApproveBom={canApproveBom}
+    />
+  );
 }
