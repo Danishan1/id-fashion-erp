@@ -5808,6 +5808,42 @@ existing Style" picker — that's a separate, bigger feature, deliberately not b
   `npx vitest run` (1419/1419, no regressions) all clean — no new unit test added, matching the sibling
   `updateSampleRequestColor()` function's own existing (untested) coverage level.
 
+## BOM/MRP — Design BOM view for a sample, linked from the Sampling list (2026-09-12)
+
+Direct user request: a sample's own material list (its `SampleMaterial` rows on the current version) is
+effectively that design's own "BOM" — it wasn't reachable from anywhere in BOM/MRP itself, only inline on
+the Sample Request detail page. Asked for a tab alongside the real Style BOM showing it, plus a link on the
+Sampling list next to Edit.
+
+- **No new schema or business logic** — this is purely a new arrangement of two already-existing data
+  sources: `SampleMaterial` (Sampling's own module) and `Bom`/`BomVersion`/`BomItem` (bom-mrp's own module,
+  unchanged since the Phase 5B build and the later Sample-Style BOM linkage work).
+- New page `/bom-mrp/design/[sampleRequestId]` (`page.tsx` + a client `DesignBomTabs.tsx`) — a tab bar with
+  **Design BOM** (default, a plain read-only table: Material/Color/Shade-Pantone/Quantity/Unit/Notes, sourced
+  from the sample's current version, reusing the exact color-swatch/shade-formatting convention already used
+  throughout `SampleWorkflowPanel.tsx`) and, only when the sample is linked to a real Style
+  (`SampleRequest.productId` set), a **Style BOM** tab that embeds `BomVersionPanel`/`BomEditor` completely
+  unchanged — the exact same components `/bom-mrp/[productId]` itself renders, so editing a linked style's
+  BOM from here has full parity with the dedicated page, not a read-only approximation of it. When a sample
+  has no linked Style, the Style BOM tab renders as a disabled label with a tooltip ("This design has not
+  been converted to a Style yet.") rather than a dead link.
+- **RBAC**: gated on `sampling`/`view` (the page's real entry point is the Sampling list) — the Style BOM
+  tab additionally checks `bom_mrp`/`view` (and separately `bom_mrp`/`approve` for the embedded
+  `BomVersionPanel`'s own approve button) and simply omits itself if the viewer lacks that permission, rather
+  than rendering a 403'd tab.
+- New "Design BOM" link added next to the existing "Edit" link on the Sampling list
+  (`SamplingListClient.tsx`) — `product.id` was already selected by the list's own repository query, so no
+  new API field was needed.
+- **Verified live end-to-end**: a sample linked to a real Style ("Gown"/ST-00011) showed both tabs, with the
+  Style BOM tab correctly rendering the real (currently-empty) `BomEditor`; a sample with no linked Style
+  showed its own real Design BOM materials and a correctly-disabled Style BOM label. Zero console errors on
+  either page. `npx tsc --noEmit`, `npx eslint`, and `npx vitest run` (1427/1427, no regressions) all clean.
+- **Environment note, not a code issue**: this session's own git worktree had no local `node_modules` at
+  all — a plain `npm ci` inside it was required before the dev server could start (Turbopack refuses to
+  resolve `next` through a symlink/junction pointing outside the worktree's own directory tree, so sharing
+  the parent checkout's `node_modules` via a junction is not a viable shortcut here, unlike some other
+  monorepo setups). Worth remembering for any future worktree-based session on this repo.
+
 ## Recommended Stack
 
 Next.js 14+ (App Router) + React + TypeScript + Tailwind CSS (frontend); Next.js API routes/route handlers as REST API; PostgreSQL + Prisma ORM; session-based auth (Auth.js/NextAuth, DB sessions) with RBAC and optional TOTP 2FA; S3-compatible or local file storage for attachments; server-side PDF/Excel export (`exceljs`, `pdf-lib`/`@react-pdf/renderer`).
