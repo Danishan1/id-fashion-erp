@@ -5874,6 +5874,27 @@ picker, so keeping them without the wizard would have been schema/prompt complex
 The stale branch (`claude/fashion-erp-testing-f1d5f4`) was deleted from the remote afterward — everything
 worth keeping from it is now on `main` via the salvage PR; nothing else in it is wanted.
 
+## Design BOM is now editable; BOM/MRP list gains Style/Design BOM tabs (2026-09-12)
+
+Two direct follow-up requests on the Design BOM feature from earlier the same day.
+
+- **Editable Design BOM**: `/bom-mrp/design/[sampleRequestId]`'s Design BOM tab gained real Edit/Remove
+  actions per material line — a sample's planned quantities routinely need adjusting once actual sampling
+  shows it used more or less than planned. Reuses Sampling's own existing `updateSampleMaterial()`/
+  `removeSampleMaterial()` (the exact same functions `SampleWorkflowPanel`'s own Edit/Remove actions already
+  call, editable at any sample status, no new business logic) via a new `EditMaterialModal` mirroring that
+  panel's own Add/Edit Material form (`MaterialPicker` + Quantity/Unit/Color/Shade-Pantone/Notes) —
+  server-gated on the page's own `sampling`/`edit` check, hidden entirely for a viewer who lacks it.
+- **BOM/MRP list page gains tabs**: `/bom-mrp` (`BomMrpListClient.tsx`) now has "Style" (the original
+  per-style BOM list, unchanged) and "Design BOM" (new — the existing `/api/v1/sampling` list endpoint
+  reused through the generic `DataTable`, each row linking straight to that design's own Design BOM page).
+  The Design BOM tab only renders for a viewer who also holds `sampling`/`view`.
+- **Verified live**: edited a real material's quantity (5→7.5 Mtr) and notes on the Design BOM page,
+  confirmed it persisted, reverted it back to the original value; confirmed the Remove confirmation dialog
+  opens with the correct material name and cancels cleanly without deleting anything; confirmed both new
+  BOM/MRP tabs render real data with correct links. Zero console errors throughout. `npx tsc --noEmit`,
+  `npx eslint`, and `npx vitest run` (1427/1427, no regressions) all clean.
+
 ## Recommended Stack
 
 Next.js 14+ (App Router) + React + TypeScript + Tailwind CSS (frontend); Next.js API routes/route handlers as REST API; PostgreSQL + Prisma ORM; session-based auth (Auth.js/NextAuth, DB sessions) with RBAC and optional TOTP 2FA; S3-compatible or local file storage for attachments; server-side PDF/Excel export (`exceljs`, `pdf-lib`/`@react-pdf/renderer`).
