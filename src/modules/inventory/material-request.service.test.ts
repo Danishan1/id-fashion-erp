@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/numbering/DocumentNumberingService", () => ({ generateDocumentNumber: vi.fn() }));
 vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { assert: vi.fn() } }));
-vi.mock("@/core/db/client", () => ({ prisma: { $transaction: vi.fn() } }));
+vi.mock("@/core/db/client", () => ({ prisma: { $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn({})) } }));
 vi.mock("@/modules/purchasing/purchase-order.service", () => ({ createPurchaseOrder: vi.fn() }));
 vi.mock("@/modules/bom-mrp/mrp.service", () => ({ getMaterialRequirements: vi.fn() }));
 vi.mock("@/modules/bom-mrp/bom.repository", () => ({ BomRepository: { findByProductId: vi.fn() } }));
@@ -14,7 +14,18 @@ vi.mock("@/modules/sampling/sample.repository", () => ({
   SampleMaterialRepository: { findByVersionIdForMaterialRequest: vi.fn() },
 }));
 vi.mock("@/modules/lookups/lookup.repository", () => ({ LookupRepository: { unit: { findUnique: vi.fn() } } }));
-vi.mock("./inventory.service", () => ({ getAvailableQuantity: vi.fn(), recordInventoryTransaction: vi.fn() }));
+vi.mock("./inventory.service", () => ({
+  getAvailableQuantity: vi.fn(),
+  getAvailableQuantityByDye: vi.fn(),
+  recordInventoryTransaction: vi.fn(),
+}));
+vi.mock("@/modules/purchasing/fabric-roll.repository", () => ({
+  FabricRollRepository: {
+    findByIdWithContext: vi.fn(),
+    guardedDecrementRemaining: vi.fn(),
+    findAvailableForMaterial: vi.fn(),
+  },
+}));
 vi.mock("./material-request.repository", () => ({
   MaterialRequestRepository: {
     findAnyById: vi.fn(),
@@ -33,10 +44,13 @@ vi.mock("./material-request.repository", () => ({
     guardedIncrementIssued: vi.fn(),
     findManyForStatusRecompute: vi.fn(),
     findLinesForShortfallGeneration: vi.fn(),
+    findById: vi.fn(),
   },
 }));
 
 const { MaterialRequestRepository, MaterialRequestItemRepository } = await import("./material-request.repository");
+const { FabricRollRepository } = await import("@/modules/purchasing/fabric-roll.repository");
+const { recordInventoryTransaction } = await import("./inventory.service");
 const { PermissionService } = await import("@/core/rbac/PermissionService");
 const { generateDocumentNumber } = await import("@/core/numbering/DocumentNumberingService");
 const { createPurchaseOrder } = await import("@/modules/purchasing/purchase-order.service");
@@ -56,6 +70,8 @@ const {
   findMaterialRequestsBySampleVersion,
   createMaterialRequest,
   updateMaterialRequestLines,
+  issueMaterialRequestLine,
+  getAvailableRollsForLine,
 } = await import("./material-request.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
@@ -91,6 +107,13 @@ beforeEach(() => {
   vi.mocked(ProductRepository.findMaterialById)
     .mockReset()
     .mockResolvedValue({ id: "mat-1", styleName: "Test Material", baseUom: { id: "uom-1", baseUnitId: null, conversionFactor: 1 } } as never);
+  vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockReset();
+  vi.mocked(MaterialRequestItemRepository.guardedIncrementIssued).mockReset();
+  vi.mocked(MaterialRequestItemRepository.findById).mockReset();
+  vi.mocked(recordInventoryTransaction).mockReset().mockResolvedValue(undefined);
+  vi.mocked(FabricRollRepository.findByIdWithContext).mockReset();
+  vi.mocked(FabricRollRepository.guardedDecrementRemaining).mockReset();
+  vi.mocked(FabricRollRepository.findAvailableForMaterial).mockReset();
 });
 
 describe("computeMaterialRequestStatus", () => {
@@ -680,5 +703,122 @@ describe("createMaterialRequest — Sales Order link", () => {
 
     expect(SalesOrderRepository.findAnyById).not.toHaveBeenCalled();
     expect(MaterialRequestRepository.createWithLines).toHaveBeenCalledWith(expect.objectContaining({ salesOrderId: null }));
+  });
+});
+
+describe("issueMaterialRequestLine — fabric roll (color/shade) selection", () => {
+  function baseLine(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "line-1",
+      materialId: "mat-fabric",
+      requestedQuantity: "10",
+      issuedQuantity: "0",
+      material: { id: "mat-fabric", styleName: "Cotton Fabric", materialCategory: "FABRIC", baseUomId: "uom-1", baseUom: { id: "uom-1", baseUnitId: null, conversionFactor: 1 } },
+      uom: { id: "uom-1", baseUnitId: null, conversionFactor: 1 },
+      materialRequest: { id: "mr-1", companyId: "co-1", warehouseId: "wh-1", status: "OPEN" },
+      ...overrides,
+    };
+  }
+
+  function inStockRoll(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "roll-1",
+      status: "IN_STOCK",
+      remainingQuantity: "50",
+      goodsReceiptItem: { productId: "mat-fabric", warehouseId: "wh-1" },
+      ...overrides,
+    };
+  }
+
+  it("issues against the selected roll: decrements it and records the roll on the ledger entry", async () => {
+    vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue(baseLine() as never);
+    vi.mocked(FabricRollRepository.findByIdWithContext).mockResolvedValue(inStockRoll() as never);
+    vi.mocked(MaterialRequestItemRepository.guardedIncrementIssued).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(FabricRollRepository.guardedDecrementRemaining).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(MaterialRequestItemRepository.findById).mockResolvedValue({ id: "line-1" } as never);
+
+    await issueMaterialRequestLine(actor, "line-1", 5, null, "roll-1");
+
+    expect(recordInventoryTransaction).toHaveBeenCalledWith(
+      {},
+      actor,
+      expect.objectContaining({ fabricRollId: "roll-1", quantity: -5 })
+    );
+    expect(FabricRollRepository.guardedDecrementRemaining).toHaveBeenCalledWith({}, "roll-1", 5);
+  });
+
+  it("rejects a roll that belongs to a different material at this warehouse", async () => {
+    vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue(baseLine() as never);
+    vi.mocked(FabricRollRepository.findByIdWithContext).mockResolvedValue(
+      inStockRoll({ goodsReceiptItem: { productId: "some-other-material", warehouseId: "wh-1" } }) as never
+    );
+
+    await expect(issueMaterialRequestLine(actor, "line-1", 5, null, "roll-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(FabricRollRepository.guardedDecrementRemaining).not.toHaveBeenCalled();
+  });
+
+  it("rejects issuing more than the selected roll actually has remaining", async () => {
+    vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue(baseLine() as never);
+    vi.mocked(FabricRollRepository.findByIdWithContext).mockResolvedValue(inStockRoll({ remainingQuantity: "3" }) as never);
+
+    await expect(issueMaterialRequestLine(actor, "line-1", 5, null, "roll-1")).rejects.toMatchObject({
+      code: "INSUFFICIENT_RAW_MATERIAL_STOCK",
+    });
+    expect(MaterialRequestItemRepository.guardedIncrementIssued).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a clean conflict error when the roll is decremented by someone else in the same instant", async () => {
+    vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue(baseLine() as never);
+    vi.mocked(FabricRollRepository.findByIdWithContext).mockResolvedValue(inStockRoll() as never);
+    vi.mocked(MaterialRequestItemRepository.guardedIncrementIssued).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(FabricRollRepository.guardedDecrementRemaining).mockResolvedValue({ count: 0 } as never);
+
+    await expect(issueMaterialRequestLine(actor, "line-1", 5, null, "roll-1")).rejects.toMatchObject({
+      code: "INSUFFICIENT_RAW_MATERIAL_STOCK",
+    });
+  });
+
+  it("falls back to the flat material-level check when no roll is selected — unchanged, backward-compatible behavior", async () => {
+    const { getAvailableQuantity } = await import("./inventory.service");
+    vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue(baseLine() as never);
+    vi.mocked(getAvailableQuantity).mockResolvedValue(20 as never);
+    vi.mocked(MaterialRequestItemRepository.guardedIncrementIssued).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(MaterialRequestItemRepository.findById).mockResolvedValue({ id: "line-1" } as never);
+
+    await issueMaterialRequestLine(actor, "line-1", 5, null, null);
+
+    expect(FabricRollRepository.findByIdWithContext).not.toHaveBeenCalled();
+    expect(FabricRollRepository.guardedDecrementRemaining).not.toHaveBeenCalled();
+    expect(recordInventoryTransaction).toHaveBeenCalledWith({}, actor, expect.objectContaining({ fabricRollId: null }));
+  });
+});
+
+describe("getAvailableRollsForLine", () => {
+  it("returns the color/shade breakdown for the line's material at its request's warehouse", async () => {
+    vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue({
+      materialId: "mat-fabric",
+      materialRequest: { companyId: "co-1", warehouseId: "wh-1" },
+    } as never);
+    vi.mocked(FabricRollRepository.findAvailableForMaterial).mockResolvedValue([
+      { id: "roll-1", rollNumber: "R-1", remainingQuantity: "50", dye: { id: "dye-1", name: "Navy Blue", pantone: "19-4030" } },
+      { id: "roll-2", rollNumber: "R-2", remainingQuantity: "30", dye: null },
+    ] as never);
+
+    const rolls = await getAvailableRollsForLine(actor, "line-1");
+
+    expect(FabricRollRepository.findAvailableForMaterial).toHaveBeenCalledWith("co-1", "mat-fabric", "wh-1");
+    expect(rolls).toEqual([
+      { id: "roll-1", rollNumber: "R-1", remainingQuantity: "50", dye: { id: "dye-1", name: "Navy Blue", pantone: "19-4030" } },
+      { id: "roll-2", rollNumber: "R-2", remainingQuantity: "30", dye: null },
+    ]);
+  });
+
+  it("rejects a line that doesn't belong to this company", async () => {
+    vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue({
+      materialId: "mat-fabric",
+      materialRequest: { companyId: "some-other-co", warehouseId: "wh-1" },
+    } as never);
+
+    await expect(getAvailableRollsForLine(actor, "line-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 });
