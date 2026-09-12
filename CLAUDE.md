@@ -5844,6 +5844,36 @@ Sampling list next to Edit.
   the parent checkout's `node_modules` via a junction is not a viable shortcut here, unlike some other
   monorepo setups). Worth remembering for any future worktree-based session on this repo.
 
+## AI Garment Flow — scoped and closed out a stale "guided design wizard" branch (2026-09-12)
+
+An earlier session had built, on its own orphaned branch (`claude/fashion-erp-testing-f1d5f4`, never merged,
+30 commits behind `main` by the time this was picked up), a single commit titled "replace Product
+Suitability/Fabric-to-Garment Development with a guided design wizard." Investigated properly (not just
+skimmed) before touching anything, since the title alone implied removing two already-shipped, tested,
+documented AI processes (Process 8 "Product/Fabric Suitability" and Process 9 "Fabric-to-Garment
+Development," both still fully live on `main` — confirmed via `ProductSuitabilityPanel.tsx`/
+`FabricDevelopmentBriefPanel` still being real, wired components, not dead code).
+
+**The key finding, surfaced to the user before writing any code**: the proposed replacement — a menu-driven
+Target Customer → Age Group → Product Category → Design Options → Environment wizard — is functionally the
+same idea as the separate, already-built **AI Designer** module (2026-09-10 onward), which the user
+deliberately kept "genuinely separate... zero shared business logic" from AI Garment Flow. Building the same
+wizard concept a second time, inside AI Garment Flow, would have created two divergent copies of one idea
+rather than reusing the one that already exists and has since grown much further (Multi-Fabric, Tech Pack,
+admin clipart/text toggle, real reference photos, a Masters-backed attribute catalog).
+
+**User's decision, via AskUserQuestion**: keep Product Suitability + Fabric-to-Garment Development exactly
+as they are; drop the stale branch's wizard entirely — AI Designer already covers that need. Two genuinely
+independent, non-destructive pieces from the same stale commit were salvaged separately (see the
+"AI Garment Flow: extend Modify Design feature list; clean Fabric Analysis summary view" entry immediately
+above this one) since neither depended on the wizard-replaces-suitability decision. A third piece (adding
+`fabricName`/`suitableSeason`/`recommendedGarments` fields to Fabric Analysis) was deliberately **not**
+carried over — those 3 fields existed specifically to feed the now-declined wizard's own product-category
+picker, so keeping them without the wizard would have been schema/prompt complexity with no real consumer.
+
+The stale branch (`claude/fashion-erp-testing-f1d5f4`) was deleted from the remote afterward — everything
+worth keeping from it is now on `main` via the salvage PR; nothing else in it is wanted.
+
 ## Recommended Stack
 
 Next.js 14+ (App Router) + React + TypeScript + Tailwind CSS (frontend); Next.js API routes/route handlers as REST API; PostgreSQL + Prisma ORM; session-based auth (Auth.js/NextAuth, DB sessions) with RBAC and optional TOTP 2FA; S3-compatible or local file storage for attachments; server-side PDF/Excel export (`exceljs`, `pdf-lib`/`@react-pdf/renderer`).
