@@ -84,9 +84,16 @@ export function MerchandisingActionSheetPanel({ projectId }: { projectId: string
   const [error, setError] = useState<string | null>(null);
 
   async function toggle() {
-    if (!open && data === undefined) {
+    // Re-fetch on EVERY open, not just the first — this is a rollup of other
+    // steps' own real, mutable state, so a stale-first-load guard here would
+    // silently show yesterday's status for the rest of the page session
+    // (ERP-BUG-0001, found during the 2026-09-08 QA pass).
+    if (!open) {
+      setError(null);
       try {
         const res = await fetch(`/api/v1/ai-garment-projects/${projectId}/merchandising-action-sheet`);
+        const contentType = res.headers.get("content-type") ?? "";
+        if (!contentType.includes("application/json")) throw new Error("Failed to load the Merchandising Action Sheet.");
         const body = await res.json();
         if (!res.ok) throw new Error(body?.error?.message ?? "Failed to load the Merchandising Action Sheet.");
         setData(body.data);

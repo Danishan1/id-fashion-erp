@@ -5266,6 +5266,91 @@ and unit-tested with their live success path blocked only on the configured Open
 item 15) intentionally covered via a deep-link into the existing Sampling module rather than a new dedicated
 process.
 
+**Correction, 2026-09-08**: a third image-generation provider (Cloudflare Workers AI, `providers/
+cloudflare.ts`) had already been added in an earlier session (commit `fd1da2d`, ancestor of `main`) but was
+never documented in this file — noted here in passing while writing up the full QA pass immediately below,
+which is where it actually mattered. `.env`'s `IMAGE_GENERATION_PROVIDER` is currently set to `"cloudflare"`,
+with real credentials configured — it implements only plain text-to-image `generate()` (a free-tier model,
+`flux-1-schnell`), deliberately omitting `generateVariation`/`applyFabric`/`generateTechnicalFlat` entirely
+(the REST API has no arbitrary-multi-image-input model comparable to Gemini's or OpenAI's), so under this
+provider Process 3 (Garment Design Visual Generation) is genuinely live and working, while Process 4
+(Controlled Design Variation), Process 6 (Apply Actual Fabric), and Technical Flat generation all correctly
+fail clean with `UNSUPPORTED_OPERATION` rather than the `CREDITS_EXHAUSTED` this file's other sections
+describe for the OpenAI-configured state — both are real, currently-true statements about two different
+provider configurations this app has been run under across different sessions, not a contradiction.
+
+## Full QA/UAT pass across all 17 processes, 4 real bugs found and fixed (2026-09-08)
+
+A dedicated `erp-qa-uat` agent drove all 17 processes end-to-end through the real browser UI against the
+real dev DB and real AI providers (Anthropic + the Cloudflare config above) — the first time this module was
+verified through the actual UI rather than a mix of unit tests and direct-script service-layer calls, made
+possible because another session's own `next dev` was already running and reachable at `localhost:3000`
+(navigated to directly, sidestepping the single-instance dev-server lock that blocked every earlier live-UI
+attempt documented throughout this file's own AI Garment Flow sections). Two fresh test projects were
+created (`AGF-2026-00002`, Reference workflow, taken all the way to `COMPLETED`; `AGF-2026-00003`, Fabric
+workflow, taken through Costing) and left in the dev DB as evidence.
+
+**Result: 13/17 processes fully PASS with genuinely grounded AI content verified by reading the actual
+output (not just checking HTTP status), 3 correctly clean-fail exactly as the Cloudflare capability gap
+above predicts (confirmed zero orphan DB rows on each), and Production Handoff passed its full real
+Sample→Sales-Order→Production-Order loop. Zero P0/P1 defects.** Two real P2 bugs were found and fixed, both
+in the display/tracking layer — the underlying business-rule gates were independently confirmed unaffected
+(a direct attempt to skip real gated work still correctly `409`s):
+
+- **Stepper tabs could mark a step "✓ complete" just by clicking to preview it, with zero real work done.**
+  `saveWorkflowStep()`'s single endpoint is deliberately reused two ways: every genuine completion action
+  (Approve, Select-for-Development, etc.) calls it with the CURRENT step's own key first (to self-mark that
+  step done) before advancing — but the stepper's own tab buttons called the identical function with
+  whatever step was merely clicked, with no way to tell "I finished this" apart from "I'm just looking at
+  this." Confirmed live: clicking forward onto an unstarted step immediately flipped it green with zero
+  backend work done. Fixed by disabling forward-jump clicks in the tab bar entirely (`idx > currentIndex`) —
+  the tabs are now purely a "review a step you're on or have already passed" control; forward progress still
+  works exactly as before via each step's own "Save & Continue"/explicit completion action, so nothing was
+  lost. Re-verified live: steps 1-12 (current + all earlier) stayed clickable on a mid-workflow test project,
+  steps 13-14 (ahead of current) correctly disabled.
+- **The Merchandising Action Sheet panel only ever fetched once per page load.** `MerchandisingActionSheetPanel.tsx`'s
+  own `toggle()` guarded its fetch with `data === undefined`, so the very first open cached a permanent
+  snapshot — reopening it later in the same page session (after real work happened elsewhere on the page)
+  kept showing that first-load snapshot forever, directly undermining the one thing this panel exists to be:
+  an always-current rollup. Fixed by refetching on every open, not just the first. Re-verified live via the
+  network log: two distinct request timestamps for two separate opens of the same panel, confirming a fresh
+  fetch each time (the panel briefly *looked* unfixed during verification because a stale accessibility-tree
+  `ref_N` pointed at an already-detached button after a React re-render — the sandboxed browser tool's own
+  documented limitation, not the app; a direct `element.click()` via `javascript_tool` confirmed the real fix).
+
+Two P3s also fixed: stale placeholder copy on the Reference Analysis step's help text (still read *"AI would
+analyse the uploaded reference here once connected"* — leftover from before Process 1 was built, the one
+sibling step whose copy never got updated once its own AI integration actually shipped); and
+`FabricAnalysisPanel.tsx`'s mount-effect fetch had no guard against a non-JSON error response, so a genuine
+transient dev-server crash (a Windows-specific Next.js manifest-rename race hit once during the QA pass,
+unrelated to this app's own code) left an uncaught `SyntaxError` in the console and the panel stuck on
+"Loading…" forever instead of a clean error message — fixed with a content-type check before parsing.
+
+**Confirmed NOT a bug, investigated rather than assumed**: the QA agent couldn't tell whether picking "3"
+directions on the Development Brief form and getting 6 back anyway was a real defect or its own test-script
+timing (clicking the radio and the submit button synchronously before React committed the state change).
+Traced the actual code: the radio's `checked`/`onChange` wiring is a completely standard controlled pair,
+and the client payload's `directionCount` field name matches the server Zod schema's own field name exactly
+(`z.union([z.literal(3), z.literal(6), z.literal(9)]).default(6)`) — no mismatch, no silently-dropped field.
+Concluded this is almost certainly the QA agent's own flagged test-script-timing artifact, not an app bug;
+not changed.
+
+**Deliberately NOT fixed this pass, flagged as a known, scoped limitation instead of a silent 17-file sweep**:
+the same "no content-type guard before `.then((res) => res.json())`" shape found in `FabricAnalysisPanel.tsx`
+is genuinely pervasive — confirmed via grep across **17 of the AI Garment Flow module's own panel files**.
+Fixing every instance is a real, separate, larger sweep (matching this project's own established precedent
+for exactly this kind of finding — e.g. Phase 10's "~47 more client list pages share the same
+missing-permission-gate pattern... recommend a dedicated follow-up sweep" — rather than a rushed multi-file
+pass with no per-file verification time); only the one instance the QA agent actually reproduced a real
+crash against was fixed in this pass.
+
+`npx tsc --noEmit`, `npx eslint .`, and `npx vitest run` (1265/1265, no new tests needed — these are
+UI/display-layer fixes with no new business logic to unit-test) all clean throughout. Four orphaned
+`VERIFY-MAS-FRESH-*` test projects — leftovers from the Merchandising Action Sheet build's own earlier
+interrupted verification-script runs, never cleaned up because the script crashed before reaching its own
+cleanup step on 4 separate attempts — were found sitting in the project list during this pass's own live
+verification and deleted.
+
 ## AI Designer — a new, genuinely separate module from AI Garment Flow (2026-09-10)
 
 User asked for a brand-new "AI Designer" module: a guided wizard (Fabric Selection → Analyze Fabric with AI
