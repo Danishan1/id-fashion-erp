@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 
 export interface EmployeeFormValues {
   employeeCode: string;
@@ -226,21 +227,15 @@ export function EmployeeForm({ initialValues, submitUrl, method, onSuccess, onCa
       </div>
 
       <FormField label="Reports To" htmlFor="reportsToId">
-        <select
+        <SearchableSelect
           id="reportsToId"
           value={values.reportsToId}
-          onChange={(e) => setValues({ ...values, reportsToId: e.target.value })}
-          className={textInputClass()}
-        >
-          <option value="">— None —</option>
-          {managers
+          onChange={(reportsToId) => setValues({ ...values, reportsToId })}
+          options={managers
             .filter((m) => m.id !== excludeEmployeeId)
-            .map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.fullName} ({m.employeeCode})
-              </option>
-            ))}
-        </select>
+            .map((m) => ({ id: m.id, label: m.fullName, sublabel: m.employeeCode }))}
+          placeholder="Search employee…"
+        />
       </FormField>
 
       <div className="grid grid-cols-2 gap-4">

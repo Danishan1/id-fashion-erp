@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { formatCurrency } from "@/lib/currency";
 import { todayIsoDate } from "@/lib/date";
 import { formatDate } from "@/lib/date-format";
@@ -78,6 +79,7 @@ export interface InitialOrder {
   buyerId: string | null;
   orderDate: string;
   requiredShipDate: string | null;
+  customerPoNumber?: string | null;
   items: InitialOrderItem[];
 }
 
@@ -97,6 +99,7 @@ export function SalesOrderForm({
   const [buyerId, setBuyerId] = useState(initialOrder?.buyerId ?? "");
   const [orderDate, setOrderDate] = useState(initialOrder ? initialOrder.orderDate.slice(0, 10) : TODAY);
   const [requiredShipDate, setRequiredShipDate] = useState(initialOrder?.requiredShipDate?.slice(0, 10) ?? "");
+  const [customerPoNumber, setCustomerPoNumber] = useState(initialOrder?.customerPoNumber ?? "");
   const [customers, setCustomers] = useState<Option[]>([]);
   const [buyers, setBuyers] = useState<Option[]>([]);
   const [styles, setStyles] = useState<StyleOption[]>([]);
@@ -275,6 +278,7 @@ export function SalesOrderForm({
         buyerId: buyerId || undefined,
         orderDate,
         requiredShipDate: requiredShipDate || undefined,
+        customerPoNumber: customerPoNumber || undefined,
         originatingDealId: !initialOrder && originatingDealId ? originatingDealId : undefined,
         items: payloadItems,
         overrideReason: initialOrder && useOverride ? overrideReason : undefined,
@@ -313,12 +317,12 @@ export function SalesOrderForm({
       )}
       <div className="grid grid-cols-2 gap-4">
         <FormField label="Customer" htmlFor="customerId" required>
-          <select
+          <SearchableSelect
             id="customerId"
             required
             value={customerId}
-            onChange={(e) => {
-              setCustomerId(e.target.value);
+            onChange={(next) => {
+              setCustomerId(next);
               setBuyerId("");
               setBuyers([]);
               // Company-wide sample search is independent of the customer,
@@ -326,32 +330,20 @@ export function SalesOrderForm({
               if (!searchAllCustomers) setApprovedSamples([]);
               setLastOrderPrices({});
             }}
-            className={textInputClass()}
-          >
-            <option value="">— Select —</option>
-            {customers.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
+            options={customers.map((c) => ({ id: c.id, label: c.name ?? "" }))}
+            placeholder="Search customer…"
+          />
         </FormField>
 
         <FormField label="Buyer" htmlFor="buyerId">
-          <select
+          <SearchableSelect
             id="buyerId"
             value={buyerId}
-            onChange={(e) => setBuyerId(e.target.value)}
+            onChange={setBuyerId}
             disabled={!customerId}
-            className={textInputClass()}
-          >
-            <option value="">— None —</option>
-            {buyers.map((b) => (
-              <option key={b.id} value={b.id}>
-                {b.name}
-              </option>
-            ))}
-          </select>
+            options={buyers.map((b) => ({ id: b.id, label: b.name ?? "" }))}
+            placeholder="Search buyer…"
+          />
         </FormField>
       </div>
 
@@ -376,6 +368,23 @@ export function SalesOrderForm({
           />
         </FormField>
       </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <FormField label="Customer PO Number (optional)" htmlFor="customerPoNumber">
+          <input
+            id="customerPoNumber"
+            value={customerPoNumber}
+            onChange={(e) => setCustomerPoNumber(e.target.value)}
+            placeholder="Buyer's own purchase order reference"
+            className={textInputClass()}
+          />
+        </FormField>
+      </div>
+      {!initialOrder && (
+        <p className="text-xs text-zinc-500 dark:text-zinc-400">
+          You can upload the buyer&apos;s PO document as an attachment from the order&apos;s detail page once it&apos;s created.
+        </p>
+      )}
 
       <div className="space-y-4">
         <div className="flex items-center justify-between">
@@ -409,29 +418,25 @@ export function SalesOrderForm({
 
             <div className="grid grid-cols-2 gap-3">
               <FormField label="Style" htmlFor={`style-${index}`} required>
-                <select
+                <SearchableSelect
                   id={`style-${index}`}
                   required
                   value={item.productId}
-                  onChange={(e) => onStyleChange(index, e.target.value)}
-                  className={textInputClass()}
-                >
-                  <option value="">— Select —</option>
-                  {styles.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.styleName}
-                      {s.designNumber ? ` (Design: ${s.designNumber})` : ""}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(next) => onStyleChange(index, next)}
+                  options={styles.map((s) => ({
+                    id: s.id,
+                    label: s.styleName ?? "",
+                    sublabel: s.designNumber ? `Design: ${s.designNumber}` : undefined,
+                  }))}
+                  placeholder="Search style…"
+                />
               </FormField>
 
               <FormField label="Design Name / Linked Sample (optional)" htmlFor={`sample-${index}`}>
-                <select
+                <SearchableSelect
                   id={`sample-${index}`}
                   value={item.sampleRequestId}
-                  onChange={(e) => {
-                    const sampleRequestId = e.target.value;
+                  onChange={(sampleRequestId) => {
                     const selected = approvedSamples.find((s) => s.id === sampleRequestId);
                     const sampleCost = selected?.versions[0]?.estimatedCostPerUnit ?? null;
                     // Default, not enforced — only fills a still-empty Unit
@@ -443,17 +448,11 @@ export function SalesOrderForm({
                     });
                   }}
                   disabled={(!searchAllCustomers && !customerId) || !item.productId}
-                  className={textInputClass()}
-                >
-                  <option value="">— None —</option>
-                  {approvedSamples
+                  options={approvedSamples
                     .filter((s) => s.product?.id === item.productId)
-                    .map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {sampleDisplayLabel(s)}
-                      </option>
-                    ))}
-                </select>
+                    .map((s) => ({ id: s.id, label: sampleDisplayLabel(s) }))}
+                  placeholder="Search design / sample…"
+                />
                 {!searchAllCustomers && !customerId ? (
                   <p className="mt-1 text-xs text-zinc-400">Pick a Customer first, or search all customers above.</p>
                 ) : !item.productId ? (

@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { formatCurrency } from "@/lib/currency";
 import { todayIsoDate } from "@/lib/date";
 
@@ -185,14 +186,14 @@ export function ExpenseForm({ initialExpense, onSuccess, onCancel }: ExpenseForm
           />
         </FormField>
         <FormField label="Expense Account" htmlFor="accountId" required>
-          <select id="accountId" required value={accountId} onChange={(e) => setAccountId(e.target.value)} className={textInputClass()}>
-            <option value="">— Select —</option>
-            {accounts.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.code} — {a.name}
-              </option>
-            ))}
-          </select>
+          <SearchableSelect
+            id="accountId"
+            required
+            value={accountId}
+            onChange={setAccountId}
+            options={accounts.map((a) => ({ id: a.id, label: a.name, sublabel: a.code }))}
+            placeholder="Search account…"
+          />
         </FormField>
       </div>
 
@@ -231,14 +232,13 @@ export function ExpenseForm({ initialExpense, onSuccess, onCancel }: ExpenseForm
           </select>
         </FormField>
         <FormField label="Supplier (optional)" htmlFor="supplierId">
-          <select id="supplierId" value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className={textInputClass()}>
-            <option value="">— None —</option>
-            {suppliers.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
+          <SearchableSelect
+            id="supplierId"
+            value={supplierId}
+            onChange={setSupplierId}
+            options={suppliers.map((s) => ({ id: s.id, label: s.name }))}
+            placeholder="Search supplier…"
+          />
         </FormField>
         <FormField label="TDS % (optional)" htmlFor="tdsPercentage">
           <input

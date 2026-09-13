@@ -7,6 +7,7 @@ import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { Modal } from "@/components/ui/Modal";
 import { FilePreviewModal } from "@/components/ui/FilePreviewModal";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { todayIsoDate } from "@/lib/date";
 import { STATUS_LABELS } from "../statusLabels";
 import { STATUS_LABELS as SETTLEMENT_STATUS_LABELS } from "../../simpleDocumentStatusLabels";
@@ -465,14 +466,14 @@ export function EmployeeAdvanceWorkflowPanel({ advance }: { advance: EmployeeAdv
             <input id="settlementDate" type="date" required value={settlementDate} onChange={(e) => setSettlementDate(e.target.value)} className={textInputClass()} />
           </FormField>
           <FormField label="Expense Account" htmlFor="expenseAccountId" required>
-            <select id="expenseAccountId" required value={expenseAccountId} onChange={(e) => setExpenseAccountId(e.target.value)} className={textInputClass()}>
-              <option value="">— Select —</option>
-              {accounts.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.code} — {a.name}
-                </option>
-              ))}
-            </select>
+            <SearchableSelect
+              id="expenseAccountId"
+              required
+              value={expenseAccountId}
+              onChange={setExpenseAccountId}
+              options={accounts.map((a) => ({ id: a.id, label: a.name, sublabel: a.code }))}
+              placeholder="Search account…"
+            />
           </FormField>
           <FormField label="Description" htmlFor="description" required>
             <input id="description" required value={description} onChange={(e) => setDescription(e.target.value)} className={textInputClass()} />

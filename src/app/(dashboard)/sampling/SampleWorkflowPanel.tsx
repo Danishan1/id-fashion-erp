@@ -6,6 +6,7 @@ import { FilePreviewModal } from "@/components/ui/FilePreviewModal";
 import { MaterialPicker } from "@/components/ui/MaterialPicker";
 import { Modal } from "@/components/ui/Modal";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { formatCategoryLabel } from "@/lib/format-category-label";
 import { formatDate, formatDateTime } from "@/lib/date-format";
 import { useSubmoduleVisibility } from "@/lib/use-submodule-visibility";
@@ -221,6 +222,9 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
   const [isEditingColor, setIsEditingColor] = useState(false);
   const [colorDraft, setColorDraft] = useState(initialRequest.color ?? "");
 
+  const [isEditingDesignName, setIsEditingDesignName] = useState(false);
+  const [designNameDraft, setDesignNameDraft] = useState(initialRequest.styleName ?? "");
+
   // Report/Edit Damage — small focused CRUD on one existing material line.
   const [damageModalTarget, setDamageModalTarget] = useState<SampleMaterialRow | null>(null);
   const [damageQtyDraft, setDamageQtyDraft] = useState("");
@@ -237,6 +241,22 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
   // Style's own real BOM — see updateSampleBomMaterials() in sample.service.ts.
   const [isUpdateBomModalOpen, setIsUpdateBomModalOpen] = useState(false);
   const [updateBomDrafts, setUpdateBomDrafts] = useState<Record<string, string>>({});
+
+  // "Generate Material Request" — raw material selected during development
+  // genuinely gets used for the physical sample, so this raises a real
+  // Inventory Material Request (see createMaterialRequestFromSampleVersion)
+  // rather than any separate tracking of its own. Proactively checks for an
+  // already-existing request on open (same "warn, don't hard-block" pattern
+  // as BOM/MRP's own "Generate Material Request" button), and clears once
+  // the modal closes so a stale warning never carries over to a different
+  // version.
+  const [materialRequestModalVersionId, setMaterialRequestModalVersionId] = useState<string | null>(null);
+  const [mrWarehouseId, setMrWarehouseId] = useState("");
+  const [mrExistingRequests, setMrExistingRequests] = useState<
+    Array<{ id: string; requestNumber: string; status: string }>
+  >([]);
+  const [mrIsChecking, setMrIsChecking] = useState(false);
+  const [warehouses, setWarehouses] = useState<Option[]>([]);
   // Real purchase-rate suggestions for whichever material/shade the Rate
   // modal is currently open for — fetched fresh per open, never persisted.
   const [rateHistory, setRateHistory] = useState<RateHistoryEntry[]>([]);
@@ -309,6 +329,9 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
       .then((body) => {
         if (body?.data?.code) setConvertStyleCode(body.data.code);
       });
+    fetch("/api/v1/warehouses?pageSize=200")
+      .then((res) => res.json())
+      .then((body) => setWarehouses(body.data ?? []));
   }, []);
 
   const refresh = async () => {
@@ -355,6 +378,17 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
         }),
       "Failed to update color."
     ).then(() => setIsEditingColor(false));
+
+  const saveDesignName = () =>
+    run(
+      () =>
+        fetch(`/api/v1/sampling/${sampleRequestId}/design-name`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ styleName: designNameDraft }),
+        }),
+      "Failed to update design name."
+    ).then(() => setIsEditingDesignName(false));
 
   const addVersion = async () => {
     const payload: Record<string, unknown> = {};
@@ -707,6 +741,35 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
       if (ok) setIsUpdateBomModalOpen(false);
     });
 
+  const openGenerateMaterialRequestModal = (versionId: string) => {
+    setMaterialRequestModalVersionId(versionId);
+    setMrWarehouseId("");
+    setMrExistingRequests([]);
+    setMrIsChecking(true);
+    fetch(`/api/v1/sampling/versions/${versionId}/material-requests`)
+      .then((res) => res.json())
+      .then((body) => setMrExistingRequests(body.data ?? []))
+      .finally(() => setMrIsChecking(false));
+  };
+
+  const generateMaterialRequest = () => {
+    if (!materialRequestModalVersionId) return;
+    run(
+      () =>
+        fetch(`/api/v1/sampling/versions/${materialRequestModalVersionId}/generate-material-request`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            warehouseId: mrWarehouseId,
+            overrideDuplicateCheck: mrExistingRequests.length > 0,
+          }),
+        }),
+      "Failed to generate the material request."
+    ).then((ok) => {
+      if (ok) setMaterialRequestModalVersionId(null);
+    });
+  };
+
   const openUploadModal = () => {
     setUploadFile(null);
     setIsUploadModalOpen(true);
@@ -784,6 +847,50 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
           {STATUS_LABELS[request.status]}
         </span>
         {isBusy && <span className="text-xs text-zinc-400">Saving…</span>}
+      </div>
+
+      <div className="flex items-center gap-2 text-sm">
+        <span className="font-medium text-zinc-700 dark:text-zinc-200">Design Name:</span>
+        {isEditingDesignName ? (
+          <>
+            <input
+              value={designNameDraft}
+              onChange={(e) => setDesignNameDraft(e.target.value)}
+              placeholder="e.g. Floral Wrap Dress"
+              autoFocus
+              className={`${textInputClass()} max-w-[240px]`}
+            />
+            <button
+              type="button"
+              onClick={saveDesignName}
+              disabled={isBusy || !designNameDraft.trim()}
+              className="text-xs font-medium text-indigo-600 hover:text-indigo-500 disabled:opacity-50"
+            >
+              Save
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setDesignNameDraft(request.styleName ?? "");
+                setIsEditingDesignName(false);
+              }}
+              className="text-xs text-zinc-500 hover:text-zinc-400"
+            >
+              Cancel
+            </button>
+          </>
+        ) : (
+          <>
+            <span className="text-zinc-600 dark:text-zinc-300">{request.styleName || "Not specified yet"}</span>
+            <button
+              type="button"
+              onClick={() => setIsEditingDesignName(true)}
+              className="text-xs font-medium text-indigo-600 hover:text-indigo-500"
+            >
+              Edit
+            </button>
+          </>
+        )}
       </div>
 
       <div className="flex items-center gap-2 text-sm">
@@ -1253,9 +1360,19 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
                   </table>
                 )}
 
-                {canAddMaterial && (
-                  <div className="mt-3 border-t border-zinc-100 pt-3 dark:border-zinc-800">
-                    <ActionButton label="+ Add Material" onClick={() => openAddMaterialModal(version.id)} isBusy={isBusy} variant="secondary" />
+                {(canAddMaterial || version.materials.length > 0) && (
+                  <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-zinc-100 pt-3 dark:border-zinc-800">
+                    {canAddMaterial && (
+                      <ActionButton label="+ Add Material" onClick={() => openAddMaterialModal(version.id)} isBusy={isBusy} variant="secondary" />
+                    )}
+                    {version.materials.length > 0 && (
+                      <ActionButton
+                        label="Generate Material Request"
+                        onClick={() => openGenerateMaterialRequestModal(version.id)}
+                        isBusy={isBusy}
+                        variant="secondary"
+                      />
+                    )}
                   </div>
                 )}
 
@@ -1643,6 +1760,62 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
               onClick={saveUpdateBom}
               isBusy={isBusy}
               disabled={Object.values(updateBomDrafts).some((v) => !v || Number(v) <= 0)}
+            />
+          </div>
+        </div>
+      </Modal>
+
+      {/* Generate Material Request — raises a real Inventory Material
+          Request (requestType SAMPLING_REQUIREMENT) from this version's own
+          materials, so the raw material genuinely used for the physical
+          sample gets issued from real stock through the exact same
+          Inventory-checks-stock flow every other requirement in this app
+          uses. Never issues stock directly from here — the created request
+          still needs a separate Issue action in Inventory, matching the
+          rest of this module's own two-step design. */}
+      <Modal
+        open={materialRequestModalVersionId !== null}
+        onClose={() => setMaterialRequestModalVersionId(null)}
+        title="Generate Material Request"
+      >
+        <div className="space-y-3">
+          <p className="text-sm text-zinc-600 dark:text-zinc-300">
+            Creates a Material Request for every material on this version — Inventory will check real stock and
+            issue it from there, same as any other request.
+          </p>
+          {mrIsChecking && <p className="text-xs text-zinc-500">Checking for an existing request…</p>}
+          {!mrIsChecking && mrExistingRequests.length > 0 && (
+            <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+              A Material Request already exists for this version:{" "}
+              {mrExistingRequests.map((r, i) => (
+                <span key={r.id}>
+                  {i > 0 && ", "}
+                  <a href={`/material-requests/${r.id}`} className="font-medium underline">
+                    {r.requestNumber}
+                  </a>{" "}
+                  ({r.status})
+                </span>
+              ))}
+              . Generating again will create an additional request.
+            </div>
+          )}
+          <FormField label="Warehouse" htmlFor="mrWarehouseId">
+            <SearchableSelect
+              id="mrWarehouseId"
+              value={mrWarehouseId}
+              onChange={setMrWarehouseId}
+              options={warehouses.map((w) => ({ id: w.id, label: w.name ?? "" }))}
+              placeholder="Search warehouse…"
+              emptyOptionLabel="Select a warehouse…"
+            />
+          </FormField>
+          <div className="flex gap-3">
+            <ActionButton label="Cancel" onClick={() => setMaterialRequestModalVersionId(null)} isBusy={false} variant="secondary" />
+            <ActionButton
+              label={mrExistingRequests.length > 0 ? "Generate Anyway" : "Generate"}
+              onClick={generateMaterialRequest}
+              isBusy={isBusy}
+              disabled={!mrWarehouseId || mrIsChecking}
             />
           </div>
         </div>

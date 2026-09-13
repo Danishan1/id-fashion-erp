@@ -11,7 +11,9 @@ import { getMaterialRequirements } from "@/modules/bom-mrp/mrp.service";
 import { LookupRepository } from "@/modules/lookups/lookup.repository";
 import { ProductRepository } from "@/modules/products/product.repository";
 import { SalesOrderRepository } from "@/modules/sales-orders/sales-order.repository";
+import { SampleMaterialRepository, SampleVersionRepository } from "@/modules/sampling/sample.repository";
 import { createPurchaseOrder } from "@/modules/purchasing/purchase-order.service";
+import { FabricRollRepository } from "@/modules/purchasing/fabric-roll.repository";
 import { getAvailableQuantity, getAvailableQuantityByDye, recordInventoryTransaction } from "./inventory.service";
 import { MaterialRequestItemRepository, MaterialRequestRepository } from "./material-request.repository";
 import type { MaterialRequestInput, MaterialRequestItemInput, UpdateMaterialRequestInput } from "./material-request.schema";
@@ -317,6 +319,7 @@ export async function createMaterialRequest(actor: ActorContext, input: Material
     productionOrderId: input.productionOrderId || null,
     bomId: input.bomId || null,
     originalMaterialRequestId: input.originalMaterialRequestId || null,
+    sampleVersionId: input.sampleVersionId || null,
     remarks: input.remarks || null,
     status: "OPEN",
     requestedByUserId: actor.userId,
@@ -413,6 +416,80 @@ export async function createMaterialRequestFromShortfall(
   });
 }
 
+/** Not-CANCELLED/CLOSED requests already generated from this exact Sample
+ * Version — proactive advisory data for Sampling's own "Generate Material
+ * Request" button, and the same check createMaterialRequestFromSampleVersion
+ * enforces (with an override) before actually creating a request. */
+export async function findMaterialRequestsBySampleVersion(companyId: string, sampleVersionId: string) {
+  return MaterialRequestRepository.findOpenBySampleVersion(companyId, sampleVersionId);
+}
+
+/**
+ * Powers the "Generate Material Request" action on a Sample Version's own
+ * materials list in Sampling — the raw material selected during
+ * development genuinely gets used/consumed for the physical sample, so it
+ * goes through the exact same real Material Request -> Inventory-checks-
+ * stock -> Issue flow as every other requirement in this app, not a
+ * separate mechanism. Every SampleMaterial line on the version becomes one
+ * request line (never a selected subset — a version's material list is
+ * already a small, deliberately-curated set, unlike BOM/MRP's shortfall
+ * rows); a line with no uomId of its own falls back to its material's real
+ * base unit, matching what the Add Material UI already defaults new lines
+ * to.
+ */
+export async function createMaterialRequestFromSampleVersion(
+  actor: ActorContext,
+  input: { sampleVersionId: string; warehouseId: string; overrideDuplicateCheck?: boolean }
+) {
+  const version = await SampleVersionRepository.findWithRequestOwner(input.sampleVersionId);
+  if (!version || version.sampleRequest.companyId !== actor.companyId) {
+    throw new BusinessRuleError("NOT_FOUND", "Sample version not found.", { id: input.sampleVersionId });
+  }
+
+  const materials = await SampleMaterialRepository.findByVersionIdForMaterialRequest(input.sampleVersionId);
+  if (materials.length === 0) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "This sample version has no materials to request.", {
+      sampleVersionId: input.sampleVersionId,
+    });
+  }
+
+  if (!input.overrideDuplicateCheck) {
+    const existing = await findMaterialRequestsBySampleVersion(actor.companyId, input.sampleVersionId);
+    if (existing.length > 0) {
+      throw new BusinessRuleError(
+        "DUPLICATE_MATERIAL_REQUEST_EXISTS",
+        `A Material Request already exists for this sample version (${existing.map((r) => r.requestNumber).join(", ")}).`,
+        { existing }
+      );
+    }
+  }
+
+  const lines = materials.map((m) => {
+    const uomId = m.uomId ?? m.material.baseUomId;
+    if (!uomId) {
+      throw new BusinessRuleError(
+        "VALIDATION_ERROR",
+        `"${m.material.styleName}" has no unit set on this material line and no base unit configured for it — set one before generating a Material Request.`,
+        { sampleMaterialId: m.id }
+      );
+    }
+    return {
+      materialId: m.materialId,
+      colorId: m.colorId ?? undefined,
+      dyeId: m.dyeId ?? undefined,
+      uomId,
+      requestedQuantity: Number(m.plannedQuantity),
+    };
+  });
+
+  return createMaterialRequest(actor, {
+    requestType: "SAMPLING_REQUIREMENT",
+    warehouseId: input.warehouseId,
+    sampleVersionId: input.sampleVersionId,
+    lines,
+  });
+}
+
 /**
  * Line-level replace, not request-level: a line that's already had real
  * stock issued or a shortfall escalated to a Purchase Order is locked and
@@ -460,6 +537,7 @@ export async function updateMaterialRequestLines(actor: ActorContext, id: string
       productionOrderId: input.productionOrderId || null,
       bomId: input.bomId || null,
       originalMaterialRequestId: input.originalMaterialRequestId || null,
+      sampleVersionId: input.sampleVersionId || null,
       remarks: input.remarks || null,
     },
     input.lines.map(mapLineInput)
@@ -489,7 +567,8 @@ export async function issueMaterialRequestLine(
   actor: ActorContext,
   lineId: string,
   issueQuantity: number,
-  warehouseLocationId?: string | null
+  warehouseLocationId?: string | null,
+  fabricRollId?: string | null
 ) {
   const line = await MaterialRequestItemRepository.findWithRequestOwner(lineId);
   if (!line || line.materialRequest.companyId !== actor.companyId) {
@@ -528,13 +607,42 @@ export async function issueMaterialRequestLine(
     );
   }
 
-  const available = await getLineAvailableStock(actor.companyId, line.materialRequest.warehouseId, line);
-  if (baseQuantity > available) {
-    throw new BusinessRuleError(
-      "INSUFFICIENT_RAW_MATERIAL_STOCK",
-      `Unable to issue ${issueQuantity} of "${line.material.styleName}" — only ${available} available at this warehouse. Available: ${available}, Requested: ${baseQuantity}.`,
-      { available, requested: baseQuantity }
-    );
+  // Issuing against one specific physical roll — the color/shade actually
+  // being handed out — is a genuinely different, more precise check than
+  // the material-wide fallback below: the roll's own remainingQuantity is
+  // both the availability ceiling AND, unlike the flat StockBalance path,
+  // the thing this issue must actually decrement (see guardedDecrementRemaining
+  // below), since nothing else in this function ever touches FabricRoll.
+  let roll: Awaited<ReturnType<typeof FabricRollRepository.findByIdWithContext>> = null;
+  if (fabricRollId) {
+    roll = await FabricRollRepository.findByIdWithContext(actor.companyId, fabricRollId);
+    if (
+      !roll ||
+      roll.status !== "IN_STOCK" ||
+      roll.goodsReceiptItem.productId !== line.materialId ||
+      roll.goodsReceiptItem.warehouseId !== line.materialRequest.warehouseId
+    ) {
+      throw new BusinessRuleError("NOT_FOUND", "The selected fabric roll is not available for this material at this warehouse.", {
+        fabricRollId,
+      });
+    }
+    const rollAvailable = Number(roll.remainingQuantity);
+    if (baseQuantity > rollAvailable) {
+      throw new BusinessRuleError(
+        "INSUFFICIENT_RAW_MATERIAL_STOCK",
+        `Unable to issue ${issueQuantity} from this roll — only ${rollAvailable} remains on it. Available: ${rollAvailable}, Requested: ${baseQuantity}.`,
+        { available: rollAvailable, requested: baseQuantity }
+      );
+    }
+  } else {
+    const available = await getLineAvailableStock(actor.companyId, line.materialRequest.warehouseId, line);
+    if (baseQuantity > available) {
+      throw new BusinessRuleError(
+        "INSUFFICIENT_RAW_MATERIAL_STOCK",
+        `Unable to issue ${issueQuantity} of "${line.material.styleName}" — only ${available} available at this warehouse. Available: ${available}, Requested: ${baseQuantity}.`,
+        { available, requested: baseQuantity }
+      );
+    }
   }
 
   await prisma.$transaction(async (tx) => {
@@ -561,7 +669,19 @@ export async function issueMaterialRequestLine(
       referenceModule: "MATERIAL_REQUEST",
       referenceRecordId: lineId,
       warehouseLocationId: warehouseLocationId || null,
+      fabricRollId: roll?.id || null,
     });
+
+    if (roll) {
+      const guard = await FabricRollRepository.guardedDecrementRemaining(tx, roll.id, baseQuantity);
+      if (guard.count === 0) {
+        throw new BusinessRuleError(
+          "INSUFFICIENT_RAW_MATERIAL_STOCK",
+          "This roll was issued from by someone else at the same time — reload and try again.",
+          { fabricRollId: roll.id }
+        );
+      }
+    }
   });
 
   await recomputeAndPersistStatus(actor, line.materialRequest.id);
@@ -576,6 +696,35 @@ export async function issueMaterialRequestLine(
   });
 
   return MaterialRequestItemRepository.findById(lineId);
+}
+
+/**
+ * The color/shade-wise breakdown for a line's own material at its request's
+ * warehouse — one row per physically in-stock FabricRoll, each carrying its
+ * own real remaining quantity. Feeds the Issue modal's "which color am I
+ * actually handing out" picker; empty for a non-FABRIC material (nothing
+ * tracks shade at that granularity for it) or a FABRIC material with no
+ * roll-level stock at all, in which case the UI simply falls back to the
+ * existing flat-total Issue flow.
+ */
+export async function getAvailableRollsForLine(actor: ActorContext, lineId: string) {
+  const line = await MaterialRequestItemRepository.findWithRequestOwner(lineId);
+  if (!line || line.materialRequest.companyId !== actor.companyId) {
+    throw new BusinessRuleError("NOT_FOUND", "Material request line not found.", { id: lineId });
+  }
+
+  const rolls = await FabricRollRepository.findAvailableForMaterial(
+    actor.companyId,
+    line.materialId,
+    line.materialRequest.warehouseId
+  );
+
+  return rolls.map((roll) => ({
+    id: roll.id,
+    rollNumber: roll.rollNumber,
+    remainingQuantity: roll.remainingQuantity,
+    dye: roll.dye,
+  }));
 }
 
 interface GeneratePurchaseOrderResult {

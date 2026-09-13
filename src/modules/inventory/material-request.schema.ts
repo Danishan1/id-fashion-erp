@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const MATERIAL_REQUEST_TYPES = ["PRODUCTION_REQUIREMENT", "DAMAGE_REPLACEMENT"] as const;
+export const MATERIAL_REQUEST_TYPES = ["PRODUCTION_REQUIREMENT", "DAMAGE_REPLACEMENT", "SAMPLING_REQUIREMENT"] as const;
 
 export const materialRequestItemSchema = z.object({
   materialId: z.string().uuid("Material is required"),
@@ -35,6 +35,10 @@ const materialRequestBaseSchema = z.object({
   // Required, and only meaningful, when requestType = DAMAGE_REPLACEMENT —
   // the original requirement this damage relates to.
   originalMaterialRequestId: z.string().uuid().optional().or(z.literal("")),
+  // Nullable traceability to the SampleVersion this requirement was
+  // generated from (requestType = SAMPLING_REQUIREMENT) — same shape as
+  // bomId above, populated only by createMaterialRequestFromSampleVersion.
+  sampleVersionId: z.string().uuid().optional().or(z.literal("")),
   remarks: z.string().max(1000).optional().or(z.literal("")),
 });
 
@@ -87,6 +91,13 @@ export const issueMaterialRequestLineSchema = z.object({
   // issue time by whoever actually pulls the stock, not at request-creation
   // time by the requester.
   warehouseLocationId: z.string().uuid().optional().or(z.literal("")),
+  // Which specific FabricRoll (i.e. which physical color/shade) to draw
+  // this issue from — only ever offered for FABRIC-category materials, and
+  // only when the warehouse actually has roll-level stock to pick from.
+  // Optional: a non-fabric line, or a fabric line issued without picking a
+  // specific roll, falls back to the material's flat StockBalance total
+  // exactly as before this field existed.
+  fabricRollId: z.string().uuid().optional().or(z.literal("")),
 });
 export type IssueMaterialRequestLineInput = z.infer<typeof issueMaterialRequestLineSchema>;
 
@@ -125,3 +136,15 @@ export const generatePurchaseOrdersForShortfallSchema = z.object({
   expectedDeliveryDate: z.string().optional().or(z.literal("")),
 });
 export type GeneratePurchaseOrdersForShortfallInput = z.infer<typeof generatePurchaseOrdersForShortfallSchema>;
+
+// Powers the "Generate Material Request" action on a Sample Version's own
+// materials list in Sampling — mirrors createMaterialRequestFromShortfallSchema's
+// shape (warehouse + an override for the same soft duplicate-warning pattern),
+// but scoped to one version's whole material list rather than a selected
+// subset, since a version's materials are a small, deliberately-curated set
+// already (see createMaterialRequestFromSampleVersion).
+export const createMaterialRequestFromSampleVersionSchema = z.object({
+  warehouseId: z.string().uuid("Warehouse is required"),
+  overrideDuplicateCheck: z.boolean().optional(),
+});
+export type CreateMaterialRequestFromSampleVersionInput = z.infer<typeof createMaterialRequestFromSampleVersionSchema>;

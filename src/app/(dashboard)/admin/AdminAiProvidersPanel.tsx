@@ -81,6 +81,63 @@ async function parseJson(res: Response) {
   return body;
 }
 
+function ProductDesignDisplayModeSetting({ canManage }: { canManage: boolean }) {
+  const [mode, setMode] = useState<"CLIPART" | "TEXT" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/v1/ai-designer/settings")
+      .then(parseJson)
+      .then((body) => setMode(body.data.productDesignDisplayMode))
+      .catch((e) => setError(e.message));
+  }, []);
+
+  const toggle = async () => {
+    if (!mode) return;
+    const next = mode === "CLIPART" ? "TEXT" : "CLIPART";
+    setSaving(true);
+    setError(null);
+    try {
+      const body = await parseJson(
+        await fetch("/api/v1/ai-designer/settings", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ productDesignDisplayMode: next }),
+        })
+      );
+      setMode(body.data.productDesignDisplayMode);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-sm font-medium text-zinc-900 dark:text-zinc-50">Product Design Attribute Display</p>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">
+            Choose how the Product Design step&apos;s attribute pickers (Neckline, Sleeve, Silhouette, …) are shown
+            to every user in this company — clipart icons, or plain text.
+          </p>
+        </div>
+        {mode && (
+          <ToggleSwitch
+            checked={mode === "CLIPART"}
+            disabled={!canManage || saving}
+            label={mode === "CLIPART" ? "Clipart icons — click for text" : "Plain text — click for clipart icons"}
+            onToggle={toggle}
+          />
+        )}
+      </div>
+      {error && <p className="mt-2 text-xs text-red-600 dark:text-red-400">{error}</p>}
+    </div>
+  );
+}
+
 export function AdminAiProvidersPanel({ canManage }: { canManage: boolean }) {
   const [providers, setProviders] = useState<ProviderRow[] | null>(null);
   const [usage, setUsage] = useState<UsageRow[] | null>(null);
@@ -263,6 +320,8 @@ export function AdminAiProvidersPanel({ canManage }: { canManage: boolean }) {
         immediately instead of being silently retried elsewhere.
       </p>
       {error && <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-300">{error}</p>}
+
+      <ProductDesignDisplayModeSetting canManage={canManage} />
 
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Providers</h3>

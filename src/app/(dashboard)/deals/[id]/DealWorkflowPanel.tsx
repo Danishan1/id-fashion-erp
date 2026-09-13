@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Modal } from "@/components/ui/Modal";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { STAGE_LABELS, NEXT_STAGES } from "../statusLabels";
 import { formatNumber } from "@/lib/currency";
 
@@ -598,14 +599,14 @@ export function DealWorkflowPanel({ deal }: { deal: DealDetail }) {
           ) : (
             <>
               <FormField label="Customer" htmlFor="linkCustomerId" required>
-                <select id="linkCustomerId" required value={linkCustomerId} onChange={(e) => setLinkCustomerId(e.target.value)} className={textInputClass()}>
-                  <option value="">— Select —</option>
-                  {existingCustomers.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name} ({c.code})
-                    </option>
-                  ))}
-                </select>
+                <SearchableSelect
+                  id="linkCustomerId"
+                  required
+                  value={linkCustomerId}
+                  onChange={setLinkCustomerId}
+                  options={existingCustomers.map((c) => ({ id: c.id, label: c.name, sublabel: c.code }))}
+                  placeholder="Search customer…"
+                />
               </FormField>
 
               {convertError && <p className="text-sm text-red-600 dark:text-red-400">{convertError}</p>}

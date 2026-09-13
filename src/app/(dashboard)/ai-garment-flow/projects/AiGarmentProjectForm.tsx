@@ -3,6 +3,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 
 interface Option {
   id: string;
@@ -151,29 +152,28 @@ export function AiGarmentProjectForm({ sourceType, projectId, initialValues, onS
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <FormField label="Buyer / Customer" htmlFor="customerId">
-          <select
+          <SearchableSelect
             id="customerId"
-            className={textInputClass()}
             value={values.customerId}
-            onChange={(e) => {
-              set("customerId", e.target.value);
+            onChange={(customerId) => {
+              set("customerId", customerId);
               set("buyerId", "");
               setBuyers([]);
             }}
-          >
-            <option value="">— None yet —</option>
-            {customers.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-          </select>
+            options={customers.map((c) => ({ id: c.id, label: c.name }))}
+            placeholder="Search customer…"
+            emptyOptionLabel="— None yet —"
+          />
         </FormField>
         <FormField label="Buyer Contact" htmlFor="buyerId">
-          <select id="buyerId" className={textInputClass()} value={values.buyerId} onChange={(e) => set("buyerId", e.target.value)} disabled={!values.customerId}>
-            <option value="">{values.customerId ? "— None —" : "Pick a Buyer/Customer first"}</option>
-            {buyers.map((b) => (
-              <option key={b.id} value={b.id}>{b.name}</option>
-            ))}
-          </select>
+          <SearchableSelect
+            id="buyerId"
+            value={values.buyerId}
+            onChange={(buyerId) => set("buyerId", buyerId)}
+            disabled={!values.customerId}
+            options={buyers.map((b) => ({ id: b.id, label: b.name }))}
+            placeholder={values.customerId ? "Search buyer…" : "Pick a Buyer/Customer first"}
+          />
         </FormField>
       </div>
 

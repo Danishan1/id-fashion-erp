@@ -200,7 +200,18 @@ export async function getMaterialRequirements(companyId: string, salesOrderId: s
       const sampleMaterials = sampleMaterialsById.get(orderItem.sampleRequestId) ?? [];
       explosionItems = sampleMaterials.map((m) => ({
         materialId: m.materialId,
-        colorId: m.colorId,
+        // SampleMaterial.colorId means "this raw material's own shade/dye"
+        // (e.g. thread color) -- an entirely different concept from
+        // BomItem.colorId ("this line only applies to this ordered
+        // garment-color variant"), which is what
+        // explodeItemsForOrderItem's own filter below actually implements.
+        // Passing the sample's shade through as colorId would silently
+        // filter this line's orderedQty to 0 (the shade id essentially
+        // never matches a real style-variant color id), dropping the whole
+        // line with zero error reported. Always null here so the full
+        // ordered quantity applies regardless of the sample material's own
+        // shade color.
+        colorId: null,
         quantityPerUnit: Number(m.plannedQuantity),
         // SampleMaterial has no wastage% column — the sample's own recorded
         // quantity is treated as the effective (already-wastage-inclusive)
@@ -524,4 +535,83 @@ export async function getMaterialRequirementForOrderLine(
     }
   }
   return getStyleMaterialRequirement(companyId, args.productId, args.quantity);
+}
+
+export interface SalesOrderMaterialPreviewItem {
+  salesOrderItemId: string;
+  productId: string;
+  styleName: string;
+  sampleRequestId: string | null;
+  sampleStyleName: string | null;
+  orderedQuantity: number;
+  hasApprovedBom: boolean;
+  materials: Array<StyleMaterialRequirementRow & { quantityPerUnit: number }>;
+  unconvertibleLines: Array<{ materialId: string; materialName: string; reason: string }>;
+  totalMaterialCost: number | null;
+  materialCostPerUnit: number | null;
+}
+
+export interface SalesOrderMaterialPreview {
+  salesOrder: { id: string; orderNumber: string; customerName: string };
+  items: SalesOrderMaterialPreviewItem[];
+  grandTotalMaterialCost: number | null;
+}
+
+/**
+ * Per-style-line material breakdown for one Sales Order — the shared engine
+ * behind both the Sales Order detail page's "Estimated Material Cost"
+ * section and the Material Request create form's "add items from this
+ * order's BOM" preview, so neither can ever disagree with the other.
+ * Reuses getMaterialRequirementForOrderLine's own BOM-vs-Sample source
+ * resolution and cost math unchanged — never a second, diverging copy.
+ * `quantityPerUnit` is derived for display only (neededQuantity /
+ * orderedQuantity, e.g. "50 x 1.2m = 60m") — not a new calculation, just
+ * re-expressing the already-computed total as a per-piece factor.
+ */
+export async function getSalesOrderMaterialPreview(companyId: string, salesOrderId: string): Promise<SalesOrderMaterialPreview> {
+  const order = await SalesOrderRepository.findByIdWithDetails(companyId, salesOrderId);
+  if (!order) throw new BusinessRuleError("NOT_FOUND", "Sales order not found.", { id: salesOrderId });
+
+  const items: SalesOrderMaterialPreviewItem[] = await Promise.all(
+    order.items.map(async (item) => {
+      const orderedQuantity = item.breakdown.reduce((sum, b) => sum + b.orderedQuantity, 0);
+      const requirement = await getMaterialRequirementForOrderLine(companyId, {
+        salesOrderItemId: item.id,
+        productId: item.productId,
+        quantity: orderedQuantity,
+      });
+
+      const materials = requirement.materials.map((m) => ({
+        ...m,
+        quantityPerUnit: orderedQuantity > 0 ? round4(m.neededQuantity / orderedQuantity) : 0,
+      }));
+
+      return {
+        salesOrderItemId: item.id,
+        productId: item.productId,
+        styleName: item.product.styleName,
+        sampleRequestId: item.sampleRequestId,
+        sampleStyleName: item.sampleRequest?.styleName ?? null,
+        orderedQuantity,
+        hasApprovedBom: requirement.hasApprovedBom,
+        materials,
+        unconvertibleLines: requirement.unconvertibleLines,
+        totalMaterialCost: requirement.totalMaterialCost,
+        materialCostPerUnit: requirement.materialCostPerUnit,
+      };
+    })
+  );
+
+  // A line with materials but an unknown cost (a missing unitCost or an
+  // unconvertible UOM somewhere in its own chain) makes the grand total
+  // unknowable too — never silently undercount, matching this project's own
+  // "flag as unavailable rather than undercount" convention.
+  const anyUnknown = items.some((i) => i.hasApprovedBom && i.totalMaterialCost === null);
+  const knownTotal = items.reduce((sum, i) => sum + (i.totalMaterialCost ?? 0), 0);
+
+  return {
+    salesOrder: { id: order.id, orderNumber: order.orderNumber, customerName: order.customer.name },
+    items,
+    grandTotalMaterialCost: anyUnknown ? null : round4(knownTotal),
+  };
 }

@@ -216,6 +216,30 @@ export const SampleMaterialRepository = {
       },
     });
   },
+
+  /**
+   * Materials shaped for generating a real Inventory Material Request from
+   * this version — id (to attribute a validation error to the right line),
+   * plannedQuantity/uomId/colorId/dyeId as actually entered, plus the
+   * material's own baseUomId as a fallback source when a line's own uomId is
+   * null (rare in practice — the Add Material UI already defaults it from
+   * the material's base UOM — but the DB column stays nullable, so
+   * createMaterialRequestFromSampleVersion stays defensive about it). See
+   * material-request.service.ts.
+   */
+  findByVersionIdForMaterialRequest: (sampleVersionId: string) =>
+    prisma.sampleMaterial.findMany({
+      where: { sampleVersionId },
+      select: {
+        id: true,
+        materialId: true,
+        plannedQuantity: true,
+        uomId: true,
+        colorId: true,
+        dyeId: true,
+        material: { select: { styleName: true, baseUomId: true } },
+      },
+    }),
 };
 
 export const SampleOtherChargeRepository = {

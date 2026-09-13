@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { Queue } from "bullmq";
 import IORedis from "ioredis";
 
@@ -20,7 +21,36 @@ function createConnection() {
   return new IORedis(url, { maxRetriesPerRequest: null });
 }
 
-export const BULK_IMPORT_QUEUE_NAME = "bulk-import";
+/**
+ * Real incident, 2026-09-11: REDIS_URL points at one shared cloud Redis
+ * instance, and multiple independent local checkouts of this repo (each
+ * with its own separate DATABASE_URL/Postgres) were all connecting to it
+ * under the same fixed queue name — so whichever checkout's worker happened
+ * to grab a job first would try to process it against ITS OWN database,
+ * where the batchId simply doesn't exist, failing every time with "No
+ * record was found for an update" while the job's real owner sat stuck at
+ * QUEUED forever (its own worker never got a chance to see the job at all).
+ *
+ * The actual invariant that matters isn't "same machine" or "same checkout
+ * path" — it's "same database." Deriving the queue name from a hash of
+ * DATABASE_URL means any two processes that share a database (the only
+ * case where sharing a queue is ever correct — e.g. multiple worker
+ * replicas of one real deployment) automatically share a queue, and any
+ * two processes pointed at different databases (this bug's actual cause)
+ * automatically get different, non-interfering queues — with no per-
+ * developer setup step to forget. Hashed (not the raw URL) since a queue
+ * name can show up in logs/monitoring and the URL carries a password.
+ * BULK_IMPORT_QUEUE_NAME may still be set explicitly to override this if a
+ * deployment ever genuinely needs a fixed, predictable name.
+ */
+function deriveQueueName(): string {
+  if (process.env.BULK_IMPORT_QUEUE_NAME) return process.env.BULK_IMPORT_QUEUE_NAME;
+  const dbUrl = process.env.DATABASE_URL;
+  const suffix = dbUrl ? createHash("sha256").update(dbUrl).digest("hex").slice(0, 12) : "unknown-db";
+  return `bulk-import-${suffix}`;
+}
+
+export const BULK_IMPORT_QUEUE_NAME = deriveQueueName();
 
 let queue: Queue | null = null;
 

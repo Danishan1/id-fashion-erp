@@ -6,7 +6,7 @@ import { FABRIC_CONFIDENCE_VALUES } from "./schema";
  * AiGarmentFabricAnalysisRun row so a past analysis stays auditable against
  * the exact prompt that produced it, even after this text changes.
  */
-export const PROMPT_VERSION = "fabric-analysis-v1";
+export const PROMPT_VERSION = "fabric-analysis-v2";
 
 /**
  * The hidden business/system prompt. Never sent to the browser — only used
@@ -25,7 +25,6 @@ The purpose is to understand:
 - the fabric's physical structure (woven vs. knit, apparent weight, likely composition)
 - its visual characteristics (color, pattern, texture, sheen, transparency)
 - its likely performance behaviour (stretch, drape, recovery)
-- practical manufacturing considerations (cutting, sewing, care, quality risks)
 
 Analyse ONLY what can reasonably be determined from the supplied photograph.
 
@@ -55,10 +54,6 @@ Analyse the following:
 11. ESTIMATED STRETCH — none, slight (e.g. a woven with a little added elastane), moderate (typical single-knit), or high (4-way stretch).
 12. ESTIMATED DRAPE — stiff/structured, medium, or fluid/soft.
 13. ESTIMATED RECOVERY — how well the fabric is likely to spring back after stretching, if stretch is present at all; NOT_DETERMINABLE if the fabric shows no visible stretch.
-14. CUTTING CONSIDERATIONS — practical notes for a cutting room (e.g. fraying risk at cut edges, stripe/check matching required, nap direction to respect).
-15. SEWING CONSIDERATIONS — practical notes for sewing operators (e.g. needle type suited to a knit, puckering risk on a lightweight fabric, seam finishing needs).
-16. CARE CONSIDERATIONS — a plain-language, visually-reasoned guess at likely care needs (e.g. "likely machine washable", "may need gentle/delicate handling", "pre-wash recommended for shrinkage").
-17. POTENTIAL QUALITY RISKS — any fraying, pilling, shrinkage, or colour-consistency concerns visible or reasonably inferred from the photo.
 
 Finally, create a FABRIC SUMMARY of maximum 150 words capturing the overall fabric character, its likely best-fit use cases in general terms, and the single most important consideration for whoever develops a garment from it next.
 
@@ -128,10 +123,6 @@ const OBSERVATION_KEYS = [
   "estimatedStretch",
   "estimatedDrape",
   "estimatedRecovery",
-  "cuttingConsiderations",
-  "sewingConsiderations",
-  "careConsiderations",
-  "potentialQualityRisks",
 ] as const;
 
 /**
@@ -142,7 +133,7 @@ const OBSERVATION_KEYS = [
  * reference-analysis's own schema flat and its own strict:false decision
  * doesn't even apply here at this smaller size — kept flat anyway, for
  * consistency and because there is genuinely no natural nested grouping
- * among these 17 fields the way sleeve/fabricObservations/printPattern
+ * among these 13 fields the way sleeve/fabricObservations/printPattern
  * grouped reference-analysis's 36.
  */
 export function buildToolInputSchema() {

@@ -33,6 +33,7 @@ const MASTER_SECTIONS = [
   { href: "/masters/hr-config", label: "HR Configuration", description: "Departments, designations, shifts, and holidays" },
   { href: "/masters/cost-master", label: "Cost Master", description: "Overhead cost rates for costing" },
   { href: "/masters/finance-config", label: "Finance Configuration", description: "Payment types and bank accounts" },
+  { href: "/masters/ai-design", label: "AI Design", description: "AI Designer's own configurable masters — Product Design attributes & options" },
 ];
 
 export default function MastersIndexPage() {

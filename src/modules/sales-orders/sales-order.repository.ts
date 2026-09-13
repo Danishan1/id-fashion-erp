@@ -34,7 +34,7 @@ export const SalesOrderRepository = {
             // detail page needs to be able to surface that explicitly rather
             // than implying it's always the order's own customer's sample.
             sampleRequest: {
-              select: { id: true, requestNumber: true, status: true, customer: { select: { name: true } } },
+              select: { id: true, requestNumber: true, styleName: true, status: true, customer: { select: { name: true } } },
             },
             breakdown: { include: { productVariant: { include: { color: true, size: true } } } },
           },

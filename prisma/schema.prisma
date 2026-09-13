@@ -128,6 +128,9 @@ model Company {
   aiDesignerGenerations               AiDesignerGeneration[]
   aiDesignerImages                    AiDesignerImage[]
   aiDesignerVersions                  AiDesignerVersion[]
+  aiDesignerSettings                  AiDesignerSettings?
+  aiDesignerTechPacks                 AiDesignerTechPack[]
+  aiDesignerProductDesignAttributes   AiDesignerProductDesignAttribute[]
   aiProviders                         AIProvider[]
   aiProviderUsage                     AIProviderUsage[]
   aiFailoverLogs                      AIFailoverLog[]
@@ -340,6 +343,8 @@ model User {
   aiDesignerGenerationsCreated               AiDesignerGeneration[]               @relation("AiDesignerGenerationCreatedBy")
   aiDesignerImagesCreated                    AiDesignerImage[]                    @relation("AiDesignerImageCreatedBy")
   aiDesignerVersionsCreated                  AiDesignerVersion[]                  @relation("AiDesignerVersionCreatedBy")
+  aiDesignerTechPacksCreated                 AiDesignerTechPack[]                 @relation("AiDesignerTechPackCreatedBy")
+  aiDesignerProductDesignAttributesCreated   AiDesignerProductDesignAttribute[]   @relation("AiDesignerProductDesignAttributeCreatedBy")
   aiProvidersCreated                         AIProvider[]                         @relation("AIProviderCreatedBy")
   aiProviderUsageAsUser                      AIProviderUsage[]                    @relation("AIProviderUsageUser")
   aiGarmentFabricAnalysesCreated             AiGarmentFabricAnalysis[]            @relation("AiGarmentFabricAnalysisCreatedBy")
@@ -1736,13 +1741,17 @@ model SampleVersion {
   costingLockedAt       DateTime? @map("costing_locked_at")
   costingLockedByUserId String?   @map("costing_locked_by_user_id") @db.Uuid
 
-  sampleRequest   SampleRequest       @relation(fields: [sampleRequestId], references: [id])
-  createdBy       User                @relation("SampleVersionCreatedBy", fields: [createdByUserId], references: [id])
-  costingLockedBy User?               @relation("SampleVersionCostingLockedBy", fields: [costingLockedByUserId], references: [id])
-  materials       SampleMaterial[]
-  approvals       SampleApproval[]
-  comments        SampleComment[]
-  otherCharges    SampleOtherCharge[]
+  sampleRequest    SampleRequest       @relation(fields: [sampleRequestId], references: [id])
+  createdBy        User                @relation("SampleVersionCreatedBy", fields: [createdByUserId], references: [id])
+  costingLockedBy  User?               @relation("SampleVersionCostingLockedBy", fields: [costingLockedByUserId], references: [id])
+  materials        SampleMaterial[]
+  approvals        SampleApproval[]
+  comments         SampleComment[]
+  otherCharges     SampleOtherCharge[]
+  // Virtual back-relation only — no column on this table. A version can have
+  // more than one over time (a soft duplicate-warning, not a hard cap — see
+  // findMaterialRequestsBySampleVersion in material-request.service.ts).
+  materialRequests MaterialRequest[]
 
   @@unique([sampleRequestId, versionNumber])
   @@map("sample_versions")
@@ -2672,6 +2681,11 @@ model SalesOrder {
   originatingDealId String?           @map("originating_deal_id") @db.Uuid
   orderDate         DateTime          @map("order_date") @db.Date
   requiredShipDate  DateTime?         @map("required_ship_date") @db.Date
+  // The buyer's own PO reference number, free text — this app's real
+  // ORD-2026-00001 numbering is unrelated and unaffected; a buyer's PO
+  // document (the file itself) attaches via the existing generic Attachment
+  // mechanism (RelatedModule.SALES_ORDER), not a dedicated column here.
+  customerPoNumber  String?           @map("customer_po_number")
   status            SalesOrderStatus  @default(DRAFT)
   statusBeforeHold  SalesOrderStatus? @map("status_before_hold")
   // Frozen at creation (no live FX picker — multi-currency UI is deferred
@@ -2986,6 +3000,11 @@ enum MaterialRequestType {
   // never modifies the original request/BOM, always a new document that
   // references it via originalMaterialRequestId.
   DAMAGE_REPLACEMENT
+  // Raw material genuinely needed for a Sample Request's own development —
+  // generated from one SampleVersion's own SampleMaterial rows (see
+  // sampleVersionId on MaterialRequest below), issued through the exact same
+  // Inventory-checks-stock flow as every other Material Request.
+  SAMPLING_REQUIREMENT
 }
 
 model MaterialRequest {
@@ -3021,6 +3040,11 @@ model MaterialRequest {
   // ProductionOrder FK, since no Production module exists yet (same
   // reasoning already applied above to salesOrderId).
   originalMaterialRequestId String?                @map("original_material_request_id") @db.Uuid
+  // Nullable traceability to the SampleVersion this requirement's raw
+  // materials were generated from (requestType = SAMPLING_REQUIREMENT) — the
+  // Sampling equivalent of bomId above; a request raised any other way
+  // simply leaves this null.
+  sampleVersionId           String?                @map("sample_version_id") @db.Uuid
   remarks                   String?
   // Derived from lines except the manual ON_HOLD/CANCELLED/CLOSED
   // transitions — never hand-set to PARTIALLY_FULFILLED/FULFILLED.
@@ -3039,6 +3063,7 @@ model MaterialRequest {
   bom                     Bom?                  @relation(fields: [bomId], references: [id])
   originalMaterialRequest MaterialRequest?      @relation("MaterialRequestReplacementOrigin", fields: [originalMaterialRequestId], references: [id])
   replacementRequests     MaterialRequest[]     @relation("MaterialRequestReplacementOrigin")
+  sampleVersion           SampleVersion?        @relation(fields: [sampleVersionId], references: [id])
   requestedBy             User                  @relation("MaterialRequestRequestedBy", fields: [requestedByUserId], references: [id])
   lines                   MaterialRequestItem[]
 
@@ -3046,6 +3071,7 @@ model MaterialRequest {
   @@index([companyId, status])
   @@index([companyId, requestType])
   @@index([productionOrderId])
+  @@index([sampleVersionId])
   @@map("material_requests")
 }
 
@@ -6223,6 +6249,12 @@ enum AiGarmentDesignFeature {
   CLOSURE
   WAIST
   HEM
+  COLOR
+  BUTTONS
+  BACKGROUND_ENVIRONMENT
+  MODEL
+  LOGO
+  EMBROIDERY
   OTHER
 }
 
@@ -7529,6 +7561,16 @@ model AiDesignerProject {
   environmentLabel    String? @map("environment_label")
   isCustomEnvironment Boolean @default(false) @map("is_custom_environment")
 
+  // Step 9b -- Multi-Fabric (optional, only usable once a design already
+  // exists -- applies a second fabric photo onto specific area(s) of the
+  // currently generated garment image, e.g. yoke/sleeves/borders/contrast
+  // panels). secondFabricApplyAreas is a plain String[] validated in Zod
+  // against a small fixed const list (SECOND_FABRIC_APPLY_AREAS), not a DB
+  // enum -- this is a UI-facing tag list, not a value anything else in the
+  // schema needs to reference or constrain at the database level.
+  secondFabricImageAttachmentId String?  @map("second_fabric_image_attachment_id")
+  secondFabricApplyAreas        String[] @map("second_fabric_apply_areas")
+
   // Set once version 1 exists (nullable-then-set-later, same precedent as
   // AiGarmentProject.selectedDesignDirectionId elsewhere in this schema).
   currentVersionId String? @unique @map("current_version_id") @db.Uuid
@@ -7548,6 +7590,7 @@ model AiDesignerProject {
   images        AiDesignerImage[]
   versions      AiDesignerVersion[]    @relation("AiDesignerVersionsOfProject")
   providerUsage AIProviderUsage[]
+  techPacks     AiDesignerTechPack[]
 
   @@unique([companyId, projectNumber])
   @@map("ai_projects")
@@ -7666,6 +7709,108 @@ model AiDesignerVersion {
   @@map("ai_versions")
 }
 
+// Tech Pack (2026-09-11) -- a new, isolated AI Designer feature: one combined
+// action producing a graded measurement chart, a draft BOM, and a technical
+// flat sketch from the project's current generated design. Genuinely
+// isolated from AI Garment Flow's own, much richer equivalent processes
+// (Technical Specification/BOM Suggestion/Technical Development) -- same
+// reasoning as everywhere else in this module: this reuses only the
+// shared, zero-business-logic AI provider infrastructure
+// (requestStructuredTextOutput, ImageGenerationProvider.generateTechnicalFlat),
+// never AI Garment Flow's own schema, prompts, or service code. Deliberately
+// simpler than that module's own version: graded across a small fixed set of
+// standard sizes (not the company's real Size master), and the BOM is purely
+// advisory free-form JSON -- AI Designer has no Style-graduation mechanic at
+// all for a real BOM to attach to. Append-only (one row per attempt, mirrors
+// every other AI Designer run-log table) -- only the most recent is shown in
+// the UI, older attempts stay in the database for audit.
+model AiDesignerTechPack {
+  id                          String              @id @default(uuid()) @db.Uuid
+  companyId                   String              @map("company_id") @db.Uuid
+  projectId                   String              @map("project_id") @db.Uuid
+  status                      AiDesignerRunStatus @default(IN_PROGRESS)
+  flatSketchImageAttachmentId String?             @map("flat_sketch_image_attachment_id")
+  measurementsJson            Json?               @map("measurements_json")
+  bomJson                     Json?               @map("bom_json")
+  errorMessage                String?             @map("error_message")
+
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  company   Company           @relation(fields: [companyId], references: [id])
+  project   AiDesignerProject @relation(fields: [projectId], references: [id])
+  createdBy User              @relation("AiDesignerTechPackCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@map("ai_tech_packs")
+}
+
+// Product Design attribute master (2026-09-11) -- was a hardcoded, code-only
+// catalog (design-attribute-catalog.ts); the user asked for it to become a
+// real, editable Masters entity (Masters -> AI Design -> Product Design), the
+// same way every other lookup in this ERP is company-configurable rather
+// than baked into a constant.
+//
+// Deliberately "DB overrides the static default per category, not a merge":
+// getEffectiveDesignAttributesForCategory() returns this company's own real
+// rows for a category the moment ANY exist for it (ordered by sortOrder),
+// and only falls back to the original static PRODUCT_DESIGN_ATTRIBUTES_BY_
+// CATEGORY entry when the company has never customized that category at
+// all -- the same "a missing row means the default, no backfill needed"
+// precedent as SubmoduleVisibility/AiDesignerSettings elsewhere in this
+// schema. This means every existing company keeps working unchanged with
+// zero seeding, and an admin who edits/adds even one attribute for a
+// category takes full ownership of that category's list from then on --
+// simpler and more predictable than a per-attribute merge.
+//
+// `options` is a plain String[], not a child table -- matches the original
+// DesignAttributeDef.options shape exactly (no independent option-level
+// metadata like its own sortOrder/isActive was ever needed).
+model AiDesignerProductDesignAttribute {
+  id             String  @id @default(uuid()) @db.Uuid
+  companyId      String  @map("company_id") @db.Uuid
+  categoryName   String  @map("category_name")
+  attributeKey   String  @map("attribute_key")
+  attributeLabel String  @map("attribute_label")
+  options        String[]
+  sortOrder      Int     @default(0) @map("sort_order")
+  isActive       Boolean @default(true) @map("is_active")
+
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  company   Company @relation(fields: [companyId], references: [id])
+  createdBy User    @relation("AiDesignerProductDesignAttributeCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@unique([companyId, categoryName, attributeKey])
+  @@map("ai_product_design_attributes")
+}
+
+enum AiDesignerAttributeDisplayMode {
+  CLIPART
+  TEXT
+}
+
+// Company-wide, Super-Admin-controlled setting: whether the Product Design
+// step's attribute pickers (Neckline/Sleeve/Silhouette/...) render as clipart
+// icons (the original, default behavior) or plain text buttons. A missing
+// row means CLIPART -- no backfill needed. Deliberately a single flat row
+// per company (not a per-submodule map like SubmoduleVisibility, since
+// there is exactly one thing this toggle controls today) and deliberately
+// no lock/has-data logic (unlike SubmoduleVisibility, nothing about this
+// choice becomes unsafe once real project data exists).
+model AiDesignerSettings {
+  id                       String                         @id @default(uuid()) @db.Uuid
+  companyId                String                         @unique @map("company_id") @db.Uuid
+  productDesignDisplayMode AiDesignerAttributeDisplayMode @default(CLIPART) @map("product_design_display_mode")
+  createdAt                DateTime                       @default(now()) @map("created_at")
+  updatedAt                DateTime                       @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@map("ai_designer_settings")
+}
+
 // -----------------------------------------------------------------------------
 // AI Provider & API Management + Automatic Failover (2026-09-10)
 //
@@ -7719,6 +7864,19 @@ enum AIProviderCapability {
   TEXT_TO_IMAGE
   IMAGE_EDIT
   FABRIC_REFERENCE
+  // Applies a SECOND fabric image onto specific area(s) of an already-
+  // generated design (Multi-Fabric) -- routed to ImageGenerationProvider's
+  // own `applyFabric` (a genuine two-image composition), distinct from
+  // IMAGE_EDIT's single-image `generateVariation` -- a provider capable of
+  // one is not necessarily capable of the other (confirmed: the Cloudflare
+  // provider implements generateVariation but deliberately omits
+  // applyFabric).
+  MULTI_FABRIC
+  // Regenerates the current design as a graded technical flat / CAD-style
+  // line drawing (AI Designer's own Tech Pack feature) -- routed to
+  // `generateTechnicalFlat`, a single-base-image transform distinct in kind
+  // from IMAGE_EDIT's "change one named aspect" semantics.
+  TECHNICAL_FLAT
 }
 
 /**

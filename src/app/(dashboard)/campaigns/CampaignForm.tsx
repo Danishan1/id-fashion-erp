@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { CHANNEL_LABELS } from "./statusLabels";
 
 interface Option {
@@ -113,14 +114,13 @@ export function CampaignForm({ initialCampaign }: { initialCampaign?: InitialCam
       </div>
 
       <FormField label="Owner" htmlFor="ownerUserId">
-        <select id="ownerUserId" value={ownerUserId} onChange={(e) => setOwnerUserId(e.target.value)} className={textInputClass()}>
-          <option value="">— None —</option>
-          {users.map((u) => (
-            <option key={u.id} value={u.id}>
-              {u.fullName}
-            </option>
-          ))}
-        </select>
+        <SearchableSelect
+          id="ownerUserId"
+          value={ownerUserId}
+          onChange={setOwnerUserId}
+          options={users.map((u) => ({ id: u.id, label: u.fullName ?? "" }))}
+          placeholder="Search user…"
+        />
       </FormField>
 
       {!initialCampaign && (
