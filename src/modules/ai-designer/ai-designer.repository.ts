@@ -64,6 +64,9 @@ export const AiDesignerGenerationRepository = {
   markSuccess: (id: string) => prisma.aiDesignerGeneration.update({ where: { id }, data: { status: "SUCCESS" } }),
 
   markFailed: (id: string) => prisma.aiDesignerGeneration.update({ where: { id }, data: { status: "FAILED" } }),
+
+  /** Used by applyEditVariation() to verify a preview's own parentImageId still matches the project's real current image, and to recover the originating prompt's edit spec (mode/technicalFields) for the new version. */
+  findByIdWithPrompt: (id: string) => prisma.aiDesignerGeneration.findUnique({ where: { id }, include: { prompt: true } }),
 };
 
 export const AiDesignerImageRepository = {
@@ -92,24 +95,56 @@ export const AiDesignerVersionRepository = {
     prisma.aiDesignerVersion.findMany({
       where: { projectId },
       orderBy: { versionNumber: "desc" },
-      include: { currentImage: true, createdBy: { select: { id: true, fullName: true } } },
+      include: {
+        currentImage: true,
+        createdBy: { select: { id: true, fullName: true } },
+        approvedBy: { select: { id: true, fullName: true } },
+        aiPrompt: { select: { id: true, promptText: true } },
+      },
     }),
 
   count: (projectId: string) => prisma.aiDesignerVersion.count({ where: { projectId } }),
+
+  updateApprovalStatus: (
+    id: string,
+    data: { approvalStatus: "UNDER_REVIEW" | "APPROVED" | "REJECTED"; approvedByUserId?: string | null; approvedAt?: Date | null }
+  ) => prisma.aiDesignerVersion.update({ where: { id }, data }),
 };
 
 export const AiDesignerTechPackRepository = {
   create: (data: Prisma.AiDesignerTechPackUncheckedCreateInput) => prisma.aiDesignerTechPack.create({ data }),
 
-  markSuccess: (id: string, data: { flatSketchImageAttachmentId: string; measurementsJson: Prisma.InputJsonValue; bomJson: Prisma.InputJsonValue }) =>
-    prisma.aiDesignerTechPack.update({ where: { id }, data: { status: "SUCCESS", ...data } }),
+  markSuccess: (
+    id: string,
+    data: {
+      garmentAnalysisJson: Prisma.InputJsonValue;
+      designerNotes: string;
+      suggestedAdditionalViews: string;
+      pages: { pageNumber: number; pageTitle: string; promptText: string; imageAttachmentId: string | null }[];
+    }
+  ) =>
+    prisma.aiDesignerTechPack.update({
+      where: { id },
+      data: {
+        status: "SUCCESS",
+        garmentAnalysisJson: data.garmentAnalysisJson,
+        designerNotes: data.designerNotes,
+        suggestedAdditionalViews: data.suggestedAdditionalViews,
+        pages: { create: data.pages },
+      },
+      include: { pages: { orderBy: { pageNumber: "asc" } } },
+    }),
 
   markFailed: (id: string, errorMessage: string) =>
     prisma.aiDesignerTechPack.update({ where: { id }, data: { status: "FAILED", errorMessage } }),
 
   /** Only the most recent attempt is ever surfaced in the UI — older attempts stay in the database for audit (append-only, same convention as every other AI Designer run-log table). */
   findLatestByProjectId: (projectId: string) =>
-    prisma.aiDesignerTechPack.findFirst({ where: { projectId }, orderBy: { createdAt: "desc" } }),
+    prisma.aiDesignerTechPack.findFirst({
+      where: { projectId },
+      orderBy: { createdAt: "desc" },
+      include: { pages: { orderBy: { pageNumber: "asc" } } },
+    }),
 };
 
 export const AiDesignerProductDesignAttributeRepository = {

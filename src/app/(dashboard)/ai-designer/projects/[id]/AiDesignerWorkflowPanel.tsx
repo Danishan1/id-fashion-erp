@@ -1,8 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
-import { Modal } from "@/components/ui/Modal";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { MaterialPicker, type MaterialPickerOption } from "@/components/ui/MaterialPicker";
@@ -86,13 +86,140 @@ interface AiDesignerProjectData {
   fabricProduct: { id: string; styleName: string; styleCode: string } | null;
 }
 
+interface TechPackGarmentAnalysis {
+  part1: {
+    identification: Record<string, string>;
+    construction: Record<string, string>;
+    closure: { closureType: string; closureDetails: string };
+    seamCallouts: { calloutNumber: number; location: string; technicalSpecification: string; status: string }[];
+    visibleColors: { colorName: string; pantoneEstimate: string; hexEstimate: string; garmentPanel: string }[];
+    suggestedColorways: {
+      colorwayCode: string;
+      colorwayName: string;
+      mainColor: string;
+      contrastColor: string;
+      trimColor: string;
+      artworkColor: string;
+      notes: string;
+    }[];
+    artworkItems: {
+      artworkType: string;
+      placement: string;
+      scale: string;
+      dimensions: string;
+      alignment: string;
+      printMethod: string;
+      distanceFromHps: string;
+      distanceFromCf: string;
+    }[];
+    artworkSummary: string;
+    patternPrintType: string;
+    patternPrintNotes: string;
+  };
+  part2: {
+    bomItems: { materialType: string; composition: string; gsm: string; color: string; consumption: string; notes: string }[];
+    measurementPoints: { pointName: string; howToMeasure: string; toleranceCm: string; values: Record<string, string> }[];
+    gradeRulesNotes: string;
+    mainLabelSpec: string;
+    sizeLabelSpec: string;
+    careLabelSpec: string;
+    hangtagSpec: string;
+    polybagSpec: string;
+    foldingInstructions: string;
+    cartonPackingSpec: string;
+    barcodePlacement: string;
+  };
+}
+
+interface TechPackPage {
+  pageNumber: number;
+  pageTitle: string;
+  promptText: string;
+  imageAttachmentId: string | null;
+}
+
 interface TechPackData {
   id: string;
   status: "IN_PROGRESS" | "SUCCESS" | "FAILED";
-  flatSketchImageAttachmentId: string | null;
-  measurementsJson: { points: { pointName: string; howToMeasure: string; toleranceCm: string; values: Record<string, string> }[]; generalNotes: string } | null;
-  bomJson: { items: { materialDescription: string; materialCategory: string; suggestedQuantityPerUnit: number; suggestedUom: string; reasoning: string }[] } | null;
+  garmentAnalysisJson: TechPackGarmentAnalysis | null;
+  designerNotes: string | null;
+  suggestedAdditionalViews: string | null;
   errorMessage: string | null;
+  pages: TechPackPage[];
+}
+
+const IDENTIFICATION_FIELD_LABELS: Record<string, string> = {
+  brandName: "Brand Name",
+  styleName: "Style Name",
+  styleNumber: "Style Number",
+  garmentCategory: "Garment Category",
+  subCategory: "Sub-Category",
+  fitType: "Fit Type",
+  genderCategory: "Gender / Category",
+  targetSeason: "Target Season",
+  baseSampleSize: "Base Sample Size",
+  dateCreated: "Date Created",
+  designer: "Designer",
+};
+
+const CONSTRUCTION_FIELD_LABELS: Record<string, string> = {
+  silhouette: "Silhouette",
+  bodyShape: "Body Shape",
+  bodyLength: "Body Length",
+  width: "Width",
+  hemShape: "Hem Shape",
+  sideSeamConstruction: "Side Seam Construction",
+  shoulderConstruction: "Shoulder Construction",
+  sleeveConstruction: "Sleeve Construction",
+  hoodCollarConstruction: "Hood / Collar Construction",
+  ribTrims: "Rib Trims",
+  paneling: "Paneling",
+  dropShoulderAmount: "Drop Shoulder Amount",
+  cuffConstruction: "Cuff Construction",
+  neckConstruction: "Neck Construction",
+};
+
+function MiniTable({ headers, rows }: { headers: string[]; rows: string[][] }) {
+  if (rows.length === 0) return <p className="text-xs text-zinc-400">None.</p>;
+  return (
+    <div className="overflow-x-auto rounded border border-zinc-200 dark:border-zinc-800">
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="border-b border-zinc-200 bg-zinc-50 text-left dark:border-zinc-800 dark:bg-zinc-900">
+            {headers.map((h) => (
+              <th key={h} className="px-2 py-1.5 font-medium">
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, i) => (
+            <tr key={i} className="border-b border-zinc-100 last:border-0 dark:border-zinc-800">
+              {row.map((cell, j) => (
+                <td key={j} className="px-2 py-1.5">
+                  {cell}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function KeyValueGrid({ labels, data }: { labels: Record<string, string>; data: Record<string, string> }) {
+  return (
+    <dl className="grid grid-cols-1 gap-x-4 gap-y-1 text-xs sm:grid-cols-2">
+      {Object.entries(labels).map(([key, label]) => (
+        <div key={key} className="flex justify-between gap-2 border-b border-zinc-100 py-1 dark:border-zinc-800">
+          <dt className="text-zinc-500">{label}</dt>
+          <dd className="text-right text-zinc-800 dark:text-zinc-200">{data[key] || "—"}</dd>
+        </div>
+      ))}
+    </dl>
+  );
 }
 
 const SECOND_FABRIC_APPLY_AREA_LABELS: Record<string, string> = {
@@ -190,11 +317,6 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
   const [materials, setMaterials] = useState<MaterialPickerOption[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [editModalOpen, setEditModalOpen] = useState(false);
-  const [editFeature, setEditFeature] = useState("");
-  const [editCurrent, setEditCurrent] = useState("");
-  const [editNew, setEditNew] = useState("");
-  const [editInstructions, setEditInstructions] = useState("");
   const [pendingSelectImage, setPendingSelectImage] = useState<string | null>(null);
   const [generatedImages, setGeneratedImages] = useState<AiDesignerImageRow[]>([]);
   const [secondFabricSelectedAreas, setSecondFabricSelectedAreas] = useState<string[]>([]);
@@ -926,23 +1048,19 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
           isCurrent={project.currentStep === "EDIT"}
           isOpen={expandedStep === "EDIT"}
         >
-          <p className="text-xs text-zinc-500">Change one aspect of the current design (Collar, Sleeves, Length, Pocket, Buttons, Logo, Embroidery, Color, Background, Environment, Model, Pose) — only the affected area is regenerated.</p>
+          <p className="text-xs text-zinc-500">
+            A full single-page design workspace — canvas with zoom/pan, contextual edit categories, Quick/Technical/AI Prompt
+            edit modes, AI variations review, before/after compare, and version history with Approve/Reject.
+          </p>
           <div className="mt-3 flex items-center gap-3">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={imageUrl(currentImage.imageAttachmentId)} alt="Current design" className="h-32 w-32 rounded border object-cover" />
-            <button
-              type="button"
-              onClick={() => {
-                setEditFeature("");
-                setEditCurrent("");
-                setEditNew("");
-                setEditInstructions("");
-                setEditModalOpen(true);
-              }}
-              className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm hover:bg-zinc-50 dark:border-zinc-700"
+            <Link
+              href={`/ai-designer/projects/${projectId}/edit`}
+              className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500"
             >
-              Edit Design
-            </button>
+              Open Design Editor →
+            </Link>
           </div>
           <StepNextButton step="EDIT" onNext={goToNextStep} />
         </WizardSection>
@@ -959,8 +1077,9 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
           isOpen={expandedStep === "TECH_PACK"}
         >
           <p className="text-xs text-zinc-500">
-            One combined action — a graded measurement chart, a draft Bill of Materials, and a technical flat sketch,
-            all from the current design.
+            A full, supplier-ready tech pack from the current design — a comprehensive garment analysis (categories
+            A-J) plus 7 separately generated tech-pack page images (cover/style summary, construction callouts, BOM,
+            colorways &amp; artwork, measurements, size grading, labels &amp; packaging).
           </p>
           <button
             type="button"
@@ -977,8 +1096,8 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
           </button>
           {busy === "tech-pack" && (
             <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
-              Please wait — this usually takes 1-2 minutes. Analyzing design, calculating graded measurements, and
-              drawing the flat sketch…
+              Please wait — this can take several minutes: analyzing the design, drafting the full garment analysis,
+              writing 7 page prompts, then generating 7 separate tech-pack page images one at a time.
             </p>
           )}
 
@@ -986,86 +1105,231 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
             <p className="mt-3 text-xs text-red-600 dark:text-red-400">{techPack.errorMessage || "Tech pack generation failed."}</p>
           )}
 
-          {techPack && techPack.status === "SUCCESS" && (
+          {techPack && techPack.status === "SUCCESS" && techPack.garmentAnalysisJson && (
             <div className="mt-4 space-y-4">
-              {techPack.flatSketchImageAttachmentId && (
-                <div>
-                  <p className="mb-1 text-xs font-medium text-zinc-700 dark:text-zinc-300">Technical Flat Sketch</p>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={imageUrl(techPack.flatSketchImageAttachmentId)}
-                    alt="Technical flat sketch"
-                    className="h-56 w-56 rounded border object-contain bg-white"
-                  />
-                </div>
-              )}
+              <details className="rounded border border-zinc-200 dark:border-zinc-800" open>
+                <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                  Garment Analysis
+                </summary>
+                <div className="space-y-4 border-t border-zinc-200 p-3 dark:border-zinc-800">
+                  <section>
+                    <p className="mb-1 text-xs font-semibold text-zinc-600 dark:text-zinc-400">A. Garment Identification</p>
+                    <KeyValueGrid labels={IDENTIFICATION_FIELD_LABELS} data={techPack.garmentAnalysisJson.part1.identification} />
+                  </section>
 
-              {techPack.measurementsJson && (
-                <div>
-                  <p className="mb-1 text-xs font-medium text-zinc-700 dark:text-zinc-300">Graded Measurements</p>
-                  <div className="overflow-x-auto rounded border border-zinc-200 dark:border-zinc-800">
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="border-b border-zinc-200 bg-zinc-50 text-left dark:border-zinc-800 dark:bg-zinc-900">
-                          <th className="px-2 py-1.5 font-medium">Point</th>
-                          <th className="px-2 py-1.5 font-medium">Tolerance</th>
-                          {Object.keys(techPack.measurementsJson.points[0]?.values ?? {}).map((size) => (
-                            <th key={size} className="px-2 py-1.5 font-medium">
-                              {size}
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {techPack.measurementsJson.points.map((p) => (
-                          <tr key={p.pointName} className="border-b border-zinc-100 last:border-0 dark:border-zinc-800">
-                            <td className="px-2 py-1.5" title={p.howToMeasure}>
-                              {p.pointName}
-                            </td>
-                            <td className="px-2 py-1.5 text-zinc-500">{p.toleranceCm}</td>
-                            {Object.entries(p.values).map(([size, value]) => (
-                              <td key={size} className="px-2 py-1.5">
-                                {value}
-                              </td>
+                  <section>
+                    <p className="mb-1 text-xs font-semibold text-zinc-600 dark:text-zinc-400">B. Construction &amp; Silhouette</p>
+                    <KeyValueGrid labels={CONSTRUCTION_FIELD_LABELS} data={techPack.garmentAnalysisJson.part1.construction} />
+                  </section>
+
+                  <section>
+                    <p className="mb-1 text-xs font-semibold text-zinc-600 dark:text-zinc-400">C. Closure System</p>
+                    <p className="text-xs">
+                      <span className="text-zinc-500">Type: </span>
+                      {techPack.garmentAnalysisJson.part1.closure.closureType}
+                    </p>
+                    <p className="text-xs text-zinc-500">{techPack.garmentAnalysisJson.part1.closure.closureDetails}</p>
+                  </section>
+
+                  <section>
+                    <p className="mb-1 text-xs font-semibold text-zinc-600 dark:text-zinc-400">D. Panels &amp; Seam Construction</p>
+                    <MiniTable
+                      headers={["#", "Location", "Technical Specification", "Status"]}
+                      rows={techPack.garmentAnalysisJson.part1.seamCallouts.map((c) => [
+                        String(c.calloutNumber),
+                        c.location,
+                        c.technicalSpecification,
+                        c.status,
+                      ])}
+                    />
+                  </section>
+
+                  <section>
+                    <p className="mb-1 text-xs font-semibold text-zinc-600 dark:text-zinc-400">E. Colors &amp; Colorways</p>
+                    <p className="mb-1 text-xs text-zinc-500">Visible colors</p>
+                    <MiniTable
+                      headers={["Color", "Pantone (est.)", "HEX (est.)", "Panel"]}
+                      rows={techPack.garmentAnalysisJson.part1.visibleColors.map((c) => [c.colorName, c.pantoneEstimate, c.hexEstimate, c.garmentPanel])}
+                    />
+                    <p className="mb-1 mt-2 text-xs text-zinc-500">Suggested commercial colorways</p>
+                    <MiniTable
+                      headers={["Code", "Name", "Main", "Contrast", "Trim", "Artwork", "Notes"]}
+                      rows={techPack.garmentAnalysisJson.part1.suggestedColorways.map((c) => [
+                        c.colorwayCode,
+                        c.colorwayName,
+                        c.mainColor,
+                        c.contrastColor,
+                        c.trimColor,
+                        c.artworkColor,
+                        c.notes,
+                      ])}
+                    />
+                  </section>
+
+                  <section>
+                    <p className="mb-1 text-xs font-semibold text-zinc-600 dark:text-zinc-400">F. Artwork &amp; Graphics</p>
+                    {techPack.garmentAnalysisJson.part1.artworkItems.length > 0 ? (
+                      <MiniTable
+                        headers={["Type", "Placement", "Scale", "Dimensions", "Alignment", "Print Method", "From HPS", "From CF"]}
+                        rows={techPack.garmentAnalysisJson.part1.artworkItems.map((a) => [
+                          a.artworkType,
+                          a.placement,
+                          a.scale,
+                          a.dimensions,
+                          a.alignment,
+                          a.printMethod,
+                          a.distanceFromHps,
+                          a.distanceFromCf,
+                        ])}
+                      />
+                    ) : null}
+                    <p className="mt-1 text-xs text-zinc-500">{techPack.garmentAnalysisJson.part1.artworkSummary}</p>
+                  </section>
+
+                  <section>
+                    <p className="mb-1 text-xs font-semibold text-zinc-600 dark:text-zinc-400">G. Pattern / Print</p>
+                    <p className="text-xs">
+                      <span className="text-zinc-500">Type: </span>
+                      {techPack.garmentAnalysisJson.part1.patternPrintType}
+                    </p>
+                    <p className="text-xs text-zinc-500">{techPack.garmentAnalysisJson.part1.patternPrintNotes}</p>
+                  </section>
+
+                  <section>
+                    <p className="mb-1 text-xs font-semibold text-zinc-600 dark:text-zinc-400">H. Bill of Materials</p>
+                    <MiniTable
+                      headers={["Material Type", "Composition", "GSM", "Color", "Consumption", "Notes"]}
+                      rows={techPack.garmentAnalysisJson.part2.bomItems.map((b) => [b.materialType, b.composition, b.gsm, b.color, b.consumption, b.notes])}
+                    />
+                  </section>
+
+                  <section>
+                    <p className="mb-1 text-xs font-semibold text-zinc-600 dark:text-zinc-400">I. Measurements &amp; Grading</p>
+                    <div className="overflow-x-auto rounded border border-zinc-200 dark:border-zinc-800">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="border-b border-zinc-200 bg-zinc-50 text-left dark:border-zinc-800 dark:bg-zinc-900">
+                            <th className="px-2 py-1.5 font-medium">Point</th>
+                            <th className="px-2 py-1.5 font-medium">Tolerance</th>
+                            {Object.keys(techPack.garmentAnalysisJson.part2.measurementPoints[0]?.values ?? {}).map((size) => (
+                              <th key={size} className="px-2 py-1.5 font-medium">
+                                {size}
+                              </th>
                             ))}
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  <p className="mt-1 text-xs text-zinc-400">{techPack.measurementsJson.generalNotes}</p>
+                        </thead>
+                        <tbody>
+                          {techPack.garmentAnalysisJson.part2.measurementPoints.map((p) => (
+                            <tr key={p.pointName} className="border-b border-zinc-100 last:border-0 dark:border-zinc-800">
+                              <td className="px-2 py-1.5" title={p.howToMeasure}>
+                                {p.pointName}
+                              </td>
+                              <td className="px-2 py-1.5 text-zinc-500">{p.toleranceCm}</td>
+                              {Object.entries(p.values).map(([size, value]) => (
+                                <td key={size} className="px-2 py-1.5">
+                                  {value}
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <p className="mt-1 text-xs text-zinc-400">{techPack.garmentAnalysisJson.part2.gradeRulesNotes}</p>
+                  </section>
+
+                  <section>
+                    <p className="mb-1 text-xs font-semibold text-zinc-600 dark:text-zinc-400">J. Labels &amp; Packaging</p>
+                    <dl className="space-y-1 text-xs">
+                      {(
+                        [
+                          ["Main Label", techPack.garmentAnalysisJson.part2.mainLabelSpec],
+                          ["Size Label", techPack.garmentAnalysisJson.part2.sizeLabelSpec],
+                          ["Care Label", techPack.garmentAnalysisJson.part2.careLabelSpec],
+                          ["Hangtag", techPack.garmentAnalysisJson.part2.hangtagSpec],
+                          ["Polybag", techPack.garmentAnalysisJson.part2.polybagSpec],
+                          ["Folding Instructions", techPack.garmentAnalysisJson.part2.foldingInstructions],
+                          ["Carton Packing", techPack.garmentAnalysisJson.part2.cartonPackingSpec],
+                          ["Barcode Placement", techPack.garmentAnalysisJson.part2.barcodePlacement],
+                        ] as [string, string][]
+                      ).map(([label, value]) => (
+                        <div key={label} className="flex gap-2">
+                          <dt className="w-32 shrink-0 text-zinc-500">{label}</dt>
+                          <dd className="text-zinc-800 dark:text-zinc-200">{value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </section>
+                </div>
+              </details>
+
+              {(techPack.designerNotes || techPack.suggestedAdditionalViews) && (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  {techPack.designerNotes && (
+                    <div className="rounded border border-amber-200 bg-amber-50 p-2 text-xs dark:border-amber-900 dark:bg-amber-950">
+                      <p className="mb-1 font-medium text-amber-800 dark:text-amber-300">Notes for Designer</p>
+                      <p className="whitespace-pre-wrap text-amber-700 dark:text-amber-400">{techPack.designerNotes}</p>
+                    </div>
+                  )}
+                  {techPack.suggestedAdditionalViews && (
+                    <div className="rounded border border-zinc-200 bg-zinc-50 p-2 text-xs dark:border-zinc-800 dark:bg-zinc-900">
+                      <p className="mb-1 font-medium text-zinc-700 dark:text-zinc-300">Suggested Additional Views</p>
+                      <p className="whitespace-pre-wrap text-zinc-600 dark:text-zinc-400">{techPack.suggestedAdditionalViews}</p>
+                    </div>
+                  )}
                 </div>
               )}
 
-              {techPack.bomJson && (
-                <div>
-                  <p className="mb-1 text-xs font-medium text-zinc-700 dark:text-zinc-300">Draft Bill of Materials</p>
-                  <div className="overflow-x-auto rounded border border-zinc-200 dark:border-zinc-800">
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="border-b border-zinc-200 bg-zinc-50 text-left dark:border-zinc-800 dark:bg-zinc-900">
-                          <th className="px-2 py-1.5 font-medium">Material</th>
-                          <th className="px-2 py-1.5 font-medium">Category</th>
-                          <th className="px-2 py-1.5 font-medium">Qty / Unit</th>
-                          <th className="px-2 py-1.5 font-medium">Notes</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {techPack.bomJson.items.map((item, i) => (
-                          <tr key={i} className="border-b border-zinc-100 last:border-0 dark:border-zinc-800">
-                            <td className="px-2 py-1.5">{item.materialDescription}</td>
-                            <td className="px-2 py-1.5 text-zinc-500">{item.materialCategory}</td>
-                            <td className="px-2 py-1.5">
-                              {item.suggestedQuantityPerUnit} {item.suggestedUom}
-                            </td>
-                            <td className="px-2 py-1.5 text-zinc-500">{item.reasoning}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+              <div>
+                <div className="mb-2 flex items-center justify-between">
+                  <p className="text-xs font-medium text-zinc-700 dark:text-zinc-300">7 Tech Pack Pages</p>
+                  <a
+                    href={`/api/v1/ai-designer/projects/${projectId}/tech-pack/download`}
+                    className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500"
+                  >
+                    Download Tech Pack (PDF)
+                  </a>
                 </div>
-              )}
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {techPack.pages
+                    .slice()
+                    .sort((a, b) => a.pageNumber - b.pageNumber)
+                    .map((page) => (
+                      <div key={page.pageNumber} className="rounded border border-zinc-200 p-2 dark:border-zinc-800">
+                        <div className="mb-1 flex items-center justify-between gap-2">
+                          <p className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                            Page {page.pageNumber} — {page.pageTitle}
+                          </p>
+                          {page.imageAttachmentId && (
+                            <a
+                              href={`/api/v1/ai-designer/attachments/${page.imageAttachmentId}/download`}
+                              className="shrink-0 text-xs text-indigo-600 hover:underline dark:text-indigo-400"
+                            >
+                              Download
+                            </a>
+                          )}
+                        </div>
+                        {page.imageAttachmentId ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={imageUrl(page.imageAttachmentId)}
+                            alt={`Tech pack page ${page.pageNumber} — ${page.pageTitle}`}
+                            className="w-full rounded border bg-white object-contain"
+                          />
+                        ) : (
+                          <p className="text-xs text-zinc-400">
+                            No garment artwork needed for this page — its tables are rendered as real text in the Garment Analysis
+                            above and in the downloaded PDF.
+                          </p>
+                        )}
+                        <details className="mt-1">
+                          <summary className="cursor-pointer text-xs text-zinc-500">View prompt</summary>
+                          <p className="mt-1 whitespace-pre-wrap text-xs text-zinc-500">{page.promptText}</p>
+                        </details>
+                      </div>
+                    ))}
+                </div>
+              </div>
             </div>
           )}
 
@@ -1130,54 +1394,6 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
           <p className="mt-2 text-xs text-zinc-500">DXF export and a full Tech Pack export are future support.</p>
         </WizardSection>
       )}
-
-      <Modal open={editModalOpen} onClose={() => setEditModalOpen(false)} title="Edit Design">
-        <div className="space-y-3">
-          <FormField label="Feature to Change" htmlFor="editFeature" required>
-            <input id="editFeature" className={textInputClass()} value={editFeature} onChange={(e) => setEditFeature(e.target.value)} placeholder="e.g. Collar" />
-          </FormField>
-          <FormField label="Current Value" htmlFor="editCurrent">
-            <input id="editCurrent" className={textInputClass()} value={editCurrent} onChange={(e) => setEditCurrent(e.target.value)} placeholder="e.g. Round Neck" />
-          </FormField>
-          <FormField label="New Requirement" htmlFor="editNew" required>
-            <input id="editNew" className={textInputClass()} value={editNew} onChange={(e) => setEditNew(e.target.value)} placeholder="e.g. Mandarin Collar" />
-          </FormField>
-          <FormField label="Additional Instructions (optional)" htmlFor="editInstructions">
-            <textarea
-              id="editInstructions"
-              className={textInputClass()}
-              rows={2}
-              value={editInstructions}
-              onChange={(e) => setEditInstructions(e.target.value)}
-            />
-          </FormField>
-          <button
-            type="button"
-            disabled={busy === "edit" || !editFeature.trim() || !editNew.trim()}
-            onClick={() =>
-              run("edit", async () => {
-                const body = await parseJson(
-                  await fetch(`/api/v1/ai-designer/projects/${projectId}/edit`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      featureLabel: editFeature,
-                      currentValue: editCurrent,
-                      newValue: editNew,
-                      additionalInstructions: editInstructions,
-                    }),
-                  })
-                );
-                setGeneratedImages((prev) => [...prev, ...body.data.images]);
-                setEditModalOpen(false);
-              })
-            }
-            className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
-          >
-            {busy === "edit" ? "Regenerating…" : "Regenerate Affected Area"}
-          </button>
-        </div>
-      </Modal>
 
       <ConfirmModal
         open={pendingSelectImage !== null}

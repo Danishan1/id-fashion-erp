@@ -11,8 +11,15 @@ vi.mock("@/core/attachments/AttachmentService", () => ({
 }));
 vi.mock("@/core/ai-designer/fabric-analysis/analyze", () => ({ analyzeFabric: vi.fn() }));
 vi.mock("@/core/ai/provider-manager/AIProviderManager", () => ({ runWithFailover: vi.fn() }));
-vi.mock("@/core/ai-designer/export/tech-pack-pdf", () => ({ renderTechPackPdf: vi.fn().mockResolvedValue(Buffer.from("pdf")) }));
-vi.mock("@/core/ai-designer/tech-pack/generate", () => ({ generateGrading: vi.fn(), generateTechPackBom: vi.fn() }));
+vi.mock("@/core/ai-designer/export/tech-pack-pdf", () => ({
+  renderTechPackPdf: vi.fn().mockResolvedValue(Buffer.from("pdf")),
+  renderTechPackDocumentPdf: vi.fn().mockResolvedValue(Buffer.from("tech-pack-pdf")),
+}));
+vi.mock("@/core/ai-designer/tech-pack/generate", () => ({
+  generateGarmentAnalysisPart1: vi.fn(),
+  generateGarmentAnalysisPart2: vi.fn(),
+  generatePagePrompts: vi.fn(),
+}));
 vi.mock("@/modules/products/product.repository", () => ({
   ProductRepository: { findMaterialById: vi.fn() },
 }));
@@ -36,6 +43,7 @@ vi.mock("./ai-designer.repository", () => ({
     create: vi.fn(),
     markSuccess: vi.fn(),
     markFailed: vi.fn(),
+    findByIdWithPrompt: vi.fn(),
   },
   AiDesignerImageRepository: {
     createMany: vi.fn(),
@@ -49,6 +57,7 @@ vi.mock("./ai-designer.repository", () => ({
     create: vi.fn(),
     findByProjectId: vi.fn(),
     count: vi.fn(),
+    updateApprovalStatus: vi.fn(),
   },
   AiDesignerTechPackRepository: {
     create: vi.fn(),
@@ -61,7 +70,7 @@ vi.mock("./ai-designer.repository", () => ({
 const { generateDocumentNumber } = await import("@/core/numbering/DocumentNumberingService");
 const { uploadAttachment, getAttachmentForDownload } = await import("@/core/attachments/AttachmentService");
 const { runWithFailover } = await import("@/core/ai/provider-manager/AIProviderManager");
-const { generateGrading, generateTechPackBom } = await import("@/core/ai-designer/tech-pack/generate");
+const { generateGarmentAnalysisPart1, generateGarmentAnalysisPart2, generatePagePrompts } = await import("@/core/ai-designer/tech-pack/generate");
 const { ProductRepository } = await import("@/modules/products/product.repository");
 const {
   AiDesignerProjectRepository,
@@ -76,9 +85,13 @@ const {
   selectExistingFabric,
   uploadFabricImage,
   generateDesign,
-  editDesign,
+  generateEditPreview,
+  applyEditVariation,
+  approveCurrentVersion,
+  rejectCurrentVersion,
   applySecondFabric,
   generateTechPack,
+  exportTechPackPdf,
   decideImage,
   listImages,
   exportProject,
@@ -136,10 +149,14 @@ beforeEach(() => {
   vi.mocked(AiDesignerGenerationRepository.create).mockReset().mockResolvedValue({ id: "gen-1" } as never);
   vi.mocked(AiDesignerGenerationRepository.markSuccess).mockReset();
   vi.mocked(AiDesignerGenerationRepository.markFailed).mockReset();
+  vi.mocked(AiDesignerGenerationRepository.findByIdWithPrompt).mockReset();
   vi.mocked(AiDesignerImageRepository.createMany).mockReset();
   vi.mocked(AiDesignerImageRepository.findByGenerationId).mockReset();
+  vi.mocked(AiDesignerImageRepository.findWithProjectOwner).mockReset();
+  vi.mocked(AiDesignerImageRepository.update).mockReset();
   vi.mocked(AiDesignerVersionRepository.create).mockReset().mockResolvedValue({ id: "version-1", versionNumber: 1 } as never);
   vi.mocked(AiDesignerVersionRepository.count).mockReset().mockResolvedValue(0);
+  vi.mocked(AiDesignerVersionRepository.updateApprovalStatus).mockReset();
   vi.mocked(uploadAttachment).mockReset().mockResolvedValue({ id: "attachment-1" } as never);
   vi.mocked(getAttachmentForDownload).mockReset();
   vi.mocked(runWithFailover).mockReset();
@@ -147,8 +164,9 @@ beforeEach(() => {
   vi.mocked(AiDesignerTechPackRepository.markSuccess).mockReset();
   vi.mocked(AiDesignerTechPackRepository.markFailed).mockReset();
   vi.mocked(AiDesignerTechPackRepository.findLatestByProjectId).mockReset();
-  vi.mocked(generateGrading).mockReset();
-  vi.mocked(generateTechPackBom).mockReset();
+  vi.mocked(generateGarmentAnalysisPart1).mockReset();
+  vi.mocked(generateGarmentAnalysisPart2).mockReset();
+  vi.mocked(generatePagePrompts).mockReset();
 });
 
 describe("createProject", () => {
@@ -387,22 +405,78 @@ describe("generateDesign — the wizard-step gate", () => {
   });
 });
 
-describe("editDesign", () => {
+describe("generateEditPreview — Edit Design workspace, step 1", () => {
   it("requires a design to already exist before editing", async () => {
     vi.mocked(AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(
       baseProject({ currentVersion: null }) as never
     );
 
     await expect(
-      editDesign(actor, "proj-1", { featureLabel: "Collar", currentValue: "Round Neck", newValue: "Mandarin Collar" })
+      generateEditPreview(actor, "proj-1", { mode: "QUICK", featureLabel: "Collar", currentValue: "Round Neck", newValue: "Mandarin Collar", imageCount: 1 })
     ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
 
-  it("creates version N+1 with the correct parentImageId/editedFeature", async () => {
+  // The real-world path: fabricImageAttachmentId is ALWAYS set by the time any
+  // edit can happen (assertReadyToGenerate requires it before Generate Design
+  // itself can even run). Re-supplying that real original fabric photo as a
+  // second reference image on every edit (via applyFabric) is the actual fix
+  // for a confirmed-live bug: chaining edits from image-to-image alone let the
+  // fabric print visibly drift from the original over successive edits, since
+  // "preserve fabric" text has no real image to check against.
+  it("generates preview images WITHOUT bumping the version, re-supplying the real original fabric photo as a second reference image via applyFabric", async () => {
     vi.mocked(AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(
       baseProject({
         fabricName: "Cotton",
-        currentVersion: { currentImage: { id: "img-parent", imageAttachmentId: "att-parent" } },
+        fabricImageAttachmentId: "att-fabric-original",
+        currentVersion: { id: "version-1", currentImageId: "img-parent", currentImage: { id: "img-parent", imageAttachmentId: "att-parent" } },
+      }) as never
+    );
+    vi.mocked(getAttachmentForDownload).mockImplementation(
+      async (_companyId: string, attachmentId: string) =>
+        ({ attachment: { mimeType: "image/png" }, buffer: Buffer.from(attachmentId) }) as never
+    );
+    const applyFabric = vi
+      .fn()
+      .mockResolvedValue({ images: [{ buffer: Buffer.from("edited"), mimeType: "image/png" }], model: "gpt-image-1", raw: {} });
+    vi.mocked(runWithFailover).mockImplementation(async (params) => {
+      const result = await params.call({ name: "openai", model: "gpt-image-1", generate: vi.fn(), applyFabric } as never);
+      return { images: result.images, model: result.model, raw: result.raw, providerId: "provider-1", providerName: "openai" };
+    });
+    vi.mocked(AiDesignerImageRepository.findByGenerationId).mockResolvedValue([{ id: "img-preview-1" }] as never);
+
+    const result = await generateEditPreview(actor, "proj-1", {
+      mode: "QUICK",
+      featureLabel: "Collar",
+      currentValue: "Round Neck",
+      newValue: "Mandarin Collar",
+      imageCount: 1,
+    });
+
+    expect(runWithFailover).toHaveBeenCalledWith(expect.objectContaining({ capability: "MULTI_FABRIC" }));
+    expect(applyFabric).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseImage: { buffer: Buffer.from("att-parent"), mimeType: "image/png" },
+        swatchImage: { buffer: Buffer.from("att-fabric-original"), mimeType: "image/png" },
+      })
+    );
+    expect(AiDesignerGenerationRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({ parentImageId: "img-parent", editedFeature: "Collar", requestedImageCount: 1 })
+    );
+    expect(result.images).toEqual([{ id: "img-preview-1" }]);
+    // The whole point of a "preview" — nothing about the current design changes yet.
+    expect(AiDesignerVersionRepository.create).not.toHaveBeenCalled();
+    expect(AiDesignerProjectRepository.update).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ currentVersionId: expect.anything() }));
+  });
+
+  // Defensive fallback only — not a realistic case (assertReadyToGenerate
+  // guarantees a real fabric photo exists before any design/edit can exist at
+  // all) but proven here so a project somehow missing it still degrades to a
+  // working single-image edit rather than crashing.
+  it("falls back to a plain single-image edit when no fabric reference photo exists on the project", async () => {
+    vi.mocked(AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(
+      baseProject({
+        fabricImageAttachmentId: null,
+        currentVersion: { id: "version-1", currentImageId: "img-parent", currentImage: { id: "img-parent", imageAttachmentId: "att-parent" } },
       }) as never
     );
     vi.mocked(getAttachmentForDownload).mockResolvedValue({
@@ -416,35 +490,152 @@ describe("editDesign", () => {
       const result = await params.call({ name: "openai", model: "gpt-image-1", generate: vi.fn(), generateVariation } as never);
       return { images: result.images, model: result.model, raw: result.raw, providerId: "provider-1", providerName: "openai" };
     });
-    vi.mocked(AiDesignerImageRepository.findByGenerationId).mockResolvedValue([{ id: "img-edited" }] as never);
-    vi.mocked(AiDesignerVersionRepository.count).mockResolvedValue(1);
-    vi.mocked(AiDesignerVersionRepository.create).mockResolvedValue({ id: "version-2", versionNumber: 2 } as never);
+    vi.mocked(AiDesignerImageRepository.findByGenerationId).mockResolvedValue([{ id: "img-preview-1" }] as never);
 
-    const result = await editDesign(actor, "proj-1", {
+    await generateEditPreview(actor, "proj-1", {
+      mode: "QUICK",
       featureLabel: "Collar",
       currentValue: "Round Neck",
       newValue: "Mandarin Collar",
+      imageCount: 1,
     });
 
     expect(runWithFailover).toHaveBeenCalledWith(expect.objectContaining({ capability: "IMAGE_EDIT" }));
-    expect(AiDesignerGenerationRepository.create).toHaveBeenCalledWith(
-      expect.objectContaining({ parentImageId: "img-parent", editedFeature: "Collar" })
-    );
-    expect(AiDesignerVersionRepository.create).toHaveBeenCalledWith(
-      expect.objectContaining({ versionNumber: 2, currentImageId: "img-edited" })
-    );
-    expect(result.version.versionNumber).toBe(2);
+    expect(generateVariation).toHaveBeenCalled();
   });
 
   it("blocks editing while an edit is already in progress", async () => {
     vi.mocked(AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(
-      baseProject({ currentVersion: { currentImage: { id: "img-parent", imageAttachmentId: "att-parent" } } }) as never
+      baseProject({ currentVersion: { id: "version-1", currentImageId: "img-parent", currentImage: { id: "img-parent", imageAttachmentId: "att-parent" } } }) as never
     );
     vi.mocked(AiDesignerPromptRepository.findActiveSince).mockResolvedValue({ id: "prompt-active" } as never);
 
     await expect(
-      editDesign(actor, "proj-1", { featureLabel: "Collar", currentValue: "Round Neck", newValue: "Mandarin Collar" })
+      generateEditPreview(actor, "proj-1", { mode: "QUICK", featureLabel: "Collar", currentValue: "Round Neck", newValue: "Mandarin Collar", imageCount: 1 })
     ).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+  });
+});
+
+describe("applyEditVariation — Edit Design workspace, step 2", () => {
+  const pendingImage = { id: "img-preview-1", projectId: "proj-1", generationId: "gen-1", decision: "PENDING", project: { companyId: "co-1" } };
+  const currentProject = baseProject({
+    currentVersion: {
+      id: "version-1",
+      currentImageId: "img-parent",
+      designSnapshotJson: { fabric: {} },
+      approvalStatus: "DRAFT",
+      currentImage: { id: "img-parent", imageAttachmentId: "att-parent" },
+    },
+  });
+  const matchingGeneration = {
+    id: "gen-1",
+    parentImageId: "img-parent",
+    promptId: "prompt-1",
+    editedFeature: "Collar",
+    prompt: { specJson: { edit: { mode: "QUICK", featureLabel: "Collar", newValue: "Mandarin Collar" } } },
+  };
+
+  it("requires explicit confirmation", async () => {
+    await expect(applyEditVariation(actor, "img-preview-1", { confirmed: false })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(AiDesignerImageRepository.findWithProjectOwner).not.toHaveBeenCalled();
+  });
+
+  it("404s for an image from another company", async () => {
+    vi.mocked(AiDesignerImageRepository.findWithProjectOwner).mockResolvedValue({ ...pendingImage, project: { companyId: "co-OTHER" } } as never);
+
+    await expect(applyEditVariation(actor, "img-preview-1", { confirmed: true })).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("refuses to re-apply an image that's already been decided", async () => {
+    vi.mocked(AiDesignerImageRepository.findWithProjectOwner).mockResolvedValue({ ...pendingImage, decision: "SELECTED" } as never);
+
+    await expect(applyEditVariation(actor, "img-preview-1", { confirmed: true })).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+  });
+
+  it("refuses to apply a stale preview whose parent image no longer matches the current design", async () => {
+    vi.mocked(AiDesignerImageRepository.findWithProjectOwner).mockResolvedValue(pendingImage as never);
+    vi.mocked(AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(currentProject as never);
+    vi.mocked(AiDesignerGenerationRepository.findByIdWithPrompt).mockResolvedValue({ ...matchingGeneration, parentImageId: "img-SOME-OTHER" } as never);
+
+    await expect(applyEditVariation(actor, "img-preview-1", { confirmed: true })).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+    expect(AiDesignerVersionRepository.create).not.toHaveBeenCalled();
+  });
+
+  it("selects the image, rejects its siblings, and bumps a new AI_MODIFIED version carrying the AI prompt", async () => {
+    vi.mocked(AiDesignerImageRepository.findWithProjectOwner).mockResolvedValue(pendingImage as never);
+    vi.mocked(AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(currentProject as never);
+    vi.mocked(AiDesignerGenerationRepository.findByIdWithPrompt).mockResolvedValue(matchingGeneration as never);
+    vi.mocked(AiDesignerImageRepository.findByGenerationId).mockResolvedValue([
+      { id: "img-preview-1", decision: "PENDING" },
+      { id: "img-preview-2", decision: "PENDING" },
+    ] as never);
+    vi.mocked(AiDesignerVersionRepository.count).mockResolvedValue(1);
+    vi.mocked(AiDesignerVersionRepository.create).mockResolvedValue({ id: "version-2", versionNumber: 2 } as never);
+
+    const version = await applyEditVariation(actor, "img-preview-1", { confirmed: true });
+
+    expect(AiDesignerImageRepository.update).toHaveBeenCalledWith("img-preview-1", { decision: "SELECTED" });
+    expect(AiDesignerImageRepository.update).toHaveBeenCalledWith("img-preview-2", { decision: "REJECTED" });
+    expect(AiDesignerVersionRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        versionNumber: 2,
+        currentImageId: "img-preview-1",
+        approvalStatus: "AI_MODIFIED",
+        aiPromptId: "prompt-1",
+      })
+    );
+    expect(version.versionNumber).toBe(2);
+  });
+
+  it("persists Technical Edit Mode's structured fields onto the new version", async () => {
+    vi.mocked(AiDesignerImageRepository.findWithProjectOwner).mockResolvedValue(pendingImage as never);
+    vi.mocked(AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(currentProject as never);
+    vi.mocked(AiDesignerGenerationRepository.findByIdWithPrompt).mockResolvedValue({
+      ...matchingGeneration,
+      prompt: { specJson: { edit: { mode: "TECHNICAL", featureLabel: "Collar", technicalFields: { "Collar Type": "Mandarin", "Finished Height": "3.5 cm" } } } },
+    } as never);
+    vi.mocked(AiDesignerImageRepository.findByGenerationId).mockResolvedValue([{ id: "img-preview-1", decision: "PENDING" }] as never);
+    vi.mocked(AiDesignerVersionRepository.count).mockResolvedValue(1);
+    vi.mocked(AiDesignerVersionRepository.create).mockResolvedValue({ id: "version-2", versionNumber: 2 } as never);
+
+    await applyEditVariation(actor, "img-preview-1", { confirmed: true });
+
+    expect(AiDesignerVersionRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({ technicalChangesJson: { "Collar Type": "Mandarin", "Finished Height": "3.5 cm" } })
+    );
+  });
+});
+
+describe("approveCurrentVersion / rejectCurrentVersion", () => {
+  it("requires a current version to exist before approving", async () => {
+    vi.mocked(AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(baseProject({ currentVersion: null }) as never);
+
+    await expect(approveCurrentVersion(actor, "proj-1")).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("approves the current version, recording who and when", async () => {
+    vi.mocked(AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(
+      baseProject({ currentVersion: { id: "version-1", approvalStatus: "AI_MODIFIED" } }) as never
+    );
+    vi.mocked(AiDesignerVersionRepository.updateApprovalStatus).mockResolvedValue({ id: "version-1", approvalStatus: "APPROVED" } as never);
+
+    await approveCurrentVersion(actor, "proj-1");
+
+    expect(AiDesignerVersionRepository.updateApprovalStatus).toHaveBeenCalledWith(
+      "version-1",
+      expect.objectContaining({ approvalStatus: "APPROVED", approvedByUserId: "user-1" })
+    );
+  });
+
+  it("rejects the current version", async () => {
+    vi.mocked(AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(
+      baseProject({ currentVersion: { id: "version-1", approvalStatus: "AI_MODIFIED" } }) as never
+    );
+    vi.mocked(AiDesignerVersionRepository.updateApprovalStatus).mockResolvedValue({ id: "version-1", approvalStatus: "REJECTED" } as never);
+
+    await rejectCurrentVersion(actor, "proj-1");
+
+    expect(AiDesignerVersionRepository.updateApprovalStatus).toHaveBeenCalledWith("version-1", expect.objectContaining({ approvalStatus: "REJECTED" }));
   });
 });
 
@@ -666,7 +857,17 @@ describe("generateTechPack", () => {
     await expect(generateTechPack(actor, "proj-1")).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
 
-  it("produces graded measurements, a draft BOM, and a flat sketch in one success", async () => {
+  const fakePart1 = { identification: { brandName: "Acme" }, seamCallouts: [] } as never;
+  const fakePart2 = { bomItems: [{ materialType: "Fabric" }], measurementPoints: [] } as never;
+  // Only 4 of the 7 pages need an image (1, 2, 4, 5 — see TECH_PACK_IMAGE_PAGE_DEFINITIONS);
+  // pagePrompts is positional against THAT list, not all 7 pages.
+  const fakePagePrompts = {
+    pagePrompts: ["p1", "p2", "p4", "p5"],
+    designerNotes: "Confirm sleeve length.",
+    suggestedAdditionalViews: "A back flat-lay would help.",
+  };
+
+  it("runs the full pipeline — vision analysis, text analysis, page prompts, then only the 4 image-needing pages get a generated image", async () => {
     vi.mocked(AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(
       baseProject({
         productCategory: "Dress",
@@ -674,14 +875,9 @@ describe("generateTechPack", () => {
       }) as never
     );
     vi.mocked(getAttachmentForDownload).mockResolvedValue({ attachment: { mimeType: "image/png" }, buffer: Buffer.from("x") } as never);
-    vi.mocked(generateGrading).mockResolvedValue({
-      data: { points: [{ pointName: "Bust", howToMeasure: "Flat across", toleranceCm: "±1", values: { XS: "80", S: "84", M: "88", L: "92", XL: "96", XXL: "100" } }], generalNotes: "Draft only." },
-      model: "claude-sonnet-5",
-    } as never);
-    vi.mocked(generateTechPackBom).mockResolvedValue({
-      data: { items: [{ materialDescription: "Cotton Fabric", materialCategory: "FABRIC", suggestedQuantityPerUnit: 1.5, suggestedUom: "MTR", reasoning: "Main body." }] },
-      model: "claude-sonnet-5",
-    } as never);
+    vi.mocked(generateGarmentAnalysisPart1).mockResolvedValue({ data: fakePart1, model: "claude-sonnet-5" } as never);
+    vi.mocked(generateGarmentAnalysisPart2).mockResolvedValue({ data: fakePart2, model: "claude-sonnet-5" } as never);
+    vi.mocked(generatePagePrompts).mockResolvedValue({ data: fakePagePrompts, model: "claude-sonnet-5" } as never);
     const generateTechnicalFlat = vi
       .fn()
       .mockResolvedValue({ images: [{ buffer: Buffer.from("flat"), mimeType: "image/png" }], model: "flux-1-schnell", raw: {} });
@@ -689,18 +885,36 @@ describe("generateTechPack", () => {
       const result = await params.call({ name: "cloudflare", model: "flux-1-schnell", generate: vi.fn(), generateTechnicalFlat } as never);
       return { images: result.images, model: result.model, raw: result.raw, providerId: "provider-1", providerName: "cloudflare" };
     });
+    vi.mocked(uploadAttachment).mockResolvedValue({ id: "page-attachment" } as never);
     vi.mocked(AiDesignerTechPackRepository.markSuccess).mockResolvedValue({ id: "techpack-1", status: "SUCCESS" } as never);
 
     const result = await generateTechPack(actor, "proj-1");
 
-    expect(generateGrading).toHaveBeenCalled();
-    expect(generateTechPackBom).toHaveBeenCalled();
-    expect(runWithFailover).toHaveBeenCalledWith(expect.objectContaining({ capability: "TECHNICAL_FLAT" }));
-    expect(generateTechnicalFlat).toHaveBeenCalled();
+    expect(generateGarmentAnalysisPart1).toHaveBeenCalledTimes(1);
+    expect(generateGarmentAnalysisPart2).toHaveBeenCalledWith(expect.objectContaining({ part1: fakePart1 }));
+    expect(generatePagePrompts).toHaveBeenCalledWith(expect.objectContaining({ part1: fakePart1, part2: fakePart2 }));
+    // Only 4 image generation calls — pages 1, 2, 4, 5 — never 7.
+    expect(runWithFailover).toHaveBeenCalledTimes(4);
+    expect(generateTechnicalFlat).toHaveBeenCalledTimes(4);
+    expect(generateTechnicalFlat).toHaveBeenNthCalledWith(1, expect.objectContaining({ prompt: "p1", count: 1 }));
+    expect(generateTechnicalFlat).toHaveBeenNthCalledWith(4, expect.objectContaining({ prompt: "p5", count: 1 }));
+
     expect(AiDesignerTechPackRepository.markSuccess).toHaveBeenCalledWith(
       "techpack-1",
-      expect.objectContaining({ flatSketchImageAttachmentId: "attachment-1" })
+      expect.objectContaining({
+        designerNotes: fakePagePrompts.designerNotes,
+        suggestedAdditionalViews: fakePagePrompts.suggestedAdditionalViews,
+        pages: expect.arrayContaining([
+          expect.objectContaining({ pageNumber: 1, pageTitle: "Cover Page / Style Summary", promptText: "p1", imageAttachmentId: "page-attachment" }),
+          // Page 3 (BOM) needs no image at all — real text/tables come from garmentAnalysisJson at PDF-render time instead.
+          expect.objectContaining({ pageNumber: 3, imageAttachmentId: null }),
+        ]),
+      })
     );
+    const [, successArgs] = vi.mocked(AiDesignerTechPackRepository.markSuccess).mock.calls[0];
+    expect((successArgs.pages as unknown[]).length).toBe(7);
+    expect((successArgs.pages as { imageAttachmentId: string | null }[]).filter((p) => p.imageAttachmentId).length).toBe(4);
+
     expect(AiDesignerProjectRepository.update).toHaveBeenCalledWith(
       "proj-1",
       expect.objectContaining({ completedSteps: expect.arrayContaining(["TECH_PACK"]) })
@@ -708,24 +922,93 @@ describe("generateTechPack", () => {
     expect(result.status).toBe("SUCCESS");
   });
 
-  it("marks the run FAILED, not partially successful, when the grading call fails", async () => {
+  it("marks the run FAILED, not partially successful, when the vision analysis call fails", async () => {
     vi.mocked(AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(
       baseProject({ currentVersion: { currentImage: { id: "img-1", imageAttachmentId: "att-1" } } }) as never
     );
     vi.mocked(getAttachmentForDownload).mockResolvedValue({ attachment: { mimeType: "image/png" }, buffer: Buffer.from("x") } as never);
-    vi.mocked(generateGrading).mockRejectedValue(new Error("Anthropic call failed"));
-    vi.mocked(generateTechPackBom).mockResolvedValue({ data: { items: [] }, model: "claude-sonnet-5" } as never);
-    vi.mocked(runWithFailover).mockResolvedValue({
-      images: [{ buffer: Buffer.from("flat"), mimeType: "image/png" }],
-      model: "flux-1-schnell",
-      raw: {},
-      providerId: "p1",
-      providerName: "cloudflare",
-    } as never);
+    vi.mocked(generateGarmentAnalysisPart1).mockRejectedValue(new Error("Anthropic call failed"));
 
     await expect(generateTechPack(actor, "proj-1")).rejects.toThrow();
 
+    expect(generateGarmentAnalysisPart2).not.toHaveBeenCalled();
+    expect(generatePagePrompts).not.toHaveBeenCalled();
+    expect(runWithFailover).not.toHaveBeenCalled();
     expect(AiDesignerTechPackRepository.markFailed).toHaveBeenCalledWith("techpack-1", expect.stringContaining("Anthropic call failed"));
     expect(AiDesignerTechPackRepository.markSuccess).not.toHaveBeenCalled();
+  });
+
+  it("marks the run FAILED and names the failing page when one of the 4 image generations fails", async () => {
+    vi.mocked(AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(
+      baseProject({ currentVersion: { currentImage: { id: "img-1", imageAttachmentId: "att-1" } } }) as never
+    );
+    vi.mocked(getAttachmentForDownload).mockResolvedValue({ attachment: { mimeType: "image/png" }, buffer: Buffer.from("x") } as never);
+    vi.mocked(generateGarmentAnalysisPart1).mockResolvedValue({ data: fakePart1, model: "claude-sonnet-5" } as never);
+    vi.mocked(generateGarmentAnalysisPart2).mockResolvedValue({ data: fakePart2, model: "claude-sonnet-5" } as never);
+    vi.mocked(generatePagePrompts).mockResolvedValue({ data: fakePagePrompts, model: "claude-sonnet-5" } as never);
+    let call = 0;
+    vi.mocked(runWithFailover).mockImplementation(async () => {
+      call += 1;
+      // The 3rd image-needing page in fixed page-number order is page 4 (Colorways) — pages 1, 2, 4, 5 are the only ones that ever call runWithFailover.
+      if (call === 3) throw new Error("Provider rate-limited.");
+      return { images: [{ buffer: Buffer.from("flat"), mimeType: "image/png" }], model: "flux-1-schnell", raw: {}, providerId: "p1", providerName: "cloudflare" };
+    });
+
+    await expect(generateTechPack(actor, "proj-1")).rejects.toThrow();
+
+    expect(AiDesignerTechPackRepository.markFailed).toHaveBeenCalledWith(
+      "techpack-1",
+      expect.stringContaining("Page 4 (Colorways & Artwork Placement): Provider rate-limited.")
+    );
+    expect(AiDesignerTechPackRepository.markSuccess).not.toHaveBeenCalled();
+  });
+});
+
+describe("exportTechPackPdf", () => {
+  it("requires a successful tech pack before downloading", async () => {
+    vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(baseProject() as never);
+    vi.mocked(AiDesignerTechPackRepository.findLatestByProjectId).mockResolvedValue(null as never);
+
+    await expect(exportTechPackPdf(actor, "proj-1")).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("rejects a tech pack that hasn't succeeded yet", async () => {
+    vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(baseProject() as never);
+    vi.mocked(AiDesignerTechPackRepository.findLatestByProjectId).mockResolvedValue({ status: "FAILED", pages: [] } as never);
+
+    await expect(exportTechPackPdf(actor, "proj-1")).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("rejects a tech pack with no garment analysis data", async () => {
+    vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(baseProject() as never);
+    vi.mocked(AiDesignerTechPackRepository.findLatestByProjectId).mockResolvedValue({ status: "SUCCESS", garmentAnalysisJson: null, pages: [] } as never);
+
+    await expect(exportTechPackPdf(actor, "proj-1")).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("fetches only the real images that exist (some pages legitimately have none) and combines everything into one downloadable PDF", async () => {
+    vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(baseProject() as never);
+    vi.mocked(AiDesignerTechPackRepository.findLatestByProjectId).mockResolvedValue({
+      status: "SUCCESS",
+      createdAt: new Date("2026-09-13T10:00:00Z"),
+      garmentAnalysisJson: { part1: { identification: {} }, part2: { bomItems: [] } },
+      designerNotes: "Confirm sleeve length.",
+      suggestedAdditionalViews: "A back flat-lay would help.",
+      pages: [
+        { pageNumber: 1, pageTitle: "Cover Page / Style Summary", imageAttachmentId: "att-page-1" },
+        { pageNumber: 3, pageTitle: "Bill of Materials / BOM", imageAttachmentId: null },
+      ],
+    } as never);
+    vi.mocked(getAttachmentForDownload).mockImplementation(
+      async (_companyId: string, attachmentId: string) => ({ attachment: { mimeType: "image/png" }, buffer: Buffer.from(attachmentId) }) as never
+    );
+
+    const result = await exportTechPackPdf(actor, "proj-1");
+
+    expect(getAttachmentForDownload).toHaveBeenCalledWith("co-1", "att-page-1");
+    expect(getAttachmentForDownload).toHaveBeenCalledTimes(1); // page 3 has no image — never fetched
+    expect(result.mimeType).toBe("application/pdf");
+    expect(result.fileName).toBe("AID-2026-00001-tech-pack.pdf");
+    expect(result.buffer.toString()).toBe("tech-pack-pdf");
   });
 });
