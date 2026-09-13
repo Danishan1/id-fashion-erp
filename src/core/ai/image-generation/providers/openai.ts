@@ -167,6 +167,25 @@ export function createOpenAiImageProvider(config: OpenAiImageConfig = getOpenAiI
       }
     },
 
+    async replicateWithNewMaterial({ prompt, count, referenceImage, materialImage }): Promise<GenerateImagesResult> {
+      try {
+        const referenceFile = await toFile(referenceImage.buffer, "reference-garment.png", { type: referenceImage.mimeType });
+        const materialFile = await toFile(materialImage.buffer, "material-photo.png", { type: materialImage.mimeType });
+        const response = await openai.images.edit({
+          model: config.model,
+          image: [referenceFile, materialFile],
+          prompt,
+          n: count,
+          size: DEFAULT_SIZE,
+          quality: DEFAULT_QUALITY,
+        });
+        return { images: extractBuffers(response.data, count), model: config.model, raw: response };
+      } catch (err) {
+        if (err instanceof ImageGenerationServiceError) throw err;
+        throw mapSdkError(err);
+      }
+    },
+
     async generateTechnicalFlat({ prompt, count, baseImage }): Promise<GenerateImagesResult> {
       try {
         const file = await toFile(baseImage.buffer, "base-garment.png", { type: baseImage.mimeType });
