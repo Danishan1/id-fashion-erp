@@ -9,15 +9,15 @@ import { analyzeFabric } from "@/core/ai-designer/fabric-analysis/analyze";
 import { buildUserText, PROMPT_VERSION as FABRIC_PROMPT_VERSION } from "@/core/ai-designer/fabric-analysis/prompt";
 import { ImageGenerationServiceError } from "@/core/ai/image-generation/types";
 import { runWithFailover } from "@/core/ai/provider-manager/AIProviderManager";
-import { buildEditPrompt, buildGenerationPrompt, buildSecondFabricPrompt, PROMPT_VERSION as GENERATION_PROMPT_VERSION } from "@/core/ai-designer/image-generation/prompt";
-import type { TechPackSpecItem } from "@/core/ai-designer/export/tech-pack-pdf";
+import { buildGenerationPrompt, buildSecondFabricPrompt, buildWorkspaceEditPrompt, PROMPT_VERSION as GENERATION_PROMPT_VERSION } from "@/core/ai-designer/image-generation/prompt";
+import type { TechPackSpecItem, TechPackAnalysisForPdf, TechPackDocumentPageImage } from "@/core/ai-designer/export/tech-pack-pdf";
 import { getEnvironmentByKey } from "@/core/ai-designer/catalogs/environment-catalog";
 import { isValidAgeGroup, isValidProductCategory, TARGET_CUSTOMER_LABELS, type TargetCustomer } from "@/core/ai-designer/catalogs/customer-catalog";
 import { ProductRepository } from "@/modules/products/product.repository";
 import type { ListQuery } from "@/lib/list-query";
-import { generateGrading, generateTechPackBom } from "@/core/ai-designer/tech-pack/generate";
-import { buildFlatSketchPrompt } from "@/core/ai-designer/tech-pack/prompt";
+import { generateGarmentAnalysisPart1, generateGarmentAnalysisPart2, generatePagePrompts } from "@/core/ai-designer/tech-pack/generate";
 import type { TechPackDesignContext } from "@/core/ai-designer/tech-pack/prompt";
+import { TECH_PACK_PAGE_DEFINITIONS, type GarmentAnalysis } from "@/core/ai-designer/tech-pack/schema";
 import {
   AiDesignerGenerationRepository,
   AiDesignerImageRepository,
@@ -27,12 +27,13 @@ import {
   AiDesignerTechPackRepository,
 } from "./ai-designer.repository";
 import type {
+  ApplyEditVariationInput,
   ApplySecondFabricInput,
   CreateProjectInput,
   DecideImageInput,
-  EditDesignInput,
   ExportFormat,
   GenerateDesignInput,
+  GenerateEditPreviewInput,
   SaveWizardSelectionsInput,
   SelectExistingFabricInput,
   UpdateFabricFieldInput,
@@ -90,6 +91,16 @@ function computeCurrentStep(completedSteps: string[]): WizardStep {
 }
 
 const RUN_FRESHNESS_WINDOW_MS = 3 * 60 * 1000;
+
+/**
+ * Tech Pack's own, much longer freshness window — a full run is now a
+ * sequential chain of up to 10 real AI calls (1 vision + 2 text + 7 image
+ * generations), which can legitimately take several minutes, unlike every
+ * other single-call AI Designer action gated by RUN_FRESHNESS_WINDOW_MS
+ * above. Kept as a separate constant rather than widening the shared one, so
+ * the shorter window still applies correctly everywhere else.
+ */
+const TECH_PACK_RUN_FRESHNESS_WINDOW_MS = 10 * 60 * 1000;
 
 function errorCategoryForAi(err: unknown): string {
   if (err instanceof AiConfigMissingError) return "MISSING_CONFIG";
@@ -534,7 +545,18 @@ function buildSpecJson(project: AiDesignerProject): Record<string, unknown> {
   };
 }
 
-async function bumpVersion(actor: ActorContext, projectId: string, imageId: string, changeSummary: string, specJson: Record<string, unknown>) {
+async function bumpVersion(
+  actor: ActorContext,
+  projectId: string,
+  imageId: string,
+  changeSummary: string,
+  specJson: Record<string, unknown>,
+  options?: {
+    approvalStatus?: "DRAFT" | "AI_MODIFIED";
+    aiPromptId?: string;
+    technicalChangesJson?: Record<string, string> | null;
+  }
+) {
   const count = await AiDesignerVersionRepository.count(projectId);
   const version = await AiDesignerVersionRepository.create({
     companyId: actor.companyId,
@@ -543,6 +565,9 @@ async function bumpVersion(actor: ActorContext, projectId: string, imageId: stri
     currentImageId: imageId,
     changeSummary,
     designSnapshotJson: specJson as Prisma.InputJsonValue,
+    approvalStatus: options?.approvalStatus ?? "DRAFT",
+    aiPromptId: options?.aiPromptId,
+    technicalChangesJson: (options?.technicalChangesJson ?? undefined) as Prisma.InputJsonValue | undefined,
     createdByUserId: actor.userId,
   });
   await AiDesignerProjectRepository.update(projectId, { currentVersionId: version.id });
@@ -688,7 +713,22 @@ export async function generateDesign(actor: ActorContext, projectId: string, inp
 // Step 10 — Edit Design
 // ---------------------------------------------------------------------------
 
-export async function editDesign(actor: ActorContext, projectId: string, input: EditDesignInput) {
+function changeSummaryForEdit(input: GenerateEditPreviewInput): string {
+  if (input.mode === "QUICK") return `Changed ${input.featureLabel}: ${input.newValue}`;
+  if (input.mode === "TECHNICAL") return `Technical edit — ${input.featureLabel}`;
+  return `AI edit — ${input.featureLabel}`;
+}
+
+/**
+ * Edit Design workspace, step 1 of 2 — generates 1-4 candidate images for a
+ * requested change WITHOUT touching the current design at all (no version
+ * bump, no currentVersionId change). The images are created PENDING, exactly
+ * like the Step 9 gallery's own images, and must be explicitly applied via
+ * applyEditVariation() below — this is the "AI must never immediately
+ * overwrite the approved/current design; generate a preview first" rule,
+ * enforced structurally rather than by convention.
+ */
+export async function generateEditPreview(actor: ActorContext, projectId: string, input: GenerateEditPreviewInput) {
   const project = await AiDesignerProjectRepository.findByIdWithDetails(actor.companyId, projectId);
   if (!project) throw new BusinessRuleError("NOT_FOUND", "AI Designer project not found.", { id: projectId });
   if (!project.currentVersion?.currentImage) {
@@ -699,14 +739,42 @@ export async function editDesign(actor: ActorContext, projectId: string, input: 
   const parentImage = project.currentVersion.currentImage;
   const { attachment: parentAttachment, buffer: parentBuffer } = await getAttachmentForDownload(actor.companyId, parentImage.imageAttachmentId);
 
-  const prompt = buildEditPrompt({
+  // A real, confirmed-live bug fixed here: chaining edits purely from
+  // image-to-image (each edit based only on the PREVIOUS edit's own output,
+  // via generateVariation's single-image call) has no ground truth to check
+  // fabric fidelity against — the "preserve fabric" wording in the prompt is
+  // just text, unenforced by any actual image, so the fabric print/texture
+  // visibly drifts further from the real original with every successive
+  // edit. Fixed by re-fetching the project's own real original fabric photo
+  // (always present — assertReadyToGenerate requires it before any design
+  // can even be generated) and supplying it as a genuine second reference
+  // image on every edit call (provider.applyFabric), the same "the image is
+  // the source of truth, never text/memory alone" discipline already used
+  // for the original Generate Design/Multi-Fabric calls.
+  const fabricAttachmentId = project.fabricImageAttachmentId;
+  const fabricRef = fabricAttachmentId ? await getAttachmentForDownload(actor.companyId, fabricAttachmentId) : null;
+
+  const prompt = buildWorkspaceEditPrompt({
+    mode: input.mode,
     featureLabel: input.featureLabel,
     currentValue: input.currentValue || "Not specified",
-    newValue: input.newValue,
-    additionalInstructions: input.additionalInstructions || null,
+    newValue: input.newValue || null,
+    technicalFields: input.technicalFields || null,
+    freeformInstructions: input.freeformInstructions || null,
+    hasFabricReference: !!fabricRef,
   });
 
-  const specJson = { ...buildSpecJson(project), edit: { featureLabel: input.featureLabel, currentValue: input.currentValue || null, newValue: input.newValue } };
+  const specJson = {
+    ...buildSpecJson(project),
+    edit: {
+      mode: input.mode,
+      featureLabel: input.featureLabel,
+      currentValue: input.currentValue || null,
+      newValue: input.newValue || null,
+      technicalFields: input.technicalFields || null,
+      freeformInstructions: input.freeformInstructions || null,
+    },
+  };
 
   const promptRow = await AiDesignerPromptRepository.create({
     companyId: actor.companyId,
@@ -727,54 +795,77 @@ export async function editDesign(actor: ActorContext, projectId: string, input: 
     promptId: promptRow.id,
     parentImageId: parentImage.id,
     editedFeature: input.featureLabel,
-    requestedImageCount: 1,
+    requestedImageCount: input.imageCount,
     status: "IN_PROGRESS",
     createdByUserId: actor.userId,
   });
 
   try {
-    const result = await runWithFailover({
-      companyId: actor.companyId,
-      userId: actor.userId,
-      capability: "IMAGE_EDIT",
-      generationContext: `AI Designer / Project ${project.projectNumber} / Edit`,
-      aiDesignerProjectId: projectId,
-      inputImagePresent: true,
-      call: (provider) => {
-        if (!provider.generateVariation) {
-          throw new ImageGenerationServiceError(
-            `The configured image provider ("${provider.name}") does not support editing an existing image.`,
-            "UNSUPPORTED_OPERATION"
-          );
-        }
-        return provider.generateVariation({
-          prompt,
-          count: 1,
-          parentImage: { buffer: parentBuffer, mimeType: parentAttachment.mimeType },
+    const result = fabricRef
+      ? await runWithFailover({
+          companyId: actor.companyId,
+          userId: actor.userId,
+          capability: "MULTI_FABRIC",
+          generationContext: `AI Designer / Project ${project.projectNumber} / Edit (fabric-grounded)`,
+          aiDesignerProjectId: projectId,
+          inputImagePresent: true,
+          call: (provider) => {
+            if (!provider.applyFabric) {
+              throw new ImageGenerationServiceError(
+                `The configured image provider ("${provider.name}") does not support editing with a fabric reference.`,
+                "UNSUPPORTED_OPERATION"
+              );
+            }
+            return provider.applyFabric({
+              prompt,
+              count: input.imageCount,
+              baseImage: { buffer: parentBuffer, mimeType: parentAttachment.mimeType },
+              swatchImage: { buffer: fabricRef.buffer, mimeType: fabricRef.attachment.mimeType },
+            });
+          },
+        })
+      : // Defensive fallback only — assertReadyToGenerate() guarantees a real
+        // fabric photo exists before any design (and therefore any edit) can
+        // exist at all, so this branch should never actually run in practice.
+        await runWithFailover({
+          companyId: actor.companyId,
+          userId: actor.userId,
+          capability: "IMAGE_EDIT",
+          generationContext: `AI Designer / Project ${project.projectNumber} / Edit`,
+          aiDesignerProjectId: projectId,
+          inputImagePresent: true,
+          call: (provider) => {
+            if (!provider.generateVariation) {
+              throw new ImageGenerationServiceError(
+                `The configured image provider ("${provider.name}") does not support editing an existing image.`,
+                "UNSUPPORTED_OPERATION"
+              );
+            }
+            return provider.generateVariation({
+              prompt,
+              count: input.imageCount,
+              parentImage: { buffer: parentBuffer, mimeType: parentAttachment.mimeType },
+            });
+          },
         });
-      },
-    });
 
-    const img = result.images[0];
-    const attachment = await uploadAttachment(
-      actor,
-      "AI_DESIGNER_PROJECT",
-      projectId,
-      { buffer: img.buffer, fileName: `ai-designer-edit-${Date.now()}.png`, mimeType: img.mimeType },
-      "GENERATED_DESIGN_IMAGE"
-    );
-    await AiDesignerImageRepository.createMany([
-      { companyId: actor.companyId, projectId, generationId: generation.id, imageAttachmentId: attachment.id, createdByUserId: actor.userId },
-    ]);
+    const rows: Prisma.AiDesignerImageUncheckedCreateInput[] = [];
+    for (let i = 0; i < result.images.length; i++) {
+      const img = result.images[i];
+      const attachment = await uploadAttachment(
+        actor,
+        "AI_DESIGNER_PROJECT",
+        projectId,
+        { buffer: img.buffer, fileName: `ai-designer-edit-${Date.now()}-${i + 1}.png`, mimeType: img.mimeType },
+        "EDIT_PREVIEW_IMAGE"
+      );
+      rows.push({ companyId: actor.companyId, projectId, generationId: generation.id, imageAttachmentId: attachment.id, createdByUserId: actor.userId });
+    }
+    await AiDesignerImageRepository.createMany(rows);
     const images = await AiDesignerImageRepository.findByGenerationId(generation.id);
 
     await AiDesignerGenerationRepository.markSuccess(generation.id);
     await AiDesignerPromptRepository.markSuccessWithProvider(promptRow.id, result.providerName, result.model);
-
-    const version = await bumpVersion(actor, projectId, images[0].id, `Changed ${input.featureLabel}: ${input.newValue}`, specJson);
-
-    const completedSteps = markStepsComplete(project.completedSteps, ["EDIT"]);
-    await AiDesignerProjectRepository.update(projectId, { completedSteps, currentStep: computeCurrentStep(completedSteps) });
 
     await writeAuditLog({
       companyId: actor.companyId,
@@ -782,16 +873,137 @@ export async function editDesign(actor: ActorContext, projectId: string, input: 
       tableName: "ai_generations",
       recordId: generation.id,
       action: "CREATE",
-      newValues: { editedFeature: input.featureLabel, versionNumber: version.versionNumber, provider: result.providerName, model: result.model },
+      newValues: { editedFeature: input.featureLabel, mode: input.mode, imageCount: images.length, provider: result.providerName, model: result.model },
     });
 
-    return { generation, images, version };
+    return { generation, images, prompt: promptRow };
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error.";
     await AiDesignerGenerationRepository.markFailed(generation.id);
     await AiDesignerPromptRepository.markFailed(promptRow.id, "PROVIDER_ERROR", message);
     throw err;
   }
+}
+
+/**
+ * Edit Design workspace, step 2 of 2 — the explicit "Apply" action. Only a
+ * PENDING image whose own generation was previewed from the project's
+ * CURRENT design may be applied (a stale preview left over from before an
+ * intervening change is rejected outright, not silently applied over the
+ * wrong base) — promotes it to a real new AiDesignerVersion, marks its
+ * sibling preview images REJECTED (never leaves them ambiguously PENDING),
+ * and carries the originating AI prompt + any structured technical fields
+ * onto the new version for the workspace's own version-history display.
+ */
+export async function applyEditVariation(actor: ActorContext, imageId: string, input: ApplyEditVariationInput) {
+  if (!input.confirmed) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "Applying an edit as the new current design requires explicit confirmation.");
+  }
+
+  const image = await AiDesignerImageRepository.findWithProjectOwner(imageId);
+  if (!image || image.project.companyId !== actor.companyId) {
+    throw new BusinessRuleError("NOT_FOUND", "Previewed image not found.", { id: imageId });
+  }
+  if (image.decision !== "PENDING") {
+    throw new BusinessRuleError("INVALID_STATE_TRANSITION", "This preview has already been decided — generate a new preview to try again.");
+  }
+
+  const project = await AiDesignerProjectRepository.findByIdWithDetails(actor.companyId, image.projectId);
+  if (!project) throw new BusinessRuleError("NOT_FOUND", "AI Designer project not found.", { id: image.projectId });
+
+  const generation = await AiDesignerGenerationRepository.findByIdWithPrompt(image.generationId);
+  if (!generation || !project.currentVersion || generation.parentImageId !== project.currentVersion.currentImageId) {
+    throw new BusinessRuleError(
+      "INVALID_STATE_TRANSITION",
+      "This preview is no longer based on the current design — the design has changed since it was generated. Generate a new preview instead."
+    );
+  }
+
+  const siblings = await AiDesignerImageRepository.findByGenerationId(image.generationId);
+  await Promise.all(
+    siblings.filter((s) => s.id !== imageId && s.decision === "PENDING").map((s) => AiDesignerImageRepository.update(s.id, { decision: "REJECTED" }))
+  );
+  await AiDesignerImageRepository.update(imageId, { decision: "SELECTED" });
+
+  const editSpec = (generation.prompt.specJson as { edit?: { mode?: string; featureLabel?: string; newValue?: string; technicalFields?: Record<string, string> } })
+    .edit;
+  const mode = (editSpec?.mode as "QUICK" | "TECHNICAL" | "AI_PROMPT" | undefined) ?? "QUICK";
+  const changeSummary = changeSummaryForEdit({
+    mode,
+    featureLabel: editSpec?.featureLabel ?? generation.editedFeature ?? "Edit",
+    newValue: editSpec?.newValue,
+    imageCount: 1,
+  } as GenerateEditPreviewInput);
+
+  const version = await bumpVersion(actor, image.projectId, imageId, changeSummary, project.currentVersion.designSnapshotJson as Record<string, unknown>, {
+    approvalStatus: "AI_MODIFIED",
+    aiPromptId: generation.promptId,
+    technicalChangesJson: mode === "TECHNICAL" ? editSpec?.technicalFields ?? null : null,
+  });
+
+  const completedSteps = markStepsComplete(project.completedSteps, ["EDIT"]);
+  await AiDesignerProjectRepository.update(image.projectId, { completedSteps, currentStep: computeCurrentStep(completedSteps) });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "ai_versions",
+    recordId: version.id,
+    action: "CREATE",
+    newValues: { versionNumber: version.versionNumber, imageId, mode },
+  });
+
+  return version;
+}
+
+/** Top-toolbar "Approve Design" — approves the project's current version. */
+export async function approveCurrentVersion(actor: ActorContext, projectId: string) {
+  const project = await AiDesignerProjectRepository.findByIdWithDetails(actor.companyId, projectId);
+  if (!project) throw new BusinessRuleError("NOT_FOUND", "AI Designer project not found.", { id: projectId });
+  if (!project.currentVersion) throw new BusinessRuleError("VALIDATION_ERROR", "Generate a design first before approving it.");
+
+  const version = await AiDesignerVersionRepository.updateApprovalStatus(project.currentVersion.id, {
+    approvalStatus: "APPROVED",
+    approvedByUserId: actor.userId,
+    approvedAt: new Date(),
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "ai_versions",
+    recordId: version.id,
+    action: "UPDATE",
+    oldValues: { approvalStatus: project.currentVersion.approvalStatus },
+    newValues: { approvalStatus: "APPROVED" },
+  });
+
+  return version;
+}
+
+/** Top-toolbar "Reject Design" — the review-workflow counterpart to Approve; does not delete or revert anything, only marks the current version's own review status. */
+export async function rejectCurrentVersion(actor: ActorContext, projectId: string) {
+  const project = await AiDesignerProjectRepository.findByIdWithDetails(actor.companyId, projectId);
+  if (!project) throw new BusinessRuleError("NOT_FOUND", "AI Designer project not found.", { id: projectId });
+  if (!project.currentVersion) throw new BusinessRuleError("VALIDATION_ERROR", "Generate a design first before rejecting it.");
+
+  const version = await AiDesignerVersionRepository.updateApprovalStatus(project.currentVersion.id, {
+    approvalStatus: "REJECTED",
+    approvedByUserId: null,
+    approvedAt: null,
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "ai_versions",
+    recordId: version.id,
+    action: "UPDATE",
+    oldValues: { approvalStatus: project.currentVersion.approvalStatus },
+    newValues: { approvalStatus: "REJECTED" },
+  });
+
+  return version;
 }
 
 // ---------------------------------------------------------------------------
@@ -989,7 +1201,9 @@ export async function listVersions(companyId: string, projectId: string) {
 }
 
 // ---------------------------------------------------------------------------
-// Tech Pack — graded measurements + BOM + technical flat sketch in one action
+// Tech Pack — full "GARMENT TECH PACK SPEC SHEET GENERATOR" pipeline:
+// a comprehensive Garment Analysis (categories A-J) plus exactly 7 generated
+// tech-pack page images, all from the project's own current design.
 // ---------------------------------------------------------------------------
 
 function buildTechPackDesignContext(project: AiDesignerProject): TechPackDesignContext {
@@ -999,11 +1213,12 @@ function buildTechPackDesignContext(project: AiDesignerProject): TechPackDesignC
     fabricDescription: [project.fabricName, project.fabricComposition, project.fabricGsm].filter(Boolean).join(", ") || "Not specified",
     targetCustomer: project.targetCustomer ? TARGET_CUSTOMER_LABELS[project.targetCustomer as TargetCustomer] : "Not specified",
     ageGroup: project.ageGroup || "Not specified",
+    projectName: project.projectName,
   };
 }
 
 async function assertNoActiveTechPackRun(projectId: string) {
-  const freshSince = new Date(Date.now() - RUN_FRESHNESS_WINDOW_MS);
+  const freshSince = new Date(Date.now() - TECH_PACK_RUN_FRESHNESS_WINDOW_MS);
   const latest = await AiDesignerTechPackRepository.findLatestByProjectId(projectId);
   if (latest && latest.status === "IN_PROGRESS" && latest.createdAt >= freshSince) {
     throw new BusinessRuleError("INVALID_STATE_TRANSITION", "A tech pack is already being generated for this project.", {
@@ -1012,16 +1227,72 @@ async function assertNoActiveTechPackRun(projectId: string) {
   }
 }
 
+async function generateTechPackPageImage(params: {
+  actor: ActorContext;
+  projectId: string;
+  projectNumber: string;
+  pageNumber: number;
+  pageTitle: string;
+  promptText: string;
+  baseBuffer: Buffer;
+  baseMimeType: string;
+}) {
+  try {
+    const result = await runWithFailover({
+      companyId: params.actor.companyId,
+      userId: params.actor.userId,
+      capability: "TECHNICAL_FLAT",
+      generationContext: `AI Designer / Project ${params.projectNumber} / Tech Pack Page ${params.pageNumber} (${params.pageTitle})`,
+      aiDesignerProjectId: params.projectId,
+      inputImagePresent: true,
+      call: (provider) => {
+        if (!provider.generateTechnicalFlat) {
+          throw new ImageGenerationServiceError(
+            `The configured image provider ("${provider.name}") does not support generating a tech-pack page image.`,
+            "UNSUPPORTED_OPERATION"
+          );
+        }
+        return provider.generateTechnicalFlat({
+          prompt: params.promptText,
+          count: 1,
+          baseImage: { buffer: params.baseBuffer, mimeType: params.baseMimeType },
+        });
+      },
+    });
+
+    const image = result.images[0];
+    const attachment = await uploadAttachment(
+      params.actor,
+      "AI_DESIGNER_PROJECT",
+      params.projectId,
+      { buffer: image.buffer, fileName: `ai-designer-tech-pack-page-${params.pageNumber}-${Date.now()}.png`, mimeType: image.mimeType },
+      `TECH_PACK_PAGE_${params.pageNumber}`
+    );
+    return attachment.id;
+  } catch (err) {
+    if (err instanceof Error) {
+      err.message = `Page ${params.pageNumber} (${params.pageTitle}): ${err.message}`;
+    }
+    throw err;
+  }
+}
+
 /**
- * One combined action producing all three tech-pack deliverables — graded
- * measurements, a draft BOM, and a technical flat sketch — from the
- * project's own currently generated design. Deliberately all-or-nothing: if
- * any one of the three calls fails, the whole attempt is marked FAILED with
- * that error, rather than persisting a partially-successful run — simpler
- * to reason about, and a retry is cheap (this is a manual, low-frequency
- * action, not a hot path). Zero reuse of AI Garment Flow's own, much richer
- * equivalent processes — see this file's own schema comment on
- * AiDesignerTechPack for why.
+ * The full pipeline behind the user's own "GARMENT TECH PACK SPEC SHEET
+ * GENERATOR" prompt (supplied verbatim, 2026-09-13) — sequential, not
+ * parallel, since each step's output genuinely feeds the next: (1) a vision
+ * call analyzes the current design image into categories A-G, (2) a text
+ * call extends that into categories H-J (BOM/measurements/labels), (3) a
+ * text call turns the complete analysis into exactly 7 page-specific
+ * image-generation prompts, then (4) each of those 7 prompts is used,
+ * one at a time, to actually generate that page's image from the same base
+ * design photo. Deliberately all-or-nothing, same as the design this
+ * replaces: if any one of these ~10 real AI calls fails, the whole attempt
+ * is marked FAILED with that step identified in the error, rather than
+ * persisting a partially-successful run — simpler to reason about, and a
+ * retry is cheap (this is a manual, low-frequency action, not a hot path).
+ * Zero reuse of AI Garment Flow's own, much richer equivalent processes —
+ * this module stays deliberately isolated from that one.
  */
 export async function generateTechPack(actor: ActorContext, projectId: string) {
   const project = await AiDesignerProjectRepository.findByIdWithDetails(actor.companyId, projectId);
@@ -1044,49 +1315,50 @@ export async function generateTechPack(actor: ActorContext, projectId: string) {
       actor.companyId,
       project.currentVersion.currentImage.imageAttachmentId
     );
+    const imageMediaType = normalizeImageMediaType(baseAttachment.mimeType);
 
-    const [gradingResult, bomResult, flatSketchResult] = await Promise.all([
-      generateGrading(designContext),
-      generateTechPackBom(designContext),
-      runWithFailover({
-        companyId: actor.companyId,
-        userId: actor.userId,
-        capability: "TECHNICAL_FLAT",
-        generationContext: `AI Designer / Project ${project.projectNumber} / Tech Pack`,
-        aiDesignerProjectId: projectId,
-        inputImagePresent: true,
-        call: (provider) => {
-          if (!provider.generateTechnicalFlat) {
-            throw new ImageGenerationServiceError(
-              `The configured image provider ("${provider.name}") does not support generating a technical flat sketch.`,
-              "UNSUPPORTED_OPERATION"
-            );
-          }
-          return provider.generateTechnicalFlat({
-            prompt: buildFlatSketchPrompt(),
-            count: 1,
-            baseImage: { buffer: baseBuffer, mimeType: baseAttachment.mimeType },
-          });
-        },
-      }),
-    ]);
+    const part1 = await generateGarmentAnalysisPart1({
+      ctx: designContext,
+      imageBase64: baseBuffer.toString("base64"),
+      imageMediaType,
+    });
+    const part2 = await generateGarmentAnalysisPart2({ ctx: designContext, part1: part1.data });
+    const pagePrompts = await generatePagePrompts({ ctx: designContext, part1: part1.data, part2: part2.data });
 
-    const flatSketchImg = flatSketchResult.images[0];
-    const flatSketchAttachment = await uploadAttachment(
-      actor,
-      "AI_DESIGNER_PROJECT",
-      projectId,
-      { buffer: flatSketchImg.buffer, fileName: `ai-designer-flat-sketch-${Date.now()}.png`, mimeType: flatSketchImg.mimeType },
-      "TECH_PACK_FLAT_SKETCH"
-    );
+    const pages: { pageNumber: number; pageTitle: string; promptText: string; imageAttachmentId: string | null }[] = [];
+    let imagePageIndex = 0;
+    for (const def of TECH_PACK_PAGE_DEFINITIONS) {
+      if (!def.needsImage) {
+        pages.push({
+          pageNumber: def.pageNumber,
+          pageTitle: def.title,
+          promptText: "Rendered as real typeset text/tables in the exported PDF — no AI-generated image for this page.",
+          imageAttachmentId: null,
+        });
+        continue;
+      }
+      const promptText = pagePrompts.data.pagePrompts[imagePageIndex];
+      imagePageIndex += 1;
+      const imageAttachmentId = await generateTechPackPageImage({
+        actor,
+        projectId,
+        projectNumber: project.projectNumber,
+        pageNumber: def.pageNumber,
+        pageTitle: def.title,
+        promptText,
+        baseBuffer,
+        baseMimeType: baseAttachment.mimeType,
+      });
+      pages.push({ pageNumber: def.pageNumber, pageTitle: def.title, promptText, imageAttachmentId });
+    }
 
-    const measurementsJson = { points: gradingResult.data.points, generalNotes: gradingResult.data.generalNotes };
-    const bomJson = { items: bomResult.data.items };
+    const garmentAnalysis: GarmentAnalysis = { part1: part1.data, part2: part2.data };
 
     const updated = await AiDesignerTechPackRepository.markSuccess(techPackRow.id, {
-      flatSketchImageAttachmentId: flatSketchAttachment.id,
-      measurementsJson: measurementsJson as Prisma.InputJsonValue,
-      bomJson: bomJson as Prisma.InputJsonValue,
+      garmentAnalysisJson: garmentAnalysis as unknown as Prisma.InputJsonValue,
+      designerNotes: pagePrompts.data.designerNotes,
+      suggestedAdditionalViews: pagePrompts.data.suggestedAdditionalViews,
+      pages,
     });
 
     const completedSteps = markStepsComplete(project.completedSteps, ["TECH_PACK"]);
@@ -1098,7 +1370,7 @@ export async function generateTechPack(actor: ActorContext, projectId: string) {
       tableName: "ai_tech_packs",
       recordId: techPackRow.id,
       action: "CREATE",
-      newValues: { status: "SUCCESS", pointCount: gradingResult.data.points.length, bomLineCount: bomResult.data.items.length },
+      newValues: { status: "SUCCESS", bomLineCount: part2.data.bomItems.length, pageCount: pages.length },
     });
 
     return updated;
@@ -1112,6 +1384,35 @@ export async function generateTechPack(actor: ActorContext, projectId: string) {
 export async function getLatestTechPack(companyId: string, projectId: string) {
   await getOwnedProject(companyId, projectId);
   return AiDesignerTechPackRepository.findLatestByProjectId(projectId);
+}
+
+/** Downloads the latest successful Tech Pack as one combined PDF — one full-bleed page per generated tech-pack page image, in page order. */
+export async function exportTechPackPdf(actor: ActorContext, projectId: string) {
+  const project = await getOwnedProject(actor.companyId, projectId);
+  const techPack = await AiDesignerTechPackRepository.findLatestByProjectId(projectId);
+  if (!techPack || techPack.status !== "SUCCESS" || !techPack.garmentAnalysisJson) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "Generate a tech pack first before downloading it.");
+  }
+
+  const images: TechPackDocumentPageImage[] = [];
+  for (const page of techPack.pages) {
+    if (!page.imageAttachmentId) continue;
+    const { attachment, buffer } = await getAttachmentForDownload(actor.companyId, page.imageAttachmentId);
+    images.push({ pageNumber: page.pageNumber, imageBase64: buffer.toString("base64"), imageMimeType: attachment.mimeType });
+  }
+
+  const { renderTechPackDocumentPdf } = await import("@/core/ai-designer/export/tech-pack-pdf");
+  const pdfBuffer = await renderTechPackDocumentPdf({
+    projectNumber: project.projectNumber,
+    projectName: project.projectName,
+    generatedAt: techPack.createdAt.toLocaleString(),
+    analysis: techPack.garmentAnalysisJson as unknown as TechPackAnalysisForPdf,
+    designerNotes: techPack.designerNotes ?? "",
+    suggestedAdditionalViews: techPack.suggestedAdditionalViews ?? "",
+    images,
+  });
+
+  return { buffer: pdfBuffer, mimeType: "application/pdf", fileName: `${project.projectNumber}-tech-pack.pdf` };
 }
 
 // ---------------------------------------------------------------------------

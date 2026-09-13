@@ -81,14 +81,49 @@ export const generateDesignSchema = z.object({
 
 export type GenerateDesignInput = z.infer<typeof generateDesignSchema>;
 
-export const editDesignSchema = z.object({
-  featureLabel: z.string().min(1, "Select which aspect to change").max(100),
-  currentValue: z.string().max(300).optional().or(z.literal("")),
-  newValue: z.string().min(1, "Describe the new requirement").max(500),
-  additionalInstructions: z.string().max(1000).optional().or(z.literal("")),
+/**
+ * Edit Design workspace (2026-09-13) — replaces the old immediate-overwrite
+ * editDesignSchema/editDesign() entirely. Three edit modes share one input
+ * shape: QUICK (today's Feature/Current/New form), TECHNICAL (a free
+ * key-value list of structured manufacturing parameters, also persisted
+ * verbatim on the resulting version's own technicalChangesJson), and
+ * AI_PROMPT (a raw natural-language instruction). Generating a preview never
+ * overwrites the current design by itself — see generateEditPreview()/
+ * applyEditVariationSchema below for the separate, explicit apply step.
+ */
+export const EDIT_MODES = ["QUICK", "TECHNICAL", "AI_PROMPT"] as const;
+export type EditMode = (typeof EDIT_MODES)[number];
+
+export const generateEditPreviewSchema = z
+  .object({
+    mode: z.enum(EDIT_MODES),
+    featureLabel: z.string().min(1, "Name what you're changing").max(100),
+    currentValue: z.string().max(300).optional().or(z.literal("")),
+    newValue: z.string().max(500).optional().or(z.literal("")),
+    technicalFields: z.record(z.string().min(1).max(100), z.string().max(300)).optional(),
+    freeformInstructions: z.string().max(2000).optional().or(z.literal("")),
+    imageCount: z.number().int().min(1).max(4).default(1),
+  })
+  .superRefine((data, ctx) => {
+    if (data.mode === "QUICK" && !data.newValue) {
+      ctx.addIssue({ code: "custom", message: "Describe the new requirement.", path: ["newValue"] });
+    }
+    if (data.mode === "TECHNICAL" && (!data.technicalFields || Object.keys(data.technicalFields).length === 0)) {
+      ctx.addIssue({ code: "custom", message: "Add at least one technical field.", path: ["technicalFields"] });
+    }
+    if (data.mode === "AI_PROMPT" && !data.freeformInstructions) {
+      ctx.addIssue({ code: "custom", message: "Describe the change you want.", path: ["freeformInstructions"] });
+    }
+  });
+
+export type GenerateEditPreviewInput = z.infer<typeof generateEditPreviewSchema>;
+
+/** Explicit apply step for one previewed image — the actual "commit as the new current design" action; never happens implicitly on generation. */
+export const applyEditVariationSchema = z.object({
+  confirmed: z.boolean(),
 });
 
-export type EditDesignInput = z.infer<typeof editDesignSchema>;
+export type ApplyEditVariationInput = z.infer<typeof applyEditVariationSchema>;
 
 export const decideImageSchema = z.object({
   decision: z.enum(["SELECT", "REJECT"]),
