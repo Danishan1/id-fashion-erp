@@ -5,7 +5,23 @@ import { DESIGN_FEATURE_LABELS, type DesignFeature } from "./feature-registry";
  * output — stored on every AiGarmentDesignVariationRun/AiGarmentDesignVariation
  * row, same auditability reasoning as reference-analysis's own PROMPT_VERSION.
  */
-export const FEATURE_CHANGE_PROMPT_VERSION = "feature-change-v1";
+export const FEATURE_CHANGE_PROMPT_VERSION = "feature-change-v2";
+
+/**
+ * Which fixed Preserve-list item(s) to drop when that same aspect is the one
+ * actually being changed — generalizes what was previously a single
+ * SILHOUETTE-only special case. Without this, "Change Color"/"Change
+ * Background"/"Change Model" would contradictorily instruct the AI to both
+ * change and preserve the same thing. BUTTONS/LOGO/EMBROIDERY need no
+ * entry — they're pure additions with nothing in the fixed Preserve list to
+ * exclude.
+ */
+const PRESERVE_EXCLUSIONS: Partial<Record<DesignFeature, string>> = {
+  SILHOUETTE: "overall silhouette",
+  COLOR: "colour",
+  BACKGROUND_ENVIRONMENT: "background",
+  MODEL: "model",
+};
 
 export interface FeatureChangeContext {
   featureKey: DesignFeature;
@@ -21,6 +37,19 @@ export interface FeatureChangeContext {
  * in here server-side.
  */
 export function buildFeatureChangePrompt(ctx: FeatureChangeContext): string {
+  const exclude = PRESERVE_EXCLUSIONS[ctx.featureKey];
+  const preserveItems = [
+    "overall silhouette",
+    "fabric appearance",
+    "colour",
+    "print scale",
+    "garment category",
+    "remaining construction",
+    "model",
+    "pose",
+    "background",
+  ].filter((item) => item !== exclude);
+
   const lines = [
     "Keep the selected garment design as unchanged as possible.",
     "",
@@ -37,15 +66,7 @@ export function buildFeatureChangePrompt(ctx: FeatureChangeContext): string {
     "",
     "Preserve:",
     "",
-    "overall silhouette unless silhouette is the selected change",
-    "fabric appearance",
-    "colour",
-    "print scale",
-    "garment category",
-    "remaining construction",
-    "model",
-    "pose",
-    "background",
+    ...preserveItems,
     "",
     "Do not independently redesign other garment features.",
     "",

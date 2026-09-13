@@ -91,6 +91,13 @@ export const issueMaterialRequestLineSchema = z.object({
   // issue time by whoever actually pulls the stock, not at request-creation
   // time by the requester.
   warehouseLocationId: z.string().uuid().optional().or(z.literal("")),
+  // Which specific FabricRoll (i.e. which physical color/shade) to draw
+  // this issue from — only ever offered for FABRIC-category materials, and
+  // only when the warehouse actually has roll-level stock to pick from.
+  // Optional: a non-fabric line, or a fabric line issued without picking a
+  // specific roll, falls back to the material's flat StockBalance total
+  // exactly as before this field existed.
+  fabricRollId: z.string().uuid().optional().or(z.literal("")),
 });
 export type IssueMaterialRequestLineInput = z.infer<typeof issueMaterialRequestLineSchema>;
 

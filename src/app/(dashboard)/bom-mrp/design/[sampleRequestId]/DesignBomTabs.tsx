@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { BomVersionPanel } from "../../[productId]/BomVersionPanel";
 import { BomEditor } from "../../BomEditor";
+import { DesignBomMaterialsPanel } from "./DesignBomMaterialsPanel";
 
 interface DesignMaterialRow {
   id: string;
@@ -37,14 +38,17 @@ interface StyleBomItemInput {
 
 // The one place a design's "sample BOM" (its own SampleMaterial list) and
 // its real Style BOM (once linked) are shown together — neither view
-// duplicates the other's logic: the Design BOM tab is a plain read-only
-// table over data already fetched for the Sample detail page, and the
-// Style BOM tab reuses BomVersionPanel/BomEditor completely unchanged, the
-// exact same components the dedicated /bom-mrp/[productId] page renders.
+// duplicates the other's logic: the Design BOM tab renders
+// DesignBomMaterialsPanel (edits through Sampling's own existing material
+// update/remove endpoints — the same ones SampleWorkflowPanel's own
+// Edit/Remove actions call), and the Style BOM tab reuses
+// BomVersionPanel/BomEditor completely unchanged, the exact same
+// components the dedicated /bom-mrp/[productId] page renders.
 export function DesignBomTabs({
   productId,
   styleLabel,
   materials,
+  canEditMaterials,
   styleBomVersions,
   styleBomCurrentVersionNumber,
   canApproveBom,
@@ -55,6 +59,7 @@ export function DesignBomTabs({
   productId: string | null;
   styleLabel: string | null;
   materials: DesignMaterialRow[];
+  canEditMaterials: boolean;
   styleBomVersions: StyleBomVersionRow[];
   styleBomCurrentVersionNumber: number;
   canApproveBom: boolean;
@@ -100,7 +105,7 @@ export function DesignBomTabs({
         )}
       </div>
 
-      {tab === "design" && <DesignBomTable materials={materials} />}
+      {tab === "design" && <DesignBomMaterialsPanel materials={materials} canEditMaterials={canEditMaterials} />}
 
       {tab === "style" && productId && (
         <div className="space-y-4">
@@ -121,63 +126,6 @@ export function DesignBomTabs({
           />
         </div>
       )}
-    </div>
-  );
-}
-
-function DesignBomTable({ materials }: { materials: DesignMaterialRow[] }) {
-  if (materials.length === 0) {
-    return (
-      <p className="rounded-lg border border-zinc-200 p-4 text-sm text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
-        No materials recorded on this design&rsquo;s current sample version yet.
-      </p>
-    );
-  }
-
-  return (
-    <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-      <table className="min-w-full divide-y divide-zinc-200 text-sm dark:divide-zinc-800">
-        <thead>
-          <tr>
-            <th className="px-3 py-2 text-left font-medium text-zinc-500 dark:text-zinc-400">Material</th>
-            <th className="px-3 py-2 text-left font-medium text-zinc-500 dark:text-zinc-400">Color</th>
-            <th className="px-3 py-2 text-left font-medium text-zinc-500 dark:text-zinc-400">Shade / Pantone</th>
-            <th className="px-3 py-2 text-left font-medium text-zinc-500 dark:text-zinc-400">Quantity</th>
-            <th className="px-3 py-2 text-left font-medium text-zinc-500 dark:text-zinc-400">Unit</th>
-            <th className="px-3 py-2 text-left font-medium text-zinc-500 dark:text-zinc-400">Notes</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
-          {materials.map((m) => (
-            <tr key={m.id}>
-              <td className="px-3 py-2 font-medium text-zinc-900 dark:text-zinc-50">
-                {m.material.styleName} <span className="text-xs text-zinc-400">({m.material.styleCode})</span>
-              </td>
-              <td className="px-3 py-2 text-zinc-700 dark:text-zinc-300">
-                {m.color ? (
-                  <span className="inline-flex items-center gap-1.5">
-                    {m.color.hexValue && (
-                      <span
-                        className="inline-block h-3 w-3 rounded-full border border-zinc-300 dark:border-zinc-700"
-                        style={{ backgroundColor: m.color.hexValue }}
-                      />
-                    )}
-                    {m.color.name}
-                  </span>
-                ) : (
-                  "—"
-                )}
-              </td>
-              <td className="px-3 py-2 text-zinc-700 dark:text-zinc-300">
-                {m.dye ? `${m.dye.name}${m.dye.pantone ? ` (${m.dye.pantone})` : ""}` : "—"}
-              </td>
-              <td className="px-3 py-2 text-zinc-700 dark:text-zinc-300">{m.plannedQuantity}</td>
-              <td className="px-3 py-2 text-zinc-700 dark:text-zinc-300">{m.uom?.code ?? "—"}</td>
-              <td className="px-3 py-2 text-zinc-600 dark:text-zinc-400">{m.notes ?? "—"}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
     </div>
   );
 }

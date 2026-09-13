@@ -89,7 +89,7 @@ const STEP_HELP: Partial<Record<AiGarmentStepKey, string>> = {
   PROJECT_INFO: "Confirm the project's basic details before moving on.",
   UPLOAD_REFERENCE: "Upload the reference photo, buyer image, or inspiration file this project is based on.",
   UPLOAD_FABRIC: "Upload a photo of the fabric swatch this project is based on.",
-  REFERENCE_ANALYSIS: "AI would analyse the uploaded reference here once connected.",
+  REFERENCE_ANALYSIS: "Analyse the uploaded reference image with AI, then review, correct, and approve to continue.",
   FABRIC_ANALYSIS: "Analyse the uploaded fabric swatch with AI, then review, correct, and approve to continue.",
   DEVELOPMENT_BRIEF: "Generate differentiated commercial design directions from the approved reference analysis, then review, correct, and approve at least one to continue.",
   GENERATE_VARIATIONS: "Generate real garment visuals for each approved design direction, then Select, Reject, Regenerate, or Create a Variation of any image.",
@@ -236,7 +236,16 @@ export function AiGarmentProjectWorkflowPanel({ projectId, initialProject }: { p
             <li key={step.key}>
               <button
                 type="button"
-                disabled={isTerminal || isOnHold}
+                // Only current-or-earlier steps are clickable — jumping FORWARD onto a
+                // step nobody has reached yet must never happen via this tab bar, since
+                // saveStep()/saveWorkflowStep() marks whichever step it's called with as
+                // completedStepKeys the moment it's called, with no distinction between
+                // "the user just finished this step" and "the user merely clicked to
+                // preview it" (ERP-BUG-0002, found during the 2026-09-08 QA pass — a
+                // forward tab click showed a false "✓ complete" on a step with zero real
+                // work done on it). Forward progress still works exactly as before via
+                // each step's own "Save & Continue"/explicit completion action.
+                disabled={isTerminal || isOnHold || idx > currentIndex}
                 onClick={() => void saveStep(step.key)}
                 className={`rounded-full border px-3 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-60 ${
                   isCurrent
