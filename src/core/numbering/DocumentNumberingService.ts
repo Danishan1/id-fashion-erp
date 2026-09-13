@@ -32,6 +32,7 @@ const PREFIX_BY_DOCUMENT_TYPE: Record<DocumentType, string> = {
   EMPLOYEE_ADVANCE_SETTLEMENT: "ADVS",
   AI_GARMENT_PROJECT: "AGF",
   AI_DESIGNER_PROJECT: "AID",
+  REPLICATE_DESIGN_PROJECT: "RPD",
 };
 
 /** DocumentTypes that represent master-data codes, not transactional documents. */

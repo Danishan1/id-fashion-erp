@@ -6120,6 +6120,71 @@ color de rha hai" — the color/shade choice belongs on the Issue action itself,
   live snapshot at click time, not a held reservation, matching this project's own already-accepted "manual,
   low-frequency action, a pre-check is enough" tradeoff used everywhere else in Inventory).
 
+## AI Designer — Replicate Design, Phase 1 (2026-09-13)
+
+A new, genuinely separate page inside the existing AI Designer module (`/ai-designer/replicate`, own
+`ReplicateDesignProject*` schema, own step order, own service/prompt files under
+`src/core/ai-designer/replicate-design/`) — the existing 13-step wizard (`AiDesignerWorkflowPanel.tsx`) was
+left completely untouched. Built per the user-approved plan at
+`C:\Users\DELL 10THGEN\.claude\plans\foamy-jumping-lemur.md` (spec sections 1-9 only: reference upload → AI
+Design DNA analysis → Design Lock → select company fabric/materials → AI compatibility check → generate).
+Raw materials reuse the real `Product`/`itemType: RAW_MATERIAL` master as-is via the existing, unchanged
+`MaterialPicker` — no new material master.
+
+- **Schema (12 new tables, migrations `20260913160000_add_replicate_design_module` /
+  `20260913163000_add_replicate_design_project_usage_fk`)**: `ReplicateDesignProject` (header — single-slot
+  Front/Back/Side/Detail reference-photo columns, `fabricSource`/`fabricProductId`/`fabricImageAttachmentId`
+  duplicated from AI Designer's own fabric-selection shape per the module-isolation rule, own
+  `REPLICATE_STEP_ORDER`), `ReplicateDesignDnaAnalysis`/`Observation`/`AnalysisRun` (the same 3-table
+  "header replaced on re-analysis + per-observation rows + append-only run log" pattern already proven by AI
+  Garment Flow's own Reference/Fabric Analysis), `ReplicateDesignMaterialLine`, `ReplicateDesignCompatibilityCheck`/
+  `Item`/`Run`, `ReplicateDesignPrompt`/`Generation`/`Image`/`Version` (mirrors AI Designer's own
+  Prompt→Generation→Image→Version chain). New `AIProviderCapability.DESIGN_REPLICATION` value and a new
+  `AIProviderUsage.replicateDesignProjectId` sibling FK column (the existing `aiDesignerProjectId` column has
+  a real FK specifically to `AiDesignerProject`, so a `ReplicateDesignProject` id needed its own column, not a
+  misuse of the existing one).
+- **Design Lock is per-observation, not project-level** — `isLocked Boolean @default(true)` on each
+  `ReplicateDesignDnaObservation` row, exactly the spec's own "selective locking" ask; only `isLocked=true`
+  rows are fed into the generation prompt as hard constraints.
+- **A new, distinctly-named `ImageGenerationProvider.replicateWithNewMaterial()` method** (not a reuse of
+  `applyFabric`) — implemented in `providers/openai.ts` and `providers/gemini.ts`, gated behind its own
+  `DESIGN_REPLICATION` capability so provider health/failover stays correctly attributed per feature, matching
+  the same reasoning `generateTechnicalFlat` was already given its own method for.
+- **Compatibility check never hard-blocks** — any rating other than `COMPATIBLE` requires an explicit
+  "Continue Anyway" (`ConfirmModal`) before Generate proceeds, per the spec's own literal framing.
+- **UI**: `ReplicateDesignWorkspace.tsx` (thin orchestrator, same stepper/`WizardSection`/`StepNextButton`
+  shape as `AiDesignerWorkflowPanel.tsx`) + 5 focused panels (`ReferenceImageUploadPanel`,
+  `DesignDnaReviewPanel`, `FabricMaterialSelectionPanel`, `CompatibilityWarningPanel`, `GenerateResultPanel`).
+  Sidebar gained a "Replicate Design" entry under the AI Designer section.
+- **RBAC**: reuses the existing `ai_designer` module's grants verbatim — no new module/actions.
+- 33 new unit tests (`replicate-design.service.test.ts`) covering ownership guards, the active-run guard, DNA
+  edit/reset/lock/approve, material-line validation, the never-hard-block compatibility gating, and
+  generation error-mapping (including the provider-lacks-capability path). `npx tsc --noEmit`, `npx eslint .`,
+  and `npx vitest run` (1483/1483) all clean.
+- **Verified live end-to-end against the real dev DB and real AI providers** (a stale-Prisma-client dev
+  server from another session was hit and fixed via the project's own documented restart-the-dev-server
+  gotcha): created `RPD-2026-00001` through the real UI, uploaded a real reference photo, ran DNA analysis
+  against the real Anthropic API (a deliberately blank test image correctly produced 14
+  `NOT_DETERMINABLE` observations with honest, non-fabricated reasoning — a strong confirmation of the
+  "never invent an unseen detail" prompt discipline), edited one observation (confirmed the AI's own
+  original stays visible/untouched) and approved; selected a real Fabric Master fabric ("Silk Chiffon") and
+  uploaded its real photo (confirmed metadata and image coexist, neither overwrites the other); ran the
+  compatibility check against the real Anthropic API, which correctly flagged a genuine "Minor Concern"
+  (chiffon needing reinforcement at a 5-button placket) with well-reasoned commentary; confirmed Generate
+  correctly required "Continue Anyway" before proceeding, and correctly failed clean
+  (`"No configured AI provider currently supports design replication..."`) when no admin-configured provider
+  had the new capability enabled yet; enabled `DESIGN_REPLICATION` on the OpenAI provider via the real admin
+  API and re-ran Generate — produced a real, substantial (~2MB) generated garment image via the real OpenAI
+  API, visibly showing a patterned blouse with a button placket; Select correctly required confirmation and
+  flipped the image to `SELECTED`. Server logs clean throughout aside from the two deliberately-triggered
+  failures above. `RPD-2026-00001` and the OpenAI provider's newly-enabled capability were left in place as a
+  real, working demonstration.
+- **Not built this phase (spec sections 10-21)**: selective natural-language re-edit of one locked feature,
+  visual version compare beyond plain history, a multi-stage approval workflow past a single Approve/Reject,
+  a rich Tech Pack, BOM/costing/Sample Request/Style Master integration, and full traceability — the schema
+  (particularly per-observation `isLocked` and the `MaterialLine`/`CompatibilityItem` rows) is shaped so these
+  attach later without a breaking migration.
+
 ## Recommended Stack
 
 Next.js 14+ (App Router) + React + TypeScript + Tailwind CSS (frontend); Next.js API routes/route handlers as REST API; PostgreSQL + Prisma ORM; session-based auth (Auth.js/NextAuth, DB sessions) with RBAC and optional TOTP 2FA; S3-compatible or local file storage for attachments; server-side PDF/Excel export (`exceljs`, `pdf-lib`/`@react-pdf/renderer`).

@@ -118,4 +118,30 @@ export interface ImageGenerationProvider {
     count: number;
     fabricImage: { buffer: Buffer; mimeType: string };
   }): Promise<GenerateImagesResult>;
+
+  /**
+   * Replicate Design (AI Designer's own "Replicate Design" feature) —
+   * regenerates an EXTERNALLY-UPLOADED reference garment photo using a new
+   * fabric/material photo, while preserving the reference garment's own
+   * locked structural design (silhouette, neckline, sleeve, construction,
+   * etc. — described in the prompt, not in this call's own parameters).
+   * Distinct from `applyFabric`, which assumes `baseImage` is this
+   * pipeline's own prior AI output and carries a much lighter "apply swatch
+   * to area X" prompt payload — here `referenceImage` is an arbitrary photo
+   * of someone else's real garment, and the prompt carries every locked
+   * Design DNA observation as a hard constraint. Structurally the two calls
+   * share a two-image-plus-prompt shape, but this codebase's own established
+   * precedent (see `generateTechnicalFlat`/`generateFromFabricReference`
+   * above) is to add a new, distinctly-named, distinctly-capability-tagged
+   * method whenever the actual operation differs, rather than conflating two
+   * semantically different operations that happen to share a parameter
+   * shape. Optional, same check-before-use/UNSUPPORTED_OPERATION discipline
+   * as every other optional capability here.
+   */
+  replicateWithNewMaterial?(params: {
+    prompt: string;
+    count: number;
+    referenceImage: { buffer: Buffer; mimeType: string };
+    materialImage: { buffer: Buffer; mimeType: string };
+  }): Promise<GenerateImagesResult>;
 }
