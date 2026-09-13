@@ -7542,9 +7542,7 @@ enum AiDesignerImageDecision {
   REJECTED
 }
 
-/**
- * Edit Design workspace (2026-09-13) — a version's own review/approval state, shown as the "Design Status" badge in the workspace's top toolbar. DRAFT is the initial (never-edited) generation; every version created via an edit starts AI_MODIFIED; UNDER_REVIEW/APPROVED/REJECTED are explicit human actions from the workspace's Approve/Reject controls.
- */
+/** Edit Design workspace (2026-09-13) — a version's own review/approval state, shown as the "Design Status" badge in the workspace's top toolbar. DRAFT is the initial (never-edited) generation; every version created via an edit starts AI_MODIFIED; UNDER_REVIEW/APPROVED/REJECTED are explicit human actions from the workspace's Approve/Reject controls. */
 enum AiDesignerVersionApprovalStatus {
   DRAFT
   AI_MODIFIED
@@ -7735,24 +7733,20 @@ model AiDesignerImage {
 // and a full designSnapshotJson so history stays inspectable even if the
 // project's own "current" fields move on later.
 model AiDesignerVersion {
-  id                   String                          @id @default(uuid()) @db.Uuid
-  companyId            String                          @map("company_id") @db.Uuid
-  projectId            String                          @map("project_id") @db.Uuid
-  versionNumber        Int                             @map("version_number")
-  currentImageId       String                          @map("current_image_id") @db.Uuid
-  changeSummary        String?                         @map("change_summary")
-  designSnapshotJson   Json                            @map("design_snapshot_json")
-  approvalStatus       AiDesignerVersionApprovalStatus @default(DRAFT) @map("approval_status")
-  approvedByUserId     String?                         @map("approved_by_user_id") @db.Uuid
-  approvedAt           DateTime?                       @map("approved_at")
-  /**
-   * The exact AiDesignerPrompt (prompt text/spec/provider/model) that produced this version's image, when it came from an AI edit — null for the initial generation's own version if created some other way. Lets the Edit Design workspace's version history show "AI Prompt" per version without re-deriving it.
-   */
-  aiPromptId           String?                         @map("ai_prompt_id") @db.Uuid
-  /**
-   * Structured Technical Edit Mode fields (e.g. {"Collar Type": "Mandarin", "Finished Height": "3.5 cm"}), kept alongside the free-text changeSummary/AI prompt — the workspace's "reflected in the design specification data" requirement (Technical Edit Mode). Null for a Quick Edit or AI Prompt edit that used no structured fields.
-   */
-  technicalChangesJson Json?                           @map("technical_changes_json")
+  id                 String                           @id @default(uuid()) @db.Uuid
+  companyId          String                           @map("company_id") @db.Uuid
+  projectId          String                           @map("project_id") @db.Uuid
+  versionNumber      Int                               @map("version_number")
+  currentImageId     String                           @map("current_image_id") @db.Uuid
+  changeSummary      String?                          @map("change_summary")
+  designSnapshotJson Json                             @map("design_snapshot_json")
+  approvalStatus     AiDesignerVersionApprovalStatus @default(DRAFT) @map("approval_status")
+  approvedByUserId   String?                          @map("approved_by_user_id") @db.Uuid
+  approvedAt         DateTime?                        @map("approved_at")
+  /** The exact AiDesignerPrompt (prompt text/spec/provider/model) that produced this version's image, when it came from an AI edit — null for the initial generation's own version if created some other way. Lets the Edit Design workspace's version history show "AI Prompt" per version without re-deriving it. */
+  aiPromptId         String?                          @map("ai_prompt_id") @db.Uuid
+  /** Structured Technical Edit Mode fields (e.g. {"Collar Type": "Mandarin", "Finished Height": "3.5 cm"}), kept alongside the free-text changeSummary/AI prompt — the workspace's "reflected in the design specification data" requirement (Technical Edit Mode). Null for a Quick Edit or AI Prompt edit that used no structured fields. */
+  technicalChangesJson Json?                          @map("technical_changes_json")
 
   createdByUserId String   @map("created_by_user_id") @db.Uuid
   createdAt       DateTime @default(now()) @map("created_at")
@@ -7800,9 +7794,7 @@ model AiDesignerTechPack {
   companyId                String              @map("company_id") @db.Uuid
   projectId                String              @map("project_id") @db.Uuid
   status                   AiDesignerRunStatus @default(IN_PROGRESS)
-  /**
-   * The full structured Garment Analysis (categories A-J) -- see GarmentAnalysis in tech-pack/schema.ts for its exact shape.
-   */
+  /** The full structured Garment Analysis (categories A-J) -- see GarmentAnalysis in tech-pack/schema.ts for its exact shape. */
   garmentAnalysisJson      Json?               @map("garment_analysis_json")
   designerNotes            String?             @map("designer_notes")
   suggestedAdditionalViews String?             @map("suggested_additional_views")
@@ -7811,17 +7803,15 @@ model AiDesignerTechPack {
   createdByUserId String   @map("created_by_user_id") @db.Uuid
   createdAt       DateTime @default(now()) @map("created_at")
 
-  company   Company                  @relation(fields: [companyId], references: [id])
-  project   AiDesignerProject        @relation(fields: [projectId], references: [id])
-  createdBy User                     @relation("AiDesignerTechPackCreatedBy", fields: [createdByUserId], references: [id])
+  company   Company                 @relation(fields: [companyId], references: [id])
+  project   AiDesignerProject       @relation(fields: [projectId], references: [id])
+  createdBy User                    @relation("AiDesignerTechPackCreatedBy", fields: [createdByUserId], references: [id])
   pages     AiDesignerTechPackPage[]
 
   @@map("ai_tech_packs")
 }
 
-/**
- * One row per generated tech-pack page (always exactly 7 on a successful run, pages 1-7 per the user's own fixed page structure) -- the prompt text is kept alongside the image for review/audit, matching this project's own "keep the hidden prompt inspectable" convention.
- */
+/** One row per generated tech-pack page (always exactly 7 on a successful run, pages 1-7 per the user's own fixed page structure) -- the prompt text is kept alongside the image for review/audit, matching this project's own "keep the hidden prompt inspectable" convention. */
 model AiDesignerTechPackPage {
   id                String  @id @default(uuid()) @db.Uuid
   techPackId        String  @map("tech_pack_id") @db.Uuid
