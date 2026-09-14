@@ -185,10 +185,11 @@ export function MaterialRequirementsClient() {
       <div>
         <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Material Requirements</h1>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-          Needed vs. already-issued per material for a Sales Order, based on each style&apos;s BOM. Shortfall is what
-          still hasn&apos;t been requested/issued for this order — select it and generate a Material Request;
-          Inventory checks stock and issues what&apos;s available, anything still short can be escalated to
-          Purchasing from there. Available (current company stock) stays informational alongside it.
+          Needed vs. already-issued per material for a Sales Order, based on each style&apos;s BOM. A material still
+          shows a checkbox when there&apos;s a real gap between what&apos;s needed and what&apos;s already been
+          issued — select it and generate a Material Request; Inventory checks stock and issues what&apos;s
+          available, anything still short can be escalated to Purchasing from there. Available (current company
+          stock) stays informational alongside it.
         </p>
       </div>
 
@@ -264,8 +265,7 @@ export function MaterialRequirementsClient() {
                 <th className="py-1 pr-3 font-medium">Material</th>
                 <th className="py-1 pr-3 font-medium">Needed</th>
                 <th className="py-1 pr-3 font-medium">Available</th>
-                <th className="py-1 pr-3 font-medium">Issued</th>
-                <th className="py-1 font-medium">Shortfall</th>
+                <th className="py-1 font-medium">Issued</th>
               </tr>
             </thead>
             <tbody>
@@ -297,17 +297,14 @@ export function MaterialRequirementsClient() {
                     <td className="py-2 pr-3 text-zinc-700 dark:text-zinc-200">
                       {formatQty(m.availableQuantity)} {m.uomCode}
                     </td>
-                    <td className="py-2 pr-3 text-zinc-700 dark:text-zinc-200">
+                    <td className="py-2 text-zinc-700 dark:text-zinc-200">
                       {formatQty(m.issuedQuantity)} {m.uomCode}
-                    </td>
-                    <td className={`py-2 font-medium ${m.shortfallQuantity > 0 ? "text-red-600 dark:text-red-400" : "text-green-600 dark:text-green-400"}`}>
-                      {m.shortfallQuantity > 0 ? `${formatQty(m.shortfallQuantity)} ${m.uomCode}` : "OK"}
                     </td>
                   </tr>
                   {selectedMaterialIds.has(m.materialId) && duplicates[m.materialId] && (
                     <tr className="bg-amber-50 dark:bg-amber-900/10">
                       <td></td>
-                      <td colSpan={5} className="py-2 pr-3 text-xs text-amber-700 dark:text-amber-300">
+                      <td colSpan={4} className="py-2 pr-3 text-xs text-amber-700 dark:text-amber-300">
                         Already has an open Material Request for this Sales Order:{" "}
                         {duplicates[m.materialId].map((d, i) => (
                           <span key={d.requestId}>
@@ -324,7 +321,7 @@ export function MaterialRequirementsClient() {
                   {expandedMaterialId === m.materialId && (
                     <tr className="bg-zinc-50 dark:bg-zinc-900">
                       <td></td>
-                      <td colSpan={5} className="py-2 pr-3 text-xs text-zinc-500">
+                      <td colSpan={4} className="py-2 pr-3 text-xs text-zinc-500">
                         {m.contributingStyles.map((s) => (
                           <div key={s.productId}>
                             {s.styleName}: {formatQty(s.neededQuantity)} {m.uomCode}
