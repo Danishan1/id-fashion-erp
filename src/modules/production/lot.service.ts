@@ -7,6 +7,8 @@ import { LotRelationRepository, LotRepository, ProductionOrderRepository } from 
 import type { CreateLotInput, MergeLotsInput, SplitLotInput } from "./production.schema";
 import type { ActorContext } from "./production-order.service";
 
+const EPSILON = 0.0001;
+
 function padLotSuffix(n: number) {
   return String(n).padStart(2, "0");
 }
@@ -58,6 +60,22 @@ export async function createLot(actor: ActorContext, productionOrderId: string, 
     });
   }
 
+  if (input.variantBreakdown && input.variantBreakdown.length > 0) {
+    const sum = input.variantBreakdown.reduce((s, r) => s + r.quantity, 0);
+    if (Math.abs(sum - input.quantity) > EPSILON) {
+      throw new BusinessRuleError(
+        "VALIDATION_ERROR",
+        `The size/color breakdown (${sum}) must add up to the lot quantity (${input.quantity}).`,
+        { breakdownSum: sum, quantity: input.quantity }
+      );
+    }
+    const variantIds = input.variantBreakdown.map((r) => r.productVariantId);
+    const validCount = await prisma.productVariant.count({ where: { id: { in: variantIds }, productId: order.productId } });
+    if (validCount !== variantIds.length) {
+      throw new BusinessRuleError("VALIDATION_ERROR", "One or more selected variants do not belong to this production order's own style.", {});
+    }
+  }
+
   const lot = await prisma.$transaction(async (tx) => {
     // Claiming the next lot-number suffix is a genuine row UPDATE on the
     // ProductionOrder, which takes a Postgres row lock for the rest of this
@@ -87,6 +105,9 @@ export async function createLot(actor: ActorContext, productionOrderId: string, 
       uomId: input.uomId,
       status: "PLANNED",
       createdByUserId: actor.userId,
+      ...(input.variantBreakdown && input.variantBreakdown.length > 0
+        ? { variantBreakdown: { create: input.variantBreakdown.map((r) => ({ productVariantId: r.productVariantId, quantity: r.quantity })) } }
+        : {}),
     });
 
     // Creating the first lot moves the order forward — a side effect, not a
@@ -110,6 +131,78 @@ export async function createLot(actor: ActorContext, productionOrderId: string, 
   });
 
   return lot;
+}
+
+export interface VariantBreakdownSuggestionRow {
+  productVariantId: string;
+  colorName: string;
+  sizeName: string;
+  skuCode: string;
+  /** null for a Make-to-Stock order (no linked Sales Order line to source a
+   * real ordered quantity from) — the variant is still listed for manual
+   * entry, just with no suggested starting quantity. */
+  orderedQuantity: number | null;
+  /** Already assigned to this variant across every other Lot on this same
+   * Production Order — subtracted from orderedQuantity to suggest what's
+   * actually left to put into a new lot. */
+  alreadyInLots: number;
+  remaining: number | null;
+}
+
+/**
+ * Feeds the Add Lot modal's size/color picker. When the order is linked to a
+ * real Sales Order line, suggests from that line's own real
+ * SalesOrderItemBreakdown (never re-typed/duplicated data) minus whatever
+ * other lots on this order already claimed; for Make-to-Stock, lists the
+ * style's own active variants with no suggested quantity — purely for manual
+ * entry. Read-only, informational — never caps what createLot() will accept.
+ */
+export async function getVariantBreakdownSuggestions(companyId: string, productionOrderId: string): Promise<VariantBreakdownSuggestionRow[]> {
+  const order = await ProductionOrderRepository.findAnyById(companyId, productionOrderId);
+  if (!order) throw new BusinessRuleError("NOT_FOUND", "Production order not found.", { id: productionOrderId });
+
+  const alreadyRows = await prisma.lotVariantBreakdown.groupBy({
+    by: ["productVariantId"],
+    where: { lot: { productionOrderId } },
+    _sum: { quantity: true },
+  });
+  const alreadyMap = new Map(alreadyRows.map((r) => [r.productVariantId, Number(r._sum.quantity ?? 0)]));
+
+  if (order.salesOrderItemId) {
+    const item = await prisma.salesOrderItem.findFirst({
+      where: { id: order.salesOrderItemId },
+      include: { breakdown: { include: { productVariant: { include: { color: true, size: true } } } } },
+    });
+    if (!item) throw new BusinessRuleError("NOT_FOUND", "Sales order line not found.", { id: order.salesOrderItemId });
+
+    return item.breakdown.map((b) => {
+      const already = alreadyMap.get(b.productVariantId) ?? 0;
+      return {
+        productVariantId: b.productVariantId,
+        colorName: b.productVariant.color.name,
+        sizeName: b.productVariant.size.name,
+        skuCode: b.productVariant.skuCode,
+        orderedQuantity: b.orderedQuantity,
+        alreadyInLots: already,
+        remaining: b.orderedQuantity - already,
+      };
+    });
+  }
+
+  const variants = await prisma.productVariant.findMany({
+    where: { productId: order.productId, isActive: true },
+    include: { color: true, size: true },
+    orderBy: [{ color: { name: "asc" } }, { size: { sortOrder: "asc" } }],
+  });
+  return variants.map((v) => ({
+    productVariantId: v.id,
+    colorName: v.color.name,
+    sizeName: v.size.name,
+    skuCode: v.skuCode,
+    orderedQuantity: null,
+    alreadyInLots: alreadyMap.get(v.id) ?? 0,
+    remaining: null,
+  }));
 }
 
 async function assertLotAtRest(lotId: string, action: string) {

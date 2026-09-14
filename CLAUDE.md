@@ -5957,6 +5957,71 @@ Three more direct refinements, same day, on the inline BOM/MRP editing above.
   both times, not just the UI's own re-render. Zero console errors. `npx tsc --noEmit`, `npx eslint`, and
   `npx vitest run` (1427/1427, no regressions) all clean.
 
+## Production: size/color breakdown on a Lot, visible at every stage (2026-09-12)
+
+User-reported real floor-usage gap: "kisi bhi stage me size wise color wise pta nahi chal raha" — a Lot's
+own quantity has always been a flat number (`Lot.quantity`), with zero size/color detail anywhere in
+Production, so a worker at Cutting/Stitching/Checking/Finishing/Packing had no way to know the actual
+color/size mix they were handling. Confirmed via AskUserQuestion before building — this is the exact "no
+variant-level Lot tracking in V1" decision documented in Phase 5C's own design notes above, revisited: kept
+scoped to **visibility only**, not full per-variant quantity tracking through completed/rejected/damaged/
+forwarded/qcPassed at every stage (that would have meant rewriting Log Progress/Forward/Revert/QC's own
+well-tested accumulator logic — explicitly declined as disproportionate to the actual ask), sourced from the
+linked Sales Order's own real `SalesOrderItemBreakdown` when one exists, manual entry otherwise.
+
+- **Schema**: new `LotVariantBreakdown` (`lot_variant_breakdowns`, migration
+  `20260912100000_add_lot_variant_breakdown`) — `lotId`/`productVariantId`/`quantity`,
+  `@@unique([lotId, productVariantId])`. Purely informational and read-only from every other angle: nothing
+  in `forwardJobOrder`/`revertJobOrder`/`recordProgressEntry`/`recordQcInspection` reads or writes it — a
+  Lot's own `quantity` and every JobOrder accumulator stay exactly the flat aggregates they always were.
+- **`createLot()`** (`lot.service.ts`) gained an optional `variantBreakdown` array on `createLotSchema` —
+  when supplied, the rows must sum to exactly the lot's own `quantity` (same `EPSILON`-tolerant
+  sum-must-match discipline as `splitLot`'s own children-must-sum-to-parent rule) and every
+  `productVariantId` must genuinely belong to the order's own style (`ProductVariant.productId ===
+  order.productId`) — both checked before the transaction opens, then written as a nested `create` inside
+  the same `LotRepository.createInTx` call. Omitting it entirely (existing callers, a style with no
+  variants configured) behaves exactly as before — fully backward compatible.
+- **New `getVariantBreakdownSuggestions(companyId, productionOrderId)`** feeds the Add Lot modal: when the
+  order is linked to a real Sales Order line, suggests each variant's real ordered quantity minus whatever
+  other Lots on this same order already claimed (via a `lotVariantBreakdown.groupBy`) — never re-typed data,
+  always derived fresh so two lots against the same order can't silently double-claim the same units. For a
+  Make-to-Stock order (no linked Sales Order), lists the style's own active `ProductVariant`s with no
+  suggested quantity, for manual entry. New `GET /api/v1/production-orders/[id]/variant-breakdown-suggestions`.
+- **UI — Add Lot modal** (`ProductionOrderWorkflowPanel.tsx`): when the style has any variants to suggest
+  from, the plain Quantity input is replaced by a Color/Size/Qty table (pre-filled from the suggestion, every
+  cell still editable) with a live-computed read-only Total — removing by construction the possibility of a
+  breakdown that doesn't match the lot's own total, rather than validating it after the fact. Falls back to
+  the original flat Quantity input untouched when the style has zero variants configured.
+- **UI — Lot detail page** (`LotWorkflowPanel.tsx`): a "Size / Color Breakdown" table renders right under
+  the status badges, above every Job Order card — visible regardless of which stage's card the worker is
+  looking at, since all of a lot's job orders across every stage already sit on this same page. Renders
+  nothing when the lot has no breakdown (old lots, or one deliberately created without it).
+- **UI — Stage Transfer Slip** (the actual worker-facing printable document): `slip-pdf.tsx`'s shared
+  `SlipDescriptor` gained an optional `variantBreakdown` table section (reused by any future slip, not
+  Stage-Slip-specific), and the stage-slip route now populates it from the lot's own real breakdown rows —
+  this is the one place a floor worker who never opens the app at all still sees the size/color mix, printed
+  on the same ticket that already travels with the lot between stages.
+- 4 new unit tests for `createLot`'s breakdown validation (sum mismatch, foreign-style variant, successful
+  nested create, and the no-breakdown-supplied backward-compatible path) and 2 for
+  `getVariantBreakdownSuggestions` (Sales-Order-sourced with the already-claimed subtraction, and the
+  Make-to-Stock manual-entry fallback) — `lot.service.test.ts`, 13/13 passing, 107/107 project-wide in
+  `src/modules/production`.
+- **Verified live end-to-end against the real dev DB** (not just mocks): used the real `PROD-2026-00008`
+  (the exact order from this session's earlier live-debugged stage-transfer bug, still carrying its real
+  5-line Sales Order breakdown — Black S/L, Grey XL, White S/L) — `getVariantBreakdownSuggestions` correctly
+  returned all 5 lines with `remaining` equal to `orderedQuantity` before any lot claimed them; a mismatched-
+  sum `createLot` call correctly rejected with the exact message; a real `createLot` call with a 2-row
+  breakdown (Black S:5, Black L:5) succeeded, and a direct DB query confirmed exactly those 2
+  `LotVariantBreakdown` rows were stored with the correct color/size/quantity; re-running
+  `getVariantBreakdownSuggestions` afterward correctly showed those 2 lines' `remaining` dropped to 0 while
+  the other 3 untouched lines stayed at their original remaining amounts. Test lot and its breakdown rows
+  deleted afterward. `npx tsc --noEmit`, `npx eslint`, and `npx vitest run` (1434/1434, 6 new) all clean.
+- **Not built this pass, explicitly out of scope per the confirmed decision above**: per-stage/per-JobOrder
+  variant-level quantity tracking (completed/rejected/damaged/forwarded/qcPassed still stay flat aggregates
+  at every stage) — if a future need genuinely requires knowing exactly how many of a specific size/color
+  were rejected at a specific stage (not just the lot's overall mix), that's a much larger, separate change
+  to `job-order.service.ts`'s own accumulator logic, not an extension of this one.
+
 ## Recommended Stack
 
 Next.js 14+ (App Router) + React + TypeScript + Tailwind CSS (frontend); Next.js API routes/route handlers as REST API; PostgreSQL + Prisma ORM; session-based auth (Auth.js/NextAuth, DB sessions) with RBAC and optional TOTP 2FA; S3-compatible or local file storage for attachments; server-side PDF/Excel export (`exceljs`, `pdf-lib`/`@react-pdf/renderer`).

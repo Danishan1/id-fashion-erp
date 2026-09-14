@@ -975,6 +975,7 @@ model ProductVariant {
 
   salesOrderBreakdown SalesOrderItemBreakdown[]
   cartonItems         CartonItem[]
+  lotVariantBreakdown LotVariantBreakdown[]
 
   @@unique([productId, colorId, sizeId])
   @@map("product_variants")
@@ -3381,11 +3382,35 @@ model Lot {
   jobOrders         JobOrder[]
   stageTransactions ProductionStageTransaction[]
   qcInspections     QcInspection[]
+  variantBreakdown  LotVariantBreakdown[]
 
   @@unique([companyId, lotNumber])
   @@index([productionOrderId])
   @@index([companyId, status])
   @@map("lots")
+}
+
+// Purely informational size/color breakdown of a Lot's own flat `quantity` —
+// entered once at Lot creation (auto-suggested from the linked Sales Order's
+// own real SalesOrderItemBreakdown when one exists, manual otherwise) so a
+// floor worker can see exactly which sizes/colors make up the number they're
+// handling at any stage. Deliberately NOT tracked per-variant through
+// completed/rejected/damaged/forwarded/qcPassed — every JobOrder quantity
+// accumulator stays a flat aggregate exactly as before; this table is read
+// (never decremented) by the Stage Transfer Slip and the Lot's own detail
+// page only.
+model LotVariantBreakdown {
+  id               String   @id @default(uuid()) @db.Uuid
+  lotId            String   @map("lot_id") @db.Uuid
+  productVariantId String   @map("product_variant_id") @db.Uuid
+  quantity         Decimal  @map("quantity") @db.Decimal(18, 4)
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  lot            Lot            @relation(fields: [lotId], references: [id])
+  productVariant ProductVariant @relation(fields: [productVariantId], references: [id])
+
+  @@unique([lotId, productVariantId])
+  @@map("lot_variant_breakdowns")
 }
 
 enum LotRelationType {
