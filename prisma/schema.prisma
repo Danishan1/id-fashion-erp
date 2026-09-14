@@ -138,6 +138,7 @@ model Company {
   replicateDesignGenerations          ReplicateDesignGeneration[]
   replicateDesignImages               ReplicateDesignImage[]
   replicateDesignVersions             ReplicateDesignVersion[]
+  replicateDesignTechPacks            ReplicateDesignTechPack[]
   aiDesignerSettings                  AiDesignerSettings?
   aiDesignerTechPacks                 AiDesignerTechPack[]
   aiDesignerProductDesignAttributes   AiDesignerProductDesignAttribute[]
@@ -366,6 +367,8 @@ model User {
   replicateDesignGenerationsCreated          ReplicateDesignGeneration[]          @relation("ReplicateDesignGenerationCreatedBy")
   replicateDesignImagesCreated               ReplicateDesignImage[]               @relation("ReplicateDesignImageCreatedBy")
   replicateDesignVersionsCreated             ReplicateDesignVersion[]             @relation("ReplicateDesignVersionCreatedBy")
+  replicateDesignVersionsApproved            ReplicateDesignVersion[]             @relation("ReplicateDesignVersionApprovedBy")
+  replicateDesignTechPacksCreated            ReplicateDesignTechPack[]            @relation("ReplicateDesignTechPackCreatedBy")
   aiDesignerTechPacksCreated                 AiDesignerTechPack[]                 @relation("AiDesignerTechPackCreatedBy")
   aiDesignerProductDesignAttributesCreated   AiDesignerProductDesignAttribute[]   @relation("AiDesignerProductDesignAttributeCreatedBy")
   aiProvidersCreated                         AIProvider[]                         @relation("AIProviderCreatedBy")
@@ -7978,6 +7981,16 @@ enum ReplicatePromptType {
   DNA_ANALYSIS
   COMPATIBILITY_CHECK
   IMAGE_GENERATE
+  IMAGE_EDIT
+}
+
+/** Edit Design workspace (mirrors AiDesignerVersionApprovalStatus exactly) — a version's own review/approval state, shown as the "Design Status" badge in the workspace's top toolbar. DRAFT is the initial (never-edited) generation; every version created via an edit starts AI_MODIFIED; UNDER_REVIEW/APPROVED/REJECTED are explicit human actions from the workspace's Approve/Reject controls. */
+enum ReplicateDesignVersionApprovalStatus {
+  DRAFT
+  AI_MODIFIED
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
 }
 
 model ReplicateDesignProject {
@@ -8035,6 +8048,7 @@ model ReplicateDesignProject {
   images             ReplicateDesignImage[]
   versions           ReplicateDesignVersion[]           @relation("ReplicateDesignVersionsOfProject")
   providerUsage      AIProviderUsage[]
+  techPacks          ReplicateDesignTechPack[]
 
   @@unique([companyId, projectNumber])
   @@map("replicate_design_projects")
@@ -8251,28 +8265,35 @@ model ReplicateDesignPrompt {
   project    ReplicateDesignProject     @relation(fields: [projectId], references: [id])
   createdBy  User                       @relation("ReplicateDesignPromptCreatedBy", fields: [createdByUserId], references: [id])
   generation ReplicateDesignGeneration?
+  versions   ReplicateDesignVersion[]
 
   @@map("replicate_design_prompts")
 }
 
 // One row per image-producing AI call. 1:1 with the Prompt that produced it.
+// parentImageId/editedFeature are set only for an Edit Design workspace call
+// (mirrors AiDesignerGeneration exactly) — null for the initial "Generate"
+// call, which has no prior image to edit from.
 model ReplicateDesignGeneration {
   id                  String             @id @default(uuid()) @db.Uuid
   companyId           String             @map("company_id") @db.Uuid
   projectId           String             @map("project_id") @db.Uuid
   promptId            String             @unique @map("prompt_id") @db.Uuid
+  parentImageId       String?            @map("parent_image_id") @db.Uuid
+  editedFeature       String?            @map("edited_feature")
   requestedImageCount Int                @default(1) @map("requested_image_count")
   status              ReplicateRunStatus @default(IN_PROGRESS)
 
   createdByUserId String   @map("created_by_user_id") @db.Uuid
   createdAt       DateTime @default(now()) @map("created_at")
 
-  company   Company                @relation(fields: [companyId], references: [id])
-  project   ReplicateDesignProject @relation(fields: [projectId], references: [id])
-  prompt    ReplicateDesignPrompt  @relation(fields: [promptId], references: [id])
-  createdBy User                   @relation("ReplicateDesignGenerationCreatedBy", fields: [createdByUserId], references: [id])
+  company     Company                    @relation(fields: [companyId], references: [id])
+  project     ReplicateDesignProject     @relation(fields: [projectId], references: [id])
+  prompt      ReplicateDesignPrompt      @relation(fields: [promptId], references: [id])
+  parentImage ReplicateDesignImage?      @relation("ReplicateDesignGenerationParentImage", fields: [parentImageId], references: [id])
+  createdBy   User                       @relation("ReplicateDesignGenerationCreatedBy", fields: [createdByUserId], references: [id])
 
-  images ReplicateDesignImage[]
+  images ReplicateDesignImage[] @relation("ReplicateDesignImagesOfGeneration")
 
   @@map("replicate_design_generations")
 }
@@ -8293,25 +8314,35 @@ model ReplicateDesignImage {
 
   company    Company                   @relation(fields: [companyId], references: [id])
   project    ReplicateDesignProject    @relation(fields: [projectId], references: [id])
-  generation ReplicateDesignGeneration @relation(fields: [generationId], references: [id])
+  generation ReplicateDesignGeneration @relation("ReplicateDesignImagesOfGeneration", fields: [generationId], references: [id])
   createdBy  User                      @relation("ReplicateDesignImageCreatedBy", fields: [createdByUserId], references: [id])
 
   currentForVersions ReplicateDesignVersion[]
+  usedAsParentFor    ReplicateDesignGeneration[] @relation("ReplicateDesignGenerationParentImage")
 
   @@map("replicate_design_images")
 }
 
 // Version history: version 1 is created by the first successful generate;
 // designSnapshotJson keeps the full spec inspectable even as the project's
-// own current fields move on.
+// own current fields move on. approvalStatus/approvedBy/approvedAt/aiPromptId/
+// technicalChangesJson mirror AiDesignerVersion exactly — the Edit Design
+// workspace's own review/approval + provenance fields.
 model ReplicateDesignVersion {
-  id                 String  @id @default(uuid()) @db.Uuid
-  companyId          String  @map("company_id") @db.Uuid
-  projectId          String  @map("project_id") @db.Uuid
-  versionNumber      Int     @map("version_number")
-  currentImageId     String  @map("current_image_id") @db.Uuid
-  changeSummary      String? @map("change_summary")
-  designSnapshotJson Json    @map("design_snapshot_json")
+  id                   String                               @id @default(uuid()) @db.Uuid
+  companyId            String                               @map("company_id") @db.Uuid
+  projectId            String                               @map("project_id") @db.Uuid
+  versionNumber        Int                                  @map("version_number")
+  currentImageId       String                               @map("current_image_id") @db.Uuid
+  changeSummary        String?                              @map("change_summary")
+  designSnapshotJson    Json                                 @map("design_snapshot_json")
+  approvalStatus        ReplicateDesignVersionApprovalStatus @default(DRAFT) @map("approval_status")
+  approvedByUserId      String?                              @map("approved_by_user_id") @db.Uuid
+  approvedAt            DateTime?                            @map("approved_at")
+  /** The exact ReplicateDesignPrompt that produced this version's image, when it came from an AI edit — null for the initial generation's own version. */
+  aiPromptId            String?                              @map("ai_prompt_id") @db.Uuid
+  /** Structured Technical Edit Mode fields, kept alongside the free-text changeSummary/AI prompt — mirrors AiDesignerVersion.technicalChangesJson exactly. */
+  technicalChangesJson  Json?                                @map("technical_changes_json")
 
   createdByUserId String   @map("created_by_user_id") @db.Uuid
   createdAt       DateTime @default(now()) @map("created_at")
@@ -8320,11 +8351,64 @@ model ReplicateDesignVersion {
   project      ReplicateDesignProject @relation("ReplicateDesignVersionsOfProject", fields: [projectId], references: [id])
   currentImage ReplicateDesignImage   @relation(fields: [currentImageId], references: [id])
   createdBy    User                   @relation("ReplicateDesignVersionCreatedBy", fields: [createdByUserId], references: [id])
+  approvedBy   User?                  @relation("ReplicateDesignVersionApprovedBy", fields: [approvedByUserId], references: [id])
+  aiPrompt     ReplicateDesignPrompt? @relation(fields: [aiPromptId], references: [id])
 
   currentForProject ReplicateDesignProject? @relation("ReplicateDesignProjectCurrentVersion")
 
   @@unique([projectId, versionNumber])
   @@map("replicate_design_versions")
+}
+
+// Tech Pack (2026-09-13) -- the same "GARMENT TECH PACK SPEC SHEET GENERATOR"
+// pipeline as AiDesignerTechPack/AiDesignerTechPackPage above, reused for
+// Replicate Design's own generated design. This reuses the shared, generic
+// AI infrastructure (src/core/ai-designer/tech-pack/{schema,prompt,generate}.ts,
+// tech-pack-pdf.tsx) as-is -- appropriate DRY reuse *within* the ai-designer
+// module (this module's own established isolation rule is specifically
+// about never sharing business logic with the separate AI Garment Flow
+// module, not about avoiding reuse between two features that already live
+// inside the same module). Its own schema mirrors AiDesignerTechPack's shape
+// exactly (own tables, own FK to ReplicateDesignProject) rather than a
+// shared table, matching this module's convention of duplicating schema
+// while reusing generic service/prompt code. Reuses AiDesignerRunStatus
+// directly for `status` (identical IN_PROGRESS/SUCCESS/FAILED shape) rather
+// than minting a redundant twin enum.
+model ReplicateDesignTechPack {
+  id                       String              @id @default(uuid()) @db.Uuid
+  companyId                String              @map("company_id") @db.Uuid
+  projectId                String              @map("project_id") @db.Uuid
+  status                   AiDesignerRunStatus @default(IN_PROGRESS)
+  /** The full structured Garment Analysis (categories A-J) -- see GarmentAnalysis in tech-pack/schema.ts for its exact shape. */
+  garmentAnalysisJson      Json?               @map("garment_analysis_json")
+  designerNotes            String?             @map("designer_notes")
+  suggestedAdditionalViews String?             @map("suggested_additional_views")
+  errorMessage             String?             @map("error_message")
+
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  company   Company                     @relation(fields: [companyId], references: [id])
+  project   ReplicateDesignProject      @relation(fields: [projectId], references: [id])
+  createdBy User                        @relation("ReplicateDesignTechPackCreatedBy", fields: [createdByUserId], references: [id])
+  pages     ReplicateDesignTechPackPage[]
+
+  @@map("replicate_design_tech_packs")
+}
+
+/** One row per generated tech-pack page (always exactly 7 on a successful run) -- the prompt text is kept alongside the image for review/audit, mirroring AiDesignerTechPackPage exactly. */
+model ReplicateDesignTechPackPage {
+  id                String  @id @default(uuid()) @db.Uuid
+  techPackId        String  @map("tech_pack_id") @db.Uuid
+  pageNumber        Int     @map("page_number")
+  pageTitle         String  @map("page_title")
+  promptText        String  @map("prompt_text")
+  imageAttachmentId String? @map("image_attachment_id")
+
+  techPack ReplicateDesignTechPack @relation(fields: [techPackId], references: [id], onDelete: Cascade)
+
+  @@unique([techPackId, pageNumber])
+  @@map("replicate_design_tech_pack_pages")
 }
 
 // -----------------------------------------------------------------------------

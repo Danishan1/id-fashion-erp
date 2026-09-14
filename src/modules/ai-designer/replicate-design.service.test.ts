@@ -14,6 +14,11 @@ vi.mock("@/core/ai-designer/replicate-design/compatibility-check/generate", () =
   generateCompatibilityCheck: vi.fn(),
 }));
 vi.mock("@/core/ai/provider-manager/AIProviderManager", () => ({ runWithFailover: vi.fn() }));
+vi.mock("@/core/ai-designer/tech-pack/generate", () => ({
+  generateGarmentAnalysisPart1: vi.fn(),
+  generateGarmentAnalysisPart2: vi.fn(),
+  generatePagePrompts: vi.fn(),
+}));
 vi.mock("@/modules/products/product.repository", () => ({
   ProductRepository: { findMaterialById: vi.fn() },
 }));
@@ -70,6 +75,7 @@ vi.mock("./replicate-design.repository", () => ({
     create: vi.fn(),
     markSuccess: vi.fn(),
     markFailed: vi.fn(),
+    findByIdWithPrompt: vi.fn(),
   },
   ReplicateDesignImageRepository: {
     createMany: vi.fn(),
@@ -82,6 +88,13 @@ vi.mock("./replicate-design.repository", () => ({
     create: vi.fn(),
     findByProjectId: vi.fn(),
     count: vi.fn(),
+    updateApprovalStatus: vi.fn(),
+  },
+  ReplicateDesignTechPackRepository: {
+    create: vi.fn(),
+    markSuccess: vi.fn(),
+    markFailed: vi.fn(),
+    findLatestByProjectId: vi.fn(),
   },
 }));
 
@@ -90,6 +103,7 @@ const { uploadAttachment, getAttachmentForDownload, deleteAttachment } = await i
 const { analyzeReplicateDesignDna } = await import("@/core/ai-designer/replicate-design/dna-analysis/analyze");
 const { generateCompatibilityCheck } = await import("@/core/ai-designer/replicate-design/compatibility-check/generate");
 const { runWithFailover } = await import("@/core/ai/provider-manager/AIProviderManager");
+const { generateGarmentAnalysisPart1, generateGarmentAnalysisPart2, generatePagePrompts } = await import("@/core/ai-designer/tech-pack/generate");
 const { ProductRepository } = await import("@/modules/products/product.repository");
 const {
   ReplicateDesignProjectRepository,
@@ -103,6 +117,7 @@ const {
   ReplicateDesignGenerationRepository,
   ReplicateDesignImageRepository,
   ReplicateDesignVersionRepository,
+  ReplicateDesignTechPackRepository,
 } = await import("./replicate-design.repository");
 const {
   createReplicateProject,
@@ -118,6 +133,12 @@ const {
   runCompatibilityCheck,
   generateReplicatedDesign,
   decideReplicateImage,
+  generateReplicateEditPreview,
+  applyReplicateEditVariation,
+  approveReplicateVersion,
+  rejectReplicateVersion,
+  generateReplicateTechPack,
+  getLatestReplicateTechPack,
 } = await import("./replicate-design.service");
 
 const actor = { companyId: "co-1", userId: "user-1", branchId: "br-1" };
@@ -202,6 +223,17 @@ beforeEach(() => {
   vi.mocked(ReplicateDesignVersionRepository.create).mockReset().mockResolvedValue({ id: "version-1", versionNumber: 1 } as never);
   vi.mocked(ReplicateDesignVersionRepository.count).mockReset().mockResolvedValue(0);
   vi.mocked(ReplicateDesignVersionRepository.findByProjectId).mockReset();
+  vi.mocked(ReplicateDesignVersionRepository.updateApprovalStatus).mockReset();
+
+  vi.mocked(ReplicateDesignGenerationRepository.findByIdWithPrompt).mockReset();
+
+  vi.mocked(ReplicateDesignTechPackRepository.create).mockReset().mockResolvedValue({ id: "techpack-1" } as never);
+  vi.mocked(ReplicateDesignTechPackRepository.markSuccess).mockReset();
+  vi.mocked(ReplicateDesignTechPackRepository.markFailed).mockReset();
+  vi.mocked(ReplicateDesignTechPackRepository.findLatestByProjectId).mockReset();
+  vi.mocked(generateGarmentAnalysisPart1).mockReset();
+  vi.mocked(generateGarmentAnalysisPart2).mockReset();
+  vi.mocked(generatePagePrompts).mockReset();
 
   vi.mocked(uploadAttachment).mockReset().mockResolvedValue({ id: "attachment-1" } as never);
   vi.mocked(getAttachmentForDownload).mockReset();
@@ -635,5 +667,268 @@ describe("decideReplicateImage", () => {
     const updated = await decideReplicateImage(actor, "img-1", { decision: "REJECT" });
 
     expect(updated).toMatchObject({ decision: "REJECTED" });
+  });
+});
+
+function projectWithCurrentImage(overrides: Record<string, unknown> = {}) {
+  return {
+    ...baseProject(),
+    fabricImageAttachmentId: "att-fabric",
+    currentVersion: { id: "version-1", currentImageId: "img-current", designSnapshotJson: {}, currentImage: { id: "img-current", imageAttachmentId: "att-current" } },
+    ...overrides,
+  };
+}
+
+describe("generateReplicateEditPreview", () => {
+  it("rejects when the project doesn't exist", async () => {
+    vi.mocked(ReplicateDesignProjectRepository.findByIdWithDetails).mockResolvedValue(null);
+
+    await expect(
+      generateReplicateEditPreview(actor, "proj-x", { mode: "QUICK", featureLabel: "Collar", newValue: "Mandarin", imageCount: 1 })
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("rejects when no design has been generated yet", async () => {
+    vi.mocked(ReplicateDesignProjectRepository.findByIdWithDetails).mockResolvedValue({ ...baseProject(), currentVersion: null } as never);
+
+    await expect(
+      generateReplicateEditPreview(actor, "proj-1", { mode: "QUICK", featureLabel: "Collar", newValue: "Mandarin", imageCount: 1 })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("rejects when an edit is already in progress", async () => {
+    vi.mocked(ReplicateDesignProjectRepository.findByIdWithDetails).mockResolvedValue(projectWithCurrentImage() as never);
+    vi.mocked(ReplicateDesignPromptRepository.findActiveSince).mockResolvedValue({ id: "prompt-active" } as never);
+
+    await expect(
+      generateReplicateEditPreview(actor, "proj-1", { mode: "QUICK", featureLabel: "Collar", newValue: "Mandarin", imageCount: 1 })
+    ).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+  });
+
+  it("calls the provider's applyFabric with the current image and the project's own material reference", async () => {
+    vi.mocked(ReplicateDesignProjectRepository.findByIdWithDetails).mockResolvedValue(projectWithCurrentImage() as never);
+    vi.mocked(getAttachmentForDownload).mockResolvedValue({ attachment: { mimeType: "image/png" }, buffer: Buffer.from("x") } as never);
+    vi.mocked(runWithFailover).mockImplementation((async (params: { capability: string; call: (p: unknown) => unknown }) => {
+      expect(params.capability).toBe("MULTI_FABRIC");
+      const provider = { name: "test-provider", applyFabric: vi.fn().mockResolvedValue({ images: [{ buffer: Buffer.from("img"), mimeType: "image/png" }] }) };
+      const result = await params.call(provider);
+      return { ...(result as object), providerName: "test-provider", model: "test-model" };
+    }) as never);
+    vi.mocked(ReplicateDesignImageRepository.findByGenerationId).mockResolvedValue([{ id: "preview-1" }] as never);
+
+    const result = await generateReplicateEditPreview(actor, "proj-1", {
+      mode: "QUICK",
+      featureLabel: "Collar",
+      currentValue: "Round Neck",
+      newValue: "Mandarin Collar",
+      imageCount: 2,
+    });
+
+    expect(result.images).toMatchObject([{ id: "preview-1" }]);
+    expect(ReplicateDesignGenerationRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({ parentImageId: "img-current", editedFeature: "Collar" })
+    );
+    expect(ReplicateDesignGenerationRepository.markSuccess).toHaveBeenCalled();
+    // The generate step's own currentVersionId is never touched by a preview.
+    expect(ReplicateDesignProjectRepository.update).not.toHaveBeenCalledWith("proj-1", expect.objectContaining({ currentVersionId: expect.anything() }));
+  });
+});
+
+describe("applyReplicateEditVariation", () => {
+  it("rejects without explicit confirmation", async () => {
+    await expect(applyReplicateEditVariation(actor, "img-1", { confirmed: false })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("rejects a previewed image that doesn't belong to this company", async () => {
+    vi.mocked(ReplicateDesignImageRepository.findWithProjectOwner).mockResolvedValue({
+      id: "img-1",
+      decision: "PENDING",
+      project: { companyId: "co-other" },
+    } as never);
+
+    await expect(applyReplicateEditVariation(actor, "img-1", { confirmed: true })).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("rejects an already-decided preview", async () => {
+    vi.mocked(ReplicateDesignImageRepository.findWithProjectOwner).mockResolvedValue({
+      id: "img-1",
+      decision: "REJECTED",
+      project: { companyId: "co-1" },
+    } as never);
+
+    await expect(applyReplicateEditVariation(actor, "img-1", { confirmed: true })).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+  });
+
+  it("rejects a preview that's no longer based on the current design", async () => {
+    vi.mocked(ReplicateDesignImageRepository.findWithProjectOwner).mockResolvedValue({
+      id: "img-1",
+      projectId: "proj-1",
+      generationId: "gen-1",
+      decision: "PENDING",
+      project: { companyId: "co-1" },
+    } as never);
+    vi.mocked(ReplicateDesignProjectRepository.findByIdWithDetails).mockResolvedValue(projectWithCurrentImage() as never);
+    vi.mocked(ReplicateDesignGenerationRepository.findByIdWithPrompt).mockResolvedValue({
+      id: "gen-1",
+      parentImageId: "img-stale",
+      prompt: { id: "prompt-1", specJson: { edit: { mode: "QUICK", featureLabel: "Collar", newValue: "Mandarin" } } },
+    } as never);
+
+    await expect(applyReplicateEditVariation(actor, "img-1", { confirmed: true })).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+  });
+
+  it("applies the preview, rejects PENDING siblings, and bumps a new AI_MODIFIED version carrying the originating prompt", async () => {
+    vi.mocked(ReplicateDesignImageRepository.findWithProjectOwner).mockResolvedValue({
+      id: "img-1",
+      projectId: "proj-1",
+      generationId: "gen-1",
+      decision: "PENDING",
+      project: { companyId: "co-1" },
+    } as never);
+    vi.mocked(ReplicateDesignProjectRepository.findByIdWithDetails).mockResolvedValue(projectWithCurrentImage() as never);
+    vi.mocked(ReplicateDesignGenerationRepository.findByIdWithPrompt).mockResolvedValue({
+      id: "gen-1",
+      promptId: "prompt-1",
+      parentImageId: "img-current",
+      editedFeature: "Collar",
+      prompt: { id: "prompt-1", specJson: { edit: { mode: "QUICK", featureLabel: "Collar", newValue: "Mandarin Collar" } } },
+    } as never);
+    vi.mocked(ReplicateDesignImageRepository.findByGenerationId).mockResolvedValue([
+      { id: "img-1", decision: "PENDING" },
+      { id: "img-sibling", decision: "PENDING" },
+    ] as never);
+
+    const version = await applyReplicateEditVariation(actor, "img-1", { confirmed: true });
+
+    expect(ReplicateDesignImageRepository.update).toHaveBeenCalledWith("img-sibling", { decision: "REJECTED" });
+    expect(ReplicateDesignImageRepository.update).toHaveBeenCalledWith("img-1", { decision: "SELECTED" });
+    expect(ReplicateDesignVersionRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({ currentImageId: "img-1", approvalStatus: "AI_MODIFIED", aiPromptId: "prompt-1", changeSummary: "Changed Collar: Mandarin Collar" })
+    );
+    expect(version).toMatchObject({ id: "version-1" });
+  });
+});
+
+describe("approveReplicateVersion / rejectReplicateVersion", () => {
+  it("rejects approving when no design has been generated yet", async () => {
+    vi.mocked(ReplicateDesignProjectRepository.findByIdWithDetails).mockResolvedValue({ ...baseProject(), currentVersion: null } as never);
+
+    await expect(approveReplicateVersion(actor, "proj-1")).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("approves the current version, stamping the approving user and timestamp", async () => {
+    vi.mocked(ReplicateDesignProjectRepository.findByIdWithDetails).mockResolvedValue(
+      projectWithCurrentImage({ currentVersion: { id: "version-1", approvalStatus: "DRAFT" } }) as never
+    );
+    vi.mocked(ReplicateDesignVersionRepository.updateApprovalStatus).mockResolvedValue({ id: "version-1", approvalStatus: "APPROVED" } as never);
+
+    const version = await approveReplicateVersion(actor, "proj-1");
+
+    expect(ReplicateDesignVersionRepository.updateApprovalStatus).toHaveBeenCalledWith(
+      "version-1",
+      expect.objectContaining({ approvalStatus: "APPROVED", approvedByUserId: "user-1" })
+    );
+    expect(version).toMatchObject({ approvalStatus: "APPROVED" });
+  });
+
+  it("rejects the current version without touching approvedBy/approvedAt", async () => {
+    vi.mocked(ReplicateDesignProjectRepository.findByIdWithDetails).mockResolvedValue(
+      projectWithCurrentImage({ currentVersion: { id: "version-1", approvalStatus: "AI_MODIFIED" } }) as never
+    );
+    vi.mocked(ReplicateDesignVersionRepository.updateApprovalStatus).mockResolvedValue({ id: "version-1", approvalStatus: "REJECTED" } as never);
+
+    await rejectReplicateVersion(actor, "proj-1");
+
+    expect(ReplicateDesignVersionRepository.updateApprovalStatus).toHaveBeenCalledWith(
+      "version-1",
+      expect.objectContaining({ approvalStatus: "REJECTED", approvedByUserId: null, approvedAt: null })
+    );
+  });
+});
+
+describe("generateReplicateTechPack", () => {
+  const fakePart1 = {
+    identification: {}, construction: {}, closure: { closureType: "", closureDetails: "" }, seamCallouts: [], visibleColors: [],
+    suggestedColorways: [], artworkItems: [], artworkSummary: "", patternPrintType: "", patternPrintNotes: "",
+  };
+  const fakePart2 = {
+    bomItems: [], measurementPoints: [], gradeRulesNotes: "", mainLabelSpec: "", sizeLabelSpec: "", careLabelSpec: "",
+    hangtagSpec: "", polybagSpec: "", foldingInstructions: "", cartonPackingSpec: "", barcodePlacement: "",
+  };
+  const fakePagePrompts = { pagePrompts: ["p1", "p2", "p3", "p4"], designerNotes: "", suggestedAdditionalViews: "" };
+
+  it("rejects when no design has been generated yet", async () => {
+    vi.mocked(ReplicateDesignProjectRepository.findByIdWithDetails).mockResolvedValue({ ...baseProject(), currentVersion: null } as never);
+
+    await expect(generateReplicateTechPack(actor, "proj-1")).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("rejects when a tech pack is already being generated", async () => {
+    vi.mocked(ReplicateDesignProjectRepository.findByIdWithDetails).mockResolvedValue(projectWithCurrentImage() as never);
+    vi.mocked(ReplicateDesignTechPackRepository.findLatestByProjectId).mockResolvedValue({
+      id: "techpack-active",
+      status: "IN_PROGRESS",
+      createdAt: new Date(),
+    } as never);
+
+    await expect(generateReplicateTechPack(actor, "proj-1")).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+  });
+
+  it("runs the full 3-call pipeline plus one page image per needsImage page, then marks the tech pack SUCCESS", async () => {
+    vi.mocked(ReplicateDesignProjectRepository.findByIdWithDetails).mockResolvedValue(
+      projectWithCurrentImage({ dnaAnalysis: { observations: [{ featureKey: "garmentCategory", approvedObservation: "T-Shirt" }] } }) as never
+    );
+    vi.mocked(ReplicateDesignTechPackRepository.findLatestByProjectId).mockResolvedValue(null);
+    vi.mocked(getAttachmentForDownload).mockResolvedValue({ attachment: { mimeType: "image/png" }, buffer: Buffer.from("x") } as never);
+    vi.mocked(generateGarmentAnalysisPart1).mockResolvedValue({ data: fakePart1, model: "claude-sonnet-5" } as never);
+    vi.mocked(generateGarmentAnalysisPart2).mockResolvedValue({ data: fakePart2, model: "claude-sonnet-5" } as never);
+    vi.mocked(generatePagePrompts).mockResolvedValue({ data: fakePagePrompts, model: "claude-sonnet-5" } as never);
+    vi.mocked(runWithFailover).mockImplementation((async (params: { capability: string; call: (p: unknown) => unknown }) => {
+      expect(params.capability).toBe("TECHNICAL_FLAT");
+      const provider = { name: "test-provider", generateTechnicalFlat: vi.fn().mockResolvedValue({ images: [{ buffer: Buffer.from("img"), mimeType: "image/png" }] }) };
+      return params.call(provider);
+    }) as never);
+    vi.mocked(ReplicateDesignTechPackRepository.markSuccess).mockResolvedValue({ id: "techpack-1", status: "SUCCESS" } as never);
+
+    const result = await generateReplicateTechPack(actor, "proj-1");
+
+    expect(generateGarmentAnalysisPart1).toHaveBeenCalledTimes(1);
+    expect(generateGarmentAnalysisPart2).toHaveBeenCalledWith(expect.objectContaining({ part1: fakePart1 }));
+    expect(generatePagePrompts).toHaveBeenCalledWith(expect.objectContaining({ part1: fakePart1, part2: fakePart2 }));
+    expect(ReplicateDesignTechPackRepository.markSuccess).toHaveBeenCalledWith(
+      "techpack-1",
+      expect.objectContaining({ pages: expect.arrayContaining([expect.objectContaining({ pageNumber: 1 })]) })
+    );
+    expect(result).toMatchObject({ status: "SUCCESS" });
+  });
+
+  it("marks the tech pack FAILED and propagates the error when an AI call fails", async () => {
+    vi.mocked(ReplicateDesignProjectRepository.findByIdWithDetails).mockResolvedValue(projectWithCurrentImage() as never);
+    vi.mocked(ReplicateDesignTechPackRepository.findLatestByProjectId).mockResolvedValue(null);
+    vi.mocked(getAttachmentForDownload).mockResolvedValue({ attachment: { mimeType: "image/png" }, buffer: Buffer.from("x") } as never);
+    vi.mocked(generateGarmentAnalysisPart1).mockRejectedValue(new Error("Anthropic call failed"));
+
+    await expect(generateReplicateTechPack(actor, "proj-1")).rejects.toThrow();
+
+    expect(generateGarmentAnalysisPart2).not.toHaveBeenCalled();
+    expect(ReplicateDesignTechPackRepository.markFailed).toHaveBeenCalledWith("techpack-1", expect.stringContaining("Anthropic call failed"));
+    expect(ReplicateDesignTechPackRepository.markSuccess).not.toHaveBeenCalled();
+  });
+});
+
+describe("getLatestReplicateTechPack", () => {
+  it("rejects an unowned/nonexistent project", async () => {
+    vi.mocked(ReplicateDesignProjectRepository.findAnyById).mockResolvedValue(null);
+
+    await expect(getLatestReplicateTechPack("co-1", "proj-x")).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("returns the latest tech pack for an owned project", async () => {
+    vi.mocked(ReplicateDesignProjectRepository.findAnyById).mockResolvedValue(baseProject() as never);
+    vi.mocked(ReplicateDesignTechPackRepository.findLatestByProjectId).mockResolvedValue({ id: "techpack-1", status: "SUCCESS" } as never);
+
+    const techPack = await getLatestReplicateTechPack("co-1", "proj-1");
+
+    expect(techPack).toMatchObject({ id: "techpack-1" });
   });
 });
