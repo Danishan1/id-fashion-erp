@@ -6185,6 +6185,80 @@ Raw materials reuse the real `Product`/`itemType: RAW_MATERIAL` master as-is via
   (particularly per-observation `isLocked` and the `MaterialLine`/`CompatibilityItem` rows) is shaped so these
   attach later without a breaking migration.
 
+## Branch-level data access control (RoleBranchAccess), first phase on Inventory/Warehouse (2026-09-15)
+
+User asked to "properly implement branch access" against the 60-section Users/Roles/Permissions module spec
+they'd pasted earlier — scoped via two AskUserQuestion rounds before any code was written: **mirror the
+existing `RoleProductionStageAccess` pattern exactly** (same table shape, same union/unrestricted-wins
+semantics) rather than inventing a new mechanism, and **roll it out first on Inventory/Warehouse only**
+(Warehouse, Material Request, Goods Receipt, Stock Movement — matching the spec's own "Store Manager →
+Gurugram Factory" example), deferring the other ~18 branchId-carrying models to a future pass.
+
+- **Schema**: new `RoleBranchAccess` (`role_id` × `branch_id`, `@@unique([roleId, branchId])`) — a role with
+  zero rows is unrestricted (sees every branch, the default for every existing role); non-zero rows restrict
+  to just those branches. `Role.branchAccess`/`Branch.roleBranchAccess` back-relations. Migration
+  `20260915090000_add_role_branch_access`, applied via this project's established non-interactive workaround
+  (`migrate diff --script` → hand-placed `migration.sql` → `db execute` → `migrate resolve --applied`) and
+  independently re-verified via a direct `information_schema.columns` query, never trusted from
+  `resolve --applied` alone.
+- **`PermissionService.getAllowedBranchIds(userId): Promise<Set<string> | null>`** — placed directly after
+  the existing `getAllowedProductionStageIds()`, identical logic structure: a platform admin always gets
+  `null`; a user holding ANY unrestricted role gets `null` outright even if their other held roles are
+  individually restricted (holding one extra narrow role must never silently shrink an otherwise-unrestricted
+  user's own view); only when EVERY held role is restricted does the result become the union of their allowed
+  branch sets; a user holding no role at all gets an empty `Set` (sees nothing, matching that they'd already
+  fail every ordinary permission check too).
+- **`src/lib/branch-access.ts`** — `branchScopeWhere(allowedBranchIds)` (spread-in `{ branchId: { in: [...] } }`
+  addition alongside a query's existing `companyId` scoping, never a replacement; `null` → `{}`) and
+  `assertBranchAccess(actor, branchId)` (throws the new `BRANCH_ACCESS_DENIED`, 403, when a branch is outside
+  the actor's allowed set). New `BusinessRuleError` code alongside the existing
+  `PRODUCTION_STAGE_ACCESS_DENIED`.
+- **Admin UI**: `RoleBranchAccessPanel.tsx` on `/admin/roles/[id]` (checkbox list of the company's active
+  branches, "select nothing to leave this role unrestricted" copy), backed by `GET`/`PUT
+  /api/v1/administration/roles/[id]/branches` → `getRoleBranchAccess()`/`updateRoleBranches()` in
+  `role-admin.service.ts` (mirrors `getRoleProductionStageAccess()`/`updateRoleProductionStages()` exactly,
+  including being **deliberately allowed on system/seeded roles too** — stage/branch restriction is a purely
+  additive, narrowing dimension that can never widen what a role can do, unlike the module/action permission
+  matrix, which does block editing a seeded role). `replaceBranchAccessInTx()` in `role-admin.repository.ts`
+  follows the same "empty array is a real state — clears any existing restriction — not a no-op" contract as
+  its stage-access sibling.
+- **Enforcement, applied identically across all four modules**: every `list*`/`get*ById` function now takes
+  a richer actor (`{ companyId, userId }` in place of a bare `companyId` string) and spreads
+  `branchScopeWhere(allowedBranchIds)` into its `where`; every `get*ById` additionally checks
+  `allowedBranchIds !== null && (!record.branchId || !allowedBranchIds.has(record.branchId))` and throws a
+  plain `NOT_FOUND` — this app's established "deny as not-found" convention (never revealing a record exists
+  to someone who can't see it), the same denial shape already used for permission-based denial elsewhere.
+  Every API route/Server Component caller updated to pass `{ companyId: session.user.companyId, userId:
+  session.user.id }` instead of a bare `companyId`. Applied to `warehouse.service.ts` (`listWarehouses`/
+  `getWarehouseById`, plus `assertBranchAccess(actor, actor.branchId)` on `createWarehouse`),
+  `material-request.service.ts` (`listMaterialRequests`/`getMaterialRequestById`),
+  `goods-receipt.service.ts` (`listGoodsReceipts`/`getGoodsReceiptById`), and `stock-movement.service.ts`
+  (`listStockMovements`/`getStockMovementById`) — 22 new unit tests across the four modules' own test files
+  (branch-filtered/unfiltered list `where` shape, in-scope success, out-of-scope `NOT_FOUND`, a
+  no-branchId-when-restricted edge case), each requiring the same `vi.mock("@/core/rbac/PermissionService",
+  ...)` addition already established for `job-order.service.test.ts`'s equivalent stage-access mocks (a real
+  Postgres connection error is what happens if this mock is forgotten, since `getAllowedBranchIds()` would
+  otherwise hit the genuinely-unmocked real Prisma client inside the test environment).
+- **Verified live end-to-end against the real dev DB**: created a real second branch ("Gurugram Factory,"
+  `GGN`) through the actual `/admin` UI, created a real custom "Branch Access Test Role" (full
+  Inventory/Warehouse/Purchasing permissions) and restricted it to Head Office only via the real
+  `RoleBranchAccessPanel`, created a real test user holding it, signed in as them, and confirmed — for all
+  four modules — their list view correctly excluded a real record deliberately reassigned to the Gurugram
+  branch (a warehouse, a material request, a goods receipt, and a stock movement, each flipped via a direct
+  DB update for the test and restored to Head Office afterward) while a same-branch record stayed visible,
+  and that a direct `fetch()` to that record's own `GET .../:id` endpoint correctly returned
+  `404 NOT_FOUND` in every case. Confirmed Super Admin's own unrestricted view was completely unaffected
+  both before and after the test data was restored. Test user suspended afterward (no delete-user endpoint
+  exists, matching this project's own established precedent); the "Branch Access Test Role" itself was kept
+  as a real, working demonstration, the same precedent already set for the "Cutting Supervisor" test role
+  from the per-role Production Stage access pass.
+- `npx tsc --noEmit`, `npx eslint .` (0 errors), and `npx vitest run` (1567/1567, 22 new) all clean
+  throughout.
+- **Not built this pass, explicitly deferred per the user's own confirmed scope**: the other ~18
+  branchId-carrying models (Sales Orders, Purchase Orders, Production Orders, Dispatch, Journal, Invoices,
+  etc.) — extend using this exact same `getAllowedBranchIds`/`branchScopeWhere`/`assertBranchAccess` pattern
+  once that next module is prioritized.
+
 ## Recommended Stack
 
 Next.js 14+ (App Router) + React + TypeScript + Tailwind CSS (frontend); Next.js API routes/route handlers as REST API; PostgreSQL + Prisma ORM; session-based auth (Auth.js/NextAuth, DB sessions) with RBAC and optional TOTP 2FA; S3-compatible or local file storage for attachments; server-side PDF/Excel export (`exceljs`, `pdf-lib`/`@react-pdf/renderer`).
