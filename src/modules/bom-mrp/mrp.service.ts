@@ -12,7 +12,7 @@ import { BomRepository } from "./bom.repository";
 // otherwise surfaces IEEE-754 noise like 103.60000000000002 in the JSON
 // response. Rounds to the same 4-decimal precision this project's own
 // Decimal(18,4) quantity columns already use everywhere else.
-function round4(n: number): number {
+export function round4(n: number): number {
   return Math.round(n * 10000) / 10000;
 }
 

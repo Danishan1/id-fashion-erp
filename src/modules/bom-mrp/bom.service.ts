@@ -2,12 +2,14 @@ import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { PermissionService } from "@/core/rbac/PermissionService";
 import type { ListQuery } from "@/lib/list-query";
+import { round2 } from "@/lib/money";
 import { convertUomQuantity } from "@/lib/uom-conversion";
 import { LookupRepository } from "@/modules/lookups/lookup.repository";
 import { ProductRepository } from "@/modules/products/product.repository";
 import type { Prisma } from "@prisma/client";
 import type { BomInput } from "./bom.schema";
 import { BomRepository } from "./bom.repository";
+import { round4 } from "./mrp.service";
 
 interface ActorContext {
   companyId: string;
@@ -231,4 +233,133 @@ export async function approveBomVersion(actor: ActorContext, productId: string) 
   });
 
   return updated;
+}
+
+export interface BomCostSheetLine {
+  materialId: string;
+  materialName: string;
+  materialCode: string;
+  colorId: string | null;
+  colorName: string | null;
+  quantityPerUnit: number;
+  wastagePercentage: number;
+  /** Effective quantity per one finished piece, in the material's own base UOM, after wastage. */
+  effectiveQuantity: number;
+  uomCode: string;
+  /** Per the material's base UOM — null if the material has no unit cost configured. */
+  unitCost: number | null;
+  /** Null whenever unitCost is unset or this line's UOM has no fixed conversion to the material's base UOM. */
+  lineCost: number | null;
+  isCostAvailable: boolean;
+}
+
+export interface BomCostSheetColorBreakdown {
+  colorId: string | null;
+  /** "All Colors" for the null-color bucket. */
+  colorName: string;
+  materialCostPerUnit: number;
+  /** False if any line contributing to this bucket lacked cost data — materialCostPerUnit is then a known undercount, not a true total. */
+  isComplete: boolean;
+}
+
+export interface BomCostSheet {
+  productId: string;
+  styleName: string;
+  styleCode: string;
+  hasBom: boolean;
+  lines: BomCostSheetLine[];
+  /**
+   * One entry per color that actually has a color-specific BOM line (each
+   * including the always-applicable null-color lines' cost added in), or a
+   * single "All Colors" entry when the BOM has no color-specific lines at
+   * all. A BomItem's colorId means "this line only applies to that color"
+   * (see bom.schema.ts) — so naively summing every line regardless of color
+   * would double-count a style that has, say, a Navy-thread line and a
+   * separate Black-thread line, as if a single garment needed both.
+   */
+  colorBreakdown: BomCostSheetColorBreakdown[];
+}
+
+/**
+ * Material Cost roll-up for a Style's BOM — the first, foundational slice of
+ * the BOM Cost Sheet (Processing Cost/Labour Cost/Overhead are tracked
+ * nowhere in this schema yet; see docs/FASHION_ERP_FEATURE_ROADMAP.md Step 9
+ * for the follow-up plan). Reuses the exact effective-quantity formula and
+ * UOM-conversion helper already proven in mrp.service.ts's own material-
+ * requirement calculation, rather than a second, divergent implementation —
+ * this is what makes the reported cost correct even when a BOM line's unit
+ * differs from the material's own base unit (e.g. a line entered in Yards
+ * against a Meter-based material).
+ */
+export async function getBomCostSheet(companyId: string, productId: string): Promise<BomCostSheet> {
+  const product = await ProductRepository.findStyleById(companyId, productId);
+  if (!product) throw new BusinessRuleError("NOT_FOUND", "Style not found.", { id: productId });
+
+  const bom = await BomRepository.findByProductId(companyId, productId);
+  // The Cost Sheet reflects whichever version the Edit BOM tab is currently
+  // showing (bom.currentVersionNumber — the highest version ever minted, not
+  // necessarily the approved one) rather than only an approved version, so a
+  // merchandiser reviewing an in-progress draft's cost sees it match exactly
+  // what they're editing.
+  const currentVersion = bom?.versions.find((v) => v.versionNumber === bom.currentVersionNumber) ?? null;
+  const items = currentVersion?.items ?? [];
+  if (!bom || items.length === 0) {
+    return { productId, styleName: product.styleName, styleCode: product.styleCode, hasBom: false, lines: [], colorBreakdown: [] };
+  }
+
+  const lines: BomCostSheetLine[] = items.map((item) => {
+    const quantityPerUnit = Number(item.quantityPerUnit);
+    const wastagePercentage = Number(item.wastagePercentage);
+    const effectiveQtyInLineUom = quantityPerUnit * (1 + wastagePercentage / 100);
+    const material = item.material;
+    const unitCost = material.unitCost !== null ? Number(material.unitCost) : null;
+
+    const effectiveQtyInBaseUom = material.baseUom ? convertUomQuantity(effectiveQtyInLineUom, item.uom, material.baseUom) : null;
+    const isCostAvailable = effectiveQtyInBaseUom !== null && unitCost !== null;
+
+    return {
+      materialId: material.id,
+      materialName: material.styleName,
+      materialCode: material.styleCode,
+      colorId: item.colorId,
+      colorName: item.color?.name ?? null,
+      quantityPerUnit,
+      wastagePercentage,
+      effectiveQuantity: round4(effectiveQtyInBaseUom ?? effectiveQtyInLineUom),
+      uomCode: material.baseUom?.code ?? item.uom.code,
+      unitCost,
+      lineCost: isCostAvailable ? round2(effectiveQtyInBaseUom! * unitCost!) : null,
+      isCostAvailable,
+    };
+  });
+
+  const nullColorLines = lines.filter((l) => l.colorId === null);
+  const distinctColors = new Map<string, string>();
+  for (const item of items) {
+    if (item.colorId && item.color) distinctColors.set(item.colorId, item.color.name);
+  }
+
+  function sumBucket(bucketLines: BomCostSheetLine[]): { materialCostPerUnit: number; isComplete: boolean } {
+    let sum = 0;
+    let isComplete = true;
+    for (const line of bucketLines) {
+      if (!line.isCostAvailable) {
+        isComplete = false;
+        continue;
+      }
+      sum += line.lineCost!;
+    }
+    return { materialCostPerUnit: round2(sum), isComplete };
+  }
+
+  const colorBreakdown: BomCostSheetColorBreakdown[] =
+    distinctColors.size === 0
+      ? [{ colorId: null, colorName: "All Colors", ...sumBucket(nullColorLines) }]
+      : [...distinctColors.entries()].map(([colorId, colorName]) => ({
+          colorId,
+          colorName,
+          ...sumBucket([...nullColorLines, ...lines.filter((l) => l.colorId === colorId)]),
+        }));
+
+  return { productId, styleName: product.styleName, styleCode: product.styleCode, hasBom: true, lines, colorBreakdown };
 }
