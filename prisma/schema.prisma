@@ -142,6 +142,7 @@ model Company {
   aiDesignerSettings                  AiDesignerSettings?
   aiDesignerTechPacks                 AiDesignerTechPack[]
   aiDesignerProductDesignAttributes   AiDesignerProductDesignAttribute[]
+  aiDesignerOptionReferenceImages     AiDesignerOptionReferenceImage[]
   aiProviders                         AIProvider[]
   aiProviderUsage                     AIProviderUsage[]
   aiFailoverLogs                      AIFailoverLog[]
@@ -370,7 +371,9 @@ model User {
   replicateDesignVersionsApproved            ReplicateDesignVersion[]             @relation("ReplicateDesignVersionApprovedBy")
   replicateDesignTechPacksCreated            ReplicateDesignTechPack[]            @relation("ReplicateDesignTechPackCreatedBy")
   aiDesignerTechPacksCreated                 AiDesignerTechPack[]                 @relation("AiDesignerTechPackCreatedBy")
+  aiDesignerTechPacksApproved                AiDesignerTechPack[]                 @relation("AiDesignerTechPackApprovedBy")
   aiDesignerProductDesignAttributesCreated   AiDesignerProductDesignAttribute[]   @relation("AiDesignerProductDesignAttributeCreatedBy")
+  aiDesignerOptionReferenceImagesCreated     AiDesignerOptionReferenceImage[]     @relation("AiDesignerOptionReferenceImageCreatedBy")
   aiProvidersCreated                         AIProvider[]                         @relation("AIProviderCreatedBy")
   aiProviderUsageAsUser                      AIProviderUsage[]                    @relation("AIProviderUsageUser")
   aiGarmentFabricAnalysesCreated             AiGarmentFabricAnalysis[]            @relation("AiGarmentFabricAnalysisCreatedBy")
@@ -7619,6 +7622,18 @@ model AiDesignerProject {
   secondFabricImageAttachmentId String?  @map("second_fabric_image_attachment_id")
   secondFabricApplyAreas        String[] @map("second_fabric_apply_areas")
 
+  // Step 9c -- Embellishments (optional, only usable once a design already
+  // exists -- applies a digital applique/embroidery motif onto the currently
+  // generated garment image via a free-text description and/or an uploaded
+  // motif reference photo). Mirrors secondFabricImageAttachmentId's exact
+  // shape (persisted, replaceable, deletable). `embellishmentType` and the
+  // free-text instructions are deliberately NOT persisted project columns --
+  // same precedent as secondFabricApplyAreas above being schema-only UI tag
+  // data, not something anything else needs to reference/constrain -- they
+  // travel as plain per-request API input instead, recorded only in the
+  // generation's audit log / version designSnapshotJson.
+  embellishmentMotifAttachmentId String? @map("embellishment_motif_attachment_id")
+
   // Set once version 1 exists (nullable-then-set-later, same precedent as
   // AiGarmentProject.selectedDesignDirectionId elsewhere in this schema).
   currentVersionId String? @unique @map("current_version_id") @db.Uuid
@@ -7792,6 +7807,30 @@ model AiDesignerVersion {
 // carried no real production data), matching this project's own established
 // precedent for a clean schema replacement when a feature's scope is
 // fundamentally rebuilt (e.g. Purchase Request -> Material Request).
+/**
+ * v3 (2026-09-14): the AI's own page-image generation was removed entirely --
+ * pages 1/2/4 now embed the project's own real, already-generated design
+ * photo (imageAttachmentId copied verbatim from the project's currentVersion,
+ * never re-uploaded), never a fabricated "AI-drawn flat" -- per the user's
+ * own explicit, repeated rule against using AI image generation to build the
+ * document. This also added a real approve/revision discipline, mirroring
+ * AiDesignerVersion's own approvalStatus/approvedByUserId/approvedAt shape
+ * exactly: a tech pack starts DRAFT, and editing an already-APPROVED one
+ * forks a brand-new row (parentTechPackId/revisionNumber) rather than
+ * silently mutating the approved snapshot -- so a previously-approved,
+ * previously-downloaded PDF's data always stays exactly reproducible.
+ * `originalGarmentAnalysisJson` is a frozen copy made once at generation
+ * time, backing a "Revert to AI-generated" action at the whole-document
+ * level (not per-field -- doubling every one of the ~15 leaf fields into an
+ * {ai, current} pair for a rarely-used capability wasn't worth it; per-field
+ * audit history already exists via the write-audit-log convention on every
+ * edit).
+ */
+enum AiDesignerTechPackApprovalStatus {
+  DRAFT
+  APPROVED
+}
+
 model AiDesignerTechPack {
   id                       String              @id @default(uuid()) @db.Uuid
   companyId                String              @map("company_id") @db.Uuid
@@ -7799,29 +7838,43 @@ model AiDesignerTechPack {
   status                   AiDesignerRunStatus @default(IN_PROGRESS)
   /** The full structured Garment Analysis (categories A-J) -- see GarmentAnalysis in tech-pack/schema.ts for its exact shape. */
   garmentAnalysisJson      Json?               @map("garment_analysis_json")
+  /** Frozen at generation time, never touched by edits -- see the model doc comment above. */
+  originalGarmentAnalysisJson Json?            @map("original_garment_analysis_json")
   designerNotes            String?             @map("designer_notes")
   suggestedAdditionalViews String?             @map("suggested_additional_views")
   errorMessage             String?             @map("error_message")
 
+  approvalStatus  AiDesignerTechPackApprovalStatus @default(DRAFT) @map("approval_status")
+  approvedByUserId String?                         @map("approved_by_user_id") @db.Uuid
+  approvedAt       DateTime?                       @map("approved_at")
+
+  /** A revision is just another row of this same model -- see the model doc comment above. */
+  revisionNumber   Int     @default(1) @map("revision_number")
+  parentTechPackId String? @map("parent_tech_pack_id") @db.Uuid
+
   createdByUserId String   @map("created_by_user_id") @db.Uuid
   createdAt       DateTime @default(now()) @map("created_at")
 
-  company   Company                 @relation(fields: [companyId], references: [id])
-  project   AiDesignerProject       @relation(fields: [projectId], references: [id])
-  createdBy User                    @relation("AiDesignerTechPackCreatedBy", fields: [createdByUserId], references: [id])
-  pages     AiDesignerTechPackPage[]
+  company        Company                  @relation(fields: [companyId], references: [id])
+  project        AiDesignerProject        @relation(fields: [projectId], references: [id])
+  createdBy      User                     @relation("AiDesignerTechPackCreatedBy", fields: [createdByUserId], references: [id])
+  approvedBy     User?                    @relation("AiDesignerTechPackApprovedBy", fields: [approvedByUserId], references: [id])
+  parentTechPack AiDesignerTechPack?      @relation("AiDesignerTechPackRevisions", fields: [parentTechPackId], references: [id])
+  childRevisions AiDesignerTechPack[]     @relation("AiDesignerTechPackRevisions")
+  pages          AiDesignerTechPackPage[]
 
   @@map("ai_tech_packs")
 }
 
-/** One row per generated tech-pack page (always exactly 7 on a successful run, pages 1-7 per the user's own fixed page structure) -- the prompt text is kept alongside the image for review/audit, matching this project's own "keep the hidden prompt inspectable" convention. */
+/** One row per tech-pack page (always exactly 7 on a successful run, pages 1-7 per the user's own fixed page structure). `promptText` is nullable -- v3 removed all per-page AI image generation, so nothing populates it for new rows; historical rows keep their real string. `technicalFlatAttachmentId` is reserved for a genuinely future, separate feature (a manually-uploaded CAD/SVG technical flat) -- unpopulated by anything in this codebase today. */
 model AiDesignerTechPackPage {
-  id                String  @id @default(uuid()) @db.Uuid
-  techPackId        String  @map("tech_pack_id") @db.Uuid
-  pageNumber        Int     @map("page_number")
-  pageTitle         String  @map("page_title")
-  promptText        String  @map("prompt_text")
-  imageAttachmentId String? @map("image_attachment_id")
+  id                        String  @id @default(uuid()) @db.Uuid
+  techPackId                String  @map("tech_pack_id") @db.Uuid
+  pageNumber                Int     @map("page_number")
+  pageTitle                 String  @map("page_title")
+  promptText                String? @map("prompt_text")
+  imageAttachmentId         String? @map("image_attachment_id")
+  technicalFlatAttachmentId String? @map("technical_flat_attachment_id")
 
   techPack AiDesignerTechPack @relation(fields: [techPackId], references: [id], onDelete: Cascade)
 
@@ -7869,6 +7922,35 @@ model AiDesignerProductDesignAttribute {
 
   @@unique([companyId, categoryName, attributeKey])
   @@map("ai_product_design_attributes")
+}
+
+/**
+ * A company-uploaded photo override for one Product Design option VALUE
+ * (e.g. "Deep Back Cut-Out") -- deliberately keyed by the option's own
+ * string, not by (categoryName, attributeKey): the same value string means
+ * the same real garment detail regardless of which attribute it's attached
+ * to, so it gets exactly one override, reused everywhere that value
+ * appears -- the identical "dedupe by value only" reasoning already used by
+ * the AI-generated reference-photo pipeline this augments (see
+ * reference-image-prompt.ts). A missing row for a value means "no
+ * override" -- DesignOptionImage then falls back to the AI-generated static
+ * file, then to the clipart icon, in that order.
+ */
+model AiDesignerOptionReferenceImage {
+  id           String @id @default(uuid()) @db.Uuid
+  companyId    String @map("company_id") @db.Uuid
+  optionValue  String @map("option_value")
+  attachmentId String @map("attachment_id")
+
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  company   Company @relation(fields: [companyId], references: [id])
+  createdBy User    @relation("AiDesignerOptionReferenceImageCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@unique([companyId, optionValue])
+  @@map("ai_designer_option_reference_images")
 }
 
 enum AiDesignerAttributeDisplayMode {

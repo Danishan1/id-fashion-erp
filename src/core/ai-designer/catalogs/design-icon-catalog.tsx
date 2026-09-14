@@ -942,15 +942,28 @@ export function DesignOptionIcon({ value }: { value: string }) {
  * check / manifest) so newly-generated photos "light up" automatically the
  * next time this component mounts, with zero code change needed.
  */
-export function DesignOptionImage({ value }: { value: string }) {
+/** Download URL for a company-uploaded reference-photo override (see AiDesignerOptionReferenceImage) — reuses the same generic, company-scoped attachment route every other AI Designer photo goes through. */
+export function optionReferenceImageOverrideUrl(attachmentId: string): string {
+  return `/api/v1/ai-designer/attachments/${attachmentId}/download?disposition=inline`;
+}
+
+/**
+ * Three-tier fallback: an admin-uploaded photo override for this exact
+ * option value (if one exists, via `overrideAttachmentId`) beats the
+ * AI-generated static photo, which beats the clipart icon — matching the
+ * schema doc comment on AiDesignerOptionReferenceImage. `overrideAttachmentId`
+ * is optional so every existing caller (which has no override map to check)
+ * keeps working unchanged.
+ */
+export function DesignOptionImage({ value, overrideAttachmentId }: { value: string; overrideAttachmentId?: string | null }) {
   const [imageFailed, setImageFailed] = useState(false);
 
   if (imageFailed) return <DesignOptionIcon value={value} />;
 
   return (
-    // eslint-disable-next-line @next/next/no-img-element -- a small, per-option reference thumbnail from a growing generated set, not a Next-optimizable static asset.
+    // eslint-disable-next-line @next/next/no-img-element -- a small, per-option reference thumbnail from a growing generated/uploaded set, not a Next-optimizable static asset.
     <img
-      src={referenceImageUrlForValue(value)}
+      src={overrideAttachmentId ? optionReferenceImageOverrideUrl(overrideAttachmentId) : referenceImageUrlForValue(value)}
       alt={value}
       className="h-16 w-16 rounded object-cover sm:h-20 sm:w-20"
       onError={() => setImageFailed(true)}

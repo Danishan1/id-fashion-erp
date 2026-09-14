@@ -14,7 +14,7 @@ vi.mock("@/core/ai-designer/replicate-design/compatibility-check/generate", () =
   generateCompatibilityCheck: vi.fn(),
 }));
 vi.mock("@/core/ai/provider-manager/AIProviderManager", () => ({ runWithFailover: vi.fn() }));
-vi.mock("@/core/ai-designer/tech-pack/generate", () => ({
+vi.mock("@/core/ai-designer/replicate-design/tech-pack/generate", () => ({
   generateGarmentAnalysisPart1: vi.fn(),
   generateGarmentAnalysisPart2: vi.fn(),
   generatePagePrompts: vi.fn(),
@@ -103,7 +103,7 @@ const { uploadAttachment, getAttachmentForDownload, deleteAttachment } = await i
 const { analyzeReplicateDesignDna } = await import("@/core/ai-designer/replicate-design/dna-analysis/analyze");
 const { generateCompatibilityCheck } = await import("@/core/ai-designer/replicate-design/compatibility-check/generate");
 const { runWithFailover } = await import("@/core/ai/provider-manager/AIProviderManager");
-const { generateGarmentAnalysisPart1, generateGarmentAnalysisPart2, generatePagePrompts } = await import("@/core/ai-designer/tech-pack/generate");
+const { generateGarmentAnalysisPart1, generateGarmentAnalysisPart2, generatePagePrompts } = await import("@/core/ai-designer/replicate-design/tech-pack/generate");
 const { ProductRepository } = await import("@/modules/products/product.repository");
 const {
   ReplicateDesignProjectRepository,

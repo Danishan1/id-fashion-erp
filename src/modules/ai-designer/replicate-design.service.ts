@@ -17,16 +17,19 @@ import {
 } from "@/core/ai-designer/replicate-design/image-generation/prompt";
 import { ImageGenerationServiceError } from "@/core/ai/image-generation/types";
 import { runWithFailover } from "@/core/ai/provider-manager/AIProviderManager";
-// Tech Pack — the same "GARMENT TECH PACK SPEC SHEET GENERATOR" pipeline
-// already built for the main AI Designer wizard, reused as-is: this is
-// shared, generic AI infrastructure (schema/prompt/generate + the PDF
-// renderer take a plain TechPackDesignContext, never anything specific to
-// AiDesignerProject) — appropriate DRY reuse *within* this module, not a
-// violation of its own "never share business logic with AI Garment Flow"
-// isolation rule, which is about a different module boundary entirely.
-import { generateGarmentAnalysisPart1, generateGarmentAnalysisPart2, generatePagePrompts } from "@/core/ai-designer/tech-pack/generate";
-import type { TechPackDesignContext } from "@/core/ai-designer/tech-pack/prompt";
-import { TECH_PACK_PAGE_DEFINITIONS, type GarmentAnalysis } from "@/core/ai-designer/tech-pack/schema";
+// Tech Pack — Replicate Design's OWN dedicated copy of AI Designer's
+// original "GARMENT TECH PACK SPEC SHEET GENERATOR" pipeline
+// (src/core/ai-designer/replicate-design/tech-pack/*, forked verbatim
+// 2026-09-14). This used to import AI Designer's own shared tech-pack/*
+// files directly (a real DRY-reuse shortcut when this feature was first
+// built) — forked once AI Designer's own Tech Pack was rebuilt (v3: no more
+// AI-generated page images) so that rebuild wouldn't silently change this
+// unrelated feature's own behavior (still generates 4 AI page images, per
+// its own untouched scope). The forked files are otherwise byte-identical
+// to AI Designer's pre-v3 originals.
+import { generateGarmentAnalysisPart1, generateGarmentAnalysisPart2, generatePagePrompts } from "@/core/ai-designer/replicate-design/tech-pack/generate";
+import type { TechPackDesignContext } from "@/core/ai-designer/replicate-design/tech-pack/prompt";
+import { TECH_PACK_PAGE_DEFINITIONS, type GarmentAnalysis } from "@/core/ai-designer/replicate-design/tech-pack/schema";
 import type { TechPackAnalysisForPdf, TechPackDocumentPageImage } from "@/core/ai-designer/export/tech-pack-pdf";
 import { ProductRepository } from "@/modules/products/product.repository";
 import type { ListQuery } from "@/lib/list-query";
