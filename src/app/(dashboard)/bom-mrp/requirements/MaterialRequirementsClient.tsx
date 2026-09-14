@@ -199,7 +199,14 @@ export function MaterialRequirementsClient() {
             <button
               key={f.value}
               type="button"
-              onClick={() => setSalesOrderFilter(f.value)}
+              onClick={() => {
+                setSalesOrderFilter(f.value);
+                // Switching the filter is a deliberate "start over" action —
+                // clear whatever order/material data is currently shown so
+                // the page never keeps displaying a selection that no
+                // longer matches the tab the user just clicked.
+                loadRequirements("");
+              }}
               className={`rounded-md border px-2.5 py-1 text-xs font-medium transition ${
                 salesOrderFilter === f.value
                   ? "border-indigo-600 bg-indigo-600 text-white"
