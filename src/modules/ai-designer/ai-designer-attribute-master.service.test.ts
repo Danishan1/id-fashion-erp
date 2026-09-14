@@ -6,6 +6,9 @@ vi.mock("@/core/attachments/AttachmentService", () => ({
   uploadAttachment: vi.fn(),
   deleteAttachment: vi.fn(),
 }));
+vi.mock("@/core/ai-designer/catalogs/reference-image-thumbnail", () => ({
+  toReferenceImageThumbnail: vi.fn(async (buf: Buffer) => buf),
+}));
 vi.mock("./ai-designer.repository", () => ({
   AiDesignerProductDesignAttributeRepository: {
     findMany: vi.fn(),

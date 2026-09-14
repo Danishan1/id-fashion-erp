@@ -7,6 +7,7 @@ import {
   PRODUCT_DESIGN_ATTRIBUTES_BY_CATEGORY,
   type DesignAttributeDef,
 } from "@/core/ai-designer/catalogs/design-attribute-catalog";
+import { toReferenceImageThumbnail } from "@/core/ai-designer/catalogs/reference-image-thumbnail";
 import { AiDesignerProductDesignAttributeRepository, AiDesignerOptionReferenceImageRepository } from "./ai-designer.repository";
 import type { CreateProductDesignAttributeInput, UpdateProductDesignAttributeInput } from "./ai-designer-attribute-master.schema";
 
@@ -146,7 +147,18 @@ export async function uploadOptionReferenceImage(actor: ActorContext, optionValu
   // a real record id, so a fresh one is minted up front for a brand-new
   // override (reusing the existing row's own real id when replacing).
   const relatedRecordId = existing?.id ?? crypto.randomUUID();
-  const attachment = await uploadAttachment(actor, "AI_DESIGNER_PROJECT", relatedRecordId, file, "OPTION_REFERENCE_IMAGE");
+  // A phone-camera upload can be several MB; this is only ever shown as an
+  // ~80px thumbnail (same reasoning as the AI-generated pipeline's own
+  // toReferenceImageThumbnail() — reused here, not reimplemented, so both
+  // paths produce identically-sized files).
+  const thumbnailBuffer = await toReferenceImageThumbnail(file.buffer);
+  const attachment = await uploadAttachment(
+    actor,
+    "AI_DESIGNER_PROJECT",
+    relatedRecordId,
+    { buffer: thumbnailBuffer, fileName: file.fileName.replace(/\.[^.]+$/, ".jpg"), mimeType: "image/jpeg" },
+    "OPTION_REFERENCE_IMAGE"
+  );
   const row = await AiDesignerOptionReferenceImageRepository.upsert({
     companyId: actor.companyId,
     optionValue,

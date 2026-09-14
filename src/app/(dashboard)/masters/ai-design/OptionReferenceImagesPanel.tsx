@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { DesignOptionImage } from "@/core/ai-designer/catalogs/design-icon-catalog";
+import { useEffect, useMemo, useState } from "react";
+import { OptionPhotoUploadControl } from "./OptionPhotoUploadControl";
 
 interface ReferenceImageRow {
   optionValue: string;
@@ -23,14 +23,15 @@ async function parseJson(res: Response) {
  * whatever the AI produced. Every known option value across the whole
  * catalog (built-in + this company's own customized attributes) is listed,
  * whether or not it has an override yet — search narrows a ~200-value list
- * down to something browsable.
+ * down to something browsable. The same per-option upload/reset control
+ * (OptionPhotoUploadControl) is also embedded directly in the Product
+ * Design tab's own Add/Edit Attribute modal, so a brand-new option doesn't
+ * need a separate trip here just to get its first photo.
  */
 export function OptionReferenceImagesPanel() {
   const [rows, setRows] = useState<ReferenceImageRow[] | null>(null);
   const [search, setSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [busyValue, setBusyValue] = useState<string | null>(null);
-  const fileInputs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const reload = async () => {
     const body = await parseJson(await fetch("/api/v1/ai-designer/product-design-attributes/reference-images"));
@@ -49,41 +50,6 @@ export function OptionReferenceImagesPanel() {
     if (!q) return rows ?? [];
     return (rows ?? []).filter((r) => r.optionValue.toLowerCase().includes(q));
   }, [rows, search]);
-
-  const handleUpload = async (optionValue: string, file: File) => {
-    setBusyValue(optionValue);
-    setError(null);
-    try {
-      const formData = new FormData();
-      formData.append("optionValue", optionValue);
-      formData.append("file", file);
-      await parseJson(await fetch("/api/v1/ai-designer/product-design-attributes/reference-images", { method: "POST", body: formData }));
-      await reload();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Upload failed.");
-    } finally {
-      setBusyValue(null);
-    }
-  };
-
-  const handleReset = async (optionValue: string) => {
-    setBusyValue(optionValue);
-    setError(null);
-    try {
-      await parseJson(
-        await fetch("/api/v1/ai-designer/product-design-attributes/reference-images", {
-          method: "DELETE",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ optionValue }),
-        })
-      );
-      await reload();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Reset failed.");
-    } finally {
-      setBusyValue(null);
-    }
-  };
 
   if (!rows) return <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>;
 
@@ -114,47 +80,7 @@ export function OptionReferenceImagesPanel() {
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
         {filtered.map((row) => (
-          <div
-            key={row.optionValue}
-            className="flex flex-col items-center gap-1.5 rounded-md border border-zinc-200 p-2.5 text-center dark:border-zinc-800"
-          >
-            <DesignOptionImage value={row.optionValue} overrideAttachmentId={row.attachmentId} />
-            <p className="text-xs font-medium leading-tight text-zinc-900 dark:text-zinc-100">{row.optionValue}</p>
-            {row.attachmentId && <p className="text-[10px] text-indigo-600 dark:text-indigo-400">Custom photo uploaded</p>}
-            <input
-              ref={(el) => {
-                fileInputs.current[row.optionValue] = el;
-              }}
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) void handleUpload(row.optionValue, file);
-                e.target.value = "";
-              }}
-            />
-            <div className="flex gap-2">
-              <button
-                type="button"
-                disabled={busyValue === row.optionValue}
-                onClick={() => fileInputs.current[row.optionValue]?.click()}
-                className="text-xs font-medium text-indigo-600 hover:underline disabled:opacity-50"
-              >
-                {busyValue === row.optionValue ? "Working…" : row.attachmentId ? "Replace" : "Upload"}
-              </button>
-              {row.attachmentId && (
-                <button
-                  type="button"
-                  disabled={busyValue === row.optionValue}
-                  onClick={() => handleReset(row.optionValue)}
-                  className="text-xs font-medium text-zinc-500 hover:underline disabled:opacity-50"
-                >
-                  Reset
-                </button>
-              )}
-            </div>
-          </div>
+          <OptionPhotoUploadControl key={row.optionValue} optionValue={row.optionValue} attachmentId={row.attachmentId} onChanged={reload} />
         ))}
       </div>
     </div>
