@@ -5,7 +5,13 @@ vi.mock("@/core/numbering/DocumentNumberingService", () => ({ generateDocumentNu
 vi.mock("@/core/db/client", () => ({ prisma: { $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn({})) } }));
 vi.mock("./inventory.service", () => ({ getAvailableQuantity: vi.fn(), recordInventoryTransaction: vi.fn() }));
 vi.mock("./stock-movement.repository", () => ({
-  StockMovementRepository: { createWithItems: vi.fn(), findByIdempotencyKey: vi.fn() },
+  StockMovementRepository: {
+    createWithItems: vi.fn(),
+    findByIdempotencyKey: vi.fn(),
+    findMany: vi.fn(),
+    count: vi.fn(),
+    findByIdWithDetails: vi.fn(),
+  },
 }));
 vi.mock("@/modules/products/product.repository", () => ({
   ProductRepository: { findMaterialById: vi.fn() },
@@ -13,13 +19,15 @@ vi.mock("@/modules/products/product.repository", () => ({
 vi.mock("@/modules/lookups/lookup.repository", () => ({
   LookupRepository: { unit: { findUnique: vi.fn() } },
 }));
+vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { getAllowedBranchIds: vi.fn() } }));
 
 const { generateDocumentNumber } = await import("@/core/numbering/DocumentNumberingService");
 const { getAvailableQuantity, recordInventoryTransaction } = await import("./inventory.service");
 const { StockMovementRepository } = await import("./stock-movement.repository");
 const { ProductRepository } = await import("@/modules/products/product.repository");
 const { LookupRepository } = await import("@/modules/lookups/lookup.repository");
-const { createStockMovement } = await import("./stock-movement.service");
+const { PermissionService } = await import("@/core/rbac/PermissionService");
+const { createStockMovement, listStockMovements, getStockMovementById } = await import("./stock-movement.service");
 
 const actor = { companyId: "co-1", userId: "user-1", branchId: "br-1" };
 
@@ -38,6 +46,7 @@ beforeEach(() => {
   vi.mocked(ProductRepository.findMaterialById)
     .mockReset()
     .mockResolvedValue({ id: "mat-1", styleName: "Test Material", baseUom: BASE_UOM } as never);
+  vi.mocked(PermissionService.getAllowedBranchIds).mockReset().mockResolvedValue(null);
 });
 
 describe("createStockMovement", () => {
@@ -279,5 +288,49 @@ describe("createStockMovement", () => {
 
       await expect(createStockMovement(actor, adjustmentInput as never)).rejects.toBe(p2002);
     });
+  });
+});
+
+describe("branch access enforcement (2026-09-15)", () => {
+  const listQuery = { search: "", sortBy: "createdAt", sortOrder: "desc" as const, page: 1, pageSize: 20, skip: 0, take: 20 };
+
+  beforeEach(() => {
+    vi.mocked(StockMovementRepository.findMany).mockReset().mockResolvedValue([]);
+    vi.mocked(StockMovementRepository.count).mockReset().mockResolvedValue(0);
+  });
+
+  it("listStockMovements adds no branch filter for an unrestricted user", async () => {
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(null);
+
+    await listStockMovements(actor, listQuery);
+
+    const whereArg = vi.mocked(StockMovementRepository.findMany).mock.calls[0][0];
+    expect(whereArg).not.toHaveProperty("branchId");
+  });
+
+  it("listStockMovements adds a branchId IN filter for a branch-restricted user", async () => {
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    await listStockMovements(actor, listQuery);
+
+    expect(StockMovementRepository.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ branchId: { in: ["branch-1"] } }),
+      expect.anything()
+    );
+  });
+
+  it("getStockMovementById succeeds for a movement inside the user's allowed branches", async () => {
+    vi.mocked(StockMovementRepository.findByIdWithDetails).mockResolvedValue({ id: "sm-1", branchId: "branch-1" } as never);
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    const result = await getStockMovementById(actor, "sm-1");
+    expect(result.id).toBe("sm-1");
+  });
+
+  it("getStockMovementById throws NOT_FOUND for a movement outside the user's allowed branches", async () => {
+    vi.mocked(StockMovementRepository.findByIdWithDetails).mockResolvedValue({ id: "sm-1", branchId: "branch-2" } as never);
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    await expect(getStockMovementById(actor, "sm-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 });

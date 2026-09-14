@@ -11,7 +11,7 @@ export async function GET(req: NextRequest) {
     await PermissionService.assert(session.user.id, "inventory", "view");
 
     const query = parseListQuery(req.nextUrl.searchParams, "createdAt");
-    const { data, totalCount } = await listMaterialRequests(session.user.companyId, query);
+    const { data, totalCount } = await listMaterialRequests({ companyId: session.user.companyId, userId: session.user.id }, query);
 
     return NextResponse.json({ data, meta: buildListMeta(totalCount, query.page, query.pageSize) });
   } catch (error) {

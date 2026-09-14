@@ -4,6 +4,7 @@ import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingServic
 import { PermissionService } from "@/core/rbac/PermissionService";
 import { prisma } from "@/core/db/client";
 import type { ListQuery } from "@/lib/list-query";
+import { branchScopeWhere } from "@/lib/branch-access";
 import { convertUomQuantity } from "@/lib/uom-conversion";
 import { todayIsoDate } from "@/lib/date";
 import { BomRepository } from "@/modules/bom-mrp/bom.repository";
@@ -235,9 +236,11 @@ async function assertNothingIssuedOrEscalated(materialRequestId: string, action:
   }
 }
 
-export async function listMaterialRequests(companyId: string, query: ListQuery) {
+export async function listMaterialRequests(actor: { companyId: string; userId: string }, query: ListQuery) {
+  const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
   const where: Prisma.MaterialRequestWhereInput = {
-    companyId,
+    companyId: actor.companyId,
+    ...branchScopeWhere(allowedBranchIds),
     ...(query.search ? { requestNumber: { contains: query.search, mode: "insensitive" as const } } : {}),
   };
 
@@ -253,15 +256,21 @@ export async function listMaterialRequests(companyId: string, query: ListQuery) 
   return { data, totalCount };
 }
 
-export async function getMaterialRequestById(companyId: string, id: string) {
-  const request = await MaterialRequestRepository.findByIdWithDetails(companyId, id);
+/** A branch-restricted user gets NOT_FOUND for a request outside their allowed branches — same "deny as not-found" convention used across this app. */
+export async function getMaterialRequestById(actor: { companyId: string; userId: string }, id: string) {
+  const request = await MaterialRequestRepository.findByIdWithDetails(actor.companyId, id);
   if (!request) throw new BusinessRuleError("NOT_FOUND", "Material request not found.", { id });
+
+  const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
+  if (allowedBranchIds !== null && (!request.branchId || !allowedBranchIds.has(request.branchId))) {
+    throw new BusinessRuleError("NOT_FOUND", "Material request not found.", { id });
+  }
 
   const lines = await Promise.all(
     request.lines.map(async (line) => ({
       ...line,
       ...projectLineQuantities(line),
-      availableStockQuantity: await getLineAvailableStock(companyId, request.warehouseId, line),
+      availableStockQuantity: await getLineAvailableStock(actor.companyId, request.warehouseId, line),
     }))
   );
 
@@ -912,7 +921,7 @@ export async function generatePurchaseOrdersForShortfall(
     },
   });
 
-  return { results, skipped, materialRequest: await getMaterialRequestById(actor.companyId, id) };
+  return { results, skipped, materialRequest: await getMaterialRequestById(actor, id) };
 }
 
 export async function closeMaterialRequest(actor: ActorContext, id: string) {
