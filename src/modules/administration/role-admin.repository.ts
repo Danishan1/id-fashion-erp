@@ -53,4 +53,21 @@ export const RoleAdminRepository = {
       prisma.roleProductionStageAccess.deleteMany({ where: { roleId } }),
       prisma.roleProductionStageAccess.createMany({ data: stageIds.map((productionStageId) => ({ roleId, productionStageId })) }),
     ]),
+
+  findActiveBranches: (companyId: string) =>
+    prisma.branch.findMany({
+      where: { companyId, isActive: true },
+      select: { id: true, name: true, code: true },
+      orderBy: { name: "asc" },
+    }),
+
+  findGrantedBranchIds: (roleId: string) => prisma.roleBranchAccess.findMany({ where: { roleId }, select: { branchId: true } }),
+
+  // Same "empty array = unrestricted, not a no-op" contract as
+  // replaceStageAccessInTx above, mirrored for RoleBranchAccess.
+  replaceBranchAccessInTx: (roleId: string, branchIds: string[]) =>
+    prisma.$transaction([
+      prisma.roleBranchAccess.deleteMany({ where: { roleId } }),
+      prisma.roleBranchAccess.createMany({ data: branchIds.map((branchId) => ({ roleId, branchId })) }),
+    ]),
 };

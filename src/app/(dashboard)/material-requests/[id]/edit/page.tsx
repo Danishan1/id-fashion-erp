@@ -8,7 +8,7 @@ export default async function EditMaterialRequestPage({ params }: { params: Prom
   const { id } = await params;
   const session = await auth();
 
-  const request = await getMaterialRequestById(session!.user.companyId, id).catch(() => null);
+  const request = await getMaterialRequestById({ companyId: session!.user.companyId, userId: session!.user.id }, id).catch(() => null);
   if (!request) notFound();
 
   // Matches the service's own real-state guard, applied per line (not to

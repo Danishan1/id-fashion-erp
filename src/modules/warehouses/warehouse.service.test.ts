@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
+vi.mock("@/core/rbac/PermissionService", () => ({
+  PermissionService: { getAllowedBranchIds: vi.fn() },
+}));
 vi.mock("./warehouse.repository", () => ({
   WarehouseRepository: {
     findByCodeInBranch: vi.fn(),
@@ -20,13 +23,16 @@ vi.mock("./warehouse.repository", () => ({
 }));
 
 const { writeAuditLog } = await import("@/core/audit/AuditLogger");
+const { PermissionService } = await import("@/core/rbac/PermissionService");
 const { WarehouseRepository, WarehouseLocationRepository } = await import("./warehouse.repository");
-const { createWarehouse, updateWarehouse, createWarehouseLocation, updateWarehouseLocation } = await import("./warehouse.service");
+const { createWarehouse, updateWarehouse, createWarehouseLocation, updateWarehouseLocation, listWarehouses, getWarehouseById } =
+  await import("./warehouse.service");
 
 const actor = { companyId: "co-1", branchId: "branch-1", userId: "user-1" };
 
 beforeEach(() => {
   vi.mocked(writeAuditLog).mockReset();
+  vi.mocked(PermissionService.getAllowedBranchIds).mockReset().mockResolvedValue(null);
   vi.mocked(WarehouseRepository.findByCodeInBranch).mockReset().mockResolvedValue(null);
   vi.mocked(WarehouseRepository.create)
     .mockReset()
@@ -40,6 +46,60 @@ beforeEach(() => {
   vi.mocked(WarehouseLocationRepository.create).mockReset().mockResolvedValue({ id: "loc-1" } as never);
   vi.mocked(WarehouseLocationRepository.update).mockReset().mockResolvedValue({ id: "loc-1" } as never);
   vi.mocked(WarehouseLocationRepository.findByIdWithWarehouse).mockReset();
+  vi.mocked(WarehouseRepository.findMany).mockReset().mockResolvedValue([]);
+  vi.mocked(WarehouseRepository.count).mockReset().mockResolvedValue(0);
+});
+
+describe("branch access enforcement (2026-09-15)", () => {
+  const listQuery = { search: "", sortBy: "name", sortOrder: "asc" as const, page: 1, pageSize: 20, skip: 0, take: 20 };
+
+  it("listWarehouses applies no branch filter for an unrestricted user", async () => {
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(null);
+
+    await listWarehouses({ companyId: "co-1", userId: "user-1" }, listQuery);
+
+    expect(WarehouseRepository.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ companyId: "co-1" }),
+      expect.anything()
+    );
+    const whereArg = vi.mocked(WarehouseRepository.findMany).mock.calls[0][0];
+    expect(whereArg).not.toHaveProperty("branchId");
+  });
+
+  it("listWarehouses adds a branchId IN filter for a branch-restricted user", async () => {
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    await listWarehouses({ companyId: "co-1", userId: "user-1" }, listQuery);
+
+    expect(WarehouseRepository.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ companyId: "co-1", branchId: { in: ["branch-1"] } }),
+      expect.anything()
+    );
+  });
+
+  it("getWarehouseById succeeds for a warehouse inside the user's allowed branches", async () => {
+    vi.mocked(WarehouseRepository.findByIdWithLocations).mockResolvedValue({ id: "wh-1", companyId: "co-1", branchId: "branch-1" } as never);
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    const result = await getWarehouseById({ companyId: "co-1", userId: "user-1" }, "wh-1");
+    expect(result.id).toBe("wh-1");
+  });
+
+  it("getWarehouseById throws NOT_FOUND for a warehouse outside the user's allowed branches", async () => {
+    vi.mocked(WarehouseRepository.findByIdWithLocations).mockResolvedValue({ id: "wh-1", companyId: "co-1", branchId: "branch-2" } as never);
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    await expect(getWarehouseById({ companyId: "co-1", userId: "user-1" }, "wh-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("createWarehouse is blocked when the actor's own branch isn't in their allowed set", async () => {
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["some-other-branch"]));
+
+    await expect(
+      createWarehouse(actor, { code: "WH-NEW", name: "New Warehouse", type: ["FABRIC"], isActive: true })
+    ).rejects.toMatchObject({ code: "BRANCH_ACCESS_DENIED" });
+    expect(WarehouseRepository.create).not.toHaveBeenCalled();
+  });
 });
 
 describe("createWarehouse — staged Storage Locations (2026-09-02)", () => {

@@ -24,6 +24,8 @@ vi.mock("./goods-receipt.repository", () => ({
     findByIdempotencyKey: vi.fn(),
     createWithItemsAndRolls: vi.fn(),
     updateStatusInTx: vi.fn(),
+    findMany: vi.fn(),
+    count: vi.fn(),
   },
   GoodsReceiptItemRepository: {
     findByIdWithContext: vi.fn(),
@@ -31,6 +33,7 @@ vi.mock("./goods-receipt.repository", () => ({
     findManyByReceiptIdInTx: vi.fn(),
   },
 }));
+vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { getAllowedBranchIds: vi.fn() } }));
 vi.mock("./purchase-order.repository", () => ({
   PurchaseOrderRepository: { findByIdWithDetails: vi.fn(), updateStatusInTx: vi.fn() },
   PurchaseOrderItemRepository: {
@@ -45,7 +48,8 @@ const { MaterialRequestItemRepository } = await import("@/modules/inventory/mate
 const { FabricRollRepository } = await import("./fabric-roll.repository");
 const { GoodsReceiptRepository, GoodsReceiptItemRepository } = await import("./goods-receipt.repository");
 const { PurchaseOrderRepository, PurchaseOrderItemRepository } = await import("./purchase-order.repository");
-const { createGoodsReceipt, reverseGoodsReceiptLine } = await import("./goods-receipt.service");
+const { PermissionService } = await import("@/core/rbac/PermissionService");
+const { createGoodsReceipt, reverseGoodsReceiptLine, listGoodsReceipts, getGoodsReceiptById } = await import("./goods-receipt.service");
 
 const actor = { companyId: "co-1", userId: "user-1", branchId: "br-1" };
 const BASE_UOM = { id: "uom-1", name: "MTR", baseUnitId: null, conversionFactor: 1 };
@@ -99,6 +103,7 @@ beforeEach(() => {
   vi.mocked(PurchaseOrderItemRepository.incrementReceived).mockReset().mockResolvedValue({ count: 1 } as never);
   vi.mocked(PurchaseOrderItemRepository.guardedDecrementReceived).mockReset().mockResolvedValue(1 as never);
   vi.mocked(PurchaseOrderItemRepository.findManyForStatusRecompute).mockReset().mockResolvedValue([{ orderedQuantity: 100, receivedQuantity: 50 }] as never);
+  vi.mocked(PermissionService.getAllowedBranchIds).mockReset().mockResolvedValue(null);
 });
 
 describe("createGoodsReceipt", () => {
@@ -406,5 +411,56 @@ describe("reverseGoodsReceiptLine", () => {
 
     expect(PurchaseOrderRepository.updateStatusInTx).toHaveBeenCalledWith(expect.anything(), "po-1", { status: "SENT_TO_SUPPLIER" });
     expect(GoodsReceiptRepository.updateStatusInTx).toHaveBeenCalledWith(expect.anything(), "gr-1", "CANCELLED");
+  });
+});
+
+describe("branch access enforcement (2026-09-15)", () => {
+  const listQuery = { search: "", sortBy: "createdAt", sortOrder: "desc" as const, page: 1, pageSize: 20, skip: 0, take: 20 };
+
+  beforeEach(() => {
+    vi.mocked(GoodsReceiptRepository.findMany).mockReset().mockResolvedValue([]);
+    vi.mocked(GoodsReceiptRepository.count).mockReset().mockResolvedValue(0);
+  });
+
+  it("listGoodsReceipts adds no branch filter for an unrestricted user", async () => {
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(null);
+
+    await listGoodsReceipts(actor, listQuery);
+
+    const whereArg = vi.mocked(GoodsReceiptRepository.findMany).mock.calls[0][0];
+    expect(whereArg).not.toHaveProperty("branchId");
+  });
+
+  it("listGoodsReceipts adds a branchId IN filter for a branch-restricted user", async () => {
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    await listGoodsReceipts(actor, listQuery);
+
+    expect(GoodsReceiptRepository.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ branchId: { in: ["branch-1"] } }),
+      expect.anything()
+    );
+  });
+
+  it("getGoodsReceiptById succeeds for a receipt inside the user's allowed branches", async () => {
+    vi.mocked(GoodsReceiptRepository.findByIdWithDetails).mockResolvedValue({ id: "gr-1", branchId: "branch-1" } as never);
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    const result = await getGoodsReceiptById(actor, "gr-1");
+    expect(result.id).toBe("gr-1");
+  });
+
+  it("getGoodsReceiptById throws NOT_FOUND for a receipt outside the user's allowed branches", async () => {
+    vi.mocked(GoodsReceiptRepository.findByIdWithDetails).mockResolvedValue({ id: "gr-1", branchId: "branch-2" } as never);
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    await expect(getGoodsReceiptById(actor, "gr-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("getGoodsReceiptById throws NOT_FOUND for a receipt with no branchId when the user is restricted", async () => {
+    vi.mocked(GoodsReceiptRepository.findByIdWithDetails).mockResolvedValue({ id: "gr-1", branchId: null } as never);
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    await expect(getGoodsReceiptById(actor, "gr-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 });

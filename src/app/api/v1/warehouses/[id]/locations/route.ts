@@ -10,7 +10,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     await PermissionService.assert(session.user.id, "masters_core", "view");
 
     const { id } = await params;
-    const locations = await listWarehouseLocations(session.user.companyId, id);
+    const locations = await listWarehouseLocations({ companyId: session.user.companyId, userId: session.user.id }, id);
 
     return NextResponse.json({ data: locations });
   } catch (error) {

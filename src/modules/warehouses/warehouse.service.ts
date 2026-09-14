@@ -1,13 +1,20 @@
 import type { Prisma } from "@prisma/client";
 import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
+import { PermissionService } from "@/core/rbac/PermissionService";
 import type { ListQuery } from "@/lib/list-query";
+import { assertBranchAccess, branchScopeWhere } from "@/lib/branch-access";
 import type { WarehouseInput, WarehouseUpdateInput, WarehouseLocationInput, WarehouseLocationUpdateInput } from "./warehouse.schema";
 import { WarehouseLocationRepository, WarehouseRepository } from "./warehouse.repository";
 
 interface ActorContext {
   companyId: string;
   branchId: string | null;
+  userId: string;
+}
+
+interface ReadActorContext {
+  companyId: string;
   userId: string;
 }
 
@@ -20,9 +27,11 @@ function resolveMaterialCategoryOther(materialCategory: string | null, other: st
   return other || null;
 }
 
-export async function listWarehouses(companyId: string, query: ListQuery) {
+export async function listWarehouses(actor: ReadActorContext, query: ListQuery) {
+  const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
   const where = {
-    companyId,
+    companyId: actor.companyId,
+    ...branchScopeWhere(allowedBranchIds),
     ...(query.search
       ? {
           OR: [
@@ -41,9 +50,16 @@ export async function listWarehouses(companyId: string, query: ListQuery) {
   return { data, totalCount };
 }
 
-export async function getWarehouseById(companyId: string, id: string) {
-  const warehouse = await WarehouseRepository.findByIdWithLocations(companyId, id);
+/** A branch-restricted user gets NOT_FOUND for a warehouse outside their allowed branches — same "deny as not-found" convention already used elsewhere in this app for permission-based denial, never revealing that the record exists at all to someone who can't see it. */
+export async function getWarehouseById(actor: ReadActorContext, id: string) {
+  const warehouse = await WarehouseRepository.findByIdWithLocations(actor.companyId, id);
   if (!warehouse) throw new BusinessRuleError("NOT_FOUND", "Warehouse not found.", { id });
+
+  const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
+  if (allowedBranchIds !== null && (!warehouse.branchId || !allowedBranchIds.has(warehouse.branchId))) {
+    throw new BusinessRuleError("NOT_FOUND", "Warehouse not found.", { id });
+  }
+
   return warehouse;
 }
 
@@ -51,6 +67,7 @@ export async function createWarehouse(actor: ActorContext, input: WarehouseInput
   if (!actor.branchId) {
     throw new BusinessRuleError("VALIDATION_ERROR", "Your account has no default branch assigned.");
   }
+  await assertBranchAccess(actor, actor.branchId);
 
   const existing = await WarehouseRepository.findByCodeInBranch(actor.branchId, input.code);
   if (existing) {
@@ -120,7 +137,7 @@ export async function createWarehouse(actor: ActorContext, input: WarehouseInput
 }
 
 export async function setWarehouseActiveStatus(actor: ActorContext, id: string, isActive: boolean) {
-  const before = await getWarehouseById(actor.companyId, id);
+  const before = await getWarehouseById(actor, id);
   const updated = await WarehouseRepository.update(id, { isActive });
 
   await writeAuditLog({
@@ -137,7 +154,7 @@ export async function setWarehouseActiveStatus(actor: ActorContext, id: string, 
 }
 
 export async function updateWarehouse(actor: ActorContext, id: string, input: WarehouseUpdateInput) {
-  const before = await getWarehouseById(actor.companyId, id);
+  const before = await getWarehouseById(actor, id);
 
   const data: Prisma.WarehouseUncheckedUpdateInput = {};
   if (input.code !== undefined) data.code = input.code;
@@ -160,8 +177,8 @@ export async function updateWarehouse(actor: ActorContext, id: string, input: Wa
   return updated;
 }
 
-export async function listWarehouseLocations(companyId: string, warehouseId: string) {
-  await getWarehouseById(companyId, warehouseId);
+export async function listWarehouseLocations(actor: ReadActorContext, warehouseId: string) {
+  await getWarehouseById(actor, warehouseId);
   return WarehouseLocationRepository.findMany(warehouseId);
 }
 
@@ -182,7 +199,7 @@ export async function createWarehouseLocation(
   warehouseId: string,
   input: WarehouseLocationInput
 ) {
-  await getWarehouseById(actor.companyId, warehouseId);
+  await getWarehouseById(actor, warehouseId);
 
   const existing = await WarehouseLocationRepository.findByCode(warehouseId, input.code);
   if (existing) {
