@@ -55,7 +55,7 @@ export const NAV_SECTIONS: NavSection[] = [
     modules: ["ai_designer"],
     children: [
       { label: "Dashboard", href: "/ai-designer", modules: ["ai_designer"] },
-      { label: "Projects", href: "/ai-designer/projects", modules: ["ai_designer"] },
+      { label: "Catalogue Designs", href: "/ai-designer/projects", modules: ["ai_designer"] },
       { label: "Replicate Design", href: "/ai-designer/replicate", modules: ["ai_designer"] },
     ],
   },
