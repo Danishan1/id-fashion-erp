@@ -6,6 +6,7 @@ import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { PRODUCT_CATEGORIES_BY_CUSTOMER } from "@/core/ai-designer/catalogs/customer-catalog";
+import { OptionPhotoUploadControl } from "./OptionPhotoUploadControl";
 
 interface AttributeRow {
   id: string;
@@ -51,10 +52,24 @@ export function ProductDesignAttributesPanel() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [pendingToggle, setPendingToggle] = useState<AttributeRow | null>(null);
+  // { optionValue -> attachmentId } for whichever options already have an
+  // uploaded photo override — fetched once so the Add/Edit modal's own
+  // per-option photo controls (below the Options textarea) can show
+  // Upload/Replace correctly without a separate round-trip per option.
+  const [referenceImages, setReferenceImages] = useState<Record<string, string>>({});
 
   const reload = async () => {
     const body = await parseJson(await fetch("/api/v1/ai-designer/product-design-attributes"));
     setAttributes(body.data);
+  };
+
+  const reloadReferenceImages = async () => {
+    const body = await parseJson(await fetch("/api/v1/ai-designer/product-design-attributes/reference-images"));
+    const map: Record<string, string> = {};
+    for (const row of body.data ?? []) {
+      if (row.attachmentId) map[row.optionValue] = row.attachmentId;
+    }
+    setReferenceImages(map);
   };
 
   useEffect(() => {
@@ -62,6 +77,19 @@ export function ProductDesignAttributesPanel() {
       .then(parseJson)
       .then((body) => setAttributes(body.data))
       .catch((e) => setError(e.message));
+  }, []);
+
+  useEffect(() => {
+    fetch("/api/v1/ai-designer/product-design-attributes/reference-images")
+      .then(parseJson)
+      .then((body) => {
+        const map: Record<string, string> = {};
+        for (const row of body.data ?? []) {
+          if (row.attachmentId) map[row.optionValue] = row.attachmentId;
+        }
+        setReferenceImages(map);
+      })
+      .catch(() => setReferenceImages({}));
   }, []);
 
   const groups = useMemo(() => {
@@ -271,6 +299,26 @@ export function ProductDesignAttributesPanel() {
             />
             <p className="mt-1 text-xs text-zinc-400">Comma or newline separated.</p>
           </FormField>
+
+          {parseOptions(form.optionsText).length > 0 && (
+            <div>
+              <p className="mb-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-300">Reference Photos (optional)</p>
+              <p className="mb-2 text-xs text-zinc-400">
+                Upload a real photo per option now, or leave blank to use the AI-generated photo (or clipart icon).
+              </p>
+              <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                {parseOptions(form.optionsText).map((opt) => (
+                  <OptionPhotoUploadControl
+                    key={opt}
+                    optionValue={opt}
+                    attachmentId={referenceImages[opt] ?? null}
+                    onChanged={() => void reloadReferenceImages()}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
           <button
             type="button"
             disabled={busy || !form.categoryName.trim() || !form.attributeLabel.trim() || !parseOptions(form.optionsText).length || (!editingId && !form.attributeKey.trim())}
