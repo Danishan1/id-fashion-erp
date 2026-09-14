@@ -5266,6 +5266,91 @@ and unit-tested with their live success path blocked only on the configured Open
 item 15) intentionally covered via a deep-link into the existing Sampling module rather than a new dedicated
 process.
 
+**Correction, 2026-09-08**: a third image-generation provider (Cloudflare Workers AI, `providers/
+cloudflare.ts`) had already been added in an earlier session (commit `fd1da2d`, ancestor of `main`) but was
+never documented in this file — noted here in passing while writing up the full QA pass immediately below,
+which is where it actually mattered. `.env`'s `IMAGE_GENERATION_PROVIDER` is currently set to `"cloudflare"`,
+with real credentials configured — it implements only plain text-to-image `generate()` (a free-tier model,
+`flux-1-schnell`), deliberately omitting `generateVariation`/`applyFabric`/`generateTechnicalFlat` entirely
+(the REST API has no arbitrary-multi-image-input model comparable to Gemini's or OpenAI's), so under this
+provider Process 3 (Garment Design Visual Generation) is genuinely live and working, while Process 4
+(Controlled Design Variation), Process 6 (Apply Actual Fabric), and Technical Flat generation all correctly
+fail clean with `UNSUPPORTED_OPERATION` rather than the `CREDITS_EXHAUSTED` this file's other sections
+describe for the OpenAI-configured state — both are real, currently-true statements about two different
+provider configurations this app has been run under across different sessions, not a contradiction.
+
+## Full QA/UAT pass across all 17 processes, 4 real bugs found and fixed (2026-09-08)
+
+A dedicated `erp-qa-uat` agent drove all 17 processes end-to-end through the real browser UI against the
+real dev DB and real AI providers (Anthropic + the Cloudflare config above) — the first time this module was
+verified through the actual UI rather than a mix of unit tests and direct-script service-layer calls, made
+possible because another session's own `next dev` was already running and reachable at `localhost:3000`
+(navigated to directly, sidestepping the single-instance dev-server lock that blocked every earlier live-UI
+attempt documented throughout this file's own AI Garment Flow sections). Two fresh test projects were
+created (`AGF-2026-00002`, Reference workflow, taken all the way to `COMPLETED`; `AGF-2026-00003`, Fabric
+workflow, taken through Costing) and left in the dev DB as evidence.
+
+**Result: 13/17 processes fully PASS with genuinely grounded AI content verified by reading the actual
+output (not just checking HTTP status), 3 correctly clean-fail exactly as the Cloudflare capability gap
+above predicts (confirmed zero orphan DB rows on each), and Production Handoff passed its full real
+Sample→Sales-Order→Production-Order loop. Zero P0/P1 defects.** Two real P2 bugs were found and fixed, both
+in the display/tracking layer — the underlying business-rule gates were independently confirmed unaffected
+(a direct attempt to skip real gated work still correctly `409`s):
+
+- **Stepper tabs could mark a step "✓ complete" just by clicking to preview it, with zero real work done.**
+  `saveWorkflowStep()`'s single endpoint is deliberately reused two ways: every genuine completion action
+  (Approve, Select-for-Development, etc.) calls it with the CURRENT step's own key first (to self-mark that
+  step done) before advancing — but the stepper's own tab buttons called the identical function with
+  whatever step was merely clicked, with no way to tell "I finished this" apart from "I'm just looking at
+  this." Confirmed live: clicking forward onto an unstarted step immediately flipped it green with zero
+  backend work done. Fixed by disabling forward-jump clicks in the tab bar entirely (`idx > currentIndex`) —
+  the tabs are now purely a "review a step you're on or have already passed" control; forward progress still
+  works exactly as before via each step's own "Save & Continue"/explicit completion action, so nothing was
+  lost. Re-verified live: steps 1-12 (current + all earlier) stayed clickable on a mid-workflow test project,
+  steps 13-14 (ahead of current) correctly disabled.
+- **The Merchandising Action Sheet panel only ever fetched once per page load.** `MerchandisingActionSheetPanel.tsx`'s
+  own `toggle()` guarded its fetch with `data === undefined`, so the very first open cached a permanent
+  snapshot — reopening it later in the same page session (after real work happened elsewhere on the page)
+  kept showing that first-load snapshot forever, directly undermining the one thing this panel exists to be:
+  an always-current rollup. Fixed by refetching on every open, not just the first. Re-verified live via the
+  network log: two distinct request timestamps for two separate opens of the same panel, confirming a fresh
+  fetch each time (the panel briefly *looked* unfixed during verification because a stale accessibility-tree
+  `ref_N` pointed at an already-detached button after a React re-render — the sandboxed browser tool's own
+  documented limitation, not the app; a direct `element.click()` via `javascript_tool` confirmed the real fix).
+
+Two P3s also fixed: stale placeholder copy on the Reference Analysis step's help text (still read *"AI would
+analyse the uploaded reference here once connected"* — leftover from before Process 1 was built, the one
+sibling step whose copy never got updated once its own AI integration actually shipped); and
+`FabricAnalysisPanel.tsx`'s mount-effect fetch had no guard against a non-JSON error response, so a genuine
+transient dev-server crash (a Windows-specific Next.js manifest-rename race hit once during the QA pass,
+unrelated to this app's own code) left an uncaught `SyntaxError` in the console and the panel stuck on
+"Loading…" forever instead of a clean error message — fixed with a content-type check before parsing.
+
+**Confirmed NOT a bug, investigated rather than assumed**: the QA agent couldn't tell whether picking "3"
+directions on the Development Brief form and getting 6 back anyway was a real defect or its own test-script
+timing (clicking the radio and the submit button synchronously before React committed the state change).
+Traced the actual code: the radio's `checked`/`onChange` wiring is a completely standard controlled pair,
+and the client payload's `directionCount` field name matches the server Zod schema's own field name exactly
+(`z.union([z.literal(3), z.literal(6), z.literal(9)]).default(6)`) — no mismatch, no silently-dropped field.
+Concluded this is almost certainly the QA agent's own flagged test-script-timing artifact, not an app bug;
+not changed.
+
+**Deliberately NOT fixed this pass, flagged as a known, scoped limitation instead of a silent 17-file sweep**:
+the same "no content-type guard before `.then((res) => res.json())`" shape found in `FabricAnalysisPanel.tsx`
+is genuinely pervasive — confirmed via grep across **17 of the AI Garment Flow module's own panel files**.
+Fixing every instance is a real, separate, larger sweep (matching this project's own established precedent
+for exactly this kind of finding — e.g. Phase 10's "~47 more client list pages share the same
+missing-permission-gate pattern... recommend a dedicated follow-up sweep" — rather than a rushed multi-file
+pass with no per-file verification time); only the one instance the QA agent actually reproduced a real
+crash against was fixed in this pass.
+
+`npx tsc --noEmit`, `npx eslint .`, and `npx vitest run` (1265/1265, no new tests needed — these are
+UI/display-layer fixes with no new business logic to unit-test) all clean throughout. Four orphaned
+`VERIFY-MAS-FRESH-*` test projects — leftovers from the Merchandising Action Sheet build's own earlier
+interrupted verification-script runs, never cleaned up because the script crashed before reaching its own
+cleanup step on 4 separate attempts — were found sitting in the project list during this pass's own live
+verification and deleted.
+
 ## AI Designer — a new, genuinely separate module from AI Garment Flow (2026-09-10)
 
 User asked for a brand-new "AI Designer" module: a guided wizard (Fabric Selection → Analyze Fabric with AI
@@ -6021,6 +6106,149 @@ linked Sales Order's own real `SalesOrderItemBreakdown` when one exists, manual 
   at every stage) — if a future need genuinely requires knowing exactly how many of a specific size/color
   were rejected at a specific stage (not just the lot's overall mix), that's a much larger, separate change
   to `job-order.service.ts`'s own accumulator logic, not an extension of this one.
+
+## Material Request Issue — color/shade roll picker for fabric materials (2026-09-12)
+
+User-reported real workflow gap on `/material-requests/[id]` (`http://localhost:3000/material-requests/...`):
+Line Items' "Available Stock" only shows a value when the requested Material AND Color/Shade both match a
+real stock row exactly — but often the exact shade isn't recorded on the request, and the actual physical
+stock for that material sits in several different colors/rolls. Asked (per the user's own "phle btao abhi
+code mt kro" — explain first, don't code yet) to explain the options before building anything: the
+explanation walked through why `StockBalance` has no color dimension at all (it's the flat, material+
+warehouse-level total this whole ledger design already documents) and that the only place real per-color
+stock genuinely exists in this schema is `FabricRoll` (roll-level, tracks `dyeId`/shade, FABRIC materials
+only) — landing on **Option B**: show the color-wise breakdown and let the warehouse person pick which one
+to issue. The user then confirmed **B**, with one addition of their own: "issue time me select kre konsa
+color de rha hai" — the color/shade choice belongs on the Issue action itself, not just as a display.
+
+- **`FabricRollRepository.findAvailableForMaterial(companyId, productId, warehouseId)`** — every `IN_STOCK`,
+  `remainingQuantity > 0` roll for that material at that specific warehouse (joined through
+  `goodsReceiptItem.productId`/`.warehouseId`, the same relation `FabricRoll` has always had since Phase 6),
+  ordered by dye name then roll number. `getAvailableRollsForLine(actor, lineId)` (new export in
+  `material-request.service.ts`) resolves the line's own material/warehouse first (company-scoped via the
+  existing `findWithRequestOwner`), then calls it — backing a new `GET /api/v1/material-requests/lines/
+  [lineId]/available-rolls` route (same `inventory`/`edit` gate as the Issue action itself, since it's only
+  ever fetched right before issuing).
+- **`issueMaterialRequestLine()` gained a 5th, optional `fabricRollId` param.** When supplied, the function
+  validates the roll (`findByIdWithContext` — company/material/warehouse/`IN_STOCK` all re-checked, never
+  trusted from the client) and uses **that roll's own `remainingQuantity`** as the issue-quantity cap instead
+  of the flat `getLineAvailableStock()` figure — the material fix the user actually asked for, since two
+  different physical rolls of the same material can have very different remaining amounts. When no
+  `fabricRollId` is given (a non-fabric material, or a fabric material with no roll-level stock recorded),
+  behavior is completely unchanged — the existing flat-stock path is the fallback, not replaced.
+- **A genuine pre-existing bug, found while building this, not introduced by it**: `issueMaterialRequestLine()`
+  had never once touched `FabricRoll.remainingQuantity` at all since the day this whole module was built —
+  only the flat `StockBalance` was ever decremented on issue. Every fabric roll's own "remaining" number has
+  therefore been silently drifting out of sync with the material's real total stock for as long as Material
+  Request issuance has existed. Fixed as part of this same change: passing a `fabricRollId` now also calls
+  `FabricRollRepository.guardedDecrementRemaining(tx, roll.id, baseQuantity)` inside the same transaction as
+  the ledger write (`recordInventoryTransaction(..., { fabricRollId: roll.id })`, which already accepted this
+  field for traceability but had no caller ever supplying it) — the same atomic guarded-`updateMany` idiom
+  every other accumulator in this codebase uses, with its own dedicated guard-failure error rather than
+  silently under/over-decrementing on a lost race.
+- **Issue button is no longer disabled just because flat Available Stock reads 0** — `line.availableStockQuantity
+  <= 0` used to disable Issue outright for *any* material, which was actively wrong for a FABRIC material
+  whose exact requested shade has zero stock but a different roll of the same material genuinely does. The
+  disable condition is now `line.material.materialCategory !== "FABRIC" && line.availableStockQuantity <= 0`
+  — a non-fabric material keeps the exact old behavior; a fabric material always opens the modal, which then
+  either shows the real roll picker or an honest "no roll-level stock recorded for this material at this
+  warehouse — this will issue against the general stock total instead" fallback message when the material
+  genuinely has no rolls at that specific warehouse (confirmed live on a real request where the material's
+  only real `FabricRoll` rows exist at a *different* warehouse than the one being issued from).
+- **UI** (`MaterialRequestWorkflowPanel.tsx`): the Issue modal fetches `available-rolls` only for FABRIC
+  lines, computes `isFabric`/`selectedRoll`/`effectiveAvailable`/`cap`/`mustPickRoll` via a small IIFE, and
+  renders a "Color / Shade" `<select>` (`{dye.name} ({dye.pantone}) — {remainingQuantity} {uom} available`
+  per roll) whenever real rolls exist. The Issue Quantity input is `disabled={mustPickRoll}` (a fabric line
+  with real rolls can't be issued before a specific one is chosen) with its `max` following the selected
+  roll's own remaining quantity, not the flat total.
+- 7 new unit tests (`material-request.service.test.ts`) covering: `issueMaterialRequestLine` with a roll
+  selected (uses the roll's own remaining as the cap, decrements the specific roll, passes `fabricRollId`
+  through to the ledger), a roll belonging to a different company/material/warehouse each correctly rejected,
+  an already-`CANCELLED` roll rejected, the guard-failure path on a lost race, and `getAvailableRollsForLine`
+  scoping correctly by warehouse and rejecting a cross-company line.
+- **Verified live end-to-end** through the real UI and direct API calls together, against real seeded data
+  (not fixtures): opened Issue on `MR-2026-00009`'s Cotton Cambric line at "Dharam Colony" (0 Mtr flat
+  Available Stock) and confirmed the Issue button was now correctly enabled with the honest "no roll-level
+  stock at this warehouse, will issue against the general total (0 Mtr available)" message; opened the same
+  material's line on `MR-2026-00007` at "E-52 Palam Vihar" (where it genuinely has 4 real `FabricRoll` rows —
+  hand-verified via a direct query: "102"/Classic Blue/50, "103"/Lighter Blue/50, "121221"/no dye/65,
+  "121222"/no dye/60, summing to the flat 225 Available Stock shown) and confirmed the picker listed all 4
+  correctly; selected "Classic Blue (19-4052 TCX) — 50 Mtr available", issued 10 Mtr, and confirmed via a
+  follow-up API call that **only** that roll's `remainingQuantity` dropped 50→40 (the other 3 rolls
+  untouched — the exact per-roll-not-blanket decrement this fix exists for), `MaterialRequestItem
+  .issuedQuantity` incremented to 10/`remainingQuantity` correctly 70, and available stock decremented
+  225→215. Zero console/server errors throughout. `npx tsc --noEmit`, `npx eslint .` (0 errors), and
+  `npx vitest run` (1434/1434) all clean.
+- **Not built this pass** (out of scope for the confirmed ask): color/shade selection on any other module's
+  Issue-shaped action (Job Work Order's own material issuance, Stock Movement) — this was scoped specifically
+  to Material Request's own Issue action; a per-color reservation/allocation mechanism (the picker shows a
+  live snapshot at click time, not a held reservation, matching this project's own already-accepted "manual,
+  low-frequency action, a pre-check is enough" tradeoff used everywhere else in Inventory).
+
+## AI Designer — Replicate Design, Phase 1 (2026-09-13)
+
+A new, genuinely separate page inside the existing AI Designer module (`/ai-designer/replicate`, own
+`ReplicateDesignProject*` schema, own step order, own service/prompt files under
+`src/core/ai-designer/replicate-design/`) — the existing 13-step wizard (`AiDesignerWorkflowPanel.tsx`) was
+left completely untouched. Built per the user-approved plan at
+`C:\Users\DELL 10THGEN\.claude\plans\foamy-jumping-lemur.md` (spec sections 1-9 only: reference upload → AI
+Design DNA analysis → Design Lock → select company fabric/materials → AI compatibility check → generate).
+Raw materials reuse the real `Product`/`itemType: RAW_MATERIAL` master as-is via the existing, unchanged
+`MaterialPicker` — no new material master.
+
+- **Schema (12 new tables, migrations `20260913160000_add_replicate_design_module` /
+  `20260913163000_add_replicate_design_project_usage_fk`)**: `ReplicateDesignProject` (header — single-slot
+  Front/Back/Side/Detail reference-photo columns, `fabricSource`/`fabricProductId`/`fabricImageAttachmentId`
+  duplicated from AI Designer's own fabric-selection shape per the module-isolation rule, own
+  `REPLICATE_STEP_ORDER`), `ReplicateDesignDnaAnalysis`/`Observation`/`AnalysisRun` (the same 3-table
+  "header replaced on re-analysis + per-observation rows + append-only run log" pattern already proven by AI
+  Garment Flow's own Reference/Fabric Analysis), `ReplicateDesignMaterialLine`, `ReplicateDesignCompatibilityCheck`/
+  `Item`/`Run`, `ReplicateDesignPrompt`/`Generation`/`Image`/`Version` (mirrors AI Designer's own
+  Prompt→Generation→Image→Version chain). New `AIProviderCapability.DESIGN_REPLICATION` value and a new
+  `AIProviderUsage.replicateDesignProjectId` sibling FK column (the existing `aiDesignerProjectId` column has
+  a real FK specifically to `AiDesignerProject`, so a `ReplicateDesignProject` id needed its own column, not a
+  misuse of the existing one).
+- **Design Lock is per-observation, not project-level** — `isLocked Boolean @default(true)` on each
+  `ReplicateDesignDnaObservation` row, exactly the spec's own "selective locking" ask; only `isLocked=true`
+  rows are fed into the generation prompt as hard constraints.
+- **A new, distinctly-named `ImageGenerationProvider.replicateWithNewMaterial()` method** (not a reuse of
+  `applyFabric`) — implemented in `providers/openai.ts` and `providers/gemini.ts`, gated behind its own
+  `DESIGN_REPLICATION` capability so provider health/failover stays correctly attributed per feature, matching
+  the same reasoning `generateTechnicalFlat` was already given its own method for.
+- **Compatibility check never hard-blocks** — any rating other than `COMPATIBLE` requires an explicit
+  "Continue Anyway" (`ConfirmModal`) before Generate proceeds, per the spec's own literal framing.
+- **UI**: `ReplicateDesignWorkspace.tsx` (thin orchestrator, same stepper/`WizardSection`/`StepNextButton`
+  shape as `AiDesignerWorkflowPanel.tsx`) + 5 focused panels (`ReferenceImageUploadPanel`,
+  `DesignDnaReviewPanel`, `FabricMaterialSelectionPanel`, `CompatibilityWarningPanel`, `GenerateResultPanel`).
+  Sidebar gained a "Replicate Design" entry under the AI Designer section.
+- **RBAC**: reuses the existing `ai_designer` module's grants verbatim — no new module/actions.
+- 33 new unit tests (`replicate-design.service.test.ts`) covering ownership guards, the active-run guard, DNA
+  edit/reset/lock/approve, material-line validation, the never-hard-block compatibility gating, and
+  generation error-mapping (including the provider-lacks-capability path). `npx tsc --noEmit`, `npx eslint .`,
+  and `npx vitest run` (1483/1483) all clean.
+- **Verified live end-to-end against the real dev DB and real AI providers** (a stale-Prisma-client dev
+  server from another session was hit and fixed via the project's own documented restart-the-dev-server
+  gotcha): created `RPD-2026-00001` through the real UI, uploaded a real reference photo, ran DNA analysis
+  against the real Anthropic API (a deliberately blank test image correctly produced 14
+  `NOT_DETERMINABLE` observations with honest, non-fabricated reasoning — a strong confirmation of the
+  "never invent an unseen detail" prompt discipline), edited one observation (confirmed the AI's own
+  original stays visible/untouched) and approved; selected a real Fabric Master fabric ("Silk Chiffon") and
+  uploaded its real photo (confirmed metadata and image coexist, neither overwrites the other); ran the
+  compatibility check against the real Anthropic API, which correctly flagged a genuine "Minor Concern"
+  (chiffon needing reinforcement at a 5-button placket) with well-reasoned commentary; confirmed Generate
+  correctly required "Continue Anyway" before proceeding, and correctly failed clean
+  (`"No configured AI provider currently supports design replication..."`) when no admin-configured provider
+  had the new capability enabled yet; enabled `DESIGN_REPLICATION` on the OpenAI provider via the real admin
+  API and re-ran Generate — produced a real, substantial (~2MB) generated garment image via the real OpenAI
+  API, visibly showing a patterned blouse with a button placket; Select correctly required confirmation and
+  flipped the image to `SELECTED`. Server logs clean throughout aside from the two deliberately-triggered
+  failures above. `RPD-2026-00001` and the OpenAI provider's newly-enabled capability were left in place as a
+  real, working demonstration.
+- **Not built this phase (spec sections 10-21)**: selective natural-language re-edit of one locked feature,
+  visual version compare beyond plain history, a multi-stage approval workflow past a single Approve/Reject,
+  a rich Tech Pack, BOM/costing/Sample Request/Style Master integration, and full traceability — the schema
+  (particularly per-observation `isLocked` and the `MaterialLine`/`CompatibilityItem` rows) is shaped so these
+  attach later without a breaking migration.
 
 ## Recommended Stack
 

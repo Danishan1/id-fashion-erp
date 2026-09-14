@@ -103,15 +103,29 @@ export function FabricAnalysisPanel({ projectId, hasFabricSwatchImage }: { proje
   const [editOpen, setEditOpen] = useState(false);
 
   async function load() {
-    const res = await fetch(`/api/v1/ai-garment-projects/${projectId}/fabric-analysis`);
-    const body = await res.json();
-    if (res.ok) setAnalysis(body.data);
+    try {
+      const res = await fetch(`/api/v1/ai-garment-projects/${projectId}/fabric-analysis`);
+      if (!(res.headers.get("content-type") ?? "").includes("application/json")) {
+        throw new Error("Failed to load the Fabric Analysis.");
+      }
+      const body = await res.json();
+      if (res.ok) setAnalysis(body.data);
+      else setError(body?.error?.message ?? "Failed to load the Fabric Analysis.");
+    } catch {
+      setError("Failed to load the Fabric Analysis. Please reload the page.");
+    }
   }
 
   useEffect(() => {
     fetch(`/api/v1/ai-garment-projects/${projectId}/fabric-analysis`)
-      .then((res) => res.json())
-      .then((body) => setAnalysis(body.data));
+      .then((res) => {
+        if (!(res.headers.get("content-type") ?? "").includes("application/json")) {
+          throw new Error("Failed to load the Fabric Analysis.");
+        }
+        return res.json();
+      })
+      .then((body) => setAnalysis(body.data))
+      .catch(() => setError("Failed to load the Fabric Analysis. Please reload the page."));
   }, [projectId]);
 
   async function runAnalysis() {

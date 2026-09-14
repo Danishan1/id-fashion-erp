@@ -182,6 +182,26 @@ export function createGeminiImageProvider(config: GeminiImageConfig = getGeminiI
       );
     },
 
+    // Same two-image + text call shape as applyFabric — the reference
+    // garment photo and the new material photo are both supplied as
+    // inlineData Parts, and the prompt carries every locked Design DNA
+    // observation as a hard structural constraint.
+    async replicateWithNewMaterial({ prompt, count, referenceImage, materialImage }): Promise<GenerateImagesResult> {
+      return generateSequentially(
+        [
+          {
+            role: "user",
+            parts: [
+              { inlineData: { data: referenceImage.buffer.toString("base64"), mimeType: referenceImage.mimeType } },
+              { inlineData: { data: materialImage.buffer.toString("base64"), mimeType: materialImage.mimeType } },
+              { text: prompt },
+            ],
+          },
+        ],
+        count
+      );
+    },
+
     // Same single-image + text call shape as generateVariation — the fabric
     // photo is the one inlineData Part, and the prompt instructs the model
     // to compose a brand-new garment scene using it as the exact fabric

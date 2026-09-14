@@ -32,6 +32,26 @@ const nextConfig: NextConfig = {
   // default as a DNS-rebinding protection — without this, loading the app
   // from another device's browser via the LAN IP gets a 403 on every chunk.
   allowedDevOrigins: ["192.168.29.215"],
+  async redirects() {
+    return [
+      // AI Designer's "Catalogue Designs" page route was renamed from
+      // /ai-designer/projects (2026-09-14, to match the sidebar label
+      // already renamed from "Projects") — this keeps any existing
+      // bookmark/shared link working rather than silently 404ing. The
+      // underlying API routes (/api/v1/ai-designer/projects/...) are
+      // deliberately untouched — only the browser-facing page path moved.
+      {
+        source: "/ai-designer/projects",
+        destination: "/ai-designer/catalogue-designs",
+        permanent: true,
+      },
+      {
+        source: "/ai-designer/projects/:path*",
+        destination: "/ai-designer/catalogue-designs/:path*",
+        permanent: true,
+      },
+    ];
+  },
   async headers() {
     return [
       {

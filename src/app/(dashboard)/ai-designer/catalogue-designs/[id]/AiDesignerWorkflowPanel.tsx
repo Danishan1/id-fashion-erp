@@ -1,8 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
-import { Modal } from "@/components/ui/Modal";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { MaterialPicker, type MaterialPickerOption } from "@/components/ui/MaterialPicker";
@@ -20,6 +20,7 @@ import { BODY_TYPES, MODEL_GENDERS, POSES } from "@/core/ai-designer/catalogs/mo
 import { FABRIC_FIELD_KEYS, type FabricFieldKey } from "@/modules/ai-designer/ai-designer.schema";
 import { useAiDesignerDisplayMode } from "@/lib/use-ai-designer-display-mode";
 import { STATUS_BADGE_CLASS, STATUS_LABELS, WIZARD_STEP_LABELS, WIZARD_STEP_ORDER } from "../../statusLabels";
+import { AiDesignerTechPackPanel, type TechPackData } from "./AiDesignerTechPackPanel";
 
 const FABRIC_FIELD_LABELS: Record<FabricFieldKey, string> = {
   fabricName: "Fabric Name",
@@ -81,18 +82,10 @@ interface AiDesignerProjectData {
   isCustomEnvironment: boolean;
   secondFabricImageAttachmentId: string | null;
   secondFabricApplyAreas: string[];
+  embellishmentMotifAttachmentId: string | null;
   currentVersion: { currentImage: AiDesignerImageRow } | null;
   versions: { versionNumber: number; changeSummary: string | null; currentImage: AiDesignerImageRow }[];
   fabricProduct: { id: string; styleName: string; styleCode: string } | null;
-}
-
-interface TechPackData {
-  id: string;
-  status: "IN_PROGRESS" | "SUCCESS" | "FAILED";
-  flatSketchImageAttachmentId: string | null;
-  measurementsJson: { points: { pointName: string; howToMeasure: string; toleranceCm: string; values: Record<string, string> }[]; generalNotes: string } | null;
-  bomJson: { items: { materialDescription: string; materialCategory: string; suggestedQuantityPerUnit: number; suggestedUom: string; reasoning: string }[] } | null;
-  errorMessage: string | null;
 }
 
 const SECOND_FABRIC_APPLY_AREA_LABELS: Record<string, string> = {
@@ -100,6 +93,15 @@ const SECOND_FABRIC_APPLY_AREA_LABELS: Record<string, string> = {
   SLEEVES: "Sleeves",
   BORDERS: "Borders / Hem",
   CONTRAST_PANELS: "Contrast Panels",
+};
+
+const EMBELLISHMENT_TYPE_LABELS: Record<string, string> = {
+  DIGITAL_APPLIQUE: "Digital Applique",
+  EMBROIDERY: "Embroidery",
+  SEQUIN_WORK: "Sequin Work",
+  LACE_TRIM: "Lace Trim",
+  BEADWORK: "Beadwork",
+  PATCHWORK: "Patchwork",
 };
 
 function imageUrl(attachmentId: string) {
@@ -190,16 +192,15 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
   const [materials, setMaterials] = useState<MaterialPickerOption[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [editModalOpen, setEditModalOpen] = useState(false);
-  const [editFeature, setEditFeature] = useState("");
-  const [editCurrent, setEditCurrent] = useState("");
-  const [editNew, setEditNew] = useState("");
-  const [editInstructions, setEditInstructions] = useState("");
   const [pendingSelectImage, setPendingSelectImage] = useState<string | null>(null);
   const [generatedImages, setGeneratedImages] = useState<AiDesignerImageRow[]>([]);
   const [secondFabricSelectedAreas, setSecondFabricSelectedAreas] = useState<string[]>([]);
+  const [embellishmentType, setEmbellishmentType] = useState<string>("DIGITAL_APPLIQUE");
+  const [embellishmentInstructions, setEmbellishmentInstructions] = useState("");
   const [techPack, setTechPack] = useState<TechPackData | null>(null);
   const [designAttributes, setDesignAttributes] = useState<DesignAttributeDef[]>([]);
+  const [activeDesignAttrKey, setActiveDesignAttrKey] = useState<string | null>(null);
+  const [optionReferenceImages, setOptionReferenceImages] = useState<Record<string, string>>({});
 
   // Which single wizard step is currently the active "tab" — purely a display
   // concern, has no bearing on the real `currentStep`/`completedSteps` wizard
@@ -276,6 +277,25 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
       .catch(() => setDesignAttributes([]));
   }, [project.productCategory]);
 
+  // Admin-uploaded photo overrides (Masters -> AI Design -> Product Design ->
+  // Reference Photos) — a flat { optionValue -> attachmentId } map fetched
+  // once, company-wide (not per-category), since the same option value's
+  // photo applies everywhere it appears. Missing from this map just means
+  // "no override yet" -- DesignOptionImage falls back to the AI-generated
+  // static photo, then the clipart icon, same as before this existed.
+  useEffect(() => {
+    fetch("/api/v1/ai-designer/product-design-attributes/reference-images")
+      .then((r) => r.json())
+      .then((body) => {
+        const map: Record<string, string> = {};
+        for (const row of body.data ?? []) {
+          if (row.attachmentId) map[row.optionValue] = row.attachmentId;
+        }
+        setOptionReferenceImages(map);
+      })
+      .catch(() => setOptionReferenceImages({}));
+  }, []);
+
   // Deliberately does NOT move `expandedStep` — the panel stays on whatever
   // step the user is currently looking at after any save, even though the
   // reloaded `project.currentStep`/`completedSteps` (driving the checkmarks
@@ -330,6 +350,7 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
   const productCategories = project.targetCustomer ? PRODUCT_CATEGORIES_BY_CUSTOMER[project.targetCustomer] : [];
   const designSelections = project.designSelectionsJson ?? {};
   const designDisplayMode = useAiDesignerDisplayMode();
+  const activeDesignAttr = designAttributes.find((a) => a.key === activeDesignAttrKey) ?? designAttributes[0];
 
   const currentImage = project.currentVersion?.currentImage ?? null;
 
@@ -594,48 +615,75 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
         isOpen={expandedStep === "PRODUCT_DESIGN"}
       >
         {!project.productCategory && <p className="text-xs text-zinc-500">Pick a Product Category first.</p>}
-        <div className="mt-3 space-y-4">
-          {designAttributes.map((attr) => (
-            <div key={attr.key}>
-              <p className="mb-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-300">{attr.label}</p>
-              <div
-                className={
-                  designDisplayMode === "TEXT"
-                    ? "flex flex-wrap gap-2"
-                    : "grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4"
-                }
+
+        {/* Category grid — label-only, no options shown here. Pick one to
+            open its own options panel below, instead of showing every
+            category's full option grid open at once (direct user feedback,
+            matched against a competitor reference: a flat "everything open"
+            layout got long/unwieldy once a category had 15+ attributes). */}
+        <div className="mt-3 flex flex-wrap gap-2">
+          {designAttributes.map((attr) => {
+            const isActive = activeDesignAttr?.key === attr.key;
+            const hasSelection = !!designSelections[attr.key];
+            return (
+              <button
+                key={attr.key}
+                type="button"
+                onClick={() => setActiveDesignAttrKey(attr.key)}
+                className={`rounded-md border px-3 py-1.5 text-xs transition ${
+                  isActive
+                    ? "border-indigo-600 bg-indigo-600 text-white"
+                    : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-900/40"
+                }`}
               >
-                {attr.options.map((opt) => {
-                  const selected = designSelections[attr.key] === opt;
-                  return (
-                    <button
-                      key={opt}
-                      type="button"
-                      aria-pressed={selected}
-                      onClick={() => run("design", () => patchWizard({ designSelections: { [attr.key]: opt } }))}
-                      className={
-                        designDisplayMode === "TEXT"
-                          ? `rounded-md border px-3 py-1.5 text-xs transition ${
-                              selected
-                                ? "border-indigo-600 bg-indigo-600 text-white"
-                                : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-900/40"
-                            }`
-                          : `flex flex-col items-center gap-1.5 rounded-md border px-2 py-3 text-center transition ${
-                              selected
-                                ? "border-indigo-600 bg-indigo-600 text-white"
-                                : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-900/40"
-                            }`
-                      }
-                    >
-                      {designDisplayMode === "CLIPART" && <DesignOptionImage value={opt} />}
-                      <span className="text-xs leading-tight">{opt}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
+                {attr.label}
+                {hasSelection && <span className={isActive ? "ml-1 text-white" : "ml-1 text-indigo-600 dark:text-indigo-400"}>●</span>}
+              </button>
+            );
+          })}
         </div>
+
+        {activeDesignAttr && (
+          <div className="mt-4 rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
+            <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{activeDesignAttr.label}</p>
+            <p className="mb-2 mt-0.5 text-xs text-zinc-500">Choose one option below — it will be used when the design is generated.</p>
+            <div
+              className={
+                designDisplayMode === "TEXT" ? "flex flex-wrap gap-2" : "grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4"
+              }
+            >
+              {activeDesignAttr.options.map((opt) => {
+                const selected = designSelections[activeDesignAttr.key] === opt;
+                return (
+                  <button
+                    key={opt}
+                    type="button"
+                    aria-pressed={selected}
+                    onClick={() => run("design", () => patchWizard({ designSelections: { [activeDesignAttr.key]: opt } }))}
+                    className={
+                      designDisplayMode === "TEXT"
+                        ? `rounded-md border px-3 py-1.5 text-xs transition ${
+                            selected
+                              ? "border-indigo-600 bg-indigo-600 text-white"
+                              : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-900/40"
+                          }`
+                        : `flex flex-col items-center gap-1.5 rounded-md border px-2 py-3 text-center transition ${
+                            selected
+                              ? "border-indigo-600 bg-indigo-600 text-white"
+                              : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-900/40"
+                          }`
+                    }
+                  >
+                    {designDisplayMode === "CLIPART" && (
+                      <DesignOptionImage value={opt} overrideAttachmentId={optionReferenceImages[opt]} />
+                    )}
+                    <span className="text-xs leading-tight">{opt}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
         <StepNextButton step="PRODUCT_DESIGN" onNext={goToNextStep} />
       </WizardSection>
 
@@ -916,158 +964,170 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
         </WizardSection>
       )}
 
-      {/* Step 11 — Edit Design */}
+      {/* Step 11 — Embellishments */}
+      {currentImage && (
+        <WizardSection
+          sectionRef={(el) => (sectionRefs.current.EMBELLISHMENTS = el)}
+          index={11}
+          title="Embellishments"
+          isDone={project.completedSteps.includes("EMBELLISHMENTS")}
+          isCurrent={project.currentStep === "EMBELLISHMENTS"}
+          isOpen={expandedStep === "EMBELLISHMENTS"}
+        >
+          <p className="text-xs text-zinc-500">
+            Optional. Add a digital applique or embroidery embellishment to the current design — upload a motif
+            reference photo, describe how it should be applied, or both.
+          </p>
+
+          <div className="mt-3">
+            <p className="mb-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-300">Embellishment Type</p>
+            <div className="flex flex-wrap gap-2">
+              {Object.entries(EMBELLISHMENT_TYPE_LABELS).map(([type, label]) => (
+                <button
+                  key={type}
+                  type="button"
+                  aria-pressed={embellishmentType === type}
+                  onClick={() => setEmbellishmentType(type)}
+                  className={`rounded-md border px-3 py-1.5 text-sm ${
+                    embellishmentType === type
+                      ? "border-indigo-600 bg-indigo-600 text-white"
+                      : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-4 md:grid-cols-2">
+            <div>
+              <p className="text-xs font-medium text-zinc-900 dark:text-zinc-100">Embroidery / Applique Motif</p>
+              <p className="mt-0.5 text-xs text-zinc-500">Upload a motif or embroidery pattern reference image (optional).</p>
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                className="mt-2 block w-full text-sm"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  const formData = new FormData();
+                  formData.append("file", file);
+                  run("upload-embellishment-motif", () =>
+                    fetch(`/api/v1/ai-designer/projects/${projectId}/embellishment-motif`, { method: "POST", body: formData }).then(parseJson)
+                  );
+                  e.target.value = "";
+                }}
+              />
+              {project.embellishmentMotifAttachmentId && (
+                <div className="mt-2 flex items-center gap-3">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={imageUrl(project.embellishmentMotifAttachmentId)}
+                    alt="Embellishment motif reference"
+                    className="h-24 w-24 rounded border object-cover"
+                  />
+                  <button
+                    type="button"
+                    className="text-xs text-red-600 hover:underline"
+                    onClick={() =>
+                      run("delete-embellishment-motif", () =>
+                        fetch(`/api/v1/ai-designer/projects/${projectId}/embellishment-motif`, { method: "DELETE" }).then(parseJson)
+                      )
+                    }
+                  >
+                    Remove
+                  </button>
+                </div>
+              )}
+            </div>
+            <div>
+              <p className="mb-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-300">Embellishment Instructions</p>
+              <textarea
+                rows={4}
+                className={textInputClass()}
+                value={embellishmentInstructions}
+                onChange={(e) => setEmbellishmentInstructions(e.target.value)}
+                placeholder={
+                  "e.g. \"Add intricate embroidery on the sleeves and neckline\", \"Apply sequins in a floral pattern on the bodice\", " +
+                  "\"Add lace borders along the hem and cuffs\". Leave empty to use a sensible default."
+                }
+              />
+              <button
+                type="button"
+                disabled={
+                  busy === "apply-embellishments" ||
+                  (!project.embellishmentMotifAttachmentId && !embellishmentInstructions.trim())
+                }
+                onClick={() =>
+                  run("apply-embellishments", () =>
+                    fetch(`/api/v1/ai-designer/projects/${projectId}/apply-embellishments`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ embellishmentType, instructions: embellishmentInstructions }),
+                    }).then(parseJson)
+                  )
+                }
+                className="mt-3 rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+              >
+                {busy === "apply-embellishments" ? "Applying…" : "Apply Embellishments"}
+              </button>
+            </div>
+          </div>
+          <StepNextButton step="EMBELLISHMENTS" onNext={goToNextStep} />
+        </WizardSection>
+      )}
+
+      {/* Step 12 — Edit Design */}
       {currentImage && (
         <WizardSection
           sectionRef={(el) => (sectionRefs.current.EDIT = el)}
-          index={11}
+          index={12}
           title="Edit Design"
           isDone={project.completedSteps.includes("EDIT")}
           isCurrent={project.currentStep === "EDIT"}
           isOpen={expandedStep === "EDIT"}
         >
-          <p className="text-xs text-zinc-500">Change one aspect of the current design (Collar, Sleeves, Length, Pocket, Buttons, Logo, Embroidery, Color, Background, Environment, Model, Pose) — only the affected area is regenerated.</p>
+          <p className="text-xs text-zinc-500">
+            A full single-page design workspace — canvas with zoom/pan, contextual edit categories, Quick/Technical/AI Prompt
+            edit modes, AI variations review, before/after compare, and version history with Approve/Reject.
+          </p>
           <div className="mt-3 flex items-center gap-3">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={imageUrl(currentImage.imageAttachmentId)} alt="Current design" className="h-32 w-32 rounded border object-cover" />
-            <button
-              type="button"
-              onClick={() => {
-                setEditFeature("");
-                setEditCurrent("");
-                setEditNew("");
-                setEditInstructions("");
-                setEditModalOpen(true);
-              }}
-              className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm hover:bg-zinc-50 dark:border-zinc-700"
+            <Link
+              href={`/ai-designer/catalogue-designs/${projectId}/edit`}
+              className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500"
             >
-              Edit Design
-            </button>
+              Open Design Editor →
+            </Link>
           </div>
           <StepNextButton step="EDIT" onNext={goToNextStep} />
         </WizardSection>
       )}
 
-      {/* Step 12 — Tech Pack */}
+      {/* Step 13 — Tech Pack */}
       {currentImage && (
         <WizardSection
           sectionRef={(el) => (sectionRefs.current.TECH_PACK = el)}
-          index={12}
+          index={13}
           title="Tech Pack"
           isDone={project.completedSteps.includes("TECH_PACK")}
           isCurrent={project.currentStep === "TECH_PACK"}
           isOpen={expandedStep === "TECH_PACK"}
         >
-          <p className="text-xs text-zinc-500">
-            One combined action — a graded measurement chart, a draft Bill of Materials, and a technical flat sketch,
-            all from the current design.
-          </p>
-          <button
-            type="button"
-            disabled={busy === "tech-pack"}
-            onClick={() =>
+          <AiDesignerTechPackPanel
+            projectId={projectId}
+            techPack={techPack}
+            busy={busy === "tech-pack"}
+            onGenerate={() =>
               run("tech-pack", async () => {
                 const body = await parseJson(await fetch(`/api/v1/ai-designer/projects/${projectId}/tech-pack`, { method: "POST" }));
                 setTechPack(body.data);
               })
             }
-            className="mt-2 rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
-          >
-            {busy === "tech-pack" ? "Crafting your tech pack…" : "Generate Tech Pack"}
-          </button>
-          {busy === "tech-pack" && (
-            <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
-              Please wait — this usually takes 1-2 minutes. Analyzing design, calculating graded measurements, and
-              drawing the flat sketch…
-            </p>
-          )}
-
-          {techPack && techPack.status === "FAILED" && (
-            <p className="mt-3 text-xs text-red-600 dark:text-red-400">{techPack.errorMessage || "Tech pack generation failed."}</p>
-          )}
-
-          {techPack && techPack.status === "SUCCESS" && (
-            <div className="mt-4 space-y-4">
-              {techPack.flatSketchImageAttachmentId && (
-                <div>
-                  <p className="mb-1 text-xs font-medium text-zinc-700 dark:text-zinc-300">Technical Flat Sketch</p>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={imageUrl(techPack.flatSketchImageAttachmentId)}
-                    alt="Technical flat sketch"
-                    className="h-56 w-56 rounded border object-contain bg-white"
-                  />
-                </div>
-              )}
-
-              {techPack.measurementsJson && (
-                <div>
-                  <p className="mb-1 text-xs font-medium text-zinc-700 dark:text-zinc-300">Graded Measurements</p>
-                  <div className="overflow-x-auto rounded border border-zinc-200 dark:border-zinc-800">
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="border-b border-zinc-200 bg-zinc-50 text-left dark:border-zinc-800 dark:bg-zinc-900">
-                          <th className="px-2 py-1.5 font-medium">Point</th>
-                          <th className="px-2 py-1.5 font-medium">Tolerance</th>
-                          {Object.keys(techPack.measurementsJson.points[0]?.values ?? {}).map((size) => (
-                            <th key={size} className="px-2 py-1.5 font-medium">
-                              {size}
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {techPack.measurementsJson.points.map((p) => (
-                          <tr key={p.pointName} className="border-b border-zinc-100 last:border-0 dark:border-zinc-800">
-                            <td className="px-2 py-1.5" title={p.howToMeasure}>
-                              {p.pointName}
-                            </td>
-                            <td className="px-2 py-1.5 text-zinc-500">{p.toleranceCm}</td>
-                            {Object.entries(p.values).map(([size, value]) => (
-                              <td key={size} className="px-2 py-1.5">
-                                {value}
-                              </td>
-                            ))}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  <p className="mt-1 text-xs text-zinc-400">{techPack.measurementsJson.generalNotes}</p>
-                </div>
-              )}
-
-              {techPack.bomJson && (
-                <div>
-                  <p className="mb-1 text-xs font-medium text-zinc-700 dark:text-zinc-300">Draft Bill of Materials</p>
-                  <div className="overflow-x-auto rounded border border-zinc-200 dark:border-zinc-800">
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="border-b border-zinc-200 bg-zinc-50 text-left dark:border-zinc-800 dark:bg-zinc-900">
-                          <th className="px-2 py-1.5 font-medium">Material</th>
-                          <th className="px-2 py-1.5 font-medium">Category</th>
-                          <th className="px-2 py-1.5 font-medium">Qty / Unit</th>
-                          <th className="px-2 py-1.5 font-medium">Notes</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {techPack.bomJson.items.map((item, i) => (
-                          <tr key={i} className="border-b border-zinc-100 last:border-0 dark:border-zinc-800">
-                            <td className="px-2 py-1.5">{item.materialDescription}</td>
-                            <td className="px-2 py-1.5 text-zinc-500">{item.materialCategory}</td>
-                            <td className="px-2 py-1.5">
-                              {item.suggestedQuantityPerUnit} {item.suggestedUom}
-                            </td>
-                            <td className="px-2 py-1.5 text-zinc-500">{item.reasoning}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
+            onChanged={setTechPack}
+          />
 
           <StepNextButton step="TECH_PACK" onNext={goToNextStep} />
         </WizardSection>
@@ -1106,11 +1166,11 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
         </section>
       )}
 
-      {/* Step 13 — Export */}
+      {/* Step 14 — Export */}
       {currentImage && (
         <WizardSection
           sectionRef={(el) => (sectionRefs.current.EXPORT = el)}
-          index={13}
+          index={14}
           title="Export"
           isDone={project.completedSteps.includes("EXPORT")}
           isCurrent={project.currentStep === "EXPORT"}
@@ -1130,54 +1190,6 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
           <p className="mt-2 text-xs text-zinc-500">DXF export and a full Tech Pack export are future support.</p>
         </WizardSection>
       )}
-
-      <Modal open={editModalOpen} onClose={() => setEditModalOpen(false)} title="Edit Design">
-        <div className="space-y-3">
-          <FormField label="Feature to Change" htmlFor="editFeature" required>
-            <input id="editFeature" className={textInputClass()} value={editFeature} onChange={(e) => setEditFeature(e.target.value)} placeholder="e.g. Collar" />
-          </FormField>
-          <FormField label="Current Value" htmlFor="editCurrent">
-            <input id="editCurrent" className={textInputClass()} value={editCurrent} onChange={(e) => setEditCurrent(e.target.value)} placeholder="e.g. Round Neck" />
-          </FormField>
-          <FormField label="New Requirement" htmlFor="editNew" required>
-            <input id="editNew" className={textInputClass()} value={editNew} onChange={(e) => setEditNew(e.target.value)} placeholder="e.g. Mandarin Collar" />
-          </FormField>
-          <FormField label="Additional Instructions (optional)" htmlFor="editInstructions">
-            <textarea
-              id="editInstructions"
-              className={textInputClass()}
-              rows={2}
-              value={editInstructions}
-              onChange={(e) => setEditInstructions(e.target.value)}
-            />
-          </FormField>
-          <button
-            type="button"
-            disabled={busy === "edit" || !editFeature.trim() || !editNew.trim()}
-            onClick={() =>
-              run("edit", async () => {
-                const body = await parseJson(
-                  await fetch(`/api/v1/ai-designer/projects/${projectId}/edit`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      featureLabel: editFeature,
-                      currentValue: editCurrent,
-                      newValue: editNew,
-                      additionalInstructions: editInstructions,
-                    }),
-                  })
-                );
-                setGeneratedImages((prev) => [...prev, ...body.data.images]);
-                setEditModalOpen(false);
-              })
-            }
-            className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
-          >
-            {busy === "edit" ? "Regenerating…" : "Regenerate Affected Area"}
-          </button>
-        </div>
-      </Modal>
 
       <ConfirmModal
         open={pendingSelectImage !== null}

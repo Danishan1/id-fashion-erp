@@ -2,16 +2,20 @@ import { notFound } from "next/navigation";
 import { auth } from "@/core/auth/auth";
 import { PermissionService } from "@/core/rbac/PermissionService";
 import { getSampleRequestById } from "@/modules/sampling/sample.service";
+import { getBomByProductId } from "@/modules/bom-mrp/bom.service";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
-import { DesignBomMaterialsPanel } from "./DesignBomMaterialsPanel";
+import { DesignBomTabs } from "./DesignBomTabs";
 
 // The "Design BOM" is nothing new — it's simply this sample's own current
 // SampleMaterial list (the same rows SampleWorkflowPanel's own materials
 // table and "Update BOM" action already manage), just surfaced here as its
-// own view, reachable directly from the Sampling list. Deliberately does
-// NOT also show the linked Style's own real BOM — that already has its own
-// dedicated surfaces (the "Style" tab on /bom-mrp, and the standalone
-// /bom-mrp/[productId] page).
+// own editable view (via DesignBomMaterialsPanel, reusing Sampling's own
+// material update/remove endpoints), reachable directly from the Sampling
+// list. When the sample is already linked to a real Style, a second
+// "Style BOM" tab embeds the exact same BomVersionPanel/BomEditor
+// components the dedicated `/bom-mrp/[productId]` page uses — no BOM logic
+// is duplicated anywhere, this page only arranges two already-existing
+// views side by side.
 export default async function DesignBomPage({ params }: { params: Promise<{ sampleRequestId: string }> }) {
   const { sampleRequestId } = await params;
   const session = await auth();
@@ -22,6 +26,44 @@ export default async function DesignBomPage({ params }: { params: Promise<{ samp
 
   const currentVersion = request.versions[0] ?? null;
   const canEditMaterials = await PermissionService.can(session!.user.id, "sampling", "edit");
+  const canViewStyleBom = request.productId
+    ? await PermissionService.can(session!.user.id, "bom_mrp", "view")
+    : false;
+
+  let styleBomVersions: unknown[] = [];
+  let styleBomCurrentVersionNumber = 0;
+  let canApproveBom = false;
+  let styleName: string | null = null;
+  let styleCode: string | null = null;
+
+  if (request.productId && canViewStyleBom) {
+    const { product, bom } = await getBomByProductId(session!.user.companyId, request.productId).catch(() => ({
+      product: null,
+      bom: null,
+    }));
+    styleBomVersions = bom?.versions ?? [];
+    styleBomCurrentVersionNumber = bom?.currentVersionNumber ?? 0;
+    styleName = product?.styleName ?? null;
+    styleCode = product?.styleCode ?? null;
+    canApproveBom = await PermissionService.can(session!.user.id, "bom_mrp", "approve");
+  }
+
+  const currentStyleVersion = (
+    styleBomVersions as {
+      versionNumber: number;
+      status: string;
+      notes: string | null;
+      items: {
+        materialId: string;
+        colorId: string | null;
+        quantityPerUnit: { toString(): string };
+        wastagePercentage: { toString(): string };
+        uomId: string;
+        notes: string | null;
+      }[];
+    }[]
+  ).find((v) => v.versionNumber === styleBomCurrentVersionNumber);
+  const initialStyleItems = currentStyleVersion?.items ?? [];
 
   return (
     <div className="space-y-4">
@@ -42,9 +84,28 @@ export default async function DesignBomPage({ params }: { params: Promise<{ samp
           The materials actually planned/used for this design&rsquo;s sample, from its current version.
         </p>
       </div>
-      <DesignBomMaterialsPanel
+      <DesignBomTabs
+        productId={request.productId && canViewStyleBom ? request.productId : null}
+        styleLabel={styleName ? `${styleName} (${styleCode})` : null}
         materials={JSON.parse(JSON.stringify(currentVersion?.materials ?? []))}
         canEditMaterials={canEditMaterials}
+        styleBomVersions={JSON.parse(JSON.stringify(styleBomVersions))}
+        styleBomCurrentVersionNumber={styleBomCurrentVersionNumber}
+        canApproveBom={canApproveBom}
+        initialStyleNotes={currentStyleVersion?.notes ?? ""}
+        initialStyleItems={JSON.parse(
+          JSON.stringify(
+            initialStyleItems.map((item) => ({
+              materialId: item.materialId,
+              colorId: item.colorId,
+              quantityPerUnit: item.quantityPerUnit.toString(),
+              wastagePercentage: item.wastagePercentage.toString(),
+              uomId: item.uomId,
+              notes: item.notes,
+            }))
+          )
+        )}
+        isStyleVersionLocked={currentStyleVersion?.status === "APPROVED"}
       />
     </div>
   );

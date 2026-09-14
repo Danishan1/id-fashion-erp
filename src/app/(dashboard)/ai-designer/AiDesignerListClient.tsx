@@ -32,13 +32,13 @@ export function AiDesignerListClient() {
 
       <DataTable<AiDesignerProjectRow>
         fetchUrl="/api/v1/ai-designer/projects"
-        searchPlaceholder="Search by project name…"
-        newHref="/ai-designer/projects/new"
-        newLabel="New Project"
-        rowHref={(row) => `/ai-designer/projects/${row.id}`}
+        searchPlaceholder="Search by design name…"
+        newHref="/ai-designer/catalogue-designs/new"
+        newLabel="New Design"
+        rowHref={(row) => `/ai-designer/catalogue-designs/${row.id}`}
         columns={[
-          { key: "projectNumber", header: "Project #" },
-          { key: "projectName", header: "Project Name" },
+          { key: "projectNumber", header: "Design #" },
+          { key: "projectName", header: "Design Name" },
           {
             key: "fabric",
             header: "Fabric",

@@ -38,6 +38,8 @@ export interface RunWithFailoverParams {
   /** Human-readable context for the audit trail, e.g. "AI Designer / Project AID-2026-00001". */
   generationContext: string;
   aiDesignerProjectId?: string;
+  /** A genuinely different project table from AiDesignerProject (Replicate Design's own), so it needs its own FK rather than overloading aiDesignerProjectId with an id the existing FK constraint would reject. */
+  replicateDesignProjectId?: string;
   inputImagePresent: boolean;
   call: (provider: ImageGenerationProvider) => Promise<GenerateImagesResult>;
 }
@@ -170,6 +172,8 @@ function capabilityLabel(capability: AIProviderCapability): string {
       return "multi-fabric application";
     case "TECHNICAL_FLAT":
       return "technical flat sketch generation";
+    case "DESIGN_REPLICATION":
+      return "design replication with a new material";
   }
 }
 
@@ -185,6 +189,7 @@ export async function runWithFailover(params: RunWithFailoverParams): Promise<Ru
       providerId: null,
       userId: params.userId,
       aiDesignerProjectId: params.aiDesignerProjectId ?? null,
+      replicateDesignProjectId: params.replicateDesignProjectId ?? null,
       generationType: params.capability,
       success: false,
       errorCategory: "PROVIDER_UNAVAILABLE",
@@ -215,6 +220,7 @@ export async function runWithFailover(params: RunWithFailoverParams): Promise<Ru
         providerId: providerRow.id,
         userId: params.userId,
         aiDesignerProjectId: params.aiDesignerProjectId ?? null,
+        replicateDesignProjectId: params.replicateDesignProjectId ?? null,
         generationType: params.capability,
         durationMs,
         success: true,
@@ -244,6 +250,7 @@ export async function runWithFailover(params: RunWithFailoverParams): Promise<Ru
         providerId: providerRow.id,
         userId: params.userId,
         aiDesignerProjectId: params.aiDesignerProjectId ?? null,
+        replicateDesignProjectId: params.replicateDesignProjectId ?? null,
         generationType: params.capability,
         durationMs,
         success: false,

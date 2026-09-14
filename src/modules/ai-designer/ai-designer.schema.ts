@@ -81,14 +81,49 @@ export const generateDesignSchema = z.object({
 
 export type GenerateDesignInput = z.infer<typeof generateDesignSchema>;
 
-export const editDesignSchema = z.object({
-  featureLabel: z.string().min(1, "Select which aspect to change").max(100),
-  currentValue: z.string().max(300).optional().or(z.literal("")),
-  newValue: z.string().min(1, "Describe the new requirement").max(500),
-  additionalInstructions: z.string().max(1000).optional().or(z.literal("")),
+/**
+ * Edit Design workspace (2026-09-13) — replaces the old immediate-overwrite
+ * editDesignSchema/editDesign() entirely. Three edit modes share one input
+ * shape: QUICK (today's Feature/Current/New form), TECHNICAL (a free
+ * key-value list of structured manufacturing parameters, also persisted
+ * verbatim on the resulting version's own technicalChangesJson), and
+ * AI_PROMPT (a raw natural-language instruction). Generating a preview never
+ * overwrites the current design by itself — see generateEditPreview()/
+ * applyEditVariationSchema below for the separate, explicit apply step.
+ */
+export const EDIT_MODES = ["QUICK", "TECHNICAL", "AI_PROMPT"] as const;
+export type EditMode = (typeof EDIT_MODES)[number];
+
+export const generateEditPreviewSchema = z
+  .object({
+    mode: z.enum(EDIT_MODES),
+    featureLabel: z.string().min(1, "Name what you're changing").max(100),
+    currentValue: z.string().max(300).optional().or(z.literal("")),
+    newValue: z.string().max(500).optional().or(z.literal("")),
+    technicalFields: z.record(z.string().min(1).max(100), z.string().max(300)).optional(),
+    freeformInstructions: z.string().max(2000).optional().or(z.literal("")),
+    imageCount: z.number().int().min(1).max(4).default(1),
+  })
+  .superRefine((data, ctx) => {
+    if (data.mode === "QUICK" && !data.newValue) {
+      ctx.addIssue({ code: "custom", message: "Describe the new requirement.", path: ["newValue"] });
+    }
+    if (data.mode === "TECHNICAL" && (!data.technicalFields || Object.keys(data.technicalFields).length === 0)) {
+      ctx.addIssue({ code: "custom", message: "Add at least one technical field.", path: ["technicalFields"] });
+    }
+    if (data.mode === "AI_PROMPT" && !data.freeformInstructions) {
+      ctx.addIssue({ code: "custom", message: "Describe the change you want.", path: ["freeformInstructions"] });
+    }
+  });
+
+export type GenerateEditPreviewInput = z.infer<typeof generateEditPreviewSchema>;
+
+/** Explicit apply step for one previewed image — the actual "commit as the new current design" action; never happens implicitly on generation. */
+export const applyEditVariationSchema = z.object({
+  confirmed: z.boolean(),
 });
 
-export type EditDesignInput = z.infer<typeof editDesignSchema>;
+export type ApplyEditVariationInput = z.infer<typeof applyEditVariationSchema>;
 
 export const decideImageSchema = z.object({
   decision: z.enum(["SELECT", "REJECT"]),
@@ -116,6 +151,80 @@ export const applySecondFabricSchema = z.object({
 
 export type ApplySecondFabricInput = z.infer<typeof applySecondFabricSchema>;
 
+/**
+ * Embellishments — applies a digital applique/embroidery motif onto the
+ * currently generated design, via an uploaded motif reference photo and/or
+ * free-text instructions. Only "Digital Applique" is confirmed against the
+ * competitor reference this feature was built from; the rest of this list is
+ * a documented, reasonable judgment call for a plausible fixed embellishment-
+ * technique set, easy to extend later — same "plain fixed const list, not a
+ * DB enum" shape as SECOND_FABRIC_APPLY_AREAS above.
+ */
+export const EMBELLISHMENT_TYPES = [
+  "DIGITAL_APPLIQUE",
+  "EMBROIDERY",
+  "SEQUIN_WORK",
+  "LACE_TRIM",
+  "BEADWORK",
+  "PATCHWORK",
+] as const;
+export type EmbellishmentType = (typeof EMBELLISHMENT_TYPES)[number];
+
+export const applyEmbellishmentsSchema = z.object({
+  embellishmentType: z.enum(EMBELLISHMENT_TYPES),
+  instructions: z.string().trim().max(1000).optional().or(z.literal("")),
+});
+
+export type ApplyEmbellishmentsInput = z.infer<typeof applyEmbellishmentsSchema>;
+
 /** Tech Pack — no user input at all; every field comes from the project's own already-recorded design. */
 export const generateTechPackSchema = z.object({});
 export type GenerateTechPackInput = z.infer<typeof generateTechPackSchema>;
+
+/**
+ * Tech Pack field editing (v3, 2026-09-14) — a structured, explicitly-typed
+ * input rather than a free-form path array, matching this codebase's
+ * existing `updateFabricFieldSchema`-style "enum of known field keys"
+ * convention. `category` picks which part of the Garment Analysis is being
+ * edited; `index` is required for the 6 array categories; `field` names the
+ * specific key within that category's own item shape (or "values.<SIZE>" for
+ * a measurementPoints size cell) and is omitted for the 9 plain-scalar
+ * categories, which replace their whole value directly. The service layer
+ * (`updateTechPackField`) re-validates `field`/`index` against the real
+ * known-key lists exported from `tech-pack/schema.ts` — this Zod schema only
+ * bounds the shape/size of the request, not which field names are legal for
+ * a given category (that check needs the category itself, done in the
+ * service).
+ */
+export const TECH_PACK_EDITABLE_CATEGORIES = [
+  "identification",
+  "construction",
+  "closure",
+  "seamCallouts",
+  "visibleColors",
+  "suggestedColorways",
+  "artworkItems",
+  "bomItems",
+  "measurementPoints",
+  "artworkSummary",
+  "patternPrintType",
+  "patternPrintNotes",
+  "gradeRulesNotes",
+  "mainLabelSpec",
+  "sizeLabelSpec",
+  "careLabelSpec",
+  "hangtagSpec",
+  "polybagSpec",
+  "foldingInstructions",
+  "cartonPackingSpec",
+  "barcodePlacement",
+] as const;
+export type TechPackEditableCategory = (typeof TECH_PACK_EDITABLE_CATEGORIES)[number];
+
+export const updateTechPackFieldSchema = z.object({
+  category: z.enum(TECH_PACK_EDITABLE_CATEGORIES),
+  index: z.number().int().min(0).optional(),
+  field: z.string().min(1).max(50).optional(),
+  value: z.string().max(2000),
+});
+export type UpdateTechPackFieldInput = z.infer<typeof updateTechPackFieldSchema>;

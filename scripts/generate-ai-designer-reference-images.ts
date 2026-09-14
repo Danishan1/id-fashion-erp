@@ -17,9 +17,9 @@
 import "dotenv/config";
 import { mkdir, writeFile, access } from "node:fs/promises";
 import path from "node:path";
-import sharp from "sharp";
 import { PRODUCT_DESIGN_ATTRIBUTES_BY_CATEGORY } from "../src/core/ai-designer/catalogs/design-attribute-catalog";
 import { slugifyDesignOptionValue, buildReferenceImagePrompt } from "../src/core/ai-designer/catalogs/reference-image-prompt";
+import { toReferenceImageThumbnail } from "../src/core/ai-designer/catalogs/reference-image-thumbnail";
 import { getImageGenerationProvider } from "../src/core/ai/image-generation/factory";
 
 const OUTPUT_DIR = path.join(process.cwd(), "public", "ai-designer-reference");
@@ -88,7 +88,11 @@ async function main() {
       const result = await provider.generate({ prompt: buildReferenceImagePrompt(value), count: 1 });
       const img = result.images[0];
       if (!img) throw new Error("Provider returned zero images.");
-      const jpegBuffer = await sharp(img.buffer).jpeg({ quality: 88 }).toBuffer();
+      // Providers return a full 1024x1024+ image, but this is only ever
+      // displayed as an ~80px (up to 160px @2x) thumbnail — resizing down
+      // before saving keeps these lightweight (a few KB instead of
+      // 100-300KB each) with no visible quality loss at that display size.
+      const jpegBuffer = await toReferenceImageThumbnail(img.buffer);
       await writeFile(outPath, jpegBuffer);
       generated++;
       consecutiveFailures = 0;

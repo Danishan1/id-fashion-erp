@@ -16,7 +16,7 @@ const { LookupRepository } = await import("@/modules/lookups/lookup.repository")
 const { ProductRepository } = await import("@/modules/products/product.repository");
 const { PermissionService } = await import("@/core/rbac/PermissionService");
 const { BomRepository } = await import("./bom.repository");
-const { upsertBom, approveBomVersion } = await import("./bom.service");
+const { upsertBom, approveBomVersion, getBomCostSheet } = await import("./bom.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
 const BASE_UOM = { id: "uom-1", name: "MTR", baseUnitId: null, conversionFactor: 1 };
@@ -174,5 +174,112 @@ describe("approveBomVersion", () => {
     vi.mocked(PermissionService.assert).mockRejectedValue(Object.assign(new Error("denied"), { code: "PERMISSION_DENIED" }));
     await expect(approveBomVersion(actor, "prod-1")).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
     expect(BomRepository.approveVersionInTx).not.toHaveBeenCalled();
+  });
+});
+
+describe("getBomCostSheet", () => {
+  const MTR = { id: "uom-mtr", code: "MTR", name: "Meter", baseUnitId: null, conversionFactor: 1 };
+  const YDS = { id: "uom-yds", code: "YDS", name: "Yard", baseUnitId: "uom-mtr", conversionFactor: 0.9144 };
+  const ROLL_UNRELATED = { id: "uom-roll", code: "ROL", name: "Roll", baseUnitId: null, conversionFactor: 1 };
+
+  const bomItem = (overrides: Record<string, unknown> = {}) => ({
+    id: "item-1",
+    quantityPerUnit: 2,
+    wastagePercentage: 10,
+    colorId: null,
+    color: null,
+    uom: MTR,
+    material: {
+      id: "mat-1",
+      styleName: "Cotton Fabric",
+      styleCode: "MAT-001",
+      baseUom: MTR,
+      unitCost: 50,
+    },
+    ...overrides,
+  });
+
+  it("reports hasBom: false with no lines when the style has no BOM at all", async () => {
+    vi.mocked(BomRepository.findByProductId).mockResolvedValue(null);
+    const sheet = await getBomCostSheet("co-1", "prod-1");
+    expect(sheet).toMatchObject({ hasBom: false, lines: [], colorBreakdown: [] });
+  });
+
+  it("rejects a style that doesn't exist in this company", async () => {
+    vi.mocked(ProductRepository.findStyleById).mockResolvedValue(null);
+    await expect(getBomCostSheet("co-1", "prod-x")).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("computes material cost per unit for a simple single-line BOM (same UOM as the material's base unit)", async () => {
+    // effective qty = 2 * 1.10 = 2.2 (MTR, same as base) -> 2.2 * 50 = 110
+    vi.mocked(BomRepository.findByProductId).mockResolvedValue(bomWithVersion({ items: [bomItem()] }) as never);
+    const sheet = await getBomCostSheet("co-1", "prod-1");
+    expect(sheet.lines[0]).toMatchObject({ effectiveQuantity: 2.2, lineCost: 110, isCostAvailable: true });
+    expect(sheet.colorBreakdown).toEqual([{ colorId: null, colorName: "All Colors", materialCostPerUnit: 110, isComplete: true }]);
+  });
+
+  it("converts a line's UOM to the material's base UOM before costing, reusing the same helper mrp.service.ts uses", async () => {
+    // 10 YDS, no wastage -> 10 * 0.9144 = 9.144 MTR -> 9.144 * 50 = 457.2
+    vi.mocked(BomRepository.findByProductId).mockResolvedValue(
+      bomWithVersion({ items: [bomItem({ quantityPerUnit: 10, wastagePercentage: 0, uom: YDS })] }) as never
+    );
+    const sheet = await getBomCostSheet("co-1", "prod-1");
+    expect(sheet.lines[0].effectiveQuantity).toBeCloseTo(9.144, 4);
+    expect(sheet.lines[0].lineCost).toBeCloseTo(457.2, 2);
+  });
+
+  it("marks a line unavailable (not silently zero) when the material has no unit cost, and flags the bucket incomplete", async () => {
+    vi.mocked(BomRepository.findByProductId).mockResolvedValue(
+      bomWithVersion({
+        items: [bomItem({ material: { id: "mat-1", styleName: "Cotton Fabric", styleCode: "MAT-001", baseUom: MTR, unitCost: null } })],
+      }) as never
+    );
+    const sheet = await getBomCostSheet("co-1", "prod-1");
+    expect(sheet.lines[0]).toMatchObject({ isCostAvailable: false, lineCost: null });
+    expect(sheet.colorBreakdown[0]).toMatchObject({ materialCostPerUnit: 0, isComplete: false });
+  });
+
+  it("marks a line unavailable when its UOM has no fixed conversion to the material's base unit", async () => {
+    vi.mocked(BomRepository.findByProductId).mockResolvedValue(
+      bomWithVersion({ items: [bomItem({ uom: ROLL_UNRELATED })] }) as never
+    );
+    const sheet = await getBomCostSheet("co-1", "prod-1");
+    expect(sheet.lines[0]).toMatchObject({ isCostAvailable: false, lineCost: null });
+    expect(sheet.colorBreakdown[0].isComplete).toBe(false);
+  });
+
+  it("computes a separate cost bucket per color, each including the shared null-color lines rather than summing everything into one number", async () => {
+    // null-color line: 1 * 1.0 * 50 = 50 (shared by every color)
+    // Navy-only line: 1 * 1.0 * 20 = 20
+    // Black-only line: 1 * 1.0 * 30 = 30
+    const sharedLine = bomItem({ id: "shared", quantityPerUnit: 1, wastagePercentage: 0 });
+    const navyLine = bomItem({
+      id: "navy",
+      quantityPerUnit: 1,
+      wastagePercentage: 0,
+      colorId: "color-navy",
+      color: { id: "color-navy", name: "Navy Blue" },
+      material: { id: "mat-2", styleName: "Thread", styleCode: "MAT-002", baseUom: MTR, unitCost: 20 },
+    });
+    const blackLine = bomItem({
+      id: "black",
+      quantityPerUnit: 1,
+      wastagePercentage: 0,
+      colorId: "color-black",
+      color: { id: "color-black", name: "Black" },
+      material: { id: "mat-3", styleName: "Thread", styleCode: "MAT-003", baseUom: MTR, unitCost: 30 },
+    });
+    vi.mocked(BomRepository.findByProductId).mockResolvedValue(
+      bomWithVersion({ items: [sharedLine, navyLine, blackLine] }) as never
+    );
+
+    const sheet = await getBomCostSheet("co-1", "prod-1");
+    expect(sheet.colorBreakdown).toHaveLength(2);
+    expect(sheet.colorBreakdown).toEqual(
+      expect.arrayContaining([
+        { colorId: "color-navy", colorName: "Navy Blue", materialCostPerUnit: 70, isComplete: true },
+        { colorId: "color-black", colorName: "Black", materialCostPerUnit: 80, isComplete: true },
+      ])
+    );
   });
 });
