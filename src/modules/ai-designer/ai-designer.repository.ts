@@ -120,7 +120,7 @@ export const AiDesignerTechPackRepository = {
       garmentAnalysisJson: Prisma.InputJsonValue;
       designerNotes: string;
       suggestedAdditionalViews: string;
-      pages: { pageNumber: number; pageTitle: string; promptText: string; imageAttachmentId: string | null }[];
+      pages: { pageNumber: number; pageTitle: string; imageAttachmentId: string | null }[];
     }
   ) =>
     prisma.aiDesignerTechPack.update({
@@ -128,6 +128,12 @@ export const AiDesignerTechPackRepository = {
       data: {
         status: "SUCCESS",
         garmentAnalysisJson: data.garmentAnalysisJson,
+        // Frozen at the same moment as garmentAnalysisJson itself -- the two
+        // are byte-identical only right here; every subsequent edit only
+        // ever touches garmentAnalysisJson, never this column, so it always
+        // reflects what the AI originally said (see updateTechPackField's
+        // own "Revert to AI-generated" support in ai-designer.service.ts).
+        originalGarmentAnalysisJson: data.garmentAnalysisJson,
         designerNotes: data.designerNotes,
         suggestedAdditionalViews: data.suggestedAdditionalViews,
         pages: { create: data.pages },
@@ -138,11 +144,61 @@ export const AiDesignerTechPackRepository = {
   markFailed: (id: string, errorMessage: string) =>
     prisma.aiDesignerTechPack.update({ where: { id }, data: { status: "FAILED", errorMessage } }),
 
-  /** Only the most recent attempt is ever surfaced in the UI — older attempts stay in the database for audit (append-only, same convention as every other AI Designer run-log table). */
+  /** Only the most recent attempt/revision is ever surfaced in the UI — older ones stay in the database for audit (append-only, same convention as every other AI Designer run-log table). A revision is just another row of this same model, so this needs no query change to correctly surface it. */
   findLatestByProjectId: (projectId: string) =>
     prisma.aiDesignerTechPack.findFirst({
       where: { projectId },
       orderBy: { createdAt: "desc" },
+      include: { pages: { orderBy: { pageNumber: "asc" } } },
+    }),
+
+  /** Company-scoped single lookup, for the field-edit/approve/revert actions, which all operate on one already-known tech pack id. */
+  findByIdScoped: (companyId: string, id: string) =>
+    prisma.aiDesignerTechPack.findFirst({
+      where: { id, companyId },
+      include: { pages: { orderBy: { pageNumber: "asc" } } },
+    }),
+
+  update: (id: string, data: Prisma.AiDesignerTechPackUncheckedUpdateInput) =>
+    prisma.aiDesignerTechPack.update({
+      where: { id },
+      data,
+      include: { pages: { orderBy: { pageNumber: "asc" } } },
+    }),
+
+  /**
+   * Forks a brand-new row from an already-APPROVED tech pack, preserving the
+   * parent completely untouched -- see the model's own doc comment in
+   * schema.prisma. `pages` are copied verbatim (same real imageAttachmentIds,
+   * no re-upload).
+   */
+  createRevision: (parent: {
+    id: string;
+    companyId: string;
+    projectId: string;
+    garmentAnalysisJson: Prisma.InputJsonValue;
+    originalGarmentAnalysisJson: Prisma.InputJsonValue;
+    designerNotes: string | null;
+    suggestedAdditionalViews: string | null;
+    revisionNumber: number;
+    createdByUserId: string;
+    pages: { pageNumber: number; pageTitle: string; promptText: string | null; imageAttachmentId: string | null }[];
+  }) =>
+    prisma.aiDesignerTechPack.create({
+      data: {
+        companyId: parent.companyId,
+        projectId: parent.projectId,
+        status: "SUCCESS",
+        approvalStatus: "DRAFT",
+        garmentAnalysisJson: parent.garmentAnalysisJson,
+        originalGarmentAnalysisJson: parent.originalGarmentAnalysisJson,
+        designerNotes: parent.designerNotes,
+        suggestedAdditionalViews: parent.suggestedAdditionalViews,
+        revisionNumber: parent.revisionNumber + 1,
+        parentTechPackId: parent.id,
+        createdByUserId: parent.createdByUserId,
+        pages: { create: parent.pages },
+      },
       include: { pages: { orderBy: { pageNumber: "asc" } } },
     }),
 };
@@ -171,4 +227,22 @@ export const AiDesignerProductDesignAttributeRepository = {
 
   update: (id: string, data: Prisma.AiDesignerProductDesignAttributeUncheckedUpdateInput) =>
     prisma.aiDesignerProductDesignAttribute.update({ where: { id }, data }),
+};
+
+export const AiDesignerOptionReferenceImageRepository = {
+  findMany: (companyId: string) => prisma.aiDesignerOptionReferenceImage.findMany({ where: { companyId } }),
+
+  findByValue: (companyId: string, optionValue: string) =>
+    prisma.aiDesignerOptionReferenceImage.findFirst({ where: { companyId, optionValue } }),
+
+  /** Replaces the attachmentId if a row for this (companyId, optionValue) already exists, else creates one. */
+  upsert: (data: { companyId: string; optionValue: string; attachmentId: string; createdByUserId: string }) =>
+    prisma.aiDesignerOptionReferenceImage.upsert({
+      where: { companyId_optionValue: { companyId: data.companyId, optionValue: data.optionValue } },
+      create: data,
+      update: { attachmentId: data.attachmentId },
+    }),
+
+  deleteByValue: (companyId: string, optionValue: string) =>
+    prisma.aiDesignerOptionReferenceImage.delete({ where: { companyId_optionValue: { companyId, optionValue } } }),
 };

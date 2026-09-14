@@ -151,6 +151,80 @@ export const applySecondFabricSchema = z.object({
 
 export type ApplySecondFabricInput = z.infer<typeof applySecondFabricSchema>;
 
+/**
+ * Embellishments — applies a digital applique/embroidery motif onto the
+ * currently generated design, via an uploaded motif reference photo and/or
+ * free-text instructions. Only "Digital Applique" is confirmed against the
+ * competitor reference this feature was built from; the rest of this list is
+ * a documented, reasonable judgment call for a plausible fixed embellishment-
+ * technique set, easy to extend later — same "plain fixed const list, not a
+ * DB enum" shape as SECOND_FABRIC_APPLY_AREAS above.
+ */
+export const EMBELLISHMENT_TYPES = [
+  "DIGITAL_APPLIQUE",
+  "EMBROIDERY",
+  "SEQUIN_WORK",
+  "LACE_TRIM",
+  "BEADWORK",
+  "PATCHWORK",
+] as const;
+export type EmbellishmentType = (typeof EMBELLISHMENT_TYPES)[number];
+
+export const applyEmbellishmentsSchema = z.object({
+  embellishmentType: z.enum(EMBELLISHMENT_TYPES),
+  instructions: z.string().trim().max(1000).optional().or(z.literal("")),
+});
+
+export type ApplyEmbellishmentsInput = z.infer<typeof applyEmbellishmentsSchema>;
+
 /** Tech Pack — no user input at all; every field comes from the project's own already-recorded design. */
 export const generateTechPackSchema = z.object({});
 export type GenerateTechPackInput = z.infer<typeof generateTechPackSchema>;
+
+/**
+ * Tech Pack field editing (v3, 2026-09-14) — a structured, explicitly-typed
+ * input rather than a free-form path array, matching this codebase's
+ * existing `updateFabricFieldSchema`-style "enum of known field keys"
+ * convention. `category` picks which part of the Garment Analysis is being
+ * edited; `index` is required for the 6 array categories; `field` names the
+ * specific key within that category's own item shape (or "values.<SIZE>" for
+ * a measurementPoints size cell) and is omitted for the 9 plain-scalar
+ * categories, which replace their whole value directly. The service layer
+ * (`updateTechPackField`) re-validates `field`/`index` against the real
+ * known-key lists exported from `tech-pack/schema.ts` — this Zod schema only
+ * bounds the shape/size of the request, not which field names are legal for
+ * a given category (that check needs the category itself, done in the
+ * service).
+ */
+export const TECH_PACK_EDITABLE_CATEGORIES = [
+  "identification",
+  "construction",
+  "closure",
+  "seamCallouts",
+  "visibleColors",
+  "suggestedColorways",
+  "artworkItems",
+  "bomItems",
+  "measurementPoints",
+  "artworkSummary",
+  "patternPrintType",
+  "patternPrintNotes",
+  "gradeRulesNotes",
+  "mainLabelSpec",
+  "sizeLabelSpec",
+  "careLabelSpec",
+  "hangtagSpec",
+  "polybagSpec",
+  "foldingInstructions",
+  "cartonPackingSpec",
+  "barcodePlacement",
+] as const;
+export type TechPackEditableCategory = (typeof TECH_PACK_EDITABLE_CATEGORIES)[number];
+
+export const updateTechPackFieldSchema = z.object({
+  category: z.enum(TECH_PACK_EDITABLE_CATEGORIES),
+  index: z.number().int().min(0).optional(),
+  field: z.string().min(1).max(50).optional(),
+  value: z.string().max(2000),
+});
+export type UpdateTechPackFieldInput = z.infer<typeof updateTechPackFieldSchema>;

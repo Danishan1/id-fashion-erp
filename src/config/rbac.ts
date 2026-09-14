@@ -120,7 +120,12 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     reports: ["view", "export", "print"],
     administration: ["view"],
     ai_garment_flow: ["view"],
-    ai_designer: ["view"],
+    // "approve" added 2026-09-14 for Tech Pack's own approve/revision
+    // discipline -- a maker/checker split (Merchandiser generates/edits,
+    // Management approves); MERCHANDISER deliberately does not get it (the
+    // self-approval guard would block them from approving their own tech
+    // pack anyway unless they're also SUPER_ADMIN).
+    ai_designer: ["view", "approve"],
   },
   MERCHANDISER: {
     dashboard: ["view"],
