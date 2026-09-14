@@ -1056,7 +1056,7 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={imageUrl(currentImage.imageAttachmentId)} alt="Current design" className="h-32 w-32 rounded border object-cover" />
             <Link
-              href={`/ai-designer/projects/${projectId}/edit`}
+              href={`/ai-designer/catalogue-designs/${projectId}/edit`}
               className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500"
             >
               Open Design Editor →
