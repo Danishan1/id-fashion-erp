@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/numbering/DocumentNumberingService", () => ({ generateDocumentNumber: vi.fn() }));
-vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { assert: vi.fn() } }));
+vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { assert: vi.fn(), getAllowedBranchIds: vi.fn() } }));
 vi.mock("@/modules/customers/customer.repository", () => ({
   CustomerRepository: { findByIdWithBuyers: vi.fn() },
 }));
@@ -49,7 +49,7 @@ const { SalesInvoiceRepository } = await import("./sales-invoice.repository");
 const { PurchaseInvoiceRepository } = await import("./purchase-invoice.repository");
 const { ChartOfAccountRepository } = await import("./chart-of-account.repository");
 const { postJournalCore } = await import("./journal.service");
-const { createPayment, postPayment, cancelPayment, allocatePayment } = await import("./payment.service");
+const { createPayment, postPayment, cancelPayment, allocatePayment, listPayments, getPaymentById } = await import("./payment.service");
 
 const actor = { companyId: "co-1", userId: "user-1", branchId: null };
 
@@ -87,6 +87,7 @@ function makeFakeTx(
 
 beforeEach(() => {
   vi.mocked(PermissionService.assert).mockReset().mockResolvedValue(undefined);
+  vi.mocked(PermissionService.getAllowedBranchIds).mockReset().mockResolvedValue(null);
   vi.mocked(CustomerRepository.findByIdWithBuyers).mockReset();
   vi.mocked(SupplierRepository.findById).mockReset();
   vi.mocked(FinanceConfigRepository.paymentType.findFirst).mockReset();
@@ -572,5 +573,49 @@ describe("allocatePayment — applying an already-POSTED payment's unallocated r
     expect(result).toMatchObject({ id: "pay-1" });
     expect(createSpy).toHaveBeenCalledWith({ data: { paymentId: "pay-1", salesInvoiceId: "inv-1", purchaseInvoiceId: null, allocatedAmount: 150 } });
     expect(fakeTx.journal.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("branch access enforcement (2026-09-15)", () => {
+  const listQuery = { search: "", sortBy: "createdAt", sortOrder: "desc" as const, page: 1, pageSize: 20, skip: 0, take: 20 };
+
+  beforeEach(() => {
+    vi.mocked(PaymentRepository.findMany).mockReset().mockResolvedValue([]);
+    vi.mocked(PaymentRepository.count).mockReset().mockResolvedValue(0);
+  });
+
+  it("listPayments adds no branch filter for an unrestricted user", async () => {
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(null);
+
+    await listPayments(actor, listQuery);
+
+    const whereArg = vi.mocked(PaymentRepository.findMany).mock.calls[0][0];
+    expect(whereArg).not.toHaveProperty("branchId");
+  });
+
+  it("listPayments adds a branchId IN filter for a branch-restricted user", async () => {
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    await listPayments(actor, listQuery);
+
+    expect(PaymentRepository.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ branchId: { in: ["branch-1"] } }),
+      expect.anything()
+    );
+  });
+
+  it("getPaymentById succeeds for a payment inside the user's allowed branches", async () => {
+    vi.mocked(PaymentRepository.findByIdWithDetails).mockResolvedValue({ id: "pay-1", branchId: "branch-1" } as never);
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    const payment = await getPaymentById(actor, "pay-1");
+    expect(payment.id).toBe("pay-1");
+  });
+
+  it("getPaymentById throws NOT_FOUND for a payment outside the user's allowed branches", async () => {
+    vi.mocked(PaymentRepository.findByIdWithDetails).mockResolvedValue({ id: "pay-1", branchId: "branch-2" } as never);
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    await expect(getPaymentById(actor, "pay-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 });

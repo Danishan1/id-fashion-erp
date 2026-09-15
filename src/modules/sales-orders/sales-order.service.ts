@@ -3,6 +3,7 @@ import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingService";
 import { PermissionService } from "@/core/rbac/PermissionService";
 import type { ListQuery } from "@/lib/list-query";
+import { branchScopeWhere } from "@/lib/branch-access";
 import { prisma } from "@/core/db/client";
 import { CustomerRepository } from "@/modules/customers/customer.repository";
 import { ProductRepository } from "@/modules/products/product.repository";
@@ -40,9 +41,11 @@ const ALLOWED_TRANSITIONS: Record<SalesOrderStatus, SalesOrderStatus[]> = {
   CANCELLED: [],
 };
 
-export async function listSalesOrders(companyId: string, query: ListQuery) {
+export async function listSalesOrders(actor: { companyId: string; userId: string }, query: ListQuery) {
+  const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
   const where: Prisma.SalesOrderWhereInput = {
-    companyId,
+    companyId: actor.companyId,
+    ...branchScopeWhere(allowedBranchIds),
     ...(query.search ? { orderNumber: { contains: query.search, mode: "insensitive" as const } } : {}),
   };
 
@@ -70,9 +73,15 @@ export async function getLastOrderedPrice(companyId: string, customerId: string,
   return { unitPrice: item.unitPrice.toString(), orderNumber: item.salesOrder.orderNumber, orderDate: item.salesOrder.orderDate };
 }
 
-export async function getSalesOrderById(companyId: string, id: string) {
-  const order = await SalesOrderRepository.findByIdWithDetails(companyId, id);
+/** A branch-restricted user gets NOT_FOUND for an order outside their allowed branches — same "deny as not-found" convention used across this app. */
+export async function getSalesOrderById(actor: { companyId: string; userId: string }, id: string) {
+  const order = await SalesOrderRepository.findByIdWithDetails(actor.companyId, id);
   if (!order) throw new BusinessRuleError("NOT_FOUND", "Sales order not found.", { id });
+
+  const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
+  if (allowedBranchIds !== null && (!order.branchId || !allowedBranchIds.has(order.branchId))) {
+    throw new BusinessRuleError("NOT_FOUND", "Sales order not found.", { id });
+  }
 
   // Per-line rollup of every Production Order linked to it — how much has
   // been planned/produced/rejected against what was actually ordered.
@@ -81,7 +90,7 @@ export async function getSalesOrderById(companyId: string, id: string) {
   // onto each item (not a separate parallel array) so the detail page gets
   // it in the same server-rendered payload with no index-matching needed.
   const items = await Promise.all(
-    order.items.map(async (item) => ({ ...item, productionSummary: await getSalesOrderItemProductionSummary(companyId, item.id) }))
+    order.items.map(async (item) => ({ ...item, productionSummary: await getSalesOrderItemProductionSummary(actor.companyId, item.id) }))
   );
 
   return { ...order, items };

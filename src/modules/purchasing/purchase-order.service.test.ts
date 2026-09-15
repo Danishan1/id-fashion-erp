@@ -3,7 +3,7 @@ import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/numbering/DocumentNumberingService", () => ({ generateDocumentNumber: vi.fn() }));
-vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { assert: vi.fn() } }));
+vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { assert: vi.fn(), getAllowedBranchIds: vi.fn() } }));
 vi.mock("@/modules/lookups/lookup.repository", () => ({
   LookupRepository: { unit: { findUnique: vi.fn() }, color: { findFirst: vi.fn() } },
 }));
@@ -51,6 +51,8 @@ const {
   closePurchaseOrder,
   transitionPurchaseOrderStatus,
   resumePurchaseOrderFromHold,
+  listPurchaseOrders,
+  getPurchaseOrderById,
 } = await import("./purchase-order.service");
 
 const actor = { companyId: "co-1", userId: "user-1", branchId: "br-1" };
@@ -68,6 +70,7 @@ const oneItem = (overrides: Record<string, unknown> = {}) => ({
 beforeEach(() => {
   vi.mocked(generateDocumentNumber).mockReset().mockResolvedValue("PO-2026-00001");
   vi.mocked(PermissionService.assert).mockReset().mockResolvedValue(undefined as never);
+  vi.mocked(PermissionService.getAllowedBranchIds).mockReset().mockResolvedValue(null);
   vi.mocked(SupplierRepository.findById).mockReset().mockResolvedValue({ id: "sup-1" } as never);
   vi.mocked(ProductRepository.findMaterialById)
     .mockReset()
@@ -357,5 +360,49 @@ describe("resumePurchaseOrderFromHold", () => {
   it("rejects resuming an order that isn't on hold", async () => {
     vi.mocked(PurchaseOrderRepository.findAnyById).mockResolvedValue({ id: "po-1", status: "DRAFT", statusBeforeHold: null } as never);
     await expect(resumePurchaseOrderFromHold(actor, "po-1")).rejects.toThrow(BusinessRuleError);
+  });
+});
+
+describe("branch access enforcement (2026-09-15)", () => {
+  const listQuery = { search: "", sortBy: "createdAt", sortOrder: "desc" as const, page: 1, pageSize: 20, skip: 0, take: 20 };
+
+  beforeEach(() => {
+    vi.mocked(PurchaseOrderRepository.findMany).mockReset().mockResolvedValue([]);
+    vi.mocked(PurchaseOrderRepository.count).mockReset().mockResolvedValue(0);
+  });
+
+  it("listPurchaseOrders adds no branch filter for an unrestricted user", async () => {
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(null);
+
+    await listPurchaseOrders(actor, listQuery);
+
+    const whereArg = vi.mocked(PurchaseOrderRepository.findMany).mock.calls[0][0];
+    expect(whereArg).not.toHaveProperty("branchId");
+  });
+
+  it("listPurchaseOrders adds a branchId IN filter for a branch-restricted user", async () => {
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    await listPurchaseOrders(actor, listQuery);
+
+    expect(PurchaseOrderRepository.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ branchId: { in: ["branch-1"] } }),
+      expect.anything()
+    );
+  });
+
+  it("getPurchaseOrderById succeeds for an order inside the user's allowed branches", async () => {
+    vi.mocked(PurchaseOrderRepository.findByIdWithDetails).mockResolvedValue({ id: "po-1", branchId: "branch-1" } as never);
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    const order = await getPurchaseOrderById(actor, "po-1");
+    expect(order.id).toBe("po-1");
+  });
+
+  it("getPurchaseOrderById throws NOT_FOUND for an order outside the user's allowed branches", async () => {
+    vi.mocked(PurchaseOrderRepository.findByIdWithDetails).mockResolvedValue({ id: "po-1", branchId: "branch-2" } as never);
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    await expect(getPurchaseOrderById(actor, "po-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 });

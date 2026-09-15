@@ -14,7 +14,7 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
     await PermissionService.assert(session.user.id, "dispatch", "view");
 
     const { id } = await params;
-    const dispatch = await getDispatchById(session.user.companyId, id);
+    const dispatch = await getDispatchById({ companyId: session.user.companyId, userId: session.user.id }, id);
 
     return NextResponse.json({ data: dispatch });
   } catch (error) {

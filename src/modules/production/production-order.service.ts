@@ -2,7 +2,9 @@ import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { prisma } from "@/core/db/client";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingService";
+import { PermissionService } from "@/core/rbac/PermissionService";
 import type { ListQuery } from "@/lib/list-query";
+import { branchScopeWhere } from "@/lib/branch-access";
 import { BomRepository } from "@/modules/bom-mrp/bom.repository";
 import { getMaterialRequirementForOrderLine } from "@/modules/bom-mrp/mrp.service";
 import { createMaterialRequest } from "@/modules/inventory/material-request.service";
@@ -94,9 +96,11 @@ export async function getSalesOrderLineCommitment(
   return { orderedTotal, otherCommitted, remaining: orderedTotal - otherCommitted };
 }
 
-export async function listProductionOrders(companyId: string, query: ListQuery) {
+export async function listProductionOrders(actor: { companyId: string; userId: string }, query: ListQuery) {
+  const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
   const where: Prisma.ProductionOrderWhereInput = {
-    companyId,
+    companyId: actor.companyId,
+    ...branchScopeWhere(allowedBranchIds),
     ...(query.search ? { orderNumber: { contains: query.search, mode: "insensitive" as const } } : {}),
   };
 
@@ -112,14 +116,20 @@ export async function listProductionOrders(companyId: string, query: ListQuery) 
   return { data, totalCount };
 }
 
-export async function getProductionOrderById(companyId: string, id: string) {
-  const order = await ProductionOrderRepository.findByIdWithDetails(companyId, id);
+/** A branch-restricted user gets NOT_FOUND for an order outside their allowed branches — same "deny as not-found" convention used across this app. */
+export async function getProductionOrderById(actor: { companyId: string; userId: string }, id: string) {
+  const order = await ProductionOrderRepository.findByIdWithDetails(actor.companyId, id);
   if (!order) throw new BusinessRuleError("NOT_FOUND", "Production order not found.", { id });
 
+  const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
+  if (allowedBranchIds !== null && (!order.branchId || !allowedBranchIds.has(order.branchId))) {
+    throw new BusinessRuleError("NOT_FOUND", "Production order not found.", { id });
+  }
+
   const salesOrderContext = order.salesOrderItemId
-    ? await getSalesOrderLineCommitment(companyId, order.salesOrderItemId, id)
+    ? await getSalesOrderLineCommitment(actor.companyId, order.salesOrderItemId, id)
     : null;
-  const progress = await getProductionOrderProgress(companyId, id);
+  const progress = await getProductionOrderProgress(actor.companyId, id);
 
   return { ...order, salesOrderContext, progress };
 }

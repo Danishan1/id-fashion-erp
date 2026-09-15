@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/rbac/PermissionService", () => ({
-  PermissionService: { assert: vi.fn(), getAllowedProductionStageIds: vi.fn() },
+  PermissionService: { assert: vi.fn(), getAllowedProductionStageIds: vi.fn(), getAllowedBranchIds: vi.fn() },
 }));
 vi.mock("@/modules/inventory/inventory.service", () => ({ recordInventoryTransaction: vi.fn() }));
 vi.mock("@/modules/employees/employee.repository", () => ({
@@ -56,7 +56,7 @@ const {
   LotRepository,
   QcInspectionRepository,
 } = await import("./production.repository");
-const { computeJobOrderStatus, assignWorker, recordProgressEntry, forwardJobOrder, revertJobOrder, recordQcInspection, recordAdjustmentEntry } = await import("./job-order.service");
+const { computeJobOrderStatus, assignWorker, recordProgressEntry, forwardJobOrder, revertJobOrder, recordQcInspection, recordAdjustmentEntry, getJobOrderById } = await import("./job-order.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
 
@@ -92,6 +92,7 @@ beforeEach(() => {
   vi.mocked(ProductionOrderRepository.findAnyById).mockReset();
   vi.mocked(PermissionService.assert).mockReset().mockResolvedValue(undefined);
   vi.mocked(PermissionService.getAllowedProductionStageIds).mockReset().mockResolvedValue(null);
+  vi.mocked(PermissionService.getAllowedBranchIds).mockReset().mockResolvedValue(null);
   vi.mocked(JobOrderRepository.findForGuardedUpdateInTx).mockReset();
   vi.mocked(JobOrderRepository.updateInTx).mockReset();
   vi.mocked(JobOrderRepository.createInTx).mockReset();
@@ -587,5 +588,36 @@ describe("recordAdjustmentEntry", () => {
       expect.anything(),
       expect.objectContaining({ employeeId: null })
     );
+  });
+});
+
+describe("getJobOrderById — branch access enforcement (2026-09-15)", () => {
+  it("succeeds for a job order whose lot is inside the user's allowed branches", async () => {
+    vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(
+      jobOrder({ lot: { id: "lot-1", lotNumber: "L-1", productionOrderId: "po-1", branchId: "branch-1" } }) as never
+    );
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    const result = await getJobOrderById("co-1", "jo-1", "user-1");
+    expect(result.id).toBe("jo-1");
+  });
+
+  it("throws NOT_FOUND for a job order whose lot is outside the user's allowed branches", async () => {
+    vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(
+      jobOrder({ lot: { id: "lot-1", lotNumber: "L-1", productionOrderId: "po-1", branchId: "branch-2" } }) as never
+    );
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    await expect(getJobOrderById("co-1", "jo-1", "user-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("skips the branch check entirely when no userId is supplied (an internal caller)", async () => {
+    vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(
+      jobOrder({ lot: { id: "lot-1", lotNumber: "L-1", productionOrderId: "po-1", branchId: "branch-2" } }) as never
+    );
+
+    const result = await getJobOrderById("co-1", "jo-1");
+    expect(result.id).toBe("jo-1");
+    expect(PermissionService.getAllowedBranchIds).not.toHaveBeenCalled();
   });
 });

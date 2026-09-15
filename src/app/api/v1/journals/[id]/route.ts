@@ -14,7 +14,7 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
     await PermissionService.assert(session.user.id, "accounts", "view");
 
     const { id } = await params;
-    const journal = await getJournalById(session.user.companyId, id);
+    const journal = await getJournalById({ companyId: session.user.companyId, userId: session.user.id }, id);
 
     return NextResponse.json({ data: journal });
   } catch (error) {

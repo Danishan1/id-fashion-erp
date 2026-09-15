@@ -4,6 +4,7 @@ import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingServic
 import { PermissionService } from "@/core/rbac/PermissionService";
 import { prisma } from "@/core/db/client";
 import type { ListQuery } from "@/lib/list-query";
+import { branchScopeWhere } from "@/lib/branch-access";
 import type { Prisma } from "@prisma/client";
 import { SupplierRepository } from "@/modules/suppliers/supplier.repository";
 import { FinanceConfigRepository } from "@/modules/finance-config/finance-config.repository";
@@ -88,9 +89,11 @@ async function buildExpenseFields(companyId: string, input: ExpenseInput): Promi
   };
 }
 
-export async function listExpenses(companyId: string, query: ListQuery) {
+export async function listExpenses(actor: { companyId: string; userId: string }, query: ListQuery) {
+  const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
   const where: Prisma.ExpenseWhereInput = {
-    companyId,
+    companyId: actor.companyId,
+    ...branchScopeWhere(allowedBranchIds),
     ...(query.search ? { expenseNumber: { contains: query.search, mode: "insensitive" as const } } : {}),
   };
 
@@ -106,9 +109,16 @@ export async function listExpenses(companyId: string, query: ListQuery) {
   return { data, totalCount };
 }
 
-export async function getExpenseById(companyId: string, id: string) {
-  const expense = await ExpenseRepository.findByIdWithDetails(companyId, id);
+/** A branch-restricted user gets NOT_FOUND for an expense outside their allowed branches — same "deny as not-found" convention used across this app. */
+export async function getExpenseById(actor: { companyId: string; userId: string }, id: string) {
+  const expense = await ExpenseRepository.findByIdWithDetails(actor.companyId, id);
   if (!expense) throw new BusinessRuleError("NOT_FOUND", "Expense not found.", { id });
+
+  const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
+  if (allowedBranchIds !== null && (!expense.branchId || !allowedBranchIds.has(expense.branchId))) {
+    throw new BusinessRuleError("NOT_FOUND", "Expense not found.", { id });
+  }
+
   return expense;
 }
 

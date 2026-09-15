@@ -3,6 +3,7 @@ import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingService";
 import { PermissionService } from "@/core/rbac/PermissionService";
 import type { ListQuery } from "@/lib/list-query";
+import { branchScopeWhere } from "@/lib/branch-access";
 import { convertUomQuantity } from "@/lib/uom-conversion";
 import { LookupRepository } from "@/modules/lookups/lookup.repository";
 import { FabricConfigRepository } from "@/modules/fabric-config/fabric-config.repository";
@@ -127,9 +128,11 @@ function computeTotalAmount(items: PurchaseOrderItemInput[]) {
   return items.reduce((sum, item) => sum + item.unitPrice * item.orderedQuantity, 0);
 }
 
-export async function listPurchaseOrders(companyId: string, query: ListQuery) {
+export async function listPurchaseOrders(actor: { companyId: string; userId: string }, query: ListQuery) {
+  const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
   const where: Prisma.PurchaseOrderWhereInput = {
-    companyId,
+    companyId: actor.companyId,
+    ...branchScopeWhere(allowedBranchIds),
     ...(query.search ? { orderNumber: { contains: query.search, mode: "insensitive" as const } } : {}),
   };
 
@@ -145,9 +148,16 @@ export async function listPurchaseOrders(companyId: string, query: ListQuery) {
   return { data, totalCount };
 }
 
-export async function getPurchaseOrderById(companyId: string, id: string) {
-  const order = await PurchaseOrderRepository.findByIdWithDetails(companyId, id);
+/** A branch-restricted user gets NOT_FOUND for an order outside their allowed branches — same "deny as not-found" convention used across this app. */
+export async function getPurchaseOrderById(actor: { companyId: string; userId: string }, id: string) {
+  const order = await PurchaseOrderRepository.findByIdWithDetails(actor.companyId, id);
   if (!order) throw new BusinessRuleError("NOT_FOUND", "Purchase order not found.", { id });
+
+  const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
+  if (allowedBranchIds !== null && (!order.branchId || !allowedBranchIds.has(order.branchId))) {
+    throw new BusinessRuleError("NOT_FOUND", "Purchase order not found.", { id });
+  }
+
   return order;
 }
 

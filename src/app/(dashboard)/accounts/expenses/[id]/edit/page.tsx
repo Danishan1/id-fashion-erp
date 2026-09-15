@@ -8,7 +8,7 @@ export default async function EditExpensePage({ params }: { params: Promise<{ id
   const { id } = await params;
   const session = await auth();
 
-  const expense = await getExpenseById(session!.user.companyId, id).catch(() => null);
+  const expense = await getExpenseById({ companyId: session!.user.companyId, userId: session!.user.id }, id).catch(() => null);
   if (!expense) notFound();
 
   // Matches the service's own guard — nothing else can be edited here.

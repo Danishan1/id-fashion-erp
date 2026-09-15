@@ -8,7 +8,7 @@ export default async function JournalDetailPage({ params }: { params: Promise<{ 
   const { id } = await params;
   const session = await auth();
 
-  const journal = await getJournalById(session!.user.companyId, id).catch(() => null);
+  const journal = await getJournalById({ companyId: session!.user.companyId, userId: session!.user.id }, id).catch(() => null);
   if (!journal) notFound();
 
   return (
