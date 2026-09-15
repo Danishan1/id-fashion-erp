@@ -2,7 +2,9 @@ import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { prisma } from "@/core/db/client";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingService";
+import { PermissionService } from "@/core/rbac/PermissionService";
 import type { ListQuery } from "@/lib/list-query";
+import { branchScopeWhere } from "@/lib/branch-access";
 import { convertUomQuantity } from "@/lib/uom-conversion";
 import { LookupRepository } from "@/modules/lookups/lookup.repository";
 import { ProductRepository } from "@/modules/products/product.repository";
@@ -23,9 +25,11 @@ const INVENTORY_TRANSACTION_TYPE_BY_MOVEMENT_TYPE = {
   RETURN_TO_SUPPLIER: "RETURN_TO_SUPPLIER",
 } as const;
 
-export async function listStockMovements(companyId: string, query: ListQuery) {
+export async function listStockMovements(actor: { companyId: string; userId: string }, query: ListQuery) {
+  const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
   const where: Prisma.StockMovementWhereInput = {
-    companyId,
+    companyId: actor.companyId,
+    ...branchScopeWhere(allowedBranchIds),
     ...(query.search ? { movementNumber: { contains: query.search, mode: "insensitive" as const } } : {}),
   };
 
@@ -41,9 +45,16 @@ export async function listStockMovements(companyId: string, query: ListQuery) {
   return { data, totalCount };
 }
 
-export async function getStockMovementById(companyId: string, id: string) {
-  const movement = await StockMovementRepository.findByIdWithDetails(companyId, id);
+/** A branch-restricted user gets NOT_FOUND for a movement outside their allowed branches — same "deny as not-found" convention used across this app. */
+export async function getStockMovementById(actor: { companyId: string; userId: string }, id: string) {
+  const movement = await StockMovementRepository.findByIdWithDetails(actor.companyId, id);
   if (!movement) throw new BusinessRuleError("NOT_FOUND", "Stock movement not found.", { id });
+
+  const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
+  if (allowedBranchIds !== null && (!movement.branchId || !allowedBranchIds.has(movement.branchId))) {
+    throw new BusinessRuleError("NOT_FOUND", "Stock movement not found.", { id });
+  }
+
   return movement;
 }
 

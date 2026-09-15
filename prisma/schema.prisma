@@ -212,6 +212,7 @@ model Branch {
   goodsReceipts         GoodsReceipt[]
   inventoryTransactions InventoryTransaction[]
   stockMovements        StockMovement[]
+  roleBranchAccess      RoleBranchAccess[]
   productionOrders      ProductionOrder[]
   lots                  Lot[]
   documentSequences     DocumentSequence[]
@@ -428,6 +429,7 @@ model Role {
   rolePermissions       RolePermission[]
   userBranchRoles       UserBranchRole[]
   productionStageAccess RoleProductionStageAccess[]
+  branchAccess          RoleBranchAccess[]
 
   @@unique([companyId, name])
   @@map("roles")
@@ -455,6 +457,36 @@ model RoleProductionStageAccess {
 
   @@unique([roleId, productionStageId])
   @@map("role_production_stage_access")
+}
+
+/**
+ * Per-role BRANCH restriction — the exact same "additive, opt-in narrowing"
+ * shape as RoleProductionStageAccess just above, reused deliberately rather
+ * than invented fresh: a Role with ZERO rows here is unrestricted (sees
+ * every branch in the company), so every pre-existing role (including every
+ * currently-seeded system role) keeps working exactly as before with no
+ * data migration needed — this only starts to matter the moment an admin
+ * explicitly restricts a role to specific branches. See
+ * PermissionService.getAllowedBranchIds() for the read side (identical
+ * union/"any unrestricted role wins" semantics as
+ * getAllowedProductionStageIds()) and assertBranchAccess() in
+ * src/lib/branch-access.ts for the write side. Deliberately role-scoped,
+ * not user-scoped directly -- UserBranchRole already ties a user to one or
+ * more (role, branch) pairs for identity/numbering purposes (session.user
+ * .defaultBranchId), a separate concern from whether that role's own data
+ * visibility is restricted to specific branches at all.
+ */
+model RoleBranchAccess {
+  id        String   @id @default(uuid()) @db.Uuid
+  roleId    String   @map("role_id") @db.Uuid
+  branchId  String   @map("branch_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  branch Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, branchId])
+  @@map("role_branch_access")
 }
 
 model Permission {

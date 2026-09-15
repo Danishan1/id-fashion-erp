@@ -9,7 +9,7 @@ export default async function MaterialRequestDetailPage({ params }: { params: Pr
   const { id } = await params;
   const session = await auth();
 
-  const request = await getMaterialRequestById(session!.user.companyId, id).catch(() => null);
+  const request = await getMaterialRequestById({ companyId: session!.user.companyId, userId: session!.user.id }, id).catch(() => null);
   if (!request) notFound();
 
   return (

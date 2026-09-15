@@ -16,7 +16,7 @@ export default async function StockMovementDetailPage({ params }: { params: Prom
   const { id } = await params;
   const session = await auth();
 
-  const movement = await getStockMovementById(session!.user.companyId, id).catch(() => null);
+  const movement = await getStockMovementById({ companyId: session!.user.companyId, userId: session!.user.id }, id).catch(() => null);
   if (!movement) notFound();
 
   return (

@@ -22,3 +22,10 @@ export const updateRoleProductionStagesSchema = z.object({
   stageIds: z.array(z.string().uuid()),
 });
 export type UpdateRoleProductionStagesInput = z.infer<typeof updateRoleProductionStagesSchema>;
+
+// Same "empty array = unrestricted, not no-op" contract as
+// updateRoleProductionStagesSchema above, mirrored for branch access.
+export const updateRoleBranchesSchema = z.object({
+  branchIds: z.array(z.string().uuid()),
+});
+export type UpdateRoleBranchesInput = z.infer<typeof updateRoleBranchesSchema>;

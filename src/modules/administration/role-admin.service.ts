@@ -2,7 +2,7 @@ import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { PermissionService } from "@/core/rbac/PermissionService";
 import { RoleAdminRepository } from "./role-admin.repository";
-import type { CreateRoleInput, UpdateRoleProductionStagesInput } from "./role-admin.schema";
+import type { CreateRoleInput, UpdateRoleBranchesInput, UpdateRoleProductionStagesInput } from "./role-admin.schema";
 
 export interface ActorContext {
   companyId: string;
@@ -163,4 +163,59 @@ export async function updateRoleProductionStages(actor: ActorContext, roleId: st
   });
 
   return getRoleProductionStageAccess(actor.companyId, roleId);
+}
+
+export async function getRoleBranchAccess(companyId: string, roleId: string) {
+  const role = await RoleAdminRepository.findById(companyId, roleId);
+  if (!role) throw new BusinessRuleError("NOT_FOUND", "Role not found.", { id: roleId });
+
+  const [branches, granted] = await Promise.all([
+    RoleAdminRepository.findActiveBranches(companyId),
+    RoleAdminRepository.findGrantedBranchIds(roleId),
+  ]);
+  const grantedIds = new Set(granted.map((g) => g.branchId));
+
+  return {
+    role: { id: role.id, name: role.name },
+    // Zero rows granted = unrestricted (every branch) — surfaced explicitly
+    // here rather than left for the UI to infer, same reasoning as
+    // getRoleProductionStageAccess()'s own isRestricted flag.
+    isRestricted: grantedIds.size > 0,
+    branches: branches.map((b) => ({ id: b.id, name: b.name, code: b.code, granted: grantedIds.has(b.id) })),
+  };
+}
+
+/**
+ * Deliberately allowed on system roles too — identical reasoning to
+ * updateRoleProductionStages() above: branch restriction is a purely
+ * additive/narrowing dimension layered on top of a role's existing
+ * module/action grants, never widening what it can do, only which
+ * branch(es) it can do it on.
+ */
+export async function updateRoleBranches(actor: ActorContext, roleId: string, input: UpdateRoleBranchesInput) {
+  const role = await RoleAdminRepository.findById(actor.companyId, roleId);
+  if (!role) throw new BusinessRuleError("NOT_FOUND", "Role not found.", { id: roleId });
+
+  const activeBranches = await RoleAdminRepository.findActiveBranches(actor.companyId);
+  const activeBranchIds = new Set(activeBranches.map((b) => b.id));
+  const unknownIds = input.branchIds.filter((id) => !activeBranchIds.has(id));
+  if (unknownIds.length > 0) {
+    throw new BusinessRuleError("VALIDATION_ERROR", `Unknown or inactive branch id(s): ${unknownIds.join(", ")}`, { unknownIds });
+  }
+
+  await RoleAdminRepository.replaceBranchAccessInTx(roleId, input.branchIds);
+
+  // Same reasoning as updateRoleProductionStages()'s own invalidate() call.
+  PermissionService.invalidate();
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "role_branch_access",
+    recordId: roleId,
+    action: "UPDATE",
+    newValues: { roleId, branchIds: input.branchIds },
+  });
+
+  return getRoleBranchAccess(actor.companyId, roleId);
 }
