@@ -152,11 +152,24 @@ async function postStageTransactionInTx(
   return { jobOrder: toJobOrder, transactionId: transaction.id };
 }
 
-/** Posts the Finished-Goods receipt and closes out both the Lot and the
- * newly-created final-stage JobOrder — the automatic side effect of landing
- * on a stage flagged isFinal, same discipline as every other "terminal
- * action is a side effect, never a caller-chosen generic step" pattern in
- * this project. */
+/** Posts the Finished-Goods receipt and closes out the newly-created
+ * final-stage JobOrder — the automatic side effect of landing on a stage
+ * flagged isFinal, same discipline as every other "terminal action is a side
+ * effect, never a caller-chosen generic step" pattern in this project.
+ *
+ * The Lot itself only follows to COMPLETED once its FULL quantity is
+ * accounted for — either landed at a final stage, or permanently removed
+ * from the flow as rejected/damaged along the way. Each forward into an
+ * isFinal stage creates its own JobOrder for just the forwarded batch (see
+ * postStageTransactionInTx), so this function runs once per batch, not once
+ * per lot — a small partial batch (e.g. a reworked handful trickling back
+ * through QC) reaching Packing must NOT complete a lot whose bulk quantity
+ * is still mid-pipeline. (Previously this set Lot.status unconditionally on
+ * any final-stage arrival: a 1-of-22 rework batch reaching Packing flipped
+ * the whole lot to COMPLETED, and canAct in LotWorkflowPanel — which only
+ * allows PLANNED/IN_PROGRESS lots — then hid Forward on every other JobOrder
+ * for that lot, stranding the remaining 20 pcs already completed at
+ * Finishing with no way to send them on to Packing.) */
 async function completeAtFinalStageInTx(
   tx: Prisma.TransactionClient,
   actor: ActorContext,
@@ -170,12 +183,26 @@ async function completeAtFinalStageInTx(
     referenceModule: "PRODUCTION_ORDER",
     referenceRecordId: params.lotId,
   });
-  await LotRepository.updateInTx(tx, params.lotId, { status: "COMPLETED" });
   await JobOrderRepository.updateInTx(tx, params.jobOrderId, {
     status: "COMPLETED",
     completedQuantity: params.quantity,
     actualEndAt: new Date(),
   });
+
+  const lot = await tx.lot.findUniqueOrThrow({ where: { id: params.lotId }, select: { quantity: true } });
+  const jobOrders = await tx.jobOrder.findMany({
+    where: { lotId: params.lotId },
+    select: { completedQuantity: true, rejectedQuantity: true, damagedQuantity: true, productionStage: { select: { isFinal: true } } },
+  });
+  const accountedFor = jobOrders.reduce((sum, jo) => {
+    const permanentlyDisposed = Number(jo.rejectedQuantity) + Number(jo.damagedQuantity);
+    const reachedFinalStage = jo.productionStage.isFinal ? Number(jo.completedQuantity) : 0;
+    return sum + permanentlyDisposed + reachedFinalStage;
+  }, 0);
+
+  if (accountedFor >= Number(lot.quantity) - EPSILON) {
+    await LotRepository.updateInTx(tx, params.lotId, { status: "COMPLETED" });
+  }
 }
 
 /** 3-column guard (completed+rejected+damaged <= planned) — can't be a
@@ -316,9 +343,18 @@ function guardedIncrementQcPassed(tx: Prisma.TransactionClient, jobOrderId: stri
   });
 }
 
-export async function getJobOrderById(companyId: string, id: string) {
+/** A branch-restricted user gets NOT_FOUND for a job order outside their allowed branches — derived from its own Lot's branch, since JobOrder itself carries no branchId column. */
+export async function getJobOrderById(companyId: string, id: string, userId?: string) {
   const jobOrder = await JobOrderRepository.findAnyById(companyId, id);
   if (!jobOrder) throw new BusinessRuleError("NOT_FOUND", "Job order not found.", { id });
+
+  if (userId) {
+    const allowedBranchIds = await PermissionService.getAllowedBranchIds(userId);
+    if (allowedBranchIds !== null && (!jobOrder.lot.branchId || !allowedBranchIds.has(jobOrder.lot.branchId))) {
+      throw new BusinessRuleError("NOT_FOUND", "Job order not found.", { id });
+    }
+  }
+
   return jobOrder;
 }
 

@@ -20,7 +20,7 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
     await PermissionService.assert(session.user.id, "inventory", "view");
 
     const { id } = await params;
-    const request = await getMaterialRequestById(session.user.companyId, id);
+    const request = await getMaterialRequestById({ companyId: session.user.companyId, userId: session.user.id }, id);
     const recordIds = [id, ...request.lines.map((l) => l.id)];
 
     const entries = await prisma.auditLog.findMany({

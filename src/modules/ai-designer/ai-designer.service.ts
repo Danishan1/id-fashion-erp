@@ -1,5 +1,6 @@
 import sharp from "sharp";
 import { writeAuditLog } from "@/core/audit/AuditLogger";
+import { PermissionService } from "@/core/rbac/PermissionService";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingService";
 import { deleteAttachment, getAttachmentForDownload, uploadAttachment } from "@/core/attachments/AttachmentService";
@@ -9,15 +10,32 @@ import { analyzeFabric } from "@/core/ai-designer/fabric-analysis/analyze";
 import { buildUserText, PROMPT_VERSION as FABRIC_PROMPT_VERSION } from "@/core/ai-designer/fabric-analysis/prompt";
 import { ImageGenerationServiceError } from "@/core/ai/image-generation/types";
 import { runWithFailover } from "@/core/ai/provider-manager/AIProviderManager";
-import { buildGenerationPrompt, buildSecondFabricPrompt, buildWorkspaceEditPrompt, PROMPT_VERSION as GENERATION_PROMPT_VERSION } from "@/core/ai-designer/image-generation/prompt";
+import { buildEmbellishmentPrompt, buildGenerationPrompt, buildSecondFabricPrompt, buildWorkspaceEditPrompt, PROMPT_VERSION as GENERATION_PROMPT_VERSION } from "@/core/ai-designer/image-generation/prompt";
 import type { TechPackSpecItem, TechPackAnalysisForPdf, TechPackDocumentPageImage } from "@/core/ai-designer/export/tech-pack-pdf";
 import { getEnvironmentByKey } from "@/core/ai-designer/catalogs/environment-catalog";
 import { isValidAgeGroup, isValidProductCategory, TARGET_CUSTOMER_LABELS, type TargetCustomer } from "@/core/ai-designer/catalogs/customer-catalog";
 import { ProductRepository } from "@/modules/products/product.repository";
 import type { ListQuery } from "@/lib/list-query";
-import { generateGarmentAnalysisPart1, generateGarmentAnalysisPart2, generatePagePrompts } from "@/core/ai-designer/tech-pack/generate";
+import { generateGarmentAnalysisPart1, generateGarmentAnalysisPart2 } from "@/core/ai-designer/tech-pack/generate";
 import type { TechPackDesignContext } from "@/core/ai-designer/tech-pack/prompt";
-import { TECH_PACK_PAGE_DEFINITIONS, type GarmentAnalysis } from "@/core/ai-designer/tech-pack/schema";
+import {
+  ARTWORK_ITEM_EDITABLE_FIELDS,
+  BOM_ITEM_EDITABLE_FIELDS,
+  CLOSURE_EDITABLE_FIELDS,
+  CONSTRUCTION_EDITABLE_FIELDS,
+  IDENTIFICATION_EDITABLE_FIELDS,
+  MEASUREMENT_POINT_EDITABLE_FIELDS,
+  PART1_SCALAR_FIELDS,
+  PART2_SCALAR_FIELDS,
+  PHOTO_PAGE_NUMBERS,
+  SEAM_CALLOUT_STATUS_VALUES,
+  SEAM_CALLOUT_TEXT_FIELDS,
+  STANDARD_SIZES,
+  SUGGESTED_COLORWAY_EDITABLE_FIELDS,
+  TECH_PACK_PAGE_DEFINITIONS,
+  VISIBLE_COLOR_EDITABLE_FIELDS,
+  type GarmentAnalysis,
+} from "@/core/ai-designer/tech-pack/schema";
 import {
   AiDesignerGenerationRepository,
   AiDesignerImageRepository,
@@ -28,6 +46,7 @@ import {
 } from "./ai-designer.repository";
 import type {
   ApplyEditVariationInput,
+  ApplyEmbellishmentsInput,
   ApplySecondFabricInput,
   CreateProjectInput,
   DecideImageInput,
@@ -37,6 +56,7 @@ import type {
   SaveWizardSelectionsInput,
   SelectExistingFabricInput,
   UpdateFabricFieldInput,
+  UpdateTechPackFieldInput,
 } from "./ai-designer.schema";
 import type { AiDesignerProject, Prisma } from "@prisma/client";
 
@@ -56,12 +76,12 @@ const ALLOWED_IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/jpg", "image/png"
 
 /**
  * Own resumable-wizard step order — mirrors the *shape* of AiGarmentProject's
- * step machinery, not shared code (confirmed separate module). MULTI_FABRIC
- * and TECH_PACK are both optional/skippable steps -- nothing downstream
- * requires either to be completed, so a project that never uses them simply
- * never marks them complete (this only affects the display-only "current
- * step" highlight, not navigation, which is entirely user-driven via each
- * step's own Next button — see AiDesignerWorkflowPanel.tsx).
+ * step machinery, not shared code (confirmed separate module). MULTI_FABRIC,
+ * EMBELLISHMENTS, and TECH_PACK are all optional/skippable steps -- nothing
+ * downstream requires any of them to be completed, so a project that never
+ * uses them simply never marks them complete (this only affects the
+ * display-only "current step" highlight, not navigation, which is entirely
+ * user-driven via each step's own Next button — see AiDesignerWorkflowPanel.tsx).
  */
 export const WIZARD_STEP_ORDER = [
   "FABRIC_SELECTION",
@@ -74,6 +94,7 @@ export const WIZARD_STEP_ORDER = [
   "ENVIRONMENT",
   "GENERATE",
   "MULTI_FABRIC",
+  "EMBELLISHMENTS",
   "EDIT",
   "TECH_PACK",
   "EXPORT",
@@ -1161,6 +1182,197 @@ export async function applySecondFabric(actor: ActorContext, projectId: string, 
 }
 
 // ---------------------------------------------------------------------------
+// Step 9c — Embellishments
+// ---------------------------------------------------------------------------
+
+export async function uploadEmbellishmentMotif(actor: ActorContext, projectId: string, file: UploadableFile) {
+  await getOwnedProject(actor.companyId, projectId);
+
+  if (!ALLOWED_IMAGE_MIME_TYPES.has(file.mimeType)) {
+    throw new BusinessRuleError("VALIDATION_ERROR", `Unsupported file type "${file.mimeType}" — upload a JPG, PNG, or WEBP image.`);
+  }
+
+  const attachment = await uploadAttachment(actor, "AI_DESIGNER_PROJECT", projectId, file, "EMBELLISHMENT_MOTIF_IMAGE");
+  const updated = await AiDesignerProjectRepository.update(projectId, { embellishmentMotifAttachmentId: attachment.id });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "ai_projects",
+    recordId: projectId,
+    action: "UPDATE",
+    newValues: { embellishmentMotifAttachmentId: attachment.id },
+  });
+
+  return { project: updated, attachment };
+}
+
+export async function deleteEmbellishmentMotif(actor: ActorContext, projectId: string) {
+  const project = await getOwnedProject(actor.companyId, projectId);
+  if (!project.embellishmentMotifAttachmentId) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "This project has no embellishment motif image to delete.");
+  }
+  await deleteAttachment(actor, project.embellishmentMotifAttachmentId);
+  return AiDesignerProjectRepository.update(projectId, { embellishmentMotifAttachmentId: null });
+}
+
+/**
+ * Applies a digital applique/embroidery embellishment onto the CURRENT
+ * design image — either a genuine two-image composition (current design +
+ * uploaded motif photo, via `provider.applyFabric`, reusing the MULTI_FABRIC
+ * capability since it's mechanically the same two-image-composition call as
+ * Multi-Fabric's own second-fabric application) or, when no motif photo was
+ * uploaded, a single-image edit driven purely by the free-text instructions
+ * (via `provider.generateVariation`, reusing the IMAGE_EDIT capability the
+ * same way Edit Design's own single-image edits do). Deliberately no new
+ * AIProviderCapability value — both branches are mechanically identical to
+ * an existing, already-gated call, just with a different prompt.
+ */
+export async function applyEmbellishments(actor: ActorContext, projectId: string, input: ApplyEmbellishmentsInput) {
+  const project = await AiDesignerProjectRepository.findByIdWithDetails(actor.companyId, projectId);
+  if (!project) throw new BusinessRuleError("NOT_FOUND", "AI Designer project not found.", { id: projectId });
+  if (!project.currentVersion?.currentImage) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "Generate a design first before applying embellishments.");
+  }
+  const trimmedInstructions = input.instructions?.trim() || undefined;
+  if (!project.embellishmentMotifAttachmentId && !trimmedInstructions) {
+    throw new BusinessRuleError(
+      "VALIDATION_ERROR",
+      "Upload an embroidery/applique motif image or enter embellishment instructions first."
+    );
+  }
+  await assertNoActiveRun(projectId, "IMAGE_EDIT");
+
+  const parentImage = project.currentVersion.currentImage;
+  const { attachment: parentAttachment, buffer: parentBuffer } = await getAttachmentForDownload(actor.companyId, parentImage.imageAttachmentId);
+  const motifRef = project.embellishmentMotifAttachmentId
+    ? await getAttachmentForDownload(actor.companyId, project.embellishmentMotifAttachmentId)
+    : null;
+
+  const prompt = buildEmbellishmentPrompt(input.embellishmentType, trimmedInstructions, !!motifRef);
+  const specJson = {
+    ...buildSpecJson(project),
+    embellishment: { embellishmentType: input.embellishmentType, instructions: trimmedInstructions ?? null },
+  };
+
+  const promptRow = await AiDesignerPromptRepository.create({
+    companyId: actor.companyId,
+    projectId,
+    promptType: "IMAGE_EDIT",
+    promptVersion: GENERATION_PROMPT_VERSION,
+    specJson: specJson as Prisma.InputJsonValue,
+    promptText: prompt,
+    provider: "pending",
+    model: "pending",
+    status: "IN_PROGRESS",
+    createdByUserId: actor.userId,
+  });
+
+  const generation = await AiDesignerGenerationRepository.create({
+    companyId: actor.companyId,
+    projectId,
+    promptId: promptRow.id,
+    parentImageId: parentImage.id,
+    editedFeature: `Embellishment: ${input.embellishmentType}`,
+    requestedImageCount: 1,
+    status: "IN_PROGRESS",
+    createdByUserId: actor.userId,
+  });
+
+  try {
+    const result = motifRef
+      ? await runWithFailover({
+          companyId: actor.companyId,
+          userId: actor.userId,
+          capability: "MULTI_FABRIC",
+          generationContext: `AI Designer / Project ${project.projectNumber} / Embellishments`,
+          aiDesignerProjectId: projectId,
+          inputImagePresent: true,
+          call: (provider) => {
+            if (!provider.applyFabric) {
+              throw new ImageGenerationServiceError(
+                `The configured image provider ("${provider.name}") does not support applying an embellishment motif onto an existing design — it needs a genuine two-image composition capability.`,
+                "UNSUPPORTED_OPERATION"
+              );
+            }
+            return provider.applyFabric({
+              prompt,
+              count: 1,
+              baseImage: { buffer: parentBuffer, mimeType: parentAttachment.mimeType },
+              swatchImage: { buffer: motifRef.buffer, mimeType: motifRef.attachment.mimeType },
+            });
+          },
+        })
+      : await runWithFailover({
+          companyId: actor.companyId,
+          userId: actor.userId,
+          capability: "IMAGE_EDIT",
+          generationContext: `AI Designer / Project ${project.projectNumber} / Embellishments`,
+          aiDesignerProjectId: projectId,
+          inputImagePresent: true,
+          call: (provider) => {
+            if (!provider.generateVariation) {
+              throw new ImageGenerationServiceError(
+                `The configured image provider ("${provider.name}") does not support editing an existing image.`,
+                "UNSUPPORTED_OPERATION"
+              );
+            }
+            return provider.generateVariation({
+              prompt,
+              count: 1,
+              parentImage: { buffer: parentBuffer, mimeType: parentAttachment.mimeType },
+            });
+          },
+        });
+
+    const img = result.images[0];
+    const attachment = await uploadAttachment(
+      actor,
+      "AI_DESIGNER_PROJECT",
+      projectId,
+      { buffer: img.buffer, fileName: `ai-designer-embellishment-${Date.now()}.png`, mimeType: img.mimeType },
+      "GENERATED_DESIGN_IMAGE"
+    );
+    await AiDesignerImageRepository.createMany([
+      { companyId: actor.companyId, projectId, generationId: generation.id, imageAttachmentId: attachment.id, createdByUserId: actor.userId },
+    ]);
+    const images = await AiDesignerImageRepository.findByGenerationId(generation.id);
+
+    await AiDesignerGenerationRepository.markSuccess(generation.id);
+    await AiDesignerPromptRepository.markSuccessWithProvider(promptRow.id, result.providerName, result.model);
+
+    const typeLabel = input.embellishmentType.replace(/_/g, " ");
+    const changeSummary = `Applied embellishment: ${typeLabel}${trimmedInstructions ? ` — ${trimmedInstructions.slice(0, 80)}` : ""}`;
+    const version = await bumpVersion(actor, projectId, images[0].id, changeSummary, specJson);
+
+    const completedSteps = markStepsComplete(project.completedSteps, ["EMBELLISHMENTS"]);
+    await AiDesignerProjectRepository.update(projectId, { completedSteps, currentStep: computeCurrentStep(completedSteps) });
+
+    await writeAuditLog({
+      companyId: actor.companyId,
+      userId: actor.userId,
+      tableName: "ai_generations",
+      recordId: generation.id,
+      action: "CREATE",
+      newValues: {
+        embellishmentType: input.embellishmentType,
+        instructions: trimmedInstructions ?? null,
+        versionNumber: version.versionNumber,
+        provider: result.providerName,
+        model: result.model,
+      },
+    });
+
+    return { generation, images, version };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error.";
+    await AiDesignerGenerationRepository.markFailed(generation.id);
+    await AiDesignerPromptRepository.markFailed(promptRow.id, "PROVIDER_ERROR", message);
+    throw err;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Images / decisions / versions
 // ---------------------------------------------------------------------------
 
@@ -1201,9 +1413,15 @@ export async function listVersions(companyId: string, projectId: string) {
 }
 
 // ---------------------------------------------------------------------------
-// Tech Pack — full "GARMENT TECH PACK SPEC SHEET GENERATOR" pipeline:
-// a comprehensive Garment Analysis (categories A-J) plus exactly 7 generated
-// tech-pack page images, all from the project's own current design.
+// Tech Pack — full "GARMENT TECH PACK SPEC SHEET GENERATOR" pipeline: a
+// comprehensive Garment Analysis (categories A-J) rendered as a real 7-page
+// PDF from structured data via fixed @react-pdf/renderer templates. v3
+// (2026-09-14) removed AI image generation from this feature entirely — the
+// 3 pages that show a visual (Cover, Construction, Colorways) embed the
+// project's own real, already-generated design photo instead of a freshly
+// AI-drawn "flat", per the user's own explicit rule against fabricating page
+// artwork. Also added a real approve/revision discipline (see
+// updateTechPackField/approveTechPack/revertTechPackToOriginal below).
 // ---------------------------------------------------------------------------
 
 function buildTechPackDesignContext(project: AiDesignerProject): TechPackDesignContext {
@@ -1227,72 +1445,18 @@ async function assertNoActiveTechPackRun(projectId: string) {
   }
 }
 
-async function generateTechPackPageImage(params: {
-  actor: ActorContext;
-  projectId: string;
-  projectNumber: string;
-  pageNumber: number;
-  pageTitle: string;
-  promptText: string;
-  baseBuffer: Buffer;
-  baseMimeType: string;
-}) {
-  try {
-    const result = await runWithFailover({
-      companyId: params.actor.companyId,
-      userId: params.actor.userId,
-      capability: "TECHNICAL_FLAT",
-      generationContext: `AI Designer / Project ${params.projectNumber} / Tech Pack Page ${params.pageNumber} (${params.pageTitle})`,
-      aiDesignerProjectId: params.projectId,
-      inputImagePresent: true,
-      call: (provider) => {
-        if (!provider.generateTechnicalFlat) {
-          throw new ImageGenerationServiceError(
-            `The configured image provider ("${provider.name}") does not support generating a tech-pack page image.`,
-            "UNSUPPORTED_OPERATION"
-          );
-        }
-        return provider.generateTechnicalFlat({
-          prompt: params.promptText,
-          count: 1,
-          baseImage: { buffer: params.baseBuffer, mimeType: params.baseMimeType },
-        });
-      },
-    });
-
-    const image = result.images[0];
-    const attachment = await uploadAttachment(
-      params.actor,
-      "AI_DESIGNER_PROJECT",
-      params.projectId,
-      { buffer: image.buffer, fileName: `ai-designer-tech-pack-page-${params.pageNumber}-${Date.now()}.png`, mimeType: image.mimeType },
-      `TECH_PACK_PAGE_${params.pageNumber}`
-    );
-    return attachment.id;
-  } catch (err) {
-    if (err instanceof Error) {
-      err.message = `Page ${params.pageNumber} (${params.pageTitle}): ${err.message}`;
-    }
-    throw err;
-  }
-}
-
 /**
  * The full pipeline behind the user's own "GARMENT TECH PACK SPEC SHEET
  * GENERATOR" prompt (supplied verbatim, 2026-09-13) — sequential, not
  * parallel, since each step's output genuinely feeds the next: (1) a vision
  * call analyzes the current design image into categories A-G, (2) a text
- * call extends that into categories H-J (BOM/measurements/labels), (3) a
- * text call turns the complete analysis into exactly 7 page-specific
- * image-generation prompts, then (4) each of those 7 prompts is used,
- * one at a time, to actually generate that page's image from the same base
- * design photo. Deliberately all-or-nothing, same as the design this
- * replaces: if any one of these ~10 real AI calls fails, the whole attempt
- * is marked FAILED with that step identified in the error, rather than
- * persisting a partially-successful run — simpler to reason about, and a
- * retry is cheap (this is a manual, low-frequency action, not a hot path).
- * Zero reuse of AI Garment Flow's own, much richer equivalent processes —
- * this module stays deliberately isolated from that one.
+ * call extends that into categories H-J (BOM/measurements/labels) plus
+ * designer notes. Deliberately all-or-nothing: if either real AI call fails,
+ * the whole attempt is marked FAILED, rather than persisting a partially-
+ * successful run — simpler to reason about, and a retry is cheap (this is a
+ * manual, low-frequency action, not a hot path). Zero reuse of AI Garment
+ * Flow's own, much richer equivalent processes — this module stays
+ * deliberately isolated from that one.
  */
 export async function generateTechPack(actor: ActorContext, projectId: string) {
   const project = await AiDesignerProjectRepository.findByIdWithDetails(actor.companyId, projectId);
@@ -1323,41 +1487,24 @@ export async function generateTechPack(actor: ActorContext, projectId: string) {
       imageMediaType,
     });
     const part2 = await generateGarmentAnalysisPart2({ ctx: designContext, part1: part1.data });
-    const pagePrompts = await generatePagePrompts({ ctx: designContext, part1: part1.data, part2: part2.data });
 
-    const pages: { pageNumber: number; pageTitle: string; promptText: string; imageAttachmentId: string | null }[] = [];
-    let imagePageIndex = 0;
-    for (const def of TECH_PACK_PAGE_DEFINITIONS) {
-      if (!def.needsImage) {
-        pages.push({
-          pageNumber: def.pageNumber,
-          pageTitle: def.title,
-          promptText: "Rendered as real typeset text/tables in the exported PDF — no AI-generated image for this page.",
-          imageAttachmentId: null,
-        });
-        continue;
-      }
-      const promptText = pagePrompts.data.pagePrompts[imagePageIndex];
-      imagePageIndex += 1;
-      const imageAttachmentId = await generateTechPackPageImage({
-        actor,
-        projectId,
-        projectNumber: project.projectNumber,
-        pageNumber: def.pageNumber,
-        pageTitle: def.title,
-        promptText,
-        baseBuffer,
-        baseMimeType: baseAttachment.mimeType,
-      });
-      pages.push({ pageNumber: def.pageNumber, pageTitle: def.title, promptText, imageAttachmentId });
-    }
+    // Pages 1/2/4 embed the project's own real design photo (the SAME
+    // attachment id already on the project's current version, reused as-is
+    // -- never re-uploaded, never freshly AI-generated). Every other page
+    // has no image at all; its content is entirely real, typeset text.
+    const realPhotoAttachmentId = project.currentVersion.currentImage.imageAttachmentId;
+    const pages = TECH_PACK_PAGE_DEFINITIONS.map((def) => ({
+      pageNumber: def.pageNumber,
+      pageTitle: def.title,
+      imageAttachmentId: (PHOTO_PAGE_NUMBERS as readonly number[]).includes(def.pageNumber) ? realPhotoAttachmentId : null,
+    }));
 
     const garmentAnalysis: GarmentAnalysis = { part1: part1.data, part2: part2.data };
 
     const updated = await AiDesignerTechPackRepository.markSuccess(techPackRow.id, {
       garmentAnalysisJson: garmentAnalysis as unknown as Prisma.InputJsonValue,
-      designerNotes: pagePrompts.data.designerNotes,
-      suggestedAdditionalViews: pagePrompts.data.suggestedAdditionalViews,
+      designerNotes: part2.data.designerNotes,
+      suggestedAdditionalViews: part2.data.suggestedAdditionalViews,
       pages,
     });
 
@@ -1386,7 +1533,7 @@ export async function getLatestTechPack(companyId: string, projectId: string) {
   return AiDesignerTechPackRepository.findLatestByProjectId(projectId);
 }
 
-/** Downloads the latest successful Tech Pack as one combined PDF — one full-bleed page per generated tech-pack page image, in page order. */
+/** Downloads the latest successful Tech Pack as one combined PDF. */
 export async function exportTechPackPdf(actor: ActorContext, projectId: string) {
   const project = await getOwnedProject(actor.companyId, projectId);
   const techPack = await AiDesignerTechPackRepository.findLatestByProjectId(projectId);
@@ -1394,12 +1541,18 @@ export async function exportTechPackPdf(actor: ActorContext, projectId: string) 
     throw new BusinessRuleError("VALIDATION_ERROR", "Generate a tech pack first before downloading it.");
   }
 
-  const images: TechPackDocumentPageImage[] = [];
-  for (const page of techPack.pages) {
-    if (!page.imageAttachmentId) continue;
-    const { attachment, buffer } = await getAttachmentForDownload(actor.companyId, page.imageAttachmentId);
-    images.push({ pageNumber: page.pageNumber, imageBase64: buffer.toString("base64"), imageMimeType: attachment.mimeType });
+  // Pages 1/2/4 now typically share the SAME real attachment id -- fetch
+  // each distinct one once rather than once per page.
+  const distinctAttachmentIds = [...new Set(techPack.pages.map((p) => p.imageAttachmentId).filter((id): id is string => !!id))];
+  const fetched = new Map<string, { imageBase64: string; imageMimeType: string }>();
+  for (const attachmentId of distinctAttachmentIds) {
+    const { attachment, buffer } = await getAttachmentForDownload(actor.companyId, attachmentId);
+    fetched.set(attachmentId, { imageBase64: buffer.toString("base64"), imageMimeType: attachment.mimeType });
   }
+
+  const images: TechPackDocumentPageImage[] = techPack.pages
+    .filter((p) => p.imageAttachmentId)
+    .map((p) => ({ pageNumber: p.pageNumber, ...fetched.get(p.imageAttachmentId!)! }));
 
   const { renderTechPackDocumentPdf } = await import("@/core/ai-designer/export/tech-pack-pdf");
   const pdfBuffer = await renderTechPackDocumentPdf({
@@ -1413,6 +1566,273 @@ export async function exportTechPackPdf(actor: ActorContext, projectId: string) 
   });
 
   return { buffer: pdfBuffer, mimeType: "application/pdf", fileName: `${project.projectNumber}-tech-pack.pdf` };
+}
+
+/**
+ * Resolves a `{category, index?, field?}` path against a real
+ * `GarmentAnalysis` object and returns the CURRENT string value there (for
+ * the audit log's `oldValues`), without mutating anything. Shares the exact
+ * same validation as `applyTechPackFieldEdit` below (any invalid path throws
+ * the identical error), by simply calling that function with a sentinel
+ * write and reading the result back out immediately afterward on a
+ * throwaway clone -- see the two functions together.
+ */
+function readTechPackFieldValue(analysis: GarmentAnalysis, input: { category: string; index?: number; field?: string }): string | undefined {
+  const { category, index, field } = input;
+  try {
+    switch (category) {
+      case "identification":
+        return (analysis.part1.identification as unknown as Record<string, string>)[field ?? ""];
+      case "construction":
+        return (analysis.part1.construction as unknown as Record<string, string>)[field ?? ""];
+      case "closure":
+        return (analysis.part1.closure as unknown as Record<string, string>)[field ?? ""];
+      case "seamCallouts":
+        return (analysis.part1.seamCallouts[index ?? -1] as unknown as Record<string, string>)[field ?? ""];
+      case "visibleColors":
+        return (analysis.part1.visibleColors[index ?? -1] as unknown as Record<string, string>)[field ?? ""];
+      case "suggestedColorways":
+        return (analysis.part1.suggestedColorways[index ?? -1] as unknown as Record<string, string>)[field ?? ""];
+      case "artworkItems":
+        return (analysis.part1.artworkItems[index ?? -1] as unknown as Record<string, string>)[field ?? ""];
+      case "bomItems":
+        return (analysis.part2.bomItems[index ?? -1] as unknown as Record<string, string>)[field ?? ""];
+      case "measurementPoints": {
+        const point = analysis.part2.measurementPoints[index ?? -1];
+        if (!point) return undefined;
+        if (field?.startsWith("values.")) return (point.values as unknown as Record<string, string>)[field.slice("values.".length)];
+        return (point as unknown as Record<string, string>)[field ?? ""];
+      }
+      default:
+        if ((PART1_SCALAR_FIELDS as readonly string[]).includes(category)) return (analysis.part1 as unknown as Record<string, string>)[category];
+        if ((PART2_SCALAR_FIELDS as readonly string[]).includes(category)) return (analysis.part2 as unknown as Record<string, string>)[category];
+        return undefined;
+    }
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Resolves a `{category, index?, field?}` path against a mutable clone of
+ * `GarmentAnalysis`, mutating the matching leaf in place with `value`.
+ * Every category/field name is checked against the real known-key lists
+ * exported from `tech-pack/schema.ts` -- an unknown key or out-of-bounds
+ * array index is rejected outright, never silently written.
+ */
+function applyTechPackFieldEdit(analysis: GarmentAnalysis, input: { category: string; index?: number; field?: string; value: string }): void {
+  const { category, index, field, value } = input;
+
+  const requireIndex = (arr: unknown[]) => {
+    if (index === undefined || index < 0 || index >= arr.length) {
+      throw new BusinessRuleError("VALIDATION_ERROR", `"${category}" requires a valid "index" (0-${arr.length - 1}).`);
+    }
+    return index;
+  };
+  const requireField = (allowed: readonly string[]) => {
+    if (!field || !allowed.includes(field)) {
+      throw new BusinessRuleError("VALIDATION_ERROR", `Unknown field "${field}" for category "${category}".`);
+    }
+    return field;
+  };
+
+  switch (category) {
+    case "identification": {
+      const key = requireField(IDENTIFICATION_EDITABLE_FIELDS);
+      (analysis.part1.identification as unknown as Record<string, string>)[key] = value;
+      return;
+    }
+    case "construction": {
+      const key = requireField(CONSTRUCTION_EDITABLE_FIELDS);
+      (analysis.part1.construction as unknown as Record<string, string>)[key] = value;
+      return;
+    }
+    case "closure": {
+      const key = requireField(CLOSURE_EDITABLE_FIELDS);
+      (analysis.part1.closure as unknown as Record<string, string>)[key] = value;
+      return;
+    }
+    case "seamCallouts": {
+      const i = requireIndex(analysis.part1.seamCallouts);
+      const item = analysis.part1.seamCallouts[i];
+      if (field === "status") {
+        if (!(SEAM_CALLOUT_STATUS_VALUES as readonly string[]).includes(value)) {
+          throw new BusinessRuleError("VALIDATION_ERROR", `"status" must be one of: ${SEAM_CALLOUT_STATUS_VALUES.join(", ")}.`);
+        }
+        item.status = value as (typeof SEAM_CALLOUT_STATUS_VALUES)[number];
+        return;
+      }
+      const key = requireField(SEAM_CALLOUT_TEXT_FIELDS);
+      (item as unknown as Record<string, string>)[key] = value;
+      return;
+    }
+    case "visibleColors": {
+      const i = requireIndex(analysis.part1.visibleColors);
+      const key = requireField(VISIBLE_COLOR_EDITABLE_FIELDS);
+      (analysis.part1.visibleColors[i] as unknown as Record<string, string>)[key] = value;
+      return;
+    }
+    case "suggestedColorways": {
+      const i = requireIndex(analysis.part1.suggestedColorways);
+      const key = requireField(SUGGESTED_COLORWAY_EDITABLE_FIELDS);
+      (analysis.part1.suggestedColorways[i] as unknown as Record<string, string>)[key] = value;
+      return;
+    }
+    case "artworkItems": {
+      const i = requireIndex(analysis.part1.artworkItems);
+      const key = requireField(ARTWORK_ITEM_EDITABLE_FIELDS);
+      (analysis.part1.artworkItems[i] as unknown as Record<string, string>)[key] = value;
+      return;
+    }
+    case "bomItems": {
+      const i = requireIndex(analysis.part2.bomItems);
+      const key = requireField(BOM_ITEM_EDITABLE_FIELDS);
+      (analysis.part2.bomItems[i] as unknown as Record<string, string>)[key] = value;
+      return;
+    }
+    case "measurementPoints": {
+      const i = requireIndex(analysis.part2.measurementPoints);
+      const point = analysis.part2.measurementPoints[i];
+      if (field?.startsWith("values.")) {
+        const size = field.slice("values.".length);
+        if (!(STANDARD_SIZES as readonly string[]).includes(size)) {
+          throw new BusinessRuleError("VALIDATION_ERROR", `Unknown size "${size}" — must be one of: ${STANDARD_SIZES.join(", ")}.`);
+        }
+        (point.values as unknown as Record<string, string>)[size] = value;
+        return;
+      }
+      const key = requireField(MEASUREMENT_POINT_EDITABLE_FIELDS);
+      (point as unknown as Record<string, string>)[key] = value;
+      return;
+    }
+    default: {
+      // The 9 remaining categories are plain scalar strings on Part 1/Part 2
+      // -- the whole value is replaced directly, no field/index involved.
+      if ((PART1_SCALAR_FIELDS as readonly string[]).includes(category)) {
+        (analysis.part1 as unknown as Record<string, string>)[category] = value;
+        return;
+      }
+      if ((PART2_SCALAR_FIELDS as readonly string[]).includes(category)) {
+        (analysis.part2 as unknown as Record<string, string>)[category] = value;
+        return;
+      }
+      throw new BusinessRuleError("VALIDATION_ERROR", `Unknown tech pack category "${category}".`);
+    }
+  }
+}
+
+/**
+ * Edits one field/row of a Tech Pack's Garment Analysis. Editing an
+ * already-APPROVED tech pack never mutates it -- it forks a brand-new
+ * revision row first (same real data, same real page image ids, no
+ * re-upload) and applies the edit to THAT row instead, so a previously-
+ * approved, previously-downloaded PDF's data always stays exactly
+ * reproducible. Editing a still-DRAFT tech pack just updates it in place.
+ */
+export async function updateTechPackField(actor: ActorContext, projectId: string, techPackId: string, input: UpdateTechPackFieldInput) {
+  await getOwnedProject(actor.companyId, projectId);
+  const techPack = await AiDesignerTechPackRepository.findByIdScoped(actor.companyId, techPackId);
+  if (!techPack || techPack.projectId !== projectId || !techPack.garmentAnalysisJson) {
+    throw new BusinessRuleError("NOT_FOUND", "Tech pack not found.", { id: techPackId });
+  }
+
+  let target = techPack;
+  if (techPack.approvalStatus === "APPROVED") {
+    target = await AiDesignerTechPackRepository.createRevision({
+      id: techPack.id,
+      companyId: techPack.companyId,
+      projectId: techPack.projectId,
+      garmentAnalysisJson: techPack.garmentAnalysisJson as Prisma.InputJsonValue,
+      originalGarmentAnalysisJson: (techPack.originalGarmentAnalysisJson ?? techPack.garmentAnalysisJson) as Prisma.InputJsonValue,
+      designerNotes: techPack.designerNotes,
+      suggestedAdditionalViews: techPack.suggestedAdditionalViews,
+      revisionNumber: techPack.revisionNumber,
+      createdByUserId: actor.userId,
+      pages: techPack.pages.map((p) => ({ pageNumber: p.pageNumber, pageTitle: p.pageTitle, promptText: p.promptText, imageAttachmentId: p.imageAttachmentId })),
+    });
+  }
+
+  const analysis = JSON.parse(JSON.stringify(target.garmentAnalysisJson)) as GarmentAnalysis;
+  const oldValue = readTechPackFieldValue(analysis, input);
+  applyTechPackFieldEdit(analysis, input);
+
+  const updated = await AiDesignerTechPackRepository.update(target.id, {
+    garmentAnalysisJson: analysis as unknown as Prisma.InputJsonValue,
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "ai_tech_packs",
+    recordId: target.id,
+    action: "UPDATE",
+    oldValues: { category: input.category, index: input.index, field: input.field, forkedFrom: target.id !== techPack.id ? techPack.id : undefined, value: oldValue },
+    newValues: { category: input.category, index: input.index, field: input.field, value: input.value },
+  });
+
+  return { techPack: updated, forkedNewRevision: target.id !== techPack.id };
+}
+
+/** Approve — mirrors AiDesignerVersion's own approvalStatus/approvedByUserId/approvedAt pattern exactly. */
+export async function approveTechPack(actor: ActorContext, projectId: string, techPackId: string) {
+  await getOwnedProject(actor.companyId, projectId);
+  const techPack = await AiDesignerTechPackRepository.findByIdScoped(actor.companyId, techPackId);
+  if (!techPack || techPack.projectId !== projectId) {
+    throw new BusinessRuleError("NOT_FOUND", "Tech pack not found.", { id: techPackId });
+  }
+  if (techPack.status !== "SUCCESS") {
+    throw new BusinessRuleError("VALIDATION_ERROR", "Only a successfully generated tech pack can be approved.");
+  }
+
+  await PermissionService.assert(actor.userId, "ai_designer", "approve", { createdBy: techPack.createdByUserId });
+
+  const updated = await AiDesignerTechPackRepository.update(techPackId, {
+    approvalStatus: "APPROVED",
+    approvedByUserId: actor.userId,
+    approvedAt: new Date(),
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "ai_tech_packs",
+    recordId: techPackId,
+    action: "UPDATE",
+    oldValues: { approvalStatus: techPack.approvalStatus },
+    newValues: { approvalStatus: "APPROVED" },
+  });
+
+  return updated;
+}
+
+/** Discards every edit made since generation, restoring the frozen AI-original snapshot. Blocked once approved -- an approved tech pack's own data is the record; further edits fork a new revision instead (see updateTechPackField). */
+export async function revertTechPackToOriginal(actor: ActorContext, projectId: string, techPackId: string) {
+  await getOwnedProject(actor.companyId, projectId);
+  const techPack = await AiDesignerTechPackRepository.findByIdScoped(actor.companyId, techPackId);
+  if (!techPack || techPack.projectId !== projectId) {
+    throw new BusinessRuleError("NOT_FOUND", "Tech pack not found.", { id: techPackId });
+  }
+  if (techPack.approvalStatus === "APPROVED") {
+    throw new BusinessRuleError("INVALID_STATE_TRANSITION", "This tech pack is already approved — it cannot be reverted.");
+  }
+  if (!techPack.originalGarmentAnalysisJson) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "No AI-generated original is available to revert to.");
+  }
+
+  const updated = await AiDesignerTechPackRepository.update(techPackId, {
+    garmentAnalysisJson: techPack.originalGarmentAnalysisJson as Prisma.InputJsonValue,
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "ai_tech_packs",
+    recordId: techPackId,
+    action: "UPDATE",
+    newValues: { revertedToOriginal: true },
+  });
+
+  return updated;
 }
 
 // ---------------------------------------------------------------------------

@@ -24,7 +24,14 @@ interface CustomerDetail {
   code: string;
   name: string;
   type: string;
+  contactPerson: string | null;
+  phone: string | null;
+  email: string | null;
+  billingAddress: string | null;
+  city: string | null;
+  pinCode: string | null;
   country: string | null;
+  taxRegistrationNo: string | null;
   paymentTermsDays: number | null;
   creditLimit: string | number | null;
   defaultCurrencyCode: string | null;
@@ -36,7 +43,14 @@ function toFormValues(customer: CustomerDetail): CustomerFormValues {
     code: customer.code,
     name: customer.name,
     type: customer.type as "CUSTOMER" | "AGENT",
+    contactPerson: customer.contactPerson ?? "",
+    phone: customer.phone ?? "",
+    email: customer.email ?? "",
+    billingAddress: customer.billingAddress ?? "",
+    city: customer.city ?? "",
+    pinCode: customer.pinCode ?? "",
     country: customer.country ?? "",
+    taxRegistrationNo: customer.taxRegistrationNo ?? "",
     paymentTermsDays: customer.paymentTermsDays?.toString() ?? "",
     creditLimit: customer.creditLimit?.toString() ?? "",
     defaultCurrencyCode: customer.defaultCurrencyCode ?? "",

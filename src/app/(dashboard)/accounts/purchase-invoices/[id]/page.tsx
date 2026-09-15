@@ -8,7 +8,7 @@ export default async function PurchaseInvoiceDetailPage({ params }: { params: Pr
   const { id } = await params;
   const session = await auth();
 
-  const invoice = await getPurchaseInvoiceById(session!.user.companyId, id).catch(() => null);
+  const invoice = await getPurchaseInvoiceById({ companyId: session!.user.companyId, userId: session!.user.id }, id).catch(() => null);
   if (!invoice) notFound();
 
   return (

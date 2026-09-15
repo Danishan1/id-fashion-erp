@@ -62,6 +62,9 @@ function toData(input: SupplierInput) {
     email: input.email || null,
     phone: input.phone || null,
     address: input.address || null,
+    city: input.city || null,
+    pinCode: input.pinCode || null,
+    country: input.country || null,
     taxRegistrationNo: input.taxRegistrationNo || null,
     paymentTermsDays: input.paymentTermsDays ?? null,
     defaultCurrencyCode: input.defaultCurrencyCode || null,
@@ -69,16 +72,24 @@ function toData(input: SupplierInput) {
   };
 }
 
-/** Only includes keys actually present in a partial PATCH body — omitted fields are left untouched in the DB. */
+/**
+ * Only includes keys actually present in a partial PATCH body — omitted
+ * fields are left untouched in the DB. `code` is deliberately never included
+ * here (2026-09-15) — it's auto-generated at creation and immutable from
+ * then on, per explicit user request; the form disables the field, and this
+ * is the server-side backstop against a direct API call trying to change it.
+ */
 function toUpdateData(input: SupplierUpdateInput): Prisma.SupplierUncheckedUpdateInput {
   const data: Prisma.SupplierUncheckedUpdateInput = {};
-  if (input.code !== undefined) data.code = input.code;
   if (input.name !== undefined) data.name = input.name;
   if (input.categoryId !== undefined) data.categoryId = input.categoryId;
   if (input.contactPerson !== undefined) data.contactPerson = input.contactPerson || null;
   if (input.email !== undefined) data.email = input.email || null;
   if (input.phone !== undefined) data.phone = input.phone || null;
   if (input.address !== undefined) data.address = input.address || null;
+  if (input.city !== undefined) data.city = input.city || null;
+  if (input.pinCode !== undefined) data.pinCode = input.pinCode || null;
+  if (input.country !== undefined) data.country = input.country || null;
   if (input.taxRegistrationNo !== undefined) data.taxRegistrationNo = input.taxRegistrationNo || null;
   if (input.paymentTermsDays !== undefined) data.paymentTermsDays = input.paymentTermsDays ?? null;
   if (input.defaultCurrencyCode !== undefined) data.defaultCurrencyCode = input.defaultCurrencyCode || null;
@@ -114,12 +125,6 @@ export async function createSupplier(actor: ActorContext, input: SupplierInput) 
 export async function updateSupplier(actor: ActorContext, id: string, input: SupplierUpdateInput) {
   const before = await getSupplierById(actor.companyId, id);
 
-  if (input.code !== undefined && input.code !== before.code) {
-    const codeInUse = await SupplierRepository.findByCode(actor.companyId, input.code, id);
-    if (codeInUse) {
-      throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Supplier code "${input.code}" is already in use.`);
-    }
-  }
   if (input.categoryId !== undefined) {
     await assertSupplierCategoryBelongsToCompany(actor.companyId, input.categoryId);
   }

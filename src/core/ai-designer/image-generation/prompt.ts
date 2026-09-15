@@ -300,3 +300,57 @@ export function buildSecondFabricPrompt(applyAreas: readonly string[]): string {
     "Generate a clean revised image suitable for direct comparison with the previous version.",
   ].join("\n");
 }
+
+const EMBELLISHMENT_TYPE_LABELS: Record<string, string> = {
+  DIGITAL_APPLIQUE: "Digital Applique",
+  EMBROIDERY: "Embroidery",
+  SEQUIN_WORK: "Sequin Work",
+  LACE_TRIM: "Lace Trim",
+  BEADWORK: "Beadwork",
+  PATCHWORK: "Patchwork",
+};
+
+/**
+ * Embellishments — regenerates the current design with a digital applique/
+ * embroidery motif added, either from a real uploaded motif reference photo
+ * (a genuine two-image composition, sent to `ImageGenerationProvider
+ * .applyFabric` the same way Multi-Fabric's own second-fabric photo is), or
+ * from free-text instructions alone (a single-image `generateVariation`
+ * edit, same shape as Edit Design's AI Prompt mode) when no motif image was
+ * uploaded. `hasMotifImage` controls which grounding paragraph is appended —
+ * the caller decides which provider method to call based on the same fact.
+ */
+export function buildEmbellishmentPrompt(embellishmentType: string, instructions: string | undefined, hasMotifImage: boolean): string {
+  const typeLabel = EMBELLISHMENT_TYPE_LABELS[embellishmentType] ?? embellishmentType;
+  const trimmedInstructions = instructions?.trim();
+
+  const lines = [`Add a ${typeLabel} embellishment to this garment design.`, ""];
+
+  if (hasMotifImage) {
+    lines.push(
+      "A second image is also supplied — the motif/embroidery reference photo. Use it as the exact visual source for the embellishment's pattern, artwork, and style. Do not invent a different motif or redesign the one shown.",
+      ""
+    );
+  }
+
+  if (trimmedInstructions) {
+    lines.push("Apply it as follows:", trimmedInstructions, "");
+  } else {
+    lines.push(
+      `Apply the ${typeLabel.toLowerCase()} in a placement and scale that looks natural and commercially plausible for this garment.`,
+      ""
+    );
+  }
+
+  lines.push(
+    "Preserve everything else exactly as it already is in the current design image: the garment's own fabric, silhouette, construction, model, pose, and background/environment.",
+    "",
+    "Do not independently redesign any other aspect of the garment or image beyond the embellishment requested.",
+    "",
+    "The result must be technically plausible and commercially manufacturable — a real embellished garment, not a fantasy composite.",
+    "",
+    "Generate a clean revised image suitable for direct comparison with the previous version."
+  );
+
+  return lines.join("\n");
+}

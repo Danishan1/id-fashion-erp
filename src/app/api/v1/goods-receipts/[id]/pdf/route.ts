@@ -21,7 +21,7 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
     await PermissionService.assert(session.user.id, "inventory", "export");
 
     const { id } = await params;
-    const receipt = await getGoodsReceiptById(session.user.companyId, id);
+    const receipt = await getGoodsReceiptById({ companyId: session.user.companyId, userId: session.user.id }, id);
     const { companyName, companyDetailLines } = await getCompanyHeaderLines(session.user.companyId);
 
     const rows = receipt.items.map((item) => ({

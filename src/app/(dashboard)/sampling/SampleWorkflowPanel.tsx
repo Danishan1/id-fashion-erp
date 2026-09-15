@@ -109,7 +109,8 @@ interface SampleRequestDetail {
   statusBeforeHold: SampleStatus | null;
   currentVersionNumber: number;
   styleName: string | null;
-  color: string | null;
+  color: { id: string; name: string } | null;
+  size: { id: string; name: string } | null;
   productId: string | null;
   buyer: { name: string; contactPerson: string | null; phone: string | null } | null;
   // Only set for a sample that originated from a converted Buyer Enquiry
@@ -220,7 +221,9 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
   const [convertSeasonId, setConvertSeasonId] = useState("");
 
   const [isEditingColor, setIsEditingColor] = useState(false);
-  const [colorDraft, setColorDraft] = useState(initialRequest.color ?? "");
+  const [colorIdDraft, setColorIdDraft] = useState(initialRequest.color?.id ?? "");
+  const [sizeIdDraft, setSizeIdDraft] = useState(initialRequest.size?.id ?? "");
+  const [sizes, setSizes] = useState<Option[]>([]);
 
   const [isEditingDesignName, setIsEditingDesignName] = useState(false);
   const [designNameDraft, setDesignNameDraft] = useState(initialRequest.styleName ?? "");
@@ -315,6 +318,9 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
     fetch("/api/v1/colors?pageSize=200")
       .then((res) => res.json())
       .then((body) => setMaterialColors(body.data ?? []));
+    fetch("/api/v1/sizes?pageSize=200")
+      .then((res) => res.json())
+      .then((body) => setSizes(body.data ?? []));
     fetch("/api/v1/fabric-dyes")
       .then((res) => res.json())
       .then((body) => setMaterialDyes(body.data ?? []));
@@ -374,9 +380,9 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
         fetch(`/api/v1/sampling/${sampleRequestId}/color`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ color: colorDraft || undefined }),
+          body: JSON.stringify({ colorId: colorIdDraft || undefined, sizeId: sizeIdDraft || undefined }),
         }),
-      "Failed to update color."
+      "Failed to update color/size."
     ).then(() => setIsEditingColor(false));
 
   const saveDesignName = () =>
@@ -894,16 +900,30 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
       </div>
 
       <div className="flex items-center gap-2 text-sm">
-        <span className="font-medium text-zinc-700 dark:text-zinc-200">Color:</span>
+        <span className="font-medium text-zinc-700 dark:text-zinc-200">Color / Size:</span>
         {isEditingColor ? (
           <>
-            <input
-              value={colorDraft}
-              onChange={(e) => setColorDraft(e.target.value)}
-              placeholder="e.g. Navy Blue"
+            <select
+              value={colorIdDraft}
+              onChange={(e) => setColorIdDraft(e.target.value)}
               autoFocus
-              className={`${textInputClass()} max-w-[200px]`}
-            />
+              className={`${textInputClass()} max-w-[160px]`}
+            >
+              <option value="">— Color: not decided —</option>
+              {materialColors.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+            <select value={sizeIdDraft} onChange={(e) => setSizeIdDraft(e.target.value)} className={`${textInputClass()} max-w-[160px]`}>
+              <option value="">— Size: not decided —</option>
+              {sizes.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
             <button
               type="button"
               onClick={saveColor}
@@ -915,7 +935,8 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
             <button
               type="button"
               onClick={() => {
-                setColorDraft(request.color ?? "");
+                setColorIdDraft(request.color?.id ?? "");
+                setSizeIdDraft(request.size?.id ?? "");
                 setIsEditingColor(false);
               }}
               className="text-xs text-zinc-500 hover:text-zinc-400"
@@ -925,7 +946,9 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
           </>
         ) : (
           <>
-            <span className="text-zinc-600 dark:text-zinc-300">{request.color || "Not specified yet"}</span>
+            <span className="text-zinc-600 dark:text-zinc-300">
+              {[request.color?.name, request.size?.name].filter(Boolean).join(" / ") || "Not specified yet"}
+            </span>
             <button
               type="button"
               onClick={() => setIsEditingColor(true)}

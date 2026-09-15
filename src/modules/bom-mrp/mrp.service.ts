@@ -12,7 +12,7 @@ import { BomRepository } from "./bom.repository";
 // otherwise surfaces IEEE-754 noise like 103.60000000000002 in the JSON
 // response. Rounds to the same 4-decimal precision this project's own
 // Decimal(18,4) quantity columns already use everywhere else.
-function round4(n: number): number {
+export function round4(n: number): number {
   return Math.round(n * 10000) / 10000;
 }
 
@@ -30,6 +30,8 @@ interface MaterialRequirementRow {
   uomCode: string;
   neededQuantity: number;
   availableQuantity: number;
+  /** Already issued via a non-cancelled Material Request linked to this Sales Order, in the material's own base UOM. */
+  issuedQuantity: number;
   shortfallQuantity: number;
   defaultSupplierId: string | null;
   unitCost: number | null;
@@ -141,6 +143,7 @@ function explodeItemsForOrderItem(
         uomCode: item.material.baseUom.code,
         neededQuantity: neededInBaseUom,
         availableQuantity: 0,
+        issuedQuantity: 0,
         shortfallQuantity: 0,
         defaultSupplierId: item.material.defaultSupplierId,
         unitCost: item.material.unitCost ? Number(item.material.unitCost) : null,
@@ -150,49 +153,32 @@ function explodeItemsForOrderItem(
   }
 }
 
+/** The narrow order-item shape explodeOrderItemsToRows/explodeItemsForOrderItem actually need — satisfied by both SalesOrderRepository.findByIdWithDetails's richer items and the lighter select used by getSalesOrdersMaterialStatus's batch query. */
+interface OrderItemForExplosion {
+  productId: string;
+  product: { styleName: string };
+  sampleRequestId: string | null;
+  breakdown: Array<{ productVariant: { color: { id: string } }; orderedQuantity: number }>;
+}
+
 /**
- * Computes needed/available/shortfall per material for a Sales Order's
- * style lines. Purely informational — no status restriction, no stock
- * reservation happens here (that's Production's job once a Production Order
- * actually reserves stock). Aggregates by materialId only (never
- * materialId+uomId — a mixed-unit sum would be wrong if the same material is
- * used at different chosen uomIds across different lines); every reported
- * quantity is in the material's own base UOM, converted via
- * convertUomQuantity.
- *
- * Per-line source resolution, per the user's own explicit rule: a line with
- * a linked Sample (`sampleRequestId` set) explodes that Sample's own current
- * material list instead of the Style's real BOM — a line with no linked
- * Sample uses the Style's real, approved BOM exactly as before. The Style's
- * own Bom/BomItem rows are never written to by this function either way.
+ * Shared per-order explosion: given one order's items plus the already
+ * batch-fetched BOM/Sample-material lookups, returns needed-quantity-per-
+ * material (rowsByMaterialId) — the same math getMaterialRequirements and
+ * getSalesOrdersMaterialStatus both need, kept in exactly one place so a
+ * "needed" figure shown on one screen can never quietly disagree with what
+ * drives the other.
  */
-export async function getMaterialRequirements(companyId: string, salesOrderId: string) {
-  // SalesOrderRepository.findByIdWithDetails is already company-scoped —
-  // reuse as-is, do not add a second, unscoped lookup.
-  const order = await SalesOrderRepository.findByIdWithDetails(companyId, salesOrderId);
-  if (!order) throw new BusinessRuleError("NOT_FOUND", "Sales order not found.", { id: salesOrderId });
-
-  const styleProductIds = [...new Set(order.items.map((item) => item.productId))];
-  const boms = await BomRepository.findManyByProductIds(companyId, styleProductIds);
-  const bomByProductId = new Map(boms.map((bom) => [bom.productId, bom]));
-
-  // Sample-linked lines are batch-fetched once per distinct sample, not once
-  // per order line — a Sales Order rarely links the same sample to more than
-  // one line, but nothing rules it out.
-  const sampleRequestIds = [...new Set(order.items.map((item) => item.sampleRequestId).filter((id): id is string => !!id))];
-  const sampleMaterialsById = new Map(
-    await Promise.all(
-      sampleRequestIds.map(
-        async (id) => [id, await SampleMaterialRepository.findLatestVersionMaterialsForRequirement(id)] as const
-      )
-    )
-  );
-
+function explodeOrderItemsToRows(
+  items: OrderItemForExplosion[],
+  bomByProductId: Map<string, Awaited<ReturnType<typeof BomRepository.findManyByProductIds>>[number]>,
+  sampleMaterialsById: Map<string, Awaited<ReturnType<typeof SampleMaterialRepository.findLatestVersionMaterialsForRequirement>>>
+) {
   const stylesWithoutBom: Array<{ productId: string; styleName: string; reason: string }> = [];
   const rowsByMaterialId = new Map<string, MaterialRequirementRow>();
   const unconvertibleLines: Array<{ materialId: string; materialName: string; reason: string }> = [];
 
-  for (const orderItem of order.items) {
+  for (const orderItem of items) {
     let explosionItems: ExplosionLineItem[];
     let emptySourceReason: string;
 
@@ -259,16 +245,119 @@ export async function getMaterialRequirements(companyId: string, salesOrderId: s
     explodeItemsForOrderItem(explosionItems, orderItem, rowsByMaterialId, unconvertibleLines);
   }
 
+  return { rowsByMaterialId, stylesWithoutBom, unconvertibleLines };
+}
+
+// Same tolerance idiom already used for quantity comparisons elsewhere in
+// this codebase (inventory.service.ts, job-order.service.ts) — avoids a
+// false "still pending" flag from pure floating-point noise.
+const QUANTITY_EPSILON = 0.0001;
+
+/**
+ * { salesOrderId -> { materialId -> issuedQuantity } }, in each material's
+ * own base UOM — total already-issued-so-far across every non-cancelled
+ * Material Request linked to each Sales Order. A request line is raised in
+ * whatever unit was chosen at the time (not necessarily the material's base
+ * unit), so each line is converted individually before summing, the same
+ * convertUomQuantity discipline every other quantity in this module already
+ * follows. A line whose unit can't be converted (no base UOM configured, or
+ * no fixed factor) is skipped rather than thrown — matches this function's
+ * advisory role; the real conversion gate already lives at Material Request
+ * creation time.
+ */
+async function getIssuedQuantitiesBySalesOrder(companyId: string, salesOrderIds: string[]): Promise<Map<string, Map<string, number>>> {
+  const result = new Map<string, Map<string, number>>();
+  if (salesOrderIds.length === 0) return result;
+
+  const items = await prisma.materialRequestItem.findMany({
+    where: { materialRequest: { companyId, salesOrderId: { in: salesOrderIds }, status: { not: "CANCELLED" } } },
+    select: {
+      materialId: true,
+      issuedQuantity: true,
+      uom: true,
+      material: { select: { baseUom: true } },
+      materialRequest: { select: { salesOrderId: true } },
+    },
+  });
+
+  for (const item of items) {
+    const salesOrderId = item.materialRequest.salesOrderId;
+    if (!salesOrderId || !item.material.baseUom) continue;
+    const converted = convertUomQuantity(Number(item.issuedQuantity), item.uom, item.material.baseUom);
+    if (converted === null) continue;
+
+    if (!result.has(salesOrderId)) result.set(salesOrderId, new Map());
+    const perMaterial = result.get(salesOrderId)!;
+    perMaterial.set(item.materialId, (perMaterial.get(item.materialId) ?? 0) + converted);
+  }
+
+  return result;
+}
+
+/**
+ * Computes needed/available/issued/shortfall per material for a Sales
+ * Order's style lines. Purely informational — no status restriction, no
+ * stock reservation happens here (that's Production's job once a
+ * Production Order actually reserves stock). Aggregates by materialId only
+ * (never materialId+uomId — a mixed-unit sum would be wrong if the same
+ * material is used at different chosen uomIds across different lines);
+ * every reported quantity is in the material's own base UOM, converted via
+ * convertUomQuantity.
+ *
+ * `shortfallQuantity` is "Needed − Issued so far" (how much MORE this order
+ * still needs raised as a Material Request), not "Needed − current stock" —
+ * this page raises requests, it never issues material itself, so the real
+ * question it answers is "what hasn't been requested/issued yet for this
+ * order", independent of whether stock happens to be sitting in the
+ * warehouse right now. `availableQuantity` (current company-wide stock)
+ * stays purely informational alongside it.
+ *
+ * Per-line source resolution, per the user's own explicit rule: a line with
+ * a linked Sample (`sampleRequestId` set) explodes that Sample's own current
+ * material list instead of the Style's real BOM — a line with no linked
+ * Sample uses the Style's real, approved BOM exactly as before. The Style's
+ * own Bom/BomItem rows are never written to by this function either way.
+ */
+export async function getMaterialRequirements(companyId: string, salesOrderId: string) {
+  // SalesOrderRepository.findByIdWithDetails is already company-scoped —
+  // reuse as-is, do not add a second, unscoped lookup.
+  const order = await SalesOrderRepository.findByIdWithDetails(companyId, salesOrderId);
+  if (!order) throw new BusinessRuleError("NOT_FOUND", "Sales order not found.", { id: salesOrderId });
+
+  const styleProductIds = [...new Set(order.items.map((item) => item.productId))];
+  const boms = await BomRepository.findManyByProductIds(companyId, styleProductIds);
+  const bomByProductId = new Map(boms.map((bom) => [bom.productId, bom]));
+
+  // Sample-linked lines are batch-fetched once per distinct sample, not once
+  // per order line — a Sales Order rarely links the same sample to more than
+  // one line, but nothing rules it out.
+  const sampleRequestIds = [...new Set(order.items.map((item) => item.sampleRequestId).filter((id): id is string => !!id))];
+  const sampleMaterialsById = new Map(
+    await Promise.all(
+      sampleRequestIds.map(
+        async (id) => [id, await SampleMaterialRepository.findLatestVersionMaterialsForRequirement(id)] as const
+      )
+    )
+  );
+
+  const { rowsByMaterialId, stylesWithoutBom, unconvertibleLines } = explodeOrderItemsToRows(order.items, bomByProductId, sampleMaterialsById);
+
   const materialIds = [...rowsByMaterialId.keys()];
-  const availableByMaterialId = await sumAvailableByProductIds(companyId, materialIds);
+  const [availableByMaterialId, issuedBySalesOrder] = await Promise.all([
+    sumAvailableByProductIds(companyId, materialIds),
+    getIssuedQuantitiesBySalesOrder(companyId, [salesOrderId]),
+  ]);
+  const issuedByMaterialId = issuedBySalesOrder.get(salesOrderId) ?? new Map<string, number>();
 
   const materials = [...rowsByMaterialId.values()].map((row) => {
     const availableQuantity = availableByMaterialId.get(row.materialId) ?? 0;
+    const issuedQuantity = issuedByMaterialId.get(row.materialId) ?? 0;
     return {
       ...row,
       neededQuantity: round4(row.neededQuantity),
       availableQuantity: round4(availableQuantity),
-      shortfallQuantity: round4(Math.max(0, row.neededQuantity - availableQuantity)),
+      issuedQuantity: round4(issuedQuantity),
+      shortfallQuantity: round4(Math.max(0, row.neededQuantity - issuedQuantity)),
       contributingStyles: row.contributingStyles.map((s) => ({ ...s, neededQuantity: round4(s.neededQuantity) })),
     };
   });
@@ -281,6 +370,93 @@ export async function getMaterialRequirements(companyId: string, salesOrderId: s
     stylesWithoutBom,
     unconvertibleLines,
   };
+}
+
+export interface SalesOrderMaterialStatusEntry {
+  id: string;
+  orderNumber: string;
+  customerName: string;
+  /** FULFILLED means every exploded material's real shortfall (needed −
+   * issued so far) is already zero — never means "nothing left in stock",
+   * that's a different, purely informational figure elsewhere on this page.
+   * An order with no explodable materials at all (no BOM/Sample anywhere) is
+   * reported PENDING, never FULFILLED — there's nothing to say is "done". */
+  materialStatus: "PENDING" | "FULFILLED";
+}
+
+const PENDING_LIST_STATUSES = ["CONFIRMED", "IN_PRODUCTION", "PARTIALLY_DISPATCHED", "DISPATCHED", "INVOICED", "ON_HOLD"] as const;
+
+/**
+ * Batch pending/fulfilled classification for the Sales Order picker on the
+ * Material Requirements page — lets the default view hide orders with
+ * nothing left to request without ever losing access to a "fully issued"
+ * order a merchandiser still wants to raise MORE material against later
+ * (damage, a quantity increase, etc.): FULFILLED orders are filtered out of
+ * the default list, never deleted or hidden from the "all"/"fulfilled"
+ * views. Deliberately skips the company-wide stock lookup
+ * (sumAvailableByProductIds) this page's own single-order detail view uses —
+ * that figure is purely informational there and isn't needed just to decide
+ * pending-vs-fulfilled here, so this stays cheap even across ~200 orders:
+ * one query for all candidate orders, one batched BOM/Sample-material
+ * fetch, one batched issued-quantity fetch — never N+1 per order.
+ */
+export async function getSalesOrdersMaterialStatus(companyId: string): Promise<SalesOrderMaterialStatusEntry[]> {
+  const orders = await prisma.salesOrder.findMany({
+    where: { companyId, status: { in: [...PENDING_LIST_STATUSES] } },
+    select: {
+      id: true,
+      orderNumber: true,
+      customer: { select: { name: true } },
+      items: {
+        select: {
+          productId: true,
+          product: { select: { styleName: true } },
+          sampleRequestId: true,
+          breakdown: { select: { orderedQuantity: true, productVariant: { select: { color: { select: { id: true } } } } } },
+        },
+      },
+    },
+    orderBy: { orderDate: "desc" },
+    take: 200,
+  });
+
+  if (orders.length === 0) return [];
+
+  const styleProductIds = [...new Set(orders.flatMap((o) => o.items.map((i) => i.productId)))];
+  const boms = await BomRepository.findManyByProductIds(companyId, styleProductIds);
+  const bomByProductId = new Map(boms.map((bom) => [bom.productId, bom]));
+
+  const sampleRequestIds = [...new Set(orders.flatMap((o) => o.items.map((i) => i.sampleRequestId).filter((id): id is string => !!id)))];
+  const sampleMaterialsById = new Map(
+    await Promise.all(
+      sampleRequestIds.map(
+        async (id) => [id, await SampleMaterialRepository.findLatestVersionMaterialsForRequirement(id)] as const
+      )
+    )
+  );
+
+  const issuedBySalesOrder = await getIssuedQuantitiesBySalesOrder(companyId, orders.map((o) => o.id));
+
+  return orders.map((order) => {
+    const { rowsByMaterialId } = explodeOrderItemsToRows(order.items, bomByProductId, sampleMaterialsById);
+    const issuedByMaterialId = issuedBySalesOrder.get(order.id) ?? new Map<string, number>();
+
+    let pending = rowsByMaterialId.size === 0;
+    for (const row of rowsByMaterialId.values()) {
+      const issued = issuedByMaterialId.get(row.materialId) ?? 0;
+      if (row.neededQuantity - issued > QUANTITY_EPSILON) {
+        pending = true;
+        break;
+      }
+    }
+
+    return {
+      id: order.id,
+      orderNumber: order.orderNumber,
+      customerName: order.customer.name,
+      materialStatus: pending ? "PENDING" : "FULFILLED",
+    };
+  });
 }
 
 export interface StyleMaterialRequirementRow {

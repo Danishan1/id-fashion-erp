@@ -69,6 +69,9 @@ export const LotRepository = {
       where: { id, companyId },
       include: {
         ...LOT_INCLUDE,
+        variantBreakdown: {
+          include: { productVariant: { select: { id: true, skuCode: true, color: { select: { name: true } }, size: { select: { name: true } } } } },
+        },
         productionOrder: { select: { id: true, orderNumber: true, productId: true, product: { select: { styleName: true } } } },
         jobOrders: {
           orderBy: { createdAt: "asc" },
@@ -112,7 +115,7 @@ export const LotRelationRepository = {
 const JOB_ORDER_INCLUDE = {
   productionStage: { select: { id: true, name: true, code: true, sequence: true, allowRework: true, isFinal: true, isActive: true } },
   productionLine: { select: { id: true, name: true } },
-  lot: { select: { id: true, lotNumber: true, productionOrderId: true } },
+  lot: { select: { id: true, lotNumber: true, productionOrderId: true, branchId: true } },
   assignments: {
     include: { employee: { select: { id: true, fullName: true, employeeCode: true } } },
   },
@@ -303,7 +306,15 @@ export const ProductionStageTransactionRepository = {
     prisma.productionStageTransaction.findFirst({
       where: { companyId, lotId, toJobOrderId },
       include: {
-        lot: { select: { id: true, lotNumber: true } },
+        lot: {
+          select: {
+            id: true,
+            lotNumber: true,
+            variantBreakdown: {
+              include: { productVariant: { select: { color: { select: { name: true } }, size: { select: { name: true } } } } },
+            },
+          },
+        },
         productionOrder: { select: { id: true, orderNumber: true, product: { select: { styleName: true, styleCode: true } } } },
         fromProductionStage: { select: { id: true, name: true } },
         toProductionStage: { select: { id: true, name: true } },

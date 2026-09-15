@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/numbering/DocumentNumberingService", () => ({ generateDocumentNumber: vi.fn() }));
-vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { assert: vi.fn() } }));
+vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { assert: vi.fn(), getAllowedBranchIds: vi.fn() } }));
 vi.mock("@/core/db/client", () => ({ prisma: { $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn({})) } }));
 vi.mock("@/modules/purchasing/purchase-order.service", () => ({ createPurchaseOrder: vi.fn() }));
 vi.mock("@/modules/bom-mrp/mrp.service", () => ({ getMaterialRequirements: vi.fn() }));
@@ -38,6 +38,8 @@ vi.mock("./material-request.repository", () => ({
     replaceLines: vi.fn(),
     findOpenDuplicateLines: vi.fn(),
     findOpenBySampleVersion: vi.fn(),
+    findMany: vi.fn(),
+    count: vi.fn(),
   },
   MaterialRequestItemRepository: {
     findWithRequestOwner: vi.fn(),
@@ -72,6 +74,8 @@ const {
   updateMaterialRequestLines,
   issueMaterialRequestLine,
   getAvailableRollsForLine,
+  listMaterialRequests,
+  getMaterialRequestById,
 } = await import("./material-request.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
@@ -95,6 +99,7 @@ beforeEach(() => {
   vi.mocked(SampleMaterialRepository.findByVersionIdForMaterialRequest).mockReset();
   vi.mocked(MaterialRequestItemRepository.findLinesForShortfallGeneration).mockReset();
   vi.mocked(PermissionService.assert).mockReset().mockResolvedValue(undefined);
+  vi.mocked(PermissionService.getAllowedBranchIds).mockReset().mockResolvedValue(null);
   vi.mocked(createPurchaseOrder).mockReset();
   vi.mocked(getMaterialRequirements).mockReset();
   vi.mocked(BomRepository.findByProductId).mockReset();
@@ -820,5 +825,59 @@ describe("getAvailableRollsForLine", () => {
     } as never);
 
     await expect(getAvailableRollsForLine(actor, "line-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+});
+
+describe("branch access enforcement (2026-09-15)", () => {
+  const listQuery = { search: "", sortBy: "createdAt", sortOrder: "desc" as const, page: 1, pageSize: 20, skip: 0, take: 20 };
+
+  beforeEach(() => {
+    vi.mocked(MaterialRequestRepository.findMany).mockReset().mockResolvedValue([]);
+    vi.mocked(MaterialRequestRepository.count).mockReset().mockResolvedValue(0);
+  });
+
+  it("listMaterialRequests adds no branch filter for an unrestricted user", async () => {
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(null);
+
+    await listMaterialRequests(actor, listQuery);
+
+    const whereArg = vi.mocked(MaterialRequestRepository.findMany).mock.calls[0][0];
+    expect(whereArg).not.toHaveProperty("branchId");
+  });
+
+  it("listMaterialRequests adds a branchId IN filter for a branch-restricted user", async () => {
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    await listMaterialRequests(actor, listQuery);
+
+    expect(MaterialRequestRepository.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ branchId: { in: ["branch-1"] } }),
+      expect.anything()
+    );
+  });
+
+  it("getMaterialRequestById throws NOT_FOUND for a request outside the user's allowed branches", async () => {
+    vi.mocked(MaterialRequestRepository.findByIdWithDetails).mockResolvedValue({
+      id: "mr-1",
+      branchId: "branch-2",
+      warehouseId: "wh-1",
+      lines: [],
+    } as never);
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    await expect(getMaterialRequestById(actor, "mr-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("getMaterialRequestById succeeds for a request inside the user's allowed branches", async () => {
+    vi.mocked(MaterialRequestRepository.findByIdWithDetails).mockResolvedValue({
+      id: "mr-1",
+      branchId: "branch-1",
+      warehouseId: "wh-1",
+      lines: [],
+    } as never);
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    const result = await getMaterialRequestById(actor, "mr-1");
+    expect(result.id).toBe("mr-1");
   });
 });

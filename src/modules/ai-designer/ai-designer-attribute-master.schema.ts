@@ -27,3 +27,9 @@ export const updateProductDesignAttributeSchema = z.object({
   isActive: z.boolean().optional(),
 });
 export type UpdateProductDesignAttributeInput = z.infer<typeof updateProductDesignAttributeSchema>;
+
+/** DELETE .../reference-images — removes one option value's uploaded photo override, falling back to the AI-generated static photo (then the clipart icon). */
+export const deleteOptionReferenceImageSchema = z.object({
+  optionValue: z.string().trim().min(1).max(200),
+});
+export type DeleteOptionReferenceImageInput = z.infer<typeof deleteOptionReferenceImageSchema>;

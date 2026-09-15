@@ -21,8 +21,8 @@ export default function NewAiDesignerProjectPage() {
         body: JSON.stringify({ projectName }),
       });
       const body = await res.json();
-      if (!res.ok) throw new Error(body?.error?.message ?? "Failed to create project.");
-      router.push(`/ai-designer/projects/${body.data.id}`);
+      if (!res.ok) throw new Error(body?.error?.message ?? "Failed to create design.");
+      router.push(`/ai-designer/catalogue-designs/${body.data.id}`);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -33,17 +33,17 @@ export default function NewAiDesignerProjectPage() {
   return (
     <div className="max-w-lg space-y-4">
       <Breadcrumb
-        items={[{ label: "Dashboard", href: "/dashboard" }, { label: "AI Designer", href: "/ai-designer" }, { label: "New Project" }]}
+        items={[{ label: "Dashboard", href: "/dashboard" }, { label: "AI Designer", href: "/ai-designer" }, { label: "New Design" }]}
       />
       <div>
-        <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">New AI Designer Project</h1>
+        <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">New Catalogue Design</h1>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-          Give the project a name — the guided wizard (fabric, customer, product, design, model,
+          Give the design a name — the guided wizard (fabric, customer, product, design, model,
           environment, generate) starts on the next screen.
         </p>
       </div>
 
-      <FormField label="Project Name" htmlFor="projectName" required>
+      <FormField label="Design Name" htmlFor="projectName" required>
         <input
           id="projectName"
           className={textInputClass()}
@@ -61,7 +61,7 @@ export default function NewAiDesignerProjectPage() {
         disabled={isSubmitting || !projectName.trim()}
         className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
       >
-        {isSubmitting ? "Creating…" : "Create Project"}
+        {isSubmitting ? "Creating…" : "Create Design"}
       </button>
     </div>
   );

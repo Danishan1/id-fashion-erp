@@ -6042,6 +6042,71 @@ Three more direct refinements, same day, on the inline BOM/MRP editing above.
   both times, not just the UI's own re-render. Zero console errors. `npx tsc --noEmit`, `npx eslint`, and
   `npx vitest run` (1427/1427, no regressions) all clean.
 
+## Production: size/color breakdown on a Lot, visible at every stage (2026-09-12)
+
+User-reported real floor-usage gap: "kisi bhi stage me size wise color wise pta nahi chal raha" — a Lot's
+own quantity has always been a flat number (`Lot.quantity`), with zero size/color detail anywhere in
+Production, so a worker at Cutting/Stitching/Checking/Finishing/Packing had no way to know the actual
+color/size mix they were handling. Confirmed via AskUserQuestion before building — this is the exact "no
+variant-level Lot tracking in V1" decision documented in Phase 5C's own design notes above, revisited: kept
+scoped to **visibility only**, not full per-variant quantity tracking through completed/rejected/damaged/
+forwarded/qcPassed at every stage (that would have meant rewriting Log Progress/Forward/Revert/QC's own
+well-tested accumulator logic — explicitly declined as disproportionate to the actual ask), sourced from the
+linked Sales Order's own real `SalesOrderItemBreakdown` when one exists, manual entry otherwise.
+
+- **Schema**: new `LotVariantBreakdown` (`lot_variant_breakdowns`, migration
+  `20260912100000_add_lot_variant_breakdown`) — `lotId`/`productVariantId`/`quantity`,
+  `@@unique([lotId, productVariantId])`. Purely informational and read-only from every other angle: nothing
+  in `forwardJobOrder`/`revertJobOrder`/`recordProgressEntry`/`recordQcInspection` reads or writes it — a
+  Lot's own `quantity` and every JobOrder accumulator stay exactly the flat aggregates they always were.
+- **`createLot()`** (`lot.service.ts`) gained an optional `variantBreakdown` array on `createLotSchema` —
+  when supplied, the rows must sum to exactly the lot's own `quantity` (same `EPSILON`-tolerant
+  sum-must-match discipline as `splitLot`'s own children-must-sum-to-parent rule) and every
+  `productVariantId` must genuinely belong to the order's own style (`ProductVariant.productId ===
+  order.productId`) — both checked before the transaction opens, then written as a nested `create` inside
+  the same `LotRepository.createInTx` call. Omitting it entirely (existing callers, a style with no
+  variants configured) behaves exactly as before — fully backward compatible.
+- **New `getVariantBreakdownSuggestions(companyId, productionOrderId)`** feeds the Add Lot modal: when the
+  order is linked to a real Sales Order line, suggests each variant's real ordered quantity minus whatever
+  other Lots on this same order already claimed (via a `lotVariantBreakdown.groupBy`) — never re-typed data,
+  always derived fresh so two lots against the same order can't silently double-claim the same units. For a
+  Make-to-Stock order (no linked Sales Order), lists the style's own active `ProductVariant`s with no
+  suggested quantity, for manual entry. New `GET /api/v1/production-orders/[id]/variant-breakdown-suggestions`.
+- **UI — Add Lot modal** (`ProductionOrderWorkflowPanel.tsx`): when the style has any variants to suggest
+  from, the plain Quantity input is replaced by a Color/Size/Qty table (pre-filled from the suggestion, every
+  cell still editable) with a live-computed read-only Total — removing by construction the possibility of a
+  breakdown that doesn't match the lot's own total, rather than validating it after the fact. Falls back to
+  the original flat Quantity input untouched when the style has zero variants configured.
+- **UI — Lot detail page** (`LotWorkflowPanel.tsx`): a "Size / Color Breakdown" table renders right under
+  the status badges, above every Job Order card — visible regardless of which stage's card the worker is
+  looking at, since all of a lot's job orders across every stage already sit on this same page. Renders
+  nothing when the lot has no breakdown (old lots, or one deliberately created without it).
+- **UI — Stage Transfer Slip** (the actual worker-facing printable document): `slip-pdf.tsx`'s shared
+  `SlipDescriptor` gained an optional `variantBreakdown` table section (reused by any future slip, not
+  Stage-Slip-specific), and the stage-slip route now populates it from the lot's own real breakdown rows —
+  this is the one place a floor worker who never opens the app at all still sees the size/color mix, printed
+  on the same ticket that already travels with the lot between stages.
+- 4 new unit tests for `createLot`'s breakdown validation (sum mismatch, foreign-style variant, successful
+  nested create, and the no-breakdown-supplied backward-compatible path) and 2 for
+  `getVariantBreakdownSuggestions` (Sales-Order-sourced with the already-claimed subtraction, and the
+  Make-to-Stock manual-entry fallback) — `lot.service.test.ts`, 13/13 passing, 107/107 project-wide in
+  `src/modules/production`.
+- **Verified live end-to-end against the real dev DB** (not just mocks): used the real `PROD-2026-00008`
+  (the exact order from this session's earlier live-debugged stage-transfer bug, still carrying its real
+  5-line Sales Order breakdown — Black S/L, Grey XL, White S/L) — `getVariantBreakdownSuggestions` correctly
+  returned all 5 lines with `remaining` equal to `orderedQuantity` before any lot claimed them; a mismatched-
+  sum `createLot` call correctly rejected with the exact message; a real `createLot` call with a 2-row
+  breakdown (Black S:5, Black L:5) succeeded, and a direct DB query confirmed exactly those 2
+  `LotVariantBreakdown` rows were stored with the correct color/size/quantity; re-running
+  `getVariantBreakdownSuggestions` afterward correctly showed those 2 lines' `remaining` dropped to 0 while
+  the other 3 untouched lines stayed at their original remaining amounts. Test lot and its breakdown rows
+  deleted afterward. `npx tsc --noEmit`, `npx eslint`, and `npx vitest run` (1434/1434, 6 new) all clean.
+- **Not built this pass, explicitly out of scope per the confirmed decision above**: per-stage/per-JobOrder
+  variant-level quantity tracking (completed/rejected/damaged/forwarded/qcPassed still stay flat aggregates
+  at every stage) — if a future need genuinely requires knowing exactly how many of a specific size/color
+  were rejected at a specific stage (not just the lot's overall mix), that's a much larger, separate change
+  to `job-order.service.ts`'s own accumulator logic, not an extension of this one.
+
 ## Material Request Issue — color/shade roll picker for fabric materials (2026-09-12)
 
 User-reported real workflow gap on `/material-requests/[id]` (`http://localhost:3000/material-requests/...`):
@@ -6184,6 +6249,138 @@ Raw materials reuse the real `Product`/`itemType: RAW_MATERIAL` master as-is via
   a rich Tech Pack, BOM/costing/Sample Request/Style Master integration, and full traceability — the schema
   (particularly per-observation `isLocked` and the `MaterialLine`/`CompatibilityItem` rows) is shaped so these
   attach later without a breaking migration.
+
+## Branch-level data access control (RoleBranchAccess), first phase on Inventory/Warehouse (2026-09-15)
+
+User asked to "properly implement branch access" against the 60-section Users/Roles/Permissions module spec
+they'd pasted earlier — scoped via two AskUserQuestion rounds before any code was written: **mirror the
+existing `RoleProductionStageAccess` pattern exactly** (same table shape, same union/unrestricted-wins
+semantics) rather than inventing a new mechanism, and **roll it out first on Inventory/Warehouse only**
+(Warehouse, Material Request, Goods Receipt, Stock Movement — matching the spec's own "Store Manager →
+Gurugram Factory" example), deferring the other ~18 branchId-carrying models to a future pass.
+
+- **Schema**: new `RoleBranchAccess` (`role_id` × `branch_id`, `@@unique([roleId, branchId])`) — a role with
+  zero rows is unrestricted (sees every branch, the default for every existing role); non-zero rows restrict
+  to just those branches. `Role.branchAccess`/`Branch.roleBranchAccess` back-relations. Migration
+  `20260915090000_add_role_branch_access`, applied via this project's established non-interactive workaround
+  (`migrate diff --script` → hand-placed `migration.sql` → `db execute` → `migrate resolve --applied`) and
+  independently re-verified via a direct `information_schema.columns` query, never trusted from
+  `resolve --applied` alone.
+- **`PermissionService.getAllowedBranchIds(userId): Promise<Set<string> | null>`** — placed directly after
+  the existing `getAllowedProductionStageIds()`, identical logic structure: a platform admin always gets
+  `null`; a user holding ANY unrestricted role gets `null` outright even if their other held roles are
+  individually restricted (holding one extra narrow role must never silently shrink an otherwise-unrestricted
+  user's own view); only when EVERY held role is restricted does the result become the union of their allowed
+  branch sets; a user holding no role at all gets an empty `Set` (sees nothing, matching that they'd already
+  fail every ordinary permission check too).
+- **`src/lib/branch-access.ts`** — `branchScopeWhere(allowedBranchIds)` (spread-in `{ branchId: { in: [...] } }`
+  addition alongside a query's existing `companyId` scoping, never a replacement; `null` → `{}`) and
+  `assertBranchAccess(actor, branchId)` (throws the new `BRANCH_ACCESS_DENIED`, 403, when a branch is outside
+  the actor's allowed set). New `BusinessRuleError` code alongside the existing
+  `PRODUCTION_STAGE_ACCESS_DENIED`.
+- **Admin UI**: `RoleBranchAccessPanel.tsx` on `/admin/roles/[id]` (checkbox list of the company's active
+  branches, "select nothing to leave this role unrestricted" copy), backed by `GET`/`PUT
+  /api/v1/administration/roles/[id]/branches` → `getRoleBranchAccess()`/`updateRoleBranches()` in
+  `role-admin.service.ts` (mirrors `getRoleProductionStageAccess()`/`updateRoleProductionStages()` exactly,
+  including being **deliberately allowed on system/seeded roles too** — stage/branch restriction is a purely
+  additive, narrowing dimension that can never widen what a role can do, unlike the module/action permission
+  matrix, which does block editing a seeded role). `replaceBranchAccessInTx()` in `role-admin.repository.ts`
+  follows the same "empty array is a real state — clears any existing restriction — not a no-op" contract as
+  its stage-access sibling.
+- **Enforcement, applied identically across all four modules**: every `list*`/`get*ById` function now takes
+  a richer actor (`{ companyId, userId }` in place of a bare `companyId` string) and spreads
+  `branchScopeWhere(allowedBranchIds)` into its `where`; every `get*ById` additionally checks
+  `allowedBranchIds !== null && (!record.branchId || !allowedBranchIds.has(record.branchId))` and throws a
+  plain `NOT_FOUND` — this app's established "deny as not-found" convention (never revealing a record exists
+  to someone who can't see it), the same denial shape already used for permission-based denial elsewhere.
+  Every API route/Server Component caller updated to pass `{ companyId: session.user.companyId, userId:
+  session.user.id }` instead of a bare `companyId`. Applied to `warehouse.service.ts` (`listWarehouses`/
+  `getWarehouseById`, plus `assertBranchAccess(actor, actor.branchId)` on `createWarehouse`),
+  `material-request.service.ts` (`listMaterialRequests`/`getMaterialRequestById`),
+  `goods-receipt.service.ts` (`listGoodsReceipts`/`getGoodsReceiptById`), and `stock-movement.service.ts`
+  (`listStockMovements`/`getStockMovementById`) — 22 new unit tests across the four modules' own test files
+  (branch-filtered/unfiltered list `where` shape, in-scope success, out-of-scope `NOT_FOUND`, a
+  no-branchId-when-restricted edge case), each requiring the same `vi.mock("@/core/rbac/PermissionService",
+  ...)` addition already established for `job-order.service.test.ts`'s equivalent stage-access mocks (a real
+  Postgres connection error is what happens if this mock is forgotten, since `getAllowedBranchIds()` would
+  otherwise hit the genuinely-unmocked real Prisma client inside the test environment).
+- **Verified live end-to-end against the real dev DB**: created a real second branch ("Gurugram Factory,"
+  `GGN`) through the actual `/admin` UI, created a real custom "Branch Access Test Role" (full
+  Inventory/Warehouse/Purchasing permissions) and restricted it to Head Office only via the real
+  `RoleBranchAccessPanel`, created a real test user holding it, signed in as them, and confirmed — for all
+  four modules — their list view correctly excluded a real record deliberately reassigned to the Gurugram
+  branch (a warehouse, a material request, a goods receipt, and a stock movement, each flipped via a direct
+  DB update for the test and restored to Head Office afterward) while a same-branch record stayed visible,
+  and that a direct `fetch()` to that record's own `GET .../:id` endpoint correctly returned
+  `404 NOT_FOUND` in every case. Confirmed Super Admin's own unrestricted view was completely unaffected
+  both before and after the test data was restored. Test user suspended afterward (no delete-user endpoint
+  exists, matching this project's own established precedent); the "Branch Access Test Role" itself was kept
+  as a real, working demonstration, the same precedent already set for the "Cutting Supervisor" test role
+  from the per-role Production Stage access pass.
+- `npx tsc --noEmit`, `npx eslint .` (0 errors), and `npx vitest run` (1567/1567, 22 new) all clean
+  throughout.
+- **Not built this pass, explicitly deferred per the user's own confirmed scope**: the other ~18
+  branchId-carrying models (Sales Orders, Purchase Orders, Production Orders, Dispatch, Journal, Invoices,
+  etc.) — extend using this exact same `getAllowedBranchIds`/`branchScopeWhere`/`assertBranchAccess` pattern
+  once that next module is prioritized.
+
+## Branch-level data access control, second phase — Sales Orders, Purchase Orders, Production, Dispatch, Accounts (2026-09-15)
+
+User authorized extending the pattern above to all remaining branch-carrying modules in one pass, confirmed
+via AskUserQuestion (multiSelect: all four proposed groups — Sales Orders + Purchase Orders; Production
+[Production Orders, Lots, Job Orders]; Dispatch; Accounts [Journal, Invoices, Payments, Expenses] — were all
+selected). Zero new mechanism — every one of these 9 service files was updated to the exact same
+`getAllowedBranchIds`/`branchScopeWhere`/`assertBranchAccess`/"deny as `NOT_FOUND`" convention the first
+phase already proved, with no schema or `PermissionService` changes needed at all.
+
+- **The rollout pattern, applied identically to every module**: `list*(companyId, query)` →
+  `list*(actor: { companyId; userId }, query)`, computing `allowedBranchIds` and spreading
+  `branchScopeWhere(allowedBranchIds)` into the Prisma `where`; `get*ById(companyId, id)` →
+  `get*ById(actor, id)`, adding the same `allowedBranchIds !== null && (!record.branchId ||
+  !allowedBranchIds.has(record.branchId)) → NOT_FOUND` check after the existing not-found guard. Every
+  internal caller within the same service file and every external caller (API routes, Server Component
+  pages) updated to pass `{ companyId: session.user.companyId, userId: session.user.id }` instead of a bare
+  `companyId`. Applied to `sales-order.service.ts`, `purchase-order.service.ts`,
+  `production-order.service.ts`, `lot.service.ts`, `job-order.service.ts`, `dispatch.service.ts`,
+  `journal.service.ts`, `sales-invoice.service.ts`, `purchase-invoice.service.ts`, `payment.service.ts`, and
+  `expense.service.ts` — 11 `list`/`get` pairs across 9 service files.
+- **`JobOrder` has no `branchId` column of its own** — it derives branch scope from its parent `Lot
+  .branchId`, requiring `branchId: true` to be added to the nested `lot` select inside the shared
+  `JOB_ORDER_INCLUDE` repository constant (`production.repository.ts`) rather than any schema migration.
+  Confirmed via grep before assuming this was safe — `JobOrder` genuinely has only `lotId`/
+  `productionStageId`, no `branchId`.
+- **`getJobOrderById`'s new branch-check parameter is optional (`userId?: string`), not required** — the
+  branch check is skipped entirely when it's omitted, so any hypothetical future internal caller that
+  doesn't need branch scoping can't be broken by this change. A dedicated unit test proves the no-op when
+  `userId` is absent.
+- **`getLotById(companyId, id, userId)` already had a `userId` param** from the earlier per-role Production
+  Stage access pass (used to filter job orders by allowed production stage) — the new branch check was
+  added as an additional guard using that same existing param, placed before the existing stage-filtering
+  logic, rather than adding a second parameter for the same actor.
+- **19 new unit tests** across the 9 modules' own test files (branch-filtered/unfiltered list `where` shape,
+  in-scope success, out-of-scope `NOT_FOUND`), each adding `getAllowedBranchIds: vi.fn()` to that module's
+  existing `PermissionService` mock (or creating the mock from scratch for the two modules —
+  `production-order.service.test.ts`, `lot.service.test.ts` — that had none at all before).
+- **Verified live end-to-end against real, pre-existing dev-DB data** — not fixtures: granted the existing
+  "Branch Access Test Role" the new modules' `view` permission (36 total now), reactivated the "Branch Test
+  User," then flipped one real Sales Order (`ORD-2026-00001`), one real Purchase Order (`PO-2026-00009`),
+  and the one real Production Order (`PROD-2026-00004`) to the Gurugram branch — confirmed the restricted
+  test user's list views correctly excluded all three and a direct `GET .../:id` call returned `404
+  NOT_FOUND` for each, then restored all three to Head Office. Confirmed Super Admin's own unrestricted view
+  was unaffected throughout. Test user suspended afterward; the "Branch Access Test Role" kept as a real,
+  working demonstration, per the same precedent already established.
+- **Accounts-side modules (Dispatch, Journal, Sales Invoice, Purchase Invoice, Payment, Expense) were not
+  live-verified this pass** — this dev DB has zero real transactional records in any of them, and its Chart
+  of Accounts currently holds only leftover test rows rather than the standard seeded set, so building fresh
+  fixtures purely for this check wasn't judged worth it given their branch-access logic already has
+  dedicated, passing unit tests covering the same enforcement shape already proven live on the other 5
+  modules.
+- `npx tsc --noEmit`, `npx eslint .` (0 errors), and `npx vitest run` (1616/1616, 19 new) all clean
+  throughout — including after merging a same-day, independently-landed `main` commit (Lot size/color
+  breakdown, #44) that touched several of the same files; the one real conflict (both branches added
+  different new test blocks to `lot.service.test.ts`) was resolved by keeping both sets of tests side by
+  side, and `prisma generate`/`prisma migrate deploy` were re-run to pick up that commit's own new
+  `LotVariantBreakdown` schema addition.
 
 ## Recommended Stack
 

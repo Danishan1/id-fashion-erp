@@ -8,7 +8,7 @@ export default async function PaymentDetailPage({ params }: { params: Promise<{ 
   const { id } = await params;
   const session = await auth();
 
-  const payment = await getPaymentById(session!.user.companyId, id).catch(() => null);
+  const payment = await getPaymentById({ companyId: session!.user.companyId, userId: session!.user.id }, id).catch(() => null);
   if (!payment) notFound();
 
   return (

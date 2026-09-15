@@ -4,13 +4,20 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { FilePreviewModal } from "@/components/ui/FilePreviewModal";
-import type { EditMode } from "@/modules/ai-designer/ai-designer.schema";
+import type { ReplicateEditMode } from "@/modules/ai-designer/replicate-design.schema";
+
+// Mirrors AI Designer's own EditDesignWorkspace.tsx exactly (same 3-column
+// CAD-like editor: left edit-category sidebar, center canvas with zoom/pan,
+// bottom variations/compare/versions tabs, right contextual edit-mode
+// panel) — duplicated per this module's own established isolation rule,
+// adapted only where Replicate Design's own schema genuinely differs (its
+// own API routes, and no productCategory field on this project).
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-interface AiDesignerImageRow {
+interface ReplicateImageRow {
   id: string;
   generationId: string;
   imageAttachmentId: string;
@@ -30,14 +37,14 @@ interface CurrentVersion {
   approvedAt: string | null;
   aiPromptId: string | null;
   technicalChangesJson: Record<string, string> | null;
-  currentImage: AiDesignerImageRow;
+  currentImage: ReplicateImageRow;
 }
 
 interface ProjectData {
   id: string;
   projectNumber: string;
   projectName: string;
-  productCategory: string | null;
+  fabricName: string | null;
   currentVersion: CurrentVersion | null;
 }
 
@@ -52,24 +59,19 @@ interface VersionRow {
   technicalChangesJson: Record<string, string> | null;
   createdBy: { id: string; fullName: string };
   createdAt: string;
-  currentImage: AiDesignerImageRow;
+  currentImage: ReplicateImageRow;
 }
 
 interface PreviewBatch {
   generationId: string;
-  images: AiDesignerImageRow[];
+  images: ReplicateImageRow[];
 }
 
 // ---------------------------------------------------------------------------
-// Left-sidebar edit-category vocabulary — a cross-cutting taxonomy of
-// EDIT TARGETS (Fabric/Color/Print/...), deliberately a different axis from
-// the Product Design step's own garment-CATEGORY-keyed attribute catalog
-// (Masters -> AI Design -> Product Design) — see the investigation this
-// workspace was scoped from. Selecting a leaf item here only sets which
-// human-readable label feeds the AI prompt (Quick Edit's "Feature"); it is
-// NOT a real pixel-space region selector — no image masking exists anywhere
-// in this codebase (confirmed before building this), so a leaf item is a
-// labeled edit target, not a drawn/clicked area of the photo.
+// Left-sidebar edit-category vocabulary — same cross-cutting taxonomy of
+// EDIT TARGETS as AI Designer's own EditDesignWorkspace (a labeled edit
+// target, not a drawn/clicked image region — no image masking exists
+// anywhere in this codebase).
 // ---------------------------------------------------------------------------
 
 const EDIT_CATEGORIES: { group: string; items: string[] }[] = [
@@ -107,12 +109,11 @@ const STATUS_LABEL: Record<ApprovalStatus, string> = {
   REJECTED: "Rejected",
 };
 
-// A manufacturing-impact hint is shown per edit category — deliberately a
-// static, honest note (no calculated severity, no fabricated numbers, no
-// real downstream write) since AI Designer has zero real connection to the
-// BOM/Costing/Tech Pack modules — see this workspace's own scoping decision.
+// A manufacturing-impact hint per edit category — a static, honest note (no
+// calculated severity, no fabricated numbers) matching AI Designer's own
+// identical disclaimer.
 const IMPACT_HINTS: Record<string, string> = {
-  Fabric: "Fabric changes typically affect the Bill of Materials, costing, and any generated Tech Pack — review those manually after applying.",
+  Fabric: "Fabric/material changes typically affect the Bill of Materials, costing, and any generated Tech Pack — review those manually after applying.",
   "Trims & Accessories": "Trim changes typically affect the Bill of Materials and costing — review those manually after applying.",
   Closure: "Closure changes typically affect the Bill of Materials and costing — review those manually after applying.",
   Branding: "Branding/label changes typically affect the Bill of Materials and packaging specs — review those manually after applying.",
@@ -138,7 +139,7 @@ async function parseJson(res: Response) {
 // Component
 // ---------------------------------------------------------------------------
 
-export function EditDesignWorkspace({ projectId, initialProject }: { projectId: string; initialProject: ProjectData }) {
+export function EditReplicateDesignWorkspace({ projectId, initialProject }: { projectId: string; initialProject: ProjectData }) {
   const [project, setProject] = useState<ProjectData>(initialProject);
   const [versions, setVersions] = useState<VersionRow[]>([]);
   const [preview, setPreview] = useState<PreviewBatch | null>(null);
@@ -157,7 +158,7 @@ export function EditDesignWorkspace({ projectId, initialProject }: { projectId: 
 
   // Right panel — edit form
   const [rightOpen, setRightOpen] = useState(true);
-  const [editMode, setEditMode] = useState<EditMode>("QUICK");
+  const [editMode, setEditMode] = useState<ReplicateEditMode>("QUICK");
   const [currentValue, setCurrentValue] = useState("");
   const [newValue, setNewValue] = useState("");
   const [techRows, setTechRows] = useState<{ key: string; value: string }[]>([{ key: "", value: "" }]);
@@ -182,17 +183,17 @@ export function EditDesignWorkspace({ projectId, initialProject }: { projectId: 
   }
 
   async function refreshProject() {
-    const body = await parseJson(await fetch(`/api/v1/ai-designer/projects/${projectId}`));
+    const body = await parseJson(await fetch(`/api/v1/ai-designer/replicate-projects/${projectId}`));
     setProject(body.data);
   }
 
   async function refreshVersions() {
-    const body = await parseJson(await fetch(`/api/v1/ai-designer/projects/${projectId}/versions`));
+    const body = await parseJson(await fetch(`/api/v1/ai-designer/replicate-projects/${projectId}/versions`));
     setVersions(body.data ?? []);
   }
 
   useEffect(() => {
-    fetch(`/api/v1/ai-designer/projects/${projectId}/versions`)
+    fetch(`/api/v1/ai-designer/replicate-projects/${projectId}/versions`)
       .then(parseJson)
       .then((body) => setVersions(body.data ?? []))
       .catch(() => {});
@@ -228,7 +229,7 @@ export function EditDesignWorkspace({ projectId, initialProject }: { projectId: 
       setError("Choose an edit category on the left first.");
       return;
     }
-    const featureLabel = editMode === "AI_PROMPT" ? activeItem ?? "Custom Instruction" : activeItem!;
+    const featureLabel = editMode === "AI_PROMPT" ? (activeItem ?? "Custom Instruction") : activeItem!;
     const technicalFields =
       editMode === "TECHNICAL"
         ? Object.fromEntries(techRows.filter((r) => r.key.trim() && r.value.trim()).map((r) => [r.key.trim(), r.value.trim()]))
@@ -236,7 +237,7 @@ export function EditDesignWorkspace({ projectId, initialProject }: { projectId: 
 
     run("preview", async () => {
       const body = await parseJson(
-        await fetch(`/api/v1/ai-designer/projects/${projectId}/edit`, {
+        await fetch(`/api/v1/ai-designer/replicate-projects/${projectId}/edit`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -259,7 +260,7 @@ export function EditDesignWorkspace({ projectId, initialProject }: { projectId: 
   function confirmApply(imageId: string) {
     run("apply", async () => {
       await parseJson(
-        await fetch(`/api/v1/ai-designer/projects/${projectId}/images/${imageId}/apply-edit`, {
+        await fetch(`/api/v1/ai-designer/replicate-projects/${projectId}/images/${imageId}/apply-edit`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ confirmed: true }),
@@ -277,7 +278,7 @@ export function EditDesignWorkspace({ projectId, initialProject }: { projectId: 
   function rejectPreviewImage(imageId: string) {
     run(`reject-${imageId}`, async () => {
       await parseJson(
-        await fetch(`/api/v1/ai-designer/projects/${projectId}/images/${imageId}/decide`, {
+        await fetch(`/api/v1/ai-designer/replicate-projects/${projectId}/images/${imageId}/decide`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ decision: "REJECT" }),
@@ -289,7 +290,7 @@ export function EditDesignWorkspace({ projectId, initialProject }: { projectId: 
 
   function decideVersion(action: "approve" | "reject") {
     run(action, async () => {
-      await parseJson(await fetch(`/api/v1/ai-designer/projects/${projectId}/versions/${action}`, { method: "POST" }));
+      await parseJson(await fetch(`/api/v1/ai-designer/replicate-projects/${projectId}/versions/${action}`, { method: "POST" }));
       setConfirmAction(null);
       await Promise.all([refreshProject(), refreshVersions()]);
     });
@@ -319,12 +320,12 @@ export function EditDesignWorkspace({ projectId, initialProject }: { projectId: 
       {/* Top toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 bg-white px-4 py-2 dark:border-zinc-800 dark:bg-zinc-950">
         <div className="flex flex-wrap items-center gap-3 text-sm">
-          <Link href={`/ai-designer/projects/${projectId}`} className="text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300">
+          <Link href={`/ai-designer/replicate/${projectId}`} className="text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300">
             ← Back
           </Link>
           <span className="font-semibold text-zinc-900 dark:text-zinc-100">{project.projectName}</span>
           <span className="text-zinc-400">{project.projectNumber}</span>
-          {project.productCategory && <span className="text-zinc-400">· {project.productCategory}</span>}
+          {project.fabricName && <span className="text-zinc-400">· {project.fabricName}</span>}
           {project.currentVersion && (
             <>
               <span className="rounded bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
@@ -354,12 +355,6 @@ export function EditDesignWorkspace({ projectId, initialProject }: { projectId: 
           >
             Reject Design
           </button>
-          <a
-            href={`/api/v1/ai-designer/projects/${projectId}/export?format=png`}
-            className="rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium hover:bg-zinc-50 dark:border-zinc-700 dark:hover:bg-zinc-900"
-          >
-            Export
-          </a>
         </div>
       </div>
 
@@ -584,9 +579,7 @@ export function EditDesignWorkspace({ projectId, initialProject }: { projectId: 
                       />
                     </div>
                     <div className="text-center">
-                      <p className="mb-1 text-[10px] font-medium text-zinc-500">
-                        Current — V{project.currentVersion?.versionNumber}
-                      </p>
+                      <p className="mb-1 text-[10px] font-medium text-zinc-500">Current — V{project.currentVersion?.versionNumber}</p>
                       {currentImage && (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img
@@ -690,7 +683,7 @@ export function EditDesignWorkspace({ projectId, initialProject }: { projectId: 
             )}
 
             <div className="mb-3 flex gap-1 rounded bg-zinc-100 p-0.5 text-xs dark:bg-zinc-900">
-              {(["QUICK", "TECHNICAL", "AI_PROMPT"] as EditMode[]).map((m) => (
+              {(["QUICK", "TECHNICAL", "AI_PROMPT"] as ReplicateEditMode[]).map((m) => (
                 <button
                   key={m}
                   type="button"

@@ -19,6 +19,8 @@ export const STEP_LABELS: Record<string, string> = {
   FABRIC_MATERIAL_SELECTION: "Fabric & Material Selection",
   COMPATIBILITY_CHECK: "Compatibility Check",
   GENERATE: "Generate Design",
+  EDIT: "Edit Design",
+  TECH_PACK: "Tech Pack",
 };
 
 // Mirrors replicate-design.service.ts's own REPLICATE_STEP_ORDER exactly — a
@@ -32,4 +34,6 @@ export const STEP_ORDER = [
   "FABRIC_MATERIAL_SELECTION",
   "COMPATIBILITY_CHECK",
   "GENERATE",
+  "EDIT",
+  "TECH_PACK",
 ] as const;

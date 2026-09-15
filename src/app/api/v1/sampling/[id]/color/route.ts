@@ -14,11 +14,11 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
     await PermissionService.assert(session.user.id, "sampling", "edit");
 
     const { id } = await params;
-    const { color } = sampleRequestColorSchema.parse(await req.json());
+    const { colorId, sizeId } = sampleRequestColorSchema.parse(await req.json());
     const request = await updateSampleRequestColor(
       { companyId: session.user.companyId, userId: session.user.id },
       id,
-      color || null
+      { colorId: colorId || null, sizeId: sizeId || null }
     );
 
     return NextResponse.json({ data: request });

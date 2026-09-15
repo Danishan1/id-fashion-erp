@@ -4,6 +4,7 @@ import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingServic
 import { PermissionService } from "@/core/rbac/PermissionService";
 import { prisma } from "@/core/db/client";
 import type { ListQuery } from "@/lib/list-query";
+import { branchScopeWhere } from "@/lib/branch-access";
 import { Prisma } from "@prisma/client";
 import { PurchaseOrderRepository, PurchaseOrderItemRepository } from "@/modules/purchasing/purchase-order.repository";
 import { SupplierRepository } from "@/modules/suppliers/supplier.repository";
@@ -130,9 +131,11 @@ function sumTotals(items: PurchaseInvoiceItemCreateData[]) {
   return { subtotalAmount, taxAmount, totalAmount: round2(subtotalAmount + taxAmount) };
 }
 
-export async function listPurchaseInvoices(companyId: string, query: ListQuery) {
+export async function listPurchaseInvoices(actor: { companyId: string; userId: string }, query: ListQuery) {
+  const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
   const where: Prisma.PurchaseInvoiceWhereInput = {
-    companyId,
+    companyId: actor.companyId,
+    ...branchScopeWhere(allowedBranchIds),
     ...(query.search ? { invoiceNumber: { contains: query.search, mode: "insensitive" as const } } : {}),
   };
 
@@ -148,9 +151,16 @@ export async function listPurchaseInvoices(companyId: string, query: ListQuery) 
   return { data, totalCount };
 }
 
-export async function getPurchaseInvoiceById(companyId: string, id: string) {
-  const invoice = await PurchaseInvoiceRepository.findByIdWithDetails(companyId, id);
+/** A branch-restricted user gets NOT_FOUND for an invoice outside their allowed branches — same "deny as not-found" convention used across this app. */
+export async function getPurchaseInvoiceById(actor: { companyId: string; userId: string }, id: string) {
+  const invoice = await PurchaseInvoiceRepository.findByIdWithDetails(actor.companyId, id);
   if (!invoice) throw new BusinessRuleError("NOT_FOUND", "Purchase invoice not found.", { id });
+
+  const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
+  if (allowedBranchIds !== null && (!invoice.branchId || !allowedBranchIds.has(invoice.branchId))) {
+    throw new BusinessRuleError("NOT_FOUND", "Purchase invoice not found.", { id });
+  }
+
   return invoice;
 }
 

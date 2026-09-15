@@ -48,6 +48,11 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
         { label: "Performed By", value: transaction.performedBy.fullName },
         { label: "Performed At", value: new Date(transaction.performedAt).toLocaleString("en-IN") },
       ],
+      variantBreakdown: transaction.lot.variantBreakdown.map((b) => ({
+        colorName: b.productVariant.color.name,
+        sizeName: b.productVariant.size.name,
+        quantity: Number(b.quantity).toLocaleString("en-IN"),
+      })),
       notes: transaction.notes ?? transaction.revertReason ?? null,
       signatureLabels: ["Handed Over By", "Received By"],
       generatedAt: new Date().toLocaleString("en-IN"),

@@ -3,15 +3,16 @@
 import { useState } from "react";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { ProductDesignAttributesPanel } from "./ProductDesignAttributesPanel";
+import { OptionReferenceImagesPanel } from "./OptionReferenceImagesPanel";
 
-const TABS = ["Product Design"] as const;
+const TABS = ["Product Design", "Reference Photos"] as const;
 type Tab = (typeof TABS)[number];
 
 /**
- * Masters -> AI Design. A single tab today (Product Design), structured as
- * a tabbed page like Categories/Garment Attributes/Fabric Configuration so
- * a future AI Designer master (e.g. Model options, Environment presets)
- * can be added as a sibling tab without restructuring this page.
+ * Masters -> AI Design. Structured as a tabbed page like Categories/Garment
+ * Attributes/Fabric Configuration so a future AI Designer master (e.g.
+ * Model options, Environment presets) can be added as a sibling tab without
+ * restructuring this page.
  */
 export function AiDesignMastersClient() {
   const [tab, setTab] = useState<Tab>("Product Design");
@@ -45,6 +46,7 @@ export function AiDesignMastersClient() {
       </div>
 
       {tab === "Product Design" && <ProductDesignAttributesPanel />}
+      {tab === "Reference Photos" && <OptionReferenceImagesPanel />}
     </div>
   );
 }

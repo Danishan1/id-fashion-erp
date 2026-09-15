@@ -1,20 +1,28 @@
-import { STANDARD_SIZES, TECH_PACK_IMAGE_PAGE_DEFINITIONS, type GarmentAnalysisPart1 } from "./schema";
+import { STANDARD_SIZES, type GarmentAnalysisPart1 } from "./schema";
 
 /**
  * Every prompt in this file is written to faithfully implement the user's
  * own "GARMENT TECH PACK SPEC SHEET GENERATOR" system prompt (supplied
  * verbatim, 2026-09-13, "ye prompt use kro" — use this prompt) — split
- * across 3 real AI calls (Part 1 vision, Part 2 text, Part 3 text) rather
- * than one mega-call, for the same reason every other multi-category AI
- * Garment Flow/AI Designer process in this codebase splits a large
- * deliverable into focused calls: keeps each call's schema/output size well
- * inside Anthropic's real, confirmed-live limits (a compiled strict-mode
+ * across 2 real AI calls (Part 1 vision, Part 2 text) rather than one
+ * mega-call, for the same reason every other multi-category AI Garment Flow/
+ * AI Designer process in this codebase splits a large deliverable into
+ * focused calls: keeps each call's schema/output size well inside
+ * Anthropic's real, confirmed-live limits (a compiled strict-mode
  * tool-schema grammar-size ceiling, and a 16000-max-output-tokens ceiling on
  * a single response) rather than risking truncation or an outright 400.
+ *
+ * v3 (2026-09-14): the third AI call this file used to make ("Part 3" — 4
+ * image-generation prompts for the tech-pack's own drawn garment artwork)
+ * was removed entirely, per the user's own explicit, repeated rule against
+ * using AI image generation to build the document at all. The two real
+ * fields that call also produced — `designerNotes`/`suggestedAdditionalViews`
+ * — were folded into Part 2's own schema/prompt instead, since Part 2
+ * already has the complete analysis in hand at that point; this removes a
+ * whole AI call rather than just its image-prompt half.
  */
 export const GARMENT_ANALYSIS_PART1_PROMPT_VERSION = "ai-designer-tech-pack-analysis-part1-v1";
-export const GARMENT_ANALYSIS_PART2_PROMPT_VERSION = "ai-designer-tech-pack-analysis-part2-v1";
-export const PAGE_PROMPTS_PROMPT_VERSION = "ai-designer-tech-pack-page-prompts-v1";
+export const GARMENT_ANALYSIS_PART2_PROMPT_VERSION = "ai-designer-tech-pack-analysis-part2-v2";
 
 export interface TechPackDesignContext {
   productCategory: string;
@@ -188,7 +196,8 @@ export function buildGarmentAnalysisPart1ToolInputSchema() {
 }
 
 // ---------------------------------------------------------------------------
-// Part 2 (text) — Categories H, I, J
+// Part 2 (text) — Categories H, I, J, plus designer notes / suggested
+// additional views (folded in from the now-removed Part 3 image-prompt call)
 // ---------------------------------------------------------------------------
 
 export function buildGarmentAnalysisPart2SystemPrompt(): string {
@@ -202,6 +211,9 @@ Generate a graded Point-of-Measure (POM) chart: 6-15 measurement points genuinel
 
 ## J. LABELS & PACKAGING
 Generate: main label spec, size label spec, care label spec, hangtag spec, polybag spec, folding instructions, carton packing spec, and barcode placement.
+
+## DESIGNER NOTES & SUGGESTED ADDITIONAL VIEWS
+Also return "designerNotes" (a list of every assumption and unclear area flagged during the full analysis so far, categories A-J) and "suggestedAdditionalViews" (a list of recommended reference images/angles that would improve this tech pack's accuracy, e.g. a flat-lay back view or a close-up of the trim).
 
 State plainly, in your own notes, that this BOM and measurement chart are a reasonable starting draft only, pending real technical costing, sourcing, and grading review — never present them as confirmed final production figures.`;
 }
@@ -249,6 +261,8 @@ export function buildGarmentAnalysisPart2ToolInputSchema() {
       foldingInstructions: stringField(),
       cartonPackingSpec: stringField(),
       barcodePlacement: stringField(),
+      designerNotes: stringField(),
+      suggestedAdditionalViews: stringField(),
     },
     required: [
       "bomItems",
@@ -262,80 +276,8 @@ export function buildGarmentAnalysisPart2ToolInputSchema() {
       "foldingInstructions",
       "cartonPackingSpec",
       "barcodePlacement",
+      "designerNotes",
+      "suggestedAdditionalViews",
     ],
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Part 3 (text) — image-generation prompts for the garment-artwork pages
-// only + designer notes
-// ---------------------------------------------------------------------------
-//
-// v2 (2026-09-13): live testing showed the image model rendering every
-// table/header/footer/paragraph asked of it as illegible pixel-noise — a
-// universal, confirmed-live weakness of current image-generation models at
-// rendering accurate text, not something achievable through prompt wording
-// alone. Fixed architecturally: the AI is now asked for artwork ONLY (the
-// actual drawn garment), never for any text/table/header/footer content at
-// all — every one of those is instead rendered as real, always-legible PDF
-// text from the Garment Analysis data (see tech-pack-pdf.tsx). Only the 4
-// pages that genuinely need a drawn garment (TECH_PACK_IMAGE_PAGE_DEFINITIONS)
-// get an image-generation prompt at all.
-
-const ARTWORK_ONLY_RULES = `Every image you generate must be PURE GARMENT ARTWORK ONLY — a clean, technical CAD-style flat/line drawing of the garment on a plain white background. Do NOT render any tables, headers, footers, paragraphs, sentences, or brand names inside the image — all of that will be added separately as real, typeset text around the image. The ONLY text allowed inside the image is a small numbered circle/tag (a single digit or two, e.g. "1", "2", "3") marking a construction callout or measurement point where specified below — nothing more.`;
-
-const GLOBAL_VISUAL_RULES = `Every image must be: a pure white background; a minimal luxury factory tech-pack aesthetic; thin black outline linework; clean spacing and alignment; no decorative graphics; no gradients; no shadows; no mockup scene; no folded garments unless specified; flat orthographic garment CAD views only; supplier-document visual quality; a high-resolution print-ready image; fashion CAD style; realistic garment rendering; editorially clean composition.`;
-
-const IMAGE_OPTIMIZATION_RULES = `To improve image-generation quality, ALWAYS use phrases like "technical CAD flat drawing", "full-color technical flat", "factory-ready apparel artwork", "fashion technical design drawing". NEVER use the words "concept art", "poster", "mockup sheet", "Pinterest style", "editorial collage", "dribbble", "behance", or "graphic design board".`;
-
-const PAGE_ARTWORK_REQUIREMENTS: Record<number, string> = {
-  1: `Front view and back view of the finished garment, side by side, full color, realistic fashion CAD style, orthographic flat technical drawings, supplier-level quality. No text of any kind.`,
-  2: `Front view and back view of the garment with small numbered circle markers (1, 2, 3, ...) placed exactly at each construction/seam callout location from the analysis below — markers only, no legend text on the image itself.`,
-  4: `Front view (and back view too, if the artwork appears there) of the garment in full color, clearly showing the actual print/artwork exactly as placed on the real garment. No color swatches, no chips, no text.`,
-  5: `A black-and-white line-art technical flat of the garment with measurement (POM) arrows drawn between key points, each arrow endpoint marked with a small numbered circle matching a measurement point from the analysis below — no measurement values or labels written on the image itself.`,
-};
-
-const CONSISTENCY_RULES = `Every generated image (and the real data tables placed alongside them in the final tech pack) must reflect the identical style, garment details, measurements, color references, artwork placement, and terminology — never contradict a fact already established in the analysis.`;
-
-const TECHNICAL_FLAT_RULES = `Pages 1, 2, and 4 must use full-color technical CAD flats with realistic garment rendering, orthographic front/back views, visible seam construction, visible rib texture, and accurate proportions and artwork placement. Page 5's diagram must be black-and-white line art only.`;
-
-export function buildPagePromptsSystemPrompt(): string {
-  const pageList = TECH_PACK_IMAGE_PAGE_DEFINITIONS.map((p) => `PAGE ${p.pageNumber} — ${p.title}`).join("\n");
-  const pageContent = TECH_PACK_IMAGE_PAGE_DEFINITIONS.map((p) => `PAGE ${p.pageNumber} (${p.title}): ${PAGE_ARTWORK_REQUIREMENTS[p.pageNumber]}`).join("\n\n");
-
-  return `You are the same Senior Technical Fashion Designer and Apparel Product Developer, now writing image-generation prompts for the tech pack's own drawn garment artwork. Only ${TECH_PACK_IMAGE_PAGE_DEFINITIONS.length} of the 7 tech-pack pages need a generated image at all — the rest are rendered as real typeset tables and text directly from the analysis you already produced, never as an image. You are writing exactly ${TECH_PACK_IMAGE_PAGE_DEFINITIONS.length} image-generation prompts, one per image-needing page, in this fixed order:
-${pageList}
-
-You are given the complete garment analysis (categories A-J) below — every prompt must be grounded in it and never contradict it.
-
-${ARTWORK_ONLY_RULES}
-
-${GLOBAL_VISUAL_RULES}
-
-${IMAGE_OPTIMIZATION_RULES}
-
-Per-page artwork requirements:
-${pageContent}
-
-${CONSISTENCY_RULES}
-
-${TECHNICAL_FLAT_RULES}
-
-Return exactly ${TECH_PACK_IMAGE_PAGE_DEFINITIONS.length} prompt strings in "pagePrompts", in the exact order given above — each one a single, detailed image-generation prompt for that page's garment artwork alone (no tables, no headers, no footers, no paragraphs). Also return "designerNotes" (a list of every assumption and unclear area flagged during the analysis) and "suggestedAdditionalViews" (a list of recommended reference images/angles that would improve this tech pack's accuracy, e.g. a flat-lay back view or a close-up of the trim).`;
-}
-
-export function buildPagePromptsUserText(ctx: TechPackDesignContext, analysis: { part1: unknown; part2: unknown }): string {
-  return [...contextLines(ctx), "", "Full garment analysis:", JSON.stringify(analysis, null, 2)].join("\n");
-}
-
-export function buildPagePromptsToolInputSchema() {
-  return {
-    type: "object" as const,
-    properties: {
-      pagePrompts: { type: "array", items: stringField() },
-      designerNotes: stringField(),
-      suggestedAdditionalViews: stringField(),
-    },
-    required: ["pagePrompts", "designerNotes", "suggestedAdditionalViews"],
   };
 }

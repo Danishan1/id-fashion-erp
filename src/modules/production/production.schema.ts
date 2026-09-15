@@ -30,9 +30,19 @@ export const generateMaterialRequestSchema = z.object({
 });
 export type GenerateMaterialRequestInput = z.infer<typeof generateMaterialRequestSchema>;
 
+// Purely informational (see LotVariantBreakdown in schema.prisma) — optional
+// so a style with no configured variants (or a lot that genuinely doesn't
+// need this) still creates exactly as before. When supplied, createLot()
+// requires the rows to sum to `quantity` exactly.
+export const lotVariantBreakdownRowSchema = z.object({
+  productVariantId: z.string().uuid(),
+  quantity: z.coerce.number().positive("Quantity must be greater than 0"),
+});
+
 export const createLotSchema = z.object({
   quantity: z.coerce.number().positive("Quantity must be greater than 0"),
   uomId: z.string().uuid("Unit is required"),
+  variantBreakdown: z.array(lotVariantBreakdownRowSchema).optional(),
 });
 export type CreateLotInput = z.infer<typeof createLotSchema>;
 

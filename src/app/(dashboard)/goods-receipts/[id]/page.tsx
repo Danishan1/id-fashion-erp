@@ -10,7 +10,7 @@ export default async function GoodsReceiptDetailPage({ params }: { params: Promi
   const { id } = await params;
   const session = await auth();
 
-  const receipt = await getGoodsReceiptById(session!.user.companyId, id).catch(() => null);
+  const receipt = await getGoodsReceiptById({ companyId: session!.user.companyId, userId: session!.user.id }, id).catch(() => null);
   if (!receipt) notFound();
 
   return (

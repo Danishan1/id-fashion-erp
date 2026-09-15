@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/numbering/DocumentNumberingService", () => ({ generateDocumentNumber: vi.fn() }));
-vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { assert: vi.fn() } }));
+vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { assert: vi.fn(), getAllowedBranchIds: vi.fn() } }));
 vi.mock("./chart-of-account.repository", () => ({
   ChartOfAccountRepository: { findAnyById: vi.fn(), findMany: vi.fn(), sumPostedLinesByAccount: vi.fn() },
 }));
@@ -38,11 +38,12 @@ const { prisma } = await import("@/core/db/client");
 const { PermissionService } = await import("@/core/rbac/PermissionService");
 const { JournalRepository } = await import("./journal.repository");
 const { ChartOfAccountRepository } = await import("./chart-of-account.repository");
-const { postJournal, reverseJournal, getTrialBalance } = await import("./journal.service");
+const { postJournal, reverseJournal, getTrialBalance, listJournals, getJournalById } = await import("./journal.service");
 
 const actor = { companyId: "co-1", userId: "user-1", branchId: null };
 
 beforeEach(() => {
+  vi.mocked(PermissionService.getAllowedBranchIds).mockReset().mockResolvedValue(null);
   vi.mocked(PermissionService.assert).mockReset().mockResolvedValue(undefined);
   vi.mocked(JournalRepository.findAnyById).mockReset();
   vi.mocked(JournalRepository.findByIdWithDetails).mockReset();
@@ -228,5 +229,49 @@ describe("getTrialBalance", () => {
 
     const { rows } = await getTrialBalance("co-1");
     expect(rows[0]).toMatchObject({ totalDebit: 0, totalCredit: 0, netBalance: 0 });
+  });
+});
+
+describe("branch access enforcement (2026-09-15)", () => {
+  const listQuery = { search: "", sortBy: "createdAt", sortOrder: "desc" as const, page: 1, pageSize: 20, skip: 0, take: 20 };
+
+  beforeEach(() => {
+    vi.mocked(JournalRepository.findMany).mockReset().mockResolvedValue([]);
+    vi.mocked(JournalRepository.count).mockReset().mockResolvedValue(0);
+  });
+
+  it("listJournals adds no branch filter for an unrestricted user", async () => {
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(null);
+
+    await listJournals(actor, listQuery);
+
+    const whereArg = vi.mocked(JournalRepository.findMany).mock.calls[0][0];
+    expect(whereArg).not.toHaveProperty("branchId");
+  });
+
+  it("listJournals adds a branchId IN filter for a branch-restricted user", async () => {
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    await listJournals(actor, listQuery);
+
+    expect(JournalRepository.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ branchId: { in: ["branch-1"] } }),
+      expect.anything()
+    );
+  });
+
+  it("getJournalById succeeds for a journal inside the user's allowed branches", async () => {
+    vi.mocked(JournalRepository.findByIdWithDetails).mockResolvedValue({ id: "jrn-1", branchId: "branch-1" } as never);
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    const journal = await getJournalById(actor, "jrn-1");
+    expect(journal.id).toBe("jrn-1");
+  });
+
+  it("getJournalById throws NOT_FOUND for a journal outside the user's allowed branches", async () => {
+    vi.mocked(JournalRepository.findByIdWithDetails).mockResolvedValue({ id: "jrn-1", branchId: "branch-2" } as never);
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    await expect(getJournalById(actor, "jrn-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 });

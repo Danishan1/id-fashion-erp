@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { COUNTRIES } from "@/lib/countries";
 
 export interface SupplierFormValues {
   code: string;
@@ -11,6 +12,9 @@ export interface SupplierFormValues {
   email: string;
   phone: string;
   address: string;
+  city: string;
+  pinCode: string;
+  country: string;
   taxRegistrationNo: string;
   paymentTermsDays: string;
   defaultCurrencyCode: string;
@@ -25,6 +29,9 @@ const EMPTY_VALUES: SupplierFormValues = {
   email: "",
   phone: "",
   address: "",
+  city: "",
+  pinCode: "",
+  country: "India",
   taxRegistrationNo: "",
   paymentTermsDays: "",
   defaultCurrencyCode: "INR",
@@ -118,9 +125,11 @@ export function SupplierForm({ initialValues, submitUrl, method, onSuccess, onCa
           <input
             id="code"
             required
+            readOnly
+            disabled
             value={values.code}
-            onChange={(e) => setValues({ ...values, code: e.target.value })}
-            className={textInputClass()}
+            title="Auto-generated — not editable"
+            className={`${textInputClass()} cursor-not-allowed bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400`}
           />
         </FormField>
         <FormField label="Category" htmlFor="categoryId" required>
@@ -190,6 +199,40 @@ export function SupplierForm({ initialValues, submitUrl, method, onSuccess, onCa
           className={textInputClass()}
         />
       </FormField>
+
+      <div className="grid grid-cols-3 gap-4">
+        <FormField label="City" htmlFor="city">
+          <input
+            id="city"
+            value={values.city}
+            onChange={(e) => setValues({ ...values, city: e.target.value })}
+            className={textInputClass()}
+          />
+        </FormField>
+        <FormField label="Pin Code" htmlFor="pinCode">
+          <input
+            id="pinCode"
+            value={values.pinCode}
+            onChange={(e) => setValues({ ...values, pinCode: e.target.value })}
+            className={textInputClass()}
+          />
+        </FormField>
+        <FormField label="Country" htmlFor="country">
+          <select
+            id="country"
+            value={values.country}
+            onChange={(e) => setValues({ ...values, country: e.target.value })}
+            className={textInputClass()}
+          >
+            <option value="">— Select —</option>
+            {COUNTRIES.map((country) => (
+              <option key={country} value={country}>
+                {country}
+              </option>
+            ))}
+          </select>
+        </FormField>
+      </div>
 
       <div className="grid grid-cols-3 gap-4">
         <FormField label="Tax Reg. No." htmlFor="taxRegistrationNo">

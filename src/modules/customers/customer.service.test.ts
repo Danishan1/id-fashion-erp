@@ -76,19 +76,27 @@ describe("updateCustomer", () => {
     expect(CustomerRepository.update).toHaveBeenCalled();
   });
 
-  it("rejects renaming to a code already used by another customer", async () => {
+  // Code is auto-generated at creation and deliberately immutable from then
+  // on (2026-09-15, explicit user request) — updateCustomer() no longer
+  // accepts a code change at all, even if one is submitted directly, and
+  // never runs a duplicate-code check on update as a result (the check only
+  // ever mattered for a code that could actually change).
+  it("never changes the code even when a different one is submitted", async () => {
     vi.mocked(CustomerRepository.findByIdWithBuyers).mockResolvedValue({
       id: "id-1",
       ...baseInput,
       code: "CUST-00001",
       buyers: [],
     } as never);
-    vi.mocked(CustomerRepository.findByCode).mockResolvedValue({ id: "other-id" } as never);
+    vi.mocked(CustomerRepository.update).mockResolvedValue({ id: "id-1", ...baseInput, code: "CUST-00001" } as never);
 
-    await expect(updateCustomer(actor, "id-1", { ...baseInput, code: "CUST-00002" })).rejects.toMatchObject({
-      code: "DUPLICATE_DOC_NUMBER",
-    });
-    expect(CustomerRepository.update).not.toHaveBeenCalled();
+    await updateCustomer(actor, "id-1", { ...baseInput, code: "CUST-00002" });
+
+    expect(CustomerRepository.findByCode).not.toHaveBeenCalled();
+    expect(CustomerRepository.update).toHaveBeenCalledWith(
+      "id-1",
+      expect.not.objectContaining({ code: expect.anything() })
+    );
   });
 });
 

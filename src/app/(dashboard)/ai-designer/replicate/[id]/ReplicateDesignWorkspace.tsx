@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRef, useState } from "react";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { STATUS_BADGE_CLASS, STATUS_LABELS, STEP_LABELS, STEP_ORDER } from "../statusLabels";
@@ -8,7 +9,8 @@ import { DesignDnaReviewPanel } from "./DesignDnaReviewPanel";
 import { FabricMaterialSelectionPanel } from "./FabricMaterialSelectionPanel";
 import { CompatibilityWarningPanel } from "./CompatibilityWarningPanel";
 import { GenerateResultPanel } from "./GenerateResultPanel";
-import { parseJson } from "./shared";
+import { TechPackPanel } from "./TechPackPanel";
+import { imageUrl, parseJson } from "./shared";
 
 interface Observation {
   id: string;
@@ -50,6 +52,11 @@ interface CompatibilityCheck {
   items: CompatibilityItem[];
 }
 
+interface CurrentImage {
+  id: string;
+  imageAttachmentId: string;
+}
+
 interface ReplicateProjectData {
   id: string;
   projectNumber: string;
@@ -69,6 +76,7 @@ interface ReplicateProjectData {
   materialLines: MaterialLine[];
   dnaAnalysis: DnaAnalysis | null;
   compatibilityCheck: CompatibilityCheck | null;
+  currentVersion: { currentImage: CurrentImage } | null;
 }
 
 function WizardSection({
@@ -318,6 +326,50 @@ export function ReplicateDesignWorkspace({ projectId, initialProject }: { projec
           run={run}
         />
       </WizardSection>
+
+      {project.currentVersion?.currentImage && (
+        <WizardSection
+          sectionRef={(el) => (sectionRefs.current.EDIT = el)}
+          index={7}
+          title={STEP_LABELS.EDIT}
+          isDone={project.completedSteps.includes("EDIT")}
+          isCurrent={project.currentStep === "EDIT"}
+          isOpen={expandedStep === "EDIT"}
+        >
+          <p className="text-xs text-zinc-500">
+            A full single-page design workspace — canvas with zoom/pan, contextual edit categories, Quick/Technical/AI
+            Prompt edit modes, AI variations review, before/after compare, and version history with Approve/Reject.
+          </p>
+          <div className="mt-3 flex items-center gap-3">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={imageUrl(project.currentVersion.currentImage.imageAttachmentId)}
+              alt="Current design"
+              className="h-32 w-32 rounded border object-cover"
+            />
+            <Link
+              href={`/ai-designer/replicate/${projectId}/edit`}
+              className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500"
+            >
+              Open Design Editor →
+            </Link>
+          </div>
+          <StepNextButton step="EDIT" onNext={goToNextStep} />
+        </WizardSection>
+      )}
+
+      {project.currentVersion?.currentImage && (
+        <WizardSection
+          sectionRef={(el) => (sectionRefs.current.TECH_PACK = el)}
+          index={8}
+          title={STEP_LABELS.TECH_PACK}
+          isDone={project.completedSteps.includes("TECH_PACK")}
+          isCurrent={project.currentStep === "TECH_PACK"}
+          isOpen={expandedStep === "TECH_PACK"}
+        >
+          <TechPackPanel projectId={projectId} hasCurrentDesign={!!project.currentVersion?.currentImage} busy={busy} run={run} />
+        </WizardSection>
+      )}
     </div>
   );
 }

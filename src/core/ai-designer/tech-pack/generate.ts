@@ -6,19 +6,9 @@ import {
   buildGarmentAnalysisPart2SystemPrompt,
   buildGarmentAnalysisPart2UserText,
   buildGarmentAnalysisPart2ToolInputSchema,
-  buildPagePromptsSystemPrompt,
-  buildPagePromptsUserText,
-  buildPagePromptsToolInputSchema,
   type TechPackDesignContext,
 } from "./prompt";
-import {
-  validateGarmentAnalysisPart1,
-  validateGarmentAnalysisPart2,
-  validatePagePromptsResponse,
-  type GarmentAnalysisPart1,
-  type GarmentAnalysisPart2,
-  type PagePromptsResponse,
-} from "./schema";
+import { validateGarmentAnalysisPart1, validateGarmentAnalysisPart2, type GarmentAnalysisPart1, type GarmentAnalysisPart2 } from "./schema";
 
 export { AiServiceError, AiInvalidResponseError } from "@/core/ai/providers/anthropic";
 export { AiConfigMissingError } from "@/core/ai/config";
@@ -50,25 +40,9 @@ export async function generateGarmentAnalysisPart2(params: {
     systemPrompt: buildGarmentAnalysisPart2SystemPrompt(),
     userText: buildGarmentAnalysisPart2UserText(params.ctx, params.part1),
     toolName: "record_garment_analysis_part2",
-    toolDescription: "Records the garment analysis (categories H-J: bill of materials, measurements & grading, labels & packaging).",
+    toolDescription: "Records the garment analysis (categories H-J: bill of materials, measurements & grading, labels & packaging) plus designer notes and suggested additional views.",
     inputSchema: buildGarmentAnalysisPart2ToolInputSchema(),
     validate: (input: unknown) => validateGarmentAnalysisPart2(input),
-  });
-  return { data: result.data, model: result.model };
-}
-
-export async function generatePagePrompts(params: {
-  ctx: TechPackDesignContext;
-  part1: GarmentAnalysisPart1;
-  part2: GarmentAnalysisPart2;
-}): Promise<{ data: PagePromptsResponse; model: string }> {
-  const result = await requestStructuredTextOutput({
-    systemPrompt: buildPagePromptsSystemPrompt(),
-    userText: buildPagePromptsUserText(params.ctx, { part1: params.part1, part2: params.part2 }),
-    toolName: "record_tech_pack_page_prompts",
-    toolDescription: "Records exactly 7 image-generation prompts (one per tech-pack page, in page order) plus designer notes and suggested additional views.",
-    inputSchema: buildPagePromptsToolInputSchema(),
-    validate: (input: unknown) => validatePagePromptsResponse(input),
   });
   return { data: result.data, model: result.model };
 }

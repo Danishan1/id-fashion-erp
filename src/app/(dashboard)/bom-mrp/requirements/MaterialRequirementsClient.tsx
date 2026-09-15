@@ -1,16 +1,27 @@
 "use client";
 
 import Link from "next/link";
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { FormField } from "@/components/ui/FormField";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
 
+type MaterialStatus = "PENDING" | "FULFILLED";
+
 interface SalesOrderOption {
   id: string;
   orderNumber: string;
-  customer: { name: string } | null;
+  customerName: string;
+  materialStatus: MaterialStatus;
 }
+
+type SalesOrderFilter = "PENDING" | "FULFILLED" | "ALL";
+
+const SALES_ORDER_FILTERS: { value: SalesOrderFilter; label: string }[] = [
+  { value: "PENDING", label: "Pending" },
+  { value: "FULFILLED", label: "Fulfilled" },
+  { value: "ALL", label: "All" },
+];
 
 interface ContributingStyle {
   productId: string;
@@ -26,6 +37,7 @@ interface MaterialRow {
   uomCode: string;
   neededQuantity: number;
   availableQuantity: number;
+  issuedQuantity: number;
   shortfallQuantity: number;
   defaultSupplierId: string | null;
   unitCost: number | null;
@@ -56,6 +68,7 @@ function formatQty(n: number) {
 
 export function MaterialRequirementsClient() {
   const [salesOrders, setSalesOrders] = useState<SalesOrderOption[]>([]);
+  const [salesOrderFilter, setSalesOrderFilter] = useState<SalesOrderFilter>("PENDING");
   const [salesOrderId, setSalesOrderId] = useState("");
   const [warehouses, setWarehouses] = useState<WarehouseOption[]>([]);
   const [warehouseId, setWarehouseId] = useState("");
@@ -70,13 +83,22 @@ export function MaterialRequirementsClient() {
   const [duplicateBlock, setDuplicateBlock] = useState<Record<string, DuplicateEntry[]> | null>(null);
 
   useEffect(() => {
-    fetch("/api/v1/sales-orders?pageSize=200")
+    fetch("/api/v1/bom-mrp/sales-orders")
       .then((res) => res.json())
       .then((body) => setSalesOrders(body.data ?? []));
     fetch("/api/v1/warehouses?pageSize=200")
       .then((res) => res.json())
       .then((body) => setWarehouses(body.data ?? []));
   }, []);
+
+  // The currently-selected order must stay selectable even if the filter
+  // changes out from under it afterward (e.g. Pending -> Fulfilled once its
+  // last material gets issued mid-session) — never yank the active
+  // selection out of the dropdown just because its own status moved.
+  const filteredSalesOrders = useMemo(() => {
+    if (salesOrderFilter === "ALL") return salesOrders;
+    return salesOrders.filter((o) => o.id === salesOrderId || o.materialStatus === salesOrderFilter);
+  }, [salesOrders, salesOrderFilter, salesOrderId]);
 
   const loadRequirements = async (id: string) => {
     setSalesOrderId(id);
@@ -163,22 +185,56 @@ export function MaterialRequirementsClient() {
       <div>
         <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Material Requirements</h1>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-          Needed vs. available stock per material for a Sales Order, based on each style&apos;s BOM. Select a real
-          shortfall and generate a Material Request — Inventory checks stock and issues what&apos;s available;
-          anything still short can be escalated to Purchasing from there.
+          Needed vs. already-issued per material for a Sales Order, based on each style&apos;s BOM. A material still
+          shows a checkbox when there&apos;s a real gap between what&apos;s needed and what&apos;s already been
+          issued — select it and generate a Material Request; Inventory checks stock and issues what&apos;s
+          available, anything still short can be escalated to Purchasing from there. Available (current company
+          stock) stays informational alongside it.
         </p>
       </div>
 
-      <div className="max-w-md">
+      <div className="max-w-md space-y-2">
+        <div className="flex gap-1">
+          {SALES_ORDER_FILTERS.map((f) => (
+            <button
+              key={f.value}
+              type="button"
+              onClick={() => {
+                setSalesOrderFilter(f.value);
+                // Switching the filter is a deliberate "start over" action —
+                // clear whatever order/material data is currently shown so
+                // the page never keeps displaying a selection that no
+                // longer matches the tab the user just clicked.
+                loadRequirements("");
+              }}
+              className={`rounded-md border px-2.5 py-1 text-xs font-medium transition ${
+                salesOrderFilter === f.value
+                  ? "border-indigo-600 bg-indigo-600 text-white"
+                  : "border-zinc-300 text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900/40"
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
         <FormField label="Sales Order" htmlFor="salesOrderId">
           <SearchableSelect
             id="salesOrderId"
             value={salesOrderId}
             onChange={loadRequirements}
-            options={salesOrders.map((o) => ({ id: o.id, label: o.orderNumber, sublabel: o.customer?.name }))}
+            options={filteredSalesOrders.map((o) => ({
+              id: o.id,
+              label: o.orderNumber,
+              sublabel: `${o.customerName}${o.materialStatus === "FULFILLED" ? " — fully issued" : ""}`,
+            }))}
             placeholder="Search sales order…"
           />
         </FormField>
+        <p className="text-xs text-zinc-400">
+          {salesOrderFilter === "PENDING" && "Showing orders with at least one material not yet fully issued."}
+          {salesOrderFilter === "FULFILLED" && "Showing orders where every material has already been fully issued."}
+          {salesOrderFilter === "ALL" && "Showing every order regardless of issuance status."}
+        </p>
       </div>
 
       {isLoading && <p className="text-sm text-zinc-500">Calculating…</p>}
@@ -216,7 +272,7 @@ export function MaterialRequirementsClient() {
                 <th className="py-1 pr-3 font-medium">Material</th>
                 <th className="py-1 pr-3 font-medium">Needed</th>
                 <th className="py-1 pr-3 font-medium">Available</th>
-                <th className="py-1 font-medium">Shortfall</th>
+                <th className="py-1 font-medium">Issued</th>
               </tr>
             </thead>
             <tbody>
@@ -248,8 +304,8 @@ export function MaterialRequirementsClient() {
                     <td className="py-2 pr-3 text-zinc-700 dark:text-zinc-200">
                       {formatQty(m.availableQuantity)} {m.uomCode}
                     </td>
-                    <td className={`py-2 font-medium ${m.shortfallQuantity > 0 ? "text-red-600 dark:text-red-400" : "text-green-600 dark:text-green-400"}`}>
-                      {m.shortfallQuantity > 0 ? `${formatQty(m.shortfallQuantity)} ${m.uomCode}` : "OK"}
+                    <td className="py-2 text-zinc-700 dark:text-zinc-200">
+                      {formatQty(m.issuedQuantity)} {m.uomCode}
                     </td>
                   </tr>
                   {selectedMaterialIds.has(m.materialId) && duplicates[m.materialId] && (

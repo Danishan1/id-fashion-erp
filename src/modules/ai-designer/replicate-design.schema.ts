@@ -71,3 +71,41 @@ export const decideReplicateImageSchema = z.object({
   confirmed: z.boolean().optional(),
 });
 export type DecideReplicateImageInput = z.infer<typeof decideReplicateImageSchema>;
+
+// ---------------------------------------------------------------------------
+// Edit Design workspace — mirrors AI Designer's own edit schema exactly
+// (three edit modes, the same field shapes); applyReplicateEditVariationSchema
+// below is the separate, explicit apply step.
+// ---------------------------------------------------------------------------
+
+export const REPLICATE_EDIT_MODES = ["QUICK", "TECHNICAL", "AI_PROMPT"] as const;
+export type ReplicateEditMode = (typeof REPLICATE_EDIT_MODES)[number];
+
+export const generateReplicateEditPreviewSchema = z
+  .object({
+    mode: z.enum(REPLICATE_EDIT_MODES),
+    featureLabel: z.string().min(1, "Name what you're changing").max(100),
+    currentValue: z.string().max(300).optional().or(z.literal("")),
+    newValue: z.string().max(500).optional().or(z.literal("")),
+    technicalFields: z.record(z.string().min(1).max(100), z.string().max(300)).optional(),
+    freeformInstructions: z.string().max(2000).optional().or(z.literal("")),
+    imageCount: z.number().int().min(1).max(4).default(1),
+  })
+  .superRefine((data, ctx) => {
+    if (data.mode === "QUICK" && !data.newValue) {
+      ctx.addIssue({ code: "custom", message: "Describe the new requirement.", path: ["newValue"] });
+    }
+    if (data.mode === "TECHNICAL" && (!data.technicalFields || Object.keys(data.technicalFields).length === 0)) {
+      ctx.addIssue({ code: "custom", message: "Add at least one technical field.", path: ["technicalFields"] });
+    }
+    if (data.mode === "AI_PROMPT" && !data.freeformInstructions) {
+      ctx.addIssue({ code: "custom", message: "Describe the design change you want.", path: ["freeformInstructions"] });
+    }
+  });
+export type GenerateReplicateEditPreviewInput = z.infer<typeof generateReplicateEditPreviewSchema>;
+
+/** Explicit apply step for one previewed image — the actual "commit as the new current design" action; never happens implicitly on generation. */
+export const applyReplicateEditVariationSchema = z.object({
+  confirmed: z.boolean(),
+});
+export type ApplyReplicateEditVariationInput = z.infer<typeof applyReplicateEditVariationSchema>;
