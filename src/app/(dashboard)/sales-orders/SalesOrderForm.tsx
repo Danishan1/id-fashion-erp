@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { formatCurrency } from "@/lib/currency";
@@ -30,6 +30,13 @@ interface SampleOption {
   // Current version's own costing only — see sample.repository.ts's
   // findMany include. Null until the sample has been costed at all.
   versions: { estimatedCostPerUnit: string | null }[];
+  // The planned color+size the sample itself was made in (2026-09-15) —
+  // used to default (not force) this line's variant grid to the same
+  // combo, so ordering "against this sample" starts from the exact color/
+  // size it was proven in, while still allowing other colors/sizes to be
+  // added or changed freely.
+  color: { id: string; name: string } | null;
+  size: { id: string; name: string } | null;
 }
 
 /** styleName is nullable at the DB level (pre-existing rows) — falls back to
@@ -106,6 +113,11 @@ export function SalesOrderForm({
   const [colors, setColors] = useState<Option[]>([]);
   const [sizes, setSizes] = useState<Option[]>([]);
   const [approvedSamples, setApprovedSamples] = useState<SampleOption[]>([]);
+  // Which variant id to visually default-highlight per line, once a linked
+  // sample's own planned color+size resolves to a real ProductVariant (see
+  // applySampleVariantDefault below) — a display cue only, never a forced
+  // selection; every other cell in the grid stays fully editable as normal.
+  const [highlightVariantId, setHighlightVariantId] = useState<Record<number, string>>({});
   // Keyed by line index — the same customer's own most recent price for
   // that line's Style, if any. See the dedicated effect below.
   const [lastOrderPrices, setLastOrderPrices] = useState<
@@ -181,10 +193,49 @@ export function SalesOrderForm({
 
   const onStyleChange = (index: number, productId: string) => {
     updateItem(index, { productId, variants: [], quantities: {} });
+    setHighlightVariantId((prev) => {
+      const next = { ...prev };
+      delete next[index];
+      return next;
+    });
     if (!productId) return;
     fetch(`/api/v1/products/${productId}`)
       .then((res) => res.json())
       .then((body) => updateItem(index, { variants: body.data?.variants ?? [] }));
+  };
+
+  /**
+   * Defaults (never forces) a line's variant grid to the linked sample's own
+   * planned color+size — the exact combo the sample was proven in, per
+   * explicit ask. If that combo doesn't exist yet as a real ProductVariant
+   * for this Style (the common case — most samples are made before variants
+   * are generated), it's auto-generated via the same bulk-variant endpoint
+   * `InlineVariantGenerator` already uses, scoped to just this one
+   * color+size, so the grid always has the relevant cell to fill in without
+   * a separate manual step. Every other color/size stays fully addable —
+   * this only decides which cell gets a starting highlight.
+   */
+  const applySampleVariantDefault = async (index: number, sample: SampleOption, currentVariants: VariantOption[], productId: string) => {
+    if (!sample.color || !sample.size) return;
+
+    const existing = currentVariants.find((v) => v.color.id === sample.color!.id && v.size.id === sample.size!.id);
+    if (existing) {
+      setHighlightVariantId((prev) => ({ ...prev, [index]: existing.id }));
+      return;
+    }
+
+    const res = await fetch(`/api/v1/products/${productId}/variants/bulk`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ colorIds: [sample.color.id], sizeIds: [sample.size.id] }),
+    }).catch(() => null);
+    if (!res || !res.ok) return; // e.g. an inactive color/size — leave the grid as-is, no forced failure.
+
+    const refreshed = await fetch(`/api/v1/products/${productId}`).then((r) => r.json());
+    const variants: VariantOption[] = refreshed.data?.variants ?? [];
+    updateItem(index, { variants });
+    const created = variants.find((v) => v.color.id === sample.color!.id && v.size.id === sample.size!.id);
+    if (created) setHighlightVariantId((prev) => ({ ...prev, [index]: created.id }));
   };
 
   // Pre-fill each existing line's variant grid when editing, so entered
@@ -446,6 +497,9 @@ export function SalesOrderForm({
                       sampleRequestId,
                       ...(sampleCost && !item.unitPrice ? { unitPrice: sampleCost } : {}),
                     });
+                    if (selected && item.productId) {
+                      void applySampleVariantDefault(index, selected, item.variants, item.productId);
+                    }
                   }}
                   disabled={(!searchAllCustomers && !customerId) || !item.productId}
                   options={approvedSamples
@@ -522,6 +576,7 @@ export function SalesOrderForm({
                   variants={item.variants}
                   quantities={item.quantities}
                   onChange={(patch) => setQuantities(index, patch)}
+                  highlightVariantId={highlightVariantId[index]}
                 />
               </div>
             )}
@@ -596,13 +651,23 @@ function VariantQuantityGrid({
   variants,
   quantities,
   onChange,
+  highlightVariantId,
 }: {
   variants: VariantOption[];
   quantities: Record<string, string>;
   onChange: (patch: Record<string, string>) => void;
+  /** The linked sample's own planned color+size, once resolved to a real
+   * variant id — a display default only (see applySampleVariantDefault),
+   * never a restriction on which other cells can be filled. */
+  highlightVariantId?: string;
 }) {
   const [rowFill, setRowFill] = useState<Record<string, string>>({});
   const [colFill, setColFill] = useState<Record<string, string>>({});
+  const highlightRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (highlightVariantId) highlightRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [highlightVariantId]);
 
   const colors = Array.from(new Map(variants.map((v) => [v.color.id, v.color])).values());
   const sizes = Array.from(new Map(variants.map((v) => [v.size.id, v.size])).values()).sort(
@@ -725,15 +790,22 @@ function VariantQuantityGrid({
               </td>
               {sizes.map((size) => {
                 const variant = cellByKey.get(`${color.id}:${size.id}`);
+                const isHighlighted = !!variant && variant.id === highlightVariantId;
                 return (
                   <td key={size.id} className="border-b border-zinc-100 px-1.5 py-1 text-center dark:border-zinc-800">
                     {variant ? (
                       <input
+                        ref={isHighlighted ? highlightRef : undefined}
                         type="number"
                         min={0}
+                        title={isHighlighted ? "Defaulted from the linked sample's own color/size" : undefined}
                         value={quantities[variant.id] ?? ""}
                         onChange={(e) => onChange({ [variant.id]: e.target.value })}
-                        className={cellInputClass}
+                        className={
+                          isHighlighted
+                            ? `${cellInputClass} ring-2 ring-indigo-500 dark:ring-indigo-400`
+                            : cellInputClass
+                        }
                       />
                     ) : (
                       <span className="text-zinc-300 dark:text-zinc-700">—</span>

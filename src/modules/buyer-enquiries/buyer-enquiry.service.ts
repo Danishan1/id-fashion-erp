@@ -368,13 +368,18 @@ export async function convertEnquiryLineToSampleRequest(
     );
   }
 
+  // Note: `input.color` (a free-text value carried from the enquiry line's
+  // own colorRemarks) is deliberately NOT threaded through here — Sample
+  // Request's own color/size are now real Color/Size master FKs (2026-09-15),
+  // and a free-text remark has no reliable match to pick from automatically.
+  // The merchandiser picks the real color/size on the created sample request
+  // directly afterward, the same way any other sample does.
   const sampleRequest = await createSampleRequest(actor, {
     customerId: line.buyerEnquiry.customerId,
     buyerId: line.buyerEnquiry.buyerId || undefined,
     productId: line.productId || undefined,
     styleName: input.styleName,
     sampleType: input.sampleType,
-    color: input.color || undefined,
     requestDate: todayIsoDate(),
     targetSubmissionDate: input.targetSubmissionDate || undefined,
   });

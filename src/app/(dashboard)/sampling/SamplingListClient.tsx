@@ -73,7 +73,7 @@ export function SamplingListClient() {
         if (filters.requestedByUserId) url.searchParams.set("requestedByUserId", filters.requestedByUserId);
         if (filters.dateFrom) url.searchParams.set("dateFrom", filters.dateFrom);
         if (filters.dateTo) url.searchParams.set("dateTo", filters.dateTo);
-        if (filters.color) url.searchParams.set("color", filters.color);
+        if (filters.colorId) url.searchParams.set("colorId", filters.colorId);
 
         const res = await fetch(url.toString(), { signal: controller.signal });
         const body = await res.json();

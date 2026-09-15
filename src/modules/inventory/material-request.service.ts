@@ -577,7 +577,16 @@ export async function issueMaterialRequestLine(
   lineId: string,
   issueQuantity: number,
   warehouseLocationId?: string | null,
-  fabricRollId?: string | null
+  fabricRollId?: string | null,
+  // Manual "issue extra" override (2026-09-15, explicit user request) — real
+  // sample-making routinely uses slightly more material than the BOM's own
+  // planned figure (e.g. 2m planned, 2.2m actually needed for wastage). Only
+  // meaningful, and only ever honored, for SAMPLING_REQUIREMENT lines — a
+  // reason is required whenever the requested amount genuinely exceeds what
+  // remains, so it's visible later via the audit log (no new schema column,
+  // matching the "reason lives in the audit trail" precedent already used
+  // elsewhere, e.g. Material Request's own "Purchase Quantity Changed" entry).
+  extraReason?: string
 ) {
   const line = await MaterialRequestItemRepository.findWithRequestOwner(lineId);
   if (!line || line.materialRequest.companyId !== actor.companyId) {
@@ -592,13 +601,28 @@ export async function issueMaterialRequestLine(
   }
 
   const remaining = Number(line.requestedQuantity) - Number(line.issuedQuantity);
-  if (issueQuantity > remaining) {
-    throw new BusinessRuleError(
-      "OVER_ISSUE_NOT_ALLOWED",
-      `Cannot issue ${issueQuantity} — only ${remaining} remains on this line.`,
-      { remaining, issueQuantity }
-    );
+  const overRequested = Math.max(0, issueQuantity - remaining);
+  if (overRequested > 0) {
+    if (line.materialRequest.requestType !== "SAMPLING_REQUIREMENT") {
+      throw new BusinessRuleError(
+        "OVER_ISSUE_NOT_ALLOWED",
+        `Cannot issue ${issueQuantity} — only ${remaining} remains on this line.`,
+        { remaining, issueQuantity }
+      );
+    }
+    if (!extraReason?.trim()) {
+      throw new BusinessRuleError(
+        "VALIDATION_ERROR",
+        `Issuing ${issueQuantity} is ${overRequested} more than the ${remaining} remaining on this line — a reason is required to issue extra.`,
+        { remaining, issueQuantity }
+      );
+    }
   }
+  // The guarded increment's own cap widens by exactly the approved extra
+  // amount (0 for every non-override issue, unchanged from before) — never a
+  // blanket unlimited allowance, and still race-safe under concurrent issues
+  // against the same line.
+  const issueCap = Number(line.requestedQuantity) + overRequested;
 
   if (!line.material.baseUom) {
     throw new BusinessRuleError(
@@ -658,7 +682,7 @@ export async function issueMaterialRequestLine(
     const result = await MaterialRequestItemRepository.guardedIncrementIssued(
       tx,
       lineId,
-      Number(line.requestedQuantity),
+      issueCap,
       issueQuantity,
       warehouseLocationId || null
     );
@@ -701,7 +725,10 @@ export async function issueMaterialRequestLine(
     tableName: "material_request_items",
     recordId: lineId,
     action: "UPDATE",
-    newValues: { issuedQuantity: issueQuantity },
+    newValues: {
+      issuedQuantity: issueQuantity,
+      ...(overRequested > 0 ? { extraQuantity: overRequested, extraReason } : {}),
+    },
   });
 
   return MaterialRequestItemRepository.findById(lineId);

@@ -98,6 +98,11 @@ export const issueMaterialRequestLineSchema = z.object({
   // specific roll, falls back to the material's flat StockBalance total
   // exactly as before this field existed.
   fabricRollId: z.string().uuid().optional().or(z.literal("")),
+  // Manual "issue extra" override (2026-09-15) — only meaningful, and only
+  // ever honored server-side, for SAMPLING_REQUIREMENT lines where the
+  // issued quantity genuinely exceeds what remains; the service throws a
+  // clean VALIDATION_ERROR if this is required but omitted.
+  extraReason: z.string().max(500).optional().or(z.literal("")),
 });
 export type IssueMaterialRequestLineInput = z.infer<typeof issueMaterialRequestLineSchema>;
 

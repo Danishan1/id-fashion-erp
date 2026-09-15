@@ -34,7 +34,6 @@ interface ProductDetail {
   id: string;
   styleCode: string;
   styleName: string;
-  designNumber: string | null;
   categoryId: string | null;
   seasonId: string | null;
   brandId: string | null;
@@ -43,7 +42,6 @@ interface ProductDetail {
   gender: string | null;
   description: string | null;
   hsnSacCode: string | null;
-  customerId: string | null;
   isActive: boolean;
 }
 
@@ -51,7 +49,6 @@ function toFormValues(product: ProductDetail): ProductFormValues {
   return {
     styleCode: product.styleCode,
     styleName: product.styleName,
-    designNumber: product.designNumber ?? "",
     categoryId: product.categoryId ?? "",
     seasonId: product.seasonId ?? "",
     brandId: product.brandId ?? "",
@@ -60,7 +57,6 @@ function toFormValues(product: ProductDetail): ProductFormValues {
     gender: product.gender ?? "",
     description: product.description ?? "",
     hsnSacCode: product.hsnSacCode ?? "",
-    customerId: product.customerId ?? "",
     isActive: product.isActive,
   };
 }

@@ -558,6 +558,15 @@ model Customer {
   taxRegistrationNo   String?   @map("tax_registration_no")
   billingAddress      String?   @map("billing_address")
   shippingAddress     String?   @map("shipping_address")
+  // Added 2026-09-15 -- Customer had no contact/phone/email/city/pinCode
+  // fields at all until now (only Buyer, its child contact record, had
+  // contactPerson/email/phone). These are direct fields on the Customer
+  // itself, matching Supplier's own existing shape.
+  contactPerson       String?   @map("contact_person")
+  phone               String?
+  email               String?
+  city                String?
+  pinCode             String?   @map("pin_code")
   paymentTermsDays    Int?      @map("payment_terms_days")
   creditLimit         Decimal?  @map("credit_limit") @db.Decimal(18, 2)
   defaultCurrencyCode String?   @map("default_currency_code") @db.Char(3)
@@ -676,6 +685,11 @@ model Supplier {
   email               String?
   phone               String?
   address             String?
+  // Added 2026-09-15 -- Supplier had no city/pinCode/country breakdown at
+  // all, only a single free-text address field.
+  city                String?
+  pinCode             String?   @map("pin_code")
+  country             String?
   taxRegistrationNo   String?   @map("tax_registration_no")
   paymentTermsDays    Int?      @map("payment_terms_days")
   defaultCurrencyCode String?   @map("default_currency_code") @db.Char(3)
@@ -814,6 +828,11 @@ model Employee {
   fullName           String           @map("full_name")
   phone              String?
   email              String?
+  // Added 2026-09-15 -- Employee had zero location fields at all before this.
+  address            String?
+  city               String?
+  pinCode            String?          @map("pin_code")
+  country            String?
   joinDate           DateTime?        @map("join_date")
   // Pay-basis data only — stored for reference/reporting, no payroll
   // run/payslip generation exists or is computed from these (deliberate
@@ -975,6 +994,7 @@ model Color {
   materialRequestItems   MaterialRequestItem[]
   purchaseOrderItems     PurchaseOrderItem[]
   aiGarmentFabricDetails AiGarmentFabricDetail[]
+  sampleRequests         SampleRequest[]
 
   @@unique([companyId, code])
   @@map("colors")
@@ -993,6 +1013,7 @@ model Size {
   company                    Company                     @relation(fields: [companyId], references: [id])
   variants                   ProductVariant[]
   aiGarmentMeasurementValues AiGarmentMeasurementValue[]
+  sampleRequests             SampleRequest[]
 
   @@unique([companyId, code])
   @@map("sizes")
@@ -1739,10 +1760,18 @@ model SampleRequest {
   // customer/style; silently relabeling a PP sample after the fact would
   // undermine its future role as a Production-order eligibility gate.
   sampleType           SampleType?
-  // Free-text, editable at any stage — a customer may name a color upfront
-  // (or only after seeing the physical sample) and revise it later; not an
-  // enum/FK since this is a casual descriptive value, not a Color master pick.
-  color                String?
+  // Was a free-text string until 2026-09-15 (a casual descriptive value, not
+  // a Color master pick, per the original design note) — converted to a real
+  // FK per explicit user request so the same color can drive the Sales
+  // Order variant grid default once the sample is approved. Editable at any
+  // stage, same reasoning as before (a customer may confirm/change the color
+  // only after seeing the physical sample) — null means "not yet decided."
+  colorId              String?       @map("color_id") @db.Uuid
+  // New 2026-09-15 — SampleRequest never had any size concept before this;
+  // paired with colorId to describe "the color+size this sample was made
+  // in," which Sales Order's own variant grid defaults to once the sample
+  // is linked. Also nullable/editable at any stage, same reasoning as color.
+  sizeId               String?       @map("size_id") @db.Uuid
   requestedByUserId    String        @map("requested_by_user_id") @db.Uuid
   requestDate          DateTime      @map("request_date") @db.Date
   targetSubmissionDate DateTime?     @map("target_submission_date") @db.Date
@@ -1757,6 +1786,8 @@ model SampleRequest {
   customer         Customer          @relation(fields: [customerId], references: [id])
   buyer            Buyer?            @relation(fields: [buyerId], references: [id])
   product          Product?          @relation("SampleRequestStyle", fields: [productId], references: [id])
+  color            Color?            @relation(fields: [colorId], references: [id])
+  size             Size?             @relation(fields: [sizeId], references: [id])
   requestedBy      User              @relation("SampleRequestedBy", fields: [requestedByUserId], references: [id])
   versions         SampleVersion[]
   comments         SampleComment[]

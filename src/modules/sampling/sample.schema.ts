@@ -15,7 +15,13 @@ export const sampleRequestSchema = z.object({
   // like source-of-enquiry-style fields. Immutable after creation (no edit
   // schema exists for it, by design — see the schema.prisma comment).
   sampleType: z.enum(SAMPLE_TYPES),
-  color: z.string().max(100).optional().or(z.literal("")),
+  // Converted from a free-text string to real Color/Size master FKs
+  // (2026-09-15, explicit user request) — the planned color+size this sample
+  // is being made in, later used to default the Sales Order variant grid
+  // once the sample is approved and linked. Editable at any stage, same
+  // reasoning as before (null = "not yet decided").
+  colorId: z.string().uuid().optional().or(z.literal("")),
+  sizeId: z.string().uuid().optional().or(z.literal("")),
   requestDate: z.string().min(1, "Request date is required"),
   targetSubmissionDate: z.string().optional().or(z.literal("")),
 });
@@ -35,16 +41,18 @@ export const sampleRequestListFiltersSchema = z.object({
   requestedByUserId: z.string().uuid().optional(),
   dateFrom: z.string().optional(),
   dateTo: z.string().optional(),
-  color: z.string().max(100).optional(),
+  colorId: z.string().uuid().optional(),
 });
 
 export type SampleRequestListFiltersInput = z.infer<typeof sampleRequestListFiltersSchema>;
 
 // A scoped field-level update, deliberately separate from the (intentionally
-// immutable) create schema above — a customer may only decide on / change a
-// color well after the request is logged.
+// immutable) create schema above — a customer may only decide on / change the
+// color+size well after the request is logged. Both are now real Color/Size
+// master FKs (2026-09-15), not free text.
 export const sampleRequestColorSchema = z.object({
-  color: z.string().max(100).optional().or(z.literal("")),
+  colorId: z.string().uuid().optional().or(z.literal("")),
+  sizeId: z.string().uuid().optional().or(z.literal("")),
 });
 
 export type SampleRequestColorInput = z.infer<typeof sampleRequestColorSchema>;

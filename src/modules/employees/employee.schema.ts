@@ -18,6 +18,10 @@ export const employeeSchema = z.object({
   reportsToId: z.string().uuid().optional().or(z.literal("")),
   phone: optionalPhoneSchema,
   email: z.string().email().optional().or(z.literal("")),
+  address: z.string().max(500).optional().or(z.literal("")),
+  city: z.string().max(100).optional().or(z.literal("")),
+  pinCode: z.string().max(20).optional().or(z.literal("")),
+  country: z.string().max(100).optional().or(z.literal("")),
   joinDate: z.string().optional().or(z.literal("")),
   // Deliberately `.optional()`, not `.default(true)` — a `.default()` value
   // still gets injected by Zod even under `employeeUpdateSchema`'s

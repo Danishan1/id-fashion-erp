@@ -9,6 +9,8 @@ export const SampleRequestRepository = {
         customer: { select: { id: true, name: true } },
         buyer: { select: { id: true, name: true } },
         product: { select: { id: true, styleName: true, styleCode: true } },
+        color: { select: { id: true, name: true, hexValue: true } },
+        size: { select: { id: true, name: true } },
         requestedBy: { select: { id: true, fullName: true } },
         // The current (highest version number) version's own costing only —
         // callers like the Sales Order form's "Linked Sample" picker need a
@@ -34,6 +36,8 @@ export const SampleRequestRepository = {
         customer: { select: { id: true, name: true, code: true, country: true, defaultCurrencyCode: true } },
         buyer: true,
         product: true,
+        color: { select: { id: true, name: true, hexValue: true } },
+        size: { select: { id: true, name: true } },
         requestedBy: { select: { id: true, fullName: true } },
         versions: {
           orderBy: { versionNumber: "desc" },

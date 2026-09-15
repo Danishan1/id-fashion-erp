@@ -22,12 +22,15 @@ export function SampleRequestForm() {
   const [productId, setProductId] = useState("");
   const [sampleType, setSampleType] = useState("");
   const [styleName, setStyleName] = useState("");
-  const [color, setColor] = useState("");
+  const [colorId, setColorId] = useState("");
+  const [sizeId, setSizeId] = useState("");
   const [requestDate, setRequestDate] = useState(TODAY);
   const [targetSubmissionDate, setTargetSubmissionDate] = useState("");
   const [customers, setCustomers] = useState<Option[]>([]);
   const [buyers, setBuyers] = useState<Option[]>([]);
   const [products, setProducts] = useState<Option[]>([]);
+  const [colors, setColors] = useState<Option[]>([]);
+  const [sizes, setSizes] = useState<Option[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -38,6 +41,12 @@ export function SampleRequestForm() {
     fetch("/api/v1/products?pageSize=200")
       .then((res) => res.json())
       .then((body) => setProducts(body.data ?? []));
+    fetch("/api/v1/colors?pageSize=200")
+      .then((res) => res.json())
+      .then((body) => setColors(body.data ?? []));
+    fetch("/api/v1/sizes?pageSize=200")
+      .then((res) => res.json())
+      .then((body) => setSizes(body.data ?? []));
   }, []);
 
   // Buyers are scoped to the selected customer — refetch whenever it changes.
@@ -66,7 +75,8 @@ export function SampleRequestForm() {
         productId: productId || undefined,
         sampleType,
         styleName,
-        color: color || undefined,
+        colorId: colorId || undefined,
+        sizeId: sizeId || undefined,
         requestDate,
         targetSubmissionDate: targetSubmissionDate || undefined,
       }),
@@ -156,15 +166,28 @@ export function SampleRequestForm() {
         />
       </FormField>
 
-      <FormField label="Color" htmlFor="color">
-        <input
-          id="color"
-          value={color}
-          onChange={(e) => setColor(e.target.value)}
-          placeholder="e.g. Navy Blue (leave blank if not yet decided)"
-          className={textInputClass()}
-        />
-      </FormField>
+      <div className="grid grid-cols-2 gap-4">
+        <FormField label="Color" htmlFor="colorId">
+          <select id="colorId" value={colorId} onChange={(e) => setColorId(e.target.value)} className={textInputClass()}>
+            <option value="">— Not yet decided —</option>
+            {colors.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </FormField>
+        <FormField label="Size" htmlFor="sizeId">
+          <select id="sizeId" value={sizeId} onChange={(e) => setSizeId(e.target.value)} className={textInputClass()}>
+            <option value="">— Not yet decided —</option>
+            {sizes.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        </FormField>
+      </div>
 
       <div className="grid grid-cols-2 gap-4">
         <FormField label="Request Date" htmlFor="requestDate" required>
