@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { DataTable } from "@/components/ui/DataTable";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 
 interface LocationBalance {
   code: string;
@@ -74,19 +75,15 @@ export function StockBalancesListClient() {
         </a>
       </div>
 
-      <select
-        aria-label="Filter by warehouse"
-        value={warehouseId}
-        onChange={(e) => setWarehouseId(e.target.value)}
-        className="rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-800"
-      >
-        <option value="">All Warehouses</option>
-        {warehouses.map((w) => (
-          <option key={w.id} value={w.id}>
-            {w.name}
-          </option>
-        ))}
-      </select>
+      <div className="w-64">
+        <SearchableSelect
+          value={warehouseId}
+          onChange={setWarehouseId}
+          options={warehouses.map((w) => ({ id: w.id, label: w.name }))}
+          placeholder="Search warehouse…"
+          emptyOptionLabel="All Warehouses"
+        />
+      </div>
 
       <DataTable<StockBalanceRow>
         key={fetchUrl}

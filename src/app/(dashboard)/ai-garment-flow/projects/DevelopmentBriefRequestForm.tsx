@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 
 interface Option {
   id: string;
@@ -161,12 +162,14 @@ export function DevelopmentBriefRequestForm({
       </div>
 
       <FormField label="Buyer (if known)" htmlFor="dbBuyer">
-        <select id="dbBuyer" className={textInputClass()} value={buyerId} onChange={(e) => setBuyerId(e.target.value)} disabled={buyers.length === 0}>
-          <option value="">—</option>
-          {buyers.map((b) => (
-            <option key={b.id} value={b.id}>{b.name}</option>
-          ))}
-        </select>
+        <SearchableSelect
+          id="dbBuyer"
+          value={buyerId}
+          onChange={setBuyerId}
+          disabled={buyers.length === 0}
+          options={buyers.map((b) => ({ id: b.id, label: b.name }))}
+          placeholder="Search buyer…"
+        />
       </FormField>
 
       <FormField label="Number of Design Directions" htmlFor="dbCount">

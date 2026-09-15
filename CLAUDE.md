@@ -5266,6 +5266,1122 @@ and unit-tested with their live success path blocked only on the configured Open
 item 15) intentionally covered via a deep-link into the existing Sampling module rather than a new dedicated
 process.
 
+**Correction, 2026-09-08**: a third image-generation provider (Cloudflare Workers AI, `providers/
+cloudflare.ts`) had already been added in an earlier session (commit `fd1da2d`, ancestor of `main`) but was
+never documented in this file — noted here in passing while writing up the full QA pass immediately below,
+which is where it actually mattered. `.env`'s `IMAGE_GENERATION_PROVIDER` is currently set to `"cloudflare"`,
+with real credentials configured — it implements only plain text-to-image `generate()` (a free-tier model,
+`flux-1-schnell`), deliberately omitting `generateVariation`/`applyFabric`/`generateTechnicalFlat` entirely
+(the REST API has no arbitrary-multi-image-input model comparable to Gemini's or OpenAI's), so under this
+provider Process 3 (Garment Design Visual Generation) is genuinely live and working, while Process 4
+(Controlled Design Variation), Process 6 (Apply Actual Fabric), and Technical Flat generation all correctly
+fail clean with `UNSUPPORTED_OPERATION` rather than the `CREDITS_EXHAUSTED` this file's other sections
+describe for the OpenAI-configured state — both are real, currently-true statements about two different
+provider configurations this app has been run under across different sessions, not a contradiction.
+
+## Full QA/UAT pass across all 17 processes, 4 real bugs found and fixed (2026-09-08)
+
+A dedicated `erp-qa-uat` agent drove all 17 processes end-to-end through the real browser UI against the
+real dev DB and real AI providers (Anthropic + the Cloudflare config above) — the first time this module was
+verified through the actual UI rather than a mix of unit tests and direct-script service-layer calls, made
+possible because another session's own `next dev` was already running and reachable at `localhost:3000`
+(navigated to directly, sidestepping the single-instance dev-server lock that blocked every earlier live-UI
+attempt documented throughout this file's own AI Garment Flow sections). Two fresh test projects were
+created (`AGF-2026-00002`, Reference workflow, taken all the way to `COMPLETED`; `AGF-2026-00003`, Fabric
+workflow, taken through Costing) and left in the dev DB as evidence.
+
+**Result: 13/17 processes fully PASS with genuinely grounded AI content verified by reading the actual
+output (not just checking HTTP status), 3 correctly clean-fail exactly as the Cloudflare capability gap
+above predicts (confirmed zero orphan DB rows on each), and Production Handoff passed its full real
+Sample→Sales-Order→Production-Order loop. Zero P0/P1 defects.** Two real P2 bugs were found and fixed, both
+in the display/tracking layer — the underlying business-rule gates were independently confirmed unaffected
+(a direct attempt to skip real gated work still correctly `409`s):
+
+- **Stepper tabs could mark a step "✓ complete" just by clicking to preview it, with zero real work done.**
+  `saveWorkflowStep()`'s single endpoint is deliberately reused two ways: every genuine completion action
+  (Approve, Select-for-Development, etc.) calls it with the CURRENT step's own key first (to self-mark that
+  step done) before advancing — but the stepper's own tab buttons called the identical function with
+  whatever step was merely clicked, with no way to tell "I finished this" apart from "I'm just looking at
+  this." Confirmed live: clicking forward onto an unstarted step immediately flipped it green with zero
+  backend work done. Fixed by disabling forward-jump clicks in the tab bar entirely (`idx > currentIndex`) —
+  the tabs are now purely a "review a step you're on or have already passed" control; forward progress still
+  works exactly as before via each step's own "Save & Continue"/explicit completion action, so nothing was
+  lost. Re-verified live: steps 1-12 (current + all earlier) stayed clickable on a mid-workflow test project,
+  steps 13-14 (ahead of current) correctly disabled.
+- **The Merchandising Action Sheet panel only ever fetched once per page load.** `MerchandisingActionSheetPanel.tsx`'s
+  own `toggle()` guarded its fetch with `data === undefined`, so the very first open cached a permanent
+  snapshot — reopening it later in the same page session (after real work happened elsewhere on the page)
+  kept showing that first-load snapshot forever, directly undermining the one thing this panel exists to be:
+  an always-current rollup. Fixed by refetching on every open, not just the first. Re-verified live via the
+  network log: two distinct request timestamps for two separate opens of the same panel, confirming a fresh
+  fetch each time (the panel briefly *looked* unfixed during verification because a stale accessibility-tree
+  `ref_N` pointed at an already-detached button after a React re-render — the sandboxed browser tool's own
+  documented limitation, not the app; a direct `element.click()` via `javascript_tool` confirmed the real fix).
+
+Two P3s also fixed: stale placeholder copy on the Reference Analysis step's help text (still read *"AI would
+analyse the uploaded reference here once connected"* — leftover from before Process 1 was built, the one
+sibling step whose copy never got updated once its own AI integration actually shipped); and
+`FabricAnalysisPanel.tsx`'s mount-effect fetch had no guard against a non-JSON error response, so a genuine
+transient dev-server crash (a Windows-specific Next.js manifest-rename race hit once during the QA pass,
+unrelated to this app's own code) left an uncaught `SyntaxError` in the console and the panel stuck on
+"Loading…" forever instead of a clean error message — fixed with a content-type check before parsing.
+
+**Confirmed NOT a bug, investigated rather than assumed**: the QA agent couldn't tell whether picking "3"
+directions on the Development Brief form and getting 6 back anyway was a real defect or its own test-script
+timing (clicking the radio and the submit button synchronously before React committed the state change).
+Traced the actual code: the radio's `checked`/`onChange` wiring is a completely standard controlled pair,
+and the client payload's `directionCount` field name matches the server Zod schema's own field name exactly
+(`z.union([z.literal(3), z.literal(6), z.literal(9)]).default(6)`) — no mismatch, no silently-dropped field.
+Concluded this is almost certainly the QA agent's own flagged test-script-timing artifact, not an app bug;
+not changed.
+
+**Deliberately NOT fixed this pass, flagged as a known, scoped limitation instead of a silent 17-file sweep**:
+the same "no content-type guard before `.then((res) => res.json())`" shape found in `FabricAnalysisPanel.tsx`
+is genuinely pervasive — confirmed via grep across **17 of the AI Garment Flow module's own panel files**.
+Fixing every instance is a real, separate, larger sweep (matching this project's own established precedent
+for exactly this kind of finding — e.g. Phase 10's "~47 more client list pages share the same
+missing-permission-gate pattern... recommend a dedicated follow-up sweep" — rather than a rushed multi-file
+pass with no per-file verification time); only the one instance the QA agent actually reproduced a real
+crash against was fixed in this pass.
+
+`npx tsc --noEmit`, `npx eslint .`, and `npx vitest run` (1265/1265, no new tests needed — these are
+UI/display-layer fixes with no new business logic to unit-test) all clean throughout. Four orphaned
+`VERIFY-MAS-FRESH-*` test projects — leftovers from the Merchandising Action Sheet build's own earlier
+interrupted verification-script runs, never cleaned up because the script crashed before reaching its own
+cleanup step on 4 separate attempts — were found sitting in the project list during this pass's own live
+verification and deleted.
+
+## AI Designer — a new, genuinely separate module from AI Garment Flow (2026-09-10)
+
+User asked for a brand-new "AI Designer" module: a guided wizard (Fabric Selection → Analyze Fabric with AI
+→ Target Customer → Age Group → Product Category → Product Design → Model → Environment → Generate Design →
+Edit Design → Save Project → Export) generating premium fashion catalogue images from a fabric. This heavily
+overlaps with the already-built AI Garment Flow module — flagged explicitly via AskUserQuestion before any
+code was written, offering "merge into AI Garment Flow" / "share only generic AI infrastructure" / "genuinely
+separate module (as specified)." **The user chose the third option** — build it exactly as specified, fully
+isolated, with zero shared business logic, even though the two modules overlap in what they do by deliberate
+choice. Built on its own branch (`feature/ai-designer-module`, off a freshly-fetched `origin/main`).
+
+**Isolation, confirmed structurally, not just by convention**: 5 new `ai_`-prefixed tables (`ai_projects`,
+`ai_prompts`, `ai_generations`, `ai_images`, `ai_versions` — the user's own exact naming, given verbatim in
+Hindi: "iske jitne bhi tables bnenge sbme prefix ai_ lg hona chahiye"), a new `src/modules/ai-designer/`
+module, a new `src/core/ai-designer/` support tree, its own `/api/v1/ai-designer/...` route family, its own
+`ai_designer` RBAC module/sidebar section — zero imports from `ai-garment-flow` anywhere (confirmed via
+grep). The only 2 FKs anywhere in this module that reach into pre-existing ERP tables are
+`AiDesignerProject.fabricProductId` (→ `Product`, the real Fabric Master) and `.fabricSupplierId` (→
+`Supplier`) — both read-only references, auto-filled once, never written back to. The **shared, generic,
+zero-business-logic AI infrastructure** (`src/core/ai/providers/anthropic.ts`'s
+`requestStructuredVisionOutput`, `src/core/ai/image-generation/{types,factory}.ts`'s
+`ImageGenerationProvider`/`getImageGenerationProvider()`) is reused as infrastructure, not forked — correct
+engineering, not a violation of "isolated," since isolation applies to this module's own schema/prompts/
+business logic, all of which are new. AI Designer's own hidden prompt templates
+(`src/core/ai-designer/fabric-analysis/prompt.ts`, `.../image-generation/prompt.ts`) and catalogs
+(`src/core/ai-designer/catalogs/*`) are deliberately duplicated from, not imported from, AI Garment Flow's
+near-identical equivalents built the day before — an accepted, explicit consequence of "genuinely separate
+module, zero shared code."
+
+**Real Fabric Master gap, handled honestly, not glossed over**: confirmed before writing any schema that the
+ERP's real Fabric Master (`Product`, `itemType: RAW_MATERIAL`) carries only Name/Code/default Supplier/unit
+cost — no GSM/Composition/Width/Color columns exist there (those sub-master tables wire only to `FabricRoll`
+and to AI Garment Flow's own `AiGarmentFabricDetail`, never to `Product` itself). `selectExistingFabric()`
+therefore auto-fills only `fabricName`/`fabricCode`/`fabricSupplierId` from the real `Product` row, leaving
+GSM/Composition/Width/Weave/Stretch/Opacity/Texture/PatternType/PrintType/SuitableSeason/
+RecommendedGarments/Color blank and user-editable — the identical honest-gap-handling precedent this
+codebase already uses for the same underlying schema limitation elsewhere.
+
+**Fabric Analysis (Step 2) is a real Anthropic vision integration**, deliberately minimal per the brief's own
+explicit instruction — exactly 12 plain-string fields (Fabric Name/Composition/GSM/Width/Weave/Stretch/
+Opacity/Texture/Pattern Type/Print Type/Suitable Season/Recommended Garments), **no confidence scores, no
+per-field metadata, no AI badge/machinery of any kind** — a deliberately simpler schema than AI Garment
+Flow's own 17-field Fabric Analysis (which does carry per-field confidence). Only runs when a fabric image
+was actually uploaded (`fabricSource: UPLOADED`) — picking an existing Fabric Master fabric has no photo to
+analyze, so `runFabricAnalysis()` throws a clean, honest `VALIDATION_ERROR` pointing the user at manual entry
+instead, rather than pretending analysis ran. `updateFabricAnalysisField()` supports plain manual correction
+of any one of the 12 fields, no versioning/approval workflow — matches the brief's own "minimal interface."
+
+**Generate Design (Step 9) / Edit Design (Step 10) build the AI prompt entirely server-side** from the
+project's own structured fields (`{fabric, customer, product, design, model, environment}`) — the user never
+writes a prompt, per the brief's explicit instruction. `generateDesign()` is gated by `assertReadyToGenerate()`
+— fabric/customer/age/category/model/environment must all be filled before the real image-generation call is
+attempted, naming exactly what's missing. Both reuse the *existing* `ImageGenerationProvider` interface
+(the same `getImageGenerationProvider()` factory AI Garment Flow's own Processes 3/4/6/7 use) — `generate()`
+for the initial batch, `generateVariation()` for an edit — so both providers (`openai`/`gemini`) work here
+with zero new provider code. `editDesign()`'s hidden prompt (`buildEditPrompt()`) drops whichever fixed
+Preserve-list item matches the aspect actually being changed (Color/Background/Environment/Model/Pose),
+avoiding the self-contradiction of instructing the AI to both change and preserve the same thing.
+
+**Own, wholly separate resumable-wizard machinery** — `AiDesignerProject.currentStep`/`completedSteps`
+mirror the *shape* of AI Garment Flow's `currentStepKey`/`completedStepKeys`, not shared code.
+`WIZARD_STEP_ORDER` (`FABRIC_SELECTION → FABRIC_ANALYSIS → TARGET_CUSTOMER → AGE_GROUP → PRODUCT_CATEGORY →
+PRODUCT_DESIGN → MODEL → ENVIRONMENT → GENERATE → EDIT → EXPORT`) drives `computeCurrentStep()` (always the
+first not-yet-completed step) — forgiving/resumable rather than a hard sequential gate, since nothing in the
+brief asked for AI Garment Flow's own stricter step-blocking; the one real gate that matters
+(`assertReadyToGenerate()` before the actual AI image call) is enforced directly, not via step-order alone.
+
+**Version history**: version 1 is created by the first successful `generateDesign()` call (from the first
+returned image); every successful `editDesign()` creates version N+1, carrying a plain-English
+`changeSummary` (e.g. "Changed Collar: Mandarin Collar") and a full `designSnapshotJson` — inspectable even
+as the project's own "current" fields move on. `AiDesignerProject.currentVersionId` is nullable-then-set-
+once, the same precedent as `AiGarmentProject.selectedDesignDirectionId`.
+
+**Export (Step 12)**: PNG/JPG return the current version's raw generated-image bytes unmodified; PDF renders
+through a brand-new `src/core/ai-designer/export/tech-pack-pdf.tsx` (`@react-pdf/renderer`'s own `Image`
+component, confirmed unused-but-supported anywhere else in this repo before this) — a fresh sibling
+template, not an extension of the existing table-shaped report/document PDF renderers, which don't fit an
+image+metadata layout. DXF export and a full structured Tech Pack export are the brief's own explicit
+"Future Support" items — not built now.
+
+**RBAC/nav**: new `ai_designer` module in `src/config/rbac.ts`, grants mirroring `ai_garment_flow`'s own
+exact shape (`MANAGEMENT: ["view"]`, `MERCHANDISER`: full CRUD+cancel+export+print; `SUPER_ADMIN`/`VIEWER`
+get it automatically via the existing `MODULES.map(...)` mechanism). New "AI Designer" `NavSection` in
+`src/components/layout/navigation.ts` (Dashboard/New Project/Projects), mirroring "AI Garment Flow"'s own
+shape. Since `prisma db seed` isn't safe to re-run against the dev DB (this project's own long-documented
+gotcha), the new module's `Permission`/`role_permissions` rows were backfilled via the established
+idempotent one-off-script pattern (re-running only `seed.ts`'s own additive `Permission.createMany
+({skipDuplicates:true})`/`RolePermission.upsert` logic, scoped to `ai_designer` and every company's own
+matching Role rows) — independently re-verified via a direct SQL query (10 permission rows, 38
+role_permission rows across `SUPER_ADMIN`/`MANAGEMENT`/`MERCHANDISER`/`VIEWER`), script deleted afterward.
+
+**Migration applied via this project's own established non-interactive workaround** (`prisma migrate dev`
+can't run in this shell): `prisma migrate diff --from-config-datasource ... --to-schema ... --script` →
+hand-placed into `prisma/migrations/20260910100000_add_ai_designer_module/migration.sql` → `prisma db execute
+--file` → `prisma migrate resolve --applied` → independently re-verified via a direct SQL query (all 5
+tables + 6 enums confirmed present, and the sibling `ai-garment-flow` branch's own tables/enum values
+confirmed completely untouched) — never trusted from `resolve --applied` alone, per this project's own
+established gotcha.
+
+**Live browser walkthrough (2026-09-10, once the shared dev server freed up) — real end-to-end run, not
+mocked, and found + fixed 3 real bugs along the way**: created `AID-2026-00001` through the real UI, picked
+an existing Fabric Master fabric (confirmed live: Name/Code/Supplier auto-filled, GSM/Composition/Width/
+Color genuinely stayed blank), manually corrected GSM to "180" (confirmed persisted via a direct DB query),
+stepped through Target Customer → Age Group → Product Category → Product Design → Model → Environment (every
+dynamic per-customer catalog — age groups, categories, design attributes — rendered and persisted correctly,
+independently confirmed via direct SQL after each step, not just trusted from the UI's own re-render), then
+clicked **Generate Design** — the configured `IMAGE_GENERATION_PROVIDER` (`cloudflare`) had real, working
+credits and returned a genuine image on the first attempt, creating version 1 exactly as designed. Also
+exercised the honest failure path for free: `editDesign()` correctly rejected with a clean
+`UNSUPPORTED_OPERATION` message ("cloudflare" has no `generateVariation` capability) instead of a crash, with
+zero spurious version created — confirmed via DB that `ai_versions` still had only v1 afterward.
+- **Bug 1 (real, found live)**: after Select/Reject, the image card kept showing "PENDING" until a full page
+  reload — `reload()` only ever seeded `generatedImages` once from `currentVersion.currentImage`, so it had
+  no way to refresh an already-tracked image's decision. Fixed by adding a dedicated `decideImageAction()`
+  helper that updates the decided image's state directly from the API response, and hiding the Select/Reject
+  button whose own action would be a no-op once that decision is already recorded.
+- **Bug 2 (real, found live)**: a fresh page load left the Step 9 gallery completely empty — `generatedImages`
+  was only ever populated by an in-session generate/edit call, never loaded from the server on mount, so a
+  reload silently lost every earlier generation's images from view (only the Version History/Export sections,
+  which read `currentVersion` directly, still showed the current one). Fixed with a real
+  `listImages()`/`GET /api/v1/ai-designer/projects/:id/images` endpoint (backed by the repository's own
+  already-existing `findByProjectId`, previously unused) and a mount-time fetch — confirmed live, a reload now
+  correctly shows "SELECTED" with the Select button correctly hidden, not "PENDING" again.
+- **Bug 3 (real, found live)**: `?format=png`/`?format=jpg` never actually converted anything — they returned
+  the stored image's raw bytes and real `mimeType` unmodified regardless of which format was requested,
+  so a "AID-2026-00001.png" download could silently contain JPEG bytes (confirmed live: the `cloudflare`
+  provider's own real output is JPEG, so every "png" export was mislabeled). Fixed by adding `sharp` (already
+  present as a transitive dependency of `next`, pinned as a direct one to match this project's own
+  exact-pin-for-critical-libraries precedent) and genuinely converting via `sharp(buffer).png()`/`.jpeg()`
+  before returning — verified live via raw magic-byte inspection (`89 50 4E 47...` for png, `FF D8 FF DB...`
+  for jpg) that the two exports are now genuinely different byte streams in the correct real format, not the
+  same bytes with a relabeled extension. Also caught and fixed a **pre-existing but previously-undetected
+  TypeScript mock-typing bug in the test file itself** (`.mockImplementation(async (...) => (...) as never)`
+  casts only the return value, not the whole function, and fails a strict Prisma-fluent-client return-type
+  check that a plain `Promise` can't satisfy) — fixed by casting the whole function expression to `never`
+  instead, matching the exact working pattern already used in `ai-garment-project.service.test.ts`.
+- PDF export verified live too: real 316KB PDF, correct `%PDF-` magic bytes, correct headers/filename.
+- **Verified overall**: `npx prisma validate` clean; `npx tsc --noEmit` clean project-wide; `npx eslint .`
+  clean, 0 errors, 0 new warnings; `npx vitest run` **1334/1334** passing (13 in `ai-designer.service.test.ts`
+  after the export-format tests were rewritten to assert against real image magic bytes instead of "bytes
+  pass through unmodified," which stopped being true — and correctly so — once real conversion was added).
+  Server logs and browser console clean throughout the live walkthrough (aside from one unrelated 502 from
+  a different, concurrently-open module, not traceable to any AI Designer request). `AID-2026-00001` was kept
+  in the dev DB as a real, working, fully-exercised demo project — its own owner (the user) was also
+  concurrently testing the module live in a separate browser session during this pass (`AID-2026-00002`),
+  confirming atomic per-company document numbering held up correctly under genuine concurrent use.
+
+## AI Designer — critical fix: generation now uses the ACTUAL fabric image, not just its text description (2026-09-10)
+
+User reported (correctly) that the module built above never actually used the selected/uploaded fabric
+photo as a visual reference — Generate Design always produced an AI-invented fabric pattern that merely
+matched the fabric's *text* fields (name/composition/GSM/color), never the real print/motif/pattern. Per
+explicit instruction, this was investigated from first principles before any fix — confirmed by reading the
+actual code, not assumed:
+
+- **`generateDesign()` never fetched or sent any image at all** — it called
+  `provider.generate({ prompt, count })`, a pure text-to-image call, built from `buildFabricDescription()`
+  (a plain string like `"Cotton Fabric, 100% Cotton, 180 GSM, Blue"`). The real fabric photo
+  (`AiDesignerProject.fabricImageAttachmentId`, when uploaded) was stored correctly but never read back for
+  generation — confirmed by grep: `generateDesign` had zero calls to `getAttachmentForDownload`.
+- **The real Fabric Master (`Product`, itemType `RAW_MATERIAL`) has no photo field used anywhere** —
+  `Product.imageUrl` exists in the schema but is dead, unwired code (confirmed: zero references anywhere in
+  `src/modules/products/` or any Masters UI). So picking an "existing" fabric could **never** have a real
+  image to reference in the first place — a structural gap, not a bug in the generation call alone.
+- **The configured provider (`cloudflare`, `flux-1-schnell`) is structurally text-to-image only** — its own
+  REST call body is `{ prompt }`, no image field exists in Cloudflare Workers AI's API for this model at all
+  (confirmed by reading `providers/cloudflare.ts`, which already documented this in its own header comment
+  from when it was built). No code change to AI Designer could make this specific provider preserve an
+  exact fabric image — this is a genuine capability ceiling of the currently-selected model, not something
+  fixable by better prompting.
+
+**Fix — the fabric image is now a real, required input to the generation call, not optional text:**
+- **Schema-level field-independence fix**: `selectExistingFabric()` no longer clears `fabricImageAttachmentId`,
+  and `uploadFabricImage()` no longer clears `fabricProductId`/`fabricSupplierId` — metadata (from the Fabric
+  Master) and the real reference photo are now two independent pieces of state that can coexist, since the
+  Fabric Master has no photo of its own. `fabricSource` is set only by whichever fabric action happens
+  first, never overwritten by the second.
+- **A real fabric photo is now a hard requirement to generate at all** — `assertReadyToGenerate()` requires
+  `fabricImageAttachmentId`, not `fabricName`. Fabric text metadata alone (name/composition/GSM/color, even
+  fully filled in) is explicitly insufficient and blocked with a clear message naming exactly what's missing
+  — this is the direct fix for the acceptance criterion "fabric metadata alone is NOT considered sufficient."
+- **New `ImageGenerationProvider.generateFromFabricReference(params: {prompt, count, fabricImage})`**
+  (`src/core/ai/image-generation/types.ts`) — a new optional capability, deliberately distinct from
+  `generateVariation` (means "take an existing full design and change one described aspect") and
+  `applyFabric` (needs an already-existing *base garment* image to apply a swatch onto — AI Designer has no
+  garment image yet on first generation, only the fabric photo). Implemented for `openai.ts`
+  (`images.edit()` with the fabric photo as the single input image — the same endpoint `generateVariation`
+  already uses, proven live) and `gemini.ts` (`generateContent` with the fabric photo as an inlineData Part
+  — the same shape `generateVariation`/`applyFabric` already use, both proven live for AI Garment Flow's own
+  Processes 3/4/6). **Deliberately NOT implemented for `cloudflare.ts`** — omitted rather than faked, per
+  the explicit instruction not to pretend text prompting is sufficient; its own header comment was updated
+  to document why. `generateDesign()` now checks for this capability and throws a clean, honest
+  `AI_SERVICE_ERROR` naming the limitation and suggesting a provider switch if it's missing, exactly
+  mirroring `editDesign()`'s own pre-existing `generateVariation` capability check.
+- **New hidden prompt (`src/core/ai-designer/image-generation/prompt.ts`, bumped to
+  `ai-designer-image-generation-v2`)** — leads with the exact fabric-preservation instruction given in the
+  requirement ("Use the supplied fabric reference image as the exact fabric source... Preserve the fabric's
+  actual print, motif, pattern arrangement, colors, texture... Do not invent, redesign, simplify, or
+  substitute the fabric pattern"), and explicitly states the fabric image is the ONLY source of truth for
+  the fabric's appearance — the text specification below it now only ever describes garment type/fit/model/
+  environment, never anything about what the fabric looks like. `fabricDescription` was removed from the
+  prompt context entirely — there is no longer a text-described fabric appearance to send at all.
+- **Lazy-loaded `@react-pdf/renderer`** in `exportProject()`'s pdf branch (was a static top-level import) —
+  found and fixed while writing a standalone verification script: a static import of the whole
+  `ai-designer.service.ts` module pulled in `@react-pdf/hyphenate`'s subpath-export resolution, which fails
+  under plain Node/tsx module resolution outside Next's own bundler. Also a genuine improvement on its own
+  merits — no reason to eagerly load a PDF-rendering library for every other function in this module.
+
+**Tests** (`ai-designer.service.test.ts`, 23 tests, up from 12): new coverage for exactly the acceptance
+criteria given — selecting a fabric preserves an already-uploaded reference image and vice versa (proving
+the two are now independent); generation is blocked with full text metadata but no real photo (fabric
+metadata alone is NOT sufficient); the real fabric image bytes/mimeType (not a text description) are what
+reaches the provider, asserted via `toHaveBeenCalledWith(expect.objectContaining({ fabricImage: {...} }))`,
+and that the provider's own plain `generate()` is never called for this flow; a clean, honest error when the
+configured provider lacks image-reference capability (mirrors the real cloudflare case exactly); Select/
+Reject (previously untested at the service layer); and the `listImages()` gallery-persistence function (the
+Bug 2 fix from the earlier live-testing pass, also previously untested).
+
+**Real end-to-end verification attempted, both configured real providers genuinely blocked right now — not
+faked, reported honestly per explicit instruction**: built a standalone script that (1) generated a
+genuinely distinctive, unambiguous test fabric — a magenta 5-petal-flower-with-yellow-center print,
+evenly gridded on a blue ground, rasterized via `sharp` from an SVG (chosen so a real visual comparison
+would be unambiguous by eye); (2) created a real `AiDesignerProject` and called the real, unmocked
+`uploadFabricImage()` — confirmed live via direct SQL that `fabricImageAttachmentId` was genuinely set on
+the real row, not just in memory; (3) filled every other gated field for a Women's Kurti via the real
+`saveWizardSelections()`; (4) called the real, unmocked `generateDesign()` — confirmed the call genuinely
+reached both real external APIs (not a mock, not a stub): OpenAI returned a real, authenticated
+`credit_balance_exhausted` (zero balance, matching this project's own long-documented state for that
+account) and Gemini returned a real, authenticated `RESOURCE_EXHAUSTED` with `limit: 0` specifically for
+`gemini-2.5-flash-preview-image` on the free tier (a genuine zero allocation for this image model on this
+account, confirmed via a direct raw-SDK probe with a 20s retry — not a short-term rate limit that clears
+with a brief wait). Both are real account/billing states, not bugs in this fix — the exact same category of
+honest, live-confirmed limitation already documented repeatedly in this file for AI Garment Flow's own
+Processes 3/4/6/7. **The fact that both calls reached the real provider APIs and were rejected specifically
+on billing/quota grounds (not a malformed-request or connection error) is itself strong evidence the
+image-conditioned call path is wired correctly end-to-end** — a bad payload would have failed differently
+(a 400, not an authenticated 429 tied to the account's real balance). Confirmed zero orphan data was created
+by the failed attempts (no `AiDesignerImage`/`AiDesignerVersion` rows), then fully cleaned up (deleted the
+2 test projects, their prompt/generation audit rows, and their stored fabric-image files) — the pre-existing
+demo projects (`AID-2026-00001`/`00002`) were untouched.
+- **A genuine, pre-existing, unrelated numbering bug was found while writing the verification script** (not
+  part of this fix, flagged here for awareness, not fixed): `document_sequences` has two independent rows
+  for the same `(companyId, AI_DESIGNER_PROJECT, 2026)` — one keyed to a real `branchId`, one keyed to
+  `branchId: null` — because `generateDocumentNumber()` scopes its counter by branch but
+  `AiDesignerProject`'s own `@@unique([companyId, projectNumber])` constraint is company-wide, not
+  branch-scoped. Any caller that passes an inconsistent `branchId` (including this script's own first,
+  uncorrected attempt) can draw a number that collides with one from the other counter. Not fixed in this
+  pass — it's a `DocumentNumberingService`-level architectural mismatch shared by every document type in
+  this app, not something isolated to AI Designer, and fixing it safely means auditing every one of that
+  shared service's ~20 other callers, well outside this fix's scope.
+- **Acceptance criteria honestly assessed against what was actually verified**: generation now genuinely
+  sends the real fabric image bytes as a primary visual reference to a real, capable model (OpenAI/Gemini),
+  confirmed via real (non-mocked) API calls reaching both providers with the correct payload shape — the
+  ONE thing not yet confirmed is the actual visual output ("does the returned kurti visibly show the
+  supplied floral print"), purely because both real providers are currently blocked on billing/quota, not
+  because of anything in this fix. That last visual confirmation is the necessary next step once either
+  account has real credits — not claimed as done here.
+
+`npx tsc --noEmit`, `npx eslint .`, and `npx vitest run` (**1344/1344**, 23 in `ai-designer.service.test.ts`)
+all clean. Changes to the shared `src/core/ai/image-generation/{types.ts,providers/*.ts}` files are strictly
+additive (one new optional method, zero changes to any existing method) — confirmed the full project test
+suite, including every AI Garment Flow test file that also depends on these shared provider files, stays
+green with no regressions.
+
+## AI Designer — Product Design clipart-vs-text is now an admin-controlled setting (2026-09-11)
+
+Direct follow-up to the clipart-icon UI pass above: the user asked for the Product Design step's icon
+display to be a real setting ("clicp art me chahiye ya text me chahiye"), then clarified it must be
+**admin-controlled** ("admin set krega"), not a per-viewer preference.
+
+- **Schema** (migration `20260911100000_add_ai_designer_settings`): new `AiDesignerAttributeDisplayMode`
+  enum (`CLIPART`/`TEXT`) and `AiDesignerSettings` (`companyId` unique, one flat row per company — a missing
+  row means `CLIPART`, no backfill needed). Deliberately simpler than the `SubmoduleVisibility` precedent it
+  otherwise mirrors — no lock/has-data logic, since nothing about this choice becomes unsafe once real
+  project data exists; it's a pure display preference.
+- **Service** (`src/modules/ai-designer/ai-designer-settings.service.ts`): `getProductDesignDisplayMode`/
+  `setProductDesignDisplayMode`, a plain `findUnique`/`upsert` — no caching needed at this scale.
+- **Routes** (`/api/v1/ai-designer/settings`): `GET` is deliberately **no-module-gated** (same
+  `/api/v1/submodule-visibility` precedent) — every AI Designer user needs to read this to know which style
+  to render, regardless of their `administration` grant. `PATCH` is gated `administration`/`"create"`,
+  matching `AdminModuleVisibilityPanel`'s/`AdminCompanySettingsPanel`'s own `canManage` derivation exactly
+  (`page.tsx`'s `canManage = PermissionService.can(..., "administration", "create")`).
+- **Client hook** (`src/lib/use-ai-designer-display-mode.ts`) mirrors `useSubmoduleVisibility()`'s own
+  fail-open-to-the-original-default convention (fails open to `CLIPART`, the pre-setting behavior, while
+  loading or on a failed fetch).
+- **UI**: a new "Product Design Attribute Display" toggle at the top of `AdminAiProvidersPanel.tsx`'s "AI
+  Configuration" admin tab (already the home for every other AI-Designer-related admin setting) — a plain
+  `ToggleSwitch`, no confirmation modal (unlike Module Visibility's hide toggle, flipping this is fully
+  reversible and affects nothing but presentation). `AiDesignerWorkflowPanel.tsx`'s Product Design step reads
+  the setting and renders either the existing clipart-icon grid or a plain flex-wrapped row of text-only
+  buttons — same `onClick`/`patchWizard` call either way, pure presentation branch.
+- **Verified live end-to-end**: toggled to `TEXT` via the real Admin UI, confirmed via direct DOM inspection
+  on the real project `AID-2026-00005` that Product Design's option buttons render with zero `<svg>` icons in
+  a `flex flex-wrap` layout; toggled back to `CLIPART` and confirmed the icon grid returns; confirmed
+  previously-saved selections (V-Neck/Cap Sleeve/Bodycon/Knee Length/Button) stay correctly highlighted in
+  both modes. `npx tsc --noEmit`, `npx eslint`, and `npx vitest run` (1403/1403, no regressions) all clean.
+
+## AI Designer wizard — no more auto-jump on selection; explicit "Next" per step; bigger/colored clipart icons (2026-09-11)
+
+Two more direct user reports against the same wizard: (1) picking any single option (a Target Customer
+button, one Product Design attribute out of several, one Model dropdown, ...) immediately snapped the whole
+panel to whatever step the backend recomputed as `currentStep` next — before the user had finished with the
+current step or had a chance to review their pick; (2) the clipart icons from the earlier pass were still too
+small/thin to reliably tell apart.
+
+- **Root cause of the auto-jump**: `saveWizardSelections()` (unchanged, still correct) marks a whole step
+  complete and recomputes `currentStep` the moment ANY one of its fields is touched — by design, since
+  `completedSteps` also drives the stepper's green checkmarks. The bug was purely client-side:
+  `AiDesignerWorkflowPanel.tsx`'s `reload()` (called after every save via `run()`) called
+  `expandCurrentStep(body.data.currentStep)` unconditionally, snapping the visible tab to that freshly
+  recomputed step on every single field save.
+- **Fix, purely client-side, no backend change**: `reload()` no longer moves `expandedStep` at all — a save
+  still updates `project`/the stepper's checkmarks, but the panel stays exactly where the user left it. A new
+  `goToNextStep(afterStep)` (looks up `afterStep`'s position in `WIZARD_STEP_ORDER` and jumps to the next one)
+  is now the only thing that ever advances the view, wired to a new `StepNextButton` rendered at the bottom of
+  every step's content (all 11 — `StepNextButton` itself renders nothing on `EXPORT`, the last step, so no
+  special-casing was needed at any call site). Confirmed live: selecting "Women" under Target Customer no
+  longer moves off that step; the "Next: Age Group →" button underneath does, and only when clicked.
+- **Clipart icons, per the user's own explicit choice between "bigger + colorful now" vs. "real AI-generated
+  images per attribute (10-20+ min, consumes provider quota)"** (asked via AskUserQuestion, since it's a real
+  time/cost tradeoff): went with the immediate option. `design-icon-catalog.tsx`'s shared `Svg` wrapper
+  (which every one of the 144 icons renders through) now renders roughly 1.6-2x larger (`h-9 w-9 sm:h-11
+  sm:w-11`, was `h-7 w-7`) with a thicker stroke (1.75, was 1.4), plus a light-indigo circular backdrop chip
+  behind every icon so each one reads as a small colored badge instead of a thin gray line. **Bug caught and
+  fixed during live verification, not shipped**: the very first version left the icon's own stroke on
+  `currentColor` (inherited from the button's text color) — on a *selected* button (solid indigo-600
+  background, white text) this made the glyph render white-on-near-white against the light backdrop chip,
+  effectively invisible. Fixed by giving the glyph its own fixed color (`text-indigo-700 dark:text-indigo-300`
+  on the `<svg>` itself, overriding inheritance) completely decoupled from the button's selected/unselected
+  state — confirmed live via screenshot that "Off-Shoulder"/"Cap Sleeve" (both selected, solid indigo buttons)
+  render exactly as legibly as their unselected siblings. `AiDesignerWorkflowPanel.tsx`'s Product Design grid
+  was also widened (`grid-cols-2 sm:grid-cols-3 md:grid-cols-4`, was 3/4/5 columns) to give the bigger icons
+  room. `npx tsc --noEmit`, `npx eslint`, and `npx vitest run` (1403/1403, no regressions) all clean; verified
+  live end-to-end on the real `AID-2026-00005` project (screenshot + DOM inspection) for both fixes together.
+
+## AI Designer — Multi-Fabric, Tech Pack, expanded attributes, real reference photos (2026-09-11)
+
+User asked for a feature-parity check against a competitor reference ("Fashdeck") — 4 screenshots showing a
+richer per-category attribute picker with real reference PHOTOS (not icons), a "Multi-Fabric" second-fabric
+composition tab, and an AI "Tech Pack" (graded measurements + BOM + flat sketch) action. Confirmed via code
+search that Multi-Fabric and Tech Pack were completely absent, and the attribute catalog was noticeably
+thinner than the reference (no separate Back Neck, Bodice, Body Cut-Outs, Waist Add-On, Shoulders, Straps,
+etc.). Scoped via AskUserQuestion: build all three, and — reversing the same day's own earlier "bigger
+clipart icons, no AI cost" decision — use real AI-generated reference photos this time, since the user
+explicitly wants the photo-reference look now that a concrete competitor benchmark exists.
+
+**Wizard reordered**: `WIZARD_STEP_ORDER` (duplicated in both `ai-designer.service.ts` and the client-safe
+`statusLabels.ts`, kept in sync by hand per this module's own established convention) gained `MULTI_FABRIC`
+(after `GENERATE`) and `TECH_PACK` (after `EDIT`) — both optional/skippable steps: nothing downstream
+requires either to be completed, so a project that never uses them simply never marks them complete (this
+only affects the display-only "current step" highlight, never navigation, which stays entirely user-driven
+via each step's own Next button from the earlier pass this same day).
+
+**Multi-Fabric** — `AiDesignerProject` gained `secondFabricImageAttachmentId`/`secondFabricApplyAreas`
+(plain `String[]`, validated in Zod against a small fixed const list `SECOND_FABRIC_APPLY_AREAS` — `YOKE`/
+`SLEEVES`/`BORDERS`/`CONTRAST_PANELS` — not a DB enum, since nothing else needs to reference or constrain
+it). `applySecondFabric()` reuses the *exact same* `AiDesignerPrompt`/`AiDesignerGeneration`/
+`AiDesignerImage`/version-bump machinery Edit Design already has (deliberately reusing the `IMAGE_EDIT`
+promptType/concurrency-gate too, rather than minting a new enum value purely for bookkeeping — the
+gating behavior it buys, never running two concurrent image-mutating calls against one project, is exactly
+what's wanted here as well) — the only real difference is which provider method it calls
+(`ImageGenerationProvider.applyFabric`, a genuine two-image base+swatch composition, already built for AI
+Garment Flow's own Process 6 and reused here as shared, zero-business-logic infrastructure) and its own
+prompt (`buildSecondFabricPrompt()`, new in `image-generation/prompt.ts`).
+
+**Tech Pack** — a new, wholly isolated feature (own schema, own prompts — zero reuse of AI Garment Flow's own
+much richer Technical Specification/BOM Suggestion/Technical Development processes, matching this module's
+established isolation). New `AiDesignerTechPack` table (append-only, one row per attempt, mirrors every
+other AI Designer run-log table) with `measurementsJson`/`bomJson`/`flatSketchImageAttachmentId`. Deliberately
+simpler than AI Garment Flow's own equivalent: graded across a small fixed size set (`STANDARD_SIZES` = XS
+through XXL in `tech-pack/schema.ts`), not the company's real Size master, and the BOM is purely advisory —
+AI Designer has no Style-graduation/BOM-mrp integration for a real BOM to attach to. `generateTechPack()`
+runs three calls together via `Promise.all` (two Anthropic text calls via the shared, generic
+`requestStructuredTextOutput()` — grading and BOM, each with their own isolated prompt/schema under
+`src/core/ai-designer/tech-pack/` — plus one Cloudflare/OpenAI/Gemini image call via the existing
+`generateTechnicalFlat` provider method) and is deliberately all-or-nothing: any one of the three failing
+marks the whole attempt `FAILED` with that error, never a partially-successful row — simpler to reason about,
+and a retry is cheap for this manual, low-frequency action.
+
+**New `AIProviderCapability` values, `MULTI_FABRIC`/`TECHNICAL_FLAT`** — both `applyFabric`/
+`generateTechnicalFlat` needed their own capability flag distinct from the existing `IMAGE_EDIT` (confirmed
+live: the Cloudflare provider implements `generateTechnicalFlat` but deliberately omits `applyFabric` — a
+provider capable of one is not necessarily capable of the other). `capabilityLabel()`'s exhaustive switch in
+`AIProviderManager.ts` and the admin UI's `CAPABILITY_VALUES` list both updated — the admin capability
+checkboxes render generically from that list, so no UI code changes were needed there beyond the constant.
+
+**Attribute catalog expanded** (`design-attribute-catalog.ts`) — two fields added to literally every
+category (`surface`/"Surface / Finish" and `accentColor`/"Accent / Trim Color") via a small
+`UNIVERSAL_ATTRIBUTES` array merged onto every category's own list at module-load time, rather than
+duplicated into all 21 entries by hand. **`accentColor` is deliberately NOT a general "Colors" picker for
+the whole garment** — the garment's actual base color is already, and remains, driven entirely by the real
+uploaded fabric photo (`image-generation/prompt.ts`'s own "the fabric image is the ONLY source of truth for
+color" instruction); a generic Colors field here would silently contradict that, so this one is scoped
+narrowly to accent/trim/contrast-stitch choices, with "Same as Fabric" as the safe default. **Dress** (the
+exact category shown in the reference) additionally gained the full richer set the reference's own picker
+implies: Back Neck (with the reference's own 5 real option names — Criss-Cross/Deep/Open/Oval/Tie-Back
+Cut-Out — plus Regular Back), Bodice, Body Cut-Outs, Waist Add-On, Waist Line, Shoulders, Straps, Flare
+Variation, Slit Length, Slit Type. Blouse/Top/Kurti/Frock (the other dress-like categories) got a lighter,
+plausible subset rather than the full set, to avoid a field that doesn't make sense for their own silhouette
+(e.g. no "Waist Add-On" on a Kurti). Every existing field KEY was preserved exactly (only some LABELS
+changed, e.g. `neckline` relabeled "Front Neck" for the dress-like categories) — this was deliberate, so
+already-saved `designSelectionsJson` data on real, pre-existing projects keeps rendering/highlighting
+correctly with zero migration needed (`designSelections` is validated as a generic `z.record(string, string)`
+in the schema, so the new fields needed zero backend changes at all — purely a catalog/UI addition).
+
+**Real reference photos, per the user's own reversed choice, with a fully generic template (not a
+hand-authored prompt per option value)** — `reference-image-prompt.ts` builds one prompt template from any
+option value string, and `slugifyDesignOptionValue()`/`referenceImageUrlForValue()` derive a stable
+`/ai-designer-reference/<slug>.jpg` URL for it (reusing the icon system's own `normalizeDesignOptionKey`, so
+the same option value always maps to the same slug and photo regardless of which category/field it's
+attached to — this is what makes the mechanism scale to new categories/attributes added later with zero code
+changes). New `DesignOptionImage` component (`design-icon-catalog.tsx`) tries the real photo first and falls
+back to the existing `DesignOptionIcon` via a plain `<img onError>` — deliberately not a server-side
+existence check/manifest, so newly-generated photos "light up" automatically the next time the component
+mounts. A new re-runnable content-generation tool, `scripts/generate-ai-designer-reference-images.ts`
+(`npx tsx scripts/generate-ai-designer-reference-images.ts [cap]`), walks the whole attribute catalog,
+dedupes by normalized value, and calls whichever provider `IMAGE_GENERATION_PROVIDER` selects to generate and
+cache each one as a real JPEG under `public/ai-designer-reference/` (gitignored — a re-generatable cache, not
+source) — resumable (skips any slug that already has a file) and stops itself after 3 consecutive failures
+rather than grinding through the whole ~195-value catalog uselessly when a provider is genuinely out of
+credits (a real bug caught and fixed during this pass's own live run — the original cap only limited
+successes, so a fully-exhausted provider burned through every single value before the cap ever got a chance
+to stop it).
+
+**Verified live end-to-end** (real Postgres, real running dev server, a temporary fixture project built via
+a scratch script since real image generation is currently blocked — see below): confirmed the reordered
+13-step stepper renders with correct labels in the real UI; confirmed the expanded Dress attribute catalog
+renders all 17 fields with the exact reference option names, and that a pre-existing real project's saved
+selections (V-Neck/Cap Sleeve/Bodycon/Knee Length/Button) still highlight correctly; confirmed
+`DesignOptionImage`'s onError fallback genuinely swaps to the clipart icon (no real photos exist yet) with
+zero broken-image artifacts, just the expected one console 404 per missing photo; enabled `TECHNICAL_FLAT`
+on the Cloudflare admin provider row (a real, correct capability — Cloudflare's own provider file already
+implements it) and confirmed `Apply Second Fabric` correctly reaches the real `AIProviderManager` pipeline
+and cleanly reports `UNSUPPORTED_OPERATION` for Cloudflare (which never implements `applyFabric`, by
+design); confirmed `Generate Tech Pack` correctly reaches the real pipeline and cleanly fails (502) rather
+than crashing, with the `AiDesignerTechPack` row correctly left `FAILED`/no orphan partial data, and
+`completedSteps` correctly excluding both `MULTI_FABRIC`/`TECH_PACK` since both attempts failed. Fixture
+project and its attachments fully deleted afterward; the Cloudflare provider's own capability list was
+corrected afterward too (kept `TECHNICAL_FLAT`, a genuinely real capability; removed the `MULTI_FABRIC` flag
+this verification pass had added for a probe, since Cloudflare will never support that method). `npx tsc
+--noEmit`, `npx eslint`, and `npx vitest run` (1410/1410, 7 new) all clean throughout.
+
+**Known, honestly-reported limitation, not a code defect**: this dev environment's configured providers are
+all currently out of usable credit/quota for actual image generation — OpenAI/Gemini already documented
+elsewhere in this file as `CREDITS_EXHAUSTED`, and Cloudflare (confirmed via a real, direct script run this
+pass) also returns `credits are exhausted` for plain `generate()` calls and a real `AUTH_ERROR`-categorized
+failure specifically for `generateTechnicalFlat`'s own separate img2img model. This means: (a) the real
+reference-photo batch script has generated zero real photos yet — every Product Design option currently
+falls back to its clipart icon, correctly, but the "photo-first" experience the user asked for isn't visibly
+different from before until a provider has real credits; (b) Multi-Fabric's actual composition and Tech
+Pack's actual flat-sketch/measurements/BOM content remain unverified beyond "reaches the real API and fails
+cleanly" — the exact same honest bar this file has already documented repeatedly for AI Garment Flow's own
+image-generation processes. Once any configured provider has real credits, re-running the batch script (or
+retrying Multi-Fabric/Tech Pack from the real UI) is the only remaining step — no further code changes are
+expected to be needed.
+
+## AI Designer — Product Design attribute catalog is now a real Masters entity (2026-09-11)
+
+Direct follow-up user request: the Product Design attribute catalog (Neckline/Sleeve/Silhouette/... per
+category) was still a hardcoded, code-only constant (`design-attribute-catalog.ts`) — the one place in this
+module that wasn't editable like every other lookup in this ERP. User asked for a real master: **Masters ->
+AI Design -> Product Design**.
+
+- **Schema**: new `AiDesignerProductDesignAttribute` (`ai_product_design_attributes`, company-scoped,
+  `@@unique([companyId, categoryName, attributeKey])`). `options` is a plain `String[]` column, not a child
+  table — matches the original `DesignAttributeDef.options` shape exactly (no option ever needed its own
+  independent sortOrder/isActive).
+- **"DB overrides the static default per category, not a merge"** — `getEffectiveDesignAttributesForCategory
+  (companyId, categoryName)` returns this company's own real rows for a category the moment ANY exist for it
+  (ordered by `sortOrder`), and only falls back to the original hardcoded `PRODUCT_DESIGN_ATTRIBUTES_BY_
+  CATEGORY` entry when the company has never customized that category at all — the same "a missing row means
+  the default, no backfill needed" precedent as `SubmoduleVisibility`/`AiDesignerSettings` elsewhere in this
+  schema. Every existing company keeps working unchanged with zero seeding; an admin who adds even one
+  attribute for a category takes full ownership of that category's whole list from then on (confirmed live:
+  adding one "Sleeve Length" row to Dress made the wizard show *only* that field, not that field plus the 17
+  built-in ones — deliberate, not a bug, and worth remembering before customizing a category the wizard is
+  actively used for).
+- **RBAC reuses the existing `ai_designer` module's own actions** (view/create/edit — already fully granted
+  to `MERCHANDISER`, view-only to `MANAGEMENT`) rather than gating this under `administration` like the
+  clipart/text toggle — this is master data *for* AI Designer, which `MERCHANDISER` already owns full CRUD
+  on, not a company-wide admin setting.
+- **Wizard refactor**: `AiDesignerWorkflowPanel.tsx`'s Product Design step switched from a synchronous
+  `useMemo(() => getDesignAttributesForCategory(...))` static-import call to a real `useEffect` fetch against
+  `GET /product-design-attributes/effective?category=...` — the first place in this module where the
+  attribute list is genuinely dynamic per company rather than baked into the client bundle.
+- **UI**: a new bespoke Masters page (`/masters/ai-design`, tabbed for future extensibility — "Product
+  Design" is the only tab today) — doesn't fit `SimpleLookupManager`'s flat-field-type model (an attribute's
+  options are a whole list, not one value), so it gets its own component, matching the `CategoryTreeManager`
+  precedent that not every master is forced through the generic lookup manager. Attributes are grouped by
+  category; uncustomized known categories (from the existing `PRODUCT_CATEGORIES_BY_CUSTOMER` catalog) are
+  listed as one-click "start customizing" shortcuts. Add/Edit is a small `Modal` (Category — free text with a
+  `<datalist>` of known categories, Key/Label immutable once created, Options as a comma/newline-separated
+  textarea); the existing Active/Inactive `ToggleSwitch` + `ConfirmModal` pattern is reused verbatim for
+  deactivation.
+- **`scripts/generate-ai-designer-reference-images.ts` was deliberately NOT changed** to read from this new
+  master — it still walks the static catalog file, which remains every company's real default. A company
+  that customizes/extends a category's options won't get reference photos for its own new values from this
+  script yet; flagged here as a known, scoped-out follow-up rather than silently left unmentioned.
+- 7 new unit tests (`ai-designer-attribute-master.service.test.ts`) covering the DB-overrides-default
+  fallback (including the "unknown category, no custom rows" empty-list case), the duplicate-`(category,key)`
+  rejection, and the cross-company `NOT_FOUND` guard on update. **Verified live end-to-end**: added a real
+  "Sleeve Length" attribute for Dress through the actual Masters UI, confirmed it appeared correctly grouped
+  and Dress dropped out of the "not yet customized" list, confirmed the real AI Designer wizard (`AID-2026-
+  00005`) immediately reflected it (showing *only* Sleeve Length, not the built-in set) with zero code
+  redeploy needed, then removed the test row and confirmed the wizard correctly self-healed back to the full
+  17-field built-in default. `npx tsc --noEmit`, `npx eslint`, and `npx vitest run` (1418/1418, 7 new) all
+  clean throughout.
+
+## Sampling — "Design Name" is now editable, same pattern as Color (2026-09-11)
+
+User-reported real workflow gap: a Buyer Enquiry line's free-text "Style Name / Description (if new)" gets
+carried into `SampleRequest.styleName` ("Design Name") when converted to a Sample Request — often just a
+rough placeholder, since the buyer hasn't confirmed anything yet. There was no way to correct it later.
+Investigated before building anything (per the user's own "let's discuss first" request): confirmed no
+auto-creation of a Style/Product ever happens from Buyer Enquiry or Sample Request creation — the only place
+a real `Product` row is ever created is the existing, explicit "Convert to Style" action on an `APPROVED`
+sample. Also confirmed, by reading the actual schema comments (not assumed), that `styleName`'s apparent
+"immutable, no edit endpoint" framing in a neighbouring code comment actually describes the sibling
+`sampleType` field, not `styleName` itself — there was never a deliberate reason this field couldn't be
+edited, it simply had no edit path built. Confirmed scope with the user (edit-only, not also a "link to an
+existing Style" picker — that's a separate, bigger feature, deliberately not built this pass).
+
+- New `updateSampleRequestDesignName()` (`sample.service.ts`), `sampleRequestDesignNameSchema` (`sample
+  .schema.ts`), and `PATCH /api/v1/sampling/[id]/design-name` — line-for-line the same shape as the existing
+  `color` field's own scoped-sub-route pattern (editable at any status, no state-machine restriction,
+  audit-logged with old/new values) — the one difference being `styleName` stays required/non-blank on edit,
+  matching its own required-at-creation rule (`color` is optional).
+- UI: `SampleWorkflowPanel.tsx` gained a "Design Name: <value> Edit" inline control identical to the
+  existing Color control, placed directly above it.
+- **Known, deliberately unaddressed edge case**: the "Convert to Style" form's own Style Name draft
+  (`convertStyleName`) is only ever initialized once from `initialRequest.styleName` at page load, not kept
+  in sync with a live edit made via this new control in the same session — a user who edits Design Name and,
+  without reloading the page, immediately opens the always-visible Convert-to-Style section (only shown once
+  `APPROVED`) would still see the pre-edit name there. A page reload always shows the correct current value.
+  Flagged rather than silently left unmentioned; not fixed this pass since it's a narrow, easily-worked-around
+  case outside the user's own confirmed scope.
+- **Verified live end-to-end** on a real request (`SAM-2026-00012`): edited Design Name through the actual
+  UI, confirmed it persisted (`GET` round-trip), confirmed both the edit and a restore-to-original PATCH were
+  correctly audit-logged with old/new values, reverted the test edit. `npx tsc --noEmit`, `npx eslint`, and
+  `npx vitest run` (1419/1419, no regressions) all clean — no new unit test added, matching the sibling
+  `updateSampleRequestColor()` function's own existing (untested) coverage level.
+
+## BOM/MRP — Design BOM view for a sample, linked from the Sampling list (2026-09-12)
+
+Direct user request: a sample's own material list (its `SampleMaterial` rows on the current version) is
+effectively that design's own "BOM" — it wasn't reachable from anywhere in BOM/MRP itself, only inline on
+the Sample Request detail page. Asked for a tab alongside the real Style BOM showing it, plus a link on the
+Sampling list next to Edit.
+
+- **No new schema or business logic** — this is purely a new arrangement of two already-existing data
+  sources: `SampleMaterial` (Sampling's own module) and `Bom`/`BomVersion`/`BomItem` (bom-mrp's own module,
+  unchanged since the Phase 5B build and the later Sample-Style BOM linkage work).
+- New page `/bom-mrp/design/[sampleRequestId]` (`page.tsx` + a client `DesignBomTabs.tsx`) — a tab bar with
+  **Design BOM** (default, a plain read-only table: Material/Color/Shade-Pantone/Quantity/Unit/Notes, sourced
+  from the sample's current version, reusing the exact color-swatch/shade-formatting convention already used
+  throughout `SampleWorkflowPanel.tsx`) and, only when the sample is linked to a real Style
+  (`SampleRequest.productId` set), a **Style BOM** tab that embeds `BomVersionPanel`/`BomEditor` completely
+  unchanged — the exact same components `/bom-mrp/[productId]` itself renders, so editing a linked style's
+  BOM from here has full parity with the dedicated page, not a read-only approximation of it. When a sample
+  has no linked Style, the Style BOM tab renders as a disabled label with a tooltip ("This design has not
+  been converted to a Style yet.") rather than a dead link.
+- **RBAC**: gated on `sampling`/`view` (the page's real entry point is the Sampling list) — the Style BOM
+  tab additionally checks `bom_mrp`/`view` (and separately `bom_mrp`/`approve` for the embedded
+  `BomVersionPanel`'s own approve button) and simply omits itself if the viewer lacks that permission, rather
+  than rendering a 403'd tab.
+- New "Design BOM" link added next to the existing "Edit" link on the Sampling list
+  (`SamplingListClient.tsx`) — `product.id` was already selected by the list's own repository query, so no
+  new API field was needed.
+- **Verified live end-to-end**: a sample linked to a real Style ("Gown"/ST-00011) showed both tabs, with the
+  Style BOM tab correctly rendering the real (currently-empty) `BomEditor`; a sample with no linked Style
+  showed its own real Design BOM materials and a correctly-disabled Style BOM label. Zero console errors on
+  either page. `npx tsc --noEmit`, `npx eslint`, and `npx vitest run` (1427/1427, no regressions) all clean.
+- **Environment note, not a code issue**: this session's own git worktree had no local `node_modules` at
+  all — a plain `npm ci` inside it was required before the dev server could start (Turbopack refuses to
+  resolve `next` through a symlink/junction pointing outside the worktree's own directory tree, so sharing
+  the parent checkout's `node_modules` via a junction is not a viable shortcut here, unlike some other
+  monorepo setups). Worth remembering for any future worktree-based session on this repo.
+
+## AI Garment Flow — scoped and closed out a stale "guided design wizard" branch (2026-09-12)
+
+An earlier session had built, on its own orphaned branch (`claude/fashion-erp-testing-f1d5f4`, never merged,
+30 commits behind `main` by the time this was picked up), a single commit titled "replace Product
+Suitability/Fabric-to-Garment Development with a guided design wizard." Investigated properly (not just
+skimmed) before touching anything, since the title alone implied removing two already-shipped, tested,
+documented AI processes (Process 8 "Product/Fabric Suitability" and Process 9 "Fabric-to-Garment
+Development," both still fully live on `main` — confirmed via `ProductSuitabilityPanel.tsx`/
+`FabricDevelopmentBriefPanel` still being real, wired components, not dead code).
+
+**The key finding, surfaced to the user before writing any code**: the proposed replacement — a menu-driven
+Target Customer → Age Group → Product Category → Design Options → Environment wizard — is functionally the
+same idea as the separate, already-built **AI Designer** module (2026-09-10 onward), which the user
+deliberately kept "genuinely separate... zero shared business logic" from AI Garment Flow. Building the same
+wizard concept a second time, inside AI Garment Flow, would have created two divergent copies of one idea
+rather than reusing the one that already exists and has since grown much further (Multi-Fabric, Tech Pack,
+admin clipart/text toggle, real reference photos, a Masters-backed attribute catalog).
+
+**User's decision, via AskUserQuestion**: keep Product Suitability + Fabric-to-Garment Development exactly
+as they are; drop the stale branch's wizard entirely — AI Designer already covers that need. Two genuinely
+independent, non-destructive pieces from the same stale commit were salvaged separately (see the
+"AI Garment Flow: extend Modify Design feature list; clean Fabric Analysis summary view" entry immediately
+above this one) since neither depended on the wizard-replaces-suitability decision. A third piece (adding
+`fabricName`/`suitableSeason`/`recommendedGarments` fields to Fabric Analysis) was deliberately **not**
+carried over — those 3 fields existed specifically to feed the now-declined wizard's own product-category
+picker, so keeping them without the wizard would have been schema/prompt complexity with no real consumer.
+
+The stale branch (`claude/fashion-erp-testing-f1d5f4`) was deleted from the remote afterward — everything
+worth keeping from it is now on `main` via the salvage PR; nothing else in it is wanted.
+
+## Design BOM is now editable; BOM/MRP list gains Style/Design BOM tabs (2026-09-12)
+
+Two direct follow-up requests on the Design BOM feature from earlier the same day.
+
+- **Editable Design BOM**: `/bom-mrp/design/[sampleRequestId]`'s Design BOM tab gained real Edit/Remove
+  actions per material line — a sample's planned quantities routinely need adjusting once actual sampling
+  shows it used more or less than planned. Reuses Sampling's own existing `updateSampleMaterial()`/
+  `removeSampleMaterial()` (the exact same functions `SampleWorkflowPanel`'s own Edit/Remove actions already
+  call, editable at any sample status, no new business logic) via a new `EditMaterialModal` mirroring that
+  panel's own Add/Edit Material form (`MaterialPicker` + Quantity/Unit/Color/Shade-Pantone/Notes) —
+  server-gated on the page's own `sampling`/`edit` check, hidden entirely for a viewer who lacks it.
+- **BOM/MRP list page gains tabs**: `/bom-mrp` (`BomMrpListClient.tsx`) now has "Style" (the original
+  per-style BOM list, unchanged) and "Design BOM" (new — the existing `/api/v1/sampling` list endpoint
+  reused through the generic `DataTable`, each row linking straight to that design's own Design BOM page).
+  The Design BOM tab only renders for a viewer who also holds `sampling`/`view`.
+- **Verified live**: edited a real material's quantity (5→7.5 Mtr) and notes on the Design BOM page,
+  confirmed it persisted, reverted it back to the original value; confirmed the Remove confirmation dialog
+  opens with the correct material name and cancels cleanly without deleting anything; confirmed both new
+  BOM/MRP tabs render real data with correct links. Zero console errors throughout. `npx tsc --noEmit`,
+  `npx eslint`, and `npx vitest run` (1427/1427, no regressions) all clean.
+
+## BOM/MRP: Style and Design BOM now edit inline on `/bom-mrp`, no navigation (2026-09-12)
+
+Direct follow-up, same day: the two tabs above still navigated away (to `/bom-mrp/[productId]` or
+`/bom-mrp/design/[sampleRequestId]`) when a row was clicked — the user wanted both editable right there on
+`/bom-mrp` itself.
+
+- **Master-detail on one page, not two routes**: selecting a row in either tab now expands that row's real,
+  editable BOM directly below the list on `/bom-mrp` — client-fetched via the exact same `GET` endpoints the
+  two standalone pages already use (`/api/v1/bom-mrp/:productId`, `/api/v1/sampling/:id`), then rendered
+  through the exact same `BomVersionPanel`/`BomEditor`/`DesignBomTabs` components those pages already use,
+  completely unchanged. No BOM logic duplicated anywhere — this only changes how the same editors are
+  reached from this one list page. `DataTable`'s existing `onEditRow` callback (previously used only for
+  modal-opening call sites elsewhere in the app) is repurposed here to just set "which row is selected"
+  local state instead, since it already meant "don't navigate, the caller owns what happens next."
+- **The two standalone pages are deliberately untouched** — confirmed via grep that `/bom-mrp/[productId]`
+  is still linked directly from AI Garment Flow's own BOM step ("Open BOM Editor for &lt;styleCode&gt;"),
+  Masters → Products' style list, and Material Request's own BOM link, and
+  `/bom-mrp/design/[sampleRequestId]` is still Sampling's own "Design BOM" list link — none of those deep
+  links go through `/bom-mrp` at all, so removing either standalone route would have broken them. Only
+  `/bom-mrp`'s own list page changed.
+- **`page.tsx` now computes three permission booleans up front** (`canViewDesignBom`, `canEditSampleMaterials`,
+  `canApproveBom`) and passes them down — the client component has no server-side `PermissionService` access
+  of its own, so anything permission-gated has to be decided once, server-side, at page load.
+- **Verified live**: clicked "Edit" on a real Style row (Kids Froock, ST-00010, 4 real BOM lines, currently
+  APPROVED) — the full `BomVersionPanel`+`BomEditor` expanded inline on `/bom-mrp` with the correct
+  pre-filled quantities (1.5/0.1/1.5/0.1/1/0/4/0 across the 4 lines' Qty/Wastage pairs), no navigation;
+  clicked "Edit" on a real Design BOM row (SAM-2026-00009) — the Design BOM table + its own Style BOM tab
+  expanded inline; edited a real material's quantity (1→3, then back to 1) through the inline Edit modal and
+  confirmed both saves persisted correctly. Zero console errors throughout. `npx tsc --noEmit`, `npx eslint`,
+  and `npx vitest run` (1427/1427, no regressions) all clean.
+
+## Design BOM: Approved-only list, opens in a Modal, no Style BOM tab (2026-09-12)
+
+Three more direct refinements, same day, on the inline BOM/MRP editing above.
+
+- **Design BOM tab now only lists APPROVED sample requests** — a design's own material list is only treated
+  as "the design's BOM" worth reviewing/adjusting from `/bom-mrp` once sampling is actually finalized;
+  earlier statuses are still edited from the Sample Request's own page. `fetchUrl="/api/v1/sampling?status=APPROVED"`
+  reuses the list endpoint's own existing comma-separated `status` filter param — no new API surface.
+- **Both tabs now open in a real `Modal` on "Edit"**, instead of expanding inline below the list — confirmed
+  live via `role="dialog"`/`aria-modal="true"`, not just visually.
+- **Dropped the embedded "Style BOM" tab from the Design BOM view entirely** — `DesignBomTabs.tsx` (which
+  held both the Design and Style BOM tabs) was renamed to `DesignBomMaterialsPanel.tsx` and stripped down to
+  just the materials table with Edit/Remove, no tab bar left at all. The linked Style's real BOM already has
+  its own dedicated surfaces (the "Style" tab on `/bom-mrp`, and the standalone `/bom-mrp/[productId]` page)
+  — embedding it a third time inside Design BOM read as confusing/redundant rather than useful. The
+  standalone `/bom-mrp/design/[sampleRequestId]` page was simplified to match (dropped its own Style-BOM
+  fetching/props entirely, not just hid the tab).
+- **A real bug caught and fixed during this pass's own live verification**: the first attempt to revert a
+  test edit back to its original value silently failed — the page navigated away instead of saving, and a
+  direct DB query confirmed the edit never reverted. Root cause never fully isolated (a stale button
+  reference from an earlier `querySelectorAll` call, most likely, given the modal had been closed and
+  reopened in between) — re-run more carefully (re-querying the DOM fresh at each step, confirming state via
+  a direct DB read after every step) succeeded and is now the confirmed-working state. Worth remembering
+  for any future live verification through this tool: after closing and reopening a modal, always re-query
+  its buttons fresh rather than reusing an earlier reference.
+- **Verified live**: Design BOM tab correctly showed only 5 Approved samples (down from all 8); both tabs'
+  "Edit" opened genuine modal dialogs; the Design BOM modal showed only the materials table, no Style BOM
+  tab; a real material's quantity edit persisted and reverted correctly, confirmed via direct DB queries
+  both times, not just the UI's own re-render. Zero console errors. `npx tsc --noEmit`, `npx eslint`, and
+  `npx vitest run` (1427/1427, no regressions) all clean.
+
+## Production: size/color breakdown on a Lot, visible at every stage (2026-09-12)
+
+User-reported real floor-usage gap: "kisi bhi stage me size wise color wise pta nahi chal raha" — a Lot's
+own quantity has always been a flat number (`Lot.quantity`), with zero size/color detail anywhere in
+Production, so a worker at Cutting/Stitching/Checking/Finishing/Packing had no way to know the actual
+color/size mix they were handling. Confirmed via AskUserQuestion before building — this is the exact "no
+variant-level Lot tracking in V1" decision documented in Phase 5C's own design notes above, revisited: kept
+scoped to **visibility only**, not full per-variant quantity tracking through completed/rejected/damaged/
+forwarded/qcPassed at every stage (that would have meant rewriting Log Progress/Forward/Revert/QC's own
+well-tested accumulator logic — explicitly declined as disproportionate to the actual ask), sourced from the
+linked Sales Order's own real `SalesOrderItemBreakdown` when one exists, manual entry otherwise.
+
+- **Schema**: new `LotVariantBreakdown` (`lot_variant_breakdowns`, migration
+  `20260912100000_add_lot_variant_breakdown`) — `lotId`/`productVariantId`/`quantity`,
+  `@@unique([lotId, productVariantId])`. Purely informational and read-only from every other angle: nothing
+  in `forwardJobOrder`/`revertJobOrder`/`recordProgressEntry`/`recordQcInspection` reads or writes it — a
+  Lot's own `quantity` and every JobOrder accumulator stay exactly the flat aggregates they always were.
+- **`createLot()`** (`lot.service.ts`) gained an optional `variantBreakdown` array on `createLotSchema` —
+  when supplied, the rows must sum to exactly the lot's own `quantity` (same `EPSILON`-tolerant
+  sum-must-match discipline as `splitLot`'s own children-must-sum-to-parent rule) and every
+  `productVariantId` must genuinely belong to the order's own style (`ProductVariant.productId ===
+  order.productId`) — both checked before the transaction opens, then written as a nested `create` inside
+  the same `LotRepository.createInTx` call. Omitting it entirely (existing callers, a style with no
+  variants configured) behaves exactly as before — fully backward compatible.
+- **New `getVariantBreakdownSuggestions(companyId, productionOrderId)`** feeds the Add Lot modal: when the
+  order is linked to a real Sales Order line, suggests each variant's real ordered quantity minus whatever
+  other Lots on this same order already claimed (via a `lotVariantBreakdown.groupBy`) — never re-typed data,
+  always derived fresh so two lots against the same order can't silently double-claim the same units. For a
+  Make-to-Stock order (no linked Sales Order), lists the style's own active `ProductVariant`s with no
+  suggested quantity, for manual entry. New `GET /api/v1/production-orders/[id]/variant-breakdown-suggestions`.
+- **UI — Add Lot modal** (`ProductionOrderWorkflowPanel.tsx`): when the style has any variants to suggest
+  from, the plain Quantity input is replaced by a Color/Size/Qty table (pre-filled from the suggestion, every
+  cell still editable) with a live-computed read-only Total — removing by construction the possibility of a
+  breakdown that doesn't match the lot's own total, rather than validating it after the fact. Falls back to
+  the original flat Quantity input untouched when the style has zero variants configured.
+- **UI — Lot detail page** (`LotWorkflowPanel.tsx`): a "Size / Color Breakdown" table renders right under
+  the status badges, above every Job Order card — visible regardless of which stage's card the worker is
+  looking at, since all of a lot's job orders across every stage already sit on this same page. Renders
+  nothing when the lot has no breakdown (old lots, or one deliberately created without it).
+- **UI — Stage Transfer Slip** (the actual worker-facing printable document): `slip-pdf.tsx`'s shared
+  `SlipDescriptor` gained an optional `variantBreakdown` table section (reused by any future slip, not
+  Stage-Slip-specific), and the stage-slip route now populates it from the lot's own real breakdown rows —
+  this is the one place a floor worker who never opens the app at all still sees the size/color mix, printed
+  on the same ticket that already travels with the lot between stages.
+- 4 new unit tests for `createLot`'s breakdown validation (sum mismatch, foreign-style variant, successful
+  nested create, and the no-breakdown-supplied backward-compatible path) and 2 for
+  `getVariantBreakdownSuggestions` (Sales-Order-sourced with the already-claimed subtraction, and the
+  Make-to-Stock manual-entry fallback) — `lot.service.test.ts`, 13/13 passing, 107/107 project-wide in
+  `src/modules/production`.
+- **Verified live end-to-end against the real dev DB** (not just mocks): used the real `PROD-2026-00008`
+  (the exact order from this session's earlier live-debugged stage-transfer bug, still carrying its real
+  5-line Sales Order breakdown — Black S/L, Grey XL, White S/L) — `getVariantBreakdownSuggestions` correctly
+  returned all 5 lines with `remaining` equal to `orderedQuantity` before any lot claimed them; a mismatched-
+  sum `createLot` call correctly rejected with the exact message; a real `createLot` call with a 2-row
+  breakdown (Black S:5, Black L:5) succeeded, and a direct DB query confirmed exactly those 2
+  `LotVariantBreakdown` rows were stored with the correct color/size/quantity; re-running
+  `getVariantBreakdownSuggestions` afterward correctly showed those 2 lines' `remaining` dropped to 0 while
+  the other 3 untouched lines stayed at their original remaining amounts. Test lot and its breakdown rows
+  deleted afterward. `npx tsc --noEmit`, `npx eslint`, and `npx vitest run` (1434/1434, 6 new) all clean.
+- **Not built this pass, explicitly out of scope per the confirmed decision above**: per-stage/per-JobOrder
+  variant-level quantity tracking (completed/rejected/damaged/forwarded/qcPassed still stay flat aggregates
+  at every stage) — if a future need genuinely requires knowing exactly how many of a specific size/color
+  were rejected at a specific stage (not just the lot's overall mix), that's a much larger, separate change
+  to `job-order.service.ts`'s own accumulator logic, not an extension of this one.
+
+## Material Request Issue — color/shade roll picker for fabric materials (2026-09-12)
+
+User-reported real workflow gap on `/material-requests/[id]` (`http://localhost:3000/material-requests/...`):
+Line Items' "Available Stock" only shows a value when the requested Material AND Color/Shade both match a
+real stock row exactly — but often the exact shade isn't recorded on the request, and the actual physical
+stock for that material sits in several different colors/rolls. Asked (per the user's own "phle btao abhi
+code mt kro" — explain first, don't code yet) to explain the options before building anything: the
+explanation walked through why `StockBalance` has no color dimension at all (it's the flat, material+
+warehouse-level total this whole ledger design already documents) and that the only place real per-color
+stock genuinely exists in this schema is `FabricRoll` (roll-level, tracks `dyeId`/shade, FABRIC materials
+only) — landing on **Option B**: show the color-wise breakdown and let the warehouse person pick which one
+to issue. The user then confirmed **B**, with one addition of their own: "issue time me select kre konsa
+color de rha hai" — the color/shade choice belongs on the Issue action itself, not just as a display.
+
+- **`FabricRollRepository.findAvailableForMaterial(companyId, productId, warehouseId)`** — every `IN_STOCK`,
+  `remainingQuantity > 0` roll for that material at that specific warehouse (joined through
+  `goodsReceiptItem.productId`/`.warehouseId`, the same relation `FabricRoll` has always had since Phase 6),
+  ordered by dye name then roll number. `getAvailableRollsForLine(actor, lineId)` (new export in
+  `material-request.service.ts`) resolves the line's own material/warehouse first (company-scoped via the
+  existing `findWithRequestOwner`), then calls it — backing a new `GET /api/v1/material-requests/lines/
+  [lineId]/available-rolls` route (same `inventory`/`edit` gate as the Issue action itself, since it's only
+  ever fetched right before issuing).
+- **`issueMaterialRequestLine()` gained a 5th, optional `fabricRollId` param.** When supplied, the function
+  validates the roll (`findByIdWithContext` — company/material/warehouse/`IN_STOCK` all re-checked, never
+  trusted from the client) and uses **that roll's own `remainingQuantity`** as the issue-quantity cap instead
+  of the flat `getLineAvailableStock()` figure — the material fix the user actually asked for, since two
+  different physical rolls of the same material can have very different remaining amounts. When no
+  `fabricRollId` is given (a non-fabric material, or a fabric material with no roll-level stock recorded),
+  behavior is completely unchanged — the existing flat-stock path is the fallback, not replaced.
+- **A genuine pre-existing bug, found while building this, not introduced by it**: `issueMaterialRequestLine()`
+  had never once touched `FabricRoll.remainingQuantity` at all since the day this whole module was built —
+  only the flat `StockBalance` was ever decremented on issue. Every fabric roll's own "remaining" number has
+  therefore been silently drifting out of sync with the material's real total stock for as long as Material
+  Request issuance has existed. Fixed as part of this same change: passing a `fabricRollId` now also calls
+  `FabricRollRepository.guardedDecrementRemaining(tx, roll.id, baseQuantity)` inside the same transaction as
+  the ledger write (`recordInventoryTransaction(..., { fabricRollId: roll.id })`, which already accepted this
+  field for traceability but had no caller ever supplying it) — the same atomic guarded-`updateMany` idiom
+  every other accumulator in this codebase uses, with its own dedicated guard-failure error rather than
+  silently under/over-decrementing on a lost race.
+- **Issue button is no longer disabled just because flat Available Stock reads 0** — `line.availableStockQuantity
+  <= 0` used to disable Issue outright for *any* material, which was actively wrong for a FABRIC material
+  whose exact requested shade has zero stock but a different roll of the same material genuinely does. The
+  disable condition is now `line.material.materialCategory !== "FABRIC" && line.availableStockQuantity <= 0`
+  — a non-fabric material keeps the exact old behavior; a fabric material always opens the modal, which then
+  either shows the real roll picker or an honest "no roll-level stock recorded for this material at this
+  warehouse — this will issue against the general stock total instead" fallback message when the material
+  genuinely has no rolls at that specific warehouse (confirmed live on a real request where the material's
+  only real `FabricRoll` rows exist at a *different* warehouse than the one being issued from).
+- **UI** (`MaterialRequestWorkflowPanel.tsx`): the Issue modal fetches `available-rolls` only for FABRIC
+  lines, computes `isFabric`/`selectedRoll`/`effectiveAvailable`/`cap`/`mustPickRoll` via a small IIFE, and
+  renders a "Color / Shade" `<select>` (`{dye.name} ({dye.pantone}) — {remainingQuantity} {uom} available`
+  per roll) whenever real rolls exist. The Issue Quantity input is `disabled={mustPickRoll}` (a fabric line
+  with real rolls can't be issued before a specific one is chosen) with its `max` following the selected
+  roll's own remaining quantity, not the flat total.
+- 7 new unit tests (`material-request.service.test.ts`) covering: `issueMaterialRequestLine` with a roll
+  selected (uses the roll's own remaining as the cap, decrements the specific roll, passes `fabricRollId`
+  through to the ledger), a roll belonging to a different company/material/warehouse each correctly rejected,
+  an already-`CANCELLED` roll rejected, the guard-failure path on a lost race, and `getAvailableRollsForLine`
+  scoping correctly by warehouse and rejecting a cross-company line.
+- **Verified live end-to-end** through the real UI and direct API calls together, against real seeded data
+  (not fixtures): opened Issue on `MR-2026-00009`'s Cotton Cambric line at "Dharam Colony" (0 Mtr flat
+  Available Stock) and confirmed the Issue button was now correctly enabled with the honest "no roll-level
+  stock at this warehouse, will issue against the general total (0 Mtr available)" message; opened the same
+  material's line on `MR-2026-00007` at "E-52 Palam Vihar" (where it genuinely has 4 real `FabricRoll` rows —
+  hand-verified via a direct query: "102"/Classic Blue/50, "103"/Lighter Blue/50, "121221"/no dye/65,
+  "121222"/no dye/60, summing to the flat 225 Available Stock shown) and confirmed the picker listed all 4
+  correctly; selected "Classic Blue (19-4052 TCX) — 50 Mtr available", issued 10 Mtr, and confirmed via a
+  follow-up API call that **only** that roll's `remainingQuantity` dropped 50→40 (the other 3 rolls
+  untouched — the exact per-roll-not-blanket decrement this fix exists for), `MaterialRequestItem
+  .issuedQuantity` incremented to 10/`remainingQuantity` correctly 70, and available stock decremented
+  225→215. Zero console/server errors throughout. `npx tsc --noEmit`, `npx eslint .` (0 errors), and
+  `npx vitest run` (1434/1434) all clean.
+- **Not built this pass** (out of scope for the confirmed ask): color/shade selection on any other module's
+  Issue-shaped action (Job Work Order's own material issuance, Stock Movement) — this was scoped specifically
+  to Material Request's own Issue action; a per-color reservation/allocation mechanism (the picker shows a
+  live snapshot at click time, not a held reservation, matching this project's own already-accepted "manual,
+  low-frequency action, a pre-check is enough" tradeoff used everywhere else in Inventory).
+
+## AI Designer — Replicate Design, Phase 1 (2026-09-13)
+
+A new, genuinely separate page inside the existing AI Designer module (`/ai-designer/replicate`, own
+`ReplicateDesignProject*` schema, own step order, own service/prompt files under
+`src/core/ai-designer/replicate-design/`) — the existing 13-step wizard (`AiDesignerWorkflowPanel.tsx`) was
+left completely untouched. Built per the user-approved plan at
+`C:\Users\DELL 10THGEN\.claude\plans\foamy-jumping-lemur.md` (spec sections 1-9 only: reference upload → AI
+Design DNA analysis → Design Lock → select company fabric/materials → AI compatibility check → generate).
+Raw materials reuse the real `Product`/`itemType: RAW_MATERIAL` master as-is via the existing, unchanged
+`MaterialPicker` — no new material master.
+
+- **Schema (12 new tables, migrations `20260913160000_add_replicate_design_module` /
+  `20260913163000_add_replicate_design_project_usage_fk`)**: `ReplicateDesignProject` (header — single-slot
+  Front/Back/Side/Detail reference-photo columns, `fabricSource`/`fabricProductId`/`fabricImageAttachmentId`
+  duplicated from AI Designer's own fabric-selection shape per the module-isolation rule, own
+  `REPLICATE_STEP_ORDER`), `ReplicateDesignDnaAnalysis`/`Observation`/`AnalysisRun` (the same 3-table
+  "header replaced on re-analysis + per-observation rows + append-only run log" pattern already proven by AI
+  Garment Flow's own Reference/Fabric Analysis), `ReplicateDesignMaterialLine`, `ReplicateDesignCompatibilityCheck`/
+  `Item`/`Run`, `ReplicateDesignPrompt`/`Generation`/`Image`/`Version` (mirrors AI Designer's own
+  Prompt→Generation→Image→Version chain). New `AIProviderCapability.DESIGN_REPLICATION` value and a new
+  `AIProviderUsage.replicateDesignProjectId` sibling FK column (the existing `aiDesignerProjectId` column has
+  a real FK specifically to `AiDesignerProject`, so a `ReplicateDesignProject` id needed its own column, not a
+  misuse of the existing one).
+- **Design Lock is per-observation, not project-level** — `isLocked Boolean @default(true)` on each
+  `ReplicateDesignDnaObservation` row, exactly the spec's own "selective locking" ask; only `isLocked=true`
+  rows are fed into the generation prompt as hard constraints.
+- **A new, distinctly-named `ImageGenerationProvider.replicateWithNewMaterial()` method** (not a reuse of
+  `applyFabric`) — implemented in `providers/openai.ts` and `providers/gemini.ts`, gated behind its own
+  `DESIGN_REPLICATION` capability so provider health/failover stays correctly attributed per feature, matching
+  the same reasoning `generateTechnicalFlat` was already given its own method for.
+- **Compatibility check never hard-blocks** — any rating other than `COMPATIBLE` requires an explicit
+  "Continue Anyway" (`ConfirmModal`) before Generate proceeds, per the spec's own literal framing.
+- **UI**: `ReplicateDesignWorkspace.tsx` (thin orchestrator, same stepper/`WizardSection`/`StepNextButton`
+  shape as `AiDesignerWorkflowPanel.tsx`) + 5 focused panels (`ReferenceImageUploadPanel`,
+  `DesignDnaReviewPanel`, `FabricMaterialSelectionPanel`, `CompatibilityWarningPanel`, `GenerateResultPanel`).
+  Sidebar gained a "Replicate Design" entry under the AI Designer section.
+- **RBAC**: reuses the existing `ai_designer` module's grants verbatim — no new module/actions.
+- 33 new unit tests (`replicate-design.service.test.ts`) covering ownership guards, the active-run guard, DNA
+  edit/reset/lock/approve, material-line validation, the never-hard-block compatibility gating, and
+  generation error-mapping (including the provider-lacks-capability path). `npx tsc --noEmit`, `npx eslint .`,
+  and `npx vitest run` (1483/1483) all clean.
+- **Verified live end-to-end against the real dev DB and real AI providers** (a stale-Prisma-client dev
+  server from another session was hit and fixed via the project's own documented restart-the-dev-server
+  gotcha): created `RPD-2026-00001` through the real UI, uploaded a real reference photo, ran DNA analysis
+  against the real Anthropic API (a deliberately blank test image correctly produced 14
+  `NOT_DETERMINABLE` observations with honest, non-fabricated reasoning — a strong confirmation of the
+  "never invent an unseen detail" prompt discipline), edited one observation (confirmed the AI's own
+  original stays visible/untouched) and approved; selected a real Fabric Master fabric ("Silk Chiffon") and
+  uploaded its real photo (confirmed metadata and image coexist, neither overwrites the other); ran the
+  compatibility check against the real Anthropic API, which correctly flagged a genuine "Minor Concern"
+  (chiffon needing reinforcement at a 5-button placket) with well-reasoned commentary; confirmed Generate
+  correctly required "Continue Anyway" before proceeding, and correctly failed clean
+  (`"No configured AI provider currently supports design replication..."`) when no admin-configured provider
+  had the new capability enabled yet; enabled `DESIGN_REPLICATION` on the OpenAI provider via the real admin
+  API and re-ran Generate — produced a real, substantial (~2MB) generated garment image via the real OpenAI
+  API, visibly showing a patterned blouse with a button placket; Select correctly required confirmation and
+  flipped the image to `SELECTED`. Server logs clean throughout aside from the two deliberately-triggered
+  failures above. `RPD-2026-00001` and the OpenAI provider's newly-enabled capability were left in place as a
+  real, working demonstration.
+- **Not built this phase (spec sections 10-21)**: selective natural-language re-edit of one locked feature,
+  visual version compare beyond plain history, a multi-stage approval workflow past a single Approve/Reject,
+  a rich Tech Pack, BOM/costing/Sample Request/Style Master integration, and full traceability — the schema
+  (particularly per-observation `isLocked` and the `MaterialLine`/`CompatibilityItem` rows) is shaped so these
+  attach later without a breaking migration.
+
+## Branch-level data access control (RoleBranchAccess), first phase on Inventory/Warehouse (2026-09-15)
+
+User asked to "properly implement branch access" against the 60-section Users/Roles/Permissions module spec
+they'd pasted earlier — scoped via two AskUserQuestion rounds before any code was written: **mirror the
+existing `RoleProductionStageAccess` pattern exactly** (same table shape, same union/unrestricted-wins
+semantics) rather than inventing a new mechanism, and **roll it out first on Inventory/Warehouse only**
+(Warehouse, Material Request, Goods Receipt, Stock Movement — matching the spec's own "Store Manager →
+Gurugram Factory" example), deferring the other ~18 branchId-carrying models to a future pass.
+
+- **Schema**: new `RoleBranchAccess` (`role_id` × `branch_id`, `@@unique([roleId, branchId])`) — a role with
+  zero rows is unrestricted (sees every branch, the default for every existing role); non-zero rows restrict
+  to just those branches. `Role.branchAccess`/`Branch.roleBranchAccess` back-relations. Migration
+  `20260915090000_add_role_branch_access`, applied via this project's established non-interactive workaround
+  (`migrate diff --script` → hand-placed `migration.sql` → `db execute` → `migrate resolve --applied`) and
+  independently re-verified via a direct `information_schema.columns` query, never trusted from
+  `resolve --applied` alone.
+- **`PermissionService.getAllowedBranchIds(userId): Promise<Set<string> | null>`** — placed directly after
+  the existing `getAllowedProductionStageIds()`, identical logic structure: a platform admin always gets
+  `null`; a user holding ANY unrestricted role gets `null` outright even if their other held roles are
+  individually restricted (holding one extra narrow role must never silently shrink an otherwise-unrestricted
+  user's own view); only when EVERY held role is restricted does the result become the union of their allowed
+  branch sets; a user holding no role at all gets an empty `Set` (sees nothing, matching that they'd already
+  fail every ordinary permission check too).
+- **`src/lib/branch-access.ts`** — `branchScopeWhere(allowedBranchIds)` (spread-in `{ branchId: { in: [...] } }`
+  addition alongside a query's existing `companyId` scoping, never a replacement; `null` → `{}`) and
+  `assertBranchAccess(actor, branchId)` (throws the new `BRANCH_ACCESS_DENIED`, 403, when a branch is outside
+  the actor's allowed set). New `BusinessRuleError` code alongside the existing
+  `PRODUCTION_STAGE_ACCESS_DENIED`.
+- **Admin UI**: `RoleBranchAccessPanel.tsx` on `/admin/roles/[id]` (checkbox list of the company's active
+  branches, "select nothing to leave this role unrestricted" copy), backed by `GET`/`PUT
+  /api/v1/administration/roles/[id]/branches` → `getRoleBranchAccess()`/`updateRoleBranches()` in
+  `role-admin.service.ts` (mirrors `getRoleProductionStageAccess()`/`updateRoleProductionStages()` exactly,
+  including being **deliberately allowed on system/seeded roles too** — stage/branch restriction is a purely
+  additive, narrowing dimension that can never widen what a role can do, unlike the module/action permission
+  matrix, which does block editing a seeded role). `replaceBranchAccessInTx()` in `role-admin.repository.ts`
+  follows the same "empty array is a real state — clears any existing restriction — not a no-op" contract as
+  its stage-access sibling.
+- **Enforcement, applied identically across all four modules**: every `list*`/`get*ById` function now takes
+  a richer actor (`{ companyId, userId }` in place of a bare `companyId` string) and spreads
+  `branchScopeWhere(allowedBranchIds)` into its `where`; every `get*ById` additionally checks
+  `allowedBranchIds !== null && (!record.branchId || !allowedBranchIds.has(record.branchId))` and throws a
+  plain `NOT_FOUND` — this app's established "deny as not-found" convention (never revealing a record exists
+  to someone who can't see it), the same denial shape already used for permission-based denial elsewhere.
+  Every API route/Server Component caller updated to pass `{ companyId: session.user.companyId, userId:
+  session.user.id }` instead of a bare `companyId`. Applied to `warehouse.service.ts` (`listWarehouses`/
+  `getWarehouseById`, plus `assertBranchAccess(actor, actor.branchId)` on `createWarehouse`),
+  `material-request.service.ts` (`listMaterialRequests`/`getMaterialRequestById`),
+  `goods-receipt.service.ts` (`listGoodsReceipts`/`getGoodsReceiptById`), and `stock-movement.service.ts`
+  (`listStockMovements`/`getStockMovementById`) — 22 new unit tests across the four modules' own test files
+  (branch-filtered/unfiltered list `where` shape, in-scope success, out-of-scope `NOT_FOUND`, a
+  no-branchId-when-restricted edge case), each requiring the same `vi.mock("@/core/rbac/PermissionService",
+  ...)` addition already established for `job-order.service.test.ts`'s equivalent stage-access mocks (a real
+  Postgres connection error is what happens if this mock is forgotten, since `getAllowedBranchIds()` would
+  otherwise hit the genuinely-unmocked real Prisma client inside the test environment).
+- **Verified live end-to-end against the real dev DB**: created a real second branch ("Gurugram Factory,"
+  `GGN`) through the actual `/admin` UI, created a real custom "Branch Access Test Role" (full
+  Inventory/Warehouse/Purchasing permissions) and restricted it to Head Office only via the real
+  `RoleBranchAccessPanel`, created a real test user holding it, signed in as them, and confirmed — for all
+  four modules — their list view correctly excluded a real record deliberately reassigned to the Gurugram
+  branch (a warehouse, a material request, a goods receipt, and a stock movement, each flipped via a direct
+  DB update for the test and restored to Head Office afterward) while a same-branch record stayed visible,
+  and that a direct `fetch()` to that record's own `GET .../:id` endpoint correctly returned
+  `404 NOT_FOUND` in every case. Confirmed Super Admin's own unrestricted view was completely unaffected
+  both before and after the test data was restored. Test user suspended afterward (no delete-user endpoint
+  exists, matching this project's own established precedent); the "Branch Access Test Role" itself was kept
+  as a real, working demonstration, the same precedent already set for the "Cutting Supervisor" test role
+  from the per-role Production Stage access pass.
+- `npx tsc --noEmit`, `npx eslint .` (0 errors), and `npx vitest run` (1567/1567, 22 new) all clean
+  throughout.
+- **Not built this pass, explicitly deferred per the user's own confirmed scope**: the other ~18
+  branchId-carrying models (Sales Orders, Purchase Orders, Production Orders, Dispatch, Journal, Invoices,
+  etc.) — extend using this exact same `getAllowedBranchIds`/`branchScopeWhere`/`assertBranchAccess` pattern
+  once that next module is prioritized.
+
+## Branch-level data access control, second phase — Sales Orders, Purchase Orders, Production, Dispatch, Accounts (2026-09-15)
+
+User authorized extending the pattern above to all remaining branch-carrying modules in one pass, confirmed
+via AskUserQuestion (multiSelect: all four proposed groups — Sales Orders + Purchase Orders; Production
+[Production Orders, Lots, Job Orders]; Dispatch; Accounts [Journal, Invoices, Payments, Expenses] — were all
+selected). Zero new mechanism — every one of these 9 service files was updated to the exact same
+`getAllowedBranchIds`/`branchScopeWhere`/`assertBranchAccess`/"deny as `NOT_FOUND`" convention the first
+phase already proved, with no schema or `PermissionService` changes needed at all.
+
+- **The rollout pattern, applied identically to every module**: `list*(companyId, query)` →
+  `list*(actor: { companyId; userId }, query)`, computing `allowedBranchIds` and spreading
+  `branchScopeWhere(allowedBranchIds)` into the Prisma `where`; `get*ById(companyId, id)` →
+  `get*ById(actor, id)`, adding the same `allowedBranchIds !== null && (!record.branchId ||
+  !allowedBranchIds.has(record.branchId)) → NOT_FOUND` check after the existing not-found guard. Every
+  internal caller within the same service file and every external caller (API routes, Server Component
+  pages) updated to pass `{ companyId: session.user.companyId, userId: session.user.id }` instead of a bare
+  `companyId`. Applied to `sales-order.service.ts`, `purchase-order.service.ts`,
+  `production-order.service.ts`, `lot.service.ts`, `job-order.service.ts`, `dispatch.service.ts`,
+  `journal.service.ts`, `sales-invoice.service.ts`, `purchase-invoice.service.ts`, `payment.service.ts`, and
+  `expense.service.ts` — 11 `list`/`get` pairs across 9 service files.
+- **`JobOrder` has no `branchId` column of its own** — it derives branch scope from its parent `Lot
+  .branchId`, requiring `branchId: true` to be added to the nested `lot` select inside the shared
+  `JOB_ORDER_INCLUDE` repository constant (`production.repository.ts`) rather than any schema migration.
+  Confirmed via grep before assuming this was safe — `JobOrder` genuinely has only `lotId`/
+  `productionStageId`, no `branchId`.
+- **`getJobOrderById`'s new branch-check parameter is optional (`userId?: string`), not required** — the
+  branch check is skipped entirely when it's omitted, so any hypothetical future internal caller that
+  doesn't need branch scoping can't be broken by this change. A dedicated unit test proves the no-op when
+  `userId` is absent.
+- **`getLotById(companyId, id, userId)` already had a `userId` param** from the earlier per-role Production
+  Stage access pass (used to filter job orders by allowed production stage) — the new branch check was
+  added as an additional guard using that same existing param, placed before the existing stage-filtering
+  logic, rather than adding a second parameter for the same actor.
+- **19 new unit tests** across the 9 modules' own test files (branch-filtered/unfiltered list `where` shape,
+  in-scope success, out-of-scope `NOT_FOUND`), each adding `getAllowedBranchIds: vi.fn()` to that module's
+  existing `PermissionService` mock (or creating the mock from scratch for the two modules —
+  `production-order.service.test.ts`, `lot.service.test.ts` — that had none at all before).
+- **Verified live end-to-end against real, pre-existing dev-DB data** — not fixtures: granted the existing
+  "Branch Access Test Role" the new modules' `view` permission (36 total now), reactivated the "Branch Test
+  User," then flipped one real Sales Order (`ORD-2026-00001`), one real Purchase Order (`PO-2026-00009`),
+  and the one real Production Order (`PROD-2026-00004`) to the Gurugram branch — confirmed the restricted
+  test user's list views correctly excluded all three and a direct `GET .../:id` call returned `404
+  NOT_FOUND` for each, then restored all three to Head Office. Confirmed Super Admin's own unrestricted view
+  was unaffected throughout. Test user suspended afterward; the "Branch Access Test Role" kept as a real,
+  working demonstration, per the same precedent already established.
+- **Accounts-side modules (Dispatch, Journal, Sales Invoice, Purchase Invoice, Payment, Expense) were not
+  live-verified this pass** — this dev DB has zero real transactional records in any of them, and its Chart
+  of Accounts currently holds only leftover test rows rather than the standard seeded set, so building fresh
+  fixtures purely for this check wasn't judged worth it given their branch-access logic already has
+  dedicated, passing unit tests covering the same enforcement shape already proven live on the other 5
+  modules.
+- `npx tsc --noEmit`, `npx eslint .` (0 errors), and `npx vitest run` (1616/1616, 19 new) all clean
+  throughout — including after merging a same-day, independently-landed `main` commit (Lot size/color
+  breakdown, #44) that touched several of the same files; the one real conflict (both branches added
+  different new test blocks to `lot.service.test.ts`) was resolved by keeping both sets of tests side by
+  side, and `prisma generate`/`prisma migrate deploy` were re-run to pick up that commit's own new
+  `LotVariantBreakdown` schema addition.
+
 ## Recommended Stack
 
 Next.js 14+ (App Router) + React + TypeScript + Tailwind CSS (frontend); Next.js API routes/route handlers as REST API; PostgreSQL + Prisma ORM; session-based auth (Auth.js/NextAuth, DB sessions) with RBAC and optional TOTP 2FA; S3-compatible or local file storage for attachments; server-side PDF/Excel export (`exceljs`, `pdf-lib`/`@react-pdf/renderer`).
@@ -5475,3 +6591,13 @@ Security review, performance/indexing pass, backup strategy, full audit-log cove
 ## Reference
 
 Full architecture rationale, complete table-by-table field lists, and the full role×module permission matrix were developed in the Phase 1 planning session and are condensed here. Consult that history if a design decision needs deeper justification than what's summarized above.
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->

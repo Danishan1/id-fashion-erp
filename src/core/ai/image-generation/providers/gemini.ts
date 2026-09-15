@@ -1,6 +1,6 @@
 import { GoogleGenAI, ApiError, FinishReason } from "@google/genai";
 import type { Content, GenerateContentResponse } from "@google/genai";
-import { getGeminiImageConfig } from "../config";
+import { getGeminiImageConfig, type GeminiImageConfig } from "../config";
 import { ImageGenerationServiceError, type GenerateImagesResult, type ImageGenerationProvider } from "../types";
 
 /**
@@ -96,8 +96,8 @@ function extractSingleImage(response: GenerateContentResponse): GenerateImagesRe
   return { buffer: Buffer.from(imagePart.inlineData.data, "base64"), mimeType };
 }
 
-export function createGeminiImageProvider(): ImageGenerationProvider {
-  const config = getGeminiImageConfig();
+/** `config` is optional for the same backward-compatibility reason as createOpenAiImageProvider — see its own comment. */
+export function createGeminiImageProvider(config: GeminiImageConfig = getGeminiImageConfig()): ImageGenerationProvider {
   const ai = client(config.apiKey);
 
   /** One generateContent call producing exactly one image. Requested images are generated sequentially, not via Promise.all — Gemini's free tier has a low requests-per-minute ceiling, and this provider exists specifically to be usable on that tier, so bursting `count` concurrent calls would defeat the point. */
@@ -181,5 +181,69 @@ export function createGeminiImageProvider(): ImageGenerationProvider {
         count
       );
     },
+
+    // Same two-image + text call shape as applyFabric — the reference
+    // garment photo and the new material photo are both supplied as
+    // inlineData Parts, and the prompt carries every locked Design DNA
+    // observation as a hard structural constraint.
+    async replicateWithNewMaterial({ prompt, count, referenceImage, materialImage }): Promise<GenerateImagesResult> {
+      return generateSequentially(
+        [
+          {
+            role: "user",
+            parts: [
+              { inlineData: { data: referenceImage.buffer.toString("base64"), mimeType: referenceImage.mimeType } },
+              { inlineData: { data: materialImage.buffer.toString("base64"), mimeType: materialImage.mimeType } },
+              { text: prompt },
+            ],
+          },
+        ],
+        count
+      );
+    },
+
+    // Same single-image + text call shape as generateVariation — the fabric
+    // photo is the one inlineData Part, and the prompt instructs the model
+    // to compose a brand-new garment scene using it as the exact fabric
+    // source, rather than describing a small edit to it.
+    async generateFromFabricReference({ prompt, count, fabricImage }): Promise<GenerateImagesResult> {
+      return generateSequentially(
+        [
+          {
+            role: "user",
+            parts: [{ inlineData: { data: fabricImage.buffer.toString("base64"), mimeType: fabricImage.mimeType } }, { text: prompt }],
+          },
+        ],
+        count
+      );
+    },
   };
+}
+
+/**
+ * A real, free connectivity check for the admin "Test Connection" action.
+ * The SDK has no single "get one model" call (confirmed from its own type
+ * definitions — Models only exposes `list`), so this lists the account's
+ * available models (a free metadata call, not an inference call — the same
+ * discipline as OpenAI's own `models.retrieve()` test above, just adapted
+ * to this SDK's own actual surface) and confirms the configured model
+ * genuinely appears in it. A failed list() call itself already validates/
+ * invalidates the API key and reachability.
+ */
+export async function testGeminiConnection(config: GeminiImageConfig): Promise<{ modelAvailable: boolean }> {
+  try {
+    const ai = client(config.apiKey);
+    const pager = await ai.models.list({ config: { pageSize: 200 } });
+    let modelAvailable = false;
+    for await (const model of pager) {
+      if (model.name === config.model || model.name === `models/${config.model}`) {
+        modelAvailable = true;
+        break;
+      }
+    }
+    return { modelAvailable };
+  } catch (err) {
+    if (err instanceof ImageGenerationServiceError) throw err;
+    throw mapSdkError(err);
+  }
 }

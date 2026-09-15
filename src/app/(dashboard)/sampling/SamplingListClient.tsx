@@ -30,7 +30,11 @@ type SortBy = "requestDate" | "status" | "customer" | "buyer" | "styleName";
 const SORT_COLUMNS: { key: SortBy; header: string }[] = [
   { key: "customer", header: "Customer" },
   { key: "buyer", header: "Buyer" },
-  { key: "styleName", header: "Style" },
+  // Sorts on SampleRequest's own free-text styleName column — the header
+  // reads "Design Name" to match what it actually displays (row.styleName,
+  // not the linked Style master's own name — that's the separate, plain
+  // "Style" column rendered right after Type below).
+  { key: "styleName", header: "Design Name" },
   { key: "status", header: "Status" },
   { key: "requestDate", header: "Request Date" },
 ];
@@ -69,7 +73,7 @@ export function SamplingListClient() {
         if (filters.requestedByUserId) url.searchParams.set("requestedByUserId", filters.requestedByUserId);
         if (filters.dateFrom) url.searchParams.set("dateFrom", filters.dateFrom);
         if (filters.dateTo) url.searchParams.set("dateTo", filters.dateTo);
-        if (filters.color) url.searchParams.set("color", filters.color);
+        if (filters.colorId) url.searchParams.set("colorId", filters.colorId);
 
         const res = await fetch(url.toString(), { signal: controller.signal });
         const body = await res.json();
@@ -98,7 +102,7 @@ export function SamplingListClient() {
     setPage(1);
   };
 
-  const colSpan = SORT_COLUMNS.length + 4; // Request #, Type, Requested By, Actions
+  const colSpan = SORT_COLUMNS.length + 5; // Request #, Type, Style, Requested By, Actions
 
   return (
     <div className="space-y-4">
@@ -157,6 +161,12 @@ export function SamplingListClient() {
             <tr className="border-b border-zinc-200 text-left text-xs uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
               <th className="px-4 py-2 font-medium">Request #</th>
               <th className="px-4 py-2 font-medium">Type</th>
+              {/* The real linked Style master's own name — plain, not
+                  sortable (no product relation sort exists server-side yet).
+                  Distinct from "Design Name" below, which is this request's
+                  own free-text styleName and may differ from, or exist
+                  without, a linked Style. */}
+              <th className="px-4 py-2 font-medium">Style</th>
               {SORT_COLUMNS.map((col) => (
                 <th key={col.key} className="px-4 py-2 font-medium">
                   <button
@@ -206,11 +216,10 @@ export function SamplingListClient() {
                   <td className="px-4 py-2 text-zinc-700 dark:text-zinc-200">
                     {row.sampleType ? SAMPLE_TYPE_LABELS[row.sampleType] : "Not specified"}
                   </td>
+                  <td className="px-4 py-2 text-zinc-700 dark:text-zinc-200">{row.product?.styleName ?? "—"}</td>
                   <td className="px-4 py-2 text-zinc-700 dark:text-zinc-200">{row.customer?.name ?? "—"}</td>
                   <td className="px-4 py-2 text-zinc-700 dark:text-zinc-200">{row.buyer?.name ?? "—"}</td>
-                  <td className="px-4 py-2 text-zinc-700 dark:text-zinc-200">
-                    {row.styleName ?? row.product?.styleName ?? "—"}
-                  </td>
+                  <td className="px-4 py-2 text-zinc-700 dark:text-zinc-200">{row.styleName ?? "—"}</td>
                   <td className="px-4 py-2">
                     <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_BADGE_CLASS[row.status]}`}>
                       {STATUS_LABELS[row.status] ?? row.status}
@@ -221,9 +230,19 @@ export function SamplingListClient() {
                   </td>
                   <td className="px-4 py-2 text-zinc-700 dark:text-zinc-200">{row.requestedBy?.fullName ?? "—"}</td>
                   <td className="px-4 py-2">
-                    <Link href={`/sampling/${row.id}`} className="font-medium text-indigo-600 hover:text-indigo-500">
-                      Edit
-                    </Link>
+                    <div className="flex items-center gap-3">
+                      <Link href={`/sampling/${row.id}`} className="font-medium text-indigo-600 hover:text-indigo-500">
+                        Edit
+                      </Link>
+                      <Link
+                        href={`/bom-mrp/design/${row.id}`}
+                        className="font-medium text-indigo-600 hover:text-indigo-500"
+                        title="View this design's Bill of Materials"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        Design BOM
+                      </Link>
+                    </div>
                   </td>
                 </tr>
               ))}

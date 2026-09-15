@@ -2,7 +2,9 @@ import { prisma } from "@/core/db/client";
 import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingService";
+import { PermissionService } from "@/core/rbac/PermissionService";
 import type { ListQuery } from "@/lib/list-query";
+import { branchScopeWhere } from "@/lib/branch-access";
 import { convertUomQuantity } from "@/lib/uom-conversion";
 import { recordInventoryTransaction } from "@/modules/inventory/inventory.service";
 import { MaterialRequestItemRepository } from "@/modules/inventory/material-request.repository";
@@ -18,9 +20,11 @@ interface ActorContext {
   branchId?: string | null;
 }
 
-export async function listGoodsReceipts(companyId: string, query: ListQuery) {
+export async function listGoodsReceipts(actor: { companyId: string; userId: string }, query: ListQuery) {
+  const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
   const where: Prisma.GoodsReceiptWhereInput = {
-    companyId,
+    companyId: actor.companyId,
+    ...branchScopeWhere(allowedBranchIds),
     ...(query.search ? { receiptNumber: { contains: query.search, mode: "insensitive" as const } } : {}),
   };
 
@@ -36,9 +40,16 @@ export async function listGoodsReceipts(companyId: string, query: ListQuery) {
   return { data, totalCount };
 }
 
-export async function getGoodsReceiptById(companyId: string, id: string) {
-  const receipt = await GoodsReceiptRepository.findByIdWithDetails(companyId, id);
+/** A branch-restricted user gets NOT_FOUND for a receipt outside their allowed branches — same "deny as not-found" convention used across this app. */
+export async function getGoodsReceiptById(actor: { companyId: string; userId: string }, id: string) {
+  const receipt = await GoodsReceiptRepository.findByIdWithDetails(actor.companyId, id);
   if (!receipt) throw new BusinessRuleError("NOT_FOUND", "Goods receipt not found.", { id });
+
+  const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
+  if (allowedBranchIds !== null && (!receipt.branchId || !allowedBranchIds.has(receipt.branchId))) {
+    throw new BusinessRuleError("NOT_FOUND", "Goods receipt not found.", { id });
+  }
+
   return receipt;
 }
 
@@ -553,7 +564,7 @@ export async function reverseGoodsReceiptLine(
     newValues: { reversedQuantityDelta: input.quantity, reason: input.reason, fabricRollId: fabricRollId || null },
   });
 
-  return getGoodsReceiptById(actor.companyId, result.goodsReceiptId);
+  return getGoodsReceiptById(actor, result.goodsReceiptId);
 }
 
 /** Thin convenience wrapper: reverses every line's (and, for roll-tracked
@@ -578,5 +589,5 @@ export async function cancelGoodsReceipt(actor: ActorContext, id: string, reason
     }
   }
 
-  return getGoodsReceiptById(actor.companyId, id);
+  return getGoodsReceiptById(actor, id);
 }

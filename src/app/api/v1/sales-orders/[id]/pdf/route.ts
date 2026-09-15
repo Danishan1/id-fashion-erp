@@ -16,7 +16,7 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
     await PermissionService.assert(session.user.id, "sales_orders", "export");
 
     const { id } = await params;
-    const order = await getSalesOrderById(session.user.companyId, id);
+    const order = await getSalesOrderById({ companyId: session.user.companyId, userId: session.user.id }, id);
     const customerAddress = await prisma.customer.findUnique({
       where: { id: order.customerId },
       select: { billingAddress: true, country: true },
@@ -24,16 +24,21 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
 
     const { companyName, companyDetailLines } = await getCompanyHeaderLines(session.user.companyId);
 
-    const rows = order.items.map((item) => {
-      const qty = item.breakdown.reduce((sum: number, b: { orderedQuantity: number }) => sum + b.orderedQuantity, 0);
-      const amount = Number(item.unitPrice) * qty;
-      return {
+    // One row per (style, color, size) breakdown line, not one summed row per
+    // style — so the PDF itself shows exactly what was ordered and how much
+    // of each color/size, not just a style-level total. Rows still sum to
+    // the same "Order Total" line below (each row's own Amount is that
+    // color/size line's own unitPrice x orderedQuantity).
+    const rows = order.items.flatMap((item) =>
+      item.breakdown.map((b: { orderedQuantity: number; productVariant: { color: { name: string }; size: { name: string } } }) => ({
         style: `${item.product.styleName} (${item.product.styleCode})`,
-        qty: qty.toLocaleString("en-IN"),
+        color: b.productVariant.color.name,
+        size: b.productVariant.size.name,
+        qty: b.orderedQuantity.toLocaleString("en-IN"),
         unitPrice: formatMoney(item.unitPrice, order.currencyCode),
-        amount: formatMoney(amount, order.currencyCode),
-      };
-    });
+        amount: formatMoney(Number(item.unitPrice) * b.orderedQuantity, order.currencyCode),
+      }))
+    );
 
     const partyDetailLines: string[] = [];
     if (customerAddress?.billingAddress) partyDetailLines.push(customerAddress.billingAddress);
@@ -51,11 +56,14 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
       partyName: order.customer.name,
       partyDetailLines,
       metaLines: [
+        ...(order.customerPoNumber ? [{ label: "Customer PO", value: order.customerPoNumber }] : []),
         ...(order.requiredShipDate ? [{ label: "Required Ship Date", value: formatDocDate(order.requiredShipDate) }] : []),
         { label: "Requested By", value: order.requestedBy.fullName },
       ],
       columns: [
         { key: "style", label: "Style" },
+        { key: "color", label: "Color" },
+        { key: "size", label: "Size" },
         { key: "qty", label: "Qty", align: "right" },
         { key: "unitPrice", label: "Unit Price", align: "right" },
         { key: "amount", label: "Amount", align: "right" },

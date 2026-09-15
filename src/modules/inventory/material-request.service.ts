@@ -4,6 +4,7 @@ import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingServic
 import { PermissionService } from "@/core/rbac/PermissionService";
 import { prisma } from "@/core/db/client";
 import type { ListQuery } from "@/lib/list-query";
+import { branchScopeWhere } from "@/lib/branch-access";
 import { convertUomQuantity } from "@/lib/uom-conversion";
 import { todayIsoDate } from "@/lib/date";
 import { BomRepository } from "@/modules/bom-mrp/bom.repository";
@@ -11,7 +12,9 @@ import { getMaterialRequirements } from "@/modules/bom-mrp/mrp.service";
 import { LookupRepository } from "@/modules/lookups/lookup.repository";
 import { ProductRepository } from "@/modules/products/product.repository";
 import { SalesOrderRepository } from "@/modules/sales-orders/sales-order.repository";
+import { SampleMaterialRepository, SampleVersionRepository } from "@/modules/sampling/sample.repository";
 import { createPurchaseOrder } from "@/modules/purchasing/purchase-order.service";
+import { FabricRollRepository } from "@/modules/purchasing/fabric-roll.repository";
 import { getAvailableQuantity, getAvailableQuantityByDye, recordInventoryTransaction } from "./inventory.service";
 import { MaterialRequestItemRepository, MaterialRequestRepository } from "./material-request.repository";
 import type { MaterialRequestInput, MaterialRequestItemInput, UpdateMaterialRequestInput } from "./material-request.schema";
@@ -212,11 +215,13 @@ const CANCEL_TARGETS_BY_STATUS: Record<MaterialRequestStatus, MaterialRequestSta
   CANCELLED: [],
 };
 
-/** Real, not just label-based: blocks editing/cancelling once any line has
- * actually had stock issued or a shortfall escalated to a Purchase Order —
- * the same "check the real state, not the status label" lesson this project
- * has already learned twice (Sampling's Hold/Resume bug, Purchasing's
- * cancel-from-ON_HOLD bug). */
+/** Real, not just label-based: blocks cancelling the WHOLE request once any
+ * line has actually had stock issued or a shortfall escalated to a Purchase
+ * Order — the same "check the real state, not the status label" lesson this
+ * project has already learned twice (Sampling's Hold/Resume bug,
+ * Purchasing's cancel-from-ON_HOLD bug). Cancel is a request-wide action, so
+ * this stays request-level; editing is gated per line instead (see
+ * updateMaterialRequestLines/MaterialRequestRepository.countLockedLines). */
 async function assertNothingIssuedOrEscalated(materialRequestId: string, action: string) {
   const [issuedCount, linkedCount] = await Promise.all([
     MaterialRequestRepository.countIssuedLines(materialRequestId),
@@ -231,9 +236,11 @@ async function assertNothingIssuedOrEscalated(materialRequestId: string, action:
   }
 }
 
-export async function listMaterialRequests(companyId: string, query: ListQuery) {
+export async function listMaterialRequests(actor: { companyId: string; userId: string }, query: ListQuery) {
+  const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
   const where: Prisma.MaterialRequestWhereInput = {
-    companyId,
+    companyId: actor.companyId,
+    ...branchScopeWhere(allowedBranchIds),
     ...(query.search ? { requestNumber: { contains: query.search, mode: "insensitive" as const } } : {}),
   };
 
@@ -249,15 +256,21 @@ export async function listMaterialRequests(companyId: string, query: ListQuery) 
   return { data, totalCount };
 }
 
-export async function getMaterialRequestById(companyId: string, id: string) {
-  const request = await MaterialRequestRepository.findByIdWithDetails(companyId, id);
+/** A branch-restricted user gets NOT_FOUND for a request outside their allowed branches — same "deny as not-found" convention used across this app. */
+export async function getMaterialRequestById(actor: { companyId: string; userId: string }, id: string) {
+  const request = await MaterialRequestRepository.findByIdWithDetails(actor.companyId, id);
   if (!request) throw new BusinessRuleError("NOT_FOUND", "Material request not found.", { id });
+
+  const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
+  if (allowedBranchIds !== null && (!request.branchId || !allowedBranchIds.has(request.branchId))) {
+    throw new BusinessRuleError("NOT_FOUND", "Material request not found.", { id });
+  }
 
   const lines = await Promise.all(
     request.lines.map(async (line) => ({
       ...line,
       ...projectLineQuantities(line),
-      availableStockQuantity: await getLineAvailableStock(companyId, request.warehouseId, line),
+      availableStockQuantity: await getLineAvailableStock(actor.companyId, request.warehouseId, line),
     }))
   );
 
@@ -315,6 +328,7 @@ export async function createMaterialRequest(actor: ActorContext, input: Material
     productionOrderId: input.productionOrderId || null,
     bomId: input.bomId || null,
     originalMaterialRequestId: input.originalMaterialRequestId || null,
+    sampleVersionId: input.sampleVersionId || null,
     remarks: input.remarks || null,
     status: "OPEN",
     requestedByUserId: actor.userId,
@@ -411,10 +425,93 @@ export async function createMaterialRequestFromShortfall(
   });
 }
 
-/** Full replace of a request's lines, blocked once anything has actually
- * been issued or escalated — there's no approval gate here to check instead
- * (this module deliberately has none), so the real-state guard above is the
- * only thing protecting against editing a request that's already moved. */
+/** Not-CANCELLED/CLOSED requests already generated from this exact Sample
+ * Version — proactive advisory data for Sampling's own "Generate Material
+ * Request" button, and the same check createMaterialRequestFromSampleVersion
+ * enforces (with an override) before actually creating a request. */
+export async function findMaterialRequestsBySampleVersion(companyId: string, sampleVersionId: string) {
+  return MaterialRequestRepository.findOpenBySampleVersion(companyId, sampleVersionId);
+}
+
+/**
+ * Powers the "Generate Material Request" action on a Sample Version's own
+ * materials list in Sampling — the raw material selected during
+ * development genuinely gets used/consumed for the physical sample, so it
+ * goes through the exact same real Material Request -> Inventory-checks-
+ * stock -> Issue flow as every other requirement in this app, not a
+ * separate mechanism. Every SampleMaterial line on the version becomes one
+ * request line (never a selected subset — a version's material list is
+ * already a small, deliberately-curated set, unlike BOM/MRP's shortfall
+ * rows); a line with no uomId of its own falls back to its material's real
+ * base unit, matching what the Add Material UI already defaults new lines
+ * to.
+ */
+export async function createMaterialRequestFromSampleVersion(
+  actor: ActorContext,
+  input: { sampleVersionId: string; warehouseId: string; overrideDuplicateCheck?: boolean }
+) {
+  const version = await SampleVersionRepository.findWithRequestOwner(input.sampleVersionId);
+  if (!version || version.sampleRequest.companyId !== actor.companyId) {
+    throw new BusinessRuleError("NOT_FOUND", "Sample version not found.", { id: input.sampleVersionId });
+  }
+
+  const materials = await SampleMaterialRepository.findByVersionIdForMaterialRequest(input.sampleVersionId);
+  if (materials.length === 0) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "This sample version has no materials to request.", {
+      sampleVersionId: input.sampleVersionId,
+    });
+  }
+
+  if (!input.overrideDuplicateCheck) {
+    const existing = await findMaterialRequestsBySampleVersion(actor.companyId, input.sampleVersionId);
+    if (existing.length > 0) {
+      throw new BusinessRuleError(
+        "DUPLICATE_MATERIAL_REQUEST_EXISTS",
+        `A Material Request already exists for this sample version (${existing.map((r) => r.requestNumber).join(", ")}).`,
+        { existing }
+      );
+    }
+  }
+
+  const lines = materials.map((m) => {
+    const uomId = m.uomId ?? m.material.baseUomId;
+    if (!uomId) {
+      throw new BusinessRuleError(
+        "VALIDATION_ERROR",
+        `"${m.material.styleName}" has no unit set on this material line and no base unit configured for it — set one before generating a Material Request.`,
+        { sampleMaterialId: m.id }
+      );
+    }
+    return {
+      materialId: m.materialId,
+      colorId: m.colorId ?? undefined,
+      dyeId: m.dyeId ?? undefined,
+      uomId,
+      requestedQuantity: Number(m.plannedQuantity),
+    };
+  });
+
+  return createMaterialRequest(actor, {
+    requestType: "SAMPLING_REQUIREMENT",
+    warehouseId: input.warehouseId,
+    sampleVersionId: input.sampleVersionId,
+    lines,
+  });
+}
+
+/**
+ * Line-level replace, not request-level: a line that's already had real
+ * stock issued or a shortfall escalated to a Purchase Order is locked and
+ * preserved untouched (see replaceLines/UNLOCKED_LINE_WHERE); every other
+ * line on the request stays freely editable — material, color, dye, unit,
+ * quantity, remarks — regardless of what's happened on a sibling line.
+ * `input.lines` represents the desired FINAL state of just the unlocked
+ * portion (the client never sends locked lines back at all), so this is
+ * still a full replace, just scoped to a subset instead of the whole
+ * request. No new "who can do this" concept either — the existing
+ * `inventory`/`edit` permission already covers the requester, whoever
+ * issues stock, and an admin uniformly (see the route).
+ */
 export async function updateMaterialRequestLines(actor: ActorContext, id: string, input: UpdateMaterialRequestInput) {
   const existing = await MaterialRequestRepository.findAnyById(actor.companyId, id);
   if (!existing) throw new BusinessRuleError("NOT_FOUND", "Material request not found.", { id });
@@ -426,7 +523,15 @@ export async function updateMaterialRequestLines(actor: ActorContext, id: string
       { currentStatus: existing.status }
     );
   }
-  await assertNothingIssuedOrEscalated(id, "edit this material request");
+
+  // The only request-level check left: don't let an edit leave the request
+  // with zero lines total once its locked lines (never part of `input.lines`
+  // at all) are counted back in.
+  const lockedLineCount = await MaterialRequestRepository.countLockedLines(id);
+  if (lockedLineCount + input.lines.length === 0) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "A material request must have at least one line item.", {});
+  }
+
   await assertLinesHaveConvertibleUom(actor.companyId, input.lines);
 
   const updated = await MaterialRequestRepository.replaceLines(
@@ -441,6 +546,7 @@ export async function updateMaterialRequestLines(actor: ActorContext, id: string
       productionOrderId: input.productionOrderId || null,
       bomId: input.bomId || null,
       originalMaterialRequestId: input.originalMaterialRequestId || null,
+      sampleVersionId: input.sampleVersionId || null,
       remarks: input.remarks || null,
     },
     input.lines.map(mapLineInput)
@@ -470,7 +576,17 @@ export async function issueMaterialRequestLine(
   actor: ActorContext,
   lineId: string,
   issueQuantity: number,
-  warehouseLocationId?: string | null
+  warehouseLocationId?: string | null,
+  fabricRollId?: string | null,
+  // Manual "issue extra" override (2026-09-15, explicit user request) — real
+  // sample-making routinely uses slightly more material than the BOM's own
+  // planned figure (e.g. 2m planned, 2.2m actually needed for wastage). Only
+  // meaningful, and only ever honored, for SAMPLING_REQUIREMENT lines — a
+  // reason is required whenever the requested amount genuinely exceeds what
+  // remains, so it's visible later via the audit log (no new schema column,
+  // matching the "reason lives in the audit trail" precedent already used
+  // elsewhere, e.g. Material Request's own "Purchase Quantity Changed" entry).
+  extraReason?: string
 ) {
   const line = await MaterialRequestItemRepository.findWithRequestOwner(lineId);
   if (!line || line.materialRequest.companyId !== actor.companyId) {
@@ -485,13 +601,28 @@ export async function issueMaterialRequestLine(
   }
 
   const remaining = Number(line.requestedQuantity) - Number(line.issuedQuantity);
-  if (issueQuantity > remaining) {
-    throw new BusinessRuleError(
-      "OVER_ISSUE_NOT_ALLOWED",
-      `Cannot issue ${issueQuantity} — only ${remaining} remains on this line.`,
-      { remaining, issueQuantity }
-    );
+  const overRequested = Math.max(0, issueQuantity - remaining);
+  if (overRequested > 0) {
+    if (line.materialRequest.requestType !== "SAMPLING_REQUIREMENT") {
+      throw new BusinessRuleError(
+        "OVER_ISSUE_NOT_ALLOWED",
+        `Cannot issue ${issueQuantity} — only ${remaining} remains on this line.`,
+        { remaining, issueQuantity }
+      );
+    }
+    if (!extraReason?.trim()) {
+      throw new BusinessRuleError(
+        "VALIDATION_ERROR",
+        `Issuing ${issueQuantity} is ${overRequested} more than the ${remaining} remaining on this line — a reason is required to issue extra.`,
+        { remaining, issueQuantity }
+      );
+    }
   }
+  // The guarded increment's own cap widens by exactly the approved extra
+  // amount (0 for every non-override issue, unchanged from before) — never a
+  // blanket unlimited allowance, and still race-safe under concurrent issues
+  // against the same line.
+  const issueCap = Number(line.requestedQuantity) + overRequested;
 
   if (!line.material.baseUom) {
     throw new BusinessRuleError(
@@ -509,20 +640,49 @@ export async function issueMaterialRequestLine(
     );
   }
 
-  const available = await getLineAvailableStock(actor.companyId, line.materialRequest.warehouseId, line);
-  if (baseQuantity > available) {
-    throw new BusinessRuleError(
-      "INSUFFICIENT_RAW_MATERIAL_STOCK",
-      `Unable to issue ${issueQuantity} of "${line.material.styleName}" — only ${available} available at this warehouse. Available: ${available}, Requested: ${baseQuantity}.`,
-      { available, requested: baseQuantity }
-    );
+  // Issuing against one specific physical roll — the color/shade actually
+  // being handed out — is a genuinely different, more precise check than
+  // the material-wide fallback below: the roll's own remainingQuantity is
+  // both the availability ceiling AND, unlike the flat StockBalance path,
+  // the thing this issue must actually decrement (see guardedDecrementRemaining
+  // below), since nothing else in this function ever touches FabricRoll.
+  let roll: Awaited<ReturnType<typeof FabricRollRepository.findByIdWithContext>> = null;
+  if (fabricRollId) {
+    roll = await FabricRollRepository.findByIdWithContext(actor.companyId, fabricRollId);
+    if (
+      !roll ||
+      roll.status !== "IN_STOCK" ||
+      roll.goodsReceiptItem.productId !== line.materialId ||
+      roll.goodsReceiptItem.warehouseId !== line.materialRequest.warehouseId
+    ) {
+      throw new BusinessRuleError("NOT_FOUND", "The selected fabric roll is not available for this material at this warehouse.", {
+        fabricRollId,
+      });
+    }
+    const rollAvailable = Number(roll.remainingQuantity);
+    if (baseQuantity > rollAvailable) {
+      throw new BusinessRuleError(
+        "INSUFFICIENT_RAW_MATERIAL_STOCK",
+        `Unable to issue ${issueQuantity} from this roll — only ${rollAvailable} remains on it. Available: ${rollAvailable}, Requested: ${baseQuantity}.`,
+        { available: rollAvailable, requested: baseQuantity }
+      );
+    }
+  } else {
+    const available = await getLineAvailableStock(actor.companyId, line.materialRequest.warehouseId, line);
+    if (baseQuantity > available) {
+      throw new BusinessRuleError(
+        "INSUFFICIENT_RAW_MATERIAL_STOCK",
+        `Unable to issue ${issueQuantity} of "${line.material.styleName}" — only ${available} available at this warehouse. Available: ${available}, Requested: ${baseQuantity}.`,
+        { available, requested: baseQuantity }
+      );
+    }
   }
 
   await prisma.$transaction(async (tx) => {
     const result = await MaterialRequestItemRepository.guardedIncrementIssued(
       tx,
       lineId,
-      Number(line.requestedQuantity),
+      issueCap,
       issueQuantity,
       warehouseLocationId || null
     );
@@ -542,7 +702,19 @@ export async function issueMaterialRequestLine(
       referenceModule: "MATERIAL_REQUEST",
       referenceRecordId: lineId,
       warehouseLocationId: warehouseLocationId || null,
+      fabricRollId: roll?.id || null,
     });
+
+    if (roll) {
+      const guard = await FabricRollRepository.guardedDecrementRemaining(tx, roll.id, baseQuantity);
+      if (guard.count === 0) {
+        throw new BusinessRuleError(
+          "INSUFFICIENT_RAW_MATERIAL_STOCK",
+          "This roll was issued from by someone else at the same time — reload and try again.",
+          { fabricRollId: roll.id }
+        );
+      }
+    }
   });
 
   await recomputeAndPersistStatus(actor, line.materialRequest.id);
@@ -553,10 +725,42 @@ export async function issueMaterialRequestLine(
     tableName: "material_request_items",
     recordId: lineId,
     action: "UPDATE",
-    newValues: { issuedQuantity: issueQuantity },
+    newValues: {
+      issuedQuantity: issueQuantity,
+      ...(overRequested > 0 ? { extraQuantity: overRequested, extraReason } : {}),
+    },
   });
 
   return MaterialRequestItemRepository.findById(lineId);
+}
+
+/**
+ * The color/shade-wise breakdown for a line's own material at its request's
+ * warehouse — one row per physically in-stock FabricRoll, each carrying its
+ * own real remaining quantity. Feeds the Issue modal's "which color am I
+ * actually handing out" picker; empty for a non-FABRIC material (nothing
+ * tracks shade at that granularity for it) or a FABRIC material with no
+ * roll-level stock at all, in which case the UI simply falls back to the
+ * existing flat-total Issue flow.
+ */
+export async function getAvailableRollsForLine(actor: ActorContext, lineId: string) {
+  const line = await MaterialRequestItemRepository.findWithRequestOwner(lineId);
+  if (!line || line.materialRequest.companyId !== actor.companyId) {
+    throw new BusinessRuleError("NOT_FOUND", "Material request line not found.", { id: lineId });
+  }
+
+  const rolls = await FabricRollRepository.findAvailableForMaterial(
+    actor.companyId,
+    line.materialId,
+    line.materialRequest.warehouseId
+  );
+
+  return rolls.map((roll) => ({
+    id: roll.id,
+    rollNumber: roll.rollNumber,
+    remainingQuantity: roll.remainingQuantity,
+    dye: roll.dye,
+  }));
 }
 
 interface GeneratePurchaseOrderResult {
@@ -744,7 +948,7 @@ export async function generatePurchaseOrdersForShortfall(
     },
   });
 
-  return { results, skipped, materialRequest: await getMaterialRequestById(actor.companyId, id) };
+  return { results, skipped, materialRequest: await getMaterialRequestById(actor, id) };
 }
 
 export async function closeMaterialRequest(actor: ActorContext, id: string) {

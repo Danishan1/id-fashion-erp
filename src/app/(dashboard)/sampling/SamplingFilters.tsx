@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { textInputClass } from "@/components/ui/FormField";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { toIsoDate } from "@/lib/date";
 import { STATUS_LABELS } from "./statusLabels";
 
@@ -13,7 +14,7 @@ export interface SamplingFiltersValue {
   requestedByUserId: string;
   dateFrom: string;
   dateTo: string;
-  color: string;
+  colorId: string;
 }
 
 export const EMPTY_FILTERS: SamplingFiltersValue = {
@@ -24,7 +25,7 @@ export const EMPTY_FILTERS: SamplingFiltersValue = {
   requestedByUserId: "",
   dateFrom: "",
   dateTo: "",
-  color: "",
+  colorId: "",
 };
 
 interface Option {
@@ -41,7 +42,7 @@ function countActive(f: SamplingFiltersValue): number {
     (f.statuses.length > 0 ? 1 : 0) +
     (f.requestedByUserId ? 1 : 0) +
     (f.dateFrom || f.dateTo ? 1 : 0) +
-    (f.color ? 1 : 0)
+    (f.colorId ? 1 : 0)
   );
 }
 
@@ -78,6 +79,7 @@ export function SamplingFilters({
   const [customers, setCustomers] = useState<Option[]>([]);
   const [buyers, setBuyers] = useState<Option[]>([]);
   const [users, setUsers] = useState<Option[]>([]);
+  const [colors, setColors] = useState<Option[]>([]);
 
   useEffect(() => {
     fetch("/api/v1/customers?pageSize=200")
@@ -86,6 +88,9 @@ export function SamplingFilters({
     fetch("/api/v1/users")
       .then((res) => res.json())
       .then((body) => setUsers(body.data ?? []));
+    fetch("/api/v1/colors?pageSize=200")
+      .then((res) => res.json())
+      .then((body) => setColors(body.data ?? []));
   }, []);
 
   // Resetting `buyers` when the customer is cleared happens in the Customer
@@ -125,38 +130,32 @@ export function SamplingFilters({
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <div>
               <label className="block text-xs font-medium text-zinc-500 dark:text-zinc-400">Customer</label>
-              <select
-                value={draft.customerId}
-                onChange={(e) => {
-                  setDraft((d) => ({ ...d, customerId: e.target.value, buyerId: "" }));
-                  setBuyers([]);
-                }}
-                className={`${textInputClass()} mt-1`}
-              >
-                <option value="">— Any —</option>
-                {customers.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
+              <div className="mt-1">
+                <SearchableSelect
+                  value={draft.customerId}
+                  onChange={(customerId) => {
+                    setDraft((d) => ({ ...d, customerId, buyerId: "" }));
+                    setBuyers([]);
+                  }}
+                  options={customers.map((c) => ({ id: c.id, label: c.name ?? "" }))}
+                  placeholder="Search customer…"
+                  emptyOptionLabel="— Any —"
+                />
+              </div>
             </div>
 
             <div>
               <label className="block text-xs font-medium text-zinc-500 dark:text-zinc-400">Buyer</label>
-              <select
-                value={draft.buyerId}
-                onChange={(e) => setDraft((d) => ({ ...d, buyerId: e.target.value }))}
-                disabled={!draft.customerId}
-                className={`${textInputClass()} mt-1`}
-              >
-                <option value="">— Any —</option>
-                {buyers.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.name}
-                  </option>
-                ))}
-              </select>
+              <div className="mt-1">
+                <SearchableSelect
+                  value={draft.buyerId}
+                  onChange={(buyerId) => setDraft((d) => ({ ...d, buyerId }))}
+                  disabled={!draft.customerId}
+                  options={buyers.map((b) => ({ id: b.id, label: b.name ?? "" }))}
+                  placeholder="Search buyer…"
+                  emptyOptionLabel="— Any —"
+                />
+              </div>
               {!draft.customerId && <p className="mt-1 text-xs text-zinc-400">Pick a Customer first.</p>}
             </div>
 
@@ -172,28 +171,28 @@ export function SamplingFilters({
 
             <div>
               <label className="block text-xs font-medium text-zinc-500 dark:text-zinc-400">Requested By</label>
-              <select
-                value={draft.requestedByUserId}
-                onChange={(e) => setDraft((d) => ({ ...d, requestedByUserId: e.target.value }))}
-                className={`${textInputClass()} mt-1`}
-              >
-                <option value="">— Any —</option>
-                {users.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.fullName}
-                  </option>
-                ))}
-              </select>
+              <div className="mt-1">
+                <SearchableSelect
+                  value={draft.requestedByUserId}
+                  onChange={(requestedByUserId) => setDraft((d) => ({ ...d, requestedByUserId }))}
+                  options={users.map((u) => ({ id: u.id, label: u.fullName ?? "" }))}
+                  placeholder="Search user…"
+                  emptyOptionLabel="— Any —"
+                />
+              </div>
             </div>
 
             <div>
               <label className="block text-xs font-medium text-zinc-500 dark:text-zinc-400">Color</label>
-              <input
-                value={draft.color}
-                onChange={(e) => setDraft((d) => ({ ...d, color: e.target.value }))}
-                placeholder="Search color…"
-                className={`${textInputClass()} mt-1`}
-              />
+              <div className="mt-1">
+                <SearchableSelect
+                  value={draft.colorId}
+                  onChange={(colorId) => setDraft((d) => ({ ...d, colorId }))}
+                  options={colors.map((c) => ({ id: c.id, label: c.name ?? "" }))}
+                  placeholder="Search color…"
+                  emptyOptionLabel="— Any —"
+                />
+              </div>
             </div>
 
             <div>

@@ -1,6 +1,7 @@
 import { createOpenAiImageProvider } from "./providers/openai";
 import { createGeminiImageProvider } from "./providers/gemini";
 import { createCloudflareImageProvider } from "./providers/cloudflare";
+import { createQwenLocalImageProvider } from "./providers/qwen-local";
 import { ImageGenConfigMissingError } from "./config";
 import type { ImageGenerationProvider } from "./types";
 
@@ -17,7 +18,18 @@ import type { ImageGenerationProvider } from "./types";
  * was added after Google separately restricted gemini-2.5-flash-image's own
  * free tier to 0 requests/day — text-to-image (Process 3/Regenerate) only,
  * see providers/cloudflare.ts's own comment for why Process 4/6 aren't
- * covered by it.
+ * covered by it. Qwen (local) was added as a 4th option for a self-hosted
+ * deployment with no hosted-API cost at all — see providers/qwen-local.ts's
+ * own comment for the HTTP contract a local server must implement.
+ *
+ * This single env-var-selected provider remains the entry point for any
+ * code that intentionally wants "whatever this deployment's one configured
+ * default provider is" with no failover (kept for backward compatibility —
+ * nothing here changed). The AI Provider & Failover system
+ * (src/core/ai/provider-manager/AIProviderManager.ts) is the new,
+ * separate, database-driven, capability-aware, multi-provider entry point
+ * with automatic failover — AI Designer's own generateDesign()/editDesign()
+ * now go through that instead of this function.
  */
 export function getImageGenerationProvider(): ImageGenerationProvider {
   const providerName = (process.env.IMAGE_GENERATION_PROVIDER || "openai").toLowerCase();
@@ -29,9 +41,11 @@ export function getImageGenerationProvider(): ImageGenerationProvider {
       return createGeminiImageProvider();
     case "cloudflare":
       return createCloudflareImageProvider();
+    case "qwen-local":
+      return createQwenLocalImageProvider();
     default:
       throw new ImageGenConfigMissingError(
-        `Unknown image generation provider "${providerName}" — set IMAGE_GENERATION_PROVIDER to a supported value ("openai", "gemini", "cloudflare").`
+        `Unknown image generation provider "${providerName}" — set IMAGE_GENERATION_PROVIDER to a supported value ("openai", "gemini", "cloudflare", "qwen-local").`
       );
   }
 }

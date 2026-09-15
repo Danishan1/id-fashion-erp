@@ -7,7 +7,6 @@ import { buildCategoryOptions, type FlatCategory } from "@/lib/category-tree";
 export interface ProductFormValues {
   styleCode: string;
   styleName: string;
-  designNumber: string;
   categoryId: string;
   seasonId: string;
   brandId: string;
@@ -16,14 +15,12 @@ export interface ProductFormValues {
   gender: string;
   description: string;
   hsnSacCode: string;
-  customerId: string;
   isActive: boolean;
 }
 
 const EMPTY_VALUES: ProductFormValues = {
   styleCode: "",
   styleName: "",
-  designNumber: "",
   categoryId: "",
   seasonId: "",
   brandId: "",
@@ -32,14 +29,8 @@ const EMPTY_VALUES: ProductFormValues = {
   gender: "",
   description: "",
   hsnSacCode: "",
-  customerId: "",
   isActive: true,
 };
-
-interface Customer {
-  id: string;
-  name: string;
-}
 
 interface NamedOption {
   id: string;
@@ -56,7 +47,6 @@ interface ProductFormProps {
 
 export function ProductForm({ initialValues, submitUrl, method, onSuccess, onCancel }: ProductFormProps) {
   const [values, setValues] = useState<ProductFormValues>(initialValues ?? EMPTY_VALUES);
-  const [customers, setCustomers] = useState<Customer[]>([]);
   const [categories, setCategories] = useState<FlatCategory[]>([]);
   const [seasons, setSeasons] = useState<NamedOption[]>([]);
   const [brands, setBrands] = useState<NamedOption[]>([]);
@@ -66,10 +56,6 @@ export function ProductForm({ initialValues, submitUrl, method, onSuccess, onCan
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    fetch("/api/v1/customers?pageSize=200")
-      .then((res) => res.json())
-      .then((body) => setCustomers(body.data ?? []))
-      .catch(() => setCustomers([]));
     fetch("/api/v1/categories?pageSize=200")
       .then((res) => res.json())
       .then((body) => setCategories(body.data ?? []))
@@ -128,32 +114,15 @@ export function ProductForm({ initialValues, submitUrl, method, onSuccess, onCan
 
   return (
     <form onSubmit={handleSubmit} className="max-w-xl space-y-4">
-      <div className="grid grid-cols-2 gap-4">
-        <FormField label="Style Code" htmlFor="styleCode" required>
-          <input
-            id="styleCode"
-            required
-            value={values.styleCode}
-            onChange={(e) => setValues({ ...values, styleCode: e.target.value })}
-            className={textInputClass()}
-          />
-        </FormField>
-        <FormField label="Customer" htmlFor="customerId">
-          <select
-            id="customerId"
-            value={values.customerId}
-            onChange={(e) => setValues({ ...values, customerId: e.target.value })}
-            className={textInputClass()}
-          >
-            <option value="">— None —</option>
-            {customers.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </FormField>
-      </div>
+      <FormField label="Style Code" htmlFor="styleCode" required>
+        <input
+          id="styleCode"
+          required
+          value={values.styleCode}
+          onChange={(e) => setValues({ ...values, styleCode: e.target.value })}
+          className={textInputClass()}
+        />
+      </FormField>
 
       <FormField label="Style Name" htmlFor="styleName" required>
         <input
@@ -161,16 +130,6 @@ export function ProductForm({ initialValues, submitUrl, method, onSuccess, onCan
           required
           value={values.styleName}
           onChange={(e) => setValues({ ...values, styleName: e.target.value })}
-          className={textInputClass()}
-        />
-      </FormField>
-
-      <FormField label="Design Number" htmlFor="designNumber">
-        <input
-          id="designNumber"
-          value={values.designNumber}
-          onChange={(e) => setValues({ ...values, designNumber: e.target.value })}
-          placeholder="For companies that identify styles by design number"
           className={textInputClass()}
         />
       </FormField>

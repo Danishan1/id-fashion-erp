@@ -8,7 +8,7 @@ export default async function EditSalesOrderPage({ params }: { params: Promise<{
   const { id } = await params;
   const session = await auth();
 
-  const order = await getSalesOrderById(session!.user.companyId, id).catch(() => null);
+  const order = await getSalesOrderById({ companyId: session!.user.companyId, userId: session!.user.id }, id).catch(() => null);
   if (!order) notFound();
 
   if (order.status !== "DRAFT" && order.status !== "CONFIRMED") {
@@ -23,6 +23,7 @@ export default async function EditSalesOrderPage({ params }: { params: Promise<{
     buyerId: order.buyerId,
     orderDate: order.orderDate.toISOString(),
     requiredShipDate: order.requiredShipDate ? order.requiredShipDate.toISOString() : null,
+    customerPoNumber: order.customerPoNumber,
     items: order.items.map((item) => ({
       productId: item.productId,
       sampleRequestId: item.sampleRequestId,

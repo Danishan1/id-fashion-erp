@@ -123,6 +123,29 @@ model Company {
   employeeAdvances                    EmployeeAdvance[]
   employeeAdvanceSettlements          EmployeeAdvanceSettlement[]
   submoduleVisibilities               SubmoduleVisibility[]
+  aiDesignerProjects                  AiDesignerProject[]
+  aiDesignerPrompts                   AiDesignerPrompt[]
+  aiDesignerGenerations               AiDesignerGeneration[]
+  aiDesignerImages                    AiDesignerImage[]
+  aiDesignerVersions                  AiDesignerVersion[]
+  replicateDesignProjects             ReplicateDesignProject[]
+  replicateDesignDnaAnalyses          ReplicateDesignDnaAnalysis[]
+  replicateDesignDnaAnalysisRuns      ReplicateDesignDnaAnalysisRun[]
+  replicateDesignMaterialLines        ReplicateDesignMaterialLine[]
+  replicateDesignCompatibilityChecks  ReplicateDesignCompatibilityCheck[]
+  replicateDesignCompatibilityRuns    ReplicateDesignCompatibilityRun[]
+  replicateDesignPrompts              ReplicateDesignPrompt[]
+  replicateDesignGenerations          ReplicateDesignGeneration[]
+  replicateDesignImages               ReplicateDesignImage[]
+  replicateDesignVersions             ReplicateDesignVersion[]
+  replicateDesignTechPacks            ReplicateDesignTechPack[]
+  aiDesignerSettings                  AiDesignerSettings?
+  aiDesignerTechPacks                 AiDesignerTechPack[]
+  aiDesignerProductDesignAttributes   AiDesignerProductDesignAttribute[]
+  aiDesignerOptionReferenceImages     AiDesignerOptionReferenceImage[]
+  aiProviders                         AIProvider[]
+  aiProviderUsage                     AIProviderUsage[]
+  aiFailoverLogs                      AIFailoverLog[]
   aiGarmentProjects                   AiGarmentProject[]
   aiGarmentReferenceAnalyses          AiGarmentReferenceAnalysis[]
   aiGarmentReferenceAnalysisRuns      AiGarmentReferenceAnalysisRun[]
@@ -189,6 +212,7 @@ model Branch {
   goodsReceipts         GoodsReceipt[]
   inventoryTransactions InventoryTransaction[]
   stockMovements        StockMovement[]
+  roleBranchAccess      RoleBranchAccess[]
   productionOrders      ProductionOrder[]
   lots                  Lot[]
   documentSequences     DocumentSequence[]
@@ -327,6 +351,32 @@ model User {
   aiGarmentReferenceObservationsApproved     AiGarmentReferenceObservation[]      @relation("AiGarmentReferenceObservationApprovedBy")
   aiGarmentReferenceAnalysisRunsCreated      AiGarmentReferenceAnalysisRun[]      @relation("AiGarmentReferenceAnalysisRunCreatedBy")
   aiGarmentFabricAnalysesApproved            AiGarmentFabricAnalysis[]            @relation("AiGarmentFabricAnalysisApprovedBy")
+  aiDesignerProjectsCreated                  AiDesignerProject[]                  @relation("AiDesignerProjectCreatedBy")
+  aiDesignerPromptsCreated                   AiDesignerPrompt[]                   @relation("AiDesignerPromptCreatedBy")
+  aiDesignerGenerationsCreated               AiDesignerGeneration[]               @relation("AiDesignerGenerationCreatedBy")
+  aiDesignerImagesCreated                    AiDesignerImage[]                    @relation("AiDesignerImageCreatedBy")
+  aiDesignerVersionsCreated                  AiDesignerVersion[]                  @relation("AiDesignerVersionCreatedBy")
+  aiDesignerVersionsApproved                 AiDesignerVersion[]                  @relation("AiDesignerVersionApprovedBy")
+  replicateDesignProjectsCreated             ReplicateDesignProject[]             @relation("ReplicateDesignProjectCreatedBy")
+  replicateDesignDnaAnalysesCreated          ReplicateDesignDnaAnalysis[]         @relation("ReplicateDesignDnaAnalysisCreatedBy")
+  replicateDesignDnaAnalysesApproved         ReplicateDesignDnaAnalysis[]         @relation("ReplicateDesignDnaAnalysisApprovedBy")
+  replicateDesignDnaObservationsApproved     ReplicateDesignDnaObservation[]      @relation("ReplicateDesignDnaObservationApprovedBy")
+  replicateDesignDnaAnalysisRunsCreated      ReplicateDesignDnaAnalysisRun[]      @relation("ReplicateDesignDnaAnalysisRunCreatedBy")
+  replicateDesignMaterialLinesCreated        ReplicateDesignMaterialLine[]        @relation("ReplicateDesignMaterialLineCreatedBy")
+  replicateDesignCompatibilityChecksCreated  ReplicateDesignCompatibilityCheck[]  @relation("ReplicateDesignCompatibilityCheckCreatedBy")
+  replicateDesignCompatibilityRunsCreated    ReplicateDesignCompatibilityRun[]    @relation("ReplicateDesignCompatibilityRunCreatedBy")
+  replicateDesignPromptsCreated              ReplicateDesignPrompt[]              @relation("ReplicateDesignPromptCreatedBy")
+  replicateDesignGenerationsCreated          ReplicateDesignGeneration[]          @relation("ReplicateDesignGenerationCreatedBy")
+  replicateDesignImagesCreated               ReplicateDesignImage[]               @relation("ReplicateDesignImageCreatedBy")
+  replicateDesignVersionsCreated             ReplicateDesignVersion[]             @relation("ReplicateDesignVersionCreatedBy")
+  replicateDesignVersionsApproved            ReplicateDesignVersion[]             @relation("ReplicateDesignVersionApprovedBy")
+  replicateDesignTechPacksCreated            ReplicateDesignTechPack[]            @relation("ReplicateDesignTechPackCreatedBy")
+  aiDesignerTechPacksCreated                 AiDesignerTechPack[]                 @relation("AiDesignerTechPackCreatedBy")
+  aiDesignerTechPacksApproved                AiDesignerTechPack[]                 @relation("AiDesignerTechPackApprovedBy")
+  aiDesignerProductDesignAttributesCreated   AiDesignerProductDesignAttribute[]   @relation("AiDesignerProductDesignAttributeCreatedBy")
+  aiDesignerOptionReferenceImagesCreated     AiDesignerOptionReferenceImage[]     @relation("AiDesignerOptionReferenceImageCreatedBy")
+  aiProvidersCreated                         AIProvider[]                         @relation("AIProviderCreatedBy")
+  aiProviderUsageAsUser                      AIProviderUsage[]                    @relation("AIProviderUsageUser")
   aiGarmentFabricAnalysesCreated             AiGarmentFabricAnalysis[]            @relation("AiGarmentFabricAnalysisCreatedBy")
   aiGarmentFabricObservationsApproved        AiGarmentFabricObservation[]         @relation("AiGarmentFabricObservationApprovedBy")
   aiGarmentFabricAnalysisRunsCreated         AiGarmentFabricAnalysisRun[]         @relation("AiGarmentFabricAnalysisRunCreatedBy")
@@ -379,6 +429,7 @@ model Role {
   rolePermissions       RolePermission[]
   userBranchRoles       UserBranchRole[]
   productionStageAccess RoleProductionStageAccess[]
+  branchAccess          RoleBranchAccess[]
 
   @@unique([companyId, name])
   @@map("roles")
@@ -406,6 +457,36 @@ model RoleProductionStageAccess {
 
   @@unique([roleId, productionStageId])
   @@map("role_production_stage_access")
+}
+
+/**
+ * Per-role BRANCH restriction — the exact same "additive, opt-in narrowing"
+ * shape as RoleProductionStageAccess just above, reused deliberately rather
+ * than invented fresh: a Role with ZERO rows here is unrestricted (sees
+ * every branch in the company), so every pre-existing role (including every
+ * currently-seeded system role) keeps working exactly as before with no
+ * data migration needed — this only starts to matter the moment an admin
+ * explicitly restricts a role to specific branches. See
+ * PermissionService.getAllowedBranchIds() for the read side (identical
+ * union/"any unrestricted role wins" semantics as
+ * getAllowedProductionStageIds()) and assertBranchAccess() in
+ * src/lib/branch-access.ts for the write side. Deliberately role-scoped,
+ * not user-scoped directly -- UserBranchRole already ties a user to one or
+ * more (role, branch) pairs for identity/numbering purposes (session.user
+ * .defaultBranchId), a separate concern from whether that role's own data
+ * visibility is restricted to specific branches at all.
+ */
+model RoleBranchAccess {
+  id        String   @id @default(uuid()) @db.Uuid
+  roleId    String   @map("role_id") @db.Uuid
+  branchId  String   @map("branch_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  branch Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, branchId])
+  @@map("role_branch_access")
 }
 
 model Permission {
@@ -477,6 +558,15 @@ model Customer {
   taxRegistrationNo   String?   @map("tax_registration_no")
   billingAddress      String?   @map("billing_address")
   shippingAddress     String?   @map("shipping_address")
+  // Added 2026-09-15 -- Customer had no contact/phone/email/city/pinCode
+  // fields at all until now (only Buyer, its child contact record, had
+  // contactPerson/email/phone). These are direct fields on the Customer
+  // itself, matching Supplier's own existing shape.
+  contactPerson       String?   @map("contact_person")
+  phone               String?
+  email               String?
+  city                String?
+  pinCode             String?   @map("pin_code")
   paymentTermsDays    Int?      @map("payment_terms_days")
   creditLimit         Decimal?  @map("credit_limit") @db.Decimal(18, 2)
   defaultCurrencyCode String?   @map("default_currency_code") @db.Char(3)
@@ -595,6 +685,11 @@ model Supplier {
   email               String?
   phone               String?
   address             String?
+  // Added 2026-09-15 -- Supplier had no city/pinCode/country breakdown at
+  // all, only a single free-text address field.
+  city                String?
+  pinCode             String?   @map("pin_code")
+  country             String?
   taxRegistrationNo   String?   @map("tax_registration_no")
   paymentTermsDays    Int?      @map("payment_terms_days")
   defaultCurrencyCode String?   @map("default_currency_code") @db.Char(3)
@@ -604,18 +699,20 @@ model Supplier {
   createdAt           DateTime  @default(now()) @map("created_at")
   updatedAt           DateTime  @updatedAt @map("updated_at")
 
-  company                Company                    @relation(fields: [companyId], references: [id])
-  category               SupplierCategory           @relation(fields: [categoryId], references: [id])
-  defaultForProducts     Product[]
-  suppliedMaterials      SupplierMaterial[]
-  suppliedCategories     SupplierMaterialCategory[]
-  purchaseOrders         PurchaseOrder[]
-  stockMovements         StockMovement[]
-  purchaseInvoices       PurchaseInvoice[]
-  payments               Payment[]
-  expenses               Expense[]
-  jobWorkOrders          JobWorkOrder[]
-  aiGarmentFabricDetails AiGarmentFabricDetail[]
+  company                 Company                    @relation(fields: [companyId], references: [id])
+  category                SupplierCategory           @relation(fields: [categoryId], references: [id])
+  defaultForProducts      Product[]
+  suppliedMaterials       SupplierMaterial[]
+  suppliedCategories      SupplierMaterialCategory[]
+  purchaseOrders          PurchaseOrder[]
+  stockMovements          StockMovement[]
+  purchaseInvoices        PurchaseInvoice[]
+  payments                Payment[]
+  expenses                Expense[]
+  jobWorkOrders           JobWorkOrder[]
+  aiGarmentFabricDetails  AiGarmentFabricDetail[]
+  aiDesignerProjects      AiDesignerProject[]
+  replicateDesignProjects ReplicateDesignProject[]
 
   @@unique([companyId, code])
   @@map("suppliers")
@@ -731,6 +828,11 @@ model Employee {
   fullName           String           @map("full_name")
   phone              String?
   email              String?
+  // Added 2026-09-15 -- Employee had zero location fields at all before this.
+  address            String?
+  city               String?
+  pinCode            String?          @map("pin_code")
+  country            String?
   joinDate           DateTime?        @map("join_date")
   // Pay-basis data only — stored for reference/reporting, no payroll
   // run/payslip generation exists or is computed from these (deliberate
@@ -829,38 +931,47 @@ model Product {
   createdAt         DateTime          @default(now()) @map("created_at")
   updatedAt         DateTime          @updatedAt @map("updated_at")
 
-  company               Company                @relation(fields: [companyId], references: [id])
-  customer              Customer?              @relation(fields: [customerId], references: [id])
-  baseUom               UnitOfMeasure?         @relation(fields: [baseUomId], references: [id])
-  defaultSupplier       Supplier?              @relation(fields: [defaultSupplierId], references: [id])
-  variants              ProductVariant[]
-  category              Category?              @relation(fields: [categoryId], references: [id])
-  season                Season?                @relation(fields: [seasonId], references: [id])
-  brand                 Brand?                 @relation(fields: [brandId], references: [id])
-  productType           ProductType?           @relation(fields: [productTypeId], references: [id])
-  productFitting        ProductFitting?        @relation(fields: [productFittingId], references: [id])
-  sampleRequests        SampleRequest[]        @relation("SampleRequestStyle")
-  sampleMaterialUse     SampleMaterial[]       @relation("SampleMaterialProduct")
-  buyerEnquiryLines     BuyerEnquiryLine[]
-  salesOrderItems       SalesOrderItem[]
-  purchaseOrderItems    PurchaseOrderItem[]
-  goodsReceiptItems     GoodsReceiptItem[]
-  inventoryTransactions InventoryTransaction[]
-  stockBalances         StockBalance[]
-  bom                   Bom?
-  bomItemUsages         BomItem[]              @relation("BomItemMaterial")
-  materialRequestItems  MaterialRequestItem[]  @relation("MaterialRequestItemMaterial")
-  supplierLinks         SupplierMaterial[]
-  productionOrders      ProductionOrder[]
-  stockMovementItems    StockMovementItem[]
-  salesInvoiceItems     SalesInvoiceItem[]
-  purchaseInvoiceItems  PurchaseInvoiceItem[]
-  dispatchItems         DispatchItem[]
-  jobWorkOrderMaterials JobWorkOrderMaterial[]
-  customInvoiceItems    CustomInvoiceItem[]
+  company                      Company                       @relation(fields: [companyId], references: [id])
+  customer                     Customer?                     @relation(fields: [customerId], references: [id])
+  baseUom                      UnitOfMeasure?                @relation(fields: [baseUomId], references: [id])
+  defaultSupplier              Supplier?                     @relation(fields: [defaultSupplierId], references: [id])
+  variants                     ProductVariant[]
+  category                     Category?                     @relation(fields: [categoryId], references: [id])
+  season                       Season?                       @relation(fields: [seasonId], references: [id])
+  brand                        Brand?                        @relation(fields: [brandId], references: [id])
+  productType                  ProductType?                  @relation(fields: [productTypeId], references: [id])
+  productFitting               ProductFitting?               @relation(fields: [productFittingId], references: [id])
+  sampleRequests               SampleRequest[]               @relation("SampleRequestStyle")
+  sampleMaterialUse            SampleMaterial[]              @relation("SampleMaterialProduct")
+  buyerEnquiryLines            BuyerEnquiryLine[]
+  salesOrderItems              SalesOrderItem[]
+  purchaseOrderItems           PurchaseOrderItem[]
+  goodsReceiptItems            GoodsReceiptItem[]
+  inventoryTransactions        InventoryTransaction[]
+  stockBalances                StockBalance[]
+  bom                          Bom?
+  bomItemUsages                BomItem[]                     @relation("BomItemMaterial")
+  materialRequestItems         MaterialRequestItem[]         @relation("MaterialRequestItemMaterial")
+  supplierLinks                SupplierMaterial[]
+  productionOrders             ProductionOrder[]
+  stockMovementItems           StockMovementItem[]
+  salesInvoiceItems            SalesInvoiceItem[]
+  purchaseInvoiceItems         PurchaseInvoiceItem[]
+  dispatchItems                DispatchItem[]
+  jobWorkOrderMaterials        JobWorkOrderMaterial[]
+  customInvoiceItems           CustomInvoiceItem[]
   // Virtual back-relation only — the single authoritative FK lives on
   // AiGarmentProject.productId (@unique), set once by convertProjectToStyle().
-  aiGarmentProject      AiGarmentProject?
+  aiGarmentProject             AiGarmentProject?
+  // AI Designer's own read-only reference when a project picks this row as
+  // its "existing fabric" — many AI Designer projects may point at the same
+  // material, so this is a plain array, not a unique back-relation.
+  aiDesignerProjects           AiDesignerProject[]
+  // Replicate Design's own read-only reference when a project picks this row
+  // as its "existing fabric" (fabricProductId) — same "many projects may
+  // point at the same material" plain-array shape as AI Designer's own.
+  replicateDesignProjects      ReplicateDesignProject[]
+  replicateDesignMaterialLines ReplicateDesignMaterialLine[]
 
   @@unique([companyId, styleCode])
   @@map("products")
@@ -883,6 +994,7 @@ model Color {
   materialRequestItems   MaterialRequestItem[]
   purchaseOrderItems     PurchaseOrderItem[]
   aiGarmentFabricDetails AiGarmentFabricDetail[]
+  sampleRequests         SampleRequest[]
 
   @@unique([companyId, code])
   @@map("colors")
@@ -901,6 +1013,7 @@ model Size {
   company                    Company                     @relation(fields: [companyId], references: [id])
   variants                   ProductVariant[]
   aiGarmentMeasurementValues AiGarmentMeasurementValue[]
+  sampleRequests             SampleRequest[]
 
   @@unique([companyId, code])
   @@map("sizes")
@@ -916,19 +1029,20 @@ model UnitOfMeasure {
   // ever added stayed permanently visible in every Unit dropdown app-wide.
   isActive         Boolean @default(true) @map("is_active")
 
-  baseUnit              UnitOfMeasure?         @relation("UomConversion", fields: [baseUnitId], references: [id])
-  derived               UnitOfMeasure[]        @relation("UomConversion")
-  products              Product[]
-  sampleMaterials       SampleMaterial[]
-  purchaseOrderItems    PurchaseOrderItem[]
-  goodsReceiptItems     GoodsReceiptItem[]
-  materialRequestItems  MaterialRequestItem[]
-  bomItems              BomItem[]
-  lots                  Lot[]
-  stockMovementItems    StockMovementItem[]
-  jobWorkOrders         JobWorkOrder[]
-  jobWorkOrderMaterials JobWorkOrderMaterial[]
-  fabricWidths          FabricWidth[]
+  baseUnit                     UnitOfMeasure?                @relation("UomConversion", fields: [baseUnitId], references: [id])
+  derived                      UnitOfMeasure[]               @relation("UomConversion")
+  products                     Product[]
+  sampleMaterials              SampleMaterial[]
+  purchaseOrderItems           PurchaseOrderItem[]
+  goodsReceiptItems            GoodsReceiptItem[]
+  materialRequestItems         MaterialRequestItem[]
+  bomItems                     BomItem[]
+  lots                         Lot[]
+  stockMovementItems           StockMovementItem[]
+  jobWorkOrders                JobWorkOrder[]
+  jobWorkOrderMaterials        JobWorkOrderMaterial[]
+  fabricWidths                 FabricWidth[]
+  replicateDesignMaterialLines ReplicateDesignMaterialLine[]
 
   @@map("units_of_measure")
 }
@@ -950,6 +1064,7 @@ model ProductVariant {
 
   salesOrderBreakdown SalesOrderItemBreakdown[]
   cartonItems         CartonItem[]
+  lotVariantBreakdown LotVariantBreakdown[]
 
   @@unique([productId, colorId, sizeId])
   @@map("product_variants")
@@ -1645,10 +1760,18 @@ model SampleRequest {
   // customer/style; silently relabeling a PP sample after the fact would
   // undermine its future role as a Production-order eligibility gate.
   sampleType           SampleType?
-  // Free-text, editable at any stage — a customer may name a color upfront
-  // (or only after seeing the physical sample) and revise it later; not an
-  // enum/FK since this is a casual descriptive value, not a Color master pick.
-  color                String?
+  // Was a free-text string until 2026-09-15 (a casual descriptive value, not
+  // a Color master pick, per the original design note) — converted to a real
+  // FK per explicit user request so the same color can drive the Sales
+  // Order variant grid default once the sample is approved. Editable at any
+  // stage, same reasoning as before (a customer may confirm/change the color
+  // only after seeing the physical sample) — null means "not yet decided."
+  colorId              String?       @map("color_id") @db.Uuid
+  // New 2026-09-15 — SampleRequest never had any size concept before this;
+  // paired with colorId to describe "the color+size this sample was made
+  // in," which Sales Order's own variant grid defaults to once the sample
+  // is linked. Also nullable/editable at any stage, same reasoning as color.
+  sizeId               String?       @map("size_id") @db.Uuid
   requestedByUserId    String        @map("requested_by_user_id") @db.Uuid
   requestDate          DateTime      @map("request_date") @db.Date
   targetSubmissionDate DateTime?     @map("target_submission_date") @db.Date
@@ -1663,6 +1786,8 @@ model SampleRequest {
   customer         Customer          @relation(fields: [customerId], references: [id])
   buyer            Buyer?            @relation(fields: [buyerId], references: [id])
   product          Product?          @relation("SampleRequestStyle", fields: [productId], references: [id])
+  color            Color?            @relation(fields: [colorId], references: [id])
+  size             Size?             @relation(fields: [sizeId], references: [id])
   requestedBy      User              @relation("SampleRequestedBy", fields: [requestedByUserId], references: [id])
   versions         SampleVersion[]
   comments         SampleComment[]
@@ -1716,13 +1841,17 @@ model SampleVersion {
   costingLockedAt       DateTime? @map("costing_locked_at")
   costingLockedByUserId String?   @map("costing_locked_by_user_id") @db.Uuid
 
-  sampleRequest   SampleRequest       @relation(fields: [sampleRequestId], references: [id])
-  createdBy       User                @relation("SampleVersionCreatedBy", fields: [createdByUserId], references: [id])
-  costingLockedBy User?               @relation("SampleVersionCostingLockedBy", fields: [costingLockedByUserId], references: [id])
-  materials       SampleMaterial[]
-  approvals       SampleApproval[]
-  comments        SampleComment[]
-  otherCharges    SampleOtherCharge[]
+  sampleRequest    SampleRequest       @relation(fields: [sampleRequestId], references: [id])
+  createdBy        User                @relation("SampleVersionCreatedBy", fields: [createdByUserId], references: [id])
+  costingLockedBy  User?               @relation("SampleVersionCostingLockedBy", fields: [costingLockedByUserId], references: [id])
+  materials        SampleMaterial[]
+  approvals        SampleApproval[]
+  comments         SampleComment[]
+  otherCharges     SampleOtherCharge[]
+  // Virtual back-relation only — no column on this table. A version can have
+  // more than one over time (a soft duplicate-warning, not a hard cap — see
+  // findMaterialRequestsBySampleVersion in material-request.service.ts).
+  materialRequests MaterialRequest[]
 
   @@unique([sampleRequestId, versionNumber])
   @@map("sample_versions")
@@ -2652,6 +2781,11 @@ model SalesOrder {
   originatingDealId String?           @map("originating_deal_id") @db.Uuid
   orderDate         DateTime          @map("order_date") @db.Date
   requiredShipDate  DateTime?         @map("required_ship_date") @db.Date
+  // The buyer's own PO reference number, free text — this app's real
+  // ORD-2026-00001 numbering is unrelated and unaffected; a buyer's PO
+  // document (the file itself) attaches via the existing generic Attachment
+  // mechanism (RelatedModule.SALES_ORDER), not a dedicated column here.
+  customerPoNumber  String?           @map("customer_po_number")
   status            SalesOrderStatus  @default(DRAFT)
   statusBeforeHold  SalesOrderStatus? @map("status_before_hold")
   // Frozen at creation (no live FX picker — multi-currency UI is deferred
@@ -2966,6 +3100,11 @@ enum MaterialRequestType {
   // never modifies the original request/BOM, always a new document that
   // references it via originalMaterialRequestId.
   DAMAGE_REPLACEMENT
+  // Raw material genuinely needed for a Sample Request's own development —
+  // generated from one SampleVersion's own SampleMaterial rows (see
+  // sampleVersionId on MaterialRequest below), issued through the exact same
+  // Inventory-checks-stock flow as every other Material Request.
+  SAMPLING_REQUIREMENT
 }
 
 model MaterialRequest {
@@ -3001,6 +3140,11 @@ model MaterialRequest {
   // ProductionOrder FK, since no Production module exists yet (same
   // reasoning already applied above to salesOrderId).
   originalMaterialRequestId String?                @map("original_material_request_id") @db.Uuid
+  // Nullable traceability to the SampleVersion this requirement's raw
+  // materials were generated from (requestType = SAMPLING_REQUIREMENT) — the
+  // Sampling equivalent of bomId above; a request raised any other way
+  // simply leaves this null.
+  sampleVersionId           String?                @map("sample_version_id") @db.Uuid
   remarks                   String?
   // Derived from lines except the manual ON_HOLD/CANCELLED/CLOSED
   // transitions — never hand-set to PARTIALLY_FULFILLED/FULFILLED.
@@ -3019,6 +3163,7 @@ model MaterialRequest {
   bom                     Bom?                  @relation(fields: [bomId], references: [id])
   originalMaterialRequest MaterialRequest?      @relation("MaterialRequestReplacementOrigin", fields: [originalMaterialRequestId], references: [id])
   replacementRequests     MaterialRequest[]     @relation("MaterialRequestReplacementOrigin")
+  sampleVersion           SampleVersion?        @relation(fields: [sampleVersionId], references: [id])
   requestedBy             User                  @relation("MaterialRequestRequestedBy", fields: [requestedByUserId], references: [id])
   lines                   MaterialRequestItem[]
 
@@ -3026,6 +3171,7 @@ model MaterialRequest {
   @@index([companyId, status])
   @@index([companyId, requestType])
   @@index([productionOrderId])
+  @@index([sampleVersionId])
   @@map("material_requests")
 }
 
@@ -3335,11 +3481,35 @@ model Lot {
   jobOrders         JobOrder[]
   stageTransactions ProductionStageTransaction[]
   qcInspections     QcInspection[]
+  variantBreakdown  LotVariantBreakdown[]
 
   @@unique([companyId, lotNumber])
   @@index([productionOrderId])
   @@index([companyId, status])
   @@map("lots")
+}
+
+// Purely informational size/color breakdown of a Lot's own flat `quantity` —
+// entered once at Lot creation (auto-suggested from the linked Sales Order's
+// own real SalesOrderItemBreakdown when one exists, manual otherwise) so a
+// floor worker can see exactly which sizes/colors make up the number they're
+// handling at any stage. Deliberately NOT tracked per-variant through
+// completed/rejected/damaged/forwarded/qcPassed — every JobOrder quantity
+// accumulator stays a flat aggregate exactly as before; this table is read
+// (never decremented) by the Stage Transfer Slip and the Lot's own detail
+// page only.
+model LotVariantBreakdown {
+  id               String   @id @default(uuid()) @db.Uuid
+  lotId            String   @map("lot_id") @db.Uuid
+  productVariantId String   @map("product_variant_id") @db.Uuid
+  quantity         Decimal  @map("quantity") @db.Decimal(18, 4)
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  lot            Lot            @relation(fields: [lotId], references: [id])
+  productVariant ProductVariant @relation(fields: [productVariantId], references: [id])
+
+  @@unique([lotId, productVariantId])
+  @@map("lot_variant_breakdowns")
 }
 
 enum LotRelationType {
@@ -6203,6 +6373,12 @@ enum AiGarmentDesignFeature {
   CLOSURE
   WAIST
   HEM
+  COLOR
+  BUTTONS
+  BACKGROUND_ENVIRONMENT
+  MODEL
+  LOGO
+  EMBROIDERY
   OTHER
 }
 
@@ -7115,6 +7291,18 @@ enum RelatedModule {
   // own contextLabel reused as an asset-type tag -- matching Sampling's own
   // precedent of keeping attachments at the header level, not per-child-row.
   AI_GARMENT_PROJECT
+  // AI Designer (2026-09-10) -- a genuinely separate module from AI Garment
+  // Flow (own ai_-prefixed schema, own APIs, zero shared business logic, per
+  // explicit user decision). Every file uploaded in an AI Designer project
+  // (uploaded fabric image, exported PNG/JPG/PDF) attaches at the project
+  // header level (relatedRecordId = AiDesignerProject.id) -- same "attach at
+  // the header, not per-child-row" precedent as every other module here.
+  AI_DESIGNER_PROJECT
+  // Replicate Design (2026-09-13) -- a new page inside the AI Designer
+  // module. Every file uploaded (reference garment photos, fabric photo)
+  // attaches at the project header level (relatedRecordId =
+  // ReplicateDesignProject.id), same precedent as AI_DESIGNER_PROJECT.
+  REPLICATE_DESIGN_PROJECT
 }
 
 model Attachment {
@@ -7347,6 +7535,8 @@ enum DocumentType {
   EMPLOYEE_ADVANCE
   EMPLOYEE_ADVANCE_SETTLEMENT
   AI_GARMENT_PROJECT
+  AI_DESIGNER_PROJECT
+  REPLICATE_DESIGN_PROJECT
 }
 
 model DocumentSequence {
@@ -7387,4 +7577,1238 @@ model SubmoduleVisibility {
 
   @@unique([companyId, submoduleKey])
   @@map("submodule_visibility")
+}
+
+// ─────────────────────────────────────────────────────────────
+// AI Designer (2026-09-10)
+//
+// A brand-new, fully isolated module -- NOT the same thing as "AI Garment
+// Flow" above, despite doing a similar job (fabric -> guided wizard ->
+// generated design image). Confirmed explicitly with the user: genuinely
+// separate, ai_-prefixed tables, zero shared business logic, its own API
+// route family and sidebar entry. The only two FKs anywhere in this module
+// that point into pre-existing ERP tables are AiDesignerProject.fabricProductId
+// (-> Product, the real Fabric Master, itemType RAW_MATERIAL) and
+// .fabricSupplierId (-> Supplier) -- both read-only references (auto-filled
+// once when an existing fabric is picked), never written back to.
+//
+// Exactly 5 tables, matching the user's own explicit naming: ai_projects,
+// ai_prompts, ai_generations, ai_images, ai_versions. Flat columns on the
+// project header (not a deep per-observation table) since nothing in this
+// module's own spec asked for that granularity -- Product/Composition/GSM
+// etc. are a short, fixed field list the user explicitly wants kept minimal.
+enum AiDesignerFabricSource {
+  EXISTING
+  UPLOADED
+}
+
+enum AiDesignerTargetCustomer {
+  MEN
+  WOMEN
+  BOYS
+  GIRLS
+  BABY
+  UNISEX
+}
+
+enum AiDesignerProjectStatus {
+  DRAFT
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum AiDesignerPromptType {
+  FABRIC_ANALYSIS
+  IMAGE_GENERATE
+  IMAGE_EDIT
+}
+
+enum AiDesignerRunStatus {
+  IN_PROGRESS
+  SUCCESS
+  FAILED
+}
+
+enum AiDesignerImageDecision {
+  PENDING
+  SELECTED
+  REJECTED
+}
+
+/** Edit Design workspace (2026-09-13) — a version's own review/approval state, shown as the "Design Status" badge in the workspace's top toolbar. DRAFT is the initial (never-edited) generation; every version created via an edit starts AI_MODIFIED; UNDER_REVIEW/APPROVED/REJECTED are explicit human actions from the workspace's Approve/Reject controls. */
+enum AiDesignerVersionApprovalStatus {
+  DRAFT
+  AI_MODIFIED
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+}
+
+model AiDesignerProject {
+  id            String                  @id @default(uuid()) @db.Uuid
+  companyId     String                  @map("company_id") @db.Uuid
+  projectNumber String                  @map("project_number")
+  projectName   String                  @map("project_name")
+  status        AiDesignerProjectStatus @default(DRAFT)
+
+  // Own, wholly separate resumable-wizard position -- mirrors the *shape* of
+  // AiGarmentProject's currentStepKey/completedStepKeys, not shared code.
+  currentStep    String   @default("FABRIC_SELECTION") @map("current_step")
+  completedSteps String[] @map("completed_steps")
+
+  // Step 1/2 -- fabric. fabricProductId/fabricSupplierId are read-only refs
+  // into the real ERP Fabric Master; every other fabric* field is a plain
+  // snapshot column -- auto-filled from Product when fabricSource=EXISTING
+  // (Name/Code/Supplier/unit cost only -- confirmed the real Product row
+  // carries nothing else), left blank/user-editable otherwise (Composition/
+  // GSM/Width/Weave/Stretch/Opacity/Texture/PatternType/PrintType/
+  // SuitableSeason/RecommendedGarments/Color), same honest-gap handling this
+  // codebase already uses for the identical problem in the sibling module.
+  fabricSource              AiDesignerFabricSource? @map("fabric_source")
+  fabricProductId           String?                 @map("fabric_product_id") @db.Uuid
+  fabricImageAttachmentId   String?                 @map("fabric_image_attachment_id")
+  fabricName                String?                 @map("fabric_name")
+  fabricCode                String?                 @map("fabric_code")
+  fabricComposition         String?                 @map("fabric_composition")
+  fabricGsm                 String?                 @map("fabric_gsm")
+  fabricWidth               String?                 @map("fabric_width")
+  fabricWeave               String?                 @map("fabric_weave")
+  fabricStretch             String?                 @map("fabric_stretch")
+  fabricOpacity             String?                 @map("fabric_opacity")
+  fabricTexture             String?                 @map("fabric_texture")
+  fabricPatternType         String?                 @map("fabric_pattern_type")
+  fabricPrintType           String?                 @map("fabric_print_type")
+  fabricSuitableSeason      String?                 @map("fabric_suitable_season")
+  fabricRecommendedGarments String?                 @map("fabric_recommended_garments")
+  fabricColor               String?                 @map("fabric_color")
+  fabricSupplierId          String?                 @map("fabric_supplier_id") @db.Uuid
+
+  // Step 3-6 -- customer/product/design
+  targetCustomer       AiDesignerTargetCustomer? @map("target_customer")
+  ageGroup             String?                   @map("age_group")
+  productCategory      String?                   @map("product_category")
+  designSelectionsJson Json?                     @map("design_selections_json")
+
+  // Step 7 -- model
+  modelGender   String? @map("model_gender")
+  modelBodyType String? @map("model_body_type")
+  modelPose     String? @map("model_pose")
+
+  // Step 8 -- environment
+  environmentKey      String? @map("environment_key")
+  environmentLabel    String? @map("environment_label")
+  isCustomEnvironment Boolean @default(false) @map("is_custom_environment")
+
+  // Step 9b -- Multi-Fabric (optional, only usable once a design already
+  // exists -- applies a second fabric photo onto specific area(s) of the
+  // currently generated garment image, e.g. yoke/sleeves/borders/contrast
+  // panels). secondFabricApplyAreas is a plain String[] validated in Zod
+  // against a small fixed const list (SECOND_FABRIC_APPLY_AREAS), not a DB
+  // enum -- this is a UI-facing tag list, not a value anything else in the
+  // schema needs to reference or constrain at the database level.
+  secondFabricImageAttachmentId String?  @map("second_fabric_image_attachment_id")
+  secondFabricApplyAreas        String[] @map("second_fabric_apply_areas")
+
+  // Step 9c -- Embellishments (optional, only usable once a design already
+  // exists -- applies a digital applique/embroidery motif onto the currently
+  // generated garment image via a free-text description and/or an uploaded
+  // motif reference photo). Mirrors secondFabricImageAttachmentId's exact
+  // shape (persisted, replaceable, deletable). `embellishmentType` and the
+  // free-text instructions are deliberately NOT persisted project columns --
+  // same precedent as secondFabricApplyAreas above being schema-only UI tag
+  // data, not something anything else needs to reference/constrain -- they
+  // travel as plain per-request API input instead, recorded only in the
+  // generation's audit log / version designSnapshotJson.
+  embellishmentMotifAttachmentId String? @map("embellishment_motif_attachment_id")
+
+  // Set once version 1 exists (nullable-then-set-later, same precedent as
+  // AiGarmentProject.selectedDesignDirectionId elsewhere in this schema).
+  currentVersionId String? @unique @map("current_version_id") @db.Uuid
+
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  company        Company            @relation(fields: [companyId], references: [id])
+  fabricProduct  Product?           @relation(fields: [fabricProductId], references: [id])
+  fabricSupplier Supplier?          @relation(fields: [fabricSupplierId], references: [id])
+  currentVersion AiDesignerVersion? @relation("AiDesignerProjectCurrentVersion", fields: [currentVersionId], references: [id])
+  createdBy      User               @relation("AiDesignerProjectCreatedBy", fields: [createdByUserId], references: [id])
+
+  prompts       AiDesignerPrompt[]
+  generations   AiDesignerGeneration[]
+  images        AiDesignerImage[]
+  versions      AiDesignerVersion[]    @relation("AiDesignerVersionsOfProject")
+  providerUsage AIProviderUsage[]
+  techPacks     AiDesignerTechPack[]
+
+  @@unique([companyId, projectNumber])
+  @@map("ai_projects")
+}
+
+// One row per AI call attempt of ANY kind (fabric analysis, generate, edit) --
+// the single unified audit/run log for the whole module. specJson is the
+// {fabric,customer,product,design,model,environment} structured JSON built
+// server-side from the project's own fields; promptText is what was actually
+// sent to the AI. Never surfaced to the end user as something they write.
+model AiDesignerPrompt {
+  id            String               @id @default(uuid()) @db.Uuid
+  companyId     String               @map("company_id") @db.Uuid
+  projectId     String               @map("project_id") @db.Uuid
+  promptType    AiDesignerPromptType @map("prompt_type")
+  promptVersion String               @map("prompt_version")
+  specJson      Json                 @map("spec_json")
+  promptText    String               @map("prompt_text")
+  provider      String
+  model         String
+  status        AiDesignerRunStatus  @default(IN_PROGRESS)
+  errorCategory String?              @map("error_category")
+  errorMessage  String?              @map("error_message")
+  requestedAt   DateTime             @default(now()) @map("requested_at")
+  completedAt   DateTime?            @map("completed_at")
+
+  createdByUserId String @map("created_by_user_id") @db.Uuid
+
+  company    Company               @relation(fields: [companyId], references: [id])
+  project    AiDesignerProject     @relation(fields: [projectId], references: [id])
+  createdBy  User                  @relation("AiDesignerPromptCreatedBy", fields: [createdByUserId], references: [id])
+  generation AiDesignerGeneration?
+  versions   AiDesignerVersion[]
+
+  @@map("ai_prompts")
+}
+
+// One row per image-producing AI call (initial generate, or an edit/
+// regenerate -- parentImageId + editedFeature are set only for an edit).
+// 1:1 with the AiDesignerPrompt that produced it.
+model AiDesignerGeneration {
+  id                  String              @id @default(uuid()) @db.Uuid
+  companyId           String              @map("company_id") @db.Uuid
+  projectId           String              @map("project_id") @db.Uuid
+  promptId            String              @unique @map("prompt_id") @db.Uuid
+  parentImageId       String?             @map("parent_image_id") @db.Uuid
+  editedFeature       String?             @map("edited_feature")
+  requestedImageCount Int                 @default(1) @map("requested_image_count")
+  status              AiDesignerRunStatus @default(IN_PROGRESS)
+
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  company     Company           @relation(fields: [companyId], references: [id])
+  project     AiDesignerProject @relation(fields: [projectId], references: [id])
+  prompt      AiDesignerPrompt  @relation(fields: [promptId], references: [id])
+  parentImage AiDesignerImage?  @relation("AiDesignerGenerationParentImage", fields: [parentImageId], references: [id])
+  createdBy   User              @relation("AiDesignerGenerationCreatedBy", fields: [createdByUserId], references: [id])
+
+  images AiDesignerImage[] @relation("AiDesignerImagesOfGeneration")
+
+  @@map("ai_generations")
+}
+
+// One row per actual image file a generation produced (a generation can
+// request 1/3/4). imageAttachmentId is a soft reference into the existing,
+// generic Attachment table (RelatedModule.AI_DESIGNER_PROJECT -- never the
+// sibling module's own AI_GARMENT_PROJECT value, which would wrongly couple
+// the two).
+model AiDesignerImage {
+  id                String                  @id @default(uuid()) @db.Uuid
+  companyId         String                  @map("company_id") @db.Uuid
+  projectId         String                  @map("project_id") @db.Uuid
+  generationId      String                  @map("generation_id") @db.Uuid
+  imageAttachmentId String                  @map("image_attachment_id")
+  decision          AiDesignerImageDecision @default(PENDING)
+
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  company    Company              @relation(fields: [companyId], references: [id])
+  project    AiDesignerProject    @relation(fields: [projectId], references: [id])
+  generation AiDesignerGeneration @relation("AiDesignerImagesOfGeneration", fields: [generationId], references: [id])
+  createdBy  User                 @relation("AiDesignerImageCreatedBy", fields: [createdByUserId], references: [id])
+
+  usedAsParentFor    AiDesignerGeneration[] @relation("AiDesignerGenerationParentImage")
+  currentForVersions AiDesignerVersion[]
+
+  @@map("ai_images")
+}
+
+// Version history for "Save Project -> Versions/History": version 1 is
+// created by the first successful generate; every edit that changes the
+// "current" image creates version N+1, with a plain-English changeSummary
+// and a full designSnapshotJson so history stays inspectable even if the
+// project's own "current" fields move on later.
+model AiDesignerVersion {
+  id                 String                           @id @default(uuid()) @db.Uuid
+  companyId          String                           @map("company_id") @db.Uuid
+  projectId          String                           @map("project_id") @db.Uuid
+  versionNumber      Int                               @map("version_number")
+  currentImageId     String                           @map("current_image_id") @db.Uuid
+  changeSummary      String?                          @map("change_summary")
+  designSnapshotJson Json                             @map("design_snapshot_json")
+  approvalStatus     AiDesignerVersionApprovalStatus @default(DRAFT) @map("approval_status")
+  approvedByUserId   String?                          @map("approved_by_user_id") @db.Uuid
+  approvedAt         DateTime?                        @map("approved_at")
+  /** The exact AiDesignerPrompt (prompt text/spec/provider/model) that produced this version's image, when it came from an AI edit — null for the initial generation's own version if created some other way. Lets the Edit Design workspace's version history show "AI Prompt" per version without re-deriving it. */
+  aiPromptId         String?                          @map("ai_prompt_id") @db.Uuid
+  /** Structured Technical Edit Mode fields (e.g. {"Collar Type": "Mandarin", "Finished Height": "3.5 cm"}), kept alongside the free-text changeSummary/AI prompt — the workspace's "reflected in the design specification data" requirement (Technical Edit Mode). Null for a Quick Edit or AI Prompt edit that used no structured fields. */
+  technicalChangesJson Json?                          @map("technical_changes_json")
+
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  company      Company           @relation(fields: [companyId], references: [id])
+  project      AiDesignerProject @relation("AiDesignerVersionsOfProject", fields: [projectId], references: [id])
+  currentImage AiDesignerImage   @relation(fields: [currentImageId], references: [id])
+  createdBy    User              @relation("AiDesignerVersionCreatedBy", fields: [createdByUserId], references: [id])
+  approvedBy   User?             @relation("AiDesignerVersionApprovedBy", fields: [approvedByUserId], references: [id])
+  aiPrompt     AiDesignerPrompt? @relation(fields: [aiPromptId], references: [id])
+
+  currentForProject AiDesignerProject? @relation("AiDesignerProjectCurrentVersion")
+
+  @@unique([projectId, versionNumber])
+  @@map("ai_versions")
+}
+
+// Tech Pack (2026-09-11) -- a new, isolated AI Designer feature: one combined
+// action producing a graded measurement chart, a draft BOM, and a technical
+// flat sketch from the project's current generated design. Genuinely
+// isolated from AI Garment Flow's own, much richer equivalent processes
+// (Technical Specification/BOM Suggestion/Technical Development) -- same
+// reasoning as everywhere else in this module: this reuses only the
+// shared, zero-business-logic AI provider infrastructure
+// (requestStructuredTextOutput, ImageGenerationProvider.generateTechnicalFlat),
+// never AI Garment Flow's own schema, prompts, or service code. Deliberately
+// simpler than that module's own version: graded across a small fixed set of
+// standard sizes (not the company's real Size master), and the BOM is purely
+// advisory free-form JSON -- AI Designer has no Style-graduation mechanic at
+// all for a real BOM to attach to. Append-only (one row per attempt, mirrors
+// every other AI Designer run-log table) -- only the most recent is shown in
+// the UI, older attempts stay in the database for audit.
+// Rebuilt 2026-09-13 per the user's own "GARMENT TECH PACK SPEC SHEET
+// GENERATOR" system prompt ("ye prompt use kro") -- replaces the original
+// single-flat-sketch + separate grading/BOM design entirely. A run now
+// produces one comprehensive, structured "Garment Analysis" (categories A-J)
+// plus exactly 7 real generated images, one per supplier-ready tech-pack
+// page -- see AiDesignerTechPackPage below. Old attempts under the previous
+// shape are superseded, not migrated (this feature was only 2 days old and
+// carried no real production data), matching this project's own established
+// precedent for a clean schema replacement when a feature's scope is
+// fundamentally rebuilt (e.g. Purchase Request -> Material Request).
+/**
+ * v3 (2026-09-14): the AI's own page-image generation was removed entirely --
+ * pages 1/2/4 now embed the project's own real, already-generated design
+ * photo (imageAttachmentId copied verbatim from the project's currentVersion,
+ * never re-uploaded), never a fabricated "AI-drawn flat" -- per the user's
+ * own explicit, repeated rule against using AI image generation to build the
+ * document. This also added a real approve/revision discipline, mirroring
+ * AiDesignerVersion's own approvalStatus/approvedByUserId/approvedAt shape
+ * exactly: a tech pack starts DRAFT, and editing an already-APPROVED one
+ * forks a brand-new row (parentTechPackId/revisionNumber) rather than
+ * silently mutating the approved snapshot -- so a previously-approved,
+ * previously-downloaded PDF's data always stays exactly reproducible.
+ * `originalGarmentAnalysisJson` is a frozen copy made once at generation
+ * time, backing a "Revert to AI-generated" action at the whole-document
+ * level (not per-field -- doubling every one of the ~15 leaf fields into an
+ * {ai, current} pair for a rarely-used capability wasn't worth it; per-field
+ * audit history already exists via the write-audit-log convention on every
+ * edit).
+ */
+enum AiDesignerTechPackApprovalStatus {
+  DRAFT
+  APPROVED
+}
+
+model AiDesignerTechPack {
+  id                       String              @id @default(uuid()) @db.Uuid
+  companyId                String              @map("company_id") @db.Uuid
+  projectId                String              @map("project_id") @db.Uuid
+  status                   AiDesignerRunStatus @default(IN_PROGRESS)
+  /** The full structured Garment Analysis (categories A-J) -- see GarmentAnalysis in tech-pack/schema.ts for its exact shape. */
+  garmentAnalysisJson      Json?               @map("garment_analysis_json")
+  /** Frozen at generation time, never touched by edits -- see the model doc comment above. */
+  originalGarmentAnalysisJson Json?            @map("original_garment_analysis_json")
+  designerNotes            String?             @map("designer_notes")
+  suggestedAdditionalViews String?             @map("suggested_additional_views")
+  errorMessage             String?             @map("error_message")
+
+  approvalStatus  AiDesignerTechPackApprovalStatus @default(DRAFT) @map("approval_status")
+  approvedByUserId String?                         @map("approved_by_user_id") @db.Uuid
+  approvedAt       DateTime?                       @map("approved_at")
+
+  /** A revision is just another row of this same model -- see the model doc comment above. */
+  revisionNumber   Int     @default(1) @map("revision_number")
+  parentTechPackId String? @map("parent_tech_pack_id") @db.Uuid
+
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  company        Company                  @relation(fields: [companyId], references: [id])
+  project        AiDesignerProject        @relation(fields: [projectId], references: [id])
+  createdBy      User                     @relation("AiDesignerTechPackCreatedBy", fields: [createdByUserId], references: [id])
+  approvedBy     User?                    @relation("AiDesignerTechPackApprovedBy", fields: [approvedByUserId], references: [id])
+  parentTechPack AiDesignerTechPack?      @relation("AiDesignerTechPackRevisions", fields: [parentTechPackId], references: [id])
+  childRevisions AiDesignerTechPack[]     @relation("AiDesignerTechPackRevisions")
+  pages          AiDesignerTechPackPage[]
+
+  @@map("ai_tech_packs")
+}
+
+/** One row per tech-pack page (always exactly 7 on a successful run, pages 1-7 per the user's own fixed page structure). `promptText` is nullable -- v3 removed all per-page AI image generation, so nothing populates it for new rows; historical rows keep their real string. `technicalFlatAttachmentId` is reserved for a genuinely future, separate feature (a manually-uploaded CAD/SVG technical flat) -- unpopulated by anything in this codebase today. */
+model AiDesignerTechPackPage {
+  id                        String  @id @default(uuid()) @db.Uuid
+  techPackId                String  @map("tech_pack_id") @db.Uuid
+  pageNumber                Int     @map("page_number")
+  pageTitle                 String  @map("page_title")
+  promptText                String? @map("prompt_text")
+  imageAttachmentId         String? @map("image_attachment_id")
+  technicalFlatAttachmentId String? @map("technical_flat_attachment_id")
+
+  techPack AiDesignerTechPack @relation(fields: [techPackId], references: [id], onDelete: Cascade)
+
+  @@unique([techPackId, pageNumber])
+  @@map("ai_tech_pack_pages")
+}
+
+// Product Design attribute master (2026-09-11) -- was a hardcoded, code-only
+// catalog (design-attribute-catalog.ts); the user asked for it to become a
+// real, editable Masters entity (Masters -> AI Design -> Product Design), the
+// same way every other lookup in this ERP is company-configurable rather
+// than baked into a constant.
+//
+// Deliberately "DB overrides the static default per category, not a merge":
+// getEffectiveDesignAttributesForCategory() returns this company's own real
+// rows for a category the moment ANY exist for it (ordered by sortOrder),
+// and only falls back to the original static PRODUCT_DESIGN_ATTRIBUTES_BY_
+// CATEGORY entry when the company has never customized that category at
+// all -- the same "a missing row means the default, no backfill needed"
+// precedent as SubmoduleVisibility/AiDesignerSettings elsewhere in this
+// schema. This means every existing company keeps working unchanged with
+// zero seeding, and an admin who edits/adds even one attribute for a
+// category takes full ownership of that category's list from then on --
+// simpler and more predictable than a per-attribute merge.
+//
+// `options` is a plain String[], not a child table -- matches the original
+// DesignAttributeDef.options shape exactly (no independent option-level
+// metadata like its own sortOrder/isActive was ever needed).
+model AiDesignerProductDesignAttribute {
+  id             String   @id @default(uuid()) @db.Uuid
+  companyId      String   @map("company_id") @db.Uuid
+  categoryName   String   @map("category_name")
+  attributeKey   String   @map("attribute_key")
+  attributeLabel String   @map("attribute_label")
+  options        String[]
+  sortOrder      Int      @default(0) @map("sort_order")
+  isActive       Boolean  @default(true) @map("is_active")
+
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  company   Company @relation(fields: [companyId], references: [id])
+  createdBy User    @relation("AiDesignerProductDesignAttributeCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@unique([companyId, categoryName, attributeKey])
+  @@map("ai_product_design_attributes")
+}
+
+/**
+ * A company-uploaded photo override for one Product Design option VALUE
+ * (e.g. "Deep Back Cut-Out") -- deliberately keyed by the option's own
+ * string, not by (categoryName, attributeKey): the same value string means
+ * the same real garment detail regardless of which attribute it's attached
+ * to, so it gets exactly one override, reused everywhere that value
+ * appears -- the identical "dedupe by value only" reasoning already used by
+ * the AI-generated reference-photo pipeline this augments (see
+ * reference-image-prompt.ts). A missing row for a value means "no
+ * override" -- DesignOptionImage then falls back to the AI-generated static
+ * file, then to the clipart icon, in that order.
+ */
+model AiDesignerOptionReferenceImage {
+  id           String @id @default(uuid()) @db.Uuid
+  companyId    String @map("company_id") @db.Uuid
+  optionValue  String @map("option_value")
+  attachmentId String @map("attachment_id")
+
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  company   Company @relation(fields: [companyId], references: [id])
+  createdBy User    @relation("AiDesignerOptionReferenceImageCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@unique([companyId, optionValue])
+  @@map("ai_designer_option_reference_images")
+}
+
+enum AiDesignerAttributeDisplayMode {
+  CLIPART
+  TEXT
+}
+
+// Company-wide, Super-Admin-controlled setting: whether the Product Design
+// step's attribute pickers (Neckline/Sleeve/Silhouette/...) render as clipart
+// icons (the original, default behavior) or plain text buttons. A missing
+// row means CLIPART -- no backfill needed. Deliberately a single flat row
+// per company (not a per-submodule map like SubmoduleVisibility, since
+// there is exactly one thing this toggle controls today) and deliberately
+// no lock/has-data logic (unlike SubmoduleVisibility, nothing about this
+// choice becomes unsafe once real project data exists).
+model AiDesignerSettings {
+  id                       String                         @id @default(uuid()) @db.Uuid
+  companyId                String                         @unique @map("company_id") @db.Uuid
+  productDesignDisplayMode AiDesignerAttributeDisplayMode @default(CLIPART) @map("product_design_display_mode")
+  createdAt                DateTime                       @default(now()) @map("created_at")
+  updatedAt                DateTime                       @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@map("ai_designer_settings")
+}
+
+// -----------------------------------------------------------------------------
+// Replicate Design (2026-09-13, Phase 1) — a NEW, separate page inside the AI
+// Designer module (never inside the existing 13-step wizard above): upload a
+// photo of an existing garment, AI extracts a structural "Design DNA" that
+// becomes a locked baseline, then the company's own real fabric/raw materials
+// (never the garment's original ones) are used to regenerate the SAME
+// garment. Phase 1 covers reference upload -> DNA analysis -> Design Lock ->
+// fabric/material selection -> AI compatibility check -> generate; later
+// phases (selective unlock+edit, version compare, approval, rich Tech Pack,
+// BOM, costing, Sample Request, Style Master, full traceability) are not
+// built yet. Uses a `ReplicateDesign*` prefix throughout (no collision with
+// `AiDesigner*`/`AiGarment*`), shares the existing `ai_designer` RBAC module,
+// and follows this codebase's own proven conventions: the 3-table
+// "header (replaced) + per-observation rows + append-only run log" shape
+// already used twice for AI Garment Flow's Reference Analysis and Product
+// Suitability, and the `Prompt -> Generation -> Image -> Version` chain
+// already proven by AI Designer's own Generate Design step.
+// -----------------------------------------------------------------------------
+
+enum ReplicateDesignProjectStatus {
+  DRAFT
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum ReplicateDesignFabricSource {
+  EXISTING
+  UPLOADED
+}
+
+enum ReplicateDesignDnaStatus {
+  DRAFT
+  AI_ANALYSED
+  UNDER_REVIEW
+  APPROVED
+  STALE
+}
+
+enum ReplicateAnalysisConfidence {
+  CONFIRMED_VISUALLY
+  LIKELY_INFERRED
+  NOT_DETERMINABLE
+}
+
+enum ReplicateRunStatus {
+  IN_PROGRESS
+  SUCCESS
+  FAILED
+}
+
+enum ReplicateMaterialRole {
+  MAIN_FABRIC
+  CONTRAST_FABRIC
+  LINING
+  INTERLINING
+  BUTTON
+  ZIPPER
+  THREAD
+  LABEL
+  TRIM_OTHER
+  OTHER
+}
+
+enum ReplicateCompatibilityRating {
+  COMPATIBLE
+  MINOR_CONCERN
+  INCOMPATIBLE
+}
+
+enum ReplicateCompatibilitySubject {
+  FABRIC
+  MATERIAL_LINE
+}
+
+enum ReplicateImageDecision {
+  PENDING
+  SELECTED
+  REJECTED
+}
+
+enum ReplicatePromptType {
+  DNA_ANALYSIS
+  COMPATIBILITY_CHECK
+  IMAGE_GENERATE
+  IMAGE_EDIT
+}
+
+/** Edit Design workspace (mirrors AiDesignerVersionApprovalStatus exactly) — a version's own review/approval state, shown as the "Design Status" badge in the workspace's top toolbar. DRAFT is the initial (never-edited) generation; every version created via an edit starts AI_MODIFIED; UNDER_REVIEW/APPROVED/REJECTED are explicit human actions from the workspace's Approve/Reject controls. */
+enum ReplicateDesignVersionApprovalStatus {
+  DRAFT
+  AI_MODIFIED
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+}
+
+model ReplicateDesignProject {
+  id            String                       @id @default(uuid()) @db.Uuid
+  companyId     String                       @map("company_id") @db.Uuid
+  projectNumber String                       @map("project_number")
+  projectName   String                       @map("project_name")
+  status        ReplicateDesignProjectStatus @default(DRAFT)
+
+  // Own, wholly separate resumable-flow position — mirrors the *shape* of
+  // AiDesignerProject's own currentStep/completedSteps, never shared code
+  // (this is a different route/flow with its own step order).
+  currentStep    String   @default("REFERENCE_UPLOAD") @map("current_step")
+  completedSteps String[] @map("completed_steps")
+
+  // Reference garment photos — single-slot columns (a cheap "is front
+  // uploaded" column check); repeatable "additional" photos are plain
+  // Attachment rows tagged contextLabel="REFERENCE_ADDITIONAL" instead, the
+  // same header-level multi-photo precedent already used by AI Garment
+  // Flow's own project-level attachments.
+  referenceFrontImageAttachmentId  String? @map("reference_front_image_attachment_id")
+  referenceBackImageAttachmentId   String? @map("reference_back_image_attachment_id")
+  referenceSideImageAttachmentId   String? @map("reference_side_image_attachment_id")
+  referenceDetailImageAttachmentId String? @map("reference_detail_image_attachment_id")
+
+  // Fabric selection — same shape as AiDesignerProject's own fabric* columns,
+  // duplicated (not cross-module-reused) per this module's own established
+  // isolation rule.
+  fabricSource            ReplicateDesignFabricSource? @map("fabric_source")
+  fabricProductId         String?                      @map("fabric_product_id") @db.Uuid
+  fabricImageAttachmentId String?                      @map("fabric_image_attachment_id")
+  fabricName              String?                      @map("fabric_name")
+  fabricCode              String?                      @map("fabric_code")
+  fabricSupplierId        String?                      @map("fabric_supplier_id") @db.Uuid
+
+  currentVersionId String? @unique @map("current_version_id") @db.Uuid
+
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  company        Company                 @relation(fields: [companyId], references: [id])
+  fabricProduct  Product?                @relation(fields: [fabricProductId], references: [id])
+  fabricSupplier Supplier?               @relation(fields: [fabricSupplierId], references: [id])
+  currentVersion ReplicateDesignVersion? @relation("ReplicateDesignProjectCurrentVersion", fields: [currentVersionId], references: [id])
+  createdBy      User                    @relation("ReplicateDesignProjectCreatedBy", fields: [createdByUserId], references: [id])
+
+  dnaAnalysis        ReplicateDesignDnaAnalysis?
+  dnaAnalysisRuns    ReplicateDesignDnaAnalysisRun[]
+  materialLines      ReplicateDesignMaterialLine[]
+  compatibilityCheck ReplicateDesignCompatibilityCheck?
+  compatibilityRuns  ReplicateDesignCompatibilityRun[]
+  prompts            ReplicateDesignPrompt[]
+  generations        ReplicateDesignGeneration[]
+  images             ReplicateDesignImage[]
+  versions           ReplicateDesignVersion[]           @relation("ReplicateDesignVersionsOfProject")
+  providerUsage      AIProviderUsage[]
+  techPacks          ReplicateDesignTechPack[]
+
+  @@unique([companyId, projectNumber])
+  @@map("replicate_design_projects")
+}
+
+// 1:1 per project, fully replaced on re-analysis — the current, mutable
+// "result"; a failed attempt is logged separately (see the Run table below)
+// and never overwrites a previously-successful analysis.
+model ReplicateDesignDnaAnalysis {
+  id                    String                   @id @default(uuid()) @db.Uuid
+  companyId             String                   @map("company_id") @db.Uuid
+  projectId             String                   @unique @map("project_id") @db.Uuid
+  // Soft reference to whichever front photo this actually ran against — kept
+  // even if the project's own current reference image is later replaced, so
+  // a STALE analysis still records what it was analysing.
+  referenceAttachmentId String                   @map("reference_attachment_id")
+  status                ReplicateDesignDnaStatus @default(DRAFT)
+  promptVersion         String                   @map("prompt_version")
+  provider              String
+  model                 String
+  rawResponseJson       Json                     @map("raw_response_json")
+  designDnaSummary      String?                  @map("design_dna_summary")
+  approvedByUserId      String?                  @map("approved_by_user_id") @db.Uuid
+  approvedAt            DateTime?                @map("approved_at")
+  createdByUserId       String                   @map("created_by_user_id") @db.Uuid
+  createdAt             DateTime                 @default(now()) @map("created_at")
+  updatedAt             DateTime                 @updatedAt @map("updated_at")
+
+  company    Company                @relation(fields: [companyId], references: [id])
+  project    ReplicateDesignProject @relation(fields: [projectId], references: [id])
+  approvedBy User?                  @relation("ReplicateDesignDnaAnalysisApprovedBy", fields: [approvedByUserId], references: [id])
+  createdBy  User                   @relation("ReplicateDesignDnaAnalysisCreatedBy", fields: [createdByUserId], references: [id])
+
+  observations ReplicateDesignDnaObservation[]
+  runs         ReplicateDesignDnaAnalysisRun[]
+
+  @@map("replicate_design_dna_analyses")
+}
+
+// One row per structural feature (garmentCategory, silhouette, garmentLength,
+// fit, neckline, collar, sleeveType, sleeveLength, shoulderConstruction,
+// closureType, panelsAndSeams, waistTreatment, hemFinish,
+// keyConstructionDetails). isLocked is the Design Lock — default ON per
+// attribute; the generation prompt-builder only ever reads a locked row's
+// approvedObservation as a hard structural constraint.
+model ReplicateDesignDnaObservation {
+  id                  String                      @id @default(uuid()) @db.Uuid
+  analysisId          String                      @map("analysis_id") @db.Uuid
+  featureKey          String                      @map("feature_key")
+  aiObservation       String                      @map("ai_observation")
+  aiConfidence        ReplicateAnalysisConfidence @map("ai_confidence")
+  // Defaults to aiObservation at creation; the ONLY field image generation
+  // ever reads — a later process can never bypass the human-approved value.
+  approvedObservation String                      @map("approved_observation")
+  userEdited          Boolean                     @default(false) @map("user_edited")
+  isLocked            Boolean                     @default(true) @map("is_locked")
+  approvedByUserId    String?                     @map("approved_by_user_id") @db.Uuid
+  approvedAt          DateTime?                   @map("approved_at")
+  createdAt           DateTime                    @default(now()) @map("created_at")
+  updatedAt           DateTime                    @updatedAt @map("updated_at")
+
+  analysis   ReplicateDesignDnaAnalysis @relation(fields: [analysisId], references: [id])
+  approvedBy User?                      @relation("ReplicateDesignDnaObservationApprovedBy", fields: [approvedByUserId], references: [id])
+
+  @@unique([analysisId, featureKey])
+  @@map("replicate_design_dna_observations")
+}
+
+// Append-only audit log of every DNA analysis attempt, success or failure —
+// a failed attempt can never overwrite a previously-successful analysis.
+model ReplicateDesignDnaAnalysisRun {
+  id                    String             @id @default(uuid()) @db.Uuid
+  companyId             String             @map("company_id") @db.Uuid
+  projectId             String             @map("project_id") @db.Uuid
+  analysisId            String?            @map("analysis_id") @db.Uuid
+  referenceAttachmentId String             @map("reference_attachment_id")
+  provider              String
+  model                 String
+  promptVersion         String             @map("prompt_version")
+  status                ReplicateRunStatus @default(IN_PROGRESS)
+  errorCategory         String?            @map("error_category")
+  errorMessage          String?            @map("error_message")
+  requestedAt           DateTime           @default(now()) @map("requested_at")
+  completedAt           DateTime?          @map("completed_at")
+  createdByUserId       String             @map("created_by_user_id") @db.Uuid
+
+  company   Company                     @relation(fields: [companyId], references: [id])
+  project   ReplicateDesignProject      @relation(fields: [projectId], references: [id])
+  analysis  ReplicateDesignDnaAnalysis? @relation(fields: [analysisId], references: [id])
+  createdBy User                        @relation("ReplicateDesignDnaAnalysisRunCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@index([projectId, status])
+  @@map("replicate_design_dna_analysis_runs")
+}
+
+// A raw-material line the user picked (via the existing shared MaterialPicker
+// component) to replace one of the reference garment's original materials —
+// productId always points at a real Product row (itemType=RAW_MATERIAL).
+model ReplicateDesignMaterialLine {
+  id        String                @id @default(uuid()) @db.Uuid
+  companyId String                @map("company_id") @db.Uuid
+  projectId String                @map("project_id") @db.Uuid
+  productId String                @map("product_id") @db.Uuid
+  role      ReplicateMaterialRole @default(OTHER)
+  quantity  Decimal?              @db.Decimal(18, 4)
+  uomId     String?               @map("uom_id") @db.Uuid
+  notes     String?
+
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  company   Company                @relation(fields: [companyId], references: [id])
+  project   ReplicateDesignProject @relation(fields: [projectId], references: [id])
+  product   Product                @relation(fields: [productId], references: [id])
+  uom       UnitOfMeasure?         @relation(fields: [uomId], references: [id])
+  createdBy User                   @relation("ReplicateDesignMaterialLineCreatedBy", fields: [createdByUserId], references: [id])
+
+  compatibilityItems ReplicateDesignCompatibilityItem[]
+
+  @@map("replicate_design_material_lines")
+}
+
+// 1:1 per project, replaced each run. Never a hard block on Generate — per
+// the feature's own spec, any rating other than COMPATIBLE just surfaces a
+// warning requiring an explicit "Continue Anyway" before Generate proceeds.
+model ReplicateDesignCompatibilityCheck {
+  id              String                        @id @default(uuid()) @db.Uuid
+  companyId       String                        @map("company_id") @db.Uuid
+  projectId       String                        @unique @map("project_id") @db.Uuid
+  promptVersion   String                        @map("prompt_version")
+  provider        String
+  model           String
+  rawResponseJson Json                          @map("raw_response_json")
+  overallSummary  String?                       @map("overall_summary")
+  overallRating   ReplicateCompatibilityRating? @map("overall_rating")
+
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  company   Company                @relation(fields: [companyId], references: [id])
+  project   ReplicateDesignProject @relation(fields: [projectId], references: [id])
+  createdBy User                   @relation("ReplicateDesignCompatibilityCheckCreatedBy", fields: [createdByUserId], references: [id])
+
+  items ReplicateDesignCompatibilityItem[]
+  runs  ReplicateDesignCompatibilityRun[]
+
+  @@map("replicate_design_compatibility_checks")
+}
+
+// One row per fabric/material line the compatibility check actually assessed.
+model ReplicateDesignCompatibilityItem {
+  id             String                        @id @default(uuid()) @db.Uuid
+  checkId        String                        @map("check_id") @db.Uuid
+  subjectType    ReplicateCompatibilitySubject @map("subject_type")
+  // Null when subjectType=FABRIC (the fabric itself, not a material line).
+  materialLineId String?                       @map("material_line_id") @db.Uuid
+  aiRating       ReplicateCompatibilityRating  @map("ai_rating")
+  aiReasoning    String                        @map("ai_reasoning")
+  createdAt      DateTime                      @default(now()) @map("created_at")
+
+  check        ReplicateDesignCompatibilityCheck @relation(fields: [checkId], references: [id])
+  materialLine ReplicateDesignMaterialLine?      @relation(fields: [materialLineId], references: [id])
+
+  @@map("replicate_design_compatibility_items")
+}
+
+// Append-only audit log, mirrors ReplicateDesignDnaAnalysisRun exactly.
+model ReplicateDesignCompatibilityRun {
+  id              String             @id @default(uuid()) @db.Uuid
+  companyId       String             @map("company_id") @db.Uuid
+  projectId       String             @map("project_id") @db.Uuid
+  checkId         String?            @map("check_id") @db.Uuid
+  provider        String
+  model           String
+  promptVersion   String             @map("prompt_version")
+  status          ReplicateRunStatus @default(IN_PROGRESS)
+  errorCategory   String?            @map("error_category")
+  errorMessage    String?            @map("error_message")
+  requestedAt     DateTime           @default(now()) @map("requested_at")
+  completedAt     DateTime?          @map("completed_at")
+  createdByUserId String             @map("created_by_user_id") @db.Uuid
+
+  company   Company                            @relation(fields: [companyId], references: [id])
+  project   ReplicateDesignProject             @relation(fields: [projectId], references: [id])
+  check     ReplicateDesignCompatibilityCheck? @relation(fields: [checkId], references: [id])
+  createdBy User                               @relation("ReplicateDesignCompatibilityRunCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@index([projectId, status])
+  @@map("replicate_design_compatibility_runs")
+}
+
+// One row per AI call attempt of any kind (DNA analysis, compatibility
+// check, image generate) — the unified audit/run log for this whole
+// sub-module, mirroring AiDesignerPrompt exactly.
+model ReplicateDesignPrompt {
+  id              String              @id @default(uuid()) @db.Uuid
+  companyId       String              @map("company_id") @db.Uuid
+  projectId       String              @map("project_id") @db.Uuid
+  promptType      ReplicatePromptType @map("prompt_type")
+  promptVersion   String              @map("prompt_version")
+  specJson        Json                @map("spec_json")
+  promptText      String              @map("prompt_text")
+  provider        String
+  model           String
+  status          ReplicateRunStatus  @default(IN_PROGRESS)
+  errorCategory   String?             @map("error_category")
+  errorMessage    String?             @map("error_message")
+  requestedAt     DateTime            @default(now()) @map("requested_at")
+  completedAt     DateTime?           @map("completed_at")
+  createdByUserId String              @map("created_by_user_id") @db.Uuid
+
+  company    Company                    @relation(fields: [companyId], references: [id])
+  project    ReplicateDesignProject     @relation(fields: [projectId], references: [id])
+  createdBy  User                       @relation("ReplicateDesignPromptCreatedBy", fields: [createdByUserId], references: [id])
+  generation ReplicateDesignGeneration?
+  versions   ReplicateDesignVersion[]
+
+  @@map("replicate_design_prompts")
+}
+
+// One row per image-producing AI call. 1:1 with the Prompt that produced it.
+// parentImageId/editedFeature are set only for an Edit Design workspace call
+// (mirrors AiDesignerGeneration exactly) — null for the initial "Generate"
+// call, which has no prior image to edit from.
+model ReplicateDesignGeneration {
+  id                  String             @id @default(uuid()) @db.Uuid
+  companyId           String             @map("company_id") @db.Uuid
+  projectId           String             @map("project_id") @db.Uuid
+  promptId            String             @unique @map("prompt_id") @db.Uuid
+  parentImageId       String?            @map("parent_image_id") @db.Uuid
+  editedFeature       String?            @map("edited_feature")
+  requestedImageCount Int                @default(1) @map("requested_image_count")
+  status              ReplicateRunStatus @default(IN_PROGRESS)
+
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  company     Company                    @relation(fields: [companyId], references: [id])
+  project     ReplicateDesignProject     @relation(fields: [projectId], references: [id])
+  prompt      ReplicateDesignPrompt      @relation(fields: [promptId], references: [id])
+  parentImage ReplicateDesignImage?      @relation("ReplicateDesignGenerationParentImage", fields: [parentImageId], references: [id])
+  createdBy   User                       @relation("ReplicateDesignGenerationCreatedBy", fields: [createdByUserId], references: [id])
+
+  images ReplicateDesignImage[] @relation("ReplicateDesignImagesOfGeneration")
+
+  @@map("replicate_design_generations")
+}
+
+// One row per actual image file a generation produced (1/3/4 per request).
+// imageAttachmentId is a soft reference into the existing generic Attachment
+// table (RelatedModule.REPLICATE_DESIGN_PROJECT).
+model ReplicateDesignImage {
+  id                String                 @id @default(uuid()) @db.Uuid
+  companyId         String                 @map("company_id") @db.Uuid
+  projectId         String                 @map("project_id") @db.Uuid
+  generationId      String                 @map("generation_id") @db.Uuid
+  imageAttachmentId String                 @map("image_attachment_id")
+  decision          ReplicateImageDecision @default(PENDING)
+
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  company    Company                   @relation(fields: [companyId], references: [id])
+  project    ReplicateDesignProject    @relation(fields: [projectId], references: [id])
+  generation ReplicateDesignGeneration @relation("ReplicateDesignImagesOfGeneration", fields: [generationId], references: [id])
+  createdBy  User                      @relation("ReplicateDesignImageCreatedBy", fields: [createdByUserId], references: [id])
+
+  currentForVersions ReplicateDesignVersion[]
+  usedAsParentFor    ReplicateDesignGeneration[] @relation("ReplicateDesignGenerationParentImage")
+
+  @@map("replicate_design_images")
+}
+
+// Version history: version 1 is created by the first successful generate;
+// designSnapshotJson keeps the full spec inspectable even as the project's
+// own current fields move on. approvalStatus/approvedBy/approvedAt/aiPromptId/
+// technicalChangesJson mirror AiDesignerVersion exactly — the Edit Design
+// workspace's own review/approval + provenance fields.
+model ReplicateDesignVersion {
+  id                   String                               @id @default(uuid()) @db.Uuid
+  companyId            String                               @map("company_id") @db.Uuid
+  projectId            String                               @map("project_id") @db.Uuid
+  versionNumber        Int                                  @map("version_number")
+  currentImageId       String                               @map("current_image_id") @db.Uuid
+  changeSummary        String?                              @map("change_summary")
+  designSnapshotJson    Json                                 @map("design_snapshot_json")
+  approvalStatus        ReplicateDesignVersionApprovalStatus @default(DRAFT) @map("approval_status")
+  approvedByUserId      String?                              @map("approved_by_user_id") @db.Uuid
+  approvedAt            DateTime?                            @map("approved_at")
+  /** The exact ReplicateDesignPrompt that produced this version's image, when it came from an AI edit — null for the initial generation's own version. */
+  aiPromptId            String?                              @map("ai_prompt_id") @db.Uuid
+  /** Structured Technical Edit Mode fields, kept alongside the free-text changeSummary/AI prompt — mirrors AiDesignerVersion.technicalChangesJson exactly. */
+  technicalChangesJson  Json?                                @map("technical_changes_json")
+
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  company      Company                @relation(fields: [companyId], references: [id])
+  project      ReplicateDesignProject @relation("ReplicateDesignVersionsOfProject", fields: [projectId], references: [id])
+  currentImage ReplicateDesignImage   @relation(fields: [currentImageId], references: [id])
+  createdBy    User                   @relation("ReplicateDesignVersionCreatedBy", fields: [createdByUserId], references: [id])
+  approvedBy   User?                  @relation("ReplicateDesignVersionApprovedBy", fields: [approvedByUserId], references: [id])
+  aiPrompt     ReplicateDesignPrompt? @relation(fields: [aiPromptId], references: [id])
+
+  currentForProject ReplicateDesignProject? @relation("ReplicateDesignProjectCurrentVersion")
+
+  @@unique([projectId, versionNumber])
+  @@map("replicate_design_versions")
+}
+
+// Tech Pack (2026-09-13) -- the same "GARMENT TECH PACK SPEC SHEET GENERATOR"
+// pipeline as AiDesignerTechPack/AiDesignerTechPackPage above, reused for
+// Replicate Design's own generated design. This reuses the shared, generic
+// AI infrastructure (src/core/ai-designer/tech-pack/{schema,prompt,generate}.ts,
+// tech-pack-pdf.tsx) as-is -- appropriate DRY reuse *within* the ai-designer
+// module (this module's own established isolation rule is specifically
+// about never sharing business logic with the separate AI Garment Flow
+// module, not about avoiding reuse between two features that already live
+// inside the same module). Its own schema mirrors AiDesignerTechPack's shape
+// exactly (own tables, own FK to ReplicateDesignProject) rather than a
+// shared table, matching this module's convention of duplicating schema
+// while reusing generic service/prompt code. Reuses AiDesignerRunStatus
+// directly for `status` (identical IN_PROGRESS/SUCCESS/FAILED shape) rather
+// than minting a redundant twin enum.
+model ReplicateDesignTechPack {
+  id                       String              @id @default(uuid()) @db.Uuid
+  companyId                String              @map("company_id") @db.Uuid
+  projectId                String              @map("project_id") @db.Uuid
+  status                   AiDesignerRunStatus @default(IN_PROGRESS)
+  /** The full structured Garment Analysis (categories A-J) -- see GarmentAnalysis in tech-pack/schema.ts for its exact shape. */
+  garmentAnalysisJson      Json?               @map("garment_analysis_json")
+  designerNotes            String?             @map("designer_notes")
+  suggestedAdditionalViews String?             @map("suggested_additional_views")
+  errorMessage             String?             @map("error_message")
+
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  company   Company                     @relation(fields: [companyId], references: [id])
+  project   ReplicateDesignProject      @relation(fields: [projectId], references: [id])
+  createdBy User                        @relation("ReplicateDesignTechPackCreatedBy", fields: [createdByUserId], references: [id])
+  pages     ReplicateDesignTechPackPage[]
+
+  @@map("replicate_design_tech_packs")
+}
+
+/** One row per generated tech-pack page (always exactly 7 on a successful run) -- the prompt text is kept alongside the image for review/audit, mirroring AiDesignerTechPackPage exactly. */
+model ReplicateDesignTechPackPage {
+  id                String  @id @default(uuid()) @db.Uuid
+  techPackId        String  @map("tech_pack_id") @db.Uuid
+  pageNumber        Int     @map("page_number")
+  pageTitle         String  @map("page_title")
+  promptText        String  @map("prompt_text")
+  imageAttachmentId String? @map("image_attachment_id")
+
+  techPack ReplicateDesignTechPack @relation(fields: [techPackId], references: [id], onDelete: Cascade)
+
+  @@unique([techPackId, pageNumber])
+  @@map("replicate_design_tech_pack_pages")
+}
+
+// -----------------------------------------------------------------------------
+// AI Provider & API Management + Automatic Failover (2026-09-10)
+//
+// A genuinely new area (confirmed via a dedicated research pass before
+// writing this: grep across the whole schema for any Provider/AIConfig/
+// ApiKey/Credential/Usage/Failover/Health model name returned zero
+// matches). Extends, rather than duplicates, what already exists: reuses
+// src/core/security/encryption.ts's encryptSecret/decryptSecret verbatim
+// for apiKeyEncrypted (the same NEXTAUTH_SECRET-derived key
+// AdAccountConnection's OAuth tokens already use -- no new key to manage),
+// reuses the existing ImageGenerationProvider interface/ImageGenErrorCategory
+// taxonomy as the runtime contract every provider still implements, and is
+// gated behind the existing "administration" RBAC module (matching every
+// other admin-only settings tab -- Company Settings, Worker Settings,
+// Module Visibility -- none of which got their own RBAC module either).
+//
+// Scoping decision, made explicitly rather than left implicit: AIProvider
+// rows are per-company only (companyId required, not nullable). No genuine
+// "global config row + per-company override" pattern exists anywhere in
+// this codebase today (SubmoduleVisibility's own "global default" is a
+// hardcoded true fallback in code, not a queryable global row -- see
+// SubmoduleVisibilityService) -- inventing one here, unproven need, would
+// have added exactly the kind of complexity this project's own conventions
+// warn against. Every company independently configures its own providers,
+// consistent with every other admin-managed entity in this app (Company
+// Settings, Branches, Document Sequences, Module Visibility are all
+// per-company). A true global-default tier can be added later as a
+// proven-needed extension without breaking this shape.
+//
+// Consolidation decision: the original suggested table list named 6 tables
+// (AIProvider, AIProviderCredential, AIProviderModel, AIProviderUsage,
+// AIProviderHealth, AIFailoverLog), 3 of which (Credential/Model/Health)
+// are genuinely 1:1 with a single AIProvider row, not a real one-to-many
+// relationship -- splitting them into separate tables would have meant a
+// join for every single read with no real data-modeling benefit. Merged
+// into AIProvider itself; AIProviderUsage and AIFailoverLog remain separate
+// since they are genuinely one-to-many (many usage/failover events per
+// provider over time).
+
+enum AIProviderType {
+  OPENAI
+  GEMINI
+  CLOUDFLARE
+  QWEN_LOCAL
+}
+
+/**
+ * Matches the distinct image-generation operations AI Designer's own pipeline(s) actually distinguish today -- not a speculative larger taxonomy.
+ */
+enum AIProviderCapability {
+  TEXT_TO_IMAGE
+  IMAGE_EDIT
+  FABRIC_REFERENCE
+  // Applies a SECOND fabric image onto specific area(s) of an already-
+  // generated design (Multi-Fabric) -- routed to ImageGenerationProvider's
+  // own `applyFabric` (a genuine two-image composition), distinct from
+  // IMAGE_EDIT's single-image `generateVariation` -- a provider capable of
+  // one is not necessarily capable of the other (confirmed: the Cloudflare
+  // provider implements generateVariation but deliberately omits
+  // applyFabric).
+  MULTI_FABRIC
+  // Regenerates the current design as a graded technical flat / CAD-style
+  // line drawing (AI Designer's own Tech Pack feature) -- routed to
+  // `generateTechnicalFlat`, a single-base-image transform distinct in kind
+  // from IMAGE_EDIT's "change one named aspect" semantics.
+  TECHNICAL_FLAT
+  // Replicate Design (2026-09-13) -- regenerates an externally-uploaded
+  // reference garment photo using a new fabric/material photo while
+  // preserving the reference's own structural design -- routed to
+  // `replicateWithNewMaterial`, its own distinct method (never reusing
+  // MULTI_FABRIC/applyFabric's capability tag, even though the underlying
+  // vendor call may be identical) so provider health/failover stays
+  // correctly attributed per feature.
+  DESIGN_REPLICATION
+}
+
+/**
+ * Runtime health/quota state, distinct from the static isActive admin toggle -- a provider can be isActive:true but currently QUOTA_EXHAUSTED (in cooldown), or isActive:false (an admin deliberately disabled it, never even attempted).
+ */
+enum AIProviderHealthStatus {
+  HEALTHY
+  RATE_LIMITED
+  QUOTA_EXHAUSTED
+  UNAVAILABLE
+  AUTH_ERROR
+  DISABLED
+}
+
+/**
+ * The normalized error taxonomy AIProviderManager classifies every
+ * provider failure into -- deliberately a superset of the existing,
+ * narrower ImageGenErrorCategory (src/core/ai/image-generation/types.ts),
+ * since that one predates and does not distinguish "should this trigger
+ * failover" (it has no separate content-policy-vs-auth-failure split).
+ * Kept as its own enum rather than widening the existing one, since
+ * ImageGenErrorCategory is a provider-SDK-facing contract
+ * (UNSUPPORTED_OPERATION, INVALID_IMAGE_RESPONSE describe the SDK response
+ * shape, not failover eligibility) -- AIUsageErrorCategory is specifically
+ * about "what should the failover engine do next," a different concern at
+ * a different layer.
+ */
+enum AIUsageErrorCategory {
+  QUOTA_EXHAUSTED
+  RATE_LIMITED
+  PROVIDER_UNAVAILABLE
+  TIMEOUT
+  AUTH_ERROR
+  INVALID_REQUEST
+  CONTENT_POLICY
+  INTERNAL_ERROR
+}
+
+model AIProvider {
+  id           String         @id @default(uuid()) @db.Uuid
+  companyId    String         @map("company_id") @db.Uuid
+  name         String
+  providerType AIProviderType @map("provider_type")
+
+  // Encrypted via src/core/security/encryption.ts's encryptSecret -- never
+  // the plain key. Nullable because QWEN_LOCAL (a self-hosted endpoint) may
+  // need no API key at all, only a baseUrl.
+  apiKeyEncrypted String? @map("api_key_encrypted")
+  model           String
+  baseUrl         String? @map("base_url")
+
+  isActive               Boolean @default(true) @map("is_active")
+  // Lower number = tried first. Deliberately a plain Int, not a unique
+  // constraint -- two providers legitimately sharing a priority is fine
+  // (stable-sorted by createdAt as the tiebreaker); forcing strict
+  // uniqueness would only add friction for no real benefit.
+  priority               Int     @default(100)
+  autoFailoverEnabled    Boolean @default(true) @map("auto_failover_enabled")
+  dailyGenerationLimit   Int?    @map("daily_generation_limit")
+  monthlyGenerationLimit Int?    @map("monthly_generation_limit")
+  requestTimeoutMs       Int     @default(120000) @map("request_timeout_ms")
+  maxRetryCount          Int     @default(1) @map("max_retry_count")
+
+  capabilities AIProviderCapability[]
+
+  // Runtime health/cooldown state -- mutated by AIProviderManager after
+  // every real call, not by any admin action directly (the admin can only
+  // force it back to HEALTHY via a manual "Reset" action, or DISABLED via
+  // the isActive toggle).
+  healthStatus      AIProviderHealthStatus @default(HEALTHY) @map("health_status")
+  cooldownUntil     DateTime?              @map("cooldown_until")
+  lastHealthCheckAt DateTime?              @map("last_health_check_at")
+  lastErrorMessage  String?                @map("last_error_message")
+
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  company   Company @relation(fields: [companyId], references: [id])
+  createdBy User    @relation("AIProviderCreatedBy", fields: [createdByUserId], references: [id])
+
+  usageLogs               AIProviderUsage[]
+  failoverLogsAsRequested AIFailoverLog[]   @relation("AIFailoverRequestedProvider")
+  failoverLogsAsFallback  AIFailoverLog[]   @relation("AIFailoverFallbackProvider")
+
+  @@unique([companyId, name])
+  @@map("ai_providers")
+}
+
+/**
+ * One row per real generation attempt (success or failure) that reached
+ * AIProviderManager -- providerId is nullable for the "no compatible
+ * provider was even found" case (the request never reached any real API at
+ * all, still worth recording so the usage dashboard/failover history is
+ * complete). estimatedCost/tokenUsage are populated only when the
+ * provider's own real response actually carries that information.
+ */
+model AIProviderUsage {
+  id                       String  @id @default(uuid()) @db.Uuid
+  companyId                String  @map("company_id") @db.Uuid
+  providerId               String? @map("provider_id") @db.Uuid
+  userId                   String? @map("user_id") @db.Uuid
+  aiDesignerProjectId      String? @map("ai_designer_project_id") @db.Uuid
+  // Replicate Design (2026-09-13) -- a separate, genuinely different project
+  // table from AiDesignerProject, so its own usage rows need their own FK
+  // rather than overloading aiDesignerProjectId with an id from a different
+  // table (which the existing FK constraint would reject outright).
+  replicateDesignProjectId String? @map("replicate_design_project_id") @db.Uuid
+
+  generationType AIProviderCapability @map("generation_type")
+  requestedAt    DateTime             @default(now()) @map("requested_at")
+  durationMs     Int?                 @map("duration_ms")
+  success        Boolean
+
+  errorCategory AIUsageErrorCategory? @map("error_category")
+  errorMessage  String?               @map("error_message")
+
+  providerRequestId String?  @map("provider_request_id")
+  inputImagePresent Boolean  @default(false) @map("input_image_present")
+  outputCount       Int      @default(0) @map("output_count")
+  tokenUsage        Int?     @map("token_usage")
+  estimatedCost     Decimal? @map("estimated_cost") @db.Decimal(10, 4)
+
+  company                Company                 @relation(fields: [companyId], references: [id])
+  provider               AIProvider?             @relation(fields: [providerId], references: [id])
+  user                   User?                   @relation("AIProviderUsageUser", fields: [userId], references: [id])
+  project                AiDesignerProject?      @relation(fields: [aiDesignerProjectId], references: [id])
+  replicateDesignProject ReplicateDesignProject? @relation(fields: [replicateDesignProjectId], references: [id])
+
+  @@map("ai_provider_usage")
+}
+
+/**
+ * One row per automatic failover attempt AIProviderManager makes --
+ * "attempt", not just "success": a failed fallback that itself fails over
+ * to a third provider produces two rows (OpenAI to Gemini, then Gemini to
+ * Qwen), each independently showing its own result. requestedProviderId/
+ * fallbackProviderId are both nullable: the former for a genuinely
+ * unattributable case, the latter for the terminal "no more candidates
+ * left" case (no fallback exists to name).
+ */
+model AIFailoverLog {
+  id                  String               @id @default(uuid()) @db.Uuid
+  companyId           String               @map("company_id") @db.Uuid
+  requestedProviderId String?              @map("requested_provider_id") @db.Uuid
+  fallbackProviderId  String?              @map("fallback_provider_id") @db.Uuid
+  reason              AIUsageErrorCategory
+  generationContext   String               @map("generation_context")
+  result              String
+  createdAt           DateTime             @default(now()) @map("created_at")
+
+  company           Company     @relation(fields: [companyId], references: [id])
+  requestedProvider AIProvider? @relation("AIFailoverRequestedProvider", fields: [requestedProviderId], references: [id])
+  fallbackProvider  AIProvider? @relation("AIFailoverFallbackProvider", fields: [fallbackProviderId], references: [id])
+
+  @@map("ai_failover_logs")
 }

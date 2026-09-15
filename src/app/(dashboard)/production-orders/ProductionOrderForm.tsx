@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { todayIsoDate } from "@/lib/date";
 import { MaterialRequirementPreview } from "./MaterialRequirementPreview";
 
@@ -131,14 +132,14 @@ export function ProductionOrderForm() {
   return (
     <form onSubmit={handleSubmit} className="max-w-2xl space-y-6">
       <FormField label="Linked Sales Order (optional — leave blank for Make-to-Stock)" htmlFor="salesOrderId">
-        <select id="salesOrderId" value={salesOrderId} onChange={(e) => onSalesOrderChange(e.target.value)} className={textInputClass()}>
-          <option value="">— None (Make-to-Stock) —</option>
-          {salesOrders.map((o) => (
-            <option key={o.id} value={o.id}>
-              {o.orderNumber} — {o.customer?.name ?? "—"}
-            </option>
-          ))}
-        </select>
+        <SearchableSelect
+          id="salesOrderId"
+          value={salesOrderId}
+          onChange={onSalesOrderChange}
+          options={salesOrders.map((o) => ({ id: o.id, label: o.orderNumber, sublabel: o.customer?.name ?? undefined }))}
+          placeholder="Search sales order…"
+          emptyOptionLabel="— None (Make-to-Stock) —"
+        />
       </FormField>
 
       {salesOrderId && (
@@ -185,14 +186,14 @@ export function ProductionOrderForm() {
       )}
 
       <FormField label="Style" htmlFor="productId" required>
-        <select id="productId" required value={productId} onChange={(e) => setProductId(e.target.value)} className={textInputClass()}>
-          <option value="">— Select —</option>
-          {styles.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.styleName} ({s.styleCode})
-            </option>
-          ))}
-        </select>
+        <SearchableSelect
+          id="productId"
+          required
+          value={productId}
+          onChange={setProductId}
+          options={styles.map((s) => ({ id: s.id, label: s.styleName, sublabel: s.styleCode }))}
+          placeholder="Search style…"
+        />
       </FormField>
 
       <div className="grid grid-cols-2 gap-4">
@@ -218,7 +219,13 @@ export function ProductionOrderForm() {
         </FormField>
       </div>
 
-      {productId && <MaterialRequirementPreview productId={productId} quantity={Number(plannedQuantity) || 0} />}
+      {productId && (
+        <MaterialRequirementPreview
+          productId={productId}
+          quantity={Number(plannedQuantity) || 0}
+          salesOrderItemId={salesOrderItemId || undefined}
+        />
+      )}
 
       <div className="grid grid-cols-2 gap-4">
         <FormField label="Planned Start Date" htmlFor="plannedStartDate">

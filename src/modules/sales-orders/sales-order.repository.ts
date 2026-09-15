@@ -34,7 +34,7 @@ export const SalesOrderRepository = {
             // detail page needs to be able to surface that explicitly rather
             // than implying it's always the order's own customer's sample.
             sampleRequest: {
-              select: { id: true, requestNumber: true, status: true, customer: { select: { name: true } } },
+              select: { id: true, requestNumber: true, styleName: true, status: true, customer: { select: { name: true } } },
             },
             breakdown: { include: { productVariant: { include: { color: true, size: true } } } },
           },
@@ -43,6 +43,27 @@ export const SalesOrderRepository = {
     }),
 
   findAnyById: (companyId: string, id: string) => prisma.salesOrder.findFirst({ where: { id, companyId } }),
+
+  /** Most recent (by order date) non-cancelled item this exact customer has
+   * ever ordered for this exact style — powers the "Last Order Price"
+   * suggestion on the create/edit form, the same "suggest, never enforce"
+   * convention already used for a linked sample's own costing default.
+   * `excludeOrderId` keeps an in-progress edit from suggesting its own
+   * not-yet-saved price back to itself. */
+  findLastOrderedItem: (companyId: string, customerId: string, productId: string, excludeOrderId?: string) =>
+    prisma.salesOrderItem.findFirst({
+      where: {
+        productId,
+        salesOrder: {
+          companyId,
+          customerId,
+          status: { not: "CANCELLED" },
+          ...(excludeOrderId ? { id: { not: excludeOrderId } } : {}),
+        },
+      },
+      orderBy: { salesOrder: { orderDate: "desc" } },
+      select: { unitPrice: true, salesOrder: { select: { orderNumber: true, orderDate: true } } },
+    }),
 
   createWithItems: (data: Prisma.SalesOrderUncheckedCreateInput) =>
     prisma.salesOrder.create({

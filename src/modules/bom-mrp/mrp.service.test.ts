@@ -7,11 +7,29 @@ vi.mock("@/modules/sales-orders/sales-order.repository", () => ({
 vi.mock("./bom.repository", () => ({
   BomRepository: { findManyByProductIds: vi.fn(), findByProductId: vi.fn() },
 }));
+vi.mock("@/modules/sampling/sample.repository", () => ({
+  SampleMaterialRepository: { findLatestVersionMaterialsForRequirement: vi.fn() },
+}));
+vi.mock("@/core/db/client", () => ({
+  prisma: {
+    salesOrderItem: { findFirst: vi.fn() },
+    materialRequestItem: { findMany: vi.fn() },
+    salesOrder: { findMany: vi.fn() },
+  },
+}));
 
 const { sumAvailableByProductIds } = await import("@/modules/inventory/inventory.service");
 const { SalesOrderRepository } = await import("@/modules/sales-orders/sales-order.repository");
 const { BomRepository } = await import("./bom.repository");
-const { getMaterialRequirements, getStyleMaterialRequirement } = await import("./mrp.service");
+const { SampleMaterialRepository } = await import("@/modules/sampling/sample.repository");
+const { prisma } = await import("@/core/db/client");
+const {
+  getMaterialRequirements,
+  getStyleMaterialRequirement,
+  getSampleMaterialRequirement,
+  getMaterialRequirementForOrderLine,
+  getSalesOrdersMaterialStatus,
+} = await import("./mrp.service");
 
 const MTR = { id: "uom-mtr", code: "MTR", name: "Meter", baseUnitId: null, conversionFactor: 1 };
 const ROL = { id: "uom-rol", code: "ROL", name: "Roll", baseUnitId: null, conversionFactor: 1 };
@@ -75,6 +93,11 @@ beforeEach(() => {
   vi.mocked(sumAvailableByProductIds)
     .mockReset()
     .mockResolvedValue(new Map([["mat-cotton", 509.144], ["mat-thread", 0]]));
+  // No Material Request issuance recorded by default -- issuedQuantity 0,
+  // so shortfallQuantity (needed - issued) equals neededQuantity unless a
+  // test explicitly mocks some issuance.
+  vi.mocked(prisma.materialRequestItem.findMany).mockReset().mockResolvedValue([]);
+  vi.mocked(prisma.salesOrder.findMany).mockReset().mockResolvedValue([]);
 });
 
 describe("getMaterialRequirements", () => {
@@ -88,10 +111,13 @@ describe("getMaterialRequirements", () => {
     const cotton = result.materials.find((m) => m.materialId === "mat-cotton")!;
 
     // 1.2 * (1 + 10%) * (200 + 400) = 792, matching this project's own
-    // hand-verified worked example.
+    // hand-verified worked example. availableQuantity is purely informational
+    // stock; shortfallQuantity is needed minus what's actually been issued
+    // (none, by default) -- not needed minus current stock.
     expect(cotton.neededQuantity).toBeCloseTo(792);
     expect(cotton.availableQuantity).toBe(509.144);
-    expect(cotton.shortfallQuantity).toBeCloseTo(282.856);
+    expect(cotton.issuedQuantity).toBe(0);
+    expect(cotton.shortfallQuantity).toBeCloseTo(792);
   });
 
   it("filters a color-specific BOM line to only the matching color's breakdown rows", async () => {
@@ -101,6 +127,31 @@ describe("getMaterialRequirements", () => {
     // 0.05 * 400 (navy only, black excluded) = 20
     expect(thread.neededQuantity).toBeCloseTo(20);
     expect(thread.shortfallQuantity).toBeCloseTo(20);
+  });
+
+  it("subtracts already-issued Material Request quantity (not current stock) from shortfall", async () => {
+    vi.mocked(prisma.materialRequestItem.findMany).mockResolvedValue([
+      { materialId: "mat-cotton", issuedQuantity: 300, uom: MTR, material: { baseUom: MTR }, materialRequest: { salesOrderId: "so-1" } },
+    ] as never);
+
+    const result = await getMaterialRequirements("co-1", "so-1");
+    const cotton = result.materials.find((m) => m.materialId === "mat-cotton")!;
+
+    expect(cotton.issuedQuantity).toBe(300);
+    // 792 needed - 300 already issued = 492 still to request, regardless of
+    // the 509.144 currently sitting in stock.
+    expect(cotton.shortfallQuantity).toBeCloseTo(492);
+  });
+
+  it("reports shortfall as zero once issued quantity meets or exceeds what's needed", async () => {
+    vi.mocked(prisma.materialRequestItem.findMany).mockResolvedValue([
+      { materialId: "mat-cotton", issuedQuantity: 900, uom: MTR, material: { baseUom: MTR }, materialRequest: { salesOrderId: "so-1" } },
+    ] as never);
+
+    const result = await getMaterialRequirements("co-1", "so-1");
+    const cotton = result.materials.find((m) => m.materialId === "mat-cotton")!;
+
+    expect(cotton.shortfallQuantity).toBe(0);
   });
 
   it("aggregates the same material across multiple contributing styles rather than overwriting", async () => {
@@ -127,7 +178,9 @@ describe("getMaterialRequirements", () => {
   it("reports a style with no BOM separately instead of throwing", async () => {
     vi.mocked(BomRepository.findManyByProductIds).mockResolvedValue([]);
     const result = await getMaterialRequirements("co-1", "so-1");
-    expect(result.stylesWithoutBom).toEqual([{ productId: "style-1", styleName: "Round Neck T-Shirt" }]);
+    expect(result.stylesWithoutBom).toEqual([
+      { productId: "style-1", styleName: "Round Neck T-Shirt", reason: "no BOM defined for this style" },
+    ]);
     expect(result.materials).toHaveLength(0);
   });
 
@@ -138,8 +191,123 @@ describe("getMaterialRequirements", () => {
   it("treats a style with an unapproved BOM (approvedVersion: null) the same as no BOM at all", async () => {
     vi.mocked(BomRepository.findManyByProductIds).mockResolvedValue([bomFixture("style-1", null)] as never);
     const result = await getMaterialRequirements("co-1", "so-1");
-    expect(result.stylesWithoutBom).toEqual([{ productId: "style-1", styleName: "Round Neck T-Shirt" }]);
+    expect(result.stylesWithoutBom).toEqual([
+      { productId: "style-1", styleName: "Round Neck T-Shirt", reason: "no BOM defined for this style" },
+    ]);
     expect(result.materials).toHaveLength(0);
+  });
+
+  // The user's own explicit rule: a line with a linked Sample uses that
+  // sample's own current material list instead of the Style's real BOM.
+  it("uses the linked Sample's material list instead of the Style's BOM for a sample-linked line", async () => {
+    vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue(
+      order({
+        items: [
+          {
+            productId: "style-1",
+            sampleRequestId: "sam-1",
+            product: { styleName: "Round Neck T-Shirt" },
+            breakdown: [
+              { orderedQuantity: 200, productVariant: { color: { id: "black" } } },
+              { orderedQuantity: 400, productVariant: { color: { id: "navy" } } },
+            ],
+          },
+        ],
+      }) as never
+    );
+    vi.mocked(SampleMaterialRepository.findLatestVersionMaterialsForRequirement).mockResolvedValue([
+      { materialId: "mat-cotton", plannedQuantity: 1, uomId: "uom-mtr", colorId: null, uom: MTR, material: { id: "mat-cotton", styleName: "Cotton Fabric", styleCode: "MAT-COT", baseUomId: "uom-mtr", baseUom: MTR, defaultSupplierId: "sup-1", unitCost: 50 } },
+    ] as never);
+
+    const result = await getMaterialRequirements("co-1", "so-1");
+
+    // Sample-sourced: no wastage%, plannedQuantity treated as-is per unit —
+    // 1 * 600 (200 black + 400 navy) = 600, NOT the BOM fixture's 792.
+    const cotton = result.materials.find((m) => m.materialId === "mat-cotton")!;
+    expect(cotton.neededQuantity).toBe(600);
+    expect(BomRepository.findManyByProductIds).toHaveBeenCalled();
+    // The Style's own BOM was fetched (for any non-sample lines) but never
+    // consulted for this sample-linked line's own quantity.
+    expect(result.stylesWithoutBom).toHaveLength(0);
+  });
+
+  // Regression for a real reported bug: SampleMaterial.colorId means "this
+  // raw material's own shade/dye" (e.g. a thread color), not "this line only
+  // applies to this ordered garment-color variant" (BomItem.colorId's real
+  // meaning). A shade id essentially never matches a real style-variant
+  // color id on the order's own breakdown, so passing it through unchanged
+  // used to filter the line's orderedQty to 0 and silently drop it from the
+  // requirement list entirely.
+  it("does not drop a sample material whose own shade colorId doesn't match any of the order's style-variant colors", async () => {
+    vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue(
+      order({
+        items: [
+          {
+            productId: "style-1",
+            sampleRequestId: "sam-1",
+            product: { styleName: "Round Neck T-Shirt" },
+            breakdown: [
+              { orderedQuantity: 200, productVariant: { color: { id: "black" } } },
+              { orderedQuantity: 400, productVariant: { color: { id: "navy" } } },
+            ],
+          },
+        ],
+      }) as never
+    );
+    vi.mocked(SampleMaterialRepository.findLatestVersionMaterialsForRequirement).mockResolvedValue([
+      {
+        materialId: "mat-cotton",
+        plannedQuantity: 2.5,
+        uomId: "uom-mtr",
+        colorId: null,
+        uom: MTR,
+        material: { id: "mat-cotton", styleName: "Viscose Crepe", styleCode: "MAT-COT", baseUomId: "uom-mtr", baseUom: MTR, defaultSupplierId: "sup-1", unitCost: 50 },
+      },
+      {
+        materialId: "mat-thread",
+        plannedQuantity: 1,
+        uomId: "uom-rol",
+        // A shade/dye id that is NOT one of the order's real style-variant
+        // color ids ("black"/"navy" above) -- the exact real-world shape of
+        // the bug: a thread's own shade happens to be named "navy-thread",
+        // not "navy".
+        colorId: "navy-thread",
+        uom: ROL,
+        material: { id: "mat-thread", styleName: "Silk Thread", styleCode: "MAT-THR", baseUomId: "uom-rol", baseUom: ROL, defaultSupplierId: null, unitCost: null },
+      },
+    ] as never);
+
+    const result = await getMaterialRequirements("co-1", "so-1");
+
+    const thread = result.materials.find((m) => m.materialId === "mat-thread");
+    expect(thread).toBeDefined();
+    // 1 (no wastage) * 600 (200 black + 400 navy) = 600, same full ordered
+    // quantity a colorId: null line would get -- confirming the sample's own
+    // shade never gates the quantity.
+    expect(thread!.neededQuantity).toBe(600);
+    const cotton = result.materials.find((m) => m.materialId === "mat-cotton")!;
+    expect(cotton.neededQuantity).toBe(1500);
+  });
+
+  it("reports a sample-linked line with no recorded materials separately, naming the sample as the cause", async () => {
+    vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue(
+      order({
+        items: [
+          {
+            productId: "style-1",
+            sampleRequestId: "sam-1",
+            product: { styleName: "Round Neck T-Shirt" },
+            breakdown: [{ orderedQuantity: 100, productVariant: { color: { id: "black" } } }],
+          },
+        ],
+      }) as never
+    );
+    vi.mocked(SampleMaterialRepository.findLatestVersionMaterialsForRequirement).mockResolvedValue([]);
+
+    const result = await getMaterialRequirements("co-1", "so-1");
+    expect(result.stylesWithoutBom).toEqual([
+      { productId: "style-1", styleName: "Round Neck T-Shirt", reason: "the linked sample has no materials recorded yet" },
+    ]);
   });
 
   it("reports a line whose material has no base unit as unconvertible rather than crashing", async () => {
@@ -162,7 +330,13 @@ describe("getMaterialRequirements", () => {
   });
 
   it("sorts materials by shortfall quantity descending", async () => {
-    vi.mocked(sumAvailableByProductIds).mockResolvedValue(new Map([["mat-cotton", 780], ["mat-thread", 0]]));
+    // cotton needed=792, thread needed=20 -- issuing almost all of cotton's
+    // requirement (but none of thread's) flips the shortfall ordering
+    // relative to plain neededQuantity, proving the sort key really is
+    // shortfall (needed - issued), not raw needed quantity.
+    vi.mocked(prisma.materialRequestItem.findMany).mockResolvedValue([
+      { materialId: "mat-cotton", issuedQuantity: 780, uom: MTR, material: { baseUom: MTR }, materialRequest: { salesOrderId: "so-1" } },
+    ] as never);
     const result = await getMaterialRequirements("co-1", "so-1");
     expect(result.materials.map((m) => m.materialId)).toEqual(["mat-thread", "mat-cotton"]);
   });
@@ -258,5 +432,173 @@ describe("getStyleMaterialRequirement", () => {
   it("carries the BOM header's own id through for callers that need it (e.g. raising a Material Request)", async () => {
     const result = await getStyleMaterialRequirement("co-1", "style-1", 100);
     expect(result.bomId).toBe("bom-style-1");
+  });
+});
+
+describe("getSampleMaterialRequirement", () => {
+  it("reports no recorded materials as hasApprovedBom: false, with everything else empty/null", async () => {
+    vi.mocked(SampleMaterialRepository.findLatestVersionMaterialsForRequirement).mockResolvedValue([]);
+
+    const result = await getSampleMaterialRequirement("co-1", "sam-1", 100);
+
+    expect(result).toMatchObject({
+      hasApprovedBom: false,
+      productId: null,
+      bomId: null,
+      sampleRequestId: "sam-1",
+      materials: [],
+      totalMaterialCost: null,
+    });
+  });
+
+  it("scales the sample's own plannedQuantity by the given flat quantity, with no wastage%", async () => {
+    vi.mocked(SampleMaterialRepository.findLatestVersionMaterialsForRequirement).mockResolvedValue([
+      { materialId: "mat-cotton", plannedQuantity: 1.2, uomId: "uom-mtr", colorId: null, uom: MTR, material: { id: "mat-cotton", styleName: "Cotton Fabric", styleCode: "MAT-COT", baseUomId: "uom-mtr", baseUom: MTR, defaultSupplierId: "sup-1", unitCost: 50 } },
+    ] as never);
+    vi.mocked(sumAvailableByProductIds).mockResolvedValue(new Map([["mat-cotton", 0]]));
+
+    const result = await getSampleMaterialRequirement("co-1", "sam-1", 600);
+    const cotton = result.materials[0];
+
+    // 1.2 (no wastage) * 600 = 720 — deliberately not 792 (the BOM fixture's
+    // own 10% wastage figure), proving no wastage is applied here.
+    expect(cotton.neededQuantity).toBe(720);
+    expect(cotton.lineCost).toBe(36000);
+    expect(result.bomId).toBeNull();
+    expect(result.productId).toBeNull();
+    expect(result.sampleRequestId).toBe("sam-1");
+  });
+
+  it("reports a material line with no unit specified on the sample as unconvertible rather than crashing", async () => {
+    vi.mocked(SampleMaterialRepository.findLatestVersionMaterialsForRequirement).mockResolvedValue([
+      { materialId: "mat-cotton", plannedQuantity: 1, uomId: null, colorId: null, uom: null, material: { id: "mat-cotton", styleName: "Cotton Fabric", styleCode: "MAT-COT", baseUomId: "uom-mtr", baseUom: MTR, defaultSupplierId: "sup-1", unitCost: 50 } },
+    ] as never);
+
+    const result = await getSampleMaterialRequirement("co-1", "sam-1", 100);
+    expect(result.unconvertibleLines).toEqual([{ materialId: "mat-cotton", materialName: "Cotton Fabric", reason: "no unit specified" }]);
+    expect(result.materials).toHaveLength(0);
+  });
+});
+
+describe("getMaterialRequirementForOrderLine", () => {
+  beforeEach(() => {
+    vi.mocked(BomRepository.findByProductId)
+      .mockReset()
+      .mockResolvedValue(bomFixture("style-1", [cottonBomItem(), threadBomItem()]) as never);
+  });
+
+  it("uses the Style's own BOM when the line has no linked Sales Order Item at all", async () => {
+    const result = await getMaterialRequirementForOrderLine("co-1", { salesOrderItemId: null, productId: "style-1", quantity: 100 });
+    expect(result.sampleRequestId).toBeNull();
+    expect(result.bomId).toBe("bom-style-1");
+  });
+
+  it("uses the Style's own BOM when the linked Sales Order Item has no sample attached", async () => {
+    vi.mocked(prisma.salesOrderItem.findFirst).mockResolvedValue({ sampleRequestId: null } as never);
+    const result = await getMaterialRequirementForOrderLine("co-1", { salesOrderItemId: "soi-1", productId: "style-1", quantity: 100 });
+    expect(result.sampleRequestId).toBeNull();
+    expect(result.bomId).toBe("bom-style-1");
+  });
+
+  it("uses the linked Sample's own material list when the Sales Order Item has one attached", async () => {
+    vi.mocked(prisma.salesOrderItem.findFirst).mockResolvedValue({ sampleRequestId: "sam-1" } as never);
+    vi.mocked(SampleMaterialRepository.findLatestVersionMaterialsForRequirement).mockResolvedValue([
+      { materialId: "mat-cotton", plannedQuantity: 1, uomId: "uom-mtr", colorId: null, uom: MTR, material: { id: "mat-cotton", styleName: "Cotton Fabric", styleCode: "MAT-COT", baseUomId: "uom-mtr", baseUom: MTR, defaultSupplierId: "sup-1", unitCost: 50 } },
+    ] as never);
+
+    const result = await getMaterialRequirementForOrderLine("co-1", { salesOrderItemId: "soi-1", productId: "style-1", quantity: 100 });
+
+    expect(result.sampleRequestId).toBe("sam-1");
+    expect(result.bomId).toBeNull();
+    // The Style's own BOM must never be consulted once a sample is linked.
+    expect(BomRepository.findByProductId).not.toHaveBeenCalled();
+  });
+});
+
+describe("getSalesOrdersMaterialStatus", () => {
+  function batchOrder(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "so-1",
+      orderNumber: "ORD-2026-00001",
+      customer: { name: "Zenith Apparel Imports" },
+      items: [
+        {
+          productId: "style-1",
+          product: { styleName: "Round Neck T-Shirt" },
+          sampleRequestId: null,
+          breakdown: [{ orderedQuantity: 100, productVariant: { color: { id: "black" } } }],
+        },
+      ],
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    vi.mocked(prisma.salesOrder.findMany).mockReset();
+    vi.mocked(BomRepository.findManyByProductIds)
+      .mockReset()
+      .mockResolvedValue([bomFixture("style-1", [cottonBomItem({ colorId: null, wastagePercentage: 0, quantityPerUnit: 1 })])] as never);
+    vi.mocked(prisma.materialRequestItem.findMany).mockReset().mockResolvedValue([]);
+  });
+
+  it("returns an empty list when there are no candidate orders", async () => {
+    vi.mocked(prisma.salesOrder.findMany).mockResolvedValue([]);
+    const result = await getSalesOrdersMaterialStatus("co-1");
+    expect(result).toEqual([]);
+  });
+
+  it("flags an order PENDING when nothing has been issued yet", async () => {
+    vi.mocked(prisma.salesOrder.findMany).mockResolvedValue([batchOrder()] as never);
+    const result = await getSalesOrdersMaterialStatus("co-1");
+    expect(result).toEqual([
+      { id: "so-1", orderNumber: "ORD-2026-00001", customerName: "Zenith Apparel Imports", materialStatus: "PENDING" },
+    ]);
+  });
+
+  it("flags an order FULFILLED once every material's issued quantity already meets what's needed", async () => {
+    vi.mocked(prisma.salesOrder.findMany).mockResolvedValue([batchOrder()] as never);
+    // needed = 1 * 100 = 100 (no wastage, single color line).
+    vi.mocked(prisma.materialRequestItem.findMany).mockResolvedValue([
+      { materialId: "mat-cotton", issuedQuantity: 100, uom: MTR, material: { baseUom: MTR }, materialRequest: { salesOrderId: "so-1" } },
+    ] as never);
+
+    const result = await getSalesOrdersMaterialStatus("co-1");
+    expect(result[0].materialStatus).toBe("FULFILLED");
+  });
+
+  it("stays PENDING when issued quantity only partially covers what's needed", async () => {
+    vi.mocked(prisma.salesOrder.findMany).mockResolvedValue([batchOrder()] as never);
+    vi.mocked(prisma.materialRequestItem.findMany).mockResolvedValue([
+      { materialId: "mat-cotton", issuedQuantity: 40, uom: MTR, material: { baseUom: MTR }, materialRequest: { salesOrderId: "so-1" } },
+    ] as never);
+
+    const result = await getSalesOrdersMaterialStatus("co-1");
+    expect(result[0].materialStatus).toBe("PENDING");
+  });
+
+  it("flags an order with no BOM/materials at all as PENDING, never FULFILLED", async () => {
+    vi.mocked(prisma.salesOrder.findMany).mockResolvedValue([batchOrder()] as never);
+    vi.mocked(BomRepository.findManyByProductIds).mockResolvedValue([]);
+
+    const result = await getSalesOrdersMaterialStatus("co-1");
+    expect(result[0].materialStatus).toBe("PENDING");
+  });
+
+  it("classifies each order independently within one batched query pass", async () => {
+    vi.mocked(prisma.salesOrder.findMany).mockResolvedValue([
+      batchOrder(),
+      batchOrder({ id: "so-2", orderNumber: "ORD-2026-00002", customer: { name: "Other Customer" } }),
+    ] as never);
+    vi.mocked(prisma.materialRequestItem.findMany).mockResolvedValue([
+      { materialId: "mat-cotton", issuedQuantity: 100, uom: MTR, material: { baseUom: MTR }, materialRequest: { salesOrderId: "so-2" } },
+    ] as never);
+
+    const result = await getSalesOrdersMaterialStatus("co-1");
+    expect(result.find((o) => o.id === "so-1")?.materialStatus).toBe("PENDING");
+    expect(result.find((o) => o.id === "so-2")?.materialStatus).toBe("FULFILLED");
+    // One shared BOM fetch, one shared issued-quantity fetch, covering both
+    // orders -- never once per order.
+    expect(BomRepository.findManyByProductIds).toHaveBeenCalledTimes(1);
+    expect(prisma.materialRequestItem.findMany).toHaveBeenCalledTimes(1);
   });
 });

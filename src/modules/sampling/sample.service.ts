@@ -26,8 +26,11 @@ import {
 } from "./sample.repository";
 import { ProductRepository } from "@/modules/products/product.repository";
 import { CustomerRepository } from "@/modules/customers/customer.repository";
+import { LookupRepository } from "@/modules/lookups/lookup.repository";
+import { BomRepository } from "@/modules/bom-mrp/bom.repository";
 import { advanceMasterCodeSequence } from "@/core/numbering/DocumentNumberingService";
 import { SampleStatus, SampleType, type Prisma, type SampleVersionStatus } from "@prisma/client";
+import type { SampleBomUpdateInput } from "./sample.schema";
 
 // The header's own status is the real state — this mirrors it onto the
 // current (latest, still-live) version's display-only status field for the
@@ -95,7 +98,20 @@ export interface SampleRequestListFilters {
   requestedByUserId?: string;
   dateFrom?: string;
   dateTo?: string;
-  color?: string;
+  colorId?: string;
+}
+
+/** Tenant-scope check on a Color/Size master id before it's ever written to
+ * a SampleRequest — same discipline as customer/product's own checks just
+ * below in createSampleRequest. */
+async function assertColorBelongsToCompany(companyId: string, colorId: string) {
+  const color = await LookupRepository.color.findFirst({ where: { id: colorId, companyId } });
+  if (!color) throw new BusinessRuleError("NOT_FOUND", "Color not found.", { id: colorId });
+}
+
+async function assertSizeBelongsToCompany(companyId: string, sizeId: string) {
+  const size = await LookupRepository.size.findFirst({ where: { id: sizeId, companyId } });
+  if (!size) throw new BusinessRuleError("NOT_FOUND", "Size not found.", { id: sizeId });
 }
 
 const VALID_SAMPLE_STATUSES = new Set<string>(Object.values(SampleStatus));
@@ -140,7 +156,7 @@ export async function listSampleRequests(companyId: string, query: ListQuery, fi
     ...(filters.requestedByUserId ? { requestedByUserId: filters.requestedByUserId } : {}),
     ...(filters.sampleType ? { sampleType: filters.sampleType } : {}),
     ...(statuses.length > 0 ? { status: { in: statuses } } : {}),
-    ...(filters.color ? { color: { contains: filters.color, mode: "insensitive" as const } } : {}),
+    ...(filters.colorId ? { colorId: filters.colorId } : {}),
     // Style has no single source column — a request may only have the
     // free-text styleName, only a linked Product, or (usually) both kept in
     // sync — so a style search matches either rather than picking one.
@@ -200,6 +216,9 @@ export async function createSampleRequest(actor: ActorContext, input: SampleRequ
     if (!product) throw new BusinessRuleError("NOT_FOUND", "Style not found.", { id: input.productId });
   }
 
+  if (input.colorId) await assertColorBelongsToCompany(actor.companyId, input.colorId);
+  if (input.sizeId) await assertSizeBelongsToCompany(actor.companyId, input.sizeId);
+
   const requestNumber = await generateDocumentNumber({
     companyId: actor.companyId,
     branchId: actor.branchId ?? null,
@@ -215,7 +234,8 @@ export async function createSampleRequest(actor: ActorContext, input: SampleRequ
     productId: input.productId || null,
     styleName: input.styleName,
     sampleType: input.sampleType,
-    color: input.color || null,
+    colorId: input.colorId || null,
+    sizeId: input.sizeId || null,
     requestedByUserId: actor.userId,
     requestDate: new Date(input.requestDate),
     targetSubmissionDate: input.targetSubmissionDate ? new Date(input.targetSubmissionDate) : null,
@@ -235,14 +255,23 @@ export async function createSampleRequest(actor: ActorContext, input: SampleRequ
   return request;
 }
 
-// Color is deliberately editable at any status, not just non-terminal ones —
-// a client that only sent a photo often confirms/changes the color well
-// after the sample is physically made, sometimes even after approval.
-export async function updateSampleRequestColor(actor: ActorContext, id: string, color: string | null) {
+// Color/Size are deliberately editable at any status, not just non-terminal
+// ones — a client that only sent a photo often confirms/changes the color+
+// size well after the sample is physically made, sometimes even after
+// approval. Both are real Color/Size master FKs (2026-09-15) — re-verified
+// tenant-scoped here rather than trusted from the caller.
+export async function updateSampleRequestColor(
+  actor: ActorContext,
+  id: string,
+  input: { colorId: string | null; sizeId: string | null }
+) {
   const existing = await SampleRequestRepository.findAnyById(actor.companyId, id);
   if (!existing) throw new BusinessRuleError("NOT_FOUND", "Sample request not found.", { id });
 
-  const updated = await SampleRequestRepository.update(id, { color });
+  if (input.colorId) await assertColorBelongsToCompany(actor.companyId, input.colorId);
+  if (input.sizeId) await assertSizeBelongsToCompany(actor.companyId, input.sizeId);
+
+  const updated = await SampleRequestRepository.update(id, { colorId: input.colorId, sizeId: input.sizeId });
 
   await writeAuditLog({
     companyId: actor.companyId,
@@ -250,8 +279,32 @@ export async function updateSampleRequestColor(actor: ActorContext, id: string, 
     tableName: "sample_requests",
     recordId: id,
     action: "UPDATE",
-    oldValues: { color: existing.color },
-    newValues: { color: updated.color },
+    oldValues: { colorId: existing.colorId, sizeId: existing.sizeId },
+    newValues: { colorId: updated.colorId, sizeId: updated.sizeId },
+  });
+
+  return updated;
+}
+
+// Same "editable at any status" reasoning as color above — a Design Name
+// entered early (often copied from a Buyer Enquiry line's own free-text
+// placeholder, before the buyer had confirmed anything real) routinely
+// needs correcting later. Never touches productId/Convert-to-Style's own
+// draft — that flow re-prefills from this field fresh each time it opens.
+export async function updateSampleRequestDesignName(actor: ActorContext, id: string, styleName: string) {
+  const existing = await SampleRequestRepository.findAnyById(actor.companyId, id);
+  if (!existing) throw new BusinessRuleError("NOT_FOUND", "Sample request not found.", { id });
+
+  const updated = await SampleRequestRepository.update(id, { styleName });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "sample_requests",
+    recordId: id,
+    action: "UPDATE",
+    oldValues: { styleName: existing.styleName },
+    newValues: { styleName: updated.styleName },
   });
 
   return updated;
@@ -385,6 +438,18 @@ export async function addSampleVersion(actor: ActorContext, sampleRequestId: str
     createdByUserId: actor.userId,
   });
 
+  // Version 1 of a sample raised against an EXISTING Style starts pre-filled
+  // from that Style's own real, approved BOM — a starting point only, never
+  // a live link: from here on the sample's own material list is edited
+  // freely (actual sampling usage routinely differs from the plan) and the
+  // Style's real Bom/BomItem rows are never written back to by anything in
+  // this module (see updateSampleBomMaterials below). A brand-new style
+  // (productId null) or a style with no approved BOM yet simply starts empty,
+  // exactly as before this feature existed.
+  if (isFirstVersion && request.productId) {
+    await copyStyleBomIntoSampleVersion(actor, version.id, request.productId);
+  }
+
   const updatedRequest = await SampleRequestRepository.update(sampleRequestId, {
     currentVersionNumber: nextVersionNumber,
     status: isFirstVersion ? "TECH_PACK_READY" : "IN_DEVELOPMENT",
@@ -400,6 +465,103 @@ export async function addSampleVersion(actor: ActorContext, sampleRequestId: str
   });
 
   return { version, request: updatedRequest };
+}
+
+/**
+ * One-time starting point, not a live sync: copies every line of the Style's
+ * currently APPROVED BOM version into fresh SampleMaterial rows on the given
+ * (brand-new, empty) sample version. Silently does nothing if the style has
+ * no BOM yet, or no version of it has ever been approved — the sample simply
+ * starts empty, matching this function's behavior before this feature
+ * existed. `plannedQuantity` is seeded from the BOM's own `quantityPerUnit`
+ * (a sample is normally made 1 piece at a time; wastage% isn't copied since
+ * SampleMaterial has no such column) — every value is freely editable
+ * afterward via the ordinary Add/Edit Material actions or the "Update BOM"
+ * bulk-confirm action below.
+ */
+async function copyStyleBomIntoSampleVersion(actor: ActorContext, sampleVersionId: string, productId: string) {
+  const bom = await BomRepository.findByProductId(actor.companyId, productId);
+  const approvedItems = bom?.approvedVersion?.items ?? [];
+  if (approvedItems.length === 0) return;
+
+  await SampleMaterialRepository.createMany(
+    approvedItems.map((item) => ({
+      sampleVersionId,
+      materialId: item.materialId,
+      plannedQuantity: item.quantityPerUnit,
+      uomId: item.uomId,
+      colorId: item.colorId,
+      notes: item.notes ? `From Style BOM: ${item.notes}` : "Copied from Style BOM",
+    }))
+  );
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "sample_materials",
+    recordId: sampleVersionId,
+    action: "CREATE",
+    newValues: { copiedFromBomId: bom!.id, materialCount: approvedItems.length },
+  });
+}
+
+/**
+ * "Update BOM" — bulk-confirms the actual raw-material quantities used
+ * during sampling, once sampling is complete (APPROVED). Edits only the
+ * quantity of already-existing SampleMaterial lines on the current version
+ * (never adds/removes a line, and never touches material/color/unit
+ * identity — that stays the ordinary Add/Edit Material actions' job).
+ * Deliberately does NOT write anything back to the Style's real Bom/BomItem
+ * — per the user's own explicit instruction, only the sample's own material
+ * list ("the sample's BOM") is updated; the Style master is untouched.
+ */
+export async function updateSampleBomMaterials(actor: ActorContext, sampleRequestId: string, input: SampleBomUpdateInput) {
+  const request = await SampleRequestRepository.findAnyById(actor.companyId, sampleRequestId);
+  if (!request) throw new BusinessRuleError("NOT_FOUND", "Sample request not found.", { id: sampleRequestId });
+
+  if (request.status !== "APPROVED") {
+    throw new BusinessRuleError(
+      "INVALID_STATE_TRANSITION",
+      `The BOM can only be updated once sampling is complete (Approved), not while "${request.status}".`,
+      { currentStatus: request.status }
+    );
+  }
+
+  const latest = await SampleVersionRepository.findLatest(sampleRequestId);
+  if (!latest) throw new BusinessRuleError("NOT_FOUND", "This sample has no version to update.", { id: sampleRequestId });
+
+  const existingMaterials = await SampleMaterialRepository.findByVersionId(latest.id);
+  const existingById = new Map(existingMaterials.map((m) => [m.id, m]));
+
+  for (const update of input.updates) {
+    if (!existingById.has(update.sampleMaterialId)) {
+      throw new BusinessRuleError("NOT_FOUND", "One of these materials doesn't belong to this sample's current version.", {
+        sampleMaterialId: update.sampleMaterialId,
+      });
+    }
+  }
+
+  await prisma.$transaction(async (tx) => {
+    for (const update of input.updates) {
+      await SampleMaterialRepository.updatePlannedQuantityInTx(tx, update.sampleMaterialId, update.plannedQuantity);
+    }
+    // Never blocked by a costing lock — an approved sample's costing is very
+    // often already locked, and this action is about correcting raw-material
+    // usage, not re-opening costing; the rollup simply doesn't apply if locked.
+    await recalculateSampleVersionCosting(tx, latest.id, { throwIfBlocked: false });
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "sample_materials",
+    recordId: latest.id,
+    action: "UPDATE",
+    oldValues: { quantities: input.updates.map((u) => ({ id: u.sampleMaterialId, before: existingById.get(u.sampleMaterialId)?.plannedQuantity })) },
+    newValues: { quantities: input.updates },
+  });
+
+  return SampleMaterialRepository.findByVersionId(latest.id);
 }
 
 /**
@@ -641,6 +803,37 @@ export async function updateSampleMaterial(actor: ActorContext, sampleMaterialId
   // must keep a since-priced line's rollup in sync, but must never itself be
   // blocked by a costing lock (rate isn't part of this payload at all).
   await recalculateSampleVersionCosting(prisma, material.sampleVersionId, { throwIfBlocked: false });
+
+  return SampleMaterialRepository.findByVersionId(material.sampleVersionId);
+}
+
+/**
+ * Permanently drops one line from a version's material list — e.g. a
+ * material auto-copied in from the Style's BOM (see addSampleVersion) that
+ * this particular sample doesn't actually need. Unlike add/edit (which never
+ * block on a costing lock, since a lock only ever protects the *priced*
+ * numbers), removing a line is a structural change to what's being costed at
+ * all — same "blocked while locked" reasoning as deleteSampleOtherCharge.
+ */
+export async function removeSampleMaterial(actor: ActorContext, sampleMaterialId: string) {
+  const material = await SampleMaterialRepository.findWithRequestOwner(sampleMaterialId);
+  if (!material || material.sampleVersion.sampleRequest.companyId !== actor.companyId) {
+    throw new BusinessRuleError("NOT_FOUND", "Sample material not found.", { id: sampleMaterialId });
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await SampleMaterialRepository.delete(tx, sampleMaterialId);
+    await recalculateSampleVersionCosting(tx, material.sampleVersionId, { throwIfBlocked: true });
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "sample_materials",
+    recordId: sampleMaterialId,
+    action: "DELETE",
+    oldValues: { materialId: material.materialId, plannedQuantity: material.plannedQuantity },
+  });
 
   return SampleMaterialRepository.findByVersionId(material.sampleVersionId);
 }

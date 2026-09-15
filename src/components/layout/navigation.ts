@@ -46,6 +46,19 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Projects", href: "/ai-garment-flow/projects", modules: ["ai_garment_flow"] },
     ],
   },
+  // A genuinely separate module from "AI Garment Flow" above (confirmed
+  // explicitly with the user, 2026-09-10) -- its own ai_-prefixed schema, own
+  // APIs, own permission module, zero shared business logic.
+  {
+    label: "AI Designer",
+    href: "/ai-designer",
+    modules: ["ai_designer"],
+    children: [
+      { label: "Dashboard", href: "/ai-designer", modules: ["ai_designer"] },
+      { label: "Catalogue Designs", href: "/ai-designer/catalogue-designs", modules: ["ai_designer"] },
+      { label: "Replicate Design", href: "/ai-designer/replicate", modules: ["ai_designer"] },
+    ],
+  },
   { label: "Masters", href: "/masters", modules: ["masters_core", "masters_finance"] },
   {
     label: "CRM",

@@ -60,15 +60,19 @@ export function VisualGenerationPanel({ projectId }: { projectId: string }) {
   }, [projectId]);
 
   if (directions === undefined) {
-    return <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>;
+    return <p className="text-sm text-stone-500 dark:text-stone-400">Loading…</p>;
   }
 
   return (
     <div className="space-y-5">
-      {error && <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-500/10 dark:text-red-300">{error}</p>}
+      {error && (
+        <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-900 dark:bg-rose-500/10 dark:text-rose-300">
+          {error}
+        </p>
+      )}
 
       {directions.length === 0 ? (
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">
+        <p className="text-sm text-stone-500 dark:text-stone-400">
           No design directions are approved yet — approve at least one on the Development Brief step to generate visuals for it here.
         </p>
       ) : (
@@ -131,13 +135,13 @@ function DirectionVisualsSection({
   const compareImages = images?.filter((img) => compareSelection.includes(img.id)) ?? [];
 
   return (
-    <div className="space-y-3 rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
+    <div className="space-y-3 rounded-xl border border-stone-200 bg-white p-4 shadow-sm dark:border-stone-700 dark:bg-stone-900/40">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <h4 className="text-base font-semibold text-zinc-900 dark:text-zinc-50">{direction.designDirectionName}</h4>
-          <p className="mt-1 max-w-2xl text-sm text-zinc-600 dark:text-zinc-300">{direction.commercialRationale}</p>
+          <h4 className="text-base font-semibold text-stone-900 dark:text-stone-50">{direction.designDirectionName}</h4>
+          <p className="mt-1 max-w-2xl text-sm text-stone-600 dark:text-stone-300">{direction.commercialRationale}</p>
         </div>
-        <span className="shrink-0 rounded-full bg-zinc-900 px-2 py-0.5 text-xs font-bold text-white dark:bg-zinc-100 dark:text-zinc-900">
+        <span className="shrink-0 rounded-full bg-stone-900 px-2 py-0.5 text-xs font-bold text-white dark:bg-amber-500 dark:text-stone-950">
           {direction.overallScore}/100
         </span>
       </div>
@@ -146,7 +150,7 @@ function DirectionVisualsSection({
         <select
           value={imageCount}
           onChange={(e) => setImageCount(Number(e.target.value) as (typeof IMAGE_COUNT_OPTIONS)[number])}
-          className="rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-xs dark:border-zinc-700 dark:bg-zinc-900"
+          className="rounded-lg border border-stone-300 bg-white px-2 py-1.5 text-xs dark:border-stone-700 dark:bg-stone-900"
         >
           {IMAGE_COUNT_OPTIONS.map((n) => (
             <option key={n} value={n}>
@@ -158,7 +162,7 @@ function DirectionVisualsSection({
           type="button"
           disabled={generating}
           onClick={() => generate(imageCount)}
-          className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+          className="rounded-lg bg-stone-900 px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-stone-800 disabled:opacity-50 dark:bg-amber-500 dark:text-stone-950 dark:hover:bg-amber-400"
         >
           {generating ? "Generating…" : "GENERATE VISUAL"}
         </button>
@@ -169,7 +173,7 @@ function DirectionVisualsSection({
               setCompareMode((m) => !m);
               setCompareSelection([]);
             }}
-            className="rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            className="rounded-lg border border-stone-300 px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-stone-800"
           >
             {compareMode ? "Exit Compare" : "Compare"}
           </button>
@@ -177,20 +181,20 @@ function DirectionVisualsSection({
       </div>
 
       {compareMode && compareImages.length > 0 && (
-        <div className="rounded-md border border-indigo-200 bg-indigo-50 p-3 dark:border-indigo-900 dark:bg-indigo-500/10">
-          <p className="mb-2 text-xs font-medium text-indigo-700 dark:text-indigo-300">Comparing {compareImages.length} image(s)</p>
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-500/10">
+          <p className="mb-2 text-xs font-medium text-amber-800 dark:text-amber-300">Comparing {compareImages.length} image(s)</p>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             {compareImages.map((img) => (
-              <img key={img.id} src={imageUrl(img.imageAttachmentId)} alt="Comparison" className="w-full rounded-md border border-zinc-200 dark:border-zinc-700" />
+              <img key={img.id} src={imageUrl(img.imageAttachmentId)} alt="Comparison" className="w-full rounded-lg border border-stone-200 dark:border-stone-700" />
             ))}
           </div>
         </div>
       )}
 
       {images === undefined ? (
-        <p className="text-xs text-zinc-500 dark:text-zinc-400">Loading images…</p>
+        <p className="text-xs text-stone-500 dark:text-stone-400">Loading images…</p>
       ) : images.length === 0 ? (
-        <p className="text-xs text-zinc-500 dark:text-zinc-400">No visuals generated yet for this design direction.</p>
+        <p className="text-xs text-stone-500 dark:text-stone-400">No visuals generated yet for this design direction.</p>
       ) : (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
           {images.map((img) => (
@@ -235,9 +239,9 @@ function GeneratedImageThumb({
   const [variations, setVariations] = useState<DesignVariation[] | undefined>(undefined);
 
   const DECISION_BADGE: Record<GeneratedImage["decision"], string> = {
-    PENDING: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
-    SELECTED: "bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-300",
-    REJECTED: "bg-red-100 text-red-700 dark:bg-red-500/10 dark:text-red-300",
+    PENDING: "bg-stone-100 text-stone-700 dark:bg-stone-800 dark:text-stone-300",
+    SELECTED: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300",
+    REJECTED: "bg-rose-100 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300",
   };
 
   async function reject() {
@@ -371,7 +375,7 @@ function GeneratedImageThumb({
   }
 
   return (
-    <div className="space-y-1.5 rounded-md border border-zinc-200 p-2 dark:border-zinc-800">
+    <div className="space-y-1.5 rounded-lg border border-stone-200 bg-white p-2 shadow-sm dark:border-stone-700 dark:bg-stone-900/40">
       <div className="relative">
         {compareMode && (
           <input
@@ -385,7 +389,7 @@ function GeneratedImageThumb({
         <img
           src={imageUrl(image.imageAttachmentId)}
           alt="Generated design"
-          className="w-full cursor-zoom-in rounded border border-zinc-200 dark:border-zinc-700"
+          className="w-full cursor-zoom-in rounded-md border border-stone-200 dark:border-stone-700"
           onClick={() => setPreview(true)}
         />
       </div>
@@ -393,7 +397,7 @@ function GeneratedImageThumb({
       <div className="flex items-center justify-between gap-1">
         <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${DECISION_BADGE[image.decision]}`}>{image.decision}</span>
         {image.generationRun.parentGeneratedImageId && (
-          <span className="text-[10px] text-zinc-400 dark:text-zinc-500" title="Created as a variation of another image">
+          <span className="text-[10px] text-stone-400 dark:text-stone-500" title="Created as a variation of another image">
             Variation
           </span>
         )}
@@ -405,19 +409,19 @@ function GeneratedImageThumb({
             rows={2}
             value={notesDraft}
             onChange={(e) => setNotesDraft(e.target.value)}
-            className="w-full rounded border border-zinc-300 px-1.5 py-1 text-[11px] dark:border-zinc-700 dark:bg-zinc-900"
+            className="w-full rounded-md border border-stone-300 px-1.5 py-1 text-[11px] dark:border-stone-700 dark:bg-stone-900"
           />
           <div className="flex gap-1">
-            <button type="button" disabled={busy} onClick={saveNotes} className="rounded bg-indigo-600 px-2 py-0.5 text-[10px] text-white">
+            <button type="button" disabled={busy} onClick={saveNotes} className="rounded-md bg-stone-900 px-2 py-0.5 text-[10px] text-white dark:bg-amber-500 dark:text-stone-950">
               Save
             </button>
-            <button type="button" onClick={() => setEditingNotes(false)} className="rounded border border-zinc-300 px-2 py-0.5 text-[10px] dark:border-zinc-700">
+            <button type="button" onClick={() => setEditingNotes(false)} className="rounded-md border border-stone-300 px-2 py-0.5 text-[10px] dark:border-stone-700">
               Cancel
             </button>
           </div>
         </div>
       ) : (
-        <button type="button" onClick={() => setEditingNotes(true)} className="block w-full truncate text-left text-[11px] text-zinc-500 hover:underline dark:text-zinc-400">
+        <button type="button" onClick={() => setEditingNotes(true)} className="block w-full truncate text-left text-[11px] text-stone-500 hover:underline dark:text-stone-400">
           {image.userNotes || "Add notes…"}
         </button>
       )}
@@ -427,7 +431,7 @@ function GeneratedImageThumb({
           type="button"
           disabled={busy || image.decision === "SELECTED"}
           onClick={() => setConfirmSelectOpen(true)}
-          className="rounded bg-green-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-green-500 disabled:opacity-50"
+          className="rounded-md bg-emerald-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
         >
           Select
         </button>
@@ -435,7 +439,7 @@ function GeneratedImageThumb({
           type="button"
           disabled={busy || image.decision === "REJECTED"}
           onClick={reject}
-          className="rounded border border-red-300 px-1.5 py-0.5 text-[10px] font-medium text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-500/10"
+          className="rounded-md border border-rose-300 px-1.5 py-0.5 text-[10px] font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-800 dark:text-rose-300 dark:hover:bg-rose-500/10"
         >
           Reject
         </button>
@@ -443,7 +447,7 @@ function GeneratedImageThumb({
           type="button"
           disabled={busy}
           onClick={regenerate}
-          className="rounded border border-zinc-300 px-1.5 py-0.5 text-[10px] font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          className="rounded-md border border-stone-300 px-1.5 py-0.5 text-[10px] font-medium text-stone-700 hover:bg-stone-50 disabled:opacity-50 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-stone-800"
         >
           Regenerate
         </button>
@@ -451,7 +455,7 @@ function GeneratedImageThumb({
           type="button"
           disabled={busy}
           onClick={createVariation}
-          className="rounded border border-zinc-300 px-1.5 py-0.5 text-[10px] font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          className="rounded-md border border-stone-300 px-1.5 py-0.5 text-[10px] font-medium text-stone-700 hover:bg-stone-50 disabled:opacity-50 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-stone-800"
         >
           Create Variation
         </button>
@@ -459,7 +463,7 @@ function GeneratedImageThumb({
           type="button"
           disabled={busy}
           onClick={() => setModifyOpen(true)}
-          className="rounded bg-purple-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-purple-500 disabled:opacity-50"
+          className="rounded-md bg-purple-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-purple-500 disabled:opacity-50"
         >
           MODIFY DESIGN
         </button>
@@ -468,17 +472,17 @@ function GeneratedImageThumb({
       <button
         type="button"
         onClick={toggleVariations}
-        className="block w-full text-left text-[10px] font-medium text-indigo-600 hover:underline dark:text-indigo-400"
+        className="block w-full text-left text-[10px] font-medium text-amber-700 hover:underline dark:text-amber-400"
       >
         {variationsOpen ? "Hide" : "Show"} design variations{variations ? ` (${variations.length})` : ""}
       </button>
 
       {variationsOpen && (
-        <div className="space-y-2 rounded-md border border-zinc-200 bg-zinc-50 p-2 dark:border-zinc-800 dark:bg-zinc-900/50">
+        <div className="space-y-2 rounded-lg border border-stone-200 bg-stone-50 p-2 dark:border-stone-800 dark:bg-stone-900/50">
           {variations === undefined ? (
-            <p className="text-[10px] text-zinc-500 dark:text-zinc-400">Loading…</p>
+            <p className="text-[10px] text-stone-500 dark:text-stone-400">Loading…</p>
           ) : variations.length === 0 ? (
-            <p className="text-[10px] text-zinc-500 dark:text-zinc-400">No design variations yet — use MODIFY DESIGN above.</p>
+            <p className="text-[10px] text-stone-500 dark:text-stone-400">No design variations yet — use MODIFY DESIGN above.</p>
           ) : (
             variations.map((v) => (
               <DesignVariationRow
@@ -533,9 +537,9 @@ function GeneratedImageThumb({
 }
 
 const VARIATION_DECISION_BADGE: Record<DesignVariation["decision"], string> = {
-  PENDING: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
-  SELECTED: "bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-300",
-  KEPT_ORIGINAL: "bg-zinc-200 text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300",
+  PENDING: "bg-stone-100 text-stone-700 dark:bg-stone-800 dark:text-stone-300",
+  SELECTED: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300",
+  KEPT_ORIGINAL: "bg-stone-200 text-stone-600 dark:bg-stone-700 dark:text-stone-300",
 };
 
 /** Original / Variation side by side, per the spec — the original image is never touched by any action here. */
@@ -557,25 +561,25 @@ function DesignVariationRow({
   const [confirmSelectOpen, setConfirmSelectOpen] = useState(false);
 
   return (
-    <div className="space-y-1.5 rounded border border-zinc-200 bg-white p-2 dark:border-zinc-700 dark:bg-zinc-900">
+    <div className="space-y-1.5 rounded-lg border border-stone-200 bg-white p-2 dark:border-stone-700 dark:bg-stone-900">
       <div className="grid grid-cols-2 gap-2">
         <div>
-          <p className="mb-1 text-[9px] font-semibold uppercase tracking-wide text-zinc-400">Original</p>
-          <img src={imageUrl(originalImage.imageAttachmentId)} alt="Original design" className="w-full rounded border border-zinc-200 dark:border-zinc-700" />
+          <p className="mb-1 text-[9px] font-semibold uppercase tracking-wide text-stone-400">Original</p>
+          <img src={imageUrl(originalImage.imageAttachmentId)} alt="Original design" className="w-full rounded-md border border-stone-200 dark:border-stone-700" />
         </div>
         <div>
-          <p className="mb-1 text-[9px] font-semibold uppercase tracking-wide text-zinc-400">Variation {variation.variationNumber}</p>
-          <img src={imageUrl(variation.imageAttachmentId)} alt={`Variation ${variation.variationNumber}`} className="w-full rounded border border-zinc-200 dark:border-zinc-700" />
+          <p className="mb-1 text-[9px] font-semibold uppercase tracking-wide text-stone-400">Variation {variation.variationNumber}</p>
+          <img src={imageUrl(variation.imageAttachmentId)} alt={`Variation ${variation.variationNumber}`} className="w-full rounded-md border border-stone-200 dark:border-stone-700" />
         </div>
       </div>
 
-      <div className="space-y-0.5 text-[10px] text-zinc-600 dark:text-zinc-300">
+      <div className="space-y-0.5 text-[10px] text-stone-600 dark:text-stone-300">
         <p>
           <span className="font-medium">{DESIGN_FEATURE_LABELS[variation.featureKey]}</span> changed:{" "}
-          <span className="text-zinc-500 dark:text-zinc-400">{variation.previousValue}</span> →{" "}
-          <span className="text-zinc-500 dark:text-zinc-400">{variation.newValue}</span>
+          <span className="text-stone-500 dark:text-stone-400">{variation.previousValue}</span> →{" "}
+          <span className="text-stone-500 dark:text-stone-400">{variation.newValue}</span>
         </p>
-        <p className="text-zinc-400 dark:text-zinc-500">Created {new Date(variation.createdAt).toLocaleString()}</p>
+        <p className="text-stone-400 dark:text-stone-500">Created {new Date(variation.createdAt).toLocaleString()}</p>
       </div>
 
       <div className="flex flex-wrap items-center gap-1 pt-0.5">
@@ -586,7 +590,7 @@ function DesignVariationRow({
           type="button"
           disabled={busy || variation.decision === "SELECTED"}
           onClick={() => setConfirmSelectOpen(true)}
-          className="rounded bg-green-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-green-500 disabled:opacity-50"
+          className="rounded-md bg-emerald-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
         >
           Select Variation
         </button>
@@ -594,7 +598,7 @@ function DesignVariationRow({
           type="button"
           disabled={busy || variation.decision === "KEPT_ORIGINAL"}
           onClick={onKeepOriginal}
-          className="rounded border border-zinc-300 px-1.5 py-0.5 text-[10px] font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          className="rounded-md border border-stone-300 px-1.5 py-0.5 text-[10px] font-medium text-stone-700 hover:bg-stone-50 disabled:opacity-50 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-stone-800"
         >
           Keep Original
         </button>
@@ -602,7 +606,7 @@ function DesignVariationRow({
           type="button"
           disabled={busy}
           onClick={onCreateAnother}
-          className="rounded border border-zinc-300 px-1.5 py-0.5 text-[10px] font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          className="rounded-md border border-stone-300 px-1.5 py-0.5 text-[10px] font-medium text-stone-700 hover:bg-stone-50 disabled:opacity-50 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-stone-800"
         >
           Create Another Variation
         </button>
@@ -669,14 +673,18 @@ function DesignVariationModifyForm({
   return (
     <Modal open={open} onClose={onClose} title="Modify Design" maxWidthClass="max-w-lg">
       <div className="space-y-3">
-        {formError && <p className="rounded-md bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-500/10 dark:text-red-300">{formError}</p>}
+        {formError && (
+          <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-900 dark:bg-rose-500/10 dark:text-rose-300">
+            {formError}
+          </p>
+        )}
 
         <div>
-          <label className="mb-1 block text-xs font-medium text-zinc-700 dark:text-zinc-300">Feature to Change</label>
+          <label className="mb-1 block text-xs font-medium text-stone-700 dark:text-stone-300">Feature to Change</label>
           <select
             value={form.featureKey}
             onChange={(e) => setForm((f) => ({ ...f, featureKey: e.target.value as DesignFeature }))}
-            className="w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+            className="w-full rounded-lg border border-stone-300 bg-white px-2 py-1.5 text-sm dark:border-stone-700 dark:bg-stone-900"
           >
             {DESIGN_FEATURE_VALUES.map((key) => (
               <option key={key} value={key}>
@@ -687,35 +695,35 @@ function DesignVariationModifyForm({
         </div>
 
         <div>
-          <label className="mb-1 block text-xs font-medium text-zinc-700 dark:text-zinc-300">Current Feature</label>
+          <label className="mb-1 block text-xs font-medium text-stone-700 dark:text-stone-300">Current Feature</label>
           <input
             type="text"
             value={form.currentFeatureValue}
             onChange={(e) => setForm((f) => ({ ...f, currentFeatureValue: e.target.value }))}
             placeholder="Describe the feature as it appears in the image now"
-            className="w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+            className="w-full rounded-lg border border-stone-300 bg-white px-2 py-1.5 text-sm dark:border-stone-700 dark:bg-stone-900"
           />
         </div>
 
         <div>
-          <label className="mb-1 block text-xs font-medium text-zinc-700 dark:text-zinc-300">New Requirement</label>
+          <label className="mb-1 block text-xs font-medium text-stone-700 dark:text-stone-300">New Requirement</label>
           <textarea
             rows={2}
             value={form.newRequirement}
             onChange={(e) => setForm((f) => ({ ...f, newRequirement: e.target.value }))}
             placeholder="Describe what the feature should become"
-            className="w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+            className="w-full rounded-lg border border-stone-300 bg-white px-2 py-1.5 text-sm dark:border-stone-700 dark:bg-stone-900"
           />
         </div>
 
         <div>
-          <label className="mb-1 block text-xs font-medium text-zinc-700 dark:text-zinc-300">Additional Instructions (optional)</label>
+          <label className="mb-1 block text-xs font-medium text-stone-700 dark:text-stone-300">Additional Instructions (optional)</label>
           <textarea
             rows={2}
             value={form.additionalInstructions}
             onChange={(e) => setForm((f) => ({ ...f, additionalInstructions: e.target.value }))}
             placeholder="Any further detail the AI should take into account"
-            className="w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+            className="w-full rounded-lg border border-stone-300 bg-white px-2 py-1.5 text-sm dark:border-stone-700 dark:bg-stone-900"
           />
         </div>
 
@@ -723,7 +731,7 @@ function DesignVariationModifyForm({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            className="rounded-lg border border-stone-300 px-3 py-1.5 text-sm font-medium text-stone-700 hover:bg-stone-50 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-stone-800"
           >
             Cancel
           </button>
@@ -731,7 +739,7 @@ function DesignVariationModifyForm({
             type="button"
             disabled={submitting || !form.currentFeatureValue.trim() || !form.newRequirement.trim()}
             onClick={submit}
-            className="rounded-md bg-purple-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-purple-500 disabled:opacity-50"
+            className="rounded-lg bg-purple-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-purple-500 disabled:opacity-50"
           >
             {submitting ? "Generating…" : "Generate Variation"}
           </button>

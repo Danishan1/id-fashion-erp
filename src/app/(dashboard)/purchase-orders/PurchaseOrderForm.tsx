@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { MaterialPicker } from "@/components/ui/MaterialPicker";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { formatCurrency } from "@/lib/currency";
 import { todayIsoDate } from "@/lib/date";
 
@@ -168,20 +169,14 @@ export function PurchaseOrderForm({ initialOrder }: { initialOrder?: InitialPurc
 
       <div className="grid grid-cols-2 gap-4">
         <FormField label="Supplier" htmlFor="supplierId" required>
-          <select
+          <SearchableSelect
             id="supplierId"
             required
             value={supplierId}
-            onChange={(e) => setSupplierId(e.target.value)}
-            className={textInputClass()}
-          >
-            <option value="">— Select —</option>
-            {suppliers.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
+            onChange={setSupplierId}
+            options={suppliers.map((s) => ({ id: s.id, label: s.name ?? "" }))}
+            placeholder="Search supplier…"
+          />
         </FormField>
         <FormField label="Order Date" htmlFor="orderDate" required>
           <input

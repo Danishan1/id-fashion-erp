@@ -14,7 +14,7 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
     await PermissionService.assert(session.user.id, "masters_core", "view");
 
     const { id } = await params;
-    const warehouse = await getWarehouseById(session.user.companyId, id);
+    const warehouse = await getWarehouseById({ companyId: session.user.companyId, userId: session.user.id }, id);
     return NextResponse.json({ data: warehouse });
   } catch (error) {
     return handleApiError(error);

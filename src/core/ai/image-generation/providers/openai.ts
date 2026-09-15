@@ -9,7 +9,7 @@ import OpenAI, {
   BadRequestError,
 } from "openai";
 import type { Image as OpenAiImage } from "openai/resources/images";
-import { getOpenAiImageConfig } from "../config";
+import { getOpenAiImageConfig, type OpenAiImageConfig } from "../config";
 import { ImageGenerationServiceError, type GenerateImagesResult, type ImageGenerationProvider } from "../types";
 
 /**
@@ -91,8 +91,15 @@ function extractBuffers(images: OpenAiImage[] | undefined, count: number): Gener
   return out;
 }
 
-export function createOpenAiImageProvider(): ImageGenerationProvider {
-  const config = getOpenAiImageConfig();
+/**
+ * `config` is optional so every existing caller (factory.ts's
+ * env-var-driven `getImageGenerationProvider()`) keeps working completely
+ * unchanged — omitting it falls back to `getOpenAiImageConfig()` exactly as
+ * before. AIProviderManager passes an explicit config (decrypted from a
+ * real `AIProvider` database row) instead, without needing a second,
+ * duplicate OpenAI client implementation.
+ */
+export function createOpenAiImageProvider(config: OpenAiImageConfig = getOpenAiImageConfig()): ImageGenerationProvider {
   const openai = client(config.apiKey);
 
   return {
@@ -160,6 +167,25 @@ export function createOpenAiImageProvider(): ImageGenerationProvider {
       }
     },
 
+    async replicateWithNewMaterial({ prompt, count, referenceImage, materialImage }): Promise<GenerateImagesResult> {
+      try {
+        const referenceFile = await toFile(referenceImage.buffer, "reference-garment.png", { type: referenceImage.mimeType });
+        const materialFile = await toFile(materialImage.buffer, "material-photo.png", { type: materialImage.mimeType });
+        const response = await openai.images.edit({
+          model: config.model,
+          image: [referenceFile, materialFile],
+          prompt,
+          n: count,
+          size: DEFAULT_SIZE,
+          quality: DEFAULT_QUALITY,
+        });
+        return { images: extractBuffers(response.data, count), model: config.model, raw: response };
+      } catch (err) {
+        if (err instanceof ImageGenerationServiceError) throw err;
+        throw mapSdkError(err);
+      }
+    },
+
     async generateTechnicalFlat({ prompt, count, baseImage }): Promise<GenerateImagesResult> {
       try {
         const file = await toFile(baseImage.buffer, "base-garment.png", { type: baseImage.mimeType });
@@ -177,5 +203,48 @@ export function createOpenAiImageProvider(): ImageGenerationProvider {
         throw mapSdkError(err);
       }
     },
+
+    // The images.edit() endpoint (single input image) is used here exactly
+    // as it is for generateVariation — the fabric photo IS the input image,
+    // and the prompt instructs the model to build a new garment scene around
+    // it rather than merely describing a small change to it. This is what
+    // makes the fabric a genuine visual reference instead of a text
+    // description the model has to invent pixels for.
+    async generateFromFabricReference({ prompt, count, fabricImage }): Promise<GenerateImagesResult> {
+      try {
+        const file = await toFile(fabricImage.buffer, "fabric-reference.png", { type: fabricImage.mimeType });
+        const response = await openai.images.edit({
+          model: config.model,
+          image: file,
+          prompt,
+          n: count,
+          size: DEFAULT_SIZE,
+          quality: DEFAULT_QUALITY,
+        });
+        return { images: extractBuffers(response.data, count), model: config.model, raw: response };
+      } catch (err) {
+        if (err instanceof ImageGenerationServiceError) throw err;
+        throw mapSdkError(err);
+      }
+    },
   };
+}
+
+/**
+ * A real, free/cheap connectivity check for the admin "Test Connection"
+ * action — `models.retrieve()` validates the API key and confirms the
+ * configured model actually exists on this account, without spending a
+ * real image-generation credit the way calling `generate()` just to test
+ * reachability would. Errors are mapped through the same `mapSdkError()`
+ * every real generation call already uses, so a bad key/missing model
+ * surfaces the identical classified error a real generation attempt would.
+ */
+export async function testOpenAiConnection(config: OpenAiImageConfig): Promise<{ modelAvailable: boolean }> {
+  try {
+    await client(config.apiKey).models.retrieve(config.model);
+    return { modelAvailable: true };
+  } catch (err) {
+    if (err instanceof ImageGenerationServiceError) throw err;
+    throw mapSdkError(err);
+  }
 }

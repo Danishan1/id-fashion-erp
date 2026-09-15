@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { todayIsoDate } from "@/lib/date";
 
 const ELIGIBLE_PO_STATUSES = ["SENT_TO_SUPPLIER", "PARTIALLY_RECEIVED", "FULLY_RECEIVED", "CLOSED"];
@@ -252,31 +253,25 @@ export function PurchaseInvoiceForm() {
       <div className="grid grid-cols-3 gap-4">
         {billMode === "PO" ? (
           <FormField label="Purchase Order" htmlFor="purchaseOrderId" required>
-            <select
+            <SearchableSelect
               id="purchaseOrderId"
               required
               value={purchaseOrderId}
-              onChange={(e) => setPurchaseOrderId(e.target.value)}
-              className={textInputClass()}
-            >
-              <option value="">— Select an eligible order —</option>
-              {orders.map((o) => (
-                <option key={o.id} value={o.id}>
-                  {o.orderNumber}
-                </option>
-              ))}
-            </select>
+              onChange={setPurchaseOrderId}
+              options={orders.map((o) => ({ id: o.id, label: o.orderNumber }))}
+              placeholder="Search purchase order…"
+            />
           </FormField>
         ) : (
           <FormField label="Party / Supplier" htmlFor="supplierId" required>
-            <select id="supplierId" required value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className={textInputClass()}>
-              <option value="">— Select a supplier —</option>
-              {suppliers.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
+            <SearchableSelect
+              id="supplierId"
+              required
+              value={supplierId}
+              onChange={setSupplierId}
+              options={suppliers.map((s) => ({ id: s.id, label: s.name }))}
+              placeholder="Search supplier…"
+            />
           </FormField>
         )}
         <FormField label="Supplier Reference No." htmlFor="supplierInvoiceNumber">
@@ -419,18 +414,12 @@ export function PurchaseInvoiceForm() {
                         />
                       </td>
                       <td className="px-3 py-2">
-                        <select
+                        <SearchableSelect
                           value={l.expenseAccountId}
-                          onChange={(e) => updateDirectLine(l.id, { expenseAccountId: e.target.value })}
-                          className={textInputClass()}
-                        >
-                          <option value="">— Select —</option>
-                          {expenseAccounts.map((a) => (
-                            <option key={a.id} value={a.id}>
-                              {a.code} — {a.name}
-                            </option>
-                          ))}
-                        </select>
+                          onChange={(next) => updateDirectLine(l.id, { expenseAccountId: next })}
+                          options={expenseAccounts.map((a) => ({ id: a.id, label: a.name, sublabel: a.code }))}
+                          placeholder="Search account…"
+                        />
                       </td>
                       <td className="px-3 py-2">
                         <input

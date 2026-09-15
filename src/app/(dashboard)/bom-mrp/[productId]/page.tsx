@@ -3,8 +3,7 @@ import { auth } from "@/core/auth/auth";
 import { PermissionService } from "@/core/rbac/PermissionService";
 import { getBomByProductId } from "@/modules/bom-mrp/bom.service";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
-import { BomEditor } from "../BomEditor";
-import { BomVersionPanel } from "./BomVersionPanel";
+import { BomDetailTabs } from "./BomDetailTabs";
 
 export default async function BomEditorPage({ params }: { params: Promise<{ productId: string }> }) {
   const { productId } = await params;
@@ -45,20 +44,15 @@ export default async function BomEditorPage({ params }: { params: Promise<{ prod
           Materials consumed per one finished piece of this style.
         </p>
       </div>
-      <BomVersionPanel
+      <BomDetailTabs
         key={productId}
         productId={productId}
         versions={JSON.parse(JSON.stringify(bom?.versions ?? []))}
         currentVersionNumber={bom?.currentVersionNumber ?? 0}
         canApprove={canApprove}
-      />
-      <BomEditor
-        key={`editor-${productId}`}
-        productId={productId}
         initialNotes={currentVersion?.notes ?? ""}
         initialItems={initialItems}
         isCurrentVersionLocked={currentVersion?.status === "APPROVED"}
-        currentVersionNumber={bom?.currentVersionNumber ?? 0}
       />
     </div>
   );

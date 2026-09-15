@@ -9,7 +9,14 @@ export interface CustomerFormValues {
   code: string;
   name: string;
   type: "CUSTOMER" | "AGENT";
+  contactPerson: string;
+  phone: string;
+  email: string;
+  billingAddress: string;
+  city: string;
+  pinCode: string;
   country: string;
+  taxRegistrationNo: string;
   paymentTermsDays: string;
   creditLimit: string;
   defaultCurrencyCode: string;
@@ -20,7 +27,14 @@ const EMPTY_VALUES: CustomerFormValues = {
   code: "",
   name: "",
   type: "CUSTOMER",
+  contactPerson: "",
+  phone: "",
+  email: "",
+  billingAddress: "",
+  city: "",
+  pinCode: "",
   country: "India",
+  taxRegistrationNo: "",
   paymentTermsDays: "",
   creditLimit: "",
   defaultCurrencyCode: "INR",
@@ -60,7 +74,9 @@ export function CustomerForm({ initialValues, submitUrl, method, onSuccess, onCa
       .catch(() => setCurrencies([]));
   }, []);
 
-  // New records get a suggested sequential code (e.g. CUST-00006); the field stays editable.
+  // New records get a suggested sequential code (e.g. CUST-00006) — the field
+  // itself is read-only (auto-generated, never manually editable, per explicit
+  // request), so this is the ONLY thing that ever sets it.
   useEffect(() => {
     if (initialValues) return;
     fetch("/api/v1/customers/next-code")
@@ -98,7 +114,14 @@ export function CustomerForm({ initialValues, submitUrl, method, onSuccess, onCa
         code: values.code,
         name: values.name,
         type: values.type,
+        contactPerson: values.contactPerson,
+        phone: values.phone,
+        email: values.email,
+        billingAddress: values.billingAddress,
+        city: values.city,
+        pinCode: values.pinCode,
         country: values.country,
+        taxRegistrationNo: values.taxRegistrationNo,
         paymentTermsDays: values.paymentTermsDays ? Number(values.paymentTermsDays) : undefined,
         creditLimit: values.creditLimit ? Number(values.creditLimit) : undefined,
         defaultCurrencyCode: values.defaultCurrencyCode,
@@ -124,9 +147,11 @@ export function CustomerForm({ initialValues, submitUrl, method, onSuccess, onCa
           <input
             id="code"
             required
+            readOnly
+            disabled
             value={values.code}
-            onChange={(e) => setValues({ ...values, code: e.target.value })}
-            className={textInputClass()}
+            title="Auto-generated — not editable"
+            className={`${textInputClass()} cursor-not-allowed bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400`}
           />
         </FormField>
         <FormField label="Type" htmlFor="type" required>
@@ -153,6 +178,71 @@ export function CustomerForm({ initialValues, submitUrl, method, onSuccess, onCa
       </FormField>
 
       <div className="grid grid-cols-2 gap-4">
+        <FormField label="Contact Person" htmlFor="contactPerson">
+          <input
+            id="contactPerson"
+            value={values.contactPerson}
+            onChange={(e) => setValues({ ...values, contactPerson: e.target.value })}
+            className={textInputClass()}
+          />
+        </FormField>
+        <FormField label="Phone" htmlFor="phone">
+          <input
+            id="phone"
+            value={values.phone}
+            onChange={(e) => setValues({ ...values, phone: e.target.value })}
+            className={textInputClass()}
+          />
+        </FormField>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <FormField label="Email" htmlFor="email">
+          <input
+            id="email"
+            type="email"
+            value={values.email}
+            onChange={(e) => setValues({ ...values, email: e.target.value })}
+            className={textInputClass()}
+          />
+        </FormField>
+        <FormField label="GST / VAT No." htmlFor="taxRegistrationNo">
+          <input
+            id="taxRegistrationNo"
+            value={values.taxRegistrationNo}
+            onChange={(e) => setValues({ ...values, taxRegistrationNo: e.target.value })}
+            className={textInputClass()}
+          />
+        </FormField>
+      </div>
+
+      <FormField label="Address" htmlFor="billingAddress">
+        <textarea
+          id="billingAddress"
+          rows={2}
+          value={values.billingAddress}
+          onChange={(e) => setValues({ ...values, billingAddress: e.target.value })}
+          className={textInputClass()}
+        />
+      </FormField>
+
+      <div className="grid grid-cols-3 gap-4">
+        <FormField label="City" htmlFor="city">
+          <input
+            id="city"
+            value={values.city}
+            onChange={(e) => setValues({ ...values, city: e.target.value })}
+            className={textInputClass()}
+          />
+        </FormField>
+        <FormField label="Pin Code" htmlFor="pinCode">
+          <input
+            id="pinCode"
+            value={values.pinCode}
+            onChange={(e) => setValues({ ...values, pinCode: e.target.value })}
+            className={textInputClass()}
+          />
+        </FormField>
         <FormField label="Country" htmlFor="country">
           <select
             id="country"
@@ -168,23 +258,24 @@ export function CustomerForm({ initialValues, submitUrl, method, onSuccess, onCa
             ))}
           </select>
         </FormField>
-        <FormField label="Default Currency" htmlFor="currency">
-          <select
-            id="currency"
-            value={values.defaultCurrencyCode}
-            onChange={(e) => setValues({ ...values, defaultCurrencyCode: e.target.value })}
-            className={textInputClass()}
-          >
-            <option value="">— None —</option>
-            {currencies.map((c) => (
-              <option key={c.code} value={c.code}>
-                {c.code} — {c.name}
-                {COUNTRY_BY_CURRENCY[c.code] ? ` (${COUNTRY_BY_CURRENCY[c.code]})` : ""}
-              </option>
-            ))}
-          </select>
-        </FormField>
       </div>
+
+      <FormField label="Default Currency" htmlFor="currency">
+        <select
+          id="currency"
+          value={values.defaultCurrencyCode}
+          onChange={(e) => setValues({ ...values, defaultCurrencyCode: e.target.value })}
+          className={textInputClass()}
+        >
+          <option value="">— None —</option>
+          {currencies.map((c) => (
+            <option key={c.code} value={c.code}>
+              {c.code} — {c.name}
+              {COUNTRY_BY_CURRENCY[c.code] ? ` (${COUNTRY_BY_CURRENCY[c.code]})` : ""}
+            </option>
+          ))}
+        </select>
+      </FormField>
 
       <div className="grid grid-cols-2 gap-4">
         <FormField label="Payment Terms (days)" htmlFor="paymentTerms">

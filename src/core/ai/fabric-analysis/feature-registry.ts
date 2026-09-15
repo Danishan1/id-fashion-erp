@@ -1,5 +1,5 @@
 /**
- * The 17 individually-tracked observation slots the fabric-analysis prompt
+ * The 13 individually-tracked observation slots the fabric-analysis prompt
  * produces, each mapped to a display label, a UI section grouping, and the
  * (flat, single-segment) path into the raw structured-JSON response used to
  * pluck its value out. Deliberately zero Prisma/server-only imports — both
@@ -7,17 +7,21 @@
  * (rendering section headings/labels) import this same file, so a label
  * never has to be duplicated or kept in sync between the two. Mirrors
  * reference-analysis/feature-registry.ts's exact shape, scoped narrower
- * (17, not 36) since there is no garment yet to describe, only the fabric.
+ * (13, not 36) since there is no garment yet to describe, only the fabric.
+ * The original 17-field shape also had a MANUFACTURING section (Cutting/
+ * Sewing/Care Considerations + Potential Quality Risks) — dropped per
+ * explicit user feedback that it read as advisory consulting prose rather
+ * than "fabric details," leaving just the fabric's own structural/visual/
+ * performance properties.
  */
 
-export const FABRIC_ANALYSIS_SECTIONS = ["STRUCTURE", "VISUAL", "PERFORMANCE", "MANUFACTURING"] as const;
+export const FABRIC_ANALYSIS_SECTIONS = ["STRUCTURE", "VISUAL", "PERFORMANCE"] as const;
 export type FabricAnalysisSection = (typeof FABRIC_ANALYSIS_SECTIONS)[number];
 
 export const FABRIC_ANALYSIS_SECTION_LABELS: Record<FabricAnalysisSection, string> = {
   STRUCTURE: "Fabric Structure",
   VISUAL: "Visual Characteristics",
   PERFORMANCE: "Performance Estimates",
-  MANUFACTURING: "Manufacturing Considerations",
 };
 
 interface FabricFeatureDef {
@@ -43,11 +47,6 @@ export const FABRIC_FEATURE_REGISTRY: FabricFeatureDef[] = [
   { key: "estimatedStretch", label: "Estimated Stretch", section: "PERFORMANCE", path: ["estimatedStretch"] },
   { key: "estimatedDrape", label: "Estimated Drape", section: "PERFORMANCE", path: ["estimatedDrape"] },
   { key: "estimatedRecovery", label: "Estimated Recovery", section: "PERFORMANCE", path: ["estimatedRecovery"] },
-
-  { key: "cuttingConsiderations", label: "Cutting Considerations", section: "MANUFACTURING", path: ["cuttingConsiderations"] },
-  { key: "sewingConsiderations", label: "Sewing Considerations", section: "MANUFACTURING", path: ["sewingConsiderations"] },
-  { key: "careConsiderations", label: "Care Considerations", section: "MANUFACTURING", path: ["careConsiderations"] },
-  { key: "potentialQualityRisks", label: "Potential Quality Risks", section: "MANUFACTURING", path: ["potentialQualityRisks"] },
 ];
 
 export function getFabricFeatureDef(featureKey: string): FabricFeatureDef | undefined {

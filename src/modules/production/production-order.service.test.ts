@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/numbering/DocumentNumberingService", () => ({ generateDocumentNumber: vi.fn() }));
 vi.mock("@/modules/bom-mrp/bom.repository", () => ({ BomRepository: { findByProductId: vi.fn() } }));
-vi.mock("@/modules/bom-mrp/mrp.service", () => ({ getStyleMaterialRequirement: vi.fn() }));
+vi.mock("@/modules/bom-mrp/mrp.service", () => ({ getMaterialRequirementForOrderLine: vi.fn() }));
+vi.mock("./production-progress.service", () => ({ getProductionOrderProgress: vi.fn() }));
 vi.mock("@/modules/inventory/material-request.service", () => ({ createMaterialRequest: vi.fn() }));
 vi.mock("@/modules/products/product.repository", () => ({ ProductRepository: { findStyleById: vi.fn() } }));
 vi.mock("./production.repository", () => ({
@@ -14,6 +15,8 @@ vi.mock("./production.repository", () => ({
     findByIdWithDetails: vi.fn(),
     update: vi.fn(),
     updateStatusInTx: vi.fn(),
+    findMany: vi.fn(),
+    count: vi.fn(),
   },
 }));
 vi.mock("@/core/db/client", () => ({
@@ -22,10 +25,13 @@ vi.mock("@/core/db/client", () => ({
     productionOrder: { aggregate: vi.fn() },
   },
 }));
+vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { getAllowedBranchIds: vi.fn() } }));
 
 const { generateDocumentNumber } = await import("@/core/numbering/DocumentNumberingService");
+const { PermissionService } = await import("@/core/rbac/PermissionService");
 const { ProductRepository } = await import("@/modules/products/product.repository");
-const { getStyleMaterialRequirement } = await import("@/modules/bom-mrp/mrp.service");
+const { getMaterialRequirementForOrderLine } = await import("@/modules/bom-mrp/mrp.service");
+const { getProductionOrderProgress } = await import("./production-progress.service");
 const { createMaterialRequest } = await import("@/modules/inventory/material-request.service");
 const { LotRepository, ProductionOrderRepository } = await import("./production.repository");
 const { prisma } = await import("@/core/db/client");
@@ -35,6 +41,7 @@ const {
   getSalesOrderLineCommitment,
   getProductionOrderById,
   updateProductionOrderQuantity,
+  listProductionOrders,
 } = await import("./production-order.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
@@ -49,6 +56,8 @@ beforeEach(() => {
   vi.mocked(LotRepository.findByProductionOrderId).mockReset().mockResolvedValue([] as never);
   vi.mocked(prisma.salesOrderItem.findFirst).mockReset();
   vi.mocked(prisma.productionOrder.aggregate).mockReset().mockResolvedValue({ _sum: { plannedQuantity: null } } as never);
+  vi.mocked(getProductionOrderProgress).mockReset().mockResolvedValue({ progressStatus: "PLANNED" } as never);
+  vi.mocked(PermissionService.getAllowedBranchIds).mockReset().mockResolvedValue(null);
 });
 
 describe("createProductionOrder", () => {
@@ -132,7 +141,7 @@ describe("getProductionOrderById", () => {
     } as never);
     vi.mocked(prisma.productionOrder.aggregate).mockResolvedValue({ _sum: { plannedQuantity: 20 } } as never);
 
-    const order = await getProductionOrderById("co-1", "po-1");
+    const order = await getProductionOrderById(actor, "po-1");
 
     expect(order.salesOrderContext).toEqual({ orderedTotal: 100, otherCommitted: 20, remaining: 80 });
   });
@@ -140,7 +149,7 @@ describe("getProductionOrderById", () => {
   it("returns null salesOrderContext for a Make-to-Stock order", async () => {
     vi.mocked(ProductionOrderRepository.findByIdWithDetails).mockResolvedValue({ id: "po-1", salesOrderItemId: null } as never);
 
-    const order = await getProductionOrderById("co-1", "po-1");
+    const order = await getProductionOrderById(actor, "po-1");
 
     expect(order.salesOrderContext).toBeNull();
     expect(prisma.salesOrderItem.findFirst).not.toHaveBeenCalled();
@@ -148,7 +157,17 @@ describe("getProductionOrderById", () => {
 
   it("rejects a production order that doesn't exist", async () => {
     vi.mocked(ProductionOrderRepository.findByIdWithDetails).mockResolvedValue(null);
-    await expect(getProductionOrderById("co-1", "missing")).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(getProductionOrderById(actor, "missing")).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("attaches the derived progress summary", async () => {
+    vi.mocked(ProductionOrderRepository.findByIdWithDetails).mockResolvedValue({ id: "po-1", salesOrderItemId: null } as never);
+    vi.mocked(getProductionOrderProgress).mockResolvedValue({ progressStatus: "IN_PRODUCTION", producedQuantity: 40 } as never);
+
+    const order = await getProductionOrderById(actor, "po-1");
+
+    expect(getProductionOrderProgress).toHaveBeenCalledWith("co-1", "po-1");
+    expect(order.progress).toEqual({ progressStatus: "IN_PRODUCTION", producedQuantity: 40 });
   });
 });
 
@@ -190,7 +209,12 @@ describe("generateMaterialRequestForOrder", () => {
   });
 
   it("rejects when the style has no approved BOM", async () => {
-    vi.mocked(getStyleMaterialRequirement).mockResolvedValue({ hasApprovedBom: false, bomId: null, materials: [] } as never);
+    vi.mocked(getMaterialRequirementForOrderLine).mockResolvedValue({
+      hasApprovedBom: false,
+      bomId: null,
+      sampleRequestId: null,
+      materials: [],
+    } as never);
 
     await expect(generateMaterialRequestForOrder(actor, "po-1", { warehouseId: "wh-1" })).rejects.toMatchObject({
       code: "VALIDATION_ERROR",
@@ -198,10 +222,25 @@ describe("generateMaterialRequestForOrder", () => {
     expect(createMaterialRequest).not.toHaveBeenCalled();
   });
 
+  it("names the linked sample (not the Style/BOM) as the rejection cause when a sample-sourced requirement has no materials", async () => {
+    vi.mocked(getMaterialRequirementForOrderLine).mockResolvedValue({
+      hasApprovedBom: false,
+      bomId: null,
+      sampleRequestId: "sam-1",
+      materials: [],
+    } as never);
+
+    await expect(generateMaterialRequestForOrder(actor, "po-1", { warehouseId: "wh-1" })).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("linked sample"),
+    });
+  });
+
   it("rejects when nothing is short", async () => {
-    vi.mocked(getStyleMaterialRequirement).mockResolvedValue({
+    vi.mocked(getMaterialRequirementForOrderLine).mockResolvedValue({
       hasApprovedBom: true,
       bomId: "bom-1",
+      sampleRequestId: null,
       materials: [{ materialId: "mat-1", uomId: "uom-1", shortfallQuantity: 0 }],
     } as never);
 
@@ -211,9 +250,10 @@ describe("generateMaterialRequestForOrder", () => {
   });
 
   it("raises a Material Request for exactly the shortfall lines, using the shared calc's own bomId/uomId", async () => {
-    vi.mocked(getStyleMaterialRequirement).mockResolvedValue({
+    vi.mocked(getMaterialRequirementForOrderLine).mockResolvedValue({
       hasApprovedBom: true,
       bomId: "bom-1",
+      sampleRequestId: null,
       materials: [
         { materialId: "mat-1", uomId: "uom-1", shortfallQuantity: 40 },
         { materialId: "mat-2", uomId: "uom-2", shortfallQuantity: 0 },
@@ -222,7 +262,11 @@ describe("generateMaterialRequestForOrder", () => {
 
     await generateMaterialRequestForOrder(actor, "po-1", { warehouseId: "wh-1" });
 
-    expect(getStyleMaterialRequirement).toHaveBeenCalledWith("co-1", "prod-1", 100);
+    expect(getMaterialRequirementForOrderLine).toHaveBeenCalledWith("co-1", {
+      salesOrderItemId: undefined,
+      productId: "prod-1",
+      quantity: 100,
+    });
     expect(createMaterialRequest).toHaveBeenCalledWith(
       actor,
       expect.objectContaining({
@@ -231,5 +275,84 @@ describe("generateMaterialRequestForOrder", () => {
         lines: [{ materialId: "mat-1", uomId: "uom-1", requestedQuantity: 40 }],
       })
     );
+  });
+
+  it("passes this order's own linked salesOrderItemId through, so the shared calc can resolve a linked Sample", async () => {
+    vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue({
+      id: "po-1",
+      productId: "prod-1",
+      plannedQuantity: 100,
+      salesOrderItemId: "soi-1",
+    } as never);
+    vi.mocked(getMaterialRequirementForOrderLine).mockResolvedValue({
+      hasApprovedBom: true,
+      bomId: null,
+      sampleRequestId: "sam-1",
+      materials: [{ materialId: "mat-1", uomId: "uom-1", shortfallQuantity: 40 }],
+    } as never);
+
+    await generateMaterialRequestForOrder(actor, "po-1", { warehouseId: "wh-1" });
+
+    expect(getMaterialRequirementForOrderLine).toHaveBeenCalledWith("co-1", {
+      salesOrderItemId: "soi-1",
+      productId: "prod-1",
+      quantity: 100,
+    });
+    // A sample-sourced requirement has no real Bom row — bomId must pass
+    // through as undefined (createMaterialRequest's own schema field), never
+    // a stray non-null-asserted null.
+    expect(createMaterialRequest).toHaveBeenCalledWith(actor, expect.objectContaining({ bomId: undefined }));
+  });
+});
+
+describe("branch access enforcement (2026-09-15)", () => {
+  const listQuery = { search: "", sortBy: "createdAt", sortOrder: "desc" as const, page: 1, pageSize: 20, skip: 0, take: 20 };
+
+  beforeEach(() => {
+    vi.mocked(ProductionOrderRepository.findMany).mockReset().mockResolvedValue([]);
+    vi.mocked(ProductionOrderRepository.count).mockReset().mockResolvedValue(0);
+  });
+
+  it("listProductionOrders adds no branch filter for an unrestricted user", async () => {
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(null);
+
+    await listProductionOrders(actor, listQuery);
+
+    const whereArg = vi.mocked(ProductionOrderRepository.findMany).mock.calls[0][0];
+    expect(whereArg).not.toHaveProperty("branchId");
+  });
+
+  it("listProductionOrders adds a branchId IN filter for a branch-restricted user", async () => {
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    await listProductionOrders(actor, listQuery);
+
+    expect(ProductionOrderRepository.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ branchId: { in: ["branch-1"] } }),
+      expect.anything()
+    );
+  });
+
+  it("getProductionOrderById succeeds for an order inside the user's allowed branches", async () => {
+    vi.mocked(ProductionOrderRepository.findByIdWithDetails).mockResolvedValue({
+      id: "po-1",
+      branchId: "branch-1",
+      salesOrderItemId: null,
+    } as never);
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    const order = await getProductionOrderById(actor, "po-1");
+    expect(order.id).toBe("po-1");
+  });
+
+  it("getProductionOrderById throws NOT_FOUND for an order outside the user's allowed branches", async () => {
+    vi.mocked(ProductionOrderRepository.findByIdWithDetails).mockResolvedValue({
+      id: "po-1",
+      branchId: "branch-2",
+      salesOrderItemId: null,
+    } as never);
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    await expect(getProductionOrderById(actor, "po-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 });

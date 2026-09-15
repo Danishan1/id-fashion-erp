@@ -31,6 +31,7 @@ export const MODULES = [
   "reports",
   "administration",
   "ai_garment_flow",
+  "ai_designer",
 ] as const;
 export type Module = (typeof MODULES)[number];
 
@@ -119,6 +120,12 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     reports: ["view", "export", "print"],
     administration: ["view"],
     ai_garment_flow: ["view"],
+    // "approve" added 2026-09-14 for Tech Pack's own approve/revision
+    // discipline -- a maker/checker split (Merchandiser generates/edits,
+    // Management approves); MERCHANDISER deliberately does not get it (the
+    // self-approval guard would block them from approving their own tech
+    // pack anyway unless they're also SUPER_ADMIN).
+    ai_designer: ["view", "approve"],
   },
   MERCHANDISER: {
     dashboard: ["view"],
@@ -137,6 +144,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     purchasing: ["view", "create"],
     reports: ["view", "export", "print"],
     ai_garment_flow: ["view", "create", "edit", "delete", "cancel", "export", "print"],
+    ai_designer: ["view", "create", "edit", "delete", "cancel", "export", "print"],
   },
   SAMPLING_MANAGER: {
     dashboard: ["view"],

@@ -2,13 +2,16 @@ import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { prisma } from "@/core/db/client";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingService";
+import { PermissionService } from "@/core/rbac/PermissionService";
 import type { ListQuery } from "@/lib/list-query";
+import { branchScopeWhere } from "@/lib/branch-access";
 import { BomRepository } from "@/modules/bom-mrp/bom.repository";
-import { getStyleMaterialRequirement } from "@/modules/bom-mrp/mrp.service";
+import { getMaterialRequirementForOrderLine } from "@/modules/bom-mrp/mrp.service";
 import { createMaterialRequest } from "@/modules/inventory/material-request.service";
 import { ProductRepository } from "@/modules/products/product.repository";
 import type { Prisma, ProductionOrderStatus } from "@prisma/client";
 import { LotRepository, ProductionOrderRepository } from "./production.repository";
+import { getProductionOrderProgress } from "./production-progress.service";
 import type { CreateProductionOrderInput, GenerateMaterialRequestInput } from "./production.schema";
 
 export interface ActorContext {
@@ -93,9 +96,11 @@ export async function getSalesOrderLineCommitment(
   return { orderedTotal, otherCommitted, remaining: orderedTotal - otherCommitted };
 }
 
-export async function listProductionOrders(companyId: string, query: ListQuery) {
+export async function listProductionOrders(actor: { companyId: string; userId: string }, query: ListQuery) {
+  const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
   const where: Prisma.ProductionOrderWhereInput = {
-    companyId,
+    companyId: actor.companyId,
+    ...branchScopeWhere(allowedBranchIds),
     ...(query.search ? { orderNumber: { contains: query.search, mode: "insensitive" as const } } : {}),
   };
 
@@ -111,15 +116,22 @@ export async function listProductionOrders(companyId: string, query: ListQuery) 
   return { data, totalCount };
 }
 
-export async function getProductionOrderById(companyId: string, id: string) {
-  const order = await ProductionOrderRepository.findByIdWithDetails(companyId, id);
+/** A branch-restricted user gets NOT_FOUND for an order outside their allowed branches — same "deny as not-found" convention used across this app. */
+export async function getProductionOrderById(actor: { companyId: string; userId: string }, id: string) {
+  const order = await ProductionOrderRepository.findByIdWithDetails(actor.companyId, id);
   if (!order) throw new BusinessRuleError("NOT_FOUND", "Production order not found.", { id });
 
-  const salesOrderContext = order.salesOrderItemId
-    ? await getSalesOrderLineCommitment(companyId, order.salesOrderItemId, id)
-    : null;
+  const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
+  if (allowedBranchIds !== null && (!order.branchId || !allowedBranchIds.has(order.branchId))) {
+    throw new BusinessRuleError("NOT_FOUND", "Production order not found.", { id });
+  }
 
-  return { ...order, salesOrderContext };
+  const salesOrderContext = order.salesOrderItemId
+    ? await getSalesOrderLineCommitment(actor.companyId, order.salesOrderItemId, id)
+    : null;
+  const progress = await getProductionOrderProgress(actor.companyId, id);
+
+  return { ...order, salesOrderContext, progress };
 }
 
 export async function createProductionOrder(actor: ActorContext, input: CreateProductionOrderInput) {
@@ -177,29 +189,36 @@ export async function createProductionOrder(actor: ActorContext, input: CreatePr
 }
 
 /**
- * Explodes this order's BOM (quantityPerUnit * (1 + wastage%) * plannedQuantity
- * per material, converted to each material's own base UOM) and raises a real
- * MaterialRequest for whatever's short — reuses createMaterialRequest()
- * unchanged, exactly the pattern BOM/MRP's own "Generate Material Request"
- * button already established. Reuses getStyleMaterialRequirement (the same
- * calculation the create/edit form's live preview uses) rather than a second,
- * ad hoc calc — that former inline version never converted to base UOM
- * before comparing against available stock, a real unit-mismatch bug
- * whenever a BOM line's own unit differed from the material's base unit,
- * fixed here by construction rather than patched separately. A BomItem's
- * colorId is informational only here (Production Order carries no
- * color/size breakdown of its own) — every line applies to the full
- * plannedQuantity regardless of colorId, a deliberate V1 simplification.
+ * Explodes this order's material source (quantityPerUnit * (1 + wastage%) *
+ * plannedQuantity per material, converted to each material's own base UOM)
+ * and raises a real MaterialRequest for whatever's short — reuses
+ * createMaterialRequest() unchanged, exactly the pattern BOM/MRP's own
+ * "Generate Material Request" button already established. Per the user's own
+ * explicit rule, the source is resolved by getMaterialRequirementForOrderLine:
+ * the linked Sample's own material list when this order's Sales Order Item
+ * has one, otherwise the Style's own real, approved BOM — the same
+ * resolution the create/edit form's live preview uses, so a shortfall/cost
+ * figure a user previews can never disagree with what this actually raises.
+ * A BomItem/SampleMaterial's colorId is informational only here (Production
+ * Order carries no color/size breakdown of its own) — every line applies to
+ * the full plannedQuantity regardless of colorId, a deliberate V1
+ * simplification.
  */
 export async function generateMaterialRequestForOrder(actor: ActorContext, id: string, input: GenerateMaterialRequestInput) {
   const order = await ProductionOrderRepository.findAnyById(actor.companyId, id);
   if (!order) throw new BusinessRuleError("NOT_FOUND", "Production order not found.", { id });
 
-  const requirement = await getStyleMaterialRequirement(actor.companyId, order.productId, Number(order.plannedQuantity));
+  const requirement = await getMaterialRequirementForOrderLine(actor.companyId, {
+    salesOrderItemId: order.salesOrderItemId,
+    productId: order.productId,
+    quantity: Number(order.plannedQuantity),
+  });
   if (!requirement.hasApprovedBom) {
     throw new BusinessRuleError(
       "VALIDATION_ERROR",
-      "This style has no approved BOM — an unapproved draft can't be used to plan material requirements. Approve a BOM version first.",
+      requirement.sampleRequestId
+        ? "The linked sample has no materials recorded yet — record its material usage first."
+        : "This style has no approved BOM — an unapproved draft can't be used to plan material requirements. Approve a BOM version first.",
       { id }
     );
   }
@@ -216,7 +235,9 @@ export async function generateMaterialRequestForOrder(actor: ActorContext, id: s
     requestType: "PRODUCTION_REQUIREMENT",
     warehouseId: input.warehouseId,
     productionOrderId: id,
-    bomId: requirement.bomId!,
+    // null (never a real Bom row) whenever this requirement was sourced from
+    // a linked Sample instead of the Style's own real BOM.
+    bomId: requirement.bomId ?? undefined,
     lines,
   });
 }

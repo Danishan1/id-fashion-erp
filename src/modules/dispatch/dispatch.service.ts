@@ -4,6 +4,7 @@ import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingServic
 import { PermissionService } from "@/core/rbac/PermissionService";
 import { prisma } from "@/core/db/client";
 import type { ListQuery } from "@/lib/list-query";
+import { branchScopeWhere } from "@/lib/branch-access";
 import type { DispatchStatus, Prisma } from "@prisma/client";
 import { SalesOrderRepository } from "@/modules/sales-orders/sales-order.repository";
 import { recordInventoryTransaction, getAvailableQuantity } from "@/modules/inventory/inventory.service";
@@ -81,9 +82,11 @@ async function buildDispatchItems(orderItems: OrderItemLike[], inputItems: Dispa
   return items;
 }
 
-export async function listDispatches(companyId: string, query: ListQuery) {
+export async function listDispatches(actor: { companyId: string; userId: string }, query: ListQuery) {
+  const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
   const where: Prisma.DispatchWhereInput = {
-    companyId,
+    companyId: actor.companyId,
+    ...branchScopeWhere(allowedBranchIds),
     ...(query.search ? { dispatchNumber: { contains: query.search, mode: "insensitive" as const } } : {}),
   };
 
@@ -99,9 +102,16 @@ export async function listDispatches(companyId: string, query: ListQuery) {
   return { data, totalCount };
 }
 
-export async function getDispatchById(companyId: string, id: string) {
-  const dispatch = await DispatchRepository.findByIdWithDetails(companyId, id);
+/** A branch-restricted user gets NOT_FOUND for a dispatch outside their allowed branches — same "deny as not-found" convention used across this app. */
+export async function getDispatchById(actor: { companyId: string; userId: string }, id: string) {
+  const dispatch = await DispatchRepository.findByIdWithDetails(actor.companyId, id);
   if (!dispatch) throw new BusinessRuleError("NOT_FOUND", "Dispatch not found.", { id });
+
+  const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
+  if (allowedBranchIds !== null && (!dispatch.branchId || !allowedBranchIds.has(dispatch.branchId))) {
+    throw new BusinessRuleError("NOT_FOUND", "Dispatch not found.", { id });
+  }
+
   return dispatch;
 }
 

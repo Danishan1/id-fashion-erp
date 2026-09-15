@@ -15,7 +15,13 @@ export const sampleRequestSchema = z.object({
   // like source-of-enquiry-style fields. Immutable after creation (no edit
   // schema exists for it, by design — see the schema.prisma comment).
   sampleType: z.enum(SAMPLE_TYPES),
-  color: z.string().max(100).optional().or(z.literal("")),
+  // Converted from a free-text string to real Color/Size master FKs
+  // (2026-09-15, explicit user request) — the planned color+size this sample
+  // is being made in, later used to default the Sales Order variant grid
+  // once the sample is approved and linked. Editable at any stage, same
+  // reasoning as before (null = "not yet decided").
+  colorId: z.string().uuid().optional().or(z.literal("")),
+  sizeId: z.string().uuid().optional().or(z.literal("")),
   requestDate: z.string().min(1, "Request date is required"),
   targetSubmissionDate: z.string().optional().or(z.literal("")),
 });
@@ -35,19 +41,35 @@ export const sampleRequestListFiltersSchema = z.object({
   requestedByUserId: z.string().uuid().optional(),
   dateFrom: z.string().optional(),
   dateTo: z.string().optional(),
-  color: z.string().max(100).optional(),
+  colorId: z.string().uuid().optional(),
 });
 
 export type SampleRequestListFiltersInput = z.infer<typeof sampleRequestListFiltersSchema>;
 
 // A scoped field-level update, deliberately separate from the (intentionally
-// immutable) create schema above — a customer may only decide on / change a
-// color well after the request is logged.
+// immutable) create schema above — a customer may only decide on / change the
+// color+size well after the request is logged. Both are now real Color/Size
+// master FKs (2026-09-15), not free text.
 export const sampleRequestColorSchema = z.object({
-  color: z.string().max(100).optional().or(z.literal("")),
+  colorId: z.string().uuid().optional().or(z.literal("")),
+  sizeId: z.string().uuid().optional().or(z.literal("")),
 });
 
 export type SampleRequestColorInput = z.infer<typeof sampleRequestColorSchema>;
+
+// Same shape/reasoning as color above — styleName ("Design Name") was never
+// actually marked immutable by design (the neighbouring comment on the
+// create schema above describes sampleType, not this field — confirmed
+// against schema.prisma's own per-field comments), it simply never had an
+// edit path built. A name entered early (e.g. copied from a Buyer Enquiry
+// line before the buyer had confirmed anything) routinely needs correcting
+// well after the sample is logged, the same real-world timing color already
+// has to support.
+export const sampleRequestDesignNameSchema = z.object({
+  styleName: z.string().min(1, "Design name is required").max(200),
+});
+
+export type SampleRequestDesignNameInput = z.infer<typeof sampleRequestDesignNameSchema>;
 
 export const sampleVersionSchema = z.object({
   techPackNotes: z.string().max(4000).optional().or(z.literal("")),
@@ -95,6 +117,26 @@ export const sampleMaterialCostingSchema = z.object({
 });
 
 export type SampleMaterialCostingInput = z.infer<typeof sampleMaterialCostingSchema>;
+
+// "Update BOM" — bulk-confirms the actual raw-material quantities used during
+// sampling (which routinely differ from what was copied in from the Style's
+// BOM at version-1 creation). One row per already-existing SampleMaterial
+// line on the current version; every quantity is edited/confirmed together
+// rather than one line at a time, matching the "confirmation and edit
+// option" the feature was asked for. Never touches the Style's own real BOM
+// — see updateSampleBomMaterials() in sample.service.ts.
+export const sampleBomUpdateSchema = z.object({
+  updates: z
+    .array(
+      z.object({
+        sampleMaterialId: z.string().uuid(),
+        plannedQuantity: z.coerce.number().positive("Quantity must be greater than 0"),
+      })
+    )
+    .min(1, "At least one material is required"),
+});
+
+export type SampleBomUpdateInput = z.infer<typeof sampleBomUpdateSchema>;
 
 export const SAMPLE_OTHER_CHARGE_COST_HEADS = ["PROCESS", "FABRICATION", "OTHER"] as const;
 

@@ -34,7 +34,6 @@ interface ProductDetail {
   id: string;
   styleCode: string;
   styleName: string;
-  designNumber: string | null;
   categoryId: string | null;
   seasonId: string | null;
   brandId: string | null;
@@ -43,7 +42,6 @@ interface ProductDetail {
   gender: string | null;
   description: string | null;
   hsnSacCode: string | null;
-  customerId: string | null;
   isActive: boolean;
 }
 
@@ -51,7 +49,6 @@ function toFormValues(product: ProductDetail): ProductFormValues {
   return {
     styleCode: product.styleCode,
     styleName: product.styleName,
-    designNumber: product.designNumber ?? "",
     categoryId: product.categoryId ?? "",
     seasonId: product.seasonId ?? "",
     brandId: product.brandId ?? "",
@@ -60,7 +57,6 @@ function toFormValues(product: ProductDetail): ProductFormValues {
     gender: product.gender ?? "",
     description: product.description ?? "",
     hsnSacCode: product.hsnSacCode ?? "",
-    customerId: product.customerId ?? "",
     isActive: product.isActive,
   };
 }
@@ -239,7 +235,17 @@ function ProductsListContent() {
         newAction={{ label: "New Style", onClick: () => setAddOpen(true) }}
         searchPlaceholder="Search by style name or code…"
         onEditRow={(row) => openEdit(row.id)}
-        rowActions={(row) => <VariantsSection productId={row.id} />}
+        rowActions={(row) => (
+          <>
+            <a
+              href={`/bom-mrp/${row.id}`}
+              className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400"
+            >
+              BOM
+            </a>
+            <VariantsSection productId={row.id} />
+          </>
+        )}
         columns={[
           {
             key: "imageUrl",

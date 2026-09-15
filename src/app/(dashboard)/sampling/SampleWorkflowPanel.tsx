@@ -6,6 +6,7 @@ import { FilePreviewModal } from "@/components/ui/FilePreviewModal";
 import { MaterialPicker } from "@/components/ui/MaterialPicker";
 import { Modal } from "@/components/ui/Modal";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { formatCategoryLabel } from "@/lib/format-category-label";
 import { formatDate, formatDateTime } from "@/lib/date-format";
 import { useSubmoduleVisibility } from "@/lib/use-submodule-visibility";
@@ -108,9 +109,14 @@ interface SampleRequestDetail {
   statusBeforeHold: SampleStatus | null;
   currentVersionNumber: number;
   styleName: string | null;
-  color: string | null;
+  color: { id: string; name: string } | null;
+  size: { id: string; name: string } | null;
   productId: string | null;
   buyer: { name: string; contactPerson: string | null; phone: string | null } | null;
+  // Only set for a sample that originated from a converted Buyer Enquiry
+  // line — null for every directly-created sample. Read-only here; the
+  // price itself is only ever entered at Buyer Enquiry intake.
+  buyerEnquiryLine: { targetUnitPrice: string | null; buyerEnquiry: { id: string; enquiryNumber: string } } | null;
   versions: SampleVersionRow[];
   comments: SampleCommentRow[];
 }
@@ -215,7 +221,12 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
   const [convertSeasonId, setConvertSeasonId] = useState("");
 
   const [isEditingColor, setIsEditingColor] = useState(false);
-  const [colorDraft, setColorDraft] = useState(initialRequest.color ?? "");
+  const [colorIdDraft, setColorIdDraft] = useState(initialRequest.color?.id ?? "");
+  const [sizeIdDraft, setSizeIdDraft] = useState(initialRequest.size?.id ?? "");
+  const [sizes, setSizes] = useState<Option[]>([]);
+
+  const [isEditingDesignName, setIsEditingDesignName] = useState(false);
+  const [designNameDraft, setDesignNameDraft] = useState(initialRequest.styleName ?? "");
 
   // Report/Edit Damage — small focused CRUD on one existing material line.
   const [damageModalTarget, setDamageModalTarget] = useState<SampleMaterialRow | null>(null);
@@ -226,6 +237,29 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
   const [rateModalTarget, setRateModalTarget] = useState<SampleMaterialRow | null>(null);
   const [rateDraft, setRateDraft] = useState("");
   const [gstDraft, setGstDraft] = useState("");
+
+  // "Update BOM" — bulk-confirms the actual raw-material quantities used
+  // during sampling (once Approved). One draft quantity per current-version
+  // material line; Confirm sends every line together. Never touches the
+  // Style's own real BOM — see updateSampleBomMaterials() in sample.service.ts.
+  const [isUpdateBomModalOpen, setIsUpdateBomModalOpen] = useState(false);
+  const [updateBomDrafts, setUpdateBomDrafts] = useState<Record<string, string>>({});
+
+  // "Generate Material Request" — raw material selected during development
+  // genuinely gets used for the physical sample, so this raises a real
+  // Inventory Material Request (see createMaterialRequestFromSampleVersion)
+  // rather than any separate tracking of its own. Proactively checks for an
+  // already-existing request on open (same "warn, don't hard-block" pattern
+  // as BOM/MRP's own "Generate Material Request" button), and clears once
+  // the modal closes so a stale warning never carries over to a different
+  // version.
+  const [materialRequestModalVersionId, setMaterialRequestModalVersionId] = useState<string | null>(null);
+  const [mrWarehouseId, setMrWarehouseId] = useState("");
+  const [mrExistingRequests, setMrExistingRequests] = useState<
+    Array<{ id: string; requestNumber: string; status: string }>
+  >([]);
+  const [mrIsChecking, setMrIsChecking] = useState(false);
+  const [warehouses, setWarehouses] = useState<Option[]>([]);
   // Real purchase-rate suggestions for whichever material/shade the Rate
   // modal is currently open for — fetched fresh per open, never persisted.
   const [rateHistory, setRateHistory] = useState<RateHistoryEntry[]>([]);
@@ -249,11 +283,12 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
   const [freightDraft, setFreightDraft] = useState("");
   const [manualEstimateDraft, setManualEstimateDraft] = useState("");
 
-  // Deleting a charge or an attachment is permanent (a real DB delete, and
-  // for attachments the file is removed from disk too — neither is
-  // recoverable through the app), so both go through this same confirmation
-  // step rather than firing on a single click.
+  // Deleting a charge, a material line, or an attachment is permanent (a
+  // real DB delete, and for attachments the file is removed from disk too —
+  // none of these are recoverable through the app), so all three go through
+  // this same confirmation step rather than firing on a single click.
   const [deleteChargeTarget, setDeleteChargeTarget] = useState<SampleOtherChargeRow | null>(null);
+  const [deleteMaterialTarget, setDeleteMaterialTarget] = useState<SampleMaterialRow | null>(null);
   const [deleteAttachmentTarget, setDeleteAttachmentTarget] = useState<AttachmentRow | null>(null);
 
   const [attachments, setAttachments] = useState<AttachmentRow[]>([]);
@@ -283,6 +318,9 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
     fetch("/api/v1/colors?pageSize=200")
       .then((res) => res.json())
       .then((body) => setMaterialColors(body.data ?? []));
+    fetch("/api/v1/sizes?pageSize=200")
+      .then((res) => res.json())
+      .then((body) => setSizes(body.data ?? []));
     fetch("/api/v1/fabric-dyes")
       .then((res) => res.json())
       .then((body) => setMaterialDyes(body.data ?? []));
@@ -297,6 +335,9 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
       .then((body) => {
         if (body?.data?.code) setConvertStyleCode(body.data.code);
       });
+    fetch("/api/v1/warehouses?pageSize=200")
+      .then((res) => res.json())
+      .then((body) => setWarehouses(body.data ?? []));
   }, []);
 
   const refresh = async () => {
@@ -339,10 +380,21 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
         fetch(`/api/v1/sampling/${sampleRequestId}/color`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ color: colorDraft || undefined }),
+          body: JSON.stringify({ colorId: colorIdDraft || undefined, sizeId: sizeIdDraft || undefined }),
         }),
-      "Failed to update color."
+      "Failed to update color/size."
     ).then(() => setIsEditingColor(false));
+
+  const saveDesignName = () =>
+    run(
+      () =>
+        fetch(`/api/v1/sampling/${sampleRequestId}/design-name`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ styleName: designNameDraft }),
+        }),
+      "Failed to update design name."
+    ).then(() => setIsEditingDesignName(false));
 
   const addVersion = async () => {
     const payload: Record<string, unknown> = {};
@@ -565,6 +617,14 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
     ).then(() => setDeleteChargeTarget(null));
   };
 
+  const confirmDeleteMaterial = () => {
+    if (!deleteMaterialTarget) return;
+    run(
+      () => fetch(`/api/v1/sampling/materials/${deleteMaterialTarget.id}`, { method: "DELETE" }),
+      "Failed to remove the material."
+    ).then(() => setDeleteMaterialTarget(null));
+  };
+
   const openCostingModal = (versionId: string) => {
     setMarginDraft("");
     setCommissionDraft("");
@@ -662,6 +722,60 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
       "Failed to convert this sample into a Style."
     );
 
+  const openUpdateBomModal = () => {
+    const drafts: Record<string, string> = {};
+    for (const m of latestVersion?.materials ?? []) drafts[m.id] = m.plannedQuantity;
+    setUpdateBomDrafts(drafts);
+    setIsUpdateBomModalOpen(true);
+  };
+
+  const saveUpdateBom = () =>
+    run(
+      () =>
+        fetch(`/api/v1/sampling/${sampleRequestId}/bom-materials`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            updates: Object.entries(updateBomDrafts).map(([sampleMaterialId, plannedQuantity]) => ({
+              sampleMaterialId,
+              plannedQuantity: Number(plannedQuantity),
+            })),
+          }),
+        }),
+      "Failed to update the BOM."
+    ).then((ok) => {
+      if (ok) setIsUpdateBomModalOpen(false);
+    });
+
+  const openGenerateMaterialRequestModal = (versionId: string) => {
+    setMaterialRequestModalVersionId(versionId);
+    setMrWarehouseId("");
+    setMrExistingRequests([]);
+    setMrIsChecking(true);
+    fetch(`/api/v1/sampling/versions/${versionId}/material-requests`)
+      .then((res) => res.json())
+      .then((body) => setMrExistingRequests(body.data ?? []))
+      .finally(() => setMrIsChecking(false));
+  };
+
+  const generateMaterialRequest = () => {
+    if (!materialRequestModalVersionId) return;
+    run(
+      () =>
+        fetch(`/api/v1/sampling/versions/${materialRequestModalVersionId}/generate-material-request`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            warehouseId: mrWarehouseId,
+            overrideDuplicateCheck: mrExistingRequests.length > 0,
+          }),
+        }),
+      "Failed to generate the material request."
+    ).then((ok) => {
+      if (ok) setMaterialRequestModalVersionId(null);
+    });
+  };
+
   const openUploadModal = () => {
     setUploadFile(null);
     setIsUploadModalOpen(true);
@@ -742,16 +856,74 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
       </div>
 
       <div className="flex items-center gap-2 text-sm">
-        <span className="font-medium text-zinc-700 dark:text-zinc-200">Color:</span>
-        {isEditingColor ? (
+        <span className="font-medium text-zinc-700 dark:text-zinc-200">Design Name:</span>
+        {isEditingDesignName ? (
           <>
             <input
-              value={colorDraft}
-              onChange={(e) => setColorDraft(e.target.value)}
-              placeholder="e.g. Navy Blue"
+              value={designNameDraft}
+              onChange={(e) => setDesignNameDraft(e.target.value)}
+              placeholder="e.g. Floral Wrap Dress"
               autoFocus
-              className={`${textInputClass()} max-w-[200px]`}
+              className={`${textInputClass()} max-w-[240px]`}
             />
+            <button
+              type="button"
+              onClick={saveDesignName}
+              disabled={isBusy || !designNameDraft.trim()}
+              className="text-xs font-medium text-indigo-600 hover:text-indigo-500 disabled:opacity-50"
+            >
+              Save
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setDesignNameDraft(request.styleName ?? "");
+                setIsEditingDesignName(false);
+              }}
+              className="text-xs text-zinc-500 hover:text-zinc-400"
+            >
+              Cancel
+            </button>
+          </>
+        ) : (
+          <>
+            <span className="text-zinc-600 dark:text-zinc-300">{request.styleName || "Not specified yet"}</span>
+            <button
+              type="button"
+              onClick={() => setIsEditingDesignName(true)}
+              className="text-xs font-medium text-indigo-600 hover:text-indigo-500"
+            >
+              Edit
+            </button>
+          </>
+        )}
+      </div>
+
+      <div className="flex items-center gap-2 text-sm">
+        <span className="font-medium text-zinc-700 dark:text-zinc-200">Color / Size:</span>
+        {isEditingColor ? (
+          <>
+            <select
+              value={colorIdDraft}
+              onChange={(e) => setColorIdDraft(e.target.value)}
+              autoFocus
+              className={`${textInputClass()} max-w-[160px]`}
+            >
+              <option value="">— Color: not decided —</option>
+              {materialColors.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+            <select value={sizeIdDraft} onChange={(e) => setSizeIdDraft(e.target.value)} className={`${textInputClass()} max-w-[160px]`}>
+              <option value="">— Size: not decided —</option>
+              {sizes.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
             <button
               type="button"
               onClick={saveColor}
@@ -763,7 +935,8 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
             <button
               type="button"
               onClick={() => {
-                setColorDraft(request.color ?? "");
+                setColorIdDraft(request.color?.id ?? "");
+                setSizeIdDraft(request.size?.id ?? "");
                 setIsEditingColor(false);
               }}
               className="text-xs text-zinc-500 hover:text-zinc-400"
@@ -773,7 +946,9 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
           </>
         ) : (
           <>
-            <span className="text-zinc-600 dark:text-zinc-300">{request.color || "Not specified yet"}</span>
+            <span className="text-zinc-600 dark:text-zinc-300">
+              {[request.color?.name, request.size?.name].filter(Boolean).join(" / ") || "Not specified yet"}
+            </span>
             <button
               type="button"
               onClick={() => setIsEditingColor(true)}
@@ -784,6 +959,17 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
           </>
         )}
       </div>
+
+      {request.buyerEnquiryLine && (
+        <div className="flex items-center gap-2 text-sm">
+          <span className="font-medium text-zinc-700 dark:text-zinc-200">
+            Target Price <span className="font-normal text-zinc-400">(from Buyer Enquiry {request.buyerEnquiryLine.buyerEnquiry.enquiryNumber})</span>:
+          </span>
+          <span className="text-zinc-600 dark:text-zinc-300">
+            {request.buyerEnquiryLine.targetUnitPrice !== null ? `₹${request.buyerEnquiryLine.targetUnitPrice}` : "Not specified"}
+          </span>
+        </div>
+      )}
 
       {stepIndex >= 0 && (
         <div className="flex flex-wrap items-center gap-y-2">
@@ -980,12 +1166,21 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
 
       {request.status === "APPROVED" && request.productId && (
         <div className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
-          <p className="text-sm text-zinc-600 dark:text-zinc-300">
-            This sample is linked to a Style master —{" "}
-            <a href={`/masters/products/${request.productId}`} className="font-medium text-indigo-600 hover:text-indigo-500">
-              open it to add Color × Size variants
-            </a>
-            .
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-zinc-600 dark:text-zinc-300">
+              This sample is linked to a Style master —{" "}
+              <a href={`/masters/products/${request.productId}`} className="font-medium text-indigo-600 hover:text-indigo-500">
+                open it to add Color × Size variants
+              </a>
+              .
+            </p>
+            {latestVersion && latestVersion.materials.length > 0 && (
+              <ActionButton label="Update BOM" onClick={openUpdateBomModal} isBusy={isBusy} variant="secondary" />
+            )}
+          </div>
+          <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+            &quot;Update BOM&quot; confirms this sample&apos;s own raw-material quantities as actually used during
+            sampling — it never changes the Style&apos;s own real BOM.
           </p>
         </div>
       )}
@@ -1164,13 +1359,22 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
                           </td>
                           {canAddMaterial && (
                             <td className="py-1 text-zinc-700 dark:text-zinc-200">
-                              <button
-                                type="button"
-                                onClick={() => openEditMaterialModal(m)}
-                                className="font-medium text-indigo-600 hover:text-indigo-500"
-                              >
-                                Edit
-                              </button>
+                              <div className="flex items-center gap-3">
+                                <button
+                                  type="button"
+                                  onClick={() => openEditMaterialModal(m)}
+                                  className="font-medium text-indigo-600 hover:text-indigo-500"
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setDeleteMaterialTarget(m)}
+                                  className="font-medium text-red-600 hover:text-red-500"
+                                >
+                                  Remove
+                                </button>
+                              </div>
                             </td>
                           )}
                         </tr>
@@ -1179,9 +1383,19 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
                   </table>
                 )}
 
-                {canAddMaterial && (
-                  <div className="mt-3 border-t border-zinc-100 pt-3 dark:border-zinc-800">
-                    <ActionButton label="+ Add Material" onClick={() => openAddMaterialModal(version.id)} isBusy={isBusy} variant="secondary" />
+                {(canAddMaterial || version.materials.length > 0) && (
+                  <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-zinc-100 pt-3 dark:border-zinc-800">
+                    {canAddMaterial && (
+                      <ActionButton label="+ Add Material" onClick={() => openAddMaterialModal(version.id)} isBusy={isBusy} variant="secondary" />
+                    )}
+                    {version.materials.length > 0 && (
+                      <ActionButton
+                        label="Generate Material Request"
+                        onClick={() => openGenerateMaterialRequestModal(version.id)}
+                        isBusy={isBusy}
+                        variant="secondary"
+                      />
+                    )}
                   </div>
                 )}
 
@@ -1535,6 +1749,101 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
         </div>
       </Modal>
 
+      {/* Update BOM — bulk-confirm actual raw-material usage for the current
+          version, once Approved. Never writes to the Style's own real BOM. */}
+      <Modal open={isUpdateBomModalOpen} onClose={() => setIsUpdateBomModalOpen(false)} title="Update BOM — Confirm Materials Used">
+        <div className="space-y-3">
+          <p className="text-sm text-zinc-600 dark:text-zinc-300">
+            Edit each quantity below to match what was actually used during sampling, then Confirm. This only updates
+            this sample&apos;s own material list — the Style&apos;s real BOM is never changed.
+          </p>
+          <div className="max-h-80 space-y-2 overflow-y-auto">
+            {(latestVersion?.materials ?? []).map((m) => (
+              <div key={m.id} className="flex items-center gap-3 rounded-md border border-zinc-200 p-2 dark:border-zinc-800">
+                <div className="flex-1 text-sm text-zinc-700 dark:text-zinc-200">
+                  {m.material.styleName}
+                  {m.color ? ` · ${m.color.name}` : ""}
+                </div>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.0001"
+                  value={updateBomDrafts[m.id] ?? ""}
+                  onChange={(e) => setUpdateBomDrafts((prev) => ({ ...prev, [m.id]: e.target.value }))}
+                  className={`${textInputClass()} w-28`}
+                />
+                <span className="w-10 text-xs text-zinc-500">{m.uom?.code ?? ""}</span>
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-3">
+            <ActionButton label="Cancel" onClick={() => setIsUpdateBomModalOpen(false)} isBusy={false} variant="secondary" />
+            <ActionButton
+              label="Confirm"
+              onClick={saveUpdateBom}
+              isBusy={isBusy}
+              disabled={Object.values(updateBomDrafts).some((v) => !v || Number(v) <= 0)}
+            />
+          </div>
+        </div>
+      </Modal>
+
+      {/* Generate Material Request — raises a real Inventory Material
+          Request (requestType SAMPLING_REQUIREMENT) from this version's own
+          materials, so the raw material genuinely used for the physical
+          sample gets issued from real stock through the exact same
+          Inventory-checks-stock flow every other requirement in this app
+          uses. Never issues stock directly from here — the created request
+          still needs a separate Issue action in Inventory, matching the
+          rest of this module's own two-step design. */}
+      <Modal
+        open={materialRequestModalVersionId !== null}
+        onClose={() => setMaterialRequestModalVersionId(null)}
+        title="Generate Material Request"
+      >
+        <div className="space-y-3">
+          <p className="text-sm text-zinc-600 dark:text-zinc-300">
+            Creates a Material Request for every material on this version — Inventory will check real stock and
+            issue it from there, same as any other request.
+          </p>
+          {mrIsChecking && <p className="text-xs text-zinc-500">Checking for an existing request…</p>}
+          {!mrIsChecking && mrExistingRequests.length > 0 && (
+            <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+              A Material Request already exists for this version:{" "}
+              {mrExistingRequests.map((r, i) => (
+                <span key={r.id}>
+                  {i > 0 && ", "}
+                  <a href={`/material-requests/${r.id}`} className="font-medium underline">
+                    {r.requestNumber}
+                  </a>{" "}
+                  ({r.status})
+                </span>
+              ))}
+              . Generating again will create an additional request.
+            </div>
+          )}
+          <FormField label="Warehouse" htmlFor="mrWarehouseId">
+            <SearchableSelect
+              id="mrWarehouseId"
+              value={mrWarehouseId}
+              onChange={setMrWarehouseId}
+              options={warehouses.map((w) => ({ id: w.id, label: w.name ?? "" }))}
+              placeholder="Search warehouse…"
+              emptyOptionLabel="Select a warehouse…"
+            />
+          </FormField>
+          <div className="flex gap-3">
+            <ActionButton label="Cancel" onClick={() => setMaterialRequestModalVersionId(null)} isBusy={false} variant="secondary" />
+            <ActionButton
+              label={mrExistingRequests.length > 0 ? "Generate Anyway" : "Generate"}
+              onClick={generateMaterialRequest}
+              isBusy={isBusy}
+              disabled={!mrWarehouseId || mrIsChecking}
+            />
+          </div>
+        </div>
+      </Modal>
+
       {/* Add/Edit Other Charge */}
       <Modal open={chargeModal !== null} onClose={() => setChargeModal(null)} title={chargeModal?.charge ? "Edit Charge" : "Add Charge"}>
         <div className="space-y-3">
@@ -1733,9 +2042,10 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
         </div>
       </Modal>
 
-      {/* Deleting a charge or an attachment is a real, permanent delete — no
-          soft-delete column on either table, and an attachment's file is
-          also removed from disk — so both are confirmed before firing. */}
+      {/* Deleting a charge, a material line, or an attachment is a real,
+          permanent delete — no soft-delete column on any of these tables,
+          and an attachment's file is also removed from disk — so all three
+          are confirmed before firing. */}
       <ConfirmModal
         open={deleteChargeTarget !== null}
         title="Remove this charge?"
@@ -1745,6 +2055,16 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
         isBusy={isBusy}
         onConfirm={confirmDeleteCharge}
         onCancel={() => setDeleteChargeTarget(null)}
+      />
+      <ConfirmModal
+        open={deleteMaterialTarget !== null}
+        title="Remove this material?"
+        message={`"${deleteMaterialTarget?.material.styleName ?? ""}" will be permanently removed from this version's material list and the costing total recalculated. This cannot be undone.`}
+        confirmLabel="Remove"
+        isDangerous
+        isBusy={isBusy}
+        onConfirm={confirmDeleteMaterial}
+        onCancel={() => setDeleteMaterialTarget(null)}
       />
       <ConfirmModal
         open={deleteAttachmentTarget !== null}

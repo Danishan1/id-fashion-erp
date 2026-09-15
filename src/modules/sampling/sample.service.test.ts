@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/core/db/client", () => ({ prisma: { crmFollowup: { create: vi.fn() } } }));
+vi.mock("@/core/db/client", () => ({
+  prisma: { crmFollowup: { create: vi.fn() }, $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn({})) },
+}));
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/numbering/DocumentNumberingService", () => ({
   generateDocumentNumber: vi.fn(),
@@ -11,6 +13,9 @@ vi.mock("@/modules/products/product.repository", () => ({
 }));
 vi.mock("@/modules/customers/customer.repository", () => ({
   CustomerRepository: { findByIdWithBuyers: vi.fn() },
+}));
+vi.mock("@/modules/bom-mrp/bom.repository", () => ({
+  BomRepository: { findByProductId: vi.fn() },
 }));
 vi.mock("@/core/rbac/PermissionService", () => ({
   PermissionService: { assert: vi.fn() },
@@ -40,8 +45,10 @@ vi.mock("./sample.repository", () => ({
     findByVersionAndMergeKey: vi.fn(),
     findWithRequestOwner: vi.fn(),
     update: vi.fn(),
+    delete: vi.fn(),
     updateCosting: vi.fn(),
     findByVersionIdTx: vi.fn(),
+    updatePlannedQuantityInTx: vi.fn(),
   },
   SampleOtherChargeRepository: {
     findByVersionId: vi.fn(),
@@ -60,10 +67,19 @@ const { SampleRequestRepository, SampleVersionRepository, SampleMaterialReposito
   await import("./sample.repository");
 const { ProductRepository } = await import("@/modules/products/product.repository");
 const { CustomerRepository } = await import("@/modules/customers/customer.repository");
+const { BomRepository } = await import("@/modules/bom-mrp/bom.repository");
 const { PermissionService } = await import("@/core/rbac/PermissionService");
 const { generateDocumentNumber } = await import("@/core/numbering/DocumentNumberingService");
-const { recalculateSampleVersionCosting, addSampleMaterial, transitionSampleStatus, createSampleRequest, recordSampleApproval } =
-  await import("./sample.service");
+const {
+  recalculateSampleVersionCosting,
+  addSampleMaterial,
+  transitionSampleStatus,
+  createSampleRequest,
+  recordSampleApproval,
+  addSampleVersion,
+  updateSampleBomMaterials,
+  removeSampleMaterial,
+} = await import("./sample.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
 const fakeTx = {} as never;
@@ -89,6 +105,11 @@ beforeEach(() => {
   vi.mocked(SampleVersionRepository.findById).mockReset();
   vi.mocked(SampleApprovalRepository.create).mockReset();
   vi.mocked(PermissionService.assert).mockReset().mockResolvedValue(undefined);
+  vi.mocked(SampleVersionRepository.create).mockReset();
+  vi.mocked(SampleMaterialRepository.createMany).mockReset();
+  vi.mocked(SampleMaterialRepository.updatePlannedQuantityInTx).mockReset();
+  vi.mocked(SampleMaterialRepository.delete).mockReset();
+  vi.mocked(BomRepository.findByProductId).mockReset();
 });
 
 describe("recordSampleApproval — self-approval guard now lives in the service, not just the route", () => {
@@ -409,5 +430,191 @@ describe("transitionSampleStatus", () => {
 
     expect(SampleVersionRepository.findLatest).not.toHaveBeenCalled();
     expect(SampleVersionRepository.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("addSampleVersion — copies the Style's approved BOM into version 1", () => {
+  const versionInput = { techPackNotes: "" };
+
+  beforeEach(() => {
+    vi.mocked(SampleVersionRepository.findLatest).mockResolvedValue(null);
+    vi.mocked(SampleVersionRepository.create).mockResolvedValue({ id: "ver-1", versionNumber: 1 } as never);
+    vi.mocked(SampleRequestRepository.update).mockResolvedValue({ id: "sam-1", status: "TECH_PACK_READY" } as never);
+  });
+
+  it("copies every approved BOM line into fresh SampleMaterial rows when this is version 1 for a sample linked to an existing style", async () => {
+    vi.mocked(SampleRequestRepository.findAnyById).mockResolvedValue({
+      id: "sam-1",
+      status: "REQUESTED",
+      currentVersionNumber: 0,
+      productId: "prod-1",
+    } as never);
+    vi.mocked(BomRepository.findByProductId).mockResolvedValue({
+      id: "bom-1",
+      approvedVersion: {
+        items: [
+          { materialId: "mat-cotton", quantityPerUnit: "1.2", uomId: "uom-mtr", colorId: null, notes: null },
+          { materialId: "mat-thread", quantityPerUnit: "0.05", uomId: "uom-rol", colorId: "navy", notes: "for collar" },
+        ],
+      },
+    } as never);
+
+    await addSampleVersion(actor, "sam-1", versionInput as never);
+
+    expect(SampleMaterialRepository.createMany).toHaveBeenCalledWith([
+      expect.objectContaining({ sampleVersionId: "ver-1", materialId: "mat-cotton", plannedQuantity: "1.2", colorId: null }),
+      expect.objectContaining({ sampleVersionId: "ver-1", materialId: "mat-thread", plannedQuantity: "0.05", colorId: "navy" }),
+    ]);
+  });
+
+  it("copies nothing when the sample isn't linked to an existing style (a brand-new style has no BOM yet)", async () => {
+    vi.mocked(SampleRequestRepository.findAnyById).mockResolvedValue({
+      id: "sam-1",
+      status: "REQUESTED",
+      currentVersionNumber: 0,
+      productId: null,
+    } as never);
+
+    await addSampleVersion(actor, "sam-1", versionInput as never);
+
+    expect(BomRepository.findByProductId).not.toHaveBeenCalled();
+    expect(SampleMaterialRepository.createMany).not.toHaveBeenCalled();
+  });
+
+  it("copies nothing when the linked style has no approved BOM yet", async () => {
+    vi.mocked(SampleRequestRepository.findAnyById).mockResolvedValue({
+      id: "sam-1",
+      status: "REQUESTED",
+      currentVersionNumber: 0,
+      productId: "prod-1",
+    } as never);
+    vi.mocked(BomRepository.findByProductId).mockResolvedValue({ id: "bom-1", approvedVersion: null } as never);
+
+    await addSampleVersion(actor, "sam-1", versionInput as never);
+
+    expect(SampleMaterialRepository.createMany).not.toHaveBeenCalled();
+  });
+
+  it("does not re-copy the BOM for a later revision (version 2+), even when the sample is style-linked", async () => {
+    vi.mocked(SampleRequestRepository.findAnyById).mockResolvedValue({
+      id: "sam-1",
+      status: "REVISION_REQUESTED",
+      currentVersionNumber: 1,
+      productId: "prod-1",
+    } as never);
+    vi.mocked(SampleVersionRepository.findLatest).mockResolvedValue({ id: "ver-1", versionNumber: 1 } as never);
+    vi.mocked(SampleVersionRepository.create).mockResolvedValue({ id: "ver-2", versionNumber: 2 } as never);
+    vi.mocked(SampleRequestRepository.update).mockResolvedValue({ id: "sam-1", status: "IN_DEVELOPMENT" } as never);
+
+    await addSampleVersion(actor, "sam-1", versionInput as never);
+
+    expect(BomRepository.findByProductId).not.toHaveBeenCalled();
+    expect(SampleMaterialRepository.createMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("updateSampleBomMaterials — 'Update BOM', never touches the Style's real BOM", () => {
+  const materials = [
+    { id: "sm-1", plannedQuantity: "1.2" },
+    { id: "sm-2", plannedQuantity: "0.05" },
+  ];
+
+  beforeEach(() => {
+    vi.mocked(SampleVersionRepository.findLatest).mockResolvedValue({ id: "ver-1", versionNumber: 1 } as never);
+    vi.mocked(SampleMaterialRepository.findByVersionId).mockResolvedValue(materials as never);
+    vi.mocked(SampleVersionRepository.findByIdTx).mockResolvedValue({ id: "ver-1", marginPercent: null, commissionPercent: null, freightAmount: null } as never);
+    vi.mocked(SampleMaterialRepository.findByVersionIdTx).mockResolvedValue([] as never);
+    vi.mocked(SampleOtherChargeRepository.findByVersionIdTx).mockResolvedValue([] as never);
+    vi.mocked(SampleVersionRepository.updateCostingIfUnlocked).mockResolvedValue({ count: 1 } as never);
+  });
+
+  it("rejects while sampling isn't complete (status other than APPROVED)", async () => {
+    vi.mocked(SampleRequestRepository.findAnyById).mockResolvedValue({ id: "sam-1", status: "IN_DEVELOPMENT" } as never);
+
+    await expect(
+      updateSampleBomMaterials(actor, "sam-1", { updates: [{ sampleMaterialId: "sm-1", plannedQuantity: 2 }] })
+    ).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+  });
+
+  it("rejects a sampleMaterialId that doesn't belong to the current version", async () => {
+    vi.mocked(SampleRequestRepository.findAnyById).mockResolvedValue({ id: "sam-1", status: "APPROVED" } as never);
+
+    await expect(
+      updateSampleBomMaterials(actor, "sam-1", { updates: [{ sampleMaterialId: "sm-other", plannedQuantity: 2 }] })
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("updates each line's plannedQuantity and recalculates costing, never writing to the Style's own Bom/BomItem tables", async () => {
+    vi.mocked(SampleRequestRepository.findAnyById).mockResolvedValue({ id: "sam-1", status: "APPROVED" } as never);
+
+    await updateSampleBomMaterials(actor, "sam-1", {
+      updates: [
+        { sampleMaterialId: "sm-1", plannedQuantity: 1.5 },
+        { sampleMaterialId: "sm-2", plannedQuantity: 0.08 },
+      ],
+    });
+
+    expect(BomRepository.findByProductId).not.toHaveBeenCalled();
+    // recalculateSampleVersionCosting's own guarded write is the only real
+    // signal this ran inside the transaction — confirms the costing rollup
+    // fires as part of this action, matching addSampleMaterial's own
+    // "never blocked by a costing lock" tolerance (throwIfBlocked: false).
+    expect(SampleVersionRepository.updateCostingIfUnlocked).toHaveBeenCalled();
+  });
+});
+
+describe("removeSampleMaterial", () => {
+  const material = { id: "sm-1", sampleVersionId: "ver-1", materialId: "mat-1", plannedQuantity: "1.2" };
+
+  beforeEach(() => {
+    vi.mocked(SampleVersionRepository.findByIdTx).mockResolvedValue({
+      id: "ver-1",
+      marginPercent: null,
+      commissionPercent: null,
+      freightAmount: null,
+    } as never);
+    vi.mocked(SampleMaterialRepository.findByVersionIdTx).mockResolvedValue([] as never);
+    vi.mocked(SampleOtherChargeRepository.findByVersionIdTx).mockResolvedValue([] as never);
+  });
+
+  it("rejects a materialId belonging to another company", async () => {
+    vi.mocked(SampleMaterialRepository.findWithRequestOwner).mockResolvedValue({
+      ...material,
+      sampleVersion: { sampleRequest: { companyId: "co-other" } },
+    } as never);
+
+    await expect(removeSampleMaterial(actor, "sm-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(SampleMaterialRepository.delete).not.toHaveBeenCalled();
+  });
+
+  it("deletes the line and recalculates costing when unlocked", async () => {
+    vi.mocked(SampleMaterialRepository.findWithRequestOwner).mockResolvedValue({
+      ...material,
+      sampleVersion: { sampleRequest: { companyId: "co-1" } },
+    } as never);
+    vi.mocked(SampleMaterialRepository.delete).mockResolvedValue({} as never);
+    vi.mocked(SampleVersionRepository.updateCostingIfUnlocked).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(SampleMaterialRepository.findByVersionId).mockResolvedValue([] as never);
+
+    await removeSampleMaterial(actor, "sm-1");
+
+    expect(SampleMaterialRepository.delete).toHaveBeenCalledWith(expect.anything(), "sm-1");
+    expect(SampleVersionRepository.updateCostingIfUnlocked).toHaveBeenCalled();
+  });
+
+  // Unlike add/edit (which never block on a costing lock), removal is a
+  // structural change — same "blocked while locked" reasoning already
+  // proven for deleteSampleOtherCharge. The real Postgres transaction rolls
+  // the delete back too when this guard fails; this test only asserts the
+  // thrown error, which is all a mocked $transaction can verify.
+  it("rejects when the version's costing is locked", async () => {
+    vi.mocked(SampleMaterialRepository.findWithRequestOwner).mockResolvedValue({
+      ...material,
+      sampleVersion: { sampleRequest: { companyId: "co-1" } },
+    } as never);
+    vi.mocked(SampleMaterialRepository.delete).mockResolvedValue({} as never);
+    vi.mocked(SampleVersionRepository.updateCostingIfUnlocked).mockResolvedValue({ count: 0 } as never);
+
+    await expect(removeSampleMaterial(actor, "sm-1")).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
   });
 });

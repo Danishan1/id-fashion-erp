@@ -51,6 +51,19 @@ export interface CloudflareImageConfig {
   accountId: string;
   apiToken: string;
   model: string;
+  img2imgModel: string;
+}
+
+/**
+ * The img2img model isn't a per-admin-row-configurable field (unlike `model`
+ * itself, which the admin form sets) — it's a fixed, env-overridable
+ * companion to whichever text-to-image model is configured, shared by both
+ * the env-var-driven config getter below and AIProviderManager's own
+ * DB-row-driven `buildProviderInstance` — one source of truth for the
+ * default so the two paths can't drift onto different model strings.
+ */
+export function resolveCloudflareImg2ImgModel(): string {
+  return process.env.CLOUDFLARE_IMG2IMG_MODEL || "@cf/runwayml/stable-diffusion-v1-5-img2img";
 }
 
 /**
@@ -79,5 +92,44 @@ export function getCloudflareImageConfig(): CloudflareImageConfig {
     // easier to handle uniformly than stable-diffusion-xl's raw-binary-or-
     // JSON-error response shape, and is itself on Workers AI's free tier.
     model: process.env.CLOUDFLARE_IMAGE_MODEL || "@cf/black-forest-labs/flux-1-schnell",
+    // A genuinely free, ongoing (not trial-credit) image-to-image model on
+    // the same account/token — the one real free option found that accepts
+    // an actual reference image, closing the gap flux-1-schnell has (see
+    // providers/cloudflare.ts's own updated header comment for the honest
+    // quality tradeoff: Stable Diffusion 1.5's `strength` parameter is a
+    // blunt blend control, not the smart multi-image composition
+    // OpenAI/Gemini do — a deliberate, disclosed choice, not a hidden one.
+    img2imgModel: resolveCloudflareImg2ImgModel(),
+  };
+}
+
+export interface QwenLocalImageConfig {
+  baseUrl: string;
+  model: string;
+  /** Self-hosted endpoints are frequently unauthenticated on a private network — genuinely optional, unlike every hosted provider's apiKey. */
+  apiKey?: string;
+}
+
+/**
+ * A 4th, self-hosted provider (e.g. a local Qwen-Image-Edit deployment) for
+ * environments with no internet-facing AI budget at all. No specific local
+ * serving tool's own API is assumed here (ComfyUI/vLLM/a custom FastAPI
+ * wrapper all differ) — instead this defines one small, explicit HTTP
+ * contract ("the Qwen Local Bridge", documented in full in
+ * providers/qwen-local.ts) that any local server can implement. Honestly
+ * unverified against a real running server in this environment — no local
+ * GPU/model server was available to test against.
+ */
+export function getQwenLocalImageConfig(): QwenLocalImageConfig {
+  const baseUrl = process.env.QWEN_LOCAL_BASE_URL;
+  if (!baseUrl) {
+    throw new ImageGenConfigMissingError(
+      "Image generation is not configured — QWEN_LOCAL_BASE_URL is missing. Point it at a running Qwen Image Edit / local AI server to enable this provider."
+    );
+  }
+  return {
+    baseUrl: baseUrl.replace(/\/+$/, ""),
+    model: process.env.QWEN_LOCAL_MODEL || "qwen-image-edit",
+    apiKey: process.env.QWEN_LOCAL_API_KEY || undefined,
   };
 }

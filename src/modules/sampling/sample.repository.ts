@@ -9,6 +9,8 @@ export const SampleRequestRepository = {
         customer: { select: { id: true, name: true } },
         buyer: { select: { id: true, name: true } },
         product: { select: { id: true, styleName: true, styleCode: true } },
+        color: { select: { id: true, name: true, hexValue: true } },
+        size: { select: { id: true, name: true } },
         requestedBy: { select: { id: true, fullName: true } },
         // The current (highest version number) version's own costing only —
         // callers like the Sales Order form's "Linked Sample" picker need a
@@ -34,6 +36,8 @@ export const SampleRequestRepository = {
         customer: { select: { id: true, name: true, code: true, country: true, defaultCurrencyCode: true } },
         buyer: true,
         product: true,
+        color: { select: { id: true, name: true, hexValue: true } },
+        size: { select: { id: true, name: true } },
         requestedBy: { select: { id: true, fullName: true } },
         versions: {
           orderBy: { versionNumber: "desc" },
@@ -53,6 +57,15 @@ export const SampleRequestRepository = {
         comments: {
           orderBy: { createdAt: "asc" },
           include: { author: { select: { id: true, fullName: true } } },
+        },
+        // Read-only — the buyer's own Target Price, captured once at Buyer
+        // Enquiry intake and never re-entered in Sampling itself. Only ever
+        // set for a sample that actually originated from a converted
+        // enquiry line (see BuyerEnquiryLine.sampleRequestId's own schema
+        // comment) — null for every directly-created sample, same as every
+        // other optional traceability relation on this model.
+        buyerEnquiryLine: {
+          select: { targetUnitPrice: true, buyerEnquiry: { select: { id: true, enquiryNumber: true } } },
         },
       },
     }),
@@ -139,6 +152,11 @@ export const SampleMaterialRepository = {
   update: (id: string, data: Prisma.SampleMaterialUncheckedUpdateInput) =>
     prisma.sampleMaterial.update({ where: { id }, data }),
 
+  /** Permanently removes one line, inside the caller's transaction — see
+   * removeSampleMaterial() in sample.service.ts, which recomputes costing in
+   * the same transaction so a removed priced line's cost drops out too. */
+  delete: (tx: Prisma.TransactionClient, id: string) => tx.sampleMaterial.delete({ where: { id } }),
+
   /**
    * Sets/clears rate+GST on one line, inside the caller's transaction.
    * Deliberately unconditional (not guarded directly) — the lock/supersede
@@ -155,6 +173,76 @@ export const SampleMaterialRepository = {
     tx.sampleMaterial.findMany({
       where: { sampleVersionId },
       select: { plannedQuantity: true, rate: true, gstPercentage: true },
+    }),
+
+  /** Sets an absolute plannedQuantity on one line, inside the caller's
+   * transaction — used by updateSampleBomMaterials ("Update BOM"), which
+   * bulk-confirms actual raw-material usage together with a costing
+   * recompute in one transaction. */
+  updatePlannedQuantityInTx: (tx: Prisma.TransactionClient, id: string, plannedQuantity: number) =>
+    tx.sampleMaterial.update({ where: { id }, data: { plannedQuantity } }),
+
+  /**
+   * The current (highest version number) version's materials, shaped like
+   * bom.repository.ts's own ITEMS_INCLUDE (material.baseUom included) so
+   * mrp.service.ts's UOM-conversion code can treat a sample's material list
+   * as an alternate, interchangeable BOM-explosion source — used whenever a
+   * Sales Order line or Production Order has a linked Sample instead of
+   * relying on the Style's own real Bom/BomItem rows.
+   */
+  findLatestVersionMaterialsForRequirement: async (sampleRequestId: string) => {
+    const latest = await prisma.sampleVersion.findFirst({
+      where: { sampleRequestId },
+      orderBy: { versionNumber: "desc" },
+      select: { id: true },
+    });
+    if (!latest) return [];
+
+    return prisma.sampleMaterial.findMany({
+      where: { sampleVersionId: latest.id },
+      select: {
+        materialId: true,
+        plannedQuantity: true,
+        uomId: true,
+        colorId: true,
+        uom: { select: { id: true, code: true, name: true, baseUnitId: true, conversionFactor: true } },
+        material: {
+          select: {
+            id: true,
+            styleName: true,
+            styleCode: true,
+            baseUomId: true,
+            baseUom: { select: { id: true, name: true, code: true, baseUnitId: true, conversionFactor: true } },
+            defaultSupplierId: true,
+            unitCost: true,
+          },
+        },
+      },
+    });
+  },
+
+  /**
+   * Materials shaped for generating a real Inventory Material Request from
+   * this version — id (to attribute a validation error to the right line),
+   * plannedQuantity/uomId/colorId/dyeId as actually entered, plus the
+   * material's own baseUomId as a fallback source when a line's own uomId is
+   * null (rare in practice — the Add Material UI already defaults it from
+   * the material's base UOM — but the DB column stays nullable, so
+   * createMaterialRequestFromSampleVersion stays defensive about it). See
+   * material-request.service.ts.
+   */
+  findByVersionIdForMaterialRequest: (sampleVersionId: string) =>
+    prisma.sampleMaterial.findMany({
+      where: { sampleVersionId },
+      select: {
+        id: true,
+        materialId: true,
+        plannedQuantity: true,
+        uomId: true,
+        colorId: true,
+        dyeId: true,
+        material: { select: { styleName: true, baseUomId: true } },
+      },
     }),
 };
 

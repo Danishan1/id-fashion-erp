@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { DataTable } from "@/components/ui/DataTable";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { JOB_WORK_ORDER_STATUS_LABELS, JOB_WORK_ORDER_STATUS_BADGE_CLASS } from "../../production-orders/statusLabels";
 
 type JobWorkStatus = keyof typeof JOB_WORK_ORDER_STATUS_LABELS;
@@ -65,19 +66,16 @@ export function JobWorkOrdersListClient() {
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
-        <select
-          aria-label="Filter by contractor"
-          value={supplierId}
-          onChange={(e) => setSupplierId(e.target.value)}
-          className="rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-800"
-        >
-          <option value="">All Contractors</option>
-          {suppliers.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name}
-            </option>
-          ))}
-        </select>
+        <div className="w-56">
+          <SearchableSelect
+            id="jobWorkSupplierFilter"
+            value={supplierId}
+            onChange={setSupplierId}
+            options={suppliers.map((s) => ({ id: s.id, label: s.name }))}
+            placeholder="Search contractor…"
+            emptyOptionLabel="All Contractors"
+          />
+        </div>
         <label className="flex items-center gap-1.5 text-sm text-zinc-600 dark:text-zinc-300">
           <input type="checkbox" checked={overdueOnly} onChange={(e) => setOverdueOnly(e.target.checked)} />
           Overdue only

@@ -168,6 +168,39 @@ class PermissionServiceImpl {
   }
 
   /**
+   * Identical union/"any unrestricted role wins" semantics as
+   * getAllowedProductionStageIds() just above, applied to RoleBranchAccess
+   * instead of RoleProductionStageAccess -- a Role with zero
+   * RoleBranchAccess rows is unrestricted (this user's held role sees every
+   * branch in the company); a user holding ANY unrestricted role gets
+   * `null` (full access) outright, regardless of other, narrower roles they
+   * also hold; only when EVERY held role is individually restricted does
+   * the result become the union of their allowed branch sets. A platform
+   * admin always gets `null`. A user with no role at all gets an empty Set
+   * (sees no branch's data), matching that they'd already fail every
+   * ordinary permission check too.
+   */
+  async getAllowedBranchIds(userId: string): Promise<Set<string> | null> {
+    const user = await this.loadLiveUserState(userId);
+    if (user?.isPlatformAdmin) return null;
+
+    const userBranchRoles = await prisma.userBranchRole.findMany({ where: { userId }, select: { roleId: true } });
+    if (userBranchRoles.length === 0) return new Set();
+
+    const roleIds = [...new Set(userBranchRoles.map((ubr) => ubr.roleId))];
+    const restrictions = await prisma.roleBranchAccess.findMany({
+      where: { roleId: { in: roleIds } },
+      select: { roleId: true, branchId: true },
+    });
+
+    const restrictedRoleIds = new Set(restrictions.map((r) => r.roleId));
+    const hasUnrestrictedRole = roleIds.some((id) => !restrictedRoleIds.has(id));
+    if (hasUnrestrictedRole) return null;
+
+    return new Set(restrictions.map((r) => r.branchId));
+  }
+
+  /**
    * The set of modules this user holds `view` on — drives which sidebar
    * sections/links actually render, so a narrowly-scoped custom role (e.g.
    * a floor-only "Cutting Supervisor") doesn't see nav entries for modules

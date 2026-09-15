@@ -1,10 +1,12 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { formatCurrency } from "@/lib/currency";
 import { todayIsoDate } from "@/lib/date";
+import { formatDate } from "@/lib/date-format";
 
 interface Option {
   id: string;
@@ -19,10 +21,32 @@ interface StyleOption extends Option {
 interface SampleOption {
   id: string;
   requestNumber: string;
-  product: { id: string } | null;
+  // The sample's own identifying name (Sampling's "styleName" field — same
+  // one shown as the header on the Sample Request's own detail page, e.g.
+  // "SAM-2026-00018 — V-Neck T-Shirt"), so this dropdown reads as a name a
+  // merchandiser actually recognizes instead of a bare document number.
+  styleName: string | null;
+  product: { id: string; styleName: string } | null;
   // Current version's own costing only — see sample.repository.ts's
   // findMany include. Null until the sample has been costed at all.
   versions: { estimatedCostPerUnit: string | null }[];
+  // The planned color+size the sample itself was made in (2026-09-15) —
+  // used to default (not force) this line's variant grid to the same
+  // combo, so ordering "against this sample" starts from the exact color/
+  // size it was proven in, while still allowing other colors/sizes to be
+  // added or changed freely.
+  color: { id: string; name: string } | null;
+  size: { id: string; name: string } | null;
+}
+
+/** styleName is nullable at the DB level (pre-existing rows) — falls back to
+ * the linked Style's own current name, which every sample reachable in this
+ * dropdown always has (it's filtered to `product.id === the selected Style`
+ * already). requestNumber is the very thing this dropdown used to show
+ * alone — kept in brackets so it's still visible for traceability. */
+function sampleDisplayLabel(s: SampleOption): string {
+  const name = s.styleName ?? s.product?.styleName;
+  return name ? `${name} (${s.requestNumber})` : s.requestNumber;
 }
 
 interface VariantOption {
@@ -62,6 +86,7 @@ export interface InitialOrder {
   buyerId: string | null;
   orderDate: string;
   requiredShipDate: string | null;
+  customerPoNumber?: string | null;
   items: InitialOrderItem[];
 }
 
@@ -81,12 +106,23 @@ export function SalesOrderForm({
   const [buyerId, setBuyerId] = useState(initialOrder?.buyerId ?? "");
   const [orderDate, setOrderDate] = useState(initialOrder ? initialOrder.orderDate.slice(0, 10) : TODAY);
   const [requiredShipDate, setRequiredShipDate] = useState(initialOrder?.requiredShipDate?.slice(0, 10) ?? "");
+  const [customerPoNumber, setCustomerPoNumber] = useState(initialOrder?.customerPoNumber ?? "");
   const [customers, setCustomers] = useState<Option[]>([]);
   const [buyers, setBuyers] = useState<Option[]>([]);
   const [styles, setStyles] = useState<StyleOption[]>([]);
   const [colors, setColors] = useState<Option[]>([]);
   const [sizes, setSizes] = useState<Option[]>([]);
   const [approvedSamples, setApprovedSamples] = useState<SampleOption[]>([]);
+  // Which variant id to visually default-highlight per line, once a linked
+  // sample's own planned color+size resolves to a real ProductVariant (see
+  // applySampleVariantDefault below) — a display cue only, never a forced
+  // selection; every other cell in the grid stays fully editable as normal.
+  const [highlightVariantId, setHighlightVariantId] = useState<Record<number, string>>({});
+  // Keyed by line index — the same customer's own most recent price for
+  // that line's Style, if any. See the dedicated effect below.
+  const [lastOrderPrices, setLastOrderPrices] = useState<
+    Record<number, { unitPrice: string; orderNumber: string; orderDate: string } | null>
+  >({});
   // Off by default (the common case: reference this order's own customer's
   // approved samples) — on, when a customer wants to order based on a
   // sample that was actually made/approved for a different customer.
@@ -157,10 +193,49 @@ export function SalesOrderForm({
 
   const onStyleChange = (index: number, productId: string) => {
     updateItem(index, { productId, variants: [], quantities: {} });
+    setHighlightVariantId((prev) => {
+      const next = { ...prev };
+      delete next[index];
+      return next;
+    });
     if (!productId) return;
     fetch(`/api/v1/products/${productId}`)
       .then((res) => res.json())
       .then((body) => updateItem(index, { variants: body.data?.variants ?? [] }));
+  };
+
+  /**
+   * Defaults (never forces) a line's variant grid to the linked sample's own
+   * planned color+size — the exact combo the sample was proven in, per
+   * explicit ask. If that combo doesn't exist yet as a real ProductVariant
+   * for this Style (the common case — most samples are made before variants
+   * are generated), it's auto-generated via the same bulk-variant endpoint
+   * `InlineVariantGenerator` already uses, scoped to just this one
+   * color+size, so the grid always has the relevant cell to fill in without
+   * a separate manual step. Every other color/size stays fully addable —
+   * this only decides which cell gets a starting highlight.
+   */
+  const applySampleVariantDefault = async (index: number, sample: SampleOption, currentVariants: VariantOption[], productId: string) => {
+    if (!sample.color || !sample.size) return;
+
+    const existing = currentVariants.find((v) => v.color.id === sample.color!.id && v.size.id === sample.size!.id);
+    if (existing) {
+      setHighlightVariantId((prev) => ({ ...prev, [index]: existing.id }));
+      return;
+    }
+
+    const res = await fetch(`/api/v1/products/${productId}/variants/bulk`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ colorIds: [sample.color.id], sizeIds: [sample.size.id] }),
+    }).catch(() => null);
+    if (!res || !res.ok) return; // e.g. an inactive color/size — leave the grid as-is, no forced failure.
+
+    const refreshed = await fetch(`/api/v1/products/${productId}`).then((r) => r.json());
+    const variants: VariantOption[] = refreshed.data?.variants ?? [];
+    updateItem(index, { variants });
+    const created = variants.find((v) => v.color.id === sample.color!.id && v.size.id === sample.size!.id);
+    if (created) setHighlightVariantId((prev) => ({ ...prev, [index]: created.id }));
   };
 
   // Pre-fill each existing line's variant grid when editing, so entered
@@ -174,6 +249,40 @@ export function SalesOrderForm({
         .then((body) => updateItem(index, { variants: body.data?.variants ?? [] }));
     });
   }, [initialOrder]);
+
+  // "Last Order Price" — what this exact customer was actually charged the
+  // last time they ordered this exact style, so a repeat order defaults to
+  // real negotiated history instead of a generic sample-costing estimate.
+  // Re-runs whenever the customer or any line's own Style changes (not on
+  // every keystroke — the productId-list dependency key below is stable
+  // across quantity/price edits). Default-fills Unit Price only while it's
+  // still empty (never overwrites), the same "suggest, never enforce"
+  // convention already used for the linked sample's own costing default —
+  // since this fetch is triggered by Style selection, which always happens
+  // before a Sample can even be picked, a real last-order price naturally
+  // wins the race and fills the field first.
+  const productIdsKey = items.map((item) => item.productId).join(",");
+  useEffect(() => {
+    // Reset-on-clear lives in the Customer <select>'s own onChange (see
+    // below), not here — calling setState synchronously in an effect body
+    // trips this project's react-hooks/set-state-in-effect rule; every
+    // setState in this effect happens inside a fetch .then() instead.
+    if (!customerId) return;
+    items.forEach((item, index) => {
+      if (!item.productId) return;
+      const params = new URLSearchParams({ customerId, productId: item.productId });
+      if (initialOrder) params.set("excludeOrderId", initialOrder.id);
+      fetch(`/api/v1/sales-orders/last-price?${params}`)
+        .then((res) => res.json())
+        .then((body) => {
+          setLastOrderPrices((prev) => ({ ...prev, [index]: body.data ?? null }));
+          if (body.data?.unitPrice) {
+            setItems((prev) => prev.map((it, i) => (i === index && !it.unitPrice ? { ...it, unitPrice: body.data.unitPrice } : it)));
+          }
+        });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customerId, productIdsKey]);
 
   const setQuantities = (index: number, patch: Record<string, string>) => {
     setItems((prev) =>
@@ -220,6 +329,7 @@ export function SalesOrderForm({
         buyerId: buyerId || undefined,
         orderDate,
         requiredShipDate: requiredShipDate || undefined,
+        customerPoNumber: customerPoNumber || undefined,
         originatingDealId: !initialOrder && originatingDealId ? originatingDealId : undefined,
         items: payloadItems,
         overrideReason: initialOrder && useOverride ? overrideReason : undefined,
@@ -258,44 +368,33 @@ export function SalesOrderForm({
       )}
       <div className="grid grid-cols-2 gap-4">
         <FormField label="Customer" htmlFor="customerId" required>
-          <select
+          <SearchableSelect
             id="customerId"
             required
             value={customerId}
-            onChange={(e) => {
-              setCustomerId(e.target.value);
+            onChange={(next) => {
+              setCustomerId(next);
               setBuyerId("");
               setBuyers([]);
               // Company-wide sample search is independent of the customer,
               // so only reset the pool when scoped search is actually in use.
               if (!searchAllCustomers) setApprovedSamples([]);
+              setLastOrderPrices({});
             }}
-            className={textInputClass()}
-          >
-            <option value="">— Select —</option>
-            {customers.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
+            options={customers.map((c) => ({ id: c.id, label: c.name ?? "" }))}
+            placeholder="Search customer…"
+          />
         </FormField>
 
         <FormField label="Buyer" htmlFor="buyerId">
-          <select
+          <SearchableSelect
             id="buyerId"
             value={buyerId}
-            onChange={(e) => setBuyerId(e.target.value)}
+            onChange={setBuyerId}
             disabled={!customerId}
-            className={textInputClass()}
-          >
-            <option value="">— None —</option>
-            {buyers.map((b) => (
-              <option key={b.id} value={b.id}>
-                {b.name}
-              </option>
-            ))}
-          </select>
+            options={buyers.map((b) => ({ id: b.id, label: b.name ?? "" }))}
+            placeholder="Search buyer…"
+          />
         </FormField>
       </div>
 
@@ -320,6 +419,23 @@ export function SalesOrderForm({
           />
         </FormField>
       </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <FormField label="Customer PO Number (optional)" htmlFor="customerPoNumber">
+          <input
+            id="customerPoNumber"
+            value={customerPoNumber}
+            onChange={(e) => setCustomerPoNumber(e.target.value)}
+            placeholder="Buyer's own purchase order reference"
+            className={textInputClass()}
+          />
+        </FormField>
+      </div>
+      {!initialOrder && (
+        <p className="text-xs text-zinc-500 dark:text-zinc-400">
+          You can upload the buyer&apos;s PO document as an attachment from the order&apos;s detail page once it&apos;s created.
+        </p>
+      )}
 
       <div className="space-y-4">
         <div className="flex items-center justify-between">
@@ -353,29 +469,25 @@ export function SalesOrderForm({
 
             <div className="grid grid-cols-2 gap-3">
               <FormField label="Style" htmlFor={`style-${index}`} required>
-                <select
+                <SearchableSelect
                   id={`style-${index}`}
                   required
                   value={item.productId}
-                  onChange={(e) => onStyleChange(index, e.target.value)}
-                  className={textInputClass()}
-                >
-                  <option value="">— Select —</option>
-                  {styles.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.styleName}
-                      {s.designNumber ? ` (Design: ${s.designNumber})` : ""}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(next) => onStyleChange(index, next)}
+                  options={styles.map((s) => ({
+                    id: s.id,
+                    label: s.styleName ?? "",
+                    sublabel: s.designNumber ? `Design: ${s.designNumber}` : undefined,
+                  }))}
+                  placeholder="Search style…"
+                />
               </FormField>
 
-              <FormField label="Linked Sample (optional)" htmlFor={`sample-${index}`}>
-                <select
+              <FormField label="Design Name / Linked Sample (optional)" htmlFor={`sample-${index}`}>
+                <SearchableSelect
                   id={`sample-${index}`}
                   value={item.sampleRequestId}
-                  onChange={(e) => {
-                    const sampleRequestId = e.target.value;
+                  onChange={(sampleRequestId) => {
                     const selected = approvedSamples.find((s) => s.id === sampleRequestId);
                     const sampleCost = selected?.versions[0]?.estimatedCostPerUnit ?? null;
                     // Default, not enforced — only fills a still-empty Unit
@@ -385,19 +497,16 @@ export function SalesOrderForm({
                       sampleRequestId,
                       ...(sampleCost && !item.unitPrice ? { unitPrice: sampleCost } : {}),
                     });
+                    if (selected && item.productId) {
+                      void applySampleVariantDefault(index, selected, item.variants, item.productId);
+                    }
                   }}
                   disabled={(!searchAllCustomers && !customerId) || !item.productId}
-                  className={textInputClass()}
-                >
-                  <option value="">— None —</option>
-                  {approvedSamples
+                  options={approvedSamples
                     .filter((s) => s.product?.id === item.productId)
-                    .map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.requestNumber}
-                      </option>
-                    ))}
-                </select>
+                    .map((s) => ({ id: s.id, label: sampleDisplayLabel(s) }))}
+                  placeholder="Search design / sample…"
+                />
                 {!searchAllCustomers && !customerId ? (
                   <p className="mt-1 text-xs text-zinc-400">Pick a Customer first, or search all customers above.</p>
                 ) : !item.productId ? (
@@ -432,6 +541,12 @@ export function SalesOrderForm({
                   onChange={(e) => updateItem(index, { unitPrice: e.target.value })}
                   className={textInputClass()}
                 />
+                {lastOrderPrices[index] && (
+                  <p className="mt-1 text-xs text-emerald-600 dark:text-emerald-400">
+                    Last order price: {formatAmount(Number(lastOrderPrices[index]!.unitPrice))} ({lastOrderPrices[index]!.orderNumber} on{" "}
+                    {formatDate(lastOrderPrices[index]!.orderDate)})
+                  </p>
+                )}
               </FormField>
               <FormField label="Notes" htmlFor={`notes-${index}`}>
                 <input
@@ -461,6 +576,7 @@ export function SalesOrderForm({
                   variants={item.variants}
                   quantities={item.quantities}
                   onChange={(patch) => setQuantities(index, patch)}
+                  highlightVariantId={highlightVariantId[index]}
                 />
               </div>
             )}
@@ -535,13 +651,23 @@ function VariantQuantityGrid({
   variants,
   quantities,
   onChange,
+  highlightVariantId,
 }: {
   variants: VariantOption[];
   quantities: Record<string, string>;
   onChange: (patch: Record<string, string>) => void;
+  /** The linked sample's own planned color+size, once resolved to a real
+   * variant id — a display default only (see applySampleVariantDefault),
+   * never a restriction on which other cells can be filled. */
+  highlightVariantId?: string;
 }) {
   const [rowFill, setRowFill] = useState<Record<string, string>>({});
   const [colFill, setColFill] = useState<Record<string, string>>({});
+  const highlightRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (highlightVariantId) highlightRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [highlightVariantId]);
 
   const colors = Array.from(new Map(variants.map((v) => [v.color.id, v.color])).values());
   const sizes = Array.from(new Map(variants.map((v) => [v.size.id, v.size])).values()).sort(
@@ -664,15 +790,22 @@ function VariantQuantityGrid({
               </td>
               {sizes.map((size) => {
                 const variant = cellByKey.get(`${color.id}:${size.id}`);
+                const isHighlighted = !!variant && variant.id === highlightVariantId;
                 return (
                   <td key={size.id} className="border-b border-zinc-100 px-1.5 py-1 text-center dark:border-zinc-800">
                     {variant ? (
                       <input
+                        ref={isHighlighted ? highlightRef : undefined}
                         type="number"
                         min={0}
+                        title={isHighlighted ? "Defaulted from the linked sample's own color/size" : undefined}
                         value={quantities[variant.id] ?? ""}
                         onChange={(e) => onChange({ [variant.id]: e.target.value })}
-                        className={cellInputClass}
+                        className={
+                          isHighlighted
+                            ? `${cellInputClass} ring-2 ring-indigo-500 dark:ring-indigo-400`
+                            : cellInputClass
+                        }
                       />
                     ) : (
                       <span className="text-zinc-300 dark:text-zinc-700">—</span>

@@ -19,6 +19,12 @@ export const DESIGN_FEATURE_VALUES = [
   "CLOSURE",
   "WAIST",
   "HEM",
+  "COLOR",
+  "BUTTONS",
+  "BACKGROUND_ENVIRONMENT",
+  "MODEL",
+  "LOGO",
+  "EMBROIDERY",
   "OTHER",
 ] as const;
 
@@ -37,5 +43,11 @@ export const DESIGN_FEATURE_LABELS: Record<DesignFeature, string> = {
   CLOSURE: "Closure",
   WAIST: "Waist",
   HEM: "Hem",
+  COLOR: "Color",
+  BUTTONS: "Buttons",
+  BACKGROUND_ENVIRONMENT: "Background / Environment",
+  MODEL: "Model",
+  LOGO: "Add Logo",
+  EMBROIDERY: "Add Embroidery",
   OTHER: "Other",
 };

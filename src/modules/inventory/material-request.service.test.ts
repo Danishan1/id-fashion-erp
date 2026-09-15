@@ -2,15 +2,30 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/numbering/DocumentNumberingService", () => ({ generateDocumentNumber: vi.fn() }));
-vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { assert: vi.fn() } }));
-vi.mock("@/core/db/client", () => ({ prisma: { $transaction: vi.fn() } }));
+vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { assert: vi.fn(), getAllowedBranchIds: vi.fn() } }));
+vi.mock("@/core/db/client", () => ({ prisma: { $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn({})) } }));
 vi.mock("@/modules/purchasing/purchase-order.service", () => ({ createPurchaseOrder: vi.fn() }));
 vi.mock("@/modules/bom-mrp/mrp.service", () => ({ getMaterialRequirements: vi.fn() }));
 vi.mock("@/modules/bom-mrp/bom.repository", () => ({ BomRepository: { findByProductId: vi.fn() } }));
 vi.mock("@/modules/products/product.repository", () => ({ ProductRepository: { findMaterialById: vi.fn() } }));
 vi.mock("@/modules/sales-orders/sales-order.repository", () => ({ SalesOrderRepository: { findAnyById: vi.fn() } }));
+vi.mock("@/modules/sampling/sample.repository", () => ({
+  SampleVersionRepository: { findWithRequestOwner: vi.fn() },
+  SampleMaterialRepository: { findByVersionIdForMaterialRequest: vi.fn() },
+}));
 vi.mock("@/modules/lookups/lookup.repository", () => ({ LookupRepository: { unit: { findUnique: vi.fn() } } }));
-vi.mock("./inventory.service", () => ({ getAvailableQuantity: vi.fn(), recordInventoryTransaction: vi.fn() }));
+vi.mock("./inventory.service", () => ({
+  getAvailableQuantity: vi.fn(),
+  getAvailableQuantityByDye: vi.fn(),
+  recordInventoryTransaction: vi.fn(),
+}));
+vi.mock("@/modules/purchasing/fabric-roll.repository", () => ({
+  FabricRollRepository: {
+    findByIdWithContext: vi.fn(),
+    guardedDecrementRemaining: vi.fn(),
+    findAvailableForMaterial: vi.fn(),
+  },
+}));
 vi.mock("./material-request.repository", () => ({
   MaterialRequestRepository: {
     findAnyById: vi.fn(),
@@ -19,17 +34,25 @@ vi.mock("./material-request.repository", () => ({
     update: vi.fn(),
     countLinkedPurchaseOrderItems: vi.fn(),
     countIssuedLines: vi.fn(),
+    countLockedLines: vi.fn(),
+    replaceLines: vi.fn(),
     findOpenDuplicateLines: vi.fn(),
+    findOpenBySampleVersion: vi.fn(),
+    findMany: vi.fn(),
+    count: vi.fn(),
   },
   MaterialRequestItemRepository: {
     findWithRequestOwner: vi.fn(),
     guardedIncrementIssued: vi.fn(),
     findManyForStatusRecompute: vi.fn(),
     findLinesForShortfallGeneration: vi.fn(),
+    findById: vi.fn(),
   },
 }));
 
 const { MaterialRequestRepository, MaterialRequestItemRepository } = await import("./material-request.repository");
+const { FabricRollRepository } = await import("@/modules/purchasing/fabric-roll.repository");
+const { recordInventoryTransaction } = await import("./inventory.service");
 const { PermissionService } = await import("@/core/rbac/PermissionService");
 const { generateDocumentNumber } = await import("@/core/numbering/DocumentNumberingService");
 const { createPurchaseOrder } = await import("@/modules/purchasing/purchase-order.service");
@@ -37,6 +60,7 @@ const { getMaterialRequirements } = await import("@/modules/bom-mrp/mrp.service"
 const { BomRepository } = await import("@/modules/bom-mrp/bom.repository");
 const { ProductRepository } = await import("@/modules/products/product.repository");
 const { SalesOrderRepository } = await import("@/modules/sales-orders/sales-order.repository");
+const { SampleVersionRepository, SampleMaterialRepository } = await import("@/modules/sampling/sample.repository");
 const {
   computeMaterialRequestStatus,
   computeRequiresPurchaseAction,
@@ -44,7 +68,14 @@ const {
   generatePurchaseOrdersForShortfall,
   findDuplicateMaterialRequests,
   createMaterialRequestFromShortfall,
+  createMaterialRequestFromSampleVersion,
+  findMaterialRequestsBySampleVersion,
   createMaterialRequest,
+  updateMaterialRequestLines,
+  issueMaterialRequestLine,
+  getAvailableRollsForLine,
+  listMaterialRequests,
+  getMaterialRequestById,
 } = await import("./material-request.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
@@ -60,9 +91,15 @@ beforeEach(() => {
   vi.mocked(MaterialRequestRepository.update).mockReset();
   vi.mocked(MaterialRequestRepository.countLinkedPurchaseOrderItems).mockReset().mockResolvedValue(0);
   vi.mocked(MaterialRequestRepository.countIssuedLines).mockReset().mockResolvedValue(0);
+  vi.mocked(MaterialRequestRepository.countLockedLines).mockReset().mockResolvedValue(0);
+  vi.mocked(MaterialRequestRepository.replaceLines).mockReset();
   vi.mocked(MaterialRequestRepository.findOpenDuplicateLines).mockReset().mockResolvedValue([]);
+  vi.mocked(MaterialRequestRepository.findOpenBySampleVersion).mockReset().mockResolvedValue([]);
+  vi.mocked(SampleVersionRepository.findWithRequestOwner).mockReset();
+  vi.mocked(SampleMaterialRepository.findByVersionIdForMaterialRequest).mockReset();
   vi.mocked(MaterialRequestItemRepository.findLinesForShortfallGeneration).mockReset();
   vi.mocked(PermissionService.assert).mockReset().mockResolvedValue(undefined);
+  vi.mocked(PermissionService.getAllowedBranchIds).mockReset().mockResolvedValue(null);
   vi.mocked(createPurchaseOrder).mockReset();
   vi.mocked(getMaterialRequirements).mockReset();
   vi.mocked(BomRepository.findByProductId).mockReset();
@@ -75,6 +112,13 @@ beforeEach(() => {
   vi.mocked(ProductRepository.findMaterialById)
     .mockReset()
     .mockResolvedValue({ id: "mat-1", styleName: "Test Material", baseUom: { id: "uom-1", baseUnitId: null, conversionFactor: 1 } } as never);
+  vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockReset();
+  vi.mocked(MaterialRequestItemRepository.guardedIncrementIssued).mockReset();
+  vi.mocked(MaterialRequestItemRepository.findById).mockReset();
+  vi.mocked(recordInventoryTransaction).mockReset().mockResolvedValue(undefined);
+  vi.mocked(FabricRollRepository.findByIdWithContext).mockReset();
+  vi.mocked(FabricRollRepository.guardedDecrementRemaining).mockReset();
+  vi.mocked(FabricRollRepository.findAvailableForMaterial).mockReset();
 });
 
 describe("computeMaterialRequestStatus", () => {
@@ -205,6 +249,99 @@ describe("transitionMaterialRequestStatus", () => {
     await expect(transitionMaterialRequestStatus(actor, "mr-1", "ON_HOLD")).rejects.toMatchObject({
       code: "INVALID_STATE_TRANSITION",
     });
+  });
+});
+
+describe("updateMaterialRequestLines — line-level editability", () => {
+  const editInput = {
+    requestType: "PRODUCTION_REQUIREMENT" as const,
+    departmentId: "",
+    warehouseId: "wh-1",
+    requiredDate: "",
+    purpose: "",
+    salesOrderId: "",
+    productionOrderId: "",
+    bomId: "",
+    originalMaterialRequestId: "",
+    remarks: "",
+    lines: [{ materialId: "mat-1", colorId: "", dyeId: "", uomId: "uom-1", requestedQuantity: 5, damageReason: "", remarks: "" }],
+  };
+
+  it("rejects editing a CANCELLED or CLOSED request outright — unchanged, request-level guard", async () => {
+    vi.mocked(MaterialRequestRepository.findAnyById).mockResolvedValue({ id: "mr-1", companyId: "co-1", status: "CLOSED" } as never);
+
+    await expect(updateMaterialRequestLines(actor, "mr-1", editInput)).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+    expect(MaterialRequestRepository.replaceLines).not.toHaveBeenCalled();
+  });
+
+  it("succeeds on a request with zero locked lines — the ordinary, pre-existing case still works", async () => {
+    vi.mocked(MaterialRequestRepository.findAnyById).mockResolvedValue({ id: "mr-1", companyId: "co-1", status: "OPEN" } as never);
+    vi.mocked(MaterialRequestRepository.countLockedLines).mockResolvedValue(0);
+    vi.mocked(MaterialRequestRepository.replaceLines).mockResolvedValue({ id: "mr-1", lines: [{ id: "line-1" }] } as never);
+
+    await updateMaterialRequestLines(actor, "mr-1", editInput);
+
+    expect(MaterialRequestRepository.replaceLines).toHaveBeenCalledWith(
+      "mr-1",
+      expect.objectContaining({ warehouseId: "wh-1" }),
+      expect.arrayContaining([expect.objectContaining({ materialId: "mat-1", requestedQuantity: 5 })])
+    );
+  });
+
+  it("succeeds even when OTHER lines on the same request are already locked — the actual fix: no whole-request block anymore", async () => {
+    vi.mocked(MaterialRequestRepository.findAnyById).mockResolvedValue({
+      id: "mr-1",
+      companyId: "co-1",
+      status: "PARTIALLY_FULFILLED",
+    } as never);
+    vi.mocked(MaterialRequestRepository.countLockedLines).mockResolvedValue(1); // one sibling line already issued
+    vi.mocked(MaterialRequestRepository.replaceLines).mockResolvedValue({ id: "mr-1", lines: [{ id: "line-2" }] } as never);
+
+    await updateMaterialRequestLines(actor, "mr-1", editInput);
+
+    // The submitted line array is only ever the still-unlocked portion —
+    // replaceLines itself is what leaves the locked sibling line untouched
+    // (see material-request.repository.ts's own UNLOCKED_LINE_WHERE).
+    expect(MaterialRequestRepository.replaceLines).toHaveBeenCalledWith(
+      "mr-1",
+      expect.anything(),
+      expect.arrayContaining([expect.objectContaining({ materialId: "mat-1" })])
+    );
+  });
+
+  it("lets the substitute material/color/quantity through unchanged from the client's submitted values — no substitution concept, just an ordinary field edit", async () => {
+    vi.mocked(MaterialRequestRepository.findAnyById).mockResolvedValue({ id: "mr-1", companyId: "co-1", status: "OPEN" } as never);
+    vi.mocked(MaterialRequestRepository.countLockedLines).mockResolvedValue(0);
+    vi.mocked(MaterialRequestRepository.replaceLines).mockResolvedValue({ id: "mr-1", lines: [] } as never);
+
+    await updateMaterialRequestLines(actor, "mr-1", {
+      ...editInput,
+      lines: [{ materialId: "mat-2", colorId: "color-9", dyeId: "", uomId: "uom-1", requestedQuantity: 12, damageReason: "", remarks: "" }],
+    });
+
+    expect(MaterialRequestRepository.replaceLines).toHaveBeenCalledWith(
+      "mr-1",
+      expect.anything(),
+      expect.arrayContaining([expect.objectContaining({ materialId: "mat-2", colorId: "color-9", requestedQuantity: 12 })])
+    );
+  });
+
+  it("rejects an edit that would leave the request with zero lines total (no locked lines to fall back on, and nothing submitted)", async () => {
+    vi.mocked(MaterialRequestRepository.findAnyById).mockResolvedValue({ id: "mr-1", companyId: "co-1", status: "OPEN" } as never);
+    vi.mocked(MaterialRequestRepository.countLockedLines).mockResolvedValue(0);
+
+    await expect(updateMaterialRequestLines(actor, "mr-1", { ...editInput, lines: [] })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(MaterialRequestRepository.replaceLines).not.toHaveBeenCalled();
+  });
+
+  it("allows submitting zero lines when locked lines already cover the request — removing the last remaining editable line is legitimate", async () => {
+    vi.mocked(MaterialRequestRepository.findAnyById).mockResolvedValue({ id: "mr-1", companyId: "co-1", status: "PARTIALLY_FULFILLED" } as never);
+    vi.mocked(MaterialRequestRepository.countLockedLines).mockResolvedValue(1);
+    vi.mocked(MaterialRequestRepository.replaceLines).mockResolvedValue({ id: "mr-1", lines: [] } as never);
+
+    await updateMaterialRequestLines(actor, "mr-1", { ...editInput, lines: [] });
+
+    expect(MaterialRequestRepository.replaceLines).toHaveBeenCalledWith("mr-1", expect.anything(), []);
   });
 });
 
@@ -401,6 +538,142 @@ describe("createMaterialRequestFromShortfall", () => {
   });
 });
 
+describe("createMaterialRequestFromSampleVersion", () => {
+  const version = { id: "ver-1", sampleRequest: { companyId: "co-1", requestedByUserId: "user-x" } };
+
+  beforeEach(() => {
+    vi.mocked(SampleVersionRepository.findWithRequestOwner).mockResolvedValue(version as never);
+    vi.mocked(MaterialRequestRepository.createWithLines).mockResolvedValue({ id: "mr-new", requestNumber: "MR-2026-00099" } as never);
+  });
+
+  it("rejects with NOT_FOUND when the version doesn't belong to the actor's own company", async () => {
+    vi.mocked(SampleVersionRepository.findWithRequestOwner).mockResolvedValue({
+      id: "ver-1",
+      sampleRequest: { companyId: "other-co", requestedByUserId: "user-x" },
+    } as never);
+
+    await expect(
+      createMaterialRequestFromSampleVersion(actor, { sampleVersionId: "ver-1", warehouseId: "wh-1" })
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(MaterialRequestRepository.createWithLines).not.toHaveBeenCalled();
+  });
+
+  it("rejects with VALIDATION_ERROR when the version has no materials to request", async () => {
+    vi.mocked(SampleMaterialRepository.findByVersionIdForMaterialRequest).mockResolvedValue([]);
+
+    await expect(
+      createMaterialRequestFromSampleVersion(actor, { sampleVersionId: "ver-1", warehouseId: "wh-1" })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(MaterialRequestRepository.createWithLines).not.toHaveBeenCalled();
+  });
+
+  it("rejects with VALIDATION_ERROR naming the material when a line has no uomId and its material has no base unit either", async () => {
+    vi.mocked(SampleMaterialRepository.findByVersionIdForMaterialRequest).mockResolvedValue([
+      {
+        id: "sm-1",
+        materialId: "mat-1",
+        plannedQuantity: "10",
+        uomId: null,
+        colorId: null,
+        dyeId: null,
+        material: { styleName: "Cotton Fabric", baseUomId: null },
+      },
+    ] as never);
+
+    await expect(
+      createMaterialRequestFromSampleVersion(actor, { sampleVersionId: "ver-1", warehouseId: "wh-1" })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR", message: expect.stringContaining("Cotton Fabric") });
+    expect(MaterialRequestRepository.createWithLines).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the material's own base unit when the sample material line has no uomId of its own", async () => {
+    // assertLinesHaveConvertibleUom (createMaterialRequest's own guard) needs
+    // the resolved line's uomId to match this material's baseUom exactly, or
+    // it'll try a real UOM-conversion lookup this test doesn't mock.
+    vi.mocked(ProductRepository.findMaterialById).mockResolvedValue({
+      id: "mat-1",
+      styleName: "Cotton Fabric",
+      baseUom: { id: "uom-base-1" },
+    } as never);
+    vi.mocked(SampleMaterialRepository.findByVersionIdForMaterialRequest).mockResolvedValue([
+      {
+        id: "sm-1",
+        materialId: "mat-1",
+        plannedQuantity: "10",
+        uomId: null,
+        colorId: "color-1",
+        dyeId: "dye-1",
+        material: { styleName: "Cotton Fabric", baseUomId: "uom-base-1" },
+      },
+    ] as never);
+
+    await createMaterialRequestFromSampleVersion(actor, { sampleVersionId: "ver-1", warehouseId: "wh-1" });
+
+    expect(MaterialRequestRepository.createWithLines).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestType: "SAMPLING_REQUIREMENT",
+        sampleVersionId: "ver-1",
+        warehouseId: "wh-1",
+        lines: {
+          create: [
+            expect.objectContaining({
+              materialId: "mat-1",
+              colorId: "color-1",
+              dyeId: "dye-1",
+              uomId: "uom-base-1",
+              requestedQuantity: 10,
+            }),
+          ],
+        },
+      })
+    );
+  });
+
+  it("blocks with DUPLICATE_MATERIAL_REQUEST_EXISTS when a request already exists for this version and no override is given", async () => {
+    vi.mocked(SampleMaterialRepository.findByVersionIdForMaterialRequest).mockResolvedValue([
+      { id: "sm-1", materialId: "mat-1", plannedQuantity: "10", uomId: "uom-1", colorId: null, dyeId: null, material: { styleName: "X", baseUomId: null } },
+    ] as never);
+    vi.mocked(MaterialRequestRepository.findOpenBySampleVersion).mockResolvedValue([
+      { id: "mr-existing", requestNumber: "MR-2026-00005", status: "OPEN", createdAt: new Date() },
+    ] as never);
+
+    await expect(
+      createMaterialRequestFromSampleVersion(actor, { sampleVersionId: "ver-1", warehouseId: "wh-1" })
+    ).rejects.toMatchObject({ code: "DUPLICATE_MATERIAL_REQUEST_EXISTS" });
+    expect(MaterialRequestRepository.createWithLines).not.toHaveBeenCalled();
+  });
+
+  it("proceeds despite an existing request when overrideDuplicateCheck is set", async () => {
+    vi.mocked(SampleMaterialRepository.findByVersionIdForMaterialRequest).mockResolvedValue([
+      { id: "sm-1", materialId: "mat-1", plannedQuantity: "10", uomId: "uom-1", colorId: null, dyeId: null, material: { styleName: "X", baseUomId: null } },
+    ] as never);
+    vi.mocked(MaterialRequestRepository.findOpenBySampleVersion).mockResolvedValue([
+      { id: "mr-existing", requestNumber: "MR-2026-00005", status: "OPEN", createdAt: new Date() },
+    ] as never);
+
+    await createMaterialRequestFromSampleVersion(actor, {
+      sampleVersionId: "ver-1",
+      warehouseId: "wh-1",
+      overrideDuplicateCheck: true,
+    });
+
+    expect(MaterialRequestRepository.createWithLines).toHaveBeenCalled();
+  });
+});
+
+describe("findMaterialRequestsBySampleVersion", () => {
+  it("delegates straight to the repository, company-scoped", async () => {
+    vi.mocked(MaterialRequestRepository.findOpenBySampleVersion).mockResolvedValue([
+      { id: "mr-1", requestNumber: "MR-2026-00001", status: "OPEN", createdAt: new Date() },
+    ] as never);
+
+    const result = await findMaterialRequestsBySampleVersion("co-1", "ver-1");
+
+    expect(MaterialRequestRepository.findOpenBySampleVersion).toHaveBeenCalledWith("co-1", "ver-1");
+    expect(result).toHaveLength(1);
+  });
+});
+
 // The manual create form's own optional Sales Order dropdown (2026-09-05) —
 // previously salesOrderId was only ever set internally by
 // createMaterialRequestFromShortfall (already company-scoped via
@@ -435,5 +708,176 @@ describe("createMaterialRequest — Sales Order link", () => {
 
     expect(SalesOrderRepository.findAnyById).not.toHaveBeenCalled();
     expect(MaterialRequestRepository.createWithLines).toHaveBeenCalledWith(expect.objectContaining({ salesOrderId: null }));
+  });
+});
+
+describe("issueMaterialRequestLine — fabric roll (color/shade) selection", () => {
+  function baseLine(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "line-1",
+      materialId: "mat-fabric",
+      requestedQuantity: "10",
+      issuedQuantity: "0",
+      material: { id: "mat-fabric", styleName: "Cotton Fabric", materialCategory: "FABRIC", baseUomId: "uom-1", baseUom: { id: "uom-1", baseUnitId: null, conversionFactor: 1 } },
+      uom: { id: "uom-1", baseUnitId: null, conversionFactor: 1 },
+      materialRequest: { id: "mr-1", companyId: "co-1", warehouseId: "wh-1", status: "OPEN" },
+      ...overrides,
+    };
+  }
+
+  function inStockRoll(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "roll-1",
+      status: "IN_STOCK",
+      remainingQuantity: "50",
+      goodsReceiptItem: { productId: "mat-fabric", warehouseId: "wh-1" },
+      ...overrides,
+    };
+  }
+
+  it("issues against the selected roll: decrements it and records the roll on the ledger entry", async () => {
+    vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue(baseLine() as never);
+    vi.mocked(FabricRollRepository.findByIdWithContext).mockResolvedValue(inStockRoll() as never);
+    vi.mocked(MaterialRequestItemRepository.guardedIncrementIssued).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(FabricRollRepository.guardedDecrementRemaining).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(MaterialRequestItemRepository.findById).mockResolvedValue({ id: "line-1" } as never);
+
+    await issueMaterialRequestLine(actor, "line-1", 5, null, "roll-1");
+
+    expect(recordInventoryTransaction).toHaveBeenCalledWith(
+      {},
+      actor,
+      expect.objectContaining({ fabricRollId: "roll-1", quantity: -5 })
+    );
+    expect(FabricRollRepository.guardedDecrementRemaining).toHaveBeenCalledWith({}, "roll-1", 5);
+  });
+
+  it("rejects a roll that belongs to a different material at this warehouse", async () => {
+    vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue(baseLine() as never);
+    vi.mocked(FabricRollRepository.findByIdWithContext).mockResolvedValue(
+      inStockRoll({ goodsReceiptItem: { productId: "some-other-material", warehouseId: "wh-1" } }) as never
+    );
+
+    await expect(issueMaterialRequestLine(actor, "line-1", 5, null, "roll-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(FabricRollRepository.guardedDecrementRemaining).not.toHaveBeenCalled();
+  });
+
+  it("rejects issuing more than the selected roll actually has remaining", async () => {
+    vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue(baseLine() as never);
+    vi.mocked(FabricRollRepository.findByIdWithContext).mockResolvedValue(inStockRoll({ remainingQuantity: "3" }) as never);
+
+    await expect(issueMaterialRequestLine(actor, "line-1", 5, null, "roll-1")).rejects.toMatchObject({
+      code: "INSUFFICIENT_RAW_MATERIAL_STOCK",
+    });
+    expect(MaterialRequestItemRepository.guardedIncrementIssued).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a clean conflict error when the roll is decremented by someone else in the same instant", async () => {
+    vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue(baseLine() as never);
+    vi.mocked(FabricRollRepository.findByIdWithContext).mockResolvedValue(inStockRoll() as never);
+    vi.mocked(MaterialRequestItemRepository.guardedIncrementIssued).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(FabricRollRepository.guardedDecrementRemaining).mockResolvedValue({ count: 0 } as never);
+
+    await expect(issueMaterialRequestLine(actor, "line-1", 5, null, "roll-1")).rejects.toMatchObject({
+      code: "INSUFFICIENT_RAW_MATERIAL_STOCK",
+    });
+  });
+
+  it("falls back to the flat material-level check when no roll is selected — unchanged, backward-compatible behavior", async () => {
+    const { getAvailableQuantity } = await import("./inventory.service");
+    vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue(baseLine() as never);
+    vi.mocked(getAvailableQuantity).mockResolvedValue(20 as never);
+    vi.mocked(MaterialRequestItemRepository.guardedIncrementIssued).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(MaterialRequestItemRepository.findById).mockResolvedValue({ id: "line-1" } as never);
+
+    await issueMaterialRequestLine(actor, "line-1", 5, null, null);
+
+    expect(FabricRollRepository.findByIdWithContext).not.toHaveBeenCalled();
+    expect(FabricRollRepository.guardedDecrementRemaining).not.toHaveBeenCalled();
+    expect(recordInventoryTransaction).toHaveBeenCalledWith({}, actor, expect.objectContaining({ fabricRollId: null }));
+  });
+});
+
+describe("getAvailableRollsForLine", () => {
+  it("returns the color/shade breakdown for the line's material at its request's warehouse", async () => {
+    vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue({
+      materialId: "mat-fabric",
+      materialRequest: { companyId: "co-1", warehouseId: "wh-1" },
+    } as never);
+    vi.mocked(FabricRollRepository.findAvailableForMaterial).mockResolvedValue([
+      { id: "roll-1", rollNumber: "R-1", remainingQuantity: "50", dye: { id: "dye-1", name: "Navy Blue", pantone: "19-4030" } },
+      { id: "roll-2", rollNumber: "R-2", remainingQuantity: "30", dye: null },
+    ] as never);
+
+    const rolls = await getAvailableRollsForLine(actor, "line-1");
+
+    expect(FabricRollRepository.findAvailableForMaterial).toHaveBeenCalledWith("co-1", "mat-fabric", "wh-1");
+    expect(rolls).toEqual([
+      { id: "roll-1", rollNumber: "R-1", remainingQuantity: "50", dye: { id: "dye-1", name: "Navy Blue", pantone: "19-4030" } },
+      { id: "roll-2", rollNumber: "R-2", remainingQuantity: "30", dye: null },
+    ]);
+  });
+
+  it("rejects a line that doesn't belong to this company", async () => {
+    vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue({
+      materialId: "mat-fabric",
+      materialRequest: { companyId: "some-other-co", warehouseId: "wh-1" },
+    } as never);
+
+    await expect(getAvailableRollsForLine(actor, "line-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+});
+
+describe("branch access enforcement (2026-09-15)", () => {
+  const listQuery = { search: "", sortBy: "createdAt", sortOrder: "desc" as const, page: 1, pageSize: 20, skip: 0, take: 20 };
+
+  beforeEach(() => {
+    vi.mocked(MaterialRequestRepository.findMany).mockReset().mockResolvedValue([]);
+    vi.mocked(MaterialRequestRepository.count).mockReset().mockResolvedValue(0);
+  });
+
+  it("listMaterialRequests adds no branch filter for an unrestricted user", async () => {
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(null);
+
+    await listMaterialRequests(actor, listQuery);
+
+    const whereArg = vi.mocked(MaterialRequestRepository.findMany).mock.calls[0][0];
+    expect(whereArg).not.toHaveProperty("branchId");
+  });
+
+  it("listMaterialRequests adds a branchId IN filter for a branch-restricted user", async () => {
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    await listMaterialRequests(actor, listQuery);
+
+    expect(MaterialRequestRepository.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ branchId: { in: ["branch-1"] } }),
+      expect.anything()
+    );
+  });
+
+  it("getMaterialRequestById throws NOT_FOUND for a request outside the user's allowed branches", async () => {
+    vi.mocked(MaterialRequestRepository.findByIdWithDetails).mockResolvedValue({
+      id: "mr-1",
+      branchId: "branch-2",
+      warehouseId: "wh-1",
+      lines: [],
+    } as never);
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    await expect(getMaterialRequestById(actor, "mr-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("getMaterialRequestById succeeds for a request inside the user's allowed branches", async () => {
+    vi.mocked(MaterialRequestRepository.findByIdWithDetails).mockResolvedValue({
+      id: "mr-1",
+      branchId: "branch-1",
+      warehouseId: "wh-1",
+      lines: [],
+    } as never);
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    const result = await getMaterialRequestById(actor, "mr-1");
+    expect(result.id).toBe("mr-1");
   });
 });

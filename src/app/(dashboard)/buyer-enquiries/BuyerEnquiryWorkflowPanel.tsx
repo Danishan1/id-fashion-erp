@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { Modal } from "@/components/ui/Modal";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import {
   LINE_STATUS_BADGE_CLASS,
   LINE_STATUS_LABELS,
@@ -531,36 +532,24 @@ function LinkCustomerPanel({
       ) : (
         <div className="mt-3 max-w-md space-y-2">
           <FormField label="Customer" htmlFor="link-customer-id" required>
-            <select
+            <SearchableSelect
               id="link-customer-id"
               required
               value={customerId}
-              onChange={(e) => selectCustomer(e.target.value)}
-              className={textInputClass()}
-            >
-              <option value="">— Select —</option>
-              {customers.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
+              onChange={selectCustomer}
+              options={customers.map((c) => ({ id: c.id, label: c.name ?? "" }))}
+              placeholder="Search customer…"
+            />
           </FormField>
           <FormField label="Buyer" htmlFor="link-buyer-id">
-            <select
+            <SearchableSelect
               id="link-buyer-id"
               value={buyerId}
-              onChange={(e) => setBuyerId(e.target.value)}
+              onChange={setBuyerId}
               disabled={!customerId}
-              className={textInputClass()}
-            >
-              <option value="">— None —</option>
-              {buyers.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name}
-                </option>
-              ))}
-            </select>
+              options={buyers.map((b) => ({ id: b.id, label: b.name ?? "" }))}
+              placeholder="Search buyer…"
+            />
           </FormField>
           {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
           <div className="flex gap-2">

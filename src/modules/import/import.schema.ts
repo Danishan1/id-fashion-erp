@@ -197,6 +197,7 @@ export const BULK_IMPORT_COLUMNS: Record<BulkImportMasterType, ImportColumnSpec[
     { key: "code", label: "Account Code", required: true },
     { key: "name", label: "Account Name", required: true },
     { key: "accountType", label: "Account Type (ASSET/LIABILITY/EQUITY/INCOME/EXPENSE)", required: true },
+    { key: "parentAccount", label: "Parent Account (existing account code or name, optional)", required: false },
   ],
 
   // ── Tier 1 + Tier 2 masters (2026-09-05) ──────────────────────────────
@@ -453,6 +454,7 @@ export const BULK_IMPORT_SAMPLE_ROWS: Record<BulkImportMasterType, Record<string
     code: "1999",
     name: "Sample Reserve Account",
     accountType: "ASSET",
+    parentAccount: "",
   },
 
   COLOR: { code: "SMPL-CLR", name: "Sample Navy Blue", hexValue: "#1F2A44" },

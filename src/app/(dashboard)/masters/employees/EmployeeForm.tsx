@@ -2,6 +2,8 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
+import { COUNTRIES } from "@/lib/countries";
 
 export interface EmployeeFormValues {
   employeeCode: string;
@@ -13,6 +15,10 @@ export interface EmployeeFormValues {
   reportsToId: string;
   phone: string;
   email: string;
+  address: string;
+  city: string;
+  pinCode: string;
+  country: string;
   joinDate: string;
   isActive: boolean;
 }
@@ -27,6 +33,10 @@ const EMPTY_VALUES: EmployeeFormValues = {
   reportsToId: "",
   phone: "",
   email: "",
+  address: "",
+  city: "",
+  pinCode: "",
+  country: "India",
   joinDate: "",
   isActive: true,
 };
@@ -226,21 +236,15 @@ export function EmployeeForm({ initialValues, submitUrl, method, onSuccess, onCa
       </div>
 
       <FormField label="Reports To" htmlFor="reportsToId">
-        <select
+        <SearchableSelect
           id="reportsToId"
           value={values.reportsToId}
-          onChange={(e) => setValues({ ...values, reportsToId: e.target.value })}
-          className={textInputClass()}
-        >
-          <option value="">— None —</option>
-          {managers
+          onChange={(reportsToId) => setValues({ ...values, reportsToId })}
+          options={managers
             .filter((m) => m.id !== excludeEmployeeId)
-            .map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.fullName} ({m.employeeCode})
-              </option>
-            ))}
-        </select>
+            .map((m) => ({ id: m.id, label: m.fullName, sublabel: m.employeeCode }))}
+          placeholder="Search employee…"
+        />
       </FormField>
 
       <div className="grid grid-cols-2 gap-4">
@@ -289,6 +293,50 @@ export function EmployeeForm({ initialValues, submitUrl, method, onSuccess, onCa
             onChange={(e) => setValues({ ...values, email: e.target.value })}
             className={textInputClass()}
           />
+        </FormField>
+      </div>
+
+      <FormField label="Address" htmlFor="address">
+        <textarea
+          id="address"
+          rows={2}
+          value={values.address}
+          onChange={(e) => setValues({ ...values, address: e.target.value })}
+          className={textInputClass()}
+        />
+      </FormField>
+
+      <div className="grid grid-cols-3 gap-4">
+        <FormField label="City" htmlFor="city">
+          <input
+            id="city"
+            value={values.city}
+            onChange={(e) => setValues({ ...values, city: e.target.value })}
+            className={textInputClass()}
+          />
+        </FormField>
+        <FormField label="Pin Code" htmlFor="pinCode">
+          <input
+            id="pinCode"
+            value={values.pinCode}
+            onChange={(e) => setValues({ ...values, pinCode: e.target.value })}
+            className={textInputClass()}
+          />
+        </FormField>
+        <FormField label="Country" htmlFor="country">
+          <select
+            id="country"
+            value={values.country}
+            onChange={(e) => setValues({ ...values, country: e.target.value })}
+            className={textInputClass()}
+          >
+            <option value="">— Select —</option>
+            {COUNTRIES.map((country) => (
+              <option key={country} value={country}>
+                {country}
+              </option>
+            ))}
+          </select>
         </FormField>
       </div>
 

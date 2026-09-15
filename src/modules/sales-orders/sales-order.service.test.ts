@@ -3,7 +3,7 @@ import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/numbering/DocumentNumberingService", () => ({ generateDocumentNumber: vi.fn() }));
-vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { assert: vi.fn() } }));
+vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { assert: vi.fn(), getAllowedBranchIds: vi.fn() } }));
 vi.mock("@/core/db/client", () => ({ prisma: { deal: { findFirst: vi.fn() } } }));
 vi.mock("@/modules/customers/customer.repository", () => ({
   CustomerRepository: { findByIdWithBuyers: vi.fn() },
@@ -20,6 +20,9 @@ vi.mock("@/modules/accounts/sales-invoice.repository", () => ({
 vi.mock("@/modules/dispatch/dispatch.repository", () => ({
   DispatchRepository: { findAnyByOrderId: vi.fn() },
 }));
+vi.mock("@/modules/production/production-progress.service", () => ({
+  getSalesOrderItemProductionSummary: vi.fn(),
+}));
 vi.mock("./sales-order.repository", () => ({
   CompanyRepository: { findBaseCurrencyCode: vi.fn() },
   SalesOrderRepository: {
@@ -31,6 +34,7 @@ vi.mock("./sales-order.repository", () => ({
     update: vi.fn(),
     updateStatusConditional: vi.fn(),
     replaceItems: vi.fn(),
+    findLastOrderedItem: vi.fn(),
   },
 }));
 
@@ -41,10 +45,18 @@ const { ProductRepository } = await import("@/modules/products/product.repositor
 const { SampleRequestRepository } = await import("@/modules/sampling/sample.repository");
 const { SalesInvoiceRepository } = await import("@/modules/accounts/sales-invoice.repository");
 const { DispatchRepository } = await import("@/modules/dispatch/dispatch.repository");
+const { getSalesOrderItemProductionSummary } = await import("@/modules/production/production-progress.service");
 const { CompanyRepository, SalesOrderRepository } = await import("./sales-order.repository");
-const { createSalesOrder, updateSalesOrder, confirmSalesOrder, transitionSalesOrderStatus, resumeSalesOrderFromHold } = await import(
-  "./sales-order.service"
-);
+const {
+  createSalesOrder,
+  updateSalesOrder,
+  confirmSalesOrder,
+  transitionSalesOrderStatus,
+  resumeSalesOrderFromHold,
+  getSalesOrderById,
+  getLastOrderedPrice,
+  listSalesOrders,
+} = await import("./sales-order.service");
 
 const actor = { companyId: "co-1", userId: "user-1", branchId: "br-1" };
 
@@ -68,10 +80,12 @@ beforeEach(() => {
   vi.mocked(SalesOrderRepository.update).mockReset();
   vi.mocked(SalesOrderRepository.updateStatusConditional).mockReset();
   vi.mocked(SalesOrderRepository.replaceItems).mockReset();
+  vi.mocked(getSalesOrderItemProductionSummary).mockReset().mockResolvedValue({ orderedTotal: 0 } as never);
   vi.mocked(SalesInvoiceRepository.findActiveByOrderId).mockReset().mockResolvedValue(null);
   vi.mocked(DispatchRepository.findAnyByOrderId).mockReset().mockResolvedValue(null);
   vi.mocked(SampleRequestRepository.findMany).mockReset().mockResolvedValue([]);
   vi.mocked(PermissionService.assert).mockReset().mockResolvedValue(undefined as never);
+  vi.mocked(PermissionService.getAllowedBranchIds).mockReset().mockResolvedValue(null);
 });
 
 describe("createSalesOrder", () => {
@@ -281,5 +295,102 @@ describe("resumeSalesOrderFromHold", () => {
   it("rejects resuming an order that isn't on hold", async () => {
     vi.mocked(SalesOrderRepository.findAnyById).mockResolvedValue({ id: "so-1", status: "DRAFT", statusBeforeHold: null } as never);
     await expect(resumeSalesOrderFromHold(actor, "so-1")).rejects.toThrow(BusinessRuleError);
+  });
+});
+
+describe("getSalesOrderById", () => {
+  it("attaches a production summary onto each item, keyed by that item's own id", async () => {
+    vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue({
+      id: "so-1",
+      items: [
+        { id: "item-1", productId: "style-1" },
+        { id: "item-2", productId: "style-2" },
+      ],
+    } as never);
+    vi.mocked(getSalesOrderItemProductionSummary)
+      .mockResolvedValueOnce({ salesOrderItemId: "item-1", orderedTotal: 100 } as never)
+      .mockResolvedValueOnce({ salesOrderItemId: "item-2", orderedTotal: 50 } as never);
+
+    const order = await getSalesOrderById(actor, "so-1");
+
+    expect(getSalesOrderItemProductionSummary).toHaveBeenCalledWith("co-1", "item-1");
+    expect(getSalesOrderItemProductionSummary).toHaveBeenCalledWith("co-1", "item-2");
+    expect(order.items[0].productionSummary).toEqual({ salesOrderItemId: "item-1", orderedTotal: 100 });
+    expect(order.items[1].productionSummary).toEqual({ salesOrderItemId: "item-2", orderedTotal: 50 });
+  });
+
+  it("rejects a sales order that doesn't exist", async () => {
+    vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue(null);
+    await expect(getSalesOrderById(actor, "missing")).rejects.toThrow(BusinessRuleError);
+  });
+});
+
+describe("getLastOrderedPrice", () => {
+  it("returns the price/order details from the most recent prior item, delegated straight to the repository", async () => {
+    vi.mocked(SalesOrderRepository.findLastOrderedItem).mockResolvedValue({
+      unitPrice: { toString: () => "320" },
+      salesOrder: { orderNumber: "ORD-2026-00014", orderDate: new Date("2026-09-10") },
+    } as never);
+
+    const result = await getLastOrderedPrice("co-1", "cust-1", "style-1");
+
+    expect(SalesOrderRepository.findLastOrderedItem).toHaveBeenCalledWith("co-1", "cust-1", "style-1", undefined);
+    expect(result).toEqual({ unitPrice: "320", orderNumber: "ORD-2026-00014", orderDate: new Date("2026-09-10") });
+  });
+
+  it("passes excludeOrderId through, so an in-progress edit never suggests its own not-yet-saved price back to itself", async () => {
+    vi.mocked(SalesOrderRepository.findLastOrderedItem).mockResolvedValue(null);
+    await getLastOrderedPrice("co-1", "cust-1", "style-1", "so-being-edited");
+    expect(SalesOrderRepository.findLastOrderedItem).toHaveBeenCalledWith("co-1", "cust-1", "style-1", "so-being-edited");
+  });
+
+  it("returns null (not an error) when there's no prior order at all — the common, expected case for a first-time line", async () => {
+    vi.mocked(SalesOrderRepository.findLastOrderedItem).mockResolvedValue(null);
+    const result = await getLastOrderedPrice("co-1", "cust-1", "style-1");
+    expect(result).toBeNull();
+  });
+});
+
+describe("branch access enforcement (2026-09-15)", () => {
+  const listQuery = { search: "", sortBy: "createdAt", sortOrder: "desc" as const, page: 1, pageSize: 20, skip: 0, take: 20 };
+
+  beforeEach(() => {
+    vi.mocked(SalesOrderRepository.findMany).mockReset().mockResolvedValue([]);
+    vi.mocked(SalesOrderRepository.count).mockReset().mockResolvedValue(0);
+  });
+
+  it("listSalesOrders adds no branch filter for an unrestricted user", async () => {
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(null);
+
+    await listSalesOrders(actor, listQuery);
+
+    const whereArg = vi.mocked(SalesOrderRepository.findMany).mock.calls[0][0];
+    expect(whereArg).not.toHaveProperty("branchId");
+  });
+
+  it("listSalesOrders adds a branchId IN filter for a branch-restricted user", async () => {
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    await listSalesOrders(actor, listQuery);
+
+    expect(SalesOrderRepository.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ branchId: { in: ["branch-1"] } }),
+      expect.anything()
+    );
+  });
+
+  it("getSalesOrderById succeeds for an order inside the user's allowed branches", async () => {
+    vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue({ id: "so-1", branchId: "branch-1", items: [] } as never);
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    const order = await getSalesOrderById(actor, "so-1");
+    expect(order.id).toBe("so-1");
+  });
+
+  it("getSalesOrderById throws NOT_FOUND for an order outside the user's allowed branches", async () => {
+    vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue({ id: "so-1", branchId: "branch-2", items: [] } as never);
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    await expect(getSalesOrderById(actor, "so-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 });

@@ -10,7 +10,7 @@ export default async function SalesOrderDetailPage({ params }: { params: Promise
   const { id } = await params;
   const session = await auth();
 
-  const order = await getSalesOrderById(session!.user.companyId, id).catch(() => null);
+  const order = await getSalesOrderById({ companyId: session!.user.companyId, userId: session!.user.id }, id).catch(() => null);
   if (!order) notFound();
 
   return (
@@ -24,6 +24,7 @@ export default async function SalesOrderDetailPage({ params }: { params: Promise
             {order.buyer ? ` — ${order.buyer.name}` : ""} · Requested by {order.requestedBy.fullName} on{" "}
             {formatDate(order.orderDate)}
             {order.requiredShipDate ? ` · Required ship: ${formatDate(order.requiredShipDate)}` : ""}
+            {order.customerPoNumber ? ` · Customer PO: ${order.customerPoNumber}` : ""}
           </p>
         </div>
         <div className="flex flex-col items-end gap-2">
