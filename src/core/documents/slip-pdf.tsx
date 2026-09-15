@@ -24,6 +24,15 @@ const styles = StyleSheet.create({
   notesBlock: { marginTop: 16 },
   notesLabel: { fontSize: 8, color: "#666", textTransform: "uppercase" },
   notesText: { fontSize: 9, marginTop: 4 },
+  breakdownBlock: { marginTop: 16 },
+  breakdownLabel: { fontSize: 8, color: "#666", textTransform: "uppercase", marginBottom: 4 },
+  breakdownHeaderRow: { flexDirection: "row", borderBottomWidth: 1, borderBottomColor: "#333", paddingBottom: 3 },
+  breakdownRow: { flexDirection: "row", borderBottomWidth: 0.5, borderBottomColor: "#ddd", paddingVertical: 3 },
+  breakdownHeaderCell: { fontSize: 8, fontWeight: 700, color: "#666" },
+  breakdownCell: { fontSize: 9 },
+  breakdownColorCol: { width: "40%" },
+  breakdownSizeCol: { width: "30%" },
+  breakdownQtyCol: { width: "30%", textAlign: "right" },
   signatureBlock: { flexDirection: "row", justifyContent: "space-between", marginTop: 40 },
   signatureLine: { width: "40%", borderTopWidth: 1, borderTopColor: "#333", paddingTop: 4, fontSize: 8, color: "#666", textAlign: "center" },
   footer: {
@@ -43,11 +52,22 @@ export interface SlipField {
   value: string;
 }
 
+export interface SlipVariantBreakdownRow {
+  colorName: string;
+  sizeName: string;
+  quantity: string;
+}
+
 export interface SlipDescriptor {
   companyName: string;
   slipTitle: string;
   slipNumber: string;
   fields: SlipField[];
+  /** Optional size/color breakdown table — used by the Stage Transfer Slip
+   * so a floor worker sees exactly which sizes/colors make up the flat
+   * quantity above, without opening the app. Omitted entirely when the lot
+   * has no recorded breakdown (see LotVariantBreakdown in schema.prisma). */
+  variantBreakdown?: SlipVariantBreakdownRow[] | null;
   notes?: string | null;
   signatureLabels: [string, string];
   generatedAt: string;
@@ -73,6 +93,24 @@ function SlipPdfBody({ descriptor }: { descriptor: SlipDescriptor }) {
             <Text style={styles.fieldValue}>{f.value}</Text>
           </View>
         ))}
+
+        {descriptor.variantBreakdown && descriptor.variantBreakdown.length > 0 ? (
+          <View style={styles.breakdownBlock}>
+            <Text style={styles.breakdownLabel}>Size / Color Breakdown</Text>
+            <View style={styles.breakdownHeaderRow}>
+              <Text style={[styles.breakdownHeaderCell, styles.breakdownColorCol]}>Color</Text>
+              <Text style={[styles.breakdownHeaderCell, styles.breakdownSizeCol]}>Size</Text>
+              <Text style={[styles.breakdownHeaderCell, styles.breakdownQtyCol]}>Qty</Text>
+            </View>
+            {descriptor.variantBreakdown.map((row, i) => (
+              <View key={i} style={styles.breakdownRow}>
+                <Text style={[styles.breakdownCell, styles.breakdownColorCol]}>{row.colorName}</Text>
+                <Text style={[styles.breakdownCell, styles.breakdownSizeCol]}>{row.sizeName}</Text>
+                <Text style={[styles.breakdownCell, styles.breakdownQtyCol]}>{row.quantity}</Text>
+              </View>
+            ))}
+          </View>
+        ) : null}
 
         {descriptor.notes ? (
           <View style={styles.notesBlock}>

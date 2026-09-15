@@ -11,7 +11,8 @@ vi.mock("@/modules/employees/employee.repository", () => ({
 
 const mockPrismaClient = vi.hoisted(() => ({
   productionStage: { findFirst: vi.fn() },
-  jobOrder: { count: vi.fn(), updateMany: vi.fn() },
+  jobOrder: { count: vi.fn(), updateMany: vi.fn(), findMany: vi.fn() },
+  lot: { findUniqueOrThrow: vi.fn() },
   user: { findUnique: vi.fn() },
 }));
 
@@ -101,6 +102,8 @@ beforeEach(() => {
   mockPrismaClient.productionStage.findFirst.mockReset();
   mockPrismaClient.jobOrder.count.mockReset();
   mockPrismaClient.jobOrder.updateMany.mockReset();
+  mockPrismaClient.jobOrder.findMany.mockReset();
+  mockPrismaClient.lot.findUniqueOrThrow.mockReset();
   mockPrismaClient.user.findUnique.mockReset();
   vi.mocked(JobOrderProgressEntryRepository.createInTx).mockReset();
 });
@@ -313,11 +316,51 @@ describe("forwardJobOrder", () => {
     vi.mocked(JobOrderRepository.createInTx).mockResolvedValue({ id: "jo-2", status: "PENDING", completedQuantity: "0" } as never);
     vi.mocked(ProductionStageTransactionRepository.createInTx).mockResolvedValue({ id: "txn-1" } as never);
     vi.mocked(LotRepository.updateInTx).mockResolvedValue({} as never);
+    mockPrismaClient.lot.findUniqueOrThrow.mockResolvedValue({ quantity: "10" } as never);
+    mockPrismaClient.jobOrder.findMany.mockResolvedValue([
+      { completedQuantity: "10", rejectedQuantity: "0", damagedQuantity: "0", productionStage: { isFinal: true } },
+    ] as never);
 
     const result = await forwardJobOrder(actor, "jo-1", { quantity: 10, finishedGoodsWarehouseId: "wh-1" });
 
     expect(JobOrderRepository.findAnyById).toHaveBeenCalledTimes(2);
     expect(result).toMatchObject({ id: "jo-2", status: "COMPLETED", completedQuantity: "10" });
+    expect(LotRepository.updateInTx).toHaveBeenCalledWith(expect.anything(), "lot-1", { status: "COMPLETED" });
+  });
+
+  // Regression test for the bug this session found live: PROD-2026-00008-L01
+  // (lot quantity 22) had a 1-pc rework batch reach Packing (isFinal) while
+  // 20 pcs still sat completed-but-unforwarded at Finishing. The old code
+  // set Lot.status to COMPLETED on ANY final-stage arrival, regardless of
+  // how much of the lot's total quantity that batch represented — which then
+  // made canAct (PLANNED/IN_PROGRESS only) hide Forward on every other
+  // JobOrder for the lot, stranding the remaining 20 pcs with no way to
+  // reach Packing at all.
+  it("does not complete the Lot when a partial batch reaches a final stage while the rest of the lot is still mid-pipeline", async () => {
+    vi.mocked(JobOrderRepository.findAnyById)
+      .mockResolvedValueOnce(jobOrder({ id: "jo-1", completedQuantity: "1", forwardedQuantity: "0", plannedQuantity: "1" }) as never)
+      .mockResolvedValueOnce({ id: "jo-2", status: "COMPLETED", completedQuantity: "1" } as never);
+    vi.mocked(prisma.productionStage.findFirst).mockResolvedValue(stage({ id: "stage-2", sequence: 2, isFinal: true, name: "Packing", code: "PAK" }) as never);
+    vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue({ id: "po-1", productId: "prod-1" } as never);
+    vi.mocked(prisma.jobOrder.count).mockResolvedValue(0);
+    vi.mocked(prisma.jobOrder.updateMany).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(JobOrderRepository.createInTx).mockResolvedValue({ id: "jo-2", status: "PENDING", completedQuantity: "0" } as never);
+    vi.mocked(ProductionStageTransactionRepository.createInTx).mockResolvedValue({ id: "txn-1" } as never);
+    vi.mocked(LotRepository.updateInTx).mockResolvedValue({} as never);
+    // Lot quantity 22 — this batch only accounts for 1 pc at the final stage,
+    // 20 more sit completed-but-unforwarded at a non-final "Finishing" stage.
+    mockPrismaClient.lot.findUniqueOrThrow.mockResolvedValue({ quantity: "22" } as never);
+    mockPrismaClient.jobOrder.findMany.mockResolvedValue([
+      { completedQuantity: "20", rejectedQuantity: "0", damagedQuantity: "0", productionStage: { isFinal: false } }, // Finishing, stuck
+      { completedQuantity: "1", rejectedQuantity: "0", damagedQuantity: "0", productionStage: { isFinal: true } }, // this Packing batch
+    ] as never);
+
+    await forwardJobOrder(actor, "jo-1", { quantity: 1, finishedGoodsWarehouseId: "wh-1" });
+
+    // postStageTransactionInTx always bumps currentStageId/IN_PROGRESS on
+    // every forward — the regression under test is that nothing separately
+    // calls it again with status COMPLETED for this still-in-flight lot.
+    expect(LotRepository.updateInTx).not.toHaveBeenCalledWith(expect.anything(), "lot-1", { status: "COMPLETED" });
   });
 });
 

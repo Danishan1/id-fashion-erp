@@ -77,6 +77,16 @@ interface WarehouseOption {
   name: string;
 }
 
+interface VariantBreakdownSuggestionRow {
+  productVariantId: string;
+  colorName: string;
+  sizeName: string;
+  skuCode: string;
+  orderedQuantity: number | null;
+  alreadyInLots: number;
+  remaining: number | null;
+}
+
 async function parseErrorMessage(res: Response, fallback: string) {
   const body = await res.json().catch(() => null);
   return body?.error?.message ?? fallback;
@@ -107,6 +117,8 @@ export function ProductionOrderWorkflowPanel({
   const [units, setUnits] = useState<UnitOption[]>([]);
   const [lotQuantity, setLotQuantity] = useState("");
   const [lotUomId, setLotUomId] = useState("");
+  const [variantSuggestions, setVariantSuggestions] = useState<VariantBreakdownSuggestionRow[]>([]);
+  const [variantQtyById, setVariantQtyById] = useState<Record<string, string>>({});
 
   const [showGenerateMr, setShowGenerateMr] = useState(false);
   const [warehouses, setWarehouses] = useState<WarehouseOption[]>([]);
@@ -129,6 +141,27 @@ export function ProductionOrderWorkflowPanel({
       .then((res) => res.json())
       .then((body) => setWarehouses(body.data ?? []));
   }, []);
+
+  // Fetches the size/color picker's own suggested quantities fresh every
+  // time the Add Lot modal opens — never trusted stale from a prior open,
+  // since sibling lots' own already-claimed quantities can have changed.
+  useEffect(() => {
+    if (!showAddLot) return;
+    fetch(`/api/v1/production-orders/${productionOrderId}/variant-breakdown-suggestions`)
+      .then((res) => res.json())
+      .then((body) => {
+        const rows: VariantBreakdownSuggestionRow[] = body.data ?? [];
+        setVariantSuggestions(rows);
+        const initial: Record<string, string> = {};
+        for (const r of rows) {
+          if (r.remaining !== null && r.remaining > 0) initial[r.productVariantId] = String(r.remaining);
+        }
+        setVariantQtyById(initial);
+      });
+  }, [showAddLot, productionOrderId]);
+
+  const breakdownTotal = Object.values(variantQtyById).reduce((sum, v) => sum + (Number(v) || 0), 0);
+  const hasVariantOptions = variantSuggestions.length > 0;
 
   const refresh = async () => {
     const res = await fetch(`/api/v1/production-orders/${productionOrderId}`);
@@ -165,12 +198,18 @@ export function ProductionOrderWorkflowPanel({
     run(() => fetch(`/api/v1/production-orders/${productionOrderId}/resume`, { method: "POST" }), "Failed to resume.");
 
   const submitAddLot = async () => {
+    const quantity = hasVariantOptions ? breakdownTotal : Number(lotQuantity);
+    const variantBreakdown = hasVariantOptions
+      ? Object.entries(variantQtyById)
+          .filter(([, v]) => Number(v) > 0)
+          .map(([productVariantId, v]) => ({ productVariantId, quantity: Number(v) }))
+      : undefined;
     const ok = await run(
       () =>
         fetch(`/api/v1/production-orders/${productionOrderId}/lots`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ quantity: Number(lotQuantity), uomId: lotUomId }),
+          body: JSON.stringify({ quantity, uomId: lotUomId, ...(variantBreakdown ? { variantBreakdown } : {}) }),
         }),
       "Failed to create this lot."
     );
@@ -178,6 +217,8 @@ export function ProductionOrderWorkflowPanel({
       setShowAddLot(false);
       setLotQuantity("");
       setLotUomId("");
+      setVariantSuggestions([]);
+      setVariantQtyById({});
     }
   };
 
@@ -510,19 +551,63 @@ export function ProductionOrderWorkflowPanel({
         </div>
       </Modal>
 
-      <Modal open={showAddLot} onClose={() => setShowAddLot(false)} title="Add Lot">
+      <Modal open={showAddLot} onClose={() => setShowAddLot(false)} title="Add Lot" maxWidthClass="max-w-lg">
         <div className="space-y-4">
-          <FormField label="Quantity" htmlFor="lotQuantity" required>
-            <input
-              id="lotQuantity"
-              type="number"
-              min={0}
-              step="0.0001"
-              value={lotQuantity}
-              onChange={(e) => setLotQuantity(e.target.value)}
-              className={textInputClass()}
-            />
-          </FormField>
+          {hasVariantOptions ? (
+            <div>
+              <p className="mb-2 text-xs text-zinc-500">
+                Size/color mix for this lot — shown on the lot&apos;s own page and on the Stage Transfer Slip so a
+                worker at any stage knows exactly what they&apos;re handling.
+                {order.salesOrderItemId && " Pre-filled from what's still remaining on the linked Sales Order line."}
+              </p>
+              <div className="max-h-64 overflow-y-auto rounded-md border border-zinc-200 dark:border-zinc-800">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-zinc-50 dark:bg-zinc-900">
+                    <tr className="text-left text-xs text-zinc-500">
+                      <th className="px-2 py-1.5 font-medium">Color</th>
+                      <th className="px-2 py-1.5 font-medium">Size</th>
+                      {order.salesOrderItemId && <th className="px-2 py-1.5 text-right font-medium">Remaining</th>}
+                      <th className="px-2 py-1.5 text-right font-medium">Qty for this lot</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {variantSuggestions.map((v) => (
+                      <tr key={v.productVariantId} className="border-t border-zinc-100 dark:border-zinc-800">
+                        <td className="px-2 py-1.5 text-zinc-700 dark:text-zinc-200">{v.colorName}</td>
+                        <td className="px-2 py-1.5 text-zinc-700 dark:text-zinc-200">{v.sizeName}</td>
+                        {order.salesOrderItemId && (
+                          <td className="px-2 py-1.5 text-right text-zinc-500">{v.remaining}</td>
+                        )}
+                        <td className="px-2 py-1.5 text-right">
+                          <input
+                            type="number"
+                            min={0}
+                            step="0.0001"
+                            value={variantQtyById[v.productVariantId] ?? ""}
+                            onChange={(e) => setVariantQtyById((prev) => ({ ...prev, [v.productVariantId]: e.target.value }))}
+                            className="w-24 rounded border border-zinc-300 px-2 py-1 text-right text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="mt-2 text-sm font-medium text-zinc-900 dark:text-zinc-50">Total Quantity: {breakdownTotal}</p>
+            </div>
+          ) : (
+            <FormField label="Quantity" htmlFor="lotQuantity" required>
+              <input
+                id="lotQuantity"
+                type="number"
+                min={0}
+                step="0.0001"
+                value={lotQuantity}
+                onChange={(e) => setLotQuantity(e.target.value)}
+                className={textInputClass()}
+              />
+            </FormField>
+          )}
           <FormField label="Unit" htmlFor="lotUomId" required>
             <select id="lotUomId" value={lotUomId} onChange={(e) => setLotUomId(e.target.value)} className={textInputClass()}>
               <option value="">— Select —</option>
@@ -540,7 +625,7 @@ export function ProductionOrderWorkflowPanel({
             <button
               type="button"
               onClick={submitAddLot}
-              disabled={isBusy || !lotQuantity || !lotUomId}
+              disabled={isBusy || !lotUomId || (hasVariantOptions ? breakdownTotal <= 0 : !lotQuantity)}
               className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
             >
               {isBusy ? "Saving…" : "Add Lot"}

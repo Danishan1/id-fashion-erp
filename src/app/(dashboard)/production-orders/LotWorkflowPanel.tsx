@@ -32,6 +32,12 @@ interface JobOrderRow {
   assignments: Assignment[];
 }
 
+interface LotVariantBreakdownRow {
+  id: string;
+  quantity: string;
+  productVariant: { id: string; skuCode: string; color: { name: string }; size: { name: string } };
+}
+
 interface LotDetail {
   id: string;
   lotNumber: string;
@@ -39,6 +45,7 @@ interface LotDetail {
   status: LotStatus;
   uom: { id: string; code: string };
   currentStage: { id: string; name: string } | null;
+  variantBreakdown: LotVariantBreakdownRow[];
   jobOrders: JobOrderRow[];
 }
 
@@ -373,6 +380,35 @@ export function LotWorkflowPanel({
       </div>
 
       {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+
+      {lot.variantBreakdown.length > 0 && (
+        <div className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
+          <h2 className="mb-3 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Size / Color Breakdown</h2>
+          <p className="mb-2 text-xs text-zinc-500">
+            What this lot&apos;s {lot.quantity} {lot.uom.code} is actually made of — same at every stage below.
+          </p>
+          <div className="overflow-x-auto">
+            <table className="text-sm">
+              <thead>
+                <tr className="text-left text-xs text-zinc-500">
+                  <th className="py-1 pr-6 font-medium">Color</th>
+                  <th className="py-1 pr-6 font-medium">Size</th>
+                  <th className="py-1 font-medium">Quantity</th>
+                </tr>
+              </thead>
+              <tbody>
+                {lot.variantBreakdown.map((row) => (
+                  <tr key={row.id} className="border-t border-zinc-100 dark:border-zinc-800">
+                    <td className="py-1.5 pr-6 text-zinc-700 dark:text-zinc-200">{row.productVariant.color.name}</td>
+                    <td className="py-1.5 pr-6 text-zinc-700 dark:text-zinc-200">{row.productVariant.size.name}</td>
+                    <td className="py-1.5 font-medium text-zinc-900 dark:text-zinc-50">{row.quantity}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {createdJobWorkOrderId && (
         <p className="text-sm text-emerald-600 dark:text-emerald-400">
