@@ -14,7 +14,7 @@ export interface SamplingFiltersValue {
   requestedByUserId: string;
   dateFrom: string;
   dateTo: string;
-  color: string;
+  colorId: string;
 }
 
 export const EMPTY_FILTERS: SamplingFiltersValue = {
@@ -25,7 +25,7 @@ export const EMPTY_FILTERS: SamplingFiltersValue = {
   requestedByUserId: "",
   dateFrom: "",
   dateTo: "",
-  color: "",
+  colorId: "",
 };
 
 interface Option {
@@ -42,7 +42,7 @@ function countActive(f: SamplingFiltersValue): number {
     (f.statuses.length > 0 ? 1 : 0) +
     (f.requestedByUserId ? 1 : 0) +
     (f.dateFrom || f.dateTo ? 1 : 0) +
-    (f.color ? 1 : 0)
+    (f.colorId ? 1 : 0)
   );
 }
 
@@ -79,6 +79,7 @@ export function SamplingFilters({
   const [customers, setCustomers] = useState<Option[]>([]);
   const [buyers, setBuyers] = useState<Option[]>([]);
   const [users, setUsers] = useState<Option[]>([]);
+  const [colors, setColors] = useState<Option[]>([]);
 
   useEffect(() => {
     fetch("/api/v1/customers?pageSize=200")
@@ -87,6 +88,9 @@ export function SamplingFilters({
     fetch("/api/v1/users")
       .then((res) => res.json())
       .then((body) => setUsers(body.data ?? []));
+    fetch("/api/v1/colors?pageSize=200")
+      .then((res) => res.json())
+      .then((body) => setColors(body.data ?? []));
   }, []);
 
   // Resetting `buyers` when the customer is cleared happens in the Customer
@@ -180,12 +184,15 @@ export function SamplingFilters({
 
             <div>
               <label className="block text-xs font-medium text-zinc-500 dark:text-zinc-400">Color</label>
-              <input
-                value={draft.color}
-                onChange={(e) => setDraft((d) => ({ ...d, color: e.target.value }))}
-                placeholder="Search color…"
-                className={`${textInputClass()} mt-1`}
-              />
+              <div className="mt-1">
+                <SearchableSelect
+                  value={draft.colorId}
+                  onChange={(colorId) => setDraft((d) => ({ ...d, colorId }))}
+                  options={colors.map((c) => ({ id: c.id, label: c.name ?? "" }))}
+                  placeholder="Search color…"
+                  emptyOptionLabel="— Any —"
+                />
+              </div>
             </div>
 
             <div>

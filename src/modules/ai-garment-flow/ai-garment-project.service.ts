@@ -726,13 +726,17 @@ export async function createSampleRequestFromProject(
     );
   }
 
+  // Note: `input.color` (a free-text value) is deliberately NOT threaded
+  // through here — Sample Request's own color/size are now real Color/Size
+  // master FKs (2026-09-15), and a free-text value has no reliable match to
+  // pick from automatically. The merchandiser picks the real color/size on
+  // the created sample request directly afterward, same as any other sample.
   const sampleRequest = await createSampleRequest(actor, {
     customerId: project.customerId,
     buyerId: project.buyerId || undefined,
     productId: project.productId,
     styleName: project.projectName,
     sampleType: input.sampleType,
-    color: input.color || undefined,
     requestDate: todayIsoDate(),
     targetSubmissionDate: input.targetSubmissionDate || undefined,
   });

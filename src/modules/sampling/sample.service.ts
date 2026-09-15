@@ -26,6 +26,7 @@ import {
 } from "./sample.repository";
 import { ProductRepository } from "@/modules/products/product.repository";
 import { CustomerRepository } from "@/modules/customers/customer.repository";
+import { LookupRepository } from "@/modules/lookups/lookup.repository";
 import { BomRepository } from "@/modules/bom-mrp/bom.repository";
 import { advanceMasterCodeSequence } from "@/core/numbering/DocumentNumberingService";
 import { SampleStatus, SampleType, type Prisma, type SampleVersionStatus } from "@prisma/client";
@@ -97,7 +98,20 @@ export interface SampleRequestListFilters {
   requestedByUserId?: string;
   dateFrom?: string;
   dateTo?: string;
-  color?: string;
+  colorId?: string;
+}
+
+/** Tenant-scope check on a Color/Size master id before it's ever written to
+ * a SampleRequest — same discipline as customer/product's own checks just
+ * below in createSampleRequest. */
+async function assertColorBelongsToCompany(companyId: string, colorId: string) {
+  const color = await LookupRepository.color.findFirst({ where: { id: colorId, companyId } });
+  if (!color) throw new BusinessRuleError("NOT_FOUND", "Color not found.", { id: colorId });
+}
+
+async function assertSizeBelongsToCompany(companyId: string, sizeId: string) {
+  const size = await LookupRepository.size.findFirst({ where: { id: sizeId, companyId } });
+  if (!size) throw new BusinessRuleError("NOT_FOUND", "Size not found.", { id: sizeId });
 }
 
 const VALID_SAMPLE_STATUSES = new Set<string>(Object.values(SampleStatus));
@@ -142,7 +156,7 @@ export async function listSampleRequests(companyId: string, query: ListQuery, fi
     ...(filters.requestedByUserId ? { requestedByUserId: filters.requestedByUserId } : {}),
     ...(filters.sampleType ? { sampleType: filters.sampleType } : {}),
     ...(statuses.length > 0 ? { status: { in: statuses } } : {}),
-    ...(filters.color ? { color: { contains: filters.color, mode: "insensitive" as const } } : {}),
+    ...(filters.colorId ? { colorId: filters.colorId } : {}),
     // Style has no single source column — a request may only have the
     // free-text styleName, only a linked Product, or (usually) both kept in
     // sync — so a style search matches either rather than picking one.
@@ -202,6 +216,9 @@ export async function createSampleRequest(actor: ActorContext, input: SampleRequ
     if (!product) throw new BusinessRuleError("NOT_FOUND", "Style not found.", { id: input.productId });
   }
 
+  if (input.colorId) await assertColorBelongsToCompany(actor.companyId, input.colorId);
+  if (input.sizeId) await assertSizeBelongsToCompany(actor.companyId, input.sizeId);
+
   const requestNumber = await generateDocumentNumber({
     companyId: actor.companyId,
     branchId: actor.branchId ?? null,
@@ -217,7 +234,8 @@ export async function createSampleRequest(actor: ActorContext, input: SampleRequ
     productId: input.productId || null,
     styleName: input.styleName,
     sampleType: input.sampleType,
-    color: input.color || null,
+    colorId: input.colorId || null,
+    sizeId: input.sizeId || null,
     requestedByUserId: actor.userId,
     requestDate: new Date(input.requestDate),
     targetSubmissionDate: input.targetSubmissionDate ? new Date(input.targetSubmissionDate) : null,
@@ -237,14 +255,23 @@ export async function createSampleRequest(actor: ActorContext, input: SampleRequ
   return request;
 }
 
-// Color is deliberately editable at any status, not just non-terminal ones —
-// a client that only sent a photo often confirms/changes the color well
-// after the sample is physically made, sometimes even after approval.
-export async function updateSampleRequestColor(actor: ActorContext, id: string, color: string | null) {
+// Color/Size are deliberately editable at any status, not just non-terminal
+// ones — a client that only sent a photo often confirms/changes the color+
+// size well after the sample is physically made, sometimes even after
+// approval. Both are real Color/Size master FKs (2026-09-15) — re-verified
+// tenant-scoped here rather than trusted from the caller.
+export async function updateSampleRequestColor(
+  actor: ActorContext,
+  id: string,
+  input: { colorId: string | null; sizeId: string | null }
+) {
   const existing = await SampleRequestRepository.findAnyById(actor.companyId, id);
   if (!existing) throw new BusinessRuleError("NOT_FOUND", "Sample request not found.", { id });
 
-  const updated = await SampleRequestRepository.update(id, { color });
+  if (input.colorId) await assertColorBelongsToCompany(actor.companyId, input.colorId);
+  if (input.sizeId) await assertSizeBelongsToCompany(actor.companyId, input.sizeId);
+
+  const updated = await SampleRequestRepository.update(id, { colorId: input.colorId, sizeId: input.sizeId });
 
   await writeAuditLog({
     companyId: actor.companyId,
@@ -252,8 +279,8 @@ export async function updateSampleRequestColor(actor: ActorContext, id: string, 
     tableName: "sample_requests",
     recordId: id,
     action: "UPDATE",
-    oldValues: { color: existing.color },
-    newValues: { color: updated.color },
+    oldValues: { colorId: existing.colorId, sizeId: existing.sizeId },
+    newValues: { colorId: updated.colorId, sizeId: updated.sizeId },
   });
 
   return updated;

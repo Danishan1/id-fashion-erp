@@ -176,7 +176,7 @@ export const MaterialRequestItemRepository = {
       include: {
         material: { select: { id: true, styleName: true, materialCategory: true, baseUomId: true, baseUom: true } },
         uom: true,
-        materialRequest: { select: { id: true, companyId: true, warehouseId: true, status: true } },
+        materialRequest: { select: { id: true, companyId: true, warehouseId: true, status: true, requestType: true } },
       },
     }),
 
