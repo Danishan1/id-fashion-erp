@@ -6324,6 +6324,64 @@ Gurugram Factory" example), deferring the other ~18 branchId-carrying models to 
   etc.) — extend using this exact same `getAllowedBranchIds`/`branchScopeWhere`/`assertBranchAccess` pattern
   once that next module is prioritized.
 
+## Branch-level data access control, second phase — Sales Orders, Purchase Orders, Production, Dispatch, Accounts (2026-09-15)
+
+User authorized extending the pattern above to all remaining branch-carrying modules in one pass, confirmed
+via AskUserQuestion (multiSelect: all four proposed groups — Sales Orders + Purchase Orders; Production
+[Production Orders, Lots, Job Orders]; Dispatch; Accounts [Journal, Invoices, Payments, Expenses] — were all
+selected). Zero new mechanism — every one of these 9 service files was updated to the exact same
+`getAllowedBranchIds`/`branchScopeWhere`/`assertBranchAccess`/"deny as `NOT_FOUND`" convention the first
+phase already proved, with no schema or `PermissionService` changes needed at all.
+
+- **The rollout pattern, applied identically to every module**: `list*(companyId, query)` →
+  `list*(actor: { companyId; userId }, query)`, computing `allowedBranchIds` and spreading
+  `branchScopeWhere(allowedBranchIds)` into the Prisma `where`; `get*ById(companyId, id)` →
+  `get*ById(actor, id)`, adding the same `allowedBranchIds !== null && (!record.branchId ||
+  !allowedBranchIds.has(record.branchId)) → NOT_FOUND` check after the existing not-found guard. Every
+  internal caller within the same service file and every external caller (API routes, Server Component
+  pages) updated to pass `{ companyId: session.user.companyId, userId: session.user.id }` instead of a bare
+  `companyId`. Applied to `sales-order.service.ts`, `purchase-order.service.ts`,
+  `production-order.service.ts`, `lot.service.ts`, `job-order.service.ts`, `dispatch.service.ts`,
+  `journal.service.ts`, `sales-invoice.service.ts`, `purchase-invoice.service.ts`, `payment.service.ts`, and
+  `expense.service.ts` — 11 `list`/`get` pairs across 9 service files.
+- **`JobOrder` has no `branchId` column of its own** — it derives branch scope from its parent `Lot
+  .branchId`, requiring `branchId: true` to be added to the nested `lot` select inside the shared
+  `JOB_ORDER_INCLUDE` repository constant (`production.repository.ts`) rather than any schema migration.
+  Confirmed via grep before assuming this was safe — `JobOrder` genuinely has only `lotId`/
+  `productionStageId`, no `branchId`.
+- **`getJobOrderById`'s new branch-check parameter is optional (`userId?: string`), not required** — the
+  branch check is skipped entirely when it's omitted, so any hypothetical future internal caller that
+  doesn't need branch scoping can't be broken by this change. A dedicated unit test proves the no-op when
+  `userId` is absent.
+- **`getLotById(companyId, id, userId)` already had a `userId` param** from the earlier per-role Production
+  Stage access pass (used to filter job orders by allowed production stage) — the new branch check was
+  added as an additional guard using that same existing param, placed before the existing stage-filtering
+  logic, rather than adding a second parameter for the same actor.
+- **19 new unit tests** across the 9 modules' own test files (branch-filtered/unfiltered list `where` shape,
+  in-scope success, out-of-scope `NOT_FOUND`), each adding `getAllowedBranchIds: vi.fn()` to that module's
+  existing `PermissionService` mock (or creating the mock from scratch for the two modules —
+  `production-order.service.test.ts`, `lot.service.test.ts` — that had none at all before).
+- **Verified live end-to-end against real, pre-existing dev-DB data** — not fixtures: granted the existing
+  "Branch Access Test Role" the new modules' `view` permission (36 total now), reactivated the "Branch Test
+  User," then flipped one real Sales Order (`ORD-2026-00001`), one real Purchase Order (`PO-2026-00009`),
+  and the one real Production Order (`PROD-2026-00004`) to the Gurugram branch — confirmed the restricted
+  test user's list views correctly excluded all three and a direct `GET .../:id` call returned `404
+  NOT_FOUND` for each, then restored all three to Head Office. Confirmed Super Admin's own unrestricted view
+  was unaffected throughout. Test user suspended afterward; the "Branch Access Test Role" kept as a real,
+  working demonstration, per the same precedent already established.
+- **Accounts-side modules (Dispatch, Journal, Sales Invoice, Purchase Invoice, Payment, Expense) were not
+  live-verified this pass** — this dev DB has zero real transactional records in any of them, and its Chart
+  of Accounts currently holds only leftover test rows rather than the standard seeded set, so building fresh
+  fixtures purely for this check wasn't judged worth it given their branch-access logic already has
+  dedicated, passing unit tests covering the same enforcement shape already proven live on the other 5
+  modules.
+- `npx tsc --noEmit`, `npx eslint .` (0 errors), and `npx vitest run` (1616/1616, 19 new) all clean
+  throughout — including after merging a same-day, independently-landed `main` commit (Lot size/color
+  breakdown, #44) that touched several of the same files; the one real conflict (both branches added
+  different new test blocks to `lot.service.test.ts`) was resolved by keeping both sets of tests side by
+  side, and `prisma generate`/`prisma migrate deploy` were re-run to pick up that commit's own new
+  `LotVariantBreakdown` schema addition.
+
 ## Recommended Stack
 
 Next.js 14+ (App Router) + React + TypeScript + Tailwind CSS (frontend); Next.js API routes/route handlers as REST API; PostgreSQL + Prisma ORM; session-based auth (Auth.js/NextAuth, DB sessions) with RBAC and optional TOTP 2FA; S3-compatible or local file storage for attachments; server-side PDF/Excel export (`exceljs`, `pdf-lib`/`@react-pdf/renderer`).
