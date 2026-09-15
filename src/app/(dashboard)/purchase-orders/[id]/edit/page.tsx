@@ -8,7 +8,7 @@ export default async function EditPurchaseOrderPage({ params }: { params: Promis
   const { id } = await params;
   const session = await auth();
 
-  const order = await getPurchaseOrderById(session!.user.companyId, id).catch(() => null);
+  const order = await getPurchaseOrderById({ companyId: session!.user.companyId, userId: session!.user.id }, id).catch(() => null);
   if (!order) notFound();
 
   if (order.status !== "DRAFT" && order.status !== "APPROVED") {

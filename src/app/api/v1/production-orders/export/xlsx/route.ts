@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
     await PermissionService.assert(session.user.id, "production", "export");
 
     const search = req.nextUrl.searchParams.get("search") || undefined;
-    const { data } = await listProductionOrders(session.user.companyId, {
+    const { data } = await listProductionOrders({ companyId: session.user.companyId, userId: session.user.id }, {
       page: 1,
       pageSize: EXPORT_ROW_CAP,
       skip: 0,

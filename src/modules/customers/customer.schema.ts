@@ -1,14 +1,19 @@
 import { z } from "zod";
-import { requiredPhoneSchema } from "@/lib/validation";
+import { requiredPhoneSchema, optionalPhoneSchema } from "@/lib/validation";
 
 export const customerSchema = z.object({
   code: z.string().min(1, "Code is required").max(30),
   name: z.string().min(1, "Name is required").max(200),
   type: z.enum(["CUSTOMER", "AGENT"]).default("CUSTOMER"),
-  country: z.string().max(100).optional().or(z.literal("")),
-  taxRegistrationNo: z.string().max(50).optional().or(z.literal("")),
+  contactPerson: z.string().max(200).optional().or(z.literal("")),
+  phone: optionalPhoneSchema,
+  email: z.string().max(200).email("Enter a valid email address").optional().or(z.literal("")),
   billingAddress: z.string().max(500).optional().or(z.literal("")),
   shippingAddress: z.string().max(500).optional().or(z.literal("")),
+  city: z.string().max(100).optional().or(z.literal("")),
+  pinCode: z.string().max(20).optional().or(z.literal("")),
+  country: z.string().max(100).optional().or(z.literal("")),
+  taxRegistrationNo: z.string().max(50).optional().or(z.literal("")),
   paymentTermsDays: z.coerce.number().int().min(0).optional(),
   creditLimit: z.coerce.number().min(0).optional(),
   defaultCurrencyCode: z.string().length(3).optional().or(z.literal("")),

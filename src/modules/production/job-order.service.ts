@@ -343,9 +343,18 @@ function guardedIncrementQcPassed(tx: Prisma.TransactionClient, jobOrderId: stri
   });
 }
 
-export async function getJobOrderById(companyId: string, id: string) {
+/** A branch-restricted user gets NOT_FOUND for a job order outside their allowed branches — derived from its own Lot's branch, since JobOrder itself carries no branchId column. */
+export async function getJobOrderById(companyId: string, id: string, userId?: string) {
   const jobOrder = await JobOrderRepository.findAnyById(companyId, id);
   if (!jobOrder) throw new BusinessRuleError("NOT_FOUND", "Job order not found.", { id });
+
+  if (userId) {
+    const allowedBranchIds = await PermissionService.getAllowedBranchIds(userId);
+    if (allowedBranchIds !== null && (!jobOrder.lot.branchId || !allowedBranchIds.has(jobOrder.lot.branchId))) {
+      throw new BusinessRuleError("NOT_FOUND", "Job order not found.", { id });
+    }
+  }
+
   return jobOrder;
 }
 

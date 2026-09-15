@@ -4,6 +4,7 @@ import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingServic
 import { PermissionService } from "@/core/rbac/PermissionService";
 import { prisma } from "@/core/db/client";
 import type { ListQuery } from "@/lib/list-query";
+import { branchScopeWhere } from "@/lib/branch-access";
 import type { Prisma } from "@prisma/client";
 import { CustomerRepository } from "@/modules/customers/customer.repository";
 import { SupplierRepository } from "@/modules/suppliers/supplier.repository";
@@ -27,9 +28,11 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-export async function listPayments(companyId: string, query: ListQuery) {
+export async function listPayments(actor: { companyId: string; userId: string }, query: ListQuery) {
+  const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
   const where: Prisma.PaymentWhereInput = {
-    companyId,
+    companyId: actor.companyId,
+    ...branchScopeWhere(allowedBranchIds),
     ...(query.search ? { paymentNumber: { contains: query.search, mode: "insensitive" as const } } : {}),
   };
 
@@ -45,9 +48,16 @@ export async function listPayments(companyId: string, query: ListQuery) {
   return { data, totalCount };
 }
 
-export async function getPaymentById(companyId: string, id: string) {
-  const payment = await PaymentRepository.findByIdWithDetails(companyId, id);
+/** A branch-restricted user gets NOT_FOUND for a payment outside their allowed branches — same "deny as not-found" convention used across this app. */
+export async function getPaymentById(actor: { companyId: string; userId: string }, id: string) {
+  const payment = await PaymentRepository.findByIdWithDetails(actor.companyId, id);
   if (!payment) throw new BusinessRuleError("NOT_FOUND", "Payment not found.", { id });
+
+  const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
+  if (allowedBranchIds !== null && (!payment.branchId || !allowedBranchIds.has(payment.branchId))) {
+    throw new BusinessRuleError("NOT_FOUND", "Payment not found.", { id });
+  }
+
   return payment;
 }
 

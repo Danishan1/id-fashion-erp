@@ -16,7 +16,7 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
     await PermissionService.assert(session.user.id, "sales_orders", "export");
 
     const { id } = await params;
-    const order = await getSalesOrderById(session.user.companyId, id);
+    const order = await getSalesOrderById({ companyId: session.user.companyId, userId: session.user.id }, id);
     const customerAddress = await prisma.customer.findUnique({
       where: { id: order.customerId },
       select: { billingAddress: true, country: true },

@@ -3,7 +3,7 @@ import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/numbering/DocumentNumberingService", () => ({ generateDocumentNumber: vi.fn() }));
-vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { assert: vi.fn() } }));
+vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { assert: vi.fn(), getAllowedBranchIds: vi.fn() } }));
 vi.mock("@/core/db/client", () => ({ prisma: { deal: { findFirst: vi.fn() } } }));
 vi.mock("@/modules/customers/customer.repository", () => ({
   CustomerRepository: { findByIdWithBuyers: vi.fn() },
@@ -55,6 +55,7 @@ const {
   resumeSalesOrderFromHold,
   getSalesOrderById,
   getLastOrderedPrice,
+  listSalesOrders,
 } = await import("./sales-order.service");
 
 const actor = { companyId: "co-1", userId: "user-1", branchId: "br-1" };
@@ -84,6 +85,7 @@ beforeEach(() => {
   vi.mocked(DispatchRepository.findAnyByOrderId).mockReset().mockResolvedValue(null);
   vi.mocked(SampleRequestRepository.findMany).mockReset().mockResolvedValue([]);
   vi.mocked(PermissionService.assert).mockReset().mockResolvedValue(undefined as never);
+  vi.mocked(PermissionService.getAllowedBranchIds).mockReset().mockResolvedValue(null);
 });
 
 describe("createSalesOrder", () => {
@@ -309,7 +311,7 @@ describe("getSalesOrderById", () => {
       .mockResolvedValueOnce({ salesOrderItemId: "item-1", orderedTotal: 100 } as never)
       .mockResolvedValueOnce({ salesOrderItemId: "item-2", orderedTotal: 50 } as never);
 
-    const order = await getSalesOrderById("co-1", "so-1");
+    const order = await getSalesOrderById(actor, "so-1");
 
     expect(getSalesOrderItemProductionSummary).toHaveBeenCalledWith("co-1", "item-1");
     expect(getSalesOrderItemProductionSummary).toHaveBeenCalledWith("co-1", "item-2");
@@ -319,7 +321,7 @@ describe("getSalesOrderById", () => {
 
   it("rejects a sales order that doesn't exist", async () => {
     vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue(null);
-    await expect(getSalesOrderById("co-1", "missing")).rejects.toThrow(BusinessRuleError);
+    await expect(getSalesOrderById(actor, "missing")).rejects.toThrow(BusinessRuleError);
   });
 });
 
@@ -346,5 +348,49 @@ describe("getLastOrderedPrice", () => {
     vi.mocked(SalesOrderRepository.findLastOrderedItem).mockResolvedValue(null);
     const result = await getLastOrderedPrice("co-1", "cust-1", "style-1");
     expect(result).toBeNull();
+  });
+});
+
+describe("branch access enforcement (2026-09-15)", () => {
+  const listQuery = { search: "", sortBy: "createdAt", sortOrder: "desc" as const, page: 1, pageSize: 20, skip: 0, take: 20 };
+
+  beforeEach(() => {
+    vi.mocked(SalesOrderRepository.findMany).mockReset().mockResolvedValue([]);
+    vi.mocked(SalesOrderRepository.count).mockReset().mockResolvedValue(0);
+  });
+
+  it("listSalesOrders adds no branch filter for an unrestricted user", async () => {
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(null);
+
+    await listSalesOrders(actor, listQuery);
+
+    const whereArg = vi.mocked(SalesOrderRepository.findMany).mock.calls[0][0];
+    expect(whereArg).not.toHaveProperty("branchId");
+  });
+
+  it("listSalesOrders adds a branchId IN filter for a branch-restricted user", async () => {
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    await listSalesOrders(actor, listQuery);
+
+    expect(SalesOrderRepository.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ branchId: { in: ["branch-1"] } }),
+      expect.anything()
+    );
+  });
+
+  it("getSalesOrderById succeeds for an order inside the user's allowed branches", async () => {
+    vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue({ id: "so-1", branchId: "branch-1", items: [] } as never);
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    const order = await getSalesOrderById(actor, "so-1");
+    expect(order.id).toBe("so-1");
+  });
+
+  it("getSalesOrderById throws NOT_FOUND for an order outside the user's allowed branches", async () => {
+    vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue({ id: "so-1", branchId: "branch-2", items: [] } as never);
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    await expect(getSalesOrderById(actor, "so-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 });

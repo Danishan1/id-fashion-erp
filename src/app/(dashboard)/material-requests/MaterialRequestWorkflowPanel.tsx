@@ -125,6 +125,14 @@ export function MaterialRequestWorkflowPanel({
   const [issuingLine, setIssuingLine] = useState<LineRow | null>(null);
   const [issueQty, setIssueQty] = useState("");
   const [issueLocationId, setIssueLocationId] = useState("");
+  // "Issue Extra" manual override (2026-09-15) — only ever offered for
+  // SAMPLING_REQUIREMENT requests, since real sample-making routinely needs
+  // slightly more material than the planned/BOM quantity (e.g. 2m planned,
+  // 2.2m actually used). A reason is required whenever the entered quantity
+  // genuinely exceeds what remains — enforced server-side, this is just the
+  // matching UI.
+  const [issueExtra, setIssueExtra] = useState(false);
+  const [issueExtraReason, setIssueExtraReason] = useState("");
   const [locations, setLocations] = useState<LocationOption[]>([]);
   // Color/shade-wise stock breakdown for the line currently being issued —
   // only ever populated for a FABRIC material (see fetch below); a
@@ -211,6 +219,7 @@ export function MaterialRequestWorkflowPanel({
             issueQuantity: Number(issueQty),
             warehouseLocationId: issueLocationId || undefined,
             fabricRollId: selectedRollId || undefined,
+            extraReason: issueExtra ? issueExtraReason || undefined : undefined,
           }),
         }),
       "Failed to issue this line."
@@ -463,6 +472,8 @@ export function MaterialRequestWorkflowPanel({
                             setIssuingLine(line);
                             setIssueLocationId("");
                             setSelectedRollId("");
+                            setIssueExtra(false);
+                            setIssueExtraReason("");
                             setError(null);
                             if (line.material.materialCategory === "FABRIC") {
                               // Real cap depends on which roll/shade gets
@@ -584,8 +595,14 @@ export function MaterialRequestWorkflowPanel({
           // has no roll-level stock recorded at all (nothing to pick from).
           const effectiveAvailable =
             isFabric && availableRolls.length > 0 ? Number(selectedRoll?.remainingQuantity ?? 0) : issuingLine.availableStockQuantity;
-          const cap = Math.min(issuingLine.remainingQuantity, effectiveAvailable);
+          const canIssueExtra = request.requestType === "SAMPLING_REQUIREMENT";
+          // With "Issue Extra" checked, the only real ceiling left is
+          // physical stock — the planned/requested quantity is deliberately
+          // no longer a hard cap, matching the confirmed override design.
+          const cap = issueExtra && canIssueExtra ? effectiveAvailable : Math.min(issuingLine.remainingQuantity, effectiveAvailable);
           const mustPickRoll = isFabric && availableRolls.length > 0 && !selectedRollId;
+          const isOverPlanned = Number(issueQty) > issuingLine.remainingQuantity;
+          const needsExtraReason = issueExtra && isOverPlanned && !issueExtraReason.trim();
 
           return (
           <div className="space-y-4">
@@ -654,6 +671,34 @@ export function MaterialRequestWorkflowPanel({
                 className={textInputClass()}
               />
             </FormField>
+
+            {canIssueExtra && (
+              <div className="space-y-2 rounded-md border border-dashed border-zinc-300 p-3 dark:border-zinc-700">
+                <label className="flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+                  <input
+                    type="checkbox"
+                    checked={issueExtra}
+                    onChange={(e) => {
+                      setIssueExtra(e.target.checked);
+                      if (!e.target.checked) setIssueExtraReason("");
+                    }}
+                  />
+                  Issue extra (beyond the {issuingLine.remainingQuantity} {issuingLine.uom.code} planned)
+                </label>
+                {issueExtra && (
+                  <FormField label="Reason" htmlFor="issueExtraReason" required={isOverPlanned}>
+                    <input
+                      id="issueExtraReason"
+                      value={issueExtraReason}
+                      onChange={(e) => setIssueExtraReason(e.target.value)}
+                      placeholder="e.g. extra wastage during sample cutting"
+                      className={textInputClass()}
+                    />
+                  </FormField>
+                )}
+              </div>
+            )}
+
             <FormField label="Location (optional)" htmlFor="issueLocationId">
               {(() => {
                 // Only offer locations that actually make sense for this
@@ -693,7 +738,7 @@ export function MaterialRequestWorkflowPanel({
               <button
                 type="button"
                 onClick={submitIssue}
-                disabled={isBusy || mustPickRoll || !(Number(issueQty) > 0)}
+                disabled={isBusy || mustPickRoll || needsExtraReason || !(Number(issueQty) > 0)}
                 className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
               >
                 {isBusy ? "Saving…" : "Issue"}

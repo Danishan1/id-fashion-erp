@@ -23,7 +23,7 @@ export async function GET(req: NextRequest) {
       requestedByUserId: params.get("requestedByUserId") || undefined,
       dateFrom: params.get("dateFrom") || undefined,
       dateTo: params.get("dateTo") || undefined,
-      color: params.get("color") || undefined,
+      colorId: params.get("colorId") || undefined,
     });
 
     const { data, totalCount } = await listSampleRequests(session.user.companyId, query, filters);

@@ -85,6 +85,10 @@ function toData(input: EmployeeInput) {
     reportsToId: input.reportsToId || null,
     phone: input.phone || null,
     email: input.email || null,
+    address: input.address || null,
+    city: input.city || null,
+    pinCode: input.pinCode || null,
+    country: input.country || null,
     joinDate: input.joinDate ? new Date(input.joinDate) : null,
     isActive: input.isActive ?? true,
     payType: input.payType || null,
@@ -108,6 +112,10 @@ function toUpdateData(input: EmployeeUpdateInput): Prisma.EmployeeUncheckedUpdat
   if (input.reportsToId !== undefined) data.reportsToId = input.reportsToId || null;
   if (input.phone !== undefined) data.phone = input.phone || null;
   if (input.email !== undefined) data.email = input.email || null;
+  if (input.address !== undefined) data.address = input.address || null;
+  if (input.city !== undefined) data.city = input.city || null;
+  if (input.pinCode !== undefined) data.pinCode = input.pinCode || null;
+  if (input.country !== undefined) data.country = input.country || null;
   if (input.joinDate !== undefined) data.joinDate = input.joinDate ? new Date(input.joinDate) : null;
   if (input.isActive !== undefined) data.isActive = input.isActive;
   if (input.payType !== undefined) data.payType = input.payType || null;

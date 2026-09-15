@@ -10,7 +10,7 @@ export default async function SalesOrderDetailPage({ params }: { params: Promise
   const { id } = await params;
   const session = await auth();
 
-  const order = await getSalesOrderById(session!.user.companyId, id).catch(() => null);
+  const order = await getSalesOrderById({ companyId: session!.user.companyId, userId: session!.user.id }, id).catch(() => null);
   if (!order) notFound();
 
   return (

@@ -3,7 +3,7 @@ import { Prisma } from "@prisma/client";
 
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/numbering/DocumentNumberingService", () => ({ generateDocumentNumber: vi.fn() }));
-vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { assert: vi.fn() } }));
+vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { assert: vi.fn(), getAllowedBranchIds: vi.fn() } }));
 vi.mock("@/modules/sales-orders/sales-order.repository", () => ({
   SalesOrderRepository: { findByIdWithDetails: vi.fn() },
 }));
@@ -45,7 +45,7 @@ const { SalesInvoiceRepository } = await import("./sales-invoice.repository");
 const { ChartOfAccountRepository } = await import("./chart-of-account.repository");
 const { TaxRateRepository } = await import("./tax-config.repository");
 const { postJournalCore } = await import("./journal.service");
-const { createSalesInvoice, postSalesInvoice, cancelSalesInvoice, updateSalesInvoice } = await import(
+const { createSalesInvoice, postSalesInvoice, cancelSalesInvoice, updateSalesInvoice, listSalesInvoices, getSalesInvoiceById } = await import(
   "./sales-invoice.service"
 );
 
@@ -62,6 +62,7 @@ function orderItem(id: string, unitPrice: string, quantities: number[]) {
 
 beforeEach(() => {
   vi.mocked(PermissionService.assert).mockReset().mockResolvedValue(undefined);
+  vi.mocked(PermissionService.getAllowedBranchIds).mockReset().mockResolvedValue(null);
   vi.mocked(SalesOrderRepository.findByIdWithDetails).mockReset();
   vi.mocked(SalesInvoiceRepository.findByIdWithDetails).mockReset();
   vi.mocked(SalesInvoiceRepository.findAnyById).mockReset();
@@ -425,5 +426,49 @@ describe("postSalesInvoice — self-approval guard + one-transaction settlement 
 
     await expect(postSalesInvoice(actor, "inv-1")).rejects.toMatchObject({ code: "POSTED_INVOICE_LOCKED" });
     expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+});
+
+describe("branch access enforcement (2026-09-15)", () => {
+  const listQuery = { search: "", sortBy: "createdAt", sortOrder: "desc" as const, page: 1, pageSize: 20, skip: 0, take: 20 };
+
+  beforeEach(() => {
+    vi.mocked(SalesInvoiceRepository.findMany).mockReset().mockResolvedValue([]);
+    vi.mocked(SalesInvoiceRepository.count).mockReset().mockResolvedValue(0);
+  });
+
+  it("listSalesInvoices adds no branch filter for an unrestricted user", async () => {
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(null);
+
+    await listSalesInvoices(actor, listQuery);
+
+    const whereArg = vi.mocked(SalesInvoiceRepository.findMany).mock.calls[0][0];
+    expect(whereArg).not.toHaveProperty("branchId");
+  });
+
+  it("listSalesInvoices adds a branchId IN filter for a branch-restricted user", async () => {
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    await listSalesInvoices(actor, listQuery);
+
+    expect(SalesInvoiceRepository.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ branchId: { in: ["branch-1"] } }),
+      expect.anything()
+    );
+  });
+
+  it("getSalesInvoiceById succeeds for an invoice inside the user's allowed branches", async () => {
+    vi.mocked(SalesInvoiceRepository.findByIdWithDetails).mockResolvedValue({ id: "inv-1", branchId: "branch-1" } as never);
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    const invoice = await getSalesInvoiceById(actor, "inv-1");
+    expect(invoice.id).toBe("inv-1");
+  });
+
+  it("getSalesInvoiceById throws NOT_FOUND for an invoice outside the user's allowed branches", async () => {
+    vi.mocked(SalesInvoiceRepository.findByIdWithDetails).mockResolvedValue({ id: "inv-1", branchId: "branch-2" } as never);
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    await expect(getSalesInvoiceById(actor, "inv-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 });

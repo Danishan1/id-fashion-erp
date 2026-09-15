@@ -115,7 +115,7 @@ export const LotRelationRepository = {
 const JOB_ORDER_INCLUDE = {
   productionStage: { select: { id: true, name: true, code: true, sequence: true, allowRework: true, isFinal: true, isActive: true } },
   productionLine: { select: { id: true, name: true } },
-  lot: { select: { id: true, lotNumber: true, productionOrderId: true } },
+  lot: { select: { id: true, lotNumber: true, productionOrderId: true, branchId: true } },
   assignments: {
     include: { employee: { select: { id: true, fullName: true, employeeCode: true } } },
   },

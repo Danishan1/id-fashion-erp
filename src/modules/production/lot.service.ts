@@ -33,6 +33,13 @@ export async function getLotById(companyId: string, id: string, userId: string) 
   const lot = await LotRepository.findByIdWithDetails(companyId, id);
   if (!lot) throw new BusinessRuleError("NOT_FOUND", "Lot not found.", { id });
 
+  // A branch-restricted user gets NOT_FOUND for a lot outside their allowed
+  // branches — same "deny as not-found" convention used across this app.
+  const allowedBranchIds = await PermissionService.getAllowedBranchIds(userId);
+  if (allowedBranchIds !== null && (!lot.branchId || !allowedBranchIds.has(lot.branchId))) {
+    throw new BusinessRuleError("NOT_FOUND", "Lot not found.", { id });
+  }
+
   const allowedStageIds = await PermissionService.getAllowedProductionStageIds(userId);
   if (allowedStageIds === null) return lot;
 

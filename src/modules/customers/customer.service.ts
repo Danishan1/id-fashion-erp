@@ -58,10 +58,15 @@ export async function createCustomer(actor: ActorContext, input: CustomerInput) 
     code: input.code,
     name: input.name,
     type: input.type,
+    contactPerson: input.contactPerson || null,
+    phone: input.phone || null,
+    email: input.email || null,
     country: input.country || null,
     taxRegistrationNo: input.taxRegistrationNo || null,
     billingAddress: input.billingAddress || null,
     shippingAddress: input.shippingAddress || null,
+    city: input.city || null,
+    pinCode: input.pinCode || null,
     paymentTermsDays: input.paymentTermsDays ?? null,
     creditLimit: input.creditLimit ?? null,
     defaultCurrencyCode: input.defaultCurrencyCode || null,
@@ -85,23 +90,23 @@ export async function createCustomer(actor: ActorContext, input: CustomerInput) 
 export async function updateCustomer(actor: ActorContext, id: string, input: CustomerInput) {
   const before = await getCustomerById(actor.companyId, id);
 
-  if (input.code !== undefined && input.code !== before.code) {
-    const codeInUse = await CustomerRepository.findByCode(actor.companyId, input.code, id);
-    if (codeInUse) {
-      throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Customer code "${input.code}" is already in use.`, {
-        code: input.code,
-      });
-    }
-  }
-
+  // Code is auto-generated at creation and deliberately immutable from here on
+  // (per explicit user request, 2026-09-15) — the form itself disables the
+  // field, but a direct API call must not be able to bypass that by simply
+  // submitting a different code, so it's silently ignored on update rather
+  // than validated/applied.
   const data: Prisma.CustomerUncheckedUpdateInput = {};
-  if (input.code !== undefined) data.code = input.code;
   if (input.name !== undefined) data.name = input.name;
   if (input.type !== undefined) data.type = input.type;
+  if (input.contactPerson !== undefined) data.contactPerson = input.contactPerson || null;
+  if (input.phone !== undefined) data.phone = input.phone || null;
+  if (input.email !== undefined) data.email = input.email || null;
   if (input.country !== undefined) data.country = input.country || null;
   if (input.taxRegistrationNo !== undefined) data.taxRegistrationNo = input.taxRegistrationNo || null;
   if (input.billingAddress !== undefined) data.billingAddress = input.billingAddress || null;
   if (input.shippingAddress !== undefined) data.shippingAddress = input.shippingAddress || null;
+  if (input.city !== undefined) data.city = input.city || null;
+  if (input.pinCode !== undefined) data.pinCode = input.pinCode || null;
   if (input.paymentTermsDays !== undefined) data.paymentTermsDays = input.paymentTermsDays ?? null;
   if (input.creditLimit !== undefined) data.creditLimit = input.creditLimit ?? null;
   if (input.defaultCurrencyCode !== undefined) data.defaultCurrencyCode = input.defaultCurrencyCode || null;

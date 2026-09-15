@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
     await PermissionService.assert(session.user.id, "purchasing", "export");
 
     const search = req.nextUrl.searchParams.get("search") || undefined;
-    const { data } = await listPurchaseOrders(session.user.companyId, {
+    const { data } = await listPurchaseOrders({ companyId: session.user.companyId, userId: session.user.id }, {
       page: 1,
       pageSize: EXPORT_ROW_CAP,
       skip: 0,
