@@ -8,7 +8,7 @@ export default async function SalesInvoiceDetailPage({ params }: { params: Promi
   const { id } = await params;
   const session = await auth();
 
-  const invoice = await getSalesInvoiceById(session!.user.companyId, id).catch(() => null);
+  const invoice = await getSalesInvoiceById({ companyId: session!.user.companyId, userId: session!.user.id }, id).catch(() => null);
   if (!invoice) notFound();
 
   return (

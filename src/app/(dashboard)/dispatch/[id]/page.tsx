@@ -8,7 +8,7 @@ export default async function DispatchDetailPage({ params }: { params: Promise<{
   const { id } = await params;
   const session = await auth();
 
-  const dispatch = await getDispatchById(session!.user.companyId, id).catch(() => null);
+  const dispatch = await getDispatchById({ companyId: session!.user.companyId, userId: session!.user.id }, id).catch(() => null);
   if (!dispatch) notFound();
 
   return (

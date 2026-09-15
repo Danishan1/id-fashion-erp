@@ -5,6 +5,7 @@ vi.mock("@/core/db/client", () => ({ prisma: { $transaction: vi.fn(async (fn: (t
 vi.mock("./production.repository", () => ({
   LotRepository: {
     findAnyById: vi.fn(),
+    findByIdWithDetails: vi.fn(),
     countOpenJobOrders: vi.fn(),
     createInTx: vi.fn(),
     updateInTx: vi.fn(),
@@ -12,9 +13,13 @@ vi.mock("./production.repository", () => ({
   LotRelationRepository: { createManyInTx: vi.fn() },
   ProductionOrderRepository: { findAnyById: vi.fn(), incrementLotSequenceInTx: vi.fn() },
 }));
+vi.mock("@/core/rbac/PermissionService", () => ({
+  PermissionService: { getAllowedBranchIds: vi.fn(), getAllowedProductionStageIds: vi.fn() },
+}));
 
 const { LotRepository, ProductionOrderRepository } = await import("./production.repository");
-const { splitLot, mergeLots } = await import("./lot.service");
+const { PermissionService } = await import("@/core/rbac/PermissionService");
+const { splitLot, mergeLots, getLotById } = await import("./lot.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
 
@@ -35,6 +40,9 @@ beforeEach(() => {
   vi.mocked(LotRepository.findAnyById).mockReset();
   vi.mocked(LotRepository.countOpenJobOrders).mockReset().mockResolvedValue(0);
   vi.mocked(ProductionOrderRepository.findAnyById).mockReset().mockResolvedValue({ id: "po-1", orderNumber: "PROD-2026-00001" } as never);
+  vi.mocked(LotRepository.findByIdWithDetails).mockReset();
+  vi.mocked(PermissionService.getAllowedBranchIds).mockReset().mockResolvedValue(null);
+  vi.mocked(PermissionService.getAllowedProductionStageIds).mockReset().mockResolvedValue(null);
 });
 
 describe("splitLot", () => {
@@ -94,5 +102,29 @@ describe("mergeLots", () => {
     vi.mocked(LotRepository.findAnyById).mockResolvedValueOnce(lot({ id: "lot-a" }) as never).mockResolvedValueOnce(null as never);
 
     await expect(mergeLots(actor, { parentLotIds: ["lot-a", "lot-missing"] })).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+});
+
+describe("getLotById — branch access enforcement (2026-09-15)", () => {
+  it("succeeds for a lot inside the user's allowed branches", async () => {
+    vi.mocked(LotRepository.findByIdWithDetails).mockResolvedValue({ id: "lot-1", branchId: "branch-1", jobOrders: [] } as never);
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    const result = await getLotById("co-1", "lot-1", "user-1");
+    expect(result.id).toBe("lot-1");
+  });
+
+  it("throws NOT_FOUND for a lot outside the user's allowed branches", async () => {
+    vi.mocked(LotRepository.findByIdWithDetails).mockResolvedValue({ id: "lot-1", branchId: "branch-2", jobOrders: [] } as never);
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    await expect(getLotById("co-1", "lot-1", "user-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("throws NOT_FOUND for a lot with no branchId when the user is branch-restricted", async () => {
+    vi.mocked(LotRepository.findByIdWithDetails).mockResolvedValue({ id: "lot-1", branchId: null, jobOrders: [] } as never);
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    await expect(getLotById("co-1", "lot-1", "user-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 });

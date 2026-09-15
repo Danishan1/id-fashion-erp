@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/numbering/DocumentNumberingService", () => ({ generateDocumentNumber: vi.fn() }));
-vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { assert: vi.fn() } }));
+vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { assert: vi.fn(), getAllowedBranchIds: vi.fn() } }));
 vi.mock("@/modules/sales-orders/sales-order.repository", () => ({
   SalesOrderRepository: { findByIdWithDetails: vi.fn() },
 }));
@@ -30,8 +30,16 @@ const { PermissionService } = await import("@/core/rbac/PermissionService");
 const { SalesOrderRepository } = await import("@/modules/sales-orders/sales-order.repository");
 const { recordInventoryTransaction, getAvailableQuantity } = await import("@/modules/inventory/inventory.service");
 const { DispatchRepository } = await import("./dispatch.repository");
-const { createDispatch, markPacked, confirmDispatch, markDelivered, transitionDispatchStatus, resumeDispatchFromHold } =
-  await import("./dispatch.service");
+const {
+  createDispatch,
+  markPacked,
+  confirmDispatch,
+  markDelivered,
+  transitionDispatchStatus,
+  resumeDispatchFromHold,
+  listDispatches,
+  getDispatchById,
+} = await import("./dispatch.service");
 
 const actor = { companyId: "co-1", userId: "user-1", branchId: null };
 
@@ -59,6 +67,7 @@ function makeFakeTx(overrides: { updateManyCount?: number; dispatchUpdateManyCou
 
 beforeEach(() => {
   vi.mocked(PermissionService.assert).mockReset().mockResolvedValue(undefined);
+  vi.mocked(PermissionService.getAllowedBranchIds).mockReset().mockResolvedValue(null);
   vi.mocked(SalesOrderRepository.findByIdWithDetails).mockReset();
   vi.mocked(recordInventoryTransaction).mockReset().mockResolvedValue(undefined);
   vi.mocked(getAvailableQuantity).mockReset().mockResolvedValue(1000);
@@ -361,5 +370,49 @@ describe("resumeDispatchFromHold — race-guard rejection", () => {
       status: "PACKED",
       statusBeforeHold: null,
     });
+  });
+});
+
+describe("branch access enforcement (2026-09-15)", () => {
+  const listQuery = { search: "", sortBy: "createdAt", sortOrder: "desc" as const, page: 1, pageSize: 20, skip: 0, take: 20 };
+
+  beforeEach(() => {
+    vi.mocked(DispatchRepository.findMany).mockReset().mockResolvedValue([]);
+    vi.mocked(DispatchRepository.count).mockReset().mockResolvedValue(0);
+  });
+
+  it("listDispatches adds no branch filter for an unrestricted user", async () => {
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(null);
+
+    await listDispatches(actor, listQuery);
+
+    const whereArg = vi.mocked(DispatchRepository.findMany).mock.calls[0][0];
+    expect(whereArg).not.toHaveProperty("branchId");
+  });
+
+  it("listDispatches adds a branchId IN filter for a branch-restricted user", async () => {
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    await listDispatches(actor, listQuery);
+
+    expect(DispatchRepository.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ branchId: { in: ["branch-1"] } }),
+      expect.anything()
+    );
+  });
+
+  it("getDispatchById succeeds for a dispatch inside the user's allowed branches", async () => {
+    vi.mocked(DispatchRepository.findByIdWithDetails).mockResolvedValue({ id: "disp-1", branchId: "branch-1" } as never);
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    const dispatch = await getDispatchById(actor, "disp-1");
+    expect(dispatch.id).toBe("disp-1");
+  });
+
+  it("getDispatchById throws NOT_FOUND for a dispatch outside the user's allowed branches", async () => {
+    vi.mocked(DispatchRepository.findByIdWithDetails).mockResolvedValue({ id: "disp-1", branchId: "branch-2" } as never);
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    await expect(getDispatchById(actor, "disp-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 });

@@ -3,7 +3,7 @@ import type { ExpenseInput } from "./expense.schema";
 
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/numbering/DocumentNumberingService", () => ({ generateDocumentNumber: vi.fn() }));
-vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { assert: vi.fn() } }));
+vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { assert: vi.fn(), getAllowedBranchIds: vi.fn() } }));
 vi.mock("@/modules/suppliers/supplier.repository", () => ({
   SupplierRepository: { findById: vi.fn() },
 }));
@@ -44,7 +44,9 @@ const { ExpenseRepository, CompanyRepository } = await import("./expense.reposit
 const { ChartOfAccountRepository } = await import("./chart-of-account.repository");
 const { TaxRateRepository } = await import("./tax-config.repository");
 const { postJournalCore } = await import("./journal.service");
-const { createExpense, updateExpense, approveExpense, rejectExpense, postExpense, cancelExpense } = await import("./expense.service");
+const { createExpense, updateExpense, approveExpense, rejectExpense, postExpense, cancelExpense, listExpenses, getExpenseById } = await import(
+  "./expense.service"
+);
 
 const actor = { companyId: "co-1", userId: "user-1", branchId: null };
 
@@ -62,6 +64,7 @@ function makeFakeTx(overrides: { expenseUpdateManyCount?: number } = {}) {
 
 beforeEach(() => {
   vi.mocked(PermissionService.assert).mockReset().mockResolvedValue(undefined);
+  vi.mocked(PermissionService.getAllowedBranchIds).mockReset().mockResolvedValue(null);
   vi.mocked(SupplierRepository.findById).mockReset();
   vi.mocked(FinanceConfigRepository.paymentType.findFirst).mockReset().mockResolvedValue(paymentType as never);
   vi.mocked(FinanceConfigRepository.bankAccount.findFirst).mockReset();
@@ -373,5 +376,49 @@ describe("postExpense — APPROVED -> PAID, self-approval via 'post', dynamic li
 
     await expect(postExpense(actor, "exp-1")).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
     expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+});
+
+describe("branch access enforcement (2026-09-15)", () => {
+  const listQuery = { search: "", sortBy: "createdAt", sortOrder: "desc" as const, page: 1, pageSize: 20, skip: 0, take: 20 };
+
+  beforeEach(() => {
+    vi.mocked(ExpenseRepository.findMany).mockReset().mockResolvedValue([]);
+    vi.mocked(ExpenseRepository.count).mockReset().mockResolvedValue(0);
+  });
+
+  it("listExpenses adds no branch filter for an unrestricted user", async () => {
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(null);
+
+    await listExpenses(actor, listQuery);
+
+    const whereArg = vi.mocked(ExpenseRepository.findMany).mock.calls[0][0];
+    expect(whereArg).not.toHaveProperty("branchId");
+  });
+
+  it("listExpenses adds a branchId IN filter for a branch-restricted user", async () => {
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    await listExpenses(actor, listQuery);
+
+    expect(ExpenseRepository.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ branchId: { in: ["branch-1"] } }),
+      expect.anything()
+    );
+  });
+
+  it("getExpenseById succeeds for an expense inside the user's allowed branches", async () => {
+    vi.mocked(ExpenseRepository.findByIdWithDetails).mockResolvedValue({ id: "exp-1", branchId: "branch-1" } as never);
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    const expense = await getExpenseById(actor, "exp-1");
+    expect(expense.id).toBe("exp-1");
+  });
+
+  it("getExpenseById throws NOT_FOUND for an expense outside the user's allowed branches", async () => {
+    vi.mocked(ExpenseRepository.findByIdWithDetails).mockResolvedValue({ id: "exp-1", branchId: "branch-2" } as never);
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    await expect(getExpenseById(actor, "exp-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 });

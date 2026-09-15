@@ -5,6 +5,7 @@ import { PermissionService } from "@/core/rbac/PermissionService";
 import { prisma } from "@/core/db/client";
 import { round2 } from "@/lib/money";
 import type { ListQuery } from "@/lib/list-query";
+import { branchScopeWhere } from "@/lib/branch-access";
 import type { JournalInput, ReverseJournalInput } from "./journal.schema";
 import { JournalRepository } from "./journal.repository";
 import { ChartOfAccountRepository } from "./chart-of-account.repository";
@@ -37,9 +38,11 @@ async function assertAccountsBelongToCompany(companyId: string, lines: LineInput
   }
 }
 
-export async function listJournals(companyId: string, query: ListQuery) {
+export async function listJournals(actor: { companyId: string; userId: string }, query: ListQuery) {
+  const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
   const where: Prisma.JournalWhereInput = {
-    companyId,
+    companyId: actor.companyId,
+    ...branchScopeWhere(allowedBranchIds),
     ...(query.search ? { journalNumber: { contains: query.search, mode: "insensitive" as const } } : {}),
   };
 
@@ -55,9 +58,16 @@ export async function listJournals(companyId: string, query: ListQuery) {
   return { data, totalCount };
 }
 
-export async function getJournalById(companyId: string, id: string) {
-  const journal = await JournalRepository.findByIdWithDetails(companyId, id);
+/** A branch-restricted user gets NOT_FOUND for a journal outside their allowed branches — same "deny as not-found" convention used across this app. */
+export async function getJournalById(actor: { companyId: string; userId: string }, id: string) {
+  const journal = await JournalRepository.findByIdWithDetails(actor.companyId, id);
   if (!journal) throw new BusinessRuleError("NOT_FOUND", "Journal not found.", { id });
+
+  const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
+  if (allowedBranchIds !== null && (!journal.branchId || !allowedBranchIds.has(journal.branchId))) {
+    throw new BusinessRuleError("NOT_FOUND", "Journal not found.", { id });
+  }
+
   return journal;
 }
 

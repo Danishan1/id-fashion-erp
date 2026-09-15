@@ -15,6 +15,8 @@ vi.mock("./production.repository", () => ({
     findByIdWithDetails: vi.fn(),
     update: vi.fn(),
     updateStatusInTx: vi.fn(),
+    findMany: vi.fn(),
+    count: vi.fn(),
   },
 }));
 vi.mock("@/core/db/client", () => ({
@@ -23,8 +25,10 @@ vi.mock("@/core/db/client", () => ({
     productionOrder: { aggregate: vi.fn() },
   },
 }));
+vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { getAllowedBranchIds: vi.fn() } }));
 
 const { generateDocumentNumber } = await import("@/core/numbering/DocumentNumberingService");
+const { PermissionService } = await import("@/core/rbac/PermissionService");
 const { ProductRepository } = await import("@/modules/products/product.repository");
 const { getMaterialRequirementForOrderLine } = await import("@/modules/bom-mrp/mrp.service");
 const { getProductionOrderProgress } = await import("./production-progress.service");
@@ -37,6 +41,7 @@ const {
   getSalesOrderLineCommitment,
   getProductionOrderById,
   updateProductionOrderQuantity,
+  listProductionOrders,
 } = await import("./production-order.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
@@ -52,6 +57,7 @@ beforeEach(() => {
   vi.mocked(prisma.salesOrderItem.findFirst).mockReset();
   vi.mocked(prisma.productionOrder.aggregate).mockReset().mockResolvedValue({ _sum: { plannedQuantity: null } } as never);
   vi.mocked(getProductionOrderProgress).mockReset().mockResolvedValue({ progressStatus: "PLANNED" } as never);
+  vi.mocked(PermissionService.getAllowedBranchIds).mockReset().mockResolvedValue(null);
 });
 
 describe("createProductionOrder", () => {
@@ -135,7 +141,7 @@ describe("getProductionOrderById", () => {
     } as never);
     vi.mocked(prisma.productionOrder.aggregate).mockResolvedValue({ _sum: { plannedQuantity: 20 } } as never);
 
-    const order = await getProductionOrderById("co-1", "po-1");
+    const order = await getProductionOrderById(actor, "po-1");
 
     expect(order.salesOrderContext).toEqual({ orderedTotal: 100, otherCommitted: 20, remaining: 80 });
   });
@@ -143,7 +149,7 @@ describe("getProductionOrderById", () => {
   it("returns null salesOrderContext for a Make-to-Stock order", async () => {
     vi.mocked(ProductionOrderRepository.findByIdWithDetails).mockResolvedValue({ id: "po-1", salesOrderItemId: null } as never);
 
-    const order = await getProductionOrderById("co-1", "po-1");
+    const order = await getProductionOrderById(actor, "po-1");
 
     expect(order.salesOrderContext).toBeNull();
     expect(prisma.salesOrderItem.findFirst).not.toHaveBeenCalled();
@@ -151,14 +157,14 @@ describe("getProductionOrderById", () => {
 
   it("rejects a production order that doesn't exist", async () => {
     vi.mocked(ProductionOrderRepository.findByIdWithDetails).mockResolvedValue(null);
-    await expect(getProductionOrderById("co-1", "missing")).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(getProductionOrderById(actor, "missing")).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 
   it("attaches the derived progress summary", async () => {
     vi.mocked(ProductionOrderRepository.findByIdWithDetails).mockResolvedValue({ id: "po-1", salesOrderItemId: null } as never);
     vi.mocked(getProductionOrderProgress).mockResolvedValue({ progressStatus: "IN_PRODUCTION", producedQuantity: 40 } as never);
 
-    const order = await getProductionOrderById("co-1", "po-1");
+    const order = await getProductionOrderById(actor, "po-1");
 
     expect(getProductionOrderProgress).toHaveBeenCalledWith("co-1", "po-1");
     expect(order.progress).toEqual({ progressStatus: "IN_PRODUCTION", producedQuantity: 40 });
@@ -296,5 +302,57 @@ describe("generateMaterialRequestForOrder", () => {
     // through as undefined (createMaterialRequest's own schema field), never
     // a stray non-null-asserted null.
     expect(createMaterialRequest).toHaveBeenCalledWith(actor, expect.objectContaining({ bomId: undefined }));
+  });
+});
+
+describe("branch access enforcement (2026-09-15)", () => {
+  const listQuery = { search: "", sortBy: "createdAt", sortOrder: "desc" as const, page: 1, pageSize: 20, skip: 0, take: 20 };
+
+  beforeEach(() => {
+    vi.mocked(ProductionOrderRepository.findMany).mockReset().mockResolvedValue([]);
+    vi.mocked(ProductionOrderRepository.count).mockReset().mockResolvedValue(0);
+  });
+
+  it("listProductionOrders adds no branch filter for an unrestricted user", async () => {
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(null);
+
+    await listProductionOrders(actor, listQuery);
+
+    const whereArg = vi.mocked(ProductionOrderRepository.findMany).mock.calls[0][0];
+    expect(whereArg).not.toHaveProperty("branchId");
+  });
+
+  it("listProductionOrders adds a branchId IN filter for a branch-restricted user", async () => {
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    await listProductionOrders(actor, listQuery);
+
+    expect(ProductionOrderRepository.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ branchId: { in: ["branch-1"] } }),
+      expect.anything()
+    );
+  });
+
+  it("getProductionOrderById succeeds for an order inside the user's allowed branches", async () => {
+    vi.mocked(ProductionOrderRepository.findByIdWithDetails).mockResolvedValue({
+      id: "po-1",
+      branchId: "branch-1",
+      salesOrderItemId: null,
+    } as never);
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    const order = await getProductionOrderById(actor, "po-1");
+    expect(order.id).toBe("po-1");
+  });
+
+  it("getProductionOrderById throws NOT_FOUND for an order outside the user's allowed branches", async () => {
+    vi.mocked(ProductionOrderRepository.findByIdWithDetails).mockResolvedValue({
+      id: "po-1",
+      branchId: "branch-2",
+      salesOrderItemId: null,
+    } as never);
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
+
+    await expect(getProductionOrderById(actor, "po-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 });
