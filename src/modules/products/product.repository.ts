@@ -14,6 +14,42 @@ export const ProductRepository = {
 
   count: (where: Prisma.ProductWhereInput) => prisma.product.count({ where }),
 
+  /** Top N styleName/styleCode matches among this company's real Styles —
+   * backs the Topbar Global Search's Products/Styles group. */
+  searchTopStyles: (companyId: string, term: string, limit: number) =>
+    prisma.product.findMany({
+      where: {
+        companyId,
+        itemType: "STYLE",
+        deletedAt: null,
+        OR: [
+          { styleName: { contains: term, mode: "insensitive" as const } },
+          { styleCode: { contains: term, mode: "insensitive" as const } },
+        ],
+      },
+      select: { id: true, styleName: true, styleCode: true },
+      orderBy: { createdAt: "desc" },
+      take: limit,
+    }),
+
+  /** Same shape as searchTopStyles, scoped to Raw Materials instead — backs
+   * the Topbar Global Search's Raw Materials group. */
+  searchTopMaterials: (companyId: string, term: string, limit: number) =>
+    prisma.product.findMany({
+      where: {
+        companyId,
+        itemType: "RAW_MATERIAL",
+        deletedAt: null,
+        OR: [
+          { styleName: { contains: term, mode: "insensitive" as const } },
+          { styleCode: { contains: term, mode: "insensitive" as const } },
+        ],
+      },
+      select: { id: true, styleName: true, styleCode: true },
+      orderBy: { createdAt: "desc" },
+      take: limit,
+    }),
+
   findStyleById: (companyId: string, id: string) =>
     prisma.product.findFirst({
       where: { id, companyId, itemType: "STYLE", deletedAt: null },

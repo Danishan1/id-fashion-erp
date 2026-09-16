@@ -14,6 +14,16 @@ export const PurchaseOrderRepository = {
 
   count: (where: Prisma.PurchaseOrderWhereInput) => prisma.purchaseOrder.count({ where }),
 
+  /** Top N order-number matches for this company — backs the Topbar Global
+   * Search's Purchase Orders group. */
+  searchTop: (companyId: string, term: string, limit: number) =>
+    prisma.purchaseOrder.findMany({
+      where: { companyId, orderNumber: { contains: term, mode: "insensitive" as const } },
+      select: { id: true, orderNumber: true, supplier: { select: { name: true } } },
+      orderBy: { createdAt: "desc" },
+      take: limit,
+    }),
+
   findByIdWithDetails: (companyId: string, id: string) =>
     prisma.purchaseOrder.findFirst({
       where: { id, companyId },

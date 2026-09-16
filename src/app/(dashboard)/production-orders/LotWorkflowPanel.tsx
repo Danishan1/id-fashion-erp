@@ -807,7 +807,7 @@ export function LotWorkflowPanel({
                 type="button"
                 onClick={submitJobWork}
                 disabled={isBusy || !jobWorkSupplierId || !jobWorkQty}
-                className="rounded-md bg-purple-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-purple-500 disabled:opacity-60"
+                className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
               >
                 {isBusy ? "Saving…" : "Send to Job-Work"}
               </button>

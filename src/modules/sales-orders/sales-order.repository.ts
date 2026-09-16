@@ -15,6 +15,18 @@ export const SalesOrderRepository = {
 
   count: (where: Prisma.SalesOrderWhereInput) => prisma.salesOrder.count({ where }),
 
+  /** Top N order-number matches for this company — backs the Topbar Global
+   * Search's Sales Orders group. A narrow, capped, `select`-only query
+   * (never the full `findMany`'s heavier `include`), matching the existing
+   * `orderNumber`-contains predicate every list endpoint already uses. */
+  searchTop: (companyId: string, term: string, limit: number) =>
+    prisma.salesOrder.findMany({
+      where: { companyId, orderNumber: { contains: term, mode: "insensitive" as const } },
+      select: { id: true, orderNumber: true, customer: { select: { name: true } } },
+      orderBy: { createdAt: "desc" },
+      take: limit,
+    }),
+
   findByIdWithDetails: (companyId: string, id: string) =>
     prisma.salesOrder.findFirst({
       where: { id, companyId },

@@ -15,6 +15,17 @@ import { ImageGenerationServiceError } from "@/core/ai/image-generation/types";
 import { runWithFailover } from "@/core/ai/provider-manager/AIProviderManager";
 import { ProductRepository } from "@/modules/products/product.repository";
 import type { ListQuery } from "@/lib/list-query";
+// Tech Pack — the same "GARMENT TECH PACK SPEC SHEET GENERATOR" pipeline
+// already built for the main AI Designer wizard (2026-09-13), reused as-is:
+// this is shared, generic AI infrastructure (schema/prompt/generate + the
+// PDF renderer take a plain TechPackDesignContext, never anything specific
+// to AiDesignerProject) — appropriate DRY reuse *within* this module, not a
+// violation of its own "never share business logic with AI Garment Flow"
+// isolation rule, which is about a different module boundary entirely.
+import { generateGarmentAnalysisPart1, generateGarmentAnalysisPart2, generatePagePrompts } from "@/core/ai-designer/tech-pack/generate";
+import type { TechPackDesignContext } from "@/core/ai-designer/tech-pack/prompt";
+import { TECH_PACK_PAGE_DEFINITIONS, type GarmentAnalysis } from "@/core/ai-designer/tech-pack/schema";
+import type { TechPackAnalysisForPdf, TechPackDocumentPageImage } from "@/core/ai-designer/export/tech-pack-pdf";
 import {
   ReplicateDesignCompatibilityRepository,
   ReplicateDesignCompatibilityRunRepository,
@@ -26,6 +37,7 @@ import {
   ReplicateDesignMaterialLineRepository,
   ReplicateDesignProjectRepository,
   ReplicateDesignPromptRepository,
+  ReplicateDesignTechPackRepository,
   ReplicateDesignVersionRepository,
 } from "./replicate-design.repository";
 import type {

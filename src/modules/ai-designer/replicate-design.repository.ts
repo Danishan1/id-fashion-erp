@@ -229,3 +229,39 @@ export const ReplicateDesignVersionRepository = {
 
   count: (projectId: string) => prisma.replicateDesignVersion.count({ where: { projectId } }),
 };
+
+export const ReplicateDesignTechPackRepository = {
+  create: (data: Prisma.ReplicateDesignTechPackUncheckedCreateInput) => prisma.replicateDesignTechPack.create({ data }),
+
+  markSuccess: (
+    id: string,
+    data: {
+      garmentAnalysisJson: Prisma.InputJsonValue;
+      designerNotes: string;
+      suggestedAdditionalViews: string;
+      pages: { pageNumber: number; pageTitle: string; promptText: string; imageAttachmentId: string | null }[];
+    }
+  ) =>
+    prisma.replicateDesignTechPack.update({
+      where: { id },
+      data: {
+        status: "SUCCESS",
+        garmentAnalysisJson: data.garmentAnalysisJson,
+        designerNotes: data.designerNotes,
+        suggestedAdditionalViews: data.suggestedAdditionalViews,
+        pages: { create: data.pages },
+      },
+      include: { pages: { orderBy: { pageNumber: "asc" } } },
+    }),
+
+  markFailed: (id: string, errorMessage: string) =>
+    prisma.replicateDesignTechPack.update({ where: { id }, data: { status: "FAILED", errorMessage } }),
+
+  /** Only the most recent attempt is ever surfaced in the UI — older attempts stay in the database for audit (append-only, same convention as every other run-log table in this module). */
+  findLatestByProjectId: (projectId: string) =>
+    prisma.replicateDesignTechPack.findFirst({
+      where: { projectId },
+      orderBy: { createdAt: "desc" },
+      include: { pages: { orderBy: { pageNumber: "asc" } } },
+    }),
+};

@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import { ChildFormModal } from "@/components/ui/ChildFormModal";
+import { Button } from "@/components/ui/Button";
 import type { LookupField } from "@/components/ui/SimpleLookupManager";
 
 export interface ChildColumn<T> {
@@ -133,7 +134,16 @@ export function ChildrenList<T extends { id: string; isActive?: boolean }>({
         </button>
       </div>
 
-      {loadError && <p className="text-sm text-red-600 dark:text-red-400">{loadError}</p>}
+      {loadError && (
+        <div className="flex flex-wrap items-center gap-3">
+          <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+            {loadError}
+          </p>
+          <Button variant="secondary" size="xs" onClick={() => setLocalRefresh((k) => k + 1)}>
+            Retry
+          </Button>
+        </div>
+      )}
       {toggleError && <p className="text-sm text-red-600 dark:text-red-400">{toggleError}</p>}
 
       <div className="max-h-[40vh] overflow-y-auto overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
@@ -158,8 +168,11 @@ export function ChildrenList<T extends { id: string; isActive?: boolean }>({
             )}
             {!loadError && !isLoading && rows.length === 0 && (
               <tr>
-                <td colSpan={columns.length + 1} className="px-4 py-6 text-center text-zinc-500">
-                  {emptyMessage}
+                <td colSpan={columns.length + 1} className="px-4 py-8 text-center">
+                  <div className="space-y-3">
+                    <p className="text-sm text-zinc-500">{emptyMessage}</p>
+                    <Button onClick={openAdd}>{addLabel}</Button>
+                  </div>
                 </td>
               </tr>
             )}

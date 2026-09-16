@@ -4,12 +4,23 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { signOut } from "next-auth/react";
 import { NotificationBell } from "./NotificationBell";
+import { GlobalSearch } from "./GlobalSearch";
 
 interface TopbarProps {
   userName: string;
+  /** Toggles the mobile/tablet off-canvas nav drawer. Renders a hamburger button, `lg:hidden`, when supplied. */
+  onMenuClick?: () => void;
 }
 
-export function Topbar({ userName }: TopbarProps) {
+function MenuIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" className="h-5 w-5" aria-hidden="true">
+      <path d="M3 5.5h14M3 10h14M3 14.5h14" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function Topbar({ userName, onMenuClick }: TopbarProps) {
   const router = useRouter();
   const pathname = usePathname();
   // Hidden on the dashboard home page — nothing meaningful to go back to
@@ -19,13 +30,19 @@ export function Topbar({ userName }: TopbarProps) {
   const showBack = pathname !== "/dashboard";
 
   return (
-    <header className="flex h-14 items-center justify-between border-b border-zinc-200 bg-white px-4 dark:border-zinc-800 dark:bg-zinc-900">
-      <div className="flex-1">
-        <input
-          type="search"
-          placeholder="Search customers, orders, samples, invoices…"
-          className="w-full max-w-md rounded-md border border-zinc-300 bg-zinc-50 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-800"
-        />
+    <header className="flex h-14 items-center justify-between gap-3 border-b border-zinc-200 bg-white px-4 dark:border-zinc-800 dark:bg-zinc-900">
+      <div className="flex flex-1 items-center gap-3">
+        {onMenuClick && (
+          <button
+            type="button"
+            onClick={onMenuClick}
+            aria-label="Open navigation menu"
+            className="shrink-0 rounded-md border border-zinc-300 p-2 text-zinc-700 hover:bg-zinc-100 lg:hidden dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+          >
+            <MenuIcon />
+          </button>
+        )}
+        <GlobalSearch />
       </div>
       <div className="flex items-center gap-4">
         {showBack && (

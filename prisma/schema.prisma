@@ -138,6 +138,7 @@ model Company {
   replicateDesignGenerations          ReplicateDesignGeneration[]
   replicateDesignImages               ReplicateDesignImage[]
   replicateDesignVersions             ReplicateDesignVersion[]
+  replicateDesignTechPacks            ReplicateDesignTechPack[]
   aiDesignerSettings                  AiDesignerSettings?
   aiDesignerTechPacks                 AiDesignerTechPack[]
   aiDesignerProductDesignAttributes   AiDesignerProductDesignAttribute[]
@@ -366,6 +367,7 @@ model User {
   replicateDesignGenerationsCreated          ReplicateDesignGeneration[]          @relation("ReplicateDesignGenerationCreatedBy")
   replicateDesignImagesCreated               ReplicateDesignImage[]               @relation("ReplicateDesignImageCreatedBy")
   replicateDesignVersionsCreated             ReplicateDesignVersion[]             @relation("ReplicateDesignVersionCreatedBy")
+  replicateDesignTechPacksCreated            ReplicateDesignTechPack[]            @relation("ReplicateDesignTechPackCreatedBy")
   aiDesignerTechPacksCreated                 AiDesignerTechPack[]                 @relation("AiDesignerTechPackCreatedBy")
   aiDesignerProductDesignAttributesCreated   AiDesignerProductDesignAttribute[]   @relation("AiDesignerProductDesignAttributeCreatedBy")
   aiProvidersCreated                         AIProvider[]                         @relation("AIProviderCreatedBy")
@@ -8034,6 +8036,7 @@ model ReplicateDesignProject {
   generations        ReplicateDesignGeneration[]
   images             ReplicateDesignImage[]
   versions           ReplicateDesignVersion[]           @relation("ReplicateDesignVersionsOfProject")
+  techPacks          ReplicateDesignTechPack[]
   providerUsage      AIProviderUsage[]
 
   @@unique([companyId, projectNumber])
@@ -8325,6 +8328,55 @@ model ReplicateDesignVersion {
 
   @@unique([projectId, versionNumber])
   @@map("replicate_design_versions")
+}
+
+// Tech Pack (2026-09-13) -- the same "GARMENT TECH PACK SPEC SHEET GENERATOR"
+// pipeline as AiDesignerTechPack/AiDesignerTechPackPage above, reused for
+// Replicate Design's own generated design. This reuses the shared, generic
+// AI infrastructure (src/core/ai-designer/tech-pack/{schema,prompt,generate}.ts,
+// tech-pack-pdf.tsx) as-is -- appropriate DRY reuse *within* the ai-designer
+// module (this module's own established isolation rule is specifically
+// about never sharing business logic with the separate AI Garment Flow
+// module, not about avoiding reuse between two features that already live
+// inside the same module). Its own schema mirrors AiDesignerTechPack's shape
+// exactly (own tables, own FK to ReplicateDesignProject) rather than a
+// shared table, matching this module's convention of duplicating schema
+// while reusing generic service/prompt code.
+model ReplicateDesignTechPack {
+  id                       String              @id @default(uuid()) @db.Uuid
+  companyId                String              @map("company_id") @db.Uuid
+  projectId                String              @map("project_id") @db.Uuid
+  status                   AiDesignerRunStatus @default(IN_PROGRESS)
+  /** The full structured Garment Analysis (categories A-J) -- see GarmentAnalysis in tech-pack/schema.ts for its exact shape. */
+  garmentAnalysisJson      Json?               @map("garment_analysis_json")
+  designerNotes            String?             @map("designer_notes")
+  suggestedAdditionalViews String?             @map("suggested_additional_views")
+  errorMessage             String?             @map("error_message")
+
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  company   Company                       @relation(fields: [companyId], references: [id])
+  project   ReplicateDesignProject        @relation(fields: [projectId], references: [id])
+  createdBy User                          @relation("ReplicateDesignTechPackCreatedBy", fields: [createdByUserId], references: [id])
+  pages     ReplicateDesignTechPackPage[]
+
+  @@map("replicate_design_tech_packs")
+}
+
+/** One row per generated tech-pack page (always exactly 7 on a successful run, pages 1-7 per the same fixed page structure) -- the prompt text is kept alongside the image for review/audit. */
+model ReplicateDesignTechPackPage {
+  id                String  @id @default(uuid()) @db.Uuid
+  techPackId        String  @map("tech_pack_id") @db.Uuid
+  pageNumber        Int     @map("page_number")
+  pageTitle         String  @map("page_title")
+  promptText        String  @map("prompt_text")
+  imageAttachmentId String? @map("image_attachment_id")
+
+  techPack ReplicateDesignTechPack @relation(fields: [techPackId], references: [id], onDelete: Cascade)
+
+  @@unique([techPackId, pageNumber])
+  @@map("replicate_design_tech_pack_pages")
 }
 
 // -----------------------------------------------------------------------------
