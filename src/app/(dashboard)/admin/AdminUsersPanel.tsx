@@ -6,6 +6,7 @@ import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
+import { ActionMenu } from "@/components/ui/ActionMenu";
 
 interface RoleRef {
   id: string;
@@ -316,20 +317,14 @@ export function AdminUsersPanel({
                   </td>
                 )}
                 {canManage && (
-                  <td className="space-x-3 whitespace-nowrap px-3 py-2">
-                    <button type="button" onClick={() => openEdit(u)} className="text-sm text-indigo-600 hover:underline dark:text-indigo-400">
-                      Edit
-                    </button>
-                    <button type="button" onClick={() => openRolesModal(u)} className="text-sm text-indigo-600 hover:underline dark:text-indigo-400">
-                      Roles
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => openReset(u)}
-                      className="text-sm text-indigo-600 hover:underline dark:text-indigo-400"
-                    >
-                      Reset Password
-                    </button>
+                  <td className="whitespace-nowrap px-3 py-2">
+                    <ActionMenu
+                      items={[
+                        { label: "Edit", onClick: () => openEdit(u) },
+                        { label: "Roles", onClick: () => openRolesModal(u) },
+                        { label: "Reset Password", onClick: () => openReset(u) },
+                      ]}
+                    />
                   </td>
                 )}
               </tr>

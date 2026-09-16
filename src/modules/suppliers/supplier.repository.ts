@@ -7,6 +7,23 @@ export const SupplierRepository = {
 
   count: (where: Prisma.SupplierWhereInput) => prisma.supplier.count({ where }),
 
+  /** Top N name/code matches for this company — backs the Topbar Global
+   * Search's Suppliers group. */
+  searchTop: (companyId: string, term: string, limit: number) =>
+    prisma.supplier.findMany({
+      where: {
+        companyId,
+        deletedAt: null,
+        OR: [
+          { name: { contains: term, mode: "insensitive" as const } },
+          { code: { contains: term, mode: "insensitive" as const } },
+        ],
+      },
+      select: { id: true, name: true, code: true },
+      orderBy: { createdAt: "desc" },
+      take: limit,
+    }),
+
   findById: (companyId: string, id: string) =>
     prisma.supplier.findFirst({ where: { id, companyId, deletedAt: null }, include: { category: true } }),
 

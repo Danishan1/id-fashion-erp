@@ -1,5 +1,7 @@
 "use client";
 
+import { Button } from "@/components/ui/Button";
+
 interface ConfirmModalProps {
   open: boolean;
   title: string;
@@ -47,24 +49,12 @@ export function ConfirmModal({
         <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">{message}</p>
 
         <div className="mt-5 flex justify-end gap-3">
-          <button
-            type="button"
-            onClick={onCancel}
-            disabled={isBusy}
-            className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
-          >
+          <Button variant="secondary" onClick={onCancel} disabled={isBusy}>
             {cancelLabel}
-          </button>
-          <button
-            type="button"
-            onClick={onConfirm}
-            disabled={isBusy}
-            className={`rounded-md px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60 ${
-              isDangerous ? "bg-red-600 hover:bg-red-500" : "bg-indigo-600 hover:bg-indigo-500"
-            }`}
-          >
-            {isBusy ? "Please wait…" : confirmLabel}
-          </button>
+          </Button>
+          <Button variant={isDangerous ? "danger" : "primary"} onClick={onConfirm} isLoading={isBusy}>
+            {confirmLabel}
+          </Button>
         </div>
       </div>
     </div>

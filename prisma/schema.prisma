@@ -8217,8 +8217,8 @@ model ReplicateDesignProject {
   generations        ReplicateDesignGeneration[]
   images             ReplicateDesignImage[]
   versions           ReplicateDesignVersion[]           @relation("ReplicateDesignVersionsOfProject")
-  providerUsage      AIProviderUsage[]
   techPacks          ReplicateDesignTechPack[]
+  providerUsage      AIProviderUsage[]
 
   @@unique([companyId, projectNumber])
   @@map("replicate_design_projects")

@@ -48,8 +48,8 @@ export function SuppliersListClient() {
           </>
         )}
         columns={[
-          { key: "code", header: "Code" },
-          { key: "name", header: "Name" },
+          { key: "code", header: "Code", sortable: true },
+          { key: "name", header: "Name", sortable: true },
           { key: "category", header: "Category", render: (row) => row.category?.name ?? "—" },
           {
             key: "isActive",

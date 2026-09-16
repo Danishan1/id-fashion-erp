@@ -16,6 +16,17 @@ export const BuyerEnquiryRepository = {
 
   count: (where: Prisma.BuyerEnquiryWhereInput) => prisma.buyerEnquiry.count({ where }),
 
+  /** Top N enquiry-number matches for this company — backs the Topbar Global
+   * Search's Buyer Enquiries group. `customer`/`prospectName` are mutually
+   * exclusive (see the model's own comment) so the caller picks whichever is set. */
+  searchTop: (companyId: string, term: string, limit: number) =>
+    prisma.buyerEnquiry.findMany({
+      where: { companyId, enquiryNumber: { contains: term, mode: "insensitive" as const } },
+      select: { id: true, enquiryNumber: true, prospectName: true, customer: { select: { name: true } } },
+      orderBy: { createdAt: "desc" },
+      take: limit,
+    }),
+
   findByIdWithDetails: (companyId: string, id: string) =>
     prisma.buyerEnquiry.findFirst({
       where: { id, companyId },

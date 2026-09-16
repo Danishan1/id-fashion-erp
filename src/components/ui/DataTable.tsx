@@ -5,11 +5,25 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, type MouseEvent, type ReactNode } from "react";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
+import { Button, buttonClasses } from "@/components/ui/Button";
 
 export interface DataTableColumn<T> {
   key: string;
   header: string;
   render?: (row: T) => ReactNode;
+  /**
+   * Opt-in column sorting (audit item #7) — set only on a column whose `key`
+   * is a genuine flat scalar field on the underlying Prisma model, since it's
+   * sent to the server as-is (`?sortBy=<key>&sortOrder=asc|desc`) and every
+   * list service already does a generic `orderBy: { [query.sortBy]:
+   * query.sortOrder }` pass-through (see src/lib/list-query.ts). Never set
+   * this on a computed/relation column (e.g. a joined "category.name" cell)
+   * — the server has no such flat field to sort by. Purely additive: a
+   * column with no `sortable` renders exactly as before, and the table
+   * sends no sort params at all until a user actually clicks a sortable
+   * header, so the server's own existing default order is unaffected.
+   */
+  sortable?: boolean;
 }
 
 interface DataTableProps<T> {
@@ -81,6 +95,11 @@ export function DataTable<T extends { id: string }>({
   const [pendingToggleRow, setPendingToggleRow] = useState<T | null>(null);
   const [isToggling, setIsToggling] = useState(false);
   const [reloadTick, setReloadTick] = useState(0);
+  // Undefined until a user actually clicks a sortable header — the request
+  // then carries no sortBy/sortOrder params at all, so every page's existing
+  // default server-side order is completely unaffected until opted into.
+  const [sortBy, setSortBy] = useState<string | undefined>(undefined);
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
 
   useEffect(() => {
     const controller = new AbortController();
@@ -91,6 +110,10 @@ export function DataTable<T extends { id: string }>({
         const url = new URL(fetchUrl, window.location.origin);
         url.searchParams.set("page", String(page));
         if (search) url.searchParams.set("search", search);
+        if (sortBy) {
+          url.searchParams.set("sortBy", sortBy);
+          url.searchParams.set("sortOrder", sortOrder);
+        }
 
         const res = await fetch(url.toString(), { signal: controller.signal });
         const body = await res.json();
@@ -109,7 +132,30 @@ export function DataTable<T extends { id: string }>({
       clearTimeout(timeout);
       controller.abort();
     };
-  }, [fetchUrl, page, search, refreshKey, reloadTick]);
+  }, [fetchUrl, page, search, refreshKey, reloadTick, sortBy, sortOrder]);
+
+  const actionsColCount = rowHref || onEditRow || rowActions ? 1 : 0;
+
+  const toggleSort = (key: string) => {
+    if (sortBy === key) {
+      setSortOrder((o) => (o === "asc" ? "desc" : "asc"));
+    } else {
+      setSortBy(key);
+      setSortOrder("asc");
+    }
+    setPage(1);
+  };
+
+  // The exact same element renders in the header's own toolbar AND (only
+  // when the table is genuinely empty, see below) as the empty state's own
+  // call-to-action — one definition so the two can never visually drift.
+  const newButton = newAction ? (
+    <Button onClick={newAction.onClick}>{newAction.label}</Button>
+  ) : newHref ? (
+    <Link href={newHref} className={buttonClasses("primary", "sm")}>
+      {newLabel}
+    </Link>
+  ) : null;
 
   const rowIsActive = (row: T): boolean | undefined => (row as { isActive?: boolean }).isActive;
 
@@ -146,31 +192,11 @@ export function DataTable<T extends { id: string }>({
         />
         <div className="flex shrink-0 items-center gap-2">
           {exportUrl && (
-            <a
-              href={exportUrl}
-              className="whitespace-nowrap rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
-            >
+            <a href={exportUrl} className={buttonClasses("secondary", "sm")}>
               Download Excel
             </a>
           )}
-          {newAction ? (
-            <button
-              type="button"
-              onClick={newAction.onClick}
-              className="whitespace-nowrap rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500"
-            >
-              {newAction.label}
-            </button>
-          ) : (
-            newHref && (
-              <Link
-                href={newHref}
-                className="whitespace-nowrap rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500"
-              >
-                {newLabel}
-              </Link>
-            )
-          )}
+          {newButton}
         </div>
       </div>
 
@@ -178,33 +204,65 @@ export function DataTable<T extends { id: string }>({
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-zinc-200 text-left text-xs uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
-              {columns.map((col) => (
-                <th key={col.key} className="px-4 py-2 font-medium">
-                  {col.header}
-                </th>
-              ))}
+              {columns.map((col) =>
+                col.sortable ? (
+                  <th
+                    key={col.key}
+                    className="px-4 py-2 font-medium"
+                    aria-sort={sortBy === col.key ? (sortOrder === "asc" ? "ascending" : "descending") : "none"}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => toggleSort(col.key)}
+                      className="flex items-center gap-1 uppercase tracking-wide hover:text-zinc-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-1 dark:hover:text-zinc-200 dark:focus-visible:ring-offset-zinc-900"
+                    >
+                      {col.header}
+                      {sortBy === col.key && <span aria-hidden="true">{sortOrder === "asc" ? "▲" : "▼"}</span>}
+                    </button>
+                  </th>
+                ) : (
+                  <th key={col.key} className="px-4 py-2 font-medium">
+                    {col.header}
+                  </th>
+                )
+              )}
               {(rowHref || onEditRow || rowActions) && <th className="px-4 py-2 font-medium">Actions</th>}
             </tr>
           </thead>
           <tbody>
             {error && (
               <tr>
-                <td colSpan={columns.length + (rowHref || onEditRow || rowActions ? 1 : 0)} className="px-4 py-6 text-center text-red-600 dark:text-red-400">
-                  {error}
+                <td colSpan={columns.length + actionsColCount} className="px-4 py-8 text-center">
+                  <div className="space-y-3">
+                    <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+                      {error}
+                    </p>
+                    <Button variant="secondary" onClick={() => setReloadTick((t) => t + 1)}>
+                      Retry
+                    </Button>
+                  </div>
                 </td>
               </tr>
             )}
             {!error && isLoading && (
               <tr>
-                <td colSpan={columns.length + (rowHref || onEditRow || rowActions ? 1 : 0)} className="px-4 py-6 text-center text-zinc-500">
+                <td colSpan={columns.length + actionsColCount} className="px-4 py-6 text-center text-zinc-500">
                   Loading…
                 </td>
               </tr>
             )}
             {!error && !isLoading && result?.data.length === 0 && (
               <tr>
-                <td colSpan={columns.length + (rowHref || onEditRow || rowActions ? 1 : 0)} className="px-4 py-6 text-center text-zinc-500">
-                  No records found.
+                <td colSpan={columns.length + actionsColCount} className="px-4 py-8 text-center">
+                  {search.trim() ? (
+                    <p className="text-sm text-zinc-500">No records match your search.</p>
+                  ) : (
+                    <div className="space-y-1">
+                      <p className="text-sm text-zinc-500">No records found.</p>
+                      {newButton && <p className="text-sm text-zinc-500">Create your first one to get started.</p>}
+                      <div className="pt-2">{newButton}</div>
+                    </div>
+                  )}
                 </td>
               </tr>
             )}

@@ -28,6 +28,16 @@ export const ProductionOrderRepository = {
 
   count: (where: Prisma.ProductionOrderWhereInput) => prisma.productionOrder.count({ where }),
 
+  /** Top N order-number matches for this company — backs the Topbar Global
+   * Search's Production Orders group. */
+  searchTop: (companyId: string, term: string, limit: number) =>
+    prisma.productionOrder.findMany({
+      where: { companyId, orderNumber: { contains: term, mode: "insensitive" as const } },
+      select: { id: true, orderNumber: true, product: { select: { styleName: true } } },
+      orderBy: { createdAt: "desc" },
+      take: limit,
+    }),
+
   findByIdWithDetails: (companyId: string, id: string) =>
     prisma.productionOrder.findFirst({
       where: { id, companyId },

@@ -13,6 +13,23 @@ export const CustomerRepository = {
 
   count: (where: Prisma.CustomerWhereInput) => prisma.customer.count({ where }),
 
+  /** Top N name/code matches for this company — backs the Topbar Global
+   * Search's Customers group. */
+  searchTop: (companyId: string, term: string, limit: number) =>
+    prisma.customer.findMany({
+      where: {
+        companyId,
+        deletedAt: null,
+        OR: [
+          { name: { contains: term, mode: "insensitive" as const } },
+          { code: { contains: term, mode: "insensitive" as const } },
+        ],
+      },
+      select: { id: true, name: true, code: true },
+      orderBy: { createdAt: "desc" },
+      take: limit,
+    }),
+
   findByIdWithBuyers: (companyId: string, id: string) =>
     prisma.customer.findFirst({
       where: { id, companyId, deletedAt: null },

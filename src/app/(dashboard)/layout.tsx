@@ -2,8 +2,7 @@ import type { ReactNode } from "react";
 import { auth } from "@/core/auth/auth";
 import type { Module } from "@/config/rbac";
 import { PermissionService } from "@/core/rbac/PermissionService";
-import { Sidebar } from "@/components/layout/Sidebar";
-import { Topbar } from "@/components/layout/Topbar";
+import { DashboardShell } from "@/components/layout/DashboardShell";
 
 export default async function DashboardLayout({ children }: { children: ReactNode }) {
   const session = await auth();
@@ -18,12 +17,12 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   const viewableModules = viewableModulesResult === "all" ? "all" : Array.from(viewableModulesResult);
 
   return (
-    <div className="flex flex-1">
-      <Sidebar isPlatformAdmin={session?.user?.isPlatformAdmin} viewableModules={viewableModules} />
-      <div className="flex flex-1 flex-col">
-        <Topbar userName={session?.user?.name ?? session?.user?.email ?? "User"} />
-        <main className="flex-1 overflow-y-auto bg-zinc-50 p-6 dark:bg-zinc-950">{children}</main>
-      </div>
-    </div>
+    <DashboardShell
+      isPlatformAdmin={session?.user?.isPlatformAdmin}
+      viewableModules={viewableModules}
+      userName={session?.user?.name ?? session?.user?.email ?? "User"}
+    >
+      {children}
+    </DashboardShell>
   );
 }

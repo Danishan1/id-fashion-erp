@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
-import { textInputClass } from "@/components/ui/FormField";
+import { FormField, textInputClass } from "@/components/ui/FormField";
 import { Modal } from "@/components/ui/Modal";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
+import { Button } from "@/components/ui/Button";
 import { suggestCodeFromName, makeCodeUnique } from "@/lib/code-suggest";
 
 export interface LookupField {
@@ -83,6 +84,7 @@ export function SimpleLookupManager({
   const [pendingToggleRow, setPendingToggleRow] = useState<LookupRow | null>(null);
   const [isToggling, setIsToggling] = useState(false);
   const [search, setSearch] = useState("");
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const columns = displayColumns ?? fields.map((f) => ({ key: f.key, header: f.label }));
 
@@ -132,10 +134,21 @@ export function SimpleLookupManager({
 
   const load = () => {
     setIsLoading(true);
+    setLoadError(null);
     fetch(`${fetchUrl}?pageSize=200`)
-      .then((res) => res.json())
-      .then((body) => setRows(body.data ?? []))
-      .catch(() => setRows([]))
+      .then(async (res) => {
+        const body = await res.json().catch(() => null);
+        // Previously this never checked `res.ok` at all, so a real HTTP
+        // failure (403/500/...) silently rendered as "No records found."
+        // instead of a genuine error — fixed as part of adding a real error
+        // state here, not a behavior change to the success path.
+        if (!res.ok) throw new Error(body?.error?.message ?? "Failed to load records.");
+        setRows(body?.data ?? []);
+      })
+      .catch((err) => {
+        setRows([]);
+        setLoadError(err instanceof Error ? err.message : "Failed to load records.");
+      })
       .finally(() => setIsLoading(false));
   };
 
@@ -257,10 +270,10 @@ export function SimpleLookupManager({
         <form onSubmit={handleSubmit} className="space-y-3">
           {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
           {fields.map((f) => (
-            <div key={f.key}>
-              <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400">{f.label}</label>
+            <FormField key={f.key} label={f.label} htmlFor={f.key} required={f.required}>
               {f.type === "select" ? (
                 <select
+                  id={f.key}
                   required={f.required}
                   value={values[f.key] ?? ""}
                   onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
@@ -275,6 +288,7 @@ export function SimpleLookupManager({
                 </select>
               ) : (
                 <input
+                  id={f.key}
                   type={f.type ?? "text"}
                   required={f.required}
                   placeholder={f.placeholder}
@@ -283,23 +297,15 @@ export function SimpleLookupManager({
                   className={textInputClass()}
                 />
               )}
-            </div>
+            </FormField>
           ))}
           <div className="flex justify-end gap-3 pt-2">
-            <button
-              type="button"
-              onClick={() => setShowForm(false)}
-              className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
-            >
+            <Button variant="secondary" onClick={() => setShowForm(false)}>
               Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
-            >
-              {isSubmitting ? "Saving…" : editingId ? "Update" : "Add"}
-            </button>
+            </Button>
+            <Button type="submit" isLoading={isSubmitting} loadingLabel="Saving…">
+              {editingId ? "Update" : "Add"}
+            </Button>
           </div>
         </form>
       </Modal>
@@ -318,21 +324,43 @@ export function SimpleLookupManager({
             </tr>
           </thead>
           <tbody>
-            {isLoading && (
+            {loadError && (
+              <tr>
+                <td colSpan={columns.length + 1} className="px-4 py-8 text-center">
+                  <div className="space-y-3">
+                    <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+                      {loadError}
+                    </p>
+                    <Button variant="secondary" onClick={load}>
+                      Retry
+                    </Button>
+                  </div>
+                </td>
+              </tr>
+            )}
+            {!loadError && isLoading && (
               <tr>
                 <td colSpan={columns.length + 1} className="px-4 py-6 text-center text-zinc-500">
                   Loading…
                 </td>
               </tr>
             )}
-            {!isLoading && filteredRows.length === 0 && (
+            {!loadError && !isLoading && filteredRows.length === 0 && (
               <tr>
-                <td colSpan={columns.length + 1} className="px-4 py-6 text-center text-zinc-500">
-                  {rows.length === 0 ? "No records found." : "No records match your search."}
+                <td colSpan={columns.length + 1} className="px-4 py-8 text-center">
+                  {rows.length === 0 ? (
+                    <div className="space-y-3">
+                      <p className="text-sm text-zinc-500">No records found.</p>
+                      <Button onClick={startCreate}>+ Add {entityLabel}</Button>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-zinc-500">No records match your search.</p>
+                  )}
                 </td>
               </tr>
             )}
-            {!isLoading &&
+            {!loadError &&
+              !isLoading &&
               filteredRows.map((row) => (
                 <tr key={row.id} className="border-b border-zinc-100 last:border-0 dark:border-zinc-800">
                   {columns.map((c) => {

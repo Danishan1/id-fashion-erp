@@ -147,10 +147,10 @@ function CustomersListContent() {
           </>
         )}
         columns={[
-          { key: "code", header: "Code" },
-          { key: "name", header: "Name" },
-          { key: "type", header: "Type" },
-          { key: "country", header: "Country", render: (row) => row.country ?? "—" },
+          { key: "code", header: "Code", sortable: true },
+          { key: "name", header: "Name", sortable: true },
+          { key: "type", header: "Type", sortable: true },
+          { key: "country", header: "Country", sortable: true, render: (row) => row.country ?? "—" },
           {
             key: "isActive",
             header: "Status",

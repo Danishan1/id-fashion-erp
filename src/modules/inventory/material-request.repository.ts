@@ -50,6 +50,21 @@ export const MaterialRequestRepository = {
 
   count: (where: Prisma.MaterialRequestWhereInput) => prisma.materialRequest.count({ where }),
 
+  /** Top N request-number matches for this company — backs the Topbar Global
+   * Search's Material Requests group. */
+  searchTop: (companyId: string, term: string, limit: number) =>
+    prisma.materialRequest.findMany({
+      where: { companyId, requestNumber: { contains: term, mode: "insensitive" as const } },
+      select: {
+        id: true,
+        requestNumber: true,
+        department: { select: { name: true } },
+        warehouse: { select: { name: true } },
+      },
+      orderBy: { createdAt: "desc" },
+      take: limit,
+    }),
+
   findByIdWithDetails: (companyId: string, id: string) =>
     prisma.materialRequest.findFirst({
       where: { id, companyId },

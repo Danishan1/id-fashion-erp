@@ -27,6 +27,16 @@ export const SampleRequestRepository = {
 
   count: (where: Prisma.SampleRequestWhereInput) => prisma.sampleRequest.count({ where }),
 
+  /** Top N request-number matches for this company — backs the Topbar Global
+   * Search's Sample Requests group. */
+  searchTop: (companyId: string, term: string, limit: number) =>
+    prisma.sampleRequest.findMany({
+      where: { companyId, requestNumber: { contains: term, mode: "insensitive" as const } },
+      select: { id: true, requestNumber: true, customer: { select: { name: true } } },
+      orderBy: { createdAt: "desc" },
+      take: limit,
+    }),
+
   findByIdWithDetails: (companyId: string, id: string) =>
     prisma.sampleRequest.findFirst({
       where: { id, companyId },
