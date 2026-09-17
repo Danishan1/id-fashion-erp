@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { FilePreviewModal } from "@/components/ui/FilePreviewModal";
 
 interface ImageAttachment {
   id: string;
@@ -12,8 +13,12 @@ interface SampleImagesSectionProps {
   sampleRequestId: string;
 }
 
-function downloadUrl(id: string) {
+function inlineUrl(id: string) {
   return `/api/v1/sampling/attachments/${id}/download?disposition=inline`;
+}
+
+function attachmentDownloadUrl(id: string) {
+  return `/api/v1/sampling/attachments/${id}/download`;
 }
 
 /**
@@ -31,6 +36,7 @@ export function SampleImagesSection({ sampleRequestId }: SampleImagesSectionProp
   const [error, setError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [uploadInputKey, setUploadInputKey] = useState(0);
+  const [previewTarget, setPreviewTarget] = useState<ImageAttachment | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function load() {
@@ -155,7 +161,12 @@ export function SampleImagesSection({ sampleRequestId }: SampleImagesSectionProp
                   }`}
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={downloadUrl(img.id)} alt={img.fileName} className="h-28 w-full object-cover" />
+                  <img
+                    src={inlineUrl(img.id)}
+                    alt={img.fileName}
+                    onClick={() => setPreviewTarget(img)}
+                    className="h-28 w-full cursor-zoom-in object-cover"
+                  />
                   <div className="space-y-1 p-1.5">
                     {isMain ? (
                       <span className="block rounded bg-indigo-100 px-1.5 py-0.5 text-center text-[10px] font-semibold text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-300">
@@ -186,6 +197,18 @@ export function SampleImagesSection({ sampleRequestId }: SampleImagesSectionProp
           </div>
         )}
       </div>
+
+      {previewTarget && (
+        <FilePreviewModal
+          key={previewTarget.id}
+          open
+          onClose={() => setPreviewTarget(null)}
+          previewUrl={inlineUrl(previewTarget.id)}
+          downloadUrl={attachmentDownloadUrl(previewTarget.id)}
+          fileName={previewTarget.fileName}
+          mimeType={previewTarget.mimeType}
+        />
+      )}
     </div>
   );
 }

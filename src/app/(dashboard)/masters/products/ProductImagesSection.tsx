@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Modal } from "@/components/ui/Modal";
+import { FilePreviewModal } from "@/components/ui/FilePreviewModal";
 
 interface ImageAttachment {
   id: string;
@@ -14,8 +15,12 @@ interface ProductImagesSectionProps {
   onClose: () => void;
 }
 
-function downloadUrl(id: string) {
+function inlineUrl(id: string) {
   return `/api/v1/products/attachments/${id}/download?disposition=inline`;
+}
+
+function attachmentDownloadUrl(id: string) {
+  return `/api/v1/products/attachments/${id}/download`;
 }
 
 /**
@@ -40,6 +45,7 @@ export function ProductImagesSection({ productId, onClose }: ProductImagesSectio
   const [isBusy, setIsBusy] = useState(false);
   const [mainInputKey, setMainInputKey] = useState(0);
   const [otherInputKey, setOtherInputKey] = useState(0);
+  const [previewTarget, setPreviewTarget] = useState<ImageAttachment | null>(null);
 
   async function load() {
     setIsLoading(true);
@@ -186,9 +192,10 @@ export function ProductImagesSection({ productId, onClose }: ProductImagesSectio
                 {mainImage ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
-                    src={downloadUrl(mainImage.id)}
+                    src={inlineUrl(mainImage.id)}
                     alt={mainImage.fileName}
-                    className="h-24 w-24 rounded-md border border-indigo-500 object-cover ring-2 ring-indigo-500"
+                    onClick={() => setPreviewTarget(mainImage)}
+                    className="h-24 w-24 cursor-zoom-in rounded-md border border-indigo-500 object-cover ring-2 ring-indigo-500"
                   />
                 ) : (
                   <div className="flex h-24 w-24 items-center justify-center rounded-md border border-dashed border-zinc-300 text-xs text-zinc-400 dark:border-zinc-700">
@@ -238,7 +245,12 @@ export function ProductImagesSection({ productId, onClose }: ProductImagesSectio
                   {otherImages.map((img) => (
                     <div key={img.id} className="overflow-hidden rounded-md border border-zinc-200 dark:border-zinc-800">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={downloadUrl(img.id)} alt={img.fileName} className="h-24 w-full object-cover" />
+                      <img
+                        src={inlineUrl(img.id)}
+                        alt={img.fileName}
+                        onClick={() => setPreviewTarget(img)}
+                        className="h-24 w-full cursor-zoom-in object-cover"
+                      />
                       <div className="space-y-1 p-1.5">
                         <button
                           type="button"
@@ -275,6 +287,18 @@ export function ProductImagesSection({ productId, onClose }: ProductImagesSectio
           </button>
         </div>
       </div>
+
+      {previewTarget && (
+        <FilePreviewModal
+          key={previewTarget.id}
+          open
+          onClose={() => setPreviewTarget(null)}
+          previewUrl={inlineUrl(previewTarget.id)}
+          downloadUrl={attachmentDownloadUrl(previewTarget.id)}
+          fileName={previewTarget.fileName}
+          mimeType={previewTarget.mimeType}
+        />
+      )}
     </Modal>
   );
 }
