@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { Modal } from "@/components/ui/Modal";
+import { FilePreviewModal } from "@/components/ui/FilePreviewModal";
 import { ICON_BUTTON_CLASS, BomIcon, VariantsIcon, ImagesIcon } from "@/components/ui/icons";
 import { STATUS_LABELS, STATUS_BADGE_CLASS } from "@/app/(dashboard)/sampling/statusLabels";
 import { SampleImagesSection } from "@/app/(dashboard)/sampling/SampleImagesSection";
@@ -58,6 +59,10 @@ export function DesignsListClient({ productId, styleName, styleCode, variantCoun
   // this page shares the same one style, so this opens that style's own
   // existing Variants modal, just reachable from a design's row too.
   const [variantsOpen, setVariantsOpen] = useState(false);
+  // Clicking the row's own thumbnail opens the same shared full-screen
+  // preview the Images modal's own thumbnails use — same pattern as the
+  // Styles list's row thumbnail.
+  const [thumbnailPreview, setThumbnailPreview] = useState<{ url: string; title: string } | null>(null);
 
   // Deliberately does no setState itself — kept as a pure fetch so it can
   // be called both from the mount effect below (which must stay free of
@@ -146,7 +151,13 @@ export function DesignsListClient({ productId, styleName, styleCode, variantCoun
                         <img
                           src={mainImageDownloadUrl(r.mainImageAttachmentId)}
                           alt={r.styleName}
-                          className="h-10 w-10 rounded object-cover"
+                          onClick={() =>
+                            setThumbnailPreview({
+                              url: mainImageDownloadUrl(r.mainImageAttachmentId!),
+                              title: r.styleName,
+                            })
+                          }
+                          className="h-10 w-10 cursor-zoom-in rounded object-cover"
                         />
                       ) : (
                         <div className="flex h-10 w-10 items-center justify-center rounded bg-zinc-100 text-xs text-zinc-400 dark:bg-zinc-800">
@@ -220,6 +231,18 @@ export function DesignsListClient({ productId, styleName, styleCode, variantCoun
       )}
 
       {variantsOpen && <VariantsSection key={productId} productId={productId} onClose={() => setVariantsOpen(false)} />}
+
+      {thumbnailPreview && (
+        <FilePreviewModal
+          key={thumbnailPreview.url}
+          open
+          onClose={() => setThumbnailPreview(null)}
+          previewUrl={thumbnailPreview.url}
+          downloadUrl={thumbnailPreview.url.split("?")[0]}
+          fileName={thumbnailPreview.title}
+          mimeType="image/jpeg"
+        />
+      )}
     </div>
   );
 }

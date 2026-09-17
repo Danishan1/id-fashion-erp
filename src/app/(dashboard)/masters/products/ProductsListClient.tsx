@@ -6,6 +6,7 @@ import Link from "next/link";
 import { DataTable } from "@/components/ui/DataTable";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { Modal } from "@/components/ui/Modal";
+import { FilePreviewModal } from "@/components/ui/FilePreviewModal";
 import { ICON_BUTTON_CLASS, EditIcon, BomIcon, VariantsIcon, DesignsIcon, ImagesIcon } from "@/components/ui/icons";
 import { ProductForm, type ProductFormValues } from "./ProductForm";
 import { VariantsSection } from "./VariantsSection";
@@ -97,6 +98,12 @@ function ProductsListContent() {
   // "don't crowd a row with many inline buttons once it grows past 2-3"
   // standard ActionMenu.tsx's own doc comment already states.
   const [rowModal, setRowModal] = useState<{ type: "variants" | "images"; row: ProductRow } | null>(null);
+  // Clicking the row's own thumbnail (the leftmost column) opens the same
+  // shared full-screen preview the Images modal's own thumbnails use —
+  // mainImageUrl is already the inline-disposition download URL, so the
+  // plain-attachment (forced-download) URL is just that same URL minus its
+  // query string.
+  const [thumbnailPreview, setThumbnailPreview] = useState<{ url: string; title: string } | null>(null);
 
   useEffect(() => {
     fetch("/api/v1/categories?pageSize=200").then((r) => r.json()).then((b) => setCategories(b.data ?? []));
@@ -289,7 +296,12 @@ function ProductsListContent() {
             render: (row) =>
               row.mainImageUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={row.mainImageUrl} alt={row.styleName} className="h-10 w-10 rounded object-cover" />
+                <img
+                  src={row.mainImageUrl}
+                  alt={row.styleName}
+                  onClick={() => setThumbnailPreview({ url: row.mainImageUrl!, title: row.styleName })}
+                  className="h-10 w-10 cursor-zoom-in rounded object-cover"
+                />
               ) : (
                 <div className="flex h-10 w-10 items-center justify-center rounded bg-zinc-100 text-xs text-zinc-400 dark:bg-zinc-800">—</div>
               ),
@@ -366,6 +378,18 @@ function ProductsListContent() {
           />
         )}
       </Modal>
+
+      {thumbnailPreview && (
+        <FilePreviewModal
+          key={thumbnailPreview.url}
+          open
+          onClose={() => setThumbnailPreview(null)}
+          previewUrl={thumbnailPreview.url}
+          downloadUrl={thumbnailPreview.url.split("?")[0]}
+          fileName={thumbnailPreview.title}
+          mimeType="image/jpeg"
+        />
+      )}
     </div>
   );
 }
