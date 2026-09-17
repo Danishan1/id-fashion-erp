@@ -14,6 +14,10 @@ interface SampleRequestRow {
 
 interface DesignNamesSectionProps {
   productId: string;
+  /** The style's own real linked-sample count (Product._count.sampleRequests
+   * from the list query) — shown in the row-action button label, mirroring
+   * VariantsSection's own count-in-label treatment. */
+  designCount: number;
 }
 
 /**
@@ -23,7 +27,7 @@ interface DesignNamesSectionProps {
  * SampleRequest whose productId points here. Self-fetches on open, since a
  * list row has no per-row detail fetch to piggyback on.
  */
-export function DesignNamesSection({ productId }: DesignNamesSectionProps) {
+export function DesignNamesSection({ productId, designCount }: DesignNamesSectionProps) {
   const [open, setOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [requests, setRequests] = useState<SampleRequestRow[]>([]);
@@ -50,7 +54,7 @@ export function DesignNamesSection({ productId }: DesignNamesSectionProps) {
         onClick={openModal}
         className="whitespace-nowrap rounded-md border border-zinc-300 px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
       >
-        Design Names
+        Designs ({designCount})
       </button>
 
       <Modal open={open} onClose={() => setOpen(false)} title="Design Names (Samples from this Style)" maxWidthClass="max-w-xl">

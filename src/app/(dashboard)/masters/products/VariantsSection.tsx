@@ -19,6 +19,11 @@ interface Option {
 
 interface VariantsSectionProps {
   productId: string;
+  /** The style's own real variant count (Product._count.variants from the
+   * list query) — shown in the row-action button label so the count is
+   * visible without opening the modal, mirroring the table's own Variants
+   * column value rather than a second, separately-fetched number. */
+  variantCount: number;
 }
 
 /**
@@ -29,7 +34,7 @@ interface VariantsSectionProps {
  * server-preloaded prop, since a list row has no per-row detail fetch to
  * piggyback on.
  */
-export function VariantsSection({ productId }: VariantsSectionProps) {
+export function VariantsSection({ productId, variantCount }: VariantsSectionProps) {
   const [open, setOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [variants, setVariants] = useState<Variant[]>([]);
@@ -103,7 +108,7 @@ export function VariantsSection({ productId }: VariantsSectionProps) {
         onClick={openModal}
         className="whitespace-nowrap rounded-md border border-zinc-300 px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
       >
-        Variants
+        Variants ({variantCount})
       </button>
 
       <Modal open={open} onClose={() => setOpen(false)} title="Variants (Color × Size)" maxWidthClass="max-w-xl">

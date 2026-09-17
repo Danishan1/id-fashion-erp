@@ -24,7 +24,7 @@ interface ProductRow {
   productType: { name: string } | null;
   productFitting: { name: string } | null;
   isActive: boolean;
-  _count: { variants: number };
+  _count: { variants: number; sampleRequests: number };
 }
 
 interface NamedOption {
@@ -248,8 +248,8 @@ function ProductsListContent() {
             >
               BOM
             </a>
-            <VariantsSection productId={row.id} />
-            <DesignNamesSection productId={row.id} />
+            <VariantsSection productId={row.id} variantCount={row._count.variants} />
+            <DesignNamesSection productId={row.id} designCount={row._count.sampleRequests} />
             <ProductImagesSection productId={row.id} />
           </>
         )}
