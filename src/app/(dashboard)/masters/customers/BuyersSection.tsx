@@ -5,6 +5,8 @@ import { textInputClass } from "@/components/ui/FormField";
 import { Modal } from "@/components/ui/Modal";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
+import { RowAction } from "@/components/ui/RowAction";
+import { PeopleIcon, EditIcon } from "@/components/ui/icons";
 
 interface Buyer {
   id: string;
@@ -125,13 +127,7 @@ export function BuyersSection({ customerId }: BuyersSectionProps) {
 
   return (
     <>
-      <button
-        type="button"
-        onClick={openModal}
-        className="whitespace-nowrap rounded-md border border-zinc-300 px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
-      >
-        Buyers
-      </button>
+      <RowAction icon={<PeopleIcon />} label="Buyers" onClick={openModal} />
 
       <Modal open={open} onClose={() => setOpen(false)} title="Buyers" maxWidthClass="max-w-xl">
         <div className="space-y-3">
@@ -160,9 +156,7 @@ export function BuyersSection({ customerId }: BuyersSectionProps) {
                     {!buyer.isActive && <span className="ml-2 text-xs text-zinc-400">(inactive)</span>}
                   </div>
                   <div className="flex items-center gap-3">
-                    <button onClick={() => openEditForm(buyer)} className="text-indigo-600 hover:text-indigo-500">
-                      Edit
-                    </button>
+                    <RowAction icon={<EditIcon />} label="Edit" onClick={() => openEditForm(buyer)} />
                     <ToggleSwitch checked={buyer.isActive} onToggle={() => setPendingToggle(buyer)} />
                   </div>
                 </li>

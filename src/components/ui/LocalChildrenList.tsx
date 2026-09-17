@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { ChildFormModal } from "@/components/ui/ChildFormModal";
+import { RowAction } from "@/components/ui/RowAction";
+import { EditIcon, DeleteIcon } from "@/components/ui/icons";
 import type { ChildColumn } from "@/components/ui/ChildrenList";
 import type { LookupField } from "@/components/ui/SimpleLookupManager";
 
@@ -99,12 +101,8 @@ export function LocalChildrenList<T extends Record<string, unknown>>({
                 ))}
                 <td className="px-4 py-2">
                   <div className="flex items-center gap-3">
-                    <button type="button" onClick={() => openEdit(index)} className="text-indigo-600 hover:text-indigo-500">
-                      Edit
-                    </button>
-                    <button type="button" onClick={() => removeAt(index)} className="text-red-600 hover:text-red-500">
-                      Remove
-                    </button>
+                    <RowAction icon={<EditIcon />} label="Edit" onClick={() => openEdit(index)} />
+                    <RowAction icon={<DeleteIcon />} label="Remove" onClick={() => removeAt(index)} variant="danger" />
                   </div>
                 </td>
               </tr>

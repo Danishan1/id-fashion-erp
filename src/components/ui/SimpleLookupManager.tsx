@@ -6,6 +6,8 @@ import { Modal } from "@/components/ui/Modal";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import { Button } from "@/components/ui/Button";
+import { RowAction } from "@/components/ui/RowAction";
+import { EditIcon } from "@/components/ui/icons";
 import { suggestCodeFromName, makeCodeUnique } from "@/lib/code-suggest";
 
 export interface LookupField {
@@ -373,9 +375,7 @@ export function SimpleLookupManager({
                   })}
                   <td className="px-4 py-2">
                     <div className="flex items-center gap-3">
-                      <button onClick={() => startEdit(row)} className="text-indigo-600 hover:text-indigo-500">
-                        Edit
-                      </button>
+                      <RowAction icon={<EditIcon />} label="Edit" onClick={() => startEdit(row)} />
                       {hasActiveToggle && (
                         <ToggleSwitch
                           checked={Boolean(row.isActive)}

@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { Modal } from "@/components/ui/Modal";
 import { textInputClass } from "@/components/ui/FormField";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
+import { RowAction } from "@/components/ui/RowAction";
+import { ViewIcon } from "@/components/ui/icons";
 
 interface AuditLogRow {
   id: string;
@@ -236,9 +238,7 @@ export function AdminAuditLogPanel() {
                     {log.recordId.slice(0, 8)}…
                   </td>
                   <td className="px-3 py-2 text-right">
-                    <button type="button" onClick={() => setSelected(log)} className="text-sm text-indigo-600 hover:underline dark:text-indigo-400">
-                      View
-                    </button>
+                    <RowAction icon={<ViewIcon />} label="View" onClick={() => setSelected(log)} />
                   </td>
                 </tr>
               ))}

@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
+import { RowAction } from "@/components/ui/RowAction";
+import { ApproveIcon, RejectIcon } from "@/components/ui/icons";
 
 interface FollowupRow {
   id: string;
@@ -83,12 +85,8 @@ export default function FollowUpsPage() {
       </div>
       {row.status === "PENDING" && (
         <div className="flex shrink-0 gap-2">
-          <button type="button" onClick={() => changeStatus(row.id, "COMPLETED")} className="text-xs font-medium text-green-600 hover:underline">
-            Complete
-          </button>
-          <button type="button" onClick={() => changeStatus(row.id, "CANCELLED")} className="text-xs font-medium text-red-600 hover:underline">
-            Cancel
-          </button>
+          <RowAction icon={<ApproveIcon />} label="Complete" variant="success" onClick={() => changeStatus(row.id, "COMPLETED")} />
+          <RowAction icon={<RejectIcon />} label="Cancel" variant="danger" onClick={() => changeStatus(row.id, "CANCELLED")} />
         </div>
       )}
     </li>

@@ -5,6 +5,8 @@ import { MATERIAL_CATEGORIES } from "@/modules/products/product.schema";
 import { formatCategoryLabel } from "@/lib/format-category-label";
 import { textInputClass } from "@/components/ui/FormField";
 import { Modal } from "@/components/ui/Modal";
+import { RowAction } from "@/components/ui/RowAction";
+import { PackageIcon, DeleteIcon } from "@/components/ui/icons";
 
 interface MaterialOption {
   id: string;
@@ -152,13 +154,7 @@ export function SuppliedMaterialsSection({ supplierId }: SuppliedMaterialsSectio
 
   return (
     <>
-      <button
-        type="button"
-        onClick={openModal}
-        className="whitespace-nowrap rounded-md border border-zinc-300 px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
-      >
-        Materials
-      </button>
+      <RowAction icon={<PackageIcon />} label="Materials" onClick={openModal} />
 
       <Modal open={open} onClose={() => setOpen(false)} title="Materials Supplied" maxWidthClass="max-w-xl">
         <div className="space-y-3">
@@ -187,14 +183,13 @@ export function SuppliedMaterialsSection({ supplierId }: SuppliedMaterialsSectio
                           <span className="ml-2 text-xs text-zinc-500">{formatCategoryLabel(link.product.materialCategory)}</span>
                         )}
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => handleRemove(link)}
+                      <RowAction
+                        icon={<DeleteIcon />}
+                        label={removingId === link.id ? "Removing…" : "Remove"}
+                        variant="danger"
                         disabled={removingId === link.id}
-                        className="text-sm text-red-600 hover:text-red-500 disabled:opacity-60 dark:text-red-400"
-                      >
-                        {removingId === link.id ? "Removing…" : "Remove"}
-                      </button>
+                        onClick={() => handleRemove(link)}
+                      />
                     </li>
                   ))}
                 </ul>

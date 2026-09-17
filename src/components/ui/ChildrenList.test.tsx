@@ -58,6 +58,12 @@ describe("ChildrenList — error + retry (audit item #9)", () => {
 
     await waitFor(() => expect(screen.getByText("Rack A")).toBeTruthy(), { timeout: 2000 });
     expect(screen.queryByText("Failed to load.")).toBeNull();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // Filtered by URL, not a raw call count — once a row renders, its Edit
+    // RowAction independently fetches the shared Action Display setting
+    // over this same stubbed global fetch, which is unrelated to what this
+    // assertion is actually verifying (that ChildrenList's own retry fired
+    // exactly once more, not a stale request piling up).
+    const ownCalls = fetchMock.mock.calls.filter(([url]) => url === "/api/v1/warehouses/w1/locations");
+    expect(ownCalls).toHaveLength(2);
   });
 });

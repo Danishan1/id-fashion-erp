@@ -5,6 +5,8 @@ import { Modal } from "@/components/ui/Modal";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { RowAction } from "@/components/ui/RowAction";
+import { EditIcon } from "@/components/ui/icons";
 
 const BRANCH_TYPES = ["FACTORY", "OFFICE", "WAREHOUSE"] as const;
 
@@ -130,9 +132,7 @@ export function AdminBranchesPanel({ canManage }: { canManage: boolean }) {
                   )}
                   {canManage && (
                     <td className="px-3 py-2">
-                      <button type="button" onClick={() => openEdit(b)} className="text-sm text-indigo-600 hover:underline dark:text-indigo-400">
-                        Edit
-                      </button>
+                      <RowAction icon={<EditIcon />} label="Edit" onClick={() => openEdit(b)} />
                     </td>
                   )}
                 </tr>

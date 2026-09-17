@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { Modal } from "@/components/ui/Modal";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { RowAction } from "@/components/ui/RowAction";
+import { EditIcon } from "@/components/ui/icons";
 
 interface RoleRow {
   id: string;
@@ -127,9 +128,11 @@ export function AdminRolesPanel({ canManage }: { canManage: boolean }) {
                   <td className="px-3 py-2 text-zinc-600 dark:text-zinc-400">{r.permissionCount}</td>
                   <td className="px-3 py-2 text-zinc-600 dark:text-zinc-400">{r.userCount}</td>
                   <td className="px-3 py-2 text-right">
-                    <Link href={`/admin/roles/${r.id}`} className="text-sm text-indigo-600 hover:underline dark:text-indigo-400">
-                      {r.isSystemRole ? "View Permissions" : "Manage Permissions"}
-                    </Link>
+                    <RowAction
+                      icon={<EditIcon />}
+                      label={r.isSystemRole ? "View Permissions" : "Manage Permissions"}
+                      href={`/admin/roles/${r.id}`}
+                    />
                   </td>
                 </tr>
               ))}

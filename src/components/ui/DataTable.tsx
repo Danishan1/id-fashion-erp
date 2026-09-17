@@ -2,10 +2,12 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import { Button, buttonClasses } from "@/components/ui/Button";
+import { RowAction } from "@/components/ui/RowAction";
+import { EditIcon } from "@/components/ui/icons";
 
 export interface DataTableColumn<T> {
   key: string;
@@ -297,24 +299,9 @@ export function DataTable<T extends { id: string }>({
                       <td className="px-4 py-2">
                         <div className="flex items-center gap-3">
                           {rowHref ? (
-                            <Link
-                              href={href!}
-                              onClick={(e: MouseEvent) => e.stopPropagation()}
-                              className="font-medium text-indigo-600 hover:text-indigo-500"
-                            >
-                              Edit
-                            </Link>
+                            <RowAction icon={<EditIcon />} label="Edit" href={href!} />
                           ) : onEditRow ? (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onEditRow(row);
-                              }}
-                              className="font-medium text-indigo-600 hover:text-indigo-500"
-                            >
-                              Edit
-                            </button>
+                            <RowAction icon={<EditIcon />} label="Edit" onClick={() => onEditRow(row)} />
                           ) : null}
                           {rowActions && (
                             <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>

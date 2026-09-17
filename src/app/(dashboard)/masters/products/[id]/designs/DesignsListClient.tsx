@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { Modal } from "@/components/ui/Modal";
 import { FilePreviewModal } from "@/components/ui/FilePreviewModal";
-import { ICON_BUTTON_CLASS, ViewIcon, BomIcon, VariantsIcon, ImagesIcon } from "@/components/ui/icons";
+import { ViewIcon, BomIcon, VariantsIcon, ImagesIcon } from "@/components/ui/icons";
+import { RowAction } from "@/components/ui/RowAction";
 import { STATUS_LABELS, STATUS_BADGE_CLASS } from "@/app/(dashboard)/sampling/statusLabels";
 import { SampleImagesSection } from "@/app/(dashboard)/sampling/SampleImagesSection";
 import { VariantsSection } from "../../VariantsSection";
@@ -183,40 +183,14 @@ export function DesignsListClient({ productId, styleName, styleCode, variantCoun
                     </td>
                     <td className="px-4 py-2">
                       <div className="flex items-center gap-0.5">
-                        <Link
-                          href={`/sampling/${r.id}/view`}
-                          title="View"
-                          aria-label="View"
-                          className={ICON_BUTTON_CLASS}
-                        >
-                          <ViewIcon />
-                        </Link>
-                        <Link
-                          href={`/bom-mrp/design/${r.id}`}
-                          title="BOM"
-                          aria-label="BOM"
-                          className={ICON_BUTTON_CLASS}
-                        >
-                          <BomIcon />
-                        </Link>
-                        <button
-                          type="button"
-                          title={`Variants (${variantCount})`}
-                          aria-label={`Variants (${variantCount})`}
+                        <RowAction icon={<ViewIcon />} label="View" href={`/sampling/${r.id}/view`} />
+                        <RowAction icon={<BomIcon />} label="BOM" href={`/bom-mrp/design/${r.id}`} />
+                        <RowAction
+                          icon={<VariantsIcon />}
+                          label={`Variants (${variantCount})`}
                           onClick={() => setVariantsOpen(true)}
-                          className={ICON_BUTTON_CLASS}
-                        >
-                          <VariantsIcon />
-                        </button>
-                        <button
-                          type="button"
-                          title="Images"
-                          aria-label="Images"
-                          onClick={() => setImagesFor(r)}
-                          className={ICON_BUTTON_CLASS}
-                        >
-                          <ImagesIcon />
-                        </button>
+                        />
+                        <RowAction icon={<ImagesIcon />} label="Images" onClick={() => setImagesFor(r)} />
                       </div>
                     </td>
                   </tr>

@@ -2,12 +2,12 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
-import Link from "next/link";
 import { DataTable } from "@/components/ui/DataTable";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { Modal } from "@/components/ui/Modal";
 import { FilePreviewModal } from "@/components/ui/FilePreviewModal";
-import { ICON_BUTTON_CLASS, ViewIcon, EditIcon, BomIcon, VariantsIcon, DesignsIcon, ImagesIcon } from "@/components/ui/icons";
+import { ViewIcon, EditIcon, BomIcon, VariantsIcon, DesignsIcon, ImagesIcon } from "@/components/ui/icons";
+import { RowAction } from "@/components/ui/RowAction";
 import { ProductForm, type ProductFormValues } from "./ProductForm";
 import { VariantsSection } from "./VariantsSection";
 import { ProductImagesSection } from "./ProductImagesSection";
@@ -255,41 +255,20 @@ function ProductsListContent() {
         searchPlaceholder="Search by style name or code…"
         rowActions={(row) => (
           <div className="flex items-center gap-0.5">
-            <Link href={`/masters/products/${row.id}/view`} title="View" aria-label="View" className={ICON_BUTTON_CLASS}>
-              <ViewIcon />
-            </Link>
-            <button type="button" title="Edit" aria-label="Edit" onClick={() => openEdit(row.id)} className={ICON_BUTTON_CLASS}>
-              <EditIcon />
-            </button>
-            <Link href={`/bom-mrp/${row.id}`} title="BOM" aria-label="BOM" className={ICON_BUTTON_CLASS}>
-              <BomIcon />
-            </Link>
-            <button
-              type="button"
-              title={`Variants (${row._count.variants})`}
-              aria-label={`Variants (${row._count.variants})`}
+            <RowAction icon={<ViewIcon />} label="View" href={`/masters/products/${row.id}/view`} />
+            <RowAction icon={<EditIcon />} label="Edit" onClick={() => openEdit(row.id)} />
+            <RowAction icon={<BomIcon />} label="BOM" href={`/bom-mrp/${row.id}`} />
+            <RowAction
+              icon={<VariantsIcon />}
+              label={`Variants (${row._count.variants})`}
               onClick={() => setRowModal({ type: "variants", row })}
-              className={ICON_BUTTON_CLASS}
-            >
-              <VariantsIcon />
-            </button>
-            <Link
+            />
+            <RowAction
+              icon={<DesignsIcon />}
+              label={`Designs (${row._count.sampleRequests})`}
               href={`/masters/products/${row.id}/designs`}
-              title={`Designs (${row._count.sampleRequests})`}
-              aria-label={`Designs (${row._count.sampleRequests})`}
-              className={ICON_BUTTON_CLASS}
-            >
-              <DesignsIcon />
-            </Link>
-            <button
-              type="button"
-              title="Images"
-              aria-label="Images"
-              onClick={() => setRowModal({ type: "images", row })}
-              className={ICON_BUTTON_CLASS}
-            >
-              <ImagesIcon />
-            </button>
+            />
+            <RowAction icon={<ImagesIcon />} label="Images" onClick={() => setRowModal({ type: "images", row })} />
           </div>
         )}
         columns={[

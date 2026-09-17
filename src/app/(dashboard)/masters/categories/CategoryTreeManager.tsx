@@ -5,6 +5,8 @@ import { textInputClass } from "@/components/ui/FormField";
 import { Modal } from "@/components/ui/Modal";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
+import { RowAction } from "@/components/ui/RowAction";
+import { EditIcon, PlusIcon } from "@/components/ui/icons";
 import { suggestCodeFromName } from "@/lib/code-suggest";
 import {
   buildCategoryTree,
@@ -184,12 +186,8 @@ export function CategoryTreeManager() {
             {!node.isActive && <span className="shrink-0 text-xs text-zinc-400">(inactive)</span>}
           </div>
           <div className="flex shrink-0 items-center gap-3 text-sm">
-            <button type="button" onClick={() => openAddSubcategory(node)} className="text-indigo-600 hover:text-indigo-500">
-              + Subcategory
-            </button>
-            <button type="button" onClick={() => openEdit(node)} className="text-indigo-600 hover:text-indigo-500">
-              Edit
-            </button>
+            <RowAction icon={<PlusIcon />} label="Add Subcategory" onClick={() => openAddSubcategory(node)} />
+            <RowAction icon={<EditIcon />} label="Edit" onClick={() => openEdit(node)} />
             <ToggleSwitch
               checked={node.isActive}
               onToggle={() => setPendingToggle(node)}

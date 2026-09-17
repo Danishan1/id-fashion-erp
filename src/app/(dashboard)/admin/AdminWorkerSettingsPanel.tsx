@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { Modal } from "@/components/ui/Modal";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
+import { RowAction } from "@/components/ui/RowAction";
+import { EditIcon } from "@/components/ui/icons";
 
 type PayType = "FIXED_SALARY" | "PIECE_RATE" | null;
 
@@ -168,13 +170,7 @@ export function AdminWorkerSettingsPanel({ canManage }: { canManage: boolean }) 
                   </td>
                   {canManage && (
                     <td className="px-3 py-2">
-                      <button
-                        type="button"
-                        onClick={() => openPayModal(e)}
-                        className="text-sm text-indigo-600 hover:underline dark:text-indigo-400"
-                      >
-                        Edit Pay Config
-                      </button>
+                      <RowAction icon={<EditIcon />} label="Edit Pay Config" onClick={() => openPayModal(e)} />
                     </td>
                   )}
                 </tr>

@@ -6,6 +6,8 @@ import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { PROVIDER_TYPE_VALUES, CAPABILITY_VALUES } from "@/modules/ai-providers/ai-provider.schema";
+import { RowAction } from "@/components/ui/RowAction";
+import { EditIcon, RefreshIcon, DeleteIcon } from "@/components/ui/icons";
 
 interface ProviderRow {
   id: string;
@@ -376,9 +378,7 @@ export function AdminAiProvidersPanel({ canManage }: { canManage: boolean }) {
                   <div className="flex flex-wrap items-center gap-2">
                     {canManage && (
                       <>
-                        <button type="button" className="text-indigo-600 hover:underline" onClick={() => openEdit(row)}>
-                          Edit
-                        </button>
+                        <RowAction icon={<EditIcon />} label="Edit" onClick={() => openEdit(row)} />
                         <ToggleSwitch
                           checked={row.isActive}
                           disabled={busy === row.id}
@@ -387,23 +387,17 @@ export function AdminAiProvidersPanel({ canManage }: { canManage: boolean }) {
                         />
                       </>
                     )}
-                    <button
-                      type="button"
-                      className="text-zinc-600 hover:underline disabled:opacity-50 dark:text-zinc-300"
+                    <RowAction
+                      icon={<RefreshIcon />}
+                      label={busy === `test-${row.id}` ? "Testing…" : "Test Connection"}
                       disabled={busy === `test-${row.id}`}
                       onClick={() => runTestConnection(row)}
-                    >
-                      {busy === `test-${row.id}` ? "Testing…" : "Test Connection"}
-                    </button>
+                    />
                     {canManage && row.healthStatus !== "HEALTHY" && (
-                      <button type="button" className="text-zinc-600 hover:underline dark:text-zinc-300" onClick={() => resetHealth(row)}>
-                        Reset
-                      </button>
+                      <RowAction icon={<RefreshIcon />} label="Reset" onClick={() => resetHealth(row)} />
                     )}
                     {canManage && (
-                      <button type="button" className="text-red-600 hover:underline" onClick={() => setPendingDelete(row)}>
-                        Delete
-                      </button>
+                      <RowAction icon={<DeleteIcon />} label="Delete" variant="danger" onClick={() => setPendingDelete(row)} />
                     )}
                   </div>
                 </td>

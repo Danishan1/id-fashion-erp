@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
+import { RowAction } from "@/components/ui/RowAction";
+import { ViewIcon, EditIcon, BomIcon } from "@/components/ui/icons";
 import { STATUS_LABELS, STATUS_BADGE_CLASS } from "./statusLabels";
 import { EMPTY_FILTERS, SamplingFilters, type SamplingFiltersValue } from "./SamplingFilters";
 import { SAMPLE_TYPE_LABELS } from "./sampleTypeLabels";
@@ -231,24 +233,9 @@ export function SamplingListClient() {
                   <td className="px-4 py-2 text-zinc-700 dark:text-zinc-200">{row.requestedBy?.fullName ?? "—"}</td>
                   <td className="px-4 py-2">
                     <div className="flex items-center gap-3">
-                      <Link
-                        href={`/sampling/${row.id}/view`}
-                        className="font-medium text-indigo-600 hover:text-indigo-500"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        View
-                      </Link>
-                      <Link href={`/sampling/${row.id}`} className="font-medium text-indigo-600 hover:text-indigo-500">
-                        Edit
-                      </Link>
-                      <Link
-                        href={`/bom-mrp/design/${row.id}`}
-                        className="font-medium text-indigo-600 hover:text-indigo-500"
-                        title="View this design's Bill of Materials"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        Design BOM
-                      </Link>
+                      <RowAction icon={<ViewIcon />} label="View" href={`/sampling/${row.id}/view`} />
+                      <RowAction icon={<EditIcon />} label="Edit" href={`/sampling/${row.id}`} stopPropagation={false} />
+                      <RowAction icon={<BomIcon />} label="Design BOM" href={`/bom-mrp/design/${row.id}`} />
                     </div>
                   </td>
                 </tr>

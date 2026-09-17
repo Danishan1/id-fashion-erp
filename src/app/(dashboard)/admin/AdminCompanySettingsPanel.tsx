@@ -2,6 +2,88 @@
 
 import { useEffect, useState } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
+import { invalidateActionDisplayCache, type ActionDisplayMode, type ActionTextStyle } from "@/lib/use-action-display";
+
+async function parseJson(res: Response) {
+  const body = await res.json();
+  if (!res.ok) throw new Error(body?.error?.message ?? "Request failed");
+  return body;
+}
+
+/**
+ * Company-wide row-action display: icon-only (default) or a text label —
+ * and if text, a plain link or a bordered button. Read by the shared
+ * RowAction component every list page in the app uses. Same self-contained
+ * fetch-on-mount/toggle-and-PATCH shape as AI Configuration's own
+ * ProductDesignDisplayModeSetting.
+ */
+function ActionDisplaySettingsSection({ canManage }: { canManage: boolean }) {
+  const [settings, setSettings] = useState<{ displayMode: ActionDisplayMode; textStyle: ActionTextStyle } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/v1/action-display-settings")
+      .then(parseJson)
+      .then((body) => setSettings(body.data))
+      .catch((e) => setError(e.message));
+  }, []);
+
+  async function update(patch: Partial<{ displayMode: ActionDisplayMode; textStyle: ActionTextStyle }>) {
+    if (!settings) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const body = await parseJson(
+        await fetch("/api/v1/action-display-settings", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(patch),
+        })
+      );
+      setSettings(body.data);
+      invalidateActionDisplayCache(body.data);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="mb-4 rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-sm font-medium text-zinc-900 dark:text-zinc-50">Action Display</p>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">
+            How row actions (Edit/View/BOM/Remove/...) render across every list in the app.
+          </p>
+        </div>
+        {settings && (
+          <ToggleSwitch
+            checked={settings.displayMode === "ICON"}
+            disabled={!canManage || saving}
+            label={settings.displayMode === "ICON" ? "Icons — click for text" : "Text — click for icons"}
+            onToggle={() => update({ displayMode: settings.displayMode === "ICON" ? "TEXT" : "ICON" })}
+          />
+        )}
+      </div>
+      {settings?.displayMode === "TEXT" && (
+        <div className="mt-2 flex items-center justify-between border-t border-zinc-100 pt-2 dark:border-zinc-800">
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">Text actions show as</p>
+          <ToggleSwitch
+            checked={settings.textStyle === "LINK"}
+            disabled={!canManage || saving}
+            label={settings.textStyle === "LINK" ? "Link — click for button" : "Button — click for link"}
+            onToggle={() => update({ textStyle: settings.textStyle === "LINK" ? "BUTTON" : "LINK" })}
+          />
+        </div>
+      )}
+      {error && <p className="mt-2 text-xs text-red-600 dark:text-red-400">{error}</p>}
+    </div>
+  );
+}
 
 interface CompanyData {
   name: string;
@@ -61,6 +143,7 @@ export function AdminCompanySettingsPanel({ canManage }: { canManage: boolean })
 
   return (
     <div className="max-w-lg space-y-3">
+      <ActionDisplaySettingsSection canManage={canManage} />
       {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
       {saved && <p className="text-sm text-emerald-600 dark:text-emerald-400">Saved.</p>}
 

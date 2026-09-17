@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { BULK_IMPORT_DEPENDENCY_ORDER, type BulkImportMasterType } from "@/modules/import/import.schema";
+import { RowAction } from "@/components/ui/RowAction";
+import { ViewIcon, UndoIcon } from "@/components/ui/icons";
 
 const MASTER_TYPE_LABELS: Record<BulkImportMasterType, string> = {
   CUSTOMER: "Customer",
@@ -442,21 +444,14 @@ export function AdminBulkImportPanel() {
                     <td className="px-3 py-2">
                       <div className="flex items-center gap-3">
                         {b.hasFailedRows && (
-                          <a
+                          <RowAction
+                            icon={<ViewIcon />}
+                            label="Error Log"
                             href={`/api/v1/admin/bulk-import/batches/${b.id}/error-log`}
-                            className="text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400"
-                          >
-                            Error log
-                          </a>
+                          />
                         )}
                         {b.status === "COMPLETED" && (
-                          <button
-                            type="button"
-                            onClick={() => setPendingUndoId(b.id)}
-                            className="text-xs font-medium text-red-600 hover:underline dark:text-red-400"
-                          >
-                            Undo
-                          </button>
+                          <RowAction icon={<UndoIcon />} label="Undo" variant="danger" onClick={() => setPendingUndoId(b.id)} />
                         )}
                         {b.status === "UNDONE" && <span className="text-xs text-zinc-400">Undone</span>}
                       </div>

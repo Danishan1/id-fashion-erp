@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Modal } from "@/components/ui/Modal";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
+import { RowAction } from "@/components/ui/RowAction";
+import { EditIcon, PlusIcon } from "@/components/ui/icons";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { PRODUCT_CATEGORIES_BY_CUSTOMER } from "@/core/ai-designer/catalogs/customer-catalog";
 import { OptionPhotoUploadControl } from "./OptionPhotoUploadControl";
@@ -206,9 +208,7 @@ export function ProductDesignAttributesPanel() {
         <div key={category} className="rounded-lg border border-zinc-200 dark:border-zinc-800">
           <div className="flex items-center justify-between border-b border-zinc-200 px-4 py-2.5 dark:border-zinc-800">
             <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">{category}</h3>
-            <button type="button" className="text-xs font-medium text-indigo-600 hover:underline" onClick={() => openCreate(category)}>
-              + Add attribute here
-            </button>
+            <RowAction icon={<PlusIcon />} label="Add Attribute" onClick={() => openCreate(category)} />
           </div>
           <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
             {rows.map((attr) => (
@@ -220,9 +220,7 @@ export function ProductDesignAttributesPanel() {
                   <p className="mt-0.5 truncate text-xs text-zinc-500 dark:text-zinc-400">{attr.options.join(", ")}</p>
                 </div>
                 <div className="flex shrink-0 items-center gap-3">
-                  <button type="button" className="text-xs font-medium text-indigo-600 hover:underline" onClick={() => openEdit(attr)}>
-                    Edit
-                  </button>
+                  <RowAction icon={<EditIcon />} label="Edit" onClick={() => openEdit(attr)} />
                   <ToggleSwitch checked={attr.isActive} onToggle={() => setPendingToggle(attr)} />
                 </div>
               </div>

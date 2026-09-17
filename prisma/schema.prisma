@@ -176,6 +176,7 @@ model Company {
   aiGarmentValueEngineeringAnalyses   AiGarmentValueEngineeringAnalysis[]
   aiGarmentBuyerCommentsRuns          AiGarmentBuyerCommentsRun[]
   aiGarmentBuyerCommentsAnalyses      AiGarmentBuyerCommentsAnalysis[]
+  actionDisplaySettings               ActionDisplaySettings?
 
   @@map("companies")
 }
@@ -8088,6 +8089,38 @@ model AiDesignerSettings {
   company Company @relation(fields: [companyId], references: [id])
 
   @@map("ai_designer_settings")
+}
+
+enum ActionDisplayMode {
+  ICON
+  TEXT
+}
+
+enum ActionTextStyle {
+  LINK
+  BUTTON
+}
+
+// Company-wide, Super-Admin-controlled setting: whether row actions across
+// the app's list pages (Edit/View/BOM/Remove/...) render as icon-only
+// buttons (the default) or as text labels — and if text, whether that text
+// renders as a plain link or a bordered button. A missing row means
+// ICON/LINK — no backfill needed. Deliberately a single flat row per
+// company (not a per-page/per-action map), matching AiDesignerSettings'
+// own exact reasoning: there is exactly one pair of things this toggle
+// controls, applied uniformly everywhere via the shared RowAction
+// component, not a per-screen override.
+model ActionDisplaySettings {
+  id          String            @id @default(uuid()) @db.Uuid
+  companyId   String            @unique @map("company_id") @db.Uuid
+  displayMode ActionDisplayMode @default(ICON) @map("display_mode")
+  textStyle   ActionTextStyle   @default(LINK) @map("text_style")
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@map("action_display_settings")
 }
 
 // -----------------------------------------------------------------------------

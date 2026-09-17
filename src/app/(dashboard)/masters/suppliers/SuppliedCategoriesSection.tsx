@@ -3,6 +3,8 @@
 import { useMemo, useState } from "react";
 import { Modal } from "@/components/ui/Modal";
 import { textInputClass } from "@/components/ui/FormField";
+import { RowAction } from "@/components/ui/RowAction";
+import { TagIcon, DeleteIcon } from "@/components/ui/icons";
 
 interface CategoryEntry {
   id: string;
@@ -127,13 +129,7 @@ export function SuppliedCategoriesSection({ supplierId }: SuppliedCategoriesSect
 
   return (
     <>
-      <button
-        type="button"
-        onClick={openModal}
-        className="whitespace-nowrap rounded-md border border-zinc-300 px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
-      >
-        Categories
-      </button>
+      <RowAction icon={<TagIcon />} label="Categories" onClick={openModal} />
 
       <Modal open={open} onClose={() => setOpen(false)} title="Categories Supplied (broad)" maxWidthClass="max-w-xl">
         <div className="space-y-3">
@@ -157,14 +153,13 @@ export function SuppliedCategoriesSection({ supplierId }: SuppliedCategoriesSect
                   {granted.map((entry) => (
                     <li key={entry.id} className="flex items-center justify-between px-3 py-2 text-sm">
                       <span className="font-medium text-zinc-800 dark:text-zinc-100">{entry.name}</span>
-                      <button
-                        type="button"
-                        onClick={() => handleRemove(entry.id)}
+                      <RowAction
+                        icon={<DeleteIcon />}
+                        label={removingId === entry.id ? "Removing…" : "Remove"}
+                        variant="danger"
                         disabled={removingId === entry.id}
-                        className="text-sm text-red-600 hover:text-red-500 disabled:opacity-60 dark:text-red-400"
-                      >
-                        {removingId === entry.id ? "Removing…" : "Remove"}
-                      </button>
+                        onClick={() => handleRemove(entry.id)}
+                      />
                     </li>
                   ))}
                 </ul>

@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { Modal } from "@/components/ui/Modal";
+import { RowAction } from "@/components/ui/RowAction";
+import { EditIcon, ApproveIcon, RejectIcon } from "@/components/ui/icons";
 
 interface PendingEntry {
   id: string;
@@ -225,31 +227,27 @@ export function ApprovalsClient() {
                   <td className="px-3 py-2 text-zinc-500 dark:text-zinc-400">{e.remarks || "—"}</td>
                   <td className="px-3 py-2">
                     <div className="flex flex-wrap gap-3 text-xs font-medium">
-                      <button type="button" onClick={() => openEdit(e)} className="text-zinc-600 hover:text-zinc-500 dark:text-zinc-300">
-                        Edit
-                      </button>
-                      <button
-                        type="button"
+                      <RowAction icon={<EditIcon />} label="Edit" onClick={() => openEdit(e)} />
+                      <RowAction
+                        icon={<ApproveIcon />}
+                        label="Approve"
+                        variant="success"
                         onClick={() => {
                           setApproveTarget(e);
                           setApproveRemark("");
                           setApproveError(null);
                         }}
-                        className="text-emerald-600 hover:text-emerald-500"
-                      >
-                        Approve
-                      </button>
-                      <button
-                        type="button"
+                      />
+                      <RowAction
+                        icon={<RejectIcon />}
+                        label="Reject"
+                        variant="danger"
                         onClick={() => {
                           setRejectTarget(e);
                           setRejectRemark("");
                           setRejectError(null);
                         }}
-                        className="text-red-600 hover:text-red-500"
-                      >
-                        Reject
-                      </button>
+                      />
                     </div>
                   </td>
                 </tr>

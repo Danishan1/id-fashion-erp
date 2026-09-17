@@ -6,6 +6,8 @@ import { DataTable } from "@/components/ui/DataTable";
 import { Modal } from "@/components/ui/Modal";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
+import { RowAction } from "@/components/ui/RowAction";
+import { ApproveIcon, RejectIcon } from "@/components/ui/icons";
 import { STATUS_LABELS, STATUS_BADGE_CLASS } from "@/lib/hr-approval-status-labels";
 
 interface Option {
@@ -145,12 +147,8 @@ export function AttendanceCorrectionsListClient() {
             render: (row) =>
               row.status === "PENDING" ? (
                 <div className="flex gap-3">
-                  <button type="button" onClick={() => approve(row.id)} className="text-xs font-medium text-green-600 hover:underline">
-                    Approve
-                  </button>
-                  <button type="button" onClick={() => setRejectTarget(row)} className="text-xs font-medium text-red-600 hover:underline">
-                    Reject
-                  </button>
+                  <RowAction icon={<ApproveIcon />} label="Approve" onClick={() => approve(row.id)} variant="success" />
+                  <RowAction icon={<RejectIcon />} label="Reject" onClick={() => setRejectTarget(row)} variant="danger" />
                 </div>
               ) : row.status === "REJECTED" && row.rejectionReason ? (
                 <span className="text-xs text-zinc-500">{row.rejectionReason}</span>

@@ -5,6 +5,8 @@ import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import { ChildFormModal } from "@/components/ui/ChildFormModal";
 import { Button } from "@/components/ui/Button";
+import { RowAction } from "@/components/ui/RowAction";
+import { EditIcon } from "@/components/ui/icons";
 import type { LookupField } from "@/components/ui/SimpleLookupManager";
 
 export interface ChildColumn<T> {
@@ -187,9 +189,7 @@ export function ChildrenList<T extends { id: string; isActive?: boolean }>({
                   ))}
                   <td className="px-4 py-2">
                     <div className="flex items-center gap-3">
-                      <button type="button" onClick={() => openEdit(row)} className="text-indigo-600 hover:text-indigo-500">
-                        Edit
-                      </button>
+                      <RowAction icon={<EditIcon />} label="Edit" onClick={() => openEdit(row)} />
                       {hasActiveToggle && (
                         <ToggleSwitch
                           checked={Boolean(row.isActive)}

@@ -5,6 +5,8 @@ import { useSearchParams } from "next/navigation";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { Modal } from "@/components/ui/Modal";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
+import { RowAction } from "@/components/ui/RowAction";
+import { RefreshIcon, LinkIcon, DeleteIcon } from "@/components/ui/icons";
 
 type Platform = "META" | "GOOGLE";
 
@@ -231,29 +233,15 @@ function AdIntegrationsContent() {
                     </td>
                     <td className="px-4 py-2">
                       <div className="flex flex-wrap gap-2">
-                        <button
-                          type="button"
+                        <RowAction
+                          icon={<RefreshIcon />}
+                          label={syncingId === c.id ? "Syncing…" : "Sync Now"}
                           disabled={c.status === "DISCONNECTED" || syncingId === c.id}
                           onClick={() => syncNow(c)}
-                          className="text-xs font-medium text-indigo-600 hover:underline disabled:opacity-40 dark:text-indigo-400"
-                        >
-                          {syncingId === c.id ? "Syncing…" : "Sync Now"}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setLinksModalConnection(c)}
-                          className="text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400"
-                        >
-                          Manage Campaign Links
-                        </button>
+                        />
+                        <RowAction icon={<LinkIcon />} label="Manage Campaign Links" onClick={() => setLinksModalConnection(c)} />
                         {c.status !== "DISCONNECTED" && (
-                          <button
-                            type="button"
-                            onClick={() => setDisconnectTarget(c)}
-                            className="text-xs font-medium text-red-600 hover:underline dark:text-red-400"
-                          >
-                            Disconnect
-                          </button>
+                          <RowAction icon={<DeleteIcon />} label="Disconnect" variant="danger" onClick={() => setDisconnectTarget(c)} />
                         )}
                       </div>
                     </td>
