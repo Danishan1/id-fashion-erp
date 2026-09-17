@@ -221,6 +221,7 @@ export const SampleMaterialRepository = {
         plannedQuantity: true,
         uomId: true,
         colorId: true,
+        dyeId: true,
         uom: { select: { id: true, code: true, name: true, baseUnitId: true, conversionFactor: true } },
         material: {
           select: {

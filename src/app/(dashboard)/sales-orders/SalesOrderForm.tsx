@@ -7,6 +7,7 @@ import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { formatCurrency } from "@/lib/currency";
 import { todayIsoDate } from "@/lib/date";
 import { formatDate } from "@/lib/date-format";
+import { dedupePriceOptions, type SalesPriceHistoryEntry } from "@/lib/price-history";
 
 interface Option {
   id: string;
@@ -123,6 +124,12 @@ export function SalesOrderForm({
   const [lastOrderPrices, setLastOrderPrices] = useState<
     Record<number, { unitPrice: string; orderNumber: string; orderDate: string } | null>
   >({});
+  // Keyed by line index — every real price this exact customer was charged
+  // for this exact style in the last year, for the Unit Price field's own
+  // datalist suggestions (same free-type-or-pick pattern already built for
+  // Purchase Order's own Unit Price fields, just sourced from what we
+  // charged rather than what we paid).
+  const [priceHistoryByLine, setPriceHistoryByLine] = useState<Record<number, SalesPriceHistoryEntry[]>>({});
   // Off by default (the common case: reference this order's own customer's
   // approved samples) — on, when a customer wants to order based on a
   // sample that was actually made/approved for a different customer.
@@ -192,8 +199,27 @@ export function SalesOrderForm({
   };
 
   const onStyleChange = (index: number, productId: string) => {
-    updateItem(index, { productId, variants: [], quantities: {} });
+    // A different Style means the previously-linked Sample and its cost, the
+    // manually/auto-filled Unit Price, and any cached price hints all belong
+    // to the OLD style — carrying them forward silently made the Style
+    // change look like it did nothing (the Sample field visually clears
+    // since it's no longer in the new style's filtered option list, but the
+    // stale sampleRequestId stayed in state and kept resolving to the old
+    // sample's cost/unit text; the stale Unit Price blocked the new style's
+    // own Last Order Price from auto-filling, since that only fills an
+    // empty field). Reset all of it so the new style starts clean.
+    updateItem(index, { productId, sampleRequestId: "", unitPrice: "", variants: [], quantities: {} });
     setHighlightVariantId((prev) => {
+      const next = { ...prev };
+      delete next[index];
+      return next;
+    });
+    setLastOrderPrices((prev) => {
+      const next = { ...prev };
+      delete next[index];
+      return next;
+    });
+    setPriceHistoryByLine((prev) => {
       const next = { ...prev };
       delete next[index];
       return next;
@@ -280,6 +306,12 @@ export function SalesOrderForm({
             setItems((prev) => prev.map((it, i) => (i === index && !it.unitPrice ? { ...it, unitPrice: body.data.unitPrice } : it)));
           }
         });
+
+      const historyParams = new URLSearchParams({ customerId, productId: item.productId, sinceDays: "365" });
+      if (initialOrder) historyParams.set("excludeOrderId", initialOrder.id);
+      fetch(`/api/v1/sales-orders/price-history?${historyParams}`)
+        .then((res) => res.json())
+        .then((body) => setPriceHistoryByLine((prev) => ({ ...prev, [index]: body.data ?? [] })));
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customerId, productIdsKey]);
@@ -380,6 +412,7 @@ export function SalesOrderForm({
               // so only reset the pool when scoped search is actually in use.
               if (!searchAllCustomers) setApprovedSamples([]);
               setLastOrderPrices({});
+              setPriceHistoryByLine({});
             }}
             options={customers.map((c) => ({ id: c.id, label: c.name ?? "" }))}
             placeholder="Search customer…"
@@ -539,8 +572,18 @@ export function SalesOrderForm({
                   required
                   value={item.unitPrice}
                   onChange={(e) => updateItem(index, { unitPrice: e.target.value })}
+                  // A real datalist, not a forced picker — the field stays
+                  // freely typeable; every distinct price this customer was
+                  // actually charged for this style in the last year is one
+                  // native-dropdown click away instead.
+                  list={`price-history-${index}`}
                   className={textInputClass()}
                 />
+                <datalist id={`price-history-${index}`}>
+                  {dedupePriceOptions(priceHistoryByLine[index] ?? []).map((h, i) => (
+                    <option key={i} value={h.unitPrice} label={`${h.orderNumber} — ${formatDate(h.orderDate)}`} />
+                  ))}
+                </datalist>
                 {lastOrderPrices[index] && (
                   <p className="mt-1 text-xs text-emerald-600 dark:text-emerald-400">
                     Last order price: {formatAmount(Number(lastOrderPrices[index]!.unitPrice))} ({lastOrderPrices[index]!.orderNumber} on{" "}

@@ -60,6 +60,8 @@ interface DuplicateEntry {
   requestId: string;
   requestNumber: string;
   remainingQuantity: number;
+  warehouseName: string;
+  availableAtWarehouse: number;
 }
 
 function formatQty(n: number) {
@@ -319,7 +321,8 @@ export function MaterialRequirementsClient() {
                             <Link href={`/material-requests/${d.requestId}`} className="underline">
                               {d.requestNumber}
                             </Link>{" "}
-                            ({formatQty(d.remainingQuantity)} {m.uomCode} remaining)
+                            ({formatQty(d.remainingQuantity)} {m.uomCode} remaining — {formatQty(d.availableAtWarehouse)}{" "}
+                            {m.uomCode} available at {d.warehouseName})
                           </span>
                         ))}
                       </td>

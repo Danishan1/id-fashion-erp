@@ -73,6 +73,31 @@ export async function getLastOrderedPrice(companyId: string, customerId: string,
   return { unitPrice: item.unitPrice.toString(), orderNumber: item.salesOrder.orderNumber, orderDate: item.salesOrder.orderDate };
 }
 
+/**
+ * The fuller price-history list behind getLastOrderedPrice's own single
+ * most-recent figure — every real price this exact customer was actually
+ * charged for this exact style, so a merchandiser has real negotiated
+ * history (not just the latest one) to finalize today's Unit Price against.
+ * Powers the Unit Price field's own datalist suggestions on the Sales Order
+ * create/edit form — same shape/purpose as the Purchase Order form's own
+ * price-history suggestions, just sourced from what we charged instead of
+ * what we paid.
+ */
+export async function getSalesOrderPriceHistory(
+  companyId: string,
+  customerId: string,
+  productId: string,
+  excludeOrderId?: string,
+  sinceDate?: Date
+) {
+  const items = await SalesOrderRepository.findOrderedPriceHistory(companyId, customerId, productId, excludeOrderId, sinceDate);
+  return items.map((item) => ({
+    unitPrice: Number(item.unitPrice),
+    orderNumber: item.salesOrder.orderNumber,
+    orderDate: item.salesOrder.orderDate.toISOString(),
+  }));
+}
+
 /** A branch-restricted user gets NOT_FOUND for an order outside their allowed branches — same "deny as not-found" convention used across this app. */
 export async function getSalesOrderById(actor: { companyId: string; userId: string }, id: string) {
   const order = await SalesOrderRepository.findByIdWithDetails(actor.companyId, id);

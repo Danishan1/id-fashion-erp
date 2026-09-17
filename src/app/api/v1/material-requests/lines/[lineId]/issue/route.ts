@@ -14,7 +14,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
     await PermissionService.assert(session.user.id, "inventory", "edit");
 
     const { lineId } = await params;
-    const { issueQuantity, warehouseLocationId, fabricRollId, extraReason } = issueMaterialRequestLineSchema.parse(
+    const { issueQuantity, warehouseLocationId, fabricRollId, extraReason, issueWarehouseId } = issueMaterialRequestLineSchema.parse(
       await req.json()
     );
     const line = await issueMaterialRequestLine(
@@ -23,7 +23,8 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
       issueQuantity,
       warehouseLocationId || null,
       fabricRollId || null,
-      extraReason || undefined
+      extraReason || undefined,
+      issueWarehouseId || null
     );
 
     return NextResponse.json({ data: line });

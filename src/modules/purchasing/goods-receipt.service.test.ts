@@ -2,12 +2,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/numbering/DocumentNumberingService", () => ({ generateDocumentNumber: vi.fn() }));
-vi.mock("@/core/db/client", () => ({ prisma: { $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn({})) } }));
+vi.mock("@/core/db/client", () => ({
+  prisma: {
+    $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn({})),
+    goodsReceiptItem: { findMany: vi.fn() },
+    product: { findFirst: vi.fn() },
+  },
+}));
 vi.mock("@/modules/inventory/inventory.service", () => ({ recordInventoryTransaction: vi.fn() }));
 vi.mock("@/modules/inventory/material-request.repository", () => ({
   MaterialRequestItemRepository: {
     findForReceiptRollupInTx: vi.fn(),
-    guardedIncrementPurchaseReceived: vi.fn(),
+    incrementPurchaseReceived: vi.fn(),
     decrementPurchaseReceived: vi.fn(),
   },
 }));
@@ -49,7 +55,10 @@ const { FabricRollRepository } = await import("./fabric-roll.repository");
 const { GoodsReceiptRepository, GoodsReceiptItemRepository } = await import("./goods-receipt.repository");
 const { PurchaseOrderRepository, PurchaseOrderItemRepository } = await import("./purchase-order.repository");
 const { PermissionService } = await import("@/core/rbac/PermissionService");
-const { createGoodsReceipt, reverseGoodsReceiptLine, listGoodsReceipts, getGoodsReceiptById } = await import("./goods-receipt.service");
+const { prisma } = await import("@/core/db/client");
+const { createGoodsReceipt, reverseGoodsReceiptLine, listGoodsReceipts, getGoodsReceiptById, getMaterialRateHistory } = await import(
+  "./goods-receipt.service"
+);
 
 const actor = { companyId: "co-1", userId: "user-1", branchId: "br-1" };
 const BASE_UOM = { id: "uom-1", name: "MTR", baseUnitId: null, conversionFactor: 1 };
@@ -86,7 +95,7 @@ const oneRollItem = (overrides: Record<string, unknown> = {}) => ({
 beforeEach(() => {
   vi.mocked(recordInventoryTransaction).mockReset().mockResolvedValue(undefined as never);
   vi.mocked(MaterialRequestItemRepository.findForReceiptRollupInTx).mockReset();
-  vi.mocked(MaterialRequestItemRepository.guardedIncrementPurchaseReceived).mockReset();
+  vi.mocked(MaterialRequestItemRepository.incrementPurchaseReceived).mockReset();
   vi.mocked(MaterialRequestItemRepository.decrementPurchaseReceived).mockReset();
   vi.mocked(FabricRollRepository.guardedDecrementRemaining).mockReset().mockResolvedValue({ count: 1 } as never);
   vi.mocked(FabricRollRepository.findRemainingInTx).mockReset().mockResolvedValue({ remainingQuantity: 0 } as never);
@@ -104,6 +113,8 @@ beforeEach(() => {
   vi.mocked(PurchaseOrderItemRepository.guardedDecrementReceived).mockReset().mockResolvedValue(1 as never);
   vi.mocked(PurchaseOrderItemRepository.findManyForStatusRecompute).mockReset().mockResolvedValue([{ orderedQuantity: 100, receivedQuantity: 50 }] as never);
   vi.mocked(PermissionService.getAllowedBranchIds).mockReset().mockResolvedValue(null);
+  vi.mocked(prisma.goodsReceiptItem.findMany).mockReset().mockResolvedValue([]);
+  vi.mocked(prisma.product.findFirst).mockReset().mockResolvedValue(null);
 });
 
 describe("createGoodsReceipt", () => {
@@ -165,6 +176,60 @@ describe("createGoodsReceipt", () => {
     });
 
     expect(PurchaseOrderItemRepository.incrementReceived).toHaveBeenCalledWith(expect.anything(), "poi-1", 500);
+    expect(GoodsReceiptRepository.createWithItemsAndRolls).toHaveBeenCalled();
+  });
+
+  // Regression for a real live bug: a capped guard used to silently and
+  // PERMANENTLY zero out this Material Request line's own "Purchase
+  // Received" traceability the moment one over-receipt happened, even
+  // though real stock genuinely kept arriving on every later receipt too —
+  // see incrementPurchaseReceived's own comment.
+  it("rolls up the received quantity onto the linked Material Request line even when it exceeds what was ordered", async () => {
+    vi.mocked(PurchaseOrderRepository.findByIdWithDetails).mockResolvedValue(
+      poWithOneItem({ items: [{ ...poWithOneItem().items[0], materialRequestItemId: "mri-1" }] }) as never
+    );
+    vi.mocked(MaterialRequestItemRepository.findForReceiptRollupInTx).mockResolvedValue({
+      id: "mri-1",
+      uom: BASE_UOM,
+    } as never);
+    vi.mocked(GoodsReceiptRepository.createWithItemsAndRolls).mockResolvedValue({
+      id: "gr-1",
+      receiptNumber: "REC-2026-00001",
+      items: [{ id: "gri-1", purchaseOrderItemId: "poi-1", productId: "mat-1", warehouseId: "wh-1", warehouseLocationId: null, receivedQuantity: 500, rolls: [] }],
+    } as never);
+
+    await createGoodsReceipt(actor, "po-1", {
+      receivedDate: "2026-08-24",
+      items: [
+        oneRollItem({
+          receivedQuantity: 500,
+          rolls: [{ rollNumber: "R1", rollQuantity: 500, batchNo: "", gsmId: "", dyeId: "", weaveTypeId: "", widthId: "", compositionId: "", warehouseLocationId: "", notes: "" }],
+        }),
+      ],
+    });
+
+    // 500 received against only 100 ordered — still rolls up in full, not
+    // silently skipped.
+    expect(MaterialRequestItemRepository.incrementPurchaseReceived).toHaveBeenCalledWith(expect.anything(), "mri-1", 500);
+  });
+
+  it("skips the Material Request rollup (without failing the receipt) when the line's unit has no fixed conversion", async () => {
+    vi.mocked(PurchaseOrderRepository.findByIdWithDetails).mockResolvedValue(
+      poWithOneItem({ items: [{ ...poWithOneItem().items[0], materialRequestItemId: "mri-1" }] }) as never
+    );
+    vi.mocked(MaterialRequestItemRepository.findForReceiptRollupInTx).mockResolvedValue({
+      id: "mri-1",
+      uom: { id: "uom-2", name: "ROL", baseUnitId: null, conversionFactor: 1 },
+    } as never);
+    vi.mocked(GoodsReceiptRepository.createWithItemsAndRolls).mockResolvedValue({
+      id: "gr-1",
+      receiptNumber: "REC-2026-00001",
+      items: [{ id: "gri-1", purchaseOrderItemId: "poi-1", productId: "mat-1", warehouseId: "wh-1", warehouseLocationId: null, receivedQuantity: 50, rolls: [] }],
+    } as never);
+
+    await createGoodsReceipt(actor, "po-1", { receivedDate: "2026-08-24", items: [oneRollItem()] });
+
+    expect(MaterialRequestItemRepository.incrementPurchaseReceived).not.toHaveBeenCalled();
     expect(GoodsReceiptRepository.createWithItemsAndRolls).toHaveBeenCalled();
   });
 
@@ -462,5 +527,66 @@ describe("branch access enforcement (2026-09-15)", () => {
     vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
 
     await expect(getGoodsReceiptById(actor, "gr-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+});
+
+describe("getMaterialRateHistory", () => {
+  function receiptItem(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "gri-1",
+      goodsReceipt: { receiptNumber: "REC-2026-00001", receivedDate: new Date("2026-06-01") },
+      purchaseOrderItem: {
+        id: "poi-1",
+        unitPrice: "25.5",
+        purchaseOrder: { orderNumber: "PO-2026-00001", supplier: { name: "Om Fabrics Pvt Ltd" } },
+      },
+      ...overrides,
+    };
+  }
+
+  it("returns every real rate paid, with no lower date bound, when sinceDate is omitted", async () => {
+    vi.mocked(prisma.goodsReceiptItem.findMany).mockResolvedValue([receiptItem()] as never);
+
+    const result = await getMaterialRateHistory("co-1", "mat-1");
+
+    expect(prisma.goodsReceiptItem.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ goodsReceipt: { companyId: "co-1", status: { not: "CANCELLED" } } }),
+      })
+    );
+    expect(result.history).toEqual([
+      {
+        id: "gri-1",
+        purchaseOrderItemId: "poi-1",
+        unitPrice: 25.5,
+        receivedDate: new Date("2026-06-01").toISOString(),
+        receiptNumber: "REC-2026-00001",
+        orderNumber: "PO-2026-00001",
+        supplierName: "Om Fabrics Pvt Ltd",
+      },
+    ]);
+  });
+
+  it("adds a receivedDate lower bound when sinceDate is given — the Purchase Order review modal's 'last 1 year' scope", async () => {
+    const sinceDate = new Date("2025-09-16");
+    await getMaterialRateHistory("co-1", "mat-1", null, null, sinceDate);
+
+    expect(prisma.goodsReceiptItem.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          goodsReceipt: { companyId: "co-1", status: { not: "CANCELLED" }, receivedDate: { gte: sinceDate } },
+        }),
+      })
+    );
+  });
+
+  it("falls back to the material's own manually-maintained unitCost only when there is zero real purchase history", async () => {
+    vi.mocked(prisma.goodsReceiptItem.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.product.findFirst).mockResolvedValue({ unitCost: "40" } as never);
+
+    const result = await getMaterialRateHistory("co-1", "mat-1");
+
+    expect(result.history).toEqual([]);
+    expect(result.fallbackUnitCost).toBe(40);
   });
 });

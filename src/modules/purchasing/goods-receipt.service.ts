@@ -93,13 +93,18 @@ export async function getMaterialRateHistory(
   companyId: string,
   materialId: string,
   colorId?: string | null,
-  dyeId?: string | null
+  dyeId?: string | null,
+  // Optional lower bound on receivedDate — omitted by the Sample Material
+  // Rate modal (wants every real rate ever paid, no matter how old), passed
+  // by the Generate Purchase Order(s) modal (wants only the last year, a
+  // recency-scoped decision aid for picking today's supplier/rate).
+  sinceDate?: Date
 ): Promise<MaterialRateHistoryResult> {
   const [receiptItems, material] = await Promise.all([
     prisma.goodsReceiptItem.findMany({
       where: {
         productId: materialId,
-        goodsReceipt: { companyId, status: { not: "CANCELLED" } },
+        goodsReceipt: { companyId, status: { not: "CANCELLED" }, ...(sinceDate ? { receivedDate: { gte: sinceDate } } : {}) },
         purchaseOrderItem: {
           ...(colorId ? { colorId } : {}),
           ...(dyeId ? { dyeId } : {}),
@@ -346,20 +351,21 @@ export async function createGoodsReceipt(actor: ActorContext, purchaseOrderId: s
 
         // Material Request rollup — purely a secondary traceability mirror,
         // never a reason to block a legitimate goods receipt. Fails soft: a
-        // missing/unconvertible unit, a lost concurrency race, or the line
-        // genuinely over-receiving past what was ordered (this rollup's own
-        // cap is still the sum of ordered quantities, deliberately left
-        // as-is — see incrementReceived's own comment for why the real,
-        // unrelated PO-item accumulator has no such cap any more) just skips
-        // the rollup for this line without affecting the receipt itself.
+        // missing/unconvertible unit or a missing line just skips the
+        // rollup for this line without affecting the receipt itself.
+        // Deliberately uncapped (2026-09-16, real bug fix — see
+        // incrementPurchaseReceived's own comment): a genuine over-receipt
+        // is real and allowed (the unrelated PO-item accumulator has no cap
+        // either), and a capped version here used to silently zero out this
+        // whole column forever the moment one over-receipt happened, hiding
+        // real stock arrivals from this exact screen.
         const poItem = itemsById.get(createdItem.purchaseOrderItemId)!;
         if (poItem.materialRequestItemId) {
           const mrLine = await MaterialRequestItemRepository.findForReceiptRollupInTx(tx, poItem.materialRequestItemId);
           if (mrLine) {
             const convertedToMrUnit = convertUomQuantity(Number(createdItem.receivedQuantity), poItem.uom, mrLine.uom);
             if (convertedToMrUnit !== null) {
-              const cap = mrLine.purchaseOrderItems.reduce((sum, p) => sum + Number(p.orderedQuantity), 0);
-              await MaterialRequestItemRepository.guardedIncrementPurchaseReceived(tx, mrLine.id, cap, convertedToMrUnit);
+              await MaterialRequestItemRepository.incrementPurchaseReceived(tx, mrLine.id, convertedToMrUnit);
             }
           }
         }

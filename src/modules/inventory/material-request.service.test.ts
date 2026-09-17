@@ -19,11 +19,14 @@ vi.mock("./inventory.service", () => ({
   getAvailableQuantityByDye: vi.fn(),
   recordInventoryTransaction: vi.fn(),
 }));
+vi.mock("./inventory.repository", () => ({ StockBalanceRepository: { findMany: vi.fn() } }));
+vi.mock("@/modules/warehouses/warehouse.repository", () => ({ WarehouseRepository: { findMany: vi.fn() } }));
 vi.mock("@/modules/purchasing/fabric-roll.repository", () => ({
   FabricRollRepository: {
     findByIdWithContext: vi.fn(),
     guardedDecrementRemaining: vi.fn(),
     findAvailableForMaterial: vi.fn(),
+    findAvailableAcrossWarehousesForMaterial: vi.fn(),
   },
 }));
 vi.mock("./material-request.repository", () => ({
@@ -52,7 +55,9 @@ vi.mock("./material-request.repository", () => ({
 
 const { MaterialRequestRepository, MaterialRequestItemRepository } = await import("./material-request.repository");
 const { FabricRollRepository } = await import("@/modules/purchasing/fabric-roll.repository");
-const { recordInventoryTransaction } = await import("./inventory.service");
+const { recordInventoryTransaction, getAvailableQuantity } = await import("./inventory.service");
+const { StockBalanceRepository } = await import("./inventory.repository");
+const { WarehouseRepository } = await import("@/modules/warehouses/warehouse.repository");
 const { PermissionService } = await import("@/core/rbac/PermissionService");
 const { generateDocumentNumber } = await import("@/core/numbering/DocumentNumberingService");
 const { createPurchaseOrder } = await import("@/modules/purchasing/purchase-order.service");
@@ -74,6 +79,7 @@ const {
   updateMaterialRequestLines,
   issueMaterialRequestLine,
   getAvailableRollsForLine,
+  getOtherWarehouseStockForLine,
   listMaterialRequests,
   getMaterialRequestById,
 } = await import("./material-request.service");
@@ -119,6 +125,10 @@ beforeEach(() => {
   vi.mocked(FabricRollRepository.findByIdWithContext).mockReset();
   vi.mocked(FabricRollRepository.guardedDecrementRemaining).mockReset();
   vi.mocked(FabricRollRepository.findAvailableForMaterial).mockReset();
+  vi.mocked(FabricRollRepository.findAvailableAcrossWarehousesForMaterial).mockReset();
+  vi.mocked(getAvailableQuantity).mockReset();
+  vi.mocked(StockBalanceRepository.findMany).mockReset();
+  vi.mocked(WarehouseRepository.findMany).mockReset();
 });
 
 describe("computeMaterialRequestStatus", () => {
@@ -346,22 +356,40 @@ describe("updateMaterialRequestLines — line-level editability", () => {
 });
 
 describe("findDuplicateMaterialRequests", () => {
-  it("surfaces an OPEN match that still has a real remainder", async () => {
+  it("surfaces an OPEN match that still has a real remainder, with the real stock at that request's own warehouse", async () => {
     vi.mocked(MaterialRequestRepository.findOpenDuplicateLines).mockResolvedValue([
-      { id: "line-1", requestedQuantity: "10", issuedQuantity: "2", materialRequest: { id: "mr-1", requestNumber: "MR-2026-00001" } },
+      {
+        id: "line-1",
+        requestedQuantity: "10",
+        issuedQuantity: "2",
+        materialRequest: { id: "mr-1", requestNumber: "MR-2026-00001", warehouseId: "wh-palam", warehouse: { name: "E-52 Palam Vihar" } },
+      },
     ] as never);
+    // Company-wide MRP might show plenty of stock, but this test proves the
+    // duplicate warning reports the *specific* warehouse's real number
+    // instead (the exact confusion a mismatched-warehouse receipt causes).
+    vi.mocked(getAvailableQuantity).mockResolvedValue(0);
 
     const result = await findDuplicateMaterialRequests("co-1", "so-1", ["mat-1"]);
-    expect(result["mat-1"]).toEqual([{ requestId: "mr-1", requestNumber: "MR-2026-00001", remainingQuantity: 8 }]);
+    expect(getAvailableQuantity).toHaveBeenCalledWith("co-1", "mat-1", "wh-palam");
+    expect(result["mat-1"]).toEqual([
+      { requestId: "mr-1", requestNumber: "MR-2026-00001", remainingQuantity: 8, warehouseName: "E-52 Palam Vihar", availableAtWarehouse: 0 },
+    ]);
   });
 
   it("excludes a match with no real remainder left (fully issued)", async () => {
     vi.mocked(MaterialRequestRepository.findOpenDuplicateLines).mockResolvedValue([
-      { id: "line-1", requestedQuantity: "10", issuedQuantity: "10", materialRequest: { id: "mr-1", requestNumber: "MR-2026-00001" } },
+      {
+        id: "line-1",
+        requestedQuantity: "10",
+        issuedQuantity: "10",
+        materialRequest: { id: "mr-1", requestNumber: "MR-2026-00001", warehouseId: "wh-1", warehouse: { name: "Head Office" } },
+      },
     ] as never);
 
     const result = await findDuplicateMaterialRequests("co-1", "so-1", ["mat-1"]);
     expect(result["mat-1"]).toBeUndefined();
+    expect(getAvailableQuantity).not.toHaveBeenCalled();
   });
 });
 
@@ -510,7 +538,12 @@ describe("createMaterialRequestFromShortfall", () => {
       materials: [{ materialId: "mat-1", uomId: "uom-1", shortfallQuantity: 10, contributingStyles: [{ productId: "prod-1" }] }],
     } as never);
     vi.mocked(MaterialRequestRepository.findOpenDuplicateLines).mockResolvedValue([
-      { id: "line-x", requestedQuantity: "5", issuedQuantity: "0", materialRequest: { id: "mr-x", requestNumber: "MR-2026-00001" } },
+      {
+        id: "line-x",
+        requestedQuantity: "5",
+        issuedQuantity: "0",
+        materialRequest: { id: "mr-x", requestNumber: "MR-2026-00001", warehouseId: "wh-x", warehouse: { name: "Existing Warehouse" } },
+      },
     ] as never);
 
     await expect(
@@ -524,8 +557,14 @@ describe("createMaterialRequestFromShortfall", () => {
       materials: [{ materialId: "mat-1", uomId: "uom-1", shortfallQuantity: 10, contributingStyles: [{ productId: "prod-1" }] }],
     } as never);
     vi.mocked(MaterialRequestRepository.findOpenDuplicateLines).mockResolvedValue([
-      { id: "line-x", requestedQuantity: "5", issuedQuantity: "0", materialRequest: { id: "mr-x", requestNumber: "MR-2026-00001" } },
+      {
+        id: "line-x",
+        requestedQuantity: "5",
+        issuedQuantity: "0",
+        materialRequest: { id: "mr-x", requestNumber: "MR-2026-00001", warehouseId: "wh-x", warehouse: { name: "Existing Warehouse" } },
+      },
     ] as never);
+    vi.mocked(getAvailableQuantity).mockResolvedValue(0);
 
     await createMaterialRequestFromShortfall(actor, {
       salesOrderId: "so-1",
@@ -534,7 +573,73 @@ describe("createMaterialRequestFromShortfall", () => {
       overrideDuplicateCheck: true,
     });
 
-    expect(MaterialRequestRepository.createWithLines).toHaveBeenCalled();
+    // Shortfall is 10, but 5 is already open on MR-2026-00001 — the new
+    // request must be netted down to 5, not re-request the full 10 (which
+    // would let both requests be issued in full and double the real need).
+    expect(MaterialRequestRepository.createWithLines).toHaveBeenCalledWith(
+      expect.objectContaining({
+        lines: { create: [expect.objectContaining({ materialId: "mat-1", requestedQuantity: 5 })] },
+      })
+    );
+  });
+
+  it("rejects when overriding but the full shortfall is already covered by open duplicates", async () => {
+    vi.mocked(getMaterialRequirements).mockResolvedValue({
+      materials: [{ materialId: "mat-1", uomId: "uom-1", shortfallQuantity: 10, contributingStyles: [{ productId: "prod-1" }] }],
+    } as never);
+    vi.mocked(MaterialRequestRepository.findOpenDuplicateLines).mockResolvedValue([
+      {
+        id: "line-x",
+        requestedQuantity: "10",
+        issuedQuantity: "0",
+        materialRequest: { id: "mr-x", requestNumber: "MR-2026-00001", warehouseId: "wh-x", warehouse: { name: "Existing Warehouse" } },
+      },
+    ] as never);
+
+    await expect(
+      createMaterialRequestFromShortfall(actor, {
+        salesOrderId: "so-1",
+        warehouseId: "wh-1",
+        materialIds: ["mat-1"],
+        overrideDuplicateCheck: true,
+      })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(MaterialRequestRepository.createWithLines).not.toHaveBeenCalled();
+  });
+
+  it("nets across multiple open duplicates for the same material when overriding", async () => {
+    vi.mocked(getMaterialRequirements).mockResolvedValue({
+      materials: [{ materialId: "mat-1", uomId: "uom-1", shortfallQuantity: 50, contributingStyles: [{ productId: "prod-1" }] }],
+    } as never);
+    vi.mocked(MaterialRequestRepository.findOpenDuplicateLines).mockResolvedValue([
+      {
+        id: "line-x",
+        requestedQuantity: "20",
+        issuedQuantity: "0",
+        materialRequest: { id: "mr-x", requestNumber: "MR-2026-00001", warehouseId: "wh-x", warehouse: { name: "Warehouse X" } },
+      },
+      {
+        id: "line-y",
+        requestedQuantity: "10",
+        issuedQuantity: "5",
+        materialRequest: { id: "mr-y", requestNumber: "MR-2026-00002", warehouseId: "wh-y", warehouse: { name: "Warehouse Y" } },
+      },
+    ] as never);
+    vi.mocked(getAvailableQuantity).mockResolvedValue(0);
+
+    await createMaterialRequestFromShortfall(actor, {
+      salesOrderId: "so-1",
+      warehouseId: "wh-1",
+      materialIds: ["mat-1"],
+      overrideDuplicateCheck: true,
+    });
+
+    // 50 shortfall − (20 remaining on mr-x + 5 remaining on mr-y) = 25.
+    expect(MaterialRequestRepository.createWithLines).toHaveBeenCalledWith(
+      expect.objectContaining({
+        lines: { create: [expect.objectContaining({ materialId: "mat-1", requestedQuantity: 25 })] },
+      })
+    );
   });
 });
 
@@ -763,11 +868,35 @@ describe("issueMaterialRequestLine — fabric roll (color/shade) selection", () 
   });
 
   it("rejects issuing more than the selected roll actually has remaining", async () => {
+    const { getAvailableQuantity } = await import("./inventory.service");
     vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue(baseLine() as never);
     vi.mocked(FabricRollRepository.findByIdWithContext).mockResolvedValue(inStockRoll({ remainingQuantity: "3" }) as never);
+    // Real flat balance is plenty here — the roll's own lower number is
+    // meant to be the binding constraint this test is actually about.
+    vi.mocked(getAvailableQuantity).mockResolvedValue(100 as never);
 
     await expect(issueMaterialRequestLine(actor, "line-1", 5, null, "roll-1")).rejects.toMatchObject({
       code: "INSUFFICIENT_RAW_MATERIAL_STOCK",
+    });
+    expect(MaterialRequestItemRepository.guardedIncrementIssued).not.toHaveBeenCalled();
+  });
+
+  // Regression for a real reported bug: FabricRoll.remainingQuantity can
+  // drift out of sync with the real StockBalance ledger (a roll left over
+  // from before every issue kept rolls in sync). Trusting the roll's own
+  // number alone would let the UI offer, and the server accept, a quantity
+  // the ledger's own floor guard would reject anyway.
+  it("caps against the real flat balance too, not just the roll's own (possibly drifted) remaining", async () => {
+    const { getAvailableQuantity } = await import("./inventory.service");
+    vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue(baseLine() as never);
+    // The roll itself claims 20 remaining, but the real ledger balance at
+    // this warehouse is only 3.5 — the exact live-confirmed drift.
+    vi.mocked(FabricRollRepository.findByIdWithContext).mockResolvedValue(inStockRoll({ remainingQuantity: "20" }) as never);
+    vi.mocked(getAvailableQuantity).mockResolvedValue(3.5 as never);
+
+    await expect(issueMaterialRequestLine(actor, "line-1", 5, null, "roll-1")).rejects.toMatchObject({
+      code: "INSUFFICIENT_RAW_MATERIAL_STOCK",
+      details: expect.objectContaining({ available: 3.5 }),
     });
     expect(MaterialRequestItemRepository.guardedIncrementIssued).not.toHaveBeenCalled();
   });
@@ -798,6 +927,121 @@ describe("issueMaterialRequestLine — fabric roll (color/shade) selection", () 
   });
 });
 
+describe("issueMaterialRequestLine — Change Warehouse override (2026-09-16)", () => {
+  function baseLine(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "line-1",
+      materialId: "mat-fabric",
+      requestedQuantity: "10",
+      issuedQuantity: "0",
+      material: {
+        id: "mat-fabric",
+        styleName: "Cotton Fabric",
+        materialCategory: "FABRIC",
+        baseUomId: "uom-1",
+        baseUom: { id: "uom-1", baseUnitId: null, conversionFactor: 1 },
+      },
+      uom: { id: "uom-1", baseUnitId: null, conversionFactor: 1 },
+      materialRequest: { id: "mr-1", companyId: "co-1", warehouseId: "wh-request", status: "OPEN" },
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    vi.mocked(WarehouseRepository.findMany).mockReset().mockResolvedValue([{ id: "wh-alt", name: "Alt Warehouse" }] as never);
+  });
+
+  it("checks and decrements stock at the alternate warehouse, not the request's own, when issueWarehouseId is given", async () => {
+    const { getAvailableQuantity } = await import("./inventory.service");
+    vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue(baseLine() as never);
+    vi.mocked(getAvailableQuantity).mockResolvedValue(20 as never);
+    vi.mocked(MaterialRequestItemRepository.guardedIncrementIssued).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(MaterialRequestItemRepository.findById).mockResolvedValue({ id: "line-1" } as never);
+
+    await issueMaterialRequestLine(actor, "line-1", 5, null, null, undefined, "wh-alt");
+
+    expect(getAvailableQuantity).toHaveBeenCalledWith("co-1", "mat-fabric", "wh-alt");
+    expect(recordInventoryTransaction).toHaveBeenCalledWith({}, actor, expect.objectContaining({ warehouseId: "wh-alt" }));
+  });
+
+  it("accepts a fabric roll that physically sits at the alternate warehouse, not the request's own", async () => {
+    vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue(baseLine() as never);
+    vi.mocked(FabricRollRepository.findByIdWithContext).mockResolvedValue({
+      id: "roll-alt",
+      status: "IN_STOCK",
+      remainingQuantity: "50",
+      goodsReceiptItem: { productId: "mat-fabric", warehouseId: "wh-alt" },
+    } as never);
+    vi.mocked(MaterialRequestItemRepository.guardedIncrementIssued).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(FabricRollRepository.guardedDecrementRemaining).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(MaterialRequestItemRepository.findById).mockResolvedValue({ id: "line-1" } as never);
+
+    await issueMaterialRequestLine(actor, "line-1", 5, null, "roll-alt", undefined, "wh-alt");
+
+    expect(recordInventoryTransaction).toHaveBeenCalledWith(
+      {},
+      actor,
+      expect.objectContaining({ warehouseId: "wh-alt", fabricRollId: "roll-alt" })
+    );
+  });
+
+  it("rejects a roll that sits at the request's own warehouse when a different warehouse was chosen", async () => {
+    vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue(baseLine() as never);
+    vi.mocked(FabricRollRepository.findByIdWithContext).mockResolvedValue({
+      id: "roll-request",
+      status: "IN_STOCK",
+      remainingQuantity: "50",
+      goodsReceiptItem: { productId: "mat-fabric", warehouseId: "wh-request" },
+    } as never);
+
+    await expect(issueMaterialRequestLine(actor, "line-1", 5, null, "roll-request", undefined, "wh-alt")).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
+    expect(FabricRollRepository.guardedDecrementRemaining).not.toHaveBeenCalled();
+  });
+
+  it("records the line's own unit code alongside the issued quantity in the audit log", async () => {
+    const { getAvailableQuantity } = await import("./inventory.service");
+    const { writeAuditLog } = await import("@/core/audit/AuditLogger");
+    vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue(
+      baseLine({ uom: { id: "uom-1", code: "KG", baseUnitId: null, conversionFactor: 1 } }) as never
+    );
+    vi.mocked(getAvailableQuantity).mockResolvedValue(20 as never);
+    vi.mocked(MaterialRequestItemRepository.guardedIncrementIssued).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(MaterialRequestItemRepository.findById).mockResolvedValue({ id: "line-1" } as never);
+
+    await issueMaterialRequestLine(actor, "line-1", 5, null, null);
+
+    expect(writeAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({ newValues: expect.objectContaining({ issuedQuantity: 5, uomCode: "KG" }) })
+    );
+  });
+
+  it("records issuedFromWarehouseId/Name in the audit log only when it actually differs from the request's own", async () => {
+    const { getAvailableQuantity } = await import("./inventory.service");
+    const { writeAuditLog } = await import("@/core/audit/AuditLogger");
+    vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue(baseLine() as never);
+    vi.mocked(getAvailableQuantity).mockResolvedValue(20 as never);
+    vi.mocked(MaterialRequestItemRepository.guardedIncrementIssued).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(MaterialRequestItemRepository.findById).mockResolvedValue({ id: "line-1" } as never);
+
+    await issueMaterialRequestLine(actor, "line-1", 5, null, null, undefined, "wh-alt");
+    expect(writeAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        newValues: expect.objectContaining({ issuedFromWarehouseId: "wh-alt", issuedFromWarehouseName: "Alt Warehouse" }),
+      })
+    );
+
+    vi.mocked(writeAuditLog).mockClear();
+    await issueMaterialRequestLine(actor, "line-1", 5, null, null, undefined, "wh-request");
+    expect(writeAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        newValues: expect.not.objectContaining({ issuedFromWarehouseId: expect.anything(), issuedFromWarehouseName: expect.anything() }),
+      })
+    );
+  });
+});
+
 describe("getAvailableRollsForLine", () => {
   it("returns the color/shade breakdown for the line's material at its request's warehouse", async () => {
     vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue({
@@ -825,6 +1069,91 @@ describe("getAvailableRollsForLine", () => {
     } as never);
 
     await expect(getAvailableRollsForLine(actor, "line-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+});
+
+describe("getOtherWarehouseStockForLine", () => {
+  it("returns a color/shade-wise breakdown for a FABRIC material, excluding the request's own warehouse", async () => {
+    vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue({
+      materialId: "mat-fabric",
+      material: { materialCategory: "FABRIC" },
+      materialRequest: { companyId: "co-1", warehouseId: "wh-request" },
+    } as never);
+    vi.mocked(StockBalanceRepository.findMany).mockResolvedValue([
+      { warehouseId: "wh-other", quantityOnHand: "100" },
+    ] as never);
+    vi.mocked(WarehouseRepository.findMany).mockResolvedValue([{ id: "wh-other", name: "Dharam Colony" }] as never);
+    vi.mocked(FabricRollRepository.findAvailableAcrossWarehousesForMaterial).mockResolvedValue([
+      {
+        id: "roll-1",
+        rollNumber: "R-1",
+        remainingQuantity: "60",
+        dye: { name: "Navy Blue", pantone: "19-4030" },
+        gsm: { name: "150 GSM" },
+        composition: { name: "100% Cotton" },
+        goodsReceiptItem: { warehouseId: "wh-other" },
+      },
+      // A roll sitting at the request's OWN warehouse must never leak into
+      // this "other warehouses" breakdown.
+      {
+        id: "roll-2",
+        rollNumber: "R-2",
+        remainingQuantity: "5",
+        dye: null,
+        gsm: null,
+        composition: null,
+        goodsReceiptItem: { warehouseId: "wh-request" },
+      },
+    ] as never);
+
+    const result = await getOtherWarehouseStockForLine(actor, "line-1");
+
+    expect(StockBalanceRepository.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ productId: "mat-fabric", warehouseId: { not: "wh-request" } }),
+      {}
+    );
+    expect(result).toEqual([
+      {
+        warehouseId: "wh-other",
+        warehouseName: "Dharam Colony",
+        totalQuantity: 100,
+        rolls: [
+          {
+            id: "roll-1",
+            rollNumber: "R-1",
+            remainingQuantity: 60,
+            dye: { name: "Navy Blue", pantone: "19-4030" },
+            gsm: { name: "150 GSM" },
+            composition: { name: "100% Cotton" },
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("skips the roll lookup entirely for a non-FABRIC material", async () => {
+    vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue({
+      materialId: "mat-trim",
+      material: { materialCategory: "TRIMS" },
+      materialRequest: { companyId: "co-1", warehouseId: "wh-request" },
+    } as never);
+    vi.mocked(StockBalanceRepository.findMany).mockResolvedValue([{ warehouseId: "wh-other", quantityOnHand: "20" }] as never);
+    vi.mocked(WarehouseRepository.findMany).mockResolvedValue([{ id: "wh-other", name: "Dharam Colony" }] as never);
+
+    const result = await getOtherWarehouseStockForLine(actor, "line-1");
+
+    expect(FabricRollRepository.findAvailableAcrossWarehousesForMaterial).not.toHaveBeenCalled();
+    expect(result).toEqual([{ warehouseId: "wh-other", warehouseName: "Dharam Colony", totalQuantity: 20, rolls: [] }]);
+  });
+
+  it("rejects a line that doesn't belong to this company", async () => {
+    vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue({
+      materialId: "mat-fabric",
+      material: { materialCategory: "FABRIC" },
+      materialRequest: { companyId: "some-other-co", warehouseId: "wh-request" },
+    } as never);
+
+    await expect(getOtherWarehouseStockForLine(actor, "line-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 });
 

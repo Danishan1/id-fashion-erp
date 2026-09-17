@@ -8,6 +8,7 @@ import { FormField, textInputClass } from "@/components/ui/FormField";
 import { Modal } from "@/components/ui/Modal";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { formatCategoryLabel } from "@/lib/format-category-label";
+import { dedupePriceOptions, type PurchaseHistoryEntry } from "@/lib/price-history";
 import { STATUS_BADGE_CLASS, STATUS_LABELS } from "./statusLabels";
 import { REQUEST_TYPE_BADGE_CLASS, REQUEST_TYPE_LABELS } from "./requestTypeLabels";
 import { MaterialRequestTimeline } from "./MaterialRequestTimeline";
@@ -38,6 +39,32 @@ interface RollOption {
   rollNumber: string;
   remainingQuantity: string;
   dye: { id: string; name: string; pantone: string | null } | null;
+  gsm: { id: string; name: string } | null;
+  composition: { id: string; name: string } | null;
+}
+
+interface OtherWarehouseStockRow {
+  warehouseId: string;
+  warehouseName: string;
+  totalQuantity: number;
+  rolls: Array<{
+    id: string;
+    rollNumber: string;
+    remainingQuantity: number;
+    dye: { name: string; pantone: string | null } | null;
+    gsm: { name: string } | null;
+    composition: { name: string } | null;
+  }>;
+}
+
+function formatRollLabel(r: { rollNumber: string; dye: { name: string; pantone: string | null } | null; gsm: { name: string } | null; composition: { name: string } | null }) {
+  return [
+    r.dye ? `${r.dye.name}${r.dye.pantone ? ` (${r.dye.pantone})` : ""}` : `Roll ${r.rollNumber} — no shade recorded`,
+    r.gsm?.name,
+    r.composition?.name,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 interface LineRow {
@@ -141,8 +168,25 @@ export function MaterialRequestWorkflowPanel({
   const [availableRolls, setAvailableRolls] = useState<RollOption[]>([]);
   const [selectedRollId, setSelectedRollId] = useState("");
   const [rollsLoading, setRollsLoading] = useState(false);
+  // "Change Warehouse" (2026-09-16) — offered inline in the Issue modal
+  // whenever the request's own warehouse has nothing, populated only from
+  // warehouses getOtherWarehouseStockForLine already confirmed have real
+  // stock. "" means "issuing from the request's own warehouse, as normal".
+  const [issueAltWarehouses, setIssueAltWarehouses] = useState<OtherWarehouseStockRow[] | null>(null);
+  const [issueAltWarehousesLoading, setIssueAltWarehousesLoading] = useState(false);
+  const [issueWarehouseId, setIssueWarehouseId] = useState("");
 
   const [showGenerate, setShowGenerate] = useState(false);
+
+  // "Other Warehouse Stock" — self-fetches on open, mirroring this project's
+  // established self-fetch-on-open modal convention (Supplier↔Material
+  // catalog, etc.). Surfaced next to a line whose own Available Stock reads
+  // 0, so a merchandiser can see whether the material simply doesn't exist
+  // yet or is genuinely sitting at a different warehouse, and jump straight
+  // into a Stock Transfer to correct it.
+  const [otherWarehouseLine, setOtherWarehouseLine] = useState<LineRow | null>(null);
+  const [otherWarehouseStock, setOtherWarehouseStock] = useState<OtherWarehouseStockRow[] | null>(null);
+  const [otherWarehouseLoading, setOtherWarehouseLoading] = useState(false);
 
   const [attachments, setAttachments] = useState<AttachmentRow[]>([]);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
@@ -220,11 +264,34 @@ export function MaterialRequestWorkflowPanel({
             warehouseLocationId: issueLocationId || undefined,
             fabricRollId: selectedRollId || undefined,
             extraReason: issueExtra ? issueExtraReason || undefined : undefined,
+            issueWarehouseId: issueWarehouseId || undefined,
           }),
         }),
       "Failed to issue this line."
     );
     if (ok) setIssuingLine(null);
+  };
+
+  // "Change Warehouse" inside the Issue modal — re-scopes the roll picker
+  // (for a FABRIC material) to whichever warehouse was just picked, exactly
+  // like the mount-time fetch above but keyed on the chosen warehouse
+  // instead of the request's own.
+  const selectIssueWarehouse = (warehouseId: string) => {
+    if (!issuingLine) return;
+    setIssueWarehouseId(warehouseId);
+    setSelectedRollId("");
+    setIssueQty("");
+    if (issuingLine.material.materialCategory === "FABRIC") {
+      setRollsLoading(true);
+      setAvailableRolls([]);
+      const url = warehouseId
+        ? `/api/v1/material-requests/lines/${issuingLine.id}/available-rolls?warehouseId=${warehouseId}`
+        : `/api/v1/material-requests/lines/${issuingLine.id}/available-rolls`;
+      fetch(url)
+        .then((res) => res.json())
+        .then((body) => setAvailableRolls(body.data ?? []))
+        .finally(() => setRollsLoading(false));
+    }
   };
 
   const uploadAttachment = async () => {
@@ -433,6 +500,23 @@ export function MaterialRequestWorkflowPanel({
                     </td>
                     <td className="py-2 pr-3 text-zinc-700 dark:text-zinc-200">
                       {line.availableStockQuantity} {line.uom.code}
+                      {line.availableStockQuantity <= 0 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setOtherWarehouseLine(line);
+                            setOtherWarehouseStock(null);
+                            setOtherWarehouseLoading(true);
+                            fetch(`/api/v1/material-requests/lines/${line.id}/other-warehouse-stock`)
+                              .then((res) => res.json())
+                              .then((body) => setOtherWarehouseStock(body.data ?? []))
+                              .finally(() => setOtherWarehouseLoading(false));
+                          }}
+                          className="ml-2 block text-xs font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400"
+                        >
+                          Check other warehouses
+                        </button>
+                      )}
                     </td>
                     <td className="py-2 pr-3 text-zinc-700 dark:text-zinc-200">
                       {line.issuedQuantity} {line.uom.code}
@@ -454,20 +538,11 @@ export function MaterialRequestWorkflowPanel({
                       {canIssue && line.remainingQuantity > 0 && (
                         <button
                           type="button"
-                          // A FABRIC material's flat availableStockQuantity
-                          // can read 0 purely because the exact requested
-                          // shade is out of stock, even though the same
-                          // fabric has plenty in other colors — the modal's
-                          // own roll picker is what actually knows the true
-                          // picture, so don't pre-emptively block opening it
-                          // for that category. Every other material keeps
-                          // the original "nothing to issue at all" gate.
-                          disabled={line.material.materialCategory !== "FABRIC" && line.availableStockQuantity <= 0}
-                          title={
-                            line.material.materialCategory !== "FABRIC" && line.availableStockQuantity <= 0
-                              ? "No stock available at this warehouse yet"
-                              : undefined
-                          }
+                          // Never pre-emptively blocked on zero stock any
+                          // more (2026-09-16) — the modal itself now offers a
+                          // real "Change Warehouse" fallback for exactly that
+                          // case, so there's always something useful to do
+                          // inside it even when this warehouse has nothing.
                           onClick={() => {
                             setIssuingLine(line);
                             setIssueLocationId("");
@@ -475,6 +550,15 @@ export function MaterialRequestWorkflowPanel({
                             setIssueExtra(false);
                             setIssueExtraReason("");
                             setError(null);
+                            setIssueWarehouseId("");
+                            setIssueAltWarehouses(null);
+                            if (line.availableStockQuantity <= 0) {
+                              setIssueAltWarehousesLoading(true);
+                              fetch(`/api/v1/material-requests/lines/${line.id}/other-warehouse-stock`)
+                                .then((res) => res.json())
+                                .then((body) => setIssueAltWarehouses(body.data ?? []))
+                                .finally(() => setIssueAltWarehousesLoading(false));
+                            }
                             if (line.material.materialCategory === "FABRIC") {
                               // Real cap depends on which roll/shade gets
                               // picked below, not the line's own flat
@@ -552,7 +636,10 @@ export function MaterialRequestWorkflowPanel({
         </div>
       </div>
 
-      <MaterialRequestTimeline materialRequestId={materialRequestId} />
+      <MaterialRequestTimeline
+        materialRequestId={materialRequestId}
+        lines={request.lines.map((l) => ({ id: l.id, uomCode: l.uom.code }))}
+      />
 
       {previewAttachment && (
         <FilePreviewModal
@@ -585,16 +672,40 @@ export function MaterialRequestWorkflowPanel({
         {issuingLine && (() => {
           const isFabric = issuingLine.material.materialCategory === "FABRIC";
           const selectedRoll = availableRolls.find((r) => r.id === selectedRollId) ?? null;
+          // Which warehouse this issue is actually about to come out of —
+          // the request's own by default, or whichever alternate the
+          // "Change Warehouse" picker below has selected.
+          const activeWarehouseName = issueWarehouseId
+            ? (issueAltWarehouses?.find((w) => w.warehouseId === issueWarehouseId)?.warehouseName ?? "the selected warehouse")
+            : request.warehouse.name;
+          // The flat total for a non-fabric material, or a fabric material
+          // with no roll-level stock — the request's own line figure when
+          // still on the request's own warehouse, or the picked alternate
+          // warehouse's own total once "Change Warehouse" is used.
+          const flatAvailable = issueWarehouseId
+            ? (issueAltWarehouses?.find((w) => w.warehouseId === issueWarehouseId)?.totalQuantity ?? 0)
+            : issuingLine.availableStockQuantity;
           // For a FABRIC material with real roll-level stock, the true
           // available quantity is whichever roll/shade is actually picked —
           // the line's own flat availableStockQuantity only ever reflected
           // the line's originally-requested shade (or the whole-material
           // total when none was requested), neither of which is what's
           // actually about to be decremented once a specific roll is
-          // chosen. Falls back to the old flat number when this material
-          // has no roll-level stock recorded at all (nothing to pick from).
+          // chosen. Falls back to the flat total when this warehouse has no
+          // roll-level stock recorded at all (nothing to pick from).
+          //
+          // Capped at the flat total too, not just the roll's own number —
+          // FabricRoll.remainingQuantity and the real StockBalance ledger
+          // can drift out of sync (confirmed live on real data: a roll can
+          // still show more "remaining" than the warehouse's actual balance,
+          // left over from before rolls were kept in sync with every issue).
+          // The server's own floor guard checks the real StockBalance, not
+          // the roll — trusting the roll alone here would let the UI offer
+          // a quantity that looks fine but fails after clicking Issue.
           const effectiveAvailable =
-            isFabric && availableRolls.length > 0 ? Number(selectedRoll?.remainingQuantity ?? 0) : issuingLine.availableStockQuantity;
+            isFabric && availableRolls.length > 0
+              ? Math.min(Number(selectedRoll?.remainingQuantity ?? 0), flatAvailable)
+              : flatAvailable;
           const canIssueExtra = request.requestType === "SAMPLING_REQUIREMENT";
           // With "Issue Extra" checked, the only real ceiling left is
           // physical stock — the planned/requested quantity is deliberately
@@ -611,19 +722,53 @@ export function MaterialRequestWorkflowPanel({
               {!isFabric && (
                 <>
                   {" "}
-                  · {issuingLine.availableStockQuantity} {issuingLine.uom.code} in stock at {request.warehouse.name}
+                  · {flatAvailable} {issuingLine.uom.code} in stock at {activeWarehouseName}
                 </>
               )}
             </p>
 
+            {issuingLine.availableStockQuantity <= 0 && (
+              <FormField label="Change Warehouse (optional)" htmlFor="issueWarehouseId">
+                {issueAltWarehousesLoading ? (
+                  <p className="text-sm text-zinc-500 dark:text-zinc-400">Checking every other warehouse for real stock…</p>
+                ) : issueAltWarehouses?.length === 0 ? (
+                  <p className="text-sm text-amber-700 dark:text-amber-400">
+                    No stock of this material exists at any other warehouse either.
+                  </p>
+                ) : (
+                  <>
+                    <select
+                      id="issueWarehouseId"
+                      value={issueWarehouseId}
+                      onChange={(e) => selectIssueWarehouse(e.target.value)}
+                      className={textInputClass()}
+                    >
+                      <option value="">{request.warehouse.name} (this request&apos;s own warehouse — 0 available)</option>
+                      {issueAltWarehouses?.map((w) => (
+                        <option key={w.warehouseId} value={w.warehouseId}>
+                          {w.warehouseName} — {w.totalQuantity} {issuingLine.uom.code} available
+                        </option>
+                      ))}
+                    </select>
+                    {issueWarehouseId && (
+                      <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
+                        Issuing from {activeWarehouseName} instead of {request.warehouse.name} — this request&apos;s own stated
+                        warehouse.
+                      </p>
+                    )}
+                  </>
+                )}
+              </FormField>
+            )}
+
             {isFabric && (
-              <FormField label="Color / Shade" htmlFor="issueRoll" required={availableRolls.length > 0}>
+              <FormField label="Color / Shade / GSM / Composition" htmlFor="issueRoll" required={availableRolls.length > 0}>
                 {rollsLoading ? (
                   <p className="text-sm text-zinc-500 dark:text-zinc-400">Checking available colors…</p>
                 ) : availableRolls.length === 0 ? (
                   <p className="text-sm text-amber-700 dark:text-amber-400">
-                    No roll-level stock recorded for this material at {request.warehouse.name} — this will issue against the
-                    general stock total instead ({issuingLine.availableStockQuantity} {issuingLine.uom.code} available).
+                    No roll-level stock recorded for this material at {activeWarehouseName} — this will issue against the
+                    general stock total instead ({flatAvailable} {issuingLine.uom.code} available).
                   </p>
                 ) : (
                   <select
@@ -638,9 +783,7 @@ export function MaterialRequestWorkflowPanel({
                     <option value="">— Select which color/shade to issue —</option>
                     {availableRolls.map((r) => (
                       <option key={r.id} value={r.id}>
-                        {r.dye ? `${r.dye.name}${r.dye.pantone ? ` (${r.dye.pantone})` : ""}` : `Roll ${r.rollNumber} — no shade recorded`}
-                        {" — "}
-                        {r.remainingQuantity} {issuingLine.uom.code} available
+                        {formatRollLabel(r)} — {r.remainingQuantity} {issuingLine.uom.code} available
                       </option>
                     ))}
                   </select>
@@ -699,6 +842,7 @@ export function MaterialRequestWorkflowPanel({
               </div>
             )}
 
+            {!issueWarehouseId && (
             <FormField label="Location (optional)" htmlFor="issueLocationId">
               {(() => {
                 // Only offer locations that actually make sense for this
@@ -728,6 +872,7 @@ export function MaterialRequestWorkflowPanel({
                 );
               })()}
             </FormField>
+            )}
 
             {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
 
@@ -747,6 +892,64 @@ export function MaterialRequestWorkflowPanel({
           </div>
           );
         })()}
+      </Modal>
+
+      <Modal open={!!otherWarehouseLine} onClose={() => setOtherWarehouseLine(null)} title="Other Warehouse Stock">
+        {otherWarehouseLine && (
+          <div className="space-y-4">
+            <p className="text-sm text-zinc-600 dark:text-zinc-300">
+              {otherWarehouseLine.material.styleName} — 0 {otherWarehouseLine.uom.code} available at {request.warehouse.name}. Real
+              stock elsewhere:
+            </p>
+
+            {otherWarehouseLoading && <p className="text-sm text-zinc-500 dark:text-zinc-400">Checking every other warehouse…</p>}
+
+            {!otherWarehouseLoading && otherWarehouseStock?.length === 0 && (
+              <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                No stock of this material exists at any other warehouse either.
+              </p>
+            )}
+
+            {!otherWarehouseLoading && otherWarehouseStock && otherWarehouseStock.length > 0 && (
+              <div className="space-y-3">
+                {otherWarehouseStock.map((w) => (
+                  <div key={w.warehouseId} className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-medium text-zinc-900 dark:text-zinc-50">
+                        {w.warehouseName} — {w.totalQuantity} {otherWarehouseLine.uom.code}
+                      </p>
+                      <Link
+                        href={`/inventory/stock-movements/new?movementType=TRANSFER&materialId=${otherWarehouseLine.material.id}&fromWarehouseId=${w.warehouseId}&toWarehouseId=${request.warehouse.id}`}
+                        className="rounded-md border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                      >
+                        Transfer to {request.warehouse.name}
+                      </Link>
+                    </div>
+                    {w.rolls.length > 0 && (
+                      <ul className="mt-2 space-y-1 text-xs text-zinc-600 dark:text-zinc-300">
+                        {w.rolls.map((r) => (
+                          <li key={r.id}>
+                            {formatRollLabel(r)} — {r.remainingQuantity} {otherWarehouseLine.uom.code}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => setOtherWarehouseLine(null)}
+                className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        )}
       </Modal>
 
       {showGenerate && (
@@ -845,6 +1048,19 @@ function GeneratePurchaseOrdersModal({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // "Purchase History" — self-fetches on open, last 1 year, per material
+  // line — a decision aid for picking today's rate/supplier before
+  // generating the new order.
+  const [historyLine, setHistoryLine] = useState<ReviewLine | null>(null);
+  const [history, setHistory] = useState<PurchaseHistoryEntry[] | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
+  // Unit Price suggestions, one real historical entry per <option> — the
+  // input stays a genuinely free-typed number (nothing forces picking one),
+  // but every real price actually paid in the last year is one click away
+  // via the browser's own native datalist dropdown.
+  const [priceOptionsByMaterialId, setPriceOptionsByMaterialId] = useState<Record<string, PurchaseHistoryEntry[]>>({});
+
   useEffect(() => {
     fetch("/api/v1/suppliers?pageSize=200")
       .then((res) => res.json())
@@ -867,6 +1083,15 @@ function GeneratePurchaseOrdersModal({
             ])
           )
         );
+
+        const materialIds = [...new Set(lines.map((l) => l.materialId))];
+        Promise.all(
+          materialIds.map((materialId) =>
+            fetch(`/api/v1/materials/${materialId}/rate-history?sinceDays=365`)
+              .then((res) => res.json())
+              .then((historyBody) => [materialId, historyBody.data?.history ?? []] as const)
+          )
+        ).then((entries) => setPriceOptionsByMaterialId(Object.fromEntries(entries)));
       });
   }, [materialRequestId]);
 
@@ -922,7 +1147,8 @@ function GeneratePurchaseOrdersModal({
   };
 
   return (
-    <Modal open onClose={onClose} title="Generate Purchase Order(s)" maxWidthClass="max-w-3xl">
+    <>
+    <Modal open onClose={onClose} title="Generate Purchase Order(s)" maxWidthClass="max-w-6xl">
       <div className="space-y-4">
         {!reviewLines && <p className="text-sm text-zinc-500">Loading…</p>}
 
@@ -964,6 +1190,21 @@ function GeneratePurchaseOrdersModal({
                         </td>
                         <td className="py-2 pr-2 text-zinc-700 dark:text-zinc-200">
                           {l.materialName} <span className="text-xs text-zinc-400">({l.materialCode})</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setHistoryLine(l);
+                              setHistory(null);
+                              setHistoryLoading(true);
+                              fetch(`/api/v1/materials/${l.materialId}/rate-history?sinceDays=365`)
+                                .then((res) => res.json())
+                                .then((body) => setHistory(body.data?.history ?? []))
+                                .finally(() => setHistoryLoading(false));
+                            }}
+                            className="ml-2 block text-xs font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400"
+                          >
+                            Purchase History
+                          </button>
                         </td>
                         <td className="py-2 pr-2 text-zinc-700 dark:text-zinc-200">
                           {l.requestedQuantity} {l.uomCode}
@@ -999,8 +1240,19 @@ function GeneratePurchaseOrdersModal({
                             disabled={!row.included}
                             value={row.unitPrice}
                             onChange={(e) => updateRow(l.materialRequestItemId, { unitPrice: e.target.value })}
+                            // A real datalist, not a forced picker — the
+                            // field stays freely typeable; when the last
+                            // year has real purchase history for this
+                            // material, every distinct price actually paid
+                            // is one native-dropdown click away instead.
+                            list={`price-history-${l.materialId}`}
                             className={`${textInputClass()} w-24`}
                           />
+                          <datalist id={`price-history-${l.materialId}`}>
+                            {dedupePriceOptions(priceOptionsByMaterialId[l.materialId] ?? []).map((h) => (
+                              <option key={h.id} value={h.unitPrice} label={`${h.supplierName} — ${new Date(h.receivedDate).toLocaleDateString()}`} />
+                            ))}
+                          </datalist>
                         </td>
                         <td className="py-2">
                           <div className="w-40">
@@ -1083,5 +1335,61 @@ function GeneratePurchaseOrdersModal({
         )}
       </div>
     </Modal>
+
+    <Modal open={!!historyLine} onClose={() => setHistoryLine(null)} title="Purchase History (Last 1 Year)">
+      {historyLine && (
+        <div className="space-y-4">
+          <p className="text-sm text-zinc-600 dark:text-zinc-300">
+            {historyLine.materialName} <span className="text-xs text-zinc-400">({historyLine.materialCode})</span>
+          </p>
+
+          {historyLoading && <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>}
+
+          {!historyLoading && history?.length === 0 && (
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">No purchases of this material in the last year.</p>
+          )}
+
+          {!historyLoading && history && history.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs text-zinc-500">
+                    <th className="py-1 pr-3 font-medium">Supplier</th>
+                    <th className="py-1 pr-3 font-medium">Rate</th>
+                    <th className="py-1 pr-3 font-medium">Received Date</th>
+                    <th className="py-1 font-medium">Order / Receipt</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {history.map((h) => (
+                    <tr key={h.id} className="border-t border-zinc-100 dark:border-zinc-800">
+                      <td className="py-2 pr-3 text-zinc-700 dark:text-zinc-200">{h.supplierName}</td>
+                      <td className="py-2 pr-3 text-zinc-700 dark:text-zinc-200">{h.unitPrice}</td>
+                      <td className="py-2 pr-3 text-zinc-700 dark:text-zinc-200">
+                        {new Date(h.receivedDate).toLocaleDateString()}
+                      </td>
+                      <td className="py-2 text-xs text-zinc-500">
+                        {h.orderNumber} · {h.receiptNumber}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={() => setHistoryLine(null)}
+              className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+    </Modal>
+    </>
   );
 }

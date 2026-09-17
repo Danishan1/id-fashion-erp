@@ -29,6 +29,7 @@ const {
   getSampleMaterialRequirement,
   getMaterialRequirementForOrderLine,
   getSalesOrdersMaterialStatus,
+  getSalesOrderRawBomLines,
 } = await import("./mrp.service");
 
 const MTR = { id: "uom-mtr", code: "MTR", name: "Meter", baseUnitId: null, conversionFactor: 1 };
@@ -600,5 +601,140 @@ describe("getSalesOrdersMaterialStatus", () => {
     // orders -- never once per order.
     expect(BomRepository.findManyByProductIds).toHaveBeenCalledTimes(1);
     expect(prisma.materialRequestItem.findMany).toHaveBeenCalledTimes(1);
+  });
+});
+
+// The Material Request create form's "Add from this Order's BOM" picker
+// needs one row PER real BOM/Sample line (never merged across colors the
+// way getMaterialRequirements' own shortfall figure deliberately is), each
+// carrying its own color/shade to pre-fill onto the created line.
+describe("getSalesOrderRawBomLines", () => {
+  it("returns one row per BOM line, never merged, color-filtering each against the order's own breakdown", async () => {
+    vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue(
+      order({
+        id: "so-1",
+        items: [
+          {
+            id: "soi-1",
+            productId: "style-1",
+            sampleRequestId: null,
+            product: { styleName: "Round Neck T-Shirt" },
+            breakdown: [
+              { orderedQuantity: 200, productVariant: { color: { id: "black" } } },
+              { orderedQuantity: 400, productVariant: { color: { id: "navy" } } },
+            ],
+          },
+        ],
+      }) as never
+    );
+
+    const result = await getSalesOrderRawBomLines("co-1", "so-1");
+    expect(result.items).toHaveLength(1);
+    const lines = result.items[0].lines;
+    expect(lines).toHaveLength(2);
+
+    const cotton = lines.find((l) => l.materialId === "mat-cotton")!;
+    // 1.2 * 1.10 * 600 (both colors, colorId: null) = 792 — same figure MRP's
+    // own shortfall calculation relies on, never a second diverging number.
+    expect(cotton.neededQuantity).toBeCloseTo(792);
+    expect(cotton.colorId).toBeNull();
+
+    const thread = lines.find((l) => l.materialId === "mat-thread")!;
+    // 0.05 * 400 (navy only, per threadBomItem's own colorId: "navy") = 20.
+    expect(thread.neededQuantity).toBeCloseTo(20);
+    expect(thread.colorId).toBe("navy");
+    expect(thread.dyeId).toBeNull();
+  });
+
+  it("preserves a sample-sourced line's own shade colorId/dyeId for pre-fill, using the full order quantity regardless of it", async () => {
+    vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue(
+      order({
+        id: "so-1",
+        items: [
+          {
+            id: "soi-1",
+            productId: "style-1",
+            sampleRequestId: "sam-1",
+            sampleRequest: { styleName: "Design Alpha" },
+            product: { styleName: "Round Neck T-Shirt" },
+            breakdown: [
+              { orderedQuantity: 200, productVariant: { color: { id: "black" } } },
+              { orderedQuantity: 400, productVariant: { color: { id: "navy" } } },
+            ],
+          },
+        ],
+      }) as never
+    );
+    vi.mocked(SampleMaterialRepository.findLatestVersionMaterialsForRequirement).mockResolvedValue([
+      {
+        materialId: "mat-thread",
+        plannedQuantity: 1,
+        uomId: "uom-rol",
+        colorId: "navy-thread-shade",
+        dyeId: "dye-1",
+        uom: ROL,
+        material: { id: "mat-thread", styleName: "Silk Thread", styleCode: "MAT-THR", baseUomId: "uom-rol", baseUom: ROL, defaultSupplierId: null, unitCost: null },
+      },
+    ] as never);
+
+    const result = await getSalesOrderRawBomLines("co-1", "so-1");
+    expect(result.items[0].sampleStyleName).toBe("Design Alpha");
+    const line = result.items[0].lines[0];
+    // The sample's own shade, not filtered out or replaced by any real
+    // style-variant color id — the exact pre-fill this row exists for.
+    expect(line.colorId).toBe("navy-thread-shade");
+    expect(line.dyeId).toBe("dye-1");
+    // No color-based filtering for a sample-sourced line — full 600 (200+400).
+    expect(line.neededQuantity).toBe(600);
+  });
+
+  it("reports an unconvertible line without throwing, and folds it into a null grand total", async () => {
+    vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue(
+      order({
+        id: "so-1",
+        items: [
+          {
+            id: "soi-1",
+            productId: "style-1",
+            sampleRequestId: null,
+            product: { styleName: "Round Neck T-Shirt" },
+            breakdown: [{ orderedQuantity: 100, productVariant: { color: { id: "black" } } }],
+          },
+        ],
+      }) as never
+    );
+    vi.mocked(BomRepository.findManyByProductIds).mockResolvedValue([
+      bomFixture("style-1", [cottonBomItem({ material: { styleName: "Cotton Fabric", styleCode: "MAT-COT", baseUom: null, defaultSupplierId: "sup-1", unitCost: 50 } })]),
+    ] as never);
+
+    const result = await getSalesOrderRawBomLines("co-1", "so-1");
+    expect(result.items[0].lines).toHaveLength(0);
+    expect(result.unconvertibleLines).toEqual([
+      { materialId: "mat-cotton", materialName: "Cotton Fabric", reason: "no base unit configured" },
+    ]);
+    expect(result.grandTotalMaterialCost).toBeNull();
+  });
+
+  it("computes a real grand total when every line's cost is known", async () => {
+    vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue(
+      order({
+        id: "so-1",
+        items: [
+          {
+            id: "soi-1",
+            productId: "style-1",
+            sampleRequestId: null,
+            product: { styleName: "Round Neck T-Shirt" },
+            breakdown: [{ orderedQuantity: 100, productVariant: { color: { id: "black" } } }],
+          },
+        ],
+      }) as never
+    );
+    vi.mocked(BomRepository.findManyByProductIds).mockResolvedValue([bomFixture("style-1", [cottonBomItem()])] as never);
+
+    const result = await getSalesOrderRawBomLines("co-1", "so-1");
+    // 1.2 * 1.10 * 100 = 132 needed, unitCost 50 -> lineCost 6600.
+    expect(result.items[0].lines[0].lineCost).toBeCloseTo(6600);
+    expect(result.grandTotalMaterialCost).toBeCloseTo(6600);
   });
 });

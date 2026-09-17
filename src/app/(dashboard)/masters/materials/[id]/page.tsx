@@ -36,7 +36,6 @@ export default async function EditMaterialPage({ params }: { params: Promise<{ i
           baseUomId: material.baseUomId ?? "",
           defaultSupplierId: material.defaultSupplierId ?? "",
           reorderLevel: material.reorderLevel?.toString() ?? "",
-          unitCost: material.unitCost?.toString() ?? "",
           description: material.description ?? "",
           hsnSacCode: material.hsnSacCode ?? "",
           isActive: material.isActive,

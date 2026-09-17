@@ -1,5 +1,8 @@
 export const STATUS_LABELS = {
-  OPEN: "Open",
+  // OPEN means zero lines have been issued or escalated yet — every line is
+  // still genuinely pending action, so "Pending" reads clearer to a
+  // merchandiser/warehouse user than the more generic "Open".
+  OPEN: "Pending",
   PARTIALLY_FULFILLED: "Partially Fulfilled",
   FULFILLED: "Fulfilled",
   CLOSED: "Closed",

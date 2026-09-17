@@ -7,6 +7,7 @@ import { MaterialPicker } from "@/components/ui/MaterialPicker";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { formatCurrency } from "@/lib/currency";
 import { todayIsoDate } from "@/lib/date";
+import { dedupePriceOptions, type PurchaseHistoryEntry } from "@/lib/price-history";
 
 interface Option {
   id: string;
@@ -84,6 +85,14 @@ export function PurchaseOrderForm({ initialOrder }: { initialOrder?: InitialPurc
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Unit Price suggestions, one real historical entry per <option> — the
+  // input stays a genuinely free-typed number (nothing forces picking one),
+  // fetched lazily per material once it's actually picked on a line (not
+  // prefetched for the whole materials master, which can run into the
+  // hundreds). Same shared datalist behavior as the Material Request's own
+  // "Generate Purchase Order(s)" review modal.
+  const [priceOptionsByMaterialId, setPriceOptionsByMaterialId] = useState<Record<string, PurchaseHistoryEntry[]>>({});
+
   useEffect(() => {
     fetch("/api/v1/suppliers?pageSize=200")
       .then((res) => res.json())
@@ -100,6 +109,17 @@ export function PurchaseOrderForm({ initialOrder }: { initialOrder?: InitialPurc
     fetch("/api/v1/fabric-dyes?pageSize=200")
       .then((res) => res.json())
       .then((body) => setDyes(body.data ?? []));
+
+    // Edit mode already has real productIds on every line from the start
+    // (never routed through onMaterialChange's own lazy fetch) — prefetch
+    // their price history too, once, at mount.
+    const initialProductIds = [...new Set(initialOrder?.items.map((item) => item.productId) ?? [])];
+    initialProductIds.forEach((productId) => {
+      fetch(`/api/v1/materials/${productId}/rate-history?sinceDays=365`)
+        .then((res) => res.json())
+        .then((body) => setPriceOptionsByMaterialId((prev) => ({ ...prev, [productId]: body.data?.history ?? [] })));
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const updateItem = (index: number, patch: Partial<LineItem>) => {
@@ -109,6 +129,12 @@ export function PurchaseOrderForm({ initialOrder }: { initialOrder?: InitialPurc
   const onMaterialChange = (index: number, productId: string) => {
     const material = materials.find((m) => m.id === productId);
     updateItem(index, { productId, uomId: material?.baseUom?.id ?? "" });
+
+    if (productId && !(productId in priceOptionsByMaterialId)) {
+      fetch(`/api/v1/materials/${productId}/rate-history?sinceDays=365`)
+        .then((res) => res.json())
+        .then((body) => setPriceOptionsByMaterialId((prev) => ({ ...prev, [productId]: body.data?.history ?? [] })));
+    }
   };
 
   const addLine = () => setItems((prev) => [...prev, emptyLine()]);
@@ -269,8 +295,20 @@ export function PurchaseOrderForm({ initialOrder }: { initialOrder?: InitialPurc
                   required
                   value={item.unitPrice}
                   onChange={(e) => updateItem(index, { unitPrice: e.target.value })}
+                  // A real datalist, not a forced picker — the field stays
+                  // freely typeable; when the last year has real purchase
+                  // history for this material, every distinct price
+                  // actually paid is one native-dropdown click away instead.
+                  list={item.productId ? `price-history-${item.productId}` : undefined}
                   className={textInputClass()}
                 />
+                {item.productId && (
+                  <datalist id={`price-history-${item.productId}`}>
+                    {dedupePriceOptions(priceOptionsByMaterialId[item.productId] ?? []).map((h) => (
+                      <option key={h.id} value={h.unitPrice} label={`${h.supplierName} — ${new Date(h.receivedDate).toLocaleDateString()}`} />
+                    ))}
+                  </datalist>
+                )}
               </FormField>
               <FormField label="Notes" htmlFor={`notes-${index}`}>
                 <input

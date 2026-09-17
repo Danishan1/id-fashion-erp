@@ -79,6 +79,21 @@ export const ProductRepository = {
       where: { companyId, styleCode, deletedAt: null, ...(excludeId ? { id: { not: excludeId } } : {}) },
     }),
 
+  /** Case-insensitive duplicate-name check, scoped to raw materials only
+   * (not the shared Style/Material `styleCode` namespace) -- a Style and a
+   * Material coincidentally sharing a name is fine, two materials sharing
+   * one isn't. */
+  findMaterialByName: (companyId: string, styleName: string, excludeId?: string) =>
+    prisma.product.findFirst({
+      where: {
+        companyId,
+        itemType: "RAW_MATERIAL",
+        styleName: { equals: styleName, mode: "insensitive" },
+        deletedAt: null,
+        ...(excludeId ? { id: { not: excludeId } } : {}),
+      },
+    }),
+
   create: (data: Prisma.ProductUncheckedCreateInput) => prisma.product.create({ data }),
 
   update: (id: string, data: Prisma.ProductUncheckedUpdateInput) => prisma.product.update({ where: { id }, data }),

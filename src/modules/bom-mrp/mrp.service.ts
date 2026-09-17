@@ -60,6 +60,17 @@ interface RequirementUom {
 interface ExplosionLineItem {
   materialId: string;
   colorId: string | null;
+  // The material's own real color/shade to pre-fill onto a Material Request
+  // line created from this BOM/Sample line — a genuinely different concept
+  // from `colorId` above (which filters the order's own color/size breakdown
+  // and is always null for a sample-sourced line, see explodeOrderItemsToRows'
+  // own comment). Optional so the two flat-quantity callers below
+  // (getStyleMaterialRequirement/getSampleMaterialRequirement), which never
+  // need it, don't have to populate it.
+  materialColorId?: string | null;
+  // The material's own shade/Pantone — only ever set for a sample-sourced
+  // line (SampleMaterial.dyeId); a real BomItem has no such column.
+  dyeId?: string | null;
   quantityPerUnit: number;
   wastagePercentage: number;
   uom: RequirementUom | null;
@@ -72,53 +83,103 @@ interface ExplosionLineItem {
   };
 }
 
+interface ExplodedLine {
+  materialId: string;
+  materialName: string;
+  materialCode: string;
+  colorId: string | null;
+  dyeId: string | null;
+  uomId: string;
+  uomCode: string;
+  /** Effective (post-wastage) per-garment quantity, in the BOM/Sample line's
+   * own chosen unit — for display only (e.g. "50 × 1.2m"), not itself
+   * converted to base UOM. */
+  quantityPerUnit: number;
+  /** The color-filtered ordered quantity this line was actually computed
+   * against — 0 rows (nothing ordered in this line's color) are never
+   * returned at all, matching explodeItemsForOrderItem's own "skip" rule. */
+  orderedQuantityForLine: number;
+  /** In the material's own base UOM. */
+  neededQuantity: number;
+  unitCost: number | null;
+}
+
+type ExplodedLineResult = ExplodedLine | { unconvertible: { materialId: string; materialName: string; reason: string } } | null;
+
+/**
+ * The real per-line math (color-filtered ordered qty, wastage, base-UOM
+ * conversion) behind every explosion in this module — shared by the merged/
+ * aggregated MRP-shortfall path below and getSalesOrderRawBomLines' own
+ * flat, unmerged path, so a Material Request line pre-filled from a BOM line
+ * can never compute a different quantity than what MRP's own shortfall
+ * figure already relies on. Returns null when nothing in this line's own
+ * color is actually on order (the caller should skip it, same as before).
+ */
+function computeExplodedLine(item: ExplosionLineItem, orderItem: OrderItemForExplosion): ExplodedLineResult {
+  const matchingBreakdown = orderItem.breakdown.filter((b) => !item.colorId || b.productVariant.color.id === item.colorId);
+  const orderedQty = matchingBreakdown.reduce((sum, b) => sum + b.orderedQuantity, 0);
+  if (orderedQty === 0) return null;
+
+  const effectiveQtyPerUnit = item.quantityPerUnit * (1 + item.wastagePercentage / 100);
+  const effectiveQtyInBomUnit = effectiveQtyPerUnit * orderedQty;
+
+  if (!item.uom) {
+    return { unconvertible: { materialId: item.materialId, materialName: item.material.styleName, reason: "no unit specified" } };
+  }
+  if (!item.material.baseUom) {
+    return { unconvertible: { materialId: item.materialId, materialName: item.material.styleName, reason: "no base unit configured" } };
+  }
+
+  const neededInBaseUom = convertUomQuantity(effectiveQtyInBomUnit, item.uom, item.material.baseUom);
+  if (neededInBaseUom === null) {
+    return {
+      unconvertible: {
+        materialId: item.materialId,
+        materialName: item.material.styleName,
+        reason: `"${item.uom.name}" has no fixed conversion to its base unit`,
+      },
+    };
+  }
+
+  return {
+    materialId: item.materialId,
+    materialName: item.material.styleName,
+    materialCode: item.material.styleCode,
+    colorId: item.materialColorId ?? item.colorId,
+    dyeId: item.dyeId ?? null,
+    uomId: item.material.baseUom.id,
+    uomCode: item.material.baseUom.code,
+    quantityPerUnit: effectiveQtyPerUnit,
+    orderedQuantityForLine: orderedQty,
+    neededQuantity: neededInBaseUom,
+    unitCost: item.material.unitCost ? Number(item.material.unitCost) : null,
+  };
+}
+
 /**
  * Explodes one order item's material lines (from either source) against its
  * own color/size breakdown and accumulates the result into rowsByMaterialId —
- * the exact per-line math (color-filtered ordered qty, wastage, base-UOM
- * conversion, contributing-style merge) this function used to run inline
- * only for BomItem rows; now shared so a Sample's material list can stand in
- * for the Style's real BOM without a second, diverging copy of this math.
+ * the contributing-style-merge shape this function has always returned;
+ * the actual per-line math now lives in computeExplodedLine above, shared
+ * with getSalesOrderRawBomLines' own unmerged path.
  */
 function explodeItemsForOrderItem(
   items: ExplosionLineItem[],
-  orderItem: {
-    productId: string;
-    product: { styleName: string };
-    breakdown: Array<{ productVariant: { color: { id: string } }; orderedQuantity: number }>;
-  },
+  orderItem: OrderItemForExplosion,
   rowsByMaterialId: Map<string, MaterialRequirementRow>,
   unconvertibleLines: Array<{ materialId: string; materialName: string; reason: string }>
 ) {
   for (const item of items) {
-    const matchingBreakdown = orderItem.breakdown.filter((b) => !item.colorId || b.productVariant.color.id === item.colorId);
-    const orderedQty = matchingBreakdown.reduce((sum, b) => sum + b.orderedQuantity, 0);
-    if (orderedQty === 0) continue;
-
-    const effectiveQtyInBomUnit = item.quantityPerUnit * (1 + item.wastagePercentage / 100) * orderedQty;
-
-    if (!item.uom) {
-      unconvertibleLines.push({ materialId: item.materialId, materialName: item.material.styleName, reason: "no unit specified" });
-      continue;
-    }
-    if (!item.material.baseUom) {
-      unconvertibleLines.push({ materialId: item.materialId, materialName: item.material.styleName, reason: "no base unit configured" });
+    const result = computeExplodedLine(item, orderItem);
+    if (result === null) continue;
+    if ("unconvertible" in result) {
+      unconvertibleLines.push(result.unconvertible);
       continue;
     }
 
-    const neededInBaseUom = convertUomQuantity(effectiveQtyInBomUnit, item.uom, item.material.baseUom);
-    if (neededInBaseUom === null) {
-      unconvertibleLines.push({
-        materialId: item.materialId,
-        materialName: item.material.styleName,
-        reason: `"${item.uom.name}" has no fixed conversion to its base unit`,
-      });
-      continue;
-    }
-
-    const existing = rowsByMaterialId.get(item.materialId);
+    const existing = rowsByMaterialId.get(result.materialId);
     if (existing) {
-      existing.neededQuantity += neededInBaseUom;
+      existing.neededQuantity += result.neededQuantity;
       // Merge into an already-listed style rather than pushing a second
       // entry — a style can reach this material through more than one
       // material line (e.g. two different color-specific lines), and
@@ -126,28 +187,28 @@ function explodeItemsForOrderItem(
       // instead of once with the correct total.
       const existingStyle = existing.contributingStyles.find((s) => s.productId === orderItem.productId);
       if (existingStyle) {
-        existingStyle.neededQuantity += neededInBaseUom;
+        existingStyle.neededQuantity += result.neededQuantity;
       } else {
         existing.contributingStyles.push({
           productId: orderItem.productId,
           styleName: orderItem.product.styleName,
-          neededQuantity: neededInBaseUom,
+          neededQuantity: result.neededQuantity,
         });
       }
     } else {
-      rowsByMaterialId.set(item.materialId, {
-        materialId: item.materialId,
-        materialName: item.material.styleName,
-        materialCode: item.material.styleCode,
-        uomId: item.material.baseUom.id,
-        uomCode: item.material.baseUom.code,
-        neededQuantity: neededInBaseUom,
+      rowsByMaterialId.set(result.materialId, {
+        materialId: result.materialId,
+        materialName: result.materialName,
+        materialCode: result.materialCode,
+        uomId: result.uomId,
+        uomCode: result.uomCode,
+        neededQuantity: result.neededQuantity,
         availableQuantity: 0,
         issuedQuantity: 0,
         shortfallQuantity: 0,
         defaultSupplierId: item.material.defaultSupplierId,
-        unitCost: item.material.unitCost ? Number(item.material.unitCost) : null,
-        contributingStyles: [{ productId: orderItem.productId, styleName: orderItem.product.styleName, neededQuantity: neededInBaseUom }],
+        unitCost: result.unitCost,
+        contributingStyles: [{ productId: orderItem.productId, styleName: orderItem.product.styleName, neededQuantity: result.neededQuantity }],
       });
     }
   }
@@ -169,35 +230,37 @@ interface OrderItemForExplosion {
  * "needed" figure shown on one screen can never quietly disagree with what
  * drives the other.
  */
-function explodeOrderItemsToRows(
-  items: OrderItemForExplosion[],
+/**
+ * Resolves which explosion items ONE order line's material requirement
+ * should come from — a linked Sample's own current material list if the
+ * line has one, otherwise the Style's own real, approved BOM — shared by
+ * explodeOrderItemsToRows' merged path below and getSalesOrderRawBomLines'
+ * own unmerged path, so both can never disagree about which source a given
+ * line actually reads from.
+ */
+function resolveExplosionItemsForOrderItem(
+  orderItem: { productId: string; sampleRequestId: string | null },
   bomByProductId: Map<string, Awaited<ReturnType<typeof BomRepository.findManyByProductIds>>[number]>,
   sampleMaterialsById: Map<string, Awaited<ReturnType<typeof SampleMaterialRepository.findLatestVersionMaterialsForRequirement>>>
-) {
-  const stylesWithoutBom: Array<{ productId: string; styleName: string; reason: string }> = [];
-  const rowsByMaterialId = new Map<string, MaterialRequirementRow>();
-  const unconvertibleLines: Array<{ materialId: string; materialName: string; reason: string }> = [];
-
-  for (const orderItem of items) {
-    let explosionItems: ExplosionLineItem[];
-    let emptySourceReason: string;
-
-    if (orderItem.sampleRequestId) {
-      const sampleMaterials = sampleMaterialsById.get(orderItem.sampleRequestId) ?? [];
-      explosionItems = sampleMaterials.map((m) => ({
+): { explosionItems: ExplosionLineItem[]; emptySourceReason: string } {
+  if (orderItem.sampleRequestId) {
+    const sampleMaterials = sampleMaterialsById.get(orderItem.sampleRequestId) ?? [];
+    return {
+      explosionItems: sampleMaterials.map((m) => ({
         materialId: m.materialId,
         // SampleMaterial.colorId means "this raw material's own shade/dye"
         // (e.g. thread color) -- an entirely different concept from
         // BomItem.colorId ("this line only applies to this ordered
-        // garment-color variant"), which is what
-        // explodeItemsForOrderItem's own filter below actually implements.
-        // Passing the sample's shade through as colorId would silently
-        // filter this line's orderedQty to 0 (the shade id essentially
-        // never matches a real style-variant color id), dropping the whole
-        // line with zero error reported. Always null here so the full
-        // ordered quantity applies regardless of the sample material's own
-        // shade color.
+        // garment-color variant"), which is what computeExplodedLine's own
+        // filter implements. Passing the sample's shade through as colorId
+        // would silently filter this line's orderedQty to 0 (the shade id
+        // essentially never matches a real style-variant color id),
+        // dropping the whole line with zero error reported. Always null
+        // here so the full ordered quantity applies regardless of the
+        // sample material's own shade color.
         colorId: null,
+        materialColorId: m.colorId,
+        dyeId: m.dyeId,
         quantityPerUnit: Number(m.plannedQuantity),
         // SampleMaterial has no wastage% column — the sample's own recorded
         // quantity is treated as the effective (already-wastage-inclusive)
@@ -211,31 +274,47 @@ function explodeOrderItemsToRows(
           defaultSupplierId: m.material.defaultSupplierId,
           unitCost: m.material.unitCost,
         },
-      }));
-      emptySourceReason = "the linked sample has no materials recorded yet";
-    } else {
-      const bom = bomByProductId.get(orderItem.productId);
-      // An unapproved draft (or no BOM at all) is treated identically —
-      // material planning must never silently consume an edit-in-progress
-      // that no one has signed off on yet (see docs/PRACTICAL_BUSINESS_READY_
-      // AUDIT.md Section 4 — this is the real gate that was missing before).
-      const approvedItems = bom?.approvedVersion?.items ?? [];
-      explosionItems = approvedItems.map((item) => ({
-        materialId: item.materialId,
-        colorId: item.colorId,
-        quantityPerUnit: Number(item.quantityPerUnit),
-        wastagePercentage: Number(item.wastagePercentage),
-        uom: item.uom,
-        material: {
-          styleName: item.material.styleName,
-          styleCode: item.material.styleCode,
-          baseUom: item.material.baseUom,
-          defaultSupplierId: item.material.defaultSupplierId,
-          unitCost: item.material.unitCost,
-        },
-      }));
-      emptySourceReason = "no BOM defined for this style";
-    }
+      })),
+      emptySourceReason: "the linked sample has no materials recorded yet",
+    };
+  }
+
+  const bom = bomByProductId.get(orderItem.productId);
+  // An unapproved draft (or no BOM at all) is treated identically —
+  // material planning must never silently consume an edit-in-progress
+  // that no one has signed off on yet (see docs/PRACTICAL_BUSINESS_READY_
+  // AUDIT.md Section 4 — this is the real gate that was missing before).
+  const approvedItems = bom?.approvedVersion?.items ?? [];
+  return {
+    explosionItems: approvedItems.map((item) => ({
+      materialId: item.materialId,
+      colorId: item.colorId,
+      quantityPerUnit: Number(item.quantityPerUnit),
+      wastagePercentage: Number(item.wastagePercentage),
+      uom: item.uom,
+      material: {
+        styleName: item.material.styleName,
+        styleCode: item.material.styleCode,
+        baseUom: item.material.baseUom,
+        defaultSupplierId: item.material.defaultSupplierId,
+        unitCost: item.material.unitCost,
+      },
+    })),
+    emptySourceReason: "no BOM defined for this style",
+  };
+}
+
+function explodeOrderItemsToRows(
+  items: OrderItemForExplosion[],
+  bomByProductId: Map<string, Awaited<ReturnType<typeof BomRepository.findManyByProductIds>>[number]>,
+  sampleMaterialsById: Map<string, Awaited<ReturnType<typeof SampleMaterialRepository.findLatestVersionMaterialsForRequirement>>>
+) {
+  const stylesWithoutBom: Array<{ productId: string; styleName: string; reason: string }> = [];
+  const rowsByMaterialId = new Map<string, MaterialRequirementRow>();
+  const unconvertibleLines: Array<{ materialId: string; materialName: string; reason: string }> = [];
+
+  for (const orderItem of items) {
+    const { explosionItems, emptySourceReason } = resolveExplosionItemsForOrderItem(orderItem, bomByProductId, sampleMaterialsById);
 
     if (explosionItems.length === 0) {
       stylesWithoutBom.push({ productId: orderItem.productId, styleName: orderItem.product.styleName, reason: emptySourceReason });
@@ -789,5 +868,134 @@ export async function getSalesOrderMaterialPreview(companyId: string, salesOrder
     salesOrder: { id: order.id, orderNumber: order.orderNumber, customerName: order.customer.name },
     items,
     grandTotalMaterialCost: anyUnknown ? null : round4(knownTotal),
+  };
+}
+
+export interface SalesOrderRawBomLine {
+  materialId: string;
+  materialName: string;
+  materialCode: string;
+  /** The material's own color/shade to pre-fill onto a created Material
+   * Request line — never null-vs-value ambiguous with a color-scoped BomItem
+   * line's own filter meaning, see computeExplodedLine. Freely editable by
+   * the user once picked. */
+  colorId: string | null;
+  /** The material's own shade/Pantone (only ever real for a sample-sourced
+   * line — SampleMaterial.dyeId; a BOM-sourced line has none). */
+  dyeId: string | null;
+  uomId: string;
+  uomCode: string;
+  quantityPerUnit: number;
+  neededQuantity: number;
+  unitCost: number | null;
+  lineCost: number | null;
+}
+
+export interface SalesOrderRawBomLinesItem {
+  salesOrderItemId: string;
+  productId: string;
+  styleName: string;
+  sampleStyleName: string | null;
+  orderedQuantity: number;
+  hasApprovedBom: boolean;
+  lines: SalesOrderRawBomLine[];
+}
+
+export interface SalesOrderRawBomLinesResult {
+  salesOrder: { id: string; orderNumber: string; customerName: string };
+  items: SalesOrderRawBomLinesItem[];
+  unconvertibleLines: Array<{ materialId: string; materialName: string; reason: string }>;
+  /** Sum of every returned line's own lineCost — null the moment any line's
+   * cost is unknown (missing unitCost, or an unconvertible UOM), matching
+   * this project's "flag as unavailable rather than undercount" convention
+   * (getSalesOrderMaterialPreview's own grandTotalMaterialCost). */
+  grandTotalMaterialCost: number | null;
+}
+
+/**
+ * The color/shade-preserving twin of getSalesOrderMaterialPreview above —
+ * returns one row per real BOM/Sample material LINE (never merged across
+ * colors the way MRP's own shortfall figure deliberately is), specifically
+ * so the Material Request create form's "Add from this Order's BOM" picker
+ * can pre-fill each addable line with the same color/shade its BOM or Sample
+ * source actually specifies, editable before the user adds it. Reuses
+ * computeExplodedLine/resolveExplosionItemsForOrderItem unchanged — the
+ * exact same per-line math the real MRP shortfall calculation already
+ * trusts, so a quantity shown here can never disagree with it.
+ */
+export async function getSalesOrderRawBomLines(companyId: string, salesOrderId: string): Promise<SalesOrderRawBomLinesResult> {
+  const order = await SalesOrderRepository.findByIdWithDetails(companyId, salesOrderId);
+  if (!order) throw new BusinessRuleError("NOT_FOUND", "Sales order not found.", { id: salesOrderId });
+
+  const styleProductIds = [...new Set(order.items.map((item) => item.productId))];
+  const boms = await BomRepository.findManyByProductIds(companyId, styleProductIds);
+  const bomByProductId = new Map(boms.map((bom) => [bom.productId, bom]));
+
+  const sampleRequestIds = [...new Set(order.items.map((item) => item.sampleRequestId).filter((id): id is string => !!id))];
+  const sampleMaterialsById = new Map(
+    await Promise.all(
+      sampleRequestIds.map(
+        async (id) => [id, await SampleMaterialRepository.findLatestVersionMaterialsForRequirement(id)] as const
+      )
+    )
+  );
+
+  const unconvertibleLines: Array<{ materialId: string; materialName: string; reason: string }> = [];
+  let anyUnknownCost = false;
+  let knownCostTotal = 0;
+
+  const items: SalesOrderRawBomLinesItem[] = order.items.map((orderItem) => {
+    const orderedQuantity = orderItem.breakdown.reduce((sum, b) => sum + b.orderedQuantity, 0);
+    const { explosionItems } = resolveExplosionItemsForOrderItem(orderItem, bomByProductId, sampleMaterialsById);
+
+    const lines: SalesOrderRawBomLine[] = [];
+    for (const explosionItem of explosionItems) {
+      const result = computeExplodedLine(explosionItem, orderItem);
+      if (result === null) continue;
+      if ("unconvertible" in result) {
+        unconvertibleLines.push(result.unconvertible);
+        // An unconvertible line's own real cost is unknowable too — the
+        // grand total must never silently exclude it as if it simply
+        // weren't there, matching explodeFlatQuantity's own
+        // allCostsKnown = unconvertibleLines.length === 0 rule.
+        anyUnknownCost = true;
+        continue;
+      }
+
+      const lineCost = result.unitCost !== null ? round4(result.neededQuantity * result.unitCost) : null;
+      if (lineCost === null) anyUnknownCost = true;
+      else knownCostTotal += lineCost;
+
+      lines.push({
+        materialId: result.materialId,
+        materialName: result.materialName,
+        materialCode: result.materialCode,
+        colorId: result.colorId,
+        dyeId: result.dyeId,
+        uomId: result.uomId,
+        uomCode: result.uomCode,
+        quantityPerUnit: round4(result.quantityPerUnit),
+        neededQuantity: round4(result.neededQuantity),
+        unitCost: result.unitCost,
+        lineCost,
+      });
+    }
+
+    return {
+      salesOrderItemId: orderItem.id,
+      productId: orderItem.productId,
+      styleName: orderItem.product.styleName,
+      sampleStyleName: orderItem.sampleRequest?.styleName ?? null,
+      orderedQuantity,
+      hasApprovedBom: explosionItems.length > 0,
+      lines,
+    };
+  });
+
+  return {
+    salesOrder: { id: order.id, orderNumber: order.orderNumber, customerName: order.customer.name },
+    items,
+    unconvertibleLines,
+    grandTotalMaterialCost: anyUnknownCost ? null : round4(knownCostTotal),
   };
 }

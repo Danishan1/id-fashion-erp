@@ -255,6 +255,11 @@ export async function createMaterial(actor: ActorContext, input: MaterialInput) 
     throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Item code "${input.styleCode}" is already in use.`);
   }
 
+  const nameInUse = await ProductRepository.findMaterialByName(actor.companyId, input.styleName);
+  if (nameInUse) {
+    throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `A material named "${input.styleName}" already exists (${nameInUse.styleCode}).`);
+  }
+
   const material = await ProductRepository.create({ companyId: actor.companyId, ...toMaterialData(input) });
 
   await advanceMasterCodeSequence(actor.companyId, "MATERIAL");
@@ -278,6 +283,13 @@ export async function updateMaterial(actor: ActorContext, id: string, input: Mat
     const codeInUse = await ProductRepository.findByStyleCode(actor.companyId, input.styleCode, id);
     if (codeInUse) {
       throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Item code "${input.styleCode}" is already in use.`);
+    }
+  }
+
+  if (input.styleName !== undefined && input.styleName !== before.styleName) {
+    const nameInUse = await ProductRepository.findMaterialByName(actor.companyId, input.styleName, id);
+    if (nameInUse) {
+      throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `A material named "${input.styleName}" already exists (${nameInUse.styleCode}).`);
     }
   }
 

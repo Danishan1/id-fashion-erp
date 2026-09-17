@@ -26,7 +26,29 @@ export const FabricRollRepository = {
         remainingQuantity: { gt: 0 },
         goodsReceiptItem: { productId, warehouseId },
       },
-      include: { dye: { select: { id: true, name: true, pantone: true } } },
+      include: {
+        dye: { select: { id: true, name: true, pantone: true } },
+        gsm: { select: { id: true, name: true } },
+        composition: { select: { id: true, name: true } },
+      },
+      orderBy: [{ dye: { name: "asc" } }, { rollNumber: "asc" }],
+    }),
+
+  /** The same color/shade-wise breakdown as findAvailableForMaterial, but
+   * across every warehouse rather than one — powers the "where else does
+   * this material actually sit" lookup on a Material Request line whose own
+   * warehouse shows nothing, and the Issue modal's own "Change Warehouse"
+   * picker (2026-09-16) once one of those other warehouses is actually
+   * chosen. */
+  findAvailableAcrossWarehousesForMaterial: (companyId: string, productId: string) =>
+    prisma.fabricRoll.findMany({
+      where: { companyId, status: "IN_STOCK", remainingQuantity: { gt: 0 }, goodsReceiptItem: { productId } },
+      include: {
+        dye: { select: { id: true, name: true, pantone: true } },
+        gsm: { select: { id: true, name: true } },
+        composition: { select: { id: true, name: true } },
+        goodsReceiptItem: { select: { warehouseId: true } },
+      },
       orderBy: [{ dye: { name: "asc" } }, { rollNumber: "asc" }],
     }),
 

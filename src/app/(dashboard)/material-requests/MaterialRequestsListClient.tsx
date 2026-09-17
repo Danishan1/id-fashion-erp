@@ -39,7 +39,7 @@ export function MaterialRequestsListClient() {
           { key: "requestNumber", header: "Request #" },
           { key: "requestType", header: "Type", render: (row) => REQUEST_TYPE_LABELS[row.requestType] ?? row.requestType },
           { key: "department", header: "Department", render: (row) => row.department?.name ?? "—" },
-          { key: "warehouse", header: "Issue From", render: (row) => row.warehouse?.name ?? "—" },
+          { key: "warehouse", header: "Request (Warehouse)", render: (row) => row.warehouse?.name ?? "—" },
           { key: "salesOrder", header: "Sales Order", render: (row) => row.salesOrder?.orderNumber ?? "—" },
           {
             key: "status",

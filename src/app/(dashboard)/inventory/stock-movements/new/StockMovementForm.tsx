@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { MaterialPicker } from "@/components/ui/MaterialPicker";
@@ -47,13 +47,24 @@ function emptyLine(): LineItem {
 
 export function StockMovementForm() {
   const router = useRouter();
-  const [movementType, setMovementType] = useState<(typeof MOVEMENT_TYPES)[number]["value"]>("TRANSFER");
-  const [warehouseId, setWarehouseId] = useState("");
-  const [toWarehouseId, setToWarehouseId] = useState("");
+  // Optional deep-link prefill — e.g. from a Material Request line's "Other
+  // Warehouse Stock" modal, which knows exactly which material/from/to
+  // warehouse a merchandiser is about to correct and shouldn't force them to
+  // re-pick all three by hand. Every param is optional; the form behaves
+  // identically to a bare /new visit when none are present.
+  const searchParams = useSearchParams();
+  const prefillMovementType = searchParams.get("movementType");
+  const prefillProductId = searchParams.get("materialId") ?? "";
+
+  const [movementType, setMovementType] = useState<(typeof MOVEMENT_TYPES)[number]["value"]>(
+    MOVEMENT_TYPES.some((t) => t.value === prefillMovementType) ? (prefillMovementType as (typeof MOVEMENT_TYPES)[number]["value"]) : "TRANSFER"
+  );
+  const [warehouseId, setWarehouseId] = useState(searchParams.get("fromWarehouseId") ?? "");
+  const [toWarehouseId, setToWarehouseId] = useState(searchParams.get("toWarehouseId") ?? "");
   const [supplierId, setSupplierId] = useState("");
   const [reason, setReason] = useState("");
   const [remarks, setRemarks] = useState("");
-  const [lines, setLines] = useState<LineItem[]>([emptyLine()]);
+  const [lines, setLines] = useState<LineItem[]>([{ ...emptyLine(), productId: prefillProductId }]);
 
   const [warehouses, setWarehouses] = useState<Option[]>([]);
   const [suppliers, setSuppliers] = useState<Option[]>([]);
@@ -80,11 +91,26 @@ export function StockMovementForm() {
       .then((body) => setSuppliers(body.data ?? []));
     fetch("/api/v1/materials?pageSize=200")
       .then((res) => res.json())
-      .then((body) => setMaterials(body.data ?? []));
+      .then((body) => {
+        const list: MaterialOption[] = body.data ?? [];
+        setMaterials(list);
+        // The prefilled line's own Unit can't be set until this list is
+        // back (it needs that material's baseUom) — same defaulting
+        // onMaterialChange already does for a manually-picked material, just
+        // done here once instead of on a change event. Lives inside this
+        // same async callback (not a separate effect keyed on `materials`)
+        // to avoid a synchronous setState-in-effect render cascade.
+        if (!prefillProductId) return;
+        const material = list.find((m) => m.id === prefillProductId);
+        if (!material?.baseUom) return;
+        setLines((prev) =>
+          prev.map((line) => (line.productId === prefillProductId && !line.uomId ? { ...line, uomId: material.baseUom!.id } : line))
+        );
+      });
     fetch("/api/v1/units")
       .then((res) => res.json())
       .then((body) => setUnits(body.data ?? []));
-  }, []);
+  }, [prefillProductId]);
 
   useEffect(() => {
     const request = warehouseId
