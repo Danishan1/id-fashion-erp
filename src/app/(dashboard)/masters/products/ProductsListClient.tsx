@@ -5,6 +5,7 @@ import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { DataTable } from "@/components/ui/DataTable";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { Modal } from "@/components/ui/Modal";
+import { ActionMenu } from "@/components/ui/ActionMenu";
 import { ProductForm, type ProductFormValues } from "./ProductForm";
 import { VariantsSection } from "./VariantsSection";
 import { ProductImagesSection } from "./ProductImagesSection";
@@ -89,6 +90,12 @@ function ProductsListContent() {
   const [editTarget, setEditTarget] = useState<{ id: string; styleName: string; values: ProductFormValues } | null>(null);
   const [editLoadError, setEditLoadError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  // A single per-row action menu (Edit/BOM/Variants/Designs/Images) replaced
+  // this page's previous mix of plain links + separate bordered buttons —
+  // consolidated here rather than each having its own trigger, per the same
+  // "don't crowd a row with many inline buttons once it grows past 2-3"
+  // standard ActionMenu.tsx's own doc comment already states.
+  const [rowModal, setRowModal] = useState<{ type: "variants" | "images"; row: ProductRow } | null>(null);
 
   useEffect(() => {
     fetch("/api/v1/categories?pageSize=200").then((r) => r.json()).then((b) => setCategories(b.data ?? []));
@@ -238,24 +245,19 @@ function ProductsListContent() {
         refreshKey={refreshKey}
         newAction={{ label: "New Style", onClick: () => setAddOpen(true) }}
         searchPlaceholder="Search by style name or code…"
-        onEditRow={(row) => openEdit(row.id)}
         rowActions={(row) => (
-          <>
-            <a
-              href={`/bom-mrp/${row.id}`}
-              className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400"
-            >
-              BOM
-            </a>
-            <VariantsSection productId={row.id} variantCount={row._count.variants} />
-            <a
-              href={`/masters/products/${row.id}/designs`}
-              className="whitespace-nowrap text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400"
-            >
-              Designs ({row._count.sampleRequests})
-            </a>
-            <ProductImagesSection productId={row.id} />
-          </>
+          <ActionMenu
+            items={[
+              { label: "Edit", onClick: () => openEdit(row.id) },
+              { label: "BOM", onClick: () => router.push(`/bom-mrp/${row.id}`) },
+              { label: `Variants (${row._count.variants})`, onClick: () => setRowModal({ type: "variants", row }) },
+              {
+                label: `Designs (${row._count.sampleRequests})`,
+                onClick: () => router.push(`/masters/products/${row.id}/designs`),
+              },
+              { label: "Images", onClick: () => setRowModal({ type: "images", row }) },
+            ]}
+          />
         )}
         columns={[
           {
@@ -293,6 +295,13 @@ function ProductsListContent() {
           },
         ]}
       />
+
+      {rowModal?.type === "variants" && (
+        <VariantsSection key={rowModal.row.id} productId={rowModal.row.id} onClose={() => setRowModal(null)} />
+      )}
+      {rowModal?.type === "images" && (
+        <ProductImagesSection key={rowModal.row.id} productId={rowModal.row.id} onClose={() => setRowModal(null)} />
+      )}
 
       <Modal open={addOpen} onClose={() => setAddOpen(false)} title="New Style" maxWidthClass="max-w-xl">
         <ProductForm submitUrl="/api/v1/products" method="POST" onSuccess={handleCreated} onCancel={() => setAddOpen(false)} />
