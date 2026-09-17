@@ -59,28 +59,44 @@ export function DesignsListClient({ productId, styleName, styleCode, variantCoun
   // existing Variants modal, just reachable from a design's row too.
   const [variantsOpen, setVariantsOpen] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    fetch(`/api/v1/sampling?productId=${productId}&status=APPROVED&pageSize=200`)
+  // Deliberately does no setState itself — kept as a pure fetch so it can
+  // be called both from the mount effect below (which must stay free of
+  // synchronous setState calls of its own, per react-hooks/set-state-in-
+  // effect) and from the Images modal's onClose handler (an event handler,
+  // where that restriction doesn't apply), without duplicating the actual
+  // fetch/parsing logic between the two call sites.
+  function fetchDesigns(): Promise<{ data?: SampleRequestRow[]; error?: string }> {
+    return fetch(`/api/v1/sampling?productId=${productId}&status=APPROVED&pageSize=200`)
       .then(async (res) => {
         const body = await res.json();
-        if (cancelled) return;
-        if (res.ok) {
-          setRequests(body.data ?? []);
-        } else {
-          setError(body?.error?.message ?? "Failed to load designs.");
-        }
+        return res.ok ? { data: body.data ?? [] } : { error: body?.error?.message ?? "Failed to load designs." };
       })
-      .catch(() => {
-        if (!cancelled) setError("Failed to load designs.");
-      })
-      .finally(() => {
-        if (!cancelled) setIsLoading(false);
-      });
+      .catch(() => ({ error: "Failed to load designs." }));
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchDesigns().then((result) => {
+      if (cancelled) return;
+      if (result.data) {
+        setRequests(result.data);
+      } else {
+        setError(result.error ?? "Failed to load designs.");
+      }
+      setIsLoading(false);
+    });
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [productId]);
+
+  function refreshAfterImagesChange() {
+    setImagesFor(null);
+    fetchDesigns().then((result) => {
+      if (result.data) setRequests(result.data);
+    });
+  }
 
   return (
     <div className="space-y-4">
@@ -193,7 +209,12 @@ export function DesignsListClient({ productId, styleName, styleCode, variantCoun
       </div>
 
       {imagesFor && (
-        <Modal open onClose={() => setImagesFor(null)} title={`Design Images — ${imagesFor.requestNumber}`} maxWidthClass="max-w-2xl">
+        <Modal
+          open
+          onClose={refreshAfterImagesChange}
+          title={`Design Images — ${imagesFor.requestNumber}`}
+          maxWidthClass="max-w-2xl"
+        >
           <SampleImagesSection key={imagesFor.id} sampleRequestId={imagesFor.id} />
         </Modal>
       )}

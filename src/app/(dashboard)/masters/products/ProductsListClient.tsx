@@ -319,10 +319,30 @@ function ProductsListContent() {
       />
 
       {rowModal?.type === "variants" && (
-        <VariantsSection key={rowModal.row.id} productId={rowModal.row.id} onClose={() => setRowModal(null)} />
+        <VariantsSection
+          key={rowModal.row.id}
+          productId={rowModal.row.id}
+          // Generating new variants changes this row's own VARIANTS column
+          // count in the table underneath — refresh on close so it's never
+          // left showing a stale number until the whole page is reloaded.
+          onClose={() => {
+            setRowModal(null);
+            setRefreshKey((k) => k + 1);
+          }}
+        />
       )}
       {rowModal?.type === "images" && (
-        <ProductImagesSection key={rowModal.row.id} productId={rowModal.row.id} onClose={() => setRowModal(null)} />
+        <ProductImagesSection
+          key={rowModal.row.id}
+          productId={rowModal.row.id}
+          // Uploading/setting a main image changes this row's own thumbnail
+          // in the table underneath — same "refresh the list on close"
+          // reasoning as the Variants modal above.
+          onClose={() => {
+            setRowModal(null);
+            setRefreshKey((k) => k + 1);
+          }}
+        />
       )}
 
       <Modal open={addOpen} onClose={() => setAddOpen(false)} title="New Style" maxWidthClass="max-w-xl">
