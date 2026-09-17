@@ -4,9 +4,11 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { MaterialPicker } from "@/components/ui/MaterialPicker";
+import { Modal } from "@/components/ui/Modal";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { todayIsoDate } from "@/lib/date";
 import { useSubmoduleVisibility } from "@/lib/use-submodule-visibility";
+import { STATUS_LABELS as SALES_ORDER_STATUS_LABELS } from "../sales-orders/statusLabels";
 
 interface Option {
   id: string;
@@ -31,10 +33,15 @@ interface LineItem {
   remarks: string;
 }
 
-interface OrderPreviewMaterial {
+interface OrderPreviewLine {
   materialId: string;
   materialName: string;
   materialCode: string;
+  // The BOM/Sample source's own color/shade — pre-fills the created line's
+  // Color/Shade fields but stays fully editable in the "Add from BOM" modal
+  // before it's added, same as a manually-typed line.
+  colorId: string | null;
+  dyeId: string | null;
   uomId: string;
   uomCode: string;
   quantityPerUnit: number;
@@ -48,7 +55,7 @@ interface OrderPreviewItem {
   sampleStyleName: string | null;
   orderedQuantity: number;
   hasApprovedBom: boolean;
-  materials: OrderPreviewMaterial[];
+  lines: OrderPreviewLine[];
 }
 
 interface OrderPreview {
@@ -126,7 +133,9 @@ export function MaterialRequestForm({ initialRequest }: { initialRequest?: Initi
   // already established.
   const [salesOrderId, setSalesOrderId] = useState(initialRequest?.salesOrderId ?? "");
   const [bomId] = useState(initialRequest?.bomId ?? "");
-  const [salesOrders, setSalesOrders] = useState<Array<{ id: string; orderNumber: string; customer: { name: string } | null }>>([]);
+  const [salesOrders, setSalesOrders] = useState<
+    Array<{ id: string; orderNumber: string; status: keyof typeof SALES_ORDER_STATUS_LABELS; customer: { name: string } | null }>
+  >([]);
   // "Add items from the order's BOM" preview — self-fetched whenever an
   // (only-on-create) Sales Order is picked, per the user's own explicit
   // rule: a style line with no linked sample uses the Style's own approved
@@ -136,7 +145,12 @@ export function MaterialRequestForm({ initialRequest }: { initialRequest?: Initi
   // turns a checked/edited row into a normal, freely editable request line.
   const [orderPreview, setOrderPreview] = useState<OrderPreview | null>(null);
   const [orderPreviewError, setOrderPreviewError] = useState<string | null>(null);
-  const [previewSelections, setPreviewSelections] = useState<Record<string, { checked: boolean; qty: string }>>({});
+  const [previewSelections, setPreviewSelections] = useState<
+    Record<string, { checked: boolean; qty: string; colorId: string; dyeId: string }>
+  >({});
+  // The actual add-from-BOM picker lives in a Modal (triggered once a
+  // preview is loaded) — the outer form only ever shows a trigger + status.
+  const [showBomLinesModal, setShowBomLinesModal] = useState(false);
 
   const [originalMaterialRequestId, setOriginalMaterialRequestId] = useState(initialRequest?.originalMaterialRequestId ?? "");
   const [originalRequestSearch, setOriginalRequestSearch] = useState(initialRequest?.originalMaterialRequestNumber ?? "");
@@ -149,6 +163,12 @@ export function MaterialRequestForm({ initialRequest }: { initialRequest?: Initi
   const [colors, setColors] = useState<Option[]>([]);
   const [dyes, setDyes] = useState<Array<{ id: string; name: string; pantone: string | null }>>([]);
 
+  // Create mode starts with NO manual lines at all (not one pristine
+  // required blank row) — a user adding everything via the "Add from BOM"
+  // modal shouldn't also be forced to fill in an unrelated empty row first.
+  // handleSubmit's own validation is what actually enforces "at least one
+  // line total", matching the user's own rule: manual Line Items are only
+  // required when zero BOM lines were added.
   const [lines, setLines] = useState<LineItem[]>(
     initialRequest
       ? initialRequest.lines.map((line) => ({
@@ -160,7 +180,7 @@ export function MaterialRequestForm({ initialRequest }: { initialRequest?: Initi
           damageReason: line.damageReason ?? "",
           remarks: line.remarks ?? "",
         }))
-      : [emptyLine()]
+      : []
   );
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -207,17 +227,22 @@ export function MaterialRequestForm({ initialRequest }: { initialRequest?: Initi
     // body trips this project's own established react-hooks/set-state-in-effect
     // rule; only the async fetch path belongs here.
     if (!salesOrderId) return;
-    fetch(`/api/v1/sales-orders/${salesOrderId}/material-preview`)
+    fetch(`/api/v1/sales-orders/${salesOrderId}/bom-lines`)
       .then(async (res) => {
         const body = await res.json();
         if (!res.ok) throw new Error(body?.error?.message ?? "Failed to load this order's material breakdown.");
         const data: OrderPreview = body.data;
         setOrderPreview(data);
         setOrderPreviewError(null);
-        const initial: Record<string, { checked: boolean; qty: string }> = {};
+        const initial: Record<string, { checked: boolean; qty: string; colorId: string; dyeId: string }> = {};
         data.items.forEach((item) => {
-          item.materials.forEach((m) => {
-            initial[`${item.salesOrderItemId}:${m.materialId}`] = { checked: true, qty: String(m.neededQuantity) };
+          item.lines.forEach((line, index) => {
+            initial[`${item.salesOrderItemId}:${index}`] = {
+              checked: true,
+              qty: String(line.neededQuantity),
+              colorId: line.colorId ?? "",
+              dyeId: line.dyeId ?? "",
+            };
           });
         });
         setPreviewSelections(initial);
@@ -242,24 +267,23 @@ export function MaterialRequestForm({ initialRequest }: { initialRequest?: Initi
 
   // Turns every checked/edited preview row into a normal request line —
   // after this, they're indistinguishable from a manually-typed line: the
-  // user can still edit the quantity, remove them, or add more by hand.
-  // Replaces the form's still-untouched starting blank line rather than
-  // leaving it dangling (its own `required` fields would otherwise block
-  // submission), but never discards anything the user has already typed.
+  // user can still edit the color/shade/quantity, remove them, or add more
+  // by hand. Simply appends (create mode starts with zero manual lines, so
+  // there's no leftover pristine blank row to replace any more).
   const addPreviewMaterialsToRequest = () => {
     if (!orderPreview) return;
     const newLines: LineItem[] = [];
     orderPreview.items.forEach((item) => {
-      item.materials.forEach((m) => {
-        const sel = previewSelections[`${item.salesOrderItemId}:${m.materialId}`];
+      item.lines.forEach((line, index) => {
+        const sel = previewSelections[`${item.salesOrderItemId}:${index}`];
         if (!sel?.checked) return;
         const qty = Number(sel.qty);
         if (!qty || qty <= 0) return;
         newLines.push({
-          materialId: m.materialId,
-          colorId: "",
-          dyeId: "",
-          uomId: m.uomId,
+          materialId: line.materialId,
+          colorId: sel.colorId,
+          dyeId: sel.dyeId,
+          uomId: line.uomId,
           requestedQuantity: sel.qty,
           damageReason: "",
           remarks: item.sampleStyleName ? `From Design: ${item.sampleStyleName}` : `From Style: ${item.styleName}`,
@@ -267,15 +291,23 @@ export function MaterialRequestForm({ initialRequest }: { initialRequest?: Initi
       });
     });
     if (newLines.length === 0) return;
-    setLines((prev) => {
-      const isPristine = prev.length === 1 && !prev[0].materialId && !prev[0].requestedQuantity;
-      return isPristine ? newLines : [...prev, ...newLines];
-    });
+    setLines((prev) => [...prev, ...newLines]);
+    setShowBomLinesModal(false);
   };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (isSubmitting) return;
+
+    // Manual Line Items are only required when nothing was added from the
+    // Order's BOM — a locked (already-actioned) line on an existing request
+    // still counts toward "at least one line total", per the same rule the
+    // server itself already enforces on edit.
+    if (lines.length === 0 && !(initialRequest?.lockedLines?.length ?? 0)) {
+      setError("Add at least one material, either via Line Items or from the Order's BOM.");
+      return;
+    }
+
     setIsSubmitting(true);
     setError(null);
 
@@ -354,70 +386,146 @@ export function MaterialRequestForm({ initialRequest }: { initialRequest?: Initi
                 setPreviewSelections({});
               }
             }}
-            options={salesOrders.map((o) => ({ id: o.id, label: o.orderNumber, sublabel: o.customer?.name }))}
+            options={salesOrders.map((o) => ({
+              id: o.id,
+              label: o.orderNumber,
+              sublabel: [o.customer?.name, SALES_ORDER_STATUS_LABELS[o.status] ?? o.status].filter(Boolean).join(" · "),
+            }))}
             placeholder="Search sales order…"
           />
         </FormField>
       )}
 
       {!initialRequest && salesOrderId && (
-        <div className="space-y-3 rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
+        <div className="space-y-2 rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
           <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Materials from this Order&apos;s BOM</p>
           {orderPreviewError && <p className="text-xs text-red-600 dark:text-red-400">{orderPreviewError}</p>}
           {orderPreview && orderPreview.items.length === 0 && (
             <p className="text-xs text-zinc-500">This order has no style lines.</p>
           )}
-          {orderPreview?.items.map((item) => (
-            <div key={item.salesOrderItemId} className="space-y-1.5">
-              <p className="text-xs font-medium text-zinc-700 dark:text-zinc-200">
-                {item.sampleStyleName ? `Design Name: ${item.sampleStyleName}` : item.styleName} · Ordered: {item.orderedQuantity}
-              </p>
-              {!item.hasApprovedBom && (
-                <p className="text-xs text-zinc-500">No approved BOM or sample materials recorded for this style yet.</p>
-              )}
-              {item.materials.map((m) => {
-                const key = `${item.salesOrderItemId}:${m.materialId}`;
-                const sel = previewSelections[key] ?? { checked: true, qty: String(m.neededQuantity) };
-                return (
-                  <div key={key} className="flex flex-wrap items-center gap-2 text-xs">
-                    <input
-                      type="checkbox"
-                      checked={sel.checked}
-                      onChange={(e) => setPreviewSelections((prev) => ({ ...prev, [key]: { ...sel, checked: e.target.checked } }))}
-                    />
-                    <span className="text-zinc-700 dark:text-zinc-200">
-                      {m.materialName} — {item.orderedQuantity} × {m.quantityPerUnit} {m.uomCode} =
-                    </span>
-                    <input
-                      type="number"
-                      min={0}
-                      step="0.0001"
-                      value={sel.qty}
-                      onChange={(e) => setPreviewSelections((prev) => ({ ...prev, [key]: { ...sel, qty: e.target.value } }))}
-                      className="w-24 rounded-md border border-zinc-300 px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-800"
-                    />
-                    <span className="text-zinc-500">{m.uomCode}</span>
-                    {m.lineCost !== null && <span className="text-zinc-400">(~{m.lineCost})</span>}
-                  </div>
-                );
-              })}
-            </div>
-          ))}
-          {orderPreview && orderPreview.grandTotalMaterialCost !== null && (
-            <p className="text-xs font-medium text-zinc-900 dark:text-zinc-50">
-              Estimated Total Material Cost: {orderPreview.grandTotalMaterialCost}
-            </p>
+          {orderPreview && orderPreview.items.length > 0 && !orderPreview.items.some((i) => i.lines.length > 0) && (
+            <p className="text-xs text-zinc-500">No approved BOM or sample materials recorded for any style on this order yet.</p>
           )}
-          {orderPreview?.items.some((i) => i.materials.length > 0) && (
-            <button
-              type="button"
-              onClick={addPreviewMaterialsToRequest}
-              className="rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
-            >
-              Add Selected Items to Request
-            </button>
+          {orderPreview?.items.some((i) => i.lines.length > 0) && (
+            <>
+              {orderPreview.grandTotalMaterialCost !== null && (
+                <p className="text-xs text-zinc-500">Estimated Total Material Cost: {orderPreview.grandTotalMaterialCost}</p>
+              )}
+              <button
+                type="button"
+                onClick={() => setShowBomLinesModal(true)}
+                className="rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+              >
+                Add Selected Items to Request
+              </button>
+            </>
           )}
         </div>
+      )}
+
+      {showBomLinesModal && orderPreview && (
+        <Modal open onClose={() => setShowBomLinesModal(false)} title="Materials from this Order's BOM">
+          <div className="space-y-4">
+            {orderPreview.items.map((item) => (
+              <div key={item.salesOrderItemId} className="space-y-2">
+                <p className="text-xs font-medium text-zinc-700 dark:text-zinc-200">
+                  {item.sampleStyleName ? `Design Name: ${item.sampleStyleName}` : item.styleName} · Ordered: {item.orderedQuantity}
+                </p>
+                {!item.hasApprovedBom && (
+                  <p className="text-xs text-zinc-500">No approved BOM or sample materials recorded for this style yet.</p>
+                )}
+                {item.lines.map((line, index) => {
+                  const key = `${item.salesOrderItemId}:${index}`;
+                  const sel = previewSelections[key] ?? {
+                    checked: true,
+                    qty: String(line.neededQuantity),
+                    colorId: line.colorId ?? "",
+                    dyeId: line.dyeId ?? "",
+                  };
+                  return (
+                    <div key={key} className="grid grid-cols-12 items-end gap-2 rounded-md border border-zinc-200 p-2 text-xs dark:border-zinc-800">
+                      <div className="col-span-1 flex items-center pb-2">
+                        <input
+                          type="checkbox"
+                          checked={sel.checked}
+                          onChange={(e) => setPreviewSelections((prev) => ({ ...prev, [key]: { ...sel, checked: e.target.checked } }))}
+                        />
+                      </div>
+                      <div className="col-span-4">
+                        <p className="text-zinc-700 dark:text-zinc-200">{line.materialName}</p>
+                        <p className="text-zinc-400">
+                          {item.orderedQuantity} × {line.quantityPerUnit} {line.uomCode}
+                          {line.lineCost !== null && ` (~${line.lineCost})`}
+                        </p>
+                      </div>
+                      <div className="col-span-3">
+                        <label className="block text-zinc-500">Color</label>
+                        <select
+                          value={sel.colorId}
+                          onChange={(e) => setPreviewSelections((prev) => ({ ...prev, [key]: { ...sel, colorId: e.target.value } }))}
+                          className="w-full rounded-md border border-zinc-300 px-2 py-1 dark:border-zinc-700 dark:bg-zinc-800"
+                        >
+                          <option value="">— None —</option>
+                          {colors.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      {isVisible("FABRIC_DYE") && (
+                        <div className="col-span-2">
+                          <label className="block text-zinc-500">Shade</label>
+                          <select
+                            value={sel.dyeId}
+                            onChange={(e) => setPreviewSelections((prev) => ({ ...prev, [key]: { ...sel, dyeId: e.target.value } }))}
+                            className="w-full rounded-md border border-zinc-300 px-2 py-1 dark:border-zinc-700 dark:bg-zinc-800"
+                          >
+                            <option value="">— None —</option>
+                            {dyes.map((d) => (
+                              <option key={d.id} value={d.id}>
+                                {d.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                      <div className={isVisible("FABRIC_DYE") ? "col-span-2" : "col-span-4"}>
+                        <label className="block text-zinc-500">Qty ({line.uomCode})</label>
+                        <input
+                          type="number"
+                          min={0}
+                          step="0.0001"
+                          value={sel.qty}
+                          onChange={(e) => setPreviewSelections((prev) => ({ ...prev, [key]: { ...sel, qty: e.target.value } }))}
+                          className="w-full rounded-md border border-zinc-300 px-2 py-1 dark:border-zinc-700 dark:bg-zinc-800"
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowBomLinesModal(false)}
+                className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={addPreviewMaterialsToRequest}
+                className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500"
+              >
+                Add Selected Items to Request (
+                {Object.values(previewSelections).filter((s) => s.checked && Number(s.qty) > 0).length})
+              </button>
+            </div>
+          </div>
+        </Modal>
       )}
 
       {requestType === "DAMAGE_REPLACEMENT" && (
@@ -526,22 +634,26 @@ export function MaterialRequestForm({ initialRequest }: { initialRequest?: Initi
         <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
           Line Items{initialRequest?.lockedLines && initialRequest.lockedLines.length > 0 ? " (editable)" : ""}
         </h2>
+        {lines.length === 0 && (
+          <p className="text-xs text-zinc-500">
+            No manual line items added yet.
+            {!initialRequest && " Add one below, or add materials from the Order's BOM above."}
+          </p>
+        )}
         {lines.map((line, index) => (
           <div key={index} className="space-y-3 rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium text-zinc-500">Line {index + 1}</span>
-              {/* Can remove down to zero editable lines when locked lines already
-                  cover the "at least one line total" requirement — otherwise, same
-                  as before, at least one editable line must remain. */}
-              {(lines.length > 1 || (initialRequest?.lockedLines?.length ?? 0) > 0) && (
-                <button
-                  type="button"
-                  onClick={() => removeLine(index)}
-                  className="text-xs font-medium text-red-600 hover:text-red-500"
-                >
-                  Remove
-                </button>
-              )}
+              {/* Whether at least one line remains is validated at submit
+                  time (manual lines are only required when nothing was added
+                  from the Order's BOM) — Remove is never blocked here. */}
+              <button
+                type="button"
+                onClick={() => removeLine(index)}
+                className="text-xs font-medium text-red-600 hover:text-red-500"
+              >
+                Remove
+              </button>
             </div>
 
             <div className="grid grid-cols-2 gap-3">

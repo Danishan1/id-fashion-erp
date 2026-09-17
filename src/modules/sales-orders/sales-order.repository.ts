@@ -77,6 +77,35 @@ export const SalesOrderRepository = {
       select: { unitPrice: true, salesOrder: { select: { orderNumber: true, orderDate: true } } },
     }),
 
+  /** The fuller history behind findLastOrderedItem's own single most-recent
+   * pick — every real price this exact customer was actually charged for
+   * this exact style, most-recent first — powers the Unit Price field's own
+   * price-history suggestions (the same "real price history as datalist
+   * suggestions" pattern already built for Purchase Order's own Unit Price
+   * fields). `sinceDate` scopes it to a recency window (the create form asks
+   * for the last year); omitted returns the full history. */
+  findOrderedPriceHistory: (
+    companyId: string,
+    customerId: string,
+    productId: string,
+    excludeOrderId?: string,
+    sinceDate?: Date
+  ) =>
+    prisma.salesOrderItem.findMany({
+      where: {
+        productId,
+        salesOrder: {
+          companyId,
+          customerId,
+          status: { not: "CANCELLED" },
+          ...(excludeOrderId ? { id: { not: excludeOrderId } } : {}),
+          ...(sinceDate ? { orderDate: { gte: sinceDate } } : {}),
+        },
+      },
+      orderBy: { salesOrder: { orderDate: "desc" } },
+      select: { unitPrice: true, salesOrder: { select: { orderNumber: true, orderDate: true } } },
+    }),
+
   createWithItems: (data: Prisma.SalesOrderUncheckedCreateInput) =>
     prisma.salesOrder.create({
       data,

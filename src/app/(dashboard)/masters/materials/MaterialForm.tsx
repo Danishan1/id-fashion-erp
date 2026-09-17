@@ -12,7 +12,6 @@ export interface MaterialFormValues {
   baseUomId: string;
   defaultSupplierId: string;
   reorderLevel: string;
-  unitCost: string;
   description: string;
   hsnSacCode: string;
   isActive: boolean;
@@ -25,7 +24,6 @@ const EMPTY_VALUES: MaterialFormValues = {
   baseUomId: "",
   defaultSupplierId: "",
   reorderLevel: "",
-  unitCost: "",
   description: "",
   hsnSacCode: "",
   isActive: true,
@@ -84,7 +82,6 @@ export function MaterialForm({ initialValues, submitUrl, method, onSuccess, onCa
       body: JSON.stringify({
         ...values,
         reorderLevel: values.reorderLevel ? Number(values.reorderLevel) : undefined,
-        unitCost: values.unitCost ? Number(values.unitCost) : undefined,
       }),
     });
 
@@ -166,30 +163,17 @@ export function MaterialForm({ initialValues, submitUrl, method, onSuccess, onCa
         </FormField>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
-        <FormField label="Reorder Level" htmlFor="reorderLevel">
-          <input
-            id="reorderLevel"
-            type="number"
-            min={0}
-            step="0.01"
-            value={values.reorderLevel}
-            onChange={(e) => setValues({ ...values, reorderLevel: e.target.value })}
-            className={textInputClass()}
-          />
-        </FormField>
-        <FormField label="Unit Cost" htmlFor="unitCost">
-          <input
-            id="unitCost"
-            type="number"
-            min={0}
-            step="0.01"
-            value={values.unitCost}
-            onChange={(e) => setValues({ ...values, unitCost: e.target.value })}
-            className={textInputClass()}
-          />
-        </FormField>
-      </div>
+      <FormField label="Reorder Level" htmlFor="reorderLevel">
+        <input
+          id="reorderLevel"
+          type="number"
+          min={0}
+          step="0.01"
+          value={values.reorderLevel}
+          onChange={(e) => setValues({ ...values, reorderLevel: e.target.value })}
+          className={textInputClass()}
+        />
+      </FormField>
 
       <FormField label="Description" htmlFor="description">
         <textarea

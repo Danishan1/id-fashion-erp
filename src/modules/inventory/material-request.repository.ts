@@ -162,7 +162,7 @@ export const MaterialRequestRepository = {
         id: true,
         requestedQuantity: true,
         issuedQuantity: true,
-        materialRequest: { select: { id: true, requestNumber: true } },
+        materialRequest: { select: { id: true, requestNumber: true, warehouseId: true, warehouse: { select: { name: true } } } },
       },
     }),
 
@@ -222,9 +222,21 @@ export const MaterialRequestItemRepository = {
    * line's active linked PurchaseOrderItems. Informational only: a lost race
    * (count === 0) or a failed UOM conversion is handled by the caller as a
    * fail-soft skip, never as a reason to abort the goods receipt itself. */
-  guardedIncrementPurchaseReceived: (tx: Prisma.TransactionClient, lineId: string, cap: number, incrementBy: number) =>
+  /** Deliberately uncapped — this column is purely a secondary traceability
+   * mirror (see goods-receipt.service.ts's own comment), never a real
+   * invariant to protect. An earlier capped version silently swallowed
+   * every future increment once a single over-receipt (a real, legitimate
+   * possibility — PurchaseOrderItem.receivedQuantity itself has no cap
+   * either, see incrementReceived) pushed the running total past the sum of
+   * ordered quantities: the WHERE guard would then reject every later
+   * increment forever, permanently stuck at 0 even after real stock kept
+   * arriving. Matches PurchaseOrderItemRepository.incrementReceived's own
+   * already-established no-cap shape exactly — a plain `increment` compiles
+   * to an atomic `SET col = col + n`, so dropping the cap loses no real
+   * concurrency protection, only the (actively harmful) ceiling check. */
+  incrementPurchaseReceived: (tx: Prisma.TransactionClient, lineId: string, incrementBy: number) =>
     tx.materialRequestItem.updateMany({
-      where: { id: lineId, purchaseReceivedQuantity: { lte: cap - incrementBy } },
+      where: { id: lineId },
       data: { purchaseReceivedQuantity: { increment: incrementBy } },
     }),
 
@@ -246,10 +258,6 @@ export const MaterialRequestItemRepository = {
       where: { id },
       include: {
         uom: { select: { id: true, name: true, baseUnitId: true, conversionFactor: true } },
-        purchaseOrderItems: {
-          where: { purchaseOrder: { status: { not: "CANCELLED" } } },
-          select: { orderedQuantity: true },
-        },
       },
     }),
 

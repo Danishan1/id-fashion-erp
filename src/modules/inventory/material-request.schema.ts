@@ -103,6 +103,11 @@ export const issueMaterialRequestLineSchema = z.object({
   // issued quantity genuinely exceeds what remains; the service throws a
   // clean VALIDATION_ERROR if this is required but omitted.
   extraReason: z.string().max(500).optional().or(z.literal("")),
+  // An explicit alternate warehouse to physically issue from (2026-09-16) —
+  // the Issue modal's own "Change Warehouse" picker, offered only when the
+  // request's own warehouse has nothing. Defaults to the request's own
+  // warehouse when omitted.
+  issueWarehouseId: z.string().uuid().optional().or(z.literal("")),
 });
 export type IssueMaterialRequestLineInput = z.infer<typeof issueMaterialRequestLineSchema>;
 

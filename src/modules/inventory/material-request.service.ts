@@ -15,6 +15,8 @@ import { SalesOrderRepository } from "@/modules/sales-orders/sales-order.reposit
 import { SampleMaterialRepository, SampleVersionRepository } from "@/modules/sampling/sample.repository";
 import { createPurchaseOrder } from "@/modules/purchasing/purchase-order.service";
 import { FabricRollRepository } from "@/modules/purchasing/fabric-roll.repository";
+import { WarehouseRepository } from "@/modules/warehouses/warehouse.repository";
+import { StockBalanceRepository } from "./inventory.repository";
 import { getAvailableQuantity, getAvailableQuantityByDye, recordInventoryTransaction } from "./inventory.service";
 import { MaterialRequestItemRepository, MaterialRequestRepository } from "./material-request.repository";
 import type { MaterialRequestInput, MaterialRequestItemInput, UpdateMaterialRequestInput } from "./material-request.schema";
@@ -353,7 +355,22 @@ export async function createMaterialRequest(actor: ActorContext, input: Material
  * createMaterialRequestFromShortfall enforces (with an override) before
  * actually creating a request. */
 export async function findDuplicateMaterialRequests(companyId: string, salesOrderId: string, materialIds: string[]) {
-  const result: Record<string, Array<{ requestId: string; requestNumber: string; remainingQuantity: number }>> = {};
+  const result: Record<
+    string,
+    Array<{
+      requestId: string;
+      requestNumber: string;
+      remainingQuantity: number;
+      warehouseName: string;
+      // Real stock for this material at the *existing* request's own
+      // warehouse — MRP's own "Available" column is a company-wide sum
+      // across every warehouse, which can read as plenty of stock while the
+      // material genuinely isn't anywhere near this specific open request
+      // (e.g. it arrived at a different warehouse). Surfaced here so the
+      // duplicate warning doesn't imply "already covered" when it isn't.
+      availableAtWarehouse: number;
+    }>
+  > = {};
 
   for (const materialId of materialIds) {
     const lines = await MaterialRequestRepository.findOpenDuplicateLines(companyId, salesOrderId, materialId);
@@ -362,9 +379,18 @@ export async function findDuplicateMaterialRequests(companyId: string, salesOrde
         requestId: l.materialRequest.id,
         requestNumber: l.materialRequest.requestNumber,
         remainingQuantity: Number(l.requestedQuantity) - Number(l.issuedQuantity),
+        warehouseId: l.materialRequest.warehouseId,
+        warehouseName: l.materialRequest.warehouse.name,
       }))
       .filter((l) => l.remainingQuantity > 0);
-    if (real.length > 0) result[materialId] = real;
+    if (real.length === 0) continue;
+
+    result[materialId] = await Promise.all(
+      real.map(async ({ warehouseId, ...entry }) => ({
+        ...entry,
+        availableAtWarehouse: await getAvailableQuantity(companyId, materialId, warehouseId),
+      }))
+    );
   }
 
   return result;
@@ -383,24 +409,47 @@ export async function createMaterialRequestFromShortfall(
   input: { salesOrderId: string; warehouseId: string; materialIds: string[]; overrideDuplicateCheck?: boolean }
 ) {
   const requirements = await getMaterialRequirements(actor.companyId, input.salesOrderId);
-  const selected = requirements.materials.filter((m) => input.materialIds.includes(m.materialId) && m.shortfallQuantity > 0);
+  let selected = requirements.materials.filter((m) => input.materialIds.includes(m.materialId) && m.shortfallQuantity > 0);
   if (selected.length === 0) {
     throw new BusinessRuleError("VALIDATION_ERROR", "None of the selected materials have a shortfall to request.", {
       materialIds: input.materialIds,
     });
   }
 
-  if (!input.overrideDuplicateCheck) {
-    const duplicates = await findDuplicateMaterialRequests(
-      actor.companyId,
-      input.salesOrderId,
-      selected.map((m) => m.materialId)
-    );
-    if (Object.keys(duplicates).length > 0) {
+  const duplicates = await findDuplicateMaterialRequests(
+    actor.companyId,
+    input.salesOrderId,
+    selected.map((m) => m.materialId)
+  );
+
+  if (Object.keys(duplicates).length > 0) {
+    if (!input.overrideDuplicateCheck) {
       throw new BusinessRuleError(
         "DUPLICATE_MATERIAL_REQUEST_EXISTS",
         "An open Material Request already exists for one or more of these materials on this Sales Order.",
         { duplicates }
+      );
+    }
+
+    // Overriding must never let the combined requested quantity across every
+    // open Material Request for this material+order exceed the real MRP
+    // shortfall — two duplicate MRs each requesting the FULL shortfall (e.g.
+    // one at a warehouse with no stock, a second raised later at a warehouse
+    // that does have it) could otherwise both be issued in full, pulling
+    // double the material the order actually needs off the shelf. Net the
+    // new request down to whatever's genuinely still unrequested instead.
+    selected = selected
+      .map((m) => {
+        const alreadyOpenQuantity = (duplicates[m.materialId] ?? []).reduce((sum, d) => sum + d.remainingQuantity, 0);
+        return { ...m, shortfallQuantity: Math.max(0, m.shortfallQuantity - alreadyOpenQuantity) };
+      })
+      .filter((m) => m.shortfallQuantity > 0);
+
+    if (selected.length === 0) {
+      throw new BusinessRuleError(
+        "VALIDATION_ERROR",
+        "The full shortfall for the selected materials is already covered by existing open Material Requests — nothing further to raise.",
+        { materialIds: input.materialIds }
       );
     }
   }
@@ -586,7 +635,16 @@ export async function issueMaterialRequestLine(
   // remains, so it's visible later via the audit log (no new schema column,
   // matching the "reason lives in the audit trail" precedent already used
   // elsewhere, e.g. Material Request's own "Purchase Quantity Changed" entry).
-  extraReason?: string
+  extraReason?: string,
+  // An explicit alternate warehouse to physically issue from (2026-09-16,
+  // explicit user request) — the Issue modal's own "Change Warehouse"
+  // picker, offered only when the request's own warehouse has nothing and
+  // populated only from warehouses getOtherWarehouseStockForLine already
+  // confirmed have real stock. Defaults to the request's own warehouse when
+  // omitted, matching every existing caller unchanged. Never separately
+  // re-validated as belonging to this company here — recordInventoryTransaction's
+  // own chokepoint check already does that before ever writing to it.
+  issueWarehouseId?: string | null
 ) {
   const line = await MaterialRequestItemRepository.findWithRequestOwner(lineId);
   if (!line || line.materialRequest.companyId !== actor.companyId) {
@@ -640,6 +698,8 @@ export async function issueMaterialRequestLine(
     );
   }
 
+  const effectiveWarehouseId = issueWarehouseId || line.materialRequest.warehouseId;
+
   // Issuing against one specific physical roll — the color/shade actually
   // being handed out — is a genuinely different, more precise check than
   // the material-wide fallback below: the roll's own remainingQuantity is
@@ -653,22 +713,34 @@ export async function issueMaterialRequestLine(
       !roll ||
       roll.status !== "IN_STOCK" ||
       roll.goodsReceiptItem.productId !== line.materialId ||
-      roll.goodsReceiptItem.warehouseId !== line.materialRequest.warehouseId
+      roll.goodsReceiptItem.warehouseId !== effectiveWarehouseId
     ) {
       throw new BusinessRuleError("NOT_FOUND", "The selected fabric roll is not available for this material at this warehouse.", {
         fabricRollId,
       });
     }
-    const rollAvailable = Number(roll.remainingQuantity);
+    // The roll's own remainingQuantity and the real StockBalance ledger can
+    // drift out of sync (confirmed live on real data — a roll left over
+    // from before every issue kept rolls in sync can still show more
+    // "remaining" than the warehouse's actual balance). Cap against
+    // whichever is smaller so this friendly pre-check can never wave
+    // through a quantity the ledger's own floor guard would reject anyway —
+    // that guard is the real backstop, this is just a cleaner error. Uses
+    // the plain flat StockBalance total (getAvailableQuantity), never the
+    // dye-scoped getLineAvailableStock — that sums FabricRoll too, so it
+    // carries the exact same drift risk as the roll itself and wouldn't
+    // actually reflect what the ledger guard checks against.
+    const flatAvailable = await getAvailableQuantity(actor.companyId, line.materialId, effectiveWarehouseId);
+    const rollAvailable = Math.min(Number(roll.remainingQuantity), flatAvailable);
     if (baseQuantity > rollAvailable) {
       throw new BusinessRuleError(
         "INSUFFICIENT_RAW_MATERIAL_STOCK",
-        `Unable to issue ${issueQuantity} from this roll — only ${rollAvailable} remains on it. Available: ${rollAvailable}, Requested: ${baseQuantity}.`,
+        `Unable to issue ${issueQuantity} from this roll — only ${rollAvailable} remains available. Available: ${rollAvailable}, Requested: ${baseQuantity}.`,
         { available: rollAvailable, requested: baseQuantity }
       );
     }
   } else {
-    const available = await getLineAvailableStock(actor.companyId, line.materialRequest.warehouseId, line);
+    const available = await getLineAvailableStock(actor.companyId, effectiveWarehouseId, line);
     if (baseQuantity > available) {
       throw new BusinessRuleError(
         "INSUFFICIENT_RAW_MATERIAL_STOCK",
@@ -696,7 +768,7 @@ export async function issueMaterialRequestLine(
 
     await recordInventoryTransaction(tx, actor, {
       productId: line.materialId,
-      warehouseId: line.materialRequest.warehouseId,
+      warehouseId: effectiveWarehouseId,
       transactionType: "MATERIAL_ISSUE",
       quantity: -baseQuantity,
       referenceModule: "MATERIAL_REQUEST",
@@ -719,6 +791,18 @@ export async function issueMaterialRequestLine(
 
   await recomputeAndPersistStatus(actor, line.materialRequest.id);
 
+  // Only resolved/recorded when it actually deviates from the request's own
+  // stated warehouse — matches this project's "Purchase Quantity Changed"
+  // audit precedent for a deliberate deviation from the plan. Stores the
+  // real name (not just the id) so the Timeline can show "from X" without a
+  // second lookup — the same "store a readable snapshot" convention every
+  // other audit entry on this timeline already follows.
+  let issuedFromWarehouseName: string | null = null;
+  if (effectiveWarehouseId !== line.materialRequest.warehouseId) {
+    const [altWarehouse] = await WarehouseRepository.findMany({ id: effectiveWarehouseId }, {});
+    issuedFromWarehouseName = altWarehouse?.name ?? null;
+  }
+
   await writeAuditLog({
     companyId: actor.companyId,
     userId: actor.userId,
@@ -727,7 +811,13 @@ export async function issueMaterialRequestLine(
     action: "UPDATE",
     newValues: {
       issuedQuantity: issueQuantity,
+      // The line's own chosen unit (e.g. "KG") — stored alongside the bare
+      // number so the Timeline can show "3.5 KG", not just "3.5".
+      uomCode: line.uom.code,
       ...(overRequested > 0 ? { extraQuantity: overRequested, extraReason } : {}),
+      ...(issuedFromWarehouseName
+        ? { issuedFromWarehouseId: effectiveWarehouseId, issuedFromWarehouseName }
+        : {}),
     },
   });
 
@@ -735,15 +825,19 @@ export async function issueMaterialRequestLine(
 }
 
 /**
- * The color/shade-wise breakdown for a line's own material at its request's
- * warehouse — one row per physically in-stock FabricRoll, each carrying its
- * own real remaining quantity. Feeds the Issue modal's "which color am I
- * actually handing out" picker; empty for a non-FABRIC material (nothing
- * tracks shade at that granularity for it) or a FABRIC material with no
- * roll-level stock at all, in which case the UI simply falls back to the
- * existing flat-total Issue flow.
+ * The color/shade/GSM/composition-wise breakdown for a line's own material
+ * at a given warehouse — one row per physically in-stock FabricRoll, each
+ * carrying its own real remaining quantity. Feeds the Issue modal's "which
+ * color am I actually handing out" picker; empty for a non-FABRIC material
+ * (nothing tracks shade at that granularity for it) or a FABRIC material
+ * with no roll-level stock at all, in which case the UI simply falls back to
+ * the existing flat-total Issue flow. `warehouseId` defaults to the
+ * request's own warehouse — the Issue modal's own "Change Warehouse" picker
+ * (2026-09-16) re-calls this with an alternate warehouse once one is chosen,
+ * so the roll list always reflects wherever is actually about to be
+ * decremented, not just the request's stated intent.
  */
-export async function getAvailableRollsForLine(actor: ActorContext, lineId: string) {
+export async function getAvailableRollsForLine(actor: ActorContext, lineId: string, warehouseId?: string) {
   const line = await MaterialRequestItemRepository.findWithRequestOwner(lineId);
   if (!line || line.materialRequest.companyId !== actor.companyId) {
     throw new BusinessRuleError("NOT_FOUND", "Material request line not found.", { id: lineId });
@@ -752,7 +846,7 @@ export async function getAvailableRollsForLine(actor: ActorContext, lineId: stri
   const rolls = await FabricRollRepository.findAvailableForMaterial(
     actor.companyId,
     line.materialId,
-    line.materialRequest.warehouseId
+    warehouseId || line.materialRequest.warehouseId
   );
 
   return rolls.map((roll) => ({
@@ -760,7 +854,80 @@ export async function getAvailableRollsForLine(actor: ActorContext, lineId: stri
     rollNumber: roll.rollNumber,
     remainingQuantity: roll.remainingQuantity,
     dye: roll.dye,
+    gsm: roll.gsm,
+    composition: roll.composition,
   }));
+}
+
+/**
+ * Where this line's material genuinely has real stock, at every warehouse
+ * OTHER than the request's own — a flat total per warehouse, plus a
+ * color/shade-wise roll breakdown for a FABRIC material. Surfaced on a line
+ * whose own "Available Stock" reads 0, so a merchandiser isn't left
+ * guessing whether the material simply doesn't exist anywhere, or is
+ * genuinely sitting at a different warehouse (the same warehouse-mismatch
+ * story a received-into-the-wrong-warehouse Goods Receipt has produced more
+ * than once) — from here a user can jump straight into a Stock Transfer to
+ * correct it, rather than hunting through Inventory reports by hand.
+ */
+export async function getOtherWarehouseStockForLine(actor: ActorContext, lineId: string) {
+  const line = await MaterialRequestItemRepository.findWithRequestOwner(lineId);
+  if (!line || line.materialRequest.companyId !== actor.companyId) {
+    throw new BusinessRuleError("NOT_FOUND", "Material request line not found.", { id: lineId });
+  }
+
+  const requestWarehouseId = line.materialRequest.warehouseId;
+  const isFabric = line.material.materialCategory === "FABRIC";
+
+  const balances = await StockBalanceRepository.findMany(
+    { companyId: actor.companyId, productId: line.materialId, warehouseId: { not: requestWarehouseId }, quantityOnHand: { gt: 0 } },
+    {}
+  );
+  // findMany's own generic `args` spread makes Prisma's return-type
+  // inference fall back to StockBalance's bare scalar columns (no include),
+  // so the warehouse name is resolved via a small separate lookup instead of
+  // fighting that inference — same low-risk workaround already used
+  // elsewhere in this codebase for a generic repository wrapper.
+  const warehouses = await WarehouseRepository.findMany({ id: { in: balances.map((b) => b.warehouseId) } }, {});
+  const warehouseNameById = new Map(warehouses.map((w) => [w.id, w.name]));
+
+  const rollsByWarehouse = new Map<
+    string,
+    Array<{
+      id: string;
+      rollNumber: string;
+      remainingQuantity: number;
+      dye: { name: string; pantone: string | null } | null;
+      gsm: { name: string } | null;
+      composition: { name: string } | null;
+    }>
+  >();
+  if (isFabric) {
+    const rolls = await FabricRollRepository.findAvailableAcrossWarehousesForMaterial(actor.companyId, line.materialId);
+    for (const roll of rolls) {
+      const warehouseId = roll.goodsReceiptItem.warehouseId;
+      if (warehouseId === requestWarehouseId) continue;
+      const bucket = rollsByWarehouse.get(warehouseId) ?? [];
+      bucket.push({
+        id: roll.id,
+        rollNumber: roll.rollNumber,
+        remainingQuantity: Number(roll.remainingQuantity),
+        dye: roll.dye ? { name: roll.dye.name, pantone: roll.dye.pantone } : null,
+        gsm: roll.gsm ? { name: roll.gsm.name } : null,
+        composition: roll.composition ? { name: roll.composition.name } : null,
+      });
+      rollsByWarehouse.set(warehouseId, bucket);
+    }
+  }
+
+  return balances
+    .map((b) => ({
+      warehouseId: b.warehouseId,
+      warehouseName: warehouseNameById.get(b.warehouseId) ?? "Unknown Warehouse",
+      totalQuantity: Number(b.quantityOnHand),
+      rolls: rollsByWarehouse.get(b.warehouseId) ?? [],
+    }))
+    .sort((a, b) => a.warehouseName.localeCompare(b.warehouseName));
 }
 
 interface GeneratePurchaseOrderResult {

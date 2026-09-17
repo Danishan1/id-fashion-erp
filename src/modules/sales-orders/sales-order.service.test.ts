@@ -35,6 +35,7 @@ vi.mock("./sales-order.repository", () => ({
     updateStatusConditional: vi.fn(),
     replaceItems: vi.fn(),
     findLastOrderedItem: vi.fn(),
+    findOrderedPriceHistory: vi.fn(),
   },
 }));
 
@@ -55,6 +56,7 @@ const {
   resumeSalesOrderFromHold,
   getSalesOrderById,
   getLastOrderedPrice,
+  getSalesOrderPriceHistory,
   listSalesOrders,
 } = await import("./sales-order.service");
 
@@ -80,6 +82,7 @@ beforeEach(() => {
   vi.mocked(SalesOrderRepository.update).mockReset();
   vi.mocked(SalesOrderRepository.updateStatusConditional).mockReset();
   vi.mocked(SalesOrderRepository.replaceItems).mockReset();
+  vi.mocked(SalesOrderRepository.findOrderedPriceHistory).mockReset();
   vi.mocked(getSalesOrderItemProductionSummary).mockReset().mockResolvedValue({ orderedTotal: 0 } as never);
   vi.mocked(SalesInvoiceRepository.findActiveByOrderId).mockReset().mockResolvedValue(null);
   vi.mocked(DispatchRepository.findAnyByOrderId).mockReset().mockResolvedValue(null);
@@ -348,6 +351,38 @@ describe("getLastOrderedPrice", () => {
     vi.mocked(SalesOrderRepository.findLastOrderedItem).mockResolvedValue(null);
     const result = await getLastOrderedPrice("co-1", "cust-1", "style-1");
     expect(result).toBeNull();
+  });
+});
+
+describe("getSalesOrderPriceHistory", () => {
+  it("returns every real price this customer was charged for this style, most-recent first, delegated straight to the repository", async () => {
+    vi.mocked(SalesOrderRepository.findOrderedPriceHistory).mockResolvedValue([
+      { unitPrice: { toString: () => "320" }, salesOrder: { orderNumber: "ORD-2026-00014", orderDate: new Date("2026-09-10") } },
+      { unitPrice: { toString: () => "300" }, salesOrder: { orderNumber: "ORD-2026-00009", orderDate: new Date("2026-08-01") } },
+    ] as never);
+
+    const result = await getSalesOrderPriceHistory("co-1", "cust-1", "style-1");
+
+    expect(SalesOrderRepository.findOrderedPriceHistory).toHaveBeenCalledWith("co-1", "cust-1", "style-1", undefined, undefined);
+    expect(result).toEqual([
+      { unitPrice: 320, orderNumber: "ORD-2026-00014", orderDate: new Date("2026-09-10").toISOString() },
+      { unitPrice: 300, orderNumber: "ORD-2026-00009", orderDate: new Date("2026-08-01").toISOString() },
+    ]);
+  });
+
+  it("passes excludeOrderId and sinceDate through unchanged", async () => {
+    vi.mocked(SalesOrderRepository.findOrderedPriceHistory).mockResolvedValue([]);
+    const sinceDate = new Date("2025-09-16");
+
+    await getSalesOrderPriceHistory("co-1", "cust-1", "style-1", "so-being-edited", sinceDate);
+
+    expect(SalesOrderRepository.findOrderedPriceHistory).toHaveBeenCalledWith("co-1", "cust-1", "style-1", "so-being-edited", sinceDate);
+  });
+
+  it("returns an empty array (not an error) when there's no prior order at all", async () => {
+    vi.mocked(SalesOrderRepository.findOrderedPriceHistory).mockResolvedValue([]);
+    const result = await getSalesOrderPriceHistory("co-1", "cust-1", "style-1");
+    expect(result).toEqual([]);
   });
 });
 

@@ -1,8 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
+vi.mock("@/core/numbering/DocumentNumberingService", () => ({ advanceMasterCodeSequence: vi.fn() }));
 vi.mock("./product.repository", () => ({
-  ProductRepository: { findManyStyles: vi.fn(), count: vi.fn(), findStyleById: vi.fn() },
+  ProductRepository: {
+    findManyStyles: vi.fn(),
+    count: vi.fn(),
+    findStyleById: vi.fn(),
+    findMaterialById: vi.fn(),
+    findByStyleCode: vi.fn(),
+    findMaterialByName: vi.fn(),
+    create: vi.fn(),
+    update: vi.fn(),
+  },
   ProductVariantRepository: {
     findColorsByIds: vi.fn(),
     findSizesByIds: vi.fn(),
@@ -12,7 +22,7 @@ vi.mock("./product.repository", () => ({
 }));
 
 const { ProductRepository, ProductVariantRepository } = await import("./product.repository");
-const { listProducts, generateVariants } = await import("./product.service");
+const { listProducts, generateVariants, createMaterial, updateMaterial } = await import("./product.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
 
@@ -22,6 +32,11 @@ beforeEach(() => {
   vi.mocked(ProductRepository.findManyStyles).mockReset().mockResolvedValue([]);
   vi.mocked(ProductRepository.count).mockReset().mockResolvedValue(0);
   vi.mocked(ProductRepository.findStyleById).mockReset().mockResolvedValue({ id: "prod-1", styleCode: "ST-001" } as never);
+  vi.mocked(ProductRepository.findMaterialById).mockReset();
+  vi.mocked(ProductRepository.findByStyleCode).mockReset().mockResolvedValue(null);
+  vi.mocked(ProductRepository.findMaterialByName).mockReset().mockResolvedValue(null);
+  vi.mocked(ProductRepository.create).mockReset();
+  vi.mocked(ProductRepository.update).mockReset();
   vi.mocked(ProductVariantRepository.findColorsByIds).mockReset();
   vi.mocked(ProductVariantRepository.findSizesByIds).mockReset();
   vi.mocked(ProductVariantRepository.findExistingKeys).mockReset().mockResolvedValue(new Set());
@@ -114,5 +129,70 @@ describe("generateVariants", () => {
     expect(ProductVariantRepository.createMany).toHaveBeenCalledWith([
       expect.objectContaining({ productId: "prod-1", colorId: "color-1", sizeId: "size-1" }),
     ]);
+  });
+});
+
+const materialInput = {
+  styleCode: "MAT-001",
+  styleName: "Cotton Fabric",
+  materialCategory: "FABRIC" as const,
+  baseUomId: "",
+  defaultSupplierId: "",
+  isActive: true,
+};
+
+describe("createMaterial", () => {
+  it("rejects a duplicate item code", async () => {
+    vi.mocked(ProductRepository.findByStyleCode).mockResolvedValue({ id: "existing-1" } as never);
+
+    await expect(createMaterial(actor, materialInput)).rejects.toMatchObject({ code: "DUPLICATE_DOC_NUMBER" });
+    expect(ProductRepository.create).not.toHaveBeenCalled();
+  });
+
+  // Regression test: previously only the item code was checked for
+  // duplicates, so two materials could freely share the same Item Name.
+  it("rejects a duplicate item name, even when the code differs", async () => {
+    vi.mocked(ProductRepository.findMaterialByName).mockResolvedValue({ id: "existing-1", styleCode: "MAT-000" } as never);
+
+    await expect(createMaterial(actor, materialInput)).rejects.toMatchObject({ code: "DUPLICATE_DOC_NUMBER" });
+    expect(ProductRepository.findMaterialByName).toHaveBeenCalledWith("co-1", "Cotton Fabric");
+    expect(ProductRepository.create).not.toHaveBeenCalled();
+  });
+
+  it("creates normally when both the code and name are free", async () => {
+    vi.mocked(ProductRepository.create).mockResolvedValue({ id: "new-1", ...materialInput } as never);
+
+    await createMaterial(actor, materialInput);
+
+    expect(ProductRepository.create).toHaveBeenCalled();
+  });
+});
+
+describe("updateMaterial", () => {
+  beforeEach(() => {
+    vi.mocked(ProductRepository.findMaterialById).mockResolvedValue({
+      id: "mat-1",
+      styleCode: "MAT-001",
+      styleName: "Cotton Fabric",
+    } as never);
+  });
+
+  it("rejects renaming to a name already used by a different material", async () => {
+    vi.mocked(ProductRepository.findMaterialByName).mockResolvedValue({ id: "other-mat", styleCode: "MAT-002" } as never);
+
+    await expect(updateMaterial(actor, "mat-1", { styleName: "Silk Fabric" })).rejects.toMatchObject({
+      code: "DUPLICATE_DOC_NUMBER",
+    });
+    expect(ProductRepository.findMaterialByName).toHaveBeenCalledWith("co-1", "Silk Fabric", "mat-1");
+    expect(ProductRepository.update).not.toHaveBeenCalled();
+  });
+
+  it("does not re-check the name when it isn't actually changing", async () => {
+    vi.mocked(ProductRepository.update).mockResolvedValue({ id: "mat-1" } as never);
+
+    await updateMaterial(actor, "mat-1", { styleName: "Cotton Fabric", reorderLevel: 10 });
+
+    expect(ProductRepository.findMaterialByName).not.toHaveBeenCalled();
+    expect(ProductRepository.update).toHaveBeenCalled();
   });
 });
