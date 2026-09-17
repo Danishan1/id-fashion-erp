@@ -7,7 +7,7 @@ import { DataTable } from "@/components/ui/DataTable";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { Modal } from "@/components/ui/Modal";
 import { FilePreviewModal } from "@/components/ui/FilePreviewModal";
-import { ICON_BUTTON_CLASS, EditIcon, BomIcon, VariantsIcon, DesignsIcon, ImagesIcon } from "@/components/ui/icons";
+import { ICON_BUTTON_CLASS, ViewIcon, EditIcon, BomIcon, VariantsIcon, DesignsIcon, ImagesIcon } from "@/components/ui/icons";
 import { ProductForm, type ProductFormValues } from "./ProductForm";
 import { VariantsSection } from "./VariantsSection";
 import { ProductImagesSection } from "./ProductImagesSection";
@@ -255,6 +255,9 @@ function ProductsListContent() {
         searchPlaceholder="Search by style name or code…"
         rowActions={(row) => (
           <div className="flex items-center gap-0.5">
+            <Link href={`/masters/products/${row.id}/view`} title="View" aria-label="View" className={ICON_BUTTON_CLASS}>
+              <ViewIcon />
+            </Link>
             <button type="button" title="Edit" aria-label="Edit" onClick={() => openEdit(row.id)} className={ICON_BUTTON_CLASS}>
               <EditIcon />
             </button>

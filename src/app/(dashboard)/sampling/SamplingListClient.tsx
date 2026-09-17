@@ -231,6 +231,13 @@ export function SamplingListClient() {
                   <td className="px-4 py-2 text-zinc-700 dark:text-zinc-200">{row.requestedBy?.fullName ?? "—"}</td>
                   <td className="px-4 py-2">
                     <div className="flex items-center gap-3">
+                      <Link
+                        href={`/sampling/${row.id}/view`}
+                        className="font-medium text-indigo-600 hover:text-indigo-500"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        View
+                      </Link>
                       <Link href={`/sampling/${row.id}`} className="font-medium text-indigo-600 hover:text-indigo-500">
                         Edit
                       </Link>

@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { Modal } from "@/components/ui/Modal";
 import { FilePreviewModal } from "@/components/ui/FilePreviewModal";
-import { ICON_BUTTON_CLASS, BomIcon, VariantsIcon, ImagesIcon } from "@/components/ui/icons";
+import { ICON_BUTTON_CLASS, ViewIcon, BomIcon, VariantsIcon, ImagesIcon } from "@/components/ui/icons";
 import { STATUS_LABELS, STATUS_BADGE_CLASS } from "@/app/(dashboard)/sampling/statusLabels";
 import { SampleImagesSection } from "@/app/(dashboard)/sampling/SampleImagesSection";
 import { VariantsSection } from "../../VariantsSection";
@@ -183,6 +183,14 @@ export function DesignsListClient({ productId, styleName, styleCode, variantCoun
                     </td>
                     <td className="px-4 py-2">
                       <div className="flex items-center gap-0.5">
+                        <Link
+                          href={`/sampling/${r.id}/view`}
+                          title="View"
+                          aria-label="View"
+                          className={ICON_BUTTON_CLASS}
+                        >
+                          <ViewIcon />
+                        </Link>
                         <Link
                           href={`/bom-mrp/design/${r.id}`}
                           title="BOM"
