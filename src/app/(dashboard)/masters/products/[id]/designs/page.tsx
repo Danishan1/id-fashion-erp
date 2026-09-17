@@ -18,5 +18,12 @@ export default async function StyleDesignsPage({ params }: { params: Promise<{ i
   const product = await getProductById(session!.user.companyId, id).catch(() => null);
   if (!product) notFound();
 
-  return <DesignsListClient productId={id} styleName={product.styleName} styleCode={product.styleCode} />;
+  return (
+    <DesignsListClient
+      productId={id}
+      styleName={product.styleName}
+      styleCode={product.styleCode}
+      variantCount={product.variants.length}
+    />
+  );
 }

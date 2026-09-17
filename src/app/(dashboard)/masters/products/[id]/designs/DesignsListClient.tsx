@@ -4,9 +4,10 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { Modal } from "@/components/ui/Modal";
-import { ICON_BUTTON_CLASS, BomIcon, ImagesIcon } from "@/components/ui/icons";
+import { ICON_BUTTON_CLASS, BomIcon, VariantsIcon, ImagesIcon } from "@/components/ui/icons";
 import { STATUS_LABELS, STATUS_BADGE_CLASS } from "@/app/(dashboard)/sampling/statusLabels";
 import { SampleImagesSection } from "@/app/(dashboard)/sampling/SampleImagesSection";
+import { VariantsSection } from "../../VariantsSection";
 
 interface SampleRequestRow {
   id: string;
@@ -25,6 +26,7 @@ interface DesignsListClientProps {
   productId: string;
   styleName: string;
   styleCode: string;
+  variantCount: number;
 }
 
 function formatDate(value: string | null) {
@@ -41,11 +43,16 @@ function formatDate(value: string | null) {
  * fetching, same as the modal it replaces) so this page can grow real
  * sections/actions later without having to first migrate off a modal.
  */
-export function DesignsListClient({ productId, styleName, styleCode }: DesignsListClientProps) {
+export function DesignsListClient({ productId, styleName, styleCode, variantCount }: DesignsListClientProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [requests, setRequests] = useState<SampleRequestRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [imagesFor, setImagesFor] = useState<SampleRequestRow | null>(null);
+  // Variants belong to the linked Style, not to the design/sample itself
+  // (SampleRequest has no Color/Size grid of its own) — every design on
+  // this page shares the same one style, so this opens that style's own
+  // existing Variants modal, just reachable from a design's row too.
+  const [variantsOpen, setVariantsOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -139,6 +146,15 @@ export function DesignsListClient({ productId, styleName, styleCode }: DesignsLi
                         </Link>
                         <button
                           type="button"
+                          title={`Variants (${variantCount})`}
+                          aria-label={`Variants (${variantCount})`}
+                          onClick={() => setVariantsOpen(true)}
+                          className={ICON_BUTTON_CLASS}
+                        >
+                          <VariantsIcon />
+                        </button>
+                        <button
+                          type="button"
                           title="Images"
                           aria-label="Images"
                           onClick={() => setImagesFor(r)}
@@ -161,6 +177,8 @@ export function DesignsListClient({ productId, styleName, styleCode }: DesignsLi
           <SampleImagesSection key={imagesFor.id} sampleRequestId={imagesFor.id} />
         </Modal>
       )}
+
+      {variantsOpen && <VariantsSection key={productId} productId={productId} onClose={() => setVariantsOpen(false)} />}
     </div>
   );
 }
