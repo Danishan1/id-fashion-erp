@@ -2,6 +2,7 @@ import { prisma } from "@/core/db/client";
 import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingService";
+import { getAttachmentMetadata } from "@/core/attachments/AttachmentService";
 import { PermissionService } from "@/core/rbac/PermissionService";
 import type { ListQuery } from "@/lib/list-query";
 import type {
@@ -91,6 +92,7 @@ const ALLOWED_TRANSITIONS: Record<SampleStatus, SampleStatus[]> = {
 export interface SampleRequestListFilters {
   customerId?: string;
   buyerId?: string;
+  productId?: string;
   styleSearch?: string;
   /** Raw comma-separated status list from the querystring — see listSampleRequests. */
   status?: string;
@@ -153,6 +155,7 @@ export async function listSampleRequests(companyId: string, query: ListQuery, fi
     ...(query.search ? { requestNumber: { contains: query.search, mode: "insensitive" as const } } : {}),
     ...(filters.customerId ? { customerId: filters.customerId } : {}),
     ...(filters.buyerId ? { buyerId: filters.buyerId } : {}),
+    ...(filters.productId ? { productId: filters.productId } : {}),
     ...(filters.requestedByUserId ? { requestedByUserId: filters.requestedByUserId } : {}),
     ...(filters.sampleType ? { sampleType: filters.sampleType } : {}),
     ...(statuses.length > 0 ? { status: { in: statuses } } : {}),
@@ -305,6 +308,38 @@ export async function updateSampleRequestDesignName(actor: ActorContext, id: str
     action: "UPDATE",
     oldValues: { styleName: existing.styleName },
     newValues: { styleName: updated.styleName },
+  });
+
+  return updated;
+}
+
+/**
+ * Designates one already-uploaded image (relatedModule SAMPLE_REQUEST,
+ * relatedRecordId = this request) as the cover/main image — same shape and
+ * "never trust a client-supplied FK" discipline as Products'
+ * setProductMainImage(). `attachmentId: null` explicitly clears it.
+ */
+export async function setSampleRequestMainImage(actor: ActorContext, id: string, attachmentId: string | null) {
+  const existing = await SampleRequestRepository.findAnyById(actor.companyId, id);
+  if (!existing) throw new BusinessRuleError("NOT_FOUND", "Sample request not found.", { id });
+
+  if (attachmentId) {
+    const attachment = await getAttachmentMetadata(actor.companyId, attachmentId);
+    if (attachment.relatedModule !== "SAMPLE_REQUEST" || attachment.relatedRecordId !== id) {
+      throw new BusinessRuleError("NOT_FOUND", "Attachment not found.", { id: attachmentId });
+    }
+  }
+
+  const updated = await SampleRequestRepository.update(id, { mainImageAttachmentId: attachmentId });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "sample_requests",
+    recordId: id,
+    action: "UPDATE",
+    oldValues: { mainImageAttachmentId: existing.mainImageAttachmentId },
+    newValues: { mainImageAttachmentId: updated.mainImageAttachmentId },
   });
 
   return updated;

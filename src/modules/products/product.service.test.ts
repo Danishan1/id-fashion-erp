@@ -1,8 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
+vi.mock("@/core/attachments/AttachmentService", () => ({ getAttachmentMetadata: vi.fn() }));
 vi.mock("./product.repository", () => ({
-  ProductRepository: { findManyStyles: vi.fn(), count: vi.fn(), findStyleById: vi.fn() },
+  ProductRepository: {
+    findManyStyles: vi.fn(),
+    count: vi.fn(),
+    findStyleById: vi.fn(),
+    findAnyById: vi.fn(),
+    update: vi.fn(),
+  },
   ProductVariantRepository: {
     findColorsByIds: vi.fn(),
     findSizesByIds: vi.fn(),
@@ -12,7 +19,8 @@ vi.mock("./product.repository", () => ({
 }));
 
 const { ProductRepository, ProductVariantRepository } = await import("./product.repository");
-const { listProducts, generateVariants } = await import("./product.service");
+const { getAttachmentMetadata } = await import("@/core/attachments/AttachmentService");
+const { listProducts, generateVariants, setProductMainImage } = await import("./product.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
 
@@ -22,10 +30,13 @@ beforeEach(() => {
   vi.mocked(ProductRepository.findManyStyles).mockReset().mockResolvedValue([]);
   vi.mocked(ProductRepository.count).mockReset().mockResolvedValue(0);
   vi.mocked(ProductRepository.findStyleById).mockReset().mockResolvedValue({ id: "prod-1", styleCode: "ST-001" } as never);
+  vi.mocked(ProductRepository.findAnyById).mockReset();
+  vi.mocked(ProductRepository.update).mockReset();
   vi.mocked(ProductVariantRepository.findColorsByIds).mockReset();
   vi.mocked(ProductVariantRepository.findSizesByIds).mockReset();
   vi.mocked(ProductVariantRepository.findExistingKeys).mockReset().mockResolvedValue(new Set());
   vi.mocked(ProductVariantRepository.createMany).mockReset();
+  vi.mocked(getAttachmentMetadata).mockReset();
 });
 
 describe("listProducts filters", () => {
@@ -114,5 +125,51 @@ describe("generateVariants", () => {
     expect(ProductVariantRepository.createMany).toHaveBeenCalledWith([
       expect.objectContaining({ productId: "prod-1", colorId: "color-1", sizeId: "size-1" }),
     ]);
+  });
+});
+
+describe("setProductMainImage", () => {
+  it("rejects when the style doesn't exist for this company", async () => {
+    vi.mocked(ProductRepository.findAnyById).mockResolvedValue(null);
+
+    await expect(setProductMainImage(actor, "prod-1", "att-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(ProductRepository.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects an attachment that belongs to a different style", async () => {
+    vi.mocked(ProductRepository.findAnyById).mockResolvedValue({ id: "prod-1", mainImageAttachmentId: null } as never);
+    vi.mocked(getAttachmentMetadata).mockResolvedValue({ id: "att-1", relatedModule: "PRODUCT", relatedRecordId: "prod-2" } as never);
+
+    await expect(setProductMainImage(actor, "prod-1", "att-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(ProductRepository.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects an attachment that isn't a PRODUCT attachment at all", async () => {
+    vi.mocked(ProductRepository.findAnyById).mockResolvedValue({ id: "prod-1", mainImageAttachmentId: null } as never);
+    vi.mocked(getAttachmentMetadata).mockResolvedValue({ id: "att-1", relatedModule: "SAMPLE_REQUEST", relatedRecordId: "prod-1" } as never);
+
+    await expect(setProductMainImage(actor, "prod-1", "att-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("sets a valid, matching attachment as the main image", async () => {
+    vi.mocked(ProductRepository.findAnyById).mockResolvedValue({ id: "prod-1", mainImageAttachmentId: null } as never);
+    vi.mocked(getAttachmentMetadata).mockResolvedValue({ id: "att-1", relatedModule: "PRODUCT", relatedRecordId: "prod-1" } as never);
+    vi.mocked(ProductRepository.update).mockResolvedValue({ id: "prod-1", mainImageAttachmentId: "att-1" } as never);
+
+    const result = await setProductMainImage(actor, "prod-1", "att-1");
+
+    expect(ProductRepository.update).toHaveBeenCalledWith("prod-1", { mainImageAttachmentId: "att-1" });
+    expect(result.mainImageUrl).toBe("/api/v1/products/attachments/att-1/download?disposition=inline");
+  });
+
+  it("clears the main image when attachmentId is null, without re-checking any attachment", async () => {
+    vi.mocked(ProductRepository.findAnyById).mockResolvedValue({ id: "prod-1", mainImageAttachmentId: "att-1" } as never);
+    vi.mocked(ProductRepository.update).mockResolvedValue({ id: "prod-1", mainImageAttachmentId: null } as never);
+
+    const result = await setProductMainImage(actor, "prod-1", null);
+
+    expect(getAttachmentMetadata).not.toHaveBeenCalled();
+    expect(ProductRepository.update).toHaveBeenCalledWith("prod-1", { mainImageAttachmentId: null });
+    expect(result.mainImageUrl).toBeNull();
   });
 });

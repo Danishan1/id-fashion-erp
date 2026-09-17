@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
+import { getAttachmentMetadata } from "@/core/attachments/AttachmentService";
 import { advanceMasterCodeSequence } from "@/core/numbering/DocumentNumberingService";
 import type { ListQuery } from "@/lib/list-query";
 import type {
@@ -52,13 +53,29 @@ export async function listProducts(companyId: string, query: ListQuery, filters:
     ProductRepository.count(where),
   ]);
 
-  return { data, totalCount };
+  return { data: data.map(withMainImageUrl), totalCount };
 }
 
 export async function getProductById(companyId: string, id: string) {
   const product = await ProductRepository.findStyleById(companyId, id);
   if (!product) throw new BusinessRuleError("NOT_FOUND", "Style not found.", { id });
-  return product;
+  return withMainImageUrl(product);
+}
+
+/**
+ * Derives a plain, directly-`<img src>`-usable URL from the designated main
+ * image's attachment id — the list/detail thumbnail never needs to know
+ * about the underlying Attachment model at all. `Product.imageUrl` (a dead
+ * column, never written to) is left untouched; this is a separate, derived
+ * field, not a repurposing of that one.
+ */
+function withMainImageUrl<T extends { mainImageAttachmentId: string | null }>(product: T) {
+  return {
+    ...product,
+    mainImageUrl: product.mainImageAttachmentId
+      ? `/api/v1/products/attachments/${product.mainImageAttachmentId}/download?disposition=inline`
+      : null,
+  };
 }
 
 function toData(input: ProductInput) {
@@ -407,4 +424,38 @@ export async function setProductVariantActiveStatus(actor: ActorContext, id: str
   });
 
   return updated;
+}
+
+/**
+ * Designates one already-uploaded gallery image (relatedModule PRODUCT,
+ * relatedRecordId = this style) as the cover/main image for a future
+ * product-gallery display — `attachmentId: null` explicitly clears it.
+ * Re-verifies the attachment genuinely belongs to both this company AND this
+ * specific style before writing the pointer, the same "never trust a
+ * client-supplied FK" discipline used everywhere else in this codebase.
+ */
+export async function setProductMainImage(actor: ActorContext, id: string, attachmentId: string | null) {
+  const product = await ProductRepository.findAnyById(actor.companyId, id);
+  if (!product) throw new BusinessRuleError("NOT_FOUND", "Style not found.", { id });
+
+  if (attachmentId) {
+    const attachment = await getAttachmentMetadata(actor.companyId, attachmentId);
+    if (attachment.relatedModule !== "PRODUCT" || attachment.relatedRecordId !== id) {
+      throw new BusinessRuleError("NOT_FOUND", "Attachment not found.", { id: attachmentId });
+    }
+  }
+
+  const updated = await ProductRepository.update(id, { mainImageAttachmentId: attachmentId });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "products",
+    recordId: id,
+    action: "UPDATE",
+    oldValues: { mainImageAttachmentId: product.mainImageAttachmentId },
+    newValues: { mainImageAttachmentId: attachmentId },
+  });
+
+  return withMainImageUrl(updated);
 }

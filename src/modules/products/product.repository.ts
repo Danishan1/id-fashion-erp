@@ -82,6 +82,11 @@ export const ProductRepository = {
   create: (data: Prisma.ProductUncheckedCreateInput) => prisma.product.create({ data }),
 
   update: (id: string, data: Prisma.ProductUncheckedUpdateInput) => prisma.product.update({ where: { id }, data }),
+
+  /** Called just before deleting an attachment — if it's currently a style's
+   * designated main image, clears the pointer first so it never dangles. */
+  clearMainImageIfMatches: (companyId: string, attachmentId: string) =>
+    prisma.product.updateMany({ where: { companyId, mainImageAttachmentId: attachmentId }, data: { mainImageAttachmentId: null } }),
 };
 
 export const ProductVariantRepository = {

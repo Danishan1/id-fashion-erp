@@ -7,12 +7,17 @@ import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { Modal } from "@/components/ui/Modal";
 import { ProductForm, type ProductFormValues } from "./ProductForm";
 import { VariantsSection } from "./VariantsSection";
+import { DesignNamesSection } from "./DesignNamesSection";
+import { ProductImagesSection } from "./ProductImagesSection";
 
 interface ProductRow {
   id: string;
   styleCode: string;
   styleName: string;
-  imageUrl: string | null;
+  // Derived by the list API from mainImageAttachmentId — the raw imageUrl
+  // column is a dead field, never written to; this is a separate, computed
+  // value pointing at the designated gallery main image, if any.
+  mainImageUrl: string | null;
   category: { name: string } | null;
   season: { name: string } | null;
   brand: { name: string } | null;
@@ -244,16 +249,18 @@ function ProductsListContent() {
               BOM
             </a>
             <VariantsSection productId={row.id} />
+            <DesignNamesSection productId={row.id} />
+            <ProductImagesSection productId={row.id} />
           </>
         )}
         columns={[
           {
-            key: "imageUrl",
+            key: "mainImageUrl",
             header: "",
             render: (row) =>
-              row.imageUrl ? (
+              row.mainImageUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={row.imageUrl} alt={row.styleName} className="h-10 w-10 rounded object-cover" />
+                <img src={row.mainImageUrl} alt={row.styleName} className="h-10 w-10 rounded object-cover" />
               ) : (
                 <div className="flex h-10 w-10 items-center justify-center rounded bg-zinc-100 text-xs text-zinc-400 dark:bg-zinc-800">—</div>
               ),

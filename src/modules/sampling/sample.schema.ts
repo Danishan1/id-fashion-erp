@@ -35,6 +35,10 @@ export type SampleRequestInput = z.infer<typeof sampleRequestSchema>;
 export const sampleRequestListFiltersSchema = z.object({
   customerId: z.string().uuid().optional(),
   buyerId: z.string().uuid().optional(),
+  // An exact match against the linked Style master, distinct from
+  // styleSearch's free-text OR match below — used by Masters/Styles' own
+  // "Design Names" list of every sample built against one specific style.
+  productId: z.string().uuid().optional(),
   styleSearch: z.string().max(200).optional(),
   status: z.string().optional(),
   sampleType: z.enum(SAMPLE_TYPES).optional(),
@@ -202,3 +206,11 @@ export const convertSampleToStyleSchema = z.object({
 });
 
 export type ConvertSampleToStyleInput = z.infer<typeof convertSampleToStyleSchema>;
+
+// `attachmentId: null` explicitly unsets the main/cover image; omitting the
+// field is a validation error — same shape as Products' own setMainImageSchema.
+export const sampleRequestSetMainImageSchema = z.object({
+  attachmentId: z.string().uuid().nullable(),
+});
+
+export type SampleRequestSetMainImageInput = z.infer<typeof sampleRequestSetMainImageSchema>;

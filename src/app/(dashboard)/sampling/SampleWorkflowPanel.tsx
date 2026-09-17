@@ -11,6 +11,7 @@ import { formatCategoryLabel } from "@/lib/format-category-label";
 import { formatDate, formatDateTime } from "@/lib/date-format";
 import { useSubmoduleVisibility } from "@/lib/use-submodule-visibility";
 import { STATUS_BADGE_CLASS, STATUS_LABELS } from "./statusLabels";
+import { SampleImagesSection } from "./SampleImagesSection";
 
 type SampleStatus = keyof typeof STATUS_LABELS;
 
@@ -1184,6 +1185,8 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
           </p>
         </div>
       )}
+
+      <SampleImagesSection sampleRequestId={sampleRequestId} />
 
       {/* Attachments — tech pack files, artwork, measurement sheets. Kept at the
           sample level (not per-version) to avoid over-complicating the model;

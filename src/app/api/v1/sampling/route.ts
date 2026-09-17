@@ -17,6 +17,7 @@ export async function GET(req: NextRequest) {
     const filters = sampleRequestListFiltersSchema.parse({
       customerId: params.get("customerId") || undefined,
       buyerId: params.get("buyerId") || undefined,
+      productId: params.get("productId") || undefined,
       styleSearch: params.get("styleSearch") || undefined,
       status: params.get("status") || undefined,
       sampleType: params.get("sampleType") || undefined,

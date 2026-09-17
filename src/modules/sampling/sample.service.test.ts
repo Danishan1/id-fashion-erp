@@ -20,6 +20,9 @@ vi.mock("@/modules/bom-mrp/bom.repository", () => ({
 vi.mock("@/core/rbac/PermissionService", () => ({
   PermissionService: { assert: vi.fn() },
 }));
+vi.mock("@/core/attachments/AttachmentService", () => ({
+  getAttachmentMetadata: vi.fn(),
+}));
 vi.mock("./sample.repository", () => ({
   SampleRequestRepository: {
     findMany: vi.fn(),
@@ -69,6 +72,7 @@ const { ProductRepository } = await import("@/modules/products/product.repositor
 const { CustomerRepository } = await import("@/modules/customers/customer.repository");
 const { BomRepository } = await import("@/modules/bom-mrp/bom.repository");
 const { PermissionService } = await import("@/core/rbac/PermissionService");
+const { getAttachmentMetadata } = await import("@/core/attachments/AttachmentService");
 const { generateDocumentNumber } = await import("@/core/numbering/DocumentNumberingService");
 const {
   recalculateSampleVersionCosting,
@@ -79,6 +83,7 @@ const {
   addSampleVersion,
   updateSampleBomMaterials,
   removeSampleMaterial,
+  setSampleRequestMainImage,
 } = await import("./sample.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
@@ -105,6 +110,7 @@ beforeEach(() => {
   vi.mocked(SampleVersionRepository.findById).mockReset();
   vi.mocked(SampleApprovalRepository.create).mockReset();
   vi.mocked(PermissionService.assert).mockReset().mockResolvedValue(undefined);
+  vi.mocked(getAttachmentMetadata).mockReset();
   vi.mocked(SampleVersionRepository.create).mockReset();
   vi.mocked(SampleMaterialRepository.createMany).mockReset();
   vi.mocked(SampleMaterialRepository.updatePlannedQuantityInTx).mockReset();
@@ -616,5 +622,50 @@ describe("removeSampleMaterial", () => {
     vi.mocked(SampleVersionRepository.updateCostingIfUnlocked).mockResolvedValue({ count: 0 } as never);
 
     await expect(removeSampleMaterial(actor, "sm-1")).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+  });
+});
+
+describe("setSampleRequestMainImage", () => {
+  it("rejects when the sample request doesn't exist for this company", async () => {
+    vi.mocked(SampleRequestRepository.findAnyById).mockResolvedValue(null);
+
+    await expect(setSampleRequestMainImage(actor, "sam-1", "att-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(SampleRequestRepository.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects an attachment that belongs to a different sample request", async () => {
+    vi.mocked(SampleRequestRepository.findAnyById).mockResolvedValue({ id: "sam-1", mainImageAttachmentId: null } as never);
+    vi.mocked(getAttachmentMetadata).mockResolvedValue({ id: "att-1", relatedModule: "SAMPLE_REQUEST", relatedRecordId: "sam-2" } as never);
+
+    await expect(setSampleRequestMainImage(actor, "sam-1", "att-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(SampleRequestRepository.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects an attachment that isn't a SAMPLE_REQUEST attachment at all", async () => {
+    vi.mocked(SampleRequestRepository.findAnyById).mockResolvedValue({ id: "sam-1", mainImageAttachmentId: null } as never);
+    vi.mocked(getAttachmentMetadata).mockResolvedValue({ id: "att-1", relatedModule: "PRODUCT", relatedRecordId: "sam-1" } as never);
+
+    await expect(setSampleRequestMainImage(actor, "sam-1", "att-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("sets a valid, matching attachment as the main image", async () => {
+    vi.mocked(SampleRequestRepository.findAnyById).mockResolvedValue({ id: "sam-1", mainImageAttachmentId: null } as never);
+    vi.mocked(getAttachmentMetadata).mockResolvedValue({ id: "att-1", relatedModule: "SAMPLE_REQUEST", relatedRecordId: "sam-1" } as never);
+    vi.mocked(SampleRequestRepository.update).mockResolvedValue({ id: "sam-1", mainImageAttachmentId: "att-1" } as never);
+
+    const result = await setSampleRequestMainImage(actor, "sam-1", "att-1");
+
+    expect(SampleRequestRepository.update).toHaveBeenCalledWith("sam-1", { mainImageAttachmentId: "att-1" });
+    expect(result).toMatchObject({ mainImageAttachmentId: "att-1" });
+  });
+
+  it("clears the main image when attachmentId is null, without re-checking any attachment", async () => {
+    vi.mocked(SampleRequestRepository.findAnyById).mockResolvedValue({ id: "sam-1", mainImageAttachmentId: "att-1" } as never);
+    vi.mocked(SampleRequestRepository.update).mockResolvedValue({ id: "sam-1", mainImageAttachmentId: null } as never);
+
+    await setSampleRequestMainImage(actor, "sam-1", null);
+
+    expect(getAttachmentMetadata).not.toHaveBeenCalled();
+    expect(SampleRequestRepository.update).toHaveBeenCalledWith("sam-1", { mainImageAttachmentId: null });
   });
 });

@@ -59,3 +59,12 @@ export const generateVariantsSchema = z.object({
   sizeIds: z.array(z.string().uuid()).min(1, "Select at least one size"),
 });
 export type GenerateVariantsInput = z.infer<typeof generateVariantsSchema>;
+
+// `attachmentId: null` explicitly unsets the main/cover image; omitting the
+// field entirely is a validation error (this is always a deliberate choice,
+// never an accidental clear) — same "explicit null vs. absent" discipline
+// already used by SampleMaterialCostingInput.rate.
+export const setMainImageSchema = z.object({
+  attachmentId: z.string().uuid().nullable(),
+});
+export type SetMainImageInput = z.infer<typeof setMainImageSchema>;

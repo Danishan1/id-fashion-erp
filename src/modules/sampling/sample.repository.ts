@@ -86,6 +86,12 @@ export const SampleRequestRepository = {
 
   update: (id: string, data: Prisma.SampleRequestUncheckedUpdateInput) =>
     prisma.sampleRequest.update({ where: { id }, data }),
+
+  /** Called just before deleting an attachment — if it's currently a
+   * request's designated main image, clears the pointer first so it never
+   * dangles. */
+  clearMainImageIfMatches: (companyId: string, attachmentId: string) =>
+    prisma.sampleRequest.updateMany({ where: { companyId, mainImageAttachmentId: attachmentId }, data: { mainImageAttachmentId: null } }),
 };
 
 export const SampleVersionRepository = {

@@ -893,23 +893,23 @@ enum ItemType {
 }
 
 model Product {
-  id                String            @id @default(uuid()) @db.Uuid
-  companyId         String            @map("company_id") @db.Uuid
-  customerId        String?           @map("customer_id") @db.Uuid
-  departmentId      String?           @map("department_id") @db.Uuid
-  baseUomId         String?           @map("base_uom_id") @db.Uuid
-  defaultSupplierId String?           @map("default_supplier_id") @db.Uuid
-  itemType          ItemType          @default(STYLE) @map("item_type")
-  materialCategory  MaterialCategory? @map("material_category")
-  styleCode         String            @map("style_code")
-  styleName         String            @map("style_name")
+  id                    String            @id @default(uuid()) @db.Uuid
+  companyId             String            @map("company_id") @db.Uuid
+  customerId            String?           @map("customer_id") @db.Uuid
+  departmentId          String?           @map("department_id") @db.Uuid
+  baseUomId             String?           @map("base_uom_id") @db.Uuid
+  defaultSupplierId     String?           @map("default_supplier_id") @db.Uuid
+  itemType              ItemType          @default(STYLE) @map("item_type")
+  materialCategory      MaterialCategory? @map("material_category")
+  styleCode             String            @map("style_code")
+  styleName             String            @map("style_name")
   // Some companies identify a style primarily by a design number rather than
   // (or alongside) styleCode/styleName — free text, not unique, since design
   // numbering conventions vary by company and this is a display/reference
   // field, not the system's own identity key for the style.
-  designNumber      String?           @map("design_number")
-  categoryId        String?           @map("category_id") @db.Uuid
-  seasonId          String?           @map("season_id") @db.Uuid
+  designNumber          String?           @map("design_number")
+  categoryId            String?           @map("category_id") @db.Uuid
+  seasonId              String?           @map("season_id") @db.Uuid
   // Wired for real catalog filtering (Brand/Type/Fitting) — the masters
   // themselves have existed since Phase 3 but were never attached to a
   // Product FK until now. Design/DesignPattern/Pattern and the fabric
@@ -917,19 +917,24 @@ model Product {
   // their right anchor (style-level vs material-level) isn't unambiguous
   // yet, and guessing would risk exactly the "duplicate/unclear wiring"
   // this pass was told to avoid.
-  brandId           String?           @map("brand_id") @db.Uuid
-  productTypeId     String?           @map("product_type_id") @db.Uuid
-  productFittingId  String?           @map("product_fitting_id") @db.Uuid
-  gender            String?
-  description       String?
-  imageUrl          String?           @map("image_url")
-  hsnSacCode        String?           @map("hsn_sac_code")
-  reorderLevel      Decimal?          @map("reorder_level") @db.Decimal(18, 4)
-  unitCost          Decimal?          @map("unit_cost") @db.Decimal(18, 2)
-  isActive          Boolean           @default(true) @map("is_active")
-  deletedAt         DateTime?         @map("deleted_at")
-  createdAt         DateTime          @default(now()) @map("created_at")
-  updatedAt         DateTime          @updatedAt @map("updated_at")
+  brandId               String?           @map("brand_id") @db.Uuid
+  productTypeId         String?           @map("product_type_id") @db.Uuid
+  productFittingId      String?           @map("product_fitting_id") @db.Uuid
+  gender                String?
+  description           String?
+  imageUrl              String?           @map("image_url")
+  // Soft reference to Attachment.id — no hard FK, same convention as
+  // AiGarmentProject.referenceImageAttachmentId — points at whichever
+  // uploaded gallery image (relatedModule PRODUCT) is the designated cover/
+  // main image, for a future product-gallery/e-commerce-style display.
+  mainImageAttachmentId String?           @map("main_image_attachment_id") @db.Uuid
+  hsnSacCode            String?           @map("hsn_sac_code")
+  reorderLevel          Decimal?          @map("reorder_level") @db.Decimal(18, 4)
+  unitCost              Decimal?          @map("unit_cost") @db.Decimal(18, 2)
+  isActive              Boolean           @default(true) @map("is_active")
+  deletedAt             DateTime?         @map("deleted_at")
+  createdAt             DateTime          @default(now()) @map("created_at")
+  updatedAt             DateTime          @updatedAt @map("updated_at")
 
   company                      Company                       @relation(fields: [companyId], references: [id])
   customer                     Customer?                     @relation(fields: [customerId], references: [id])
@@ -1742,44 +1747,49 @@ enum SampleType {
 }
 
 model SampleRequest {
-  id                   String        @id @default(uuid()) @db.Uuid
-  companyId            String        @map("company_id") @db.Uuid
-  branchId             String?       @map("branch_id") @db.Uuid
-  requestNumber        String        @map("request_number")
-  customerId           String        @map("customer_id") @db.Uuid
-  buyerId              String?       @map("buyer_id") @db.Uuid
-  productId            String?       @map("product_id") @db.Uuid
+  id                    String        @id @default(uuid()) @db.Uuid
+  companyId             String        @map("company_id") @db.Uuid
+  branchId              String?       @map("branch_id") @db.Uuid
+  requestNumber         String        @map("request_number")
+  customerId            String        @map("customer_id") @db.Uuid
+  buyerId               String?       @map("buyer_id") @db.Uuid
+  productId             String?       @map("product_id") @db.Uuid
   // Nullable at the DB level (existing rows predate this field) but required by
   // the create-form's Zod schema — the display name for the sample even before
   // it has (or ever gets) a linked Product/Style. Prefilled onto the "Convert to
   // Style" form when the sample later graduates into a real Style master.
-  styleName            String?       @map("style_name")
+  styleName             String?       @map("style_name")
   // Nullable at the DB level (existing rows predate this field) but required by
   // the create-form's Zod schema, same precedent as styleName above. Immutable
   // after creation (no edit endpoint) — identity-like, same footing as
   // customer/style; silently relabeling a PP sample after the fact would
   // undermine its future role as a Production-order eligibility gate.
-  sampleType           SampleType?
+  sampleType            SampleType?
   // Was a free-text string until 2026-09-15 (a casual descriptive value, not
   // a Color master pick, per the original design note) — converted to a real
   // FK per explicit user request so the same color can drive the Sales
   // Order variant grid default once the sample is approved. Editable at any
   // stage, same reasoning as before (a customer may confirm/change the color
   // only after seeing the physical sample) — null means "not yet decided."
-  colorId              String?       @map("color_id") @db.Uuid
+  colorId               String?       @map("color_id") @db.Uuid
   // New 2026-09-15 — SampleRequest never had any size concept before this;
   // paired with colorId to describe "the color+size this sample was made
   // in," which Sales Order's own variant grid defaults to once the sample
   // is linked. Also nullable/editable at any stage, same reasoning as color.
-  sizeId               String?       @map("size_id") @db.Uuid
-  requestedByUserId    String        @map("requested_by_user_id") @db.Uuid
-  requestDate          DateTime      @map("request_date") @db.Date
-  targetSubmissionDate DateTime?     @map("target_submission_date") @db.Date
-  status               SampleStatus  @default(DRAFT)
-  statusBeforeHold     SampleStatus? @map("status_before_hold")
-  currentVersionNumber Int           @default(0) @map("current_version_number")
-  createdAt            DateTime      @default(now()) @map("created_at")
-  updatedAt            DateTime      @updatedAt @map("updated_at")
+  sizeId                String?       @map("size_id") @db.Uuid
+  // Soft reference to Attachment.id — no hard FK, same convention as
+  // Product.mainImageAttachmentId/AiGarmentProject.referenceImageAttachmentId
+  // — points at whichever uploaded gallery image (relatedModule
+  // SAMPLE_REQUEST) is the designated cover/main image.
+  mainImageAttachmentId String?       @map("main_image_attachment_id") @db.Uuid
+  requestedByUserId     String        @map("requested_by_user_id") @db.Uuid
+  requestDate           DateTime      @map("request_date") @db.Date
+  targetSubmissionDate  DateTime?     @map("target_submission_date") @db.Date
+  status                SampleStatus  @default(DRAFT)
+  statusBeforeHold      SampleStatus? @map("status_before_hold")
+  currentVersionNumber  Int           @default(0) @map("current_version_number")
+  createdAt             DateTime      @default(now()) @map("created_at")
+  updatedAt             DateTime      @updatedAt @map("updated_at")
 
   company          Company           @relation(fields: [companyId], references: [id])
   branch           Branch?           @relation(fields: [branchId], references: [id])
@@ -7636,7 +7646,9 @@ enum AiDesignerImageDecision {
   REJECTED
 }
 
-/** Edit Design workspace (2026-09-13) — a version's own review/approval state, shown as the "Design Status" badge in the workspace's top toolbar. DRAFT is the initial (never-edited) generation; every version created via an edit starts AI_MODIFIED; UNDER_REVIEW/APPROVED/REJECTED are explicit human actions from the workspace's Approve/Reject controls. */
+/**
+ * Edit Design workspace (2026-09-13) — a version's own review/approval state, shown as the "Design Status" badge in the workspace's top toolbar. DRAFT is the initial (never-edited) generation; every version created via an edit starts AI_MODIFIED; UNDER_REVIEW/APPROVED/REJECTED are explicit human actions from the workspace's Approve/Reject controls.
+ */
 enum AiDesignerVersionApprovalStatus {
   DRAFT
   AI_MODIFIED
@@ -7839,20 +7851,24 @@ model AiDesignerImage {
 // and a full designSnapshotJson so history stays inspectable even if the
 // project's own "current" fields move on later.
 model AiDesignerVersion {
-  id                 String                           @id @default(uuid()) @db.Uuid
-  companyId          String                           @map("company_id") @db.Uuid
-  projectId          String                           @map("project_id") @db.Uuid
-  versionNumber      Int                               @map("version_number")
-  currentImageId     String                           @map("current_image_id") @db.Uuid
-  changeSummary      String?                          @map("change_summary")
-  designSnapshotJson Json                             @map("design_snapshot_json")
-  approvalStatus     AiDesignerVersionApprovalStatus @default(DRAFT) @map("approval_status")
-  approvedByUserId   String?                          @map("approved_by_user_id") @db.Uuid
-  approvedAt         DateTime?                        @map("approved_at")
-  /** The exact AiDesignerPrompt (prompt text/spec/provider/model) that produced this version's image, when it came from an AI edit — null for the initial generation's own version if created some other way. Lets the Edit Design workspace's version history show "AI Prompt" per version without re-deriving it. */
-  aiPromptId         String?                          @map("ai_prompt_id") @db.Uuid
-  /** Structured Technical Edit Mode fields (e.g. {"Collar Type": "Mandarin", "Finished Height": "3.5 cm"}), kept alongside the free-text changeSummary/AI prompt — the workspace's "reflected in the design specification data" requirement (Technical Edit Mode). Null for a Quick Edit or AI Prompt edit that used no structured fields. */
-  technicalChangesJson Json?                          @map("technical_changes_json")
+  id                   String                          @id @default(uuid()) @db.Uuid
+  companyId            String                          @map("company_id") @db.Uuid
+  projectId            String                          @map("project_id") @db.Uuid
+  versionNumber        Int                             @map("version_number")
+  currentImageId       String                          @map("current_image_id") @db.Uuid
+  changeSummary        String?                         @map("change_summary")
+  designSnapshotJson   Json                            @map("design_snapshot_json")
+  approvalStatus       AiDesignerVersionApprovalStatus @default(DRAFT) @map("approval_status")
+  approvedByUserId     String?                         @map("approved_by_user_id") @db.Uuid
+  approvedAt           DateTime?                       @map("approved_at")
+  /**
+   * The exact AiDesignerPrompt (prompt text/spec/provider/model) that produced this version's image, when it came from an AI edit — null for the initial generation's own version if created some other way. Lets the Edit Design workspace's version history show "AI Prompt" per version without re-deriving it.
+   */
+  aiPromptId           String?                         @map("ai_prompt_id") @db.Uuid
+  /**
+   * Structured Technical Edit Mode fields (e.g. {"Collar Type": "Mandarin", "Finished Height": "3.5 cm"}), kept alongside the free-text changeSummary/AI prompt — the workspace's "reflected in the design specification data" requirement (Technical Edit Mode). Null for a Quick Edit or AI Prompt edit that used no structured fields.
+   */
+  technicalChangesJson Json?                           @map("technical_changes_json")
 
   createdByUserId String   @map("created_by_user_id") @db.Uuid
   createdAt       DateTime @default(now()) @map("created_at")
@@ -7920,23 +7936,29 @@ enum AiDesignerTechPackApprovalStatus {
 }
 
 model AiDesignerTechPack {
-  id                       String              @id @default(uuid()) @db.Uuid
-  companyId                String              @map("company_id") @db.Uuid
-  projectId                String              @map("project_id") @db.Uuid
-  status                   AiDesignerRunStatus @default(IN_PROGRESS)
-  /** The full structured Garment Analysis (categories A-J) -- see GarmentAnalysis in tech-pack/schema.ts for its exact shape. */
-  garmentAnalysisJson      Json?               @map("garment_analysis_json")
-  /** Frozen at generation time, never touched by edits -- see the model doc comment above. */
-  originalGarmentAnalysisJson Json?            @map("original_garment_analysis_json")
-  designerNotes            String?             @map("designer_notes")
-  suggestedAdditionalViews String?             @map("suggested_additional_views")
-  errorMessage             String?             @map("error_message")
+  id                          String              @id @default(uuid()) @db.Uuid
+  companyId                   String              @map("company_id") @db.Uuid
+  projectId                   String              @map("project_id") @db.Uuid
+  status                      AiDesignerRunStatus @default(IN_PROGRESS)
+  /**
+   * The full structured Garment Analysis (categories A-J) -- see GarmentAnalysis in tech-pack/schema.ts for its exact shape.
+   */
+  garmentAnalysisJson         Json?               @map("garment_analysis_json")
+  /**
+   * Frozen at generation time, never touched by edits -- see the model doc comment above.
+   */
+  originalGarmentAnalysisJson Json?               @map("original_garment_analysis_json")
+  designerNotes               String?             @map("designer_notes")
+  suggestedAdditionalViews    String?             @map("suggested_additional_views")
+  errorMessage                String?             @map("error_message")
 
-  approvalStatus  AiDesignerTechPackApprovalStatus @default(DRAFT) @map("approval_status")
-  approvedByUserId String?                         @map("approved_by_user_id") @db.Uuid
-  approvedAt       DateTime?                       @map("approved_at")
+  approvalStatus   AiDesignerTechPackApprovalStatus @default(DRAFT) @map("approval_status")
+  approvedByUserId String?                          @map("approved_by_user_id") @db.Uuid
+  approvedAt       DateTime?                        @map("approved_at")
 
-  /** A revision is just another row of this same model -- see the model doc comment above. */
+  /**
+   * A revision is just another row of this same model -- see the model doc comment above.
+   */
   revisionNumber   Int     @default(1) @map("revision_number")
   parentTechPackId String? @map("parent_tech_pack_id") @db.Uuid
 
@@ -7954,7 +7976,9 @@ model AiDesignerTechPack {
   @@map("ai_tech_packs")
 }
 
-/** One row per tech-pack page (always exactly 7 on a successful run, pages 1-7 per the user's own fixed page structure). `promptText` is nullable -- v3 removed all per-page AI image generation, so nothing populates it for new rows; historical rows keep their real string. `technicalFlatAttachmentId` is reserved for a genuinely future, separate feature (a manually-uploaded CAD/SVG technical flat) -- unpopulated by anything in this codebase today. */
+/**
+ * One row per tech-pack page (always exactly 7 on a successful run, pages 1-7 per the user's own fixed page structure). `promptText` is nullable -- v3 removed all per-page AI image generation, so nothing populates it for new rows; historical rows keep their real string. `technicalFlatAttachmentId` is reserved for a genuinely future, separate feature (a manually-uploaded CAD/SVG technical flat) -- unpopulated by anything in this codebase today.
+ */
 model AiDesignerTechPackPage {
   id                        String  @id @default(uuid()) @db.Uuid
   techPackId                String  @map("tech_pack_id") @db.Uuid
@@ -8154,7 +8178,9 @@ enum ReplicatePromptType {
   IMAGE_EDIT
 }
 
-/** Edit Design workspace (mirrors AiDesignerVersionApprovalStatus exactly) — a version's own review/approval state, shown as the "Design Status" badge in the workspace's top toolbar. DRAFT is the initial (never-edited) generation; every version created via an edit starts AI_MODIFIED; UNDER_REVIEW/APPROVED/REJECTED are explicit human actions from the workspace's Approve/Reject controls. */
+/**
+ * Edit Design workspace (mirrors AiDesignerVersionApprovalStatus exactly) — a version's own review/approval state, shown as the "Design Status" badge in the workspace's top toolbar. DRAFT is the initial (never-edited) generation; every version created via an edit starts AI_MODIFIED; UNDER_REVIEW/APPROVED/REJECTED are explicit human actions from the workspace's Approve/Reject controls.
+ */
 enum ReplicateDesignVersionApprovalStatus {
   DRAFT
   AI_MODIFIED
@@ -8457,11 +8483,11 @@ model ReplicateDesignGeneration {
   createdByUserId String   @map("created_by_user_id") @db.Uuid
   createdAt       DateTime @default(now()) @map("created_at")
 
-  company     Company                    @relation(fields: [companyId], references: [id])
-  project     ReplicateDesignProject     @relation(fields: [projectId], references: [id])
-  prompt      ReplicateDesignPrompt      @relation(fields: [promptId], references: [id])
-  parentImage ReplicateDesignImage?      @relation("ReplicateDesignGenerationParentImage", fields: [parentImageId], references: [id])
-  createdBy   User                       @relation("ReplicateDesignGenerationCreatedBy", fields: [createdByUserId], references: [id])
+  company     Company                @relation(fields: [companyId], references: [id])
+  project     ReplicateDesignProject @relation(fields: [projectId], references: [id])
+  prompt      ReplicateDesignPrompt  @relation(fields: [promptId], references: [id])
+  parentImage ReplicateDesignImage?  @relation("ReplicateDesignGenerationParentImage", fields: [parentImageId], references: [id])
+  createdBy   User                   @relation("ReplicateDesignGenerationCreatedBy", fields: [createdByUserId], references: [id])
 
   images ReplicateDesignImage[] @relation("ReplicateDesignImagesOfGeneration")
 
@@ -8505,14 +8531,18 @@ model ReplicateDesignVersion {
   versionNumber        Int                                  @map("version_number")
   currentImageId       String                               @map("current_image_id") @db.Uuid
   changeSummary        String?                              @map("change_summary")
-  designSnapshotJson    Json                                 @map("design_snapshot_json")
-  approvalStatus        ReplicateDesignVersionApprovalStatus @default(DRAFT) @map("approval_status")
-  approvedByUserId      String?                              @map("approved_by_user_id") @db.Uuid
-  approvedAt            DateTime?                            @map("approved_at")
-  /** The exact ReplicateDesignPrompt that produced this version's image, when it came from an AI edit — null for the initial generation's own version. */
-  aiPromptId            String?                              @map("ai_prompt_id") @db.Uuid
-  /** Structured Technical Edit Mode fields, kept alongside the free-text changeSummary/AI prompt — mirrors AiDesignerVersion.technicalChangesJson exactly. */
-  technicalChangesJson  Json?                                @map("technical_changes_json")
+  designSnapshotJson   Json                                 @map("design_snapshot_json")
+  approvalStatus       ReplicateDesignVersionApprovalStatus @default(DRAFT) @map("approval_status")
+  approvedByUserId     String?                              @map("approved_by_user_id") @db.Uuid
+  approvedAt           DateTime?                            @map("approved_at")
+  /**
+   * The exact ReplicateDesignPrompt that produced this version's image, when it came from an AI edit — null for the initial generation's own version.
+   */
+  aiPromptId           String?                              @map("ai_prompt_id") @db.Uuid
+  /**
+   * Structured Technical Edit Mode fields, kept alongside the free-text changeSummary/AI prompt — mirrors AiDesignerVersion.technicalChangesJson exactly.
+   */
+  technicalChangesJson Json?                                @map("technical_changes_json")
 
   createdByUserId String   @map("created_by_user_id") @db.Uuid
   createdAt       DateTime @default(now()) @map("created_at")
@@ -8549,7 +8579,9 @@ model ReplicateDesignTechPack {
   companyId                String              @map("company_id") @db.Uuid
   projectId                String              @map("project_id") @db.Uuid
   status                   AiDesignerRunStatus @default(IN_PROGRESS)
-  /** The full structured Garment Analysis (categories A-J) -- see GarmentAnalysis in tech-pack/schema.ts for its exact shape. */
+  /**
+   * The full structured Garment Analysis (categories A-J) -- see GarmentAnalysis in tech-pack/schema.ts for its exact shape.
+   */
   garmentAnalysisJson      Json?               @map("garment_analysis_json")
   designerNotes            String?             @map("designer_notes")
   suggestedAdditionalViews String?             @map("suggested_additional_views")
@@ -8558,15 +8590,17 @@ model ReplicateDesignTechPack {
   createdByUserId String   @map("created_by_user_id") @db.Uuid
   createdAt       DateTime @default(now()) @map("created_at")
 
-  company   Company                     @relation(fields: [companyId], references: [id])
-  project   ReplicateDesignProject      @relation(fields: [projectId], references: [id])
-  createdBy User                        @relation("ReplicateDesignTechPackCreatedBy", fields: [createdByUserId], references: [id])
+  company   Company                       @relation(fields: [companyId], references: [id])
+  project   ReplicateDesignProject        @relation(fields: [projectId], references: [id])
+  createdBy User                          @relation("ReplicateDesignTechPackCreatedBy", fields: [createdByUserId], references: [id])
   pages     ReplicateDesignTechPackPage[]
 
   @@map("replicate_design_tech_packs")
 }
 
-/** One row per generated tech-pack page (always exactly 7 on a successful run) -- the prompt text is kept alongside the image for review/audit, mirroring AiDesignerTechPackPage exactly. */
+/**
+ * One row per generated tech-pack page (always exactly 7 on a successful run) -- the prompt text is kept alongside the image for review/audit, mirroring AiDesignerTechPackPage exactly.
+ */
 model ReplicateDesignTechPackPage {
   id                String  @id @default(uuid()) @db.Uuid
   techPackId        String  @map("tech_pack_id") @db.Uuid
