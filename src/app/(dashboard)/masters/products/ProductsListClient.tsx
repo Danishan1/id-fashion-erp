@@ -7,7 +7,6 @@ import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { Modal } from "@/components/ui/Modal";
 import { ProductForm, type ProductFormValues } from "./ProductForm";
 import { VariantsSection } from "./VariantsSection";
-import { DesignNamesSection } from "./DesignNamesSection";
 import { ProductImagesSection } from "./ProductImagesSection";
 
 interface ProductRow {
@@ -249,7 +248,12 @@ function ProductsListContent() {
               BOM
             </a>
             <VariantsSection productId={row.id} variantCount={row._count.variants} />
-            <DesignNamesSection productId={row.id} designCount={row._count.sampleRequests} />
+            <a
+              href={`/masters/products/${row.id}/designs`}
+              className="whitespace-nowrap text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400"
+            >
+              Designs ({row._count.sampleRequests})
+            </a>
             <ProductImagesSection productId={row.id} />
           </>
         )}
