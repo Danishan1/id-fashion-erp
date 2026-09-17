@@ -11,7 +11,11 @@ export const ProductRepository = {
         brand: true,
         productType: true,
         productFitting: true,
-        _count: { select: { variants: true, sampleRequests: true } },
+        // The "Designs" count shown on the Styles list is scoped to
+        // APPROVED samples only, matching the Designs page's own listing —
+        // a style's Designs badge should reflect real, confirmed designs,
+        // not every draft/rejected sample ever raised against it.
+        _count: { select: { variants: true, sampleRequests: { where: { status: "APPROVED" } } } },
       },
       ...args,
     }),

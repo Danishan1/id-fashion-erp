@@ -12,14 +12,17 @@ export const SampleRequestRepository = {
         color: { select: { id: true, name: true, hexValue: true } },
         size: { select: { id: true, name: true } },
         requestedBy: { select: { id: true, fullName: true } },
-        // The current (highest version number) version's own costing only —
-        // callers like the Sales Order form's "Linked Sample" picker need a
-        // quick price reference, not the full costing/materials/approvals
-        // detail already served by findByIdWithDetails.
+        // The current (highest version number) version's own costing +
+        // decision-date only — callers like the Sales Order form's "Linked
+        // Sample" picker need a quick price reference (not the full costing/
+        // materials/approvals detail already served by findByIdWithDetails),
+        // and the Styles → Designs list needs customerDecisionAt as this
+        // record's real "Approved Date" (SampleRequest itself has no such
+        // column — the decision date lives per-version).
         versions: {
           orderBy: { versionNumber: "desc" },
           take: 1,
-          select: { estimatedCostPerUnit: true },
+          select: { estimatedCostPerUnit: true, customerDecisionAt: true },
         },
       },
       ...args,
