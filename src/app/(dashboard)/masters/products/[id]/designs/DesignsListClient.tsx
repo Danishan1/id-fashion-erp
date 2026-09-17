@@ -15,6 +15,7 @@ interface SampleRequestRow {
   styleName: string;
   status: keyof typeof STATUS_LABELS;
   sampleType: string;
+  mainImageAttachmentId: string | null;
   customer: { name: string } | null;
   // The current (highest-numbered) version's own decision date — matches
   // sample.repository.ts's findMany, since SampleRequest itself has no such
@@ -32,6 +33,10 @@ interface DesignsListClientProps {
 function formatDate(value: string | null) {
   if (!value) return "—";
   return new Date(value).toLocaleDateString();
+}
+
+function mainImageDownloadUrl(attachmentId: string) {
+  return `/api/v1/sampling/attachments/${attachmentId}/download?disposition=inline`;
 }
 
 /**
@@ -107,6 +112,7 @@ export function DesignsListClient({ productId, styleName, styleCode, variantCoun
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-zinc-200 text-left text-xs uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
+                  <th className="px-4 py-2 font-medium"></th>
                   <th className="px-4 py-2 font-medium">Request No.</th>
                   <th className="px-4 py-2 font-medium">Design Name</th>
                   <th className="px-4 py-2 font-medium">Customer</th>
@@ -118,6 +124,20 @@ export function DesignsListClient({ productId, styleName, styleCode, variantCoun
               <tbody>
                 {requests.map((r) => (
                   <tr key={r.id} className="border-b border-zinc-100 last:border-0 dark:border-zinc-800">
+                    <td className="px-4 py-2">
+                      {r.mainImageAttachmentId ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={mainImageDownloadUrl(r.mainImageAttachmentId)}
+                          alt={r.styleName}
+                          className="h-10 w-10 rounded object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-10 w-10 items-center justify-center rounded bg-zinc-100 text-xs text-zinc-400 dark:bg-zinc-800">
+                          —
+                        </div>
+                      )}
+                    </td>
                     <td className="px-4 py-2">
                       <a
                         href={`/sampling/${r.id}`}
