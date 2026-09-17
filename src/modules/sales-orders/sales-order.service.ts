@@ -41,12 +41,17 @@ const ALLOWED_TRANSITIONS: Record<SalesOrderStatus, SalesOrderStatus[]> = {
   CANCELLED: [],
 };
 
+const VALID_SALES_ORDER_STATUSES = new Set<string>(Object.values(SalesOrderStatus));
+
 export async function listSalesOrders(actor: { companyId: string; userId: string }, query: ListQuery) {
   const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
   const where: Prisma.SalesOrderWhereInput = {
     companyId: actor.companyId,
     ...branchScopeWhere(allowedBranchIds),
     ...(query.search ? { orderNumber: { contains: query.search, mode: "insensitive" as const } } : {}),
+    ...(query.status && VALID_SALES_ORDER_STATUSES.has(query.status)
+      ? { status: query.status as SalesOrderStatus }
+      : {}),
   };
 
   const [data, totalCount] = await Promise.all([

@@ -47,15 +47,19 @@ export function InternalTransfersListClient() {
         newAction={{ label: "New Transfer", onClick: () => setModalOpen(true) }}
         searchPlaceholder="Search by transfer number…"
         rowHref={(row) => `/accounts/internal-transfers/${row.id}`}
+        statusFilter={{
+          options: Object.entries(STATUS_LABELS).map(([value, label]) => ({ value, label })),
+        }}
         columns={[
-          { key: "transferNumber", header: "Transfer No." },
+          { key: "transferNumber", header: "Transfer No.", sortable: true },
           { key: "from", header: "From", render: (row) => row.fromPaymentType.name },
           { key: "to", header: "To", render: (row) => row.toPaymentType.name },
-          { key: "transferDate", header: "Date", render: (row) => row.transferDate?.slice(0, 10) },
-          { key: "amount", header: "Amount", render: (row) => `₹${Number(row.amount).toFixed(2)}` },
+          { key: "transferDate", header: "Date", sortable: true, render: (row) => row.transferDate?.slice(0, 10) },
+          { key: "amount", header: "Amount", sortable: true, render: (row) => `₹${Number(row.amount).toFixed(2)}` },
           {
             key: "status",
             header: "Status",
+            sortable: true,
             render: (row) => (
               <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_BADGE_CLASS[row.status]}`}>
                 {STATUS_LABELS[row.status] ?? row.status}

@@ -60,14 +60,17 @@ export default function LeadsListPage() {
         newLabel="New Lead"
         rowHref={(row) => `/leads/${row.id}`}
         refreshKey={refreshKey}
+        statusFilter={{
+          options: Object.entries(STATUS_LABELS).map(([value, label]) => ({ value, label })),
+        }}
         columns={[
-          { key: "leadNumber", header: "Lead #" },
-          { key: "name", header: "Name", render: (row) => `${row.name}${row.companyName ? ` (${row.companyName})` : ""}` },
-          { key: "leadScore", header: "Score", render: (row) => Number(row.leadScore).toFixed(1) },
+          { key: "leadNumber", header: "Lead #", sortable: true },
+          { key: "name", header: "Name", sortable: true, render: (row) => `${row.name}${row.companyName ? ` (${row.companyName})` : ""}` },
+          { key: "leadScore", header: "Score", sortable: true, render: (row) => Number(row.leadScore).toFixed(1) },
           { key: "priority", header: "Priority", render: (row) => PRIORITY_LABELS[row.priority] ?? row.priority },
-          { key: "value", header: "Potential Value", render: (row) => `₹${Number(row.value).toLocaleString()}` },
+          { key: "value", header: "Potential Value", sortable: true, render: (row) => `₹${Number(row.value).toLocaleString()}` },
           { key: "assignedTo", header: "Assigned To", render: (row) => row.assignedTo?.fullName ?? "—" },
-          { key: "status", header: "Status", render: (row) => STATUS_LABELS[row.status] ?? row.status },
+          { key: "status", header: "Status", sortable: true, render: (row) => STATUS_LABELS[row.status] ?? row.status },
         ]}
       />
 

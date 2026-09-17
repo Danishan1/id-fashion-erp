@@ -59,7 +59,7 @@ import type {
   SetDnaObservationLockInput,
   UpdateDnaObservationInput,
 } from "./replicate-design.schema";
-import type { Prisma, ReplicateDesignProject } from "@prisma/client";
+import { ReplicateDesignProjectStatus, type Prisma, type ReplicateDesignProject } from "@prisma/client";
 
 interface ActorContext {
   companyId: string;
@@ -179,10 +179,15 @@ async function assertNoActiveTechPackRun(projectId: string) {
 // List / get
 // ---------------------------------------------------------------------------
 
+const VALID_REPLICATE_DESIGN_PROJECT_STATUSES = new Set<string>(Object.values(ReplicateDesignProjectStatus));
+
 export async function listReplicateProjects(companyId: string, query: ListQuery) {
   const where: Prisma.ReplicateDesignProjectWhereInput = {
     companyId,
     ...(query.search ? { projectName: { contains: query.search, mode: "insensitive" as const } } : {}),
+    ...(query.status && VALID_REPLICATE_DESIGN_PROJECT_STATUSES.has(query.status)
+      ? { status: query.status as ReplicateDesignProjectStatus }
+      : {}),
   };
 
   const [data, totalCount] = await Promise.all([

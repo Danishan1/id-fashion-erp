@@ -135,8 +135,8 @@ export function BomMrpListClient({
           searchPlaceholder="Search by style name or code…"
           onEditRow={(row) => setSelectedStyleId(row.id)}
           columns={[
-            { key: "styleName", header: "Style" },
-            { key: "styleCode", header: "Code" },
+            { key: "styleName", header: "Style", sortable: true },
+            { key: "styleCode", header: "Code", sortable: true },
             {
               key: "bomItemCount",
               header: "BOM Lines",
@@ -158,19 +158,25 @@ export function BomMrpListClient({
           onEditRow={(row) => setSelectedSampleRequestId(row.id)}
           columns={[
             { key: "requestNumber", header: "Request #" },
-            { key: "styleName", header: "Design Name", render: (row) => row.styleName ?? "—" },
+            { key: "styleName", header: "Design Name", sortable: true, render: (row) => row.styleName ?? "—" },
             { key: "product", header: "Style", render: (row) => row.product?.styleName ?? "—" },
             { key: "customer", header: "Customer", render: (row) => row.customer?.name ?? "—" },
             {
               key: "status",
               header: "Status",
+              sortable: true,
               render: (row) => (
                 <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_BADGE_CLASS[row.status]}`}>
                   {STATUS_LABELS[row.status] ?? row.status}
                 </span>
               ),
             },
-            { key: "requestDate", header: "Request Date", render: (row) => new Date(row.requestDate).toLocaleDateString() },
+            {
+              key: "requestDate",
+              header: "Request Date",
+              sortable: true,
+              render: (row) => new Date(row.requestDate).toLocaleDateString(),
+            },
           ]}
         />
       )}

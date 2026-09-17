@@ -9,7 +9,7 @@ import { branchScopeWhere } from "@/lib/branch-access";
 import type { JournalInput, ReverseJournalInput } from "./journal.schema";
 import { JournalRepository } from "./journal.repository";
 import { ChartOfAccountRepository } from "./chart-of-account.repository";
-import type { JournalStatus, Prisma } from "@prisma/client";
+import { JournalStatus, type Prisma } from "@prisma/client";
 
 interface ActorContext {
   companyId: string;
@@ -38,12 +38,15 @@ async function assertAccountsBelongToCompany(companyId: string, lines: LineInput
   }
 }
 
+const VALID_JOURNAL_STATUSES = new Set<string>(Object.values(JournalStatus));
+
 export async function listJournals(actor: { companyId: string; userId: string }, query: ListQuery) {
   const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
   const where: Prisma.JournalWhereInput = {
     companyId: actor.companyId,
     ...branchScopeWhere(allowedBranchIds),
     ...(query.search ? { journalNumber: { contains: query.search, mode: "insensitive" as const } } : {}),
+    ...(query.status && VALID_JOURNAL_STATUSES.has(query.status) ? { status: query.status as JournalStatus } : {}),
   };
 
   const [data, totalCount] = await Promise.all([

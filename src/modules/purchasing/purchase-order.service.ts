@@ -128,12 +128,17 @@ function computeTotalAmount(items: PurchaseOrderItemInput[]) {
   return items.reduce((sum, item) => sum + item.unitPrice * item.orderedQuantity, 0);
 }
 
+const VALID_PURCHASE_ORDER_STATUSES = new Set<string>(Object.values(PurchaseOrderStatus));
+
 export async function listPurchaseOrders(actor: { companyId: string; userId: string }, query: ListQuery) {
   const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
   const where: Prisma.PurchaseOrderWhereInput = {
     companyId: actor.companyId,
     ...branchScopeWhere(allowedBranchIds),
     ...(query.search ? { orderNumber: { contains: query.search, mode: "insensitive" as const } } : {}),
+    ...(query.status && VALID_PURCHASE_ORDER_STATUSES.has(query.status)
+      ? { status: query.status as PurchaseOrderStatus }
+      : {}),
   };
 
   const [data, totalCount] = await Promise.all([

@@ -44,14 +44,15 @@ export function MaterialsListClient() {
         searchPlaceholder="Search by name or item code…"
         rowHref={(row) => `/masters/materials/${row.id}`}
         columns={[
-          { key: "styleCode", header: "Item Code" },
-          { key: "styleName", header: "Item Name" },
-          { key: "materialCategory", header: "Category", render: (row) => row.materialCategory ?? "—" },
+          { key: "styleCode", header: "Item Code", sortable: true },
+          { key: "styleName", header: "Item Name", sortable: true },
+          { key: "materialCategory", header: "Category", sortable: true, render: (row) => row.materialCategory ?? "—" },
           { key: "baseUom", header: "UOM", render: (row) => row.baseUom?.code ?? "—" },
-          { key: "reorderLevel", header: "Reorder Level", render: (row) => row.reorderLevel ?? "—" },
+          { key: "reorderLevel", header: "Reorder Level", sortable: true, render: (row) => row.reorderLevel ?? "—" },
           {
             key: "isActive",
             header: "Status",
+            sortable: true,
             render: (row) => (
               <span
                 className={`rounded-full px-2 py-0.5 text-xs font-medium ${

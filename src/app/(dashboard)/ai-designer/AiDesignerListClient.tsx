@@ -36,9 +36,12 @@ export function AiDesignerListClient() {
         newHref="/ai-designer/catalogue-designs/new"
         newLabel="New Design"
         rowHref={(row) => `/ai-designer/catalogue-designs/${row.id}`}
+        statusFilter={{
+          options: Object.entries(STATUS_LABELS).map(([value, label]) => ({ value, label })),
+        }}
         columns={[
-          { key: "projectNumber", header: "Design #" },
-          { key: "projectName", header: "Design Name" },
+          { key: "projectNumber", header: "Design #", sortable: true },
+          { key: "projectName", header: "Design Name", sortable: true },
           {
             key: "fabric",
             header: "Fabric",
@@ -52,6 +55,7 @@ export function AiDesignerListClient() {
           {
             key: "status",
             header: "Status",
+            sortable: true,
             render: (row) => (
               <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_BADGE_CLASS[row.status]}`}>
                 {STATUS_LABELS[row.status] ?? row.status}

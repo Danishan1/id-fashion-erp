@@ -3,7 +3,7 @@ import { prisma } from "@/core/db/client";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { advanceMasterCodeSequence, generateDocumentNumber } from "@/core/numbering/DocumentNumberingService";
 import type { ListQuery } from "@/lib/list-query";
-import type { DealStage, Prisma } from "@prisma/client";
+import { DealStage, type Prisma } from "@prisma/client";
 import { CustomerRepository } from "@/modules/customers/customer.repository";
 import { LeadRepository } from "./lead.repository";
 import { ProductionConfigRepository } from "@/modules/production-config/production-config.repository";
@@ -64,10 +64,13 @@ function decorateDeal<T extends { value: Prisma.Decimal | number | string; proba
   return { ...deal, weightedValue: computeWeightedValue(deal.value, deal.probabilityPercent) };
 }
 
+const VALID_DEAL_STAGES = new Set<string>(Object.values(DealStage));
+
 export async function listDeals(companyId: string, query: ListQuery) {
   const where: Prisma.DealWhereInput = {
     companyId,
     ...(query.search ? { title: { contains: query.search, mode: "insensitive" as const } } : {}),
+    ...(query.status && VALID_DEAL_STAGES.has(query.status) ? { stage: query.status as DealStage } : {}),
   };
 
   const [data, totalCount] = await Promise.all([

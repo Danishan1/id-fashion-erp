@@ -84,7 +84,7 @@ describe("DataTable — empty state (audit item #8)", () => {
     expect(container.querySelector("tbody")?.querySelector("button, a")).toBeNull();
   });
 
-  it("shows 'No records match your search.' with no CTA once a search is active, even when a New action exists", async () => {
+  it("shows 'No records match your search or filter.' with no CTA once a search is active, even when a New action exists", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(true, listBody([]))));
     const onClick = vi.fn();
 
@@ -95,7 +95,7 @@ describe("DataTable — empty state (audit item #8)", () => {
     const searchBox = await screen.findByPlaceholderText("Search…");
     fireEvent.change(searchBox, { target: { value: "zzz" } });
 
-    await waitFor(() => expect(screen.getByText("No records match your search.")).toBeTruthy(), { timeout: 2000 });
+    await waitFor(() => expect(screen.getByText("No records match your search or filter.")).toBeTruthy(), { timeout: 2000 });
     expect(screen.queryByText("No records found.")).toBeNull();
     // The header's own "New Thing" button legitimately stays visible while
     // searching (unchanged behavior) — the requirement is that the empty
@@ -173,5 +173,81 @@ describe("DataTable — sortable columns (audit item #7)", () => {
     await waitFor(() => expect(lastFetchedUrl(fetchMock).searchParams.get("sortOrder")).toBe("desc"), { timeout: 2000 });
     expect(screen.getByText("Name").closest("th")!.getAttribute("aria-sort")).toBe("descending");
     expect(screen.getByText("▼")).toBeTruthy();
+  });
+});
+
+describe("DataTable — statusFilter", () => {
+  function lastFetchedUrl(fetchMock: ReturnType<typeof vi.fn>): URL {
+    const calls = fetchMock.mock.calls;
+    return new URL(String(calls[calls.length - 1][0]));
+  }
+
+  it("renders no filter dropdown when statusFilter is not supplied", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(true, listBody([{ id: "1", name: "Acme" }]))));
+    render(<DataTable<Row> fetchUrl="/api/v1/things" columns={columns} />);
+    await waitFor(() => expect(screen.getByText("Acme")).toBeTruthy(), { timeout: 2000 });
+    expect(screen.queryByRole("combobox", { name: "Filter by status" })).toBeNull();
+  });
+
+  it("selecting a status option appends it to fetchUrl under the default 'status' param and resets to page 1", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(true, listBody([{ id: "1", name: "Acme" }])));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <DataTable<Row>
+        fetchUrl="/api/v1/things"
+        columns={columns}
+        statusFilter={{ options: [{ value: "ACTIVE", label: "Active" }, { value: "CLOSED", label: "Closed" }] }}
+      />
+    );
+    await waitFor(() => expect(screen.getByText("Acme")).toBeTruthy(), { timeout: 2000 });
+
+    const select = screen.getByRole("combobox", { name: "Filter by status" }) as HTMLSelectElement;
+    expect(select.value).toBe("");
+    fireEvent.change(select, { target: { value: "CLOSED" } });
+
+    await waitFor(() => expect(lastFetchedUrl(fetchMock).searchParams.get("status")).toBe("CLOSED"), { timeout: 2000 });
+    expect(lastFetchedUrl(fetchMock).searchParams.get("page")).toBe("1");
+  });
+
+  it("respects a custom paramName instead of the default 'status'", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(true, listBody([{ id: "1", name: "Acme" }])));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <DataTable<Row>
+        fetchUrl="/api/v1/things"
+        columns={columns}
+        statusFilter={{ options: [{ value: "TRANSFER", label: "Transfer" }], paramName: "movementType" }}
+      />
+    );
+    await waitFor(() => expect(screen.getByText("Acme")).toBeTruthy(), { timeout: 2000 });
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Filter by status" }), { target: { value: "TRANSFER" } });
+
+    await waitFor(() => expect(lastFetchedUrl(fetchMock).searchParams.get("movementType")).toBe("TRANSFER"), {
+      timeout: 2000,
+    });
+    expect(lastFetchedUrl(fetchMock).searchParams.has("status")).toBe(false);
+  });
+
+  it("shows the search-or-filter empty message once a status filter yields zero rows, even with no search text", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(true, listBody([]))));
+
+    render(
+      <DataTable<Row>
+        fetchUrl="/api/v1/things"
+        columns={columns}
+        statusFilter={{ options: [{ value: "CLOSED", label: "Closed" }] }}
+      />
+    );
+
+    fireEvent.change(await screen.findByRole("combobox", { name: "Filter by status" }), {
+      target: { value: "CLOSED" },
+    });
+
+    await waitFor(() => expect(screen.getByText("No records match your search or filter.")).toBeTruthy(), {
+      timeout: 2000,
+    });
   });
 });

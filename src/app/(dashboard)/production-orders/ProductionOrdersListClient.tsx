@@ -34,14 +34,18 @@ export function ProductionOrdersListClient() {
         newHref="/production-orders/new"
         newLabel="New Production Order"
         rowHref={(row) => `/production-orders/${row.id}`}
+        statusFilter={{
+          options: Object.entries(STATUS_LABELS).map(([value, label]) => ({ value, label })),
+        }}
         columns={[
-          { key: "orderNumber", header: "Order #" },
+          { key: "orderNumber", header: "Order #", sortable: true },
           { key: "product", header: "Style", render: (row) => (row.product ? `${row.product.styleName} (${row.product.styleCode})` : "—") },
-          { key: "plannedQuantity", header: "Planned Qty" },
-          { key: "priority", header: "Priority" },
+          { key: "plannedQuantity", header: "Planned Qty", sortable: true },
+          { key: "priority", header: "Priority", sortable: true },
           {
             key: "status",
             header: "Status",
+            sortable: true,
             render: (row) => (
               <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_BADGE_CLASS[row.status]}`}>
                 {STATUS_LABELS[row.status] ?? row.status}
@@ -49,7 +53,7 @@ export function ProductionOrdersListClient() {
             ),
           },
           { key: "requestedBy", header: "Requested By", render: (row) => row.requestedBy?.fullName ?? "—" },
-          { key: "createdAt", header: "Date", render: (row) => new Date(row.createdAt).toLocaleDateString() },
+          { key: "createdAt", header: "Date", sortable: true, render: (row) => new Date(row.createdAt).toLocaleDateString() },
         ]}
       />
     </div>

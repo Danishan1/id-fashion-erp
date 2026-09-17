@@ -35,9 +35,12 @@ export function ReplicateDesignListClient() {
         newHref="/ai-designer/replicate/new"
         newLabel="New Project"
         rowHref={(row) => `/ai-designer/replicate/${row.id}`}
+        statusFilter={{
+          options: Object.entries(STATUS_LABELS).map(([value, label]) => ({ value, label })),
+        }}
         columns={[
-          { key: "projectNumber", header: "Project #" },
-          { key: "projectName", header: "Project Name" },
+          { key: "projectNumber", header: "Project #", sortable: true },
+          { key: "projectName", header: "Project Name", sortable: true },
           {
             key: "fabric",
             header: "Fabric",
@@ -51,6 +54,7 @@ export function ReplicateDesignListClient() {
           {
             key: "status",
             header: "Status",
+            sortable: true,
             render: (row) => (
               <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_BADGE_CLASS[row.status]}`}>
                 {STATUS_LABELS[row.status] ?? row.status}

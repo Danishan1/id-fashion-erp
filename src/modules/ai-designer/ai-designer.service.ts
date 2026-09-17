@@ -58,7 +58,7 @@ import type {
   UpdateFabricFieldInput,
   UpdateTechPackFieldInput,
 } from "./ai-designer.schema";
-import type { AiDesignerProject, Prisma } from "@prisma/client";
+import { AiDesignerProjectStatus, type AiDesignerProject, type Prisma } from "@prisma/client";
 
 interface ActorContext {
   companyId: string;
@@ -167,10 +167,15 @@ async function assertNoActiveRun(projectId: string, promptType: "FABRIC_ANALYSIS
 // List / get
 // ---------------------------------------------------------------------------
 
+const VALID_AI_DESIGNER_PROJECT_STATUSES = new Set<string>(Object.values(AiDesignerProjectStatus));
+
 export async function listProjects(companyId: string, query: ListQuery) {
   const where: Prisma.AiDesignerProjectWhereInput = {
     companyId,
     ...(query.search ? { projectName: { contains: query.search, mode: "insensitive" as const } } : {}),
+    ...(query.status && VALID_AI_DESIGNER_PROJECT_STATUSES.has(query.status)
+      ? { status: query.status as AiDesignerProjectStatus }
+      : {}),
   };
 
   const [data, totalCount] = await Promise.all([

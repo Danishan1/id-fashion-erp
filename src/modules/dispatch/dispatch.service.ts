@@ -5,7 +5,7 @@ import { PermissionService } from "@/core/rbac/PermissionService";
 import { prisma } from "@/core/db/client";
 import type { ListQuery } from "@/lib/list-query";
 import { branchScopeWhere } from "@/lib/branch-access";
-import type { DispatchStatus, Prisma } from "@prisma/client";
+import { DispatchStatus, type Prisma } from "@prisma/client";
 import { SalesOrderRepository } from "@/modules/sales-orders/sales-order.repository";
 import { recordInventoryTransaction, getAvailableQuantity } from "@/modules/inventory/inventory.service";
 import type { DispatchInput, UpdateDispatchInput, SetCartonsInput } from "./dispatch.schema";
@@ -82,12 +82,15 @@ async function buildDispatchItems(orderItems: OrderItemLike[], inputItems: Dispa
   return items;
 }
 
+const VALID_DISPATCH_STATUSES = new Set<string>(Object.values(DispatchStatus));
+
 export async function listDispatches(actor: { companyId: string; userId: string }, query: ListQuery) {
   const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
   const where: Prisma.DispatchWhereInput = {
     companyId: actor.companyId,
     ...branchScopeWhere(allowedBranchIds),
     ...(query.search ? { dispatchNumber: { contains: query.search, mode: "insensitive" as const } } : {}),
+    ...(query.status && VALID_DISPATCH_STATUSES.has(query.status) ? { status: query.status as DispatchStatus } : {}),
   };
 
   const [data, totalCount] = await Promise.all([

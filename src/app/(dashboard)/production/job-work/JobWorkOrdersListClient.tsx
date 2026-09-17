@@ -87,21 +87,25 @@ export function JobWorkOrdersListClient() {
         fetchUrl={fetchUrl}
         searchPlaceholder="Search by job-work #…"
         rowHref={(row) => `/production/job-work/${row.id}`}
+        statusFilter={{
+          options: Object.entries(JOB_WORK_ORDER_STATUS_LABELS).map(([value, label]) => ({ value, label })),
+        }}
         columns={[
-          { key: "jobWorkNumber", header: "Job-Work #" },
+          { key: "jobWorkNumber", header: "Job-Work #", sortable: true },
           { key: "supplier", header: "Contractor", render: (row) => row.supplier.name },
           {
             key: "jobOrder",
             header: "Lot / Job Order",
             render: (row) => `${row.jobOrder.lot.productionOrder.orderNumber} / ${row.jobOrder.lot.lotNumber} — ${row.jobOrder.jobNumber}`,
           },
-          { key: "issuedQuantity", header: "Issued", render: (row) => row.issuedQuantity },
-          { key: "receivedQuantity", header: "Received", render: (row) => row.receivedQuantity },
+          { key: "issuedQuantity", header: "Issued", sortable: true, render: (row) => row.issuedQuantity },
+          { key: "receivedQuantity", header: "Received", sortable: true, render: (row) => row.receivedQuantity },
           { key: "pending", header: "Pending", render: (row) => row.metrics.pendingQuantity },
           { key: "daysElapsed", header: "Days Elapsed", render: (row) => row.metrics.daysElapsed },
           {
             key: "status",
             header: "Status",
+            sortable: true,
             render: (row) => (
               <div className="flex items-center gap-2">
                 <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${JOB_WORK_ORDER_STATUS_BADGE_CLASS[row.status]}`}>

@@ -47,15 +47,19 @@ export function EmployeeAdvancesListClient() {
         newAction={{ label: "New Advance", onClick: () => setModalOpen(true) }}
         searchPlaceholder="Search by advance number…"
         rowHref={(row) => `/accounts/employee-advances/${row.id}`}
+        statusFilter={{
+          options: Object.entries(STATUS_LABELS).map(([value, label]) => ({ value, label })),
+        }}
         columns={[
-          { key: "advanceNumber", header: "Advance No." },
+          { key: "advanceNumber", header: "Advance No.", sortable: true },
           { key: "employee", header: "Employee", render: (row) => row.employee.fullName },
-          { key: "advanceDate", header: "Date", render: (row) => row.advanceDate?.slice(0, 10) },
-          { key: "amount", header: "Amount", render: (row) => `₹${Number(row.amount).toFixed(2)}` },
-          { key: "settledAmount", header: "Settled", render: (row) => `₹${Number(row.settledAmount).toFixed(2)}` },
+          { key: "advanceDate", header: "Date", sortable: true, render: (row) => row.advanceDate?.slice(0, 10) },
+          { key: "amount", header: "Amount", sortable: true, render: (row) => `₹${Number(row.amount).toFixed(2)}` },
+          { key: "settledAmount", header: "Settled", sortable: true, render: (row) => `₹${Number(row.settledAmount).toFixed(2)}` },
           {
             key: "status",
             header: "Status",
+            sortable: true,
             render: (row) => (
               <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_BADGE_CLASS[row.status]}`}>
                 {STATUS_LABELS[row.status] ?? row.status}

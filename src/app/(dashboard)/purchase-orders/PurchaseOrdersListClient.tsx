@@ -34,12 +34,16 @@ export function PurchaseOrdersListClient() {
         newHref="/purchase-orders/new"
         newLabel="New Purchase Order"
         rowHref={(row) => `/purchase-orders/${row.id}`}
+        statusFilter={{
+          options: Object.entries(STATUS_LABELS).map(([value, label]) => ({ value, label })),
+        }}
         columns={[
-          { key: "orderNumber", header: "Order #" },
+          { key: "orderNumber", header: "Order #", sortable: true },
           { key: "supplier", header: "Supplier", render: (row) => row.supplier?.name ?? "—" },
           {
             key: "status",
             header: "Status",
+            sortable: true,
             render: (row) => (
               <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_BADGE_CLASS[row.status]}`}>
                 {STATUS_LABELS[row.status] ?? row.status}
@@ -49,12 +53,14 @@ export function PurchaseOrdersListClient() {
           {
             key: "totalAmount",
             header: "Amount",
+            sortable: true,
             render: (row) => `${row.currencyCode} ${formatCurrency(row.totalAmount)}`,
           },
           { key: "requestedBy", header: "Requested By", render: (row) => row.requestedBy?.fullName ?? "—" },
           {
             key: "orderDate",
             header: "Order Date",
+            sortable: true,
             render: (row) => new Date(row.orderDate).toLocaleDateString(),
           },
         ]}

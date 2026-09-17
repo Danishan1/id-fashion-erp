@@ -32,11 +32,15 @@ export function PaymentsListClient() {
         newLabel="New Payment"
         searchPlaceholder="Search by payment number…"
         rowHref={(row) => `/accounts/payments/${row.id}`}
+        statusFilter={{
+          options: Object.entries(STATUS_LABELS).map(([value, label]) => ({ value, label })),
+        }}
         columns={[
-          { key: "paymentNumber", header: "Payment No." },
+          { key: "paymentNumber", header: "Payment No.", sortable: true },
           {
             key: "direction",
             header: "Direction",
+            sortable: true,
             render: (row) => (row.direction === "RECEIPT" ? "Receipt" : "Payment Out"),
           },
           {
@@ -44,11 +48,12 @@ export function PaymentsListClient() {
             header: "Party",
             render: (row) => row.customer?.name ?? row.supplier?.name ?? "—",
           },
-          { key: "paymentDate", header: "Date", render: (row) => row.paymentDate?.slice(0, 10) },
-          { key: "amount", header: "Amount", render: (row) => Number(row.amount).toFixed(2) },
+          { key: "paymentDate", header: "Date", sortable: true, render: (row) => row.paymentDate?.slice(0, 10) },
+          { key: "amount", header: "Amount", sortable: true, render: (row) => Number(row.amount).toFixed(2) },
           {
             key: "status",
             header: "Status",
+            sortable: true,
             render: (row) => (
               <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_BADGE_CLASS[row.status]}`}>
                 {STATUS_LABELS[row.status] ?? row.status}

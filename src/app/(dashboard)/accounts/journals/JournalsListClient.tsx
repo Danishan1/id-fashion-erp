@@ -30,16 +30,20 @@ export function JournalsListClient() {
         newLabel="New Journal"
         searchPlaceholder="Search by journal number…"
         rowHref={(row) => `/accounts/journals/${row.id}`}
+        statusFilter={{
+          options: Object.entries(STATUS_LABELS).map(([value, label]) => ({ value, label })),
+        }}
         columns={[
-          { key: "journalNumber", header: "Journal No." },
-          { key: "journalDate", header: "Date", render: (row) => row.journalDate?.slice(0, 10) },
+          { key: "journalNumber", header: "Journal No.", sortable: true },
+          { key: "journalDate", header: "Date", sortable: true, render: (row) => row.journalDate?.slice(0, 10) },
           { key: "narration", header: "Narration", render: (row) => row.narration ?? "—" },
-          { key: "totalDebit", header: "Debit", render: (row) => Number(row.totalDebit).toFixed(2) },
-          { key: "totalCredit", header: "Credit", render: (row) => Number(row.totalCredit).toFixed(2) },
+          { key: "totalDebit", header: "Debit", sortable: true, render: (row) => Number(row.totalDebit).toFixed(2) },
+          { key: "totalCredit", header: "Credit", sortable: true, render: (row) => Number(row.totalCredit).toFixed(2) },
           { key: "createdBy", header: "Created By", render: (row) => row.createdBy?.fullName ?? "—" },
           {
             key: "status",
             header: "Status",
+            sortable: true,
             render: (row) => (
               <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_BADGE_CLASS[row.status]}`}>
                 {STATUS_LABELS[row.status] ?? row.status}

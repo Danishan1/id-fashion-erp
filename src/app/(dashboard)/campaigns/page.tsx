@@ -82,17 +82,20 @@ function CampaignsListContent() {
         newLabel="New Campaign"
         rowHref={(row) => `/campaigns/${row.id}`}
         refreshKey={refreshKey}
+        statusFilter={{
+          options: Object.entries(STATUS_LABELS).map(([value, label]) => ({ value, label })),
+        }}
         columns={[
-          { key: "campaignNumber", header: "Campaign #" },
-          { key: "name", header: "Name" },
-          { key: "channel", header: "Channel", render: (row) => CHANNEL_LABELS[row.channel] ?? row.channel },
-          { key: "budget", header: "Budget", render: (row) => `₹${Number(row.budget).toLocaleString()}` },
+          { key: "campaignNumber", header: "Campaign #", sortable: true },
+          { key: "name", header: "Name", sortable: true },
+          { key: "channel", header: "Channel", sortable: true, render: (row) => CHANNEL_LABELS[row.channel] ?? row.channel },
+          { key: "budget", header: "Budget", sortable: true, render: (row) => `₹${Number(row.budget).toLocaleString()}` },
           { key: "spend", header: "Spend", render: (row) => `₹${row.metrics.spend.toLocaleString()}` },
           { key: "leads", header: "Leads", render: (row) => row.metrics.leads },
           { key: "customers", header: "Customers", render: (row) => row.metrics.customers },
           { key: "revenue", header: "Revenue", render: (row) => `₹${row.metrics.revenue.toLocaleString()}` },
-          { key: "status", header: "Status", render: (row) => STATUS_LABELS[row.status] ?? row.status },
-          { key: "approvalStatus", header: "Approval", render: (row) => APPROVAL_LABELS[row.approvalStatus] ?? row.approvalStatus },
+          { key: "status", header: "Status", sortable: true, render: (row) => STATUS_LABELS[row.status] ?? row.status },
+          { key: "approvalStatus", header: "Approval", sortable: true, render: (row) => APPROVAL_LABELS[row.approvalStatus] ?? row.approvalStatus },
         ]}
       />
 

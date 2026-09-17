@@ -8,7 +8,7 @@ import { branchScopeWhere } from "@/lib/branch-access";
 import { convertUomQuantity } from "@/lib/uom-conversion";
 import { LookupRepository } from "@/modules/lookups/lookup.repository";
 import { ProductRepository } from "@/modules/products/product.repository";
-import type { Prisma } from "@prisma/client";
+import { StockMovementType, type Prisma } from "@prisma/client";
 import { getAvailableQuantity, recordInventoryTransaction } from "./inventory.service";
 import { StockMovementRepository } from "./stock-movement.repository";
 import type { CreateStockMovementInput } from "./stock-movement.schema";
@@ -25,12 +25,29 @@ const INVENTORY_TRANSACTION_TYPE_BY_MOVEMENT_TYPE = {
   RETURN_TO_SUPPLIER: "RETURN_TO_SUPPLIER",
 } as const;
 
-export async function listStockMovements(actor: { companyId: string; userId: string }, query: ListQuery) {
+const VALID_STOCK_MOVEMENT_TYPES = new Set<string>(Object.values(StockMovementType));
+
+/**
+ * `movementType` (TRANSFER/ADJUSTMENT/RETURN_TO_SUPPLIER) is this model's own
+ * status-shaped filter, but it isn't called "status" and ListQuery only
+ * parses the generic `?status=` param — so the route reads `?movementType=`
+ * itself and passes the raw string through here, validated against the real
+ * runtime enum object before it can reach Prisma's `where`, same discipline
+ * as every other status/type filter in this codebase.
+ */
+export async function listStockMovements(
+  actor: { companyId: string; userId: string },
+  query: ListQuery,
+  movementType?: string
+) {
   const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
   const where: Prisma.StockMovementWhereInput = {
     companyId: actor.companyId,
     ...branchScopeWhere(allowedBranchIds),
     ...(query.search ? { movementNumber: { contains: query.search, mode: "insensitive" as const } } : {}),
+    ...(movementType && VALID_STOCK_MOVEMENT_TYPES.has(movementType)
+      ? { movementType: movementType as StockMovementType }
+      : {}),
   };
 
   const [data, totalCount] = await Promise.all([

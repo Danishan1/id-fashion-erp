@@ -5,7 +5,7 @@ import { PermissionService } from "@/core/rbac/PermissionService";
 import { prisma } from "@/core/db/client";
 import type { ListQuery } from "@/lib/list-query";
 import { branchScopeWhere } from "@/lib/branch-access";
-import { Prisma } from "@prisma/client";
+import { Prisma, SalesInvoiceStatus } from "@prisma/client";
 import { SalesOrderRepository } from "@/modules/sales-orders/sales-order.repository";
 import type { SalesInvoiceInput } from "./sales-invoice.schema";
 import { SalesInvoiceRepository } from "./sales-invoice.repository";
@@ -85,12 +85,17 @@ function sumTotals(items: Awaited<ReturnType<typeof buildInvoiceItems>>) {
   return { subtotalAmount, taxAmount, totalAmount: round2(subtotalAmount + taxAmount) };
 }
 
+const VALID_SALES_INVOICE_STATUSES = new Set<string>(Object.values(SalesInvoiceStatus));
+
 export async function listSalesInvoices(actor: { companyId: string; userId: string }, query: ListQuery) {
   const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
   const where: Prisma.SalesInvoiceWhereInput = {
     companyId: actor.companyId,
     ...branchScopeWhere(allowedBranchIds),
     ...(query.search ? { invoiceNumber: { contains: query.search, mode: "insensitive" as const } } : {}),
+    ...(query.status && VALID_SALES_INVOICE_STATUSES.has(query.status)
+      ? { status: query.status as SalesInvoiceStatus }
+      : {}),
   };
 
   const [data, totalCount] = await Promise.all([

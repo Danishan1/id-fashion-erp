@@ -3,7 +3,7 @@ import { BusinessRuleError, isUniqueConstraintViolationOnColumn } from "@/core/e
 import { prisma } from "@/core/db/client";
 import { round2 } from "@/lib/money";
 import type { ListQuery } from "@/lib/list-query";
-import { Prisma } from "@prisma/client";
+import { CustomInvoiceStatus, Prisma } from "@prisma/client";
 import type { CustomInvoiceInput } from "./custom-invoice.schema";
 import { CustomInvoiceRepository } from "./custom-invoice.repository";
 import { InvoiceSeriesRepository } from "./invoice-series.repository";
@@ -100,10 +100,15 @@ async function assertValidIncomeAccount(companyId: string, incomeAccountId: stri
   }
 }
 
+const VALID_CUSTOM_INVOICE_STATUSES = new Set<string>(Object.values(CustomInvoiceStatus));
+
 export async function listCustomInvoices(companyId: string, query: ListQuery) {
   const where: Prisma.CustomInvoiceWhereInput = {
     companyId,
     ...(query.search ? { invoiceNumber: { contains: query.search, mode: "insensitive" as const } } : {}),
+    ...(query.status && VALID_CUSTOM_INVOICE_STATUSES.has(query.status)
+      ? { status: query.status as CustomInvoiceStatus }
+      : {}),
   };
 
   const [data, totalCount] = await Promise.all([

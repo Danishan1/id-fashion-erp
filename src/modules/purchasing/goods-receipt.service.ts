@@ -12,7 +12,7 @@ import { FabricRollRepository } from "./fabric-roll.repository";
 import { GoodsReceiptItemRepository, GoodsReceiptRepository } from "./goods-receipt.repository";
 import type { GoodsReceiptInput, ReverseGoodsReceiptLineInput } from "./goods-receipt.schema";
 import { PurchaseOrderItemRepository, PurchaseOrderRepository } from "./purchase-order.repository";
-import type { Prisma } from "@prisma/client";
+import { GoodsReceiptStatus, type Prisma } from "@prisma/client";
 
 interface ActorContext {
   companyId: string;
@@ -20,12 +20,17 @@ interface ActorContext {
   branchId?: string | null;
 }
 
+const VALID_GOODS_RECEIPT_STATUSES = new Set<string>(Object.values(GoodsReceiptStatus));
+
 export async function listGoodsReceipts(actor: { companyId: string; userId: string }, query: ListQuery) {
   const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
   const where: Prisma.GoodsReceiptWhereInput = {
     companyId: actor.companyId,
     ...branchScopeWhere(allowedBranchIds),
     ...(query.search ? { receiptNumber: { contains: query.search, mode: "insensitive" as const } } : {}),
+    ...(query.status && VALID_GOODS_RECEIPT_STATUSES.has(query.status)
+      ? { status: query.status as GoodsReceiptStatus }
+      : {}),
   };
 
   const [data, totalCount] = await Promise.all([

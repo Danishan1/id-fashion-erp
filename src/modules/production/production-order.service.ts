@@ -9,7 +9,7 @@ import { BomRepository } from "@/modules/bom-mrp/bom.repository";
 import { getMaterialRequirementForOrderLine } from "@/modules/bom-mrp/mrp.service";
 import { createMaterialRequest } from "@/modules/inventory/material-request.service";
 import { ProductRepository } from "@/modules/products/product.repository";
-import type { Prisma, ProductionOrderStatus } from "@prisma/client";
+import { ProductionOrderStatus, type Prisma } from "@prisma/client";
 import { LotRepository, ProductionOrderRepository } from "./production.repository";
 import { getProductionOrderProgress } from "./production-progress.service";
 import type { CreateProductionOrderInput, GenerateMaterialRequestInput } from "./production.schema";
@@ -96,12 +96,17 @@ export async function getSalesOrderLineCommitment(
   return { orderedTotal, otherCommitted, remaining: orderedTotal - otherCommitted };
 }
 
+const VALID_PRODUCTION_ORDER_STATUSES = new Set<string>(Object.values(ProductionOrderStatus));
+
 export async function listProductionOrders(actor: { companyId: string; userId: string }, query: ListQuery) {
   const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
   const where: Prisma.ProductionOrderWhereInput = {
     companyId: actor.companyId,
     ...branchScopeWhere(allowedBranchIds),
     ...(query.search ? { orderNumber: { contains: query.search, mode: "insensitive" as const } } : {}),
+    ...(query.status && VALID_PRODUCTION_ORDER_STATUSES.has(query.status)
+      ? { status: query.status as ProductionOrderStatus }
+      : {}),
   };
 
   const [data, totalCount] = await Promise.all([

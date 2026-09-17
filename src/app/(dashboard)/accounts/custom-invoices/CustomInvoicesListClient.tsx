@@ -45,17 +45,26 @@ export function CustomInvoicesListClient() {
         newLabel="New Custom Invoice"
         searchPlaceholder="Search by invoice number…"
         rowHref={(row) => `/accounts/custom-invoices/${row.id}`}
+        statusFilter={{
+          options: Object.entries(STATUS_LABELS).map(([value, label]) => ({ value, label })),
+        }}
         columns={[
-          { key: "invoiceNumber", header: "Invoice No." },
+          { key: "invoiceNumber", header: "Invoice No.", sortable: true },
           { key: "invoiceSeries", header: "Series", render: (row) => row.invoiceSeries?.name ?? "—" },
           { key: "customer", header: "Client", render: (row) => row.customer?.name ?? "—" },
-          { key: "invoiceType", header: "Type", render: (row) => (row.invoiceType === "TAX_INVOICE" ? "Tax Invoice" : "Proforma Invoice") },
-          { key: "invoiceDate", header: "Date", render: (row) => row.invoiceDate?.slice(0, 10) },
-          { key: "grandTotal", header: "Grand Total", render: (row) => `₹${Number(row.grandTotal).toFixed(2)}` },
-          { key: "balanceDue", header: "Balance Due", render: (row) => `₹${Number(row.balanceDue).toFixed(2)}` },
+          {
+            key: "invoiceType",
+            header: "Type",
+            sortable: true,
+            render: (row) => (row.invoiceType === "TAX_INVOICE" ? "Tax Invoice" : "Proforma Invoice"),
+          },
+          { key: "invoiceDate", header: "Date", sortable: true, render: (row) => row.invoiceDate?.slice(0, 10) },
+          { key: "grandTotal", header: "Grand Total", sortable: true, render: (row) => `₹${Number(row.grandTotal).toFixed(2)}` },
+          { key: "balanceDue", header: "Balance Due", sortable: true, render: (row) => `₹${Number(row.balanceDue).toFixed(2)}` },
           {
             key: "status",
             header: "Status",
+            sortable: true,
             render: (row) => (
               <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_BADGE_CLASS[row.status]}`}>
                 {STATUS_LABELS[row.status] ?? row.status}

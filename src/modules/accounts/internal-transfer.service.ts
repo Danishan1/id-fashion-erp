@@ -4,7 +4,7 @@ import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingServic
 import { PermissionService } from "@/core/rbac/PermissionService";
 import { prisma } from "@/core/db/client";
 import type { ListQuery } from "@/lib/list-query";
-import type { Prisma } from "@prisma/client";
+import { InternalTransferStatus, type Prisma } from "@prisma/client";
 import { FinanceConfigRepository } from "@/modules/finance-config/finance-config.repository";
 import type { InternalTransferInput } from "./internal-transfer.schema";
 import { InternalTransferRepository } from "./internal-transfer.repository";
@@ -21,10 +21,15 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+const VALID_INTERNAL_TRANSFER_STATUSES = new Set<string>(Object.values(InternalTransferStatus));
+
 export async function listInternalTransfers(companyId: string, query: ListQuery) {
   const where: Prisma.InternalTransferWhereInput = {
     companyId,
     ...(query.search ? { transferNumber: { contains: query.search, mode: "insensitive" as const } } : {}),
+    ...(query.status && VALID_INTERNAL_TRANSFER_STATUSES.has(query.status)
+      ? { status: query.status as InternalTransferStatus }
+      : {}),
   };
 
   const [data, totalCount] = await Promise.all([

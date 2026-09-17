@@ -35,16 +35,21 @@ export function AiGarmentProjectsListClient() {
         newHref="/ai-garment-flow/projects/new?source=REFERENCE"
         newLabel="New Project"
         rowHref={(row) => `/ai-garment-flow/projects/${row.id}`}
+        statusFilter={{
+          options: Object.entries(STATUS_LABELS).map(([value, label]) => ({ value, label })),
+          allLabel: "All Stages",
+        }}
         columns={[
-          { key: "projectNumber", header: "Project #" },
-          { key: "projectName", header: "Project" },
-          { key: "sourceType", header: "Source", render: (row) => SOURCE_TYPE_LABELS[row.sourceType] ?? row.sourceType },
+          { key: "projectNumber", header: "Project #", sortable: true },
+          { key: "projectName", header: "Project", sortable: true },
+          { key: "sourceType", header: "Source", sortable: true, render: (row) => SOURCE_TYPE_LABELS[row.sourceType] ?? row.sourceType },
           { key: "buyer", header: "Buyer / Customer", render: (row) => row.buyer?.name ?? row.customer?.name ?? "—" },
           { key: "brand", header: "Brand", render: (row) => row.brand?.name ?? "—" },
           { key: "season", header: "Season", render: (row) => row.season?.name ?? "—" },
           {
             key: "status",
             header: "Stage / Status",
+            sortable: true,
             render: (row) => (
               <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_BADGE_CLASS[row.status]}`}>
                 {STATUS_LABELS[row.status] ?? row.status}
@@ -52,7 +57,7 @@ export function AiGarmentProjectsListClient() {
             ),
           },
           { key: "createdBy", header: "Created By", render: (row) => row.createdBy?.fullName ?? "—" },
-          { key: "createdAt", header: "Created", render: (row) => new Date(row.createdAt).toLocaleDateString() },
+          { key: "createdAt", header: "Created", sortable: true, render: (row) => new Date(row.createdAt).toLocaleDateString() },
         ]}
       />
     </div>

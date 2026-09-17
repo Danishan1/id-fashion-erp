@@ -21,6 +21,15 @@ const STATUS_STYLES: Record<string, string> = {
   CANCELLED: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
 };
 
+const STATUS_LABELS: Record<string, string> = {
+  DRAFT: "Draft",
+  PACKED: "Packed",
+  DISPATCHED: "Dispatched",
+  DELIVERED: "Delivered",
+  ON_HOLD: "On Hold",
+  CANCELLED: "Cancelled",
+};
+
 export default function DispatchListPage() {
   return (
     <div className="space-y-4">
@@ -39,17 +48,21 @@ export default function DispatchListPage() {
         newLabel="New Dispatch"
         searchPlaceholder="Search by dispatch number…"
         rowHref={(row) => `/dispatch/${row.id}`}
+        statusFilter={{
+          options: Object.entries(STATUS_LABELS).map(([value, label]) => ({ value, label })),
+        }}
         columns={[
-          { key: "dispatchNumber", header: "Dispatch No." },
+          { key: "dispatchNumber", header: "Dispatch No.", sortable: true },
           { key: "salesOrder", header: "Sales Order", render: (row) => row.salesOrder?.orderNumber ?? "—" },
           { key: "customer", header: "Customer", render: (row) => row.customer?.name ?? "—" },
-          { key: "dispatchDate", header: "Date", render: (row) => row.dispatchDate?.slice(0, 10) },
+          { key: "dispatchDate", header: "Date", sortable: true, render: (row) => row.dispatchDate?.slice(0, 10) },
           {
             key: "status",
             header: "Status",
+            sortable: true,
             render: (row) => (
               <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[row.status] ?? ""}`}>
-                {row.status}
+                {STATUS_LABELS[row.status] ?? row.status}
               </span>
             ),
           },

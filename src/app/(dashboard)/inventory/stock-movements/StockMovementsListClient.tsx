@@ -39,9 +39,19 @@ export function StockMovementsListClient() {
         rowHref={(row) => `/inventory/stock-movements/${row.id}`}
         newHref="/inventory/stock-movements/new"
         newLabel="New Stock Movement"
+        statusFilter={{
+          paramName: "movementType",
+          allLabel: "All Types",
+          options: Object.entries(MOVEMENT_TYPE_LABELS).map(([value, label]) => ({ value, label })),
+        }}
         columns={[
-          { key: "movementNumber", header: "Movement #" },
-          { key: "movementType", header: "Type", render: (row) => MOVEMENT_TYPE_LABELS[row.movementType] ?? row.movementType },
+          { key: "movementNumber", header: "Movement #", sortable: true },
+          {
+            key: "movementType",
+            header: "Type",
+            sortable: true,
+            render: (row) => MOVEMENT_TYPE_LABELS[row.movementType] ?? row.movementType,
+          },
           {
             key: "warehouse",
             header: "Warehouse(s)",
@@ -54,7 +64,7 @@ export function StockMovementsListClient() {
           },
           { key: "items", header: "Lines", render: (row) => row._count.items },
           { key: "performedBy", header: "Performed By", render: (row) => row.performedBy?.fullName ?? "—" },
-          { key: "performedAt", header: "Date", render: (row) => new Date(row.performedAt).toLocaleString() },
+          { key: "performedAt", header: "Date", sortable: true, render: (row) => new Date(row.performedAt).toLocaleString() },
         ]}
       />
     </div>

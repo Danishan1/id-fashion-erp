@@ -9,7 +9,7 @@ import type { Prisma } from "@prisma/client";
 import { SupplierRepository } from "@/modules/suppliers/supplier.repository";
 import { FinanceConfigRepository } from "@/modules/finance-config/finance-config.repository";
 import type { ExpenseInput } from "./expense.schema";
-import type { ExpenseApprovalStatus } from "@prisma/client";
+import { ExpenseApprovalStatus } from "@prisma/client";
 import { ExpenseRepository, CompanyRepository } from "./expense.repository";
 import { ChartOfAccountRepository } from "./chart-of-account.repository";
 import { assertValidExpenseAccount } from "./chart-of-account.service";
@@ -89,12 +89,17 @@ async function buildExpenseFields(companyId: string, input: ExpenseInput): Promi
   };
 }
 
+const VALID_EXPENSE_APPROVAL_STATUSES = new Set<string>(Object.values(ExpenseApprovalStatus));
+
 export async function listExpenses(actor: { companyId: string; userId: string }, query: ListQuery) {
   const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
   const where: Prisma.ExpenseWhereInput = {
     companyId: actor.companyId,
     ...branchScopeWhere(allowedBranchIds),
     ...(query.search ? { expenseNumber: { contains: query.search, mode: "insensitive" as const } } : {}),
+    ...(query.status && VALID_EXPENSE_APPROVAL_STATUSES.has(query.status)
+      ? { status: query.status as ExpenseApprovalStatus }
+      : {}),
   };
 
   const [data, totalCount] = await Promise.all([

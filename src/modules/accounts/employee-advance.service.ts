@@ -4,7 +4,7 @@ import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingServic
 import { PermissionService } from "@/core/rbac/PermissionService";
 import { prisma } from "@/core/db/client";
 import type { ListQuery } from "@/lib/list-query";
-import type { Prisma } from "@prisma/client";
+import { EmployeeAdvanceStatus, type Prisma } from "@prisma/client";
 import { EmployeeRepository } from "@/modules/employees/employee.repository";
 import { FinanceConfigRepository } from "@/modules/finance-config/finance-config.repository";
 import type { EmployeeAdvanceInput, EmployeeAdvanceSettlementInput } from "./employee-advance.schema";
@@ -26,10 +26,15 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+const VALID_EMPLOYEE_ADVANCE_STATUSES = new Set<string>(Object.values(EmployeeAdvanceStatus));
+
 export async function listEmployeeAdvances(companyId: string, query: ListQuery) {
   const where: Prisma.EmployeeAdvanceWhereInput = {
     companyId,
     ...(query.search ? { advanceNumber: { contains: query.search, mode: "insensitive" as const } } : {}),
+    ...(query.status && VALID_EMPLOYEE_ADVANCE_STATUSES.has(query.status)
+      ? { status: query.status as EmployeeAdvanceStatus }
+      : {}),
   };
 
   const [data, totalCount] = await Promise.all([

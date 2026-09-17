@@ -47,14 +47,15 @@ export function EmployeesListClient() {
         searchPlaceholder="Search by name or code…"
         rowHref={(row) => `/masters/employees/${row.id}`}
         columns={[
-          { key: "employeeCode", header: "Code" },
-          { key: "fullName", header: "Name" },
+          { key: "employeeCode", header: "Code", sortable: true },
+          { key: "fullName", header: "Name", sortable: true },
           { key: "department", header: "Department", render: (row) => row.department?.name ?? "—" },
           { key: "designation", header: "Designation", render: (row) => row.designation?.name ?? "—" },
           { key: "employeeCategory", header: "Category", render: (row) => row.employeeCategory?.name ?? "—" },
           {
             key: "isActive",
             header: "Status",
+            sortable: true,
             render: (row) => (
               <span
                 className={`rounded-full px-2 py-0.5 text-xs font-medium ${

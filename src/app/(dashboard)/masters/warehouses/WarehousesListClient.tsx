@@ -132,12 +132,13 @@ export function WarehousesListClient() {
         searchPlaceholder="Search by name or code…"
         onEditRow={openEdit}
         columns={[
-          { key: "code", header: "Code" },
-          { key: "name", header: "Name" },
+          { key: "code", header: "Code", sortable: true },
+          { key: "name", header: "Name", sortable: true },
           { key: "type", header: "Type", render: (row) => formatTypes(row.type) },
           {
             key: "isActive",
             header: "Status",
+            sortable: true,
             render: (row) => (
               <span
                 className={`rounded-full px-2 py-0.5 text-xs font-medium ${

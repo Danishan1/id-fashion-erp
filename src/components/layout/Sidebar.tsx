@@ -30,6 +30,19 @@ function ChevronIcon({ open }: { open: boolean }) {
   );
 }
 
+/** Points left (collapse) or right (expand) — a plain double-chevron, the standard "minimize sidebar" glyph. */
+function CollapseToggleIcon({ collapsed }: { collapsed: boolean }) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4 shrink-0" aria-hidden="true">
+      {collapsed ? (
+        <path d="M7 4l6 6-6 6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      ) : (
+        <path d="M13 4l-6 6 6 6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      )}
+    </svg>
+  );
+}
+
 const LEAF_CLASSES = (isActive: boolean) =>
   `block rounded-md px-3 py-1.5 text-sm ${
     isActive
@@ -40,6 +53,8 @@ const LEAF_CLASSES = (isActive: boolean) =>
 export function Sidebar({
   isPlatformAdmin = false,
   viewableModules = "all",
+  isCollapsed = false,
+  onToggleCollapse,
 }: {
   isPlatformAdmin?: boolean;
   /**
@@ -52,6 +67,9 @@ export function Sidebar({
    * sidebar.
    */
   viewableModules?: Module[] | "all";
+  /** Desktop-only minimize/maximize — the width itself is owned by DashboardShell (the flex parent); this only changes what's rendered inside. */
+  isCollapsed?: boolean;
+  onToggleCollapse?: () => void;
 }) {
   const pathname = usePathname();
   const visibleSections = filterNavSections(NAV_SECTIONS, viewableModules);
@@ -79,10 +97,77 @@ export function Sidebar({
     });
   }
 
+  // Clicking a group's letter-badge while the whole sidebar is minimized
+  // needs to do two things at once: restore full width, and land on that
+  // group already open — otherwise the viewer would maximize into a fully
+  // collapsed tree and have to find + reopen the very group they clicked.
+  function expandSidebarWithGroupOpen(section: NavSection) {
+    setOverrides((prev) => new Map(prev).set(section.label, true));
+    onToggleCollapse?.();
+  }
+
+  if (isCollapsed) {
+    return (
+      <nav className="flex h-full w-full flex-col items-center border-r border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+        <div className="flex h-14 w-full items-center justify-center border-b border-zinc-200 dark:border-zinc-800">
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            aria-label="Expand sidebar"
+            title="Expand sidebar"
+            className="rounded-md p-1.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+          >
+            <CollapseToggleIcon collapsed />
+          </button>
+        </div>
+        <div className="flex flex-1 flex-col items-center gap-1 overflow-y-auto py-3">
+          {sections.map((section) => {
+            const active = isSectionActive(section, pathname);
+            const badgeClass = `flex h-9 w-9 items-center justify-center rounded-md text-sm font-semibold ${
+              active
+                ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-300"
+                : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+            }`;
+            const initial = section.label.charAt(0).toUpperCase();
+
+            if (!section.children) {
+              return (
+                <Link key={section.label} href={section.href ?? "#"} title={section.label} aria-label={section.label} className={badgeClass}>
+                  {initial}
+                </Link>
+              );
+            }
+            return (
+              <button
+                key={section.label}
+                type="button"
+                onClick={() => expandSidebarWithGroupOpen(section)}
+                title={section.label}
+                aria-label={`Expand sidebar to ${section.label}`}
+                className={badgeClass}
+              >
+                {initial}
+              </button>
+            );
+          })}
+        </div>
+      </nav>
+    );
+  }
+
   return (
-    <nav className="flex h-full w-64 flex-col border-r border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
-      <div className="flex h-14 items-center border-b border-zinc-200 px-4 dark:border-zinc-800">
+    <nav className="flex h-full w-full flex-col border-r border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+      <div className="flex h-14 items-center justify-between border-b border-zinc-200 px-4 dark:border-zinc-800">
         <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Fashion ERP</span>
+        <button
+          type="button"
+          onClick={onToggleCollapse}
+          aria-label="Minimize sidebar"
+          title="Minimize sidebar"
+          className="rounded-md p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+        >
+          <CollapseToggleIcon collapsed={false} />
+        </button>
       </div>
       <CompanySwitcher />
       <div className="flex-1 space-y-0.5 overflow-y-auto px-2 py-3">

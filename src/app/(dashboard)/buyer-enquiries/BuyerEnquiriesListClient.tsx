@@ -36,8 +36,11 @@ export function BuyerEnquiriesListClient() {
         newHref="/buyer-enquiries/new"
         newLabel="New Buyer Enquiry"
         rowHref={(row) => `/buyer-enquiries/${row.id}`}
+        statusFilter={{
+          options: Object.entries(STATUS_LABELS).map(([value, label]) => ({ value, label })),
+        }}
         columns={[
-          { key: "enquiryNumber", header: "Enquiry #" },
+          { key: "enquiryNumber", header: "Enquiry #", sortable: true },
           {
             key: "customer",
             header: "Customer / Prospect",
@@ -48,6 +51,7 @@ export function BuyerEnquiriesListClient() {
           {
             key: "status",
             header: "Status",
+            sortable: true,
             render: (row) => (
               <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_BADGE_CLASS[row.status]}`}>
                 {STATUS_LABELS[row.status] ?? row.status}
@@ -58,6 +62,7 @@ export function BuyerEnquiriesListClient() {
           {
             key: "enquiryDate",
             header: "Enquiry Date",
+            sortable: true,
             render: (row) => new Date(row.enquiryDate).toLocaleDateString(),
           },
         ]}

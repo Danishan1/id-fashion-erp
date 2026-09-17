@@ -40,7 +40,14 @@ interface ActorContext {
 }
 
 interface ProjectFilters {
-  status?: AiGarmentProjectStatus;
+  /**
+   * Raw, unvalidated `?status=` string from the route — validated here
+   * against the real runtime enum (see VALID_AI_GARMENT_PROJECT_STATUSES)
+   * before ever reaching Prisma, matching every other module's own
+   * `Object.values(XStatus)` convention rather than trusting the route's
+   * `as never` cast.
+   */
+  status?: string;
   sourceType?: "REFERENCE" | "FABRIC";
   customerId?: string;
   brandId?: string;
@@ -172,6 +179,8 @@ async function assertOptionalFksBelongToCompany(
   }
 }
 
+const VALID_AI_GARMENT_PROJECT_STATUSES = new Set<string>(Object.values(AiGarmentProjectStatus));
+
 export async function listAiGarmentProjects(companyId: string, query: ListQuery, filters: ProjectFilters = {}) {
   const where: Prisma.AiGarmentProjectWhereInput = {
     companyId,
@@ -183,7 +192,9 @@ export async function listAiGarmentProjects(companyId: string, query: ListQuery,
           ],
         }
       : {}),
-    ...(filters.status ? { status: filters.status } : {}),
+    ...(filters.status && VALID_AI_GARMENT_PROJECT_STATUSES.has(filters.status)
+      ? { status: filters.status as AiGarmentProjectStatus }
+      : {}),
     ...(filters.sourceType ? { sourceType: filters.sourceType } : {}),
     ...(filters.customerId ? { customerId: filters.customerId } : {}),
     ...(filters.brandId ? { brandId: filters.brandId } : {}),

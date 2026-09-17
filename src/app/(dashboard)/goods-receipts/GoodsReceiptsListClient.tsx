@@ -29,13 +29,17 @@ export function GoodsReceiptsListClient() {
         exportUrl="/api/v1/goods-receipts/export/xlsx"
         searchPlaceholder="Search by receipt number…"
         rowHref={(row) => `/goods-receipts/${row.id}`}
+        statusFilter={{
+          options: Object.entries(STATUS_LABELS).map(([value, label]) => ({ value, label })),
+        }}
         columns={[
-          { key: "receiptNumber", header: "Receipt #" },
+          { key: "receiptNumber", header: "Receipt #", sortable: true },
           { key: "purchaseOrder", header: "Purchase Order", render: (row) => row.purchaseOrder?.orderNumber ?? "—" },
           { key: "supplier", header: "Supplier", render: (row) => row.purchaseOrder?.supplier.name ?? "—" },
           {
             key: "status",
             header: "Status",
+            sortable: true,
             render: (row) => (
               <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_BADGE_CLASS[row.status]}`}>
                 {STATUS_LABELS[row.status] ?? row.status}
@@ -46,6 +50,7 @@ export function GoodsReceiptsListClient() {
           {
             key: "receivedDate",
             header: "Received Date",
+            sortable: true,
             render: (row) => new Date(row.receivedDate).toLocaleDateString(),
           },
         ]}

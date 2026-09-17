@@ -3,7 +3,7 @@ import { prisma } from "@/core/db/client";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingService";
 import type { ListQuery } from "@/lib/list-query";
-import type { LeadPriority, Prisma } from "@prisma/client";
+import { LeadStatus, type LeadPriority, type Prisma } from "@prisma/client";
 import { CrmRoundRobinRepository, LeadRepository } from "./lead.repository";
 import { DEFAULT_LEAD_PRIORITY_THRESHOLDS, getCrmSettings, type LeadPriorityThresholds } from "./crm-settings.service";
 import type { CreateLeadInput, UpdateLeadInput } from "./lead.schema";
@@ -70,6 +70,8 @@ async function getNextRoundRobinAssignee(companyId: string): Promise<string | nu
   return next;
 }
 
+const VALID_LEAD_STATUSES = new Set<string>(Object.values(LeadStatus));
+
 export async function listLeads(companyId: string, query: ListQuery) {
   const where: Prisma.LeadWhereInput = {
     companyId,
@@ -83,6 +85,7 @@ export async function listLeads(companyId: string, query: ListQuery) {
           ],
         }
       : {}),
+    ...(query.status && VALID_LEAD_STATUSES.has(query.status) ? { status: query.status as LeadStatus } : {}),
   };
 
   const [data, totalCount, thresholds] = await Promise.all([

@@ -16,6 +16,14 @@ interface AccountRow {
   isActive: boolean;
 }
 
+const ACCOUNT_TYPE_OPTIONS = [
+  { value: "ASSET", label: "Asset" },
+  { value: "LIABILITY", label: "Liability" },
+  { value: "EQUITY", label: "Equity" },
+  { value: "INCOME", label: "Income" },
+  { value: "EXPENSE", label: "Expense" },
+];
+
 export function ChartOfAccountsListClient() {
   const [modalOpen, setModalOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -41,14 +49,16 @@ export function ChartOfAccountsListClient() {
         newAction={{ label: "New Account", onClick: () => setModalOpen(true) }}
         searchPlaceholder="Search by code or name…"
         rowHref={(row) => `/accounts/chart-of-accounts/${row.id}`}
+        statusFilter={{ options: ACCOUNT_TYPE_OPTIONS, allLabel: "All Types" }}
         columns={[
-          { key: "code", header: "Code" },
-          { key: "name", header: "Name" },
-          { key: "accountType", header: "Type" },
+          { key: "code", header: "Code", sortable: true },
+          { key: "name", header: "Name", sortable: true },
+          { key: "accountType", header: "Type", sortable: true },
           { key: "parentAccount", header: "Parent", render: (row) => row.parentAccount?.name ?? "—" },
           {
             key: "isSystemAccount",
             header: "System",
+            sortable: true,
             render: (row) =>
               row.isSystemAccount ? (
                 <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
@@ -61,6 +71,7 @@ export function ChartOfAccountsListClient() {
           {
             key: "isActive",
             header: "Status",
+            sortable: true,
             render: (row) => (
               <span
                 className={`rounded-full px-2 py-0.5 text-xs font-medium ${

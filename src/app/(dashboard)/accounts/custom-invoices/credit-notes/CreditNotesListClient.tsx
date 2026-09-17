@@ -46,17 +46,21 @@ export function CreditNotesListClient() {
         fetchUrl="/api/v1/custom-invoices/credit-notes"
         searchPlaceholder="Search by credit note or invoice number…"
         rowHref={(row) => `/accounts/custom-invoices/${row.customInvoice.id}`}
+        statusFilter={{
+          options: Object.entries(STATUS_LABELS).map(([value, label]) => ({ value, label })),
+        }}
         columns={[
-          { key: "creditNoteNumber", header: "Credit Note No." },
+          { key: "creditNoteNumber", header: "Credit Note No.", sortable: true },
           { key: "customInvoice", header: "Invoice No.", render: (row) => row.customInvoice.invoiceNumber },
           { key: "customer", header: "Client", render: (row) => row.customInvoice.customer.name },
-          { key: "creditNoteDate", header: "Date", render: (row) => row.creditNoteDate?.slice(0, 10) },
-          { key: "type", header: "Type", render: (row) => TYPE_LABELS[row.type] ?? row.type },
+          { key: "creditNoteDate", header: "Date", sortable: true, render: (row) => row.creditNoteDate?.slice(0, 10) },
+          { key: "type", header: "Type", sortable: true, render: (row) => TYPE_LABELS[row.type] ?? row.type },
           { key: "reason", header: "Reason", render: (row) => row.reason ?? "—" },
-          { key: "totalAmount", header: "Amount", render: (row) => `₹${Number(row.totalAmount).toFixed(2)}` },
+          { key: "totalAmount", header: "Amount", sortable: true, render: (row) => `₹${Number(row.totalAmount).toFixed(2)}` },
           {
             key: "status",
             header: "Status",
+            sortable: true,
             render: (row) => (
               <span
                 className={`rounded-full px-2 py-0.5 text-xs font-medium ${

@@ -11,7 +11,12 @@ export async function GET(req: NextRequest) {
     await PermissionService.assert(session.user.id, "inventory", "view");
 
     const query = parseListQuery(req.nextUrl.searchParams, "createdAt");
-    const { data, totalCount } = await listStockMovements({ companyId: session.user.companyId, userId: session.user.id }, query);
+    const movementType = req.nextUrl.searchParams.get("movementType")?.trim() || undefined;
+    const { data, totalCount } = await listStockMovements(
+      { companyId: session.user.companyId, userId: session.user.id },
+      query,
+      movementType
+    );
 
     return NextResponse.json({ data, meta: buildListMeta(totalCount, query.page, query.pageSize) });
   } catch (error) {

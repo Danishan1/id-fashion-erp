@@ -68,6 +68,22 @@ interface DataTableProps<T> {
    * itself is not click-to-navigate. Ignored if rowHref is also provided.
    */
   onEditRow?: (row: T) => void;
+  /**
+   * Renders a "Status" <select> next to the search box — selecting a value
+   * appends it as a query param on fetchUrl (default param name "status",
+   * matching list-query.ts's own generic `?status=` parsing) and resets to
+   * page 1. Purely additive: a table with no statusFilter behaves exactly as
+   * before. The caller supplies real enum values/labels (this component has
+   * no knowledge of any model's status enum) — the same "server validates,
+   * this is just a convenience trigger" split already used everywhere else
+   * a status filter exists in this app.
+   */
+  statusFilter?: {
+    options: { value: string; label: string }[];
+    paramName?: string;
+    /** Defaults to "All Statuses". */
+    allLabel?: string;
+  };
 }
 
 interface ListResponse<T> {
@@ -87,10 +103,12 @@ export function DataTable<T extends { id: string }>({
   rowActions,
   onEditRow,
   exportUrl,
+  statusFilter,
 }: DataTableProps<T>) {
   const router = useRouter();
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
+  const [statusValue, setStatusValue] = useState("");
   const [result, setResult] = useState<ListResponse<T> | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -116,6 +134,9 @@ export function DataTable<T extends { id: string }>({
           url.searchParams.set("sortBy", sortBy);
           url.searchParams.set("sortOrder", sortOrder);
         }
+        if (statusFilter && statusValue) {
+          url.searchParams.set(statusFilter.paramName ?? "status", statusValue);
+        }
 
         const res = await fetch(url.toString(), { signal: controller.signal });
         const body = await res.json();
@@ -134,7 +155,7 @@ export function DataTable<T extends { id: string }>({
       clearTimeout(timeout);
       controller.abort();
     };
-  }, [fetchUrl, page, search, refreshKey, reloadTick, sortBy, sortOrder]);
+  }, [fetchUrl, page, search, refreshKey, reloadTick, sortBy, sortOrder, statusFilter, statusValue]);
 
   const actionsColCount = rowHref || onEditRow || rowActions ? 1 : 0;
 
@@ -192,6 +213,24 @@ export function DataTable<T extends { id: string }>({
           }}
           className="w-full max-w-sm rounded-md border border-zinc-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-800"
         />
+        {statusFilter && (
+          <select
+            aria-label="Filter by status"
+            value={statusValue}
+            onChange={(e) => {
+              setStatusValue(e.target.value);
+              setPage(1);
+            }}
+            className="shrink-0 rounded-md border border-zinc-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-800"
+          >
+            <option value="">{statusFilter.allLabel ?? "All Statuses"}</option>
+            {statusFilter.options.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        )}
         <div className="flex shrink-0 items-center gap-2">
           {exportUrl && (
             <a href={exportUrl} className={buttonClasses("secondary", "sm")}>
@@ -256,8 +295,8 @@ export function DataTable<T extends { id: string }>({
             {!error && !isLoading && result?.data.length === 0 && (
               <tr>
                 <td colSpan={columns.length + actionsColCount} className="px-4 py-8 text-center">
-                  {search.trim() ? (
-                    <p className="text-sm text-zinc-500">No records match your search.</p>
+                  {search.trim() || statusValue ? (
+                    <p className="text-sm text-zinc-500">No records match your search or filter.</p>
                   ) : (
                     <div className="space-y-1">
                       <p className="text-sm text-zinc-500">No records found.</p>

@@ -4,7 +4,7 @@ import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingServic
 import { prisma } from "@/core/db/client";
 import { round2 } from "@/lib/money";
 import type { ListQuery } from "@/lib/list-query";
-import { Prisma } from "@prisma/client";
+import { CustomInvoiceCreditNoteStatus, Prisma } from "@prisma/client";
 import type { CustomInvoiceCreditNoteInput } from "./custom-invoice-credit-note.schema";
 import { CustomInvoiceCreditNoteRepository } from "./custom-invoice-credit-note.repository";
 import { CustomInvoiceRepository } from "./custom-invoice.repository";
@@ -16,6 +16,8 @@ interface ActorContext {
   branchId?: string | null;
 }
 
+const VALID_CUSTOM_INVOICE_CREDIT_NOTE_STATUSES = new Set<string>(Object.values(CustomInvoiceCreditNoteStatus));
+
 export async function listCustomInvoiceCreditNotes(companyId: string, query: ListQuery) {
   const where: Prisma.CustomInvoiceCreditNoteWhereInput = {
     companyId,
@@ -26,6 +28,9 @@ export async function listCustomInvoiceCreditNotes(companyId: string, query: Lis
             { customInvoice: { invoiceNumber: { contains: query.search, mode: "insensitive" as const } } },
           ],
         }
+      : {}),
+    ...(query.status && VALID_CUSTOM_INVOICE_CREDIT_NOTE_STATUSES.has(query.status)
+      ? { status: query.status as CustomInvoiceCreditNoteStatus }
       : {}),
   };
 

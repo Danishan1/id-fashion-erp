@@ -64,16 +64,20 @@ export function ExpensesListClient() {
         newAction={{ label: "New Expense", onClick: () => setModalOpen(true) }}
         searchPlaceholder="Search by expense number…"
         rowHref={(row) => `/accounts/expenses/${row.id}`}
+        statusFilter={{
+          options: Object.entries(STATUS_LABELS).map(([value, label]) => ({ value, label })),
+        }}
         columns={[
-          { key: "expenseNumber", header: "Expense No." },
+          { key: "expenseNumber", header: "Expense No.", sortable: true },
           { key: "description", header: "Description" },
           { key: "account", header: "Account", render: (row) => (row.account ? `${row.account.code} — ${row.account.name}` : "—") },
           { key: "supplier", header: "Supplier", render: (row) => row.supplier?.name ?? "—" },
-          { key: "expenseDate", header: "Date", render: (row) => row.expenseDate?.slice(0, 10) },
-          { key: "totalAmount", header: "Amount", render: (row) => Number(row.totalAmount).toFixed(2) },
+          { key: "expenseDate", header: "Date", sortable: true, render: (row) => row.expenseDate?.slice(0, 10) },
+          { key: "totalAmount", header: "Amount", sortable: true, render: (row) => Number(row.totalAmount).toFixed(2) },
           {
             key: "status",
             header: "Status",
+            sortable: true,
             render: (row) => (
               <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[row.status] ?? ""}`}>
                 {STATUS_LABELS[row.status] ?? row.status}

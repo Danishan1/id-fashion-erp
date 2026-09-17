@@ -9,7 +9,7 @@ import { LookupRepository } from "@/modules/lookups/lookup.repository";
 import { ProductRepository } from "@/modules/products/product.repository";
 import { FabricRollRepository } from "@/modules/purchasing/fabric-roll.repository";
 import { SupplierRepository } from "@/modules/suppliers/supplier.repository";
-import type { JobWorkOrderStatus, Prisma } from "@prisma/client";
+import { JobWorkOrderStatus, type Prisma } from "@prisma/client";
 import { applyJobOrderQuantityDelta, assertStageAccess } from "./job-order.service";
 import { JobOrderRepository } from "./production.repository";
 import type { CreateJobWorkOrderInput, ReceiveJobWorkInput } from "./job-work-order.schema";
@@ -85,11 +85,16 @@ export function computeJobWorkOrderMetrics(order: {
   return { pendingQuantity, daysElapsed, isOverdue };
 }
 
+const VALID_JOB_WORK_ORDER_STATUSES = new Set<string>(Object.values(JobWorkOrderStatus));
+
 export async function listJobWorkOrders(companyId: string, query: ListQuery & { supplierId?: string; overdueOnly?: boolean }) {
   const where: Prisma.JobWorkOrderWhereInput = {
     companyId,
     ...(query.search ? { jobWorkNumber: { contains: query.search, mode: "insensitive" as const } } : {}),
     ...(query.supplierId ? { supplierId: query.supplierId } : {}),
+    ...(query.status && VALID_JOB_WORK_ORDER_STATUSES.has(query.status)
+      ? { status: query.status as JobWorkOrderStatus }
+      : {}),
   };
 
   const [data, totalCount] = await Promise.all([

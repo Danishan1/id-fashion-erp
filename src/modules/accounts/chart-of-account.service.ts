@@ -4,12 +4,20 @@ import { round2 } from "@/lib/money";
 import type { ListQuery } from "@/lib/list-query";
 import type { ChartOfAccountInput } from "./chart-of-account.schema";
 import { ChartOfAccountRepository } from "./chart-of-account.repository";
-import type { Prisma } from "@prisma/client";
+import { AccountType, type Prisma } from "@prisma/client";
 
 interface ActorContext {
   companyId: string;
   userId: string;
 }
+
+// Chart of Accounts has no workflow status (just isActive, already surfaced
+// via DataTable's built-in Active/Inactive toggle) — the one genuinely useful
+// filter dimension here is accountType (Asset/Liability/Equity/Income/
+// Expense), reusing the generic `?status=` query param the same way every
+// other module's statusFilter does, rather than plumbing a second param name
+// through parseListQuery for a single master-data list.
+const VALID_ACCOUNT_TYPES = new Set<string>(Object.values(AccountType));
 
 export async function listChartOfAccounts(companyId: string, query: ListQuery) {
   const where: Prisma.ChartOfAccountWhereInput = {
@@ -22,6 +30,7 @@ export async function listChartOfAccounts(companyId: string, query: ListQuery) {
           ],
         }
       : {}),
+    ...(query.status && VALID_ACCOUNT_TYPES.has(query.status) ? { accountType: query.status as AccountType } : {}),
   };
 
   const [data, totalCount] = await Promise.all([

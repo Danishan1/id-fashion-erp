@@ -59,12 +59,15 @@ export default function DealsListPage() {
         newLabel="New Deal"
         rowHref={(row) => `/deals/${row.id}`}
         refreshKey={refreshKey}
+        statusFilter={{
+          options: Object.entries(STAGE_LABELS).map(([value, label]) => ({ value, label })),
+        }}
         columns={[
-          { key: "dealNumber", header: "Deal #" },
-          { key: "title", header: "Title" },
+          { key: "dealNumber", header: "Deal #", sortable: true },
+          { key: "title", header: "Title", sortable: true },
           { key: "lead", header: "Lead / Customer", render: (row) => row.lead?.name ?? row.customer?.name ?? "—" },
-          { key: "stage", header: "Stage", render: (row) => STAGE_LABELS[row.stage] ?? row.stage },
-          { key: "value", header: "Value", render: (row) => `₹${Number(row.value).toLocaleString()}` },
+          { key: "stage", header: "Stage", sortable: true, render: (row) => STAGE_LABELS[row.stage] ?? row.stage },
+          { key: "value", header: "Value", sortable: true, render: (row) => `₹${Number(row.value).toLocaleString()}` },
           { key: "weightedValue", header: "Weighted", render: (row) => `₹${Number(row.weightedValue).toLocaleString()}` },
           { key: "assignedTo", header: "Owner", render: (row) => row.assignedTo?.fullName ?? "—" },
         ]}

@@ -4,7 +4,7 @@ import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingService";
 import { PermissionService } from "@/core/rbac/PermissionService";
 import type { ListQuery } from "@/lib/list-query";
-import type { CampaignAlertType, CampaignStatus, Prisma } from "@prisma/client";
+import { CampaignStatus, type CampaignAlertType, type Prisma } from "@prisma/client";
 import { CampaignAlertRepository, CampaignAttributionRepository, CampaignDailyMetricRepository, CampaignRepository } from "./campaign.repository";
 import { getCrmSettings } from "@/modules/crm/crm-settings.service";
 import type {
@@ -91,11 +91,14 @@ async function decorateCampaigns<T extends { id: string }>(companyId: string, ca
   return campaigns.map((c) => ({ ...c, metrics: metricsMap.get(c.id) ?? { ...EMPTY_METRICS } }));
 }
 
+const VALID_CAMPAIGN_STATUSES = new Set<string>(Object.values(CampaignStatus));
+
 export async function listCampaigns(companyId: string, query: ListQuery, channel?: string) {
   const where: Prisma.CampaignWhereInput = {
     companyId,
     ...(query.search ? { name: { contains: query.search, mode: "insensitive" as const } } : {}),
     ...(channel ? { channel: channel as never } : {}),
+    ...(query.status && VALID_CAMPAIGN_STATUSES.has(query.status) ? { status: query.status as CampaignStatus } : {}),
   };
 
   const [data, totalCount] = await Promise.all([

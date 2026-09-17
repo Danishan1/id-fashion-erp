@@ -35,16 +35,20 @@ export function PurchaseInvoicesListClient() {
         newLabel="New Invoice"
         searchPlaceholder="Search by invoice number…"
         rowHref={(row) => `/accounts/purchase-invoices/${row.id}`}
+        statusFilter={{
+          options: Object.entries(STATUS_LABELS).map(([value, label]) => ({ value, label })),
+        }}
         columns={[
-          { key: "invoiceNumber", header: "Invoice No." },
+          { key: "invoiceNumber", header: "Invoice No.", sortable: true },
           { key: "supplierInvoiceNumber", header: "Supplier Ref.", render: (row) => row.supplierInvoiceNumber ?? "—" },
           { key: "purchaseOrder", header: "Purchase Order", render: (row) => row.purchaseOrder?.orderNumber ?? "—" },
           { key: "supplier", header: "Supplier", render: (row) => row.supplier?.name ?? "—" },
-          { key: "invoiceDate", header: "Date", render: (row) => row.invoiceDate?.slice(0, 10) },
-          { key: "totalAmount", header: "Total", render: (row) => Number(row.totalAmount).toFixed(2) },
+          { key: "invoiceDate", header: "Date", sortable: true, render: (row) => row.invoiceDate?.slice(0, 10) },
+          { key: "totalAmount", header: "Total", sortable: true, render: (row) => Number(row.totalAmount).toFixed(2) },
           {
             key: "status",
             header: "Status",
+            sortable: true,
             render: (row) => (
               <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_BADGE_CLASS[row.status]}`}>
                 {STATUS_LABELS[row.status] ?? row.status}

@@ -37,6 +37,11 @@ const LINE_ALLOWED_TRANSITIONS: Record<BuyerEnquiryLineStatus, BuyerEnquiryLineS
 
 const TERMINAL_LINE_STATUSES: BuyerEnquiryLineStatus[] = ["CONVERTED", "REJECTED"];
 
+/** The Prisma-generated runtime enum object is the one source of truth for a
+ * valid `?status=` value — the same "don't hardcode a second list" discipline
+ * already used by Sampling's own comma-separated status filter. */
+const VALID_BUYER_ENQUIRY_STATUSES = new Set(Object.values(BuyerEnquiryStatus));
+
 /**
  * The header's status is always derived from its lines, never hand-set
  * (CANCELLED is the one manual exception, via cancelBuyerEnquiry). This is
@@ -70,6 +75,9 @@ export async function listBuyerEnquiries(companyId: string, query: ListQuery) {
   const where: Prisma.BuyerEnquiryWhereInput = {
     companyId,
     ...(query.search ? { enquiryNumber: { contains: query.search, mode: "insensitive" as const } } : {}),
+    ...(query.status && VALID_BUYER_ENQUIRY_STATUSES.has(query.status as BuyerEnquiryStatus)
+      ? { status: query.status as BuyerEnquiryStatus }
+      : {}),
   };
 
   const [data, totalCount] = await Promise.all([

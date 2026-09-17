@@ -5,7 +5,7 @@ import { PermissionService } from "@/core/rbac/PermissionService";
 import { prisma } from "@/core/db/client";
 import type { ListQuery } from "@/lib/list-query";
 import { branchScopeWhere } from "@/lib/branch-access";
-import type { Prisma } from "@prisma/client";
+import { PaymentStatus, type Prisma } from "@prisma/client";
 import { CustomerRepository } from "@/modules/customers/customer.repository";
 import { SupplierRepository } from "@/modules/suppliers/supplier.repository";
 import { FinanceConfigRepository } from "@/modules/finance-config/finance-config.repository";
@@ -28,12 +28,15 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+const VALID_PAYMENT_STATUSES = new Set<string>(Object.values(PaymentStatus));
+
 export async function listPayments(actor: { companyId: string; userId: string }, query: ListQuery) {
   const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
   const where: Prisma.PaymentWhereInput = {
     companyId: actor.companyId,
     ...branchScopeWhere(allowedBranchIds),
     ...(query.search ? { paymentNumber: { contains: query.search, mode: "insensitive" as const } } : {}),
+    ...(query.status && VALID_PAYMENT_STATUSES.has(query.status) ? { status: query.status as PaymentStatus } : {}),
   };
 
   const [data, totalCount] = await Promise.all([

@@ -5,7 +5,7 @@ import { PermissionService } from "@/core/rbac/PermissionService";
 import { prisma } from "@/core/db/client";
 import type { ListQuery } from "@/lib/list-query";
 import { branchScopeWhere } from "@/lib/branch-access";
-import { Prisma } from "@prisma/client";
+import { Prisma, PurchaseInvoiceStatus } from "@prisma/client";
 import { PurchaseOrderRepository, PurchaseOrderItemRepository } from "@/modules/purchasing/purchase-order.repository";
 import { SupplierRepository } from "@/modules/suppliers/supplier.repository";
 import type { PurchaseInvoiceInput } from "./purchase-invoice.schema";
@@ -131,12 +131,17 @@ function sumTotals(items: PurchaseInvoiceItemCreateData[]) {
   return { subtotalAmount, taxAmount, totalAmount: round2(subtotalAmount + taxAmount) };
 }
 
+const VALID_PURCHASE_INVOICE_STATUSES = new Set<string>(Object.values(PurchaseInvoiceStatus));
+
 export async function listPurchaseInvoices(actor: { companyId: string; userId: string }, query: ListQuery) {
   const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
   const where: Prisma.PurchaseInvoiceWhereInput = {
     companyId: actor.companyId,
     ...branchScopeWhere(allowedBranchIds),
     ...(query.search ? { invoiceNumber: { contains: query.search, mode: "insensitive" as const } } : {}),
+    ...(query.status && VALID_PURCHASE_INVOICE_STATUSES.has(query.status)
+      ? { status: query.status as PurchaseInvoiceStatus }
+      : {}),
   };
 
   const [data, totalCount] = await Promise.all([

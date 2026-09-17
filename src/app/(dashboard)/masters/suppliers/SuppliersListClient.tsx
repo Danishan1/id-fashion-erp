@@ -54,6 +54,7 @@ export function SuppliersListClient() {
           {
             key: "isActive",
             header: "Status",
+            sortable: true,
             render: (row) => (
               <span
                 className={`rounded-full px-2 py-0.5 text-xs font-medium ${

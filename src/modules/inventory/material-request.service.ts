@@ -20,7 +20,7 @@ import { StockBalanceRepository } from "./inventory.repository";
 import { getAvailableQuantity, getAvailableQuantityByDye, recordInventoryTransaction } from "./inventory.service";
 import { MaterialRequestItemRepository, MaterialRequestRepository } from "./material-request.repository";
 import type { MaterialRequestInput, MaterialRequestItemInput, UpdateMaterialRequestInput } from "./material-request.schema";
-import { Prisma, type MaterialRequestStatus } from "@prisma/client";
+import { Prisma, MaterialRequestStatus } from "@prisma/client";
 
 export interface ActorContext {
   companyId: string;
@@ -238,12 +238,17 @@ async function assertNothingIssuedOrEscalated(materialRequestId: string, action:
   }
 }
 
+const VALID_MATERIAL_REQUEST_STATUSES = new Set<string>(Object.values(MaterialRequestStatus));
+
 export async function listMaterialRequests(actor: { companyId: string; userId: string }, query: ListQuery) {
   const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
   const where: Prisma.MaterialRequestWhereInput = {
     companyId: actor.companyId,
     ...branchScopeWhere(allowedBranchIds),
     ...(query.search ? { requestNumber: { contains: query.search, mode: "insensitive" as const } } : {}),
+    ...(query.status && VALID_MATERIAL_REQUEST_STATUSES.has(query.status)
+      ? { status: query.status as MaterialRequestStatus }
+      : {}),
   };
 
   const [data, totalCount] = await Promise.all([
