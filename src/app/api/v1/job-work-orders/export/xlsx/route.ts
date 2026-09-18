@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireSession, handleApiError } from "@/lib/api-route";
 import { PermissionService } from "@/core/rbac/PermissionService";
+import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { buildXlsxBuffer, xlsxResponseHeaders } from "@/lib/xlsx";
 import { listJobWorkOrders } from "@/modules/production/job-work-order.service";
 import { EXPORT_ROW_CAP_EXCEL as EXPORT_ROW_CAP } from "@/core/reports/constants";
@@ -25,6 +26,13 @@ export async function GET(req: NextRequest) {
   try {
     const session = await requireSession();
     await PermissionService.assert(session.user.id, "production", "export");
+    // External Unit User (2026-09-18) — blocked outright, even filtered to
+    // their own supplier: a spreadsheet export of this business document
+    // type is an internal audit tool, not something a vendor's own account
+    // should be able to download.
+    if ((await PermissionService.getAllowedSupplierId(session.user.id)) !== null) {
+      throw new BusinessRuleError("PERMISSION_DENIED", "This action is not available to an external unit account.", {});
+    }
 
     const params = req.nextUrl.searchParams;
     const { data } = await listJobWorkOrders(session.user.companyId, {

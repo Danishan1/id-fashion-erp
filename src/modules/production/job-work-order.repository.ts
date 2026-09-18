@@ -91,6 +91,31 @@ export const JobWorkReceiptRepository = {
 
   updateInTx: (tx: Prisma.TransactionClient, id: string, data: Prisma.JobWorkReceiptUncheckedUpdateInput) =>
     tx.jobWorkReceipt.update({ where: { id }, data }),
+
+  /** Backs the Supervisor-facing "Pending External Receipts" queue. */
+  findPendingForCompany: (companyId: string) =>
+    prisma.jobWorkReceipt.findMany({
+      where: { companyId, approvalStatus: "PENDING" },
+      include: {
+        jobWorkOrder: { select: { id: true, jobWorkNumber: true, supplier: { select: { id: true, name: true } } } },
+        submittedBy: { select: { id: true, fullName: true } },
+      },
+      orderBy: { createdAt: "asc" },
+    }),
+
+  updateApprovalStatusConditionalInTx: (
+    tx: Prisma.TransactionClient,
+    id: string,
+    expectedStatus: "PENDING",
+    data: Prisma.JobWorkReceiptUncheckedUpdateInput
+  ) => tx.jobWorkReceipt.updateMany({ where: { id, approvalStatus: expectedStatus }, data }),
+
+  updateApprovalStatusConditional: (
+    companyId: string,
+    id: string,
+    expectedStatus: "PENDING",
+    data: Prisma.JobWorkReceiptUncheckedUpdateInput
+  ) => prisma.jobWorkReceipt.updateMany({ where: { id, companyId, approvalStatus: expectedStatus }, data }),
 };
 
 export type { JobWorkOrderStatus };

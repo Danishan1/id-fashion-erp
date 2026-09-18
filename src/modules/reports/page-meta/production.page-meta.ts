@@ -85,3 +85,24 @@ registerReportPageMeta({
     { key: "employeeId", label: "Employee", type: "select", optionsUrl: "/api/v1/employees?pageSize=500", optionsLabelKey: "fullName" },
   ],
 });
+
+// Production Module Advanced Upgrade (2026-09-18), P0.
+registerReportPageMeta({
+  category: CATEGORY,
+  key: "production-wip-distribution",
+  title: "Production WIP Distribution",
+  description: "Live quantity distribution across every production stage, derived directly from real Job Order accumulators.",
+  includeDateRange: false,
+  filterFields: [
+    { key: "productionOrderId", label: "Production Order", type: "select", optionsUrl: "/api/v1/production-orders?pageSize=500", optionsLabelKey: "orderNumber" },
+  ],
+});
+
+registerReportPageMeta({
+  category: CATEGORY,
+  key: "production-full-trace",
+  title: "Production Full Trace",
+  description: "One Lot's complete SO -> PO -> Lot -> Stage -> Worker -> Movement -> QC -> Completion history.",
+  includeDateRange: false,
+  filterFields: [{ key: "lotId", label: "Lot", type: "select", optionsUrl: "/api/v1/lots?pageSize=500", optionsLabelKey: "lotNumber" }],
+});

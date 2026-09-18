@@ -3,6 +3,23 @@ import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/numbering/DocumentNumberingService", () => ({ generateDocumentNumber: vi.fn() }));
+// External Unit User (2026-09-18) — every existing test in this file
+// exercises the INTERNAL path, so getAllowedSupplierId defaults to null
+// (unrestricted/internal) unless a test explicitly overrides it.
+vi.mock("@/core/rbac/PermissionService", () => ({
+  PermissionService: { getAllowedSupplierId: vi.fn().mockResolvedValue(null), assert: vi.fn() },
+}));
+vi.mock("@/core/production-settings/ProductionSettingsService", () => ({
+  getProductionSettings: vi.fn().mockResolvedValue({
+    supervisorApprovalRequired: false,
+    externalEntryBy: "INTERNAL_SUPERVISOR",
+    pieceRateTrackingEnabled: false,
+    pieceRatePaymentQuantityRule: "QC_ACCEPTED_QTY",
+    workersCanViewOwnRate: false,
+  }),
+}));
+vi.mock("./piece-rate-resolution.service", () => ({ resolveSupplierPieceRate: vi.fn() }));
+vi.mock("./piece-rate-earning.service", () => ({ generateEarningForJobWorkReceipt: vi.fn() }));
 vi.mock("@/modules/inventory/inventory.service", () => ({ recordInventoryTransaction: vi.fn(), getAvailableQuantity: vi.fn() }));
 vi.mock("@/modules/products/product.repository", () => ({
   ProductRepository: { findMaterialById: vi.fn() },
@@ -17,7 +34,10 @@ vi.mock("@/modules/suppliers/supplier.repository", () => ({
   SupplierRepository: { findById: vi.fn() },
 }));
 vi.mock("./job-order.service", () => ({ applyJobOrderQuantityDelta: vi.fn(), assertStageAccess: vi.fn() }));
-vi.mock("./production.repository", () => ({ JobOrderRepository: { findAnyById: vi.fn() } }));
+vi.mock("./production.repository", () => ({
+  JobOrderRepository: { findAnyById: vi.fn() },
+  ProductionOrderRepository: { findAnyById: vi.fn() },
+}));
 vi.mock("./job-work-order.repository", () => ({
   JobWorkOrderRepository: {
     findMany: vi.fn(),
@@ -50,8 +70,12 @@ const { LookupRepository } = await import("@/modules/lookups/lookup.repository")
 const { FabricRollRepository } = await import("@/modules/purchasing/fabric-roll.repository");
 const { SupplierRepository } = await import("@/modules/suppliers/supplier.repository");
 const { applyJobOrderQuantityDelta, assertStageAccess } = await import("./job-order.service");
-const { JobOrderRepository } = await import("./production.repository");
+const { JobOrderRepository, ProductionOrderRepository } = await import("./production.repository");
 const { JobWorkOrderRepository, JobWorkReceiptRepository } = await import("./job-work-order.repository");
+const { PermissionService } = await import("@/core/rbac/PermissionService");
+const { getProductionSettings } = await import("@/core/production-settings/ProductionSettingsService");
+const { resolveSupplierPieceRate } = await import("./piece-rate-resolution.service");
+const { generateEarningForJobWorkReceipt } = await import("./piece-rate-earning.service");
 const {
   createJobWorkOrder,
   receiveJobWork,
@@ -114,6 +138,18 @@ beforeEach(() => {
   vi.mocked(JobWorkReceiptRepository.findByIdempotencyKey).mockReset().mockResolvedValue(null);
   vi.mocked(JobWorkReceiptRepository.findAnyById).mockReset();
   vi.mocked(JobWorkReceiptRepository.updateInTx).mockReset();
+  vi.mocked(PermissionService.getAllowedSupplierId).mockReset().mockResolvedValue(null);
+  vi.mocked(PermissionService.assert).mockReset().mockResolvedValue(undefined as never);
+  vi.mocked(getProductionSettings).mockReset().mockResolvedValue({
+    supervisorApprovalRequired: false,
+    externalEntryBy: "INTERNAL_SUPERVISOR",
+    pieceRateTrackingEnabled: false,
+    pieceRatePaymentQuantityRule: "QC_ACCEPTED_QTY",
+    workersCanViewOwnRate: false,
+  } as never);
+  vi.mocked(ProductionOrderRepository.findAnyById).mockReset();
+  vi.mocked(resolveSupplierPieceRate).mockReset();
+  vi.mocked(generateEarningForJobWorkReceipt).mockReset();
 });
 
 describe("createJobWorkOrder", () => {

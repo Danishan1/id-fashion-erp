@@ -2,6 +2,8 @@ import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { prisma } from "@/core/db/client";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingService";
+import { PermissionService } from "@/core/rbac/PermissionService";
+import { getProductionSettings } from "@/core/production-settings/ProductionSettingsService";
 import type { ListQuery } from "@/lib/list-query";
 import { convertUomQuantity } from "@/lib/uom-conversion";
 import { getAvailableQuantity, recordInventoryTransaction } from "@/modules/inventory/inventory.service";
@@ -11,7 +13,9 @@ import { FabricRollRepository } from "@/modules/purchasing/fabric-roll.repositor
 import { SupplierRepository } from "@/modules/suppliers/supplier.repository";
 import { JobWorkOrderStatus, type Prisma } from "@prisma/client";
 import { applyJobOrderQuantityDelta, assertStageAccess } from "./job-order.service";
-import { JobOrderRepository } from "./production.repository";
+import { resolveSupplierPieceRate } from "./piece-rate-resolution.service";
+import { generateEarningForJobWorkReceipt } from "./piece-rate-earning.service";
+import { JobOrderRepository, ProductionOrderRepository } from "./production.repository";
 import type { CreateJobWorkOrderInput, ReceiveJobWorkInput } from "./job-work-order.schema";
 import { JobWorkOrderRepository, JobWorkReceiptRepository } from "./job-work-order.repository";
 
@@ -22,6 +26,30 @@ export interface ActorContext {
 }
 
 const EPSILON = 0.0001;
+
+/**
+ * External Unit User (2026-09-18) — deny-as-NOT_FOUND, the same convention
+ * already established by getAllowedBranchIds/getAllowedProductionStageIds
+ * (never reveal a record exists to someone who can't see it). `null` from
+ * PermissionService.getAllowedSupplierId means an ordinary internal user
+ * with no restriction — this is a no-op for every pre-existing caller.
+ */
+async function assertJobWorkOrderSupplierAccess(actor: { userId: string }, order: { supplierId: string }) {
+  const allowedSupplierId = await PermissionService.getAllowedSupplierId(actor.userId);
+  if (allowedSupplierId !== null && order.supplierId !== allowedSupplierId) {
+    throw new BusinessRuleError("NOT_FOUND", "Job-work order not found.", {});
+  }
+}
+
+/** Blocks an action outright for an external-unit login — issuing WIP,
+ * cancelling/holding/closing an order, or reversing a receipt are internal
+ * business decisions a vendor's own account must never be able to make. */
+async function assertInternalUser(actor: { userId: string }) {
+  const allowedSupplierId = await PermissionService.getAllowedSupplierId(actor.userId);
+  if (allowedSupplierId !== null) {
+    throw new BusinessRuleError("PERMISSION_DENIED", "This action is not available to an external unit account.", {});
+  }
+}
 
 /**
  * Same shape as PurchaseOrder's own ALLOWED_TRANSITIONS — a small, genuinely
@@ -87,11 +115,21 @@ export function computeJobWorkOrderMetrics(order: {
 
 const VALID_JOB_WORK_ORDER_STATUSES = new Set<string>(Object.values(JobWorkOrderStatus));
 
-export async function listJobWorkOrders(companyId: string, query: ListQuery & { supplierId?: string; overdueOnly?: boolean }) {
+export async function listJobWorkOrders(
+  companyId: string,
+  query: ListQuery & { supplierId?: string; overdueOnly?: boolean },
+  userId?: string
+) {
+  // External Unit User (2026-09-18) — an external login's own supplierId
+  // always wins over any client-supplied ?supplierId= filter, never the
+  // other way around (a client-supplied value must never WIDEN what an
+  // external user can see).
+  const allowedSupplierId = userId ? await PermissionService.getAllowedSupplierId(userId) : null;
+
   const where: Prisma.JobWorkOrderWhereInput = {
     companyId,
     ...(query.search ? { jobWorkNumber: { contains: query.search, mode: "insensitive" as const } } : {}),
-    ...(query.supplierId ? { supplierId: query.supplierId } : {}),
+    ...(allowedSupplierId ? { supplierId: allowedSupplierId } : query.supplierId ? { supplierId: query.supplierId } : {}),
     ...(query.status && VALID_JOB_WORK_ORDER_STATUSES.has(query.status)
       ? { status: query.status as JobWorkOrderStatus }
       : {}),
@@ -108,9 +146,16 @@ export async function listJobWorkOrders(companyId: string, query: ListQuery & { 
   return { data: filtered, totalCount: query.overdueOnly ? filtered.length : totalCount };
 }
 
-export async function getJobWorkOrderById(companyId: string, id: string) {
+/** Backs the Supervisor-facing "Pending External Receipts" queue. */
+export async function listPendingJobWorkReceipts(actor: ActorContext) {
+  await PermissionService.assert(actor.userId, "production", "approve");
+  return JobWorkReceiptRepository.findPendingForCompany(actor.companyId);
+}
+
+export async function getJobWorkOrderById(companyId: string, id: string, userId?: string) {
   const order = await JobWorkOrderRepository.findAnyById(companyId, id);
   if (!order) throw new BusinessRuleError("NOT_FOUND", "Job-work order not found.", { id });
+  if (userId) await assertJobWorkOrderSupplierAccess({ userId }, order);
   return { ...order, metrics: computeJobWorkOrderMetrics(order) };
 }
 
@@ -247,6 +292,8 @@ async function reverseIssuedMaterialsInTx(
  * never trusted from the client.
  */
 export async function createJobWorkOrder(actor: ActorContext, input: CreateJobWorkOrderInput) {
+  await assertInternalUser(actor);
+
   const jobOrder = await JobOrderRepository.findAnyById(actor.companyId, input.jobOrderId);
   if (!jobOrder) throw new BusinessRuleError("NOT_FOUND", "Job order not found.", { id: input.jobOrderId });
   if (jobOrder.status === "CANCELLED") {
@@ -283,6 +330,33 @@ export async function createJobWorkOrder(actor: ActorContext, input: CreateJobWo
   // against real warehouse stock, up front, before any write.
   const materialBaseQuantities = await convertMaterialsToBaseUomAndCheckStock(actor.companyId, input.materials);
 
+  // Piece-Rate external costing (2026-09-18) — resolved and snapshotted once
+  // at issuance, plugging into the SAME generalized Rate Card table internal
+  // piece-rate assignments use (dimensioned by supplierId here instead of
+  // employeeId). An unresolved rate never blocks issuance — business
+  // continuity — it just flags UNRESOLVED for later correction.
+  let resolvedRate: number | null = null;
+  let rateResolutionStatus: "RESOLVED" | "UNRESOLVED" = "UNRESOLVED";
+  let rateSourceId: string | null = null;
+  if (input.productionOperationId) {
+    const settings = await getProductionSettings(actor.companyId);
+    if (settings.pieceRateTrackingEnabled) {
+      const order = await ProductionOrderRepository.findAnyById(actor.companyId, jobOrder.productionOrderId);
+      const resolution = await resolveSupplierPieceRate({
+        companyId: actor.companyId,
+        productId: order?.productId ?? null,
+        productionOperationId: input.productionOperationId,
+        supplierId: input.supplierId,
+        asOfDate: new Date(input.issueDate),
+      });
+      if (resolution.resolved) {
+        resolvedRate = resolution.rate;
+        rateResolutionStatus = "RESOLVED";
+        rateSourceId = resolution.rateCardId;
+      }
+    }
+  }
+
   const jobWorkNumber = await generateDocumentNumber({
     companyId: actor.companyId,
     branchId: actor.branchId ?? null,
@@ -298,6 +372,10 @@ export async function createJobWorkOrder(actor: ActorContext, input: CreateJobWo
         jobWorkNumber,
         supplierId: input.supplierId,
         jobOrderId: input.jobOrderId,
+        productionOperationId: input.productionOperationId || null,
+        resolvedRate,
+        rateResolutionStatus,
+        rateSourceId,
         issuedQuantity: input.issuedQuantity,
         uomId: input.uomId,
         issueDate: new Date(input.issueDate),
@@ -377,6 +455,26 @@ export async function receiveJobWork(actor: ActorContext, jobWorkOrderId: string
   const order = await JobWorkOrderRepository.findAnyById(actor.companyId, jobWorkOrderId);
   if (!order) throw new BusinessRuleError("NOT_FOUND", "Job-work order not found.", { id: jobWorkOrderId });
 
+  // External Unit User (2026-09-18) — an external login may only report
+  // against its own supplier's order, and only when the company's own
+  // ProductionSettings.externalEntryBy actually allows it. A submission that
+  // passes both checks is held PENDING with zero quantity applied — the same
+  // "a worker's own unverified claim must never count as real production
+  // before someone checks it" discipline as the internal self-entry flow.
+  const allowedSupplierId = await PermissionService.getAllowedSupplierId(actor.userId);
+  const isExternalSubmission = allowedSupplierId !== null;
+  if (isExternalSubmission) {
+    await assertJobWorkOrderSupplierAccess(actor, order);
+    const settings = await getProductionSettings(actor.companyId);
+    if (settings.externalEntryBy === "INTERNAL_SUPERVISOR") {
+      throw new BusinessRuleError(
+        "PERMISSION_DENIED",
+        "This company requires an internal Supervisor to record job-work receipts on your behalf.",
+        {}
+      );
+    }
+  }
+
   if (order.status === "CANCELLED" || order.status === "CLOSED") {
     throw new BusinessRuleError("INVALID_STATE_TRANSITION", `Cannot receive against a job-work order in "${order.status}" status.`, {
       currentStatus: order.status,
@@ -398,6 +496,39 @@ export async function receiveJobWork(actor: ActorContext, jobWorkOrderId: string
     branchId: actor.branchId ?? null,
     documentType: "JOB_WORK_RECEIPT",
   });
+
+  // An external submission never touches the JobWorkOrder's own accumulators
+  // or the parent JobOrder's quantities — only a PENDING receipt row, applied
+  // for real only once approveJobWorkReceipt() runs.
+  if (isExternalSubmission) {
+    const receipt = await JobWorkReceiptRepository.createInTx(prisma, {
+      companyId: actor.companyId,
+      jobWorkOrderId,
+      receiptNumber,
+      receivedDate: new Date(input.receivedDate),
+      receivedQuantity: input.receivedQuantity,
+      rejectedQuantity: input.rejectedQuantity,
+      damagedQuantity: input.damagedQuantity,
+      status: "COMPLETED",
+      remarks: input.remarks || null,
+      receivedByUserId: actor.userId,
+      submittedBySource: "EXTERNAL_UNIT_USER",
+      approvalStatus: "PENDING",
+      submittedByUserId: actor.userId,
+      idempotencyKey: input.idempotencyKey ?? null,
+    });
+
+    await writeAuditLog({
+      companyId: actor.companyId,
+      userId: actor.userId,
+      tableName: "job_work_receipts",
+      recordId: receipt.id,
+      action: "CREATE",
+      newValues: { jobWorkOrderId, submittedBySource: "EXTERNAL_UNIT_USER", approvalStatus: "PENDING" },
+    });
+
+    return receipt;
+  }
 
   let result;
   try {
@@ -445,6 +576,22 @@ export async function receiveJobWork(actor: ActorContext, jobWorkOrderId: string
         damaged: input.damagedQuantity,
       });
 
+      // Piece-Rate (2026-09-18) — the external "worker" here is the
+      // Supplier; only genuinely received quantity is ever paid, never
+      // rejected/damaged. No-op when the order has no resolved rate.
+      if (current.resolvedRate !== null && current.resolvedRate !== undefined) {
+        await generateEarningForJobWorkReceipt(tx, {
+          companyId: actor.companyId,
+          jobOrderId: order.jobOrderId,
+          jobWorkOrderId,
+          jobWorkReceiptId: receipt.id,
+          supplierId: current.supplierId,
+          productionOperationId: current.productionOperationId,
+          resolvedRate: Number(current.resolvedRate),
+          receivedQuantityDelta: input.receivedQuantity,
+        });
+      }
+
       return receipt;
     });
   } catch (err) {
@@ -468,12 +615,133 @@ export async function receiveJobWork(actor: ActorContext, jobWorkOrderId: string
   return result;
 }
 
+/** A Supervisor approves an external unit's PENDING receipt — this is where
+ * the vendor's own claimed quantities finally become real, applied via the
+ * exact same accumulator/applyJobOrderQuantityDelta path an internal receipt
+ * already uses. Self-approval-guarded — the external submitter cannot
+ * approve their own submission. */
+export async function approveJobWorkReceipt(actor: ActorContext, receiptId: string) {
+  await assertInternalUser(actor);
+  const receipt = await JobWorkReceiptRepository.findAnyById(actor.companyId, receiptId);
+  if (!receipt) throw new BusinessRuleError("NOT_FOUND", "Job-work receipt not found.", { id: receiptId });
+  if (receipt.approvalStatus !== "PENDING") {
+    throw new BusinessRuleError("INVALID_STATE_TRANSITION", `Cannot approve a receipt in "${receipt.approvalStatus}" status.`, {
+      currentStatus: receipt.approvalStatus,
+    });
+  }
+  await PermissionService.assert(actor.userId, "production", "approve", { createdBy: receipt.submittedByUserId ?? undefined });
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const guard = await JobWorkReceiptRepository.updateApprovalStatusConditionalInTx(tx, receiptId, "PENDING", {
+      approvalStatus: "APPROVED",
+      approvedByUserId: actor.userId,
+      approvedAt: new Date(),
+      receivedByUserId: actor.userId,
+    });
+    if (guard.count === 0) {
+      throw new BusinessRuleError("INVALID_STATE_TRANSITION", "This receipt was already decided.", {});
+    }
+
+    const current = await JobWorkOrderRepository.findForGuardedUpdateInTx(tx, receipt.jobWorkOrderId);
+    const issued = Number(current.issuedQuantity);
+    const newReceived = Number(current.receivedQuantity) + Number(receipt.receivedQuantity);
+    const newRejected = Number(current.rejectedQuantity) + Number(receipt.rejectedQuantity);
+    const newDamaged = Number(current.damagedQuantity) + Number(receipt.damagedQuantity);
+    const total = newReceived + newRejected + newDamaged;
+    if (total > issued + EPSILON) {
+      throw new BusinessRuleError(
+        "OVER_RECEIPT_NOT_ALLOWED",
+        `Approving this receipt would bring the total received+rejected+damaged (${total}) above the issued quantity (${issued}).`,
+        { issued, attempted: total }
+      );
+    }
+
+    await JobWorkOrderRepository.updateInTx(tx, receipt.jobWorkOrderId, {
+      receivedQuantity: newReceived,
+      rejectedQuantity: newRejected,
+      damagedQuantity: newDamaged,
+      status: computeJobWorkOrderStatus({ ...current, receivedQuantity: newReceived, rejectedQuantity: newRejected, damagedQuantity: newDamaged }),
+    });
+
+    await applyJobOrderQuantityDelta(tx, current.jobOrderId, {
+      completed: Number(receipt.receivedQuantity),
+      rejected: Number(receipt.rejectedQuantity),
+      damaged: Number(receipt.damagedQuantity),
+    });
+
+    if (current.resolvedRate !== null && current.resolvedRate !== undefined) {
+      await generateEarningForJobWorkReceipt(tx, {
+        companyId: actor.companyId,
+        jobOrderId: current.jobOrderId,
+        jobWorkOrderId: receipt.jobWorkOrderId,
+        jobWorkReceiptId: receipt.id,
+        supplierId: current.supplierId,
+        productionOperationId: current.productionOperationId,
+        resolvedRate: Number(current.resolvedRate),
+        receivedQuantityDelta: Number(receipt.receivedQuantity),
+      });
+    }
+
+    return tx.jobWorkReceipt.findUniqueOrThrow({ where: { id: receiptId } });
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "job_work_receipts",
+    recordId: receiptId,
+    action: "APPROVE",
+    oldValues: { approvalStatus: "PENDING" },
+    newValues: { approvalStatus: "APPROVED" },
+  });
+
+  return updated;
+}
+
+/** Rejects an external unit's PENDING receipt — a remark is required,
+ * mirroring rejectProgressEntry's own precedent. No quantity change of any
+ * kind. */
+export async function rejectJobWorkReceipt(actor: ActorContext, receiptId: string, approvalRemark: string) {
+  await assertInternalUser(actor);
+  const receipt = await JobWorkReceiptRepository.findAnyById(actor.companyId, receiptId);
+  if (!receipt) throw new BusinessRuleError("NOT_FOUND", "Job-work receipt not found.", { id: receiptId });
+  await PermissionService.assert(actor.userId, "production", "approve");
+
+  const guard = await JobWorkReceiptRepository.updateApprovalStatusConditional(actor.companyId, receiptId, "PENDING", {
+    approvalStatus: "REJECTED",
+    approvedByUserId: actor.userId,
+    approvedAt: new Date(),
+    approvalRemark,
+    status: "CANCELLED",
+  });
+  if (guard.count === 0) {
+    throw new BusinessRuleError("INVALID_STATE_TRANSITION", `Cannot reject a receipt in "${receipt.approvalStatus}" status.`, {
+      currentStatus: receipt.approvalStatus,
+    });
+  }
+
+  const updated = await JobWorkReceiptRepository.findAnyById(actor.companyId, receiptId);
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "job_work_receipts",
+    recordId: receiptId,
+    action: "REJECT",
+    oldValues: { approvalStatus: "PENDING" },
+    newValues: { approvalStatus: "REJECTED", approvalRemark },
+  });
+
+  return updated;
+}
+
 /** Mirrors reverseGoodsReceiptLine() — decrements both this JobWorkOrder's
  * own accumulators and the parent JobOrder's, symmetrically undoing what
  * the original receipt applied. No delete — a compensating state change on
  * the same row, matching this project's "no delete on transactional
  * documents" convention. */
 export async function reverseJobWorkReceipt(actor: ActorContext, receiptId: string, reason: string) {
+  await assertInternalUser(actor);
   const receipt = await JobWorkReceiptRepository.findAnyById(actor.companyId, receiptId);
   if (!receipt) throw new BusinessRuleError("NOT_FOUND", "Job-work receipt not found.", { id: receiptId });
   if (receipt.status !== "COMPLETED") {
@@ -518,6 +786,7 @@ export async function reverseJobWorkReceipt(actor: ActorContext, receiptId: stri
 }
 
 export async function transitionJobWorkOrderStatus(actor: ActorContext, id: string, targetStatus: JobWorkOrderStatus) {
+  await assertInternalUser(actor);
   const before = await JobWorkOrderRepository.findAnyById(actor.companyId, id);
   if (!before) throw new BusinessRuleError("NOT_FOUND", "Job-work order not found.", { id });
 
@@ -578,6 +847,7 @@ export async function transitionJobWorkOrderStatus(actor: ActorContext, id: stri
 /** Restores the exact status the order was held from — no caller-chosen
  * target, same reasoning as every other resume function in this project. */
 export async function resumeJobWorkOrderFromHold(actor: ActorContext, id: string) {
+  await assertInternalUser(actor);
   const before = await JobWorkOrderRepository.findAnyById(actor.companyId, id);
   if (!before) throw new BusinessRuleError("NOT_FOUND", "Job-work order not found.", { id });
   if (before.status !== "ON_HOLD" || !before.statusBeforeHold) {

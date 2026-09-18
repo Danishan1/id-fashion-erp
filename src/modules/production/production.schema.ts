@@ -64,11 +64,58 @@ export const mergeLotsSchema = z.object({
 });
 export type MergeLotsInput = z.infer<typeof mergeLotsSchema>;
 
-export const createJobOrderAssignmentSchema = z.object({
-  employeeId: z.string().uuid("Employee is required"),
-  assignedQuantity: z.coerce.number().positive("Assigned quantity must be greater than 0"),
-});
+export const createJobOrderAssignmentSchema = z
+  .object({
+    employeeId: z.string().uuid("Employee is required"),
+    assignedQuantity: z.coerce.number().positive("Assigned quantity must be greater than 0"),
+    // Piece-Rate (2026-09-18) — optional: a FIXED_SALARY worker, or a
+    // company that hasn't enabled piece-rate tracking, never needs this.
+    productionOperationId: z.string().uuid().optional().or(z.literal("")),
+    // An authorized rate override, gated behind piece_rate.override —
+    // requires a reason. Supplying overriddenRate with no reason (or vice
+    // versa) is rejected below.
+    overriddenRate: z.coerce.number().positive().optional(),
+    overrideReason: z.string().max(500).optional().or(z.literal("")),
+  })
+  .refine((data) => !data.overriddenRate || (data.overrideReason && data.overrideReason.length > 0), {
+    message: "A reason is required when overriding the resolved rate.",
+    path: ["overrideReason"],
+  });
 export type CreateJobOrderAssignmentInput = z.infer<typeof createJobOrderAssignmentSchema>;
+
+// ─────────────────────────────────────────────────────────────
+// Piece-Rate / Worker-Pricing engine (2026-09-18)
+// ─────────────────────────────────────────────────────────────
+
+export const productionOperationSchema = z.object({
+  code: z.string().min(1, "Code is required").max(30),
+  name: z.string().min(1, "Name is required").max(200),
+  productionStageId: z.string().uuid().optional().or(z.literal("")),
+});
+export type ProductionOperationSchemaInput = z.infer<typeof productionOperationSchema>;
+
+export const pieceRateCardSchema = z
+  .object({
+    productionOperationId: z.string().uuid("Operation is required"),
+    productId: z.string().uuid().optional().or(z.literal("")),
+    employeeId: z.string().uuid().optional().or(z.literal("")),
+    employeeCategoryId: z.string().uuid().optional().or(z.literal("")),
+    rate: z.coerce.number().positive("Rate must be greater than 0"),
+    effectiveFrom: z.string().min(1, "Effective-from date is required"),
+    effectiveTo: z.string().optional().or(z.literal("")),
+  })
+  .refine((data) => !(data.employeeId && data.employeeCategoryId), {
+    message: "Scope a rate to a specific worker OR a worker grade, never both.",
+    path: ["employeeCategoryId"],
+  });
+export type PieceRateCardSchemaInput = z.infer<typeof pieceRateCardSchema>;
+
+export const resolvePieceRateSchema = z.object({
+  jobOrderId: z.string().uuid(),
+  employeeId: z.string().uuid(),
+  productionOperationId: z.string().uuid(),
+});
+export type ResolvePieceRateInput = z.infer<typeof resolvePieceRateSchema>;
 
 export const createProgressEntrySchema = z.object({
   jobOrderAssignmentId: z.string().uuid().optional().or(z.literal("")),

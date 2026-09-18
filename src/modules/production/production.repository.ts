@@ -356,6 +356,15 @@ export const QcInspectionRepository = {
     const result = await prisma.qcInspection.aggregate({ where: { jobOrderId }, _sum: { acceptedQuantity: true } });
     return Number(result._sum.acceptedQuantity ?? 0);
   },
+
+  // Must be used (never the plain-`prisma` variant above) by any caller running
+  // inside an open transaction that may itself have just inserted the very
+  // QcInspection row being summed — a separate `prisma.*` call runs on a
+  // different connection and cannot see that not-yet-committed row.
+  sumAcceptedByJobOrderIdInTx: async (tx: Prisma.TransactionClient, jobOrderId: string) => {
+    const result = await tx.qcInspection.aggregate({ where: { jobOrderId }, _sum: { acceptedQuantity: true } });
+    return Number(result._sum.acceptedQuantity ?? 0);
+  },
 };
 
 export const DefectTypeRepository = {
@@ -363,4 +372,124 @@ export const DefectTypeRepository = {
   findFirst: (companyId: string, id: string) => prisma.defectType.findFirst({ where: { id, companyId } }),
   create: (data: Prisma.DefectTypeUncheckedCreateInput) => prisma.defectType.create({ data }),
   update: (id: string, data: Prisma.DefectTypeUncheckedUpdateInput) => prisma.defectType.update({ where: { id }, data }),
+};
+
+// ─────────────────────────────────────────────────────────────
+// Piece-Rate / Worker-Pricing engine (2026-09-18)
+// ─────────────────────────────────────────────────────────────
+
+export const ProductionOperationRepository = {
+  findMany: (companyId: string) =>
+    prisma.productionOperation.findMany({
+      where: { companyId },
+      include: { productionStage: { select: { id: true, name: true, code: true } } },
+      orderBy: { name: "asc" },
+    }),
+  findAnyById: (companyId: string, id: string) => prisma.productionOperation.findFirst({ where: { id, companyId } }),
+  findByCode: (companyId: string, code: string) => prisma.productionOperation.findFirst({ where: { companyId, code } }),
+  create: (data: Prisma.ProductionOperationUncheckedCreateInput) => prisma.productionOperation.create({ data }),
+  update: (id: string, data: Prisma.ProductionOperationUncheckedUpdateInput) =>
+    prisma.productionOperation.update({ where: { id }, data }),
+};
+
+const PIECE_RATE_CARD_INCLUDE = {
+  productionOperation: { select: { id: true, name: true, code: true } },
+  product: { select: { id: true, styleName: true, styleCode: true } },
+  employee: { select: { id: true, fullName: true, employeeCode: true } },
+  employeeCategory: { select: { id: true, name: true } },
+  supplier: { select: { id: true, name: true, code: true } },
+} as const;
+
+export const PieceRateCardRepository = {
+  findMany: (where: Prisma.PieceRateCardWhereInput) =>
+    prisma.pieceRateCard.findMany({ where, include: PIECE_RATE_CARD_INCLUDE, orderBy: { effectiveFrom: "desc" } }),
+
+  findAnyById: (companyId: string, id: string) =>
+    prisma.pieceRateCard.findFirst({ where: { id, companyId }, include: PIECE_RATE_CARD_INCLUDE }),
+
+  /** Every active row sharing the exact same dimension tuple — the overlap-
+   * check candidate set (mirrors TaxRateRepository.findActiveByTaxType). */
+  findMatchingDimension: (
+    companyId: string,
+    dims: {
+      productionOperationId: string;
+      productId: string | null;
+      employeeId: string | null;
+      employeeCategoryId: string | null;
+      supplierId: string | null;
+    },
+    excludeId?: string
+  ) =>
+    prisma.pieceRateCard.findMany({
+      where: {
+        companyId,
+        isActive: true,
+        productionOperationId: dims.productionOperationId,
+        productId: dims.productId,
+        employeeId: dims.employeeId,
+        employeeCategoryId: dims.employeeCategoryId,
+        supplierId: dims.supplierId,
+        ...(excludeId ? { id: { not: excludeId } } : {}),
+      },
+    }),
+
+  /** Every active row a given resolution tier might match, narrowed further
+   * in application code by asOfDate — used by resolvePieceRate(). */
+  findActiveForResolution: (
+    companyId: string,
+    where: Prisma.PieceRateCardWhereInput
+  ) => prisma.pieceRateCard.findMany({ where: { companyId, isActive: true, ...where } }),
+
+  create: (data: Prisma.PieceRateCardUncheckedCreateInput) => prisma.pieceRateCard.create({ data }),
+  update: (id: string, data: Prisma.PieceRateCardUncheckedUpdateInput) => prisma.pieceRateCard.update({ where: { id }, data }),
+};
+
+export const PieceRateEarningRepository = {
+  createInTx: (tx: Prisma.TransactionClient, data: Prisma.PieceRateEarningUncheckedCreateInput) =>
+    tx.pieceRateEarning.create({ data }),
+
+  /** Every prior, non-cancelled earning sharing the exact key a new earning
+   * would be generated under — the sum of `payableQuantity` across these
+   * rows is what generateEarningForJobOrderProgress() subtracts from the
+   * JobOrder's live eligible quantity, so a physical piece is never paid for
+   * twice. */
+  sumPriorPayable: async (
+    tx: Prisma.TransactionClient,
+    key: { jobOrderId: string; jobOrderAssignmentId?: string | null; jobWorkOrderId?: string | null }
+  ) => {
+    const result = await tx.pieceRateEarning.aggregate({
+      where: {
+        jobOrderId: key.jobOrderId,
+        status: { not: "CANCELLED" },
+        ...(key.jobOrderAssignmentId !== undefined ? { jobOrderAssignmentId: key.jobOrderAssignmentId } : {}),
+        ...(key.jobWorkOrderId !== undefined ? { jobWorkOrderId: key.jobWorkOrderId } : {}),
+      },
+      _sum: { payableQuantity: true },
+    });
+    return Number(result._sum.payableQuantity ?? 0);
+  },
+
+  findMany: (where: Prisma.PieceRateEarningWhereInput) =>
+    prisma.pieceRateEarning.findMany({
+      where,
+      include: {
+        employee: { select: { id: true, fullName: true, employeeCode: true } },
+        supplier: { select: { id: true, name: true, code: true } },
+        productionOperation: { select: { id: true, name: true } },
+        jobOrder: {
+          select: {
+            id: true,
+            jobNumber: true,
+            productionStage: { select: { name: true } },
+            lot: { select: { lotNumber: true, productionOrder: { select: { orderNumber: true } } } },
+          },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    }),
+
+  findAnyById: (companyId: string, id: string) => prisma.pieceRateEarning.findFirst({ where: { id, companyId } }),
+
+  update: (id: string, data: Prisma.PieceRateEarningUncheckedUpdateInput) =>
+    prisma.pieceRateEarning.update({ where: { id }, data }),
 };

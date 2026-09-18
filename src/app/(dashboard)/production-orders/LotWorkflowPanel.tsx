@@ -122,6 +122,16 @@ export function LotWorkflowPanel({
   const [assignTarget, setAssignTarget] = useState<JobOrderRow | null>(null);
   const [assignEmployeeId, setAssignEmployeeId] = useState("");
   const [assignQty, setAssignQty] = useState("");
+  // Piece-Rate (2026-09-18) — optional; only meaningful once the company has
+  // enabled piece-rate tracking (Admin -> Production Settings). Left blank,
+  // assignWorker() behaves exactly as before.
+  const [productionOperations, setProductionOperations] = useState<{ id: string; name: string; code: string }[]>([]);
+  const [assignOperationId, setAssignOperationId] = useState("");
+  const [assignResolution, setAssignResolution] = useState<
+    { resolved: true; rate: number; source: string } | { resolved: false } | null
+  >(null);
+  const [assignOverrideRate, setAssignOverrideRate] = useState("");
+  const [assignOverrideReason, setAssignOverrideReason] = useState("");
 
   const [progressTarget, setProgressTarget] = useState<JobOrderRow | null>(null);
   const [progressEmployeeId, setProgressEmployeeId] = useState("");
@@ -167,7 +177,37 @@ export function LotWorkflowPanel({
     fetch("/api/v1/suppliers?pageSize=200")
       .then((res) => res.json())
       .then((body) => setSuppliers(body.data ?? []));
+    fetch("/api/v1/production-operations")
+      .then((res) => res.json())
+      .then((body) => setProductionOperations(body.data ?? []))
+      .catch(() => {});
   }, []);
+
+  // Piece-Rate (2026-09-18) — live preview in the Assign Worker modal;
+  // never mutates anything, assignWorker() re-resolves for real.
+  useEffect(() => {
+    let cancelled = false;
+    Promise.resolve().then(async () => {
+      if (!assignTarget || !assignEmployeeId || !assignOperationId) {
+        if (!cancelled) setAssignResolution(null);
+        return;
+      }
+      try {
+        const res = await fetch("/api/v1/piece-rate-cards/resolve", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jobOrderId: assignTarget.id, employeeId: assignEmployeeId, productionOperationId: assignOperationId }),
+        });
+        const body = await res.json();
+        if (!cancelled) setAssignResolution(res.ok ? (body.data ?? null) : null);
+      } catch {
+        if (!cancelled) setAssignResolution(null);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [assignTarget, assignEmployeeId, assignOperationId]);
 
   const refresh = async () => {
     const res = await fetch(`/api/v1/lots/${lotId}`);
@@ -212,7 +252,13 @@ export function LotWorkflowPanel({
         fetch(`/api/v1/job-orders/${assignTarget.id}/assignments`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ employeeId: assignEmployeeId, assignedQuantity: Number(assignQty) }),
+          body: JSON.stringify({
+            employeeId: assignEmployeeId,
+            assignedQuantity: Number(assignQty),
+            productionOperationId: assignOperationId || undefined,
+            overriddenRate: assignOverrideRate ? Number(assignOverrideRate) : undefined,
+            overrideReason: assignOverrideReason || undefined,
+          }),
         }),
       "Failed to assign this worker."
     );
@@ -220,6 +266,10 @@ export function LotWorkflowPanel({
       setAssignTarget(null);
       setAssignEmployeeId("");
       setAssignQty("");
+      setAssignOperationId("");
+      setAssignResolution(null);
+      setAssignOverrideRate("");
+      setAssignOverrideReason("");
     }
   };
 
@@ -579,11 +629,59 @@ export function LotWorkflowPanel({
             <FormField label="Assigned Quantity" htmlFor="assignQty" required>
               <input id="assignQty" type="number" min={0} step="0.0001" required value={assignQty} onChange={(e) => setAssignQty(e.target.value)} className={textInputClass()} />
             </FormField>
+            {productionOperations.length > 0 && (
+              <>
+                <FormField label="Operation (Piece-Rate, optional)" htmlFor="assignOperationId">
+                  <select id="assignOperationId" value={assignOperationId} onChange={(e) => setAssignOperationId(e.target.value)} className={textInputClass()}>
+                    <option value="">— None —</option>
+                    {productionOperations.map((o) => (
+                      <option key={o.id} value={o.id}>
+                        {o.name}
+                      </option>
+                    ))}
+                  </select>
+                </FormField>
+                {assignOperationId && (
+                  <div className="rounded-md border border-zinc-200 bg-zinc-50 p-2 text-xs text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
+                    {assignResolution?.resolved ? (
+                      <>
+                        Resolved Rate: <strong>₹{assignResolution.rate}</strong> (source: {assignResolution.source})
+                        {assignQty && <> — Estimated Earning: ₹{(Number(assignQty) * assignResolution.rate).toFixed(2)}</>}
+                      </>
+                    ) : (
+                      <span className="text-amber-700 dark:text-amber-400">
+                        No rate configured for this worker/style/operation — set up a Rate Card, or supply an authorized override rate below.
+                      </span>
+                    )}
+                  </div>
+                )}
+                {assignOperationId && !assignResolution?.resolved && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <FormField label="Override Rate" htmlFor="assignOverrideRate">
+                      <input id="assignOverrideRate" type="number" min={0} step="0.0001" value={assignOverrideRate} onChange={(e) => setAssignOverrideRate(e.target.value)} className={textInputClass()} />
+                    </FormField>
+                    <FormField label="Override Reason" htmlFor="assignOverrideReason">
+                      <input id="assignOverrideReason" value={assignOverrideReason} onChange={(e) => setAssignOverrideReason(e.target.value)} className={textInputClass()} />
+                    </FormField>
+                  </div>
+                )}
+              </>
+            )}
             <div className="flex justify-end gap-2">
               <button type="button" onClick={() => setAssignTarget(null)} className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800">
                 Cancel
               </button>
-              <button type="button" onClick={submitAssign} disabled={isBusy || !assignEmployeeId || !assignQty} className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60">
+              <button
+                type="button"
+                onClick={submitAssign}
+                disabled={
+                  isBusy ||
+                  !assignEmployeeId ||
+                  !assignQty ||
+                  (!!assignOperationId && !assignResolution?.resolved && !assignOverrideRate)
+                }
+                className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
+              >
                 {isBusy ? "Saving…" : "Assign"}
               </button>
             </div>

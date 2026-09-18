@@ -201,6 +201,24 @@ class PermissionServiceImpl {
   }
 
   /**
+   * The single Supplier this user's login is scoped to, or `null` for an
+   * ordinary internal user with no such restriction (every pre-existing
+   * user). Unlike getAllowedBranchIds/getAllowedProductionStageIds this is
+   * NOT a role-level union — User.supplierId is a direct, 1:1 identity fact
+   * (the same shape as User.employeeId), so there is nothing to union across
+   * multiple roles: this account genuinely IS that vendor's own login.
+   * Uncached (matches loadLiveUserState's live-check discipline) — a cheap
+   * single-column lookup. A platform admin never has a supplierId set in
+   * practice, but if one somehow were, it would still apply — this account
+   * IS that vendor's login and should never see other suppliers'/other
+   * companies' production data regardless of any other flag.
+   */
+  async getAllowedSupplierId(userId: string): Promise<string | null> {
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { supplierId: true } });
+    return user?.supplierId ?? null;
+  }
+
+  /**
    * The set of modules this user holds `view` on — drives which sidebar
    * sections/links actually render, so a narrowly-scoped custom role (e.g.
    * a floor-only "Cutting Supervisor") doesn't see nav entries for modules

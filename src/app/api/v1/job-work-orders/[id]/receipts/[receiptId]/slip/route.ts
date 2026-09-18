@@ -23,7 +23,7 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
     await PermissionService.assert(session.user.id, "production", "view");
 
     const { id, receiptId } = await params;
-    const jobWorkOrder = await getJobWorkOrderById(session.user.companyId, id);
+    const jobWorkOrder = await getJobWorkOrderById(session.user.companyId, id, session.user.id);
     const receipt = jobWorkOrder.receipts.find((r) => r.id === receiptId);
     if (!receipt) throw new BusinessRuleError("NOT_FOUND", "Receipt not found on this job work order.", { id: receiptId });
 

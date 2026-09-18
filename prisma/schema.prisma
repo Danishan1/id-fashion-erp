@@ -84,6 +84,11 @@ model Company {
   productionStageTransactions         ProductionStageTransaction[]
   qcInspections                       QcInspection[]
   defectTypes                         DefectType[]
+  productionOperations                ProductionOperation[]
+  pieceRateCards                      PieceRateCard[]
+  pieceRateEarnings                   PieceRateEarning[]
+  productionSettings                  ProductionSettings?
+  productionRoutes                    ProductionRoute[]
   documentSequences                   DocumentSequence[]
   auditLogs                           AuditLog[]
   notifications                       Notification[]
@@ -247,6 +252,13 @@ model User {
   companyId         String     @map("company_id") @db.Uuid
   defaultBranchId   String?    @map("default_branch_id") @db.Uuid
   employeeId        String?    @unique @map("employee_id") @db.Uuid
+  // A vendor/external-unit login — this account genuinely IS that Supplier's
+  // own portal identity (same 1:1 "this login is that real-world entity"
+  // shape as employeeId just above, not a role-style many-to-many). Nullable
+  // for every ordinary internal user. Scoped server-side via
+  // PermissionService.getAllowedSupplierId() in every Job Work Order route —
+  // an EXTERNAL_UNIT_USER role sees/acts on only its own supplier's jobs.
+  supplierId        String?    @unique @map("supplier_id") @db.Uuid
   email             String     @unique
   passwordHash      String     @map("password_hash")
   fullName          String     @map("full_name")
@@ -277,6 +289,7 @@ model User {
   company                                    Company                              @relation(fields: [companyId], references: [id])
   defaultBranch                              Branch?                              @relation("UserDefaultBranch", fields: [defaultBranchId], references: [id])
   employee                                   Employee?                            @relation(fields: [employeeId], references: [id])
+  supplierPortalFor                          Supplier?                            @relation("SupplierPortalUser", fields: [supplierId], references: [id])
   branchRoles                                UserBranchRole[]
   auditLogs                                  AuditLog[]
   notifications                              Notification[]
@@ -413,6 +426,12 @@ model User {
   aiGarmentBuyerCommentsAnalysesCreated      AiGarmentBuyerCommentsAnalysis[]     @relation("AiGarmentBuyerCommentsAnalysisCreatedBy")
   aiGarmentProjectsCostingCompletedBy        AiGarmentProject[]                   @relation("AiGarmentProjectCostingCompletedBy")
   aiGarmentProjectsProductionHandoffBy       AiGarmentProject[]                   @relation("AiGarmentProjectProductionHandoffCompletedBy")
+  pieceRateCardsCreated                      PieceRateCard[]                      @relation("PieceRateCardCreatedBy")
+  pieceRateCardsUpdated                      PieceRateCard[]                      @relation("PieceRateCardUpdatedBy")
+  pieceRateEarningsApproved                  PieceRateEarning[]                   @relation("PieceRateEarningApprovedBy")
+  jobOrderAssignmentsRateOverridden          JobOrderAssignment[]                 @relation("JobOrderAssignmentRateOverriddenBy")
+  jobWorkReceiptsApproved                    JobWorkReceipt[]                     @relation("JobWorkReceiptApprovedBy")
+  jobWorkReceiptsSubmitted                   JobWorkReceipt[]                     @relation("JobWorkReceiptSubmittedBy")
 
   @@map("users")
 }
@@ -714,6 +733,10 @@ model Supplier {
   aiGarmentFabricDetails  AiGarmentFabricDetail[]
   aiDesignerProjects      AiDesignerProject[]
   replicateDesignProjects ReplicateDesignProject[]
+  portalUser              User?                      @relation("SupplierPortalUser")
+  pieceRateCards          PieceRateCard[]
+  pieceRateEarnings       PieceRateEarning[]
+  preferredForRouteStages ProductionRouteStage[]
 
   @@unique([companyId, code])
   @@map("suppliers")
@@ -871,6 +894,8 @@ model Employee {
   productionStagesOwned   ProductionStage[]       @relation("ProductionStageDefaultOwner")
   jobOrderAssignments     JobOrderAssignment[]    @relation("JobOrderAssignmentEmployee")
   jobOrderProgressEntries JobOrderProgressEntry[] @relation("JobOrderProgressEntryEmployee")
+  pieceRateCards          PieceRateCard[]
+  pieceRateEarnings       PieceRateEarning[]
 
   // HRMS (migrated from WordPress "EQ HRMS")
   attendanceRecords            AttendanceRecord[]
@@ -978,6 +1003,8 @@ model Product {
   // point at the same material" plain-array shape as AI Designer's own.
   replicateDesignProjects      ReplicateDesignProject[]
   replicateDesignMaterialLines ReplicateDesignMaterialLine[]
+  pieceRateCards               PieceRateCard[]
+  productionRoutes             ProductionRoute[]
 
   @@unique([companyId, styleCode])
   @@map("products")
@@ -1192,9 +1219,253 @@ model ProductionStage {
   transactionsFromHere ProductionStageTransaction[] @relation("StageTransactionFromStage")
   transactionsToHere   ProductionStageTransaction[] @relation("StageTransactionToStage")
   roleAccess           RoleProductionStageAccess[]
+  productionOperations ProductionOperation[]
+  routeStages          ProductionRouteStage[]
 
   @@unique([companyId, code])
   @@map("production_stages")
+}
+
+// -----------------------------------------------------------------------------
+// Piece-Rate / Worker-Pricing engine (2026-09-18) — a genuinely new,
+// lightweight costing dimension layered ON TOP OF the existing stage-movement
+// engine above, never inside it. ProductionOperation NEVER participates in
+// stage forward/revert/QC (postStageTransactionInTx, forwardJobOrder,
+// revertJobOrder, recordQcInspection all remain untouched) — it exists solely
+// so a Rate Card can price "Style X + Sleeve Attach" independently of the
+// coarse ProductionStage a lot actually moves through. The optional
+// productionStageId below is an organizational tag only ("this operation is
+// usually done during Stitching"), read by nothing in the movement engine.
+// -----------------------------------------------------------------------------
+
+model ProductionOperation {
+  id                String   @id @default(uuid()) @db.Uuid
+  companyId         String   @map("company_id") @db.Uuid
+  productionStageId String?  @map("production_stage_id") @db.Uuid
+  code              String
+  name              String
+  isActive          Boolean  @default(true) @map("is_active")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  company             Company              @relation(fields: [companyId], references: [id])
+  productionStage     ProductionStage?     @relation(fields: [productionStageId], references: [id])
+  rateCards           PieceRateCard[]
+  earnings            PieceRateEarning[]
+  jobWorkOrders       JobWorkOrder[]
+  jobOrderAssignments JobOrderAssignment[]
+
+  @@unique([companyId, code])
+  @@map("production_operations")
+}
+
+enum RateCardRateSource {
+  WORKER_SPECIFIC
+  WORKER_GRADE
+  STYLE_OPERATION_DEFAULT
+  OPERATION_DEFAULT
+  // The External Unit (Supplier) analogue of WORKER_SPECIFIC — resolved via
+  // resolveSupplierPieceRate(), never resolvePieceRate() (which is
+  // Employee-only).
+  SUPPLIER_SPECIFIC
+}
+
+// One generalized table for every rate-card tier, not several parallel
+// tables — a row's "specificity tier" is determined purely by which of
+// employeeId/employeeCategoryId/supplierId is non-null, resolved by
+// resolvePieceRate() (piece-rate-resolution.service.ts) in strict priority
+// order. Exactly one of {employeeId, employeeCategoryId, neither} may be set
+// per row, each optionally further scoped by productId (Style). supplierId
+// is populated only by the External Job-Work rate path
+// (job-work-order.service.ts's createJobWorkOrder) — P1a's own Rate Card
+// UI/service rejects any attempt to set it directly. Overlap prevention
+// (no two active rows for the identical dimension tuple with overlapping
+// [effectiveFrom, effectiveTo) windows) is enforced in
+// piece-rate-card.service.ts, reusing tax-config.service.ts's own
+// half-open-interval rangesOverlap() pattern verbatim — nullable dimension
+// columns can't express this as a DB @@unique constraint.
+model PieceRateCard {
+  id                    String    @id @default(uuid()) @db.Uuid
+  companyId             String    @map("company_id") @db.Uuid
+  productionOperationId String    @map("production_operation_id") @db.Uuid
+  productId             String?   @map("product_id") @db.Uuid
+  employeeId            String?   @map("employee_id") @db.Uuid
+  employeeCategoryId    String?   @map("employee_category_id") @db.Uuid
+  supplierId            String?   @map("supplier_id") @db.Uuid
+  rate                  Decimal   @db.Decimal(18, 4)
+  effectiveFrom         DateTime  @map("effective_from") @db.Date
+  effectiveTo           DateTime? @map("effective_to") @db.Date
+  isActive              Boolean   @default(true) @map("is_active")
+  createdByUserId       String    @map("created_by_user_id") @db.Uuid
+  updatedByUserId       String?   @map("updated_by_user_id") @db.Uuid
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+
+  company                Company              @relation(fields: [companyId], references: [id])
+  productionOperation    ProductionOperation  @relation(fields: [productionOperationId], references: [id])
+  product                Product?             @relation(fields: [productId], references: [id])
+  employee               Employee?            @relation(fields: [employeeId], references: [id])
+  employeeCategory       EmployeeCategory?    @relation(fields: [employeeCategoryId], references: [id])
+  supplier               Supplier?            @relation(fields: [supplierId], references: [id])
+  createdBy              User                 @relation("PieceRateCardCreatedBy", fields: [createdByUserId], references: [id])
+  updatedBy              User?                @relation("PieceRateCardUpdatedBy", fields: [updatedByUserId], references: [id])
+  resolvedForAssignments JobOrderAssignment[]
+
+  @@index([companyId, productionOperationId])
+  @@index([companyId, productId, productionOperationId])
+  @@index([companyId, employeeId, productionOperationId])
+  @@index([companyId, employeeCategoryId, productionOperationId])
+  @@index([companyId, supplierId, productionOperationId])
+  @@map("piece_rate_cards")
+}
+
+enum PieceRateEarnerType {
+  EMPLOYEE
+  SUPPLIER
+}
+
+enum PieceRateEarningStatus {
+  PENDING
+  PENDING_APPROVAL
+  APPROVED
+  PAYABLE
+  PAID
+  ADJUSTED
+  CANCELLED
+}
+
+enum PieceRatePaymentQuantityRule {
+  GOOD_COMPLETED_QTY
+  QC_ACCEPTED_QTY
+}
+
+// The earning ledger — one row per INCREMENTAL payable quantity, never a
+// running total, keyed by (jobOrderId, earner, productionOperationId).
+// Rework never mutates a JobOrder (postStageTransactionInTx always creates a
+// brand-new JobOrder row at the rework destination), so this key is already
+// fully isolated per lineage step: generateEarningForJobOrderProgress()
+// (piece-rate-earning.service.ts) computes the JobOrder's live eligible
+// quantity fresh, subtracts the sum of every prior non-cancelled earning row
+// sharing this exact key, and inserts a new row only for the strictly
+// positive remainder — a physical piece can never be paid for twice, even
+// across a QC-accept/rework/re-accept cycle. Exactly one of
+// {employeeId+jobOrderAssignmentId, supplierId+jobWorkOrderId} is populated
+// per row, matching earnerType — an EMPLOYEE row is generated from ordinary
+// internal progress (recordProgressEntry/approveProgressEntry/
+// recordAdjustmentEntry/recordQcInspection in job-order.service.ts); a
+// SUPPLIER row is generated from an external Job Work receipt
+// (receiveJobWork in job-work-order.service.ts) — same table, same
+// no-duplicate-payment algorithm, never a second ledger mechanism.
+model PieceRateEarning {
+  id                          String                       @id @default(uuid()) @db.Uuid
+  companyId                   String                       @map("company_id") @db.Uuid
+  jobOrderId                  String                       @map("job_order_id") @db.Uuid
+  earnerType                  PieceRateEarnerType          @map("earner_type")
+  jobOrderAssignmentId        String?                      @map("job_order_assignment_id") @db.Uuid
+  employeeId                  String?                      @map("employee_id") @db.Uuid
+  jobWorkOrderId              String?                      @map("job_work_order_id") @db.Uuid
+  jobWorkReceiptId            String?                      @map("job_work_receipt_id") @db.Uuid
+  supplierId                  String?                      @map("supplier_id") @db.Uuid
+  productionOperationId       String?                      @map("production_operation_id") @db.Uuid
+  qtyBasis                    PieceRatePaymentQuantityRule @map("qty_basis")
+  payableQuantity             Decimal                      @map("payable_quantity") @db.Decimal(18, 4)
+  rateApplied                 Decimal                      @map("rate_applied") @db.Decimal(18, 4)
+  rateSource                  RateCardRateSource?          @map("rate_source")
+  amount                      Decimal                      @map("amount") @db.Decimal(18, 2)
+  status                      PieceRateEarningStatus       @default(PENDING)
+  cumulativeBasisAtGeneration Decimal                      @map("cumulative_basis_at_generation") @db.Decimal(18, 4)
+  generatedFromEntryId        String?                      @map("generated_from_entry_id") @db.Uuid
+  generatedFromQcInspectionId String?                      @map("generated_from_qc_inspection_id") @db.Uuid
+  approvedByUserId            String?                      @map("approved_by_user_id") @db.Uuid
+  approvedAt                  DateTime?                    @map("approved_at")
+  remarks                     String?
+  createdAt                   DateTime                     @default(now()) @map("created_at")
+  updatedAt                   DateTime                     @updatedAt @map("updated_at")
+
+  company             Company              @relation(fields: [companyId], references: [id])
+  jobOrder            JobOrder             @relation(fields: [jobOrderId], references: [id])
+  jobOrderAssignment  JobOrderAssignment?  @relation(fields: [jobOrderAssignmentId], references: [id])
+  employee            Employee?            @relation(fields: [employeeId], references: [id])
+  jobWorkOrder        JobWorkOrder?        @relation(fields: [jobWorkOrderId], references: [id])
+  jobWorkReceipt      JobWorkReceipt?      @relation(fields: [jobWorkReceiptId], references: [id])
+  supplier            Supplier?            @relation(fields: [supplierId], references: [id])
+  productionOperation ProductionOperation? @relation(fields: [productionOperationId], references: [id])
+  approvedBy          User?                @relation("PieceRateEarningApprovedBy", fields: [approvedByUserId], references: [id])
+
+  @@index([companyId, employeeId])
+  @@index([companyId, supplierId])
+  @@index([jobOrderId, jobOrderAssignmentId])
+  @@index([jobOrderId, jobWorkOrderId])
+  @@index([companyId, status])
+  @@map("piece_rate_earnings")
+}
+
+// Company-wide Production behavior toggles — flat one-row-per-company,
+// exact shape of ActionDisplaySettings (missing row = the defaults below, no
+// backfill needed).
+model ProductionSettings {
+  id                           String                       @id @default(uuid()) @db.Uuid
+  companyId                    String                       @unique @map("company_id") @db.Uuid
+  // When true, recordProgressEntry() (the ordinary Supervisor-direct path)
+  // routes through the same PENDING+approve flow submitSelfProgressEntry
+  // already uses, instead of applying immediately.
+  supervisorApprovalRequired   Boolean                      @default(false) @map("supervisor_approval_required")
+  // Who may submit a Job Work receipt on an external unit's behalf.
+  externalEntryBy              ExternalEntrySource          @default(INTERNAL_SUPERVISOR) @map("external_entry_by")
+  pieceRateTrackingEnabled     Boolean                      @default(false) @map("piece_rate_tracking_enabled")
+  pieceRatePaymentQuantityRule PieceRatePaymentQuantityRule @default(QC_ACCEPTED_QTY) @map("piece_rate_payment_quantity_rule")
+  workersCanViewOwnRate        Boolean                      @default(false) @map("workers_can_view_own_rate")
+  createdAt                    DateTime                     @default(now()) @map("created_at")
+  updatedAt                    DateTime                     @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@map("production_settings")
+}
+
+enum ExternalEntrySource {
+  EXTERNAL_UNIT_USER
+  INTERNAL_SUPERVISOR
+  BOTH
+}
+
+// Advisory-only, optionally Style-tagged ordered subset of existing
+// ProductionStages — never a hard gate. Ordering is always derived from the
+// referenced ProductionStage.sequence, never a second independent ordinal,
+// so a route can never drift from the company's own real stage order.
+// Consumed purely as a UI suggestion (pre-selecting the next stage/supplier
+// when forwarding a JobOrder or creating a Job Work Order) —
+// forwardJobOrder()'s existing free-choice/skip-ahead-approval logic is
+// completely untouched by this.
+model ProductionRoute {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  name      String
+  productId String?  @map("product_id") @db.Uuid
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company Company                @relation(fields: [companyId], references: [id])
+  product Product?               @relation(fields: [productId], references: [id])
+  stages  ProductionRouteStage[]
+
+  @@map("production_routes")
+}
+
+model ProductionRouteStage {
+  id                  String  @id @default(uuid()) @db.Uuid
+  productionRouteId   String  @map("production_route_id") @db.Uuid
+  productionStageId   String  @map("production_stage_id") @db.Uuid
+  isExternal          Boolean @default(false) @map("is_external")
+  preferredSupplierId String? @map("preferred_supplier_id") @db.Uuid
+
+  productionRoute   ProductionRoute @relation(fields: [productionRouteId], references: [id], onDelete: Cascade)
+  productionStage   ProductionStage @relation(fields: [productionStageId], references: [id])
+  preferredSupplier Supplier?       @relation(fields: [preferredSupplierId], references: [id])
+
+  @@unique([productionRouteId, productionStageId])
+  @@map("production_route_stages")
 }
 
 model ProductionLine {
@@ -1550,8 +1821,9 @@ model EmployeeCategory {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  company   Company    @relation(fields: [companyId], references: [id])
-  employees Employee[]
+  company        Company         @relation(fields: [companyId], references: [id])
+  employees      Employee[]
+  pieceRateCards PieceRateCard[]
 
   @@unique([companyId, code])
   @@map("employee_categories")
@@ -3625,6 +3897,7 @@ model JobOrder {
   outgoingTransactions ProductionStageTransaction[] @relation("StageTransactionFrom")
   qcInspections        QcInspection[]
   jobWorkOrders        JobWorkOrder[]
+  pieceRateEarnings    PieceRateEarning[]
 
   // Not unique on (lotId, productionStageId) — a lot can legitimately
   // revisit the same stage after rework; each revisit is a NEW row, never an
@@ -3664,10 +3937,36 @@ model JobOrderAssignment {
   startedAt        DateTime?        @map("started_at")
   completedAt      DateTime?        @map("completed_at")
 
-  jobOrder        JobOrder                @relation(fields: [jobOrderId], references: [id])
-  employee        Employee                @relation("JobOrderAssignmentEmployee", fields: [employeeId], references: [id])
-  assignedBy      User                    @relation("JobOrderAssignmentAssignedBy", fields: [assignedByUserId], references: [id])
-  progressEntries JobOrderProgressEntry[]
+  // Piece-Rate Job Rate Snapshot (2026-09-18) — resolved and frozen ONCE by
+  // assignWorker() via resolvePieceRate(), never recomputed even if the Rate
+  // Card changes later. All nullable/defaulted: every pre-existing assignment
+  // row, and every assignment for a FIXED_SALARY employee, simply has none of
+  // this set. One rate applies per assignment (a re-assignment/override just
+  // updates these same columns, itself audit-logged) — deliberately not a
+  // child table.
+  productionOperationId String?             @map("production_operation_id") @db.Uuid
+  resolvedRate          Decimal?            @map("resolved_rate") @db.Decimal(18, 4)
+  resolvedRateSource    RateCardRateSource? @map("resolved_rate_source")
+  resolvedRateCardId    String?             @map("resolved_rate_card_id") @db.Uuid
+  rateSnapshotAt        DateTime?           @map("rate_snapshot_at")
+  // Authorized override — resolvedRate/resolvedRateSource above are left
+  // untouched by an override; getEffectiveAssignmentRate() picks
+  // overriddenRate whenever rateOverridden is true. Gated by the piece_rate
+  // "override" RBAC action, distinct from ordinary production.edit.
+  rateOverridden        Boolean             @default(false) @map("rate_overridden")
+  overriddenRate        Decimal?            @map("overridden_rate") @db.Decimal(18, 4)
+  overrideReason        String?             @map("override_reason")
+  overriddenByUserId    String?             @map("overridden_by_user_id") @db.Uuid
+  overriddenAt          DateTime?           @map("overridden_at")
+
+  jobOrder            JobOrder                @relation(fields: [jobOrderId], references: [id])
+  employee            Employee                @relation("JobOrderAssignmentEmployee", fields: [employeeId], references: [id])
+  assignedBy          User                    @relation("JobOrderAssignmentAssignedBy", fields: [assignedByUserId], references: [id])
+  progressEntries     JobOrderProgressEntry[]
+  productionOperation ProductionOperation?    @relation(fields: [productionOperationId], references: [id])
+  resolvedRateCard    PieceRateCard?          @relation(fields: [resolvedRateCardId], references: [id])
+  overriddenBy        User?                   @relation("JobOrderAssignmentRateOverriddenBy", fields: [overriddenByUserId], references: [id])
+  pieceRateEarnings   PieceRateEarning[]
 
   @@index([jobOrderId])
   @@index([employeeId])
@@ -3878,6 +4177,34 @@ enum JobWorkReceiptStatus {
   CANCELLED
 }
 
+enum JobWorkOrderRateStatus {
+  RESOLVED
+  UNRESOLVED
+  OVERRIDDEN
+}
+
+// Discriminates who actually submitted a JobWorkReceipt — INTERNAL_SUPERVISOR
+// (today's only path, unchanged) vs. EXTERNAL_UNIT_USER (the vendor's own
+// portal login reporting its own output). Mirrors ProgressEntrySource's own
+// SUPERVISOR/SELF discriminator on the internal side.
+enum JobWorkReceiptSource {
+  INTERNAL_SUPERVISOR
+  EXTERNAL_UNIT_USER
+}
+
+// Mirrors ProgressEntryApprovalStatus exactly. An EXTERNAL_UNIT_USER
+// submission (when ProductionSettings.externalEntryBy allows it) sits PENDING
+// with no accumulator/JobOrder quantity change until an internal Supervisor
+// decides — the same "worker's own unverified claim must never count as real
+// production before someone checks it" discipline as the internal self-entry
+// flow.
+enum JobWorkReceiptApprovalStatus {
+  NOT_REQUIRED
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 // External job-work: an alternative fulfillment path for an existing
 // JobOrder's completed/rejected/damaged accumulators — the same three
 // columns internal JobOrderProgressEntry recording already drives, guarded
@@ -3891,37 +4218,49 @@ enum JobWorkReceiptStatus {
 // from — job-work-out is an external alternative to that, not a different
 // concept.
 model JobWorkOrder {
-  id                     String              @id @default(uuid()) @db.Uuid
-  companyId              String              @map("company_id") @db.Uuid
-  branchId               String?             @map("branch_id") @db.Uuid
-  jobWorkNumber          String              @map("job_work_number")
-  supplierId             String              @map("supplier_id") @db.Uuid
-  jobOrderId             String              @map("job_order_id") @db.Uuid
-  issuedQuantity         Decimal             @map("issued_quantity") @db.Decimal(18, 4)
-  uomId                  String              @map("uom_id") @db.Uuid
-  issueDate              DateTime            @map("issue_date") @db.Date
-  expectedCompletionDate DateTime?           @map("expected_completion_date") @db.Date
-  status                 JobWorkOrderStatus  @default(ISSUED)
-  statusBeforeHold       JobWorkOrderStatus? @map("status_before_hold")
+  id                     String                 @id @default(uuid()) @db.Uuid
+  companyId              String                 @map("company_id") @db.Uuid
+  branchId               String?                @map("branch_id") @db.Uuid
+  jobWorkNumber          String                 @map("job_work_number")
+  supplierId             String                 @map("supplier_id") @db.Uuid
+  jobOrderId             String                 @map("job_order_id") @db.Uuid
+  // Piece-Rate/External-costing (2026-09-18) — set explicitly at creation
+  // (a JobWorkOrder's single stage may have more than one configured
+  // Operation, so this is never inferred). Nullable: an unresolved rate never
+  // blocks WIP issuance (business continuity) — it just flags UNRESOLVED for
+  // later correction. resolvedRate is a snapshot, frozen at creation, never
+  // recomputed if the Rate Card later changes.
+  productionOperationId  String?                @map("production_operation_id") @db.Uuid
+  resolvedRate           Decimal?               @map("resolved_rate") @db.Decimal(18, 4)
+  rateResolutionStatus   JobWorkOrderRateStatus @default(UNRESOLVED) @map("rate_resolution_status")
+  rateSourceId           String?                @map("rate_source_id") @db.Uuid
+  issuedQuantity         Decimal                @map("issued_quantity") @db.Decimal(18, 4)
+  uomId                  String                 @map("uom_id") @db.Uuid
+  issueDate              DateTime               @map("issue_date") @db.Date
+  expectedCompletionDate DateTime?              @map("expected_completion_date") @db.Date
+  status                 JobWorkOrderStatus     @default(ISSUED)
+  statusBeforeHold       JobWorkOrderStatus?    @map("status_before_hold")
   // Guarded accumulators — the exact PurchaseOrderItem.receivedQuantity
   // idiom, capped at issuedQuantity via a guarded updateMany, never a
   // plain read-then-write.
-  receivedQuantity       Decimal             @default(0) @map("received_quantity") @db.Decimal(18, 4)
-  rejectedQuantity       Decimal             @default(0) @map("rejected_quantity") @db.Decimal(18, 4)
-  damagedQuantity        Decimal             @default(0) @map("damaged_quantity") @db.Decimal(18, 4)
+  receivedQuantity       Decimal                @default(0) @map("received_quantity") @db.Decimal(18, 4)
+  rejectedQuantity       Decimal                @default(0) @map("rejected_quantity") @db.Decimal(18, 4)
+  damagedQuantity        Decimal                @default(0) @map("damaged_quantity") @db.Decimal(18, 4)
   remarks                String?
-  requestedByUserId      String              @map("requested_by_user_id") @db.Uuid
-  createdAt              DateTime            @default(now()) @map("created_at")
-  updatedAt              DateTime            @updatedAt @map("updated_at")
+  requestedByUserId      String                 @map("requested_by_user_id") @db.Uuid
+  createdAt              DateTime               @default(now()) @map("created_at")
+  updatedAt              DateTime               @updatedAt @map("updated_at")
 
-  company     Company                @relation(fields: [companyId], references: [id])
-  branch      Branch?                @relation(fields: [branchId], references: [id])
-  supplier    Supplier               @relation(fields: [supplierId], references: [id])
-  jobOrder    JobOrder               @relation(fields: [jobOrderId], references: [id])
-  uom         UnitOfMeasure          @relation(fields: [uomId], references: [id])
-  requestedBy User                   @relation(fields: [requestedByUserId], references: [id])
-  materials   JobWorkOrderMaterial[]
-  receipts    JobWorkReceipt[]
+  company             Company                @relation(fields: [companyId], references: [id])
+  branch              Branch?                @relation(fields: [branchId], references: [id])
+  supplier            Supplier               @relation(fields: [supplierId], references: [id])
+  jobOrder            JobOrder               @relation(fields: [jobOrderId], references: [id])
+  uom                 UnitOfMeasure          @relation(fields: [uomId], references: [id])
+  requestedBy         User                   @relation(fields: [requestedByUserId], references: [id])
+  materials           JobWorkOrderMaterial[]
+  receipts            JobWorkReceipt[]
+  productionOperation ProductionOperation?   @relation(fields: [productionOperationId], references: [id])
+  pieceRateEarnings   PieceRateEarning[]
 
   @@unique([companyId, jobWorkNumber])
   @@index([companyId, status])
@@ -3961,26 +4300,43 @@ model JobWorkOrderMaterial {
 // scoped-to-parent numbering, since this is sub-document numbering, not a
 // standalone business document.
 model JobWorkReceipt {
-  id               String               @id @default(uuid()) @db.Uuid
-  companyId        String               @map("company_id") @db.Uuid
-  jobWorkOrderId   String               @map("job_work_order_id") @db.Uuid
-  receiptNumber    String               @map("receipt_number")
-  receivedDate     DateTime             @map("received_date") @db.Date
-  receivedQuantity Decimal              @map("received_quantity") @db.Decimal(18, 4)
-  rejectedQuantity Decimal              @default(0) @map("rejected_quantity") @db.Decimal(18, 4)
-  damagedQuantity  Decimal              @default(0) @map("damaged_quantity") @db.Decimal(18, 4)
-  status           JobWorkReceiptStatus @default(COMPLETED)
-  remarks          String?
-  receivedByUserId String               @map("received_by_user_id") @db.Uuid
+  id                String                       @id @default(uuid()) @db.Uuid
+  companyId         String                       @map("company_id") @db.Uuid
+  jobWorkOrderId    String                       @map("job_work_order_id") @db.Uuid
+  receiptNumber     String                       @map("receipt_number")
+  receivedDate      DateTime                     @map("received_date") @db.Date
+  receivedQuantity  Decimal                      @map("received_quantity") @db.Decimal(18, 4)
+  rejectedQuantity  Decimal                      @default(0) @map("rejected_quantity") @db.Decimal(18, 4)
+  damagedQuantity   Decimal                      @default(0) @map("damaged_quantity") @db.Decimal(18, 4)
+  status            JobWorkReceiptStatus         @default(COMPLETED)
+  remarks           String?
+  receivedByUserId  String                       @map("received_by_user_id") @db.Uuid
   // CF-5: no branchId field exists on this model at all, so this is
   // naturally company-only already — see StockMovement.idempotencyKey for
   // why company-only (not branch-inclusive) is the deliberate choice anyway.
-  idempotencyKey   String?              @map("idempotency_key")
-  createdAt        DateTime             @default(now()) @map("created_at")
+  idempotencyKey    String?                      @map("idempotency_key")
+  // External Unit User (2026-09-18) — who actually submitted this receipt
+  // and whether it's still awaiting an internal Supervisor's decision.
+  // submittedBySource/approvalStatus default to the pre-existing behavior
+  // (INTERNAL_SUPERVISOR/NOT_REQUIRED) for every historical row and every
+  // ordinary internal-submitted receipt going forward — nothing changes for
+  // that path. submittedByUserId is distinct from receivedByUserId
+  // ("who received it internally," which for a PENDING external submission
+  // is only populated once approved).
+  submittedBySource JobWorkReceiptSource         @default(INTERNAL_SUPERVISOR) @map("submitted_by_source")
+  approvalStatus    JobWorkReceiptApprovalStatus @default(NOT_REQUIRED) @map("approval_status")
+  approvalRemark    String?                      @map("approval_remark")
+  approvedByUserId  String?                      @map("approved_by_user_id") @db.Uuid
+  approvedAt        DateTime?                    @map("approved_at")
+  submittedByUserId String?                      @map("submitted_by_user_id") @db.Uuid
+  createdAt         DateTime                     @default(now()) @map("created_at")
 
-  company      Company      @relation(fields: [companyId], references: [id])
-  jobWorkOrder JobWorkOrder @relation(fields: [jobWorkOrderId], references: [id])
-  receivedBy   User         @relation(fields: [receivedByUserId], references: [id])
+  company           Company            @relation(fields: [companyId], references: [id])
+  jobWorkOrder      JobWorkOrder       @relation(fields: [jobWorkOrderId], references: [id])
+  receivedBy        User               @relation(fields: [receivedByUserId], references: [id])
+  approvedBy        User?              @relation("JobWorkReceiptApprovedBy", fields: [approvedByUserId], references: [id])
+  submittedBy       User?              @relation("JobWorkReceiptSubmittedBy", fields: [submittedByUserId], references: [id])
+  pieceRateEarnings PieceRateEarning[]
 
   @@unique([companyId, jobWorkOrderId, receiptNumber])
   @@unique([companyId, idempotencyKey])

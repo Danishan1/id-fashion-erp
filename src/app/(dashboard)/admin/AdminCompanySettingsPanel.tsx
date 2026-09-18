@@ -85,6 +85,136 @@ function ActionDisplaySettingsSection({ canManage }: { canManage: boolean }) {
   );
 }
 
+interface ProductionSettingsValue {
+  supervisorApprovalRequired: boolean;
+  externalEntryBy: "EXTERNAL_UNIT_USER" | "INTERNAL_SUPERVISOR" | "BOTH";
+  pieceRateTrackingEnabled: boolean;
+  pieceRatePaymentQuantityRule: "GOOD_COMPLETED_QTY" | "QC_ACCEPTED_QTY";
+  workersCanViewOwnRate: boolean;
+}
+
+/**
+ * Production Module Advanced Upgrade (2026-09-18) — company-wide toggles for
+ * the supervisor-approval-required integrity gate, the External Unit Job
+ * Work entry source, and the Piece-Rate engine's own on/off + payment
+ * quantity rule + worker-visibility settings. Same self-contained
+ * fetch-on-mount/toggle-and-PUT shape as ActionDisplaySettingsSection above.
+ */
+function ProductionSettingsSection({ canManage }: { canManage: boolean }) {
+  const [settings, setSettings] = useState<ProductionSettingsValue | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/v1/production-settings")
+      .then(parseJson)
+      .then((body) => setSettings(body.data))
+      .catch((e) => setError(e.message));
+  }, []);
+
+  async function update(patch: Partial<ProductionSettingsValue>) {
+    if (!settings) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const body = await parseJson(
+        await fetch("/api/v1/production-settings", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(patch),
+        })
+      );
+      setSettings(body.data);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!settings) return null;
+
+  return (
+    <div className="mb-4 space-y-2 rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
+      <p className="text-sm font-medium text-zinc-900 dark:text-zinc-50">Production Settings</p>
+
+      <div className="flex items-center justify-between border-t border-zinc-100 pt-2 dark:border-zinc-800">
+        <div>
+          <p className="text-xs text-zinc-700 dark:text-zinc-300">Require Supervisor approval for all progress entries</p>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">
+            When on, even a Supervisor&apos;s own direct entries wait for a second person&apos;s approval before counting.
+          </p>
+        </div>
+        <ToggleSwitch
+          checked={settings.supervisorApprovalRequired}
+          disabled={!canManage || saving}
+          label={settings.supervisorApprovalRequired ? "Required" : "Not required"}
+          onToggle={() => update({ supervisorApprovalRequired: !settings.supervisorApprovalRequired })}
+        />
+      </div>
+
+      <div className="flex items-center justify-between border-t border-zinc-100 pt-2 dark:border-zinc-800">
+        <div>
+          <p className="text-xs text-zinc-700 dark:text-zinc-300">External Job-Work entry</p>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">Who may submit a Job Work receipt for an external unit.</p>
+        </div>
+        <select
+          className={textInputClass() + " w-56"}
+          disabled={!canManage || saving}
+          value={settings.externalEntryBy}
+          onChange={(e) => update({ externalEntryBy: e.target.value as ProductionSettingsValue["externalEntryBy"] })}
+        >
+          <option value="INTERNAL_SUPERVISOR">Internal Supervisor only</option>
+          <option value="EXTERNAL_UNIT_USER">External Unit User only</option>
+          <option value="BOTH">Both</option>
+        </select>
+      </div>
+
+      <div className="flex items-center justify-between border-t border-zinc-100 pt-2 dark:border-zinc-800">
+        <div>
+          <p className="text-xs text-zinc-700 dark:text-zinc-300">Piece-Rate tracking</p>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">
+            Resolves and snapshots a worker/unit&apos;s piece rate at assignment time, and generates an Earning Ledger.
+          </p>
+        </div>
+        <ToggleSwitch
+          checked={settings.pieceRateTrackingEnabled}
+          disabled={!canManage || saving}
+          label={settings.pieceRateTrackingEnabled ? "Enabled" : "Disabled"}
+          onToggle={() => update({ pieceRateTrackingEnabled: !settings.pieceRateTrackingEnabled })}
+        />
+      </div>
+
+      {settings.pieceRateTrackingEnabled && (
+        <>
+          <div className="flex items-center justify-between border-t border-zinc-100 pt-2 dark:border-zinc-800">
+            <p className="text-xs text-zinc-700 dark:text-zinc-300">Payment quantity rule</p>
+            <select
+              className={textInputClass() + " w-56"}
+              disabled={!canManage || saving}
+              value={settings.pieceRatePaymentQuantityRule}
+              onChange={(e) => update({ pieceRatePaymentQuantityRule: e.target.value as ProductionSettingsValue["pieceRatePaymentQuantityRule"] })}
+            >
+              <option value="QC_ACCEPTED_QTY">QC-accepted quantity (recommended)</option>
+              <option value="GOOD_COMPLETED_QTY">Good-completed quantity</option>
+            </select>
+          </div>
+          <div className="flex items-center justify-between border-t border-zinc-100 pt-2 dark:border-zinc-800">
+            <p className="text-xs text-zinc-700 dark:text-zinc-300">Workers can view their own rate</p>
+            <ToggleSwitch
+              checked={settings.workersCanViewOwnRate}
+              disabled={!canManage || saving}
+              label={settings.workersCanViewOwnRate ? "Allowed" : "Not allowed"}
+              onToggle={() => update({ workersCanViewOwnRate: !settings.workersCanViewOwnRate })}
+            />
+          </div>
+        </>
+      )}
+      {error && <p className="mt-2 text-xs text-red-600 dark:text-red-400">{error}</p>}
+    </div>
+  );
+}
+
 interface CompanyData {
   name: string;
   legalName: string | null;
@@ -144,6 +274,7 @@ export function AdminCompanySettingsPanel({ canManage }: { canManage: boolean })
   return (
     <div className="max-w-lg space-y-3">
       <ActionDisplaySettingsSection canManage={canManage} />
+      <ProductionSettingsSection canManage={canManage} />
       {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
       {saved && <p className="text-sm text-emerald-600 dark:text-emerald-400">Saved.</p>}
 

@@ -8,6 +8,11 @@ export const createJobWorkOrderSchema = z.object({
   issueDate: z.string().min(1, "Issue date is required"),
   expectedCompletionDate: z.string().optional().or(z.literal("")),
   remarks: z.string().max(1000).optional().or(z.literal("")),
+  // Piece-Rate external costing (2026-09-18) — optional: a JobWorkOrder's
+  // single stage may have more than one configured Operation, so this is set
+  // explicitly rather than inferred. Never blocks issuance when omitted or
+  // when no rate resolves — see createJobWorkOrder()'s own UNRESOLVED handling.
+  productionOperationId: z.string().uuid().optional().or(z.literal("")),
   materials: z
     .array(
       z.object({
@@ -44,3 +49,11 @@ export const jobWorkOrderStatusChangeSchema = z.object({
   status: z.enum(["ON_HOLD", "CANCELLED", "CLOSED"]),
 });
 export type JobWorkOrderStatusChangeInput = z.infer<typeof jobWorkOrderStatusChangeSchema>;
+
+// External Unit User (2026-09-18) — a Supervisor's decision on an external
+// receipt submission. Rejection requires a remark, mirroring
+// rejectProgressEntry's own precedent.
+export const rejectJobWorkReceiptSchema = z.object({
+  approvalRemark: z.string().min(1, "A reason is required to reject this receipt.").max(500),
+});
+export type RejectJobWorkReceiptInput = z.infer<typeof rejectJobWorkReceiptSchema>;

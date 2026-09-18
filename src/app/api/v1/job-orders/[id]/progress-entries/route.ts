@@ -15,13 +15,18 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
 
     const { id } = await params;
     const input = createProgressEntrySchema.parse(await req.json());
-    const jobOrder = await recordProgressEntry(
+    // Discriminated return (2026-09-18) — { status: "APPLIED", jobOrder }
+    // when the entry applied immediately (the pre-existing behavior), or
+    // { status: "PENDING", entry } when ProductionSettings.
+    // supervisorApprovalRequired routes it through the approval queue
+    // instead.
+    const result = await recordProgressEntry(
       { companyId: session.user.companyId, userId: session.user.id, branchId: session.user.defaultBranchId },
       id,
       input
     );
 
-    return NextResponse.json({ data: jobOrder }, { status: 201 });
+    return NextResponse.json({ data: result }, { status: 201 });
   } catch (error) {
     return handleApiError(error);
   }

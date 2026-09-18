@@ -13,7 +13,7 @@ export async function GET(_req: Request, { params }: RouteContext) {
     await PermissionService.assert(session.user.id, "production", "view");
 
     const { id } = await params;
-    const order = await getJobWorkOrderById(session.user.companyId, id);
+    const order = await getJobWorkOrderById(session.user.companyId, id, session.user.id);
 
     return NextResponse.json({ data: order });
   } catch (error) {

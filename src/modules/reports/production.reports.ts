@@ -643,3 +643,295 @@ registerReport({
   title: "Worker Output Register",
   buildDescriptor: getWorkerOutputRegisterDescriptor,
 });
+
+// ---------------------------------------------------------------------------
+// Production Module Advanced Upgrade (2026-09-18), P0 — Production WIP
+// Distribution: a live quantity-distribution-by-stage view. Grouped by
+// productionStageId directly off JobOrder — every quantity here is already
+// the JobOrder's own real column, the exact same accumulators
+// forwardJobOrder()/recordQcInspection() maintain, never re-derived.
+// ---------------------------------------------------------------------------
+async function getProductionWipDistributionDescriptor(
+  companyId: string,
+  generatedByName: string,
+  filters: Record<string, string>
+): Promise<ReportDescriptor> {
+  const jobOrders = await prisma.jobOrder.findMany({
+    where: {
+      companyId,
+      status: { notIn: ["CANCELLED"] },
+      ...(filters.productionOrderId ? { productionOrderId: filters.productionOrderId } : {}),
+    },
+    select: {
+      plannedQuantity: true,
+      completedQuantity: true,
+      rejectedQuantity: true,
+      damagedQuantity: true,
+      forwardedQuantity: true,
+      productionStage: { select: { id: true, name: true, sequence: true } },
+    },
+  });
+
+  const byStage = new Map<
+    string,
+    { stage: string; sequence: number; plannedQty: number; inProgressQty: number; completedNotForwardedQty: number; rejectedQty: number; damagedQty: number }
+  >();
+  for (const jo of jobOrders) {
+    const key = jo.productionStage.id;
+    const bucket = byStage.get(key) ?? {
+      stage: jo.productionStage.name,
+      sequence: jo.productionStage.sequence,
+      plannedQty: 0,
+      inProgressQty: 0,
+      completedNotForwardedQty: 0,
+      rejectedQty: 0,
+      damagedQty: 0,
+    };
+    const planned = Number(jo.plannedQuantity);
+    const completed = Number(jo.completedQuantity);
+    const rejected = Number(jo.rejectedQuantity);
+    const damaged = Number(jo.damagedQuantity);
+    const forwarded = Number(jo.forwardedQuantity);
+    bucket.plannedQty += planned;
+    // Still physically present at this stage, not yet worked at all.
+    bucket.inProgressQty += Math.max(0, planned - completed - rejected - damaged);
+    // Worked but not yet handed on to the next stage.
+    bucket.completedNotForwardedQty += Math.max(0, completed - forwarded);
+    bucket.rejectedQty += rejected;
+    bucket.damagedQty += damaged;
+    byStage.set(key, bucket);
+  }
+
+  const rows = [...byStage.values()]
+    .sort((a, b) => a.sequence - b.sequence)
+    .map((b) => ({
+      stage: b.stage,
+      plannedQty: round2(b.plannedQty),
+      inProgressQty: round2(b.inProgressQty),
+      completedNotForwardedQty: round2(b.completedNotForwardedQty),
+      rejectedQty: round2(b.rejectedQty),
+      damagedQty: round2(b.damagedQty),
+    }));
+
+  return {
+    title: "Production WIP Distribution",
+    subtitle: "Live quantity distribution across every production stage, derived directly from real Job Order accumulators.",
+    filtersApplied: filtersApplied(filters, { productionOrderId: "Production Order" }),
+    columns: [
+      { key: "stage", label: "Stage" },
+      { key: "plannedQty", label: "Still At Stage", type: "number", align: "right" },
+      { key: "inProgressQty", label: "In Progress (Unworked)", type: "number", align: "right" },
+      { key: "completedNotForwardedQty", label: "Completed, Not Forwarded", type: "number", align: "right" },
+      { key: "rejectedQty", label: "Rejected", type: "number", align: "right" },
+      { key: "damagedQty", label: "Damaged", type: "number", align: "right" },
+    ],
+    rows,
+    totals: {
+      plannedQty: round2(rows.reduce((s, r) => s + r.plannedQty, 0)),
+      inProgressQty: round2(rows.reduce((s, r) => s + r.inProgressQty, 0)),
+      completedNotForwardedQty: round2(rows.reduce((s, r) => s + r.completedNotForwardedQty, 0)),
+      rejectedQty: round2(rows.reduce((s, r) => s + r.rejectedQty, 0)),
+      damagedQty: round2(rows.reduce((s, r) => s + r.damagedQty, 0)),
+    },
+    meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
+    generatedAt: new Date().toISOString(),
+    generatedByName,
+  };
+}
+
+registerReport({
+  category: CATEGORY,
+  key: "production-wip-distribution",
+  title: "Production WIP Distribution",
+  buildDescriptor: getProductionWipDistributionDescriptor,
+});
+
+// ---------------------------------------------------------------------------
+// Production Module Advanced Upgrade (2026-09-18), P0 — Production Full
+// Trace: one Lot's complete SO->PO->Lot->Stage->Worker->Movement->QC->
+// Completion history, flattened into one common {eventType, eventDate,
+// stage, actor, quantity, detail} row shape per event so it still fits the
+// single-table ReportDescriptor contract — every FK walked here already
+// exists; nothing is re-derived beyond formatting.
+// ---------------------------------------------------------------------------
+async function getProductionFullTraceDescriptor(
+  companyId: string,
+  generatedByName: string,
+  filters: Record<string, string>
+): Promise<ReportDescriptor> {
+  if (!filters.lotId) {
+    return {
+      title: "Production Full Trace",
+      subtitle: "Select a Lot to view its full production trace.",
+      filtersApplied: [],
+      columns: [],
+      rows: [],
+      generatedAt: new Date().toISOString(),
+      generatedByName,
+      unavailableReason: "Select a Lot to view its full production trace.",
+    };
+  }
+
+  const lot = await prisma.lot.findFirst({
+    where: { id: filters.lotId, companyId },
+    select: {
+      lotNumber: true,
+      productionOrder: {
+        select: {
+          orderNumber: true,
+          salesOrderItem: { select: { salesOrder: { select: { orderNumber: true } } } },
+        },
+      },
+    },
+  });
+  if (!lot) {
+    return {
+      title: "Production Full Trace",
+      subtitle: "Lot not found.",
+      filtersApplied: [],
+      columns: [],
+      rows: [],
+      generatedAt: new Date().toISOString(),
+      generatedByName,
+      unavailableReason: "Lot not found.",
+    };
+  }
+
+  const [transactions, progressEntries, qcInspections, jobWorkOrders] = await Promise.all([
+    prisma.productionStageTransaction.findMany({
+      where: { lotId: filters.lotId },
+      select: {
+        performedAt: true,
+        transactionType: true,
+        quantity: true,
+        revertReason: true,
+        notes: true,
+        toProductionStage: { select: { name: true } },
+        performedBy: { select: { fullName: true } },
+      },
+    }),
+    prisma.jobOrderProgressEntry.findMany({
+      where: { jobOrder: { lotId: filters.lotId } },
+      select: {
+        createdAt: true,
+        completedQuantity: true,
+        rejectedQuantity: true,
+        damagedQuantity: true,
+        isAdjustment: true,
+        enteredBy: true,
+        approvalStatus: true,
+        employee: { select: { fullName: true } },
+        jobOrder: { select: { productionStage: { select: { name: true } } } },
+      },
+    }),
+    prisma.qcInspection.findMany({
+      where: { lotId: filters.lotId },
+      select: {
+        inspectedAt: true,
+        result: true,
+        inspectedQuantity: true,
+        acceptedQuantity: true,
+        rejectedQuantity: true,
+        damagedQuantity: true,
+        inspector: { select: { fullName: true } },
+        jobOrder: { select: { productionStage: { select: { name: true } } } },
+      },
+    }),
+    prisma.jobWorkOrder.findMany({
+      where: { jobOrder: { lotId: filters.lotId } },
+      select: {
+        issueDate: true,
+        issuedQuantity: true,
+        status: true,
+        supplier: { select: { name: true } },
+        jobOrder: { select: { productionStage: { select: { name: true } } } },
+        receipts: {
+          select: { receivedDate: true, receivedQuantity: true, rejectedQuantity: true, damagedQuantity: true, receivedBy: { select: { fullName: true } } },
+        },
+      },
+    }),
+  ]);
+
+  const rows: { eventDate: string; eventType: string; stage: string; actor: string; quantity: number; detail: string }[] = [];
+
+  for (const t of transactions) {
+    rows.push({
+      eventDate: t.performedAt.toISOString(),
+      eventType: t.transactionType === "FORWARD" ? "Movement — Forward" : t.transactionType === "REWORK" ? "Movement — Rework" : "Movement — Adjustment",
+      stage: t.toProductionStage.name,
+      actor: t.performedBy.fullName,
+      quantity: Number(t.quantity),
+      detail: t.revertReason || t.notes || "",
+    });
+  }
+  for (const p of progressEntries) {
+    rows.push({
+      eventDate: p.createdAt.toISOString(),
+      eventType: p.isAdjustment ? "Progress — Adjustment" : `Progress (${p.enteredBy})`,
+      stage: p.jobOrder.productionStage.name,
+      actor: p.employee?.fullName ?? "—",
+      quantity: Number(p.completedQuantity),
+      detail: `Completed ${p.completedQuantity} / Rejected ${p.rejectedQuantity} / Damaged ${p.damagedQuantity}${p.approvalStatus !== "NOT_REQUIRED" ? ` (${p.approvalStatus})` : ""}`,
+    });
+  }
+  for (const qc of qcInspections) {
+    rows.push({
+      eventDate: qc.inspectedAt.toISOString(),
+      eventType: `QC — ${qc.result}`,
+      stage: qc.jobOrder.productionStage.name,
+      actor: qc.inspector.fullName,
+      quantity: Number(qc.inspectedQuantity),
+      detail: `Accepted ${qc.acceptedQuantity} / Rejected ${qc.rejectedQuantity} / Damaged ${qc.damagedQuantity}`,
+    });
+  }
+  for (const jwo of jobWorkOrders) {
+    rows.push({
+      eventDate: jwo.issueDate.toISOString(),
+      eventType: "Job Work — Issued",
+      stage: jwo.jobOrder.productionStage.name,
+      actor: jwo.supplier.name,
+      quantity: Number(jwo.issuedQuantity),
+      detail: `Status: ${jwo.status}`,
+    });
+    for (const r of jwo.receipts) {
+      rows.push({
+        eventDate: r.receivedDate.toISOString(),
+        eventType: "Job Work — Received",
+        stage: jwo.jobOrder.productionStage.name,
+        actor: r.receivedBy.fullName,
+        quantity: Number(r.receivedQuantity),
+        detail: `Received ${r.receivedQuantity} / Rejected ${r.rejectedQuantity} / Damaged ${r.damagedQuantity} (from ${jwo.supplier.name})`,
+      });
+    }
+  }
+
+  rows.sort((a, b) => a.eventDate.localeCompare(b.eventDate));
+
+  const orderNumber = lot.productionOrder.orderNumber;
+  const salesOrderNumber = lot.productionOrder.salesOrderItem?.salesOrder.orderNumber;
+
+  return {
+    title: "Production Full Trace",
+    subtitle: `Lot ${lot.lotNumber} (Production Order ${orderNumber}${salesOrderNumber ? `, Sales Order ${salesOrderNumber}` : ""}) — complete stage/worker/movement/QC/job-work history.`,
+    filtersApplied: filtersApplied(filters, { lotId: "Lot" }),
+    columns: [
+      { key: "eventDate", label: "Date/Time", type: "date" },
+      { key: "eventType", label: "Event" },
+      { key: "stage", label: "Stage" },
+      { key: "actor", label: "Actor" },
+      { key: "quantity", label: "Quantity", type: "number", align: "right" },
+      { key: "detail", label: "Detail" },
+    ],
+    rows,
+    meta: { page: 1, pageSize: rows.length, totalCount: rows.length },
+    generatedAt: new Date().toISOString(),
+    generatedByName,
+  };
+}
+
+registerReport({
+  category: CATEGORY,
+  key: "production-full-trace",
+  title: "Production Full Trace",
+  buildDescriptor: getProductionFullTraceDescriptor,
+});

@@ -14,6 +14,14 @@ const mockPrismaClient = vi.hoisted(() => ({
   jobOrder: { count: vi.fn(), updateMany: vi.fn(), findMany: vi.fn() },
   lot: { findUniqueOrThrow: vi.fn() },
   user: { findUnique: vi.fn() },
+  // Backs getProductionSettings() — every existing test relies on the
+  // hardcoded defaults (pieceRateTrackingEnabled/supervisorApprovalRequired
+  // both false) by leaving this unmocked (findUnique() then resolves
+  // undefined), so none of the new Piece-Rate/approval-gate branches this
+  // file's own service now has are ever entered unless a test explicitly
+  // stubs a resolved value.
+  productionSettings: { findUnique: vi.fn() },
+  jobOrderAssignment: { findUnique: vi.fn() },
 }));
 
 vi.mock("@/core/db/client", () => ({
@@ -43,6 +51,17 @@ vi.mock("./production.repository", () => ({
   ProductionStageTransactionRepository: { createInTx: vi.fn() },
   QcInspectionRepository: { createWithDefectsInTx: vi.fn() },
 }));
+// Piece-Rate (2026-09-18) — mocked at the module boundary so these tests
+// never need to exercise the real rate-resolution/earning-ledger machinery
+// (already covered by piece-rate-resolution.service.test.ts and
+// piece-rate-earning.service.test.ts of their own) — only whether
+// job-order.service.ts calls them correctly when ProductionSettings turns
+// the feature on.
+vi.mock("./piece-rate-resolution.service", () => ({ resolvePieceRate: vi.fn() }));
+vi.mock("./piece-rate-earning.service", () => ({
+  generateEarningForJobOrderProgress: vi.fn(),
+  generateEarningsForQcAcceptance: vi.fn(),
+}));
 
 const { prisma } = await import("@/core/db/client");
 const { PermissionService } = await import("@/core/rbac/PermissionService");
@@ -56,6 +75,8 @@ const {
   LotRepository,
   QcInspectionRepository,
 } = await import("./production.repository");
+const { resolvePieceRate } = await import("./piece-rate-resolution.service");
+const { generateEarningForJobOrderProgress, generateEarningsForQcAcceptance } = await import("./piece-rate-earning.service");
 const { computeJobOrderStatus, assignWorker, recordProgressEntry, forwardJobOrder, revertJobOrder, recordQcInspection, recordAdjustmentEntry, getJobOrderById } = await import("./job-order.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
@@ -105,8 +126,26 @@ beforeEach(() => {
   mockPrismaClient.jobOrder.findMany.mockReset();
   mockPrismaClient.lot.findUniqueOrThrow.mockReset();
   mockPrismaClient.user.findUnique.mockReset();
+  mockPrismaClient.productionSettings.findUnique.mockReset();
+  mockPrismaClient.jobOrderAssignment.findUnique.mockReset();
   vi.mocked(JobOrderProgressEntryRepository.createInTx).mockReset();
+  vi.mocked(resolvePieceRate).mockReset();
+  vi.mocked(generateEarningForJobOrderProgress).mockReset();
+  vi.mocked(generateEarningsForQcAcceptance).mockReset();
 });
+
+/** Sets ProductionSettings for the next call to getProductionSettings() —
+ * every other field defaults to this codebase's own hardcoded OFF defaults. */
+function stubProductionSettings(overrides: Record<string, unknown> = {}) {
+  mockPrismaClient.productionSettings.findUnique.mockResolvedValue({
+    supervisorApprovalRequired: false,
+    externalEntryBy: "INTERNAL_SUPERVISOR",
+    pieceRateTrackingEnabled: false,
+    pieceRatePaymentQuantityRule: "QC_ACCEPTED_QTY",
+    workersCanViewOwnRate: false,
+    ...overrides,
+  } as never);
+}
 
 describe("computeJobOrderStatus", () => {
   const base = { plannedQuantity: 100, completedQuantity: 0, rejectedQuantity: 0, damagedQuantity: 0 };
@@ -619,5 +658,162 @@ describe("getJobOrderById — branch access enforcement (2026-09-15)", () => {
     const result = await getJobOrderById("co-1", "jo-1");
     expect(result.id).toBe("jo-1");
     expect(PermissionService.getAllowedBranchIds).not.toHaveBeenCalled();
+  });
+});
+
+describe("assignWorker — Piece-Rate rate snapshot (2026-09-18)", () => {
+  it("behaves exactly as before when ProductionSettings.pieceRateTrackingEnabled is off (the default)", async () => {
+    stubProductionSettings({ pieceRateTrackingEnabled: false });
+    vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder({ plannedQuantity: "100" }) as never);
+    vi.mocked(EmployeeRepository.findById).mockResolvedValue({ id: "emp-1", payType: "PIECE_RATE" } as never);
+    vi.mocked(JobOrderAssignmentRepository.sumAssignedByJobOrderId).mockResolvedValue(0);
+    vi.mocked(JobOrderAssignmentRepository.createInTx).mockResolvedValue({ id: "assignment-1" } as never);
+
+    await assignWorker(actor, "jo-1", { employeeId: "emp-1", assignedQuantity: 10 } as never);
+
+    expect(resolvePieceRate).not.toHaveBeenCalled();
+    expect(JobOrderAssignmentRepository.createInTx).toHaveBeenCalledWith(
+      prisma,
+      expect.not.objectContaining({ resolvedRate: expect.anything() })
+    );
+  });
+
+  it("blocks the assignment when tracking is on, the employee is PIECE_RATE, and no rate resolves — never a silent 0", async () => {
+    stubProductionSettings({ pieceRateTrackingEnabled: true });
+    vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder({ plannedQuantity: "100" }) as never);
+    vi.mocked(EmployeeRepository.findById).mockResolvedValue({ id: "emp-1", payType: "PIECE_RATE" } as never);
+    vi.mocked(JobOrderAssignmentRepository.sumAssignedByJobOrderId).mockResolvedValue(0);
+    vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue({ id: "po-1", productId: "prod-1" } as never);
+    vi.mocked(resolvePieceRate).mockResolvedValue({ resolved: false });
+
+    await expect(
+      assignWorker(actor, "jo-1", { employeeId: "emp-1", assignedQuantity: 10, productionOperationId: "op-1" } as never)
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(JobOrderAssignmentRepository.createInTx).not.toHaveBeenCalled();
+  });
+
+  it("snapshots the resolved rate onto the assignment when tracking is on and a rate resolves", async () => {
+    stubProductionSettings({ pieceRateTrackingEnabled: true });
+    vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder({ plannedQuantity: "100" }) as never);
+    vi.mocked(EmployeeRepository.findById).mockResolvedValue({ id: "emp-1", payType: "PIECE_RATE" } as never);
+    vi.mocked(JobOrderAssignmentRepository.sumAssignedByJobOrderId).mockResolvedValue(0);
+    vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue({ id: "po-1", productId: "prod-1" } as never);
+    vi.mocked(resolvePieceRate).mockResolvedValue({ resolved: true, rate: 2.5, source: "STYLE_OPERATION_DEFAULT", rateCardId: "card-1" });
+    vi.mocked(JobOrderAssignmentRepository.createInTx).mockResolvedValue({ id: "assignment-1" } as never);
+
+    await assignWorker(actor, "jo-1", { employeeId: "emp-1", assignedQuantity: 10, productionOperationId: "op-1" } as never);
+
+    expect(JobOrderAssignmentRepository.createInTx).toHaveBeenCalledWith(
+      prisma,
+      expect.objectContaining({ resolvedRate: 2.5, resolvedRateSource: "STYLE_OPERATION_DEFAULT", resolvedRateCardId: "card-1", rateOverridden: false })
+    );
+  });
+
+  it("requires piece_rate.override permission when an authorized override rate is supplied", async () => {
+    stubProductionSettings({ pieceRateTrackingEnabled: true });
+    vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder({ plannedQuantity: "100" }) as never);
+    vi.mocked(EmployeeRepository.findById).mockResolvedValue({ id: "emp-1", payType: "PIECE_RATE" } as never);
+    vi.mocked(JobOrderAssignmentRepository.sumAssignedByJobOrderId).mockResolvedValue(0);
+    vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue({ id: "po-1", productId: "prod-1" } as never);
+    vi.mocked(resolvePieceRate).mockResolvedValue({ resolved: false });
+    vi.mocked(JobOrderAssignmentRepository.createInTx).mockResolvedValue({ id: "assignment-1" } as never);
+
+    await assignWorker(actor, "jo-1", {
+      employeeId: "emp-1",
+      assignedQuantity: 10,
+      productionOperationId: "op-1",
+      overriddenRate: 3,
+      overrideReason: "Negotiated rate",
+    } as never);
+
+    expect(PermissionService.assert).toHaveBeenCalledWith(actor.userId, "piece_rate", "override");
+    expect(JobOrderAssignmentRepository.createInTx).toHaveBeenCalledWith(
+      prisma,
+      expect.objectContaining({ rateOverridden: true, overriddenRate: 3, overrideReason: "Negotiated rate" })
+    );
+  });
+});
+
+describe("recordProgressEntry — company-wide supervisor-approval-required setting (2026-09-18)", () => {
+  it("routes through the PENDING+approve queue instead of applying immediately when the setting is on", async () => {
+    stubProductionSettings({ supervisorApprovalRequired: true });
+    vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder({ status: "IN_PROGRESS" }) as never);
+    vi.mocked(EmployeeRepository.findById).mockResolvedValue({ id: "emp-1" } as never);
+    vi.mocked(JobOrderProgressEntryRepository.createInTx).mockResolvedValue({ id: "entry-1", approvalStatus: "PENDING" } as never);
+
+    const result = await recordProgressEntry(actor, "jo-1", { employeeId: "emp-1", completedQuantity: 10, rejectedQuantity: 0, damagedQuantity: 0 } as never);
+
+    expect(result).toEqual({ status: "PENDING", entry: { id: "entry-1", approvalStatus: "PENDING" } });
+    expect(JobOrderRepository.updateInTx).not.toHaveBeenCalled();
+    expect(JobOrderProgressEntryRepository.createInTx).toHaveBeenCalledWith(
+      prisma,
+      expect.objectContaining({ enteredBy: "SUPERVISOR", approvalStatus: "PENDING" })
+    );
+  });
+
+  it("applies immediately (unchanged, pre-existing behavior) when the setting is off", async () => {
+    stubProductionSettings({ supervisorApprovalRequired: false });
+    vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder({ status: "IN_PROGRESS" }) as never);
+    vi.mocked(EmployeeRepository.findById).mockResolvedValue({ id: "emp-1" } as never);
+    vi.mocked(JobOrderRepository.findForGuardedUpdateInTx).mockResolvedValue(
+      jobOrder({ status: "IN_PROGRESS", plannedQuantity: "40", completedQuantity: "25", rejectedQuantity: "0", damagedQuantity: "0" }) as never
+    );
+    vi.mocked(JobOrderRepository.updateInTx).mockResolvedValue({ id: "jo-1", status: "IN_PROGRESS" } as never);
+
+    const result = await recordProgressEntry(actor, "jo-1", { employeeId: "emp-1", completedQuantity: 15, rejectedQuantity: 0, damagedQuantity: 0 } as never);
+
+    expect(result.status).toBe("APPLIED");
+    expect(JobOrderRepository.updateInTx).toHaveBeenCalled();
+  });
+});
+
+describe("recordQcInspection — Piece-Rate earning trigger (2026-09-18)", () => {
+  function stubQcAcceptPath() {
+    vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(
+      jobOrder({ completedQuantity: "100", qcPassedQuantity: "0", forwardedQuantity: "0", productionStage: stage({ sequence: 1 }) }) as never
+    );
+    mockPrismaClient.productionStage.findFirst.mockResolvedValue(stage({ id: "stage-2", sequence: 2 }) as never); // findImmediateNextStage
+    mockPrismaClient.jobOrder.updateMany.mockResolvedValue({ count: 1 } as never); // guardedIncrementQcPassed / guardedIncrementForwarded
+    mockPrismaClient.jobOrder.count.mockResolvedValue(0); // postStageTransactionInTx's priorAtStage count
+    vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue({ id: "po-1", productId: "prod-1" } as never);
+    vi.mocked(JobOrderRepository.createInTx).mockResolvedValue({ id: "jo-next" } as never);
+    vi.mocked(ProductionStageTransactionRepository.createInTx).mockResolvedValue({ id: "txn-1" } as never);
+    vi.mocked(LotRepository.updateInTx).mockResolvedValue({} as never);
+    vi.mocked(QcInspectionRepository.createWithDefectsInTx).mockResolvedValue({ id: "qc-1" } as never);
+  }
+
+  it("calls generateEarningsForQcAcceptance when tracking is enabled and some quantity was accepted", async () => {
+    stubProductionSettings({ pieceRateTrackingEnabled: true });
+    stubQcAcceptPath();
+
+    await recordQcInspection(actor, "jo-1", {
+      inspectedQuantity: 80,
+      acceptedQuantity: 80,
+      rejectedQuantity: 0,
+      damagedQuantity: 0,
+      result: "PASS",
+      defects: [],
+    } as never);
+
+    expect(generateEarningsForQcAcceptance).toHaveBeenCalledWith(
+      mockPrismaClient,
+      expect.objectContaining({ companyId: "co-1", jobOrderId: "jo-1", generatedFromQcInspectionId: "qc-1" })
+    );
+  });
+
+  it("never calls generateEarningsForQcAcceptance when tracking is disabled (the default)", async () => {
+    stubProductionSettings({ pieceRateTrackingEnabled: false });
+    stubQcAcceptPath();
+
+    await recordQcInspection(actor, "jo-1", {
+      inspectedQuantity: 80,
+      acceptedQuantity: 80,
+      rejectedQuantity: 0,
+      damagedQuantity: 0,
+      result: "PASS",
+      defects: [],
+    } as never);
+
+    expect(generateEarningsForQcAcceptance).not.toHaveBeenCalled();
   });
 });

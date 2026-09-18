@@ -4,6 +4,9 @@ import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { PermissionService } from "@/core/rbac/PermissionService";
 import { recordInventoryTransaction } from "@/modules/inventory/inventory.service";
 import { EmployeeRepository } from "@/modules/employees/employee.repository";
+import { getProductionSettings } from "@/core/production-settings/ProductionSettingsService";
+import { resolvePieceRate } from "./piece-rate-resolution.service";
+import { generateEarningForJobOrderProgress, generateEarningsForQcAcceptance } from "./piece-rate-earning.service";
 import type { JobOrderStatus, Prisma, ProductionStage } from "@prisma/client";
 import {
   JobOrderAssignmentRepository,
@@ -431,12 +434,67 @@ export async function assignWorker(actor: ActorContext, jobOrderId: string, inpu
     );
   }
 
+  // Piece-Rate Job Rate Snapshot (2026-09-18) — only enforced when the
+  // company has piece-rate tracking enabled AND this employee is actually
+  // paid PIECE_RATE; every other assignment (FIXED_SALARY workers, or any
+  // assignment at all while the company setting is off) behaves exactly as
+  // before, with none of these columns populated. Never a silent 0 — if
+  // resolution fails and no authorized override was supplied, the
+  // assignment is blocked outright.
+  let rateFields: Partial<Prisma.JobOrderAssignmentUncheckedCreateInput> = {};
+  const settings = await getProductionSettings(actor.companyId);
+  if (settings.pieceRateTrackingEnabled && employee.payType === "PIECE_RATE") {
+    if (input.overriddenRate) {
+      await PermissionService.assert(actor.userId, "piece_rate", "override");
+    }
+    if (!input.productionOperationId && !input.overriddenRate) {
+      throw new BusinessRuleError(
+        "VALIDATION_ERROR",
+        "Select which Operation this piece-rate assignment is for (or supply an authorized override rate).",
+        {}
+      );
+    }
+
+    const order = await ProductionOrderRepository.findAnyById(actor.companyId, jobOrder.productionOrderId);
+    const resolution = input.productionOperationId
+      ? await resolvePieceRate({
+          companyId: actor.companyId,
+          productId: order?.productId ?? null,
+          productionOperationId: input.productionOperationId,
+          employeeId: input.employeeId,
+          asOfDate: new Date(),
+        })
+      : ({ resolved: false } as const);
+
+    if (!resolution.resolved && !input.overriddenRate) {
+      throw new BusinessRuleError(
+        "VALIDATION_ERROR",
+        "No piece rate is configured for this worker/style/operation combination — set up a Rate Card first, or supply an authorized override rate.",
+        {}
+      );
+    }
+
+    rateFields = {
+      productionOperationId: input.productionOperationId || null,
+      resolvedRate: resolution.resolved ? resolution.rate : null,
+      resolvedRateSource: resolution.resolved && resolution.source !== "EMPLOYEE_LEGACY" ? resolution.source : null,
+      resolvedRateCardId: resolution.resolved ? resolution.rateCardId : null,
+      rateSnapshotAt: new Date(),
+      rateOverridden: Boolean(input.overriddenRate),
+      overriddenRate: input.overriddenRate ?? null,
+      overrideReason: input.overriddenRate ? input.overrideReason || null : null,
+      overriddenByUserId: input.overriddenRate ? actor.userId : null,
+      overriddenAt: input.overriddenRate ? new Date() : null,
+    };
+  }
+
   const assignment = await JobOrderAssignmentRepository.createInTx(prisma, {
     jobOrderId,
     employeeId: input.employeeId,
     assignedQuantity: input.assignedQuantity,
     status: "ASSIGNED",
     assignedByUserId: actor.userId,
+    ...rateFields,
   });
 
   await writeAuditLog({
@@ -445,13 +503,17 @@ export async function assignWorker(actor: ActorContext, jobOrderId: string, inpu
     tableName: "job_order_assignments",
     recordId: assignment.id,
     action: "CREATE",
-    newValues: { jobOrderId, employeeId: input.employeeId, assignedQuantity: input.assignedQuantity },
+    newValues: { jobOrderId, employeeId: input.employeeId, assignedQuantity: input.assignedQuantity, ...rateFields },
   });
 
   return assignment;
 }
 
-/** The append-only worker log — never edited, never deleted. */
+/** The append-only worker log — never edited, never deleted (unless
+ * ProductionSettings.supervisorApprovalRequired is on, in which case this
+ * routes through the same PENDING+approve flow submitSelfProgressEntry
+ * already uses — see the branch below). Returns a discriminated result so
+ * the caller can tell which happened. */
 export async function recordProgressEntry(actor: ActorContext, jobOrderId: string, input: CreateProgressEntryInput) {
   const jobOrder = await JobOrderRepository.findAnyById(actor.companyId, jobOrderId);
   if (!jobOrder) throw new BusinessRuleError("NOT_FOUND", "Job order not found.", { id: jobOrderId });
@@ -472,13 +534,69 @@ export async function recordProgressEntry(actor: ActorContext, jobOrderId: strin
   const employee = await EmployeeRepository.findById(actor.companyId, input.employeeId);
   if (!employee) throw new BusinessRuleError("NOT_FOUND", "Employee not found.", { id: input.employeeId });
 
+  const settings = await getProductionSettings(actor.companyId);
+
+  // Piece-Rate (2026-09-18) — an assignment is required to attribute this
+  // entry's earning to the right worker/rate once tracking is enabled;
+  // every non-piece-rate flow (or any flow while the setting is off) is
+  // completely unaffected.
+  if (settings.pieceRateTrackingEnabled && employee.payType === "PIECE_RATE" && !input.jobOrderAssignmentId) {
+    throw new BusinessRuleError(
+      "VALIDATION_ERROR",
+      "Select which assignment this progress belongs to — required for piece-rate workers.",
+      {}
+    );
+  }
+
+  // P0 — company-wide "always require approval" setting: route the
+  // ordinary Supervisor-direct path through the exact same PENDING+approve
+  // machinery submitSelfProgressEntry already established, instead of
+  // applying immediately. approveProgressEntry/rejectProgressEntry/
+  // updatePendingProgressEntry/listPendingProgressEntries need zero changes
+  // — they already operate generically on any PENDING entry regardless of
+  // enteredBy.
+  if (settings.supervisorApprovalRequired) {
+    const entry = await JobOrderProgressEntryRepository.createInTx(prisma, {
+      jobOrderId,
+      jobOrderAssignmentId: input.jobOrderAssignmentId || null,
+      employeeId: input.employeeId,
+      recordedByUserId: actor.userId,
+      completedQuantity: input.completedQuantity,
+      rejectedQuantity: input.rejectedQuantity,
+      damagedQuantity: input.damagedQuantity,
+      isAdjustment: false,
+      remarks: input.remarks || null,
+      enteredBy: "SUPERVISOR",
+      approvalStatus: "PENDING",
+      startedAt: input.startedAt ? new Date(input.startedAt) : null,
+      endedAt: input.endedAt ? new Date(input.endedAt) : null,
+    });
+
+    await writeAuditLog({
+      companyId: actor.companyId,
+      userId: actor.userId,
+      tableName: "job_order_progress_entries",
+      recordId: entry.id,
+      action: "CREATE",
+      newValues: {
+        enteredBy: "SUPERVISOR",
+        approvalStatus: "PENDING",
+        completedQuantity: input.completedQuantity,
+        rejectedQuantity: input.rejectedQuantity,
+        damagedQuantity: input.damagedQuantity,
+      },
+    });
+
+    return { status: "PENDING" as const, entry };
+  }
+
   const updated = await prisma.$transaction(async (tx) => {
     const jo = await applyJobOrderQuantityDelta(tx, jobOrderId, {
       completed: input.completedQuantity,
       rejected: input.rejectedQuantity,
       damaged: input.damagedQuantity,
     });
-    await JobOrderProgressEntryRepository.createInTx(tx, {
+    const entry = await JobOrderProgressEntryRepository.createInTx(tx, {
       jobOrderId,
       jobOrderAssignmentId: input.jobOrderAssignmentId || null,
       employeeId: input.employeeId,
@@ -491,6 +609,16 @@ export async function recordProgressEntry(actor: ActorContext, jobOrderId: strin
       startedAt: input.startedAt ? new Date(input.startedAt) : null,
       endedAt: input.endedAt ? new Date(input.endedAt) : null,
     });
+
+    if (settings.pieceRateTrackingEnabled && settings.pieceRatePaymentQuantityRule === "GOOD_COMPLETED_QTY" && input.jobOrderAssignmentId) {
+      await generateEarningForJobOrderProgress(tx, {
+        companyId: actor.companyId,
+        jobOrderId,
+        jobOrderAssignmentId: input.jobOrderAssignmentId,
+        generatedFromEntryId: entry.id,
+      });
+    }
+
     return jo;
   });
 
@@ -507,7 +635,7 @@ export async function recordProgressEntry(actor: ActorContext, jobOrderId: strin
     },
   });
 
-  return updated;
+  return { status: "APPLIED" as const, jobOrder: updated };
 }
 
 /** A genuine data-entry correction — the only kind of entry allowed to
@@ -730,6 +858,16 @@ export async function approveProgressEntry(actor: ActorContext, entryId: string,
       rejected: Number(entry.rejectedQuantity),
       damaged: Number(entry.damagedQuantity),
     });
+
+    const settings = await getProductionSettings(actor.companyId);
+    if (settings.pieceRateTrackingEnabled && settings.pieceRatePaymentQuantityRule === "GOOD_COMPLETED_QTY" && entry.jobOrderAssignmentId) {
+      await generateEarningForJobOrderProgress(tx, {
+        companyId: actor.companyId,
+        jobOrderId: entry.jobOrderId,
+        jobOrderAssignmentId: entry.jobOrderAssignmentId,
+        generatedFromEntryId: entry.id,
+      });
+    }
 
     return tx.jobOrderProgressEntry.findUniqueOrThrow({ where: { id: entryId } });
   });
@@ -1145,7 +1283,7 @@ export async function recordQcInspection(actor: ActorContext, jobOrderId: string
       await applyQcDispositionInTx(tx, jobOrderId, { damaged: input.damagedQuantity });
     }
 
-    return QcInspectionRepository.createWithDefectsInTx(
+    const createdInspection = await QcInspectionRepository.createWithDefectsInTx(
       tx,
       {
         companyId: actor.companyId,
@@ -1168,6 +1306,21 @@ export async function recordQcInspection(actor: ActorContext, jobOrderId: string
         remarks: d.remarks || null,
       }))
     );
+
+    // Piece-Rate (2026-09-18) — QC acceptance is the primary earning trigger
+    // (QC_ACCEPTED_QTY is the recommended default payment-quantity rule).
+    // Runs inside this same transaction so an earning is never generated
+    // without the QC row that justified it, or vice versa.
+    const settings = await getProductionSettings(actor.companyId);
+    if (settings.pieceRateTrackingEnabled && input.acceptedQuantity > 0) {
+      await generateEarningsForQcAcceptance(tx, {
+        companyId: actor.companyId,
+        jobOrderId,
+        generatedFromQcInspectionId: createdInspection.id,
+      });
+    }
+
+    return createdInspection;
   });
 
   await writeAuditLog({

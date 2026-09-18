@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "RateCardRateSource" ADD VALUE 'SUPPLIER_SPECIFIC';

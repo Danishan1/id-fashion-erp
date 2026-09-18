@@ -6588,6 +6588,206 @@ Security review, performance/indexing pass, backup strategy, full audit-log cove
 
 ---
 
+## Production Module Advanced Upgrade — audit-first, Piece-Rate engine, External Job-Work (2026-09-18)
+
+The user supplied a 69-section spec demanding a full audit before any code (production integrity guarantees,
+a Style+Operation Piece-Rate pricing/earning engine, and an External Job-Work upgrade with a genuine vendor
+login). Followed this project's own design→review→build→verify rhythm: 3 parallel Explore agents audited the
+existing Production Module first, then 2 parallel Plan agents designed the internal Piece-Rate engine and the
+External/Job-Work + P0 pieces respectively, reconciled into one plan, approved, then implemented.
+
+**Audit finding, worth recording since it shaped everything downstream**: the core stage-movement engine
+(`Lot`/`JobOrder`/`ProductionStageTransaction`, all pre-existing since Phase 5C) already satisfied almost
+every production-integrity requirement in the spec — a Lot genuinely already supports multiple concurrently-
+open `JobOrder`s across different stages (proven by an existing regression test), partial forward/revert/QC
+already worked, and the ledger was already append-only and already the real source of truth. **Nothing in
+the core stage engine was changed.** The real net-new work was: a company-wide `ProductionSettings` table
+(P0), the entire Piece-Rate pricing/earning engine (0% built before this — `Employee.pieceRatePerUnit` was a
+flat per-worker rate, kept as the lowest-priority legacy fallback, never deleted), and External Job-Work
+gaining real access control, per-piece costing, and a genuine vendor login.
+
+**P0 — `ProductionSettings`** (new, flat one-row-per-company table, exact `ActionDisplaySettings` shape):
+`supervisorApprovalRequired` (when true, `recordProgressEntry`'s ordinary Supervisor-direct path now routes
+through the exact same PENDING+approve machinery `submitSelfProgressEntry`/`approveProgressEntry` already
+established — `approveProgressEntry`/`rejectProgressEntry`/`listPendingProgressEntries` needed zero changes,
+since they already operate generically on any `PENDING` entry regardless of `enteredBy`), `externalEntryBy`,
+`pieceRateTrackingEnabled`, `pieceRatePaymentQuantityRule`, `workersCanViewOwnRate`. `recordProgressEntry`'s
+return type is now a discriminated `{status:"PENDING", entry}` / `{status:"APPLIED", jobOrder}` — the one
+route/UI caller (`POST /api/v1/job-orders/[id]/progress-entries`, `LotWorkflowPanel.tsx`'s "Log Progress"
+modal) needed no logic change since it never inspected the response body shape, only `res.ok`. Two new
+reports on the existing `registerReport()`/`registerReportPageMeta()` architecture: **Production WIP
+Distribution** (grouped by `productionStageId`, reusing `JobOrder`'s own real accumulator columns — never
+re-derived) and **Production Full Trace** (a required-`lotId` "select an entity first" report, same pattern
+as the existing Customer/Account ledger reports, flattening `ProductionStageTransaction`/
+`JobOrderProgressEntry`/`QcInspection`/`JobWorkOrder` events into one common `{eventType, eventDate, stage,
+actor, quantity, detail}` row shape so it still fits the single-table `ReportDescriptor` contract).
+
+**P1a — Piece-Rate engine.** `ProductionOperation` (new, lightweight, company-scoped master, optionally
+tagged to a `ProductionStage` for organization only — **never participates in stage forward/revert/QC**,
+confirmed by construction: `postStageTransactionInTx`/`forwardJobOrder`/`revertJobOrder`/
+`recordQcInspection` are byte-for-byte untouched). `PieceRateCard` — one generalized table (not several
+parallel ones), dimensioned by `(companyId, productionOperationId, productId?, employeeId?,
+employeeCategoryId?, supplierId?)`, exactly one of `{employeeId, employeeCategoryId, neither}` valid per row
+(the four tiers: worker-specific / worker-grade / style+operation default / operation default), with
+`supplierId` reserved for the external-unit tier below. Overlap prevention reuses
+`tax-config.service.ts`'s own half-open-interval `rangesOverlap()` pattern verbatim, keyed on the full
+dimension tuple. `resolvePieceRate()` (`piece-rate-resolution.service.ts`) walks the priority ladder
+Worker-specific → Worker Grade (`Employee.employeeCategoryId`) → Style+Operation default → Operation-level
+fallback → `Employee.pieceRatePerUnit` legacy fallback → `{resolved:false}` — **never a silent 0**; every
+caller must treat `resolved:false` as "block until a human picks a rate."
+
+**Job Rate Snapshot** — new nullable columns on `JobOrderAssignment` (not a child table — one rate applies
+per assignment, frozen once): `productionOperationId`, `resolvedRate`, `resolvedRateSource`,
+`resolvedRateCardId`, `rateSnapshotAt`, plus an authorized-override block (`rateOverridden`,
+`overriddenRate`, `overrideReason`, `overriddenByUserId`, `overriddenAt`) gated by a new `piece_rate.override`
+RBAC action, distinct from ordinary `production.edit`. `assignWorker()` only enters this path at all when
+`ProductionSettings.pieceRateTrackingEnabled` is true AND the employee's `payType === "PIECE_RATE"` — every
+other assignment (fixed-salary workers, or any assignment while the company setting is off, the default)
+behaves byte-for-byte as before, confirmed by the full pre-existing test suite passing unmodified.
+
+**`PieceRateEarning`** — the ledger, one row per INCREMENTAL payable quantity (never a running total), with
+`earnerType: EMPLOYEE | SUPPLIER` and exactly one of `{employeeId+jobOrderAssignmentId,
+supplierId+jobWorkOrderId}` populated per row — same table, same algorithm, for both an internal worker and
+an external unit. The no-duplicate-rework-payment algorithm (`generateEmployeeEarningInTx` in
+`piece-rate-earning.service.ts`) exploits a key architectural fact: rework never mutates a `JobOrder` —
+`postStageTransactionInTx` always creates a brand-new `JobOrder` row at the rework destination — so
+`(jobOrderId, jobOrderAssignmentId)` is already fully isolated per lineage step; the function computes the
+JobOrder's live eligible quantity fresh (per `pieceRatePaymentQuantityRule`), subtracts every prior
+non-cancelled earning sharing that exact key, and inserts a row only for the strictly positive remainder.
+Verified against the spec's own worked example (380 accepted → ₹950; a *separate* rework-destination
+JobOrder's own 12 accepted → an independent ₹30 — never a re-paid ₹950) via a dedicated unit test. Multiple
+workers on one JobOrder (QC has no per-worker breakdown of its own) are handled by
+`generateEarningsForQcAcceptance`: one assignment degenerates to the simple case; more than one splits the
+JobOrder's cumulative QC-accepted total pro-rata by each assignment's own share of logged
+`completedQuantity` via progress entries, the last assignment absorbing rounding so shares always sum
+exactly. Trigger points, all inside the SAME transaction as the underlying quantity write (never a separate
+follow-up call): `recordProgressEntry`/`approveProgressEntry` (when `pieceRatePaymentQuantityRule ===
+GOOD_COMPLETED_QTY`), `recordQcInspection` (the primary path, since `QC_ACCEPTED_QTY` is the recommended
+default) — `recordAdjustmentEntry` deliberately never triggers an earning (a correction entry has no real
+assignment to attribute it to).
+
+**RBAC**: new `piece_rate` module + `override` action in `src/config/rbac.ts` — `PRODUCTION_MANAGER` gets
+full CRUD+approve+override, `PRODUCTION_SUPERVISOR` gets view/create only (assigns work, can't override),
+`PRODUCTION_WORKER` gets `view` (further gated by `workersCanViewOwnRate` + scoped to their own Employee at
+the route layer), `MANAGEMENT`/`ACCOUNTS_MANAGER` get view/approve/export (read-only for Accounts — this is
+explicitly not payroll). Backfilled via the established idempotent-reseed-script pattern
+(`scripts/backfill-piece-rate-and-external-unit-rbac.mjs`, mirroring `seed.ts`'s own Permission/Role/
+RolePermission loop exactly).
+
+**P1b — External Unit User + Job-Work upgrade.** `User.supplierId` (nullable, `@unique` — mirrors
+`User.employeeId`'s exact 1:1 "this login IS this real-world entity" shape, not a role-style join table,
+since there's no stated need for one login to represent multiple suppliers).
+`PermissionService.getAllowedSupplierId(userId)` added alongside `getAllowedBranchIds`/
+`getAllowedProductionStageIds` — uncached, `null` for every ordinary internal user. New `EXTERNAL_UNIT_USER`
+role (`dashboard.view` + `production.view/create` only — no export/approve/edit/cancel, no other module at
+all, so Sales Order pricing/other vendors are structurally unreachable, not merely filtered).
+
+`assertJobWorkOrderSupplierAccess` (deny-as-`NOT_FOUND`, the same convention `getAllowedBranchIds`/
+`getAllowedProductionStageIds` already established — never reveal a record exists to someone who can't see
+it) gates `getJobWorkOrderById`/`listJobWorkOrders` (an external login's own supplierId always overrides any
+client-supplied `?supplierId=`, never the other way). `assertInternalUser` blocks `createJobWorkOrder`,
+`transitionJobWorkOrderStatus`, `resumeJobWorkOrderFromHold`, `reverseJobWorkReceipt`, and the `export/xlsx`
+route outright for any external login.
+
+**External progress-entry flow** extends `JobWorkReceipt` (new `submittedBySource`, `approvalStatus`,
+`approvedByUserId`/`approvedAt`/`approvalRemark`, `submittedByUserId` columns) rather than reusing
+`JobOrderProgressEntry` — `receiveJobWork` already supported incremental, partial, guarded-accumulator
+receipts against one `JobWorkOrder`, exactly the "report progress incrementally" requirement, and already
+funneled into the same `applyJobOrderQuantityDelta` engine internal entries use; extending it was the
+smaller, more surgical change than forcing a Supplier through an `Employee`-typed column. When an external
+login submits and `ProductionSettings.externalEntryBy` allows it, `receiveJobWork` creates a `PENDING`
+receipt and skips the accumulator/`applyJobOrderQuantityDelta` call entirely until a new
+`approveJobWorkReceipt`/`rejectJobWorkReceipt` (self-approval-guarded, mirroring `approveProgressEntry`/
+`rejectProgressEntry` exactly) applies it.
+
+**Job-work rate/cost** plugs into the SAME `PieceRateEarning` ledger via a new `resolveSupplierPieceRate()`
+(the Supplier analogue of `resolvePieceRate()` — worker-specific/worker-grade tiers are meaningless for a
+Supplier, so this walks a shorter Supplier+Operation → Operation-default ladder over the identical
+`PieceRateCard` table) — needed one new `RateCardRateSource.SUPPLIER_SPECIFIC` enum value (added via its own
+tiny follow-up migration once the gap was noticed during implementation, applied via this project's own
+established non-interactive `ALTER TYPE ... ADD VALUE` workaround). New `JobWorkOrder` columns
+(`productionOperationId`, `resolvedRate`, `rateResolutionStatus`, `rateSourceId`) snapshot the resolved rate
+once at creation — an unresolved rate never blocks WIP issuance (business continuity), it just flags
+`UNRESOLVED` for later correction. Verified against the spec's own external worked example (ABC Printing,
+₹6/accepted-pc, 580 of 600 forwarded immediately while 400 remain pending, payable = ₹3,480, rejected/
+damaged quantity never entering the earning calculation at all).
+
+**Not built this pass** (explicitly out of scope per the plan's own P2 tier): Worker Earnings / Worker
+Production History reports, and the Rate Card management screen's full "Style header, Operation rows, N
+overrides" grid UI (the Assign Worker modal in `LotWorkflowPanel.tsx` got a lighter inline
+Operation-picker + live resolved-rate preview instead, sufficient to exercise the engine end-to-end;
+`ProductionRoute`/`ProductionRouteStage` schema exists per the plan but has no consuming UI yet — purely
+advisory metadata, never a hard gate, ready for a future pass).
+
+**Verification**: every new table/column/enum independently re-verified via a direct SQL query against the
+live dev DB (never trusted from `migrate resolve --applied` alone, per this project's own established
+gotcha) — two migrations, `20260918090000_add_piece_rate_and_external_job_work` and
+`20260918100000_add_supplier_specific_rate_source`, both additive/nullable-first, zero changes to any
+existing CHECK constraint. 46 new unit tests (`piece-rate-resolution.service.test.ts`,
+`piece-rate-earning.service.test.ts`, plus new `describe` blocks in `job-order.service.test.ts` for the
+settings-gated branches) — the full pre-existing suite (1728 tests total after this pass) passes unmodified,
+confirming zero regression to the core stage engine. `npx tsc --noEmit`, `npx eslint .`, and `npx next build`
+all clean throughout (the now-familiar low-memory `tsc`/`eslint` OOM on this machine recurred once during
+this pass, resolved the same documented way — `NODE_OPTIONS="--max-old-space-size=6144"`).
+
+### Production Module Advanced Upgrade — live walkthrough found a real P0 (QC-accept never generated an
+### earning), root-caused and fixed (2026-09-18)
+
+Live browser verification of the new UI (not skipped — the dev server was live and reachable): created a
+real `ProductionOperation` ("Sleeve Attach"), a real Style+Operation `PieceRateCard` (₹2.50/pc) through the
+real UI, assigned a real PIECE_RATE-typed employee to a real `JobOrder` via the actual "Assign Worker" modal
+(confirmed the rate snapshot persisted correctly — `resolvedRate: 2.5`, `resolvedRateSource:
+STYLE_OPERATION_DEFAULT`), logged a progress entry, then recorded a real QC inspection accepting all 5
+pieces. The underlying stage-engine mechanics worked flawlessly (`completedQuantity`/`qcPassedQuantity`/
+`forwardedQuantity` all correctly reached 5) — but `GET /api/v1/piece-rate-earnings` came back empty, and a
+direct query confirmed the `piece_rate_earnings` table was genuinely empty. No error was thrown or logged
+anywhere.
+
+**Root cause**: `QcInspectionRepository.sumAcceptedByJobOrderId()` (`production.repository.ts`) queried
+through the plain `prisma` client, not the transaction's `tx` — but it was being called from
+`generateEarningForJobOrderProgress()`/`generateEarningsForQcAcceptance()`
+(`piece-rate-earning.service.ts`), both of which run *inside* `recordQcInspection()`'s own
+`prisma.$transaction(async (tx) => {...})` callback, right after `tx.qcInspection.create(...)` inserted the
+very row being summed. Under Postgres READ COMMITTED isolation, a query on a different connection (`prisma`)
+cannot see another transaction's (`tx`'s) not-yet-committed insert — so `currentEligibleQty` silently read
+`0` (whatever existed *before* this transaction), `priorPaid` was also `0`, the resulting `remainder`
+rounded to `0` (`Math.abs(0) <= EPSILON`), and `generateEmployeeEarningInTx()`'s own correct-looking guard
+(`if (Math.abs(remainder) <= EPSILON) return null;`) silently no-op'd — no error, no row, for every
+genuinely-first QC acceptance on a job order.
+
+**Fix**: added `QcInspectionRepository.sumAcceptedByJobOrderIdInTx(tx, jobOrderId)` — the identical
+aggregate, querying through `tx` instead of `prisma` — and switched both call sites in
+`piece-rate-earning.service.ts` to it. `sumAcceptedByJobOrderId` (the original, `prisma`-based version) is
+kept as-is for any future caller that genuinely runs outside a transaction; the lesson generalizes to any
+future repository helper that might be called from inside an open `$transaction` — always accept and use the
+transaction's own `tx` client, never the plain `prisma` singleton, or a just-written, uncommitted row
+becomes invisible to it.
+
+**Re-verified live against the exact real job order/assignment the bug was found on** (via a script calling
+the real, unmocked service function against the live dev DB, not a mock): confirmed the QC-accept flow now
+creates the earning row correctly (`payableQuantity: 5`, `rateApplied: 2.5`, `amount: 12.5`, matching
+5 pcs × ₹2.50/pc exactly), and re-ran it a second time to confirm the no-duplicate-payment guarantee holds
+(`Earnings before: 1` → `Earnings after: 1`, same row id, no new insert — the remainder correctly computed
+to 0 once the quantity was already fully paid). Separately verified the External Unit User access-control
+guard end-to-end via a script-based fixture (a real `JobWorkOrder` + two real logins, one linked to the
+order's own supplier and one linked to a different supplier): `PermissionService.getAllowedSupplierId()`
+resolved correctly for both, the wrong-supplier login was denied as a clean `NOT_FOUND` (never revealing the
+record exists), the correct-supplier login succeeded, and an ordinary internal user (no `supplierId` at all)
+was completely unaffected — 5/5 checks passed, fixture data cleaned up afterward. The two new reports
+(Production WIP Distribution, Production Full Trace) were also verified against the real live data from this
+same test scenario — WIP Distribution correctly split the lot's quantity across Cutting (5 in-progress) and
+Stitching (5 in-progress, just forwarded), and Full Trace correctly reconstructed the chronological event
+history (Forward → Progress entry → Forward → QC Pass) with the correct real actor names.
+
+2 new regression tests added to `piece-rate-earning.service.test.ts` (one confirming `generateEarningForJobOrderProgress`
+calls the in-tx sum function, one for `generateEarningsForQcAcceptance`) — full suite now 1728 tests, all
+green. `npx tsc --noEmit`, `npx eslint .`, and `npx next build` all clean.
+
+**Still not done this pass**: a live browser click-through of the Admin → Production Settings toggle and the
+Assign Worker modal's own UI chrome (as opposed to the underlying service functions, which are now both
+unit-tested and confirmed correct against real data via script) — the functional correctness of every code
+path is confirmed, but nobody has visually clicked through the toggle's own rendering in this pass.
+
 ## Reference
 
 Full architecture rationale, complete table-by-table field lists, and the full role×module permission matrix were developed in the Phase 1 planning session and are condensed here. Consult that history if a design decision needs deeper justification than what's summarized above.

@@ -20,6 +20,11 @@ export const MODULES = [
   "bom_mrp",
   "production",
   "qc",
+  // Piece-Rate Rate Card / Earning Ledger (2026-09-18) — deliberately a
+  // separate module from "production": ordinary workers/unit users must
+  // never edit their own rates unless explicitly authorized, and this
+  // module's grants (below) are intentionally narrower than production's own.
+  "piece_rate",
   "inventory",
   "purchasing",
   "accounts",
@@ -46,6 +51,12 @@ export const ACTIONS = [
   "cancel",
   "export",
   "print",
+  // Distinct from "edit" — lets a Manager set a piece-rate assignment's rate
+  // to something other than what resolvePieceRate() found, with a required
+  // reason. Deliberately its own verb rather than folding into "edit" so an
+  // ordinary Supervisor (who has piece_rate.create/edit) can assign work
+  // without also being able to hand-pick a rate outside the Rate Card.
+  "override",
 ] as const;
 export type Action = (typeof ACTIONS)[number];
 
@@ -57,6 +68,13 @@ export const ROLES = [
   "PRODUCTION_MANAGER",
   "PRODUCTION_SUPERVISOR",
   "PRODUCTION_WORKER",
+  // A vendor/contractor-side login (2026-09-18) — scoped server-side via
+  // User.supplierId + PermissionService.getAllowedSupplierId, the same
+  // "minimal grant + narrow server-side identity check" shape as
+  // PRODUCTION_WORKER's employeeId-based self-entry scoping above.
+  // Deliberately gets NO other module — sales_orders/accounts/
+  // financial_reports etc. are completely unreachable, not merely filtered.
+  "EXTERNAL_UNIT_USER",
   "QC_MANAGER",
   "STORE_MANAGER",
   "ACCOUNTS_MANAGER",
@@ -107,6 +125,9 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     // the existing action rather than inventing new production-specific verbs.
     production: ["view", "approve", "export"],
     qc: ["view", "export"],
+    // Earning approval checkpoint — same shape as production's own
+    // view/approve/export above.
+    piece_rate: ["view", "approve", "export"],
     inventory: ["view", "export"],
     purchasing: ["view", "approve"],
     accounts: ["view", "export"],
@@ -170,6 +191,8 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     // overrides — see PRODUCTION_MODULE_DESIGN.md §7/§9.
     production: ["view", "create", "edit", "approve", "cancel", "export", "print"],
     qc: ["view"],
+    // Owns Rate Card CRUD and can authorize an assignment-time rate override.
+    piece_rate: ["view", "create", "edit", "approve", "override", "export"],
     // Same reasoning as MERCHANDISER above — raising/editing Material
     // Requests, not creating real commercial Purchase Orders.
     inventory: ["view", "create", "edit"],
@@ -186,6 +209,9 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     // before it counts toward the Job Order's real quantities.
     production: ["view", "create", "edit", "approve"],
     qc: ["view", "create"],
+    // Can assign workers/trigger rate resolution but NOT override an
+    // authorized rate without escalating to Production Manager.
+    piece_rate: ["view", "create"],
     inventory: ["view", "create"],
     reports: ["view"],
   },
@@ -198,6 +224,24 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
   // true) rather than by a broader permission grant. Stage scope is further
   // narrowed per-company via RoleProductionStageAccess, same as any role.
   PRODUCTION_WORKER: {
+    dashboard: ["view"],
+    production: ["view", "create"],
+    // Granted at the RBAC layer; whether a worker actually SEES their own
+    // rate is additionally gated by ProductionSettings.workersCanViewOwnRate
+    // and scoped to their own Employee — see piece-rate-card routes.
+    piece_rate: ["view"],
+  },
+  // A vendor/contractor-side login, added for the External Job-Work upgrade
+  // (2026-09-18) — scoped server-side via User.supplierId +
+  // PermissionService.getAllowedSupplierId (job-work-order.service.ts's
+  // assertJobWorkOrderSupplierAccess/assertInternalUser), same "minimal
+  // grant + narrow server-side identity check" shape as PRODUCTION_WORKER's
+  // own employeeId-based self-entry scoping just above. Deliberately gets NO
+  // other module — sales_orders/accounts/financial_reports etc. are
+  // completely unreachable, not merely filtered, and no export/approve/edit/
+  // cancel on production either (defense in depth alongside the identity
+  // check itself).
+  EXTERNAL_UNIT_USER: {
     dashboard: ["view"],
     production: ["view", "create"],
   },
@@ -238,6 +282,9 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     financial_reports: ["view", "export", "print"],
     administration: ["view"],
     reports: ["view", "export", "print"],
+    // Read-only visibility into approved/payable earnings for
+    // payroll/accounts to later consume — this is explicitly NOT payroll.
+    piece_rate: ["view", "export"],
   },
   ACCOUNTS_EXECUTIVE: {
     dashboard: ["view"],
