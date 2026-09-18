@@ -33,19 +33,26 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
 
     const { companyName } = await getCompanyHeaderLines(session.user.companyId);
 
+    const receivingWorkers = transaction.toJobOrder.assignments.map((a) => a.employee.fullName);
+
     const descriptor: SlipDescriptor = {
       companyName,
       slipTitle: "Stage Transfer Slip",
       slipNumber: `${transaction.lot.lotNumber} · ${transaction.toProductionStage.name}`,
       fields: [
         { label: "Production Order", value: transaction.productionOrder.orderNumber },
+        {
+          label: "Sales Order",
+          value: transaction.productionOrder.salesOrderItem?.salesOrder.orderNumber ?? "— (Make-to-Stock, no Sales Order)",
+        },
         { label: "Style", value: `${transaction.productionOrder.product.styleName} (${transaction.productionOrder.product.styleCode})` },
         { label: "Lot No.", value: transaction.lot.lotNumber },
         { label: "From Stage", value: transaction.fromProductionStage?.name ?? "— (first stage)" },
         { label: "To Stage", value: transaction.toProductionStage.name },
         { label: "Quantity", value: Number(transaction.quantity).toLocaleString("en-IN") },
         { label: "Transaction Type", value: transaction.transactionType },
-        { label: "Performed By", value: transaction.performedBy.fullName },
+        { label: "Forwarded By", value: transaction.performedBy.fullName },
+        { label: "Received By (Assigned Worker)", value: receivingWorkers.length > 0 ? receivingWorkers.join(", ") : "Not yet assigned" },
         { label: "Performed At", value: new Date(transaction.performedAt).toLocaleString("en-IN") },
       ],
       variantBreakdown: transaction.lot.variantBreakdown.map((b) => ({

@@ -325,10 +325,33 @@ export const ProductionStageTransactionRepository = {
             },
           },
         },
-        productionOrder: { select: { id: true, orderNumber: true, product: { select: { styleName: true, styleCode: true } } } },
+        productionOrder: {
+          select: {
+            id: true,
+            orderNumber: true,
+            product: { select: { styleName: true, styleCode: true } },
+            // Nullable — a Make-to-Stock order has no Sales Order at all; the
+            // slip renders an explicit "Make-to-Stock" note rather than a
+            // blank field in that case.
+            salesOrderItem: { select: { salesOrder: { select: { orderNumber: true } } } },
+          },
+        },
         fromProductionStage: { select: { id: true, name: true } },
         toProductionStage: { select: { id: true, name: true } },
         performedBy: { select: { id: true, fullName: true } },
+        // Who this quantity was actually forwarded TO — the destination job
+        // order's currently assigned worker(s), if any exist yet. A stage
+        // transfer can happen before anyone is assigned to the receiving
+        // stage, so this is honestly reported as unassigned rather than
+        // guessed at.
+        toJobOrder: {
+          select: {
+            assignments: {
+              where: { status: { not: "CANCELLED" } },
+              select: { employee: { select: { fullName: true } } },
+            },
+          },
+        },
       },
       orderBy: { performedAt: "desc" },
     }),

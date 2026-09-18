@@ -63,10 +63,13 @@ export interface SlipDescriptor {
   slipTitle: string;
   slipNumber: string;
   fields: SlipField[];
-  /** Optional size/color breakdown table — used by the Stage Transfer Slip
-   * so a floor worker sees exactly which sizes/colors make up the flat
-   * quantity above, without opening the app. Omitted entirely when the lot
-   * has no recorded breakdown (see LotVariantBreakdown in schema.prisma). */
+  /** Optional size/color breakdown table so a floor worker sees exactly
+   * which sizes/colors make up the flat quantity above, without opening the
+   * app. The whole section is omitted only when `undefined`/`null` (a slip
+   * kind that doesn't apply here at all); an empty array still renders the
+   * section with an explicit "not recorded" note, rather than silently
+   * disappearing and looking like a bug — see LotVariantBreakdown in
+   * schema.prisma (recording a breakdown at Lot creation is optional). */
   variantBreakdown?: SlipVariantBreakdownRow[] | null;
   notes?: string | null;
   signatureLabels: [string, string];
@@ -94,21 +97,27 @@ function SlipPdfBody({ descriptor }: { descriptor: SlipDescriptor }) {
           </View>
         ))}
 
-        {descriptor.variantBreakdown && descriptor.variantBreakdown.length > 0 ? (
+        {descriptor.variantBreakdown !== undefined && descriptor.variantBreakdown !== null ? (
           <View style={styles.breakdownBlock}>
             <Text style={styles.breakdownLabel}>Size / Color Breakdown</Text>
-            <View style={styles.breakdownHeaderRow}>
-              <Text style={[styles.breakdownHeaderCell, styles.breakdownColorCol]}>Color</Text>
-              <Text style={[styles.breakdownHeaderCell, styles.breakdownSizeCol]}>Size</Text>
-              <Text style={[styles.breakdownHeaderCell, styles.breakdownQtyCol]}>Qty</Text>
-            </View>
-            {descriptor.variantBreakdown.map((row, i) => (
-              <View key={i} style={styles.breakdownRow}>
-                <Text style={[styles.breakdownCell, styles.breakdownColorCol]}>{row.colorName}</Text>
-                <Text style={[styles.breakdownCell, styles.breakdownSizeCol]}>{row.sizeName}</Text>
-                <Text style={[styles.breakdownCell, styles.breakdownQtyCol]}>{row.quantity}</Text>
-              </View>
-            ))}
+            {descriptor.variantBreakdown.length > 0 ? (
+              <>
+                <View style={styles.breakdownHeaderRow}>
+                  <Text style={[styles.breakdownHeaderCell, styles.breakdownColorCol]}>Color</Text>
+                  <Text style={[styles.breakdownHeaderCell, styles.breakdownSizeCol]}>Size</Text>
+                  <Text style={[styles.breakdownHeaderCell, styles.breakdownQtyCol]}>Qty</Text>
+                </View>
+                {descriptor.variantBreakdown.map((row, i) => (
+                  <View key={i} style={styles.breakdownRow}>
+                    <Text style={[styles.breakdownCell, styles.breakdownColorCol]}>{row.colorName}</Text>
+                    <Text style={[styles.breakdownCell, styles.breakdownSizeCol]}>{row.sizeName}</Text>
+                    <Text style={[styles.breakdownCell, styles.breakdownQtyCol]}>{row.quantity}</Text>
+                  </View>
+                ))}
+              </>
+            ) : (
+              <Text style={styles.notesText}>No size/color breakdown was recorded for this lot.</Text>
+            )}
           </View>
         ) : null}
 

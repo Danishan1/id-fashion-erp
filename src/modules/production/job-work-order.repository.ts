@@ -14,7 +14,24 @@ const JOB_WORK_ORDER_INCLUDE = {
       rejectedQuantity: true,
       damagedQuantity: true,
       productionStage: { select: { id: true, name: true } },
-      lot: { select: { id: true, lotNumber: true, productionOrder: { select: { id: true, orderNumber: true } } } },
+      lot: {
+        select: {
+          id: true,
+          lotNumber: true,
+          productionOrder: {
+            select: {
+              id: true,
+              orderNumber: true,
+              // Nullable — a Make-to-Stock order has no Sales Order; the slip
+              // renders an explicit "Make-to-Stock" note in that case.
+              salesOrderItem: { select: { salesOrder: { select: { orderNumber: true } } } },
+            },
+          },
+          variantBreakdown: {
+            include: { productVariant: { select: { color: { select: { name: true } }, size: { select: { name: true } } } } },
+          },
+        },
+      },
     },
   },
   materials: {

@@ -6788,6 +6788,49 @@ Assign Worker modal's own UI chrome (as opposed to the underlying service functi
 unit-tested and confirmed correct against real data via script) — the functional correctness of every code
 path is confirmed, but nobody has visually clicked through the toggle's own rendering in this pass.
 
+### Production/Job-Work slips — color/size breakdown, Sales Order, and sender/receiver made honest (2026-09-18)
+
+User-reported real gap on a live slip (`stage-slip-PROD-2026-00004-L01-Cutting`): only a flat "Quantity 10"
+showed, with no size/color breakdown, no Sales Order reference, and no clarity on who forwarded the lot to
+whom. Investigated against the real dev DB first — the lot in question is genuinely Make-to-Stock with no
+`LotVariantBreakdown` rows ever recorded (breakdown is optional at Lot creation, per the 2026-09-12 feature
+above); the real bug was that the slip silently omitted the whole breakdown section whenever it was empty,
+giving no indication *why* — indistinguishable from a defect. Fixed for **both** slip-generating documents
+(the shared `slip-pdf.tsx` template, per this project's own "any future slip-shaped document reuses this
+template" convention):
+- **`slip-pdf.tsx`**: the Size/Color Breakdown section is now shown whenever `variantBreakdown` is a real
+  array (even empty) — an empty array renders an explicit "No size/color breakdown was recorded for this
+  lot." line instead of vanishing; `undefined`/`null` still omits the whole section (reserved for a slip kind
+  where it genuinely doesn't apply).
+- **Sales Order added to both slips** — `ProductionOrder.salesOrderItem.salesOrder.orderNumber` threaded
+  through both repository includes (`production.repository.ts`'s `findLatestByToJobOrderId`,
+  `job-work-order.repository.ts`'s shared `JOB_WORK_ORDER_INCLUDE`), rendering the real order number or an
+  explicit "— (Make-to-Stock, no Sales Order)" fallback — never a blank field.
+- **"Who sent it to whom," per the user's own explicit follow-up ("hr ek slip me or kisne kisko bheja")**:
+  Stage Transfer Slip relabels "Performed By" → "Forwarded By" and adds a new "Received By (Assigned Worker)"
+  field — the destination JobOrder's currently assigned worker(s) (via a new `toJobOrder.assignments` include,
+  `status != CANCELLED`), or an honest "Not yet assigned" when nobody has been assigned to the receiving
+  stage yet. Job Work Receipt Slip gained "Issued By (Sent Out By)" (`jobWorkOrder.requestedBy.fullName`) and
+  relabeled "Vendor / Supplier" → "Vendor / Supplier (Sent To)" / "Received By" → "Received By (Store)" —
+  completing the Issued-By → Vendor → Received-By chain. Job Work Receipt Slip also gained the same
+  variant-breakdown table the Stage Transfer Slip already had (reusing the lot's own `variantBreakdown`),
+  since it had none at all before.
+- **Gotcha hit again, same root cause as every prior instance in this file**: after these edits, the
+  `stage-slip` route 404'd with Next's own HTML 404 page (not the API's own JSON error) even on a freshly
+  started dev server — a plain restart wasn't enough; a full `.next` wipe before restarting resolved it
+  immediately, this project's own well-documented "brand-new/edited deeply-nested dynamic route" gotcha.
+- **Verified live against the real dev DB and real PDF output**, not just type-checking: since
+  `@react-pdf/renderer` can't be invoked from a standalone `tsx` script outside Next's bundler (the same
+  `@react-pdf/hyphenate` subpath-export limitation already documented for AI Designer's PDF export), fetched
+  the real PDF from the running dev server via the browser pane, zlib-inflated its content stream directly in
+  the browser via `DecompressionStream("deflate")`, and decoded the hex-encoded text runs — confirmed the
+  real, live-rendered slip for the reported lot shows "Sales Order — (Make-to-Stock, no Sales Order)",
+  "Forwarded By: Super Admin", "Received By (Assigned Worker): Not yet assigned", and "No size/color
+  breakdown was recorded for this lot." exactly as designed; then created a temporary real `ProductVariant` +
+  `LotVariantBreakdown` row (Black/XS/5) on the same lot, re-fetched, and confirmed the table renders
+  correctly ("Color / Size / Qty" / "Black / XS / 5") — deleted both temporary rows afterward. `npx tsc
+  --noEmit`, `npx eslint .` (0 errors), and `npx vitest run src/modules/production` (153/153) all clean.
+
 ## Reference
 
 Full architecture rationale, complete table-by-table field lists, and the full role×module permission matrix were developed in the Phase 1 planning session and are condensed here. Consult that history if a design decision needs deeper justification than what's summarized above.
