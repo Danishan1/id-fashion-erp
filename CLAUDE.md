@@ -6831,6 +6831,85 @@ template" convention):
   correctly ("Color / Size / Qty" / "Black / XS / 5") — deleted both temporary rows afterward. `npx tsc
   --noEmit`, `npx eslint .` (0 errors), and `npx vitest run src/modules/production` (153/153) all clean.
 
+## Structured text/vision AI now has a real OpenAI backend, switchable via one env var (2026-09-20)
+
+User reported "Analyze Fabric with AI" (AI Designer Step 2) failing with the generic "AI analysis could not
+be completed" message even after adding Anthropic credits — live-reproduced via a direct script call (with
+`AI_DEBUG=1`) and confirmed the real underlying error, unchanged across 3 separate re-checks over several
+minutes, was Anthropic's own `"Your credit balance is too low to access the Anthropic API"`. The user then
+asked to switch to OpenAI right now while keeping the Anthropic implementation intact (`"anthropic ke code
+ko rakho but abhi chatgpt ka open ai ka use kro"`) — a real architectural gap, not a one-line fix: **every**
+structured text/vision AI process in this app (Fabric Analysis, Reference Analysis, Development Brief,
+Fabric Development Brief, Commercial Evaluation, Product Suitability, BOM Suggestion, Cost Analysis, Value
+Engineering, Buyer Comments, Technical Specification, Tech Pack grading/BOM, Replicate Design's DNA analysis
+and compatibility check — ~20 call sites across AI Garment Flow, AI Designer, and Replicate Design) was
+hardcoded to call Anthropic's SDK directly via `src/core/ai/providers/anthropic.ts`, completely separate from
+the already-existing `IMAGE_GENERATION_PROVIDER` switch (which only ever controlled *image generation* —
+Generate Design, Apply Fabric, Technical Flat — and has zero effect on this text/vision path, which is
+exactly why switching that setting alone didn't fix anything).
+
+- **New neutral file, `src/core/ai/providers/text-provider-types.ts`** — `AiServiceError`/
+  `AiInvalidResponseError`/`AiErrorCategory`/`StructuredToolCallResult<T>`/`ToolSchema<T>`/
+  `RequestStructuredVisionOutputParams<T>`/`RequestStructuredTextOutputParams<T>`, moved out of
+  `anthropic.ts` verbatim (same classes, same shapes) into their own file with zero SDK imports — this is
+  what lets `anthropic.ts` and the new `openai-text.ts` share identical error classes/return types without
+  importing from each other (a genuine runtime circular dependency the two provider files would otherwise
+  have: `anthropic.ts` needs to call into `openai-text.ts`, and `openai-text.ts` needs the same
+  `AiServiceError` class every existing `instanceof` check across ~20 call sites already relies on).
+- **New `src/core/ai/providers/openai-text.ts`** — the OpenAI equivalent of
+  `requestStructuredVisionOutput`/`requestStructuredTextOutput`, using OpenAI's Structured Outputs
+  (`response_format: {type:"json_schema", ...}`) over the Chat Completions API (vision: an `image_url` data-URI
+  content part alongside the text; text: no image part) — confirmed the exact param shape directly from the
+  installed `openai` SDK's own type definitions (`ResponseFormatJSONSchema`, `max_completion_tokens` over the
+  deprecated `max_tokens`), not assumed. Deliberately uses **`strict: false`**, not `strict: true` — OpenAI's
+  strict mode requires every `properties` key to also appear in `required` (no optional fields at all), a
+  constraint none of the ~20 existing tool schemas were designed against (they were shaped for Anthropic's
+  own, differently-shaped strict-mode rules); auditing and reshaping every one of them was out of scope for
+  this fix. The existing Zod `validate()` + one-shot corrective retry (now reimplemented here as a real
+  multi-turn conversation: original messages + the model's own raw reply + a corrective user message) remains
+  the actual correctness gate either way — the same "`strict:false` + Zod is the real safety net" tradeoff
+  this codebase already accepted for Anthropic's own largest (36-field) schema.
+- **`anthropic.ts`'s own real implementation is completely untouched** — only two `if (getAiTextProvider() ===
+  "openai") return requestStructuredVisionOutputViaOpenAi(params);`-shaped branches were added at the very top
+  of its two exported functions, per the user's explicit "keep the Anthropic code" instruction. Every one of
+  the ~20 call sites keeps importing `requestStructuredVisionOutput`/`requestStructuredTextOutput`/
+  `AiServiceError`/`AiInvalidResponseError` from the exact same `@/core/ai/providers/anthropic` path,
+  completely unaware of which backend actually ran — confirmed via grep that zero caller files needed any
+  change, and the full pre-existing test suite (1730 tests, many of which mock this exact module) passed
+  unmodified.
+- **New `src/core/ai/config.ts` exports**: `getAiTextProvider()` (reads `AI_TEXT_PROVIDER`, defaults to
+  `"anthropic"` — unchanged behavior for any deployment that doesn't set this) and `getOpenAiTextConfig()`
+  (mirrors `getAnthropicConfig()`'s shape; `OPENAI_TEXT_MODEL`/`OPENAI_VISION_MODEL` env vars, both defaulting
+  to `"gpt-4o"` since it handles vision and text in the same Chat Completions call). The old, genuinely dead
+  `getAiProvider()` (confirmed zero callers anywhere, part of the already-abandoned `AIService.ts`
+  abstraction) was replaced outright rather than left alongside a second, similarly-named function.
+- **This dev `.env` now has `AI_TEXT_PROVIDER="openai"`** set explicitly (with a comment explaining why and
+  how to flip it back) — the real, live switch is active in this environment specifically because the
+  configured Anthropic account ran out of credits, not because Anthropic is deprecated in this codebase.
+- **Live end-to-end verification, real API calls, both directions**: re-confirmed the Anthropic path is
+  still 100% intact by calling `analyzeFabric()` directly with `AI_TEXT_PROVIDER` unset — genuinely reached
+  Anthropic's real API and got the same real `"credit balance too low"` rejection as before (proving the
+  Anthropic code path itself was never broken, only its account's billing state). Then re-ran the identical
+  call with `AI_TEXT_PROVIDER=openai` and `AI_DEBUG=1` — confirmed via the stack trace that the call genuinely
+  routed through `openai-text.ts` → the real `openai` SDK → OpenAI's servers, and was correctly caught and
+  mapped to the same clean `AiServiceError`/`RATE_LIMIT` shape. **The configured OpenAI account (the same one
+  already documented elsewhere in this file as `CREDITS_EXHAUSTED` for image generation) also currently has
+  zero credits** — `"You have no credits remaining... credit_balance_exhausted"`, a real, live, current
+  account state, not a code defect. The switching mechanism itself is fully verified working correctly in
+  both directions; an actual successful structured-analysis response could not be captured end-to-end because
+  neither of the two currently-configured provider accounts has usable credit right now — flagged honestly
+  rather than claimed as passing.
+- `npx tsc --noEmit`, `npx eslint .` (0 errors, same pre-existing unrelated `<img>` warnings only), and `npx
+  vitest run` (1730/1730, no regressions, no new tests added — this is provider-plumbing with no new business
+  logic of its own to unit-test beyond what the live-call verification above already exercised against the
+  real SDKs) all clean.
+- **Not built this pass**: per-process schema auditing to make OpenAI's `strict: true` mode viable (would
+  need every one of ~20 tool schemas' `required` arrays to include every property — a larger, separate
+  change), and no admin-UI toggle for this switch (unlike `IMAGE_GENERATION_PROVIDER`'s own admin-configurable
+  `AIProviderManager` system) — this is a single, deployment-level env var, matching every other
+  provider-model-name setting already in this codebase (`ANTHROPIC_DEFAULT_MODEL`, `OPENAI_IMAGE_MODEL`,
+  etc.), not a per-request/per-company choice.
+
 ## Reference
 
 Full architecture rationale, complete table-by-table field lists, and the full role×module permission matrix were developed in the Phase 1 planning session and are condensed here. Consult that history if a design decision needs deeper justification than what's summarized above.

@@ -1,44 +1,32 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { getAnthropicConfig } from "@/core/ai/config";
+import { getAnthropicConfig, getAiTextProvider } from "@/core/ai/config";
+import {
+  AiServiceError,
+  AiInvalidResponseError,
+  type AiErrorCategory,
+  type StructuredToolCallResult,
+  type ToolSchema,
+  type RequestStructuredVisionOutputParams,
+  type RequestStructuredTextOutputParams,
+} from "./text-provider-types";
+import { requestStructuredVisionOutputViaOpenAi, requestStructuredTextOutputViaOpenAi } from "./openai-text";
 
 /**
  * Low-level, provider-specific wrapper around the Anthropic SDK — the only
- * file in this codebase that imports `@anthropic-ai/sdk` directly. A future
- * ImageGenerationProvider or a second text/vision provider gets its own
- * sibling file here; nothing above this layer (reference-analysis/,
- * development-brief/, or any future AI Garment Flow process) imports the
- * SDK itself, so switching providers later means adding a new file here,
- * not rewriting callers.
+ * file in this codebase that imports `@anthropic-ai/sdk` directly for
+ * structured text/vision analysis (image generation has its own separate
+ * providers under core/ai/image-generation/). The two exported functions
+ * below (`requestStructuredVisionOutput`/`requestStructuredTextOutput`) are
+ * the single chokepoint every AI Garment Flow / AI Designer analysis process
+ * calls into — nothing above this layer imports the Anthropic SDK itself, so
+ * this file's own Anthropic implementation is left completely unchanged
+ * below; only a real-provider-selection branch was added at the top of each
+ * exported function, delegating to `openai-text.ts`'s sibling implementation
+ * when AI_TEXT_PROVIDER=openai. Every caller keeps importing from this same
+ * file/path — switching the active backend never requires touching a caller.
  */
 
-export type AiErrorCategory =
-  | "MISSING_CONFIG"
-  | "TIMEOUT"
-  | "AUTH_FAILURE"
-  | "RATE_LIMIT"
-  | "PROVIDER_ERROR"
-  | "NO_STRUCTURED_RESPONSE"
-  | "INVALID_STRUCTURED_RESPONSE";
-
-/** A provider-level failure — the caller maps this to a clean, generic user-facing message, never a raw SDK error. */
-export class AiServiceError extends Error {
-  constructor(
-    message: string,
-    public readonly category: AiErrorCategory,
-    cause?: unknown
-  ) {
-    super(message, cause !== undefined ? { cause } : undefined);
-    this.name = "AiServiceError";
-  }
-}
-
-/** The model returned no usable structured output, even after one corrective retry. */
-export class AiInvalidResponseError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "AiInvalidResponseError";
-  }
-}
+export { AiServiceError, AiInvalidResponseError, type AiErrorCategory, type StructuredToolCallResult };
 
 /**
  * 90s was too short for a real workload, confirmed live: generating a batch
@@ -104,21 +92,6 @@ function sanitizeForStrictToolSchema(node: unknown): unknown {
     result.additionalProperties = false;
   }
   return result;
-}
-
-export interface StructuredToolCallResult<T> {
-  data: T;
-  model: string;
-  rawResponse: unknown;
-}
-
-interface ToolSchema<T> {
-  toolName: string;
-  toolDescription: string;
-  /** A JSON-Schema `{type:"object", properties, required}` object — built by the caller from its own Zod schema's shape. */
-  inputSchema: { type: "object"; properties: Record<string, unknown>; required: string[] };
-  /** Re-validates the tool's raw `input` against the caller's own Zod schema — `strict: true` on the tool constrains the model server-side, but this is the actual gate before anything is persisted. */
-  validate: (input: unknown) => { success: true; data: T } | { success: false; error: string };
 }
 
 /**
@@ -235,13 +208,6 @@ function appendTextToLastTextBlock(content: Anthropic.ContentBlockParam[], instr
   return next;
 }
 
-interface RequestStructuredVisionOutputParams<T> extends ToolSchema<T> {
-  imageBase64: string;
-  imageMediaType: "image/jpeg" | "image/png" | "image/webp";
-  systemPrompt: string;
-  userText: string;
-}
-
 /**
  * 8000 was too short for a real workload, confirmed live: a genuine
  * 36-field vision analysis with rich per-field prose was truncated
@@ -275,6 +241,9 @@ const VISION_MAX_OUTPUT_TOKENS = 16000;
 export async function requestStructuredVisionOutput<T>(
   params: RequestStructuredVisionOutputParams<T>
 ): Promise<StructuredToolCallResult<T>> {
+  if (getAiTextProvider() === "openai") {
+    return requestStructuredVisionOutputViaOpenAi<T>(params);
+  }
   const config = getAnthropicConfig();
   return requestStructuredToolCall<T>({
     model: config.visionModel,
@@ -290,17 +259,15 @@ export async function requestStructuredVisionOutput<T>(
   });
 }
 
-interface RequestStructuredTextOutputParams<T> extends ToolSchema<T> {
-  systemPrompt: string;
-  userText: string;
-}
-
 const TEXT_MAX_OUTPUT_TOKENS = 16000;
 
 /** Uses ANTHROPIC_DEFAULT_MODEL (Sonnet) — normal/simple text-processing tasks with no image involved (Process 2 onward). */
 export async function requestStructuredTextOutput<T>(
   params: RequestStructuredTextOutputParams<T>
 ): Promise<StructuredToolCallResult<T>> {
+  if (getAiTextProvider() === "openai") {
+    return requestStructuredTextOutputViaOpenAi<T>(params);
+  }
   const config = getAnthropicConfig();
   return requestStructuredToolCall<T>({
     model: config.defaultModel,
