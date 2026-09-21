@@ -2,6 +2,14 @@ pipeline {
     agent any
 
     stages {
+        stage('Setup Environment') {
+            steps {
+                withCredentials([file(credentialsId: 'fashion-erp-env', variable: 'ENV_FILE')]) {
+                    sh 'cp "$ENV_FILE" .env'
+                }
+            }
+        }
+
         stage('Install Dependencies') {
             steps {
                 sh 'node -v'
@@ -36,6 +44,10 @@ pipeline {
 
         failure {
             echo 'Fashion ERP build failed!'
+        }
+
+        always {
+            sh 'rm -f .env'
         }
     }
 }
