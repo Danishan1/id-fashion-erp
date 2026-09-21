@@ -4,7 +4,7 @@ pipeline {
     stages {
         stage('Setup Environment') {
             steps {
-                withCredentials([file(credentialsId: 'fashion-erp-env', variable: 'ENV_FILE')]) {
+                withCredentials([file(credentialsId: 'fashion-erp-env-global', variable: 'ENV_FILE')]) {
                     sh 'cp "$ENV_FILE" .env'
                 }
             }
