@@ -26,6 +26,7 @@ export const AiDesignerProjectRepository = {
         createdBy: { select: { id: true, fullName: true } },
         currentVersion: { include: { currentImage: true } },
         versions: { orderBy: { versionNumber: "desc" }, include: { currentImage: true } },
+        sketchAnalysis: { include: { observations: { orderBy: { featureKey: "asc" } } } },
       },
     }),
 
@@ -227,6 +228,90 @@ export const AiDesignerProductDesignAttributeRepository = {
 
   update: (id: string, data: Prisma.AiDesignerProductDesignAttributeUncheckedUpdateInput) =>
     prisma.aiDesignerProductDesignAttribute.update({ where: { id }, data }),
+};
+
+export const AiDesignerSketchAnalysisRepository = {
+  findByProjectId: (projectId: string) =>
+    prisma.aiDesignerSketchAnalysis.findUnique({
+      where: { projectId },
+      include: { observations: { orderBy: { featureKey: "asc" } } },
+    }),
+
+  /** Full replace on re-analysis — deletes any prior observations first, same "1:1, fully replaced" convention as ReplicateDesignDnaAnalysisRepository.upsertWithObservations. */
+  upsertWithObservations: (
+    projectId: string,
+    data: Prisma.AiDesignerSketchAnalysisUncheckedCreateInput,
+    observations: Omit<Prisma.AiDesignerSketchObservationUncheckedCreateInput, "analysisId">[]
+  ) =>
+    prisma.$transaction(async (tx) => {
+      const existing = await tx.aiDesignerSketchAnalysis.findUnique({ where: { projectId } });
+      if (existing) {
+        await tx.aiDesignerSketchObservation.deleteMany({ where: { analysisId: existing.id } });
+        await tx.aiDesignerSketchAnalysis.update({ where: { id: existing.id }, data });
+        await tx.aiDesignerSketchObservation.createMany({
+          data: observations.map((o) => ({ ...o, analysisId: existing.id })),
+        });
+        return tx.aiDesignerSketchAnalysis.findUniqueOrThrow({
+          where: { id: existing.id },
+          include: { observations: { orderBy: { featureKey: "asc" } } },
+        });
+      }
+      const created = await tx.aiDesignerSketchAnalysis.create({ data });
+      await tx.aiDesignerSketchObservation.createMany({
+        data: observations.map((o) => ({ ...o, analysisId: created.id })),
+      });
+      return tx.aiDesignerSketchAnalysis.findUniqueOrThrow({
+        where: { id: created.id },
+        include: { observations: { orderBy: { featureKey: "asc" } } },
+      });
+    }),
+
+  markStale: (projectId: string) =>
+    prisma.aiDesignerSketchAnalysis.updateMany({ where: { projectId }, data: { status: "STALE" } }),
+
+  update: (id: string, data: Prisma.AiDesignerSketchAnalysisUncheckedUpdateInput) =>
+    prisma.aiDesignerSketchAnalysis.update({ where: { id }, data }),
+
+  approveAllObservations: (analysisId: string, approvedByUserId: string) =>
+    prisma.$transaction([
+      prisma.aiDesignerSketchAnalysis.update({
+        where: { id: analysisId },
+        data: { status: "APPROVED", approvedByUserId, approvedAt: new Date() },
+      }),
+      prisma.aiDesignerSketchObservation.updateMany({
+        where: { analysisId },
+        data: { approvedByUserId, approvedAt: new Date() },
+      }),
+    ]),
+};
+
+export const AiDesignerSketchObservationRepository = {
+  findByAnalysisId: (analysisId: string) =>
+    prisma.aiDesignerSketchObservation.findMany({ where: { analysisId }, orderBy: { featureKey: "asc" } }),
+
+  findWithAnalysisOwner: (id: string) =>
+    prisma.aiDesignerSketchObservation.findUnique({ where: { id }, include: { analysis: true } }),
+
+  update: (id: string, data: Prisma.AiDesignerSketchObservationUncheckedUpdateInput) =>
+    prisma.aiDesignerSketchObservation.update({ where: { id }, data }),
+};
+
+export const AiDesignerSketchAnalysisRunRepository = {
+  create: (data: Prisma.AiDesignerSketchAnalysisRunUncheckedCreateInput) => prisma.aiDesignerSketchAnalysisRun.create({ data }),
+
+  markSuccess: (id: string, analysisId: string) =>
+    prisma.aiDesignerSketchAnalysisRun.update({ where: { id }, data: { status: "SUCCESS", analysisId, completedAt: new Date() } }),
+
+  markFailed: (id: string, errorCategory: string, errorMessage: string) =>
+    prisma.aiDesignerSketchAnalysisRun.update({
+      where: { id },
+      data: { status: "FAILED", errorCategory, errorMessage, completedAt: new Date() },
+    }),
+
+  findActiveSince: (projectId: string, freshSince: Date) =>
+    prisma.aiDesignerSketchAnalysisRun.findFirst({
+      where: { projectId, status: "IN_PROGRESS", requestedAt: { gte: freshSince } },
+    }),
 };
 
 export const AiDesignerOptionReferenceImageRepository = {

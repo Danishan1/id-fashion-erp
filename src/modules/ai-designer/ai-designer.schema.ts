@@ -1,12 +1,36 @@
 import { z } from "zod";
 import { TARGET_CUSTOMER_VALUES } from "@/core/ai-designer/catalogs/customer-catalog";
 
-/** Creates a blank draft project — Step 1's fabric choice is recorded by a separate call (selectExistingFabricSchema / the fabric-image upload route), not at creation time. */
+/**
+ * Creates a blank draft project — Step 1's fabric choice is recorded by a
+ * separate call (selectExistingFabricSchema / the fabric-image upload
+ * route), not at creation time. creationMode picks which wizard this project
+ * runs: STANDARD (the original fabric-first flow, default) or SKETCH (starts
+ * from an uploaded sketch/drawing whose structural design is preserved as
+ * the authoritative reference — see stepsForCreationMode() in the service).
+ */
 export const createProjectSchema = z.object({
   projectName: z.string().min(1, "Project name is required").max(200),
+  creationMode: z.enum(["STANDARD", "SKETCH"]).default("STANDARD"),
 });
 
 export type CreateProjectInput = z.infer<typeof createProjectSchema>;
+
+/**
+ * Sketch Analysis — per-observation edit/lock/reset, same shape as Replicate
+ * Design's own updateDnaObservationSchema/setDnaObservationLockSchema
+ * (mirrored, not imported, per this module's own file-per-process
+ * convention already established throughout this codebase).
+ */
+export const updateSketchObservationSchema = z.object({
+  approvedObservation: z.string().min(1, "This field cannot be empty").max(500),
+});
+export type UpdateSketchObservationInput = z.infer<typeof updateSketchObservationSchema>;
+
+export const setSketchObservationLockSchema = z.object({
+  isLocked: z.boolean(),
+});
+export type SetSketchObservationLockInput = z.infer<typeof setSketchObservationLockSchema>;
 
 /** Admin-only: switches the Product Design step's attribute pickers between clipart icons and plain text buttons, company-wide. */
 export const updateDisplayModeSchema = z.object({

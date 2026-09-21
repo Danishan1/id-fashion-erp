@@ -82,6 +82,128 @@ Ultra realistic, high resolution.
 The output is a commercial product-development visual, not fantasy fashion art.`;
 }
 
+// ---------------------------------------------------------------------------
+// Sketch / Drawing → Garment (2026-09-20) — Step 9's generation prompt when
+// AiDesignerProject.creationMode === "SKETCH". Sent alongside TWO real input
+// images (the sketch as referenceImage, the fabric photo as materialImage)
+// to ImageGenerationProvider.replicateWithNewMaterial. Implements the user's
+// own explicit six-tier generation priority:
+//   1. User's explicit Product Design overrides
+//   2. The uploaded sketch (preserve every remaining locked detail)
+//   3. The selected fabric (apply faithfully — reuses FABRIC_REFERENCE_INSTRUCTION above)
+//   4. Product/Target/Age constraints
+//   5. Model (apply without redesigning)
+//   6. Environment (presentation only)
+// ---------------------------------------------------------------------------
+
+const SKETCH_STRUCTURE_PRESERVATION_INSTRUCTION = `Use the first supplied image (the uploaded sketch/drawing) as the AUTHORITATIVE structural design reference. This is a hand-drawn or digital sketch being converted into a realistic, commercially manufacturable garment photograph — read its construction lines, proportions, and labelled details, not its drawing style or artistic rendering. Preserve the exact garment silhouette, proportions, neckline, collar, sleeves, garment length, panels, seams, pockets, openings, and every other visible construction detail from that sketch. Do not redesign, reinterpret, or simplify the garment's structure in any way, except for any explicit override listed below.
+
+Use the second supplied image (the fabric/material photo) as the ONLY source of truth for the garment's fabric, print, texture, and color.`;
+
+export interface SketchGenerationOverride {
+  featureLabel: string;
+  sketchValue: string;
+  selectedValue: string;
+}
+
+export interface AiDesignerSketchGenerationContext {
+  targetCustomer: string;
+  ageGroup: string;
+  productCategory: string;
+  modelGender: string;
+  modelBodyType: string;
+  modelPose: string;
+  environment: string;
+  /** Tier 1 — Product Design selections that explicitly differ from the sketch's own locked value for that feature (see detectDesignOverrides() in ai-designer.service.ts). */
+  overrides: SketchGenerationOverride[];
+  /** Tier 2 — one line per locked sketch observation NOT covered by an override above, e.g. "Sleeve Type: Full-length fitted sleeve." */
+  lockedConstraints: string[];
+}
+
+/**
+ * The hidden image-generation prompt for a SKETCH-mode project's Generate
+ * Design step — built entirely server-side, never free-typed by a user.
+ */
+export function buildSketchGenerationPrompt(ctx: AiDesignerSketchGenerationContext): string {
+  const v = (s: string | null | undefined) => (s && s.trim().length > 0 ? s : FALLBACK);
+
+  const lines: string[] = [];
+
+  // Tier 1 — explicit user overrides, stated first and most forcefully so
+  // they take precedence over the sketch's own value for that one feature.
+  if (ctx.overrides.length > 0) {
+    lines.push(
+      "The user has EXPLICITLY requested the following changes from the sketch — these override the sketch for ONLY the specific feature named, every other detail of the sketch must still be preserved exactly:",
+      ""
+    );
+    for (const o of ctx.overrides) {
+      lines.push(`- Change ${o.featureLabel} to "${o.selectedValue}" (explicitly requested — the sketch itself shows "${o.sketchValue}", do NOT use the sketch's own value for this one feature).`);
+    }
+    lines.push("");
+  }
+
+  // Tier 2 — the sketch as the authoritative structural reference, plus
+  // every locked detail not already overridden above.
+  lines.push(SKETCH_STRUCTURE_PRESERVATION_INSTRUCTION, "");
+  if (ctx.lockedConstraints.length > 0) {
+    lines.push("Locked sketch details (must remain exactly as in the sketch, unless explicitly overridden above):", "");
+    for (const c of ctx.lockedConstraints) lines.push(`- ${c}`);
+    lines.push("");
+  }
+
+  // Tier 3 — fabric, reusing the exact same fabric-fidelity instruction
+  // every other AI Designer generation call already uses.
+  lines.push(
+    FABRIC_REFERENCE_INSTRUCTION,
+    "",
+    "The fabric image supplied with this request is the ONLY source of truth for the fabric's appearance. Do not substitute a different print, pattern, or colourway.",
+    "",
+    "Create a premium, catalogue-quality fashion product photograph of the garment described above, made from the supplied fabric."
+  );
+
+  // Tier 4 — Product/Target/Age constraints.
+  lines.push(
+    "",
+    "Target Customer:",
+    v(ctx.targetCustomer),
+    "",
+    "Age Group:",
+    v(ctx.ageGroup),
+    "",
+    "Product Category:",
+    v(ctx.productCategory)
+  );
+
+  // Tier 5 — Model, applied without redesigning the garment.
+  lines.push(
+    "",
+    "Model (apply the garment to this model exactly as designed — do not let the model choice change the garment's own construction):",
+    `${v(ctx.modelGender)}, ${v(ctx.modelBodyType)} build, ${v(ctx.modelPose)} pose.`
+  );
+
+  // Tier 6 — Environment, presentation only.
+  lines.push(
+    "",
+    "Environment / Setting (affects presentation and background only, never the garment's construction):",
+    v(ctx.environment)
+  );
+
+  lines.push(
+    "",
+    "Requirements:",
+    "",
+    "The garment must be realistic and commercially manufacturable — avoid impossible construction.",
+    "",
+    "Maintain realistic, natural fabric folds and draping appropriate to the garment and the supplied fabric's own weight and texture.",
+    "",
+    "Produce a premium fashion catalogue quality image, ultra realistic, high resolution.",
+    "",
+    "The output is a commercial product-development visual, not fantasy fashion art."
+  );
+
+  return lines.join("\n");
+}
+
 export interface AiDesignerEditContext {
   featureLabel: string;
   currentValue: string;

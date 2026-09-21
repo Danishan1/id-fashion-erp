@@ -8,9 +8,21 @@ import { AiConfigMissingError } from "@/core/ai/config";
 import { AiInvalidResponseError, AiServiceError } from "@/core/ai/providers/anthropic";
 import { analyzeFabric } from "@/core/ai-designer/fabric-analysis/analyze";
 import { buildUserText, PROMPT_VERSION as FABRIC_PROMPT_VERSION } from "@/core/ai-designer/fabric-analysis/prompt";
+import { analyzeSketch } from "@/core/ai-designer/sketch-analysis/analyze";
+import { PROMPT_VERSION as SKETCH_PROMPT_VERSION } from "@/core/ai-designer/sketch-analysis/prompt";
+import { flattenToObservations as flattenSketchObservations } from "@/core/ai-designer/sketch-analysis/schema";
+import { SKETCH_FEATURE_LABELS, SKETCH_TO_DESIGN_ATTRIBUTE_KEYS, type SketchFeatureKey } from "@/core/ai-designer/sketch-analysis/feature-registry";
 import { ImageGenerationServiceError } from "@/core/ai/image-generation/types";
 import { runWithFailover } from "@/core/ai/provider-manager/AIProviderManager";
-import { buildEmbellishmentPrompt, buildGenerationPrompt, buildSecondFabricPrompt, buildWorkspaceEditPrompt, PROMPT_VERSION as GENERATION_PROMPT_VERSION } from "@/core/ai-designer/image-generation/prompt";
+import {
+  buildEmbellishmentPrompt,
+  buildGenerationPrompt,
+  buildSecondFabricPrompt,
+  buildSketchGenerationPrompt,
+  buildWorkspaceEditPrompt,
+  PROMPT_VERSION as GENERATION_PROMPT_VERSION,
+  type SketchGenerationOverride,
+} from "@/core/ai-designer/image-generation/prompt";
 import type { TechPackSpecItem, TechPackAnalysisForPdf, TechPackDocumentPageImage } from "@/core/ai-designer/export/tech-pack-pdf";
 import { getEnvironmentByKey } from "@/core/ai-designer/catalogs/environment-catalog";
 import { isValidAgeGroup, isValidProductCategory, TARGET_CUSTOMER_LABELS, type TargetCustomer } from "@/core/ai-designer/catalogs/customer-catalog";
@@ -43,6 +55,9 @@ import {
   AiDesignerPromptRepository,
   AiDesignerVersionRepository,
   AiDesignerTechPackRepository,
+  AiDesignerSketchAnalysisRepository,
+  AiDesignerSketchObservationRepository,
+  AiDesignerSketchAnalysisRunRepository,
 } from "./ai-designer.repository";
 import type {
   ApplyEditVariationInput,
@@ -55,10 +70,12 @@ import type {
   GenerateEditPreviewInput,
   SaveWizardSelectionsInput,
   SelectExistingFabricInput,
+  SetSketchObservationLockInput,
   UpdateFabricFieldInput,
+  UpdateSketchObservationInput,
   UpdateTechPackFieldInput,
 } from "./ai-designer.schema";
-import { AiDesignerProjectStatus, type AiDesignerProject, type Prisma } from "@prisma/client";
+import { AiDesignerProjectStatus, type AiDesignerCreationMode, type AiDesignerProject, type Prisma } from "@prisma/client";
 
 interface ActorContext {
   companyId: string;
@@ -82,8 +99,17 @@ const ALLOWED_IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/jpg", "image/png"
  * uses them simply never marks them complete (this only affects the
  * display-only "current step" highlight, not navigation, which is entirely
  * user-driven via each step's own Next button — see AiDesignerWorkflowPanel.tsx).
+ *
+ * SKETCH-only steps (2026-09-20) — Sketch / Drawing → Garment adds two steps
+ * (UPLOAD_SKETCH, SKETCH_ANALYSIS) before every other step, which is reused
+ * completely unchanged for either mode. stepsForCreationMode() mirrors the
+ * exact precedent already proven in AI Garment Flow's own
+ * stepsForSourceType() — a STANDARD-mode project's own array is byte-
+ * identical to before, so every existing call site is unaffected once it
+ * passes STANDARD explicitly.
  */
-export const WIZARD_STEP_ORDER = [
+const SKETCH_ONLY_STEPS = ["UPLOAD_SKETCH", "SKETCH_ANALYSIS"] as const;
+const STANDARD_STEPS = [
   "FABRIC_SELECTION",
   "FABRIC_ANALYSIS",
   "TARGET_CUSTOMER",
@@ -99,16 +125,24 @@ export const WIZARD_STEP_ORDER = [
   "TECH_PACK",
   "EXPORT",
 ] as const;
-export type WizardStep = (typeof WIZARD_STEP_ORDER)[number];
+/** @deprecated kept for any external import; prefer stepsForCreationMode("STANDARD"). */
+export const WIZARD_STEP_ORDER = STANDARD_STEPS;
+export type WizardStep = (typeof STANDARD_STEPS)[number] | (typeof SKETCH_ONLY_STEPS)[number];
 
-function markStepsComplete(existing: string[], steps: WizardStep[]): string[] {
-  const set = new Set(existing);
-  for (const step of steps) set.add(step);
-  return WIZARD_STEP_ORDER.filter((s) => set.has(s));
+export function stepsForCreationMode(mode: AiDesignerCreationMode): readonly WizardStep[] {
+  return mode === "SKETCH" ? [...SKETCH_ONLY_STEPS, ...STANDARD_STEPS] : STANDARD_STEPS;
 }
 
-function computeCurrentStep(completedSteps: string[]): WizardStep {
-  return WIZARD_STEP_ORDER.find((s) => !completedSteps.includes(s)) ?? "EXPORT";
+function markStepsComplete(existing: string[], steps: WizardStep[], mode: AiDesignerCreationMode): string[] {
+  const order = stepsForCreationMode(mode);
+  const set = new Set(existing);
+  for (const step of steps) set.add(step);
+  return order.filter((s) => set.has(s));
+}
+
+function computeCurrentStep(completedSteps: string[], mode: AiDesignerCreationMode): WizardStep {
+  const order = stepsForCreationMode(mode);
+  return order.find((s) => !completedSteps.includes(s)) ?? order[order.length - 1];
 }
 
 const RUN_FRESHNESS_WINDOW_MS = 3 * 60 * 1000;
@@ -163,6 +197,16 @@ async function assertNoActiveRun(projectId: string, promptType: "FABRIC_ANALYSIS
   }
 }
 
+async function assertNoActiveSketchAnalysisRun(projectId: string) {
+  const freshSince = new Date(Date.now() - RUN_FRESHNESS_WINDOW_MS);
+  const active = await AiDesignerSketchAnalysisRunRepository.findActiveSince(projectId, freshSince);
+  if (active) {
+    throw new BusinessRuleError("INVALID_STATE_TRANSITION", "A sketch analysis is already in progress for this project.", {
+      runId: active.id,
+    });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // List / get
 // ---------------------------------------------------------------------------
@@ -212,7 +256,8 @@ export async function createProject(actor: ActorContext, input: CreateProjectInp
     projectNumber,
     projectName: input.projectName,
     status: "DRAFT",
-    currentStep: "FABRIC_SELECTION",
+    creationMode: input.creationMode,
+    currentStep: stepsForCreationMode(input.creationMode)[0],
     completedSteps: [],
     createdByUserId: actor.userId,
   });
@@ -227,6 +272,267 @@ export async function createProject(actor: ActorContext, input: CreateProjectInp
   });
 
   return project;
+}
+
+// ---------------------------------------------------------------------------
+// SKETCH mode only — Upload Sketch / Sketch Analysis
+// (see stepsForCreationMode("SKETCH") above; these steps never appear, and
+// these functions are never called, for a STANDARD-mode project.)
+// ---------------------------------------------------------------------------
+
+export async function uploadSketchImage(actor: ActorContext, projectId: string, file: UploadableFile) {
+  const project = await getOwnedProject(actor.companyId, projectId);
+
+  if (!ALLOWED_IMAGE_MIME_TYPES.has(file.mimeType)) {
+    throw new BusinessRuleError("VALIDATION_ERROR", `Unsupported file type "${file.mimeType}" — upload a JPG, PNG, or WEBP image.`);
+  }
+
+  const attachment = await uploadAttachment(actor, "AI_DESIGNER_PROJECT", projectId, file, "SKETCH_IMAGE");
+
+  // Replacing the sketch marks any existing analysis STALE — the same
+  // "replacing the reference image invalidates its analysis" rule already
+  // proven for Fabric Analysis / Reference Analysis / Replicate Design's own
+  // DNA analysis, so a later Generate call can never silently read an
+  // analysis of a sketch that's no longer the one actually uploaded.
+  await AiDesignerSketchAnalysisRepository.markStale(projectId);
+
+  const completedSteps = markStepsComplete(project.completedSteps, ["UPLOAD_SKETCH"], project.creationMode);
+  const updated = await AiDesignerProjectRepository.update(projectId, {
+    sketchImageAttachmentId: attachment.id,
+    completedSteps,
+    currentStep: computeCurrentStep(completedSteps, project.creationMode),
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "ai_projects",
+    recordId: projectId,
+    action: "UPDATE",
+    newValues: { sketchImageAttachmentId: attachment.id },
+  });
+
+  return { project: updated, attachment };
+}
+
+export async function deleteSketchImage(actor: ActorContext, projectId: string) {
+  const project = await getOwnedProject(actor.companyId, projectId);
+  if (!project.sketchImageAttachmentId) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "This project has no uploaded sketch to delete.");
+  }
+
+  await deleteAttachment(actor, project.sketchImageAttachmentId);
+  await AiDesignerSketchAnalysisRepository.markStale(projectId);
+
+  const updated = await AiDesignerProjectRepository.update(projectId, { sketchImageAttachmentId: null });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "ai_projects",
+    recordId: projectId,
+    action: "UPDATE",
+    oldValues: { sketchImageAttachmentId: project.sketchImageAttachmentId },
+    newValues: { sketchImageAttachmentId: null },
+  });
+
+  return updated;
+}
+
+export async function runSketchAnalysis(actor: ActorContext, projectId: string) {
+  const project = await getOwnedProject(actor.companyId, projectId);
+
+  if (!project.sketchImageAttachmentId) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "Upload a sketch/drawing before running Sketch Analysis.");
+  }
+  await assertNoActiveSketchAnalysisRun(projectId);
+
+  const { attachment, buffer } = await getAttachmentForDownload(actor.companyId, project.sketchImageAttachmentId);
+  const mediaType = normalizeImageMediaType(attachment.mimeType);
+
+  const runRow = await AiDesignerSketchAnalysisRunRepository.create({
+    companyId: actor.companyId,
+    projectId,
+    sketchAttachmentId: project.sketchImageAttachmentId,
+    provider: "anthropic",
+    model: process.env.ANTHROPIC_VISION_MODEL || "claude-opus-5",
+    promptVersion: SKETCH_PROMPT_VERSION,
+    status: "IN_PROGRESS",
+    createdByUserId: actor.userId,
+  });
+
+  try {
+    const result = await analyzeSketch({ imageBuffer: buffer, imageMediaType: mediaType });
+
+    const observations = flattenSketchObservations(result.data).map((o) => ({
+      featureKey: o.featureKey,
+      aiObservation: o.aiObservation,
+      aiConfidence: o.aiConfidence,
+      approvedObservation: o.aiObservation,
+      userEdited: false,
+      isLocked: true,
+    }));
+
+    const analysis = await AiDesignerSketchAnalysisRepository.upsertWithObservations(
+      projectId,
+      {
+        companyId: actor.companyId,
+        projectId,
+        sketchAttachmentId: project.sketchImageAttachmentId,
+        status: "AI_ANALYSED",
+        promptVersion: SKETCH_PROMPT_VERSION,
+        provider: "anthropic",
+        model: result.model,
+        rawResponseJson: result.rawResponse as Prisma.InputJsonValue,
+        sketchAnalysisSummary: result.data.sketchAnalysisSummary,
+        createdByUserId: actor.userId,
+      },
+      observations
+    );
+
+    await AiDesignerSketchAnalysisRunRepository.markSuccess(runRow.id, analysis.id);
+
+    const completedSteps = markStepsComplete(project.completedSteps, ["SKETCH_ANALYSIS"], project.creationMode);
+    await AiDesignerProjectRepository.update(projectId, { completedSteps, currentStep: computeCurrentStep(completedSteps, project.creationMode) });
+
+    await writeAuditLog({
+      companyId: actor.companyId,
+      userId: actor.userId,
+      tableName: "ai_designer_sketch_analyses",
+      recordId: analysis.id,
+      action: "CREATE",
+      newValues: { status: "AI_ANALYSED" },
+    });
+
+    return analysis;
+  } catch (err) {
+    const category = errorCategoryForAi(err);
+    const message = err instanceof Error ? err.message : "Unknown error.";
+    await AiDesignerSketchAnalysisRunRepository.markFailed(runRow.id, category, message);
+    mapAiError(err);
+  }
+}
+
+export async function getSketchAnalysis(companyId: string, projectId: string) {
+  await getOwnedProject(companyId, projectId);
+  return AiDesignerSketchAnalysisRepository.findByProjectId(projectId);
+}
+
+export async function updateSketchObservation(actor: ActorContext, observationId: string, input: UpdateSketchObservationInput) {
+  const observation = await AiDesignerSketchObservationRepository.findWithAnalysisOwner(observationId);
+  if (!observation || observation.analysis.companyId !== actor.companyId) {
+    throw new BusinessRuleError("NOT_FOUND", "Sketch observation not found.", { id: observationId });
+  }
+
+  const updated = await AiDesignerSketchObservationRepository.update(observationId, {
+    approvedObservation: input.approvedObservation,
+    userEdited: true,
+  });
+
+  // Editing any observation on an already-approved analysis pushes it back
+  // to review — same "never let an approved state silently drift"
+  // discipline already established elsewhere in this codebase.
+  if (observation.analysis.status === "APPROVED") {
+    await AiDesignerSketchAnalysisRepository.update(observation.analysisId, { status: "UNDER_REVIEW" });
+  }
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "ai_designer_sketch_observations",
+    recordId: observationId,
+    action: "UPDATE",
+    oldValues: { approvedObservation: observation.approvedObservation },
+    newValues: { approvedObservation: input.approvedObservation },
+  });
+
+  return updated;
+}
+
+export async function resetSketchObservationToAi(actor: ActorContext, observationId: string) {
+  const observation = await AiDesignerSketchObservationRepository.findWithAnalysisOwner(observationId);
+  if (!observation || observation.analysis.companyId !== actor.companyId) {
+    throw new BusinessRuleError("NOT_FOUND", "Sketch observation not found.", { id: observationId });
+  }
+
+  return AiDesignerSketchObservationRepository.update(observationId, {
+    approvedObservation: observation.aiObservation,
+    userEdited: false,
+  });
+}
+
+/** Lock toggle has no re-approval side effect, unlike an actual value edit — it only changes whether Generate treats this observation as a hard constraint. */
+export async function setSketchObservationLock(actor: ActorContext, observationId: string, input: SetSketchObservationLockInput) {
+  const observation = await AiDesignerSketchObservationRepository.findWithAnalysisOwner(observationId);
+  if (!observation || observation.analysis.companyId !== actor.companyId) {
+    throw new BusinessRuleError("NOT_FOUND", "Sketch observation not found.", { id: observationId });
+  }
+
+  return AiDesignerSketchObservationRepository.update(observationId, { isLocked: input.isLocked });
+}
+
+export async function approveSketchAnalysis(actor: ActorContext, projectId: string) {
+  const project = await getOwnedProject(actor.companyId, projectId);
+  const analysis = await AiDesignerSketchAnalysisRepository.findByProjectId(projectId);
+  if (!analysis) throw new BusinessRuleError("NOT_FOUND", "This project has no Sketch Analysis to approve yet.");
+  if (analysis.status !== "AI_ANALYSED" && analysis.status !== "UNDER_REVIEW") {
+    throw new BusinessRuleError("INVALID_STATE_TRANSITION", `Cannot approve an analysis in status "${analysis.status}".`);
+  }
+
+  await AiDesignerSketchAnalysisRepository.approveAllObservations(analysis.id, actor.userId);
+
+  const completedSteps = markStepsComplete(project.completedSteps, ["SKETCH_ANALYSIS"], project.creationMode);
+  await AiDesignerProjectRepository.update(projectId, { completedSteps, currentStep: computeCurrentStep(completedSteps, project.creationMode) });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "ai_designer_sketch_analyses",
+    recordId: analysis.id,
+    action: "UPDATE",
+    newValues: { status: "APPROVED" },
+  });
+
+  return AiDesignerSketchAnalysisRepository.findByProjectId(projectId);
+}
+
+/**
+ * Compares each locked sketch observation against the project's own
+ * Product Design selections (see SKETCH_TO_DESIGN_ATTRIBUTE_KEYS) — a
+ * selection differing from the sketch's own value for a mapped feature is
+ * treated as an intentional override (the spec's own explicit example: the
+ * sketch shows a round neck, the user picks V-neck → preserve everything
+ * else, change only the neckline). A sketch feature with no mapped Product
+ * Design attribute always stays preserved from the sketch (the safe
+ * default). Exported for the Design Summary UI to render the same list.
+ */
+export function detectDesignOverrides(
+  observations: { featureKey: string; approvedObservation: string; isLocked: boolean }[],
+  designSelections: Record<string, string> | null | undefined
+): { overrides: SketchGenerationOverride[]; overriddenFeatureKeys: Set<string> } {
+  const overrides: SketchGenerationOverride[] = [];
+  const overriddenFeatureKeys = new Set<string>();
+  const selections = designSelections ?? {};
+
+  for (const obs of observations) {
+    if (!obs.isLocked) continue;
+    const attributeKeys = SKETCH_TO_DESIGN_ATTRIBUTE_KEYS[obs.featureKey as SketchFeatureKey];
+    if (!attributeKeys) continue;
+    for (const attrKey of attributeKeys) {
+      const selectedValue = selections[attrKey];
+      if (selectedValue && selectedValue.trim().length > 0) {
+        overrides.push({
+          featureLabel: SKETCH_FEATURE_LABELS[obs.featureKey as SketchFeatureKey] ?? obs.featureKey,
+          sketchValue: obs.approvedObservation,
+          selectedValue,
+        });
+        overriddenFeatureKeys.add(obs.featureKey);
+        break;
+      }
+    }
+  }
+
+  return { overrides, overriddenFeatureKeys };
 }
 
 /** Auto-fills only what's genuinely on the real Fabric Master row (Name/Code/Supplier) — GSM/Composition/Width/Color etc. stay blank/user-editable, matching the confirmed real-schema gap. */
@@ -245,7 +551,7 @@ export async function selectExistingFabric(actor: ActorContext, projectId: strin
   // assertReadyToGenerate). fabricSource is only set here if it hasn't
   // already been set by an earlier upload, so it always reflects whichever
   // fabric action happened first, not whichever happened most recently.
-  const completedSteps = markStepsComplete(project.completedSteps, ["FABRIC_SELECTION"]);
+  const completedSteps = markStepsComplete(project.completedSteps, ["FABRIC_SELECTION"], project.creationMode);
   const updated = await AiDesignerProjectRepository.update(projectId, {
     fabricSource: project.fabricSource ?? "EXISTING",
     fabricProductId: material.id,
@@ -253,7 +559,7 @@ export async function selectExistingFabric(actor: ActorContext, projectId: strin
     fabricCode: material.styleCode,
     fabricSupplierId: material.defaultSupplierId,
     completedSteps,
-    currentStep: computeCurrentStep(completedSteps),
+    currentStep: computeCurrentStep(completedSteps, project.creationMode),
   });
 
   await writeAuditLog({
@@ -284,12 +590,12 @@ export async function uploadFabricImage(actor: ActorContext, projectId: string, 
   // is only set here if this is the first fabric action taken on the
   // project, matching selectExistingFabric's own symmetric rule.
   const project = await getOwnedProject(actor.companyId, projectId);
-  const completedSteps = markStepsComplete(project.completedSteps, ["FABRIC_SELECTION"]);
+  const completedSteps = markStepsComplete(project.completedSteps, ["FABRIC_SELECTION"], project.creationMode);
   const updated = await AiDesignerProjectRepository.update(projectId, {
     fabricSource: project.fabricSource ?? "UPLOADED",
     fabricImageAttachmentId: attachment.id,
     completedSteps,
-    currentStep: computeCurrentStep(completedSteps),
+    currentStep: computeCurrentStep(completedSteps, project.creationMode),
   });
 
   await writeAuditLog({
@@ -370,7 +676,7 @@ export async function runFabricAnalysis(actor: ActorContext, projectId: string) 
   try {
     const result = await analyzeFabric({ imageBuffer: buffer, imageMediaType: mediaType, projectContext });
 
-    const completedSteps = markStepsComplete(project.completedSteps, ["FABRIC_ANALYSIS"]);
+    const completedSteps = markStepsComplete(project.completedSteps, ["FABRIC_ANALYSIS"], project.creationMode);
     const updated = await AiDesignerProjectRepository.update(projectId, {
       fabricName: result.data.fabricName,
       fabricComposition: result.data.composition,
@@ -385,7 +691,7 @@ export async function runFabricAnalysis(actor: ActorContext, projectId: string) 
       fabricSuitableSeason: result.data.suitableSeason,
       fabricRecommendedGarments: result.data.recommendedGarments,
       completedSteps,
-      currentStep: computeCurrentStep(completedSteps),
+      currentStep: computeCurrentStep(completedSteps, project.creationMode),
     });
 
     await AiDesignerPromptRepository.markSuccess(promptRow.id);
@@ -487,9 +793,9 @@ export async function saveWizardSelections(actor: ActorContext, projectId: strin
     touchedSteps.push("ENVIRONMENT");
   }
 
-  const completedSteps = markStepsComplete(project.completedSteps, touchedSteps);
+  const completedSteps = markStepsComplete(project.completedSteps, touchedSteps, project.creationMode);
   data.completedSteps = completedSteps;
-  data.currentStep = computeCurrentStep(completedSteps);
+  data.currentStep = computeCurrentStep(completedSteps, project.creationMode);
 
   const updated = await AiDesignerProjectRepository.update(projectId, data);
 
@@ -518,7 +824,7 @@ export async function saveWizardSelections(actor: ActorContext, projectId: strin
  * must also upload/attach that fabric's real photo (Step 1's second field)
  * before Generate Design becomes available, regardless of fabricSource.
  */
-function assertReadyToGenerate(project: AiDesignerProject) {
+function assertReadyToGenerate(project: AiDesignerProject, sketchAnalysisStatus?: string | null) {
   const missing: string[] = [];
   if (!project.fabricImageAttachmentId) {
     missing.push("a real fabric reference photo (Step 1 — upload the actual fabric image, even if you picked an existing fabric's details)");
@@ -528,6 +834,11 @@ function assertReadyToGenerate(project: AiDesignerProject) {
   if (!project.productCategory) missing.push("Product Category");
   if (!project.modelGender || !project.modelBodyType || !project.modelPose) missing.push("Model");
   if (!project.environmentLabel) missing.push("Environment");
+
+  if (project.creationMode === "SKETCH") {
+    if (!project.sketchImageAttachmentId) missing.push("an uploaded sketch/drawing (Step 1)");
+    if (sketchAnalysisStatus !== "APPROVED") missing.push("an approved Sketch Analysis");
+  }
 
   if (missing.length > 0) {
     throw new BusinessRuleError(
@@ -544,8 +855,9 @@ function buildDesignSelectionsText(project: AiDesignerProject): string {
   return entries.length > 0 ? entries.map(([key, value]) => `${key}: ${value}`).join("; ") : "Not specified";
 }
 
-function buildSpecJson(project: AiDesignerProject): Record<string, unknown> {
+function buildSpecJson(project: AiDesignerProject, sketch?: { overrides: SketchGenerationOverride[]; lockedConstraints: string[] }): Record<string, unknown> {
   return {
+    ...(sketch ? { sketch } : {}),
     fabric: {
       source: project.fabricSource,
       name: project.fabricName,
@@ -602,7 +914,14 @@ async function bumpVersion(
 
 export async function generateDesign(actor: ActorContext, projectId: string, input: GenerateDesignInput) {
   const project = await getOwnedProject(actor.companyId, projectId);
-  assertReadyToGenerate(project);
+  const isSketchMode = project.creationMode === "SKETCH";
+
+  // SKETCH mode's own analysis/observations are fetched up front — both
+  // because assertReadyToGenerate() needs the real analysis status (never
+  // trusted from a stale project-level flag) and because the prompt/override
+  // detection below needs the approved observations themselves.
+  const sketchAnalysis = isSketchMode ? await AiDesignerSketchAnalysisRepository.findByProjectId(projectId) : null;
+  assertReadyToGenerate(project, sketchAnalysis?.status);
   await assertNoActiveRun(projectId, "IMAGE_GENERATE");
 
   // The real fabric photo, not its text description, is what makes this a
@@ -613,17 +932,44 @@ export async function generateDesign(actor: ActorContext, projectId: string, inp
     project.fabricImageAttachmentId!
   );
 
-  const specJson = buildSpecJson(project);
-  const prompt = buildGenerationPrompt({
-    targetCustomer: project.targetCustomer ? TARGET_CUSTOMER_LABELS[project.targetCustomer as TargetCustomer] : "Not specified",
-    ageGroup: project.ageGroup || "Not specified",
-    productCategory: project.productCategory || "Not specified",
-    designSelections: buildDesignSelectionsText(project),
-    modelGender: project.modelGender || "Not specified",
-    modelBodyType: project.modelBodyType || "Not specified",
-    modelPose: project.modelPose || "Not specified",
-    environment: project.environmentLabel || "Not specified",
-  });
+  let sketchImage: { attachment: { mimeType: string }; buffer: Buffer } | null = null;
+  let sketchOverrideInfo: { overrides: SketchGenerationOverride[]; lockedConstraints: string[] } | undefined;
+
+  if (isSketchMode) {
+    // assertReadyToGenerate() already guarantees sketchImageAttachmentId is
+    // set and the analysis is APPROVED at this point.
+    sketchImage = await getAttachmentForDownload(actor.companyId, project.sketchImageAttachmentId!);
+    const observations = sketchAnalysis!.observations;
+    const { overrides, overriddenFeatureKeys } = detectDesignOverrides(observations, project.designSelectionsJson as Record<string, string> | null);
+    const lockedConstraints = observations
+      .filter((o) => o.isLocked && !overriddenFeatureKeys.has(o.featureKey))
+      .map((o) => `${SKETCH_FEATURE_LABELS[o.featureKey as SketchFeatureKey] ?? o.featureKey}: ${o.approvedObservation}`);
+    sketchOverrideInfo = { overrides, lockedConstraints };
+  }
+
+  const specJson = buildSpecJson(project, sketchOverrideInfo);
+  const prompt = isSketchMode
+    ? buildSketchGenerationPrompt({
+        targetCustomer: project.targetCustomer ? TARGET_CUSTOMER_LABELS[project.targetCustomer as TargetCustomer] : "Not specified",
+        ageGroup: project.ageGroup || "Not specified",
+        productCategory: project.productCategory || "Not specified",
+        modelGender: project.modelGender || "Not specified",
+        modelBodyType: project.modelBodyType || "Not specified",
+        modelPose: project.modelPose || "Not specified",
+        environment: project.environmentLabel || "Not specified",
+        overrides: sketchOverrideInfo!.overrides,
+        lockedConstraints: sketchOverrideInfo!.lockedConstraints,
+      })
+    : buildGenerationPrompt({
+        targetCustomer: project.targetCustomer ? TARGET_CUSTOMER_LABELS[project.targetCustomer as TargetCustomer] : "Not specified",
+        ageGroup: project.ageGroup || "Not specified",
+        productCategory: project.productCategory || "Not specified",
+        designSelections: buildDesignSelectionsText(project),
+        modelGender: project.modelGender || "Not specified",
+        modelBodyType: project.modelBodyType || "Not specified",
+        modelPose: project.modelPose || "Not specified",
+        environment: project.environmentLabel || "Not specified",
+      });
 
   // Provider/model are placeholders until a real provider is actually
   // resolved by AIProviderManager below — with automatic failover, the
@@ -657,33 +1003,60 @@ export async function generateDesign(actor: ActorContext, projectId: string, inp
     // Routed through AIProviderManager — capability-filtered, priority-
     // sorted, with automatic failover to the next configured provider on a
     // transient failure (quota/rate-limit/timeout/outage), and a clean,
-    // honest error if no configured provider currently supports fabric-
-    // reference generation at all. Never silently falls back to a
-    // text-only call — a provider missing this capability throws
-    // UNSUPPORTED_OPERATION here, which AIProviderManager treats as a
-    // non-failover-eligible configuration problem (see its own comment),
-    // exactly the "never fake fabric usage" requirement.
-    const result = await runWithFailover({
-      companyId: actor.companyId,
-      userId: actor.userId,
-      capability: "FABRIC_REFERENCE",
-      generationContext: `AI Designer / Project ${project.projectNumber}`,
-      aiDesignerProjectId: projectId,
-      inputImagePresent: true,
-      call: (provider) => {
-        if (!provider.generateFromFabricReference) {
-          throw new ImageGenerationServiceError(
-            `The configured image provider ("${provider.name}") does not support generating a design from a fabric reference image — it can only do text-to-image, which cannot preserve the actual fabric photo.`,
-            "UNSUPPORTED_OPERATION"
-          );
-        }
-        return provider.generateFromFabricReference({
-          prompt,
-          count: input.imageCount,
-          fabricImage: { buffer: fabricBuffer, mimeType: fabricAttachment.mimeType },
+    // honest error if no configured provider currently supports the needed
+    // capability at all. Never silently falls back to a text-only call — a
+    // provider missing this capability throws UNSUPPORTED_OPERATION here,
+    // which AIProviderManager treats as a non-failover-eligible
+    // configuration problem (see its own comment), exactly the "never fake
+    // fabric/sketch usage" requirement. SKETCH mode uses DESIGN_REPLICATION
+    // (the sketch is the "reference image", the fabric is the "material
+    // image") — the same real, already-implemented two-image primitive
+    // Replicate Design's own Generate step uses, never a parallel
+    // generation system.
+    const result = isSketchMode
+      ? await runWithFailover({
+          companyId: actor.companyId,
+          userId: actor.userId,
+          capability: "DESIGN_REPLICATION",
+          generationContext: `AI Designer / Sketch Project ${project.projectNumber}`,
+          aiDesignerProjectId: projectId,
+          inputImagePresent: true,
+          call: (provider) => {
+            if (!provider.replicateWithNewMaterial) {
+              throw new ImageGenerationServiceError(
+                `The configured image provider ("${provider.name}") does not support generating a garment from a sketch reference image.`,
+                "UNSUPPORTED_OPERATION"
+              );
+            }
+            return provider.replicateWithNewMaterial({
+              prompt,
+              count: input.imageCount,
+              referenceImage: { buffer: sketchImage!.buffer, mimeType: sketchImage!.attachment.mimeType },
+              materialImage: { buffer: fabricBuffer, mimeType: fabricAttachment.mimeType },
+            });
+          },
+        })
+      : await runWithFailover({
+          companyId: actor.companyId,
+          userId: actor.userId,
+          capability: "FABRIC_REFERENCE",
+          generationContext: `AI Designer / Project ${project.projectNumber}`,
+          aiDesignerProjectId: projectId,
+          inputImagePresent: true,
+          call: (provider) => {
+            if (!provider.generateFromFabricReference) {
+              throw new ImageGenerationServiceError(
+                `The configured image provider ("${provider.name}") does not support generating a design from a fabric reference image — it can only do text-to-image, which cannot preserve the actual fabric photo.`,
+                "UNSUPPORTED_OPERATION"
+              );
+            }
+            return provider.generateFromFabricReference({
+              prompt,
+              count: input.imageCount,
+              fabricImage: { buffer: fabricBuffer, mimeType: fabricAttachment.mimeType },
+            });
+          },
         });
-      },
-    });
 
     const rows: Prisma.AiDesignerImageUncheckedCreateInput[] = [];
     for (let i = 0; i < result.images.length; i++) {
@@ -707,11 +1080,11 @@ export async function generateDesign(actor: ActorContext, projectId: string, inp
       await bumpVersion(actor, projectId, images[0].id, "Initial design generated.", specJson);
     }
 
-    const completedSteps = markStepsComplete(project.completedSteps, ["GENERATE"]);
+    const completedSteps = markStepsComplete(project.completedSteps, ["GENERATE"], project.creationMode);
     await AiDesignerProjectRepository.update(projectId, {
       status: "IN_PROGRESS",
       completedSteps,
-      currentStep: computeCurrentStep(completedSteps),
+      currentStep: computeCurrentStep(completedSteps, project.creationMode),
     });
 
     await writeAuditLog({
@@ -967,8 +1340,8 @@ export async function applyEditVariation(actor: ActorContext, imageId: string, i
     technicalChangesJson: mode === "TECHNICAL" ? editSpec?.technicalFields ?? null : null,
   });
 
-  const completedSteps = markStepsComplete(project.completedSteps, ["EDIT"]);
-  await AiDesignerProjectRepository.update(image.projectId, { completedSteps, currentStep: computeCurrentStep(completedSteps) });
+  const completedSteps = markStepsComplete(project.completedSteps, ["EDIT"], project.creationMode);
+  await AiDesignerProjectRepository.update(image.projectId, { completedSteps, currentStep: computeCurrentStep(completedSteps, project.creationMode) });
 
   await writeAuditLog({
     companyId: actor.companyId,
@@ -1165,8 +1538,8 @@ export async function applySecondFabric(actor: ActorContext, projectId: string, 
 
     const version = await bumpVersion(actor, projectId, images[0].id, `Applied second fabric to: ${areaSummary}`, specJson);
 
-    const completedSteps = markStepsComplete(project.completedSteps, ["MULTI_FABRIC"]);
-    await AiDesignerProjectRepository.update(projectId, { completedSteps, currentStep: computeCurrentStep(completedSteps) });
+    const completedSteps = markStepsComplete(project.completedSteps, ["MULTI_FABRIC"], project.creationMode);
+    await AiDesignerProjectRepository.update(projectId, { completedSteps, currentStep: computeCurrentStep(completedSteps, project.creationMode) });
 
     await writeAuditLog({
       companyId: actor.companyId,
@@ -1350,8 +1723,8 @@ export async function applyEmbellishments(actor: ActorContext, projectId: string
     const changeSummary = `Applied embellishment: ${typeLabel}${trimmedInstructions ? ` — ${trimmedInstructions.slice(0, 80)}` : ""}`;
     const version = await bumpVersion(actor, projectId, images[0].id, changeSummary, specJson);
 
-    const completedSteps = markStepsComplete(project.completedSteps, ["EMBELLISHMENTS"]);
-    await AiDesignerProjectRepository.update(projectId, { completedSteps, currentStep: computeCurrentStep(completedSteps) });
+    const completedSteps = markStepsComplete(project.completedSteps, ["EMBELLISHMENTS"], project.creationMode);
+    await AiDesignerProjectRepository.update(projectId, { completedSteps, currentStep: computeCurrentStep(completedSteps, project.creationMode) });
 
     await writeAuditLog({
       companyId: actor.companyId,
@@ -1429,7 +1802,11 @@ export async function listVersions(companyId: string, projectId: string) {
 // updateTechPackField/approveTechPack/revertTechPackToOriginal below).
 // ---------------------------------------------------------------------------
 
-function buildTechPackDesignContext(project: AiDesignerProject): TechPackDesignContext {
+function buildTechPackDesignContext(
+  project: AiDesignerProject & {
+    sketchAnalysis?: { status: string; sketchAnalysisSummary: string | null } | null;
+  }
+): TechPackDesignContext {
   return {
     productCategory: project.productCategory || "Not specified",
     designSelections: buildDesignSelectionsText(project),
@@ -1437,6 +1814,10 @@ function buildTechPackDesignContext(project: AiDesignerProject): TechPackDesignC
     targetCustomer: project.targetCustomer ? TARGET_CUSTOMER_LABELS[project.targetCustomer as TargetCustomer] : "Not specified",
     ageGroup: project.ageGroup || "Not specified",
     projectName: project.projectName,
+    sketchDesignNote:
+      project.creationMode === "SKETCH" && project.sketchAnalysis?.status === "APPROVED" && project.sketchAnalysis.sketchAnalysisSummary
+        ? project.sketchAnalysis.sketchAnalysisSummary
+        : undefined,
   };
 }
 
@@ -1513,8 +1894,8 @@ export async function generateTechPack(actor: ActorContext, projectId: string) {
       pages,
     });
 
-    const completedSteps = markStepsComplete(project.completedSteps, ["TECH_PACK"]);
-    await AiDesignerProjectRepository.update(projectId, { completedSteps, currentStep: computeCurrentStep(completedSteps) });
+    const completedSteps = markStepsComplete(project.completedSteps, ["TECH_PACK"], project.creationMode);
+    await AiDesignerProjectRepository.update(projectId, { completedSteps, currentStep: computeCurrentStep(completedSteps, project.creationMode) });
 
     await writeAuditLog({
       companyId: actor.companyId,

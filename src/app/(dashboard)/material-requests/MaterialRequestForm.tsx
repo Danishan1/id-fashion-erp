@@ -31,6 +31,12 @@ interface LineItem {
   requestedQuantity: string;
   damageReason: string;
   remarks: string;
+  // Display-grouping only, never submitted to the server — a line added via
+  // "Add Selected Items to Request" renders inside the "Materials from this
+  // Order's BOM" box itself (per explicit user ask: "isi section me aaye"),
+  // a manually-typed one renders under the separate "Line Items" section
+  // below. Both are otherwise identical, fully editable request lines.
+  fromBom: boolean;
 }
 
 interface OrderPreviewLine {
@@ -70,7 +76,7 @@ const REQUEST_TYPES = [
 ] as const;
 
 function emptyLine(): LineItem {
-  return { materialId: "", colorId: "", dyeId: "", uomId: "", requestedQuantity: "", damageReason: "", remarks: "" };
+  return { materialId: "", colorId: "", dyeId: "", uomId: "", requestedQuantity: "", damageReason: "", remarks: "", fromBom: false };
 }
 
 export interface InitialMaterialRequestItem {
@@ -151,6 +157,13 @@ export function MaterialRequestForm({ initialRequest }: { initialRequest?: Initi
   // The actual add-from-BOM picker lives in a Modal (triggered once a
   // preview is loaded) — the outer form only ever shows a trigger + status.
   const [showBomLinesModal, setShowBomLinesModal] = useState(false);
+  // Feedback for the "Add Selected Items to Request" action — the modal
+  // closes immediately on success and the new rows land in Line Items
+  // further down the page, so without this the user has no way to tell
+  // anything happened at all (a real reported gap: "add ho to rha hai but
+  // pta nahi chal raha hai, koi msg nahi aa raha"). Cleared whenever the
+  // user takes another action that would make it stale.
+  const [bomAddResult, setBomAddResult] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   const [originalMaterialRequestId, setOriginalMaterialRequestId] = useState(initialRequest?.originalMaterialRequestId ?? "");
   const [originalRequestSearch, setOriginalRequestSearch] = useState(initialRequest?.originalMaterialRequestNumber ?? "");
@@ -179,6 +192,7 @@ export function MaterialRequestForm({ initialRequest }: { initialRequest?: Initi
           requestedQuantity: line.requestedQuantity,
           damageReason: line.damageReason ?? "",
           remarks: line.remarks ?? "",
+          fromBom: false,
         }))
       : []
   );
@@ -262,38 +276,202 @@ export function MaterialRequestForm({ initialRequest }: { initialRequest?: Initi
     updateLine(index, { materialId, uomId: material?.baseUom?.id ?? "" });
   };
 
-  const addLine = () => setLines((prev) => [...prev, emptyLine()]);
-  const removeLine = (index: number) => setLines((prev) => prev.filter((_, i) => i !== index));
+  const addLine = () => {
+    setLines((prev) => [...prev, emptyLine()]);
+    setBomAddResult(null);
+  };
+  const removeLine = (index: number) => {
+    setLines((prev) => prev.filter((_, i) => i !== index));
+    setBomAddResult(null);
+  };
 
   // Turns every checked/edited preview row into a normal request line —
   // after this, they're indistinguishable from a manually-typed line: the
   // user can still edit the color/shade/quantity, remove them, or add more
-  // by hand. Simply appends (create mode starts with zero manual lines, so
-  // there's no leftover pristine blank row to replace any more).
+  // by hand. A row whose material+color+shade+unit already matches an
+  // existing line (from an earlier "Add Selected Items" click, or a manual
+  // line) is MERGED into that line's quantity instead of appended as a
+  // second, duplicate line — a real reported gap (clicking Add twice, e.g.
+  // to add more of the same order, silently doubled every already-added
+  // line). Matches this project's own established "merge on identical
+  // attributes" convention (Sampling's own Add Material behavior).
   const addPreviewMaterialsToRequest = () => {
     if (!orderPreview) return;
-    const newLines: LineItem[] = [];
+    const selectedRows: { materialId: string; colorId: string; dyeId: string; uomId: string; qty: string; remarks: string }[] = [];
     orderPreview.items.forEach((item) => {
       item.lines.forEach((line, index) => {
         const sel = previewSelections[`${item.salesOrderItemId}:${index}`];
         if (!sel?.checked) return;
         const qty = Number(sel.qty);
         if (!qty || qty <= 0) return;
-        newLines.push({
+        selectedRows.push({
           materialId: line.materialId,
           colorId: sel.colorId,
           dyeId: sel.dyeId,
           uomId: line.uomId,
-          requestedQuantity: sel.qty,
-          damageReason: "",
+          qty: sel.qty,
           remarks: item.sampleStyleName ? `From Design: ${item.sampleStyleName}` : `From Style: ${item.styleName}`,
         });
       });
     });
-    if (newLines.length === 0) return;
-    setLines((prev) => [...prev, ...newLines]);
+    if (selectedRows.length === 0) {
+      setBomAddResult({ type: "error", text: "Select at least one item with a quantity greater than 0 before adding." });
+      return;
+    }
+
+    const next = [...lines];
+    let mergedCount = 0;
+    let addedCount = 0;
+    selectedRows.forEach((row) => {
+      const matchIndex = next.findIndex(
+        (l) => l.materialId === row.materialId && l.colorId === row.colorId && l.dyeId === row.dyeId && l.uomId === row.uomId
+      );
+      if (matchIndex >= 0) {
+        const existing = next[matchIndex];
+        const mergedQty = (Number(existing.requestedQuantity) || 0) + Number(row.qty);
+        next[matchIndex] = { ...existing, requestedQuantity: String(mergedQty) };
+        mergedCount += 1;
+      } else {
+        next.push({
+          materialId: row.materialId,
+          colorId: row.colorId,
+          dyeId: row.dyeId,
+          uomId: row.uomId,
+          requestedQuantity: row.qty,
+          damageReason: "",
+          remarks: row.remarks,
+          fromBom: true,
+        });
+        addedCount += 1;
+      }
+    });
+
+    setLines(next);
     setShowBomLinesModal(false);
+    const parts: string[] = [];
+    if (addedCount > 0) parts.push(`added ${addedCount} new material${addedCount === 1 ? "" : "s"}`);
+    if (mergedCount > 0) parts.push(`combined quantity into ${mergedCount} already-added line${mergedCount === 1 ? "" : "s"} (no duplicates)`);
+    setBomAddResult({ type: "success", text: `${parts.join(", ")} below.`.replace(/^./, (c) => c.toUpperCase()) });
   };
+
+  // Shared card for both BOM-added and manually-typed lines — identical
+  // fields/behavior either way, only WHERE it renders differs (see the
+  // `fromBom` doc comment on LineItem). `index` is the line's real position
+  // in the flat `lines` array (what update/removeLine key off of);
+  // `displayNumber` is a 1-based label scoped to whichever section is
+  // rendering it, so "Line 1/2/3" numbers cleanly within each section
+  // instead of jumping around the shared array's real indices.
+  const renderLineCard = (line: LineItem, index: number, displayNumber: number) => (
+    <div key={index} className="space-y-3 rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium text-zinc-500">Line {displayNumber}</span>
+        {/* Whether at least one line remains is validated at submit
+            time (manual lines are only required when nothing was added
+            from the Order's BOM) — Remove is never blocked here. */}
+        <button type="button" onClick={() => removeLine(index)} className="text-xs font-medium text-red-600 hover:text-red-500">
+          Remove
+        </button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <FormField label="Material" htmlFor={`material-${index}`} required>
+          <MaterialPicker
+            id={`material-${index}`}
+            required
+            materials={materials}
+            value={line.materialId}
+            onChange={(materialId) => onMaterialChange(index, materialId)}
+          />
+        </FormField>
+        <FormField label="Unit" htmlFor={`uom-${index}`} required>
+          <select
+            id={`uom-${index}`}
+            required
+            value={line.uomId}
+            onChange={(e) => updateLine(index, { uomId: e.target.value })}
+            className={textInputClass()}
+          >
+            <option value="">— Select —</option>
+            {units.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.code}
+              </option>
+            ))}
+          </select>
+        </FormField>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <FormField label="Color (optional)" htmlFor={`color-${index}`}>
+          <select
+            id={`color-${index}`}
+            value={line.colorId}
+            onChange={(e) => updateLine(index, { colorId: e.target.value })}
+            className={textInputClass()}
+          >
+            <option value="">— None —</option>
+            {colors.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </FormField>
+        {isVisible("FABRIC_DYE") && (
+          <FormField label="Shade / Pantone (optional)" htmlFor={`dye-${index}`}>
+            <select
+              id={`dye-${index}`}
+              value={line.dyeId}
+              onChange={(e) => updateLine(index, { dyeId: e.target.value })}
+              className={textInputClass()}
+            >
+              <option value="">— None —</option>
+              {dyes.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                  {d.pantone ? ` (${d.pantone})` : ""}
+                </option>
+              ))}
+            </select>
+          </FormField>
+        )}
+      </div>
+
+      <FormField label="Requested Quantity" htmlFor={`qty-${index}`} required>
+        <input
+          id={`qty-${index}`}
+          type="number"
+          min={0}
+          step="0.0001"
+          required
+          value={line.requestedQuantity}
+          onChange={(e) => updateLine(index, { requestedQuantity: e.target.value })}
+          className={textInputClass()}
+        />
+      </FormField>
+
+      {requestType === "DAMAGE_REPLACEMENT" && (
+        <FormField label="Damage Reason" htmlFor={`damage-reason-${index}`} required>
+          <input
+            id={`damage-reason-${index}`}
+            required
+            value={line.damageReason}
+            onChange={(e) => updateLine(index, { damageReason: e.target.value })}
+            className={textInputClass()}
+          />
+        </FormField>
+      )}
+
+      <FormField label="Remarks (optional)" htmlFor={`remarks-${index}`}>
+        <input
+          id={`remarks-${index}`}
+          value={line.remarks}
+          onChange={(e) => updateLine(index, { remarks: e.target.value })}
+          className={textInputClass()}
+        />
+      </FormField>
+    </div>
+  );
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -351,6 +529,10 @@ export function MaterialRequestForm({ initialRequest }: { initialRequest?: Initi
     router.push(`/material-requests/${data.id}`);
     router.refresh();
   };
+
+  const bomLineIndices: number[] = [];
+  const manualLineIndices: number[] = [];
+  lines.forEach((line, index) => (line.fromBom ? bomLineIndices : manualLineIndices).push(index));
 
   return (
     <form onSubmit={handleSubmit} className="max-w-3xl space-y-6">
@@ -413,12 +595,25 @@ export function MaterialRequestForm({ initialRequest }: { initialRequest?: Initi
               )}
               <button
                 type="button"
-                onClick={() => setShowBomLinesModal(true)}
+                onClick={() => {
+                  setBomAddResult(null);
+                  setShowBomLinesModal(true);
+                }}
                 className="rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
               >
                 Add Selected Items to Request
               </button>
             </>
+          )}
+          {bomAddResult && (
+            <p className={`text-xs ${bomAddResult.type === "success" ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
+              {bomAddResult.text}
+            </p>
+          )}
+          {bomLineIndices.length > 0 && (
+            <div className="space-y-3 pt-2">
+              {bomLineIndices.map((index, position) => renderLineCard(lines[index], index, position + 1))}
+            </div>
           )}
         </div>
       )}
@@ -634,127 +829,13 @@ export function MaterialRequestForm({ initialRequest }: { initialRequest?: Initi
         <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
           Line Items{initialRequest?.lockedLines && initialRequest.lockedLines.length > 0 ? " (editable)" : ""}
         </h2>
-        {lines.length === 0 && (
+        {manualLineIndices.length === 0 && (
           <p className="text-xs text-zinc-500">
             No manual line items added yet.
             {!initialRequest && " Add one below, or add materials from the Order's BOM above."}
           </p>
         )}
-        {lines.map((line, index) => (
-          <div key={index} className="space-y-3 rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-zinc-500">Line {index + 1}</span>
-              {/* Whether at least one line remains is validated at submit
-                  time (manual lines are only required when nothing was added
-                  from the Order's BOM) — Remove is never blocked here. */}
-              <button
-                type="button"
-                onClick={() => removeLine(index)}
-                className="text-xs font-medium text-red-600 hover:text-red-500"
-              >
-                Remove
-              </button>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <FormField label="Material" htmlFor={`material-${index}`} required>
-                <MaterialPicker
-                  id={`material-${index}`}
-                  required
-                  materials={materials}
-                  value={line.materialId}
-                  onChange={(materialId) => onMaterialChange(index, materialId)}
-                />
-              </FormField>
-              <FormField label="Unit" htmlFor={`uom-${index}`} required>
-                <select
-                  id={`uom-${index}`}
-                  required
-                  value={line.uomId}
-                  onChange={(e) => updateLine(index, { uomId: e.target.value })}
-                  className={textInputClass()}
-                >
-                  <option value="">— Select —</option>
-                  {units.map((u) => (
-                    <option key={u.id} value={u.id}>
-                      {u.code}
-                    </option>
-                  ))}
-                </select>
-              </FormField>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <FormField label="Color (optional)" htmlFor={`color-${index}`}>
-                <select
-                  id={`color-${index}`}
-                  value={line.colorId}
-                  onChange={(e) => updateLine(index, { colorId: e.target.value })}
-                  className={textInputClass()}
-                >
-                  <option value="">— None —</option>
-                  {colors.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-              </FormField>
-              {isVisible("FABRIC_DYE") && (
-                <FormField label="Shade / Pantone (optional)" htmlFor={`dye-${index}`}>
-                  <select
-                    id={`dye-${index}`}
-                    value={line.dyeId}
-                    onChange={(e) => updateLine(index, { dyeId: e.target.value })}
-                    className={textInputClass()}
-                  >
-                    <option value="">— None —</option>
-                    {dyes.map((d) => (
-                      <option key={d.id} value={d.id}>
-                        {d.name}
-                        {d.pantone ? ` (${d.pantone})` : ""}
-                      </option>
-                    ))}
-                  </select>
-                </FormField>
-              )}
-            </div>
-
-            <FormField label="Requested Quantity" htmlFor={`qty-${index}`} required>
-              <input
-                id={`qty-${index}`}
-                type="number"
-                min={0}
-                step="0.0001"
-                required
-                value={line.requestedQuantity}
-                onChange={(e) => updateLine(index, { requestedQuantity: e.target.value })}
-                className={textInputClass()}
-              />
-            </FormField>
-
-            {requestType === "DAMAGE_REPLACEMENT" && (
-              <FormField label="Damage Reason" htmlFor={`damage-reason-${index}`} required>
-                <input
-                  id={`damage-reason-${index}`}
-                  required
-                  value={line.damageReason}
-                  onChange={(e) => updateLine(index, { damageReason: e.target.value })}
-                  className={textInputClass()}
-                />
-              </FormField>
-            )}
-
-            <FormField label="Remarks (optional)" htmlFor={`remarks-${index}`}>
-              <input
-                id={`remarks-${index}`}
-                value={line.remarks}
-                onChange={(e) => updateLine(index, { remarks: e.target.value })}
-                className={textInputClass()}
-              />
-            </FormField>
-          </div>
-        ))}
+        {manualLineIndices.map((index, position) => renderLineCard(lines[index], index, position + 1))}
 
         <button
           type="button"

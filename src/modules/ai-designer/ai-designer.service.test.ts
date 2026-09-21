@@ -11,6 +11,7 @@ vi.mock("@/core/attachments/AttachmentService", () => ({
   getAttachmentMetadata: vi.fn(),
 }));
 vi.mock("@/core/ai-designer/fabric-analysis/analyze", () => ({ analyzeFabric: vi.fn() }));
+vi.mock("@/core/ai-designer/sketch-analysis/analyze", () => ({ analyzeSketch: vi.fn() }));
 vi.mock("@/core/ai/provider-manager/AIProviderManager", () => ({ runWithFailover: vi.fn() }));
 vi.mock("@/core/ai-designer/export/tech-pack-pdf", () => ({
   renderTechPackPdf: vi.fn().mockResolvedValue(Buffer.from("pdf")),
@@ -68,6 +69,24 @@ vi.mock("./ai-designer.repository", () => ({
     update: vi.fn(),
     createRevision: vi.fn(),
   },
+  AiDesignerSketchAnalysisRepository: {
+    findByProjectId: vi.fn(),
+    upsertWithObservations: vi.fn(),
+    markStale: vi.fn(),
+    update: vi.fn(),
+    approveAllObservations: vi.fn(),
+  },
+  AiDesignerSketchObservationRepository: {
+    findByAnalysisId: vi.fn(),
+    findWithAnalysisOwner: vi.fn(),
+    update: vi.fn(),
+  },
+  AiDesignerSketchAnalysisRunRepository: {
+    create: vi.fn(),
+    markSuccess: vi.fn(),
+    markFailed: vi.fn(),
+    findActiveSince: vi.fn(),
+  },
 }));
 
 const { generateDocumentNumber } = await import("@/core/numbering/DocumentNumberingService");
@@ -76,6 +95,7 @@ const { runWithFailover } = await import("@/core/ai/provider-manager/AIProviderM
 const { PermissionService } = await import("@/core/rbac/PermissionService");
 const { generateGarmentAnalysisPart1, generateGarmentAnalysisPart2 } = await import("@/core/ai-designer/tech-pack/generate");
 const { ProductRepository } = await import("@/modules/products/product.repository");
+const { analyzeSketch } = await import("@/core/ai-designer/sketch-analysis/analyze");
 const {
   AiDesignerProjectRepository,
   AiDesignerPromptRepository,
@@ -83,11 +103,23 @@ const {
   AiDesignerImageRepository,
   AiDesignerVersionRepository,
   AiDesignerTechPackRepository,
+  AiDesignerSketchAnalysisRepository,
+  AiDesignerSketchObservationRepository,
+  AiDesignerSketchAnalysisRunRepository,
 } = await import("./ai-designer.repository");
 const {
   createProject,
   selectExistingFabric,
   uploadFabricImage,
+  uploadSketchImage,
+  deleteSketchImage,
+  runSketchAnalysis,
+  getSketchAnalysis,
+  updateSketchObservation,
+  resetSketchObservationToAi,
+  setSketchObservationLock,
+  approveSketchAnalysis,
+  detectDesignOverrides,
   generateDesign,
   generateEditPreview,
   applyEditVariation,
@@ -116,8 +148,10 @@ function baseProject(overrides: Record<string, unknown> = {}) {
     projectNumber: "AID-2026-00001",
     projectName: "Test Project",
     status: "DRAFT",
+    creationMode: "STANDARD" as "STANDARD" | "SKETCH",
     currentStep: "FABRIC_SELECTION",
     completedSteps: [] as string[],
+    sketchImageAttachmentId: null,
     fabricSource: null,
     fabricProductId: null,
     fabricImageAttachmentId: null,
@@ -181,17 +215,30 @@ beforeEach(() => {
   vi.mocked(generateGarmentAnalysisPart1).mockReset();
   vi.mocked(generateGarmentAnalysisPart2).mockReset();
   vi.mocked(PermissionService.assert).mockReset().mockResolvedValue(undefined as never);
+  vi.mocked(analyzeSketch).mockReset();
+  vi.mocked(AiDesignerSketchAnalysisRepository.findByProjectId).mockReset();
+  vi.mocked(AiDesignerSketchAnalysisRepository.upsertWithObservations).mockReset();
+  vi.mocked(AiDesignerSketchAnalysisRepository.markStale).mockReset();
+  vi.mocked(AiDesignerSketchAnalysisRepository.update).mockReset();
+  vi.mocked(AiDesignerSketchAnalysisRepository.approveAllObservations).mockReset();
+  vi.mocked(AiDesignerSketchObservationRepository.findByAnalysisId).mockReset();
+  vi.mocked(AiDesignerSketchObservationRepository.findWithAnalysisOwner).mockReset();
+  vi.mocked(AiDesignerSketchObservationRepository.update).mockReset();
+  vi.mocked(AiDesignerSketchAnalysisRunRepository.create).mockReset().mockResolvedValue({ id: "sketch-run-1" } as never);
+  vi.mocked(AiDesignerSketchAnalysisRunRepository.markSuccess).mockReset();
+  vi.mocked(AiDesignerSketchAnalysisRunRepository.markFailed).mockReset();
+  vi.mocked(AiDesignerSketchAnalysisRunRepository.findActiveSince).mockReset().mockResolvedValue(null);
 });
 
 describe("createProject", () => {
   it("creates a DRAFT project with a real document number", async () => {
     vi.mocked(AiDesignerProjectRepository.create).mockResolvedValue(baseProject({ id: "proj-1" }) as never);
 
-    const project = await createProject(actor, { projectName: "Summer Line" });
+    const project = await createProject(actor, { projectName: "Summer Line", creationMode: "STANDARD" });
 
     expect(project.id).toBe("proj-1");
     expect(AiDesignerProjectRepository.create).toHaveBeenCalledWith(
-      expect.objectContaining({ projectName: "Summer Line", status: "DRAFT", currentStep: "FABRIC_SELECTION" })
+      expect.objectContaining({ projectName: "Summer Line", status: "DRAFT", currentStep: "FABRIC_SELECTION", creationMode: "STANDARD" })
     );
   });
 });
@@ -1409,5 +1456,347 @@ describe("revertTechPackToOriginal", () => {
     } as never);
 
     await expect(revertTechPackToOriginal(actor, "proj-1", "techpack-1")).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Sketch / Drawing → Garment (2026-09-20)
+// ---------------------------------------------------------------------------
+
+function readySketchProject(overrides: Record<string, unknown> = {}) {
+  return readyProjectWithFabricImage({
+    creationMode: "SKETCH",
+    sketchImageAttachmentId: "att-sketch-photo",
+    ...overrides,
+  });
+}
+
+describe("uploadSketchImage / deleteSketchImage", () => {
+  it("uploads a sketch and marks any existing analysis STALE", async () => {
+    vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(baseProject({ creationMode: "SKETCH" }) as never);
+    vi.mocked(uploadAttachment).mockResolvedValue({ id: "att-sketch-photo" } as never);
+
+    await uploadSketchImage(actor, "proj-1", { buffer: Buffer.from("sketch"), fileName: "sketch.png", mimeType: "image/png" });
+
+    expect(uploadAttachment).toHaveBeenCalledWith(actor, "AI_DESIGNER_PROJECT", "proj-1", expect.anything(), "SKETCH_IMAGE");
+    expect(AiDesignerSketchAnalysisRepository.markStale).toHaveBeenCalledWith("proj-1");
+    expect(AiDesignerProjectRepository.update).toHaveBeenCalledWith(
+      "proj-1",
+      expect.objectContaining({ sketchImageAttachmentId: "att-sketch-photo" })
+    );
+  });
+
+  it("rejects a non-image file type", async () => {
+    vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(baseProject({ creationMode: "SKETCH" }) as never);
+
+    await expect(
+      uploadSketchImage(actor, "proj-1", { buffer: Buffer.from("not-an-image"), fileName: "sketch.pdf", mimeType: "application/pdf" })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(uploadAttachment).not.toHaveBeenCalled();
+  });
+
+  it("deletes the sketch and marks any existing analysis STALE", async () => {
+    vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(
+      baseProject({ creationMode: "SKETCH", sketchImageAttachmentId: "att-sketch-photo" }) as never
+    );
+
+    await deleteSketchImage(actor, "proj-1");
+
+    expect(deleteAttachment).toHaveBeenCalledWith(actor, "att-sketch-photo");
+    expect(AiDesignerSketchAnalysisRepository.markStale).toHaveBeenCalledWith("proj-1");
+    expect(AiDesignerProjectRepository.update).toHaveBeenCalledWith("proj-1", expect.objectContaining({ sketchImageAttachmentId: null }));
+  });
+
+  it("rejects deleting when no sketch was ever uploaded", async () => {
+    vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(baseProject({ creationMode: "SKETCH" }) as never);
+
+    await expect(deleteSketchImage(actor, "proj-1")).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(deleteAttachment).not.toHaveBeenCalled();
+  });
+});
+
+describe("runSketchAnalysis", () => {
+  it("blocks running analysis with no sketch uploaded", async () => {
+    vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(baseProject({ creationMode: "SKETCH" }) as never);
+
+    await expect(runSketchAnalysis(actor, "proj-1")).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(analyzeSketch).not.toHaveBeenCalled();
+  });
+
+  it("blocks a second analysis while one is already in progress", async () => {
+    vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(
+      baseProject({ creationMode: "SKETCH", sketchImageAttachmentId: "att-sketch-photo" }) as never
+    );
+    vi.mocked(AiDesignerSketchAnalysisRunRepository.findActiveSince).mockResolvedValue({ id: "run-active" } as never);
+
+    await expect(runSketchAnalysis(actor, "proj-1")).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+  });
+
+  it("runs the real vision analysis and persists 21 observations, each starting equal to the AI's own value and locked", async () => {
+    vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(
+      baseProject({ creationMode: "SKETCH", sketchImageAttachmentId: "att-sketch-photo" }) as never
+    );
+    vi.mocked(getAttachmentForDownload).mockResolvedValue({
+      attachment: { mimeType: "image/png" },
+      buffer: Buffer.from("sketch-bytes"),
+    } as never);
+    const observationOutput = { observation: "Round neckline, as drawn.", confidence: "CONFIRMED_VISUALLY" };
+    vi.mocked(analyzeSketch).mockResolvedValue({
+      data: {
+        garmentType: observationOutput,
+        silhouette: observationOutput,
+        length: observationOutput,
+        fit: observationOutput,
+        frontNeckline: observationOutput,
+        backNeckline: observationOutput,
+        sleeveType: observationOutput,
+        sleeveLength: observationOutput,
+        collar: observationOutput,
+        shoulderConstruction: observationOutput,
+        waistConstruction: observationOutput,
+        closureDetails: observationOutput,
+        pockets: observationOutput,
+        panelsAndYokes: observationOutput,
+        pleatsAndGathers: observationOutput,
+        dartsAndSeams: observationOutput,
+        slitsAndOpenings: observationOutput,
+        ruffleAndLayerDetails: observationOutput,
+        hemAndCuffs: observationOutput,
+        decorativeDetails: observationOutput,
+        otherConstructionNotes: observationOutput,
+        sketchAnalysisSummary: "A simple round-neck frock, knee length.",
+      },
+      model: "claude-opus-5",
+      rawResponse: {},
+    } as never);
+    vi.mocked(AiDesignerSketchAnalysisRepository.upsertWithObservations).mockResolvedValue({ id: "sketch-analysis-1" } as never);
+
+    await runSketchAnalysis(actor, "proj-1");
+
+    const [, , observations] = vi.mocked(AiDesignerSketchAnalysisRepository.upsertWithObservations).mock.calls[0];
+    expect(observations).toHaveLength(21);
+    expect(observations.every((o: { approvedObservation: string; aiObservation: string; isLocked: boolean; userEdited: boolean }) =>
+      o.approvedObservation === o.aiObservation && o.isLocked === true && o.userEdited === false
+    )).toBe(true);
+    expect(AiDesignerSketchAnalysisRunRepository.markSuccess).toHaveBeenCalledWith("sketch-run-1", "sketch-analysis-1");
+  });
+
+  it("marks the run FAILED and never persists an analysis on a real AI failure", async () => {
+    vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(
+      baseProject({ creationMode: "SKETCH", sketchImageAttachmentId: "att-sketch-photo" }) as never
+    );
+    vi.mocked(getAttachmentForDownload).mockResolvedValue({ attachment: { mimeType: "image/png" }, buffer: Buffer.from("x") } as never);
+    vi.mocked(analyzeSketch).mockRejectedValue(new Error("provider down"));
+
+    await expect(runSketchAnalysis(actor, "proj-1")).rejects.toThrow();
+    expect(AiDesignerSketchAnalysisRunRepository.markFailed).toHaveBeenCalledWith("sketch-run-1", "UNKNOWN", "provider down");
+    expect(AiDesignerSketchAnalysisRepository.upsertWithObservations).not.toHaveBeenCalled();
+  });
+});
+
+describe("updateSketchObservation / resetSketchObservationToAi / setSketchObservationLock / approveSketchAnalysis", () => {
+  it("edit re-opens an APPROVED analysis to UNDER_REVIEW and preserves the AI's own original value", async () => {
+    vi.mocked(AiDesignerSketchObservationRepository.findWithAnalysisOwner).mockResolvedValue({
+      id: "obs-1",
+      analysisId: "sketch-analysis-1",
+      featureKey: "frontNeckline",
+      aiObservation: "Round neckline.",
+      approvedObservation: "Round neckline.",
+      analysis: { companyId: "co-1", status: "APPROVED" },
+    } as never);
+
+    await updateSketchObservation(actor, "obs-1", { approvedObservation: "V-neck (buyer requested)" });
+
+    expect(AiDesignerSketchObservationRepository.update).toHaveBeenCalledWith("obs-1", {
+      approvedObservation: "V-neck (buyer requested)",
+      userEdited: true,
+    });
+    expect(AiDesignerSketchAnalysisRepository.update).toHaveBeenCalledWith("sketch-analysis-1", { status: "UNDER_REVIEW" });
+  });
+
+  it("rejects editing an observation belonging to a different company", async () => {
+    vi.mocked(AiDesignerSketchObservationRepository.findWithAnalysisOwner).mockResolvedValue({
+      id: "obs-1",
+      analysis: { companyId: "co-OTHER", status: "APPROVED" },
+    } as never);
+
+    await expect(updateSketchObservation(actor, "obs-1", { approvedObservation: "x" })).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("reset restores the AI's own original value and clears userEdited", async () => {
+    vi.mocked(AiDesignerSketchObservationRepository.findWithAnalysisOwner).mockResolvedValue({
+      id: "obs-1",
+      aiObservation: "Round neckline.",
+      analysis: { companyId: "co-1" },
+    } as never);
+
+    await resetSketchObservationToAi(actor, "obs-1");
+
+    expect(AiDesignerSketchObservationRepository.update).toHaveBeenCalledWith("obs-1", {
+      approvedObservation: "Round neckline.",
+      userEdited: false,
+    });
+  });
+
+  it("lock toggle has no re-approval side effect", async () => {
+    vi.mocked(AiDesignerSketchObservationRepository.findWithAnalysisOwner).mockResolvedValue({
+      id: "obs-1",
+      analysis: { companyId: "co-1", status: "APPROVED" },
+    } as never);
+
+    await setSketchObservationLock(actor, "obs-1", { isLocked: false });
+
+    expect(AiDesignerSketchObservationRepository.update).toHaveBeenCalledWith("obs-1", { isLocked: false });
+    expect(AiDesignerSketchAnalysisRepository.update).not.toHaveBeenCalled();
+  });
+
+  it("approve bulk-stamps the header and every observation", async () => {
+    vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(baseProject({ creationMode: "SKETCH" }) as never);
+    vi.mocked(AiDesignerSketchAnalysisRepository.findByProjectId).mockResolvedValue({ id: "sketch-analysis-1", status: "AI_ANALYSED" } as never);
+
+    await approveSketchAnalysis(actor, "proj-1");
+
+    expect(AiDesignerSketchAnalysisRepository.approveAllObservations).toHaveBeenCalledWith("sketch-analysis-1", "user-1");
+  });
+
+  it("rejects approving an analysis that doesn't exist yet", async () => {
+    vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(baseProject({ creationMode: "SKETCH" }) as never);
+    vi.mocked(AiDesignerSketchAnalysisRepository.findByProjectId).mockResolvedValue(null);
+
+    await expect(approveSketchAnalysis(actor, "proj-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+});
+
+describe("detectDesignOverrides", () => {
+  const observations = [
+    { featureKey: "frontNeckline", approvedObservation: "Round neckline.", isLocked: true },
+    { featureKey: "sleeveType", approvedObservation: "Full-length fitted sleeve.", isLocked: true },
+    { featureKey: "pleatsAndGathers", approvedObservation: "Light gathers at the waist.", isLocked: true },
+  ];
+
+  it("treats a Product Design selection differing from a locked, mapped sketch feature as an explicit override", () => {
+    const { overrides, overriddenFeatureKeys } = detectDesignOverrides(observations, { neckline: "V Neck" });
+
+    expect(overrides).toEqual([{ featureLabel: "Front Neckline", sketchValue: "Round neckline.", selectedValue: "V Neck" }]);
+    expect(overriddenFeatureKeys.has("frontNeckline")).toBe(true);
+  });
+
+  it("a sketch feature with no mapped Product Design attribute is never treated as overridden (safe default: sketch wins)", () => {
+    const { overrides, overriddenFeatureKeys } = detectDesignOverrides(observations, { anything: "whatever" });
+
+    expect(overrides.find((o) => o.featureLabel.includes("Pleats"))).toBeUndefined();
+    expect(overriddenFeatureKeys.has("pleatsAndGathers")).toBe(false);
+  });
+
+  it("an unlocked observation is never treated as overridden even if a matching selection exists", () => {
+    const { overrides } = detectDesignOverrides(
+      [{ featureKey: "frontNeckline", approvedObservation: "Round neckline.", isLocked: false }],
+      { neckline: "V Neck" }
+    );
+
+    expect(overrides).toEqual([]);
+  });
+
+  it("no selections at all means no overrides", () => {
+    const { overrides, overriddenFeatureKeys } = detectDesignOverrides(observations, null);
+
+    expect(overrides).toEqual([]);
+    expect(overriddenFeatureKeys.size).toBe(0);
+  });
+});
+
+describe("generateDesign — SKETCH mode", () => {
+  it("blocks generation with a sketch uploaded but no APPROVED analysis", async () => {
+    vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(readySketchProject() as never);
+    vi.mocked(AiDesignerSketchAnalysisRepository.findByProjectId).mockResolvedValue({ id: "sketch-analysis-1", status: "AI_ANALYSED" } as never);
+
+    await expect(generateDesign(actor, "proj-1", { imageCount: 1 })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(AiDesignerPromptRepository.create).not.toHaveBeenCalled();
+  });
+
+  it("sends the sketch as referenceImage and the fabric as materialImage to provider.replicateWithNewMaterial, honouring an explicit Product Design override", async () => {
+    vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(
+      readySketchProject({ designSelectionsJson: { neckline: "V Neck" } }) as never
+    );
+    vi.mocked(AiDesignerSketchAnalysisRepository.findByProjectId).mockResolvedValue({
+      id: "sketch-analysis-1",
+      status: "APPROVED",
+      observations: [
+        { featureKey: "frontNeckline", approvedObservation: "Round neckline.", isLocked: true },
+        { featureKey: "sleeveType", approvedObservation: "Full-length fitted sleeve.", isLocked: true },
+      ],
+    } as never);
+    const sketchBytes = Buffer.from("SKETCH-BYTES");
+    const fabricBytes = Buffer.from("FABRIC-BYTES");
+    vi.mocked(getAttachmentForDownload).mockImplementation((async (_companyId: string, attachmentId: string) =>
+      attachmentId === "att-sketch-photo"
+        ? { attachment: { mimeType: "image/png" }, buffer: sketchBytes }
+        : { attachment: { mimeType: "image/jpeg" }, buffer: fabricBytes }) as never);
+    const replicateWithNewMaterial = vi
+      .fn()
+      .mockResolvedValue({ images: [{ buffer: Buffer.from("generated"), mimeType: "image/png" }], model: "gpt-image-1", raw: {} });
+    const generateFromFabricReference = vi.fn();
+    vi.mocked(runWithFailover).mockImplementation(async (params) => {
+      const result = await params.call({ name: "openai", model: "gpt-image-1", generateFromFabricReference, replicateWithNewMaterial } as never);
+      return { images: result.images, model: result.model, raw: result.raw, providerId: "provider-1", providerName: "openai" };
+    });
+    vi.mocked(AiDesignerImageRepository.findByGenerationId).mockResolvedValue([{ id: "img-1" }] as never);
+
+    await generateDesign(actor, "proj-1", { imageCount: 1 });
+
+    expect(runWithFailover).toHaveBeenCalledWith(expect.objectContaining({ capability: "DESIGN_REPLICATION", aiDesignerProjectId: "proj-1" }));
+    expect(replicateWithNewMaterial).toHaveBeenCalledWith(
+      expect.objectContaining({
+        referenceImage: { buffer: sketchBytes, mimeType: "image/png" },
+        materialImage: { buffer: fabricBytes, mimeType: "image/jpeg" },
+      })
+    );
+    const promptText = vi.mocked(replicateWithNewMaterial).mock.calls[0][0].prompt as string;
+    // Tier 1 (explicit override) is honoured — the sketch's own front-neckline
+    // value is named as overridden, not silently preserved.
+    expect(promptText).toContain('Change Front Neckline to "V Neck"');
+    expect(promptText).toContain('the sketch itself shows "Round neckline."');
+    // Tier 2 — the un-overridden locked feature is still preserved.
+    expect(promptText).toContain("Sleeve Type: Full-length fitted sleeve.");
+    // The STANDARD-mode-only provider method must never be called for a sketch project.
+    expect(generateFromFabricReference).not.toHaveBeenCalled();
+  });
+
+  it("throws a clean UNSUPPORTED_OPERATION-mapped error when the configured provider has no design-replication capability", async () => {
+    vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(readySketchProject() as never);
+    vi.mocked(AiDesignerSketchAnalysisRepository.findByProjectId).mockResolvedValue({ id: "sketch-analysis-1", status: "APPROVED", observations: [] } as never);
+    vi.mocked(getAttachmentForDownload).mockResolvedValue({ attachment: { mimeType: "image/png" }, buffer: Buffer.from("x") } as never);
+    vi.mocked(runWithFailover).mockImplementation(async (params) => {
+      try {
+        await params.call({ name: "cloudflare", model: "flux-1-schnell", generate: vi.fn() } as never);
+        throw new Error("test setup error: should have thrown UNSUPPORTED_OPERATION");
+      } catch (err) {
+        throw new BusinessRuleError("AI_SERVICE_ERROR", err instanceof Error ? err.message : "failed");
+      }
+    });
+
+    await expect(generateDesign(actor, "proj-1", { imageCount: 1 })).rejects.toMatchObject({ code: "AI_SERVICE_ERROR" });
+    expect(AiDesignerImageRepository.createMany).not.toHaveBeenCalled();
+  });
+
+  it("a STANDARD-mode project still calls generateFromFabricReference unchanged (zero regression)", async () => {
+    vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(readyProjectWithFabricImage() as never);
+    vi.mocked(getAttachmentForDownload).mockResolvedValue({ attachment: { mimeType: "image/jpeg" }, buffer: FABRIC_IMAGE_BYTES } as never);
+    const generateFromFabricReference = vi
+      .fn()
+      .mockResolvedValue({ images: [{ buffer: Buffer.from("generated"), mimeType: "image/png" }], model: "gpt-image-1", raw: {} });
+    const replicateWithNewMaterial = vi.fn();
+    vi.mocked(runWithFailover).mockImplementation(async (params) => {
+      const result = await params.call({ name: "openai", model: "gpt-image-1", generateFromFabricReference, replicateWithNewMaterial } as never);
+      return { images: result.images, model: result.model, raw: result.raw, providerId: "provider-1", providerName: "openai" };
+    });
+    vi.mocked(AiDesignerImageRepository.findByGenerationId).mockResolvedValue([{ id: "img-1" }] as never);
+
+    await generateDesign(actor, "proj-1", { imageCount: 1 });
+
+    expect(runWithFailover).toHaveBeenCalledWith(expect.objectContaining({ capability: "FABRIC_REFERENCE" }));
+    expect(generateFromFabricReference).toHaveBeenCalled();
+    expect(replicateWithNewMaterial).not.toHaveBeenCalled();
+    expect(AiDesignerSketchAnalysisRepository.findByProjectId).not.toHaveBeenCalled();
   });
 });

@@ -13,6 +13,8 @@ export const STATUS_BADGE_CLASS: Record<string, string> = {
 };
 
 export const WIZARD_STEP_LABELS: Record<string, string> = {
+  UPLOAD_SKETCH: "Upload Sketch",
+  SKETCH_ANALYSIS: "Sketch Analysis",
   FABRIC_SELECTION: "Fabric Selection",
   FABRIC_ANALYSIS: "Analyze Fabric",
   TARGET_CUSTOMER: "Target Customer",
@@ -29,7 +31,7 @@ export const WIZARD_STEP_LABELS: Record<string, string> = {
   EXPORT: "Export",
 };
 
-// Mirrors ai-designer.service.ts's own WIZARD_STEP_ORDER exactly (a
+// Mirrors ai-designer.service.ts's own STANDARD_STEPS exactly (a
 // duplicated, client-safe copy, same convention as every other
 // client/server pair in this app — this file has zero Prisma imports).
 export const WIZARD_STEP_ORDER = [
@@ -48,3 +50,15 @@ export const WIZARD_STEP_ORDER = [
   "TECH_PACK",
   "EXPORT",
 ] as const;
+
+const SKETCH_ONLY_STEPS = ["UPLOAD_SKETCH", "SKETCH_ANALYSIS"] as const;
+
+/**
+ * Mirrors ai-designer.service.ts's own stepsForCreationMode() exactly — a
+ * SKETCH-mode project's wizard adds two steps (Upload Sketch, Sketch
+ * Analysis) before every other step, which is reused completely unchanged
+ * for either mode.
+ */
+export function stepsForCreationMode(mode: "STANDARD" | "SKETCH"): readonly string[] {
+  return mode === "SKETCH" ? [...SKETCH_ONLY_STEPS, ...WIZARD_STEP_ORDER] : WIZARD_STEP_ORDER;
+}

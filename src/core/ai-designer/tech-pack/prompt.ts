@@ -31,10 +31,20 @@ export interface TechPackDesignContext {
   targetCustomer: string;
   ageGroup: string;
   projectName: string;
+  /**
+   * Sketch / Drawing → Garment (2026-09-20) — populated only for a
+   * SKETCH-mode project, from its approved Sketch Analysis's own locked
+   * observations. The Tech Pack's own vision call still analyzes the FINAL
+   * generated garment PHOTO (per the product requirement: "represent the
+   * final approved garment, not blindly copy the original sketch"), never
+   * this note alone — this is additional grounding context, not a
+   * replacement for that image.
+   */
+  sketchDesignNote?: string;
 }
 
 function contextLines(ctx: TechPackDesignContext): string[] {
-  return [
+  const lines = [
     `Project / Style Name: ${ctx.projectName}`,
     `Garment Category: ${ctx.productCategory}`,
     `Design Details: ${ctx.designSelections}`,
@@ -42,6 +52,10 @@ function contextLines(ctx: TechPackDesignContext): string[] {
     `Target Customer: ${ctx.targetCustomer}`,
     `Age Group: ${ctx.ageGroup}`,
   ];
+  if (ctx.sketchDesignNote) {
+    lines.push(`Originating Sketch Design (for reference — the supplied photo of the FINAL approved garment is the authoritative source, use this note only as supporting context): ${ctx.sketchDesignNote}`);
+  }
+  return lines;
 }
 
 const FLAGGING_RULES = `If a detail is unclear or not actually visible in the image, mark that field's value as "[NOT VISIBLE — confirm with designer]". If a detail is inferred rather than directly seen, mark it as "[ASSUMED — confirm with designer]". Never invent a specific detail (an exact brand, style number, date, or designer name) without one of these two flags — only state a detail as fact when it is genuinely visible in the image or is a standard, uncontroversial convention for this garment type.`;

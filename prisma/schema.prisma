@@ -371,6 +371,10 @@ model User {
   aiDesignerImagesCreated                    AiDesignerImage[]                    @relation("AiDesignerImageCreatedBy")
   aiDesignerVersionsCreated                  AiDesignerVersion[]                  @relation("AiDesignerVersionCreatedBy")
   aiDesignerVersionsApproved                 AiDesignerVersion[]                  @relation("AiDesignerVersionApprovedBy")
+  aiDesignerSketchAnalysesCreated            AiDesignerSketchAnalysis[]           @relation("AiDesignerSketchAnalysisCreatedBy")
+  aiDesignerSketchAnalysesApproved           AiDesignerSketchAnalysis[]           @relation("AiDesignerSketchAnalysisApprovedBy")
+  aiDesignerSketchObservationsApproved       AiDesignerSketchObservation[]        @relation("AiDesignerSketchObservationApprovedBy")
+  aiDesignerSketchAnalysisRunsCreated        AiDesignerSketchAnalysisRun[]        @relation("AiDesignerSketchAnalysisRunCreatedBy")
   replicateDesignProjectsCreated             ReplicateDesignProject[]             @relation("ReplicateDesignProjectCreatedBy")
   replicateDesignDnaAnalysesCreated          ReplicateDesignDnaAnalysis[]         @relation("ReplicateDesignDnaAnalysisCreatedBy")
   replicateDesignDnaAnalysesApproved         ReplicateDesignDnaAnalysis[]         @relation("ReplicateDesignDnaAnalysisApprovedBy")
@@ -8014,17 +8018,41 @@ enum AiDesignerVersionApprovalStatus {
   REJECTED
 }
 
+/**
+ * Sketch / Drawing → Garment workflow (2026-09-20) -- a second intake path on
+ * the SAME AiDesignerProject table (not a parallel project type): STANDARD is
+ * every existing fabric-first project, SKETCH starts from an uploaded
+ * hand-drawn/digital sketch whose structural design is preserved as the
+ * authoritative reference (see AiDesignerSketchAnalysis below), fabric is
+ * still applied exactly as today. Every other wizard step (Target/Age/
+ * Category/Product Design/Model/Environment/Multi-Fabric/Embellishments/Edit
+ * Design/Tech Pack/Export) is reused completely unchanged for either mode.
+ */
+enum AiDesignerCreationMode {
+  STANDARD
+  SKETCH
+}
+
 model AiDesignerProject {
   id            String                  @id @default(uuid()) @db.Uuid
   companyId     String                  @map("company_id") @db.Uuid
   projectNumber String                  @map("project_number")
   projectName   String                  @map("project_name")
   status        AiDesignerProjectStatus @default(DRAFT)
+  creationMode  AiDesignerCreationMode  @default(STANDARD) @map("creation_mode")
 
   // Own, wholly separate resumable-wizard position -- mirrors the *shape* of
   // AiGarmentProject's currentStepKey/completedStepKeys, not shared code.
+  // For a SKETCH-mode project, currentStep starts at "UPLOAD_SKETCH" instead
+  // of "FABRIC_SELECTION" -- see stepsForCreationMode() in the service.
   currentStep    String   @default("FABRIC_SELECTION") @map("current_step")
   completedSteps String[] @map("completed_steps")
+
+  // SKETCH mode only -- the uploaded sketch/drawing photo, same soft-ref
+  // convention as fabricImageAttachmentId. Replacing/removing it marks any
+  // existing AiDesignerSketchAnalysis STALE (same rule already proven for
+  // Reference/Fabric Analysis and Replicate Design's own DNA analysis).
+  sketchImageAttachmentId String? @map("sketch_image_attachment_id")
 
   // Step 1/2 -- fabric. fabricProductId/fabricSupplierId are read-only refs
   // into the real ERP Fabric Master; every other fabric* field is a plain
@@ -8105,15 +8133,118 @@ model AiDesignerProject {
   currentVersion AiDesignerVersion? @relation("AiDesignerProjectCurrentVersion", fields: [currentVersionId], references: [id])
   createdBy      User               @relation("AiDesignerProjectCreatedBy", fields: [createdByUserId], references: [id])
 
-  prompts       AiDesignerPrompt[]
-  generations   AiDesignerGeneration[]
-  images        AiDesignerImage[]
-  versions      AiDesignerVersion[]    @relation("AiDesignerVersionsOfProject")
-  providerUsage AIProviderUsage[]
-  techPacks     AiDesignerTechPack[]
+  prompts        AiDesignerPrompt[]
+  generations    AiDesignerGeneration[]
+  images         AiDesignerImage[]
+  versions       AiDesignerVersion[]        @relation("AiDesignerVersionsOfProject")
+  providerUsage  AIProviderUsage[]
+  techPacks      AiDesignerTechPack[]
+  sketchAnalysis AiDesignerSketchAnalysis?
 
   @@unique([companyId, projectNumber])
   @@map("ai_projects")
+}
+
+// ---------------------------------------------------------------------------
+// SKETCH mode -- structural design analysis of the uploaded sketch, mirroring
+// ReplicateDesignDnaAnalysis/Observation/AnalysisRun's exact shape (a proven,
+// tested pattern in this same schema) rather than inventing a new one.
+// aiObservation is the immutable AI-original value; approvedObservation
+// (defaults = aiObservation) is the ONLY field generation ever reads; isLocked
+// independently controls whether a later Generate call treats it as a hard
+// constraint -- toggling it has no re-approval side effect, unlike editing
+// approvedObservation itself, which pushes an APPROVED analysis back to
+// UNDER_REVIEW.
+// ---------------------------------------------------------------------------
+
+enum AiDesignerSketchConfidence {
+  CONFIRMED_VISUALLY
+  LIKELY_INFERRED
+  NOT_DETERMINABLE
+}
+
+enum AiDesignerSketchAnalysisStatus {
+  DRAFT
+  AI_ANALYSED
+  UNDER_REVIEW
+  APPROVED
+  STALE
+}
+
+model AiDesignerSketchAnalysis {
+  id                    String                          @id @default(uuid()) @db.Uuid
+  companyId             String                          @map("company_id") @db.Uuid
+  projectId             String                          @unique @map("project_id") @db.Uuid
+  sketchAttachmentId    String                          @map("sketch_attachment_id")
+  status                AiDesignerSketchAnalysisStatus  @default(DRAFT)
+  promptVersion         String                          @map("prompt_version")
+  provider              String?
+  model                 String?
+  rawResponseJson       Json?                           @map("raw_response_json")
+  sketchAnalysisSummary String?                         @map("sketch_analysis_summary")
+  approvedByUserId      String?                         @map("approved_by_user_id") @db.Uuid
+  approvedAt            DateTime?                       @map("approved_at")
+  createdByUserId       String                          @map("created_by_user_id") @db.Uuid
+  createdAt             DateTime                        @default(now()) @map("created_at")
+  updatedAt             DateTime                        @updatedAt @map("updated_at")
+
+  project    AiDesignerProject             @relation(fields: [projectId], references: [id])
+  approvedBy User?                         @relation("AiDesignerSketchAnalysisApprovedBy", fields: [approvedByUserId], references: [id])
+  createdBy  User                          @relation("AiDesignerSketchAnalysisCreatedBy", fields: [createdByUserId], references: [id])
+
+  observations AiDesignerSketchObservation[]
+  runs         AiDesignerSketchAnalysisRun[]
+
+  @@map("ai_designer_sketch_analyses")
+}
+
+model AiDesignerSketchObservation {
+  id                  String                     @id @default(uuid()) @db.Uuid
+  analysisId          String                     @map("analysis_id") @db.Uuid
+  featureKey          String                     @map("feature_key")
+  aiObservation       String                     @map("ai_observation")
+  aiConfidence        AiDesignerSketchConfidence @map("ai_confidence")
+  approvedObservation String                     @map("approved_observation")
+  userEdited          Boolean                    @default(false) @map("user_edited")
+  isLocked            Boolean                    @default(true) @map("is_locked")
+  approvedByUserId    String?                    @map("approved_by_user_id") @db.Uuid
+  approvedAt          DateTime?                  @map("approved_at")
+  createdAt           DateTime                   @default(now()) @map("created_at")
+  updatedAt           DateTime                   @updatedAt @map("updated_at")
+
+  analysis   AiDesignerSketchAnalysis @relation(fields: [analysisId], references: [id])
+  approvedBy User?                    @relation("AiDesignerSketchObservationApprovedBy", fields: [approvedByUserId], references: [id])
+
+  @@unique([analysisId, featureKey])
+  @@map("ai_designer_sketch_observations")
+}
+
+// Append-only audit log of every analysis attempt, success or failure -- a
+// stuck IN_PROGRESS row older than the freshness window is treated as
+// abandoned, not a permanent lock (same discipline as every other AI
+// Designer/AI Garment Flow run-log table; reuses the existing
+// AiDesignerRunStatus enum rather than minting a 4th identical one).
+model AiDesignerSketchAnalysisRun {
+  id                 String              @id @default(uuid()) @db.Uuid
+  companyId          String              @map("company_id") @db.Uuid
+  projectId          String              @map("project_id") @db.Uuid
+  analysisId         String?             @map("analysis_id") @db.Uuid
+  sketchAttachmentId String              @map("sketch_attachment_id")
+  provider           String
+  model              String
+  promptVersion      String              @map("prompt_version")
+  status             AiDesignerRunStatus @default(IN_PROGRESS)
+  errorCategory      String?             @map("error_category")
+  errorMessage       String?             @map("error_message")
+  requestedAt        DateTime            @default(now()) @map("requested_at")
+  completedAt        DateTime?           @map("completed_at")
+  createdByUserId    String              @map("created_by_user_id") @db.Uuid
+
+  analysis  AiDesignerSketchAnalysis? @relation(fields: [analysisId], references: [id])
+  createdBy User                      @relation("AiDesignerSketchAnalysisRunCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@index([projectId, status])
+  @@map("ai_designer_sketch_analysis_runs")
 }
 
 // One row per AI call attempt of ANY kind (fabric analysis, generate, edit) --

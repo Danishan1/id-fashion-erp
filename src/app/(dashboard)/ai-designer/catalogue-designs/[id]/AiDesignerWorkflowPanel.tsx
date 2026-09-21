@@ -19,8 +19,11 @@ import { ENVIRONMENTS } from "@/core/ai-designer/catalogs/environment-catalog";
 import { BODY_TYPES, MODEL_GENDERS, POSES } from "@/core/ai-designer/catalogs/model-catalog";
 import { FABRIC_FIELD_KEYS, type FabricFieldKey } from "@/modules/ai-designer/ai-designer.schema";
 import { useAiDesignerDisplayMode } from "@/lib/use-ai-designer-display-mode";
-import { STATUS_BADGE_CLASS, STATUS_LABELS, WIZARD_STEP_LABELS, WIZARD_STEP_ORDER } from "../../statusLabels";
+import { SKETCH_FEATURE_LABELS, SKETCH_TO_DESIGN_ATTRIBUTE_KEYS, type SketchFeatureKey } from "@/core/ai-designer/sketch-analysis/feature-registry";
+import { STATUS_BADGE_CLASS, STATUS_LABELS, WIZARD_STEP_LABELS, stepsForCreationMode } from "../../statusLabels";
 import { AiDesignerTechPackPanel, type TechPackData } from "./AiDesignerTechPackPanel";
+import { SketchImageUploader } from "./SketchImageUploader";
+import { SketchAnalysisPanel } from "./SketchAnalysisPanel";
 
 const FABRIC_FIELD_LABELS: Record<FabricFieldKey, string> = {
   fabricName: "Fabric Name",
@@ -51,8 +54,10 @@ interface AiDesignerProjectData {
   projectNumber: string;
   projectName: string;
   status: keyof typeof STATUS_LABELS;
+  creationMode: "STANDARD" | "SKETCH";
   currentStep: string;
   completedSteps: string[];
+  sketchImageAttachmentId: string | null;
   fabricSource: "EXISTING" | "UPLOADED" | null;
   fabricProductId: string | null;
   fabricImageAttachmentId: string | null;
@@ -170,9 +175,9 @@ function WizardSection({
  * save immediately but never navigate on their own. Renders nothing on the
  * last step (`step` has no successor in `WIZARD_STEP_ORDER`).
  */
-function StepNextButton({ step, onNext }: { step: string; onNext: (afterStep: string) => void }) {
-  const idx = WIZARD_STEP_ORDER.indexOf(step as (typeof WIZARD_STEP_ORDER)[number]);
-  const next = idx >= 0 ? WIZARD_STEP_ORDER[idx + 1] : undefined;
+function StepNextButton({ step, steps, onNext }: { step: string; steps: readonly string[]; onNext: (afterStep: string) => void }) {
+  const idx = steps.indexOf(step);
+  const next = idx >= 0 ? steps[idx + 1] : undefined;
   if (!next) return null;
   return (
     <div className="mt-4 flex justify-end border-t border-zinc-100 pt-3 dark:border-zinc-800">
@@ -198,6 +203,12 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
   const [embellishmentType, setEmbellishmentType] = useState<string>("DIGITAL_APPLIQUE");
   const [embellishmentInstructions, setEmbellishmentInstructions] = useState("");
   const [techPack, setTechPack] = useState<TechPackData | null>(null);
+  const [sketchAnalysis, setSketchAnalysis] = useState<{
+    id: string;
+    status: "DRAFT" | "AI_ANALYSED" | "UNDER_REVIEW" | "APPROVED" | "STALE";
+    sketchAnalysisSummary: string | null;
+    observations: { id: string; featureKey: string; aiObservation: string; aiConfidence: string; approvedObservation: string; userEdited: boolean; isLocked: boolean }[];
+  } | null>(null);
   const [designAttributes, setDesignAttributes] = useState<DesignAttributeDef[]>([]);
   const [activeDesignAttrKey, setActiveDesignAttrKey] = useState<string | null>(null);
   const [optionReferenceImages, setOptionReferenceImages] = useState<Record<string, string>>({});
@@ -232,9 +243,11 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
   // what they'd just picked. Every step's own explicit "Next →" button (below)
   // is now the only thing that ever advances `expandedStep` after the initial
   // load; saving a field no longer moves the view at all (see `reload`).
+  const steps = stepsForCreationMode(project.creationMode);
+
   const goToNextStep = (afterStep: string) => {
-    const idx = WIZARD_STEP_ORDER.indexOf(afterStep as (typeof WIZARD_STEP_ORDER)[number]);
-    const next = idx >= 0 ? WIZARD_STEP_ORDER[idx + 1] : undefined;
+    const idx = steps.indexOf(afterStep);
+    const next = idx >= 0 ? steps[idx + 1] : undefined;
     if (next) jumpToStep(next);
   };
 
@@ -263,6 +276,15 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
       .then((body) => setTechPack(body.data ?? null))
       .catch(() => {});
   }, [projectId]);
+
+  /** SKETCH mode only — same "own data, own fetch, survives a plain project reload" reasoning as techPack above; a no-op fetch for a STANDARD-mode project (the API returns null, harmlessly). */
+  useEffect(() => {
+    if (initialProject.creationMode !== "SKETCH") return;
+    fetch(`/api/v1/ai-designer/projects/${projectId}/sketch-analysis`)
+      .then((r) => r.json())
+      .then((body) => setSketchAnalysis(body.data ?? null))
+      .catch(() => {});
+  }, [projectId, initialProject.creationMode]);
 
   // Product Design's own attribute list is now a real, per-company master
   // (Masters -> AI Design -> Product Design), not a static import — this
@@ -346,6 +368,23 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
     setGeneratedImages((prev) => prev.map((img) => (img.id === imageId ? { ...img, decision: body.data.decision } : img)));
   };
 
+  /**
+   * SKETCH mode only — wraps the shared `run()` (which only ever refreshes
+   * the flat `project` row via reload()) with a follow-up sketch-analysis
+   * refetch, the same "own data, own refresh" need techPack's own dedicated
+   * onChanged callback already solves differently. Used by both
+   * SketchImageUploader (uploading/removing a sketch marks any existing
+   * analysis STALE server-side) and SketchAnalysisPanel (every one of its
+   * own actions mutates the analysis directly).
+   */
+  const runSketch = async (key: string, fn: () => Promise<unknown>) => {
+    await run(key, fn);
+    const body = await fetch(`/api/v1/ai-designer/projects/${projectId}/sketch-analysis`)
+      .then((r) => r.json())
+      .catch(() => ({ data: null }));
+    setSketchAnalysis(body.data ?? null);
+  };
+
   const ageGroups = project.targetCustomer ? AGE_GROUPS_BY_CUSTOMER[project.targetCustomer] : [];
   const productCategories = project.targetCustomer ? PRODUCT_CATEGORIES_BY_CUSTOMER[project.targetCustomer] : [];
   const designSelections = project.designSelectionsJson ?? {};
@@ -379,7 +418,7 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
           (and expand) that step's section below, instead of purely decorative
           status text with no navigation behind it. */}
       <div className="flex flex-wrap gap-2 text-xs">
-        {WIZARD_STEP_ORDER.map((step, i) => {
+        {steps.map((step, i) => {
           const done = project.completedSteps.includes(step);
           const current = project.currentStep === step;
           return (
@@ -406,10 +445,45 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
 
       {error && <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-300">{error}</p>}
 
+      {/* SKETCH mode only — Upload Sketch / Sketch Analysis, before every other step (which is reused completely unchanged for either mode). */}
+      {project.creationMode === "SKETCH" && (
+        <>
+          <WizardSection
+            sectionRef={(el) => (sectionRefs.current.UPLOAD_SKETCH = el)}
+            index={steps.indexOf("UPLOAD_SKETCH") + 1}
+            title="Upload Sketch"
+            isDone={project.completedSteps.includes("UPLOAD_SKETCH")}
+            isCurrent={project.currentStep === "UPLOAD_SKETCH"}
+            isOpen={expandedStep === "UPLOAD_SKETCH"}
+          >
+            <SketchImageUploader projectId={projectId} sketchImageAttachmentId={project.sketchImageAttachmentId} busy={busy} run={runSketch} />
+            <StepNextButton step="UPLOAD_SKETCH" steps={steps} onNext={goToNextStep} />
+          </WizardSection>
+
+          <WizardSection
+            sectionRef={(el) => (sectionRefs.current.SKETCH_ANALYSIS = el)}
+            index={steps.indexOf("SKETCH_ANALYSIS") + 1}
+            title="Sketch Analysis"
+            isDone={project.completedSteps.includes("SKETCH_ANALYSIS")}
+            isCurrent={project.currentStep === "SKETCH_ANALYSIS"}
+            isOpen={expandedStep === "SKETCH_ANALYSIS"}
+          >
+            <SketchAnalysisPanel
+              projectId={projectId}
+              hasSketchImage={!!project.sketchImageAttachmentId}
+              analysis={sketchAnalysis}
+              busy={busy}
+              run={runSketch}
+            />
+            <StepNextButton step="SKETCH_ANALYSIS" steps={steps} onNext={goToNextStep} />
+          </WizardSection>
+        </>
+      )}
+
       {/* Step 1 — Fabric Selection */}
       <WizardSection
         sectionRef={(el) => (sectionRefs.current.FABRIC_SELECTION = el)}
-        index={1}
+        index={steps.indexOf("FABRIC_SELECTION") + 1}
         title="Fabric Selection"
         isDone={project.completedSteps.includes("FABRIC_SELECTION")}
         isCurrent={project.currentStep === "FABRIC_SELECTION"}
@@ -473,13 +547,13 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
             )}
           </div>
         </div>
-        <StepNextButton step="FABRIC_SELECTION" onNext={goToNextStep} />
+        <StepNextButton step="FABRIC_SELECTION" steps={steps} onNext={goToNextStep} />
       </WizardSection>
 
       {/* Step 2 — Analyze Fabric with AI */}
       <WizardSection
         sectionRef={(el) => (sectionRefs.current.FABRIC_ANALYSIS = el)}
-        index={2}
+        index={steps.indexOf("FABRIC_ANALYSIS") + 1}
         title="Analyze Fabric with AI"
         isDone={project.completedSteps.includes("FABRIC_ANALYSIS")}
         isCurrent={project.currentStep === "FABRIC_ANALYSIS"}
@@ -516,13 +590,13 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
             </FormField>
           ))}
         </div>
-        <StepNextButton step="FABRIC_ANALYSIS" onNext={goToNextStep} />
+        <StepNextButton step="FABRIC_ANALYSIS" steps={steps} onNext={goToNextStep} />
       </WizardSection>
 
       {/* Step 3 — Target Customer */}
       <WizardSection
         sectionRef={(el) => (sectionRefs.current.TARGET_CUSTOMER = el)}
-        index={3}
+        index={steps.indexOf("TARGET_CUSTOMER") + 1}
         title="Target Customer"
         isDone={project.completedSteps.includes("TARGET_CUSTOMER")}
         isCurrent={project.currentStep === "TARGET_CUSTOMER"}
@@ -544,13 +618,13 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
             </button>
           ))}
         </div>
-        <StepNextButton step="TARGET_CUSTOMER" onNext={goToNextStep} />
+        <StepNextButton step="TARGET_CUSTOMER" steps={steps} onNext={goToNextStep} />
       </WizardSection>
 
       {/* Step 4 — Age Group */}
       <WizardSection
         sectionRef={(el) => (sectionRefs.current.AGE_GROUP = el)}
-        index={4}
+        index={steps.indexOf("AGE_GROUP") + 1}
         title="Age Group"
         isDone={project.completedSteps.includes("AGE_GROUP")}
         isCurrent={project.currentStep === "AGE_GROUP"}
@@ -573,13 +647,13 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
             </button>
           ))}
         </div>
-        <StepNextButton step="AGE_GROUP" onNext={goToNextStep} />
+        <StepNextButton step="AGE_GROUP" steps={steps} onNext={goToNextStep} />
       </WizardSection>
 
       {/* Step 5 — Product Category */}
       <WizardSection
         sectionRef={(el) => (sectionRefs.current.PRODUCT_CATEGORY = el)}
-        index={5}
+        index={steps.indexOf("PRODUCT_CATEGORY") + 1}
         title="Product Category"
         isDone={project.completedSteps.includes("PRODUCT_CATEGORY")}
         isCurrent={project.currentStep === "PRODUCT_CATEGORY"}
@@ -602,13 +676,13 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
             </button>
           ))}
         </div>
-        <StepNextButton step="PRODUCT_CATEGORY" onNext={goToNextStep} />
+        <StepNextButton step="PRODUCT_CATEGORY" steps={steps} onNext={goToNextStep} />
       </WizardSection>
 
       {/* Step 6 — Product Design */}
       <WizardSection
         sectionRef={(el) => (sectionRefs.current.PRODUCT_DESIGN = el)}
-        index={6}
+        index={steps.indexOf("PRODUCT_DESIGN") + 1}
         title="Product Design"
         isDone={project.completedSteps.includes("PRODUCT_DESIGN")}
         isCurrent={project.currentStep === "PRODUCT_DESIGN"}
@@ -684,13 +758,13 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
             </div>
           </div>
         )}
-        <StepNextButton step="PRODUCT_DESIGN" onNext={goToNextStep} />
+        <StepNextButton step="PRODUCT_DESIGN" steps={steps} onNext={goToNextStep} />
       </WizardSection>
 
       {/* Step 7 — Model */}
       <WizardSection
         sectionRef={(el) => (sectionRefs.current.MODEL = el)}
-        index={7}
+        index={steps.indexOf("MODEL") + 1}
         title="Model"
         isDone={project.completedSteps.includes("MODEL")}
         isCurrent={project.currentStep === "MODEL"}
@@ -743,13 +817,13 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
             </select>
           </FormField>
         </div>
-        <StepNextButton step="MODEL" onNext={goToNextStep} />
+        <StepNextButton step="MODEL" steps={steps} onNext={goToNextStep} />
       </WizardSection>
 
       {/* Step 8 — Environment */}
       <WizardSection
         sectionRef={(el) => (sectionRefs.current.ENVIRONMENT = el)}
-        index={8}
+        index={steps.indexOf("ENVIRONMENT") + 1}
         title="Environment"
         isDone={project.completedSteps.includes("ENVIRONMENT")}
         isCurrent={project.currentStep === "ENVIRONMENT"}
@@ -785,18 +859,83 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
             />
           </FormField>
         </div>
-        <StepNextButton step="ENVIRONMENT" onNext={goToNextStep} />
+        <StepNextButton step="ENVIRONMENT" steps={steps} onNext={goToNextStep} />
       </WizardSection>
 
       {/* Step 9 — Generate Design */}
       <WizardSection
         sectionRef={(el) => (sectionRefs.current.GENERATE = el)}
-        index={9}
+        index={steps.indexOf("GENERATE") + 1}
         title="Generate Design"
         isDone={project.completedSteps.includes("GENERATE")}
         isCurrent={project.currentStep === "GENERATE"}
         isOpen={expandedStep === "GENERATE"}
       >
+        {project.creationMode === "SKETCH" && (
+          <div className="mb-4 rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
+            <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-200">Design Summary</p>
+            <div className="mt-2 flex flex-wrap gap-4">
+              {project.sketchImageAttachmentId && (
+                <div>
+                  <p className="text-[11px] text-zinc-500">Sketch</p>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={imageUrl(project.sketchImageAttachmentId)} alt="Sketch" className="mt-1 h-20 w-20 rounded border object-contain bg-white" />
+                </div>
+              )}
+              {project.fabricImageAttachmentId && (
+                <div>
+                  <p className="text-[11px] text-zinc-500">Fabric</p>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={imageUrl(project.fabricImageAttachmentId)} alt="Fabric" className="mt-1 h-20 w-20 rounded border object-cover" />
+                </div>
+              )}
+            </div>
+            <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-4">
+              <div>
+                <dt className="text-zinc-500">Target</dt>
+                <dd className="text-zinc-800 dark:text-zinc-200">{project.targetCustomer ? TARGET_CUSTOMER_LABELS[project.targetCustomer] : "—"}</dd>
+              </div>
+              <div>
+                <dt className="text-zinc-500">Age Group</dt>
+                <dd className="text-zinc-800 dark:text-zinc-200">{project.ageGroup || "—"}</dd>
+              </div>
+              <div>
+                <dt className="text-zinc-500">Category</dt>
+                <dd className="text-zinc-800 dark:text-zinc-200">{project.productCategory || "—"}</dd>
+              </div>
+              <div>
+                <dt className="text-zinc-500">Model</dt>
+                <dd className="text-zinc-800 dark:text-zinc-200">{[project.modelGender, project.modelBodyType, project.modelPose].filter(Boolean).join(", ") || "—"}</dd>
+              </div>
+              <div className="col-span-2">
+                <dt className="text-zinc-500">Environment</dt>
+                <dd className="text-zinc-800 dark:text-zinc-200">{project.environmentLabel || "—"}</dd>
+              </div>
+            </dl>
+            {(() => {
+              const observations = sketchAnalysis?.observations ?? [];
+              const modifications = observations
+                .filter((o) => o.isLocked)
+                .flatMap((o) => {
+                  const attrKeys = SKETCH_TO_DESIGN_ATTRIBUTE_KEYS[o.featureKey as SketchFeatureKey];
+                  if (!attrKeys) return [];
+                  const selected = attrKeys.map((k) => designSelections[k]).find((v) => v && v.trim().length > 0);
+                  if (!selected) return [];
+                  return [`${SKETCH_FEATURE_LABELS[o.featureKey as SketchFeatureKey] ?? o.featureKey} → ${selected}`];
+                });
+              return modifications.length > 0 ? (
+                <div className="mt-3">
+                  <p className="text-[11px] font-medium text-zinc-500">Design Modifications (explicit overrides from the sketch)</p>
+                  <ul className="mt-1 list-inside list-disc text-xs text-zinc-800 dark:text-zinc-200">
+                    {modifications.map((m) => (
+                      <li key={m}>{m}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null;
+            })()}
+          </div>
+        )}
         <div className="flex gap-2">
           {[1, 3, 4].map((n) => (
             <button
@@ -861,14 +1000,14 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
             ))}
           </div>
         )}
-        <StepNextButton step="GENERATE" onNext={goToNextStep} />
+        <StepNextButton step="GENERATE" steps={steps} onNext={goToNextStep} />
       </WizardSection>
 
       {/* Step 10 — Multi-Fabric */}
       {currentImage && (
         <WizardSection
           sectionRef={(el) => (sectionRefs.current.MULTI_FABRIC = el)}
-          index={10}
+          index={steps.indexOf("MULTI_FABRIC") + 1}
           title="Multi-Fabric"
           isDone={project.completedSteps.includes("MULTI_FABRIC")}
           isCurrent={project.currentStep === "MULTI_FABRIC"}
@@ -960,7 +1099,7 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
               </button>
             </div>
           </div>
-          <StepNextButton step="MULTI_FABRIC" onNext={goToNextStep} />
+          <StepNextButton step="MULTI_FABRIC" steps={steps} onNext={goToNextStep} />
         </WizardSection>
       )}
 
@@ -968,7 +1107,7 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
       {currentImage && (
         <WizardSection
           sectionRef={(el) => (sectionRefs.current.EMBELLISHMENTS = el)}
-          index={11}
+          index={steps.indexOf("EMBELLISHMENTS") + 1}
           title="Embellishments"
           isDone={project.completedSteps.includes("EMBELLISHMENTS")}
           isCurrent={project.currentStep === "EMBELLISHMENTS"}
@@ -1074,7 +1213,7 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
               </button>
             </div>
           </div>
-          <StepNextButton step="EMBELLISHMENTS" onNext={goToNextStep} />
+          <StepNextButton step="EMBELLISHMENTS" steps={steps} onNext={goToNextStep} />
         </WizardSection>
       )}
 
@@ -1082,7 +1221,7 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
       {currentImage && (
         <WizardSection
           sectionRef={(el) => (sectionRefs.current.EDIT = el)}
-          index={12}
+          index={steps.indexOf("EDIT") + 1}
           title="Edit Design"
           isDone={project.completedSteps.includes("EDIT")}
           isCurrent={project.currentStep === "EDIT"}
@@ -1102,7 +1241,7 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
               Open Design Editor →
             </Link>
           </div>
-          <StepNextButton step="EDIT" onNext={goToNextStep} />
+          <StepNextButton step="EDIT" steps={steps} onNext={goToNextStep} />
         </WizardSection>
       )}
 
@@ -1110,7 +1249,7 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
       {currentImage && (
         <WizardSection
           sectionRef={(el) => (sectionRefs.current.TECH_PACK = el)}
-          index={13}
+          index={steps.indexOf("TECH_PACK") + 1}
           title="Tech Pack"
           isDone={project.completedSteps.includes("TECH_PACK")}
           isCurrent={project.currentStep === "TECH_PACK"}
@@ -1129,7 +1268,7 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
             onChanged={setTechPack}
           />
 
-          <StepNextButton step="TECH_PACK" onNext={goToNextStep} />
+          <StepNextButton step="TECH_PACK" steps={steps} onNext={goToNextStep} />
         </WizardSection>
       )}
 
@@ -1170,7 +1309,7 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
       {currentImage && (
         <WizardSection
           sectionRef={(el) => (sectionRefs.current.EXPORT = el)}
-          index={14}
+          index={steps.indexOf("EXPORT") + 1}
           title="Export"
           isDone={project.completedSteps.includes("EXPORT")}
           isCurrent={project.currentStep === "EXPORT"}

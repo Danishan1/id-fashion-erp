@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { DataTable } from "@/components/ui/DataTable";
 import { STATUS_BADGE_CLASS, STATUS_LABELS, WIZARD_STEP_LABELS } from "./statusLabels";
@@ -20,14 +21,22 @@ export function AiDesignerListClient() {
   return (
     <div className="space-y-4">
       <Breadcrumb items={[{ label: "Dashboard", href: "/dashboard" }, { label: "AI Designer" }]} />
-      <div>
-        <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">AI Designer</h1>
-        <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-          Generate premium fashion catalogue visuals from a fabric — pick from the Fabric Master or upload a
-          new fabric photo, choose the customer/product/design/model/environment, and let AI build the
-          design image. A genuinely separate module from AI Garment Flow — its own isolated project records,
-          never shared with that module.
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">AI Designer</h1>
+          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+            Generate premium fashion catalogue visuals from a fabric — pick from the Fabric Master or upload a
+            new fabric photo, choose the customer/product/design/model/environment, and let AI build the
+            design image. A genuinely separate module from AI Garment Flow — its own isolated project records,
+            never shared with that module.
+          </p>
+        </div>
+        <Link
+          href="/ai-designer/catalogue-designs/new-from-sketch"
+          className="shrink-0 rounded-md border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-sm font-medium text-indigo-700 hover:bg-indigo-100 dark:border-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-300"
+        >
+          Create from Sketch / Drawing
+        </Link>
       </div>
 
       <DataTable<AiDesignerProjectRow>
