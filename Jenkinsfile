@@ -6,6 +6,7 @@ pipeline {
     }
 
     stages {
+
         stage('Setup Environment') {
             steps {
                 withCredentials([file(credentialsId: 'fashion-erp-env-global', variable: 'ENV_FILE')]) {
@@ -39,15 +40,35 @@ pipeline {
                 sh 'npm run build'
             }
         }
+
+        stage('Deploy') {
+            steps {
+                withCredentials([file(credentialsId: 'fashion-erp-env-global', variable: 'ENV_FILE')]) {
+                    sh '''
+                        DEPLOY_DIR="/var/www/html/NodeProjects/fashion-erp"
+
+                        rsync -a --delete \
+                          --exclude='.env' \
+                          --exclude='uploads/' \
+                          ./ "$DEPLOY_DIR/"
+
+                        cp "$ENV_FILE" "$DEPLOY_DIR/.env"
+                        chmod 600 "$DEPLOY_DIR/.env"
+
+                        mkdir -p "$DEPLOY_DIR/uploads"
+                    '''
+                }
+            }
+        }
     }
 
     post {
         success {
-            echo 'Fashion ERP build successful!'
+            echo 'Fashion ERP build and deployment successful!'
         }
 
         failure {
-            echo 'Fashion ERP build failed!'
+            echo 'Fashion ERP build or deployment failed!'
         }
 
         always {
