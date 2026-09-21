@@ -13,6 +13,10 @@ vi.mock("@/core/attachments/AttachmentService", () => ({
 vi.mock("@/core/ai-designer/fabric-analysis/analyze", () => ({ analyzeFabric: vi.fn() }));
 vi.mock("@/core/ai-designer/sketch-analysis/analyze", () => ({ analyzeSketch: vi.fn() }));
 vi.mock("@/core/ai/provider-manager/AIProviderManager", () => ({ runWithFailover: vi.fn() }));
+vi.mock("@/core/documents/company-header", () => ({
+  getCompanyHeaderLines: vi.fn().mockResolvedValue({ companyName: "Test Co", companyDetailLines: [] }),
+  formatDocDate: vi.fn((d: Date) => new Date(d).toISOString().slice(0, 10)),
+}));
 vi.mock("@/core/ai-designer/export/tech-pack-pdf", () => ({
   renderTechPackPdf: vi.fn().mockResolvedValue(Buffer.from("pdf")),
   renderTechPackDocumentPdf: vi.fn().mockResolvedValue(Buffer.from("tech-pack-pdf")),
@@ -172,6 +176,8 @@ function baseProject(overrides: Record<string, unknown> = {}) {
     environmentLabel: null,
     isCustomEnvironment: false,
     currentVersionId: null,
+    createdAt: new Date("2026-01-01T00:00:00Z"),
+    createdBy: { id: "user-1", fullName: "Test Designer" },
     ...overrides,
   };
 }
@@ -1084,7 +1090,7 @@ describe("generateTechPack", () => {
     suggestedAdditionalViews: "A back flat-lay would help.",
   };
 
-  it("runs the pipeline — vision analysis + text analysis only, ZERO AI image generation calls — pages 1/2/4 get the project's own real photo, pages 3/5/6/7 get none", async () => {
+  it("runs the pipeline — vision analysis + text analysis + a concurrent technical-flat image call — pages 1/2/4 get the real photo, pages 1/2/4/5 additionally get the generated flat, pages 3/6/7 get neither", async () => {
     vi.mocked(AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(
       baseProject({
         productCategory: "Dress",
@@ -1095,14 +1101,21 @@ describe("generateTechPack", () => {
     vi.mocked(generateGarmentAnalysisPart1).mockResolvedValue({ data: fakePart1, model: "claude-sonnet-5" } as never);
     vi.mocked(generateGarmentAnalysisPart2).mockResolvedValue({ data: fakePart2, model: "claude-sonnet-5" } as never);
     vi.mocked(AiDesignerTechPackRepository.markSuccess).mockResolvedValue({ id: "techpack-1", status: "SUCCESS" } as never);
+    const generateTechnicalFlat = vi
+      .fn()
+      .mockResolvedValue({ images: [{ buffer: Buffer.from("flat"), mimeType: "image/png" }], model: "test-model", raw: {} });
+    vi.mocked(runWithFailover).mockImplementation(async (params) => {
+      const result = await params.call({ name: "Test Provider", model: "test-model", generate: vi.fn(), generateTechnicalFlat } as never);
+      return { images: result.images, model: result.model, raw: result.raw, providerId: "p-1", providerName: "Test Provider" };
+    });
+    vi.mocked(uploadAttachment).mockResolvedValue({ id: "att-flat-1" } as never);
 
     const result = await generateTechPack(actor, "proj-1");
 
     expect(generateGarmentAnalysisPart1).toHaveBeenCalledTimes(1);
     expect(generateGarmentAnalysisPart2).toHaveBeenCalledWith(expect.objectContaining({ part1: fakePart1 }));
-    // No image-generation AI call at all — v3 removed page-image generation entirely.
-    expect(runWithFailover).not.toHaveBeenCalled();
-    expect(uploadAttachment).not.toHaveBeenCalled();
+    expect(runWithFailover).toHaveBeenCalledWith(expect.objectContaining({ capability: "TECHNICAL_FLAT", aiDesignerProjectId: "proj-1" }));
+    expect(uploadAttachment).toHaveBeenCalledWith(actor, "AI_DESIGNER_PROJECT", "proj-1", expect.objectContaining({ mimeType: "image/png" }), "TECH_PACK_TECHNICAL_FLAT");
 
     expect(AiDesignerTechPackRepository.markSuccess).toHaveBeenCalledWith(
       "techpack-1",
@@ -1110,20 +1123,20 @@ describe("generateTechPack", () => {
         designerNotes: fakePart2.designerNotes,
         suggestedAdditionalViews: fakePart2.suggestedAdditionalViews,
         pages: expect.arrayContaining([
-          expect.objectContaining({ pageNumber: 1, pageTitle: "Cover Page / Style Summary", imageAttachmentId: "att-real-photo" }),
-          expect.objectContaining({ pageNumber: 2, imageAttachmentId: "att-real-photo" }),
-          expect.objectContaining({ pageNumber: 4, imageAttachmentId: "att-real-photo" }),
-          // Page 3 (BOM), 5 (Measurements), 6 (Size Grading), 7 (Labels) need no image at all.
-          expect.objectContaining({ pageNumber: 3, imageAttachmentId: null }),
-          expect.objectContaining({ pageNumber: 5, imageAttachmentId: null }),
-          expect.objectContaining({ pageNumber: 6, imageAttachmentId: null }),
-          expect.objectContaining({ pageNumber: 7, imageAttachmentId: null }),
+          expect.objectContaining({ pageNumber: 1, pageTitle: "Cover Page / Style Summary", imageAttachmentId: "att-real-photo", technicalFlatAttachmentId: "att-flat-1" }),
+          expect.objectContaining({ pageNumber: 2, imageAttachmentId: "att-real-photo", technicalFlatAttachmentId: "att-flat-1" }),
+          expect.objectContaining({ pageNumber: 4, imageAttachmentId: "att-real-photo", technicalFlatAttachmentId: "att-flat-1" }),
+          // Page 5 gets no photo (never did), but DOES get the flat now — activates previously-dead rendering support.
+          expect.objectContaining({ pageNumber: 5, imageAttachmentId: null, technicalFlatAttachmentId: "att-flat-1" }),
+          // Page 3 (BOM), 6 (Size Grading), 7 (Labels) get neither image.
+          expect.objectContaining({ pageNumber: 3, imageAttachmentId: null, technicalFlatAttachmentId: null }),
+          expect.objectContaining({ pageNumber: 6, imageAttachmentId: null, technicalFlatAttachmentId: null }),
+          expect.objectContaining({ pageNumber: 7, imageAttachmentId: null, technicalFlatAttachmentId: null }),
         ]),
       })
     );
     const [, successArgs] = vi.mocked(AiDesignerTechPackRepository.markSuccess).mock.calls[0];
     expect((successArgs.pages as unknown[]).length).toBe(7);
-    expect((successArgs.pages as { imageAttachmentId: string | null }[]).filter((p) => p.imageAttachmentId === "att-real-photo").length).toBe(3);
 
     expect(AiDesignerProjectRepository.update).toHaveBeenCalledWith(
       "proj-1",
@@ -1132,7 +1145,32 @@ describe("generateTechPack", () => {
     expect(result.status).toBe("SUCCESS");
   });
 
-  it("marks the run FAILED, not partially successful, when the vision analysis call fails", async () => {
+  it("gracefully falls back to no technical flat when the image provider is unavailable — the tech pack still generates successfully using the plain photo", async () => {
+    vi.mocked(AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(
+      baseProject({ currentVersion: { currentImage: { id: "img-1", imageAttachmentId: "att-real-photo" } } }) as never
+    );
+    vi.mocked(getAttachmentForDownload).mockResolvedValue({ attachment: { mimeType: "image/png" }, buffer: Buffer.from("x") } as never);
+    vi.mocked(generateGarmentAnalysisPart1).mockResolvedValue({ data: fakePart1, model: "claude-sonnet-5" } as never);
+    vi.mocked(generateGarmentAnalysisPart2).mockResolvedValue({ data: fakePart2, model: "claude-sonnet-5" } as never);
+    vi.mocked(AiDesignerTechPackRepository.markSuccess).mockResolvedValue({ id: "techpack-1", status: "SUCCESS" } as never);
+    vi.mocked(runWithFailover).mockRejectedValue(new BusinessRuleError("AI_SERVICE_ERROR", "No configured AI provider currently supports technical flat sketch generation."));
+
+    const result = await generateTechPack(actor, "proj-1");
+
+    expect(uploadAttachment).not.toHaveBeenCalled();
+    expect(AiDesignerTechPackRepository.markSuccess).toHaveBeenCalledWith(
+      "techpack-1",
+      expect.objectContaining({
+        pages: expect.arrayContaining([
+          expect.objectContaining({ pageNumber: 1, imageAttachmentId: "att-real-photo", technicalFlatAttachmentId: null }),
+          expect.objectContaining({ pageNumber: 5, imageAttachmentId: null, technicalFlatAttachmentId: null }),
+        ]),
+      })
+    );
+    expect(result.status).toBe("SUCCESS");
+  });
+
+  it("marks the run FAILED, not partially successful, when the vision analysis call fails (even though the concurrent technical-flat attempt still fires)", async () => {
     vi.mocked(AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(
       baseProject({ currentVersion: { currentImage: { id: "img-1", imageAttachmentId: "att-1" } } }) as never
     );
@@ -1142,7 +1180,6 @@ describe("generateTechPack", () => {
     await expect(generateTechPack(actor, "proj-1")).rejects.toThrow();
 
     expect(generateGarmentAnalysisPart2).not.toHaveBeenCalled();
-    expect(runWithFailover).not.toHaveBeenCalled();
     expect(AiDesignerTechPackRepository.markFailed).toHaveBeenCalledWith("techpack-1", expect.stringContaining("Anthropic call failed"));
     expect(AiDesignerTechPackRepository.markSuccess).not.toHaveBeenCalled();
   });
@@ -1154,6 +1191,7 @@ describe("generateTechPack", () => {
     vi.mocked(getAttachmentForDownload).mockResolvedValue({ attachment: { mimeType: "image/png" }, buffer: Buffer.from("x") } as never);
     vi.mocked(generateGarmentAnalysisPart1).mockResolvedValue({ data: fakePart1, model: "claude-sonnet-5" } as never);
     vi.mocked(generateGarmentAnalysisPart2).mockRejectedValue(new Error("Anthropic call failed"));
+    vi.mocked(runWithFailover).mockRejectedValue(new BusinessRuleError("AI_SERVICE_ERROR", "unavailable"));
 
     await expect(generateTechPack(actor, "proj-1")).rejects.toThrow();
 
@@ -1164,28 +1202,34 @@ describe("generateTechPack", () => {
 
 describe("exportTechPackPdf", () => {
   it("requires a successful tech pack before downloading", async () => {
-    vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(baseProject() as never);
+    vi.mocked(AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(baseProject() as never);
     vi.mocked(AiDesignerTechPackRepository.findLatestByProjectId).mockResolvedValue(null as never);
 
     await expect(exportTechPackPdf(actor, "proj-1")).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
 
   it("rejects a tech pack that hasn't succeeded yet", async () => {
-    vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(baseProject() as never);
+    vi.mocked(AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(baseProject() as never);
     vi.mocked(AiDesignerTechPackRepository.findLatestByProjectId).mockResolvedValue({ status: "FAILED", pages: [] } as never);
 
     await expect(exportTechPackPdf(actor, "proj-1")).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
 
   it("rejects a tech pack with no garment analysis data", async () => {
-    vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(baseProject() as never);
+    vi.mocked(AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(baseProject() as never);
     vi.mocked(AiDesignerTechPackRepository.findLatestByProjectId).mockResolvedValue({ status: "SUCCESS", garmentAnalysisJson: null, pages: [] } as never);
 
     await expect(exportTechPackPdf(actor, "proj-1")).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
 
+  it("requires the project to exist", async () => {
+    vi.mocked(AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(null as never);
+
+    await expect(exportTechPackPdf(actor, "proj-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
   it("fetches only the real images that exist (some pages legitimately have none) and combines everything into one downloadable PDF", async () => {
-    vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(baseProject() as never);
+    vi.mocked(AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(baseProject() as never);
     vi.mocked(AiDesignerTechPackRepository.findLatestByProjectId).mockResolvedValue({
       status: "SUCCESS",
       createdAt: new Date("2026-09-13T10:00:00Z"),
@@ -1211,7 +1255,7 @@ describe("exportTechPackPdf", () => {
   });
 
   it("dedupes repeated attachment fetches when multiple pages share the same real photo id", async () => {
-    vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(baseProject() as never);
+    vi.mocked(AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(baseProject() as never);
     vi.mocked(AiDesignerTechPackRepository.findLatestByProjectId).mockResolvedValue({
       status: "SUCCESS",
       createdAt: new Date("2026-09-14T10:00:00Z"),
@@ -1232,6 +1276,39 @@ describe("exportTechPackPdf", () => {
     // Three pages share the exact same attachment id -- fetched once, not three times.
     expect(getAttachmentForDownload).toHaveBeenCalledTimes(1);
     expect(getAttachmentForDownload).toHaveBeenCalledWith("co-1", "att-shared-photo");
+  });
+
+  it("prefers the technical flat over the plain photo for Page 1/4, but Page 2 ALWAYS uses the plain photo (the image the seam-callout positions were estimated against)", async () => {
+    vi.mocked(AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(baseProject() as never);
+    vi.mocked(AiDesignerTechPackRepository.findLatestByProjectId).mockResolvedValue({
+      status: "SUCCESS",
+      createdAt: new Date("2026-09-20T10:00:00Z"),
+      garmentAnalysisJson: { part1: { identification: {} }, part2: { bomItems: [] } },
+      designerNotes: null,
+      suggestedAdditionalViews: null,
+      pages: [
+        { pageNumber: 1, pageTitle: "Cover Page / Style Summary", imageAttachmentId: "att-photo", technicalFlatAttachmentId: "att-flat" },
+        { pageNumber: 2, pageTitle: "Construction & Detail Callouts", imageAttachmentId: "att-photo", technicalFlatAttachmentId: "att-flat" },
+        { pageNumber: 4, pageTitle: "Colorways & Artwork Placement", imageAttachmentId: "att-photo", technicalFlatAttachmentId: "att-flat" },
+        { pageNumber: 5, pageTitle: "Measurements & Spec Table", imageAttachmentId: null, technicalFlatAttachmentId: "att-flat" },
+        { pageNumber: 3, pageTitle: "Bill of Materials / BOM", imageAttachmentId: null, technicalFlatAttachmentId: null },
+      ],
+    } as never);
+    vi.mocked(getAttachmentForDownload).mockImplementation(
+      async (_companyId: string, attachmentId: string) => ({ attachment: { mimeType: "image/png" }, buffer: Buffer.from(attachmentId) }) as never
+    );
+
+    const { renderTechPackDocumentPdf } = await import("@/core/ai-designer/export/tech-pack-pdf");
+    await exportTechPackPdf(actor, "proj-1");
+
+    const [callArgs] = vi.mocked(renderTechPackDocumentPdf).mock.calls[vi.mocked(renderTechPackDocumentPdf).mock.calls.length - 1];
+    const images = callArgs.images as { pageNumber: number; imageBase64: string }[];
+    const byPage = new Map(images.map((i) => [i.pageNumber, i.imageBase64]));
+    expect(byPage.get(1)).toBe(Buffer.from("att-flat").toString("base64"));
+    expect(byPage.get(2)).toBe(Buffer.from("att-photo").toString("base64")); // never the flat
+    expect(byPage.get(4)).toBe(Buffer.from("att-flat").toString("base64"));
+    expect(byPage.get(5)).toBe(Buffer.from("att-flat").toString("base64"));
+    expect(byPage.has(3)).toBe(false);
   });
 });
 
@@ -1575,7 +1652,7 @@ describe("runSketchAnalysis", () => {
 
     const [, , observations] = vi.mocked(AiDesignerSketchAnalysisRepository.upsertWithObservations).mock.calls[0];
     expect(observations).toHaveLength(21);
-    expect(observations.every((o: { approvedObservation: string; aiObservation: string; isLocked: boolean; userEdited: boolean }) =>
+    expect(observations.every((o: { approvedObservation: string; aiObservation: string; isLocked?: boolean; userEdited?: boolean }) =>
       o.approvedObservation === o.aiObservation && o.isLocked === true && o.userEdited === false
     )).toBe(true);
     expect(AiDesignerSketchAnalysisRunRepository.markSuccess).toHaveBeenCalledWith("sketch-run-1", "sketch-analysis-1");

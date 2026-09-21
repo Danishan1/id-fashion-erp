@@ -8900,6 +8900,11 @@ model ReplicateDesignCompatibilityCheck {
   rawResponseJson Json                          @map("raw_response_json")
   overallSummary  String?                       @map("overall_summary")
   overallRating   ReplicateCompatibilityRating? @map("overall_rating")
+  // One concrete, actionable next step for the whole material selection
+  // together (e.g. "no changes needed" when fully compatible, or a specific
+  // fabric/material adjustment when not) — nullable so a check row created
+  // before this field existed still renders without it, never a crash.
+  overallSuggestion String? @map("overall_suggestion")
 
   createdByUserId String   @map("created_by_user_id") @db.Uuid
   createdAt       DateTime @default(now()) @map("created_at")
@@ -8924,6 +8929,11 @@ model ReplicateDesignCompatibilityItem {
   materialLineId String?                       @map("material_line_id") @db.Uuid
   aiRating       ReplicateCompatibilityRating  @map("ai_rating")
   aiReasoning    String                        @map("ai_reasoning")
+  // A concrete, actionable recommendation for this one subject specifically
+  // (e.g. "add a fusible interlining" for a MINOR_CONCERN, or "no changes
+  // needed" for a COMPATIBLE rating) — nullable for the same backward-
+  // compatibility reason as overallSuggestion above.
+  aiSuggestion   String?                       @map("ai_suggestion")
   createdAt      DateTime                      @default(now()) @map("created_at")
 
   check        ReplicateDesignCompatibilityCheck @relation(fields: [checkId], references: [id])

@@ -121,7 +121,7 @@ export const AiDesignerTechPackRepository = {
       garmentAnalysisJson: Prisma.InputJsonValue;
       designerNotes: string;
       suggestedAdditionalViews: string;
-      pages: { pageNumber: number; pageTitle: string; imageAttachmentId: string | null }[];
+      pages: { pageNumber: number; pageTitle: string; imageAttachmentId: string | null; technicalFlatAttachmentId?: string | null }[];
     }
   ) =>
     prisma.aiDesignerTechPack.update({
@@ -183,7 +183,7 @@ export const AiDesignerTechPackRepository = {
     suggestedAdditionalViews: string | null;
     revisionNumber: number;
     createdByUserId: string;
-    pages: { pageNumber: number; pageTitle: string; promptText: string | null; imageAttachmentId: string | null }[];
+    pages: { pageNumber: number; pageTitle: string; promptText: string | null; imageAttachmentId: string | null; technicalFlatAttachmentId?: string | null }[];
   }) =>
     prisma.aiDesignerTechPack.create({
       data: {

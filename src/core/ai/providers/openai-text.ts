@@ -47,6 +47,37 @@ function client(apiKey: string): OpenAI {
   return new OpenAI({ apiKey, timeout: REQUEST_TIMEOUT_MS, maxRetries: 2 });
 }
 
+/**
+ * Some OpenAI models, when asked for `json_schema`-shaped output with
+ * `strict: false`, occasionally echo the *schema envelope itself*
+ * (`{type:"object", properties:{...actual answer...}}`) instead of just the
+ * flat answer object — confirmed live against a real request (Replicate
+ * Design's Compatibility Check): the model's real, well-formed answer
+ * (`items`/`overallSummary`/`overallRating`/`overallSuggestion`) came back
+ * nested one level under a `properties` key, with a sibling `type: "object"`
+ * key mirroring the schema's own shape, on both the original attempt AND the
+ * one-shot corrective retry — so without this unwrap, this failure mode is
+ * not self-correcting and always exhausts the retry before throwing
+ * `AiInvalidResponseError`. Only unwraps when the top-level object is
+ * missing every one of the schema's real top-level keys AND `.properties`
+ * itself contains at least one of them — never touches a genuinely valid
+ * response that happens to have its own field literally named "properties".
+ */
+export function unwrapSchemaEchoIfPresent(parsed: unknown, expectedKeys: string[]): unknown {
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return parsed;
+  const parsedObj = parsed as Record<string, unknown>;
+  const properties = parsedObj.properties;
+  if (properties === null || typeof properties !== "object" || Array.isArray(properties)) return parsed;
+  const propertiesObj = properties as Record<string, unknown>;
+
+  const hasAnyExpectedTopLevel = expectedKeys.some((key) => key in parsedObj);
+  const propertiesHasExpectedKeys = expectedKeys.some((key) => key in propertiesObj);
+  if (!hasAnyExpectedTopLevel && propertiesHasExpectedKeys) {
+    return propertiesObj;
+  }
+  return parsed;
+}
+
 function mapSdkError(err: unknown): AiServiceError {
   if (err instanceof APIConnectionTimeoutError) {
     return new AiServiceError("AI analysis could not be completed. Please try again.", "TIMEOUT", err);
@@ -111,7 +142,9 @@ async function requestStructuredJson<T>(params: CallParams<T>): Promise<Structur
     const content = response.choices[0]?.message?.content ?? null;
     if (!content) return { input: undefined, model: response.model, raw: response };
     try {
-      return { input: JSON.parse(content) as unknown, model: response.model, raw: response };
+      const parsed = JSON.parse(content) as unknown;
+      const expectedKeys = Object.keys(params.inputSchema.properties);
+      return { input: unwrapSchemaEchoIfPresent(parsed, expectedKeys), model: response.model, raw: response };
     } catch {
       return { input: undefined, model: response.model, raw: response };
     }
