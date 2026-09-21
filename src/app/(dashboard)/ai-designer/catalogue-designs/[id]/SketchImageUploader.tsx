@@ -43,7 +43,7 @@ export function SketchImageUploader({ projectId, sketchImageAttachmentId, busy, 
         Upload a hand-drawn or digital sketch of the garment you want to create. This sketch becomes the
         PRIMARY design reference — its silhouette, proportions, neckline, sleeves, panels, seams, and every
         other visible construction detail are preserved when the garment is generated. The fabric you select
-        in a later step only changes the material's appearance, never the garment's own structure.
+        in a later step only changes the material&apos;s appearance, never the garment&apos;s own structure.
       </p>
 
       {sketchImageAttachmentId ? (

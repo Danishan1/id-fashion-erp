@@ -4,7 +4,8 @@ import { createHmac, timingSafeEqual } from "crypto";
  * Signs/verifies the OAuth `state` param for the ad-integrations connect
  * flow (CSRF protection + a way to carry companyId/userId/platform through
  * the redirect round-trip without a server-side session table). HMAC-SHA256
- * over `NEXTAUTH_SECRET` — no new dependency, no new env var, and no DB row
+ * over `AUTH_SECRET` (NextAuth v5's own env var; `NEXTAUTH_SECRET` is
+ * accepted too) — no new dependency, no new env var, and no DB row
  * to expire/clean up.
  */
 interface OAuthStatePayload {
@@ -17,8 +18,10 @@ interface OAuthStatePayload {
 const STATE_MAX_AGE_MS = 10 * 60 * 1000;
 
 function getSecret(): string {
-  const secret = process.env.NEXTAUTH_SECRET;
-  if (!secret) throw new Error("NEXTAUTH_SECRET must be set to sign OAuth state.");
+  // AUTH_SECRET is NextAuth v5's own env var name (what this app actually
+  // sets); NEXTAUTH_SECRET is accepted too, for anyone who set the older name.
+  const secret = process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET;
+  if (!secret) throw new Error("AUTH_SECRET must be set to sign OAuth state.");
   return secret;
 }
 

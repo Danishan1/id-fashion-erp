@@ -7991,6 +7991,7 @@ enum AiDesignerProjectStatus {
 
 enum AiDesignerPromptType {
   FABRIC_ANALYSIS
+  PRODUCT_SUGGESTIONS
   IMAGE_GENERATE
   IMAGE_EDIT
 }
@@ -8081,13 +8082,22 @@ model AiDesignerProject {
   fabricColor               String?                 @map("fabric_color")
   fabricSupplierId          String?                 @map("fabric_supplier_id") @db.Uuid
 
+  // Step 2b -- AI Product Suggestions. Full result JSON replaced whole on
+  // each re-run (same "header replaced on re-analysis" pattern already used
+  // by Fabric Analysis's own 12 fields above) -- optional/skippable, a user
+  // can always fall back to picking Target Customer/Age Group/Product
+  // Category/Environment manually below without ever running this.
+  productSuggestionsJson Json? @map("product_suggestions_json")
+
   // Step 3-6 -- customer/product/design
   targetCustomer       AiDesignerTargetCustomer? @map("target_customer")
   ageGroup             String?                   @map("age_group")
   productCategory      String?                   @map("product_category")
   designSelectionsJson Json?                     @map("design_selections_json")
 
-  // Step 7 -- model
+  // Step 7 -- model (hidden from the wizard for now, per explicit user
+  // request -- columns kept, unused, reversible later. generateDesign()'s
+  // own prompt-building already tolerates all-null model fields.)
   modelGender   String? @map("model_gender")
   modelBodyType String? @map("model_body_type")
   modelPose     String? @map("model_pose")
@@ -8118,6 +8128,25 @@ model AiDesignerProject {
   // travel as plain per-request API input instead, recorded only in the
   // generation's audit log / version designSnapshotJson.
   embellishmentMotifAttachmentId String? @map("embellishment_motif_attachment_id")
+
+  // Step 12b -- Branding (optional). brandName is never defaulted into this
+  // column -- it stays null unless the user actually typed something, and
+  // the real default (the logged-in company's own name) is resolved at
+  // read/render time instead, so a later company-name change is picked up
+  // automatically. brandLogoAttachmentId has no default at all -- no
+  // company-logo field exists anywhere in this schema, so a logo is purely
+  // opt-in per project. logoXPercent/logoYPercent/logoWidthPercent are plain
+  // percentages (0-100) of the design image's own width/height -- not the
+  // Tech Pack PDF's letterboxed-callout-box percentages, a different
+  // problem with a different coordinate space. brandedImageAttachmentId is
+  // the real sharp-composited output, regenerated in place (not versioned --
+  // this is a deterministic image composite, not an audited AI process).
+  brandName               String?  @map("brand_name")
+  brandLogoAttachmentId   String?  @map("brand_logo_attachment_id")
+  logoXPercent            Decimal? @map("logo_x_percent") @db.Decimal(5, 2)
+  logoYPercent            Decimal? @map("logo_y_percent") @db.Decimal(5, 2)
+  logoWidthPercent        Decimal? @map("logo_width_percent") @db.Decimal(5, 2)
+  brandedImageAttachmentId String? @map("branded_image_attachment_id")
 
   // Set once version 1 exists (nullable-then-set-later, same precedent as
   // AiGarmentProject.selectedDesignDirectionId elsewhere in this schema).
@@ -8900,6 +8929,11 @@ model ReplicateDesignCompatibilityCheck {
   rawResponseJson Json                          @map("raw_response_json")
   overallSummary  String?                       @map("overall_summary")
   overallRating   ReplicateCompatibilityRating? @map("overall_rating")
+  // One concrete, actionable next step for the whole material selection
+  // together (e.g. "no changes needed" when fully compatible, or a specific
+  // fabric/material adjustment when not) — nullable so a check row created
+  // before this field existed still renders without it, never a crash.
+  overallSuggestion String? @map("overall_suggestion")
 
   createdByUserId String   @map("created_by_user_id") @db.Uuid
   createdAt       DateTime @default(now()) @map("created_at")
@@ -8924,6 +8958,11 @@ model ReplicateDesignCompatibilityItem {
   materialLineId String?                       @map("material_line_id") @db.Uuid
   aiRating       ReplicateCompatibilityRating  @map("ai_rating")
   aiReasoning    String                        @map("ai_reasoning")
+  // A concrete, actionable recommendation for this one subject specifically
+  // (e.g. "add a fusible interlining" for a MINOR_CONCERN, or "no changes
+  // needed" for a COMPATIBLE rating) — nullable for the same backward-
+  // compatibility reason as overallSuggestion above.
+  aiSuggestion   String?                       @map("ai_suggestion")
   createdAt      DateTime                      @default(now()) @map("created_at")
 
   check        ReplicateDesignCompatibilityCheck @relation(fields: [checkId], references: [id])

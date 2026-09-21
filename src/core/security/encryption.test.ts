@@ -38,8 +38,9 @@ describe("encryptSecret / decryptSecret", () => {
     expect(() => decryptSecret(tampered)).toThrow();
   });
 
-  it("requires NEXTAUTH_SECRET to be set", () => {
+  it("requires AUTH_SECRET (or the legacy NEXTAUTH_SECRET) to be set", () => {
     delete process.env.NEXTAUTH_SECRET;
-    expect(() => encryptSecret("x")).toThrow(/NEXTAUTH_SECRET/);
+    delete process.env.AUTH_SECRET;
+    expect(() => encryptSecret("x")).toThrow(/AUTH_SECRET/);
   });
 });

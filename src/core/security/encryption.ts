@@ -15,9 +15,11 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from "crypt
 const ALGORITHM = "aes-256-gcm";
 
 function getKey(): Buffer {
-  const secret = process.env.NEXTAUTH_SECRET;
+  // AUTH_SECRET is NextAuth v5's own env var name (what this app actually
+  // sets); NEXTAUTH_SECRET is accepted too, for anyone who set the older name.
+  const secret = process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET;
   if (!secret) {
-    throw new Error("NEXTAUTH_SECRET must be set to encrypt or decrypt stored secrets.");
+    throw new Error("AUTH_SECRET must be set to encrypt or decrypt stored secrets.");
   }
   return createHash("sha256").update(secret).digest();
 }
