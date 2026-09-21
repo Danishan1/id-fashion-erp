@@ -47,15 +47,29 @@ pipeline {
                     sh '''
                         DEPLOY_DIR="/var/www/html/NodeProjects/fashion-erp"
 
+                        echo "Deploying Fashion ERP..."
+
                         rsync -a --delete \
-                          --exclude='.env' \
-                          --exclude='uploads/' \
-                          ./ "$DEPLOY_DIR/"
+                        --exclude='.env' \
+                        --exclude='uploads/' \
+                        ./ "$DEPLOY_DIR/"
 
                         cp "$ENV_FILE" "$DEPLOY_DIR/.env"
                         chmod 600 "$DEPLOY_DIR/.env"
 
                         mkdir -p "$DEPLOY_DIR/uploads"
+
+                        echo "Restarting Fashion ERP..."
+
+                        export PATH="/var/lib/jenkins/.nvm/versions/node/v22.23.2/bin:$PATH"
+
+                        cd "$DEPLOY_DIR"
+
+                        PORT=3007 pm2 restart fashion-erp-web --update-env
+
+                        pm2 save
+
+                        echo "Fashion ERP deployed successfully."
                     '''
                 }
             }
