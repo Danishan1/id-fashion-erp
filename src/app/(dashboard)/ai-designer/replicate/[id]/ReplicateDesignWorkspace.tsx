@@ -43,12 +43,14 @@ interface CompatibilityItem {
   subjectType: "FABRIC" | "MATERIAL_LINE";
   aiRating: string;
   aiReasoning: string;
+  aiSuggestion: string | null;
 }
 
 interface CompatibilityCheck {
   id: string;
   overallSummary: string | null;
   overallRating: string | null;
+  overallSuggestion: string | null;
   items: CompatibilityItem[];
 }
 

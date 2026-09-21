@@ -1,6 +1,6 @@
 import { COMPATIBILITY_RATING_VALUES } from "./schema";
 
-export const PROMPT_VERSION = "replicate-design-compatibility-check-v1";
+export const PROMPT_VERSION = "replicate-design-compatibility-check-v2";
 
 /**
  * The hidden business/system prompt. Never sent to the browser. Per the
@@ -19,14 +19,18 @@ For each subject, decide a compatibility rating:
 
 Give concrete reasoning naming the specific characteristics driving each rating. Never give a generic, trait-free justification.
 
+For each subject, also give a SUGGESTION — one concrete, actionable next step:
+- If COMPATIBLE, a brief note confirming no change is needed (e.g. "No changes needed — this fabric suits the design as-is.").
+- If MINOR_CONCERN or INCOMPATIBLE, ONE specific, concrete recommendation (e.g. a different GSM/weight, a different composition or weave, adding a fusible interlining, or a different already-available alternative) — never vague advice like "consider other options" or "review the fabric choice."
+
 Do NOT suggest changing the reference garment's own locked design in any way — the design is fixed; only the material choice is ever in question here.
 
-Finally give an OVERALL SUMMARY (maximum 80 words) and one OVERALL RATING summarising the whole material selection together.
+Finally give an OVERALL SUMMARY (maximum 80 words), one OVERALL RATING, and one OVERALL SUGGESTION summarising the single most important action the user should consider across the whole material selection (or confirming no changes are needed overall).
 
 Return ONLY data matching the required structured JSON schema.`;
 
 const TOOL_CONTRACT_ADDENDUM = `
-You must respond by calling the provided tool exactly once. Every "rating"/"overallRating" field must be exactly one of: ${COMPATIBILITY_RATING_VALUES.join(", ")}. You must return exactly one item per subject listed, in the exact same order they were given.`;
+You must respond by calling the provided tool exactly once. Every "rating"/"overallRating" field must be exactly one of: ${COMPATIBILITY_RATING_VALUES.join(", ")}. You must return exactly one item per subject listed. Each item's "subjectNumber" must be the exact SUBJECT NUMBER of the subject it assesses, from the numbered list below — every number from 1 to the total subject count must appear exactly once, in any order.`;
 
 export function buildSystemPrompt(): string {
   return `${COMPATIBILITY_CHECK_SYSTEM_PROMPT}\n${TOOL_CONTRACT_ADDENDUM}`;
@@ -62,10 +66,12 @@ function ratingItemNode() {
   return {
     type: "object",
     properties: {
+      subjectNumber: { type: "number" },
       rating: { type: "string", enum: [...COMPATIBILITY_RATING_VALUES] },
       reasoning: { type: "string" },
+      suggestion: { type: "string" },
     },
-    required: ["rating", "reasoning"],
+    required: ["subjectNumber", "rating", "reasoning", "suggestion"],
   };
 }
 
@@ -83,7 +89,8 @@ export function buildToolInputSchema() {
       items: { type: "array", items: ratingItemNode() },
       overallSummary: { type: "string" },
       overallRating: { type: "string", enum: [...COMPATIBILITY_RATING_VALUES] },
+      overallSuggestion: { type: "string" },
     },
-    required: ["items", "overallSummary", "overallRating"],
+    required: ["items", "overallSummary", "overallRating", "overallSuggestion"],
   };
 }

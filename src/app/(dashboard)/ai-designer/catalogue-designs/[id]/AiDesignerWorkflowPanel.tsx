@@ -16,7 +16,6 @@ import {
 import type { DesignAttributeDef } from "@/core/ai-designer/catalogs/design-attribute-catalog";
 import { DesignOptionImage } from "@/core/ai-designer/catalogs/design-icon-catalog";
 import { ENVIRONMENTS } from "@/core/ai-designer/catalogs/environment-catalog";
-import { BODY_TYPES, MODEL_GENDERS, POSES } from "@/core/ai-designer/catalogs/model-catalog";
 import { FABRIC_FIELD_KEYS, type FabricFieldKey } from "@/modules/ai-designer/ai-designer.schema";
 import { useAiDesignerDisplayMode } from "@/lib/use-ai-designer-display-mode";
 import { SKETCH_FEATURE_LABELS, SKETCH_TO_DESIGN_ATTRIBUTE_KEYS, type SketchFeatureKey } from "@/core/ai-designer/sketch-analysis/feature-registry";
@@ -24,6 +23,10 @@ import { STATUS_BADGE_CLASS, STATUS_LABELS, WIZARD_STEP_LABELS, stepsForCreation
 import { AiDesignerTechPackPanel, type TechPackData } from "./AiDesignerTechPackPanel";
 import { SketchImageUploader } from "./SketchImageUploader";
 import { SketchAnalysisPanel } from "./SketchAnalysisPanel";
+import { ProductSuggestionsPanel } from "./ProductSuggestionsPanel";
+import { LogoPositioner } from "./LogoPositioner";
+import { AiSuggestedBadge } from "@/components/ui/AiSuggestedBadge";
+import type { ProductSuggestionsResponse } from "@/core/ai-designer/product-suggestions/schema";
 
 const FABRIC_FIELD_LABELS: Record<FabricFieldKey, string> = {
   fabricName: "Fabric Name",
@@ -47,6 +50,8 @@ interface AiDesignerImageRow {
   imageAttachmentId: string;
   decision: "PENDING" | "SELECTED" | "REJECTED";
   createdAt: string;
+  /** Set only on the response of the "click a suggested product" action — never persisted, never re-derived on reload. */
+  fromSuggestion?: boolean;
 }
 
 interface AiDesignerProjectData {
@@ -75,6 +80,7 @@ interface AiDesignerProjectData {
   fabricSuitableSeason: string | null;
   fabricRecommendedGarments: string | null;
   fabricColor: string | null;
+  productSuggestionsJson: ProductSuggestionsResponse | null;
   targetCustomer: TargetCustomer | null;
   ageGroup: string | null;
   productCategory: string | null;
@@ -88,6 +94,12 @@ interface AiDesignerProjectData {
   secondFabricImageAttachmentId: string | null;
   secondFabricApplyAreas: string[];
   embellishmentMotifAttachmentId: string | null;
+  brandName: string | null;
+  brandLogoAttachmentId: string | null;
+  logoXPercent: number | null;
+  logoYPercent: number | null;
+  logoWidthPercent: number | null;
+  brandedImageAttachmentId: string | null;
   currentVersion: { currentImage: AiDesignerImageRow } | null;
   versions: { versionNumber: number; changeSummary: string | null; currentImage: AiDesignerImageRow }[];
   fabricProduct: { id: string; styleName: string; styleCode: string } | null;
@@ -209,6 +221,13 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
     sketchAnalysisSummary: string | null;
     observations: { id: string; featureKey: string; aiObservation: string; aiConfidence: string; approvedObservation: string; userEdited: boolean; isLocked: boolean }[];
   } | null>(null);
+  const [suggestionApplied, setSuggestionApplied] = useState<{
+    targetCustomer: string;
+    ageGroup: string;
+    productCategory: string;
+    environmentKey: string;
+  } | null>(null);
+  const [brandDefaultName, setBrandDefaultName] = useState<string | null>(null);
   const [designAttributes, setDesignAttributes] = useState<DesignAttributeDef[]>([]);
   const [activeDesignAttrKey, setActiveDesignAttrKey] = useState<string | null>(null);
   const [optionReferenceImages, setOptionReferenceImages] = useState<Record<string, string>>({});
@@ -285,6 +304,17 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
       .then((body) => setSketchAnalysis(body.data ?? null))
       .catch(() => {});
   }, [projectId, initialProject.creationMode]);
+
+  // Resolves the effective brand-name default (the logged-in company's own
+  // name) purely for the placeholder/prefill on the Branding step's input —
+  // the project's own real, stored brandName (or lack of one) is what's
+  // actually submitted either way.
+  useEffect(() => {
+    fetch(`/api/v1/ai-designer/projects/${projectId}/branding`)
+      .then((r) => r.json())
+      .then((body) => setBrandDefaultName(body.data?.effectiveBrandName ?? null))
+      .catch(() => {});
+  }, [projectId]);
 
   // Product Design's own attribute list is now a real, per-company master
   // (Masters -> AI Design -> Product Design), not a static import — this
@@ -384,6 +414,29 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
       .catch(() => ({ data: null }));
     setSketchAnalysis(body.data ?? null);
   };
+
+  /**
+   * The literal "click a suggested product" action — applies the AI's own
+   * exact suggestion (Target Customer/Age Group/Product Category/
+   * Environment) AND generates 3 designs in one server round trip. Appends
+   * the 3 new images to the existing gallery the same way the plain
+   * Generate button does, so they show up immediately without a full page
+   * reload. run()'s own reload() already refreshes targetCustomer/ageGroup/
+   * productCategory/environmentLabel for free, since applyProductSuggestionAndGenerate()
+   * saves them through the same saveWizardSelections() the manual steps use.
+   */
+  const applySuggestion = (groupIndex: number, itemIndex: number) =>
+    run(`apply-suggestion-${groupIndex}-${itemIndex}`, async () => {
+      const body = await parseJson(
+        await fetch(`/api/v1/ai-designer/projects/${projectId}/product-suggestions/apply`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ groupIndex, itemIndex }),
+        })
+      );
+      setGeneratedImages((prev) => [...prev, ...body.data.images]);
+      setSuggestionApplied(body.data.appliedSuggestion);
+    });
 
   const ageGroups = project.targetCustomer ? AGE_GROUPS_BY_CUSTOMER[project.targetCustomer] : [];
   const productCategories = project.targetCustomer ? PRODUCT_CATEGORIES_BY_CUSTOMER[project.targetCustomer] : [];
@@ -593,6 +646,25 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
         <StepNextButton step="FABRIC_ANALYSIS" steps={steps} onNext={goToNextStep} />
       </WizardSection>
 
+      {/* Step 2b — AI Product Suggestions */}
+      <WizardSection
+        sectionRef={(el) => (sectionRefs.current.PRODUCT_SUGGESTIONS = el)}
+        index={steps.indexOf("PRODUCT_SUGGESTIONS") + 1}
+        title="AI Product Suggestions"
+        isDone={project.completedSteps.includes("PRODUCT_SUGGESTIONS")}
+        isCurrent={project.currentStep === "PRODUCT_SUGGESTIONS"}
+        isOpen={expandedStep === "PRODUCT_SUGGESTIONS"}
+      >
+        <ProductSuggestionsPanel
+          hasFabric={!!project.fabricName}
+          suggestions={project.productSuggestionsJson}
+          busy={busy}
+          onRun={() => run("run-suggestions", () => fetch(`/api/v1/ai-designer/projects/${projectId}/product-suggestions`, { method: "POST" }).then(parseJson))}
+          onApply={applySuggestion}
+        />
+        <StepNextButton step="PRODUCT_SUGGESTIONS" steps={steps} onNext={goToNextStep} />
+      </WizardSection>
+
       {/* Step 3 — Target Customer */}
       <WizardSection
         sectionRef={(el) => (sectionRefs.current.TARGET_CUSTOMER = el)}
@@ -602,6 +674,11 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
         isCurrent={project.currentStep === "TARGET_CUSTOMER"}
         isOpen={expandedStep === "TARGET_CUSTOMER"}
       >
+        {suggestionApplied && project.targetCustomer === suggestionApplied.targetCustomer && (
+          <div className="mb-2">
+            <AiSuggestedBadge />
+          </div>
+        )}
         <div className="flex flex-wrap gap-2">
           {TARGET_CUSTOMER_VALUES.map((c) => (
             <button
@@ -631,6 +708,11 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
         isOpen={expandedStep === "AGE_GROUP"}
       >
         {!project.targetCustomer && <p className="text-xs text-zinc-500">Pick a Target Customer first.</p>}
+        {suggestionApplied && project.ageGroup === suggestionApplied.ageGroup && (
+          <div className="mb-2">
+            <AiSuggestedBadge />
+          </div>
+        )}
         <div className="mt-2 flex flex-wrap gap-2">
           {ageGroups.map((a) => (
             <button
@@ -660,6 +742,11 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
         isOpen={expandedStep === "PRODUCT_CATEGORY"}
       >
         {!project.targetCustomer && <p className="text-xs text-zinc-500">Pick a Target Customer first.</p>}
+        {suggestionApplied && project.productCategory === suggestionApplied.productCategory && (
+          <div className="mb-2">
+            <AiSuggestedBadge />
+          </div>
+        )}
         <div className="mt-2 flex flex-wrap gap-2">
           {productCategories.map((c) => (
             <button
@@ -761,66 +848,7 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
         <StepNextButton step="PRODUCT_DESIGN" steps={steps} onNext={goToNextStep} />
       </WizardSection>
 
-      {/* Step 7 — Model */}
-      <WizardSection
-        sectionRef={(el) => (sectionRefs.current.MODEL = el)}
-        index={steps.indexOf("MODEL") + 1}
-        title="Model"
-        isDone={project.completedSteps.includes("MODEL")}
-        isCurrent={project.currentStep === "MODEL"}
-        isOpen={expandedStep === "MODEL"}
-      >
-        <div className="grid gap-3 sm:grid-cols-3">
-          <FormField label="Gender" htmlFor="modelGender">
-            <select
-              id="modelGender"
-              className={textInputClass()}
-              value={project.modelGender ?? ""}
-              onChange={(e) => run("model", () => patchWizard({ modelGender: e.target.value }))}
-            >
-              <option value="">— Select —</option>
-              {MODEL_GENDERS.map((g) => (
-                <option key={g} value={g}>
-                  {g}
-                </option>
-              ))}
-            </select>
-          </FormField>
-          <FormField label="Body Type" htmlFor="modelBodyType">
-            <select
-              id="modelBodyType"
-              className={textInputClass()}
-              value={project.modelBodyType ?? ""}
-              onChange={(e) => run("model", () => patchWizard({ modelBodyType: e.target.value }))}
-            >
-              <option value="">— Select —</option>
-              {BODY_TYPES.map((b) => (
-                <option key={b} value={b}>
-                  {b}
-                </option>
-              ))}
-            </select>
-          </FormField>
-          <FormField label="Pose" htmlFor="modelPose">
-            <select
-              id="modelPose"
-              className={textInputClass()}
-              value={project.modelPose ?? ""}
-              onChange={(e) => run("model", () => patchWizard({ modelPose: e.target.value }))}
-            >
-              <option value="">— Select —</option>
-              {POSES.map((p) => (
-                <option key={p} value={p}>
-                  {p}
-                </option>
-              ))}
-            </select>
-          </FormField>
-        </div>
-        <StepNextButton step="MODEL" steps={steps} onNext={goToNextStep} />
-      </WizardSection>
-
-      {/* Step 8 — Environment */}
+      {/* Step 8 — Environment (Model step hidden for now, per explicit request) */}
       <WizardSection
         sectionRef={(el) => (sectionRefs.current.ENVIRONMENT = el)}
         index={steps.indexOf("ENVIRONMENT") + 1}
@@ -829,6 +857,11 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
         isCurrent={project.currentStep === "ENVIRONMENT"}
         isOpen={expandedStep === "ENVIRONMENT"}
       >
+        {suggestionApplied && project.environmentKey === suggestionApplied.environmentKey && (
+          <div className="mb-2">
+            <AiSuggestedBadge />
+          </div>
+        )}
         <div className="flex flex-wrap gap-2">
           {ENVIRONMENTS.map((env) => (
             <button
@@ -965,6 +998,7 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
           <div className="mt-4 grid gap-3 sm:grid-cols-3">
             {generatedImages.map((img) => (
               <div key={img.id} className="space-y-2 rounded-md border border-zinc-200 p-2 dark:border-zinc-800">
+                {img.fromSuggestion && <AiSuggestedBadge label="Generated from AI Suggestion" />}
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={imageUrl(img.imageAttachmentId)} alt="Generated design" className="aspect-[3/4] w-full rounded object-cover" />
                 <div className="flex items-center justify-between text-xs">
@@ -1242,6 +1276,51 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
             </Link>
           </div>
           <StepNextButton step="EDIT" steps={steps} onNext={goToNextStep} />
+        </WizardSection>
+      )}
+
+      {/* Step 12b — Branding */}
+      {currentImage && (
+        <WizardSection
+          sectionRef={(el) => (sectionRefs.current.BRANDING = el)}
+          index={steps.indexOf("BRANDING") + 1}
+          title="Branding"
+          isDone={project.completedSteps.includes("BRANDING")}
+          isCurrent={project.currentStep === "BRANDING"}
+          isOpen={expandedStep === "BRANDING"}
+        >
+          <FormField label="Brand Name (optional)" htmlFor="brandName">
+            <input
+              id="brandName"
+              className={textInputClass()}
+              defaultValue={project.brandName ?? brandDefaultName ?? ""}
+              placeholder={brandDefaultName ? `Defaults to "${brandDefaultName}"` : undefined}
+              onBlur={(e) => {
+                if (e.target.value === (project.brandName ?? "")) return;
+                run("brand-name", () =>
+                  fetch(`/api/v1/ai-designer/projects/${projectId}/branding`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ brandName: e.target.value }),
+                  }).then(parseJson)
+                );
+              }}
+            />
+          </FormField>
+          <div className="mt-4">
+            <LogoPositioner
+              projectId={projectId}
+              designImageAttachmentId={currentImage.imageAttachmentId}
+              logoAttachmentId={project.brandLogoAttachmentId}
+              logoXPercent={project.logoXPercent}
+              logoYPercent={project.logoYPercent}
+              logoWidthPercent={project.logoWidthPercent}
+              brandedImageAttachmentId={project.brandedImageAttachmentId}
+              busy={busy}
+              run={run}
+            />
+          </div>
+          <StepNextButton step="BRANDING" steps={steps} onNext={goToNextStep} />
         </WizardSection>
       )}
 

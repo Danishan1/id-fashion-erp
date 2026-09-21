@@ -18,12 +18,15 @@ interface CompatibilityItem {
   subjectType: "FABRIC" | "MATERIAL_LINE";
   aiRating: string;
   aiReasoning: string;
+  /** Nullable — a check row created before this field existed won't have one; the UI simply omits the suggestion line rather than showing a blank/placeholder. */
+  aiSuggestion: string | null;
 }
 
 interface CompatibilityCheck {
   id: string;
   overallSummary: string | null;
   overallRating: string | null;
+  overallSuggestion: string | null;
   items: CompatibilityItem[];
 }
 
@@ -41,6 +44,11 @@ export function CompatibilityWarningPanel({ projectId, hasFabricOrMaterial, hasA
     run("run-compat", () => fetch(`/api/v1/ai-designer/replicate-projects/${projectId}/compatibility-check`, { method: "POST" }).then(parseJson));
 
   const disabled = busy === "run-compat" || !hasFabricOrMaterial || !hasApprovedDna;
+  const blockedReason = !hasApprovedDna
+    ? "Approve the Design DNA analysis first (Step 3 — Design Lock Review)."
+    : !hasFabricOrMaterial
+      ? "Select a fabric or add a material first (Step 4 — Fabric & Material Selection)."
+      : null;
 
   return (
     <div className="space-y-3">
@@ -49,21 +57,30 @@ export function CompatibilityWarningPanel({ projectId, hasFabricOrMaterial, hasA
         stiff fabric against a drape-dependent silhouette) — this never blocks generation outright, it only
         flags a concern for you to acknowledge before continuing.
       </p>
+      {blockedReason && <p className="text-sm text-amber-700 dark:text-amber-400">{blockedReason}</p>}
       <button
         type="button"
         disabled={disabled}
         onClick={runCheck}
         className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
-        title={!hasApprovedDna ? "Approve the Design DNA analysis first" : !hasFabricOrMaterial ? "Select a fabric or add a material first" : undefined}
+        title={blockedReason ?? undefined}
       >
         {busy === "run-compat" ? "Checking…" : check ? "Re-run Compatibility Check" : "Run Compatibility Check"}
       </button>
 
       {check && (
         <div className="space-y-3">
-          <div className="flex items-center gap-2">
-            {check.overallRating && <RatingBadge rating={check.overallRating} />}
-            {check.overallSummary && <p className="text-sm text-zinc-700 dark:text-zinc-300">{check.overallSummary}</p>}
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              {check.overallRating && <RatingBadge rating={check.overallRating} />}
+              {check.overallSummary && <p className="text-sm text-zinc-700 dark:text-zinc-300">{check.overallSummary}</p>}
+            </div>
+            {check.overallSuggestion && (
+              <p className="text-sm text-indigo-700 dark:text-indigo-300">
+                <span className="font-medium">Suggestion: </span>
+                {check.overallSuggestion}
+              </p>
+            )}
           </div>
           <div className="space-y-2">
             {check.items.map((item) => (
@@ -73,6 +90,12 @@ export function CompatibilityWarningPanel({ projectId, hasFabricOrMaterial, hasA
                   <RatingBadge rating={item.aiRating} />
                 </div>
                 <p className="mt-1 text-zinc-700 dark:text-zinc-300">{item.aiReasoning}</p>
+                {item.aiSuggestion && (
+                  <p className="mt-1 text-indigo-700 dark:text-indigo-300">
+                    <span className="font-medium">Suggestion: </span>
+                    {item.aiSuggestion}
+                  </p>
+                )}
               </div>
             ))}
           </div>

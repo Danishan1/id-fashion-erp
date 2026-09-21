@@ -94,9 +94,24 @@ const seamCalloutSchema = z.object({
   location: str(),
   technicalSpecification: str(),
   status: z.enum(["PROPOSED", "CONFIRMED"]),
+  /**
+   * Best-effort estimated position of this callout on the REAL PHOTO the
+   * vision model analyzed (percentage from the top-left corner, 0-100) — used
+   * to draw a numbered pin directly on that photo on Page 2. Both optional
+   * and deliberately NOT required together at the Zod level for a single
+   * value (a callout with only one, or neither, simply renders in the table
+   * with no pin — the renderer is what enforces "both present" before ever
+   * drawing a pin). Never estimated against a generated technical flat (a
+   * different image, different framing) — see tech-pack-pdf.tsx's own
+   * documented reasoning for why Page 2 always shows the photo, not the flat.
+   * Deliberately excluded from SEAM_CALLOUT_TEXT_FIELDS below — these are
+   * AI-estimated numeric values, not meant for manual free-text editing.
+   */
+  xPercent: z.number().min(0).max(100).optional(),
+  yPercent: z.number().min(0).max(100).optional(),
 });
 export type SeamCallout = z.infer<typeof seamCalloutSchema>;
-/** `calloutNumber` is deliberately excluded — it's a positional ordinal assigned by the AI, not a free-text value a user corrects (renumbering/reordering callouts is out of scope for this pass). `status` is editable as a constrained enum, not free text — validated separately against SEAM_CALLOUT_STATUS_VALUES. */
+/** `calloutNumber` is deliberately excluded — it's a positional ordinal assigned by the AI, not a free-text value a user corrects (renumbering/reordering callouts is out of scope for this pass). `status` is editable as a constrained enum, not free text — validated separately against SEAM_CALLOUT_STATUS_VALUES. `xPercent`/`yPercent` are also excluded — see the schema's own doc comment. */
 export const SEAM_CALLOUT_TEXT_FIELDS = ["location", "technicalSpecification"] as const;
 export const SEAM_CALLOUT_STATUS_VALUES = ["PROPOSED", "CONFIRMED"] as const;
 
@@ -117,9 +132,26 @@ const suggestedColorwaySchema = z.object({
   trimColor: str(),
   artworkColor: str(),
   notes: str(),
+  /**
+   * Best-effort HEX estimates for each named color above, so the PDF can
+   * render a real swatch chip instead of just a color-name string — optional
+   * and independent per field, since the model may reasonably be able to
+   * estimate one color's hex but not another's. Absent on any
+   * `garmentAnalysisJson` row generated before this field existed; the
+   * renderer's `resolveColorHex()` helper falls back to a small common-color
+   * name dictionary, and shows text-only when nothing resolves — never a
+   * fabricated exact hex. Deliberately excluded from
+   * SUGGESTED_COLORWAY_EDITABLE_FIELDS below (see that constant's own doc
+   * comment).
+   */
+  mainColorHex: z.string().optional(),
+  contrastColorHex: z.string().optional(),
+  trimColorHex: z.string().optional(),
+  artworkColorHex: z.string().optional(),
 });
 export type SuggestedColorway = z.infer<typeof suggestedColorwaySchema>;
-export const SUGGESTED_COLORWAY_EDITABLE_FIELDS = Object.keys(suggestedColorwaySchema.shape) as (keyof SuggestedColorway)[];
+/** Only the original 7 text fields are manually editable — the 4 *Hex fields are AI-estimated swatch data, not meant for free-text editing in this pass. */
+export const SUGGESTED_COLORWAY_EDITABLE_FIELDS = ["colorwayCode", "colorwayName", "mainColor", "contrastColor", "trimColor", "artworkColor", "notes"] as const;
 
 const artworkItemSchema = z.object({
   artworkType: str(),

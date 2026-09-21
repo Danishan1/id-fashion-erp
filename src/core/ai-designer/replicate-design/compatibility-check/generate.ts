@@ -10,6 +10,7 @@ export interface GenerateCompatibilityCheckResult {
   items: CompatibilityItemOutput[];
   overallSummary: string;
   overallRating: "COMPATIBLE" | "MINOR_CONCERN" | "INCOMPATIBLE";
+  overallSuggestion: string;
   model: string;
   rawResponse: unknown;
 }
@@ -37,6 +38,7 @@ export async function generateCompatibilityCheck(ctx: CompatibilityCheckContext)
     items: result.data.items,
     overallSummary: result.data.overallSummary,
     overallRating: result.data.overallRating,
+    overallSuggestion: result.data.overallSuggestion,
     model: result.model,
     rawResponse: result.rawResponse,
   };
