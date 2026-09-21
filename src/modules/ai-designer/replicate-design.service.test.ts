@@ -529,7 +529,7 @@ describe("runCompatibilityCheck", () => {
     await expect(runCompatibilityCheck(actor, "proj-1")).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
 
-  it("never hard-blocks on a non-COMPATIBLE rating — it just persists the warning", async () => {
+  it("never hard-blocks on a non-COMPATIBLE rating — it just persists the warning, including the AI's suggestion", async () => {
     vi.mocked(ReplicateDesignProjectRepository.findAnyById).mockResolvedValue(baseProject({ fabricName: "Chiffon" }) as never);
     vi.mocked(ReplicateDesignDnaAnalysisRepository.findByProjectId).mockResolvedValue({
       id: "analysis-1",
@@ -539,9 +539,10 @@ describe("runCompatibilityCheck", () => {
     } as never);
     vi.mocked(ReplicateDesignMaterialLineRepository.findByProjectId).mockResolvedValue([]);
     vi.mocked(generateCompatibilityCheck).mockResolvedValue({
-      items: [{ rating: "INCOMPATIBLE", reasoning: "Chiffon cannot hold a structured blazer shape." }],
+      items: [{ subjectNumber: 1, rating: "INCOMPATIBLE", reasoning: "Chiffon cannot hold a structured blazer shape.", suggestion: "Use a heavier, structured wool or twill instead." }],
       overallSummary: "The fabric is unsuitable for this silhouette.",
       overallRating: "INCOMPATIBLE",
+      overallSuggestion: "Switch to a heavier, structured fabric before generating.",
       model: "claude-sonnet-5",
       rawResponse: {},
     } as never);
@@ -554,6 +555,67 @@ describe("runCompatibilityCheck", () => {
 
     expect(check).toMatchObject({ overallRating: "INCOMPATIBLE" });
     expect(ReplicateDesignCompatibilityRunRepository.markSuccess).toHaveBeenCalled();
+    expect(ReplicateDesignCompatibilityRepository.upsertWithItems).toHaveBeenCalledWith(
+      "proj-1",
+      expect.objectContaining({ overallSuggestion: "Switch to a heavier, structured fabric before generating." }),
+      [expect.objectContaining({ aiRating: "INCOMPATIBLE", aiSuggestion: "Use a heavier, structured wool or twill instead." })]
+    );
+  });
+
+  it("maps each item back to its real subject via subjectNumber, not array position — correct even if the AI returns items out of order", async () => {
+    vi.mocked(ReplicateDesignProjectRepository.findAnyById).mockResolvedValue(baseProject({ fabricName: "Cotton" }) as never);
+    vi.mocked(ReplicateDesignDnaAnalysisRepository.findByProjectId).mockResolvedValue({
+      id: "analysis-1",
+      status: "APPROVED",
+      designDnaSummary: "A simple dress.",
+      observations: [],
+    } as never);
+    vi.mocked(ReplicateDesignMaterialLineRepository.findByProjectId).mockResolvedValue([
+      { id: "line-1", role: "LINING", notes: null, product: { styleName: "Poly Lining" } },
+    ] as never);
+    // Subject 1 = the fabric, Subject 2 = the material line — but the AI returns them in reverse order.
+    vi.mocked(generateCompatibilityCheck).mockResolvedValue({
+      items: [
+        { subjectNumber: 2, rating: "COMPATIBLE", reasoning: "Lining suits the design.", suggestion: "No changes needed." },
+        { subjectNumber: 1, rating: "MINOR_CONCERN", reasoning: "Cotton is a touch heavy.", suggestion: "Consider a lighter-weight cotton." },
+      ],
+      overallSummary: "Mostly fine.",
+      overallRating: "MINOR_CONCERN",
+      overallSuggestion: "Consider a lighter-weight cotton.",
+      model: "claude-sonnet-5",
+      rawResponse: {},
+    } as never);
+    vi.mocked(ReplicateDesignCompatibilityRepository.upsertWithItems).mockResolvedValue({ id: "check-1" } as never);
+
+    await runCompatibilityCheck(actor, "proj-1");
+
+    const [, , items] = vi.mocked(ReplicateDesignCompatibilityRepository.upsertWithItems).mock.calls[0];
+    expect(items).toEqual([
+      expect.objectContaining({ subjectType: "FABRIC", materialLineId: null, aiRating: "MINOR_CONCERN", aiSuggestion: "Consider a lighter-weight cotton." }),
+      expect.objectContaining({ subjectType: "MATERIAL_LINE", materialLineId: "line-1", aiRating: "COMPATIBLE", aiSuggestion: "No changes needed." }),
+    ]);
+  });
+
+  it("throws a clear error rather than crashing if a subject is genuinely missing from the AI response (defensive — the schema's own completeness check should already prevent this)", async () => {
+    vi.mocked(ReplicateDesignProjectRepository.findAnyById).mockResolvedValue(baseProject({ fabricName: "Cotton" }) as never);
+    vi.mocked(ReplicateDesignDnaAnalysisRepository.findByProjectId).mockResolvedValue({
+      id: "analysis-1",
+      status: "APPROVED",
+      designDnaSummary: "A simple dress.",
+      observations: [],
+    } as never);
+    vi.mocked(ReplicateDesignMaterialLineRepository.findByProjectId).mockResolvedValue([]);
+    vi.mocked(generateCompatibilityCheck).mockResolvedValue({
+      items: [{ subjectNumber: 99, rating: "COMPATIBLE", reasoning: "x", suggestion: "y" }],
+      overallSummary: "x",
+      overallRating: "COMPATIBLE",
+      overallSuggestion: "y",
+      model: "claude-sonnet-5",
+      rawResponse: {},
+    } as never);
+
+    await expect(runCompatibilityCheck(actor, "proj-1")).rejects.toThrow(/missing an assessment for subject 1/);
+    expect(ReplicateDesignCompatibilityRunRepository.markFailed).toHaveBeenCalled();
   });
 });
 

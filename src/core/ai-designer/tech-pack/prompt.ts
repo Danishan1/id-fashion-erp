@@ -41,6 +41,18 @@ export interface TechPackDesignContext {
    * replacement for that image.
    */
   sketchDesignNote?: string;
+  /**
+   * Fuller fabric/model/environment detail, widened from the original
+   * name/composition/GSM-only shape so the AI's own construction/silhouette
+   * inferences (categories B/D, which legitimately need to come from the
+   * model, not the app) are made with the full real context this project
+   * already has on file — mirrors buildSpecJson()'s own shape in
+   * ai-designer.service.ts. Optional so a caller with only the original
+   * minimal context (or a unit test) doesn't have to supply it.
+   */
+  fabricDetail?: string;
+  modelDescription?: string;
+  environmentDescription?: string;
 }
 
 function contextLines(ctx: TechPackDesignContext): string[] {
@@ -55,6 +67,9 @@ function contextLines(ctx: TechPackDesignContext): string[] {
   if (ctx.sketchDesignNote) {
     lines.push(`Originating Sketch Design (for reference — the supplied photo of the FINAL approved garment is the authoritative source, use this note only as supporting context): ${ctx.sketchDesignNote}`);
   }
+  if (ctx.fabricDetail) lines.push(`Additional Fabric Detail: ${ctx.fabricDetail}`);
+  if (ctx.modelDescription) lines.push(`Model: ${ctx.modelDescription}`);
+  if (ctx.environmentDescription) lines.push(`Environment: ${ctx.environmentDescription}`);
   return lines;
 }
 
@@ -79,10 +94,10 @@ Silhouette, body shape, body length, width, hem shape, side seam construction, s
 Determine the closure system (pullover / zipper / buttons / drawcord / snaps / velcro / toggle system). If there is no closure at all, state that clearly rather than flagging it as unclear.
 
 ## D. PANELS & SEAM CONSTRUCTION
-Identify every seam line, panel join, shoulder seam, sleeve seam, hood seam, hem seam, rib attachment, and artwork application visible on the garment, and assign each one a numbered callout with its location, a technical specification, and a status of "PROPOSED" (your own inference) or "CONFIRMED" (clearly visible and unambiguous).
+Identify every seam line, panel join, shoulder seam, sleeve seam, hood seam, hem seam, rib attachment, and artwork application visible on the garment, and assign each one a numbered callout with its location, a technical specification, and a status of "PROPOSED" (your own inference) or "CONFIRMED" (clearly visible and unambiguous). For each callout, also estimate its approximate position on THIS image as a percentage from the top-left corner (xPercent/yPercent, each 0-100) — your best-effort visual estimate of where that detail actually appears in the photo. Omit xPercent/yPercent entirely for a callout if you cannot confidently estimate a position; never guess a position for a detail you cannot actually locate in the image.
 
 ## E. COLORS & COLORWAYS
-For the visible colorway: identify every color, estimate a Pantone reference and a HEX value for each, and map each color to the garment panel it appears on. Then, separately, propose 2-3 logical commercial colorways (alternate color stories a buyer might request) — each with a colorway code, colorway name, main color, contrast color, trim color, artwork color, and notes.
+For the visible colorway: identify every color, estimate a Pantone reference and a HEX value for each, and map each color to the garment panel it appears on. Then, separately, propose 2-3 logical commercial colorways (alternate color stories a buyer might request) — each with a colorway code, colorway name, main color, contrast color, trim color, artwork color, and notes. Also provide a best-effort HEX estimate for each of a colorway's main/contrast/trim/artwork colors (mainColorHex/contrastColorHex/trimColorHex/artworkColorHex) so it can be shown as a real swatch — omit any of these you cannot reasonably estimate rather than guessing.
 
 ## F. ARTWORK & GRAPHICS
 Document every artwork/graphic element: type (screen print / embroidery / puff print / DTG / heat transfer / appliqué / etc.), placement, scale, dimensions, alignment, print method, distance from HPS (high point shoulder), and distance from CF (center front). If there is no artwork at all, return an empty list and say so plainly in the summary field.
@@ -168,6 +183,10 @@ export function buildGarmentAnalysisPart1ToolInputSchema() {
             location: stringField(),
             technicalSpecification: stringField(),
             status: { type: "string", enum: ["PROPOSED", "CONFIRMED"] },
+            // Optional — not in `required` below — so the model can omit a
+            // position it cannot confidently estimate rather than guessing.
+            xPercent: { type: "number" },
+            yPercent: { type: "number" },
           },
           ["calloutNumber", "location", "technicalSpecification", "status"]
         ),
@@ -179,7 +198,8 @@ export function buildGarmentAnalysisPart1ToolInputSchema() {
       suggestedColorways: {
         type: "array",
         items: objectSchema(
-          stringFields(["colorwayCode", "colorwayName", "mainColor", "contrastColor", "trimColor", "artworkColor", "notes"]),
+          stringFields(["colorwayCode", "colorwayName", "mainColor", "contrastColor", "trimColor", "artworkColor", "notes", "mainColorHex", "contrastColorHex", "trimColorHex", "artworkColorHex"]),
+          // Only the original 7 fields are required — the 4 *Hex fields are optional (see prompt Section E and schema.ts's own doc comment).
           ["colorwayCode", "colorwayName", "mainColor", "contrastColor", "trimColor", "artworkColor", "notes"]
         ),
       },

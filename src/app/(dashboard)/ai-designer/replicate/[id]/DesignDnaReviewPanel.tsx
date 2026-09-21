@@ -94,6 +94,9 @@ export function DesignDnaReviewPanel({ projectId, hasReferenceImage, analysis, b
         locked (🔒) by default; a locked feature is treated as a hard constraint when generating.
       </p>
 
+      {!hasReferenceImage && (
+        <p className="text-sm text-amber-700 dark:text-amber-400">Upload a front reference photo first (Step 1 — Upload Reference Garment).</p>
+      )}
       <button
         type="button"
         disabled={busy === "run-dna" || !hasReferenceImage}

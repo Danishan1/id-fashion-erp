@@ -688,12 +688,27 @@ export async function runCompatibilityCheck(actor: ActorContext, projectId: stri
       subjects: subjects.map((s) => ({ displayNumber: s.displayNumber, label: s.label, detail: s.detail })),
     });
 
-    const items = subjects.map((s, i) => ({
-      subjectType: s.subjectType,
-      materialLineId: s.materialLineId,
-      aiRating: result.items[i].rating,
-      aiReasoning: result.items[i].reasoning,
-    }));
+    // Zipped back by subjectNumber (the AI's own echoed-back ordinal), not
+    // array position — the schema's own completeness check already
+    // guarantees every 1..subjects.length appears exactly once, but this
+    // lookup makes the mapping correct even if the model returned them out
+    // of order, rather than silently trusting position.
+    const resultBySubjectNumber = new Map(result.items.map((item) => [item.subjectNumber, item]));
+    const items = subjects.map((s) => {
+      const found = resultBySubjectNumber.get(s.displayNumber);
+      if (!found) {
+        // Structurally shouldn't happen given the schema's own completeness
+        // check, but defensive rather than a raw "undefined" crash.
+        throw new AiInvalidResponseError(`AI response is missing an assessment for subject ${s.displayNumber} (${s.label}).`);
+      }
+      return {
+        subjectType: s.subjectType,
+        materialLineId: s.materialLineId,
+        aiRating: found.rating,
+        aiReasoning: found.reasoning,
+        aiSuggestion: found.suggestion,
+      };
+    });
 
     const check = await ReplicateDesignCompatibilityRepository.upsertWithItems(
       projectId,
@@ -706,6 +721,7 @@ export async function runCompatibilityCheck(actor: ActorContext, projectId: stri
         rawResponseJson: result.rawResponse as Prisma.InputJsonValue,
         overallSummary: result.overallSummary,
         overallRating: result.overallRating,
+        overallSuggestion: result.overallSuggestion,
         createdByUserId: actor.userId,
       },
       items
