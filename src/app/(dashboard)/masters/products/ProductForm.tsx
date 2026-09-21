@@ -32,7 +32,7 @@ const EMPTY_VALUES: ProductFormValues = {
   isActive: true,
 };
 
-const GENDER_OPTIONS = ["Men", "Women", "Both"] as const;
+const GENDER_OPTIONS = ["Men", "Women", "Boys", "Girls", "Kids", "Baby", "Both"] as const;
 
 interface NamedOption {
   id: string;
