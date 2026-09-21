@@ -21,6 +21,7 @@ export const AiDesignerProjectRepository = {
     prisma.aiDesignerProject.findFirst({
       where: { id, companyId },
       include: {
+        company: { select: { name: true } },
         fabricProduct: { select: { id: true, styleName: true, styleCode: true, unitCost: true } },
         fabricSupplier: { select: { id: true, name: true } },
         createdBy: { select: { id: true, fullName: true } },
@@ -53,7 +54,7 @@ export const AiDesignerPromptRepository = {
     }),
 
   /** A stuck IN_PROGRESS row older than the freshness window is treated as abandoned, not a permanent lock — same discipline as every AI Garment Flow run-log table. */
-  findActiveSince: (projectId: string, promptType: "FABRIC_ANALYSIS" | "IMAGE_GENERATE" | "IMAGE_EDIT", freshSince: Date) =>
+  findActiveSince: (projectId: string, promptType: "FABRIC_ANALYSIS" | "PRODUCT_SUGGESTIONS" | "IMAGE_GENERATE" | "IMAGE_EDIT", freshSince: Date) =>
     prisma.aiDesignerPrompt.findFirst({
       where: { projectId, promptType, status: "IN_PROGRESS", requestedAt: { gte: freshSince } },
     }),

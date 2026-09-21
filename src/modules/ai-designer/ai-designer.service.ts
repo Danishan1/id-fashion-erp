@@ -8,6 +8,9 @@ import { AiConfigMissingError } from "@/core/ai/config";
 import { AiInvalidResponseError, AiServiceError } from "@/core/ai/providers/anthropic";
 import { analyzeFabric } from "@/core/ai-designer/fabric-analysis/analyze";
 import { buildUserText, PROMPT_VERSION as FABRIC_PROMPT_VERSION } from "@/core/ai-designer/fabric-analysis/prompt";
+import { generateProductSuggestions } from "@/core/ai-designer/product-suggestions/generate";
+import { PROMPT_VERSION as PRODUCT_SUGGESTIONS_PROMPT_VERSION } from "@/core/ai-designer/product-suggestions/prompt";
+import type { ProductSuggestionsResponse } from "@/core/ai-designer/product-suggestions/schema";
 import { analyzeSketch } from "@/core/ai-designer/sketch-analysis/analyze";
 import { PROMPT_VERSION as SKETCH_PROMPT_VERSION } from "@/core/ai-designer/sketch-analysis/prompt";
 import { flattenToObservations as flattenSketchObservations } from "@/core/ai-designer/sketch-analysis/schema";
@@ -64,6 +67,7 @@ import {
 import type {
   ApplyEditVariationInput,
   ApplyEmbellishmentsInput,
+  ApplyProductSuggestionInput,
   ApplySecondFabricInput,
   CreateProjectInput,
   DecideImageInput,
@@ -73,7 +77,9 @@ import type {
   SaveWizardSelectionsInput,
   SelectExistingFabricInput,
   SetSketchObservationLockInput,
+  UpdateBrandNameInput,
   UpdateFabricFieldInput,
+  UpdateLogoPositionInput,
   UpdateSketchObservationInput,
   UpdateTechPackFieldInput,
 } from "./ai-designer.schema";
@@ -114,16 +120,20 @@ const SKETCH_ONLY_STEPS = ["UPLOAD_SKETCH", "SKETCH_ANALYSIS"] as const;
 const STANDARD_STEPS = [
   "FABRIC_SELECTION",
   "FABRIC_ANALYSIS",
+  "PRODUCT_SUGGESTIONS",
   "TARGET_CUSTOMER",
   "AGE_GROUP",
   "PRODUCT_CATEGORY",
   "PRODUCT_DESIGN",
-  "MODEL",
+  // MODEL hidden for now, per explicit request — column data survives,
+  // step removed from the wizard entirely (removing it from this array is
+  // what makes TypeScript flag every remaining reference for cleanup).
   "ENVIRONMENT",
   "GENERATE",
   "MULTI_FABRIC",
   "EMBELLISHMENTS",
   "EDIT",
+  "BRANDING",
   "TECH_PACK",
   "EXPORT",
 ] as const;
@@ -189,7 +199,7 @@ async function getOwnedProject(companyId: string, id: string) {
   return project;
 }
 
-async function assertNoActiveRun(projectId: string, promptType: "FABRIC_ANALYSIS" | "IMAGE_GENERATE" | "IMAGE_EDIT") {
+async function assertNoActiveRun(projectId: string, promptType: "FABRIC_ANALYSIS" | "PRODUCT_SUGGESTIONS" | "IMAGE_GENERATE" | "IMAGE_EDIT") {
   const freshSince = new Date(Date.now() - RUN_FRESHNESS_WINDOW_MS);
   const active = await AiDesignerPromptRepository.findActiveSince(projectId, promptType, freshSince);
   if (active) {
@@ -735,6 +745,135 @@ export async function updateFabricAnalysisField(actor: ActorContext, projectId: 
 }
 
 // ---------------------------------------------------------------------------
+// Step 2b — AI Product Suggestions. Mirrors runFabricAnalysis()'s own
+// pattern exactly: a single text-only AI call, no separate table, the
+// generic AiDesignerPrompt row as its own audit/concurrency-guard, the
+// whole result JSON replaced on each re-run. Optional/skippable — a user
+// can always fall back to picking Target Customer/Age Group/Product
+// Category/Environment manually below without ever running this.
+// ---------------------------------------------------------------------------
+
+export async function runProductSuggestions(actor: ActorContext, projectId: string) {
+  const project = await getOwnedProject(actor.companyId, projectId);
+
+  if (!project.fabricName) {
+    throw new BusinessRuleError(
+      "VALIDATION_ERROR",
+      "This project has no fabric characteristics yet — run \"Analyze Fabric With AI\" (or fill in the fabric fields manually) first."
+    );
+  }
+  await assertNoActiveRun(projectId, "PRODUCT_SUGGESTIONS");
+
+  const fabricContext = {
+    fabricName: project.fabricName,
+    composition: project.fabricComposition,
+    gsm: project.fabricGsm,
+    width: project.fabricWidth,
+    weave: project.fabricWeave,
+    stretch: project.fabricStretch,
+    opacity: project.fabricOpacity,
+    texture: project.fabricTexture,
+    patternType: project.fabricPatternType,
+    printType: project.fabricPrintType,
+    suitableSeason: project.fabricSuitableSeason,
+    recommendedGarments: project.fabricRecommendedGarments,
+  };
+
+  const promptRow = await AiDesignerPromptRepository.create({
+    companyId: actor.companyId,
+    projectId,
+    promptType: "PRODUCT_SUGGESTIONS",
+    promptVersion: PRODUCT_SUGGESTIONS_PROMPT_VERSION,
+    specJson: fabricContext,
+    promptText: JSON.stringify(fabricContext),
+    provider: "anthropic",
+    model: process.env.ANTHROPIC_DEFAULT_MODEL || "claude-sonnet-5",
+    status: "IN_PROGRESS",
+    createdByUserId: actor.userId,
+  });
+
+  try {
+    const result = await generateProductSuggestions(fabricContext);
+
+    const completedSteps = markStepsComplete(project.completedSteps, ["PRODUCT_SUGGESTIONS"], project.creationMode);
+    const updated = await AiDesignerProjectRepository.update(projectId, {
+      productSuggestionsJson: result.data as unknown as Prisma.InputJsonValue,
+      completedSteps,
+      currentStep: computeCurrentStep(completedSteps, project.creationMode),
+    });
+
+    await AiDesignerPromptRepository.markSuccessWithProvider(promptRow.id, "anthropic", result.model);
+
+    await writeAuditLog({
+      companyId: actor.companyId,
+      userId: actor.userId,
+      tableName: "ai_prompts",
+      recordId: promptRow.id,
+      action: "CREATE",
+      newValues: { promptType: "PRODUCT_SUGGESTIONS", status: "SUCCESS" },
+    });
+
+    return updated;
+  } catch (err) {
+    const category = errorCategoryForAi(err);
+    const message = err instanceof Error ? err.message : "Unknown error.";
+    await AiDesignerPromptRepository.markFailed(promptRow.id, category, message);
+    mapAiError(err);
+  }
+}
+
+export async function getProductSuggestions(companyId: string, projectId: string): Promise<ProductSuggestionsResponse | null> {
+  const project = await getOwnedProject(companyId, projectId);
+  return (project.productSuggestionsJson as unknown as ProductSuggestionsResponse | null) ?? null;
+}
+
+/**
+ * The literal "click a suggested product -> 3 designs appear" action.
+ * Deliberately composes the two already-correct functions below rather
+ * than duplicating either one's validation/generation logic — and
+ * deliberately never trusts a client-submitted targetCustomer/ageGroup/
+ * productCategory/environmentKey directly: it looks the exact item up by
+ * position from what the AI itself actually returned, so a suggestion can
+ * never be spoofed into applying a combination the AI never suggested.
+ */
+export async function applyProductSuggestionAndGenerate(actor: ActorContext, projectId: string, input: ApplyProductSuggestionInput) {
+  const project = await getOwnedProject(actor.companyId, projectId);
+  const suggestions = project.productSuggestionsJson as unknown as ProductSuggestionsResponse | null;
+  const group = suggestions?.groups[input.groupIndex];
+  const item = group?.items[input.itemIndex];
+  if (!group || !item) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "That suggestion could not be found — run Product Suggestions again.");
+  }
+
+  await saveWizardSelections(actor, projectId, {
+    targetCustomer: group.targetCustomer,
+    ageGroup: item.ageGroup,
+    productCategory: item.productCategory,
+    environmentKey: item.environmentKey,
+  });
+
+  const result = await generateDesign(actor, projectId, { imageCount: 3 }, {
+    targetCustomer: group.targetCustomer,
+    productCategory: item.productCategory,
+    priorityRank: item.priorityRank,
+  });
+
+  return {
+    ...result,
+    // Tagged directly on the response, not derived later from stored JSON —
+    // simpler, and this is the one place in the code that genuinely knows
+    // these exact images came from this exact action.
+    images: result.images.map((img) => ({ ...img, fromSuggestion: true })),
+    appliedSuggestion: {
+      targetCustomer: group.targetCustomer,
+      ageGroup: item.ageGroup,
+      productCategory: item.productCategory,
+      environmentKey: item.environmentKey,
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Steps 3-8 — Target Customer / Age Group / Product Category / Design / Model / Environment
 // ---------------------------------------------------------------------------
 
@@ -768,12 +907,13 @@ export async function saveWizardSelections(actor: ActorContext, projectId: strin
     data.designSelectionsJson = { ...existing, ...input.designSelections } as Prisma.InputJsonValue;
     touchedSteps.push("PRODUCT_DESIGN");
   }
+  // Model is hidden from the wizard for now — these writes are kept
+  // reachable (harmless, unused by any current UI) in case a direct API
+  // caller or a future re-enablement still wants them, but no longer mark
+  // any step complete ("MODEL" no longer exists in the step order).
   if (input.modelGender !== undefined) data.modelGender = input.modelGender;
   if (input.modelBodyType !== undefined) data.modelBodyType = input.modelBodyType;
   if (input.modelPose !== undefined) data.modelPose = input.modelPose;
-  if (input.modelGender !== undefined || input.modelBodyType !== undefined || input.modelPose !== undefined) {
-    touchedSteps.push("MODEL");
-  }
 
   if (input.isCustomEnvironment) {
     data.isCustomEnvironment = true;
@@ -834,7 +974,9 @@ function assertReadyToGenerate(project: AiDesignerProject, sketchAnalysisStatus?
   if (!project.targetCustomer) missing.push("Target Customer");
   if (!project.ageGroup) missing.push("Age Group");
   if (!project.productCategory) missing.push("Product Category");
-  if (!project.modelGender || !project.modelBodyType || !project.modelPose) missing.push("Model");
+  // Model is hidden from the wizard for now, per explicit request — no
+  // longer a hard precondition. generateDesign()'s own prompt-building
+  // already tolerates all-null model fields (`|| "Not specified"`).
   if (!project.environmentLabel) missing.push("Environment");
 
   if (project.creationMode === "SKETCH") {
@@ -914,7 +1056,13 @@ async function bumpVersion(
   return version;
 }
 
-export async function generateDesign(actor: ActorContext, projectId: string, input: GenerateDesignInput) {
+export async function generateDesign(
+  actor: ActorContext,
+  projectId: string,
+  input: GenerateDesignInput,
+  /** Set only by applyProductSuggestionAndGenerate() — recorded on specJson so the UI can tag exactly these images as AI-suggestion-driven, with zero new schema. */
+  fromSuggestion?: { targetCustomer: string; productCategory: string; priorityRank: number }
+) {
   const project = await getOwnedProject(actor.companyId, projectId);
   const isSketchMode = project.creationMode === "SKETCH";
 
@@ -949,7 +1097,7 @@ export async function generateDesign(actor: ActorContext, projectId: string, inp
     sketchOverrideInfo = { overrides, lockedConstraints };
   }
 
-  const specJson = buildSpecJson(project, sketchOverrideInfo);
+  const specJson = { ...buildSpecJson(project, sketchOverrideInfo), ...(fromSuggestion ? { fromSuggestion } : {}) };
   const prompt = isSketchMode
     ? buildSketchGenerationPrompt({
         targetCustomer: project.targetCustomer ? TARGET_CUSTOMER_LABELS[project.targetCustomer as TargetCustomer] : "Not specified",
@@ -1750,6 +1898,227 @@ export async function applyEmbellishments(actor: ActorContext, projectId: string
     await AiDesignerPromptRepository.markFailed(promptRow.id, "PROVIDER_ERROR", message);
     throw err;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Step 12b — Branding (optional brand name + logo overlay). Deliberately a
+// plain "settings + on-demand composite" feature, not an audited/versioned
+// AI process — applyBranding() is a real sharp image composite, never an AI
+// call. brandName has no stored default -- the real default (the logged-in
+// company's own name) is resolved at read time in getBrandDefaults() below,
+// so a later company-name change is picked up automatically. A logo has no
+// default at all (no company-logo field exists anywhere in this schema).
+// ---------------------------------------------------------------------------
+
+const DEFAULT_LOGO_X_PERCENT = 70;
+const DEFAULT_LOGO_Y_PERCENT = 80;
+const DEFAULT_LOGO_WIDTH_PERCENT = 20;
+const MIN_LOGO_WIDTH_PERCENT = 5;
+const MAX_LOGO_WIDTH_PERCENT = 60;
+
+export async function updateBrandName(actor: ActorContext, projectId: string, input: UpdateBrandNameInput) {
+  const project = await getOwnedProject(actor.companyId, projectId);
+  const updated = await AiDesignerProjectRepository.update(projectId, { brandName: input.brandName || null });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "ai_projects",
+    recordId: projectId,
+    action: "UPDATE",
+    oldValues: { brandName: project.brandName },
+    newValues: { brandName: input.brandName || null },
+  });
+
+  return updated;
+}
+
+export async function uploadBrandLogo(actor: ActorContext, projectId: string, file: UploadableFile) {
+  await getOwnedProject(actor.companyId, projectId);
+
+  if (!ALLOWED_IMAGE_MIME_TYPES.has(file.mimeType)) {
+    throw new BusinessRuleError("VALIDATION_ERROR", `Unsupported file type "${file.mimeType}" — upload a JPG, PNG, or WEBP image.`);
+  }
+
+  const attachment = await uploadAttachment(actor, "AI_DESIGNER_PROJECT", projectId, file, "BRAND_LOGO");
+
+  // Only sets a default position/size the first time a logo is uploaded --
+  // a re-upload replacing an existing logo keeps whatever position/size the
+  // user already dialed in.
+  const project = await getOwnedProject(actor.companyId, projectId);
+  const updated = await AiDesignerProjectRepository.update(projectId, {
+    brandLogoAttachmentId: attachment.id,
+    logoXPercent: project.logoXPercent ?? DEFAULT_LOGO_X_PERCENT,
+    logoYPercent: project.logoYPercent ?? DEFAULT_LOGO_Y_PERCENT,
+    logoWidthPercent: project.logoWidthPercent ?? DEFAULT_LOGO_WIDTH_PERCENT,
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "ai_projects",
+    recordId: projectId,
+    action: "UPDATE",
+    newValues: { brandLogoAttachmentId: attachment.id },
+  });
+
+  return { project: updated, attachment };
+}
+
+export async function deleteBrandLogo(actor: ActorContext, projectId: string) {
+  const project = await getOwnedProject(actor.companyId, projectId);
+  if (!project.brandLogoAttachmentId) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "This project has no uploaded logo to delete.");
+  }
+
+  await deleteAttachment(actor, project.brandLogoAttachmentId);
+  if (project.brandedImageAttachmentId) {
+    await deleteAttachment(actor, project.brandedImageAttachmentId);
+  }
+
+  const updated = await AiDesignerProjectRepository.update(projectId, {
+    brandLogoAttachmentId: null,
+    brandedImageAttachmentId: null,
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "ai_projects",
+    recordId: projectId,
+    action: "UPDATE",
+    oldValues: { brandLogoAttachmentId: project.brandLogoAttachmentId },
+    newValues: { brandLogoAttachmentId: null },
+  });
+
+  return updated;
+}
+
+export async function updateLogoPosition(actor: ActorContext, projectId: string, input: UpdateLogoPositionInput) {
+  const project = await getOwnedProject(actor.companyId, projectId);
+  if (!project.brandLogoAttachmentId) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "Upload a logo before setting its position.");
+  }
+
+  const updated = await AiDesignerProjectRepository.update(projectId, {
+    logoXPercent: input.logoXPercent,
+    logoYPercent: input.logoYPercent,
+    logoWidthPercent: input.logoWidthPercent,
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "ai_projects",
+    recordId: projectId,
+    action: "UPDATE",
+    newValues: { logoXPercent: input.logoXPercent, logoYPercent: input.logoYPercent, logoWidthPercent: input.logoWidthPercent },
+  });
+
+  return updated;
+}
+
+/**
+ * Composites the uploaded logo onto the currently selected design image at
+ * the stored position/size via a real sharp() operation -- never an AI
+ * call. Re-running this after the user moves/resizes the logo simply
+ * replaces the prior branded output. logoXPercent/logoYPercent are clamped
+ * server-side against the logo's own actual rendered width/height so the
+ * composite can never place the logo partially off-canvas, regardless of
+ * what the client last stored (e.g. a stale position saved before the
+ * logo's own width percent was reduced).
+ */
+export async function applyBranding(actor: ActorContext, projectId: string) {
+  const project = await AiDesignerProjectRepository.findByIdWithDetails(actor.companyId, projectId);
+  if (!project) throw new BusinessRuleError("NOT_FOUND", "AI Designer project not found.", { id: projectId });
+  if (!project.currentVersion?.currentImage) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "Generate a design first before applying branding.");
+  }
+  if (!project.brandLogoAttachmentId) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "Upload a logo before applying branding.");
+  }
+
+  const { buffer: designBuffer } = await getAttachmentForDownload(actor.companyId, project.currentVersion.currentImage.imageAttachmentId);
+  const { buffer: logoBuffer } = await getAttachmentForDownload(actor.companyId, project.brandLogoAttachmentId);
+
+  // sharp/libvips throws a low-level decode/encode error (not a
+  // BusinessRuleError) for a structurally corrupt image file — caught here
+  // and rethrown as a clean, honest message rather than a raw 500. The
+  // design image is generated by this app's own pipeline and essentially
+  // never corrupt; the logo is a real user upload and genuinely can be.
+  let compositedBuffer: Buffer;
+  try {
+    const designMeta = await sharp(designBuffer).metadata();
+    const designWidth = designMeta.width ?? 0;
+    const designHeight = designMeta.height ?? 0;
+    if (!designWidth || !designHeight) {
+      throw new BusinessRuleError("VALIDATION_ERROR", "Could not read the current design image's dimensions.");
+    }
+
+    const widthPercent = Math.min(
+      MAX_LOGO_WIDTH_PERCENT,
+      Math.max(MIN_LOGO_WIDTH_PERCENT, Number(project.logoWidthPercent ?? DEFAULT_LOGO_WIDTH_PERCENT))
+    );
+    const logoWidthPx = Math.max(1, Math.round((widthPercent / 100) * designWidth));
+    const resizedLogo = await sharp(logoBuffer).resize({ width: logoWidthPx }).png().toBuffer();
+    const resizedMeta = await sharp(resizedLogo).metadata();
+    const logoHeightPx = resizedMeta.height ?? logoWidthPx;
+
+    const xPercent = Number(project.logoXPercent ?? DEFAULT_LOGO_X_PERCENT);
+    const yPercent = Number(project.logoYPercent ?? DEFAULT_LOGO_Y_PERCENT);
+    const maxLeft = Math.max(0, designWidth - logoWidthPx);
+    const maxTop = Math.max(0, designHeight - logoHeightPx);
+    const left = Math.min(maxLeft, Math.max(0, Math.round((xPercent / 100) * designWidth)));
+    const top = Math.min(maxTop, Math.max(0, Math.round((yPercent / 100) * designHeight)));
+
+    compositedBuffer = await sharp(designBuffer)
+      .composite([{ input: resizedLogo, left, top }])
+      .png()
+      .toBuffer();
+  } catch (err) {
+    if (err instanceof BusinessRuleError) throw err;
+    throw new BusinessRuleError(
+      "VALIDATION_ERROR",
+      "Could not process the uploaded logo image — it may be corrupt or in an unsupported format. Try a different file."
+    );
+  }
+
+  if (project.brandedImageAttachmentId) {
+    await deleteAttachment(actor, project.brandedImageAttachmentId);
+  }
+
+  const attachment = await uploadAttachment(
+    actor,
+    "AI_DESIGNER_PROJECT",
+    projectId,
+    { buffer: compositedBuffer, fileName: `ai-designer-branded-${Date.now()}.png`, mimeType: "image/png" },
+    "BRANDED_DESIGN_IMAGE"
+  );
+
+  const completedSteps = markStepsComplete(project.completedSteps, ["BRANDING"], project.creationMode);
+  const updated = await AiDesignerProjectRepository.update(projectId, {
+    brandedImageAttachmentId: attachment.id,
+    completedSteps,
+    currentStep: computeCurrentStep(completedSteps, project.creationMode),
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "ai_projects",
+    recordId: projectId,
+    action: "UPDATE",
+    newValues: { brandedImageAttachmentId: attachment.id },
+  });
+
+  return { project: updated, attachment };
+}
+
+/** Resolves the effective brand name shown/used at generation time -- never stored, so a later company-name change is picked up automatically. */
+export async function getBrandDefaults(companyId: string, projectId: string) {
+  const project = await AiDesignerProjectRepository.findByIdWithDetails(companyId, projectId);
+  if (!project) throw new BusinessRuleError("NOT_FOUND", "AI Designer project not found.", { id: projectId });
+  return { effectiveBrandName: project.brandName || project.company.name };
 }
 
 // ---------------------------------------------------------------------------

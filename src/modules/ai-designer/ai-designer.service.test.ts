@@ -11,6 +11,7 @@ vi.mock("@/core/attachments/AttachmentService", () => ({
   getAttachmentMetadata: vi.fn(),
 }));
 vi.mock("@/core/ai-designer/fabric-analysis/analyze", () => ({ analyzeFabric: vi.fn() }));
+vi.mock("@/core/ai-designer/product-suggestions/generate", () => ({ generateProductSuggestions: vi.fn() }));
 vi.mock("@/core/ai-designer/sketch-analysis/analyze", () => ({ analyzeSketch: vi.fn() }));
 vi.mock("@/core/ai/provider-manager/AIProviderManager", () => ({ runWithFailover: vi.fn() }));
 vi.mock("@/core/documents/company-header", () => ({
@@ -100,6 +101,7 @@ const { PermissionService } = await import("@/core/rbac/PermissionService");
 const { generateGarmentAnalysisPart1, generateGarmentAnalysisPart2 } = await import("@/core/ai-designer/tech-pack/generate");
 const { ProductRepository } = await import("@/modules/products/product.repository");
 const { analyzeSketch } = await import("@/core/ai-designer/sketch-analysis/analyze");
+const { generateProductSuggestions } = await import("@/core/ai-designer/product-suggestions/generate");
 const {
   AiDesignerProjectRepository,
   AiDesignerPromptRepository,
@@ -124,6 +126,9 @@ const {
   setSketchObservationLock,
   approveSketchAnalysis,
   detectDesignOverrides,
+  runProductSuggestions,
+  getProductSuggestions,
+  applyProductSuggestionAndGenerate,
   generateDesign,
   generateEditPreview,
   applyEditVariation,
@@ -141,6 +146,12 @@ const {
   decideImage,
   listImages,
   exportProject,
+  updateBrandName,
+  uploadBrandLogo,
+  deleteBrandLogo,
+  updateLogoPosition,
+  applyBranding,
+  getBrandDefaults,
 } = await import("./ai-designer.service");
 
 const actor = { companyId: "co-1", userId: "user-1", branchId: "br-1" };
@@ -222,6 +233,7 @@ beforeEach(() => {
   vi.mocked(generateGarmentAnalysisPart2).mockReset();
   vi.mocked(PermissionService.assert).mockReset().mockResolvedValue(undefined as never);
   vi.mocked(analyzeSketch).mockReset();
+  vi.mocked(generateProductSuggestions).mockReset();
   vi.mocked(AiDesignerSketchAnalysisRepository.findByProjectId).mockReset();
   vi.mocked(AiDesignerSketchAnalysisRepository.upsertWithObservations).mockReset();
   vi.mocked(AiDesignerSketchAnalysisRepository.markStale).mockReset();
@@ -1875,5 +1887,381 @@ describe("generateDesign — SKETCH mode", () => {
     expect(generateFromFabricReference).toHaveBeenCalled();
     expect(replicateWithNewMaterial).not.toHaveBeenCalled();
     expect(AiDesignerSketchAnalysisRepository.findByProjectId).not.toHaveBeenCalled();
+  });
+});
+
+describe("runProductSuggestions", () => {
+  it("requires fabric characteristics to already be recorded", async () => {
+    vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(baseProject({ fabricName: null }) as never);
+
+    await expect(runProductSuggestions(actor, "proj-1")).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(AiDesignerPromptRepository.create).not.toHaveBeenCalled();
+  });
+
+  it("blocks a concurrent run while one is already in progress", async () => {
+    vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(baseProject({ fabricName: "Cotton Poplin" }) as never);
+    vi.mocked(AiDesignerPromptRepository.findActiveSince).mockResolvedValue({ id: "prompt-active" } as never);
+
+    await expect(runProductSuggestions(actor, "proj-1")).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+  });
+
+  it("stores the validated result and marks the step complete on success", async () => {
+    vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(
+      baseProject({ fabricName: "Cotton Poplin", fabricComposition: "100% Cotton" }) as never
+    );
+    const data = {
+      groups: [{ targetCustomer: "WOMEN", items: [{ productCategory: "Kurti", priorityRank: 1, ageGroup: "25-40", environmentKey: "STUDIO_WHITE", reasoning: "Good drape" }] }],
+      overallSummary: "Great for Women's kurtis.",
+    };
+    vi.mocked(generateProductSuggestions).mockResolvedValue({ data, model: "claude-sonnet-5", rawResponse: {} } as never);
+
+    const updated = await runProductSuggestions(actor, "proj-1");
+
+    expect(generateProductSuggestions).toHaveBeenCalledWith(expect.objectContaining({ fabricName: "Cotton Poplin", composition: "100% Cotton" }));
+    expect(AiDesignerProjectRepository.update).toHaveBeenCalledWith(
+      "proj-1",
+      expect.objectContaining({ productSuggestionsJson: data, completedSteps: expect.arrayContaining(["PRODUCT_SUGGESTIONS"]) })
+    );
+    expect(updated).toMatchObject({ productSuggestionsJson: data });
+    expect(AiDesignerPromptRepository.markSuccessWithProvider).toHaveBeenCalledWith("prompt-1", "anthropic", "claude-sonnet-5");
+  });
+
+  it("marks the prompt row FAILED and rethrows on a real AI failure, never persisting a partial result", async () => {
+    vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(baseProject({ fabricName: "Cotton Poplin" }) as never);
+    vi.mocked(generateProductSuggestions).mockRejectedValue(new Error("provider down"));
+
+    await expect(runProductSuggestions(actor, "proj-1")).rejects.toThrow();
+    expect(AiDesignerPromptRepository.markFailed).toHaveBeenCalledWith("prompt-1", "UNKNOWN", "provider down");
+    expect(AiDesignerProjectRepository.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("getProductSuggestions", () => {
+  it("returns null when nothing has been generated yet", async () => {
+    vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(baseProject({ productSuggestionsJson: null }) as never);
+    await expect(getProductSuggestions("co-1", "proj-1")).resolves.toBeNull();
+  });
+
+  it("returns the stored suggestions once generated", async () => {
+    const data = { groups: [], overallSummary: "x" };
+    vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(baseProject({ productSuggestionsJson: data }) as never);
+    await expect(getProductSuggestions("co-1", "proj-1")).resolves.toEqual(data);
+  });
+});
+
+describe("applyProductSuggestionAndGenerate", () => {
+  function projectWithSuggestions(overrides: Record<string, unknown> = {}) {
+    return readyProjectWithFabricImage({
+      productSuggestionsJson: {
+        groups: [
+          {
+            targetCustomer: "WOMEN",
+            items: [
+              { productCategory: "Kurti", priorityRank: 1, ageGroup: "25-40", environmentKey: "STUDIO_WHITE", reasoning: "Good drape" },
+              { productCategory: "Dress", priorityRank: 2, ageGroup: "18-25", environmentKey: "BEACH", reasoning: "Also nice" },
+            ],
+          },
+        ],
+      },
+      // Pre-set to match the suggestion being applied -- the mocked
+      // findAnyById returns one static object across every call this
+      // function makes (it doesn't simulate real intermediate persistence),
+      // so generateDesign()'s own internal assertReadyToGenerate() needs
+      // these fields already correct.
+      targetCustomer: "WOMEN",
+      ageGroup: "25-40",
+      productCategory: "Kurti",
+      environmentLabel: "Studio White",
+      environmentKey: "STUDIO_WHITE",
+      ...overrides,
+    });
+  }
+
+  function mockSuccessfulGeneration() {
+    vi.mocked(getAttachmentForDownload).mockResolvedValue({ attachment: { mimeType: "image/jpeg" }, buffer: Buffer.from("fabric") } as never);
+    const generateFromFabricReference = vi
+      .fn()
+      .mockResolvedValue({
+        images: [
+          { buffer: Buffer.from("a"), mimeType: "image/png" },
+          { buffer: Buffer.from("b"), mimeType: "image/png" },
+          { buffer: Buffer.from("c"), mimeType: "image/png" },
+        ],
+        model: "gpt-image-1",
+        raw: {},
+      });
+    vi.mocked(runWithFailover).mockImplementation(async (params) => {
+      const result = await params.call({ name: "openai", model: "gpt-image-1", generateFromFabricReference } as never);
+      return { images: result.images, model: result.model, raw: result.raw, providerId: "provider-1", providerName: "openai" };
+    });
+    vi.mocked(AiDesignerImageRepository.findByGenerationId).mockResolvedValue([{ id: "img-1" }, { id: "img-2" }, { id: "img-3" }] as never);
+  }
+
+  it("throws a clean error when the suggestion index doesn't exist -- never trusts client-submitted category/age-group values directly", async () => {
+    vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(projectWithSuggestions() as never);
+
+    await expect(applyProductSuggestionAndGenerate(actor, "proj-1", { groupIndex: 5, itemIndex: 0 })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(AiDesignerPromptRepository.create).not.toHaveBeenCalled();
+  });
+
+  it("throws a clean error when no suggestions have ever been generated for this project", async () => {
+    vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(readyProjectWithFabricImage({ productSuggestionsJson: null }) as never);
+
+    await expect(applyProductSuggestionAndGenerate(actor, "proj-1", { groupIndex: 0, itemIndex: 0 })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("applies the exact suggested item (by position, not client-trusted values) and generates 3 images tagged fromSuggestion", async () => {
+    vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(projectWithSuggestions() as never);
+    mockSuccessfulGeneration();
+
+    const result = await applyProductSuggestionAndGenerate(actor, "proj-1", { groupIndex: 0, itemIndex: 0 });
+
+    // saveWizardSelections() was called with the AI's own exact item, never
+    // a client-submitted value.
+    expect(AiDesignerProjectRepository.update).toHaveBeenCalledWith(
+      "proj-1",
+      expect.objectContaining({ targetCustomer: "WOMEN", ageGroup: "25-40", productCategory: "Kurti", environmentKey: "STUDIO_WHITE" })
+    );
+    expect(result.images).toEqual([
+      { id: "img-1", fromSuggestion: true },
+      { id: "img-2", fromSuggestion: true },
+      { id: "img-3", fromSuggestion: true },
+    ]);
+    expect(result.appliedSuggestion).toEqual({ targetCustomer: "WOMEN", ageGroup: "25-40", productCategory: "Kurti", environmentKey: "STUDIO_WHITE" });
+  });
+
+  it("applies the second item in the group correctly, distinct from the first", async () => {
+    vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(
+      projectWithSuggestions({ targetCustomer: "WOMEN", ageGroup: "18-25", productCategory: "Dress", environmentLabel: "Beach", environmentKey: "BEACH" }) as never
+    );
+    mockSuccessfulGeneration();
+
+    const result = await applyProductSuggestionAndGenerate(actor, "proj-1", { groupIndex: 0, itemIndex: 1 });
+
+    expect(AiDesignerProjectRepository.update).toHaveBeenCalledWith(
+      "proj-1",
+      expect.objectContaining({ targetCustomer: "WOMEN", ageGroup: "18-25", productCategory: "Dress", environmentKey: "BEACH" })
+    );
+    expect(result.appliedSuggestion.productCategory).toBe("Dress");
+  });
+});
+
+describe("Branding", () => {
+  // A real, minimal 1x1 PNG (same fixture exportProject's own tests use) --
+  // sharp() runs unmocked against real bytes here, same precedent as the
+  // exportProject describe block above.
+  const REAL_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+  const REAL_PNG = Buffer.from(REAL_PNG_BASE64, "base64");
+
+  describe("updateBrandName", () => {
+    it("stores the new brand name and audit-logs the old/new value", async () => {
+      vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(baseProject({ brandName: null }) as never);
+
+      await updateBrandName(actor, "proj-1", { brandName: "Acme Fashions" });
+
+      expect(AiDesignerProjectRepository.update).toHaveBeenCalledWith("proj-1", { brandName: "Acme Fashions" });
+    });
+
+    it("clears the brand name back to null on an empty string", async () => {
+      vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(baseProject({ brandName: "Old Name" }) as never);
+
+      await updateBrandName(actor, "proj-1", { brandName: "" });
+
+      expect(AiDesignerProjectRepository.update).toHaveBeenCalledWith("proj-1", { brandName: null });
+    });
+  });
+
+  describe("uploadBrandLogo", () => {
+    it("sets a sensible default position/size the first time a logo is uploaded", async () => {
+      vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(
+        baseProject({ brandLogoAttachmentId: null, logoXPercent: null, logoYPercent: null, logoWidthPercent: null }) as never
+      );
+      vi.mocked(uploadAttachment).mockResolvedValue({ id: "logo-att-1" } as never);
+
+      await uploadBrandLogo(actor, "proj-1", { buffer: REAL_PNG, fileName: "logo.png", mimeType: "image/png" });
+
+      expect(AiDesignerProjectRepository.update).toHaveBeenCalledWith(
+        "proj-1",
+        expect.objectContaining({ brandLogoAttachmentId: "logo-att-1", logoXPercent: 70, logoYPercent: 80, logoWidthPercent: 20 })
+      );
+    });
+
+    it("keeps the existing position/size on a re-upload replacing an existing logo", async () => {
+      vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(
+        baseProject({ brandLogoAttachmentId: "old-logo", logoXPercent: 10, logoYPercent: 15, logoWidthPercent: 30 }) as never
+      );
+      vi.mocked(uploadAttachment).mockResolvedValue({ id: "logo-att-2" } as never);
+
+      await uploadBrandLogo(actor, "proj-1", { buffer: REAL_PNG, fileName: "logo.png", mimeType: "image/png" });
+
+      expect(AiDesignerProjectRepository.update).toHaveBeenCalledWith(
+        "proj-1",
+        expect.objectContaining({ brandLogoAttachmentId: "logo-att-2", logoXPercent: 10, logoYPercent: 15, logoWidthPercent: 30 })
+      );
+    });
+
+    it("rejects an unsupported file type", async () => {
+      vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(baseProject() as never);
+
+      await expect(
+        uploadBrandLogo(actor, "proj-1", { buffer: REAL_PNG, fileName: "logo.svg", mimeType: "image/svg+xml" })
+      ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+      expect(uploadAttachment).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("deleteBrandLogo", () => {
+    it("requires a logo to already exist", async () => {
+      vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(baseProject({ brandLogoAttachmentId: null }) as never);
+
+      await expect(deleteBrandLogo(actor, "proj-1")).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    });
+
+    it("deletes both the logo and any prior branded composite, clearing both columns", async () => {
+      vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(
+        baseProject({ brandLogoAttachmentId: "logo-1", brandedImageAttachmentId: "branded-1" }) as never
+      );
+
+      await deleteBrandLogo(actor, "proj-1");
+
+      expect(deleteAttachment).toHaveBeenCalledWith(actor, "logo-1");
+      expect(deleteAttachment).toHaveBeenCalledWith(actor, "branded-1");
+      expect(AiDesignerProjectRepository.update).toHaveBeenCalledWith("proj-1", { brandLogoAttachmentId: null, brandedImageAttachmentId: null });
+    });
+  });
+
+  describe("updateLogoPosition", () => {
+    it("requires a logo to already be uploaded", async () => {
+      vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(baseProject({ brandLogoAttachmentId: null }) as never);
+
+      await expect(updateLogoPosition(actor, "proj-1", { logoXPercent: 10, logoYPercent: 10, logoWidthPercent: 20 })).rejects.toMatchObject({
+        code: "VALIDATION_ERROR",
+      });
+    });
+
+    it("stores the new position/size", async () => {
+      vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(baseProject({ brandLogoAttachmentId: "logo-1" }) as never);
+
+      await updateLogoPosition(actor, "proj-1", { logoXPercent: 40, logoYPercent: 50, logoWidthPercent: 25 });
+
+      expect(AiDesignerProjectRepository.update).toHaveBeenCalledWith("proj-1", { logoXPercent: 40, logoYPercent: 50, logoWidthPercent: 25 });
+    });
+  });
+
+  describe("applyBranding", () => {
+    it("requires a generated design to exist first", async () => {
+      vi.mocked(AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(baseProject({ currentVersion: null }) as never);
+
+      await expect(applyBranding(actor, "proj-1")).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    });
+
+    it("requires a logo to already be uploaded", async () => {
+      vi.mocked(AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(
+        baseProject({
+          currentVersion: { currentImage: { imageAttachmentId: "design-1" } },
+          brandLogoAttachmentId: null,
+        }) as never
+      );
+
+      await expect(applyBranding(actor, "proj-1")).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    });
+
+    it("composites the real logo onto the real design image and stores the result as a new attachment, replacing any prior one", async () => {
+      vi.mocked(AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(
+        baseProject({
+          currentVersion: { currentImage: { imageAttachmentId: "design-1" } },
+          brandLogoAttachmentId: "logo-1",
+          brandedImageAttachmentId: "old-branded-1",
+          logoXPercent: 70,
+          logoYPercent: 80,
+          logoWidthPercent: 20,
+        }) as never
+      );
+      vi.mocked(getAttachmentForDownload).mockResolvedValue({ attachment: { mimeType: "image/png" }, buffer: REAL_PNG } as never);
+      vi.mocked(uploadAttachment).mockResolvedValue({ id: "branded-2" } as never);
+
+      const result = await applyBranding(actor, "proj-1");
+
+      // The old branded composite is deleted before the new one is uploaded.
+      expect(deleteAttachment).toHaveBeenCalledWith(actor, "old-branded-1");
+      // A real PNG-magic-byte buffer was genuinely produced by sharp, not a
+      // placeholder -- confirms the composite actually ran.
+      expect(uploadAttachment).toHaveBeenCalledWith(
+        actor,
+        "AI_DESIGNER_PROJECT",
+        "proj-1",
+        expect.objectContaining({ mimeType: "image/png", buffer: expect.any(Buffer) }),
+        "BRANDED_DESIGN_IMAGE"
+      );
+      const uploadedBuffer = vi.mocked(uploadAttachment).mock.calls[0][3].buffer as Buffer;
+      expect(uploadedBuffer.subarray(0, 8)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+      expect(AiDesignerProjectRepository.update).toHaveBeenCalledWith(
+        "proj-1",
+        expect.objectContaining({ brandedImageAttachmentId: "branded-2" })
+      );
+      expect(result.attachment.id).toBe("branded-2");
+    });
+
+    it("clamps an out-of-range logo width to the allowed [5,60] range rather than crashing", async () => {
+      vi.mocked(AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(
+        baseProject({
+          currentVersion: { currentImage: { imageAttachmentId: "design-1" } },
+          brandLogoAttachmentId: "logo-1",
+          brandedImageAttachmentId: null,
+          logoXPercent: 70,
+          logoYPercent: 80,
+          logoWidthPercent: 999,
+        }) as never
+      );
+      vi.mocked(getAttachmentForDownload).mockResolvedValue({ attachment: { mimeType: "image/png" }, buffer: REAL_PNG } as never);
+      vi.mocked(uploadAttachment).mockResolvedValue({ id: "branded-3" } as never);
+
+      await expect(applyBranding(actor, "proj-1")).resolves.toMatchObject({ attachment: { id: "branded-3" } });
+      expect(deleteAttachment).not.toHaveBeenCalled();
+    });
+
+    // Real bug caught live: sharp/libvips throws a low-level decode error
+    // (not a BusinessRuleError) for a structurally corrupt image file,
+    // which without this guard surfaced as a raw 500 rather than a clean,
+    // actionable message.
+    it("maps a corrupt/undecodable logo file to a clean validation error, never a raw crash", async () => {
+      vi.mocked(AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(
+        baseProject({
+          currentVersion: { currentImage: { imageAttachmentId: "design-1" } },
+          brandLogoAttachmentId: "logo-1",
+          brandedImageAttachmentId: null,
+          logoXPercent: 70,
+          logoYPercent: 80,
+          logoWidthPercent: 20,
+        }) as never
+      );
+      vi.mocked(getAttachmentForDownload).mockImplementation(((_companyId: string, attachmentId: string) =>
+        Promise.resolve(
+          attachmentId === "logo-1"
+            ? { attachment: { mimeType: "image/png" }, buffer: Buffer.from("not a real png") }
+            : { attachment: { mimeType: "image/png" }, buffer: REAL_PNG }
+        )) as never);
+
+      await expect(applyBranding(actor, "proj-1")).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+      expect(uploadAttachment).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("getBrandDefaults", () => {
+    it("resolves to the project's own brandName when set", async () => {
+      vi.mocked(AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(
+        baseProject({ brandName: "My Own Brand", company: { name: "Real Company Name" } }) as never
+      );
+
+      await expect(getBrandDefaults("co-1", "proj-1")).resolves.toEqual({ effectiveBrandName: "My Own Brand" });
+    });
+
+    it("falls back to the real company name when brandName is unset -- never a hardcoded default", async () => {
+      vi.mocked(AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(
+        baseProject({ brandName: null, company: { name: "Indradhar Garments Pvt. Ltd." } }) as never
+      );
+
+      await expect(getBrandDefaults("co-1", "proj-1")).resolves.toEqual({ effectiveBrandName: "Indradhar Garments Pvt. Ltd." });
+    });
   });
 });

@@ -252,3 +252,34 @@ export const updateTechPackFieldSchema = z.object({
   value: z.string().max(2000),
 });
 export type UpdateTechPackFieldInput = z.infer<typeof updateTechPackFieldSchema>;
+
+/**
+ * Product Suggestions — "click a suggested product" is deliberately an
+ * index into the AI's own stored productSuggestionsJson, never a
+ * client-submitted targetCustomer/ageGroup/productCategory/environmentKey
+ * directly, so a suggestion can never be spoofed into applying a
+ * combination the AI never actually suggested (see
+ * applyProductSuggestionAndGenerate() in the service).
+ */
+export const applyProductSuggestionSchema = z.object({
+  groupIndex: z.number().int().min(0),
+  itemIndex: z.number().int().min(0),
+});
+export type ApplyProductSuggestionInput = z.infer<typeof applyProductSuggestionSchema>;
+
+/**
+ * Branding — optional brand name + logo overlay. brandName is a plain
+ * string, not required — an empty string clears it back to the resolved
+ * company-name default (see getBrandDefaults() in the service).
+ */
+export const updateBrandNameSchema = z.object({
+  brandName: z.string().max(200).optional().or(z.literal("")),
+});
+export type UpdateBrandNameInput = z.infer<typeof updateBrandNameSchema>;
+
+export const updateLogoPositionSchema = z.object({
+  logoXPercent: z.number().min(0).max(100),
+  logoYPercent: z.number().min(0).max(100),
+  logoWidthPercent: z.number().min(5).max(60),
+});
+export type UpdateLogoPositionInput = z.infer<typeof updateLogoPositionSchema>;

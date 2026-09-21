@@ -17,16 +17,17 @@ export const WIZARD_STEP_LABELS: Record<string, string> = {
   SKETCH_ANALYSIS: "Sketch Analysis",
   FABRIC_SELECTION: "Fabric Selection",
   FABRIC_ANALYSIS: "Analyze Fabric",
+  PRODUCT_SUGGESTIONS: "AI Product Suggestions",
   TARGET_CUSTOMER: "Target Customer",
   AGE_GROUP: "Age Group",
   PRODUCT_CATEGORY: "Product Category",
   PRODUCT_DESIGN: "Product Design",
-  MODEL: "Model",
   ENVIRONMENT: "Environment",
   GENERATE: "Generate Design",
   MULTI_FABRIC: "Multi-Fabric",
   EMBELLISHMENTS: "Embellishments",
   EDIT: "Edit Design",
+  BRANDING: "Branding",
   TECH_PACK: "Tech Pack",
   EXPORT: "Export",
 };
@@ -34,19 +35,21 @@ export const WIZARD_STEP_LABELS: Record<string, string> = {
 // Mirrors ai-designer.service.ts's own STANDARD_STEPS exactly (a
 // duplicated, client-safe copy, same convention as every other
 // client/server pair in this app — this file has zero Prisma imports).
+// MODEL is hidden from the wizard for now, per explicit request.
 export const WIZARD_STEP_ORDER = [
   "FABRIC_SELECTION",
   "FABRIC_ANALYSIS",
+  "PRODUCT_SUGGESTIONS",
   "TARGET_CUSTOMER",
   "AGE_GROUP",
   "PRODUCT_CATEGORY",
   "PRODUCT_DESIGN",
-  "MODEL",
   "ENVIRONMENT",
   "GENERATE",
   "MULTI_FABRIC",
   "EMBELLISHMENTS",
   "EDIT",
+  "BRANDING",
   "TECH_PACK",
   "EXPORT",
 ] as const;
