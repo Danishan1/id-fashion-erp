@@ -101,12 +101,12 @@ const ALLOWED_IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/jpg", "image/png"
 
 /**
  * Own resumable-wizard step order — mirrors the *shape* of AiGarmentProject's
- * step machinery, not shared code (confirmed separate module). MULTI_FABRIC,
- * EMBELLISHMENTS, and TECH_PACK are all optional/skippable steps -- nothing
- * downstream requires any of them to be completed, so a project that never
- * uses them simply never marks them complete (this only affects the
- * display-only "current step" highlight, not navigation, which is entirely
- * user-driven via each step's own Next button — see AiDesignerWorkflowPanel.tsx).
+ * step machinery, not shared code (confirmed separate module). MULTI_FABRIC
+ * and TECH_PACK are both optional/skippable steps -- nothing downstream
+ * requires either to be completed, so a project that never uses them simply
+ * never marks them complete (this only affects the display-only "current
+ * step" highlight, not navigation, which is entirely user-driven via each
+ * step's own Next button — see AiDesignerWorkflowPanel.tsx).
  *
  * SKETCH-only steps (2026-09-20) — Sketch / Drawing → Garment adds two steps
  * (UPLOAD_SKETCH, SKETCH_ANALYSIS) before every other step, which is reused
@@ -124,14 +124,23 @@ const STANDARD_STEPS = [
   "TARGET_CUSTOMER",
   "AGE_GROUP",
   "PRODUCT_CATEGORY",
-  "PRODUCT_DESIGN",
+  // PRODUCT_DESIGN hidden for now, per explicit request — designSelectionsJson
+  // data survives (still writable via saveWizardSelections, still read by the
+  // Generate Design prompt and the sketch-mode "Design Modifications" summary),
+  // step removed from the wizard entirely. Same precedent as MODEL below:
+  // removing it from this array is what makes TypeScript flag every
+  // remaining reference for cleanup.
   // MODEL hidden for now, per explicit request — column data survives,
   // step removed from the wizard entirely (removing it from this array is
   // what makes TypeScript flag every remaining reference for cleanup).
   "ENVIRONMENT",
   "GENERATE",
   "MULTI_FABRIC",
-  "EMBELLISHMENTS",
+  // EMBELLISHMENTS hidden from the main wizard for now, per explicit request
+  // — the real feature (motif upload + AI apply) is unchanged and still
+  // fully reachable from the Edit Design workspace instead (its own
+  // Embellishments tab, a completely separate/local concept there, not tied
+  // to this step-order array at all).
   "EDIT",
   "BRANDING",
   "TECH_PACK",
@@ -828,6 +837,26 @@ export async function getProductSuggestions(companyId: string, projectId: string
 }
 
 /**
+ * Explicit "Skip this step" for AI Product Suggestions — this step was
+ * already navigable-past via the wizard's own unconditional Next button (no
+ * hard gate anywhere requires it), but skipping that way never marked it
+ * complete, so its stepper checkmark stayed permanently unchecked even after
+ * a deliberate skip, which read as "still required." This marks it complete
+ * with no AI call and no other side effect, purely a completedSteps write —
+ * a real suggestion run (runProductSuggestions) still marks it complete on
+ * its own too, so calling this after suggestions already exist is a harmless
+ * no-op.
+ */
+export async function skipProductSuggestions(actor: ActorContext, projectId: string) {
+  const project = await getOwnedProject(actor.companyId, projectId);
+  const completedSteps = markStepsComplete(project.completedSteps, ["PRODUCT_SUGGESTIONS"], project.creationMode);
+  return AiDesignerProjectRepository.update(projectId, {
+    completedSteps,
+    currentStep: computeCurrentStep(completedSteps, project.creationMode),
+  });
+}
+
+/**
  * The literal "click a suggested product -> 3 designs appear" action.
  * Deliberately composes the two already-correct functions below rather
  * than duplicating either one's validation/generation logic — and
@@ -902,10 +931,13 @@ export async function saveWizardSelections(actor: ActorContext, projectId: strin
     data.productCategory = input.productCategory;
     touchedSteps.push("PRODUCT_CATEGORY");
   }
+  // Product Design is hidden from the wizard for now — this write is kept
+  // reachable (harmless, still read by generateDesign()'s own prompt and the
+  // sketch-mode "Design Modifications" summary) but no longer marks any step
+  // complete ("PRODUCT_DESIGN" no longer exists in the step order).
   if (input.designSelections !== undefined) {
     const existing = (project.designSelectionsJson as Record<string, string> | null) ?? {};
     data.designSelectionsJson = { ...existing, ...input.designSelections } as Prisma.InputJsonValue;
-    touchedSteps.push("PRODUCT_DESIGN");
   }
   // Model is hidden from the wizard for now — these writes are kept
   // reachable (harmless, unused by any current UI) in case a direct API
@@ -1871,10 +1903,12 @@ export async function applyEmbellishments(actor: ActorContext, projectId: string
 
     const typeLabel = input.embellishmentType.replace(/_/g, " ");
     const changeSummary = `Applied embellishment: ${typeLabel}${trimmedInstructions ? ` — ${trimmedInstructions.slice(0, 80)}` : ""}`;
+    // Embellishments is hidden from the main wizard for now, per explicit
+    // request — it's still a fully real action (motif upload + AI apply,
+    // unchanged), reachable from the Edit Design workspace instead, which has
+    // no step/stepper concept of its own — no completedSteps write needed
+    // here anymore ("EMBELLISHMENTS" no longer exists in the step order).
     const version = await bumpVersion(actor, projectId, images[0].id, changeSummary, specJson);
-
-    const completedSteps = markStepsComplete(project.completedSteps, ["EMBELLISHMENTS"], project.creationMode);
-    await AiDesignerProjectRepository.update(projectId, { completedSteps, currentStep: computeCurrentStep(completedSteps, project.creationMode) });
 
     await writeAuditLog({
       companyId: actor.companyId,

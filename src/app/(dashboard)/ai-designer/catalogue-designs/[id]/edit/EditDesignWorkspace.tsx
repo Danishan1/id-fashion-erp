@@ -5,6 +5,9 @@ import { useEffect, useRef, useState } from "react";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { FilePreviewModal } from "@/components/ui/FilePreviewModal";
 import type { EditMode } from "@/modules/ai-designer/ai-designer.schema";
+import type { DesignAttributeDef } from "@/core/ai-designer/catalogs/design-attribute-catalog";
+import { DesignOptionImage } from "@/core/ai-designer/catalogs/design-icon-catalog";
+import { useAiDesignerDisplayMode } from "@/lib/use-ai-designer-display-mode";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -39,6 +42,7 @@ interface ProjectData {
   projectName: string;
   productCategory: string | null;
   currentVersion: CurrentVersion | null;
+  embellishmentMotifAttachmentId: string | null;
 }
 
 interface VersionRow {
@@ -90,6 +94,47 @@ const EDIT_CATEGORIES: { group: string; items: string[] }[] = [
   { group: "Construction", items: ["Seam", "Panel", "Dart", "Pleat", "Gathering", "Yoke", "Facing", "Lining"] },
   { group: "Design Details", items: ["Ruffle", "Frill", "Cut-out", "Piping", "Binding", "Appliqué", "Patchwork"] },
 ];
+
+/**
+ * Maps an EDIT_CATEGORIES group to the matching Product Design attribute KEY
+ * (see design-attribute-catalog.ts) for the project's own productCategory —
+ * real, curated per-category options that already exist for the main
+ * wizard's (now-hidden) Product Design step, reused here so the right panel
+ * can show real reference images instead of asking the user to type a free-
+ * text "New Requirement" for exactly the categories that most benefit from
+ * a visual pick (a direct, reported gap — "user type nahi karega"). Groups
+ * with no natural visual attribute (Fabric, Stitching, Wash & Finish, …)
+ * deliberately have no mapping and keep the plain text inputs — this is
+ * honest, real coverage, not a forced 1:1 mapping across all 16 groups.
+ */
+const EDIT_GROUP_TO_DESIGN_ATTRIBUTE_KEY: Record<string, string> = {
+  "Garment Structure": "silhouette",
+  "Neck / Collar": "neckline",
+  Sleeve: "sleeve",
+  Pocket: "pocket",
+  Closure: "closure",
+};
+
+/**
+ * Sidebar restructure (direct user feedback: 16 manufacturing-jargon groups
+ * up front, with a blank "choose a category" right panel, was too much to
+ * figure out). The 5 groups above (real image pickers) are shown as their
+ * own always-visible, auto-expanded section; the remaining 11 text-only
+ * groups move under a collapsed "More Categories" toggle — reachable, not
+ * removed, just not the first thing a typical user has to wade through.
+ */
+const VISUAL_EDIT_GROUP_NAMES = new Set(Object.keys(EDIT_GROUP_TO_DESIGN_ATTRIBUTE_KEY));
+const VISUAL_EDIT_CATEGORIES = EDIT_CATEGORIES.filter((c) => VISUAL_EDIT_GROUP_NAMES.has(c.group));
+const ADVANCED_EDIT_CATEGORIES = EDIT_CATEGORIES.filter((c) => !VISUAL_EDIT_GROUP_NAMES.has(c.group));
+
+const EMBELLISHMENT_TYPE_LABELS: Record<string, string> = {
+  DIGITAL_APPLIQUE: "Digital Applique",
+  EMBROIDERY: "Embroidery",
+  SEQUIN_WORK: "Sequin Work",
+  LACE_TRIM: "Lace Trim",
+  BEADWORK: "Beadwork",
+  PATCHWORK: "Patchwork",
+};
 
 const STATUS_BADGE: Record<ApprovalStatus, string> = {
   DRAFT: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
@@ -149,20 +194,40 @@ export function EditDesignWorkspace({ projectId, initialProject }: { projectId: 
   const [compareImageId, setCompareImageId] = useState<string | null>(null);
   const [lightboxAttachmentId, setLightboxAttachmentId] = useState<string | null>(null);
 
-  // Left sidebar
+  // Left sidebar — the 5 visual-picker groups start expanded (the intended
+  // "first thing you see"), everything else stays collapsed under
+  // "More Categories" until the user explicitly asks for it.
   const [leftOpen, setLeftOpen] = useState(true);
-  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(VISUAL_EDIT_CATEGORIES.map((c) => [c.group, true]))
+  );
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [activeGroup, setActiveGroup] = useState<string | null>(null);
   const [activeItem, setActiveItem] = useState<string | null>(null);
 
   // Right panel — edit form
   const [rightOpen, setRightOpen] = useState(true);
-  const [editMode, setEditMode] = useState<EditMode>("QUICK");
+  // Widened beyond EditMode (the real /edit endpoint's own mode enum) to also
+  // cover the Embellishments tab, which is a structurally different action
+  // (its own apply-embellishments endpoint, no preview/select step) — never
+  // sent as-is to the generic /edit call; generatePreview() guards against it.
+  const [editMode, setEditMode] = useState<EditMode | "EMBELLISHMENTS">("QUICK");
   const [currentValue, setCurrentValue] = useState("");
   const [newValue, setNewValue] = useState("");
   const [techRows, setTechRows] = useState<{ key: string; value: string }[]>([{ key: "", value: "" }]);
   const [freeform, setFreeform] = useState("");
   const [imageCount, setImageCount] = useState(1);
+  const [embellishmentType, setEmbellishmentType] = useState<string>("DIGITAL_APPLIQUE");
+  const [embellishmentInstructions, setEmbellishmentInstructions] = useState("");
+
+  // Product Design's own real, per-company attribute catalog (Masters -> AI
+  // Design -> Product Design) — reused here (not duplicated) so the QUICK
+  // Edit "New Requirement" field can show real reference images for
+  // categories that have a matching visual attribute, per
+  // EDIT_GROUP_TO_DESIGN_ATTRIBUTE_KEY above.
+  const [designAttributes, setDesignAttributes] = useState<DesignAttributeDef[]>([]);
+  const [optionReferenceImages, setOptionReferenceImages] = useState<Record<string, string>>({});
+  const designDisplayMode = useAiDesignerDisplayMode();
 
   // Center canvas
   const [zoom, setZoom] = useState(1);
@@ -199,6 +264,28 @@ export function EditDesignWorkspace({ projectId, initialProject }: { projectId: 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    const category = project.productCategory;
+    if (!category) return;
+    fetch(`/api/v1/ai-designer/product-design-attributes/effective?category=${encodeURIComponent(category)}`)
+      .then((r) => r.json())
+      .then((body) => setDesignAttributes(body.data ?? []))
+      .catch(() => setDesignAttributes([]));
+  }, [project.productCategory]);
+
+  useEffect(() => {
+    fetch("/api/v1/ai-designer/product-design-attributes/reference-images")
+      .then((r) => r.json())
+      .then((body) => {
+        const map: Record<string, string> = {};
+        for (const row of body.data ?? []) {
+          if (row.attachmentId) map[row.optionValue] = row.attachmentId;
+        }
+        setOptionReferenceImages(map);
+      })
+      .catch(() => setOptionReferenceImages({}));
+  }, []);
+
   const currentImage = project.currentVersion?.currentImage ?? null;
   const hasUnsavedEdit =
     (editMode === "QUICK" && (currentValue.trim() || newValue.trim())) ||
@@ -223,7 +310,44 @@ export function EditDesignWorkspace({ projectId, initialProject }: { projectId: 
     setExpandedGroups((prev) => ({ ...prev, [group]: !prev[group] }));
   }
 
+  function renderCategoryGroup(group: string, items: string[], isVisual: boolean) {
+    return (
+      <div key={group} className="border-t border-zinc-200 dark:border-zinc-800">
+        <button
+          type="button"
+          onClick={() => toggleGroup(group)}
+          className="flex w-full items-center justify-between px-3 py-1.5 text-left text-xs font-medium text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+        >
+          <span className="flex items-center gap-1.5">
+            {group}
+            {isVisual && <span title="Has real reference images">🖼️</span>}
+          </span>
+          <span className="text-zinc-400">{expandedGroups[group] ? "−" : "+"}</span>
+        </button>
+        {expandedGroups[group] && (
+          <div className="pb-1">
+            {items.map((item) => (
+              <button
+                key={item}
+                type="button"
+                onClick={() => selectCategoryItem(group, item)}
+                className={`block w-full px-5 py-1 text-left text-xs ${
+                  activeGroup === group && activeItem === item
+                    ? "bg-indigo-100 font-medium text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
+                    : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                }`}
+              >
+                {item}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   function generatePreview() {
+    if (editMode === "EMBELLISHMENTS") return; // has its own Apply button — see applyEmbellishmentsAction()
     if (!activeItem && editMode !== "AI_PROMPT") {
       setError("Choose an edit category on the left first.");
       return;
@@ -295,6 +419,29 @@ export function EditDesignWorkspace({ projectId, initialProject }: { projectId: 
     });
   }
 
+  /**
+   * Embellishments applies directly — same real apply-embellishments action
+   * the main wizard's own Embellishments step uses (motif image composited
+   * onto the current design, or a text-only embroidery/applique edit), with
+   * no preview/select step of its own (unlike QUICK/TECHNICAL/AI_PROMPT,
+   * which always land in the AI Variations tab first). A successful call
+   * already bumped the version server-side, so this just reflects that.
+   */
+  function applyEmbellishmentsAction() {
+    run("apply-embellishments", async () => {
+      await parseJson(
+        await fetch(`/api/v1/ai-designer/projects/${projectId}/apply-embellishments`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ embellishmentType, instructions: embellishmentInstructions }),
+        })
+      );
+      setEmbellishmentInstructions("");
+      await Promise.all([refreshProject(), refreshVersions()]);
+      setBottomTab("versions");
+    });
+  }
+
   // Canvas zoom/pan
   function onCanvasMouseDown(e: React.MouseEvent) {
     if (zoom <= 1) return;
@@ -313,6 +460,9 @@ export function EditDesignWorkspace({ projectId, initialProject }: { projectId: 
   }
 
   const compareVersion = versions.find((v) => v.currentImage.id === compareImageId);
+  const matchedDesignAttr = activeGroup
+    ? designAttributes.find((a) => a.key === EDIT_GROUP_TO_DESIGN_ATTRIBUTE_KEY[activeGroup])
+    : undefined;
 
   return (
     <div className="flex h-[calc(100vh-4rem)] flex-col overflow-hidden">
@@ -378,36 +528,29 @@ export function EditDesignWorkspace({ projectId, initialProject }: { projectId: 
                 ◀
               </button>
             </div>
-            {EDIT_CATEGORIES.map(({ group, items }) => (
-              <div key={group} className="border-t border-zinc-200 dark:border-zinc-800">
-                <button
-                  type="button"
-                  onClick={() => toggleGroup(group)}
-                  className="flex w-full items-center justify-between px-3 py-1.5 text-left text-xs font-medium text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
-                >
-                  {group}
-                  <span className="text-zinc-400">{expandedGroups[group] ? "−" : "+"}</span>
-                </button>
-                {expandedGroups[group] && (
-                  <div className="pb-1">
-                    {items.map((item) => (
-                      <button
-                        key={item}
-                        type="button"
-                        onClick={() => selectCategoryItem(group, item)}
-                        className={`block w-full px-5 py-1 text-left text-xs ${
-                          activeGroup === group && activeItem === item
-                            ? "bg-indigo-100 font-medium text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
-                            : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
-                        }`}
-                      >
-                        {item}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
+            <p className="px-3 pb-2 text-[10px] leading-snug text-zinc-500">
+              🖼️ Pick a category below — you&apos;ll see real reference images to choose from, no typing needed.
+            </p>
+            {VISUAL_EDIT_CATEGORIES.map(({ group, items }) => renderCategoryGroup(group, items, true))}
+
+            <div className="border-t border-zinc-200 dark:border-zinc-800">
+              <button
+                type="button"
+                onClick={() => setAdvancedOpen((v) => !v)}
+                className="flex w-full items-center justify-between px-3 py-1.5 text-left text-xs font-medium text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              >
+                More Categories (Advanced)
+                <span className="text-zinc-400">{advancedOpen ? "−" : "+"}</span>
+              </button>
+              {advancedOpen && (
+                <>
+                  <p className="px-3 pb-1 text-[10px] leading-snug text-zinc-500">
+                    Manufacturing-level details (fabric, stitching, trims, …) — plain text fields, no reference images.
+                  </p>
+                  {ADVANCED_EDIT_CATEGORIES.map(({ group, items }) => renderCategoryGroup(group, items, false))}
+                </>
+              )}
+            </div>
           </div>
         ) : (
           <button
@@ -689,8 +832,8 @@ export function EditDesignWorkspace({ projectId, initialProject }: { projectId: 
               </p>
             )}
 
-            <div className="mb-3 flex gap-1 rounded bg-zinc-100 p-0.5 text-xs dark:bg-zinc-900">
-              {(["QUICK", "TECHNICAL", "AI_PROMPT"] as EditMode[]).map((m) => (
+            <div className="mb-3 flex flex-wrap gap-1 rounded bg-zinc-100 p-0.5 text-xs dark:bg-zinc-900">
+              {(["QUICK", "TECHNICAL", "AI_PROMPT", "EMBELLISHMENTS"] as const).map((m) => (
                 <button
                   key={m}
                   type="button"
@@ -699,7 +842,7 @@ export function EditDesignWorkspace({ projectId, initialProject }: { projectId: 
                     editMode === m ? "bg-white text-indigo-700 shadow-sm dark:bg-zinc-800 dark:text-indigo-400" : "text-zinc-500"
                   }`}
                 >
-                  {m === "QUICK" ? "Quick Edit" : m === "TECHNICAL" ? "Technical Edit" : "AI Prompt"}
+                  {m === "QUICK" ? "Quick Edit" : m === "TECHNICAL" ? "Technical Edit" : m === "AI_PROMPT" ? "AI Prompt" : "Embellishments"}
                 </button>
               ))}
             </div>
@@ -717,6 +860,31 @@ export function EditDesignWorkspace({ projectId, initialProject }: { projectId: 
                 </div>
                 <div>
                   <label className="mb-0.5 block text-[10px] font-medium text-zinc-500">New Requirement</label>
+                  {matchedDesignAttr && (
+                    <div className="mb-1.5 grid grid-cols-3 gap-1.5">
+                      {matchedDesignAttr.options.map((opt) => {
+                        const selected = newValue === opt;
+                        return (
+                          <button
+                            key={opt}
+                            type="button"
+                            aria-pressed={selected}
+                            onClick={() => setNewValue(opt)}
+                            className={`flex flex-col items-center gap-1 rounded border px-1 py-1.5 text-center transition ${
+                              selected
+                                ? "border-indigo-600 bg-indigo-600 text-white"
+                                : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-900/40"
+                            }`}
+                          >
+                            {designDisplayMode === "CLIPART" && (
+                              <DesignOptionImage value={opt} overrideAttachmentId={optionReferenceImages[opt]} />
+                            )}
+                            <span className="text-[10px] leading-tight">{opt}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                   <input
                     value={newValue}
                     onChange={(e) => setNewValue(e.target.value)}
@@ -778,34 +946,137 @@ export function EditDesignWorkspace({ projectId, initialProject }: { projectId: 
               </div>
             )}
 
-            <div className="mt-3">
-              <label className="mb-0.5 block text-[10px] font-medium text-zinc-500">Variations to generate</label>
-              <div className="flex gap-1">
-                {[1, 2, 3, 4].map((n) => (
-                  <button
-                    key={n}
-                    type="button"
-                    onClick={() => setImageCount(n)}
-                    className={`flex-1 rounded border px-2 py-1 text-xs ${
-                      imageCount === n ? "border-indigo-500 bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300" : "border-zinc-300 dark:border-zinc-700"
-                    }`}
-                  >
-                    {n}
-                  </button>
-                ))}
-              </div>
-            </div>
+            {editMode === "EMBELLISHMENTS" && (
+              <div className="space-y-3">
+                <p className="text-[10px] text-zinc-500">
+                  Add a digital applique or embroidery embellishment to the current design — upload a motif reference
+                  photo, describe how it should be applied, or both. Applies directly as a new version (no preview step).
+                </p>
 
-            <button
-              type="button"
-              disabled={busy === "preview"}
-              onClick={generatePreview}
-              className="mt-3 w-full rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
-            >
-              {busy === "preview" ? "Generating preview…" : "Generate Preview"}
-            </button>
-            {busy === "preview" && (
-              <p className="mt-1 text-[10px] text-amber-600 dark:text-amber-400">This can take up to a minute. Nothing is applied until you review and select a result below.</p>
+                <div>
+                  <p className="mb-1 text-[10px] font-medium text-zinc-500">Embellishment Type</p>
+                  <div className="flex flex-wrap gap-1">
+                    {Object.entries(EMBELLISHMENT_TYPE_LABELS).map(([type, label]) => (
+                      <button
+                        key={type}
+                        type="button"
+                        aria-pressed={embellishmentType === type}
+                        onClick={() => setEmbellishmentType(type)}
+                        className={`rounded border px-2 py-1 text-[10px] ${
+                          embellishmentType === type
+                            ? "border-indigo-600 bg-indigo-600 text-white"
+                            : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <p className="mb-1 text-[10px] font-medium text-zinc-500">Embroidery / Applique Motif (optional)</p>
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    className="block w-full text-[10px]"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const formData = new FormData();
+                      formData.append("file", file);
+                      run("upload-embellishment-motif", async () => {
+                        await parseJson(
+                          await fetch(`/api/v1/ai-designer/projects/${projectId}/embellishment-motif`, { method: "POST", body: formData })
+                        );
+                        await refreshProject();
+                      });
+                      e.target.value = "";
+                    }}
+                  />
+                  {project.embellishmentMotifAttachmentId && (
+                    <div className="mt-2 flex items-center gap-2">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={imageUrl(project.embellishmentMotifAttachmentId)}
+                        alt="Embellishment motif reference"
+                        className="h-14 w-14 rounded border object-cover"
+                      />
+                      <button
+                        type="button"
+                        className="text-[10px] text-red-600 hover:underline"
+                        onClick={() =>
+                          run("delete-embellishment-motif", async () => {
+                            await parseJson(
+                              await fetch(`/api/v1/ai-designer/projects/${projectId}/embellishment-motif`, { method: "DELETE" })
+                            );
+                            await refreshProject();
+                          })
+                        }
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <label className="mb-0.5 block text-[10px] font-medium text-zinc-500">Embellishment Instructions</label>
+                  <textarea
+                    value={embellishmentInstructions}
+                    onChange={(e) => setEmbellishmentInstructions(e.target.value)}
+                    rows={3}
+                    placeholder='e.g. "Add intricate embroidery on the sleeves and neckline". Leave empty to use a sensible default.'
+                    className="w-full rounded border border-zinc-300 px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-900"
+                  />
+                </div>
+
+                <button
+                  type="button"
+                  disabled={
+                    busy === "apply-embellishments" ||
+                    (!project.embellishmentMotifAttachmentId && !embellishmentInstructions.trim())
+                  }
+                  onClick={applyEmbellishmentsAction}
+                  className="w-full rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+                >
+                  {busy === "apply-embellishments" ? "Applying…" : "Apply Embellishments"}
+                </button>
+              </div>
+            )}
+
+            {editMode !== "EMBELLISHMENTS" && (
+              <>
+                <div className="mt-3">
+                  <label className="mb-0.5 block text-[10px] font-medium text-zinc-500">Variations to generate</label>
+                  <div className="flex gap-1">
+                    {[1, 2, 3, 4].map((n) => (
+                      <button
+                        key={n}
+                        type="button"
+                        onClick={() => setImageCount(n)}
+                        className={`flex-1 rounded border px-2 py-1 text-xs ${
+                          imageCount === n ? "border-indigo-500 bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300" : "border-zinc-300 dark:border-zinc-700"
+                        }`}
+                      >
+                        {n}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  disabled={busy === "preview"}
+                  onClick={generatePreview}
+                  className="mt-3 w-full rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+                >
+                  {busy === "preview" ? "Generating preview…" : "Generate Preview"}
+                </button>
+                {busy === "preview" && (
+                  <p className="mt-1 text-[10px] text-amber-600 dark:text-amber-400">This can take up to a minute. Nothing is applied until you review and select a result below.</p>
+                )}
+              </>
             )}
           </div>
         ) : (

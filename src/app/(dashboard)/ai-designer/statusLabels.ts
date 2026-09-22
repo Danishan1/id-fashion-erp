@@ -21,11 +21,9 @@ export const WIZARD_STEP_LABELS: Record<string, string> = {
   TARGET_CUSTOMER: "Target Customer",
   AGE_GROUP: "Age Group",
   PRODUCT_CATEGORY: "Product Category",
-  PRODUCT_DESIGN: "Product Design",
   ENVIRONMENT: "Environment",
   GENERATE: "Generate Design",
   MULTI_FABRIC: "Multi-Fabric",
-  EMBELLISHMENTS: "Embellishments",
   EDIT: "Edit Design",
   BRANDING: "Branding",
   TECH_PACK: "Tech Pack",
@@ -35,7 +33,9 @@ export const WIZARD_STEP_LABELS: Record<string, string> = {
 // Mirrors ai-designer.service.ts's own STANDARD_STEPS exactly (a
 // duplicated, client-safe copy, same convention as every other
 // client/server pair in this app — this file has zero Prisma imports).
-// MODEL is hidden from the wizard for now, per explicit request.
+// PRODUCT_DESIGN, MODEL, and EMBELLISHMENTS are all hidden from the wizard
+// for now, per explicit request — Embellishments' own real feature is still
+// fully reachable from the Edit Design workspace's own Embellishments tab.
 export const WIZARD_STEP_ORDER = [
   "FABRIC_SELECTION",
   "FABRIC_ANALYSIS",
@@ -43,11 +43,9 @@ export const WIZARD_STEP_ORDER = [
   "TARGET_CUSTOMER",
   "AGE_GROUP",
   "PRODUCT_CATEGORY",
-  "PRODUCT_DESIGN",
   "ENVIRONMENT",
   "GENERATE",
   "MULTI_FABRIC",
-  "EMBELLISHMENTS",
   "EDIT",
   "BRANDING",
   "TECH_PACK",
