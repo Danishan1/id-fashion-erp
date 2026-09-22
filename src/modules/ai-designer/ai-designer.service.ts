@@ -882,7 +882,7 @@ export async function applyProductSuggestionAndGenerate(actor: ActorContext, pro
     environmentKey: item.environmentKey,
   });
 
-  const result = await generateDesign(actor, projectId, { imageCount: 3 }, {
+  const result = await generateDesign(actor, projectId, { imageCount: 3, viewAngle: "FRONT" }, {
     targetCustomer: group.targetCustomer,
     productCategory: item.productCategory,
     priorityRank: item.priorityRank,
