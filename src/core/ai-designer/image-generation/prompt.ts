@@ -9,8 +9,15 @@
  * fabric photo as an input image, and this prompt now leads with an
  * explicit instruction that the fabric's actual visual appearance comes
  * from that image, not from the text below.
+ *
+ * v5 (2026-09-22): no framing instruction existed anywhere, so a generated
+ * image could come back as a cropped/close-up shot — cutting off the lower
+ * half of the garment made it impossible to actually see whether a length/
+ * hem-related change had taken effect. Added an explicit full-body framing
+ * requirement to both generation prompts, and to the shared edit
+ * PRESERVE_ITEMS list so it carries through every subsequent edit too.
  */
-export const PROMPT_VERSION = "ai-designer-image-generation-v4";
+export const PROMPT_VERSION = "ai-designer-image-generation-v5";
 
 export interface AiDesignerGenerationContext {
   targetCustomer: string;
@@ -30,6 +37,17 @@ const FALLBACK = "Not specified";
  * requirement — this is what makes the fabric image a PRIMARY visual
  * reference rather than a hint the model may reinterpret.
  */
+/**
+ * User-reported gap (2026-09-22): generated images were sometimes a
+ * cropped/close-up shot, cutting off the lower half of the garment — no
+ * framing instruction existed anywhere, so a request to preview a length
+ * change (e.g. Length: Floor length) could look "wrong" even when the
+ * actual generation correctly applied it, simply because the crop hid the
+ * hem entirely. Stated as its own explicit requirement, not folded into the
+ * Model line, so it survives independently of whatever pose is chosen.
+ */
+const FULL_BODY_FRAMING_INSTRUCTION = `The photograph must show the model FULL-BODY, head to toe, standing so the entire garment is visible from the neckline/shoulders all the way down to the hem (and footwear) in a single frame. Do not crop the image at the waist, hips, or knees, and do not produce a close-up, half-body, or partial-body shot — the complete garment, including its full length, must be clearly visible for review.`;
+
 const FABRIC_REFERENCE_INSTRUCTION = `Use the supplied fabric reference image as the exact fabric source for the garment. Preserve the fabric's actual print, motif, pattern arrangement, colors, texture, and visual characteristics EXACTLY as shown in the reference image — including the same density, scale, intricacy, and surface COVERAGE of the pattern/embroidery. Carefully examine how much of the fabric's base/background color remains visible between motifs in the reference image (the ratio of plain background to pattern), and reproduce that same coverage ratio on the garment — if the reference fabric is densely and heavily embroidered with very little plain background showing through, the garment's fabric must be equally densely covered, not thinned out with large plain gaps between motifs. Do not simplify a dense, detailed, or intricate pattern (e.g. embroidery, heavy motifs, layered florals) into a smaller, sparser, more spaced-out, or lower-detail version — match the reference image's own pattern density, complexity, and coverage as closely as possible, not a simplified or thinned-out approximation of it. Apply this fabric to the garment naturally while preserving the garment's construction, silhouette, seams, folds, drape, and fit. Do not invent, redesign, simplify, or substitute the fabric pattern. The garment must visibly use the supplied fabric.`;
 
 /**
@@ -70,6 +88,8 @@ Environment / Setting:
 ${v(ctx.environment)}
 
 Requirements:
+
+${FULL_BODY_FRAMING_INSTRUCTION}
 
 The garment must be realistic and commercially manufacturable — avoid impossible construction.
 
@@ -192,6 +212,8 @@ export function buildSketchGenerationPrompt(ctx: AiDesignerSketchGenerationConte
     "",
     "Requirements:",
     "",
+    FULL_BODY_FRAMING_INSTRUCTION,
+    "",
     "The garment must be realistic and commercially manufacturable — avoid impossible construction.",
     "",
     "Maintain realistic, natural fabric folds and draping appropriate to the garment and the supplied fabric's own weight and texture.",
@@ -221,6 +243,7 @@ const PRESERVE_ITEMS = [
   "model",
   "pose",
   "background / environment",
+  "full-body framing (the model shown head to toe with the complete garment visible from neckline to hem — never crop tighter than the original image)",
 ];
 
 /**
@@ -413,7 +436,7 @@ export function buildSecondFabricPrompt(applyAreas: readonly string[]): string {
     "",
     `Apply this second fabric ONLY to: ${areaLabels}.`,
     "",
-    "Preserve everything else exactly as it already is in the current design image: the primary fabric everywhere else on the garment, the overall silhouette, construction, model, pose, and background/environment.",
+    "Preserve everything else exactly as it already is in the current design image: the primary fabric everywhere else on the garment, the overall silhouette, construction, model, pose, full-body framing, and background/environment.",
     "",
     "Do not invent, redesign, simplify, or substitute either fabric's actual print, pattern, or colour — both fabrics must visibly match their own real reference photos, including the same pattern density and intricacy shown in each reference image, not a simplified approximation.",
     "",
