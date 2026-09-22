@@ -619,7 +619,12 @@ export function MaterialRequestForm({ initialRequest }: { initialRequest?: Initi
       )}
 
       {showBomLinesModal && orderPreview && (
-        <Modal open onClose={() => setShowBomLinesModal(false)} title="Materials from this Order's BOM">
+        <Modal
+          open
+          onClose={() => setShowBomLinesModal(false)}
+          title="Materials from this Order's BOM"
+          maxWidthClass="max-w-[70vw]"
+        >
           <div className="space-y-4">
             {orderPreview.items.map((item) => (
               <div key={item.salesOrderItemId} className="space-y-2">
