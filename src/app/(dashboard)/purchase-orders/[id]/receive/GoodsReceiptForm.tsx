@@ -52,8 +52,10 @@ interface RollDraft {
   calcWeightKg: string;
   calcGsm: string;
   calcWidthValue: string;
-  calcWidthUnit: "IN" | "M";
+  calcWidthUnit: "IN" | "CM" | "M";
 }
+
+const WIDTH_UNIT_TO_METERS: Record<RollDraft["calcWidthUnit"], number> = { IN: 0.0254, CM: 0.01, M: 1 };
 
 // Length(m) = Weight(g) / (GSM(g per sq.m) x Width(m))
 function suggestedMetersFromWeight(roll: RollDraft): number | null {
@@ -61,9 +63,29 @@ function suggestedMetersFromWeight(roll: RollDraft): number | null {
   const gsm = Number(roll.calcGsm);
   const widthValue = Number(roll.calcWidthValue);
   if (!weightKg || weightKg <= 0 || !gsm || gsm <= 0 || !widthValue || widthValue <= 0) return null;
-  const widthMeters = roll.calcWidthUnit === "IN" ? widthValue * 0.0254 : widthValue;
+  const widthMeters = widthValue * WIDTH_UNIT_TO_METERS[roll.calcWidthUnit];
   const meters = (weightKg * 1000) / (gsm * widthMeters);
   return Number.isFinite(meters) ? meters : null;
+}
+
+// Best-effort read of the leading number out of a master's own display name
+// (e.g. "160 GSM" -> 160, "38 inch" -> 38) -- these masters are plain
+// name/code lookups (Masters > Fabric Configuration), not guaranteed-numeric
+// fields, so a value that doesn't parse is simply left for the user to type
+// themselves rather than guessed at.
+function parseLeadingNumber(text: string): number | null {
+  const match = text.match(/(\d+(?:\.\d+)?)/);
+  if (!match) return null;
+  const n = Number(match[1]);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function detectWidthUnit(name: string): RollDraft["calcWidthUnit"] {
+  const lower = name.toLowerCase();
+  if (lower.includes("cm")) return "CM";
+  if (lower.includes("inch") || /\bin\b/.test(lower)) return "IN";
+  if (lower.includes("mtr") || lower.includes("meter") || lower.includes("metre") || /\bm\b/.test(lower)) return "M";
+  return "IN";
 }
 
 interface LineDraft {
@@ -385,7 +407,20 @@ export function GoodsReceiptForm({ purchaseOrderId, lines }: { purchaseOrderId: 
                       {isVisible("FABRIC_GSM") && (
                         <select
                           value={roll.gsmId}
-                          onChange={(e) => updateRoll(line.purchaseOrderItemId, rollIndex, { gsmId: e.target.value })}
+                          onChange={(e) => {
+                            const gsmId = e.target.value;
+                            const patch: Partial<RollDraft> = { gsmId };
+                            // Pre-fill the weight-to-meter calculator's own GSM from the
+                            // same selection so the user isn't asked to type it twice --
+                            // only when the calc field is still blank, so a value the
+                            // user already typed there themselves is never overwritten.
+                            if (!roll.calcGsm) {
+                              const picked = gsms.find((g) => g.id === gsmId);
+                              const parsed = picked ? parseLeadingNumber(picked.name) : null;
+                              if (parsed !== null) patch.calcGsm = String(parsed);
+                            }
+                            updateRoll(line.purchaseOrderItemId, rollIndex, patch);
+                          }}
                           className={textInputClass()}
                         >
                           <option value="">GSM</option>
@@ -414,7 +449,21 @@ export function GoodsReceiptForm({ purchaseOrderId, lines }: { purchaseOrderId: 
                         {isVisible("FABRIC_WIDTH") && (
                           <select
                             value={roll.widthId}
-                            onChange={(e) => updateRoll(line.purchaseOrderItemId, rollIndex, { widthId: e.target.value })}
+                            onChange={(e) => {
+                              const widthId = e.target.value;
+                              const patch: Partial<RollDraft> = { widthId };
+                              // Same "don't ask twice" pre-fill as GSM above, for the
+                              // calculator's own Width + Width Unit fields.
+                              if (!roll.calcWidthValue) {
+                                const picked = widths.find((w) => w.id === widthId);
+                                const parsed = picked ? parseLeadingNumber(picked.name) : null;
+                                if (parsed !== null) {
+                                  patch.calcWidthValue = String(parsed);
+                                  patch.calcWidthUnit = detectWidthUnit(picked!.name);
+                                }
+                              }
+                              updateRoll(line.purchaseOrderItemId, rollIndex, patch);
+                            }}
                             className={textInputClass()}
                           >
                             <option value="">Width</option>
@@ -514,11 +563,14 @@ export function GoodsReceiptForm({ purchaseOrderId, lines }: { purchaseOrderId: 
                                 id={`calc-width-unit-${line.purchaseOrderItemId}-${rollIndex}`}
                                 value={roll.calcWidthUnit}
                                 onChange={(e) =>
-                                  updateRoll(line.purchaseOrderItemId, rollIndex, { calcWidthUnit: e.target.value as "IN" | "M" })
+                                  updateRoll(line.purchaseOrderItemId, rollIndex, {
+                                    calcWidthUnit: e.target.value as RollDraft["calcWidthUnit"],
+                                  })
                                 }
                                 className={textInputClass()}
                               >
                                 <option value="IN">Inches</option>
+                                <option value="CM">Centimeters</option>
                                 <option value="M">Meters</option>
                               </select>
                             </FormField>
