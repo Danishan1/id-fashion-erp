@@ -51,9 +51,10 @@ export interface TechPackGarmentAnalysis {
       finish: string;
       consumption: StatusValue;
       supplierNotes: string;
+      garmentPiece?: string;
     }[];
-    bomItems: { materialType: string; composition: StatusValue; gsm: StatusValue; color: string; consumption: StatusValue; notes: string }[];
-    measurementPoints: { pointName: string; howToMeasure: string; toleranceCm: string; status: string; values: Record<string, string> }[];
+    bomItems: { materialType: string; composition: StatusValue; gsm: StatusValue; color: string; consumption: StatusValue; notes: string; garmentPiece?: string }[];
+    measurementPoints: { pointName: string; howToMeasure: string; toleranceCm: string; status: string; values: Record<string, string>; garmentPiece?: string }[];
     gradeRulesNotes: string;
   };
   part3: {
@@ -672,6 +673,7 @@ export function AiDesignerTechPackPanel({
                 <p className="mb-1 text-xs font-semibold text-zinc-600 dark:text-zinc-400">Fabric &amp; Materials</p>
                 <EditableDataTable
                   columns={[
+                    { header: "Piece", field: "garmentPiece", value: (i) => analysis.part2.fabricMaterials[i].garmentPiece || "" },
                     { header: "Role", field: "materialRole", value: (i) => analysis.part2.fabricMaterials[i].materialRole },
                     { header: "Fabric Type", field: "fabricType", value: (i) => analysis.part2.fabricMaterials[i].fabricType },
                     {
@@ -710,6 +712,7 @@ export function AiDesignerTechPackPanel({
                 <p className="mb-1 text-xs font-semibold text-zinc-600 dark:text-zinc-400">H. Bill of Materials (Trims &amp; Notions)</p>
                 <EditableDataTable
                   columns={[
+                    { header: "Piece", field: "garmentPiece", value: (i) => analysis.part2.bomItems[i].garmentPiece || "" },
                     { header: "Material Type", field: "materialType", value: (i) => analysis.part2.bomItems[i].materialType },
                     {
                       header: "Composition",
@@ -736,6 +739,7 @@ export function AiDesignerTechPackPanel({
                 <p className="mb-1 text-xs font-semibold text-zinc-600 dark:text-zinc-400">I. Measurements &amp; Grading</p>
                 <EditableDataTable
                   columns={[
+                    { header: "Piece", field: "garmentPiece", value: (i) => analysis.part2.measurementPoints[i].garmentPiece || "" },
                     { header: "Point", field: "pointName", value: (i) => analysis.part2.measurementPoints[i].pointName },
                     { header: "Tolerance", field: "toleranceCm", value: (i) => analysis.part2.measurementPoints[i].toleranceCm },
                     { header: "Status", field: "status", value: () => "", status: (i) => analysis.part2.measurementPoints[i].status, statusOnly: true },

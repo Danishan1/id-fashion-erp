@@ -7035,6 +7035,93 @@ its own separate structured `status` field** rather than the old v1-v3 conventio
   the browser console, leaving the real demo project exactly as found (still DRAFT, not approved — the
   script's own approve step never ran, since it came after the PDF step that hit the tooling limitation).
 
+## AI Designer — Multi-Piece Set support, real Revision History, piece-tagged Tech Pack tables (2026-09-22)
+
+User supplied 7 reference pages from a real professional supplier tech pack ("POINT 8° / DEEPTEX PRINTS,"
+a 3-piece Kurta + Pant + Dupatta set) with the comment "ye sare data aana chahiye" (all this data should
+come/appear). Investigated the gap first rather than guessing scope — the reference document's whole
+structure (separate BOM/Measurement/Grading detail per garment piece, per-piece colorway swatches, a
+Revision History table) is built around a coordinated multi-piece outfit, something AI Designer's wizard
+had never modeled at all (one project = one garment, always). Confirmed the two genuinely blocking
+architecture decisions via AskUserQuestion before building anything: **(1) build real multi-piece Set
+support**, not just enrich the single-garment shape (the user's explicit choice over the lighter
+"single-garment-only" option); **(2) keep the existing, already-confirmed "no AI-drawn diagrams" rule** —
+every new page stays real typeset text/tables, using the project's own real photo + numbered pins (already
+built for Construction & Detail Callouts) rather than hand-illustrated CAD flats/nested grading silhouettes/
+packing-process illustrations, which would have contradicted this module's own repeatedly-reaffirmed rule.
+
+- **Schema** (migration `20260922120000_add_ai_designer_project_pieces`): new `AiDesignerProjectMode` enum
+  (`SINGLE` default — unchanged behavior for every existing project — vs `SET`) on `AiDesignerProject`, and
+  a new `AiDesignerProjectPiece` table (`pieceIndex`/`pieceLabel`/`productCategory`/`designNotes`,
+  `@@unique([projectId, pieceIndex])`, cascade-deleted with the project). Deliberately simpler than the
+  single-garment wizard's own full per-attribute clipart/catalog picker — one free-text design-notes field
+  per piece rather than duplicating that whole picker N times, matching this module's own existing
+  simplification (Product Design's attribute picker is already hidden from the single-garment wizard too).
+  A pre-existing, unrelated schema/DB drift was found while diffing (`sample_requests.color` exists in the
+  live dev DB but not in `schema.prisma`) — deliberately excluded from this migration's own hand-written SQL
+  rather than silently dropped, since it's unrelated to this change and its own resolution belongs to
+  whoever owns that drift.
+- **One generated design photo per version, not N per-piece photos** — a SET project still produces ONE
+  fashion-catalogue photo per version (the whole outfit worn together), matching real fashion photography
+  for a coordinated set — building N separate per-piece generation/edit/version flows was judged
+  disproportionate to the actual ask and a much larger change to Generate/Edit/Version review.
+  `buildSetPiecesDescription()` composes a combined `"1. Kurta (Category) — notes; 2. Pant — notes"`
+  description fed into the EXISTING `buildGenerationPrompt()`'s own `productCategory`/`designSelections`
+  string fields — zero changes needed to `image-generation/prompt.ts` itself, since both were always plain
+  strings. `assertReadyToGenerate()` requires at least one real piece for a SET project instead of the
+  single `productCategory` field.
+- **Wizard**: New Project gains a Single Garment / Multi-Piece Set toggle. The existing `PRODUCT_CATEGORY`
+  step renders a genuinely different body for a SET project — a new `SetPiecesEditor` (add/remove pieces,
+  each with a label + optional category + free-text design notes, "Save Pieces" full-replace-on-save) in
+  place of the single category-button grid — rather than adding a new step to the order, since for a SET
+  project "product category" conceptually IS the set of pieces. `replaceProjectPieces()` follows the exact
+  "empty array is a real state, not a no-op" contract already established by `RoleProductionStageAccess`/
+  `SupplierMaterialCategory` elsewhere in this codebase — saving zero pieces correctly un-marks
+  `PRODUCT_CATEGORY` as complete again.
+- **Verified live end-to-end through the real UI** (not just tsc/eslint/vitest): created a real Multi-Piece
+  Set project (`AID-2026-00009`) through the actual New Design form, confirmed the Design Type toggle and the
+  resulting wizard both work; saved 3 real pieces (Kurta/Kurti/notes, Pant/Pant/notes, Dupatta/no-category/
+  notes) via the real `PUT .../pieces` endpoint, confirmed `PRODUCT_CATEGORY` correctly flips to `✓` in the
+  stepper, and confirmed reopening that step re-renders the `SetPiecesEditor` genuinely pre-filled with all 3
+  real saved pieces from the database, not blank rows. A pre-existing stale-Turbopack-module-cache issue
+  (this project's own repeatedly-documented gotcha — a garbled stack trace pointing `getProjectById` at an
+  unrelated array literal, "Unknown field `pieces`" despite the regenerated Prisma client genuinely having
+  it) was hit and fixed with a full `.next` wipe + restart before this verification could proceed cleanly.
+  `npx tsc --noEmit`, `npx eslint .` (0 errors), and `npx vitest run` (1862/1862, 11 new) all clean.
+- **Tech Pack piece-tagging**: `fabricMaterialLineSchema`/`bomItemSchema`/`measurementPointSchema` all gained
+  an optional `garmentPiece` field (a plain string, e.g. "Kurta" or "Common / Shared" for an item used across
+  every piece, e.g. sewing thread) — absent/never populated for a SINGLE-garment project, so every existing
+  renderer stays byte-for-byte unchanged there. Part 2's prompt gained a new instruction, appended only when
+  `TechPackDesignContext.garmentPieces` is populated, requiring the AI to generate separate, appropriately-
+  scoped Fabric & Materials/BOM/Measurement rows per piece (a Kurta's own chest/length measurements are
+  genuinely different from a Pant's own waist/inseam) and tag every row accordingly — never one generic set
+  assuming a single garment. The PDF renderer (`renderTechPackDocumentPdfV2`) and the live-editing panel
+  (`AiDesignerTechPackPanel.tsx`) both add a leading "Piece" column to these three tables whenever any row
+  actually carries one, with PDF rows additionally sorted so same-piece rows sit together (approximating the
+  reference's own separate-table-per-piece layout within the renderer's existing single-flat-table shape,
+  without building N distinct table components) — a documented, deliberate scope trade-off, not a literal
+  page-for-page replica of the reference document's own physically-separate tables.
+- **Real Revision History, zero AI** — the one piece of "ye sare data aana chahiye" that was purely a matter
+  of surfacing data this system already tracks. New `AiDesignerTechPackRepository.findRevisionChain()` walks
+  `parentTechPackId` back from the currently-exported tech pack to its root (a small, bounded chain) and
+  returns it oldest-first with real `createdBy`/`approvedBy` names — rendered as a genuine Rev/Date/Prepared
+  By/Status/Approved By/Approved Date table on the Cover page, directly matching the reference document's own
+  table, built entirely from real `revisionNumber`/`createdAt`/`approvalStatus`/`approvedAt` columns that
+  already existed on `AiDesignerTechPack` since its own v3 approve/revision-fork build. A Set project's Cover
+  page also gains a real "Set Pieces" table (from the real `AiDesignerProjectPiece` rows) alongside it.
+- **Not built this pass, explicitly out of scope per the confirmed decisions above**: hand-illustrated
+  construction-callout diagrams, nested size-grading silhouettes, or packing-process step illustrations (the
+  reference's own most visually distinctive pages) — all would require either AI-drawn document content
+  (against the project's own established rule) or professional pattern-making/illustration tooling neither
+  requested nor available here; richer Style Information fields beyond what's already real (Reference No. is
+  already `projectNumber`, Target Market was not added — no existing project field or AI-inferred source for
+  it was judged worth the schema churn this pass); a BOM Supplier column (would require fuzzy-matching an
+  AI-suggested material description against a real Product row — the identical capability already explicitly
+  declined for AI Garment Flow's own BOM Suggestion process, for the same low-data-quality-risk reason);
+  structured Polybag/Carton Marking/Label Specification tables (the reference's own richer packaging tables)
+  — Part 3's existing `polybagSpec`/`cartonPackingSpec`/label-spec fields stay their current single
+  `{value,status}` shape rather than being restructured into full sub-tables this pass.
+
 ## Reference
 
 Full architecture rationale, complete table-by-table field lists, and the full role×module permission matrix were developed in the Phase 1 planning session and are condensed here. Consult that history if a design decision needs deeper justification than what's summarized above.

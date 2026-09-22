@@ -41,6 +41,10 @@ vi.mock("./ai-designer.repository", () => ({
     create: vi.fn(),
     update: vi.fn(),
   },
+  AiDesignerProjectPieceRepository: {
+    findByProjectId: vi.fn(),
+    replaceAll: vi.fn(),
+  },
   AiDesignerPromptRepository: {
     create: vi.fn(),
     markSuccess: vi.fn(),
@@ -76,6 +80,7 @@ vi.mock("./ai-designer.repository", () => ({
     findByIdScoped: vi.fn(),
     update: vi.fn(),
     createRevision: vi.fn(),
+    findRevisionChain: vi.fn(),
   },
   AiDesignerSketchAnalysisRepository: {
     findByProjectId: vi.fn(),
@@ -109,6 +114,7 @@ const { analyzeSketch } = await import("@/core/ai-designer/sketch-analysis/analy
 const { generateProductSuggestions } = await import("@/core/ai-designer/product-suggestions/generate");
 const {
   AiDesignerProjectRepository,
+  AiDesignerProjectPieceRepository,
   AiDesignerPromptRepository,
   AiDesignerGenerationRepository,
   AiDesignerImageRepository,
@@ -150,6 +156,8 @@ const {
   revertTechPackToOriginal,
   decideImage,
   listImages,
+  listProjectPieces,
+  replaceProjectPieces,
   exportProject,
   updateBrandName,
   uploadBrandLogo,
@@ -259,11 +267,85 @@ describe("createProject", () => {
   it("creates a DRAFT project with a real document number", async () => {
     vi.mocked(AiDesignerProjectRepository.create).mockResolvedValue(baseProject({ id: "proj-1" }) as never);
 
-    const project = await createProject(actor, { projectName: "Summer Line", creationMode: "STANDARD" });
+    const project = await createProject(actor, { projectName: "Summer Line", creationMode: "STANDARD", projectMode: "SINGLE" });
 
     expect(project.id).toBe("proj-1");
     expect(AiDesignerProjectRepository.create).toHaveBeenCalledWith(
-      expect.objectContaining({ projectName: "Summer Line", status: "DRAFT", currentStep: "FABRIC_SELECTION", creationMode: "STANDARD" })
+      expect.objectContaining({ projectName: "Summer Line", status: "DRAFT", currentStep: "FABRIC_SELECTION", creationMode: "STANDARD", projectMode: "SINGLE" })
+    );
+  });
+
+  it("creates a SET-mode project when projectMode is SET", async () => {
+    vi.mocked(AiDesignerProjectRepository.create).mockResolvedValue(baseProject({ id: "proj-2", projectMode: "SET" }) as never);
+
+    await createProject(actor, { projectName: "Coordinated Set", creationMode: "STANDARD", projectMode: "SET" });
+
+    expect(AiDesignerProjectRepository.create).toHaveBeenCalledWith(expect.objectContaining({ projectMode: "SET" }));
+  });
+});
+
+describe("listProjectPieces", () => {
+  it("returns the project's own pieces after confirming ownership", async () => {
+    vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(baseProject({ projectMode: "SET" }) as never);
+    vi.mocked(AiDesignerProjectPieceRepository.findByProjectId).mockResolvedValue([
+      { id: "piece-1", pieceIndex: 0, pieceLabel: "Kurta", productCategory: null, designNotes: null },
+    ] as never);
+
+    const result = await listProjectPieces("co-1", "proj-1");
+
+    expect(result).toHaveLength(1);
+    expect(AiDesignerProjectPieceRepository.findByProjectId).toHaveBeenCalledWith("proj-1");
+  });
+});
+
+describe("replaceProjectPieces", () => {
+  it("rejects submitting pieces to a SINGLE-mode project", async () => {
+    vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(baseProject({ projectMode: "SINGLE" }) as never);
+
+    await expect(
+      replaceProjectPieces(actor, "proj-1", { pieces: [{ pieceLabel: "Kurta", productCategory: "", designNotes: "" }] })
+    ).rejects.toThrow(BusinessRuleError);
+  });
+
+  it("full-replaces pieces for a SET-mode project and marks PRODUCT_CATEGORY complete", async () => {
+    vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(
+      baseProject({ projectMode: "SET", completedSteps: [] }) as never
+    );
+    vi.mocked(AiDesignerProjectPieceRepository.replaceAll).mockResolvedValue([
+      { id: "piece-1", pieceIndex: 0, pieceLabel: "Kurta", productCategory: "Kurta", designNotes: null },
+      { id: "piece-2", pieceIndex: 1, pieceLabel: "Pant", productCategory: null, designNotes: "Straight fit" },
+    ] as never);
+
+    const result = await replaceProjectPieces(actor, "proj-1", {
+      pieces: [
+        { pieceLabel: "Kurta", productCategory: "Kurta", designNotes: "" },
+        { pieceLabel: "Pant", productCategory: "", designNotes: "Straight fit" },
+      ],
+    });
+
+    expect(result).toHaveLength(2);
+    expect(AiDesignerProjectPieceRepository.replaceAll).toHaveBeenCalledWith(
+      "co-1",
+      "proj-1",
+      expect.arrayContaining([expect.objectContaining({ pieceLabel: "Kurta" }), expect.objectContaining({ pieceLabel: "Pant" })])
+    );
+    expect(AiDesignerProjectRepository.update).toHaveBeenCalledWith(
+      "proj-1",
+      expect.objectContaining({ completedSteps: expect.arrayContaining(["PRODUCT_CATEGORY"]) })
+    );
+  });
+
+  it("clears the PRODUCT_CATEGORY step when saving an empty piece list", async () => {
+    vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(
+      baseProject({ projectMode: "SET", completedSteps: ["FABRIC_SELECTION", "PRODUCT_CATEGORY"] }) as never
+    );
+    vi.mocked(AiDesignerProjectPieceRepository.replaceAll).mockResolvedValue([] as never);
+
+    await replaceProjectPieces(actor, "proj-1", { pieces: [] });
+
+    expect(AiDesignerProjectRepository.update).toHaveBeenCalledWith(
+      "proj-1",
+      expect.objectContaining({ completedSteps: ["FABRIC_SELECTION"] })
     );
   });
 });
@@ -369,6 +451,56 @@ function readyProjectWithFabricImage(overrides: Record<string, unknown> = {}) {
     ...overrides,
   });
 }
+
+describe("generateDesign — multi-piece Set support", () => {
+  it("blocks generation for a SET-mode project with zero pieces, naming Set pieces rather than Product Category", async () => {
+    vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(
+      readyProjectWithFabricImage({ projectMode: "SET", productCategory: null }) as never
+    );
+    vi.mocked(AiDesignerProjectPieceRepository.findByProjectId).mockResolvedValue([] as never);
+
+    await expect(generateDesign(actor, "proj-1", { imageCount: 1, viewAngle: "FRONT" })).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("Set piece"),
+    });
+  });
+
+  it("composes a combined multi-piece prompt from the project's real pieces, not the single productCategory field", async () => {
+    vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(
+      readyProjectWithFabricImage({ projectMode: "SET", productCategory: null }) as never
+    );
+    vi.mocked(AiDesignerProjectPieceRepository.findByProjectId).mockResolvedValue([
+      { id: "p1", pieceIndex: 0, pieceLabel: "Kurta", productCategory: "Kurta", designNotes: "V-neck" },
+      { id: "p2", pieceIndex: 1, pieceLabel: "Pant", productCategory: null, designNotes: null },
+    ] as never);
+    vi.mocked(getAttachmentForDownload).mockResolvedValue({ attachment: { mimeType: "image/jpeg" }, buffer: FABRIC_IMAGE_BYTES } as never);
+    const generateFromFabricReference = vi
+      .fn()
+      .mockResolvedValue({ images: [{ buffer: Buffer.from("generated"), mimeType: "image/png" }], model: "gpt-image-1", raw: {} });
+    vi.mocked(runWithFailover).mockImplementation(async (params) => {
+      const result = await params.call({ name: "openai", model: "gpt-image-1", generate: vi.fn(), generateFromFabricReference } as never);
+      return { images: result.images, model: result.model, raw: result.raw, providerId: "provider-1", providerName: "openai" };
+    });
+    vi.mocked(AiDesignerImageRepository.findByGenerationId).mockResolvedValue([{ id: "img-1" }] as never);
+
+    await generateDesign(actor, "proj-1", { imageCount: 1, viewAngle: "FRONT" });
+
+    expect(AiDesignerPromptRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        promptText: expect.stringContaining("2-piece set"),
+        specJson: expect.objectContaining({
+          setPieces: [
+            { pieceLabel: "Kurta", productCategory: "Kurta", designNotes: "V-neck" },
+            { pieceLabel: "Pant", productCategory: null, designNotes: null },
+          ],
+        }),
+      })
+    );
+    const promptText = vi.mocked(AiDesignerPromptRepository.create).mock.calls[0][0].promptText as string;
+    expect(promptText).toContain("Kurta");
+    expect(promptText).toContain("Pant");
+  });
+});
 
 describe("generateDesign — the wizard-step gate", () => {
   it("blocks generation until fabric-image/customer/age/category/model/environment are all set", async () => {

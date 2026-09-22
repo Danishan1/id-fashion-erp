@@ -822,9 +822,10 @@ export interface TechPackAnalysisForPdfV2 {
       finish: string;
       consumption: TechPackStatusValueForPdf;
       supplierNotes: string;
+      garmentPiece?: string;
     }[];
-    bomItems: { materialType: string; composition: TechPackStatusValueForPdf; gsm: TechPackStatusValueForPdf; color: string; consumption: TechPackStatusValueForPdf; notes: string }[];
-    measurementPoints: { pointName: string; howToMeasure: string; toleranceCm: string; status: string; values: Record<string, string> }[];
+    bomItems: { materialType: string; composition: TechPackStatusValueForPdf; gsm: TechPackStatusValueForPdf; color: string; consumption: TechPackStatusValueForPdf; notes: string; garmentPiece?: string }[];
+    measurementPoints: { pointName: string; howToMeasure: string; toleranceCm: string; status: string; values: Record<string, string>; garmentPiece?: string }[];
     gradeRulesNotes: string;
   };
   part3: {
@@ -848,6 +849,22 @@ export interface TechPackAnalysisForPdfV2 {
   };
 }
 
+/** Multi-piece Set support (2026-09-22) — the real AiDesignerProjectPiece rows, when the project is a SET. Pure real data, not AI-generated. */
+export interface TechPackSetPieceForPdf {
+  pieceLabel: string;
+  productCategory: string | null;
+}
+
+/** Revision History (2026-09-22) — walked from the real AiDesignerTechPack approve/revision chain (revisionNumber/createdAt/createdBy/approvedAt/approvedBy), oldest first. Pure real data, zero AI. */
+export interface TechPackRevisionHistoryEntryForPdf {
+  revisionNumber: number;
+  createdAt: string;
+  createdByName: string;
+  approvalStatus: "DRAFT" | "APPROVED";
+  approvedAt: string | null;
+  approvedByName: string | null;
+}
+
 export interface TechPackDocumentPropsV2 {
   projectNumber: string;
   projectName: string;
@@ -857,6 +874,8 @@ export interface TechPackDocumentPropsV2 {
   companyName?: string;
   realStyleInfo?: TechPackRealStyleInfo;
   page2ImageDimensions?: { width: number; height: number };
+  setPieces?: TechPackSetPieceForPdf[];
+  revisionHistory?: TechPackRevisionHistoryEntryForPdf[];
 }
 
 /** Formats a `{value, status}` pair as one line of PDF text — a plain, low-risk bracket-tag suffix (no bespoke colored-badge PDF component needed) that still gives every fact its own visibly separate confidence tag, exactly as the new prompt's own ERP/database output convention calls for. */
@@ -888,6 +907,8 @@ function TechPackFullDocumentV2({
   companyName: companyNameProp,
   realStyleInfo: realStyleInfoProp,
   page2ImageDimensions,
+  setPieces,
+  revisionHistory,
 }: TechPackDocumentPropsV2) {
   const { part1, part2, part3, part4 } = analysis;
   const companyName = companyNameProp ?? DEFAULT_COMPANY_NAME;
@@ -915,6 +936,23 @@ function TechPackFullDocumentV2({
     : { xPercent: 0, yPercent: 0, widthPercent: 100, heightPercent: 100 };
   const gradeRules = computeGradeRules(part2.measurementPoints);
   const foldingSteps = tryParseNumberedSteps(part3.foldingInstructions);
+
+  // Multi-piece Set support (2026-09-22) — when any row of a piece-taggable
+  // table actually carries a garmentPiece (only ever true for a SET-mode
+  // project — see AiDesignerProjectMode), sort that table's rows so same-
+  // piece rows sit together and add a leading "Piece" column, approximating
+  // the reference document's own separate-table-per-piece layout within this
+  // renderer's existing single-flat-table shape. A SINGLE-garment project's
+  // rows never carry garmentPiece at all, so every one of these is a no-op
+  // there — byte-for-byte the same table as before.
+  const hasFabricPieces = part2.fabricMaterials.some((f) => f.garmentPiece);
+  const hasBomPieces = part2.bomItems.some((b) => b.garmentPiece);
+  const hasMeasurementPieces = part2.measurementPoints.some((p) => p.garmentPiece);
+  const byPiece = <T extends { garmentPiece?: string }>(rows: T[]) =>
+    [...rows].sort((a, b) => (a.garmentPiece ?? "").localeCompare(b.garmentPiece ?? ""));
+  const sortedFabricMaterials = hasFabricPieces ? byPiece(part2.fabricMaterials) : part2.fabricMaterials;
+  const sortedBomItems = hasBomPieces ? byPiece(part2.bomItems) : part2.bomItems;
+  const sortedMeasurementPoints = hasMeasurementPieces ? byPiece(part2.measurementPoints) : part2.measurementPoints;
 
   return (
     <Document>
@@ -946,6 +984,32 @@ function TechPackFullDocumentV2({
               ["Closure", fmtSV(part1.closure.closureType)],
             ]}
           />
+          {setPieces && setPieces.length > 0 && (
+            <>
+              <Text style={docStyles.sectionTitle}>Set Pieces ({setPieces.length}-piece set)</Text>
+              <DataTable
+                headers={["#", "Piece", "Category"]}
+                rows={setPieces.map((p, i) => [String(i + 1), p.pieceLabel, p.productCategory || "—"])}
+              />
+            </>
+          )}
+          {revisionHistory && revisionHistory.length > 0 && (
+            <>
+              <Text style={docStyles.sectionTitle}>Revision History</Text>
+              <DataTable
+                headers={["Rev", "Date", "Prepared By", "Status", "Approved By", "Approved Date"]}
+                rows={revisionHistory.map((r) => [
+                  String(r.revisionNumber).padStart(2, "0"),
+                  r.createdAt,
+                  r.createdByName,
+                  r.approvalStatus,
+                  r.approvedByName || "—",
+                  r.approvedAt || "—",
+                ])}
+                zebra
+              />
+            </>
+          )}
         </>
       )}
 
@@ -995,8 +1059,18 @@ function TechPackFullDocumentV2({
         <>
           <Text style={docStyles.sectionTitle}>Fabric &amp; Materials</Text>
           <DataTable
-            headers={["Role", "Fabric Type", "Composition", "GSM", "Width", "Finish", "Consumption", "Supplier Notes"]}
-            rows={part2.fabricMaterials.map((f) => [f.materialRole, f.fabricType, fmtSV(f.composition), fmtSV(f.gsm), fmtSV(f.width), f.finish, fmtSV(f.consumption), f.supplierNotes])}
+            headers={[...(hasFabricPieces ? ["Piece"] : []), "Role", "Fabric Type", "Composition", "GSM", "Width", "Finish", "Consumption", "Supplier Notes"]}
+            rows={sortedFabricMaterials.map((f) => [
+              ...(hasFabricPieces ? [f.garmentPiece || "Common / Shared"] : []),
+              f.materialRole,
+              f.fabricType,
+              fmtSV(f.composition),
+              fmtSV(f.gsm),
+              fmtSV(f.width),
+              f.finish,
+              fmtSV(f.consumption),
+              f.supplierNotes,
+            ])}
             zebra
           />
         </>
@@ -1010,6 +1084,7 @@ function TechPackFullDocumentV2({
           <View style={docStyles.table}>
             <View style={docStyles.tableHeaderRow}>
               <Text style={docStyles.swatchCol}>Swatch</Text>
+              {hasBomPieces && <Text style={docStyles.th}>Piece</Text>}
               <Text style={docStyles.th}>Material Type</Text>
               <Text style={docStyles.th}>Composition</Text>
               <Text style={docStyles.th}>GSM</Text>
@@ -1017,11 +1092,12 @@ function TechPackFullDocumentV2({
               <Text style={docStyles.th}>Consumption</Text>
               <Text style={[docStyles.th, { flex: 2 }]}>Notes</Text>
             </View>
-            {part2.bomItems.map((b, i) => (
+            {sortedBomItems.map((b, i) => (
               <View key={i} style={i % 2 === 1 ? [docStyles.tableRow, docStyles.tableRowZebra] : docStyles.tableRow}>
                 <View style={docStyles.swatchCol}>
                   <SwatchChip hex={findColorHexForBomRow(b.color, part1.visibleColors.map((c) => ({ colorName: c.colorName, hexEstimate: c.hexEstimate.value })))} />
                 </View>
+                {hasBomPieces && <Text style={docStyles.td}>{b.garmentPiece || "Common / Shared"}</Text>}
                 <Text style={docStyles.td}>{b.materialType}</Text>
                 <Text style={docStyles.td}>{fmtSV(b.composition)}</Text>
                 <Text style={docStyles.td}>{fmtSV(b.gsm)}</Text>
@@ -1110,8 +1186,15 @@ function TechPackFullDocumentV2({
           <ArtworkImage image={imageFor(6)} />
           <Text style={docStyles.sectionTitle}>Point-of-Measure Spec Table</Text>
           <DataTable
-            headers={["Point", "How to Measure", "Tolerance", "Status", ...Object.keys(part2.measurementPoints[0]?.values ?? {})]}
-            rows={part2.measurementPoints.map((p) => [p.pointName, p.howToMeasure, p.toleranceCm, p.status, ...Object.values(p.values)])}
+            headers={[...(hasMeasurementPieces ? ["Piece"] : []), "Point", "How to Measure", "Tolerance", "Status", ...Object.keys(part2.measurementPoints[0]?.values ?? {})]}
+            rows={sortedMeasurementPoints.map((p) => [
+              ...(hasMeasurementPieces ? [p.garmentPiece || "Common / Shared"] : []),
+              p.pointName,
+              p.howToMeasure,
+              p.toleranceCm,
+              p.status,
+              ...Object.values(p.values),
+            ])}
             zebra
           />
           <Text style={docStyles.notesText}>{part2.gradeRulesNotes}</Text>

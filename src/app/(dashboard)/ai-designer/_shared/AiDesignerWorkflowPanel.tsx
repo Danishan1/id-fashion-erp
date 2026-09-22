@@ -42,12 +42,22 @@ const FABRIC_FIELD_LABELS: Record<FabricFieldKey, string> = {
   fabricColor: "Color",
 };
 
+interface AiDesignerProjectPieceData {
+  id: string;
+  pieceIndex: number;
+  pieceLabel: string;
+  productCategory: string | null;
+  designNotes: string | null;
+}
+
 interface AiDesignerProjectData {
   id: string;
   projectNumber: string;
   projectName: string;
   status: keyof typeof STATUS_LABELS;
   creationMode: "STANDARD" | "SKETCH";
+  projectMode: "SINGLE" | "SET";
+  pieces: AiDesignerProjectPieceData[];
   currentStep: string;
   completedSteps: string[];
   sketchImageAttachmentId: string | null;
@@ -175,6 +185,107 @@ function StepNextButton({ step, steps, onNext }: { step: string; steps: readonly
       >
         Next: {WIZARD_STEP_LABELS[next]} →
       </button>
+    </div>
+  );
+}
+
+interface PieceDraft {
+  pieceLabel: string;
+  productCategory: string;
+  designNotes: string;
+}
+
+/**
+ * Multi-piece Set support (2026-09-22) — replaces the plain category-button
+ * grid on the PRODUCT_CATEGORY step for a SET-mode project: a coordinated
+ * outfit (e.g. Kurta + Pant + Dupatta) has no single category, it has a list
+ * of pieces, each with its own label/category/free-text design notes.
+ * Deliberately simpler than the full per-attribute clipart/catalog picker
+ * (already hidden from the single-garment wizard too, per that step's own
+ * "Product Design hidden for now" note above) — one free-text notes field per
+ * piece rather than duplicating that whole picker N times.
+ */
+function SetPiecesEditor({
+  categories,
+  savedPieces,
+  busy,
+  onSave,
+}: {
+  categories: string[];
+  savedPieces: AiDesignerProjectPieceData[];
+  busy: string | null;
+  onSave: (pieces: PieceDraft[]) => void;
+}) {
+  const [drafts, setDrafts] = useState<PieceDraft[]>(() =>
+    savedPieces.length > 0
+      ? savedPieces.map((p) => ({ pieceLabel: p.pieceLabel, productCategory: p.productCategory ?? "", designNotes: p.designNotes ?? "" }))
+      : [{ pieceLabel: "", productCategory: "", designNotes: "" }]
+  );
+
+  const update = (i: number, patch: Partial<PieceDraft>) => setDrafts((prev) => prev.map((d, idx) => (idx === i ? { ...d, ...patch } : d)));
+  const remove = (i: number) => setDrafts((prev) => prev.filter((_, idx) => idx !== i));
+  const add = () => setDrafts((prev) => [...prev, { pieceLabel: "", productCategory: "", designNotes: "" }]);
+
+  const validDrafts = drafts.filter((d) => d.pieceLabel.trim().length > 0);
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-zinc-500">
+        List every piece of this coordinated outfit — e.g. Kurta, Pant, Dupatta. One combined photo will be generated showing the whole set worn
+        together; each piece is tracked separately in the Tech Pack&apos;s BOM/Measurements/Grading.
+      </p>
+      {drafts.map((d, i) => (
+        <div key={i} className="space-y-2 rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
+          <div className="flex items-center gap-2">
+            <input
+              className={textInputClass()}
+              placeholder="Piece name (e.g. Kurta)"
+              value={d.pieceLabel}
+              onChange={(e) => update(i, { pieceLabel: e.target.value })}
+            />
+            {categories.length > 0 ? (
+              <select className={textInputClass()} value={d.productCategory} onChange={(e) => update(i, { productCategory: e.target.value })}>
+                <option value="">Category (optional)</option>
+                {categories.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                className={textInputClass()}
+                placeholder="Category (optional)"
+                value={d.productCategory}
+                onChange={(e) => update(i, { productCategory: e.target.value })}
+              />
+            )}
+            <button type="button" onClick={() => remove(i)} className="shrink-0 text-xs text-red-600 hover:underline dark:text-red-400">
+              Remove
+            </button>
+          </div>
+          <textarea
+            className={textInputClass()}
+            rows={2}
+            placeholder="Design notes for this piece (optional) — e.g. V-neck, full sleeve, contrast border"
+            value={d.designNotes}
+            onChange={(e) => update(i, { designNotes: e.target.value })}
+          />
+        </div>
+      ))}
+      <div className="flex items-center gap-3">
+        <button type="button" onClick={add} className="text-sm text-indigo-600 hover:underline dark:text-indigo-400">
+          + Add another piece
+        </button>
+        <button
+          type="button"
+          disabled={busy === "pieces" || validDrafts.length === 0}
+          onClick={() => onSave(validDrafts)}
+          className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+        >
+          {busy === "pieces" ? "Saving…" : "Save Pieces"}
+        </button>
+      </div>
     </div>
   );
 }
@@ -727,37 +838,52 @@ export function AiDesignerWorkflowPanel({
         <StepNextButton step="AGE_GROUP" steps={steps} onNext={goToNextStep} />
       </WizardSection>
 
-      {/* Step 5 — Product Category */}
+      {/* Step 5 — Product Category (SET mode: the outfit's own piece list instead of one category) */}
       <WizardSection
         sectionRef={(el) => (sectionRefs.current.PRODUCT_CATEGORY = el)}
         index={steps.indexOf("PRODUCT_CATEGORY") + 1}
-        title="Product Category"
+        title={project.projectMode === "SET" ? "Set Pieces" : "Product Category"}
         isDone={project.completedSteps.includes("PRODUCT_CATEGORY")}
         isCurrent={project.currentStep === "PRODUCT_CATEGORY"}
         isOpen={expandedStep === "PRODUCT_CATEGORY"}
       >
-        {!project.targetCustomer && <p className="text-xs text-zinc-500">Pick a Target Customer first.</p>}
-        {suggestionApplied && project.productCategory === suggestionApplied.productCategory && (
-          <div className="mb-2">
-            <AiSuggestedBadge />
-          </div>
+        {project.projectMode === "SET" ? (
+          <SetPiecesEditor
+            categories={productCategories}
+            savedPieces={project.pieces}
+            busy={busy}
+            onSave={(pieces) => run("pieces", () => fetch(`/api/v1/ai-designer/projects/${projectId}/pieces`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ pieces }),
+            }).then(parseJson))}
+          />
+        ) : (
+          <>
+            {!project.targetCustomer && <p className="text-xs text-zinc-500">Pick a Target Customer first.</p>}
+            {suggestionApplied && project.productCategory === suggestionApplied.productCategory && (
+              <div className="mb-2">
+                <AiSuggestedBadge />
+              </div>
+            )}
+            <div className="mt-2 flex flex-wrap gap-2">
+              {productCategories.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => run("category", () => patchWizard({ productCategory: c }))}
+                  className={`rounded-md border px-3 py-1.5 text-sm ${
+                    project.productCategory === c
+                      ? "border-indigo-600 bg-indigo-600 text-white"
+                      : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200"
+                  }`}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
+          </>
         )}
-        <div className="mt-2 flex flex-wrap gap-2">
-          {productCategories.map((c) => (
-            <button
-              key={c}
-              type="button"
-              onClick={() => run("category", () => patchWizard({ productCategory: c }))}
-              className={`rounded-md border px-3 py-1.5 text-sm ${
-                project.productCategory === c
-                  ? "border-indigo-600 bg-indigo-600 text-white"
-                  : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200"
-              }`}
-            >
-              {c}
-            </button>
-          ))}
-        </div>
         <StepNextButton step="PRODUCT_CATEGORY" steps={steps} onNext={goToNextStep} />
       </WizardSection>
 

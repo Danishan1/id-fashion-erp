@@ -28,6 +28,7 @@ export const AiDesignerProjectRepository = {
         currentVersion: { include: { currentImage: true } },
         versions: { orderBy: { versionNumber: "desc" }, include: { currentImage: true } },
         sketchAnalysis: { include: { observations: { orderBy: { featureKey: "asc" } } } },
+        pieces: { orderBy: { pieceIndex: "asc" } },
       },
     }),
 
@@ -35,6 +36,34 @@ export const AiDesignerProjectRepository = {
 
   update: (id: string, data: Prisma.AiDesignerProjectUncheckedUpdateInput) =>
     prisma.aiDesignerProject.update({ where: { id }, data }),
+};
+
+/**
+ * Multi-piece Set support (2026-09-22) — full-replace-on-save, same contract
+ * as RoleProductionStageAccess/SupplierMaterialCategory elsewhere in this
+ * codebase: replaceAll(projectId, []) is a real state (clears every piece,
+ * flipping the project back to behaving like it has none), not a no-op.
+ */
+export const AiDesignerProjectPieceRepository = {
+  findByProjectId: (projectId: string) =>
+    prisma.aiDesignerProjectPiece.findMany({ where: { projectId }, orderBy: { pieceIndex: "asc" } }),
+
+  replaceAll: (companyId: string, projectId: string, pieces: { pieceLabel: string; productCategory: string | null; designNotes: string | null }[]) =>
+    prisma.$transaction(async (tx) => {
+      await tx.aiDesignerProjectPiece.deleteMany({ where: { projectId } });
+      if (pieces.length === 0) return [];
+      await tx.aiDesignerProjectPiece.createMany({
+        data: pieces.map((p, i) => ({
+          companyId,
+          projectId,
+          pieceIndex: i,
+          pieceLabel: p.pieceLabel,
+          productCategory: p.productCategory,
+          designNotes: p.designNotes,
+        })),
+      });
+      return tx.aiDesignerProjectPiece.findMany({ where: { projectId }, orderBy: { pieceIndex: "asc" } });
+    }),
 };
 
 export const AiDesignerPromptRepository = {
@@ -203,6 +232,30 @@ export const AiDesignerTechPackRepository = {
       },
       include: { pages: { orderBy: { pageNumber: "asc" } } },
     }),
+
+  /**
+   * Real Revision History (2026-09-22) — walks parentTechPackId back from a
+   * given tech pack to its root (a small, bounded chain — a handful of
+   * revisions at most, no recursive CTE needed), returned oldest first. Pure
+   * real data (revisionNumber/createdAt/createdBy/approvalStatus/approvedAt/
+   * approvedBy) — zero AI involvement, matching the reference document's own
+   * Revision History table.
+   */
+  findRevisionChain: async (techPackId: string) => {
+    const chain: Prisma.AiDesignerTechPackGetPayload<{ include: { createdBy: { select: { fullName: true } }; approvedBy: { select: { fullName: true } } } }>[] = [];
+    let currentId: string | null = techPackId;
+    while (currentId) {
+      const row: Prisma.AiDesignerTechPackGetPayload<{ include: { createdBy: { select: { fullName: true } }; approvedBy: { select: { fullName: true } } } }> | null =
+        await prisma.aiDesignerTechPack.findUnique({
+          where: { id: currentId },
+          include: { createdBy: { select: { fullName: true } }, approvedBy: { select: { fullName: true } } },
+        });
+      if (!row) break;
+      chain.push(row);
+      currentId = row.parentTechPackId;
+    }
+    return chain.reverse();
+  },
 };
 
 export const AiDesignerProductDesignAttributeRepository = {

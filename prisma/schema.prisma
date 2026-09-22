@@ -8034,6 +8034,23 @@ enum AiDesignerCreationMode {
   SKETCH
 }
 
+/**
+ * Multi-piece Set support (2026-09-22) — SINGLE (default, unchanged
+ * behavior) is one garment per project, exactly as this module has always
+ * worked. SET is a coordinated multi-piece outfit (e.g. Kurta + Pant +
+ * Dupatta) — see AiDesignerProjectPiece below. A SET project still produces
+ * ONE generated design photo per version (the whole outfit worn together,
+ * matching real fashion-catalogue photography for a set — not N separate
+ * per-piece photos, which would be a much larger change to the whole
+ * Generate/Edit/Version review flow). The real per-piece payoff is in the
+ * Tech Pack, which tags Fabric & Materials/BOM/Measurement rows by piece —
+ * see garmentPiece in tech-pack/schema.ts.
+ */
+enum AiDesignerProjectMode {
+  SINGLE
+  SET
+}
+
 model AiDesignerProject {
   id            String                  @id @default(uuid()) @db.Uuid
   companyId     String                  @map("company_id") @db.Uuid
@@ -8041,6 +8058,7 @@ model AiDesignerProject {
   projectName   String                  @map("project_name")
   status        AiDesignerProjectStatus @default(DRAFT)
   creationMode  AiDesignerCreationMode  @default(STANDARD) @map("creation_mode")
+  projectMode   AiDesignerProjectMode   @default(SINGLE) @map("project_mode")
 
   // Own, wholly separate resumable-wizard position -- mirrors the *shape* of
   // AiGarmentProject's currentStepKey/completedStepKeys, not shared code.
@@ -8169,9 +8187,40 @@ model AiDesignerProject {
   providerUsage  AIProviderUsage[]
   techPacks      AiDesignerTechPack[]
   sketchAnalysis AiDesignerSketchAnalysis?
+  pieces         AiDesignerProjectPiece[]
 
   @@unique([companyId, projectNumber])
   @@map("ai_projects")
+}
+
+/**
+ * One row per garment piece of a SET-mode project (e.g. Kurta, Pant,
+ * Dupatta) — see AiDesignerProjectMode above. Deliberately simpler than the
+ * project's own Product Category/Product Design steps: a piece gets a label,
+ * an optional category (reusing the same PRODUCT_CATEGORIES_BY_CUSTOMER
+ * catalog), and a single free-text design-notes field, rather than the full
+ * per-attribute clipart/catalog picker duplicated per piece — matches this
+ * module's own existing simplification (Product Design's attribute picker is
+ * already hidden from the main single-garment wizard too). Full-replace-on-
+ * save (replaceProjectPieces in the service) — the same "empty array is a
+ * real state" contract already established by RoleProductionStageAccess/
+ * SupplierMaterialCategory elsewhere in this schema.
+ */
+model AiDesignerProjectPiece {
+  id               String   @id @default(uuid()) @db.Uuid
+  companyId        String   @map("company_id") @db.Uuid
+  projectId        String   @map("project_id") @db.Uuid
+  pieceIndex       Int      @map("piece_index")
+  pieceLabel       String   @map("piece_label")
+  productCategory  String?  @map("product_category")
+  designNotes      String?  @map("design_notes")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  project AiDesignerProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, pieceIndex])
+  @@map("ai_project_pieces")
 }
 
 // ---------------------------------------------------------------------------

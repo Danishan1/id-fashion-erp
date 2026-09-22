@@ -54,6 +54,14 @@ export interface TechPackDesignContext {
   fabricDetail?: string;
   modelDescription?: string;
   environmentDescription?: string;
+  /**
+   * Multi-piece Set support (2026-09-22) — populated only when the project's
+   * AiDesignerProjectMode is SET (e.g. Kurta + Pant + Dupatta). Each entry is
+   * a plain "Label (Category) — design notes" line, built server-side from
+   * AiDesignerProjectPiece rows. Absent/undefined for every ordinary
+   * SINGLE-garment project — leaves this whole feature a no-op there.
+   */
+  garmentPieces?: string[];
 }
 
 function contextLines(ctx: TechPackDesignContext): string[] {
@@ -65,6 +73,12 @@ function contextLines(ctx: TechPackDesignContext): string[] {
     `Target Customer: ${ctx.targetCustomer}`,
     `Age Group: ${ctx.ageGroup}`,
   ];
+  if (ctx.garmentPieces && ctx.garmentPieces.length > 0) {
+    lines.push(
+      `This is a coordinated ${ctx.garmentPieces.length}-piece SET, not a single garment. The pieces are:`,
+      ...ctx.garmentPieces.map((p, i) => `  ${i + 1}. ${p}`)
+    );
+  }
   if (ctx.sketchDesignNote) {
     lines.push(`Originating Sketch Design (for reference — the supplied photo of the FINAL approved garment is the authoritative source, use this note only as supporting context): ${ctx.sketchDesignNote}`);
   }
@@ -279,7 +293,12 @@ function priorAnalysisLines(ctx: TechPackDesignContext, part1: GarmentAnalysisPa
   return [...contextLines(ctx), "", "Garment analysis already completed (categories A-G) — use it as ground truth, never contradict it:", JSON.stringify(part1, null, 2)];
 }
 
-export function buildGarmentAnalysisPart2SystemPrompt(): string {
+function setPieceTaggingInstruction(ctx: TechPackDesignContext): string {
+  if (!ctx.garmentPieces || ctx.garmentPieces.length === 0) return "";
+  return `\n\nMULTI-PIECE SET — this project is a coordinated ${ctx.garmentPieces.length}-piece set (see the Garment Pieces list in the context above), not one single garment. Generate SEPARATE, appropriately-scoped lines/points for EACH piece — e.g. a Kurta's own chest/length measurements are genuinely different from a Pant's own waist/inseam, and each piece's own fabric/trim lines. Tag EVERY Fabric & Materials line, EVERY BOM line, and EVERY measurement point with the "garmentPiece" field, set to the exact piece label given in context (e.g. "Kurta"), or to "Common / Shared" for an item genuinely used across every piece (e.g. sewing thread, a shared hangtag). Do not produce one generic set of measurements/BOM lines that ignores which piece they belong to.`;
+}
+
+export function buildGarmentAnalysisPart2SystemPrompt(ctx?: TechPackDesignContext): string {
   return `You are the same Senior Technical Fashion Designer and Apparel Product Developer continuing this garment's tech pack.
 
 ${STATUS_TAGGING_RULES}
@@ -293,7 +312,7 @@ Generate an EXHAUSTIVE bill of materials — at least 10 distinct line items —
 ## MEASUREMENTS & GRADING
 Generate a graded Point-of-Measure (POM) chart: 6-15 measurement points genuinely relevant to this specific garment (never a point that makes no sense for the category). For each point give: point name, how-to-measure instruction, tolerance in cm, an overall status for the whole graded row, and a graded value for every one of these sizes: ${STANDARD_SIZES.join(", ")} — graded sensibly from a reasonable base size (M), with the grading math consistent across sizes (each larger size's value increases by a sensible, consistent increment for that point). Also give overall grade-rules notes.
 
-State plainly, in your notes, that this BOM, fabric table, and measurement chart are a reasonable starting draft only, pending real technical costing, sourcing, and grading review — never present them as confirmed final production figures.`;
+State plainly, in your notes, that this BOM, fabric table, and measurement chart are a reasonable starting draft only, pending real technical costing, sourcing, and grading review — never present them as confirmed final production figures.${ctx ? setPieceTaggingInstruction(ctx) : ""}`;
 }
 
 export function buildGarmentAnalysisPart2UserText(ctx: TechPackDesignContext, part1: GarmentAnalysisPart1): string {
@@ -316,6 +335,9 @@ export function buildGarmentAnalysisPart2ToolInputSchema() {
             finish: stringField(),
             consumption: statusValueField(),
             supplierNotes: stringField(),
+            // Optional — omitted from `required` — so a SINGLE-garment
+            // project's response simply never carries it.
+            garmentPiece: stringField(),
           },
           ["materialRole", "fabricType", "composition", "gsm", "width", "finish", "consumption", "supplierNotes"]
         ),
@@ -323,7 +345,15 @@ export function buildGarmentAnalysisPart2ToolInputSchema() {
       bomItems: {
         type: "array",
         items: objectSchema(
-          { materialType: stringField(), composition: statusValueField(), gsm: statusValueField(), color: stringField(), consumption: statusValueField(), notes: stringField() },
+          {
+            materialType: stringField(),
+            composition: statusValueField(),
+            gsm: statusValueField(),
+            color: stringField(),
+            consumption: statusValueField(),
+            notes: stringField(),
+            garmentPiece: stringField(),
+          },
           ["materialType", "composition", "gsm", "color", "consumption", "notes"]
         ),
       },
@@ -336,6 +366,7 @@ export function buildGarmentAnalysisPart2ToolInputSchema() {
             toleranceCm: stringField(),
             status: { type: "string", enum: [...CONFIDENCE_STATUSES] },
             values: objectSchema(Object.fromEntries(STANDARD_SIZES.map((s) => [s, stringField()])), [...STANDARD_SIZES]),
+            garmentPiece: stringField(),
           },
           ["pointName", "howToMeasure", "toleranceCm", "status", "values"]
         ),

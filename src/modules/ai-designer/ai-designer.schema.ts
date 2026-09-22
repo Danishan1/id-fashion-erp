@@ -9,12 +9,38 @@ import { TARGET_CUSTOMER_VALUES } from "@/core/ai-designer/catalogs/customer-cat
  * from an uploaded sketch/drawing whose structural design is preserved as
  * the authoritative reference — see stepsForCreationMode() in the service).
  */
+/**
+ * projectMode (2026-09-22) — SINGLE (default, unchanged behavior) is one
+ * garment per project; SET is a coordinated multi-piece outfit (e.g. Kurta +
+ * Pant + Dupatta) — see AiDesignerProjectPiece / replaceProjectPiecesSchema
+ * below.
+ */
 export const createProjectSchema = z.object({
   projectName: z.string().min(1, "Project name is required").max(200),
   creationMode: z.enum(["STANDARD", "SKETCH"]).default("STANDARD"),
+  projectMode: z.enum(["SINGLE", "SET"]).default("SINGLE"),
 });
 
 export type CreateProjectInput = z.infer<typeof createProjectSchema>;
+
+/**
+ * Multi-piece Set support — full-replace-on-save (an empty array clears every
+ * piece, a real state, not a no-op — same contract as this codebase's other
+ * full-replace lists). Only meaningful for a SET-mode project; the service
+ * rejects a non-empty submission against a SINGLE project.
+ */
+export const replaceProjectPiecesSchema = z.object({
+  pieces: z
+    .array(
+      z.object({
+        pieceLabel: z.string().min(1, "Piece name is required").max(100),
+        productCategory: z.string().max(100).optional().or(z.literal("")),
+        designNotes: z.string().max(2000).optional().or(z.literal("")),
+      })
+    )
+    .max(12, "A set can have at most 12 pieces"),
+});
+export type ReplaceProjectPiecesInput = z.infer<typeof replaceProjectPiecesSchema>;
 
 /**
  * Which side(s) of the garment the generated photograph should show —

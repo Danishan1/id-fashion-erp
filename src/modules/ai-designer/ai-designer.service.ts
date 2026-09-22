@@ -70,6 +70,7 @@ import {
   AiDesignerGenerationRepository,
   AiDesignerImageRepository,
   AiDesignerProjectRepository,
+  AiDesignerProjectPieceRepository,
   AiDesignerPromptRepository,
   AiDesignerVersionRepository,
   AiDesignerTechPackRepository,
@@ -87,6 +88,7 @@ import type {
   ExportFormat,
   GenerateDesignInput,
   GenerateEditPreviewInput,
+  ReplaceProjectPiecesInput,
   SaveWizardSelectionsInput,
   SelectExistingFabricInput,
   SetSketchObservationLockInput,
@@ -292,6 +294,7 @@ export async function createProject(actor: ActorContext, input: CreateProjectInp
     projectName: input.projectName,
     status: "DRAFT",
     creationMode: input.creationMode,
+    projectMode: input.projectMode,
     currentStep: stepsForCreationMode(input.creationMode)[0],
     completedSteps: [],
     createdByUserId: actor.userId,
@@ -1000,6 +1003,66 @@ export async function saveWizardSelections(actor: ActorContext, projectId: strin
 }
 
 // ---------------------------------------------------------------------------
+// Multi-piece Set support (2026-09-22) — pieces are managed on the same
+// PRODUCT_CATEGORY step for a SET-mode project (see AiDesignerWorkflowPanel's
+// own SET branch); this doesn't itself touch completedSteps/currentStep the
+// way saveWizardSelections does — the PRODUCT_CATEGORY step is marked
+// complete once at least 1 piece exists, checked by the same generic
+// "does the project have what Generate Design needs" logic in
+// assertReadyToGenerate below, not duplicated here.
+// ---------------------------------------------------------------------------
+
+export async function listProjectPieces(companyId: string, projectId: string) {
+  await getOwnedProject(companyId, projectId);
+  return AiDesignerProjectPieceRepository.findByProjectId(projectId);
+}
+
+export async function replaceProjectPieces(actor: ActorContext, projectId: string, input: ReplaceProjectPiecesInput) {
+  const project = await getOwnedProject(actor.companyId, projectId);
+  if (project.projectMode !== "SET" && input.pieces.length > 0) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "This project is not a multi-piece Set — pieces can only be added to a Set-mode project.");
+  }
+
+  const pieces = await AiDesignerProjectPieceRepository.replaceAll(
+    actor.companyId,
+    projectId,
+    input.pieces.map((p) => ({
+      pieceLabel: p.pieceLabel.trim(),
+      productCategory: p.productCategory?.trim() || null,
+      designNotes: p.designNotes?.trim() || null,
+    }))
+  );
+
+  const touchedSteps: WizardStep[] = pieces.length > 0 ? ["PRODUCT_CATEGORY"] : [];
+  const completedSteps =
+    touchedSteps.length > 0
+      ? markStepsComplete(project.completedSteps, touchedSteps, project.creationMode)
+      : project.completedSteps.filter((s) => s !== "PRODUCT_CATEGORY");
+  await AiDesignerProjectRepository.update(projectId, {
+    completedSteps,
+    currentStep: computeCurrentStep(completedSteps, project.creationMode),
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "ai_project_pieces",
+    recordId: projectId,
+    action: "UPDATE",
+    newValues: { pieceCount: pieces.length, pieces: pieces.map((p) => p.pieceLabel) },
+  });
+
+  return pieces;
+}
+
+/** Builds one combined multi-piece description for the image-generation prompt and the Tech Pack's own context, shared by generateDesign() and buildTechPackDesignContext() below. */
+function buildSetPiecesDescription(pieces: { pieceLabel: string; productCategory: string | null; designNotes: string | null }[]): string {
+  return pieces
+    .map((p, i) => `${i + 1}. ${p.pieceLabel}${p.productCategory ? ` (${p.productCategory})` : ""}${p.designNotes ? ` — ${p.designNotes}` : ""}`)
+    .join("; ");
+}
+
+// ---------------------------------------------------------------------------
 // Step 9 — Generate Design
 // ---------------------------------------------------------------------------
 
@@ -1012,14 +1075,18 @@ export async function saveWizardSelections(actor: ActorContext, projectId: strin
  * must also upload/attach that fabric's real photo (Step 1's second field)
  * before Generate Design becomes available, regardless of fabricSource.
  */
-function assertReadyToGenerate(project: AiDesignerProject, sketchAnalysisStatus?: string | null) {
+function assertReadyToGenerate(project: AiDesignerProject, sketchAnalysisStatus?: string | null, pieceCount?: number) {
   const missing: string[] = [];
   if (!project.fabricImageAttachmentId) {
     missing.push("a real fabric reference photo (Step 1 — upload the actual fabric image, even if you picked an existing fabric's details)");
   }
   if (!project.targetCustomer) missing.push("Target Customer");
   if (!project.ageGroup) missing.push("Age Group");
-  if (!project.productCategory) missing.push("Product Category");
+  if (project.projectMode === "SET") {
+    if (!pieceCount) missing.push("at least one Set piece (Step 5 — add each garment piece, e.g. Kurta, Pant, Dupatta)");
+  } else if (!project.productCategory) {
+    missing.push("Product Category");
+  }
   // Model is hidden from the wizard for now, per explicit request — no
   // longer a hard precondition. generateDesign()'s own prompt-building
   // already tolerates all-null model fields (`|| "Not specified"`).
@@ -1111,14 +1178,28 @@ export async function generateDesign(
 ) {
   const project = await getOwnedProject(actor.companyId, projectId);
   const isSketchMode = project.creationMode === "SKETCH";
+  const isSetMode = project.projectMode === "SET";
 
   // SKETCH mode's own analysis/observations are fetched up front — both
   // because assertReadyToGenerate() needs the real analysis status (never
   // trusted from a stale project-level flag) and because the prompt/override
   // detection below needs the approved observations themselves.
   const sketchAnalysis = isSketchMode ? await AiDesignerSketchAnalysisRepository.findByProjectId(projectId) : null;
-  assertReadyToGenerate(project, sketchAnalysis?.status);
+  const setPieces = isSetMode ? await AiDesignerProjectPieceRepository.findByProjectId(projectId) : [];
+  assertReadyToGenerate(project, sketchAnalysis?.status, setPieces.length);
   await assertNoActiveRun(projectId, "IMAGE_GENERATE");
+
+  // Multi-piece Set support — a combined "N-piece set: Kurta, Pant, Dupatta"
+  // productCategory + a per-piece designSelections description, in place of
+  // the project's own single productCategory/designSelectionsJson fields.
+  // Zero changes needed to buildGenerationPrompt() itself — both are still
+  // plain strings, just composed differently when isSetMode.
+  const effectiveProductCategory = isSetMode
+    ? `${setPieces.length}-piece set: ${setPieces.map((p) => p.pieceLabel).join(", ")}`
+    : project.productCategory || "Not specified";
+  const effectiveDesignSelections = isSetMode
+    ? `This is a coordinated ${setPieces.length}-piece set, worn together. ${buildSetPiecesDescription(setPieces)}`
+    : buildDesignSelectionsText(project);
 
   // The real fabric photo, not its text description, is what makes this a
   // genuine visual reference — assertReadyToGenerate() already guarantees
@@ -1143,7 +1224,12 @@ export async function generateDesign(
     sketchOverrideInfo = { overrides, lockedConstraints };
   }
 
-  const specJson = { ...buildSpecJson(project, sketchOverrideInfo), viewAngle: input.viewAngle, ...(fromSuggestion ? { fromSuggestion } : {}) };
+  const specJson = {
+    ...buildSpecJson(project, sketchOverrideInfo),
+    viewAngle: input.viewAngle,
+    ...(fromSuggestion ? { fromSuggestion } : {}),
+    ...(isSetMode ? { setPieces: setPieces.map((p) => ({ pieceLabel: p.pieceLabel, productCategory: p.productCategory, designNotes: p.designNotes })) } : {}),
+  };
   const prompt = isSketchMode
     ? buildSketchGenerationPrompt({
         targetCustomer: project.targetCustomer ? TARGET_CUSTOMER_LABELS[project.targetCustomer as TargetCustomer] : "Not specified",
@@ -1160,8 +1246,8 @@ export async function generateDesign(
     : buildGenerationPrompt({
         targetCustomer: project.targetCustomer ? TARGET_CUSTOMER_LABELS[project.targetCustomer as TargetCustomer] : "Not specified",
         ageGroup: project.ageGroup || "Not specified",
-        productCategory: project.productCategory || "Not specified",
-        designSelections: buildDesignSelectionsText(project),
+        productCategory: effectiveProductCategory,
+        designSelections: effectiveDesignSelections,
         modelGender: project.modelGender || "Not specified",
         modelBodyType: project.modelBodyType || "Not specified",
         modelPose: project.modelPose || "Not specified",
@@ -2235,6 +2321,7 @@ export async function listVersions(companyId: string, projectId: string) {
 function buildTechPackDesignContext(
   project: AiDesignerProject & {
     sketchAnalysis?: { status: string; sketchAnalysisSummary: string | null } | null;
+    pieces?: { pieceLabel: string; productCategory: string | null; designNotes: string | null }[];
   }
 ): TechPackDesignContext {
   // Widened (previously only name/composition/GSM) to also carry the fuller
@@ -2272,6 +2359,12 @@ function buildTechPackDesignContext(
     fabricDetail: fabricDetail || undefined,
     modelDescription: modelDescription || undefined,
     environmentDescription: project.environmentLabel || undefined,
+    garmentPieces:
+      project.projectMode === "SET" && project.pieces && project.pieces.length > 0
+        ? project.pieces.map(
+            (p) => `${p.pieceLabel}${p.productCategory ? ` (${p.productCategory})` : ""}${p.designNotes ? ` — ${p.designNotes}` : ""}`
+          )
+        : undefined,
   };
 }
 
@@ -2534,6 +2627,8 @@ export async function exportTechPackPdf(actor: ActorContext, projectId: string) 
     dateCreated: formatDocDate(project.createdAt),
   };
 
+  const revisionChain = (await AiDesignerTechPackRepository.findRevisionChain(techPack.id)) ?? [];
+
   const { renderTechPackDocumentPdfV2 } = await import("@/core/ai-designer/export/tech-pack-pdf");
   const pdfBuffer = await renderTechPackDocumentPdfV2({
     projectNumber: project.projectNumber,
@@ -2544,6 +2639,18 @@ export async function exportTechPackPdf(actor: ActorContext, projectId: string) 
     companyName,
     realStyleInfo,
     page2ImageDimensions,
+    setPieces:
+      project.projectMode === "SET" && project.pieces.length > 0
+        ? project.pieces.map((p) => ({ pieceLabel: p.pieceLabel, productCategory: p.productCategory }))
+        : undefined,
+    revisionHistory: revisionChain.map((r) => ({
+      revisionNumber: r.revisionNumber,
+      createdAt: formatDocDate(r.createdAt),
+      createdByName: r.createdBy?.fullName ?? "—",
+      approvalStatus: r.approvalStatus,
+      approvedAt: r.approvedAt ? formatDocDate(r.approvedAt) : null,
+      approvedByName: r.approvedBy?.fullName ?? null,
+    })),
   });
 
   return { buffer: pdfBuffer, mimeType: "application/pdf", fileName: `${project.projectNumber}-tech-pack.pdf` };

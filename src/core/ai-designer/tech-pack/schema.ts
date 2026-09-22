@@ -218,9 +218,18 @@ const fabricMaterialLineSchema = z.object({
   finish: str(),
   consumption: statusValueSchema,
   supplierNotes: str(),
+  /**
+   * Multi-piece Set support (2026-09-22) — which garment piece (e.g. "Kurta",
+   * "Pant", "Dupatta") this line belongs to, or "Common / Shared" for a
+   * material used across every piece. Optional and only ever populated when
+   * the project is a SET (AiDesignerProjectMode) — a SINGLE-garment project's
+   * rows simply never carry this field, and every renderer treats an absent/
+   * empty garmentPiece exactly like today's flat single-table behavior.
+   */
+  garmentPiece: z.string().optional(),
 });
 export type FabricMaterialLine = z.infer<typeof fabricMaterialLineSchema>;
-export const FABRIC_MATERIAL_EDITABLE_FIELDS = ["materialRole", "fabricType", "composition", "gsm", "width", "finish", "consumption", "supplierNotes"] as const;
+export const FABRIC_MATERIAL_EDITABLE_FIELDS = ["materialRole", "fabricType", "composition", "gsm", "width", "finish", "consumption", "supplierNotes", "garmentPiece"] as const;
 
 const bomItemSchema = z.object({
   materialType: str(),
@@ -229,9 +238,11 @@ const bomItemSchema = z.object({
   color: str(),
   consumption: statusValueSchema,
   notes: str(),
+  /** Same Set-piece tagging as fabricMaterialLineSchema.garmentPiece above. */
+  garmentPiece: z.string().optional(),
 });
 export type TechPackBomItem = z.infer<typeof bomItemSchema>;
-export const BOM_ITEM_EDITABLE_FIELDS = ["materialType", "composition", "gsm", "color", "consumption", "notes"] as const;
+export const BOM_ITEM_EDITABLE_FIELDS = ["materialType", "composition", "gsm", "color", "consumption", "notes", "garmentPiece"] as const;
 
 const sizeValuesSchema = z.object({
   XS: str(),
@@ -249,9 +260,11 @@ const measurementPointSchema = z.object({
   values: sizeValuesSchema,
   /** One status per point (not per size cell) — a deliberate, documented granularity choice: per-cell status across 6-20 points x 6 sizes would roughly double this call's own schema size for a distinction ("is the M value more confirmed than the XS value") that rarely matters in practice — the grading math is what actually drives every size once the base size is set. */
   status: z.enum(CONFIDENCE_STATUSES),
+  /** Same Set-piece tagging as fabricMaterialLineSchema.garmentPiece above — e.g. a Kurta's own "Chest Width" is a genuinely different point from a Pant's own "Waist", not one generic set assuming a single garment. */
+  garmentPiece: z.string().optional(),
 });
 export type TechPackMeasurementPoint = z.infer<typeof measurementPointSchema>;
-export const MEASUREMENT_POINT_EDITABLE_FIELDS = ["pointName", "howToMeasure", "toleranceCm", "status"] as const;
+export const MEASUREMENT_POINT_EDITABLE_FIELDS = ["pointName", "howToMeasure", "toleranceCm", "status", "garmentPiece"] as const;
 
 const garmentAnalysisPart2Schema = z.object({
   fabricMaterials: z.array(fabricMaterialLineSchema).min(1).max(12),

@@ -51,7 +51,7 @@ export async function generateGarmentAnalysisPart2(params: {
   part1: GarmentAnalysisPart1;
 }): Promise<{ data: GarmentAnalysisPart2; model: string }> {
   const result = await requestStructuredTextOutput({
-    systemPrompt: buildGarmentAnalysisPart2SystemPrompt(),
+    systemPrompt: buildGarmentAnalysisPart2SystemPrompt(params.ctx),
     userText: buildGarmentAnalysisPart2UserText(params.ctx, params.part1),
     toolName: "record_garment_analysis_part2",
     toolDescription: "Records the Fabric & Materials table, Bill of Materials, and graded Measurements & Grading, each fabricatable fact tagged with its own confidence status.",
