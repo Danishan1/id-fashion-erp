@@ -32,6 +32,8 @@ const EMPTY_VALUES: ProductFormValues = {
   isActive: true,
 };
 
+const GENDER_OPTIONS = ["Men", "Women", "Boys", "Girls", "Kids", "Baby", "Both"] as const;
+
 interface NamedOption {
   id: string;
   name: string;
@@ -166,12 +168,25 @@ export function ProductForm({ initialValues, submitUrl, method, onSuccess, onCan
           </select>
         </FormField>
         <FormField label="Gender" htmlFor="gender">
-          <input
+          <select
             id="gender"
             value={values.gender}
             onChange={(e) => setValues({ ...values, gender: e.target.value })}
             className={textInputClass()}
-          />
+          >
+            <option value="">— None —</option>
+            {GENDER_OPTIONS.map((g) => (
+              <option key={g} value={g}>
+                {g}
+              </option>
+            ))}
+            {/* An older style may carry a free-text value from before this was a fixed list
+                (e.g. "Ladies", "MEN") -- keep it selectable/visible rather than silently
+                blanking the field until the user picks something new. */}
+            {values.gender && !GENDER_OPTIONS.includes(values.gender as (typeof GENDER_OPTIONS)[number]) && (
+              <option value={values.gender}>{values.gender}</option>
+            )}
+          </select>
         </FormField>
       </div>
 

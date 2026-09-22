@@ -41,6 +41,51 @@ interface RollDraft {
   weaveTypeId: string;
   widthId: string;
   compositionId: string;
+  // Weight→Meter helper state only — never submitted (handleSubmit's roll
+  // payload is an explicit field allow-list below, these simply aren't in
+  // it). Lets a storekeeper enter what the supplier's bill actually states
+  // (KG) and get a suggested roll length in the material's own base unit
+  // (Meter), since KG↔Meter has no fixed/universal conversion factor the
+  // app can apply on its own — it genuinely depends on this specific
+  // fabric's GSM and width.
+  calcOpen: boolean;
+  calcWeightKg: string;
+  calcGsm: string;
+  calcWidthValue: string;
+  calcWidthUnit: "IN" | "CM" | "M";
+}
+
+const WIDTH_UNIT_TO_METERS: Record<RollDraft["calcWidthUnit"], number> = { IN: 0.0254, CM: 0.01, M: 1 };
+
+// Length(m) = Weight(g) / (GSM(g per sq.m) x Width(m))
+function suggestedMetersFromWeight(roll: RollDraft): number | null {
+  const weightKg = Number(roll.calcWeightKg);
+  const gsm = Number(roll.calcGsm);
+  const widthValue = Number(roll.calcWidthValue);
+  if (!weightKg || weightKg <= 0 || !gsm || gsm <= 0 || !widthValue || widthValue <= 0) return null;
+  const widthMeters = widthValue * WIDTH_UNIT_TO_METERS[roll.calcWidthUnit];
+  const meters = (weightKg * 1000) / (gsm * widthMeters);
+  return Number.isFinite(meters) ? meters : null;
+}
+
+// Best-effort read of the leading number out of a master's own display name
+// (e.g. "160 GSM" -> 160, "38 inch" -> 38) -- these masters are plain
+// name/code lookups (Masters > Fabric Configuration), not guaranteed-numeric
+// fields, so a value that doesn't parse is simply left for the user to type
+// themselves rather than guessed at.
+function parseLeadingNumber(text: string): number | null {
+  const match = text.match(/(\d+(?:\.\d+)?)/);
+  if (!match) return null;
+  const n = Number(match[1]);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function detectWidthUnit(name: string): RollDraft["calcWidthUnit"] {
+  const lower = name.toLowerCase();
+  if (lower.includes("cm")) return "CM";
+  if (lower.includes("inch") || /\bin\b/.test(lower)) return "IN";
+  if (lower.includes("mtr") || lower.includes("meter") || lower.includes("metre") || /\bm\b/.test(lower)) return "M";
+  return "IN";
 }
 
 interface LineDraft {
@@ -52,7 +97,21 @@ interface LineDraft {
 }
 
 function emptyRoll(): RollDraft {
-  return { rollNumber: "", rollQuantity: "", batchNo: "", gsmId: "", dyeId: "", weaveTypeId: "", widthId: "", compositionId: "" };
+  return {
+    rollNumber: "",
+    rollQuantity: "",
+    batchNo: "",
+    gsmId: "",
+    dyeId: "",
+    weaveTypeId: "",
+    widthId: "",
+    compositionId: "",
+    calcOpen: false,
+    calcWeightKg: "",
+    calcGsm: "",
+    calcWidthValue: "",
+    calcWidthUnit: "IN",
+  };
 }
 
 function emptyDraft(): LineDraft {
@@ -322,7 +381,8 @@ export function GoodsReceiptForm({ purchaseOrderId, lines }: { purchaseOrderId: 
                   </div>
 
                   {draft.rolls.map((roll, rollIndex) => (
-                    <div key={rollIndex} className="grid grid-cols-6 gap-2 rounded-md border border-zinc-200 p-2 dark:border-zinc-800">
+                    <div key={rollIndex} className="space-y-1.5 rounded-md border border-zinc-200 p-2 dark:border-zinc-800">
+                    <div className="grid grid-cols-6 gap-2">
                       <input
                         placeholder="Roll No."
                         value={roll.rollNumber}
@@ -347,7 +407,20 @@ export function GoodsReceiptForm({ purchaseOrderId, lines }: { purchaseOrderId: 
                       {isVisible("FABRIC_GSM") && (
                         <select
                           value={roll.gsmId}
-                          onChange={(e) => updateRoll(line.purchaseOrderItemId, rollIndex, { gsmId: e.target.value })}
+                          onChange={(e) => {
+                            const gsmId = e.target.value;
+                            const patch: Partial<RollDraft> = { gsmId };
+                            // Pre-fill the weight-to-meter calculator's own GSM from the
+                            // same selection so the user isn't asked to type it twice --
+                            // only when the calc field is still blank, so a value the
+                            // user already typed there themselves is never overwritten.
+                            if (!roll.calcGsm) {
+                              const picked = gsms.find((g) => g.id === gsmId);
+                              const parsed = picked ? parseLeadingNumber(picked.name) : null;
+                              if (parsed !== null) patch.calcGsm = String(parsed);
+                            }
+                            updateRoll(line.purchaseOrderItemId, rollIndex, patch);
+                          }}
                           className={textInputClass()}
                         >
                           <option value="">GSM</option>
@@ -376,7 +449,21 @@ export function GoodsReceiptForm({ purchaseOrderId, lines }: { purchaseOrderId: 
                         {isVisible("FABRIC_WIDTH") && (
                           <select
                             value={roll.widthId}
-                            onChange={(e) => updateRoll(line.purchaseOrderItemId, rollIndex, { widthId: e.target.value })}
+                            onChange={(e) => {
+                              const widthId = e.target.value;
+                              const patch: Partial<RollDraft> = { widthId };
+                              // Same "don't ask twice" pre-fill as GSM above, for the
+                              // calculator's own Width + Width Unit fields.
+                              if (!roll.calcWidthValue) {
+                                const picked = widths.find((w) => w.id === widthId);
+                                const parsed = picked ? parseLeadingNumber(picked.name) : null;
+                                if (parsed !== null) {
+                                  patch.calcWidthValue = String(parsed);
+                                  patch.calcWidthUnit = detectWidthUnit(picked!.name);
+                                }
+                              }
+                              updateRoll(line.purchaseOrderItemId, rollIndex, patch);
+                            }}
                             className={textInputClass()}
                           >
                             <option value="">Width</option>
@@ -423,6 +510,89 @@ export function GoodsReceiptForm({ purchaseOrderId, lines }: { purchaseOrderId: 
                           ))}
                         </select>
                       )}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => updateRoll(line.purchaseOrderItemId, rollIndex, { calcOpen: !roll.calcOpen })}
+                      className="text-xs font-medium text-indigo-600 hover:text-indigo-500"
+                    >
+                      {roll.calcOpen ? "Hide" : "Calculate Qty from Weight (KG) →"}
+                    </button>
+
+                    {roll.calcOpen &&
+                      (() => {
+                        const suggested = suggestedMetersFromWeight(roll);
+                        return (
+                          <div className="grid grid-cols-5 items-end gap-2 rounded-md bg-zinc-50 p-2 dark:bg-zinc-900/40">
+                            <FormField label="Weight (KG)" htmlFor={`calc-wt-${line.purchaseOrderItemId}-${rollIndex}`}>
+                              <input
+                                id={`calc-wt-${line.purchaseOrderItemId}-${rollIndex}`}
+                                type="number"
+                                min={0}
+                                step="0.01"
+                                value={roll.calcWeightKg}
+                                onChange={(e) => updateRoll(line.purchaseOrderItemId, rollIndex, { calcWeightKg: e.target.value })}
+                                className={textInputClass()}
+                              />
+                            </FormField>
+                            <FormField label="GSM" htmlFor={`calc-gsm-${line.purchaseOrderItemId}-${rollIndex}`}>
+                              <input
+                                id={`calc-gsm-${line.purchaseOrderItemId}-${rollIndex}`}
+                                type="number"
+                                min={0}
+                                step="0.01"
+                                value={roll.calcGsm}
+                                onChange={(e) => updateRoll(line.purchaseOrderItemId, rollIndex, { calcGsm: e.target.value })}
+                                className={textInputClass()}
+                              />
+                            </FormField>
+                            <FormField label="Width" htmlFor={`calc-width-${line.purchaseOrderItemId}-${rollIndex}`}>
+                              <input
+                                id={`calc-width-${line.purchaseOrderItemId}-${rollIndex}`}
+                                type="number"
+                                min={0}
+                                step="0.01"
+                                value={roll.calcWidthValue}
+                                onChange={(e) => updateRoll(line.purchaseOrderItemId, rollIndex, { calcWidthValue: e.target.value })}
+                                className={textInputClass()}
+                              />
+                            </FormField>
+                            <FormField label="Width Unit" htmlFor={`calc-width-unit-${line.purchaseOrderItemId}-${rollIndex}`}>
+                              <select
+                                id={`calc-width-unit-${line.purchaseOrderItemId}-${rollIndex}`}
+                                value={roll.calcWidthUnit}
+                                onChange={(e) =>
+                                  updateRoll(line.purchaseOrderItemId, rollIndex, {
+                                    calcWidthUnit: e.target.value as RollDraft["calcWidthUnit"],
+                                  })
+                                }
+                                className={textInputClass()}
+                              >
+                                <option value="IN">Inches</option>
+                                <option value="CM">Centimeters</option>
+                                <option value="M">Meters</option>
+                              </select>
+                            </FormField>
+                            <div className="space-y-1">
+                              <p className="text-xs text-zinc-500">
+                                {suggested !== null ? `≈ ${suggested.toFixed(2)} Mtr` : "Enter all 3 values"}
+                              </p>
+                              <button
+                                type="button"
+                                disabled={suggested === null}
+                                onClick={() =>
+                                  suggested !== null &&
+                                  updateRoll(line.purchaseOrderItemId, rollIndex, { rollQuantity: suggested.toFixed(4) })
+                                }
+                                className="w-full rounded-md border border-indigo-300 px-2 py-1.5 text-xs font-medium text-indigo-600 hover:bg-indigo-50 disabled:opacity-40 dark:border-indigo-800 dark:text-indigo-300 dark:hover:bg-indigo-500/10"
+                              >
+                                Use in Qty
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
                   ))}
                 </div>
