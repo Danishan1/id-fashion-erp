@@ -1,9 +1,9 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { auth } from "@/core/auth/auth";
 import { PermissionService } from "@/core/rbac/PermissionService";
 import { getProjectById } from "@/modules/ai-designer/ai-designer.service";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
-import { EditDesignWorkspace } from "./EditDesignWorkspace";
+import { EditDesignWorkspace } from "../../../_shared/EditDesignWorkspace";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -29,6 +29,7 @@ export default async function AiDesignerEditWorkspacePage({ params }: PageProps)
     throw err;
   }
 
+  if (project.creationMode === "SKETCH") redirect(`/ai-designer/sketch-to-garment/${id}/edit`);
   if (!project.currentVersion?.currentImage) notFound();
 
   return <EditDesignWorkspace key={id} projectId={id} initialProject={JSON.parse(JSON.stringify(project))} />;

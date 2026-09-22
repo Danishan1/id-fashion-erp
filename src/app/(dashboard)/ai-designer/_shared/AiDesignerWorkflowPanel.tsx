@@ -16,7 +16,7 @@ import {
 import { ENVIRONMENTS } from "@/core/ai-designer/catalogs/environment-catalog";
 import { FABRIC_FIELD_KEYS, type FabricFieldKey } from "@/modules/ai-designer/ai-designer.schema";
 import { SKETCH_FEATURE_LABELS, SKETCH_TO_DESIGN_ATTRIBUTE_KEYS, type SketchFeatureKey } from "@/core/ai-designer/sketch-analysis/feature-registry";
-import { STATUS_BADGE_CLASS, STATUS_LABELS, WIZARD_STEP_LABELS, stepsForCreationMode } from "../../statusLabels";
+import { STATUS_BADGE_CLASS, STATUS_LABELS, WIZARD_STEP_LABELS, stepsForCreationMode } from "../statusLabels";
 import { AiDesignerTechPackPanel, type TechPackData } from "./AiDesignerTechPackPanel";
 import { SketchImageUploader } from "./SketchImageUploader";
 import { SketchAnalysisPanel } from "./SketchAnalysisPanel";
@@ -179,7 +179,16 @@ function StepNextButton({ step, steps, onNext }: { step: string; steps: readonly
   );
 }
 
-export function AiDesignerWorkflowPanel({ projectId, initialProject }: { projectId: string; initialProject: AiDesignerProjectData }) {
+export function AiDesignerWorkflowPanel({
+  projectId,
+  initialProject,
+  basePath = "/ai-designer/catalogue-designs",
+}: {
+  projectId: string;
+  initialProject: AiDesignerProjectData;
+  /** Lets the same component serve both /catalogue-designs and /sketch-to-garment (a real, separate module, sharing this wizard's own overlapping steps) without hardcoding either URL. */
+  basePath?: string;
+}) {
   const [project, setProject] = useState(initialProject);
   const [materials, setMaterials] = useState<MaterialPickerOption[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
@@ -1024,7 +1033,7 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={imageUrl(currentImage.imageAttachmentId)} alt="Current design" className="h-32 w-32 rounded border object-cover" />
             <Link
-              href={`/ai-designer/catalogue-designs/${projectId}/edit`}
+              href={`${basePath}/${projectId}/edit`}
               className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500"
             >
               Open Design Editor →

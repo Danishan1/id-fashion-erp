@@ -234,9 +234,10 @@ async function assertNoActiveSketchAnalysisRun(projectId: string) {
 
 const VALID_AI_DESIGNER_PROJECT_STATUSES = new Set<string>(Object.values(AiDesignerProjectStatus));
 
-export async function listProjects(companyId: string, query: ListQuery) {
+export async function listProjects(companyId: string, query: ListQuery, creationMode?: AiDesignerCreationMode) {
   const where: Prisma.AiDesignerProjectWhereInput = {
     companyId,
+    ...(creationMode ? { creationMode } : {}),
     ...(query.search ? { projectName: { contains: query.search, mode: "insensitive" as const } } : {}),
     ...(query.status && VALID_AI_DESIGNER_PROJECT_STATUSES.has(query.status)
       ? { status: query.status as AiDesignerProjectStatus }

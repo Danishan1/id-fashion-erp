@@ -76,6 +76,9 @@ interface PreviewBatch {
 // labeled edit target, not a drawn/clicked area of the photo.
 // ---------------------------------------------------------------------------
 
+/** Sentinel activeGroup value for a click on the dynamic Design Attributes section — see matchedDesignAttr below. */
+const DESIGN_ATTRIBUTES_GROUP = "Design Attributes";
+
 const EDIT_CATEGORIES: { group: string; items: string[] }[] = [
   { group: "Garment Structure", items: ["Garment Type", "Silhouette", "Fit", "Length", "Proportion", "Front Shape", "Back Shape"] },
   { group: "Fabric", items: ["Fabric Type", "Composition", "GSM", "Weave / Knit", "Width", "Stretch", "Texture", "Finish"] },
@@ -96,36 +99,24 @@ const EDIT_CATEGORIES: { group: string; items: string[] }[] = [
 ];
 
 /**
- * Maps an EDIT_CATEGORIES group to the matching Product Design attribute KEY
- * (see design-attribute-catalog.ts) for the project's own productCategory —
- * real, curated per-category options that already exist for the main
- * wizard's (now-hidden) Product Design step, reused here so the right panel
- * can show real reference images instead of asking the user to type a free-
- * text "New Requirement" for exactly the categories that most benefit from
- * a visual pick (a direct, reported gap — "user type nahi karega"). Groups
- * with no natural visual attribute (Fabric, Stitching, Wash & Finish, …)
- * deliberately have no mapping and keep the plain text inputs — this is
- * honest, real coverage, not a forced 1:1 mapping across all 16 groups.
+ * The sidebar's primary, always-visible section is no longer a hand-picked
+ * 5-group subset of EDIT_CATEGORIES matched by group NAME — it's rendered
+ * directly, dynamically, from designAttributes (the project's own
+ * productCategory's real Product Design attribute list — Masters -> AI
+ * Design -> Product Design). This is what makes it genuinely dynamic per
+ * the explicit ask: an admin adding a new attribute (e.g. "Waist Add-On")
+ * or a new option's reference photo in Masters shows up here immediately,
+ * with zero code change — every attribute the category has gets its own
+ * image-picker entry, not just a fixed 5. matchedDesignAttr below matches
+ * by the clicked item's own LABEL against designAttributes directly, not
+ * through this now-removed group-name indirection.
+ *
+ * EDIT_CATEGORIES (the free-text edit-target taxonomy) is unchanged and
+ * still fully available under "More Categories (Advanced)" — for edit
+ * targets that genuinely have no Product Design attribute (Fabric,
+ * Stitching, Wash & Finish, Branding, …), plain text remains the only way
+ * to describe the change, same as before.
  */
-const EDIT_GROUP_TO_DESIGN_ATTRIBUTE_KEY: Record<string, string> = {
-  "Garment Structure": "silhouette",
-  "Neck / Collar": "neckline",
-  Sleeve: "sleeve",
-  Pocket: "pocket",
-  Closure: "closure",
-};
-
-/**
- * Sidebar restructure (direct user feedback: 16 manufacturing-jargon groups
- * up front, with a blank "choose a category" right panel, was too much to
- * figure out). The 5 groups above (real image pickers) are shown as their
- * own always-visible, auto-expanded section; the remaining 11 text-only
- * groups move under a collapsed "More Categories" toggle — reachable, not
- * removed, just not the first thing a typical user has to wade through.
- */
-const VISUAL_EDIT_GROUP_NAMES = new Set(Object.keys(EDIT_GROUP_TO_DESIGN_ATTRIBUTE_KEY));
-const VISUAL_EDIT_CATEGORIES = EDIT_CATEGORIES.filter((c) => VISUAL_EDIT_GROUP_NAMES.has(c.group));
-const ADVANCED_EDIT_CATEGORIES = EDIT_CATEGORIES.filter((c) => !VISUAL_EDIT_GROUP_NAMES.has(c.group));
 
 const EMBELLISHMENT_TYPE_LABELS: Record<string, string> = {
   DIGITAL_APPLIQUE: "Digital Applique",
@@ -183,7 +174,16 @@ async function parseJson(res: Response) {
 // Component
 // ---------------------------------------------------------------------------
 
-export function EditDesignWorkspace({ projectId, initialProject }: { projectId: string; initialProject: ProjectData }) {
+export function EditDesignWorkspace({
+  projectId,
+  initialProject,
+  basePath = "/ai-designer/catalogue-designs",
+}: {
+  projectId: string;
+  initialProject: ProjectData;
+  /** Same reasoning as AiDesignerWorkflowPanel's own basePath — lets this workspace serve both /catalogue-designs and /sketch-to-garment. */
+  basePath?: string;
+}) {
   const [project, setProject] = useState<ProjectData>(initialProject);
   const [versions, setVersions] = useState<VersionRow[]>([]);
   const [preview, setPreview] = useState<PreviewBatch | null>(null);
@@ -198,9 +198,7 @@ export function EditDesignWorkspace({ projectId, initialProject }: { projectId: 
   // "first thing you see"), everything else stays collapsed under
   // "More Categories" until the user explicitly asks for it.
   const [leftOpen, setLeftOpen] = useState(true);
-  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(() =>
-    Object.fromEntries(VISUAL_EDIT_CATEGORIES.map((c) => [c.group, true]))
-  );
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [activeGroup, setActiveGroup] = useState<string | null>(null);
   const [activeItem, setActiveItem] = useState<string | null>(null);
@@ -221,10 +219,10 @@ export function EditDesignWorkspace({ projectId, initialProject }: { projectId: 
   const [embellishmentInstructions, setEmbellishmentInstructions] = useState("");
 
   // Product Design's own real, per-company attribute catalog (Masters -> AI
-  // Design -> Product Design) — reused here (not duplicated) so the QUICK
-  // Edit "New Requirement" field can show real reference images for
-  // categories that have a matching visual attribute, per
-  // EDIT_GROUP_TO_DESIGN_ATTRIBUTE_KEY above.
+  // Design -> Product Design) — the sidebar's primary "Design Attributes"
+  // section is rendered directly from this list (dynamic — an admin-added
+  // attribute or option photo shows up here with zero code change), and the
+  // QUICK Edit "New Requirement" field shows its real reference images.
   const [designAttributes, setDesignAttributes] = useState<DesignAttributeDef[]>([]);
   const [optionReferenceImages, setOptionReferenceImages] = useState<Record<string, string>>({});
   const designDisplayMode = useAiDesignerDisplayMode();
@@ -310,7 +308,7 @@ export function EditDesignWorkspace({ projectId, initialProject }: { projectId: 
     setExpandedGroups((prev) => ({ ...prev, [group]: !prev[group] }));
   }
 
-  function renderCategoryGroup(group: string, items: string[], isVisual: boolean) {
+  function renderCategoryGroup(group: string, items: string[]) {
     return (
       <div key={group} className="border-t border-zinc-200 dark:border-zinc-800">
         <button
@@ -318,10 +316,7 @@ export function EditDesignWorkspace({ projectId, initialProject }: { projectId: 
           onClick={() => toggleGroup(group)}
           className="flex w-full items-center justify-between px-3 py-1.5 text-left text-xs font-medium text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
         >
-          <span className="flex items-center gap-1.5">
-            {group}
-            {isVisual && <span title="Has real reference images">🖼️</span>}
-          </span>
+          <span>{group}</span>
           <span className="text-zinc-400">{expandedGroups[group] ? "−" : "+"}</span>
         </button>
         {expandedGroups[group] && (
@@ -460,16 +455,15 @@ export function EditDesignWorkspace({ projectId, initialProject }: { projectId: 
   }
 
   const compareVersion = versions.find((v) => v.currentImage.id === compareImageId);
-  const matchedDesignAttr = activeGroup
-    ? designAttributes.find((a) => a.key === EDIT_GROUP_TO_DESIGN_ATTRIBUTE_KEY[activeGroup])
-    : undefined;
+  const matchedDesignAttr =
+    activeGroup === DESIGN_ATTRIBUTES_GROUP ? designAttributes.find((a) => a.label === activeItem) : undefined;
 
   return (
     <div className="flex h-[calc(100vh-4rem)] flex-col overflow-hidden">
       {/* Top toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 bg-white px-4 py-2 dark:border-zinc-800 dark:bg-zinc-950">
         <div className="flex flex-wrap items-center gap-3 text-sm">
-          <Link href={`/ai-designer/catalogue-designs/${projectId}`} className="text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300">
+          <Link href={`${basePath}/${projectId}`} className="text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300">
             ← Back
           </Link>
           <span className="font-semibold text-zinc-900 dark:text-zinc-100">{project.projectName}</span>
@@ -528,10 +522,31 @@ export function EditDesignWorkspace({ projectId, initialProject }: { projectId: 
                 ◀
               </button>
             </div>
-            <p className="px-3 pb-2 text-[10px] leading-snug text-zinc-500">
-              🖼️ Pick a category below — you&apos;ll see real reference images to choose from, no typing needed.
-            </p>
-            {VISUAL_EDIT_CATEGORIES.map(({ group, items }) => renderCategoryGroup(group, items, true))}
+            <p className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">🖼️ Design Attributes</p>
+            {designAttributes.length === 0 ? (
+              <p className="px-3 pb-2 text-[10px] leading-snug text-zinc-500">
+                {project.productCategory
+                  ? "No visual design attributes configured for this style's category yet — add some in Masters → AI Design → Product Design."
+                  : "This project has no product category set, so no visual design attributes are available."}
+              </p>
+            ) : (
+              <div className="pb-1">
+                {designAttributes.map((attr) => (
+                  <button
+                    key={attr.key}
+                    type="button"
+                    onClick={() => selectCategoryItem(DESIGN_ATTRIBUTES_GROUP, attr.label)}
+                    className={`block w-full px-3 py-1 text-left text-xs ${
+                      activeGroup === DESIGN_ATTRIBUTES_GROUP && activeItem === attr.label
+                        ? "bg-indigo-100 font-medium text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
+                        : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                    }`}
+                  >
+                    {attr.label}
+                  </button>
+                ))}
+              </div>
+            )}
 
             <div className="border-t border-zinc-200 dark:border-zinc-800">
               <button
@@ -547,7 +562,7 @@ export function EditDesignWorkspace({ projectId, initialProject }: { projectId: 
                   <p className="px-3 pb-1 text-[10px] leading-snug text-zinc-500">
                     Manufacturing-level details (fabric, stitching, trims, …) — plain text fields, no reference images.
                   </p>
-                  {ADVANCED_EDIT_CATEGORIES.map(({ group, items }) => renderCategoryGroup(group, items, false))}
+                  {EDIT_CATEGORIES.map(({ group, items }) => renderCategoryGroup(group, items))}
                 </>
               )}
             </div>

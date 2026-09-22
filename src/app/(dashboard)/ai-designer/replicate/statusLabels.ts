@@ -20,6 +20,7 @@ export const STEP_LABELS: Record<string, string> = {
   COMPATIBILITY_CHECK: "Compatibility Check",
   GENERATE: "Generate Design",
   EDIT: "Edit Design",
+  BRANDING: "Branding",
   TECH_PACK: "Tech Pack",
 };
 
@@ -35,5 +36,6 @@ export const STEP_ORDER = [
   "COMPATIBILITY_CHECK",
   "GENERATE",
   "EDIT",
+  "BRANDING",
   "TECH_PACK",
 ] as const;

@@ -5,13 +5,17 @@ import { parseListQuery, buildListMeta } from "@/lib/list-query";
 import { createProjectSchema } from "@/modules/ai-designer/ai-designer.schema";
 import { createProject, listProjects } from "@/modules/ai-designer/ai-designer.service";
 
+const VALID_CREATION_MODES = new Set(["STANDARD", "SKETCH"]);
+
 export async function GET(req: NextRequest) {
   try {
     const session = await requireSession();
     await PermissionService.assert(session.user.id, "ai_designer", "view");
 
     const query = parseListQuery(req.nextUrl.searchParams, "createdAt");
-    const { data, totalCount } = await listProjects(session.user.companyId, query);
+    const creationModeParam = req.nextUrl.searchParams.get("creationMode");
+    const creationMode = creationModeParam && VALID_CREATION_MODES.has(creationModeParam) ? (creationModeParam as "STANDARD" | "SKETCH") : undefined;
+    const { data, totalCount } = await listProjects(session.user.companyId, query, creationMode);
 
     return NextResponse.json({ data, meta: buildListMeta(totalCount, query.page, query.pageSize) });
   } catch (error) {

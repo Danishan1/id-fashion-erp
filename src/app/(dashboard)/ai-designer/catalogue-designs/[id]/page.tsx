@@ -1,9 +1,9 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { auth } from "@/core/auth/auth";
 import { PermissionService } from "@/core/rbac/PermissionService";
 import { getProjectById } from "@/modules/ai-designer/ai-designer.service";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
-import { AiDesignerWorkflowPanel } from "./AiDesignerWorkflowPanel";
+import { AiDesignerWorkflowPanel } from "../../_shared/AiDesignerWorkflowPanel";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -22,6 +22,11 @@ export default async function AiDesignerProjectDetailPage({ params }: PageProps)
     if (err instanceof BusinessRuleError && err.code === "NOT_FOUND") notFound();
     throw err;
   }
+
+  // Sketch to Garment is a genuinely separate module now — a SKETCH-mode
+  // project's real home is /ai-designer/sketch-to-garment/[id], never this
+  // route. Redirect rather than 404 so old bookmarks/links still work.
+  if (project.creationMode === "SKETCH") redirect(`/ai-designer/sketch-to-garment/${id}`);
 
   return <AiDesignerWorkflowPanel key={id} projectId={id} initialProject={JSON.parse(JSON.stringify(project))} />;
 }

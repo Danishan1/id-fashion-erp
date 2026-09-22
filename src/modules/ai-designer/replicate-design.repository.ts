@@ -21,6 +21,7 @@ export const ReplicateDesignProjectRepository = {
     prisma.replicateDesignProject.findFirst({
       where: { id, companyId },
       include: {
+        company: { select: { name: true } },
         fabricProduct: { select: { id: true, styleName: true, styleCode: true, unitCost: true } },
         fabricSupplier: { select: { id: true, name: true } },
         createdBy: { select: { id: true, fullName: true } },
