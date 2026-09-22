@@ -17,6 +17,18 @@ export const createProjectSchema = z.object({
 export type CreateProjectInput = z.infer<typeof createProjectSchema>;
 
 /**
+ * Which side(s) of the garment the generated photograph should show —
+ * user-requested (2026-09-22): a real option was missing from both Generate
+ * Design and every Edit mode, so there was no way to ask for a back view or
+ * a front+back composite at all. FRONT matches this module's own original,
+ * unchanged default behavior — nothing about an existing project/generation
+ * changes just because this field now exists.
+ */
+export const AI_DESIGNER_VIEW_ANGLES = ["FRONT", "BACK", "BOTH"] as const;
+export type AiDesignerViewAngle = (typeof AI_DESIGNER_VIEW_ANGLES)[number];
+const viewAngleSchema = z.enum(AI_DESIGNER_VIEW_ANGLES).default("FRONT");
+
+/**
  * Sketch Analysis — per-observation edit/lock/reset, same shape as Replicate
  * Design's own updateDnaObservationSchema/setDnaObservationLockSchema
  * (mirrored, not imported, per this module's own file-per-process
@@ -101,6 +113,7 @@ export const IMAGE_COUNT_VALUES = [1, 3, 4] as const;
 
 export const generateDesignSchema = z.object({
   imageCount: z.union([z.literal(1), z.literal(3), z.literal(4)]).default(1),
+  viewAngle: viewAngleSchema,
 });
 
 export type GenerateDesignInput = z.infer<typeof generateDesignSchema>;
@@ -127,6 +140,7 @@ export const generateEditPreviewSchema = z
     technicalFields: z.record(z.string().min(1).max(100), z.string().max(300)).optional(),
     freeformInstructions: z.string().max(2000).optional().or(z.literal("")),
     imageCount: z.number().int().min(1).max(4).default(1),
+    viewAngle: viewAngleSchema,
   })
   .superRefine((data, ctx) => {
     if (data.mode === "QUICK" && !data.newValue) {

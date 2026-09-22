@@ -367,7 +367,7 @@ describe("generateDesign — the wizard-step gate", () => {
   it("blocks generation until fabric-image/customer/age/category/model/environment are all set", async () => {
     vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(baseProject({ fabricName: "Cotton" }) as never);
 
-    await expect(generateDesign(actor, "proj-1", { imageCount: 1 })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    await expect(generateDesign(actor, "proj-1", { imageCount: 1, viewAngle: "FRONT" })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
     expect(AiDesignerPromptRepository.create).not.toHaveBeenCalled();
   });
 
@@ -392,7 +392,7 @@ describe("generateDesign — the wizard-step gate", () => {
     });
     vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(textOnlyProject as never);
 
-    await expect(generateDesign(actor, "proj-1", { imageCount: 1 })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    await expect(generateDesign(actor, "proj-1", { imageCount: 1, viewAngle: "FRONT" })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
     expect(AiDesignerPromptRepository.create).not.toHaveBeenCalled();
     expect(getAttachmentForDownload).not.toHaveBeenCalled();
   });
@@ -418,7 +418,7 @@ describe("generateDesign — the wizard-step gate", () => {
     });
     vi.mocked(AiDesignerImageRepository.findByGenerationId).mockResolvedValue([{ id: "img-1" }] as never);
 
-    const result = await generateDesign(actor, "proj-1", { imageCount: 1 });
+    const result = await generateDesign(actor, "proj-1", { imageCount: 1, viewAngle: "FRONT" });
 
     // The real fabric photo is fetched by the exact attachment the project
     // points at, and its actual bytes/mimeType are what reaches the
@@ -469,7 +469,7 @@ describe("generateDesign — the wizard-step gate", () => {
       }
     });
 
-    await expect(generateDesign(actor, "proj-1", { imageCount: 1 })).rejects.toMatchObject({
+    await expect(generateDesign(actor, "proj-1", { imageCount: 1, viewAngle: "FRONT" })).rejects.toMatchObject({
       code: "AI_SERVICE_ERROR",
       message: expect.stringContaining("does not support generating a design from a fabric reference image"),
     });
@@ -480,7 +480,7 @@ describe("generateDesign — the wizard-step gate", () => {
     vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(readyProjectWithFabricImage() as never);
     vi.mocked(AiDesignerPromptRepository.findActiveSince).mockResolvedValue({ id: "prompt-active" } as never);
 
-    await expect(generateDesign(actor, "proj-1", { imageCount: 1 })).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+    await expect(generateDesign(actor, "proj-1", { imageCount: 1, viewAngle: "FRONT" })).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
   });
 });
 
@@ -491,7 +491,7 @@ describe("generateEditPreview — Edit Design workspace, step 1", () => {
     );
 
     await expect(
-      generateEditPreview(actor, "proj-1", { mode: "QUICK", featureLabel: "Collar", currentValue: "Round Neck", newValue: "Mandarin Collar", imageCount: 1 })
+      generateEditPreview(actor, "proj-1", { mode: "QUICK", featureLabel: "Collar", currentValue: "Round Neck", newValue: "Mandarin Collar", imageCount: 1, viewAngle: "FRONT" })
     ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
 
@@ -529,6 +529,7 @@ describe("generateEditPreview — Edit Design workspace, step 1", () => {
       currentValue: "Round Neck",
       newValue: "Mandarin Collar",
       imageCount: 1,
+      viewAngle: "FRONT",
     });
 
     expect(runWithFailover).toHaveBeenCalledWith(expect.objectContaining({ capability: "MULTI_FABRIC" }));
@@ -577,6 +578,7 @@ describe("generateEditPreview — Edit Design workspace, step 1", () => {
       currentValue: "Round Neck",
       newValue: "Mandarin Collar",
       imageCount: 1,
+      viewAngle: "FRONT",
     });
 
     expect(runWithFailover).toHaveBeenCalledWith(expect.objectContaining({ capability: "IMAGE_EDIT" }));
@@ -590,7 +592,7 @@ describe("generateEditPreview — Edit Design workspace, step 1", () => {
     vi.mocked(AiDesignerPromptRepository.findActiveSince).mockResolvedValue({ id: "prompt-active" } as never);
 
     await expect(
-      generateEditPreview(actor, "proj-1", { mode: "QUICK", featureLabel: "Collar", currentValue: "Round Neck", newValue: "Mandarin Collar", imageCount: 1 })
+      generateEditPreview(actor, "proj-1", { mode: "QUICK", featureLabel: "Collar", currentValue: "Round Neck", newValue: "Mandarin Collar", imageCount: 1, viewAngle: "FRONT" })
     ).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
   });
 });
@@ -1799,7 +1801,7 @@ describe("generateDesign — SKETCH mode", () => {
     vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(readySketchProject() as never);
     vi.mocked(AiDesignerSketchAnalysisRepository.findByProjectId).mockResolvedValue({ id: "sketch-analysis-1", status: "AI_ANALYSED" } as never);
 
-    await expect(generateDesign(actor, "proj-1", { imageCount: 1 })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    await expect(generateDesign(actor, "proj-1", { imageCount: 1, viewAngle: "FRONT" })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
     expect(AiDesignerPromptRepository.create).not.toHaveBeenCalled();
   });
 
@@ -1831,7 +1833,7 @@ describe("generateDesign — SKETCH mode", () => {
     });
     vi.mocked(AiDesignerImageRepository.findByGenerationId).mockResolvedValue([{ id: "img-1" }] as never);
 
-    await generateDesign(actor, "proj-1", { imageCount: 1 });
+    await generateDesign(actor, "proj-1", { imageCount: 1, viewAngle: "FRONT" });
 
     expect(runWithFailover).toHaveBeenCalledWith(expect.objectContaining({ capability: "DESIGN_REPLICATION", aiDesignerProjectId: "proj-1" }));
     expect(replicateWithNewMaterial).toHaveBeenCalledWith(
@@ -1864,7 +1866,7 @@ describe("generateDesign — SKETCH mode", () => {
       }
     });
 
-    await expect(generateDesign(actor, "proj-1", { imageCount: 1 })).rejects.toMatchObject({ code: "AI_SERVICE_ERROR" });
+    await expect(generateDesign(actor, "proj-1", { imageCount: 1, viewAngle: "FRONT" })).rejects.toMatchObject({ code: "AI_SERVICE_ERROR" });
     expect(AiDesignerImageRepository.createMany).not.toHaveBeenCalled();
   });
 
@@ -1881,7 +1883,7 @@ describe("generateDesign — SKETCH mode", () => {
     });
     vi.mocked(AiDesignerImageRepository.findByGenerationId).mockResolvedValue([{ id: "img-1" }] as never);
 
-    await generateDesign(actor, "proj-1", { imageCount: 1 });
+    await generateDesign(actor, "proj-1", { imageCount: 1, viewAngle: "FRONT" });
 
     expect(runWithFailover).toHaveBeenCalledWith(expect.objectContaining({ capability: "FABRIC_REFERENCE" }));
     expect(generateFromFabricReference).toHaveBeenCalled();

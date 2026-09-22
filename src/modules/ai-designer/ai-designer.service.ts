@@ -1130,7 +1130,7 @@ export async function generateDesign(
     sketchOverrideInfo = { overrides, lockedConstraints };
   }
 
-  const specJson = { ...buildSpecJson(project, sketchOverrideInfo), ...(fromSuggestion ? { fromSuggestion } : {}) };
+  const specJson = { ...buildSpecJson(project, sketchOverrideInfo), viewAngle: input.viewAngle, ...(fromSuggestion ? { fromSuggestion } : {}) };
   const prompt = isSketchMode
     ? buildSketchGenerationPrompt({
         targetCustomer: project.targetCustomer ? TARGET_CUSTOMER_LABELS[project.targetCustomer as TargetCustomer] : "Not specified",
@@ -1140,6 +1140,7 @@ export async function generateDesign(
         modelBodyType: project.modelBodyType || "Not specified",
         modelPose: project.modelPose || "Not specified",
         environment: project.environmentLabel || "Not specified",
+        viewAngle: input.viewAngle,
         overrides: sketchOverrideInfo!.overrides,
         lockedConstraints: sketchOverrideInfo!.lockedConstraints,
       })
@@ -1152,6 +1153,7 @@ export async function generateDesign(
         modelBodyType: project.modelBodyType || "Not specified",
         modelPose: project.modelPose || "Not specified",
         environment: project.environmentLabel || "Not specified",
+        viewAngle: input.viewAngle,
       });
 
   // Provider/model are placeholders until a real provider is actually
@@ -1344,6 +1346,7 @@ export async function generateEditPreview(actor: ActorContext, projectId: string
     technicalFields: input.technicalFields || null,
     freeformInstructions: input.freeformInstructions || null,
     hasFabricReference: !!fabricRef,
+    viewAngle: input.viewAngle,
   });
 
   const specJson = {
@@ -1355,6 +1358,7 @@ export async function generateEditPreview(actor: ActorContext, projectId: string
       newValue: input.newValue || null,
       technicalFields: input.technicalFields || null,
       freeformInstructions: input.freeformInstructions || null,
+      viewAngle: input.viewAngle,
     },
   };
 

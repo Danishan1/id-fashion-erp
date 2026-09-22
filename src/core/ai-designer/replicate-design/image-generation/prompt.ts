@@ -1,4 +1,15 @@
-export const PROMPT_VERSION = "replicate-design-generation-v1";
+/**
+ * v2 (2026-09-22): no framing instruction existed anywhere, matching the
+ * same gap already found and fixed in AI Designer's own generation prompt.
+ * Unlike AI Designer's from-scratch text-to-image call, this module's
+ * Generate step is always grounded in a real uploaded reference garment
+ * photo, so the correct fix here is "match the reference photo's own
+ * framing/crop exactly" (not an unconditional "always full-body", which
+ * would be wrong if the reference itself is a close-up detail shot) — added
+ * to both the generation prompt and the shared edit REPLICATE_PRESERVE_ITEMS
+ * list so it carries through every subsequent edit too.
+ */
+export const PROMPT_VERSION = "replicate-design-generation-v2";
 
 /**
  * The strong structure-preservation instruction — this is what makes the
@@ -39,6 +50,8 @@ export function buildReplicateGenerationPrompt(ctx: ReplicateGenerationContext):
     ctx.materialDescription,
     "",
     "Requirements:",
+    "",
+    "Match the reference garment photo's own camera framing and crop exactly (e.g. full-body if the reference is full-body, the same crop if the reference is already cropped) — do not crop the output tighter or wider than the reference image shows.",
     "",
     "The garment must be realistic and commercially manufacturable.",
     "",
@@ -82,6 +95,7 @@ const REPLICATE_PRESERVE_ITEMS = [
   "print scale and placement",
   "garment category",
   "remaining construction details",
+  "camera framing and crop (never crop tighter or wider than the current image already shows)",
 ];
 
 /**
