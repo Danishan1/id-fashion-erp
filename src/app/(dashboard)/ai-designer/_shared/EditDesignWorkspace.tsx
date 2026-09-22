@@ -215,6 +215,11 @@ export function EditDesignWorkspace({
   const [techRows, setTechRows] = useState<{ key: string; value: string }[]>([{ key: "", value: "" }]);
   const [freeform, setFreeform] = useState("");
   const [imageCount, setImageCount] = useState(1);
+  // Which side(s) of the garment an edit's regenerated image should show —
+  // user-requested (2026-09-22). Defaults to FRONT, treated by the prompt
+  // layer as "no change requested" so every pre-existing edit keeps working
+  // exactly as before.
+  const [viewAngle, setViewAngle] = useState<"FRONT" | "BACK" | "BOTH">("FRONT");
   const [embellishmentType, setEmbellishmentType] = useState<string>("DIGITAL_APPLIQUE");
   const [embellishmentInstructions, setEmbellishmentInstructions] = useState("");
 
@@ -388,6 +393,7 @@ export function EditDesignWorkspace({
             technicalFields,
             freeformInstructions: effectiveMode === "AI_PROMPT" ? freeform : effectiveMode === "QUICK" ? undefined : freeform || undefined,
             imageCount,
+            viewAngle,
           }),
         })
       );
@@ -1132,6 +1138,32 @@ export function EditDesignWorkspace({
 
             {editMode !== "EMBELLISHMENTS" && (
               <>
+                <div className="mt-3">
+                  <label className="mb-0.5 block text-[10px] font-medium text-zinc-500">View</label>
+                  <div className="flex gap-1">
+                    {(
+                      [
+                        { value: "FRONT", label: "Front" },
+                        { value: "BACK", label: "Back" },
+                        { value: "BOTH", label: "Both" },
+                      ] as const
+                    ).map(({ value, label }) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => setViewAngle(value)}
+                        className={`flex-1 rounded border px-2 py-1 text-xs ${
+                          viewAngle === value
+                            ? "border-indigo-500 bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
+                            : "border-zinc-300 dark:border-zinc-700"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
                 <div className="mt-3">
                   <label className="mb-0.5 block text-[10px] font-medium text-zinc-500">Variations to generate</label>
                   <div className="flex gap-1">

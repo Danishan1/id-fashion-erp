@@ -164,6 +164,14 @@ export function EditReplicateDesignWorkspace({ projectId, initialProject }: { pr
   const [techRows, setTechRows] = useState<{ key: string; value: string }[]>([{ key: "", value: "" }]);
   const [freeform, setFreeform] = useState("");
   const [imageCount, setImageCount] = useState(1);
+  // Item label -> picked value, accumulated across every category item the
+  // user visits (not just the currently-focused one) -- mirrors AI
+  // Designer's own EditDesignWorkspace fix for the identical bug: switching
+  // categories used to silently reset the single shared newValue field, so
+  // only the last-clicked category's change ever actually reached the AI.
+  // Generate Preview sends every staged pick together as one combined
+  // TECHNICAL edit.
+  const [stagedSelections, setStagedSelections] = useState<Record<string, string>>({});
 
   // Center canvas
   const [zoom, setZoom] = useState(1);
@@ -202,7 +210,7 @@ export function EditReplicateDesignWorkspace({ projectId, initialProject }: { pr
 
   const currentImage = project.currentVersion?.currentImage ?? null;
   const hasUnsavedEdit =
-    (editMode === "QUICK" && (currentValue.trim() || newValue.trim())) ||
+    (editMode === "QUICK" && (currentValue.trim() || newValue.trim() || Object.keys(stagedSelections).length > 0)) ||
     (editMode === "TECHNICAL" && techRows.some((r) => r.key.trim() && r.value.trim())) ||
     (editMode === "AI_PROMPT" && freeform.trim());
 
@@ -211,6 +219,7 @@ export function EditReplicateDesignWorkspace({ projectId, initialProject }: { pr
     setNewValue("");
     setTechRows([{ key: "", value: "" }]);
     setFreeform("");
+    setStagedSelections({});
   }
 
   function selectCategoryItem(group: string, item: string) {
@@ -225,13 +234,26 @@ export function EditReplicateDesignWorkspace({ projectId, initialProject }: { pr
   }
 
   function generatePreview() {
-    if (!activeItem && editMode !== "AI_PROMPT") {
+    const stagedCount = Object.keys(stagedSelections).length;
+    if (!activeItem && editMode !== "AI_PROMPT" && stagedCount === 0) {
       setError("Choose an edit category on the left first.");
       return;
     }
-    const featureLabel = editMode === "AI_PROMPT" ? (activeItem ?? "Custom Instruction") : activeItem!;
-    const technicalFields =
-      editMode === "TECHNICAL"
+
+    // One or more categories were picked (typed a value and staged it) --
+    // always sent together as a single combined TECHNICAL edit, even if
+    // only one was staged, so every staged change is applied in the same
+    // generation rather than only whichever was typed last.
+    const useStagedSelections = editMode === "QUICK" && stagedCount > 0;
+    const effectiveMode = useStagedSelections ? "TECHNICAL" : editMode;
+    const featureLabel = useStagedSelections
+      ? Object.keys(stagedSelections).join(", ")
+      : editMode === "AI_PROMPT"
+        ? (activeItem ?? "Custom Instruction")
+        : activeItem!;
+    const technicalFields = useStagedSelections
+      ? stagedSelections
+      : editMode === "TECHNICAL"
         ? Object.fromEntries(techRows.filter((r) => r.key.trim() && r.value.trim()).map((r) => [r.key.trim(), r.value.trim()]))
         : undefined;
 
@@ -241,12 +263,12 @@ export function EditReplicateDesignWorkspace({ projectId, initialProject }: { pr
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            mode: editMode,
+            mode: effectiveMode,
             featureLabel,
-            currentValue: editMode === "QUICK" ? currentValue : undefined,
-            newValue: editMode === "QUICK" ? newValue : undefined,
+            currentValue: effectiveMode === "QUICK" ? currentValue : undefined,
+            newValue: effectiveMode === "QUICK" ? newValue : undefined,
             technicalFields,
-            freeformInstructions: editMode === "AI_PROMPT" ? freeform : editMode === "QUICK" ? undefined : freeform || undefined,
+            freeformInstructions: effectiveMode === "AI_PROMPT" ? freeform : effectiveMode === "QUICK" ? undefined : freeform || undefined,
             imageCount,
           }),
         })
@@ -385,20 +407,24 @@ export function EditReplicateDesignWorkspace({ projectId, initialProject }: { pr
                 </button>
                 {expandedGroups[group] && (
                   <div className="pb-1">
-                    {items.map((item) => (
-                      <button
-                        key={item}
-                        type="button"
-                        onClick={() => selectCategoryItem(group, item)}
-                        className={`block w-full px-5 py-1 text-left text-xs ${
-                          activeGroup === group && activeItem === item
-                            ? "bg-indigo-100 font-medium text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
-                            : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
-                        }`}
-                      >
-                        {item}
-                      </button>
-                    ))}
+                    {items.map((item) => {
+                      const picked = stagedSelections[item];
+                      return (
+                        <button
+                          key={item}
+                          type="button"
+                          onClick={() => selectCategoryItem(group, item)}
+                          className={`flex w-full items-center justify-between gap-2 px-5 py-1 text-left text-xs ${
+                            activeGroup === group && activeItem === item
+                              ? "bg-indigo-100 font-medium text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
+                              : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                          }`}
+                        >
+                          <span>{item}</span>
+                          {picked && <span className="truncate text-[9px] font-normal text-green-600 dark:text-green-400">✓ {picked}</span>}
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -711,12 +737,56 @@ export function EditReplicateDesignWorkspace({ projectId, initialProject }: { pr
                 <div>
                   <label className="mb-0.5 block text-[10px] font-medium text-zinc-500">New Requirement</label>
                   <input
-                    value={newValue}
-                    onChange={(e) => setNewValue(e.target.value)}
+                    value={activeItem ? (stagedSelections[activeItem] ?? "") : newValue}
+                    onChange={(e) => {
+                      if (activeItem) {
+                        const item = activeItem;
+                        const v = e.target.value;
+                        setStagedSelections((prev) => {
+                          const next = { ...prev };
+                          if (v.trim()) next[item] = v;
+                          else delete next[item];
+                          return next;
+                        });
+                      } else {
+                        setNewValue(e.target.value);
+                      }
+                    }}
                     placeholder="e.g. Mandarin Collar"
                     className="w-full rounded border border-zinc-300 px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-900"
                   />
                 </div>
+                {Object.keys(stagedSelections).length > 0 && (
+                  <div>
+                    <label className="mb-0.5 block text-[10px] font-medium text-zinc-500">
+                      Selected Changes ({Object.keys(stagedSelections).length}) — all applied together
+                    </label>
+                    <div className="flex flex-wrap gap-1">
+                      {Object.entries(stagedSelections).map(([label, value]) => (
+                        <span
+                          key={label}
+                          className="inline-flex items-center gap-1 rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-medium text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
+                        >
+                          {label}: {value}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setStagedSelections((prev) => {
+                                const next = { ...prev };
+                                delete next[label];
+                                return next;
+                              })
+                            }
+                            className="text-indigo-500 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-200"
+                            aria-label={`Remove ${label}`}
+                          >
+                            ✕
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <div>
                   <label className="mb-0.5 block text-[10px] font-medium text-zinc-500">Additional Instructions (optional)</label>
                   <textarea

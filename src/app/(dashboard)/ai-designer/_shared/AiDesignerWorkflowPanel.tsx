@@ -195,6 +195,10 @@ export function AiDesignerWorkflowPanel({
   const [error, setError] = useState<string | null>(null);
   const [pendingSelectImage, setPendingSelectImage] = useState<string | null>(null);
   const [generatedImages, setGeneratedImages] = useState<AiDesignerImageRow[]>([]);
+  // Which side(s) of the garment Generate Design should show — user-requested
+  // (2026-09-22). Defaults to FRONT, matching this step's own prior,
+  // unstated assumption exactly.
+  const [viewAngle, setViewAngle] = useState<"FRONT" | "BACK" | "BOTH">("FRONT");
   const [secondFabricSelectedAreas, setSecondFabricSelectedAreas] = useState<string[]>([]);
   const [techPack, setTechPack] = useState<TechPackData | null>(null);
   const [sketchAnalysis, setSketchAnalysis] = useState<{
@@ -878,6 +882,31 @@ export function AiDesignerWorkflowPanel({
             })()}
           </div>
         )}
+        <div className="mb-3">
+          <p className="mb-1 text-xs font-medium text-zinc-500">View</p>
+          <div className="flex gap-1">
+            {(
+              [
+                { value: "FRONT", label: "Front" },
+                { value: "BACK", label: "Back" },
+                { value: "BOTH", label: "Both (front + back)" },
+              ] as const
+            ).map(({ value, label }) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setViewAngle(value)}
+                className={`rounded-md border px-2.5 py-1 text-xs font-medium ${
+                  viewAngle === value
+                    ? "border-indigo-500 bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
+                    : "border-zinc-300 text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
         <div className="flex gap-2">
           {[1, 3, 4].map((n) => (
             <button
@@ -890,7 +919,7 @@ export function AiDesignerWorkflowPanel({
                     await fetch(`/api/v1/ai-designer/projects/${projectId}/generate`, {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ imageCount: n }),
+                      body: JSON.stringify({ imageCount: n, viewAngle }),
                     })
                   );
                   setGeneratedImages((prev) => [...prev, ...body.data.images]);

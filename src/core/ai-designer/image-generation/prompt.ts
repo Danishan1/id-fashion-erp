@@ -16,8 +16,22 @@
  * hem-related change had taken effect. Added an explicit full-body framing
  * requirement to both generation prompts, and to the shared edit
  * PRESERVE_ITEMS list so it carries through every subsequent edit too.
+ *
+ * v6 (2026-09-22): user-requested — a way to ask for a back view or a
+ * front+back composite, on both Generate Design and every Edit mode. Every
+ * existing caller keeps working unchanged (viewAngle defaults to "FRONT",
+ * matching this module's own prior, unstated assumption exactly).
  */
-export const PROMPT_VERSION = "ai-designer-image-generation-v5";
+export const PROMPT_VERSION = "ai-designer-image-generation-v6";
+
+export type ViewAngle = "FRONT" | "BACK" | "BOTH";
+
+const VIEW_ANGLE_INSTRUCTIONS: Record<ViewAngle, string> = {
+  FRONT:
+    "Photograph the garment from the FRONT. The model faces the camera directly so the front of the garment is the clearly visible side.",
+  BACK: "Photograph the garment from the BACK, not the front. The model faces away from the camera (or is otherwise turned so the back of the garment is the clearly visible side) — the back of the garment must be the main, clearly visible subject of the photograph.",
+  BOTH: "Compose ONE single image showing both the FRONT view and the BACK view of the garment together in the same photograph — for example, two instances of the model shown side by side within the frame, one facing the camera (front view) and one facing away (back view), so both sides of the garment's design are clearly and separately visible in this one image.",
+};
 
 export interface AiDesignerGenerationContext {
   targetCustomer: string;
@@ -28,6 +42,7 @@ export interface AiDesignerGenerationContext {
   modelBodyType: string;
   modelPose: string;
   environment: string;
+  viewAngle: ViewAngle;
 }
 
 const FALLBACK = "Not specified";
@@ -89,6 +104,8 @@ ${v(ctx.environment)}
 
 Requirements:
 
+${VIEW_ANGLE_INSTRUCTIONS[ctx.viewAngle]}
+
 ${FULL_BODY_FRAMING_INSTRUCTION}
 
 The garment must be realistic and commercially manufacturable — avoid impossible construction.
@@ -134,6 +151,7 @@ export interface AiDesignerSketchGenerationContext {
   modelBodyType: string;
   modelPose: string;
   environment: string;
+  viewAngle: ViewAngle;
   /** Tier 1 — Product Design selections that explicitly differ from the sketch's own locked value for that feature (see detectDesignOverrides() in ai-designer.service.ts). */
   overrides: SketchGenerationOverride[];
   /** Tier 2 — one line per locked sketch observation NOT covered by an override above, e.g. "Sleeve Type: Full-length fitted sleeve." */
@@ -212,6 +230,8 @@ export function buildSketchGenerationPrompt(ctx: AiDesignerSketchGenerationConte
     "",
     "Requirements:",
     "",
+    VIEW_ANGLE_INSTRUCTIONS[ctx.viewAngle],
+    "",
     FULL_BODY_FRAMING_INSTRUCTION,
     "",
     "The garment must be realistic and commercially manufacturable — avoid impossible construction.",
@@ -231,6 +251,8 @@ export interface AiDesignerEditContext {
   currentValue: string;
   newValue: string;
   additionalInstructions?: string | null;
+  /** Only injects an explicit instruction when set to BACK/BOTH — FRONT is treated as "no change requested," leaving every pre-existing edit's behavior byte-for-byte unchanged. */
+  viewAngle?: ViewAngle;
 }
 
 const PRESERVE_ITEMS = [
@@ -291,6 +313,7 @@ export function buildEditPrompt(ctx: AiDesignerEditContext): string {
     "",
     ...preserveItems,
     "",
+    ...(ctx.viewAngle && ctx.viewAngle !== "FRONT" ? [VIEW_ANGLE_INSTRUCTIONS[ctx.viewAngle], ""] : []),
     "Do not independently redesign other aspects of the garment or image.",
     "",
     "The changed feature must be technically plausible and commercially manufacturable.",
@@ -337,6 +360,8 @@ export interface AiDesignerWorkspaceEditContext {
    * telling the model to match it exactly closes that drift.
    */
   hasFabricReference?: boolean;
+  /** Only injects an explicit instruction when set to BACK/BOTH — FRONT is treated as "no change requested," leaving every pre-existing edit's behavior byte-for-byte unchanged. */
+  viewAngle?: ViewAngle;
 }
 
 const FABRIC_REFERENCE_GROUNDING = `A second image is also supplied — the project's own real original fabric reference photo. The garment's fabric print, texture, and colour in your output must match that reference image exactly, not however the fabric currently happens to look in the design being edited — including the same density, scale, and intricacy of the pattern/embroidery as shown in that reference photo. Do not invent, simplify, or let the fabric drift from the reference photo, and do not reduce a dense or intricate pattern to a sparser, lower-detail version.`;
@@ -352,6 +377,7 @@ export function buildWorkspaceEditPrompt(ctx: AiDesignerWorkspaceEditContext): s
         currentValue: ctx.currentValue || "Not specified",
         newValue: ctx.newValue || "",
         additionalInstructions: ctx.freeformInstructions,
+        viewAngle: ctx.viewAngle,
       })
     );
   }
@@ -372,6 +398,7 @@ export function buildWorkspaceEditPrompt(ctx: AiDesignerWorkspaceEditContext): s
       "",
       ...preserveItems,
       "",
+      ...(ctx.viewAngle && ctx.viewAngle !== "FRONT" ? [VIEW_ANGLE_INSTRUCTIONS[ctx.viewAngle], ""] : []),
       "Do not independently redesign other aspects of the garment or image.",
       "",
       "The changed feature must be technically plausible and commercially manufacturable.",
@@ -402,6 +429,7 @@ export function buildWorkspaceEditPrompt(ctx: AiDesignerWorkspaceEditContext): s
       "",
       "Preserve every aspect of the garment and image that the instruction above does not explicitly ask you to change — including silhouette, fabric, colour, print, construction details, the model, pose, and background — UNLESS the instruction itself is asking you to change that specific aspect, in which case make that change fully and visibly.",
       "",
+      ...(ctx.viewAngle && ctx.viewAngle !== "FRONT" ? [VIEW_ANGLE_INSTRUCTIONS[ctx.viewAngle], ""] : []),
       "Do not independently redesign any aspect of the garment or image beyond what the instruction explicitly requests, and do not under-apply the requested change — the result must visibly reflect it.",
       "",
       "If only one garment component is clearly targeted by the instruction, edit only that component.",
