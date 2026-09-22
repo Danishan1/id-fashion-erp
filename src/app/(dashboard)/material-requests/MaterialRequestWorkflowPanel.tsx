@@ -152,12 +152,13 @@ export function MaterialRequestWorkflowPanel({
   const [issuingLine, setIssuingLine] = useState<LineRow | null>(null);
   const [issueQty, setIssueQty] = useState("");
   const [issueLocationId, setIssueLocationId] = useState("");
-  // "Issue Extra" manual override (2026-09-15) — only ever offered for
-  // SAMPLING_REQUIREMENT requests, since real sample-making routinely needs
-  // slightly more material than the planned/BOM quantity (e.g. 2m planned,
-  // 2.2m actually used). A reason is required whenever the entered quantity
-  // genuinely exceeds what remains — enforced server-side, this is just the
-  // matching UI.
+  // "Issue Extra" manual override (2026-09-15, widened to every request
+  // type 2026-09-22, explicit user request) — real production floors, not
+  // just sample-making, routinely need slightly more material than the
+  // planned/BOM quantity (e.g. for wastage). A reason is required whenever
+  // the entered quantity genuinely exceeds what remains — enforced
+  // server-side, this is just the matching UI. Physical stock is still
+  // never overridable — the cap below always floors at real availability.
   const [issueExtra, setIssueExtra] = useState(false);
   const [issueExtraReason, setIssueExtraReason] = useState("");
   const [locations, setLocations] = useState<LocationOption[]>([]);
@@ -777,7 +778,11 @@ export function MaterialRequestWorkflowPanel({
           // the roll — trusting the roll alone here would let the UI offer
           // a quantity that looks fine but fails after clicking Issue.
           const effectiveAvailable = flatAvailable;
-          const canIssueExtra = request.requestType === "SAMPLING_REQUIREMENT";
+          // Confirmed 2026-09-22: no longer scoped to any one request type —
+          // real over-issue needs (wastage, minor rounding, etc.) happen on
+          // ordinary Production Requirement/Damage Replacement lines too,
+          // not just Sampling ones.
+          const canIssueExtra = true;
           // With "Issue Extra" checked, the only real ceiling left is
           // physical stock — the planned/requested quantity is deliberately
           // no longer a hard cap, matching the confirmed override design.

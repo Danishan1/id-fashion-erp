@@ -927,6 +927,64 @@ describe("issueMaterialRequestLine — fabric roll (color/shade) selection", () 
   });
 });
 
+describe("issueMaterialRequestLine — Issue Extra widened to every request type (2026-09-22)", () => {
+  function baseLine(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "line-1",
+      materialId: "mat-1",
+      requestedQuantity: "10",
+      issuedQuantity: "0",
+      material: { id: "mat-1", styleName: "Plastic Buttons", materialCategory: "BUTTONS", baseUomId: "uom-1", baseUom: { id: "uom-1", baseUnitId: null, conversionFactor: 1 } },
+      uom: { id: "uom-1", baseUnitId: null, conversionFactor: 1 },
+      materialRequest: { id: "mr-1", companyId: "co-1", warehouseId: "wh-1", status: "OPEN", requestType: "PRODUCTION_REQUIREMENT" },
+      ...overrides,
+    };
+  }
+
+  it("allows over-issuing a PRODUCTION_REQUIREMENT line when a reason is supplied — no longer Sampling-only", async () => {
+    const { getAvailableQuantity } = await import("./inventory.service");
+    vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue(baseLine() as never);
+    vi.mocked(getAvailableQuantity).mockResolvedValue(100 as never);
+    vi.mocked(MaterialRequestItemRepository.guardedIncrementIssued).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(MaterialRequestItemRepository.findById).mockResolvedValue({ id: "line-1" } as never);
+
+    await issueMaterialRequestLine(actor, "line-1", 12, null, null, "extra for wastage");
+
+    // issueCap = requestedQuantity (10) + overRequested (2) = 12 — the
+    // guarded increment's own ceiling widens by exactly the approved extra,
+    // never an unlimited allowance.
+    expect(MaterialRequestItemRepository.guardedIncrementIssued).toHaveBeenCalledWith({}, "line-1", 12, 12, null);
+  });
+
+  it("still rejects an over-issue on a PRODUCTION_REQUIREMENT line with no reason given", async () => {
+    vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue(baseLine() as never);
+
+    await expect(issueMaterialRequestLine(actor, "line-1", 12, null, null)).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(MaterialRequestItemRepository.guardedIncrementIssued).not.toHaveBeenCalled();
+  });
+
+  it("still rejects an over-issue on a DAMAGE_REPLACEMENT line with no reason given", async () => {
+    vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue(
+      baseLine({ materialRequest: { id: "mr-1", companyId: "co-1", warehouseId: "wh-1", status: "OPEN", requestType: "DAMAGE_REPLACEMENT" } }) as never
+    );
+
+    await expect(issueMaterialRequestLine(actor, "line-1", 12, null, null)).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(MaterialRequestItemRepository.guardedIncrementIssued).not.toHaveBeenCalled();
+  });
+
+  it("issuing within the remaining quantity never requires a reason, on any request type", async () => {
+    const { getAvailableQuantity } = await import("./inventory.service");
+    vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue(baseLine() as never);
+    vi.mocked(getAvailableQuantity).mockResolvedValue(100 as never);
+    vi.mocked(MaterialRequestItemRepository.guardedIncrementIssued).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(MaterialRequestItemRepository.findById).mockResolvedValue({ id: "line-1" } as never);
+
+    await issueMaterialRequestLine(actor, "line-1", 10, null, null);
+
+    expect(MaterialRequestItemRepository.guardedIncrementIssued).toHaveBeenCalledWith({}, "line-1", 10, 10, null);
+  });
+});
+
 describe("issueMaterialRequestLine — Change Warehouse override (2026-09-16)", () => {
   function baseLine(overrides: Record<string, unknown> = {}) {
     return {

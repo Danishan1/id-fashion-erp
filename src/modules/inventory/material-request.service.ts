@@ -632,14 +632,15 @@ export async function issueMaterialRequestLine(
   issueQuantity: number,
   warehouseLocationId?: string | null,
   fabricRollId?: string | null,
-  // Manual "issue extra" override (2026-09-15, explicit user request) — real
-  // sample-making routinely uses slightly more material than the BOM's own
-  // planned figure (e.g. 2m planned, 2.2m actually needed for wastage). Only
-  // meaningful, and only ever honored, for SAMPLING_REQUIREMENT lines — a
-  // reason is required whenever the requested amount genuinely exceeds what
-  // remains, so it's visible later via the audit log (no new schema column,
-  // matching the "reason lives in the audit trail" precedent already used
-  // elsewhere, e.g. Material Request's own "Purchase Quantity Changed" entry).
+  // Manual "issue extra" override (2026-09-15, explicit user request;
+  // widened to every request type 2026-09-22, also explicit — real
+  // production floors, not just sample-making, routinely need slightly more
+  // material than the planned/BOM figure, e.g. for wastage). A reason is
+  // required whenever the requested amount genuinely exceeds what remains,
+  // so it's visible later via the audit log (no new schema column, matching
+  // the "reason lives in the audit trail" precedent already used elsewhere,
+  // e.g. Material Request's own "Purchase Quantity Changed" entry). Physical
+  // stock is never overridable by this — see the guarded increment below.
   extraReason?: string,
   // An explicit alternate warehouse to physically issue from (2026-09-16,
   // explicit user request) — the Issue modal's own "Change Warehouse"
@@ -665,21 +666,12 @@ export async function issueMaterialRequestLine(
 
   const remaining = Number(line.requestedQuantity) - Number(line.issuedQuantity);
   const overRequested = Math.max(0, issueQuantity - remaining);
-  if (overRequested > 0) {
-    if (line.materialRequest.requestType !== "SAMPLING_REQUIREMENT") {
-      throw new BusinessRuleError(
-        "OVER_ISSUE_NOT_ALLOWED",
-        `Cannot issue ${issueQuantity} — only ${remaining} remains on this line.`,
-        { remaining, issueQuantity }
-      );
-    }
-    if (!extraReason?.trim()) {
-      throw new BusinessRuleError(
-        "VALIDATION_ERROR",
-        `Issuing ${issueQuantity} is ${overRequested} more than the ${remaining} remaining on this line — a reason is required to issue extra.`,
-        { remaining, issueQuantity }
-      );
-    }
+  if (overRequested > 0 && !extraReason?.trim()) {
+    throw new BusinessRuleError(
+      "VALIDATION_ERROR",
+      `Issuing ${issueQuantity} is ${overRequested} more than the ${remaining} remaining on this line — a reason is required to issue extra.`,
+      { remaining, issueQuantity }
+    );
   }
   // The guarded increment's own cap widens by exactly the approved extra
   // amount (0 for every non-override issue, unchanged from before) — never a
