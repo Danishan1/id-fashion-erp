@@ -8771,6 +8771,20 @@ model ReplicateDesignProject {
   fabricCode              String?                      @map("fabric_code")
   fabricSupplierId        String?                      @map("fabric_supplier_id") @db.Uuid
 
+  // Branding — optional brand name + logo overlay, the exact same shape as
+  // AiDesignerProject's own equivalent columns (duplicated, not shared, per
+  // this module's established isolation rule). brandName has no stored
+  // default -- resolved at read time from the company's own name, same
+  // reasoning as AiDesignerProject's own field. A logo has no default
+  // position until first uploaded. brandedImageAttachmentId is the real
+  // sharp()-composited PNG output, replaced (not versioned) on every re-apply.
+  brandName                String?  @map("brand_name")
+  brandLogoAttachmentId    String?  @map("brand_logo_attachment_id")
+  logoXPercent             Decimal? @map("logo_x_percent") @db.Decimal(5, 2)
+  logoYPercent             Decimal? @map("logo_y_percent") @db.Decimal(5, 2)
+  logoWidthPercent         Decimal? @map("logo_width_percent") @db.Decimal(5, 2)
+  brandedImageAttachmentId String?  @map("branded_image_attachment_id")
+
   currentVersionId String? @unique @map("current_version_id") @db.Uuid
 
   createdByUserId String   @map("created_by_user_id") @db.Uuid

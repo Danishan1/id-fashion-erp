@@ -1,3 +1,4 @@
+import sharp from "sharp";
 import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingService";
@@ -58,6 +59,8 @@ import type {
   SelectReplicateFabricInput,
   SetDnaObservationLockInput,
   UpdateDnaObservationInput,
+  UpdateReplicateBrandNameInput,
+  UpdateReplicateLogoPositionInput,
 } from "./replicate-design.schema";
 import { ReplicateDesignProjectStatus, type Prisma, type ReplicateDesignProject } from "@prisma/client";
 
@@ -90,6 +93,7 @@ export const REPLICATE_STEP_ORDER = [
   "COMPATIBILITY_CHECK",
   "GENERATE",
   "EDIT",
+  "BRANDING",
   "TECH_PACK",
 ] as const;
 export type ReplicateStep = (typeof REPLICATE_STEP_ORDER)[number];
@@ -1262,6 +1266,229 @@ export async function rejectReplicateVersion(actor: ActorContext, projectId: str
   });
 
   return version;
+}
+
+// ---------------------------------------------------------------------------
+// Branding (optional brand name + logo overlay) — the exact same "settings +
+// on-demand sharp() composite" feature as AI Designer's own applyBranding(),
+// duplicated (not shared) per this module's established isolation rule.
+// brandName has no stored default -- the real default (the logged-in
+// company's own name) is resolved at read time in getReplicateBrandDefaults()
+// below, so a later company-name change is picked up automatically. A logo
+// has no default at all (no company-logo field exists anywhere in this
+// schema). Entirely optional -- nothing else in this workflow requires it,
+// and skipping it leaves brandedImageAttachmentId null forever with zero
+// effect on Tech Pack or any other step.
+// ---------------------------------------------------------------------------
+
+const REPLICATE_DEFAULT_LOGO_X_PERCENT = 70;
+const REPLICATE_DEFAULT_LOGO_Y_PERCENT = 80;
+const REPLICATE_DEFAULT_LOGO_WIDTH_PERCENT = 20;
+const REPLICATE_MIN_LOGO_WIDTH_PERCENT = 5;
+const REPLICATE_MAX_LOGO_WIDTH_PERCENT = 60;
+
+export async function updateReplicateBrandName(actor: ActorContext, projectId: string, input: UpdateReplicateBrandNameInput) {
+  const project = await getOwnedProject(actor.companyId, projectId);
+  const updated = await ReplicateDesignProjectRepository.update(projectId, { brandName: input.brandName || null });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "replicate_design_projects",
+    recordId: projectId,
+    action: "UPDATE",
+    oldValues: { brandName: project.brandName },
+    newValues: { brandName: input.brandName || null },
+  });
+
+  return updated;
+}
+
+export async function uploadReplicateBrandLogo(actor: ActorContext, projectId: string, file: UploadableFile) {
+  await getOwnedProject(actor.companyId, projectId);
+
+  if (!ALLOWED_IMAGE_MIME_TYPES.has(file.mimeType)) {
+    throw new BusinessRuleError("VALIDATION_ERROR", `Unsupported file type "${file.mimeType}" — upload a JPG, PNG, or WEBP image.`);
+  }
+
+  const attachment = await uploadAttachment(actor, "REPLICATE_DESIGN_PROJECT", projectId, file, "BRAND_LOGO");
+
+  // Only sets a default position/size the first time a logo is uploaded --
+  // a re-upload replacing an existing logo keeps whatever position/size the
+  // user already dialed in.
+  const project = await getOwnedProject(actor.companyId, projectId);
+  const updated = await ReplicateDesignProjectRepository.update(projectId, {
+    brandLogoAttachmentId: attachment.id,
+    logoXPercent: project.logoXPercent ?? REPLICATE_DEFAULT_LOGO_X_PERCENT,
+    logoYPercent: project.logoYPercent ?? REPLICATE_DEFAULT_LOGO_Y_PERCENT,
+    logoWidthPercent: project.logoWidthPercent ?? REPLICATE_DEFAULT_LOGO_WIDTH_PERCENT,
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "replicate_design_projects",
+    recordId: projectId,
+    action: "UPDATE",
+    newValues: { brandLogoAttachmentId: attachment.id },
+  });
+
+  return { project: updated, attachment };
+}
+
+export async function deleteReplicateBrandLogo(actor: ActorContext, projectId: string) {
+  const project = await getOwnedProject(actor.companyId, projectId);
+  if (!project.brandLogoAttachmentId) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "This project has no uploaded logo to delete.");
+  }
+
+  await deleteAttachment(actor, project.brandLogoAttachmentId);
+  if (project.brandedImageAttachmentId) {
+    await deleteAttachment(actor, project.brandedImageAttachmentId);
+  }
+
+  const updated = await ReplicateDesignProjectRepository.update(projectId, {
+    brandLogoAttachmentId: null,
+    brandedImageAttachmentId: null,
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "replicate_design_projects",
+    recordId: projectId,
+    action: "UPDATE",
+    oldValues: { brandLogoAttachmentId: project.brandLogoAttachmentId },
+    newValues: { brandLogoAttachmentId: null },
+  });
+
+  return updated;
+}
+
+export async function updateReplicateLogoPosition(actor: ActorContext, projectId: string, input: UpdateReplicateLogoPositionInput) {
+  const project = await getOwnedProject(actor.companyId, projectId);
+  if (!project.brandLogoAttachmentId) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "Upload a logo before setting its position.");
+  }
+
+  const updated = await ReplicateDesignProjectRepository.update(projectId, {
+    logoXPercent: input.logoXPercent,
+    logoYPercent: input.logoYPercent,
+    logoWidthPercent: input.logoWidthPercent,
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "replicate_design_projects",
+    recordId: projectId,
+    action: "UPDATE",
+    newValues: { logoXPercent: input.logoXPercent, logoYPercent: input.logoYPercent, logoWidthPercent: input.logoWidthPercent },
+  });
+
+  return updated;
+}
+
+/**
+ * Composites the uploaded logo onto the currently selected design image at
+ * the stored position/size via a real sharp() operation -- never an AI
+ * call. Re-running this after the user moves/resizes the logo simply
+ * replaces the prior branded output. logoXPercent/logoYPercent are clamped
+ * server-side against the logo's own actual rendered width/height so the
+ * composite can never place the logo partially off-canvas, regardless of
+ * what the client last stored.
+ */
+export async function applyReplicateBranding(actor: ActorContext, projectId: string) {
+  const project = await ReplicateDesignProjectRepository.findByIdWithDetails(actor.companyId, projectId);
+  if (!project) throw new BusinessRuleError("NOT_FOUND", "Replicate Design project not found.", { id: projectId });
+  if (!project.currentVersion?.currentImage) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "Generate a design first before applying branding.");
+  }
+  if (!project.brandLogoAttachmentId) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "Upload a logo before applying branding.");
+  }
+
+  const { buffer: designBuffer } = await getAttachmentForDownload(actor.companyId, project.currentVersion.currentImage.imageAttachmentId);
+  const { buffer: logoBuffer } = await getAttachmentForDownload(actor.companyId, project.brandLogoAttachmentId);
+
+  // sharp/libvips throws a low-level decode/encode error (not a
+  // BusinessRuleError) for a structurally corrupt image file — caught here
+  // and rethrown as a clean, honest message rather than a raw 500. The
+  // design image is generated by this app's own pipeline and essentially
+  // never corrupt; the logo is a real user upload and genuinely can be.
+  let compositedBuffer: Buffer;
+  try {
+    const designMeta = await sharp(designBuffer).metadata();
+    const designWidth = designMeta.width ?? 0;
+    const designHeight = designMeta.height ?? 0;
+    if (!designWidth || !designHeight) {
+      throw new BusinessRuleError("VALIDATION_ERROR", "Could not read the current design image's dimensions.");
+    }
+
+    const widthPercent = Math.min(
+      REPLICATE_MAX_LOGO_WIDTH_PERCENT,
+      Math.max(REPLICATE_MIN_LOGO_WIDTH_PERCENT, Number(project.logoWidthPercent ?? REPLICATE_DEFAULT_LOGO_WIDTH_PERCENT))
+    );
+    const logoWidthPx = Math.max(1, Math.round((widthPercent / 100) * designWidth));
+    const resizedLogo = await sharp(logoBuffer).resize({ width: logoWidthPx }).png().toBuffer();
+    const resizedMeta = await sharp(resizedLogo).metadata();
+    const logoHeightPx = resizedMeta.height ?? logoWidthPx;
+
+    const xPercent = Number(project.logoXPercent ?? REPLICATE_DEFAULT_LOGO_X_PERCENT);
+    const yPercent = Number(project.logoYPercent ?? REPLICATE_DEFAULT_LOGO_Y_PERCENT);
+    const maxLeft = Math.max(0, designWidth - logoWidthPx);
+    const maxTop = Math.max(0, designHeight - logoHeightPx);
+    const left = Math.min(maxLeft, Math.max(0, Math.round((xPercent / 100) * designWidth)));
+    const top = Math.min(maxTop, Math.max(0, Math.round((yPercent / 100) * designHeight)));
+
+    compositedBuffer = await sharp(designBuffer)
+      .composite([{ input: resizedLogo, left, top }])
+      .png()
+      .toBuffer();
+  } catch (err) {
+    if (err instanceof BusinessRuleError) throw err;
+    throw new BusinessRuleError(
+      "VALIDATION_ERROR",
+      "Could not process the uploaded logo image — it may be corrupt or in an unsupported format. Try a different file."
+    );
+  }
+
+  if (project.brandedImageAttachmentId) {
+    await deleteAttachment(actor, project.brandedImageAttachmentId);
+  }
+
+  const attachment = await uploadAttachment(
+    actor,
+    "REPLICATE_DESIGN_PROJECT",
+    projectId,
+    { buffer: compositedBuffer, fileName: `replicate-design-branded-${Date.now()}.png`, mimeType: "image/png" },
+    "BRANDED_DESIGN_IMAGE"
+  );
+
+  const completedSteps = markStepsComplete(project.completedSteps, ["BRANDING"]);
+  const updated = await ReplicateDesignProjectRepository.update(projectId, {
+    brandedImageAttachmentId: attachment.id,
+    completedSteps,
+    currentStep: computeCurrentStep(completedSteps),
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "replicate_design_projects",
+    recordId: projectId,
+    action: "UPDATE",
+    newValues: { brandedImageAttachmentId: attachment.id },
+  });
+
+  return { project: updated, attachment };
+}
+
+/** Resolves the effective brand name shown/used at generation time -- never stored, so a later company-name change is picked up automatically. */
+export async function getReplicateBrandDefaults(companyId: string, projectId: string) {
+  const project = await ReplicateDesignProjectRepository.findByIdWithDetails(companyId, projectId);
+  if (!project) throw new BusinessRuleError("NOT_FOUND", "Replicate Design project not found.", { id: projectId });
+  return { effectiveBrandName: project.brandName || project.company.name };
 }
 
 // ---------------------------------------------------------------------------

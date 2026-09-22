@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { STATUS_BADGE_CLASS, STATUS_LABELS, STEP_LABELS, STEP_ORDER } from "../statusLabels";
 import { ReferenceImageUploadPanel } from "./ReferenceImageUploadPanel";
@@ -9,6 +9,7 @@ import { DesignDnaReviewPanel } from "./DesignDnaReviewPanel";
 import { FabricMaterialSelectionPanel } from "./FabricMaterialSelectionPanel";
 import { CompatibilityWarningPanel } from "./CompatibilityWarningPanel";
 import { GenerateResultPanel } from "./GenerateResultPanel";
+import { BrandingPanel } from "./BrandingPanel";
 import { TechPackPanel } from "./TechPackPanel";
 import { imageUrl, parseJson } from "./shared";
 
@@ -79,6 +80,12 @@ interface ReplicateProjectData {
   dnaAnalysis: DnaAnalysis | null;
   compatibilityCheck: CompatibilityCheck | null;
   currentVersion: { currentImage: CurrentImage } | null;
+  brandName: string | null;
+  brandLogoAttachmentId: string | null;
+  logoXPercent: number | null;
+  logoYPercent: number | null;
+  logoWidthPercent: number | null;
+  brandedImageAttachmentId: string | null;
 }
 
 function WizardSection({
@@ -134,7 +141,15 @@ export function ReplicateDesignWorkspace({ projectId, initialProject }: { projec
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [expandedStep, setExpandedStep] = useState<string | null>(initialProject.currentStep);
+  const [brandDefaultName, setBrandDefaultName] = useState<string | null>(null);
   const sectionRefs = useRef<Record<string, HTMLElement | null>>({});
+
+  useEffect(() => {
+    fetch(`/api/v1/ai-designer/replicate-projects/${projectId}/branding`)
+      .then((r) => r.json())
+      .then((body) => setBrandDefaultName(body.data?.effectiveBrandName ?? null))
+      .catch(() => {});
+  }, [projectId]);
 
   const jumpToStep = (step: string) => {
     setExpandedStep(step);
@@ -362,8 +377,34 @@ export function ReplicateDesignWorkspace({ projectId, initialProject }: { projec
 
       {project.currentVersion?.currentImage && (
         <WizardSection
-          sectionRef={(el) => (sectionRefs.current.TECH_PACK = el)}
+          sectionRef={(el) => (sectionRefs.current.BRANDING = el)}
           index={8}
+          title={STEP_LABELS.BRANDING}
+          isDone={project.completedSteps.includes("BRANDING")}
+          isCurrent={project.currentStep === "BRANDING"}
+          isOpen={expandedStep === "BRANDING"}
+        >
+          <BrandingPanel
+            projectId={projectId}
+            brandName={project.brandName}
+            brandDefaultName={brandDefaultName}
+            designImageAttachmentId={project.currentVersion.currentImage.imageAttachmentId}
+            logoAttachmentId={project.brandLogoAttachmentId}
+            logoXPercent={project.logoXPercent}
+            logoYPercent={project.logoYPercent}
+            logoWidthPercent={project.logoWidthPercent}
+            brandedImageAttachmentId={project.brandedImageAttachmentId}
+            busy={busy}
+            run={run}
+          />
+          <StepNextButton step="BRANDING" onNext={goToNextStep} />
+        </WizardSection>
+      )}
+
+      {project.currentVersion?.currentImage && (
+        <WizardSection
+          sectionRef={(el) => (sectionRefs.current.TECH_PACK = el)}
+          index={9}
           title={STEP_LABELS.TECH_PACK}
           isDone={project.completedSteps.includes("TECH_PACK")}
           isCurrent={project.currentStep === "TECH_PACK"}

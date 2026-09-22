@@ -109,3 +109,22 @@ export const applyReplicateEditVariationSchema = z.object({
   confirmed: z.boolean(),
 });
 export type ApplyReplicateEditVariationInput = z.infer<typeof applyReplicateEditVariationSchema>;
+
+/**
+ * Branding — optional brand name + logo overlay, the exact same shape as AI
+ * Designer's own equivalent (duplicated, not imported, per this module's
+ * established isolation rule). brandName is a plain string, not required —
+ * an empty string clears it back to the resolved company-name default (see
+ * getReplicateBrandDefaults() in the service).
+ */
+export const updateReplicateBrandNameSchema = z.object({
+  brandName: z.string().max(200).optional().or(z.literal("")),
+});
+export type UpdateReplicateBrandNameInput = z.infer<typeof updateReplicateBrandNameSchema>;
+
+export const updateReplicateLogoPositionSchema = z.object({
+  logoXPercent: z.number().min(0).max(100),
+  logoYPercent: z.number().min(0).max(100),
+  logoWidthPercent: z.number().min(5).max(60),
+});
+export type UpdateReplicateLogoPositionInput = z.infer<typeof updateReplicateLogoPositionSchema>;
