@@ -225,6 +225,14 @@ export function EditDesignWorkspace({
   // QUICK Edit "New Requirement" field shows its real reference images.
   const [designAttributes, setDesignAttributes] = useState<DesignAttributeDef[]>([]);
   const [optionReferenceImages, setOptionReferenceImages] = useState<Record<string, string>>({});
+  // Attribute LABEL -> picked value, accumulated across every Design
+  // Attribute the user visits (not just the currently-focused one) -- this
+  // is what lets picking a value for e.g. Length, then also Sleeve, then
+  // Neckline all stay staged together instead of each new pick silently
+  // discarding the previous one (a real reported bug: switching categories
+  // used to reset the single shared newValue field). Generate Preview sends
+  // every staged pick together as one combined TECHNICAL edit.
+  const [designAttrSelections, setDesignAttrSelections] = useState<Record<string, string>>({});
   const designDisplayMode = useAiDesignerDisplayMode();
 
   // Center canvas
@@ -286,7 +294,7 @@ export function EditDesignWorkspace({
 
   const currentImage = project.currentVersion?.currentImage ?? null;
   const hasUnsavedEdit =
-    (editMode === "QUICK" && (currentValue.trim() || newValue.trim())) ||
+    (editMode === "QUICK" && (currentValue.trim() || newValue.trim() || Object.keys(designAttrSelections).length > 0)) ||
     (editMode === "TECHNICAL" && techRows.some((r) => r.key.trim() && r.value.trim())) ||
     (editMode === "AI_PROMPT" && freeform.trim());
 
@@ -295,6 +303,7 @@ export function EditDesignWorkspace({
     setNewValue("");
     setTechRows([{ key: "", value: "" }]);
     setFreeform("");
+    setDesignAttrSelections({});
   }
 
   function selectCategoryItem(group: string, item: string) {
@@ -343,13 +352,26 @@ export function EditDesignWorkspace({
 
   function generatePreview() {
     if (editMode === "EMBELLISHMENTS") return; // has its own Apply button — see applyEmbellishmentsAction()
-    if (!activeItem && editMode !== "AI_PROMPT") {
+    const stagedDesignAttrs = Object.keys(designAttrSelections).length > 0;
+    if (!activeItem && editMode !== "AI_PROMPT" && !stagedDesignAttrs) {
       setError("Choose an edit category on the left first.");
       return;
     }
-    const featureLabel = editMode === "AI_PROMPT" ? activeItem ?? "Custom Instruction" : activeItem!;
-    const technicalFields =
-      editMode === "TECHNICAL"
+
+    // One or more Design Attributes were picked (via the image grid or its
+    // text input) — always sent together as a single combined TECHNICAL
+    // edit, even if only one was picked, so every staged change is applied
+    // in the same generation rather than only whichever was clicked last.
+    const useDesignAttrSelections = editMode === "QUICK" && stagedDesignAttrs;
+    const effectiveMode = useDesignAttrSelections ? "TECHNICAL" : editMode;
+    const featureLabel = useDesignAttrSelections
+      ? Object.keys(designAttrSelections).join(", ")
+      : editMode === "AI_PROMPT"
+        ? (activeItem ?? "Custom Instruction")
+        : activeItem!;
+    const technicalFields = useDesignAttrSelections
+      ? designAttrSelections
+      : editMode === "TECHNICAL"
         ? Object.fromEntries(techRows.filter((r) => r.key.trim() && r.value.trim()).map((r) => [r.key.trim(), r.value.trim()]))
         : undefined;
 
@@ -359,12 +381,12 @@ export function EditDesignWorkspace({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            mode: editMode,
+            mode: effectiveMode,
             featureLabel,
-            currentValue: editMode === "QUICK" ? currentValue : undefined,
-            newValue: editMode === "QUICK" ? newValue : undefined,
+            currentValue: effectiveMode === "QUICK" ? currentValue : undefined,
+            newValue: effectiveMode === "QUICK" ? newValue : undefined,
             technicalFields,
-            freeformInstructions: editMode === "AI_PROMPT" ? freeform : editMode === "QUICK" ? undefined : freeform || undefined,
+            freeformInstructions: effectiveMode === "AI_PROMPT" ? freeform : effectiveMode === "QUICK" ? undefined : freeform || undefined,
             imageCount,
           }),
         })
@@ -531,20 +553,24 @@ export function EditDesignWorkspace({
               </p>
             ) : (
               <div className="pb-1">
-                {designAttributes.map((attr) => (
-                  <button
-                    key={attr.key}
-                    type="button"
-                    onClick={() => selectCategoryItem(DESIGN_ATTRIBUTES_GROUP, attr.label)}
-                    className={`block w-full px-3 py-1 text-left text-xs ${
-                      activeGroup === DESIGN_ATTRIBUTES_GROUP && activeItem === attr.label
-                        ? "bg-indigo-100 font-medium text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
-                        : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
-                    }`}
-                  >
-                    {attr.label}
-                  </button>
-                ))}
+                {designAttributes.map((attr) => {
+                  const picked = designAttrSelections[attr.label];
+                  return (
+                    <button
+                      key={attr.key}
+                      type="button"
+                      onClick={() => selectCategoryItem(DESIGN_ATTRIBUTES_GROUP, attr.label)}
+                      className={`flex w-full items-center justify-between gap-2 px-3 py-1 text-left text-xs ${
+                        activeGroup === DESIGN_ATTRIBUTES_GROUP && activeItem === attr.label
+                          ? "bg-indigo-100 font-medium text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
+                          : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                      }`}
+                    >
+                      <span>{attr.label}</span>
+                      {picked && <span className="truncate text-[9px] font-normal text-green-600 dark:text-green-400">✓ {picked}</span>}
+                    </button>
+                  );
+                })}
               </div>
             )}
 
@@ -878,13 +904,13 @@ export function EditDesignWorkspace({
                   {matchedDesignAttr && (
                     <div className="mb-1.5 grid grid-cols-3 gap-1.5">
                       {matchedDesignAttr.options.map((opt) => {
-                        const selected = newValue === opt;
+                        const selected = designAttrSelections[matchedDesignAttr.label] === opt;
                         return (
                           <button
                             key={opt}
                             type="button"
                             aria-pressed={selected}
-                            onClick={() => setNewValue(opt)}
+                            onClick={() => setDesignAttrSelections((prev) => ({ ...prev, [matchedDesignAttr.label]: opt }))}
                             className={`flex flex-col items-center gap-1 rounded border px-1 py-1.5 text-center transition ${
                               selected
                                 ? "border-indigo-600 bg-indigo-600 text-white"
@@ -901,12 +927,56 @@ export function EditDesignWorkspace({
                     </div>
                   )}
                   <input
-                    value={newValue}
-                    onChange={(e) => setNewValue(e.target.value)}
+                    value={matchedDesignAttr ? (designAttrSelections[matchedDesignAttr.label] ?? "") : newValue}
+                    onChange={(e) => {
+                      if (matchedDesignAttr) {
+                        const label = matchedDesignAttr.label;
+                        const v = e.target.value;
+                        setDesignAttrSelections((prev) => {
+                          const next = { ...prev };
+                          if (v.trim()) next[label] = v;
+                          else delete next[label];
+                          return next;
+                        });
+                      } else {
+                        setNewValue(e.target.value);
+                      }
+                    }}
                     placeholder="e.g. Mandarin Collar"
                     className="w-full rounded border border-zinc-300 px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-900"
                   />
                 </div>
+                {Object.keys(designAttrSelections).length > 0 && (
+                  <div>
+                    <label className="mb-0.5 block text-[10px] font-medium text-zinc-500">
+                      Selected Changes ({Object.keys(designAttrSelections).length}) — all applied together
+                    </label>
+                    <div className="flex flex-wrap gap-1">
+                      {Object.entries(designAttrSelections).map(([label, value]) => (
+                        <span
+                          key={label}
+                          className="inline-flex items-center gap-1 rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-medium text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
+                        >
+                          {label}: {value}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setDesignAttrSelections((prev) => {
+                                const next = { ...prev };
+                                delete next[label];
+                                return next;
+                              })
+                            }
+                            className="text-indigo-500 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-200"
+                            aria-label={`Remove ${label}`}
+                          >
+                            ✕
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <div>
                   <label className="mb-0.5 block text-[10px] font-medium text-zinc-500">Additional Instructions (optional)</label>
                   <textarea

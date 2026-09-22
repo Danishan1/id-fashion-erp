@@ -23,8 +23,8 @@ export function AiDesignMastersClient() {
         <Breadcrumb items={[{ label: "Masters", href: "/masters" }, { label: "AI Design" }]} />
         <h1 className="mt-2 text-lg font-semibold text-zinc-900 dark:text-zinc-50">AI Design</h1>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-          AI Designer&apos;s own configurable masters — control which attributes and options show up in the
-          Product Design step of the wizard.
+          AI Designer&apos;s own configurable masters — control which attributes, options, and reference photos
+          show up in the Edit Design workspace for each product category.
         </p>
       </div>
 
