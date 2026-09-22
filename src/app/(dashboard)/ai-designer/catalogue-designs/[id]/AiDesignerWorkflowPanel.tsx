@@ -13,11 +13,8 @@ import {
   TARGET_CUSTOMER_VALUES,
   type TargetCustomer,
 } from "@/core/ai-designer/catalogs/customer-catalog";
-import type { DesignAttributeDef } from "@/core/ai-designer/catalogs/design-attribute-catalog";
-import { DesignOptionImage } from "@/core/ai-designer/catalogs/design-icon-catalog";
 import { ENVIRONMENTS } from "@/core/ai-designer/catalogs/environment-catalog";
 import { FABRIC_FIELD_KEYS, type FabricFieldKey } from "@/modules/ai-designer/ai-designer.schema";
-import { useAiDesignerDisplayMode } from "@/lib/use-ai-designer-display-mode";
 import { SKETCH_FEATURE_LABELS, SKETCH_TO_DESIGN_ATTRIBUTE_KEYS, type SketchFeatureKey } from "@/core/ai-designer/sketch-analysis/feature-registry";
 import { STATUS_BADGE_CLASS, STATUS_LABELS, WIZARD_STEP_LABELS, stepsForCreationMode } from "../../statusLabels";
 import { AiDesignerTechPackPanel, type TechPackData } from "./AiDesignerTechPackPanel";
@@ -26,6 +23,7 @@ import { SketchAnalysisPanel } from "./SketchAnalysisPanel";
 import { ProductSuggestionsPanel } from "./ProductSuggestionsPanel";
 import { LogoPositioner } from "./LogoPositioner";
 import { AiSuggestedBadge } from "@/components/ui/AiSuggestedBadge";
+import { GeneratedImageGrid, imageUrl, type AiDesignerImageRow } from "./GeneratedImageGrid";
 import type { ProductSuggestionsResponse } from "@/core/ai-designer/product-suggestions/schema";
 
 const FABRIC_FIELD_LABELS: Record<FabricFieldKey, string> = {
@@ -43,16 +41,6 @@ const FABRIC_FIELD_LABELS: Record<FabricFieldKey, string> = {
   fabricRecommendedGarments: "Recommended Garments",
   fabricColor: "Color",
 };
-
-interface AiDesignerImageRow {
-  id: string;
-  generationId: string;
-  imageAttachmentId: string;
-  decision: "PENDING" | "SELECTED" | "REJECTED";
-  createdAt: string;
-  /** Set only on the response of the "click a suggested product" action — never persisted, never re-derived on reload. */
-  fromSuggestion?: boolean;
-}
 
 interface AiDesignerProjectData {
   id: string;
@@ -111,19 +99,6 @@ const SECOND_FABRIC_APPLY_AREA_LABELS: Record<string, string> = {
   BORDERS: "Borders / Hem",
   CONTRAST_PANELS: "Contrast Panels",
 };
-
-const EMBELLISHMENT_TYPE_LABELS: Record<string, string> = {
-  DIGITAL_APPLIQUE: "Digital Applique",
-  EMBROIDERY: "Embroidery",
-  SEQUIN_WORK: "Sequin Work",
-  LACE_TRIM: "Lace Trim",
-  BEADWORK: "Beadwork",
-  PATCHWORK: "Patchwork",
-};
-
-function imageUrl(attachmentId: string) {
-  return `/api/v1/ai-designer/attachments/${attachmentId}/download?disposition=inline`;
-}
 
 async function parseJson(res: Response) {
   const body = await res.json().catch(() => ({}));
@@ -212,8 +187,6 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
   const [pendingSelectImage, setPendingSelectImage] = useState<string | null>(null);
   const [generatedImages, setGeneratedImages] = useState<AiDesignerImageRow[]>([]);
   const [secondFabricSelectedAreas, setSecondFabricSelectedAreas] = useState<string[]>([]);
-  const [embellishmentType, setEmbellishmentType] = useState<string>("DIGITAL_APPLIQUE");
-  const [embellishmentInstructions, setEmbellishmentInstructions] = useState("");
   const [techPack, setTechPack] = useState<TechPackData | null>(null);
   const [sketchAnalysis, setSketchAnalysis] = useState<{
     id: string;
@@ -227,10 +200,18 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
     productCategory: string;
     environmentKey: string;
   } | null>(null);
+  /**
+   * Per-card error for "Click to generate 3 sample designs →" — a real,
+   * user-reported gap: the shared `error` banner above renders once at the
+   * top of the whole panel, far from whichever suggestion card was actually
+   * clicked, so a failure (e.g. every image-generation provider currently
+   * down) looked like nothing had happened at all. Keyed by the same
+   * `apply-suggestion-${groupIndex}-${itemIndex}` string already used for
+   * `busy`, so ProductSuggestionsPanel can show the failure on the exact
+   * card that failed instead of a generic top-of-page message.
+   */
+  const [suggestionErrors, setSuggestionErrors] = useState<Record<string, string>>({});
   const [brandDefaultName, setBrandDefaultName] = useState<string | null>(null);
-  const [designAttributes, setDesignAttributes] = useState<DesignAttributeDef[]>([]);
-  const [activeDesignAttrKey, setActiveDesignAttrKey] = useState<string | null>(null);
-  const [optionReferenceImages, setOptionReferenceImages] = useState<Record<string, string>>({});
 
   // Which single wizard step is currently the active "tab" — purely a display
   // concern, has no bearing on the real `currentStep`/`completedSteps` wizard
@@ -316,38 +297,6 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
       .catch(() => {});
   }, [projectId]);
 
-  // Product Design's own attribute list is now a real, per-company master
-  // (Masters -> AI Design -> Product Design), not a static import — this
-  // company's own customized rows for the category once any exist, else the
-  // original built-in defaults (see ai-designer-attribute-master.service.ts).
-  useEffect(() => {
-    const category = project.productCategory;
-    if (!category) return;
-    fetch(`/api/v1/ai-designer/product-design-attributes/effective?category=${encodeURIComponent(category)}`)
-      .then((r) => r.json())
-      .then((body) => setDesignAttributes(body.data ?? []))
-      .catch(() => setDesignAttributes([]));
-  }, [project.productCategory]);
-
-  // Admin-uploaded photo overrides (Masters -> AI Design -> Product Design ->
-  // Reference Photos) — a flat { optionValue -> attachmentId } map fetched
-  // once, company-wide (not per-category), since the same option value's
-  // photo applies everywhere it appears. Missing from this map just means
-  // "no override yet" -- DesignOptionImage falls back to the AI-generated
-  // static photo, then the clipart icon, same as before this existed.
-  useEffect(() => {
-    fetch("/api/v1/ai-designer/product-design-attributes/reference-images")
-      .then((r) => r.json())
-      .then((body) => {
-        const map: Record<string, string> = {};
-        for (const row of body.data ?? []) {
-          if (row.attachmentId) map[row.optionValue] = row.attachmentId;
-        }
-        setOptionReferenceImages(map);
-      })
-      .catch(() => setOptionReferenceImages({}));
-  }, []);
-
   // Deliberately does NOT move `expandedStep` — the panel stays on whatever
   // step the user is currently looking at after any save, even though the
   // reloaded `project.currentStep`/`completedSteps` (driving the checkmarks
@@ -425,8 +374,16 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
    * productCategory/environmentLabel for free, since applyProductSuggestionAndGenerate()
    * saves them through the same saveWizardSelections() the manual steps use.
    */
-  const applySuggestion = (groupIndex: number, itemIndex: number) =>
-    run(`apply-suggestion-${groupIndex}-${itemIndex}`, async () => {
+  const applySuggestion = async (groupIndex: number, itemIndex: number) => {
+    const key = `apply-suggestion-${groupIndex}-${itemIndex}`;
+    setBusy(key);
+    setSuggestionErrors((prev) => {
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    try {
       const body = await parseJson(
         await fetch(`/api/v1/ai-designer/projects/${projectId}/product-suggestions/apply`, {
           method: "POST",
@@ -434,15 +391,35 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
           body: JSON.stringify({ groupIndex, itemIndex }),
         })
       );
-      setGeneratedImages((prev) => [...prev, ...body.data.images]);
+      setGeneratedImages((prev) => [
+        ...prev,
+        ...body.data.images.map((img: AiDesignerImageRow) => ({ ...img, suggestionContext: body.data.appliedSuggestion })),
+      ]);
       setSuggestionApplied(body.data.appliedSuggestion);
-    });
+      await reload();
+    } catch (err) {
+      setSuggestionErrors((prev) => ({ ...prev, [key]: (err as Error).message }));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  /**
+   * Explicit "Skip this step" — the step was already navigable-past via the
+   * wizard's own unconditional Next button (nothing downstream requires
+   * suggestions), but skipping that way never marked it complete, leaving
+   * the stepper checkmark permanently unchecked even after a deliberate
+   * skip — a real, reported gap. Marks it complete server-side with no AI
+   * call, then moves on exactly like the step's own Next button would.
+   */
+  const skipSuggestions = () =>
+    run("skip-suggestions", () =>
+      fetch(`/api/v1/ai-designer/projects/${projectId}/product-suggestions/skip`, { method: "POST" }).then(parseJson)
+    ).then(() => goToNextStep("PRODUCT_SUGGESTIONS"));
 
   const ageGroups = project.targetCustomer ? AGE_GROUPS_BY_CUSTOMER[project.targetCustomer] : [];
   const productCategories = project.targetCustomer ? PRODUCT_CATEGORIES_BY_CUSTOMER[project.targetCustomer] : [];
   const designSelections = project.designSelectionsJson ?? {};
-  const designDisplayMode = useAiDesignerDisplayMode();
-  const activeDesignAttr = designAttributes.find((a) => a.key === activeDesignAttrKey) ?? designAttributes[0];
 
   const currentImage = project.currentVersion?.currentImage ?? null;
 
@@ -659,8 +636,13 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
           hasFabric={!!project.fabricName}
           suggestions={project.productSuggestionsJson}
           busy={busy}
+          errors={suggestionErrors}
+          generatedImages={generatedImages.filter((img) => img.fromSuggestion)}
           onRun={() => run("run-suggestions", () => fetch(`/api/v1/ai-designer/projects/${projectId}/product-suggestions`, { method: "POST" }).then(parseJson))}
           onApply={applySuggestion}
+          onSelectImage={setPendingSelectImage}
+          onRejectImage={(id) => run("reject", () => decideImageAction(id, "REJECT"))}
+          onSkip={skipSuggestions}
         />
         <StepNextButton step="PRODUCT_SUGGESTIONS" steps={steps} onNext={goToNextStep} />
       </WizardSection>
@@ -766,89 +748,7 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
         <StepNextButton step="PRODUCT_CATEGORY" steps={steps} onNext={goToNextStep} />
       </WizardSection>
 
-      {/* Step 6 — Product Design */}
-      <WizardSection
-        sectionRef={(el) => (sectionRefs.current.PRODUCT_DESIGN = el)}
-        index={steps.indexOf("PRODUCT_DESIGN") + 1}
-        title="Product Design"
-        isDone={project.completedSteps.includes("PRODUCT_DESIGN")}
-        isCurrent={project.currentStep === "PRODUCT_DESIGN"}
-        isOpen={expandedStep === "PRODUCT_DESIGN"}
-      >
-        {!project.productCategory && <p className="text-xs text-zinc-500">Pick a Product Category first.</p>}
-
-        {/* Category grid — label-only, no options shown here. Pick one to
-            open its own options panel below, instead of showing every
-            category's full option grid open at once (direct user feedback,
-            matched against a competitor reference: a flat "everything open"
-            layout got long/unwieldy once a category had 15+ attributes). */}
-        <div className="mt-3 flex flex-wrap gap-2">
-          {designAttributes.map((attr) => {
-            const isActive = activeDesignAttr?.key === attr.key;
-            const hasSelection = !!designSelections[attr.key];
-            return (
-              <button
-                key={attr.key}
-                type="button"
-                onClick={() => setActiveDesignAttrKey(attr.key)}
-                className={`rounded-md border px-3 py-1.5 text-xs transition ${
-                  isActive
-                    ? "border-indigo-600 bg-indigo-600 text-white"
-                    : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-900/40"
-                }`}
-              >
-                {attr.label}
-                {hasSelection && <span className={isActive ? "ml-1 text-white" : "ml-1 text-indigo-600 dark:text-indigo-400"}>●</span>}
-              </button>
-            );
-          })}
-        </div>
-
-        {activeDesignAttr && (
-          <div className="mt-4 rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
-            <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{activeDesignAttr.label}</p>
-            <p className="mb-2 mt-0.5 text-xs text-zinc-500">Choose one option below — it will be used when the design is generated.</p>
-            <div
-              className={
-                designDisplayMode === "TEXT" ? "flex flex-wrap gap-2" : "grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4"
-              }
-            >
-              {activeDesignAttr.options.map((opt) => {
-                const selected = designSelections[activeDesignAttr.key] === opt;
-                return (
-                  <button
-                    key={opt}
-                    type="button"
-                    aria-pressed={selected}
-                    onClick={() => run("design", () => patchWizard({ designSelections: { [activeDesignAttr.key]: opt } }))}
-                    className={
-                      designDisplayMode === "TEXT"
-                        ? `rounded-md border px-3 py-1.5 text-xs transition ${
-                            selected
-                              ? "border-indigo-600 bg-indigo-600 text-white"
-                              : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-900/40"
-                          }`
-                        : `flex flex-col items-center gap-1.5 rounded-md border px-2 py-3 text-center transition ${
-                            selected
-                              ? "border-indigo-600 bg-indigo-600 text-white"
-                              : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-900/40"
-                          }`
-                    }
-                  >
-                    {designDisplayMode === "CLIPART" && (
-                      <DesignOptionImage value={opt} overrideAttachmentId={optionReferenceImages[opt]} />
-                    )}
-                    <span className="text-xs leading-tight">{opt}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-        <StepNextButton step="PRODUCT_DESIGN" steps={steps} onNext={goToNextStep} />
-      </WizardSection>
-
-      {/* Step 8 — Environment (Model step hidden for now, per explicit request) */}
+      {/* Step 8 — Environment (Model step hidden for now, per explicit request; Product Design step hidden for now, per explicit request) */}
       <WizardSection
         sectionRef={(el) => (sectionRefs.current.ENVIRONMENT = el)}
         index={steps.indexOf("ENVIRONMENT") + 1}
@@ -995,43 +895,12 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
         </div>
 
         {generatedImages.length > 0 && (
-          <div className="mt-4 grid gap-3 sm:grid-cols-3">
-            {generatedImages.map((img) => (
-              <div key={img.id} className="space-y-2 rounded-md border border-zinc-200 p-2 dark:border-zinc-800">
-                {img.fromSuggestion && <AiSuggestedBadge label="Generated from AI Suggestion" />}
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={imageUrl(img.imageAttachmentId)} alt="Generated design" className="aspect-[3/4] w-full rounded object-cover" />
-                <div className="flex items-center justify-between text-xs">
-                  <span
-                    className={
-                      img.decision === "SELECTED"
-                        ? "text-green-600"
-                        : img.decision === "REJECTED"
-                          ? "text-red-600"
-                          : "text-zinc-500"
-                    }
-                  >
-                    {img.decision}
-                  </span>
-                  <div className="flex gap-2">
-                    {img.decision !== "SELECTED" && (
-                      <button type="button" className="text-indigo-600 hover:underline" onClick={() => setPendingSelectImage(img.id)}>
-                        Select
-                      </button>
-                    )}
-                    {img.decision !== "REJECTED" && (
-                      <button
-                        type="button"
-                        className="text-red-600 hover:underline"
-                        onClick={() => run("reject", () => decideImageAction(img.id, "REJECT"))}
-                      >
-                        Reject
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))}
+          <div className="mt-4">
+            <GeneratedImageGrid
+              images={generatedImages}
+              onSelect={setPendingSelectImage}
+              onReject={(id) => run("reject", () => decideImageAction(id, "REJECT"))}
+            />
           </div>
         )}
         <StepNextButton step="GENERATE" steps={steps} onNext={goToNextStep} />
@@ -1137,121 +1006,7 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
         </WizardSection>
       )}
 
-      {/* Step 11 — Embellishments */}
-      {currentImage && (
-        <WizardSection
-          sectionRef={(el) => (sectionRefs.current.EMBELLISHMENTS = el)}
-          index={steps.indexOf("EMBELLISHMENTS") + 1}
-          title="Embellishments"
-          isDone={project.completedSteps.includes("EMBELLISHMENTS")}
-          isCurrent={project.currentStep === "EMBELLISHMENTS"}
-          isOpen={expandedStep === "EMBELLISHMENTS"}
-        >
-          <p className="text-xs text-zinc-500">
-            Optional. Add a digital applique or embroidery embellishment to the current design — upload a motif
-            reference photo, describe how it should be applied, or both.
-          </p>
-
-          <div className="mt-3">
-            <p className="mb-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-300">Embellishment Type</p>
-            <div className="flex flex-wrap gap-2">
-              {Object.entries(EMBELLISHMENT_TYPE_LABELS).map(([type, label]) => (
-                <button
-                  key={type}
-                  type="button"
-                  aria-pressed={embellishmentType === type}
-                  onClick={() => setEmbellishmentType(type)}
-                  className={`rounded-md border px-3 py-1.5 text-sm ${
-                    embellishmentType === type
-                      ? "border-indigo-600 bg-indigo-600 text-white"
-                      : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200"
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="mt-4 grid gap-4 md:grid-cols-2">
-            <div>
-              <p className="text-xs font-medium text-zinc-900 dark:text-zinc-100">Embroidery / Applique Motif</p>
-              <p className="mt-0.5 text-xs text-zinc-500">Upload a motif or embroidery pattern reference image (optional).</p>
-              <input
-                type="file"
-                accept="image/jpeg,image/png,image/webp"
-                className="mt-2 block w-full text-sm"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (!file) return;
-                  const formData = new FormData();
-                  formData.append("file", file);
-                  run("upload-embellishment-motif", () =>
-                    fetch(`/api/v1/ai-designer/projects/${projectId}/embellishment-motif`, { method: "POST", body: formData }).then(parseJson)
-                  );
-                  e.target.value = "";
-                }}
-              />
-              {project.embellishmentMotifAttachmentId && (
-                <div className="mt-2 flex items-center gap-3">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={imageUrl(project.embellishmentMotifAttachmentId)}
-                    alt="Embellishment motif reference"
-                    className="h-24 w-24 rounded border object-cover"
-                  />
-                  <button
-                    type="button"
-                    className="text-xs text-red-600 hover:underline"
-                    onClick={() =>
-                      run("delete-embellishment-motif", () =>
-                        fetch(`/api/v1/ai-designer/projects/${projectId}/embellishment-motif`, { method: "DELETE" }).then(parseJson)
-                      )
-                    }
-                  >
-                    Remove
-                  </button>
-                </div>
-              )}
-            </div>
-            <div>
-              <p className="mb-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-300">Embellishment Instructions</p>
-              <textarea
-                rows={4}
-                className={textInputClass()}
-                value={embellishmentInstructions}
-                onChange={(e) => setEmbellishmentInstructions(e.target.value)}
-                placeholder={
-                  "e.g. \"Add intricate embroidery on the sleeves and neckline\", \"Apply sequins in a floral pattern on the bodice\", " +
-                  "\"Add lace borders along the hem and cuffs\". Leave empty to use a sensible default."
-                }
-              />
-              <button
-                type="button"
-                disabled={
-                  busy === "apply-embellishments" ||
-                  (!project.embellishmentMotifAttachmentId && !embellishmentInstructions.trim())
-                }
-                onClick={() =>
-                  run("apply-embellishments", () =>
-                    fetch(`/api/v1/ai-designer/projects/${projectId}/apply-embellishments`, {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ embellishmentType, instructions: embellishmentInstructions }),
-                    }).then(parseJson)
-                  )
-                }
-                className="mt-3 rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
-              >
-                {busy === "apply-embellishments" ? "Applying…" : "Apply Embellishments"}
-              </button>
-            </div>
-          </div>
-          <StepNextButton step="EMBELLISHMENTS" steps={steps} onNext={goToNextStep} />
-        </WizardSection>
-      )}
-
-      {/* Step 12 — Edit Design */}
+      {/* Step 12 — Edit Design (Embellishments step hidden for now, per explicit request — still fully reachable from the Edit Design workspace's own Embellishments tab) */}
       {currentImage && (
         <WizardSection
           sectionRef={(el) => (sectionRefs.current.EDIT = el)}
@@ -1416,7 +1171,19 @@ export function AiDesignerWorkflowPanel({ projectId, initialProject }: { project
         confirmLabel="Select"
         isBusy={busy === "select"}
         onConfirm={() =>
-          run("select", () => decideImageAction(pendingSelectImage!, "SELECT", true)).then(() => setPendingSelectImage(null))
+          run("select", async () => {
+            // Re-apply the SELECTED image's own originating suggestion
+            // (Target Customer/Age Group/Product Category/Environment) —
+            // generating from a later suggestion overwrites those fields on
+            // the project, so without this, selecting an image from an
+            // earlier suggestion would leave them mismatched with whichever
+            // suggestion was clicked last, not the one actually selected.
+            const img = generatedImages.find((i) => i.id === pendingSelectImage);
+            if (img?.suggestionContext) {
+              await patchWizard(img.suggestionContext);
+            }
+            await decideImageAction(pendingSelectImage!, "SELECT", true);
+          }).then(() => setPendingSelectImage(null))
         }
         onCancel={() => setPendingSelectImage(null)}
       />
