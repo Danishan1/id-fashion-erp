@@ -69,6 +69,7 @@ export interface MaterialRateHistoryEntry {
   receivedDate: string;
   receiptNumber: string;
   orderNumber: string;
+  supplierId: string;
   supplierName: string;
 }
 
@@ -122,7 +123,7 @@ export async function getMaterialRateHistory(
           select: {
             id: true,
             unitPrice: true,
-            purchaseOrder: { select: { orderNumber: true, supplier: { select: { name: true } } } },
+            purchaseOrder: { select: { orderNumber: true, supplier: { select: { id: true, name: true } } } },
           },
         },
       },
@@ -138,6 +139,7 @@ export async function getMaterialRateHistory(
     receivedDate: item.goodsReceipt.receivedDate.toISOString(),
     receiptNumber: item.goodsReceipt.receiptNumber,
     orderNumber: item.purchaseOrderItem.purchaseOrder.orderNumber,
+    supplierId: item.purchaseOrderItem.purchaseOrder.supplier.id,
     supplierName: item.purchaseOrderItem.purchaseOrder.supplier.name,
   }));
 

@@ -538,7 +538,7 @@ describe("getMaterialRateHistory", () => {
       purchaseOrderItem: {
         id: "poi-1",
         unitPrice: "25.5",
-        purchaseOrder: { orderNumber: "PO-2026-00001", supplier: { name: "Om Fabrics Pvt Ltd" } },
+        purchaseOrder: { orderNumber: "PO-2026-00001", supplier: { id: "sup-1", name: "Om Fabrics Pvt Ltd" } },
       },
       ...overrides,
     };
@@ -562,6 +562,7 @@ describe("getMaterialRateHistory", () => {
         receivedDate: new Date("2026-06-01").toISOString(),
         receiptNumber: "REC-2026-00001",
         orderNumber: "PO-2026-00001",
+        supplierId: "sup-1",
         supplierName: "Om Fabrics Pvt Ltd",
       },
     ]);
