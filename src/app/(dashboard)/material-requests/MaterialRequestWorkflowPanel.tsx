@@ -166,7 +166,13 @@ export function MaterialRequestWorkflowPanel({
   // non-fabric line's `availableRolls` stays empty and the picker simply
   // doesn't render, falling back to the existing flat-total Issue flow.
   const [availableRolls, setAvailableRolls] = useState<RollOption[]>([]);
-  const [selectedRollId, setSelectedRollId] = useState("");
+  // Roll id -> qty-to-issue string. A roll only actually participates in
+  // the issue when its entry is a real positive number -- there's no
+  // separate "selected" boolean, the quantity itself is the selection,
+  // matching the same convention Goods Receipt's own roll table already
+  // uses. Multiple rolls (multiple Color/Shade/GSM/Composition
+  // combinations) can be issued together in one action.
+  const [rollQuantities, setRollQuantities] = useState<Record<string, string>>({});
   const [rollsLoading, setRollsLoading] = useState(false);
   // "Change Warehouse" (2026-09-16) — offered inline in the Issue modal
   // whenever the request's own warehouse has nothing, populated only from
@@ -254,22 +260,83 @@ export function MaterialRequestWorkflowPanel({
 
   const submitIssue = async () => {
     if (!issuingLine) return;
-    const ok = await run(
-      () =>
-        fetch(`/api/v1/material-requests/lines/${issuingLine.id}/issue`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            issueQuantity: Number(issueQty),
-            warehouseLocationId: issueLocationId || undefined,
-            fabricRollId: selectedRollId || undefined,
-            extraReason: issueExtra ? issueExtraReason || undefined : undefined,
-            issueWarehouseId: issueWarehouseId || undefined,
+    const rollEntries = Object.entries(rollQuantities).filter(([, qty]) => Number(qty) > 0);
+
+    if (rollEntries.length === 0) {
+      // Non-fabric, or a fabric material with no roll-level stock recorded
+      // at this warehouse -- the original single flat-quantity call,
+      // completely unchanged.
+      const ok = await run(
+        () =>
+          fetch(`/api/v1/material-requests/lines/${issuingLine.id}/issue`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              issueQuantity: Number(issueQty),
+              warehouseLocationId: issueLocationId || undefined,
+              fabricRollId: undefined,
+              extraReason: issueExtra ? issueExtraReason || undefined : undefined,
+              issueWarehouseId: issueWarehouseId || undefined,
+            }),
           }),
+        "Failed to issue this line."
+      );
+      if (ok) setIssuingLine(null);
+      return;
+    }
+
+    // Multiple rolls/shades selected -- one call per roll, sequentially, so
+    // each one re-validates against the real, latest server state rather
+    // than a single client-side snapshot. A failure partway through never
+    // loses the rolls that already succeeded: they're cleared from the form
+    // so a retry only ever resubmits what's still actually outstanding,
+    // matching the "Generate Purchase Order(s)" modal's own per-group
+    // tracked-result discipline.
+    setIsBusy(true);
+    setError(null);
+    const failures: string[] = [];
+    const succeededRollIds: string[] = [];
+    for (const [rollId, qty] of rollEntries) {
+      const roll = availableRolls.find((r) => r.id === rollId);
+      const res = await fetch(`/api/v1/material-requests/lines/${issuingLine.id}/issue`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          issueQuantity: Number(qty),
+          warehouseLocationId: issueLocationId || undefined,
+          fabricRollId: rollId,
+          extraReason: issueExtra ? issueExtraReason || undefined : undefined,
+          issueWarehouseId: issueWarehouseId || undefined,
         }),
-      "Failed to issue this line."
-    );
-    if (ok) setIssuingLine(null);
+      });
+      if (res.ok) {
+        succeededRollIds.push(rollId);
+      } else {
+        const { message } = await parseErrorMessage(res, "Failed to issue this roll.");
+        failures.push(`${roll ? formatRollLabel(roll) : rollId}: ${message}`);
+      }
+    }
+    await refresh();
+    setIsBusy(false);
+
+    if (failures.length > 0) {
+      setRollQuantities((prev) => {
+        const next = { ...prev };
+        succeededRollIds.forEach((id) => delete next[id]);
+        return next;
+      });
+      setError(`${succeededRollIds.length} of ${rollEntries.length} issued successfully. Failed: ${failures.join("; ")}`);
+      const url = issueWarehouseId
+        ? `/api/v1/material-requests/lines/${issuingLine.id}/available-rolls?warehouseId=${issueWarehouseId}`
+        : `/api/v1/material-requests/lines/${issuingLine.id}/available-rolls`;
+      setRollsLoading(true);
+      fetch(url)
+        .then((res) => res.json())
+        .then((body) => setAvailableRolls(body.data ?? []))
+        .finally(() => setRollsLoading(false));
+    } else {
+      setIssuingLine(null);
+    }
   };
 
   // "Change Warehouse" inside the Issue modal — re-scopes the roll picker
@@ -279,7 +346,7 @@ export function MaterialRequestWorkflowPanel({
   const selectIssueWarehouse = (warehouseId: string) => {
     if (!issuingLine) return;
     setIssueWarehouseId(warehouseId);
-    setSelectedRollId("");
+    setRollQuantities({});
     setIssueQty("");
     if (issuingLine.material.materialCategory === "FABRIC") {
       setRollsLoading(true);
@@ -546,7 +613,7 @@ export function MaterialRequestWorkflowPanel({
                           onClick={() => {
                             setIssuingLine(line);
                             setIssueLocationId("");
-                            setSelectedRollId("");
+                            setRollQuantities({});
                             setIssueExtra(false);
                             setIssueExtraReason("");
                             setError(null);
@@ -668,10 +735,20 @@ export function MaterialRequestWorkflowPanel({
         />
       )}
 
-      <Modal open={!!issuingLine} onClose={() => setIssuingLine(null)} title="Issue Material">
+      <Modal
+        open={!!issuingLine}
+        onClose={() => setIssuingLine(null)}
+        title="Issue Material"
+        maxWidthClass="max-w-[70vw]"
+      >
         {issuingLine && (() => {
           const isFabric = issuingLine.material.materialCategory === "FABRIC";
-          const selectedRoll = availableRolls.find((r) => r.id === selectedRollId) ?? null;
+          // The sum of every roll's own entered qty -- with multiple rolls
+          // selectable, there's no single "the chosen roll" any more; each
+          // roll's own <input> is already capped at that roll's own
+          // remainingQuantity (see the table below), so this is the real
+          // total about to be issued in fabric-with-rolls mode.
+          const totalRollQty = availableRolls.reduce((sum, r) => sum + (Number(rollQuantities[r.id]) || 0), 0);
           // Which warehouse this issue is actually about to come out of —
           // the request's own by default, or whichever alternate the
           // "Change Warehouse" picker below has selected.
@@ -685,16 +762,13 @@ export function MaterialRequestWorkflowPanel({
           const flatAvailable = issueWarehouseId
             ? (issueAltWarehouses?.find((w) => w.warehouseId === issueWarehouseId)?.totalQuantity ?? 0)
             : issuingLine.availableStockQuantity;
-          // For a FABRIC material with real roll-level stock, the true
-          // available quantity is whichever roll/shade is actually picked —
-          // the line's own flat availableStockQuantity only ever reflected
-          // the line's originally-requested shade (or the whole-material
-          // total when none was requested), neither of which is what's
-          // actually about to be decremented once a specific roll is
-          // chosen. Falls back to the flat total when this warehouse has no
-          // roll-level stock recorded at all (nothing to pick from).
+          // The real ceiling for a FABRIC material with roll-level stock is
+          // the flat ledger total — each individual roll's own <input> is
+          // already capped at that specific roll's own remainingQuantity
+          // (below), so summing several rolls can never itself exceed real
+          // physical stock; this is only the second, whole-material floor.
           //
-          // Capped at the flat total too, not just the roll's own number —
+          // Capped at the flat total, not just the rolls' own numbers —
           // FabricRoll.remainingQuantity and the real StockBalance ledger
           // can drift out of sync (confirmed live on real data: a roll can
           // still show more "remaining" than the warehouse's actual balance,
@@ -702,18 +776,20 @@ export function MaterialRequestWorkflowPanel({
           // The server's own floor guard checks the real StockBalance, not
           // the roll — trusting the roll alone here would let the UI offer
           // a quantity that looks fine but fails after clicking Issue.
-          const effectiveAvailable =
-            isFabric && availableRolls.length > 0
-              ? Math.min(Number(selectedRoll?.remainingQuantity ?? 0), flatAvailable)
-              : flatAvailable;
+          const effectiveAvailable = flatAvailable;
           const canIssueExtra = request.requestType === "SAMPLING_REQUIREMENT";
           // With "Issue Extra" checked, the only real ceiling left is
           // physical stock — the planned/requested quantity is deliberately
           // no longer a hard cap, matching the confirmed override design.
           const cap = issueExtra && canIssueExtra ? effectiveAvailable : Math.min(issuingLine.remainingQuantity, effectiveAvailable);
-          const mustPickRoll = isFabric && availableRolls.length > 0 && !selectedRollId;
-          const isOverPlanned = Number(issueQty) > issuingLine.remainingQuantity;
+          const mustPickRoll = isFabric && availableRolls.length > 0 && totalRollQty <= 0;
+          // The real quantity about to be issued — the summed rolls in
+          // fabric-with-rolls mode (Issue Quantity itself becomes a
+          // read-only mirror of this below), the free-typed field otherwise.
+          const effectiveIssueQty = isFabric && availableRolls.length > 0 ? totalRollQty : Number(issueQty);
+          const isOverPlanned = effectiveIssueQty > issuingLine.remainingQuantity;
           const needsExtraReason = issueExtra && isOverPlanned && !issueExtraReason.trim();
+          const overCap = effectiveIssueQty > cap;
 
           return (
           <div className="space-y-4">
@@ -771,22 +847,53 @@ export function MaterialRequestWorkflowPanel({
                     general stock total instead ({flatAvailable} {issuingLine.uom.code} available).
                   </p>
                 ) : (
-                  <select
-                    id="issueRoll"
-                    value={selectedRollId}
-                    onChange={(e) => {
-                      setSelectedRollId(e.target.value);
-                      setIssueQty("");
-                    }}
-                    className={textInputClass()}
-                  >
-                    <option value="">— Select which color/shade to issue —</option>
-                    {availableRolls.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        {formatRollLabel(r)} — {r.remainingQuantity} {issuingLine.uom.code} available
-                      </option>
-                    ))}
-                  </select>
+                  // A checked-quantity table, not a single-pick dropdown —
+                  // several colors/shades can be issued together in one
+                  // action; a roll with a blank/zero qty simply isn't part
+                  // of this issue.
+                  <div className="max-h-64 overflow-y-auto rounded-md border border-zinc-200 dark:border-zinc-800">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-zinc-200 bg-zinc-50 text-left text-xs text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/40">
+                          <th className="py-1.5 pl-2 pr-2 font-medium">Color / Shade / GSM / Composition</th>
+                          <th className="py-1.5 pr-2 font-medium">Available</th>
+                          <th className="py-1.5 pr-2 font-medium">Qty to Issue</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {availableRolls.map((r) => {
+                          const remaining = Number(r.remainingQuantity);
+                          const qty = rollQuantities[r.id] ?? "";
+                          return (
+                            <tr key={r.id} className="border-b border-zinc-100 last:border-0 dark:border-zinc-900">
+                              <td className="py-1.5 pl-2 pr-2">{formatRollLabel(r)}</td>
+                              <td className="py-1.5 pr-2 text-zinc-500">
+                                {r.remainingQuantity} {issuingLine.uom.code}
+                              </td>
+                              <td className="py-1.5 pr-2">
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={remaining}
+                                  step="0.0001"
+                                  value={qty}
+                                  onChange={(e) => {
+                                    const next = Number(e.target.value);
+                                    const clamped =
+                                      e.target.value !== "" && Number.isFinite(next) && next > remaining
+                                        ? String(remaining)
+                                        : e.target.value;
+                                    setRollQuantities((prev) => ({ ...prev, [r.id]: clamped }));
+                                  }}
+                                  className={`${textInputClass()} w-24`}
+                                />
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
               </FormField>
             )}
@@ -797,22 +904,27 @@ export function MaterialRequestWorkflowPanel({
                 type="number"
                 min={0}
                 // Capped by whichever is smaller — the request's own
-                // remaining need, or what's actually on hand (the selected
-                // roll's own remaining quantity, for a fabric material).
-                // Issuing more than physical stock exists would drive the
-                // ledger negative; the server's own guard is the real
-                // backstop, this just stops the mistake from being
-                // enterable at all.
-                disabled={mustPickRoll}
+                // remaining need, or what's actually on hand. In
+                // fabric-with-rolls mode this field is a read-only mirror of
+                // the roll table's own summed quantities above (each roll's
+                // own input is what's actually editable there); otherwise
+                // it's the original free-typed field, unchanged.
+                disabled={mustPickRoll || (isFabric && availableRolls.length > 0)}
                 max={cap}
                 step="0.0001"
-                value={issueQty}
+                value={isFabric && availableRolls.length > 0 ? String(totalRollQty) : issueQty}
                 onChange={(e) => {
                   const next = Number(e.target.value);
                   setIssueQty(e.target.value !== "" && Number.isFinite(next) && next > cap ? String(cap) : e.target.value);
                 }}
                 className={textInputClass()}
               />
+              {isFabric && availableRolls.length > 0 && overCap && (
+                <p className="mt-1 text-xs font-medium text-red-600 dark:text-red-400">
+                  Total ({totalRollQty} {issuingLine.uom.code}) exceeds what can be issued right now ({cap} {issuingLine.uom.code}) —
+                  reduce one or more roll quantities above.
+                </p>
+              )}
             </FormField>
 
             {canIssueExtra && (
@@ -883,7 +995,7 @@ export function MaterialRequestWorkflowPanel({
               <button
                 type="button"
                 onClick={submitIssue}
-                disabled={isBusy || mustPickRoll || needsExtraReason || !(Number(issueQty) > 0)}
+                disabled={isBusy || mustPickRoll || needsExtraReason || overCap || !(effectiveIssueQty > 0)}
                 className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
               >
                 {isBusy ? "Saving…" : "Issue"}
