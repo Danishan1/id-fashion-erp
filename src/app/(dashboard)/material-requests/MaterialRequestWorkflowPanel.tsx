@@ -1239,7 +1239,20 @@ function GeneratePurchaseOrdersModal({
                             step="0.01"
                             disabled={!row.included}
                             value={row.unitPrice}
-                            onChange={(e) => updateRow(l.materialRequestItemId, { unitPrice: e.target.value })}
+                            onChange={(e) => {
+                              const unitPrice = e.target.value;
+                              const patch: Partial<ReviewRowState> = { unitPrice };
+                              // Picking one of the real historical prices from the
+                              // datalist below also carries over the supplier that
+                              // price was actually paid to — a genuinely free-typed
+                              // price (not matching any real history entry) leaves
+                              // the supplier exactly as it was, never cleared.
+                              const matched = dedupePriceOptions(priceOptionsByMaterialId[l.materialId] ?? []).find(
+                                (h) => String(h.unitPrice) === unitPrice
+                              );
+                              if (matched) patch.supplierId = matched.supplierId;
+                              updateRow(l.materialRequestItemId, patch);
+                            }}
                             // A real datalist, not a forced picker — the
                             // field stays freely typeable; when the last
                             // year has real purchase history for this

@@ -4,6 +4,7 @@ export interface PurchaseHistoryEntry {
   receivedDate: string;
   receiptNumber: string;
   orderNumber: string;
+  supplierId: string;
   supplierName: string;
 }
 
