@@ -22,7 +22,24 @@ interface SalesOrderOption {
 interface SalesOrderItemOption {
   id: string;
   product: { id: string; styleName: string; styleCode: string };
+  // The Sample Request this line traces back to, if any — a direct/repeat
+  // order line legitimately has none (SalesOrderItem.sampleRequestId is
+  // nullable per-item). When present, its own styleName is the real
+  // "Design Name" a merchandiser actually recognizes the line by — the
+  // Style dropdown right below already shows the graduated Style, so this
+  // dropdown showing the same Style name a second time was pure
+  // duplication for any line that DOES have a linked design.
+  sampleRequest: { id: string; requestNumber: string; styleName: string | null } | null;
   breakdown: Array<{ orderedQuantity: number; productVariant: { color: { name: string }; size: { name: string } } }>;
+}
+
+function salesOrderLineLabel(item: SalesOrderItemOption): string {
+  if (item.sampleRequest) {
+    return `${item.sampleRequest.styleName || "Untitled Design"} (${item.sampleRequest.requestNumber})`;
+  }
+  // No linked Sample/Design — the Style is the only real identity this
+  // line has, same as before.
+  return `${item.product.styleName} (${item.product.styleCode}) — no linked Design`;
 }
 
 interface CommitmentInfo {
@@ -143,12 +160,12 @@ export function ProductionOrderForm() {
       </FormField>
 
       {salesOrderId && (
-        <FormField label="Sales Order Line" htmlFor="salesOrderItemId">
+        <FormField label="Design" htmlFor="salesOrderItemId">
           <select id="salesOrderItemId" value={salesOrderItemId} onChange={(e) => onSalesOrderItemChange(e.target.value)} className={textInputClass()}>
             <option value="">— Select a line —</option>
             {salesOrderItems.map((item) => (
               <option key={item.id} value={item.id}>
-                {item.product.styleName} ({item.product.styleCode})
+                {salesOrderLineLabel(item)}
               </option>
             ))}
           </select>
