@@ -21,10 +21,13 @@ vi.mock("@/core/documents/company-header", () => ({
 vi.mock("@/core/ai-designer/export/tech-pack-pdf", () => ({
   renderTechPackPdf: vi.fn().mockResolvedValue(Buffer.from("pdf")),
   renderTechPackDocumentPdf: vi.fn().mockResolvedValue(Buffer.from("tech-pack-pdf")),
+  renderTechPackDocumentPdfV2: vi.fn().mockResolvedValue(Buffer.from("tech-pack-pdf")),
 }));
 vi.mock("@/core/ai-designer/tech-pack/generate", () => ({
   generateGarmentAnalysisPart1: vi.fn(),
   generateGarmentAnalysisPart2: vi.fn(),
+  generateGarmentAnalysisPart3: vi.fn(),
+  generateGarmentAnalysisPart4: vi.fn(),
 }));
 vi.mock("@/modules/products/product.repository", () => ({
   ProductRepository: { findMaterialById: vi.fn() },
@@ -98,7 +101,9 @@ const { generateDocumentNumber } = await import("@/core/numbering/DocumentNumber
 const { uploadAttachment, getAttachmentForDownload, deleteAttachment } = await import("@/core/attachments/AttachmentService");
 const { runWithFailover } = await import("@/core/ai/provider-manager/AIProviderManager");
 const { PermissionService } = await import("@/core/rbac/PermissionService");
-const { generateGarmentAnalysisPart1, generateGarmentAnalysisPart2 } = await import("@/core/ai-designer/tech-pack/generate");
+const { generateGarmentAnalysisPart1, generateGarmentAnalysisPart2, generateGarmentAnalysisPart3, generateGarmentAnalysisPart4 } = await import(
+  "@/core/ai-designer/tech-pack/generate"
+);
 const { ProductRepository } = await import("@/modules/products/product.repository");
 const { analyzeSketch } = await import("@/core/ai-designer/sketch-analysis/analyze");
 const { generateProductSuggestions } = await import("@/core/ai-designer/product-suggestions/generate");
@@ -231,6 +236,8 @@ beforeEach(() => {
   vi.mocked(AiDesignerTechPackRepository.createRevision).mockReset();
   vi.mocked(generateGarmentAnalysisPart1).mockReset();
   vi.mocked(generateGarmentAnalysisPart2).mockReset();
+  vi.mocked(generateGarmentAnalysisPart3).mockReset();
+  vi.mocked(generateGarmentAnalysisPart4).mockReset();
   vi.mocked(PermissionService.assert).mockReset().mockResolvedValue(undefined as never);
   vi.mocked(analyzeSketch).mockReset();
   vi.mocked(generateProductSuggestions).mockReset();
@@ -1096,15 +1103,16 @@ describe("generateTechPack", () => {
     await expect(generateTechPack(actor, "proj-1")).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
 
-  const fakePart1 = { identification: { brandName: "Acme" }, seamCallouts: [] } as never;
-  const fakePart2 = {
-    bomItems: [{ materialType: "Fabric" }],
-    measurementPoints: [],
+  const fakePart1 = { identification: { brandName: { value: "Acme", status: "CONFIRMED" } }, seamCallouts: [] } as never;
+  const fakePart2 = { fabricMaterials: [], bomItems: [{ materialType: "Fabric" }], measurementPoints: [] } as never;
+  const fakePart3 = { productionInstructions: [], qcCheckpoints: [] } as never;
+  const fakePart4 = {
+    assumptionsAndMissingData: [],
+    additionalReferenceImagesRequired: [{ viewNeeded: "Back flat-lay", reason: "improves rear seam visibility" }],
     designerNotes: "Confirm sleeve length.",
-    suggestedAdditionalViews: "A back flat-lay would help.",
   };
 
-  it("runs the pipeline — vision analysis + text analysis + a concurrent technical-flat image call — pages 1/2/4 get the real photo, pages 1/2/4/5 additionally get the generated flat, pages 3/6/7 get neither", async () => {
+  it("runs the 4-call pipeline (Part 1 vision, Parts 2+3 concurrent text, then Part 4) plus a concurrent technical-flat image call — pages 1/2/5 get the real photo, pages 1/2/5/6 additionally get the generated flat", async () => {
     vi.mocked(AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(
       baseProject({
         productCategory: "Dress",
@@ -1114,6 +1122,8 @@ describe("generateTechPack", () => {
     vi.mocked(getAttachmentForDownload).mockResolvedValue({ attachment: { mimeType: "image/png" }, buffer: Buffer.from("x") } as never);
     vi.mocked(generateGarmentAnalysisPart1).mockResolvedValue({ data: fakePart1, model: "claude-sonnet-5" } as never);
     vi.mocked(generateGarmentAnalysisPart2).mockResolvedValue({ data: fakePart2, model: "claude-sonnet-5" } as never);
+    vi.mocked(generateGarmentAnalysisPart3).mockResolvedValue({ data: fakePart3, model: "claude-sonnet-5" } as never);
+    vi.mocked(generateGarmentAnalysisPart4).mockResolvedValue({ data: fakePart4, model: "claude-sonnet-5" } as never);
     vi.mocked(AiDesignerTechPackRepository.markSuccess).mockResolvedValue({ id: "techpack-1", status: "SUCCESS" } as never);
     const generateTechnicalFlat = vi
       .fn()
@@ -1128,29 +1138,31 @@ describe("generateTechPack", () => {
 
     expect(generateGarmentAnalysisPart1).toHaveBeenCalledTimes(1);
     expect(generateGarmentAnalysisPart2).toHaveBeenCalledWith(expect.objectContaining({ part1: fakePart1 }));
+    expect(generateGarmentAnalysisPart3).toHaveBeenCalledWith(expect.objectContaining({ part1: fakePart1 }));
+    expect(generateGarmentAnalysisPart4).toHaveBeenCalledWith(expect.objectContaining({ part1: fakePart1, part2: fakePart2, part3: fakePart3 }));
     expect(runWithFailover).toHaveBeenCalledWith(expect.objectContaining({ capability: "TECHNICAL_FLAT", aiDesignerProjectId: "proj-1" }));
     expect(uploadAttachment).toHaveBeenCalledWith(actor, "AI_DESIGNER_PROJECT", "proj-1", expect.objectContaining({ mimeType: "image/png" }), "TECH_PACK_TECHNICAL_FLAT");
 
     expect(AiDesignerTechPackRepository.markSuccess).toHaveBeenCalledWith(
       "techpack-1",
       expect.objectContaining({
-        designerNotes: fakePart2.designerNotes,
-        suggestedAdditionalViews: fakePart2.suggestedAdditionalViews,
+        designerNotes: fakePart4.designerNotes,
+        suggestedAdditionalViews: "Back flat-lay — improves rear seam visibility",
         pages: expect.arrayContaining([
           expect.objectContaining({ pageNumber: 1, pageTitle: "Cover Page / Style Summary", imageAttachmentId: "att-real-photo", technicalFlatAttachmentId: "att-flat-1" }),
           expect.objectContaining({ pageNumber: 2, imageAttachmentId: "att-real-photo", technicalFlatAttachmentId: "att-flat-1" }),
-          expect.objectContaining({ pageNumber: 4, imageAttachmentId: "att-real-photo", technicalFlatAttachmentId: "att-flat-1" }),
-          // Page 5 gets no photo (never did), but DOES get the flat now — activates previously-dead rendering support.
-          expect.objectContaining({ pageNumber: 5, imageAttachmentId: null, technicalFlatAttachmentId: "att-flat-1" }),
-          // Page 3 (BOM), 6 (Size Grading), 7 (Labels) get neither image.
+          expect.objectContaining({ pageNumber: 5, imageAttachmentId: "att-real-photo", technicalFlatAttachmentId: "att-flat-1" }),
+          // Page 6 (Measurements) gets no photo (never did), but DOES get the flat.
+          expect.objectContaining({ pageNumber: 6, imageAttachmentId: null, technicalFlatAttachmentId: "att-flat-1" }),
+          // Page 3 (Fabric & Materials), 4 (BOM), 7 (Size Grading) get neither image.
           expect.objectContaining({ pageNumber: 3, imageAttachmentId: null, technicalFlatAttachmentId: null }),
-          expect.objectContaining({ pageNumber: 6, imageAttachmentId: null, technicalFlatAttachmentId: null }),
+          expect.objectContaining({ pageNumber: 4, imageAttachmentId: null, technicalFlatAttachmentId: null }),
           expect.objectContaining({ pageNumber: 7, imageAttachmentId: null, technicalFlatAttachmentId: null }),
         ]),
       })
     );
     const [, successArgs] = vi.mocked(AiDesignerTechPackRepository.markSuccess).mock.calls[0];
-    expect((successArgs.pages as unknown[]).length).toBe(7);
+    expect((successArgs.pages as unknown[]).length).toBe(12);
 
     expect(AiDesignerProjectRepository.update).toHaveBeenCalledWith(
       "proj-1",
@@ -1166,6 +1178,8 @@ describe("generateTechPack", () => {
     vi.mocked(getAttachmentForDownload).mockResolvedValue({ attachment: { mimeType: "image/png" }, buffer: Buffer.from("x") } as never);
     vi.mocked(generateGarmentAnalysisPart1).mockResolvedValue({ data: fakePart1, model: "claude-sonnet-5" } as never);
     vi.mocked(generateGarmentAnalysisPart2).mockResolvedValue({ data: fakePart2, model: "claude-sonnet-5" } as never);
+    vi.mocked(generateGarmentAnalysisPart3).mockResolvedValue({ data: fakePart3, model: "claude-sonnet-5" } as never);
+    vi.mocked(generateGarmentAnalysisPart4).mockResolvedValue({ data: fakePart4, model: "claude-sonnet-5" } as never);
     vi.mocked(AiDesignerTechPackRepository.markSuccess).mockResolvedValue({ id: "techpack-1", status: "SUCCESS" } as never);
     vi.mocked(runWithFailover).mockRejectedValue(new BusinessRuleError("AI_SERVICE_ERROR", "No configured AI provider currently supports technical flat sketch generation."));
 
@@ -1177,7 +1191,7 @@ describe("generateTechPack", () => {
       expect.objectContaining({
         pages: expect.arrayContaining([
           expect.objectContaining({ pageNumber: 1, imageAttachmentId: "att-real-photo", technicalFlatAttachmentId: null }),
-          expect.objectContaining({ pageNumber: 5, imageAttachmentId: null, technicalFlatAttachmentId: null }),
+          expect.objectContaining({ pageNumber: 6, imageAttachmentId: null, technicalFlatAttachmentId: null }),
         ]),
       })
     );
@@ -1194,17 +1208,38 @@ describe("generateTechPack", () => {
     await expect(generateTechPack(actor, "proj-1")).rejects.toThrow();
 
     expect(generateGarmentAnalysisPart2).not.toHaveBeenCalled();
+    expect(generateGarmentAnalysisPart3).not.toHaveBeenCalled();
+    expect(generateGarmentAnalysisPart4).not.toHaveBeenCalled();
     expect(AiDesignerTechPackRepository.markFailed).toHaveBeenCalledWith("techpack-1", expect.stringContaining("Anthropic call failed"));
     expect(AiDesignerTechPackRepository.markSuccess).not.toHaveBeenCalled();
   });
 
-  it("marks the run FAILED, not partially successful, when the text analysis (Part 2) call fails", async () => {
+  it("marks the run FAILED, not partially successful, when one of the concurrent Part 2/3 text calls fails", async () => {
     vi.mocked(AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(
       baseProject({ currentVersion: { currentImage: { id: "img-1", imageAttachmentId: "att-1" } } }) as never
     );
     vi.mocked(getAttachmentForDownload).mockResolvedValue({ attachment: { mimeType: "image/png" }, buffer: Buffer.from("x") } as never);
     vi.mocked(generateGarmentAnalysisPart1).mockResolvedValue({ data: fakePart1, model: "claude-sonnet-5" } as never);
     vi.mocked(generateGarmentAnalysisPart2).mockRejectedValue(new Error("Anthropic call failed"));
+    vi.mocked(generateGarmentAnalysisPart3).mockResolvedValue({ data: fakePart3, model: "claude-sonnet-5" } as never);
+    vi.mocked(runWithFailover).mockRejectedValue(new BusinessRuleError("AI_SERVICE_ERROR", "unavailable"));
+
+    await expect(generateTechPack(actor, "proj-1")).rejects.toThrow();
+
+    expect(generateGarmentAnalysisPart4).not.toHaveBeenCalled();
+    expect(AiDesignerTechPackRepository.markFailed).toHaveBeenCalledWith("techpack-1", expect.stringContaining("Anthropic call failed"));
+    expect(AiDesignerTechPackRepository.markSuccess).not.toHaveBeenCalled();
+  });
+
+  it("marks the run FAILED, not partially successful, when the final Part 4 review call fails", async () => {
+    vi.mocked(AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(
+      baseProject({ currentVersion: { currentImage: { id: "img-1", imageAttachmentId: "att-1" } } }) as never
+    );
+    vi.mocked(getAttachmentForDownload).mockResolvedValue({ attachment: { mimeType: "image/png" }, buffer: Buffer.from("x") } as never);
+    vi.mocked(generateGarmentAnalysisPart1).mockResolvedValue({ data: fakePart1, model: "claude-sonnet-5" } as never);
+    vi.mocked(generateGarmentAnalysisPart2).mockResolvedValue({ data: fakePart2, model: "claude-sonnet-5" } as never);
+    vi.mocked(generateGarmentAnalysisPart3).mockResolvedValue({ data: fakePart3, model: "claude-sonnet-5" } as never);
+    vi.mocked(generateGarmentAnalysisPart4).mockRejectedValue(new Error("Anthropic call failed"));
     vi.mocked(runWithFailover).mockRejectedValue(new BusinessRuleError("AI_SERVICE_ERROR", "unavailable"));
 
     await expect(generateTechPack(actor, "proj-1")).rejects.toThrow();
@@ -1312,10 +1347,10 @@ describe("exportTechPackPdf", () => {
       async (_companyId: string, attachmentId: string) => ({ attachment: { mimeType: "image/png" }, buffer: Buffer.from(attachmentId) }) as never
     );
 
-    const { renderTechPackDocumentPdf } = await import("@/core/ai-designer/export/tech-pack-pdf");
+    const { renderTechPackDocumentPdfV2 } = await import("@/core/ai-designer/export/tech-pack-pdf");
     await exportTechPackPdf(actor, "proj-1");
 
-    const [callArgs] = vi.mocked(renderTechPackDocumentPdf).mock.calls[vi.mocked(renderTechPackDocumentPdf).mock.calls.length - 1];
+    const [callArgs] = vi.mocked(renderTechPackDocumentPdfV2).mock.calls[vi.mocked(renderTechPackDocumentPdfV2).mock.calls.length - 1];
     const images = callArgs.images as { pageNumber: number; imageBase64: string }[];
     const byPage = new Map(images.map((i) => [i.pageNumber, i.imageBase64]));
     expect(byPage.get(1)).toBe(Buffer.from("att-flat").toString("base64"));
@@ -1339,9 +1374,9 @@ describe("updateTechPackField", () => {
       suggestedAdditionalViews: "views",
       garmentAnalysisJson: {
         part1: {
-          identification: { brandName: "Acme" },
+          identification: { brandName: { value: "Acme", status: "CONFIRMED" } },
           construction: {},
-          closure: { closureType: "Zipper", closureDetails: "" },
+          closure: { closureType: { value: "Zipper", status: "CONFIRMED" }, closureDetails: { value: "", status: "NOT_VISIBLE" } },
           seamCallouts: [{ calloutNumber: 1, location: "Shoulder", technicalSpecification: "Overlock", status: "PROPOSED" }],
           visibleColors: [],
           suggestedColorways: [],
@@ -1351,17 +1386,31 @@ describe("updateTechPackField", () => {
           patternPrintNotes: "",
         },
         part2: {
+          fabricMaterials: [],
           bomItems: [],
-          measurementPoints: [{ pointName: "Chest", howToMeasure: "x", toleranceCm: "1", values: { XS: "40", S: "42", M: "44", L: "46", XL: "48", XXL: "50" } }],
+          measurementPoints: [
+            { pointName: "Chest", howToMeasure: "x", toleranceCm: "1", status: "CONFIRMED", values: { XS: "40", S: "42", M: "44", L: "46", XL: "48", XXL: "50" } },
+          ],
           gradeRulesNotes: "",
-          mainLabelSpec: "old label",
-          sizeLabelSpec: "",
-          careLabelSpec: "",
-          hangtagSpec: "",
-          polybagSpec: "",
+        },
+        part3: {
+          productionInstructions: [],
+          qcCheckpoints: [],
+          mainLabelSpec: { value: "old label", status: "PROPOSED" },
+          sizeLabelSpec: { value: "", status: "TBC" },
+          careLabelSpec: { value: "", status: "TBC" },
+          polybagSpec: { value: "", status: "TBC" },
           foldingInstructions: "",
-          cartonPackingSpec: "",
-          barcodePlacement: "",
+          cartonPackingSpec: { value: "", status: "TBC" },
+          hangtagSpec: { value: "", status: "TBC" },
+          barcodeType: { value: "", status: "TBC" },
+          barcodeContent: { value: "", status: "TBC" },
+          barcodePlacement: { value: "", status: "TBC" },
+        },
+        part4: {
+          assumptionsAndMissingData: [],
+          additionalReferenceImagesRequired: [],
+          designerNotes: "",
         },
       },
       originalGarmentAnalysisJson: null,
@@ -1370,57 +1419,96 @@ describe("updateTechPackField", () => {
     };
   }
 
-  it("edits an object-shaped category field (identification) in place while DRAFT", async () => {
+  it("edits a {value,status}-shaped field's own value (identification.brandName) in place while DRAFT", async () => {
     vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(baseProject() as never);
     vi.mocked(AiDesignerTechPackRepository.findByIdScoped).mockResolvedValue(techPackRow() as never);
     vi.mocked(AiDesignerTechPackRepository.update).mockResolvedValue({ id: "techpack-1" } as never);
 
-    const result = await updateTechPackField(actor, "proj-1", "techpack-1", { category: "identification", field: "brandName", value: "New Brand" });
+    const result = await updateTechPackField(actor, "proj-1", "techpack-1", {
+      category: "identification",
+      field: "brandName",
+      subfield: "value",
+      value: "New Brand",
+    });
 
     expect(AiDesignerTechPackRepository.createRevision).not.toHaveBeenCalled();
     const [id, data] = vi.mocked(AiDesignerTechPackRepository.update).mock.calls[0];
     expect(id).toBe("techpack-1");
-    expect((data.garmentAnalysisJson as never as { part1: { identification: { brandName: string } } }).part1.identification.brandName).toBe(
-      "New Brand"
-    );
+    const identification = (data.garmentAnalysisJson as never as { part1: { identification: { brandName: { value: string; status: string } } } })
+      .part1.identification.brandName;
+    expect(identification.value).toBe("New Brand");
+    expect(identification.status).toBe("CONFIRMED"); // untouched -- only "value" was edited
     expect(result.forkedNewRevision).toBe(false);
   });
 
-  it("edits an array-row field (seamCallouts) by index while DRAFT", async () => {
+  it("edits a {value,status}-shaped field's own status independently of its value, via subfield \"status\"", async () => {
+    vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(baseProject() as never);
+    vi.mocked(AiDesignerTechPackRepository.findByIdScoped).mockResolvedValue(techPackRow() as never);
+    vi.mocked(AiDesignerTechPackRepository.update).mockResolvedValue({ id: "techpack-1" } as never);
+
+    await updateTechPackField(actor, "proj-1", "techpack-1", { category: "identification", field: "brandName", subfield: "status", value: "TBC" });
+
+    const [, data] = vi.mocked(AiDesignerTechPackRepository.update).mock.calls[0];
+    const identification = (data.garmentAnalysisJson as never as { part1: { identification: { brandName: { value: string; status: string } } } })
+      .part1.identification.brandName;
+    expect(identification.status).toBe("TBC");
+    expect(identification.value).toBe("Acme"); // untouched -- only "status" was edited
+  });
+
+  it("rejects an invalid status value", async () => {
+    vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(baseProject() as never);
+    vi.mocked(AiDesignerTechPackRepository.findByIdScoped).mockResolvedValue(techPackRow() as never);
+
+    await expect(
+      updateTechPackField(actor, "proj-1", "techpack-1", { category: "identification", field: "brandName", subfield: "status", value: "MAYBE" })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(AiDesignerTechPackRepository.update).not.toHaveBeenCalled();
+  });
+
+  it("edits an array-row's own bare status (seamCallouts) via field \"status\"", async () => {
     vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(baseProject() as never);
     vi.mocked(AiDesignerTechPackRepository.findByIdScoped).mockResolvedValue(techPackRow() as never);
     vi.mocked(AiDesignerTechPackRepository.update).mockResolvedValue({ id: "techpack-1" } as never);
 
     await updateTechPackField(actor, "proj-1", "techpack-1", { category: "seamCallouts", index: 0, field: "technicalSpecification", value: "Coverstitch" });
+    await updateTechPackField(actor, "proj-1", "techpack-1", { category: "seamCallouts", index: 0, field: "status", value: "CONFIRMED" });
 
-    const [, data] = vi.mocked(AiDesignerTechPackRepository.update).mock.calls[0];
-    expect((data.garmentAnalysisJson as never as { part1: { seamCallouts: { technicalSpecification: string }[] } }).part1.seamCallouts[0].technicalSpecification).toBe(
-      "Coverstitch"
-    );
+    const [, data] = vi.mocked(AiDesignerTechPackRepository.update).mock.calls[1];
+    const callout = (data.garmentAnalysisJson as never as { part1: { seamCallouts: { technicalSpecification: string; status: string }[] } }).part1
+      .seamCallouts[0];
+    expect(callout.status).toBe("CONFIRMED");
   });
 
-  it("edits a measurement point's own per-size cell via field \"values.<SIZE>\"", async () => {
+  it("edits a measurement point's own per-size cell via field \"values.<SIZE>\", and its row-level status via field \"status\"", async () => {
     vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(baseProject() as never);
     vi.mocked(AiDesignerTechPackRepository.findByIdScoped).mockResolvedValue(techPackRow() as never);
     vi.mocked(AiDesignerTechPackRepository.update).mockResolvedValue({ id: "techpack-1" } as never);
 
     await updateTechPackField(actor, "proj-1", "techpack-1", { category: "measurementPoints", index: 0, field: "values.M", value: "45" });
+    await updateTechPackField(actor, "proj-1", "techpack-1", { category: "measurementPoints", index: 0, field: "status", value: "TBC" });
 
-    const [, data] = vi.mocked(AiDesignerTechPackRepository.update).mock.calls[0];
+    const [, cellData] = vi.mocked(AiDesignerTechPackRepository.update).mock.calls[0];
     expect(
-      (data.garmentAnalysisJson as never as { part2: { measurementPoints: { values: Record<string, string> }[] } }).part2.measurementPoints[0].values.M
+      (cellData.garmentAnalysisJson as never as { part2: { measurementPoints: { values: Record<string, string> }[] } }).part2.measurementPoints[0]
+        .values.M
     ).toBe("45");
+    const [, statusData] = vi.mocked(AiDesignerTechPackRepository.update).mock.calls[1];
+    expect((statusData.garmentAnalysisJson as never as { part2: { measurementPoints: { status: string }[] } }).part2.measurementPoints[0].status).toBe(
+      "TBC"
+    );
   });
 
-  it("edits a plain scalar category (mainLabelSpec) by replacing its whole value", async () => {
+  it("edits a Part 3 {value,status} scalar category (mainLabelSpec) directly on part3 by field-less category addressing", async () => {
     vi.mocked(AiDesignerProjectRepository.findAnyById).mockResolvedValue(baseProject() as never);
     vi.mocked(AiDesignerTechPackRepository.findByIdScoped).mockResolvedValue(techPackRow() as never);
     vi.mocked(AiDesignerTechPackRepository.update).mockResolvedValue({ id: "techpack-1" } as never);
 
-    await updateTechPackField(actor, "proj-1", "techpack-1", { category: "mainLabelSpec", value: "new label" });
+    await updateTechPackField(actor, "proj-1", "techpack-1", { category: "mainLabelSpec", subfield: "value", value: "new label" });
 
     const [, data] = vi.mocked(AiDesignerTechPackRepository.update).mock.calls[0];
-    expect((data.garmentAnalysisJson as never as { part2: { mainLabelSpec: string } }).part2.mainLabelSpec).toBe("new label");
+    const mainLabelSpec = (data.garmentAnalysisJson as never as { part3: { mainLabelSpec: { value: string; status: string } } }).part3.mainLabelSpec;
+    expect(mainLabelSpec.value).toBe("new label");
+    expect(mainLabelSpec.status).toBe("PROPOSED"); // untouched
   });
 
   it("rejects an unknown field name", async () => {
@@ -1451,7 +1539,7 @@ describe("updateTechPackField", () => {
     vi.mocked(AiDesignerTechPackRepository.createRevision).mockResolvedValue(forkedRow as never);
     vi.mocked(AiDesignerTechPackRepository.update).mockResolvedValue({ id: "techpack-2", revisionNumber: 2 } as never);
 
-    const result = await updateTechPackField(actor, "proj-1", "techpack-1", { category: "mainLabelSpec", value: "revised label" });
+    const result = await updateTechPackField(actor, "proj-1", "techpack-1", { category: "mainLabelSpec", subfield: "value", value: "revised label" });
 
     expect(AiDesignerTechPackRepository.createRevision).toHaveBeenCalledWith(expect.objectContaining({ id: "techpack-1", revisionNumber: 1 }));
     // The edit is applied to the NEW (forked) row, never the original approved one.
@@ -1459,7 +1547,7 @@ describe("updateTechPackField", () => {
     expect(updatedId).toBe("techpack-2");
     expect(result.forkedNewRevision).toBe(true);
     // The original approved row's own garmentAnalysisJson object is never mutated in place.
-    expect(approved.garmentAnalysisJson.part2.mainLabelSpec).toBe("old label");
+    expect((approved.garmentAnalysisJson as { part3: { mainLabelSpec: { value: string } } }).part3.mainLabelSpec.value).toBe("old label");
   });
 });
 

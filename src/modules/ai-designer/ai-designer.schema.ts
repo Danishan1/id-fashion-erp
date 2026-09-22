@@ -224,15 +224,19 @@ export type GenerateTechPackInput = z.infer<typeof generateTechPackSchema>;
  * input rather than a free-form path array, matching this codebase's
  * existing `updateFabricFieldSchema`-style "enum of known field keys"
  * convention. `category` picks which part of the Garment Analysis is being
- * edited; `index` is required for the 6 array categories; `field` names the
+ * edited; `index` is required for the array categories; `field` names the
  * specific key within that category's own item shape (or "values.<SIZE>" for
- * a measurementPoints size cell) and is omitted for the 9 plain-scalar
- * categories, which replace their whole value directly. The service layer
- * (`updateTechPackField`) re-validates `field`/`index` against the real
- * known-key lists exported from `tech-pack/schema.ts` — this Zod schema only
- * bounds the shape/size of the request, not which field names are legal for
- * a given category (that check needs the category itself, done in the
- * service).
+ * a measurementPoints size cell) and is omitted for the plain-scalar
+ * categories, which replace their whole value directly. `subfield`
+ * (2026-09-22, v4) distinguishes which half of a `{value, status}` pair is
+ * being edited when the resolved leaf is one of the new confidence-tagged
+ * fields — omitted (defaulting to editing `.value`) for any leaf that is
+ * still a plain string, so every pre-v4 category keeps working unchanged.
+ * The service layer (`updateTechPackField`) re-validates `field`/`index`
+ * against the real known-key lists exported from `tech-pack/schema.ts` —
+ * this Zod schema only bounds the shape/size of the request, not which
+ * field names are legal for a given category (that check needs the category
+ * itself, done in the service).
  */
 export const TECH_PACK_EDITABLE_CATEGORIES = [
   "identification",
@@ -242,8 +246,13 @@ export const TECH_PACK_EDITABLE_CATEGORIES = [
   "visibleColors",
   "suggestedColorways",
   "artworkItems",
+  "fabricMaterials",
   "bomItems",
   "measurementPoints",
+  "productionInstructions",
+  "qcCheckpoints",
+  "assumptionsAndMissingData",
+  "additionalReferenceImagesRequired",
   "artworkSummary",
   "patternPrintType",
   "patternPrintNotes",
@@ -256,6 +265,9 @@ export const TECH_PACK_EDITABLE_CATEGORIES = [
   "foldingInstructions",
   "cartonPackingSpec",
   "barcodePlacement",
+  "barcodeType",
+  "barcodeContent",
+  "designerNotes",
 ] as const;
 export type TechPackEditableCategory = (typeof TECH_PACK_EDITABLE_CATEGORIES)[number];
 
@@ -263,6 +275,7 @@ export const updateTechPackFieldSchema = z.object({
   category: z.enum(TECH_PACK_EDITABLE_CATEGORIES),
   index: z.number().int().min(0).optional(),
   field: z.string().min(1).max(50).optional(),
+  subfield: z.enum(["value", "status"]).optional(),
   value: z.string().max(2000),
 });
 export type UpdateTechPackFieldInput = z.infer<typeof updateTechPackFieldSchema>;

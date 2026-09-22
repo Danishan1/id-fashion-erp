@@ -6910,6 +6910,131 @@ exactly why switching that setting alone didn't fix anything).
   provider-model-name setting already in this codebase (`ANTHROPIC_DEFAULT_MODEL`, `OPENAI_IMAGE_MODEL`,
   etc.), not a per-request/per-company choice.
 
+## AI Designer — Tech Pack v4: a much richer structured-data prompt, every fact confidence-tagged (2026-09-22)
+
+The user pasted a new, far more rigorous "SYSTEM PROMPT — GARMENT TECH PACK STRUCTURED DATA GENERATOR" (an
+18-section professional apparel spec with a 5-tier CONFIRMED/INFERRED/PROPOSED/TBC/NOT_VISIBLE confidence
+discipline) and asked whether it could be adopted. Confirmed scope via two AskUserQuestion rounds before
+touching any code: **add every new section the new prompt implies** (Fabric & Materials as its own table
+separate from BOM, Production Instructions, QC Checkpoints, Assumptions & Missing Data, Additional Reference
+Images Required, and Hangtag & Barcode split out of Labels & Packaging), and **give every fact-level value
+its own separate structured `status` field** rather than the old v1-v3 convention of baking a
+"[NOT VISIBLE — confirm with designer]" marker into the text value itself. This supersedes the 2026-09-13
+"SPEC SHEET GENERATOR" prompt CLAUDE.md documented for Tech Pack's original build.
+
+- **4 real AI calls now, not 2** — `src/core/ai-designer/tech-pack/{schema,prompt,generate}.ts` all
+  rewritten. Part 1 (vision, categories A-G) is essentially unchanged in shape but every scalar field is now
+  a `{value, status}` pair instead of a plain string, and `seamCallouts.status` was widened from its old
+  2-value `PROPOSED|CONFIRMED` enum to the shared 5-value `CONFIDENCE_STATUSES`. Part 2 (text) now covers
+  **Fabric & Materials** (new — the raw shell/lining/interlining fabric itself, composition/GSM/width/
+  consumption all tagged) alongside BOM (now explicitly scoped to trims/notions, not fabric) and graded
+  Measurements (each point gained a row-level `status`, deliberately NOT a per-size-cell status — documented
+  in schema.ts as a granularity tradeoff: 6-20 points × 6 sizes of per-cell status would have roughly
+  doubled that one call's own schema size for a distinction that rarely matters once the base-size grading
+  math is set). Part 3 (new) covers Production Instructions (a numbered sewing-floor sequence) and QC
+  Checkpoints (area/what-to-check/acceptance-criteria/tool), plus Labels & Packaging and the newly-split-out
+  Hangtag & Barcode section (barcode gained real `barcodeType`/`barcodeContent` fields it never had before).
+  Part 4 (new) is a genuine final review pass over the FULL prior analysis — Assumptions & Missing Data
+  (consolidates every non-CONFIRMED item across the whole document into one scannable list) and Additional
+  Reference Images Required (a structured `{viewNeeded, reason}` list, replacing the old plain-string
+  `suggestedAdditionalViews`), plus the carried-forward Designer Notes overview. Parts 2 and 3 only depend on
+  Part 1's output, not on each other, so `generateTechPack()`'s pipeline runs them **concurrently**
+  (`Promise.all`) before Part 4 (which needs both); the technical-flat image call still runs concurrently
+  alongside Part 1 exactly as before, unaffected by any of this.
+- **The generic `{category, index?, field?}` field-edit mechanism was extended with one new optional
+  `subfield: "value" | "status"`** (`updateTechPackFieldSchema` in `ai-designer.schema.ts`) rather than
+  building a second, parallel edit path for confidence-tagged fields. `ai-designer.service.ts` gained three
+  small generic helpers — `isStatusValueLeaf()` (runtime shape detection, not a static per-category
+  registry), `readLeaf()`/`writeLeaf()` — used uniformly by `readTechPackFieldValue()`/
+  `applyTechPackFieldEdit()` for every category: a leaf that's genuinely a `{value,status}` pair honors
+  `subfield` (defaulting to `"value"`), a leaf that's still a plain string ignores it entirely — so every
+  pre-v4 category (BOM's `color`/`notes`, seamCallouts' `location`/`technicalSpecification`, etc.) keeps
+  working completely unchanged with zero migration needed.
+- **A bare row-level `status` enum (seamCallouts, measurementPoints, assumptionsAndMissingData) is a
+  genuinely different shape from a `{value,status}` pair** — it has no accompanying free-text value of its
+  own, it just IS a status. `applyTechPackFieldEdit()` keeps handling these via the pre-existing
+  `field === "status"` special case (now validated against the shared `CONFIDENCE_STATUSES` instead of a
+  bespoke 2-value enum), not through `writeLeaf()`. The UI panel (`AiDesignerTechPackPanel.tsx`) has a
+  matching `EditableColumn.statusOnly` flag so these render as a bare status dropdown with no pointless empty
+  text editor next to them — caught and fixed during this pass's own build (an early draft rendered an empty
+  `EditableText` alongside every bare-status column, which would have let a user "edit" a value that doesn't
+  exist).
+- **New shared UI components** in `AiDesignerTechPackPanel.tsx`: `StatusBadge` (a small colored pill, one
+  color per confidence tier — green/blue/amber/orange/gray for CONFIRMED/INFERRED/PROPOSED/TBC/NOT_VISIBLE),
+  `StatusSelect` (a compact `<select>` that saves immediately on change, matching this panel's existing
+  "commits on save, no separate submit step" feel), `EditableStatusValue`/`EditableStatusKeyValueList` (the
+  value-plus-its-own-status editor pair used for Identification/Construction/Closure/Labels/Hangtag &
+  Barcode), and `EditableDataTable`'s columns gained an optional `status`/`statusOnly` pair covering every
+  table with a confidence-tagged column (Fabric & Materials, BOM, Visible Colors, Artwork, seamCallouts,
+  measurementPoints, assumptionsAndMissingData).
+- **A new, separate PDF renderer, not an edit to the existing one** — `tech-pack-pdf.tsx` gained
+  `TechPackAnalysisForPdfV2`/`TechPackDocumentPropsV2`/`renderTechPackDocumentPdfV2()` alongside the
+  original `TechPackAnalysisForPdf`/`renderTechPackDocumentPdf()`, which are now used **only** by the
+  Replicate Design module's own genuinely separate, still-v1-shaped `GarmentAnalysis`-equivalent (see
+  `src/core/ai-designer/replicate-design/tech-pack/`, built 2026-09-14 as a deliberately forked module,
+  never touched by this pass) — module isolation held here exactly as designed, so this rebuild couldn't
+  break Replicate Design's own Tech Pack even by accident. The new renderer reuses every still-generic
+  helper from the original file (`PageChrome`, `DataTable`, `KeyValueList`, `SwatchChip`, `ArtworkImage`,
+  `Code128Barcode`, `docStyles`, `computeGradeRules`/`resolveColorHex`/`findColorHexForBomRow` from
+  `tech-pack-format.ts`, all confirmed to need zero changes) — only the document's own page layout/shape is
+  new. A `{value,status}` field renders in the PDF as a plain `"value  [STATUS]"` bracket-tag suffix
+  (`fmtSV()`) — a deliberate, low-risk choice over building a second, PDF-only colored-badge component for
+  a one-pass rebuild of this size.
+- **12 fixed pages now, not 7**: Cover, Construction & Callouts, **Fabric & Materials** (new), BOM,
+  Colorways & Artwork, Measurements, Size Grading, **Production Instructions** (new), **QC Checkpoints**
+  (new), Labels & Packaging, **Hangtag & Barcode** (new), **Assumptions/Missing Data/Reference Images
+  Needed** (new, replacing the old always-appended, out-of-the-page-numbering "Notes for Designer" trailing
+  page). `PHOTO_PAGE_NUMBERS` moved from `[1,2,4]` to `[1,2,5]` and the flat-eligible set from `[1,2,4,5]` to
+  `[1,2,5,6]` to match the renumbering — `TECH_PACK_PAGE_DEFINITIONS` is the single source of truth both the
+  service (page generation) and the PDF renderer (page content) key off, so the two can't drift apart.
+- **No schema migration** — `AiDesignerTechPack.garmentAnalysisJson`/`designerNotes`/`suggestedAdditionalViews`
+  are unstructured `Json?`/`String?` columns exactly as before; the richer `part1`/`part2`/`part3`/`part4`
+  shape lives entirely inside the JSON blob. `suggestedAdditionalViews` (the DB column) is now populated from
+  a joined summary of Part 4's own structured `additionalReferenceImagesRequired` list rather than a plain
+  AI-returned string, kept only for backward-compatible display; the real structured data is always read
+  from `garmentAnalysisJson.part4` going forward. The dev DB's 15 pre-existing tech-pack rows (mostly DRAFT
+  test data, one old APPROVED row from 2026-09-13) were left untouched — this is a fresh-generation-only
+  upgrade, not a backfill; an old row's `garmentAnalysisJson` simply won't match the new panel's expected
+  shape if ever reopened, which is an accepted, low-stakes gap given this dev environment's own data is all
+  disposable test data (confirmed via a direct row count before starting).
+- **A pre-existing, unrelated compile error found and fixed in passing**: `applyProductSuggestion()`
+  (`ai-designer.service.ts`) called `generateDesign(actor, projectId, { imageCount: 3 }, ...)` — a leftover
+  from the same-day earlier View Angle feature, which made `viewAngle` a required field on
+  `generateDesignSchema`'s inferred type. Fixed with `{ imageCount: 3, viewAngle: "FRONT" }` — a full,
+  clean, project-wide `npx tsc --noEmit` was the first signal this existed, and it was the *only* other
+  place in the whole codebase the earlier View Angle work had left broken.
+- 8 tech-pack-specific unit tests rewritten/added in `ai-designer.service.test.ts` (the 4-call pipeline
+  including a Part 2/3-concurrent-failure case and a Part-4-failure case; editing a `{value,status}`'s own
+  `.value` vs `.status` independently; rejecting an invalid status value; a bare-status array-row edit; a
+  measurement point's per-size cell AND its own row-level status; a Part 3 scalar StatusValue edit; the
+  fork-on-approved-edit path re-verified against the new shape) — 122/122 passing in that file, 190/190
+  across the whole `ai-designer` module (including Replicate Design's own untouched test suite, confirming
+  zero regression there). Full project `npx tsc --noEmit` (0 errors) and `npx eslint` on every touched file
+  (0 errors) both clean.
+- **Live end-to-end verification, real Postgres + a real, already-exercised test project
+  (`AID-2026-00001`), and it genuinely succeeded end to end** — this session's `.env` has
+  `AI_TEXT_PROVIDER="openai"` (set the same day, immediately before this task, because the configured
+  Anthropic account is out of credits), and the OpenAI account turned out to have real usable credit this
+  time: a standalone script ran the real, unmocked `generateTechPack()` against the real OpenAI API and got
+  back a genuine, well-formed 4-part analysis (real `{value,status}` pairs throughout — e.g.
+  `brandName: {"value":"Mordern kruti","status":"CONFIRMED"}` — 15 real assumptions, 3 real suggested
+  reference images, 12 real pages), then `updateTechPackField()` confirmed editing a StatusValue's `.value`
+  leaves its `.status` untouched and vice versa. The script's own `exportTechPackPdf()` step hit the
+  already-documented, pre-existing `@react-pdf/hyphenate` subpath-export limitation that blocks
+  `@react-pdf/renderer` from running inside a standalone `tsx` script outside Next's own bundler (see the
+  2026-09-18 Production/Job-Work slips entry for the same limitation hit before) — worked around exactly as
+  that entry did: restarted the real dev server, opened the real project's Tech Pack step in the actual
+  browser, and fetched `.../tech-pack/download` via `fetch()` from inside the live page — a real 2.4MB
+  `%PDF-1.3` file, `Content-Type: application/pdf`, correct filename, confirming `renderTechPackDocumentPdfV2`
+  genuinely works end to end. Then loaded the real Tech Pack step in the browser directly and confirmed,
+  with zero console errors: all 12 pages/sections render (Fabric & Materials, BOM, Production Instructions,
+  QC Checkpoints, Hangtag & Barcode, Assumptions & Missing Data all present and populated with real,
+  non-placeholder AI content), every `{value,status}` field shows its own clickable 5-option status control,
+  and the script's own `brandName` edit was genuinely visible and persisted in the live UI — reverted that
+  one test edit back to its original value/status afterward via a direct authenticated `fetch()` call from
+  the browser console, leaving the real demo project exactly as found (still DRAFT, not approved — the
+  script's own approve step never ran, since it came after the PDF step that hit the tooling limitation).
+
 ## Reference
 
 Full architecture rationale, complete table-by-table field lists, and the full role×module permission matrix were developed in the Phase 1 planning session and are condensed here. Consult that history if a design decision needs deeper justification than what's summarized above.

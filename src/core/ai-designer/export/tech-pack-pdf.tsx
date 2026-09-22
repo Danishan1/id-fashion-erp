@@ -752,3 +752,515 @@ function TechPackFullDocument({
 export async function renderTechPackDocumentPdf(props: TechPackDocumentProps): Promise<Buffer> {
   return renderToBuffer(<TechPackFullDocument {...props} />);
 }
+
+// ---------------------------------------------------------------------------
+// v2 (2026-09-22) — AI Designer's own Tech Pack, rebuilt on the new "GARMENT
+// TECH PACK STRUCTURED DATA GENERATOR" prompt (see tech-pack/schema.ts's own
+// v4 doc comment): 12 pages (was 7) — Fabric & Materials, Production
+// Instructions, QC Checkpoints, Assumptions & Missing Data, Additional
+// Reference Images Required, and Hangtag & Barcode (split out of Labels &
+// Packaging) are all new — and every fact-level value now carries its own
+// `{value, status}` confidence tag instead of an inline "[NOT VISIBLE]"
+// text marker.
+//
+// A NEW, separate renderer rather than an edit to TechPackFullDocument
+// above: Replicate Design (a genuinely separate, deliberately isolated
+// module — see its own tech-pack/schema.ts) calls THAT renderer with its
+// own, independently-forked, still-v1-shaped GarmentAnalysis-equivalent;
+// changing the shared interface out from under it would break that module
+// for no reason. This new renderer reuses every still-generic helper above
+// (PageChrome, DataTable, KeyValueList, SwatchChip, ArtworkImage,
+// Code128Barcode, docStyles) — only the document layout/shape is new.
+// ---------------------------------------------------------------------------
+
+export interface TechPackStatusValueForPdf {
+  value: string;
+  status: string;
+}
+
+export interface TechPackAnalysisForPdfV2 {
+  part1: {
+    identification: Record<string, TechPackStatusValueForPdf>;
+    construction: Record<string, TechPackStatusValueForPdf>;
+    closure: { closureType: TechPackStatusValueForPdf; closureDetails: TechPackStatusValueForPdf };
+    seamCallouts: { calloutNumber: number; location: string; technicalSpecification: string; status: string; xPercent?: number; yPercent?: number }[];
+    visibleColors: { colorName: string; pantoneEstimate: TechPackStatusValueForPdf; hexEstimate: TechPackStatusValueForPdf; garmentPanel: string }[];
+    suggestedColorways: {
+      colorwayCode: string;
+      colorwayName: string;
+      mainColor: string;
+      contrastColor: string;
+      trimColor: string;
+      artworkColor: string;
+      notes: string;
+      mainColorHex?: string;
+      contrastColorHex?: string;
+      trimColorHex?: string;
+      artworkColorHex?: string;
+    }[];
+    artworkItems: {
+      artworkType: string;
+      placement: string;
+      scale: string;
+      dimensions: TechPackStatusValueForPdf;
+      alignment: string;
+      printMethod: string;
+      distanceFromHps: TechPackStatusValueForPdf;
+      distanceFromCf: TechPackStatusValueForPdf;
+    }[];
+    artworkSummary: string;
+    patternPrintType: string;
+    patternPrintNotes: string;
+  };
+  part2: {
+    fabricMaterials: {
+      materialRole: string;
+      fabricType: string;
+      composition: TechPackStatusValueForPdf;
+      gsm: TechPackStatusValueForPdf;
+      width: TechPackStatusValueForPdf;
+      finish: string;
+      consumption: TechPackStatusValueForPdf;
+      supplierNotes: string;
+    }[];
+    bomItems: { materialType: string; composition: TechPackStatusValueForPdf; gsm: TechPackStatusValueForPdf; color: string; consumption: TechPackStatusValueForPdf; notes: string }[];
+    measurementPoints: { pointName: string; howToMeasure: string; toleranceCm: string; status: string; values: Record<string, string> }[];
+    gradeRulesNotes: string;
+  };
+  part3: {
+    productionInstructions: { stepNumber: number; instruction: string }[];
+    qcCheckpoints: { checkpointArea: string; whatToCheck: string; acceptanceCriteria: string; toolsOrMethod: string }[];
+    mainLabelSpec: TechPackStatusValueForPdf;
+    sizeLabelSpec: TechPackStatusValueForPdf;
+    careLabelSpec: TechPackStatusValueForPdf;
+    polybagSpec: TechPackStatusValueForPdf;
+    foldingInstructions: string;
+    cartonPackingSpec: TechPackStatusValueForPdf;
+    hangtagSpec: TechPackStatusValueForPdf;
+    barcodeType: TechPackStatusValueForPdf;
+    barcodeContent: TechPackStatusValueForPdf;
+    barcodePlacement: TechPackStatusValueForPdf;
+  };
+  part4: {
+    assumptionsAndMissingData: { item: string; assumptionMade: string; status: string }[];
+    additionalReferenceImagesRequired: { viewNeeded: string; reason: string }[];
+    designerNotes: string;
+  };
+}
+
+export interface TechPackDocumentPropsV2 {
+  projectNumber: string;
+  projectName: string;
+  generatedAt: string;
+  analysis: TechPackAnalysisForPdfV2;
+  images: TechPackDocumentPageImage[];
+  companyName?: string;
+  realStyleInfo?: TechPackRealStyleInfo;
+  page2ImageDimensions?: { width: number; height: number };
+}
+
+/** Formats a `{value, status}` pair as one line of PDF text — a plain, low-risk bracket-tag suffix (no bespoke colored-badge PDF component needed) that still gives every fact its own visibly separate confidence tag, exactly as the new prompt's own ERP/database output convention calls for. */
+function fmtSV(sv: TechPackStatusValueForPdf | undefined): string {
+  if (!sv) return "—";
+  return `${sv.value}  [${sv.status}]`;
+}
+
+function resolveStyleInfoV2(analysis: TechPackAnalysisForPdfV2, realStyleInfo: TechPackRealStyleInfo | undefined): TechPackRealStyleInfo {
+  if (realStyleInfo) return realStyleInfo;
+  const id = analysis.part1.identification;
+  return {
+    brandName: id.brandName?.value ?? "—",
+    styleName: id.styleName?.value ?? "—",
+    styleNumber: id.styleNumber?.value ?? "—",
+    category: id.garmentCategory?.value ?? "—",
+    targetCustomer: id.genderCategory?.value ?? "—",
+    designerName: id.designer?.value ?? "—",
+    dateCreated: id.dateCreated?.value ?? "—",
+  };
+}
+
+function TechPackFullDocumentV2({
+  projectNumber,
+  projectName,
+  generatedAt,
+  analysis,
+  images,
+  companyName: companyNameProp,
+  realStyleInfo: realStyleInfoProp,
+  page2ImageDimensions,
+}: TechPackDocumentPropsV2) {
+  const { part1, part2, part3, part4 } = analysis;
+  const companyName = companyNameProp ?? DEFAULT_COMPANY_NAME;
+  const realStyleInfo = resolveStyleInfoV2(analysis, realStyleInfoProp);
+  const imageFor = (pageNumber: number) => images.find((i) => i.pageNumber === pageNumber);
+  const chrome = (pageNumber: number, title: string, children: ReactNode) => (
+    <PageChrome
+      key={pageNumber}
+      title={title}
+      projectNumber={projectNumber}
+      projectName={projectName}
+      generatedAt={generatedAt}
+      companyName={companyName}
+      realStyleInfo={realStyleInfo}
+    >
+      {children}
+    </PageChrome>
+  );
+
+  const pinnedCallouts = part1.seamCallouts.filter(
+    (c) => typeof c.xPercent === "number" && typeof c.yPercent === "number" && c.xPercent! >= 0 && c.xPercent! <= 100 && c.yPercent! >= 0 && c.yPercent! <= 100
+  );
+  const calloutImageRect = page2ImageDimensions
+    ? computeContainFitRect(page2ImageDimensions.width, page2ImageDimensions.height, CALLOUT_BOX_WIDTH_PT, CALLOUT_BOX_HEIGHT_PT)
+    : { xPercent: 0, yPercent: 0, widthPercent: 100, heightPercent: 100 };
+  const gradeRules = computeGradeRules(part2.measurementPoints);
+  const foldingSteps = tryParseNumberedSteps(part3.foldingInstructions);
+
+  return (
+    <Document>
+      {chrome(
+        1,
+        "Cover Page / Style Summary",
+        <>
+          <ArtworkImage image={imageFor(1)} />
+          <Text style={docStyles.sectionTitle}>Style Info</Text>
+          <KeyValueList
+            items={[
+              ["Brand", realStyleInfo.brandName],
+              ["Style Name", realStyleInfo.styleName],
+              ["Style Number", realStyleInfo.styleNumber],
+              ["Category", `${realStyleInfo.category} — ${fmtSV(part1.identification.subCategory)}`],
+              ["Fit Type", fmtSV(part1.identification.fitType)],
+              ["Gender / Category", realStyleInfo.targetCustomer],
+              ["Target Season", fmtSV(part1.identification.targetSeason)],
+              ["Base Sample Size", fmtSV(part1.identification.baseSampleSize)],
+              ["Designer", realStyleInfo.designerName],
+              ["Date Created", realStyleInfo.dateCreated],
+            ]}
+          />
+          <Text style={docStyles.sectionTitle}>Key Specs</Text>
+          <KeyValueList
+            items={[
+              ["Silhouette", fmtSV(part1.construction.silhouette)],
+              ["Body Length", fmtSV(part1.construction.bodyLength)],
+              ["Closure", fmtSV(part1.closure.closureType)],
+            ]}
+          />
+        </>
+      )}
+
+      {chrome(
+        2,
+        "Construction & Detail Callouts",
+        <>
+          <Text style={docStyles.imageCaption}>Reference: Selected Design Photo — used for construction callouts</Text>
+          <View style={docStyles.calloutImageWrapper}>
+            <ArtworkImage image={imageFor(2)} />
+            {pinnedCallouts.map((c) => {
+              const { left, top } = mapCalloutPositionToBoxPercent({ xPercent: c.xPercent!, yPercent: c.yPercent! }, calloutImageRect);
+              return (
+                <View key={c.calloutNumber} style={[docStyles.pin, { left: `${left}%`, top: `${top}%` }]}>
+                  <Text style={docStyles.pinText}>{c.calloutNumber}</Text>
+                </View>
+              );
+            })}
+          </View>
+          <Text style={docStyles.sectionTitle}>Construction Legend</Text>
+          <View style={docStyles.table}>
+            <View style={docStyles.tableHeaderRow}>
+              <Text style={docStyles.pinBadgeCell}>#</Text>
+              <Text style={docStyles.th}>Location</Text>
+              <Text style={[docStyles.th, { flex: 2 }]}>Technical Specification</Text>
+              <Text style={docStyles.th}>Status</Text>
+            </View>
+            {part1.seamCallouts.map((c, i) => (
+              <View key={c.calloutNumber} style={i % 2 === 1 ? [docStyles.tableRow, docStyles.tableRowZebra] : docStyles.tableRow}>
+                <View style={docStyles.pinBadgeCell}>
+                  <View style={docStyles.pinBadge}>
+                    <Text style={docStyles.pinBadgeText}>{c.calloutNumber}</Text>
+                  </View>
+                </View>
+                <Text style={docStyles.td}>{c.location}</Text>
+                <Text style={[docStyles.td, { flex: 2 }]}>{c.technicalSpecification}</Text>
+                <Text style={docStyles.td}>{c.status}</Text>
+              </View>
+            ))}
+          </View>
+        </>
+      )}
+
+      {chrome(
+        3,
+        "Fabric & Materials",
+        <>
+          <Text style={docStyles.sectionTitle}>Fabric &amp; Materials</Text>
+          <DataTable
+            headers={["Role", "Fabric Type", "Composition", "GSM", "Width", "Finish", "Consumption", "Supplier Notes"]}
+            rows={part2.fabricMaterials.map((f) => [f.materialRole, f.fabricType, fmtSV(f.composition), fmtSV(f.gsm), fmtSV(f.width), f.finish, fmtSV(f.consumption), f.supplierNotes])}
+            zebra
+          />
+        </>
+      )}
+
+      {chrome(
+        4,
+        "Bill of Materials / BOM",
+        <>
+          <Text style={docStyles.sectionTitle}>Bill of Materials (Trims &amp; Notions)</Text>
+          <View style={docStyles.table}>
+            <View style={docStyles.tableHeaderRow}>
+              <Text style={docStyles.swatchCol}>Swatch</Text>
+              <Text style={docStyles.th}>Material Type</Text>
+              <Text style={docStyles.th}>Composition</Text>
+              <Text style={docStyles.th}>GSM</Text>
+              <Text style={docStyles.th}>Color</Text>
+              <Text style={docStyles.th}>Consumption</Text>
+              <Text style={[docStyles.th, { flex: 2 }]}>Notes</Text>
+            </View>
+            {part2.bomItems.map((b, i) => (
+              <View key={i} style={i % 2 === 1 ? [docStyles.tableRow, docStyles.tableRowZebra] : docStyles.tableRow}>
+                <View style={docStyles.swatchCol}>
+                  <SwatchChip hex={findColorHexForBomRow(b.color, part1.visibleColors.map((c) => ({ colorName: c.colorName, hexEstimate: c.hexEstimate.value })))} />
+                </View>
+                <Text style={docStyles.td}>{b.materialType}</Text>
+                <Text style={docStyles.td}>{fmtSV(b.composition)}</Text>
+                <Text style={docStyles.td}>{fmtSV(b.gsm)}</Text>
+                <Text style={docStyles.td}>{b.color}</Text>
+                <Text style={docStyles.td}>{fmtSV(b.consumption)}</Text>
+                <Text style={[docStyles.td, { flex: 2 }]}>{b.notes}</Text>
+              </View>
+            ))}
+          </View>
+        </>
+      )}
+
+      {chrome(
+        5,
+        "Colorways & Artwork Placement",
+        <>
+          <ArtworkImage image={imageFor(5)} />
+          <Text style={docStyles.sectionTitle}>Visible Colors</Text>
+          <View style={docStyles.table}>
+            <View style={docStyles.tableHeaderRow}>
+              <Text style={docStyles.swatchCol}>Swatch</Text>
+              <Text style={docStyles.th}>Color</Text>
+              <Text style={docStyles.th}>Pantone (est.)</Text>
+              <Text style={docStyles.th}>HEX (est.)</Text>
+              <Text style={docStyles.th}>Panel</Text>
+            </View>
+            {part1.visibleColors.map((c, i) => (
+              <View key={i} style={i === part1.visibleColors.length - 1 ? docStyles.tableRowLast : docStyles.tableRow}>
+                <View style={docStyles.swatchCol}>
+                  <SwatchChip hex={resolveColorHex({ hexEstimate: c.hexEstimate.value, colorName: c.colorName })} />
+                </View>
+                <Text style={docStyles.td}>{c.colorName}</Text>
+                <Text style={docStyles.td}>{fmtSV(c.pantoneEstimate)}</Text>
+                <Text style={docStyles.td}>{fmtSV(c.hexEstimate)}</Text>
+                <Text style={docStyles.td}>{c.garmentPanel}</Text>
+              </View>
+            ))}
+          </View>
+          <Text style={docStyles.sectionTitle}>Suggested Commercial Colorways</Text>
+          <View style={docStyles.table}>
+            <View style={docStyles.tableHeaderRow}>
+              <Text style={docStyles.th}>Code</Text>
+              <Text style={docStyles.th}>Name</Text>
+              <Text style={docStyles.th}>Main</Text>
+              <Text style={docStyles.th}>Contrast</Text>
+              <Text style={docStyles.th}>Trim</Text>
+              <Text style={docStyles.th}>Artwork</Text>
+              <Text style={[docStyles.th, { flex: 2 }]}>Notes</Text>
+            </View>
+            {part1.suggestedColorways.map((c, i) => (
+              <View key={i} style={i % 2 === 1 ? [docStyles.tableRow, docStyles.tableRowZebra] : docStyles.tableRow}>
+                <Text style={docStyles.td}>{c.colorwayCode}</Text>
+                <Text style={docStyles.td}>{c.colorwayName}</Text>
+                <View style={[docStyles.td, { flexDirection: "row", alignItems: "center" }]}>
+                  <SwatchChip hex={resolveColorHex({ hexEstimate: c.mainColorHex, colorName: c.mainColor })} />
+                  <Text style={{ marginLeft: 2 }}>{c.mainColor}</Text>
+                </View>
+                <View style={[docStyles.td, { flexDirection: "row", alignItems: "center" }]}>
+                  <SwatchChip hex={resolveColorHex({ hexEstimate: c.contrastColorHex, colorName: c.contrastColor })} />
+                  <Text style={{ marginLeft: 2 }}>{c.contrastColor}</Text>
+                </View>
+                <View style={[docStyles.td, { flexDirection: "row", alignItems: "center" }]}>
+                  <SwatchChip hex={resolveColorHex({ hexEstimate: c.trimColorHex, colorName: c.trimColor })} />
+                  <Text style={{ marginLeft: 2 }}>{c.trimColor}</Text>
+                </View>
+                <View style={[docStyles.td, { flexDirection: "row", alignItems: "center" }]}>
+                  <SwatchChip hex={resolveColorHex({ hexEstimate: c.artworkColorHex, colorName: c.artworkColor })} />
+                  <Text style={{ marginLeft: 2 }}>{c.artworkColor}</Text>
+                </View>
+                <Text style={[docStyles.td, { flex: 2 }]}>{c.notes}</Text>
+              </View>
+            ))}
+          </View>
+          <Text style={docStyles.sectionTitle}>Artwork Reference</Text>
+          <DataTable
+            headers={["Type", "Placement", "Scale", "Dimensions", "Alignment", "Print Method", "From HPS", "From CF"]}
+            rows={part1.artworkItems.map((a) => [a.artworkType, a.placement, a.scale, fmtSV(a.dimensions), a.alignment, a.printMethod, fmtSV(a.distanceFromHps), fmtSV(a.distanceFromCf)])}
+          />
+        </>
+      )}
+
+      {chrome(
+        6,
+        "Measurements & Spec Table",
+        <>
+          <ArtworkImage image={imageFor(6)} />
+          <Text style={docStyles.sectionTitle}>Point-of-Measure Spec Table</Text>
+          <DataTable
+            headers={["Point", "How to Measure", "Tolerance", "Status", ...Object.keys(part2.measurementPoints[0]?.values ?? {})]}
+            rows={part2.measurementPoints.map((p) => [p.pointName, p.howToMeasure, p.toleranceCm, p.status, ...Object.values(p.values)])}
+            zebra
+          />
+          <Text style={docStyles.notesText}>{part2.gradeRulesNotes}</Text>
+        </>
+      )}
+
+      {chrome(
+        7,
+        "Size Grading",
+        <>
+          <Text style={docStyles.sectionTitle}>Grade Rules (derived from the Point-of-Measure chart)</Text>
+          <DataTable headers={["Point", "Grade Rule (per size step)"]} rows={gradeRules.map((r) => [r.pointName, r.grade])} zebra />
+          <Text style={docStyles.notesText}>
+            Grade rule = increment applied per adjacent size step (XS to S to M to L to XL to XXL). &quot;Non-linear&quot; means the increment is not
+            consistent across every step — refer to the full Measurements &amp; Spec Table on the previous page.
+          </Text>
+          <Text style={docStyles.sectionTitle}>Size Explanation / Fit Notes</Text>
+          <Text style={docStyles.notesText}>{part2.gradeRulesNotes}</Text>
+        </>
+      )}
+
+      {chrome(
+        8,
+        "Production Instructions",
+        <>
+          <Text style={docStyles.sectionTitle}>Production Instructions</Text>
+          {part3.productionInstructions
+            .slice()
+            .sort((a, b) => a.stepNumber - b.stepNumber)
+            .map((s) => (
+              <View key={s.stepNumber} style={docStyles.numberedStep}>
+                <Text style={docStyles.numberedStepIndex}>{s.stepNumber}.</Text>
+                <Text style={docStyles.numberedStepText}>{s.instruction}</Text>
+              </View>
+            ))}
+        </>
+      )}
+
+      {chrome(
+        9,
+        "Quality Control Checkpoints",
+        <>
+          <Text style={docStyles.sectionTitle}>QC Checkpoints</Text>
+          <DataTable
+            headers={["Checkpoint Area", "What to Check", "Acceptance Criteria", "Tool / Method"]}
+            rows={part3.qcCheckpoints.map((q) => [q.checkpointArea, q.whatToCheck, q.acceptanceCriteria, q.toolsOrMethod])}
+            zebra
+          />
+        </>
+      )}
+
+      {chrome(
+        10,
+        "Labels & Packaging",
+        <>
+          <Text style={docStyles.sectionTitle}>Label Specs</Text>
+          <View style={docStyles.labelMockRow}>
+            <View style={docStyles.labelMockBox}>
+              <Text style={docStyles.labelMockCaption}>Main Label</Text>
+              <Text style={docStyles.labelMockText}>{fmtSV(part3.mainLabelSpec)}</Text>
+            </View>
+            <View style={docStyles.labelMockBox}>
+              <Text style={docStyles.labelMockCaption}>Size Label</Text>
+              <Text style={docStyles.labelMockText}>{fmtSV(part3.sizeLabelSpec)}</Text>
+            </View>
+            <View style={docStyles.labelMockBox}>
+              <Text style={docStyles.labelMockCaption}>Care Label</Text>
+              <Text style={docStyles.labelMockText}>{fmtSV(part3.careLabelSpec)}</Text>
+            </View>
+          </View>
+
+          <Text style={docStyles.sectionTitle}>Packaging</Text>
+          <View style={docStyles.cartonBox}>
+            <Text style={docStyles.labelMockCaption}>Carton</Text>
+            <Text style={docStyles.labelMockText}>{fmtSV(part3.cartonPackingSpec)}</Text>
+          </View>
+          <Text style={[docStyles.labelMockCaption, { marginBottom: 2 }]}>Polybag</Text>
+          <Text style={[docStyles.notesText, { marginBottom: 6 }]}>{fmtSV(part3.polybagSpec)}</Text>
+
+          <Text style={[docStyles.labelMockCaption, { marginBottom: 2 }]}>Folding Instructions</Text>
+          {foldingSteps ? (
+            foldingSteps.map((step, i) => (
+              <View key={i} style={docStyles.numberedStep}>
+                <Text style={docStyles.numberedStepIndex}>{i + 1}.</Text>
+                <Text style={docStyles.numberedStepText}>{step}</Text>
+              </View>
+            ))
+          ) : (
+            <Text style={[docStyles.notesText, { marginBottom: 6 }]}>{part3.foldingInstructions}</Text>
+          )}
+        </>
+      )}
+
+      {chrome(
+        11,
+        "Hangtag & Barcode",
+        <>
+          <Text style={docStyles.sectionTitle}>Hangtag</Text>
+          <View style={docStyles.cartonBox}>
+            <Text style={docStyles.labelMockText}>{fmtSV(part3.hangtagSpec)}</Text>
+          </View>
+
+          <Text style={docStyles.sectionTitle}>Barcode</Text>
+          <KeyValueList
+            items={[
+              ["Type", fmtSV(part3.barcodeType)],
+              ["Content", fmtSV(part3.barcodeContent)],
+              ["Placement", fmtSV(part3.barcodePlacement)],
+            ]}
+          />
+          <View style={[docStyles.barcodeBox, { marginTop: 6 }]}>
+            <Code128Barcode value={projectNumber} />
+          </View>
+        </>
+      )}
+
+      {chrome(
+        12,
+        "Assumptions, Missing Data & Reference Images Needed",
+        <>
+          <Text style={docStyles.sectionTitle}>Assumptions &amp; Missing Data</Text>
+          {part4.assumptionsAndMissingData.length > 0 ? (
+            <DataTable
+              headers={["Item", "Assumption / Gap", "Status"]}
+              rows={part4.assumptionsAndMissingData.map((a) => [a.item, a.assumptionMade, a.status])}
+              zebra
+            />
+          ) : (
+            <Text style={docStyles.notesText}>None flagged — every fact in this tech pack was directly confirmed.</Text>
+          )}
+
+          <Text style={docStyles.sectionTitle}>Additional Reference Images Required</Text>
+          {part4.additionalReferenceImagesRequired.length > 0 ? (
+            <DataTable
+              headers={["View Needed", "Reason"]}
+              rows={part4.additionalReferenceImagesRequired.map((r) => [r.viewNeeded, r.reason])}
+            />
+          ) : (
+            <Text style={docStyles.notesText}>None — the supplied reference image is sufficient.</Text>
+          )}
+
+          <Text style={docStyles.sectionTitle}>Designer Notes</Text>
+          <Text style={docStyles.notesText}>{part4.designerNotes}</Text>
+        </>
+      )}
+    </Document>
+  );
+}
+
+export async function renderTechPackDocumentPdfV2(props: TechPackDocumentPropsV2): Promise<Buffer> {
+  return renderToBuffer(<TechPackFullDocumentV2 {...props} />);
+}

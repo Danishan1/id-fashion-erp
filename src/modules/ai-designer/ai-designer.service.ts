@@ -26,26 +26,39 @@ import {
   PROMPT_VERSION as GENERATION_PROMPT_VERSION,
   type SketchGenerationOverride,
 } from "@/core/ai-designer/image-generation/prompt";
-import type { TechPackSpecItem, TechPackAnalysisForPdf, TechPackDocumentPageImage } from "@/core/ai-designer/export/tech-pack-pdf";
+import type { TechPackSpecItem, TechPackAnalysisForPdfV2, TechPackDocumentPageImage } from "@/core/ai-designer/export/tech-pack-pdf";
 import { getEnvironmentByKey } from "@/core/ai-designer/catalogs/environment-catalog";
 import { isValidAgeGroup, isValidProductCategory, TARGET_CUSTOMER_LABELS, type TargetCustomer } from "@/core/ai-designer/catalogs/customer-catalog";
 import { ProductRepository } from "@/modules/products/product.repository";
 import type { ListQuery } from "@/lib/list-query";
-import { generateGarmentAnalysisPart1, generateGarmentAnalysisPart2 } from "@/core/ai-designer/tech-pack/generate";
+import {
+  generateGarmentAnalysisPart1,
+  generateGarmentAnalysisPart2,
+  generateGarmentAnalysisPart3,
+  generateGarmentAnalysisPart4,
+} from "@/core/ai-designer/tech-pack/generate";
 import type { TechPackDesignContext } from "@/core/ai-designer/tech-pack/prompt";
 import { buildTechnicalFlatPrompt } from "@/core/ai/technical-development/prompt";
 import { formatDocDate, getCompanyHeaderLines } from "@/core/documents/company-header";
 import {
   ARTWORK_ITEM_EDITABLE_FIELDS,
+  ASSUMPTION_TEXT_FIELDS,
   BOM_ITEM_EDITABLE_FIELDS,
   CLOSURE_EDITABLE_FIELDS,
+  CONFIDENCE_STATUSES,
   CONSTRUCTION_EDITABLE_FIELDS,
+  FABRIC_MATERIAL_EDITABLE_FIELDS,
   IDENTIFICATION_EDITABLE_FIELDS,
   MEASUREMENT_POINT_EDITABLE_FIELDS,
   PART1_SCALAR_FIELDS,
   PART2_SCALAR_FIELDS,
+  PART3_SCALAR_FIELDS,
+  PART3_STATUS_FIELDS,
+  PART4_SCALAR_FIELDS,
   PHOTO_PAGE_NUMBERS,
-  SEAM_CALLOUT_STATUS_VALUES,
+  PRODUCTION_INSTRUCTION_EDITABLE_FIELDS,
+  QC_CHECKPOINT_EDITABLE_FIELDS,
+  REFERENCE_IMAGE_NEEDED_EDITABLE_FIELDS,
   SEAM_CALLOUT_TEXT_FIELDS,
   STANDARD_SIZES,
   SUGGESTED_COLORWAY_EDITABLE_FIELDS,
@@ -882,7 +895,7 @@ export async function applyProductSuggestionAndGenerate(actor: ActorContext, pro
     environmentKey: item.environmentKey,
   });
 
-  const result = await generateDesign(actor, projectId, { imageCount: 3 }, {
+  const result = await generateDesign(actor, projectId, { imageCount: 3, viewAngle: "FRONT" }, {
     targetCustomer: group.targetCustomer,
     productCategory: item.productCategory,
     priorityRank: item.priorityRank,
@@ -2335,21 +2348,25 @@ async function assertNoActiveTechPackRun(projectId: string) {
 }
 
 /**
- * The full pipeline behind the user's own "GARMENT TECH PACK SPEC SHEET
- * GENERATOR" prompt (supplied verbatim, 2026-09-13) — the vision/text
- * analysis chain is sequential, not parallel, since each step's output
- * genuinely feeds the next: (1) a vision call analyzes the current design
- * image into categories A-G, (2) a text call extends that into categories
- * H-J (BOM/measurements/labels) plus designer notes. Deliberately
- * all-or-nothing: if either real AI call fails, the whole attempt is marked
- * FAILED, rather than persisting a partially-successful run — simpler to
- * reason about, and a retry is cheap (this is a manual, low-frequency
- * action, not a hot path). A third, independent technical-flat image call
- * runs concurrently alongside this chain (see attemptGenerateTechnicalFlat)
- * — it is the one call in this pipeline that is allowed to fail without
- * failing the whole run. Otherwise, zero reuse of AI Garment Flow's own,
- * much richer equivalent processes — this module stays deliberately
- * isolated from that one.
+ * The full pipeline behind the user's own "GARMENT TECH PACK STRUCTURED DATA
+ * GENERATOR" prompt (supplied verbatim, 2026-09-22, superseding the earlier
+ * 2026-09-13 "SPEC SHEET GENERATOR" prompt — see schema.ts's own v4 doc
+ * comment) — 4 real AI calls: (1) a vision call analyzes the current design
+ * image into categories A-G, (2)+(3) two text calls that both only depend on
+ * (1)'s output — Fabric & Materials/BOM/Measurements, and Production
+ * Instructions/QC Checkpoints/Labels & Packaging/Hangtag & Barcode — run
+ * CONCURRENTLY, then (4) a final text call reviews the full analysis
+ * (1)+(2)+(3) together into Assumptions & Missing Data / Additional
+ * Reference Images Required / Designer Notes. Deliberately all-or-nothing:
+ * if any of the 4 real AI calls fails, the whole attempt is marked FAILED,
+ * rather than persisting a partially-successful run — simpler to reason
+ * about, and a retry is cheap (this is a manual, low-frequency action, not a
+ * hot path). A fifth, independent technical-flat image call runs
+ * concurrently alongside Part 1 (see attemptGenerateTechnicalFlat) — it is
+ * the one call in this pipeline that is allowed to fail without failing the
+ * whole run. Otherwise, zero reuse of AI Garment Flow's own, much richer
+ * equivalent processes — this module stays deliberately isolated from that
+ * one.
  */
 export async function generateTechPack(actor: ActorContext, projectId: string) {
   const project = await AiDesignerProjectRepository.findByIdWithDetails(actor.companyId, projectId);
@@ -2387,18 +2404,24 @@ export async function generateTechPack(actor: ActorContext, projectId: string) {
         imageMediaType,
       }),
     ]);
-    const part2 = await generateGarmentAnalysisPart2({ ctx: designContext, part1: part1.data });
+    // Parts 2 and 3 each only depend on Part 1's output, not on each other --
+    // run them concurrently rather than sequentially.
+    const [part2, part3] = await Promise.all([
+      generateGarmentAnalysisPart2({ ctx: designContext, part1: part1.data }),
+      generateGarmentAnalysisPart3({ ctx: designContext, part1: part1.data }),
+    ]);
+    const part4 = await generateGarmentAnalysisPart4({ ctx: designContext, part1: part1.data, part2: part2.data, part3: part3.data });
 
-    // Pages 1/2/4 embed the project's own real design photo (the SAME
+    // Pages 1/2/5 embed the project's own real design photo (the SAME
     // attachment id already on the project's current version, reused as-is
-    // -- never re-uploaded). Pages 1, 2, 4, and 5 additionally carry the
+    // -- never re-uploaded). Pages 1, 2, 5, and 6 additionally carry the
     // technical-flat attachment id when one was successfully generated --
     // stored uniformly here regardless of which one the renderer actually
     // displays per page; see tech-pack-pdf.tsx's own Page 2 handling for why
     // it always prefers the plain photo over the flat (the seam callouts'
     // xPercent/yPercent were estimated against the photo, not the flat).
     const realPhotoAttachmentId = project.currentVersion.currentImage.imageAttachmentId;
-    const FLAT_ELIGIBLE_PAGE_NUMBERS = [1, 2, 4, 5] as const;
+    const FLAT_ELIGIBLE_PAGE_NUMBERS = [1, 2, 5, 6] as const;
     const pages = TECH_PACK_PAGE_DEFINITIONS.map((def) => ({
       pageNumber: def.pageNumber,
       pageTitle: def.title,
@@ -2406,12 +2429,13 @@ export async function generateTechPack(actor: ActorContext, projectId: string) {
       technicalFlatAttachmentId: (FLAT_ELIGIBLE_PAGE_NUMBERS as readonly number[]).includes(def.pageNumber) ? technicalFlatAttachmentId : null,
     }));
 
-    const garmentAnalysis: GarmentAnalysis = { part1: part1.data, part2: part2.data };
+    const garmentAnalysis: GarmentAnalysis = { part1: part1.data, part2: part2.data, part3: part3.data, part4: part4.data };
 
     const updated = await AiDesignerTechPackRepository.markSuccess(techPackRow.id, {
       garmentAnalysisJson: garmentAnalysis as unknown as Prisma.InputJsonValue,
-      designerNotes: part2.data.designerNotes,
-      suggestedAdditionalViews: part2.data.suggestedAdditionalViews,
+      designerNotes: part4.data.designerNotes,
+      suggestedAdditionalViews:
+        part4.data.additionalReferenceImagesRequired.map((r) => `${r.viewNeeded} — ${r.reason}`).join("\n") || "None — the supplied image is sufficient.",
       pages,
     });
 
@@ -2510,14 +2534,12 @@ export async function exportTechPackPdf(actor: ActorContext, projectId: string) 
     dateCreated: formatDocDate(project.createdAt),
   };
 
-  const { renderTechPackDocumentPdf } = await import("@/core/ai-designer/export/tech-pack-pdf");
-  const pdfBuffer = await renderTechPackDocumentPdf({
+  const { renderTechPackDocumentPdfV2 } = await import("@/core/ai-designer/export/tech-pack-pdf");
+  const pdfBuffer = await renderTechPackDocumentPdfV2({
     projectNumber: project.projectNumber,
     projectName: project.projectName,
     generatedAt: techPack.createdAt.toLocaleString(),
-    analysis: techPack.garmentAnalysisJson as unknown as TechPackAnalysisForPdf,
-    designerNotes: techPack.designerNotes ?? "",
-    suggestedAdditionalViews: techPack.suggestedAdditionalViews ?? "",
+    analysis: techPack.garmentAnalysisJson as unknown as TechPackAnalysisForPdfV2,
     images,
     companyName,
     realStyleInfo,
@@ -2527,8 +2549,37 @@ export async function exportTechPackPdf(actor: ActorContext, projectId: string) 
   return { buffer: pdfBuffer, mimeType: "application/pdf", fileName: `${project.projectNumber}-tech-pack.pdf` };
 }
 
+/** True for a `{value, status}`-shaped leaf (2026-09-22, v4) -- distinguishes it at runtime from a still-plain-string leaf, so the same read/write helpers below work uniformly across both without a second, parallel set of field-name registries per category. */
+function isStatusValueLeaf(v: unknown): v is { value: string; status: string } {
+  return typeof v === "object" && v !== null && typeof (v as Record<string, unknown>).value === "string" && typeof (v as Record<string, unknown>).status === "string";
+}
+
+/** Reads the current string at `container[key]`, honoring `subfield` ("value" default, or "status") when that leaf is a `{value, status}` pair -- otherwise returns the plain string as-is. */
+function readLeaf(container: Record<string, unknown>, key: string, subfield: "value" | "status" | undefined): string | undefined {
+  const leaf = container[key];
+  if (isStatusValueLeaf(leaf)) return subfield === "status" ? leaf.status : leaf.value;
+  return typeof leaf === "string" ? leaf : undefined;
+}
+
+/** Writes `value` into `container[key]`, honoring `subfield` when that leaf is a `{value, status}` pair (validating a "status" write against the shared CONFIDENCE_STATUSES enum) -- otherwise replaces the plain string in place. */
+function writeLeaf(container: Record<string, unknown>, key: string, subfield: "value" | "status" | undefined, value: string): void {
+  const leaf = container[key];
+  if (isStatusValueLeaf(leaf)) {
+    if (subfield === "status") {
+      if (!(CONFIDENCE_STATUSES as readonly string[]).includes(value)) {
+        throw new BusinessRuleError("VALIDATION_ERROR", `"status" must be one of: ${CONFIDENCE_STATUSES.join(", ")}.`);
+      }
+      (leaf as { value: string; status: string }).status = value;
+    } else {
+      (leaf as { value: string; status: string }).value = value;
+    }
+    return;
+  }
+  container[key] = value;
+}
+
 /**
- * Resolves a `{category, index?, field?}` path against a real
+ * Resolves a `{category, index?, field?, subfield?}` path against a real
  * `GarmentAnalysis` object and returns the CURRENT string value there (for
  * the audit log's `oldValues`), without mutating anything. Shares the exact
  * same validation as `applyTechPackFieldEdit` below (any invalid path throws
@@ -2536,35 +2587,49 @@ export async function exportTechPackPdf(actor: ActorContext, projectId: string) 
  * write and reading the result back out immediately afterward on a
  * throwaway clone -- see the two functions together.
  */
-function readTechPackFieldValue(analysis: GarmentAnalysis, input: { category: string; index?: number; field?: string }): string | undefined {
-  const { category, index, field } = input;
+function readTechPackFieldValue(analysis: GarmentAnalysis, input: { category: string; index?: number; field?: string; subfield?: "value" | "status" }): string | undefined {
+  const { category, index, field, subfield } = input;
+  const asRecord = (v: unknown) => v as unknown as Record<string, unknown>;
   try {
     switch (category) {
       case "identification":
-        return (analysis.part1.identification as unknown as Record<string, string>)[field ?? ""];
+        return readLeaf(asRecord(analysis.part1.identification), field ?? "", subfield);
       case "construction":
-        return (analysis.part1.construction as unknown as Record<string, string>)[field ?? ""];
+        return readLeaf(asRecord(analysis.part1.construction), field ?? "", subfield);
       case "closure":
-        return (analysis.part1.closure as unknown as Record<string, string>)[field ?? ""];
+        return readLeaf(asRecord(analysis.part1.closure), field ?? "", subfield);
       case "seamCallouts":
-        return (analysis.part1.seamCallouts[index ?? -1] as unknown as Record<string, string>)[field ?? ""];
+        return readLeaf(asRecord(analysis.part1.seamCallouts[index ?? -1]), field ?? "", subfield);
       case "visibleColors":
-        return (analysis.part1.visibleColors[index ?? -1] as unknown as Record<string, string>)[field ?? ""];
+        return readLeaf(asRecord(analysis.part1.visibleColors[index ?? -1]), field ?? "", subfield);
       case "suggestedColorways":
-        return (analysis.part1.suggestedColorways[index ?? -1] as unknown as Record<string, string>)[field ?? ""];
+        return readLeaf(asRecord(analysis.part1.suggestedColorways[index ?? -1]), field ?? "", subfield);
       case "artworkItems":
-        return (analysis.part1.artworkItems[index ?? -1] as unknown as Record<string, string>)[field ?? ""];
+        return readLeaf(asRecord(analysis.part1.artworkItems[index ?? -1]), field ?? "", subfield);
+      case "fabricMaterials":
+        return readLeaf(asRecord(analysis.part2.fabricMaterials[index ?? -1]), field ?? "", subfield);
       case "bomItems":
-        return (analysis.part2.bomItems[index ?? -1] as unknown as Record<string, string>)[field ?? ""];
+        return readLeaf(asRecord(analysis.part2.bomItems[index ?? -1]), field ?? "", subfield);
       case "measurementPoints": {
         const point = analysis.part2.measurementPoints[index ?? -1];
         if (!point) return undefined;
-        if (field?.startsWith("values.")) return (point.values as unknown as Record<string, string>)[field.slice("values.".length)];
-        return (point as unknown as Record<string, string>)[field ?? ""];
+        if (field?.startsWith("values.")) return readLeaf(asRecord(point.values), field.slice("values.".length), subfield);
+        return readLeaf(asRecord(point), field ?? "", subfield);
       }
+      case "productionInstructions":
+        return readLeaf(asRecord(analysis.part3.productionInstructions[index ?? -1]), field ?? "", subfield);
+      case "qcCheckpoints":
+        return readLeaf(asRecord(analysis.part3.qcCheckpoints[index ?? -1]), field ?? "", subfield);
+      case "assumptionsAndMissingData":
+        return readLeaf(asRecord(analysis.part4.assumptionsAndMissingData[index ?? -1]), field ?? "", subfield);
+      case "additionalReferenceImagesRequired":
+        return readLeaf(asRecord(analysis.part4.additionalReferenceImagesRequired[index ?? -1]), field ?? "", subfield);
       default:
-        if ((PART1_SCALAR_FIELDS as readonly string[]).includes(category)) return (analysis.part1 as unknown as Record<string, string>)[category];
-        if ((PART2_SCALAR_FIELDS as readonly string[]).includes(category)) return (analysis.part2 as unknown as Record<string, string>)[category];
+        if ((PART1_SCALAR_FIELDS as readonly string[]).includes(category)) return readLeaf(asRecord(analysis.part1), category, subfield);
+        if ((PART2_SCALAR_FIELDS as readonly string[]).includes(category)) return readLeaf(asRecord(analysis.part2), category, subfield);
+        if ((PART3_SCALAR_FIELDS as readonly string[]).includes(category)) return readLeaf(asRecord(analysis.part3), category, subfield);
+        if ((PART3_STATUS_FIELDS as readonly string[]).includes(category)) return readLeaf(asRecord(analysis.part3), category, subfield);
+        if ((PART4_SCALAR_FIELDS as readonly string[]).includes(category)) return readLeaf(asRecord(analysis.part4), category, subfield);
         return undefined;
     }
   } catch {
@@ -2573,14 +2638,15 @@ function readTechPackFieldValue(analysis: GarmentAnalysis, input: { category: st
 }
 
 /**
- * Resolves a `{category, index?, field?}` path against a mutable clone of
- * `GarmentAnalysis`, mutating the matching leaf in place with `value`.
- * Every category/field name is checked against the real known-key lists
- * exported from `tech-pack/schema.ts` -- an unknown key or out-of-bounds
- * array index is rejected outright, never silently written.
+ * Resolves a `{category, index?, field?, subfield?}` path against a mutable
+ * clone of `GarmentAnalysis`, mutating the matching leaf in place with
+ * `value`. Every category/field name is checked against the real known-key
+ * lists exported from `tech-pack/schema.ts` -- an unknown key or
+ * out-of-bounds array index is rejected outright, never silently written.
  */
-function applyTechPackFieldEdit(analysis: GarmentAnalysis, input: { category: string; index?: number; field?: string; value: string }): void {
-  const { category, index, field, value } = input;
+function applyTechPackFieldEdit(analysis: GarmentAnalysis, input: { category: string; index?: number; field?: string; subfield?: "value" | "status"; value: string }): void {
+  const { category, index, field, subfield, value } = input;
+  const asRecord = (v: unknown) => v as unknown as Record<string, unknown>;
 
   const requireIndex = (arr: unknown[]) => {
     if (index === undefined || index < 0 || index >= arr.length) {
@@ -2598,27 +2664,27 @@ function applyTechPackFieldEdit(analysis: GarmentAnalysis, input: { category: st
   switch (category) {
     case "identification": {
       const key = requireField(IDENTIFICATION_EDITABLE_FIELDS);
-      (analysis.part1.identification as unknown as Record<string, string>)[key] = value;
+      writeLeaf(asRecord(analysis.part1.identification), key, subfield, value);
       return;
     }
     case "construction": {
       const key = requireField(CONSTRUCTION_EDITABLE_FIELDS);
-      (analysis.part1.construction as unknown as Record<string, string>)[key] = value;
+      writeLeaf(asRecord(analysis.part1.construction), key, subfield, value);
       return;
     }
     case "closure": {
       const key = requireField(CLOSURE_EDITABLE_FIELDS);
-      (analysis.part1.closure as unknown as Record<string, string>)[key] = value;
+      writeLeaf(asRecord(analysis.part1.closure), key, subfield, value);
       return;
     }
     case "seamCallouts": {
       const i = requireIndex(analysis.part1.seamCallouts);
       const item = analysis.part1.seamCallouts[i];
       if (field === "status") {
-        if (!(SEAM_CALLOUT_STATUS_VALUES as readonly string[]).includes(value)) {
-          throw new BusinessRuleError("VALIDATION_ERROR", `"status" must be one of: ${SEAM_CALLOUT_STATUS_VALUES.join(", ")}.`);
+        if (!(CONFIDENCE_STATUSES as readonly string[]).includes(value)) {
+          throw new BusinessRuleError("VALIDATION_ERROR", `"status" must be one of: ${CONFIDENCE_STATUSES.join(", ")}.`);
         }
-        item.status = value as (typeof SEAM_CALLOUT_STATUS_VALUES)[number];
+        item.status = value as (typeof CONFIDENCE_STATUSES)[number];
         return;
       }
       const key = requireField(SEAM_CALLOUT_TEXT_FIELDS);
@@ -2628,7 +2694,7 @@ function applyTechPackFieldEdit(analysis: GarmentAnalysis, input: { category: st
     case "visibleColors": {
       const i = requireIndex(analysis.part1.visibleColors);
       const key = requireField(VISIBLE_COLOR_EDITABLE_FIELDS);
-      (analysis.part1.visibleColors[i] as unknown as Record<string, string>)[key] = value;
+      writeLeaf(asRecord(analysis.part1.visibleColors[i]), key, subfield, value);
       return;
     }
     case "suggestedColorways": {
@@ -2640,13 +2706,19 @@ function applyTechPackFieldEdit(analysis: GarmentAnalysis, input: { category: st
     case "artworkItems": {
       const i = requireIndex(analysis.part1.artworkItems);
       const key = requireField(ARTWORK_ITEM_EDITABLE_FIELDS);
-      (analysis.part1.artworkItems[i] as unknown as Record<string, string>)[key] = value;
+      writeLeaf(asRecord(analysis.part1.artworkItems[i]), key, subfield, value);
+      return;
+    }
+    case "fabricMaterials": {
+      const i = requireIndex(analysis.part2.fabricMaterials);
+      const key = requireField(FABRIC_MATERIAL_EDITABLE_FIELDS);
+      writeLeaf(asRecord(analysis.part2.fabricMaterials[i]), key, subfield, value);
       return;
     }
     case "bomItems": {
       const i = requireIndex(analysis.part2.bomItems);
       const key = requireField(BOM_ITEM_EDITABLE_FIELDS);
-      (analysis.part2.bomItems[i] as unknown as Record<string, string>)[key] = value;
+      writeLeaf(asRecord(analysis.part2.bomItems[i]), key, subfield, value);
       return;
     }
     case "measurementPoints": {
@@ -2660,19 +2732,67 @@ function applyTechPackFieldEdit(analysis: GarmentAnalysis, input: { category: st
         (point.values as unknown as Record<string, string>)[size] = value;
         return;
       }
+      if (field === "status") {
+        if (!(CONFIDENCE_STATUSES as readonly string[]).includes(value)) {
+          throw new BusinessRuleError("VALIDATION_ERROR", `"status" must be one of: ${CONFIDENCE_STATUSES.join(", ")}.`);
+        }
+        point.status = value as (typeof CONFIDENCE_STATUSES)[number];
+        return;
+      }
       const key = requireField(MEASUREMENT_POINT_EDITABLE_FIELDS);
       (point as unknown as Record<string, string>)[key] = value;
       return;
     }
+    case "productionInstructions": {
+      const i = requireIndex(analysis.part3.productionInstructions);
+      const key = requireField(PRODUCTION_INSTRUCTION_EDITABLE_FIELDS);
+      (analysis.part3.productionInstructions[i] as unknown as Record<string, string>)[key] = value;
+      return;
+    }
+    case "qcCheckpoints": {
+      const i = requireIndex(analysis.part3.qcCheckpoints);
+      const key = requireField(QC_CHECKPOINT_EDITABLE_FIELDS);
+      (analysis.part3.qcCheckpoints[i] as unknown as Record<string, string>)[key] = value;
+      return;
+    }
+    case "assumptionsAndMissingData": {
+      const i = requireIndex(analysis.part4.assumptionsAndMissingData);
+      const item = analysis.part4.assumptionsAndMissingData[i];
+      if (field === "status") {
+        if (!(CONFIDENCE_STATUSES as readonly string[]).includes(value)) {
+          throw new BusinessRuleError("VALIDATION_ERROR", `"status" must be one of: ${CONFIDENCE_STATUSES.join(", ")}.`);
+        }
+        item.status = value as (typeof CONFIDENCE_STATUSES)[number];
+        return;
+      }
+      const key = requireField(ASSUMPTION_TEXT_FIELDS);
+      (item as unknown as Record<string, string>)[key] = value;
+      return;
+    }
+    case "additionalReferenceImagesRequired": {
+      const i = requireIndex(analysis.part4.additionalReferenceImagesRequired);
+      const key = requireField(REFERENCE_IMAGE_NEEDED_EDITABLE_FIELDS);
+      (analysis.part4.additionalReferenceImagesRequired[i] as unknown as Record<string, string>)[key] = value;
+      return;
+    }
     default: {
-      // The 9 remaining categories are plain scalar strings on Part 1/Part 2
-      // -- the whole value is replaced directly, no field/index involved.
+      // The remaining categories are plain scalar leaves directly on Part
+      // 1/2/3/4 -- some are plain strings (writeLeaf replaces the whole
+      // value), some are {value,status} pairs (writeLeaf honors `subfield`).
       if ((PART1_SCALAR_FIELDS as readonly string[]).includes(category)) {
-        (analysis.part1 as unknown as Record<string, string>)[category] = value;
+        writeLeaf(asRecord(analysis.part1), category, subfield, value);
         return;
       }
       if ((PART2_SCALAR_FIELDS as readonly string[]).includes(category)) {
-        (analysis.part2 as unknown as Record<string, string>)[category] = value;
+        writeLeaf(asRecord(analysis.part2), category, subfield, value);
+        return;
+      }
+      if ((PART3_SCALAR_FIELDS as readonly string[]).includes(category) || (PART3_STATUS_FIELDS as readonly string[]).includes(category)) {
+        writeLeaf(asRecord(analysis.part3), category, subfield, value);
+        return;
+      }
+      if ((PART4_SCALAR_FIELDS as readonly string[]).includes(category)) {
+        writeLeaf(asRecord(analysis.part4), category, subfield, value);
         return;
       }
       throw new BusinessRuleError("VALIDATION_ERROR", `Unknown tech pack category "${category}".`);
