@@ -84,6 +84,7 @@ const {
   updateSampleBomMaterials,
   removeSampleMaterial,
   setSampleRequestMainImage,
+  duplicateSampleRequest,
 } = await import("./sample.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
@@ -191,6 +192,112 @@ describe("createSampleRequest", () => {
     vi.mocked(SampleRequestRepository.create).mockResolvedValue({ id: "sam-1" } as never);
     await createSampleRequest(actor, input as never);
     expect(SampleRequestRepository.create).toHaveBeenCalledWith(expect.objectContaining({ customerId: "cust-1", buyerId: "buyer-1", productId: "prod-1" }));
+  });
+});
+
+describe("duplicateSampleRequest — 'Copy Design'", () => {
+  const source = {
+    id: "sam-src",
+    companyId: "co-1",
+    productId: "prod-1",
+    sampleType: "PROTO",
+    colorId: null,
+    sizeId: null,
+    currentVersionNumber: 1,
+  };
+  const newRequest = { id: "sam-new", status: "REQUESTED", currentVersionNumber: 0, productId: "prod-1" };
+  const copyInput = { styleName: "Copy of Test", customerId: "cust-1", buyerId: "buyer-1" };
+
+  beforeEach(() => {
+    vi.mocked(SampleRequestRepository.findAnyById).mockImplementation((async (_companyId: string, id: string) => {
+      if (id === "sam-src") return source;
+      if (id === "sam-new") return newRequest;
+      return null;
+    }) as never);
+    vi.mocked(SampleRequestRepository.create).mockResolvedValue(newRequest as never);
+    vi.mocked(SampleRequestRepository.update).mockResolvedValue(newRequest as never);
+    vi.mocked(SampleVersionRepository.create).mockResolvedValue({ id: "v-new-1" } as never);
+    vi.mocked(SampleVersionRepository.update).mockResolvedValue({} as never);
+    vi.mocked(SampleVersionRepository.findWithRequestOwner).mockResolvedValue({
+      id: "v-new-1",
+      sampleRequest: { companyId: "co-1" },
+    } as never);
+    vi.mocked(SampleMaterialRepository.findByVersionAndMergeKey).mockResolvedValue(null);
+    // addSampleMaterial's own trailing costing recompute (recalculateSampleVersionCosting) —
+    // a harmless no-op here since the freshly-copied line has no rate yet.
+    vi.mocked(SampleVersionRepository.findByIdTx).mockResolvedValue({
+      id: "v-new-1",
+      marginPercent: null,
+      commissionPercent: null,
+      freightAmount: null,
+      estimatedCostPerUnit: null,
+    } as never);
+    vi.mocked(SampleMaterialRepository.findByVersionIdTx).mockResolvedValue([] as never);
+    vi.mocked(SampleOtherChargeRepository.findByVersionIdTx).mockResolvedValue([] as never);
+    vi.mocked(SampleVersionRepository.updateCostingIfUnlocked).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(SampleMaterialRepository.findByVersionId).mockResolvedValue([] as never);
+  });
+
+  it("rejects a source request belonging to another company", async () => {
+    vi.mocked(SampleRequestRepository.findAnyById).mockResolvedValue(null);
+    await expect(duplicateSampleRequest(actor, "sam-src", copyInput)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(SampleRequestRepository.create).not.toHaveBeenCalled();
+  });
+
+  it("copies Style/Sample Type from the source but sets copiedFromRequestId, and never seeds materials from the Style's own BOM", async () => {
+    vi.mocked(SampleVersionRepository.findLatest).mockImplementation((async (id: string) => {
+      if (id === "sam-src") return { id: "v-src-1", versionNumber: 1, techPackNotes: "Handle with care" };
+      return null;
+    }) as never);
+    vi.mocked(SampleMaterialRepository.findByVersionId).mockResolvedValue([
+      { materialId: "mat-1", plannedQuantity: "5.0000", uomId: "uom-1", colorId: "color-1", dyeId: null, notes: "From the source" },
+    ] as never);
+
+    await duplicateSampleRequest(actor, "sam-src", copyInput);
+
+    expect(SampleRequestRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({ productId: "prod-1", sampleType: "PROTO", styleName: "Copy of Test", copiedFromRequestId: "sam-src" })
+    );
+    // seedFromStyleBom: false — copyStyleBomIntoSampleVersion (gated on this
+    // exact call) must never run, or the source's own copied materials
+    // would end up merged with stray "Copied from Style BOM" lines.
+    expect(BomRepository.findByProductId).not.toHaveBeenCalled();
+    expect(SampleVersionRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({ sampleRequestId: "sam-new", techPackNotes: "Handle with care" })
+    );
+    expect(SampleMaterialRepository.createMany).toHaveBeenCalledWith([
+      expect.objectContaining({
+        sampleVersionId: "v-new-1",
+        materialId: "mat-1",
+        plannedQuantity: 5,
+        uomId: "uom-1",
+        colorId: "color-1",
+        dyeId: null,
+        notes: "From the source",
+      }),
+    ]);
+  });
+
+  it("falls back sampleType to OTHER for a legacy source request with no sampleType set", async () => {
+    vi.mocked(SampleRequestRepository.findAnyById).mockImplementation((async (_companyId: string, id: string) => {
+      if (id === "sam-src") return { ...source, sampleType: null };
+      if (id === "sam-new") return newRequest;
+      return null;
+    }) as never);
+    vi.mocked(SampleVersionRepository.findLatest).mockResolvedValue(null);
+
+    await duplicateSampleRequest(actor, "sam-src", copyInput);
+
+    expect(SampleRequestRepository.create).toHaveBeenCalledWith(expect.objectContaining({ sampleType: "OTHER" }));
+  });
+
+  it("creates no version/materials when the source has never had a version", async () => {
+    vi.mocked(SampleVersionRepository.findLatest).mockResolvedValue(null);
+
+    await duplicateSampleRequest(actor, "sam-src", copyInput);
+
+    expect(SampleVersionRepository.create).not.toHaveBeenCalled();
+    expect(SampleMaterialRepository.createMany).not.toHaveBeenCalled();
   });
 });
 

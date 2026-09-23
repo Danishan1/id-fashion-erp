@@ -13,6 +13,15 @@ export const salesOrderItemSchema = z.object({
   unitPrice: z.coerce.number().min(0, "Unit price cannot be negative"),
   notes: z.string().max(500).optional().or(z.literal("")),
   breakdown: z.array(salesOrderItemBreakdownSchema).min(1, "At least one size/color line is required"),
+  // Effective BOM (2026-09-24) — set only when this item is an edit of an
+  // existing line (the UI re-submits whatever it originally loaded), never
+  // sent for a genuinely new line. This is what lets updateSalesOrder()
+  // preserve that line's own frozen BOM snapshot and any active
+  // SalesOrderBomOverride rows across the edit instead of resetting them —
+  // see reconcileSalesOrderLines() in sales-order-bom.service.ts. Ignored
+  // entirely on createSalesOrder() (a brand-new order has no existing lines
+  // to reference).
+  salesOrderLineId: z.string().uuid().optional().or(z.literal("")),
 });
 
 export type SalesOrderItemInput = z.infer<typeof salesOrderItemSchema>;

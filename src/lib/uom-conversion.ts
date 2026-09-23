@@ -1,6 +1,6 @@
 import type { Prisma } from "@prisma/client";
 
-interface UomLike {
+export interface UomLike {
   id: string;
   baseUnitId: string | null;
   conversionFactor: number | string | Prisma.Decimal;

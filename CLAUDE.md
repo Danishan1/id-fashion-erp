@@ -7122,6 +7122,100 @@ packing-process illustrations, which would have contradicted this module's own r
   — Part 3's existing `polybagSpec`/`cartonPackingSpec`/label-spec fields stay their current single
   `{value,status}` shape rather than being restructured into full sub-tables this pass.
 
+## Sampling — "Copy Design" (2026-09-23)
+
+User asked how to copy an existing Design (Masters → Styles → a style → Designs — an APPROVED
+`SampleRequest` built against that style) and make minor changes under a new name, without re-typing
+everything. Scoped via direct confirmation before building: images skip (not copied), Customer/Buyer copy
+from the source but stay editable in the popup, and add a visible "copied from" trace on the new design.
+
+- **Schema**: `SampleRequest.copiedFromRequestId` (nullable, self-referencing FK, migration
+  `20260923090000_add_sample_request_copied_from`) — set once, at creation, purely for traceability; never a
+  live/synced link. Excluded the raw `migrate diff` output's own unrelated `sample_requests.color` DROP
+  COLUMN — the same pre-existing, already-documented DB drift this file has flagged before — from the
+  hand-authored migration SQL.
+- **`duplicateSampleRequest()`** (`sample.service.ts`) orchestrates the *existing, unchanged*
+  `createSampleRequest()` → `addSampleVersion()` → `addSampleMaterial()`, the same "reuse, don't
+  re-implement" pattern already used by Convert-to-Style and Buyer-Enquiry-to-Sample. Copies Style, Sample
+  Type, Color/Size, Tech Pack Notes, and every material line (Material/Qty/Unit/Color/Shade); deliberately
+  does **not** copy rate/GST, damaged quantity/reason, costing lock, approvals, or comments — none of that
+  describes a sample that hasn't been made yet. The new request always starts fresh at
+  `REQUESTED → TECH_PACK_READY`, never inheriting the source's Approved status — a copy is a new development
+  attempt with its own approval cycle.
+- **Two small, additive extensions to existing functions, not new parallel logic**: `createSampleRequest()`
+  gained an optional 3rd param (`{ copiedFromRequestId }`, used only by this new caller) and `addSampleVersion()`
+  gained an optional `{ seedFromStyleBom: false }` — without the latter, its own existing auto-seed-from-
+  the-Style's-real-BOM step (built for the *ordinary* "raise a sample against an existing Style" flow) would
+  have run first and left stray "Copied from Style BOM" lines mixed in alongside the source design's own
+  copied materials. Every other existing caller of both functions is unaffected (the options are omitted).
+- **Images deliberately not copied**: an `Attachment`'s `storageKey` points at one physical file — pointing
+  a second Attachment row at the same file would silently break the copy's image the day someone deletes the
+  original's. Flagged as a scope decision rather than solved with a file-duplication step.
+- **UI**: a new "Copy Design" row action (`CopyDesignModal.tsx`) on the Designs list, next to View/BOM/
+  Variants/Images — Design Name pre-filled as `Copy of <source name>` (the one field expected to change
+  immediately), Customer/Buyer pre-filled via the same cascade fetch `SampleRequestForm.tsx` already uses,
+  both editable. On success, navigates straight to the new Sample Request's own page. The new request's
+  detail page shows a "Copied from: SAM-XXXXX — <name>" link back to the source, right alongside the
+  existing Buyer-Enquiry-traceability line.
+- 4 new unit tests (`sample.service.test.ts`) covering the cross-company source rejection, the header/
+  materials copy with the Style-BOM-seed correctly skipped, the legacy-null-`sampleType` fallback to
+  `OTHER`, and the no-version-on-source short-circuit. 1866/1866 tests project-wide, `npx tsc --noEmit` and
+  `npx eslint` both clean.
+- **Verified live end-to-end** through the real UI against real data (`SAM-2026-00007`, a real Approved
+  design with 2 real material lines and real tech pack notes): opened Copy Design, confirmed Customer/Buyer/
+  Design Name all pre-filled correctly, edited the Design Name, submitted — confirmed the new
+  `SAM-2026-00010` landed on `Tech Pack Ready` (not Approved), with both material lines copied exactly
+  (quantities/units, no rate, no damage), the tech pack notes copied, zero images, and a working "Copied
+  from: SAM-2026-00007" link back to the source; confirmed the source itself (status, materials, images) was
+  completely untouched by the copy. Kept as a real, working demonstration (no delete endpoint exists for
+  Sample Requests, matching this project's own established precedent).
+
+## Production — "Send to External Job-Work" now picks from real Job-Work Contractors, not every Supplier (2026-09-23)
+
+User-reported: the "Send to External Job-Work" modal's "Contractor" field listed every active Supplier
+undifferentiated (fabric/trims/packaging/machinery vendors included) — confusing, since none of those are
+actually job-work contractors. Investigated before building: `JobWorkOrder.supplierId` genuinely IS the
+correct entity for this (the whole External Job-Work system — Piece-Rate resolution, the external vendor
+login via `User.supplierId`, RBAC's `EXTERNAL_UNIT_USER` — is built around Supplier); swapping the field to
+Production Supervisor (an internal Employee) would have broken all of that. The real bug: there was no way
+to mark which Suppliers are actual job-work contractors, so the picker just showed the whole vendor list.
+Presented two fix options (a dedicated Supplier flag vs. reusing the Category master) with a recommendation;
+user chose the flag.
+
+- **Schema**: `Supplier.isJobWorkContractor` (nullable-then-`false`-default boolean, migration
+  `20260923120000_add_supplier_job_work_contractor`) — deliberately independent of `Supplier.categoryId`
+  (single-valued today), since a real supplier can be both a raw-material vendor AND a job-work contractor
+  at once.
+- **`listSuppliers()`** gained an optional `{ jobWorkContractor: boolean }` filter (only the "Send to
+  External Job-Work" picker's own `GET /api/v1/suppliers?jobWorkContractor=true` call passes it — every
+  other existing caller of this endpoint/function is unaffected, confirmed live: the plain unfiltered call
+  still returned all 4 seeded suppliers after the change).
+- **UI**: a "Job-Work Contractor" checkbox on the Supplier Add/Edit form (`SupplierForm.tsx`, next to the
+  existing Active checkbox) with inline copy explaining what it does; a "Job-Work Contractor" badge column
+  on the Suppliers list (`SuppliersListClient.tsx`) so it's visible at a glance without opening each record.
+  `LotWorkflowPanel.tsx`'s Contractor picker now fetches the filtered endpoint and shows an inline amber hint
+  ("no suppliers are marked as a Job-Work Contractor yet — go tag one in Masters → Suppliers") when the
+  filtered list is empty, instead of silently showing nothing.
+- 3 new unit tests (`supplier.service.test.ts`) covering the filter's default-off/on behavior and the
+  `isJobWorkContractor` PATCH path.
+- **A real, unrelated pre-existing test-typing bug was hit and fixed while running `tsc` for this change**:
+  3 `mockImplementation()` calls in `sample.service.test.ts` (from the same day's earlier "Copy Design" work)
+  cast only their inner return values to `never`, not the whole function expression — this had been silently
+  fine until a `prisma generate` re-run (triggered by this Supplier schema change) shifted the generated
+  Prisma fluent-client types enough to newly fail a structural check. Fixed by casting the whole function
+  expression instead — the exact same documented fix already applied once before for AI Designer's own test
+  suite.
+- **Live end-to-end verification hit this project's own well-documented stale-Turbopack-cache gotcha** — the
+  first save attempt after adding the new column 500'd with a raw Prisma `PrismaClientValidationError:
+  Unknown argument categoryId`, from a dev server that had been running since before the schema change; a
+  full `preview_stop`/`preview_start` (not just `prisma generate`, which had already been re-run) fixed it
+  immediately, confirmed by the identical save succeeding right after. Verified fully afterward, real data:
+  flagged "HP Cotton" as a Job-Work Contractor through the real Supplier edit form, confirmed it appeared
+  with the new badge on the Suppliers list and was the *only* option in a real Lot's "Send to External
+  Job-Work" picker (the other 3 seeded suppliers correctly excluded), and successfully created a real
+  `JobWorkOrder` (`JWO-2026-00001`) against it end-to-end. Full suite green throughout. Kept as a real,
+  working demonstration.
+
 ## Reference
 
 Full architecture rationale, complete table-by-table field lists, and the full role×module permission matrix were developed in the Phase 1 planning session and are condensed here. Consult that history if a design decision needs deeper justification than what's summarized above.

@@ -6,6 +6,7 @@ import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { Modal } from "@/components/ui/Modal";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
+import { MaterialPlannedVsIssuedPanel } from "./MaterialPlannedVsIssuedPanel";
 import { MaterialRequirementPreview } from "./MaterialRequirementPreview";
 import {
   STATUS_BADGE_CLASS,
@@ -362,6 +363,8 @@ export function ProductionOrderWorkflowPanel({
         quantity={Number(order.plannedQuantity)}
         salesOrderItemId={order.salesOrderItemId || undefined}
       />
+
+      <MaterialPlannedVsIssuedPanel productionOrderId={productionOrderId} />
 
       <div className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
         <h2 className="mb-3 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Actions</h2>

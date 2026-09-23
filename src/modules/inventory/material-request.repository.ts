@@ -75,6 +75,11 @@ export const MaterialRequestRepository = {
         bom: { select: { id: true, productId: true } },
         originalMaterialRequest: { select: { id: true, requestNumber: true } },
         requestedBy: { select: { id: true, fullName: true } },
+        // Additional/Damage Material Request approval (2026-09-24) —
+        // resolved to a real Person for display; approvalStatus/
+        // approvalRemark/approvedAt are plain scalars, already included
+        // automatically by this top-level `include`.
+        approvedBy: { select: { id: true, fullName: true } },
         lines: { include: ITEM_INCLUDE, orderBy: { createdAt: "asc" } },
       },
     }),
@@ -87,6 +92,15 @@ export const MaterialRequestRepository = {
 
   update: (id: string, data: Prisma.MaterialRequestUncheckedUpdateInput) =>
     prisma.materialRequest.update({ where: { id }, data }),
+
+  /** Additional/Damage Material Request approval (2026-09-24) — race-safe
+   * approve/reject, the `where` clause re-asserting approvalStatus is still
+   * PENDING so two concurrent decisions can never both succeed. Same guarded-
+   * conditional-update idiom as MaterialSubstitutionRepository.decideInTx. */
+  decideApproval: (
+    id: string,
+    data: { approvalStatus: "APPROVED" | "REJECTED"; approvedByUserId: string; approvedAt: Date; approvalRemark: string | null }
+  ) => prisma.materialRequest.updateMany({ where: { id, approvalStatus: "PENDING" }, data }),
 
   /** Replace of a request's still-unlocked lines only — same "delete then
    * recreate" shape as PurchaseOrder's/the former PurchaseRequest's
@@ -191,7 +205,7 @@ export const MaterialRequestItemRepository = {
       include: {
         material: { select: { id: true, styleName: true, materialCategory: true, baseUomId: true, baseUom: true } },
         uom: true,
-        materialRequest: { select: { id: true, companyId: true, warehouseId: true, status: true, requestType: true } },
+        materialRequest: { select: { id: true, companyId: true, warehouseId: true, status: true, requestType: true, approvalStatus: true } },
       },
     }),
 

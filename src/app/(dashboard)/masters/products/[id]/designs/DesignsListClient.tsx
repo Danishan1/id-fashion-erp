@@ -4,11 +4,12 @@ import { useEffect, useState } from "react";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { Modal } from "@/components/ui/Modal";
 import { FilePreviewModal } from "@/components/ui/FilePreviewModal";
-import { ViewIcon, BomIcon, VariantsIcon, ImagesIcon } from "@/components/ui/icons";
+import { ViewIcon, BomIcon, VariantsIcon, ImagesIcon, CopyIcon } from "@/components/ui/icons";
 import { RowAction } from "@/components/ui/RowAction";
 import { STATUS_LABELS, STATUS_BADGE_CLASS } from "@/app/(dashboard)/sampling/statusLabels";
 import { SampleImagesSection } from "@/app/(dashboard)/sampling/SampleImagesSection";
 import { VariantsSection } from "../../VariantsSection";
+import { CopyDesignModal } from "./CopyDesignModal";
 
 interface SampleRequestRow {
   id: string;
@@ -17,7 +18,8 @@ interface SampleRequestRow {
   status: keyof typeof STATUS_LABELS;
   sampleType: string;
   mainImageAttachmentId: string | null;
-  customer: { name: string } | null;
+  customer: { id: string; name: string } | null;
+  buyer: { id: string; name: string } | null;
   // The current (highest-numbered) version's own decision date — matches
   // sample.repository.ts's findMany, since SampleRequest itself has no such
   // column, only SampleVersion does.
@@ -63,6 +65,9 @@ export function DesignsListClient({ productId, styleName, styleCode, variantCoun
   // preview the Images modal's own thumbnails use — same pattern as the
   // Styles list's row thumbnail.
   const [thumbnailPreview, setThumbnailPreview] = useState<{ url: string; title: string } | null>(null);
+  // "Copy Design" — stores the whole source row (not just an id), same
+  // convention as every other modal-target state in this app.
+  const [copyTarget, setCopyTarget] = useState<SampleRequestRow | null>(null);
 
   // Deliberately does no setState itself — kept as a pure fetch so it can
   // be called both from the mount effect below (which must stay free of
@@ -191,6 +196,7 @@ export function DesignsListClient({ productId, styleName, styleCode, variantCoun
                           onClick={() => setVariantsOpen(true)}
                         />
                         <RowAction icon={<ImagesIcon />} label="Images" onClick={() => setImagesFor(r)} />
+                        <RowAction icon={<CopyIcon />} label="Copy Design" onClick={() => setCopyTarget(r)} />
                       </div>
                     </td>
                   </tr>
@@ -213,6 +219,15 @@ export function DesignsListClient({ productId, styleName, styleCode, variantCoun
       )}
 
       {variantsOpen && <VariantsSection key={productId} productId={productId} onClose={() => setVariantsOpen(false)} />}
+
+      {copyTarget && (
+        <CopyDesignModal
+          key={copyTarget.id}
+          source={copyTarget}
+          onClose={() => setCopyTarget(null)}
+          onCreated={() => setCopyTarget(null)}
+        />
+      )}
 
       {thumbnailPreview && (
         <FilePreviewModal

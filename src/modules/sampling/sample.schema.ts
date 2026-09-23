@@ -75,6 +75,19 @@ export const sampleRequestDesignNameSchema = z.object({
 
 export type SampleRequestDesignNameInput = z.infer<typeof sampleRequestDesignNameSchema>;
 
+// "Copy Design" — the only header fields the popup lets you change before
+// creating the clone; everything else (Style, Sample Type, Color/Size, the
+// current version's tech pack notes + materials) is copied from the source
+// automatically by duplicateSampleRequest() in sample.service.ts. buyerId ""
+// clears it, same convention as sampleRequestSchema.
+export const duplicateSampleRequestSchema = z.object({
+  styleName: z.string().min(1, "Design name is required").max(200),
+  customerId: z.string().uuid("Customer is required"),
+  buyerId: z.string().uuid().optional().or(z.literal("")),
+});
+
+export type DuplicateSampleRequestInput = z.infer<typeof duplicateSampleRequestSchema>;
+
 export const sampleVersionSchema = z.object({
   techPackNotes: z.string().max(4000).optional().or(z.literal("")),
   estimatedCostPerUnit: z.coerce.number().min(0).optional(),

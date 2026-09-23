@@ -38,6 +38,7 @@ vi.mock("./material-request.repository", () => ({
     countLinkedPurchaseOrderItems: vi.fn(),
     countIssuedLines: vi.fn(),
     countLockedLines: vi.fn(),
+    decideApproval: vi.fn(),
     replaceLines: vi.fn(),
     findOpenDuplicateLines: vi.fn(),
     findOpenBySampleVersion: vi.fn(),
@@ -51,6 +52,9 @@ vi.mock("./material-request.repository", () => ({
     findLinesForShortfallGeneration: vi.fn(),
     findById: vi.fn(),
   },
+}));
+vi.mock("./material-substitution.repository", () => ({
+  MaterialSubstitutionRepository: { findById: vi.fn(), setInventoryTransactionInTx: vi.fn() },
 }));
 
 const { MaterialRequestRepository, MaterialRequestItemRepository } = await import("./material-request.repository");
@@ -66,6 +70,7 @@ const { BomRepository } = await import("@/modules/bom-mrp/bom.repository");
 const { ProductRepository } = await import("@/modules/products/product.repository");
 const { SalesOrderRepository } = await import("@/modules/sales-orders/sales-order.repository");
 const { SampleVersionRepository, SampleMaterialRepository } = await import("@/modules/sampling/sample.repository");
+const { MaterialSubstitutionRepository } = await import("./material-substitution.repository");
 const {
   computeMaterialRequestStatus,
   computeRequiresPurchaseAction,
@@ -76,8 +81,11 @@ const {
   createMaterialRequestFromSampleVersion,
   findMaterialRequestsBySampleVersion,
   createMaterialRequest,
+  approveMaterialRequest,
+  rejectMaterialRequest,
   updateMaterialRequestLines,
   issueMaterialRequestLine,
+  issueSubstituteMaterial,
   getAvailableRollsForLine,
   getOtherWarehouseStockForLine,
   listMaterialRequests,
@@ -98,6 +106,7 @@ beforeEach(() => {
   vi.mocked(MaterialRequestRepository.countLinkedPurchaseOrderItems).mockReset().mockResolvedValue(0);
   vi.mocked(MaterialRequestRepository.countIssuedLines).mockReset().mockResolvedValue(0);
   vi.mocked(MaterialRequestRepository.countLockedLines).mockReset().mockResolvedValue(0);
+  vi.mocked(MaterialRequestRepository.decideApproval).mockReset().mockResolvedValue({ count: 1 } as never);
   vi.mocked(MaterialRequestRepository.replaceLines).mockReset();
   vi.mocked(MaterialRequestRepository.findOpenDuplicateLines).mockReset().mockResolvedValue([]);
   vi.mocked(MaterialRequestRepository.findOpenBySampleVersion).mockReset().mockResolvedValue([]);
@@ -121,13 +130,15 @@ beforeEach(() => {
   vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockReset();
   vi.mocked(MaterialRequestItemRepository.guardedIncrementIssued).mockReset();
   vi.mocked(MaterialRequestItemRepository.findById).mockReset();
-  vi.mocked(recordInventoryTransaction).mockReset().mockResolvedValue(undefined);
+  vi.mocked(recordInventoryTransaction).mockReset().mockResolvedValue({ id: "txn-1" } as never);
   vi.mocked(FabricRollRepository.findByIdWithContext).mockReset();
   vi.mocked(FabricRollRepository.guardedDecrementRemaining).mockReset();
   vi.mocked(FabricRollRepository.findAvailableForMaterial).mockReset();
   vi.mocked(FabricRollRepository.findAvailableAcrossWarehousesForMaterial).mockReset();
   vi.mocked(getAvailableQuantity).mockReset();
   vi.mocked(StockBalanceRepository.findMany).mockReset();
+  vi.mocked(MaterialSubstitutionRepository.findById).mockReset();
+  vi.mocked(MaterialSubstitutionRepository.setInventoryTransactionInTx).mockReset();
   vi.mocked(WarehouseRepository.findMany).mockReset();
 });
 
@@ -965,7 +976,19 @@ describe("issueMaterialRequestLine — Issue Extra widened to every request type
 
   it("still rejects an over-issue on a DAMAGE_REPLACEMENT line with no reason given", async () => {
     vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue(
-      baseLine({ materialRequest: { id: "mr-1", companyId: "co-1", warehouseId: "wh-1", status: "OPEN", requestType: "DAMAGE_REPLACEMENT" } }) as never
+      baseLine({
+        materialRequest: {
+          id: "mr-1",
+          companyId: "co-1",
+          warehouseId: "wh-1",
+          status: "OPEN",
+          requestType: "DAMAGE_REPLACEMENT",
+          // Already approved — this test is about the pre-existing "extra
+          // quantity needs a reason" rule, not the newer (2026-09-24)
+          // approval gate covered by its own dedicated describe block below.
+          approvalStatus: "APPROVED",
+        },
+      }) as never
     );
 
     await expect(issueMaterialRequestLine(actor, "line-1", 12, null, null)).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
@@ -1097,6 +1120,233 @@ describe("issueMaterialRequestLine — Change Warehouse override (2026-09-16)", 
         newValues: expect.not.objectContaining({ issuedFromWarehouseId: expect.anything(), issuedFromWarehouseName: expect.anything() }),
       })
     );
+  });
+});
+
+describe("createMaterialRequest — Additional/Damage approval gate (Phase 7)", () => {
+  it("creates a DAMAGE_REPLACEMENT request with approvalStatus PENDING", async () => {
+    vi.mocked(MaterialRequestRepository.findAnyById).mockResolvedValue({ id: "mr-orig" } as never);
+
+    await createMaterialRequest(actor, {
+      requestType: "DAMAGE_REPLACEMENT",
+      warehouseId: "wh-1",
+      originalMaterialRequestId: "mr-orig",
+      lines: [{ materialId: "mat-1", uomId: "uom-1", requestedQuantity: 5 }],
+    } as never);
+
+    expect(MaterialRequestRepository.createWithLines).toHaveBeenCalledWith(expect.objectContaining({ approvalStatus: "PENDING" }));
+  });
+
+  it("leaves approvalStatus null for an ordinary PRODUCTION_REQUIREMENT request — no approval gate at all", async () => {
+    await createMaterialRequest(actor, {
+      requestType: "PRODUCTION_REQUIREMENT",
+      warehouseId: "wh-1",
+      lines: [{ materialId: "mat-1", uomId: "uom-1", requestedQuantity: 5 }],
+    } as never);
+
+    expect(MaterialRequestRepository.createWithLines).toHaveBeenCalledWith(expect.objectContaining({ approvalStatus: null }));
+  });
+});
+
+describe("approveMaterialRequest / rejectMaterialRequest (Phase 7)", () => {
+  const pendingRequest = { id: "mr-1", companyId: "co-1", approvalStatus: "PENDING", requestedByUserId: "user-2", requestType: "DAMAGE_REPLACEMENT" };
+
+  it("approves a PENDING request, self-approval-guarded against the ORIGINAL requester", async () => {
+    vi.mocked(MaterialRequestRepository.findAnyById).mockResolvedValue(pendingRequest as never);
+
+    await approveMaterialRequest(actor, "mr-1", { approvalRemark: "Confirmed damage on the floor" });
+
+    expect(PermissionService.assert).toHaveBeenCalledWith("user-1", "production", "approve", { createdBy: "user-2" });
+    expect(MaterialRequestRepository.decideApproval).toHaveBeenCalledWith(
+      "mr-1",
+      expect.objectContaining({ approvalStatus: "APPROVED", approvedByUserId: "user-1" })
+    );
+  });
+
+  it("rejects deciding a request that has no approval gate at all (a PRODUCTION_REQUIREMENT request)", async () => {
+    vi.mocked(MaterialRequestRepository.findAnyById).mockResolvedValue({ ...pendingRequest, approvalStatus: null } as never);
+    await expect(approveMaterialRequest(actor, "mr-1", {})).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("rejects deciding an already-decided request", async () => {
+    vi.mocked(MaterialRequestRepository.findAnyById).mockResolvedValue({ ...pendingRequest, approvalStatus: "APPROVED" } as never);
+    await expect(approveMaterialRequest(actor, "mr-1", {})).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+  });
+
+  it("surfaces a clean error when a concurrent decision wins the race", async () => {
+    vi.mocked(MaterialRequestRepository.findAnyById).mockResolvedValue(pendingRequest as never);
+    vi.mocked(MaterialRequestRepository.decideApproval).mockResolvedValue({ count: 0 } as never);
+    await expect(approveMaterialRequest(actor, "mr-1", {})).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+  });
+
+  it("rejects a PENDING request via rejectMaterialRequest", async () => {
+    vi.mocked(MaterialRequestRepository.findAnyById).mockResolvedValue(pendingRequest as never);
+    await rejectMaterialRequest(actor, "mr-1", { approvalRemark: "Not a genuine shortage" });
+    expect(MaterialRequestRepository.decideApproval).toHaveBeenCalledWith("mr-1", expect.objectContaining({ approvalStatus: "REJECTED" }));
+  });
+});
+
+describe("issueMaterialRequestLine — Additional/Damage approval gate (Phase 7)", () => {
+  function damageLine(approvalStatus: string | null) {
+    return {
+      id: "line-1",
+      materialId: "mat-1",
+      requestedQuantity: "10",
+      issuedQuantity: "0",
+      material: { id: "mat-1", styleName: "Plastic Buttons", materialCategory: "BUTTONS", baseUomId: "uom-1", baseUom: { id: "uom-1", baseUnitId: null, conversionFactor: 1 } },
+      uom: { id: "uom-1", baseUnitId: null, conversionFactor: 1 },
+      materialRequest: { id: "mr-1", companyId: "co-1", warehouseId: "wh-1", status: "OPEN", requestType: "DAMAGE_REPLACEMENT", approvalStatus },
+    };
+  }
+
+  it("blocks issuing against a still-PENDING damage request", async () => {
+    vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue(damageLine("PENDING") as never);
+    await expect(issueMaterialRequestLine(actor, "line-1", 5, null, null)).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+    expect(MaterialRequestItemRepository.guardedIncrementIssued).not.toHaveBeenCalled();
+  });
+
+  it("blocks issuing against a REJECTED damage request", async () => {
+    vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue(damageLine("REJECTED") as never);
+    await expect(issueMaterialRequestLine(actor, "line-1", 5, null, null)).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+  });
+
+  it("allows issuing once the damage request is genuinely APPROVED", async () => {
+    const { getAvailableQuantity } = await import("./inventory.service");
+    vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue(damageLine("APPROVED") as never);
+    vi.mocked(getAvailableQuantity).mockResolvedValue(20 as never);
+    vi.mocked(MaterialRequestItemRepository.guardedIncrementIssued).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(MaterialRequestItemRepository.findById).mockResolvedValue({ id: "line-1" } as never);
+
+    await expect(issueMaterialRequestLine(actor, "line-1", 5, null, null)).resolves.toBeDefined();
+  });
+
+  it("never blocks an ordinary PRODUCTION_REQUIREMENT line — the gate is a no-op there (approvalStatus is always null)", async () => {
+    const { getAvailableQuantity } = await import("./inventory.service");
+    vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue({
+      ...damageLine(null),
+      materialRequest: { id: "mr-1", companyId: "co-1", warehouseId: "wh-1", status: "OPEN", requestType: "PRODUCTION_REQUIREMENT", approvalStatus: null },
+    } as never);
+    vi.mocked(getAvailableQuantity).mockResolvedValue(20 as never);
+    vi.mocked(MaterialRequestItemRepository.guardedIncrementIssued).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(MaterialRequestItemRepository.findById).mockResolvedValue({ id: "line-1" } as never);
+
+    await expect(issueMaterialRequestLine(actor, "line-1", 5, null, null)).resolves.toBeDefined();
+  });
+});
+
+describe("issueSubstituteMaterial — Material Substitution inventory issue integration (Phase 6)", () => {
+  const uom = { id: "uom-mtr", code: "MTR", name: "Metre", baseUnitId: null, conversionFactor: 1 };
+
+  function approvedSubstitution(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "sub-1",
+      companyId: "co-1",
+      materialRequestItemId: "line-1",
+      status: "APPROVED",
+      inventoryTransactionId: null,
+      substituteMaterialId: "light-blue-fabric",
+      quantity: 40,
+      uom,
+      substituteMaterial: { id: "light-blue-fabric", styleName: "Light Blue Fabric" },
+      ...overrides,
+    };
+  }
+
+  function issuableLine(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "line-1",
+      materialId: "green-fabric",
+      requestedQuantity: 100,
+      material: { styleName: "Green Fabric", baseUom: uom },
+      materialRequest: { id: "mr-1", companyId: "co-1", warehouseId: "wh-1", status: "PARTIALLY_FULFILLED" },
+      ...overrides,
+    };
+  }
+
+  it("posts the InventoryTransaction against the SUBSTITUTE material, never the original — the spec's own worked example", async () => {
+    vi.mocked(MaterialSubstitutionRepository.findById).mockResolvedValue(approvedSubstitution() as never);
+    vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue(issuableLine() as never);
+    vi.mocked(ProductRepository.findMaterialById).mockResolvedValue({ id: "light-blue-fabric", styleName: "Light Blue Fabric", baseUom: uom } as never);
+    vi.mocked(getAvailableQuantity).mockResolvedValue(100 as never);
+    vi.mocked(MaterialRequestItemRepository.guardedIncrementIssued).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(MaterialSubstitutionRepository.setInventoryTransactionInTx).mockResolvedValue({} as never);
+
+    await issueSubstituteMaterial(actor, "sub-1");
+
+    expect(recordInventoryTransaction).toHaveBeenCalledWith(
+      {},
+      actor,
+      expect.objectContaining({ productId: "light-blue-fabric", quantity: -40, transactionType: "MATERIAL_ISSUE" })
+    );
+    expect(MaterialSubstitutionRepository.setInventoryTransactionInTx).toHaveBeenCalledWith({}, "sub-1", "txn-1");
+  });
+
+  it("advances the LINE's own issuedQuantity accumulator (never Green's own stock) by the substitution's quantity", async () => {
+    vi.mocked(MaterialSubstitutionRepository.findById).mockResolvedValue(approvedSubstitution() as never);
+    vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue(issuableLine() as never);
+    vi.mocked(ProductRepository.findMaterialById).mockResolvedValue({ id: "light-blue-fabric", styleName: "Light Blue Fabric", baseUom: uom } as never);
+    vi.mocked(getAvailableQuantity).mockResolvedValue(100 as never);
+    vi.mocked(MaterialRequestItemRepository.guardedIncrementIssued).mockResolvedValue({ count: 1 } as never);
+
+    await issueSubstituteMaterial(actor, "sub-1");
+
+    expect(MaterialRequestItemRepository.guardedIncrementIssued).toHaveBeenCalledWith({}, "line-1", 100, 40, undefined);
+  });
+
+  it("rejects issuing a still-PENDING substitution", async () => {
+    vi.mocked(MaterialSubstitutionRepository.findById).mockResolvedValue(approvedSubstitution({ status: "PENDING" }) as never);
+    await expect(issueSubstituteMaterial(actor, "sub-1")).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+    expect(recordInventoryTransaction).not.toHaveBeenCalled();
+  });
+
+  it("rejects issuing a substitution that's already been issued once", async () => {
+    vi.mocked(MaterialSubstitutionRepository.findById).mockResolvedValue(approvedSubstitution({ inventoryTransactionId: "txn-old" }) as never);
+    await expect(issueSubstituteMaterial(actor, "sub-1")).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+  });
+
+  it("rejects when the substitute material's stock at the warehouse is insufficient — never touches the original material's own balance", async () => {
+    vi.mocked(MaterialSubstitutionRepository.findById).mockResolvedValue(approvedSubstitution() as never);
+    vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue(issuableLine() as never);
+    vi.mocked(ProductRepository.findMaterialById).mockResolvedValue({ id: "light-blue-fabric", styleName: "Light Blue Fabric", baseUom: uom } as never);
+    vi.mocked(getAvailableQuantity).mockResolvedValue(10 as never); // only 10 of the 40 needed
+
+    await expect(issueSubstituteMaterial(actor, "sub-1")).rejects.toMatchObject({ code: "INSUFFICIENT_RAW_MATERIAL_STOCK" });
+    expect(getAvailableQuantity).toHaveBeenCalledWith("co-1", "light-blue-fabric", "wh-1");
+    expect(recordInventoryTransaction).not.toHaveBeenCalled();
+  });
+
+  it("rejects when the underlying request is CANCELLED/CLOSED/ON_HOLD", async () => {
+    vi.mocked(MaterialSubstitutionRepository.findById).mockResolvedValue(approvedSubstitution() as never);
+    vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue(
+      issuableLine({ materialRequest: { id: "mr-1", companyId: "co-1", warehouseId: "wh-1", status: "CLOSED" } }) as never
+    );
+    await expect(issueSubstituteMaterial(actor, "sub-1")).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+  });
+
+  it("rejects substituting against a DAMAGE_REPLACEMENT request that's still pending approval — Phase 7's gate applies here too", async () => {
+    vi.mocked(MaterialSubstitutionRepository.findById).mockResolvedValue(approvedSubstitution() as never);
+    vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue(
+      issuableLine({
+        materialRequest: { id: "mr-1", companyId: "co-1", warehouseId: "wh-1", status: "PARTIALLY_FULFILLED", requestType: "DAMAGE_REPLACEMENT", approvalStatus: "PENDING" },
+      }) as never
+    );
+    await expect(issueSubstituteMaterial(actor, "sub-1")).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+    expect(recordInventoryTransaction).not.toHaveBeenCalled();
+  });
+
+  it("rejects when the substitution doesn't exist for this company", async () => {
+    vi.mocked(MaterialSubstitutionRepository.findById).mockResolvedValue(null);
+    await expect(issueSubstituteMaterial(actor, "sub-missing")).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("surfaces a clean error when a concurrent issue on the same line wins the race", async () => {
+    vi.mocked(MaterialSubstitutionRepository.findById).mockResolvedValue(approvedSubstitution() as never);
+    vi.mocked(MaterialRequestItemRepository.findWithRequestOwner).mockResolvedValue(issuableLine() as never);
+    vi.mocked(ProductRepository.findMaterialById).mockResolvedValue({ id: "light-blue-fabric", styleName: "Light Blue Fabric", baseUom: uom } as never);
+    vi.mocked(getAvailableQuantity).mockResolvedValue(100 as never);
+    vi.mocked(MaterialRequestItemRepository.guardedIncrementIssued).mockResolvedValue({ count: 0 } as never);
+
+    await expect(issueSubstituteMaterial(actor, "sub-1")).rejects.toMatchObject({ code: "OVER_ISSUE_NOT_ALLOWED" });
   });
 });
 

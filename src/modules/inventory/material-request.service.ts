@@ -19,13 +19,37 @@ import { WarehouseRepository } from "@/modules/warehouses/warehouse.repository";
 import { StockBalanceRepository } from "./inventory.repository";
 import { getAvailableQuantity, getAvailableQuantityByDye, recordInventoryTransaction } from "./inventory.service";
 import { MaterialRequestItemRepository, MaterialRequestRepository } from "./material-request.repository";
-import type { MaterialRequestInput, MaterialRequestItemInput, UpdateMaterialRequestInput } from "./material-request.schema";
+import { MaterialSubstitutionRepository } from "./material-substitution.repository";
+import type {
+  DecideMaterialRequestApprovalInput,
+  MaterialRequestInput,
+  MaterialRequestItemInput,
+  UpdateMaterialRequestInput,
+} from "./material-request.schema";
 import { Prisma, MaterialRequestStatus } from "@prisma/client";
 
 export interface ActorContext {
   companyId: string;
   userId: string;
   branchId?: string | null;
+}
+
+/**
+ * Additional/Damage Material Request approval (2026-09-24, Phase 7) —
+ * blocks issuing against a DAMAGE_REPLACEMENT request until it's actually
+ * APPROVED. A PRODUCTION_REQUIREMENT request (approvalStatus always null)
+ * is never affected — this check is a pure no-op for the ordinary flow.
+ */
+function assertNotPendingApproval(materialRequest: { requestType: string; approvalStatus: string | null }, id: string) {
+  if (materialRequest.requestType === "DAMAGE_REPLACEMENT" && materialRequest.approvalStatus !== "APPROVED") {
+    throw new BusinessRuleError(
+      "INVALID_STATE_TRANSITION",
+      materialRequest.approvalStatus === "REJECTED"
+        ? "This additional/damage material request was rejected — nothing can be issued against it."
+        : "This additional/damage material request is still pending approval — it must be approved before anything can be issued.",
+      { id }
+    );
+  }
 }
 
 function mapLineInput(line: MaterialRequestItemInput) {
@@ -339,6 +363,13 @@ export async function createMaterialRequest(actor: ActorContext, input: Material
     remarks: input.remarks || null,
     status: "OPEN",
     requestedByUserId: actor.userId,
+    // Additional/Damage Material Request approval (2026-09-24, Phase 7) —
+    // only a DAMAGE_REPLACEMENT request ever gets a real approval gate;
+    // PRODUCTION_REQUIREMENT keeps approvalStatus permanently null, its
+    // ordinary no-approval-needed flow completely unchanged. See
+    // approveMaterialRequest/rejectMaterialRequest and the issue-time gate
+    // below.
+    approvalStatus: input.requestType === "DAMAGE_REPLACEMENT" ? "PENDING" : null,
     lines: { create: input.lines.map(mapLineInput) },
   });
 
@@ -352,6 +383,73 @@ export async function createMaterialRequest(actor: ActorContext, input: Material
   });
 
   return request;
+}
+
+/**
+ * Additional/Damage Material Request approval (2026-09-24, Phase 7) — per
+ * decision #5, reuses the existing `production`/`approve` permission (no new
+ * RBAC action), self-approval-guarded via PermissionService's own
+ * `resourceContext.createdBy` mechanism — the same requester can never
+ * approve their own damage/additional request, matching every other
+ * approval checkpoint in this codebase. Only ever reachable for a request
+ * genuinely awaiting one (approvalStatus === "PENDING", which only a
+ * DAMAGE_REPLACEMENT request is ever created with) — a PRODUCTION_REQUIREMENT
+ * request has no approvalStatus at all and this function correctly refuses
+ * it as "nothing to decide."
+ */
+async function decideMaterialRequestApproval(
+  actor: ActorContext,
+  id: string,
+  decision: "APPROVED" | "REJECTED",
+  input: DecideMaterialRequestApprovalInput
+) {
+  const existing = await MaterialRequestRepository.findAnyById(actor.companyId, id);
+  if (!existing) throw new BusinessRuleError("NOT_FOUND", "Material request not found.", { id });
+
+  await PermissionService.assert(actor.userId, "production", "approve", { createdBy: existing.requestedByUserId });
+
+  if (existing.approvalStatus === null) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "This request has no approval gate — only an additional/damage material request needs one.", {
+      id,
+    });
+  }
+  if (existing.approvalStatus !== "PENDING") {
+    throw new BusinessRuleError(
+      "INVALID_STATE_TRANSITION",
+      `This request has already been ${existing.approvalStatus.toLowerCase()}.`,
+      { id }
+    );
+  }
+
+  const result = await MaterialRequestRepository.decideApproval(id, {
+    approvalStatus: decision,
+    approvedByUserId: actor.userId,
+    approvedAt: new Date(),
+    approvalRemark: input.approvalRemark ?? null,
+  });
+  if (result.count === 0) {
+    throw new BusinessRuleError("INVALID_STATE_TRANSITION", "This request was already decided by someone else — reload and try again.", { id });
+  }
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "material_requests",
+    recordId: id,
+    action: "UPDATE",
+    oldValues: { approvalStatus: "PENDING" },
+    newValues: { approvalStatus: decision, approvalRemark: input.approvalRemark ?? null },
+  });
+
+  return MaterialRequestRepository.findAnyById(actor.companyId, id);
+}
+
+export async function approveMaterialRequest(actor: ActorContext, id: string, input: DecideMaterialRequestApprovalInput) {
+  return decideMaterialRequestApproval(actor, id, "APPROVED", input);
+}
+
+export async function rejectMaterialRequest(actor: ActorContext, id: string, input: DecideMaterialRequestApprovalInput) {
+  return decideMaterialRequestApproval(actor, id, "REJECTED", input);
 }
 
 /** Open (not CANCELLED/CLOSED) requests already carrying a real remaining
@@ -663,6 +761,7 @@ export async function issueMaterialRequestLine(
       { id: lineId }
     );
   }
+  assertNotPendingApproval(line.materialRequest, lineId);
 
   const remaining = Number(line.requestedQuantity) - Number(line.issuedQuantity);
   const overRequested = Math.max(0, issueQuantity - remaining);
@@ -819,6 +918,163 @@ export async function issueMaterialRequestLine(
   });
 
   return MaterialRequestItemRepository.findById(lineId);
+}
+
+/**
+ * Material Substitution — inventory issue integration (2026-09-24, Phase 6).
+ * Physically issues an already-APPROVED MaterialSubstitution's own quantity
+ * of the SUBSTITUTE material — never the original — the direct fix for the
+ * spec's own worked example ("If Light Blue was physically issued:
+ * InventoryTransaction.productId = Light Blue. Never deduct Green stock just
+ * because the Effective BOM originally required Green."). Mirrors
+ * issueMaterialRequestLine's own shape (guarded accumulator + ledger write
+ * inside one transaction, status recompute + audit log after) but posts
+ * against `substitution.substituteMaterialId`, converted to THAT material's
+ * own base UOM — while the line's `issuedQuantity` accumulator (still
+ * expressed in the ORIGINAL material's own dimension, matching
+ * `requestedQuantity`) increments by the substitution's own quantity
+ * converted to the ORIGINAL material's base UOM instead, so "how much of
+ * this line's real requirement has been fulfilled" stays one honest number
+ * regardless of which material(s) actually fulfilled it.
+ *
+ * Deliberately one atomic issue per APPROVED substitution row (not
+ * incremental/partial like the plain original-material issue path) —
+ * `MaterialSubstitution.inventoryTransactionId` is a single nullable
+ * pointer, not a list, by design: a further substitution need against the
+ * same line is a SEPARATE MaterialSubstitution proposal (the "partial and
+ * multiple substitution" case — several distinct rows, each its own single
+ * issue), never a second issue against one row.
+ */
+export async function issueSubstituteMaterial(
+  actor: ActorContext,
+  substitutionId: string,
+  options?: { warehouseLocationId?: string | null; issueWarehouseId?: string | null }
+) {
+  await PermissionService.assert(actor.userId, "inventory", "edit");
+
+  const substitution = await MaterialSubstitutionRepository.findById(actor.companyId, substitutionId);
+  if (!substitution) throw new BusinessRuleError("NOT_FOUND", "Material substitution not found.", { id: substitutionId });
+  if (substitution.status !== "APPROVED") {
+    throw new BusinessRuleError(
+      "INVALID_STATE_TRANSITION",
+      `Only an APPROVED substitution can be issued — this one is "${substitution.status}".`,
+      { id: substitutionId }
+    );
+  }
+  if (substitution.inventoryTransactionId) {
+    throw new BusinessRuleError("INVALID_STATE_TRANSITION", "This substitution has already been issued.", { id: substitutionId });
+  }
+
+  const line = await MaterialRequestItemRepository.findWithRequestOwner(substitution.materialRequestItemId);
+  if (!line || line.materialRequest.companyId !== actor.companyId) {
+    throw new BusinessRuleError("NOT_FOUND", "Material request line not found.", { id: substitution.materialRequestItemId });
+  }
+  if (["CANCELLED", "CLOSED", "ON_HOLD"].includes(line.materialRequest.status)) {
+    throw new BusinessRuleError(
+      "INVALID_STATE_TRANSITION",
+      `Cannot issue material for a request in "${line.materialRequest.status}" status.`,
+      { id: substitution.materialRequestItemId }
+    );
+  }
+  assertNotPendingApproval(line.materialRequest, substitution.materialRequestItemId);
+  if (!line.material.baseUom) {
+    throw new BusinessRuleError(
+      "UOM_CONVERSION_UNAVAILABLE",
+      `"${line.material.styleName}" has no base unit configured — cannot record stock for it.`,
+      { id: substitution.materialRequestItemId }
+    );
+  }
+
+  const substituteMaterial = await ProductRepository.findMaterialById(actor.companyId, substitution.substituteMaterialId);
+  if (!substituteMaterial || !substituteMaterial.baseUom) {
+    throw new BusinessRuleError(
+      "UOM_CONVERSION_UNAVAILABLE",
+      `"${substitution.substituteMaterial.styleName}" has no base unit configured — cannot record stock for it.`,
+      { id: substitutionId }
+    );
+  }
+
+  const substituteQuantity = Number(substitution.quantity);
+
+  // What the LINE's own accumulator (issuedQuantity, expressed in the
+  // original material's dimension) advances by.
+  const originalBaseQuantity = convertUomQuantity(substituteQuantity, substitution.uom, line.material.baseUom);
+  if (originalBaseQuantity === null) {
+    throw new BusinessRuleError(
+      "UOM_CONVERSION_UNAVAILABLE",
+      `"${substitution.uom.name}" has no fixed conversion to "${line.material.styleName}"'s base unit.`,
+      { id: substitutionId }
+    );
+  }
+
+  // What actually gets posted to the ledger — the substitute material's own
+  // real stock movement, in ITS OWN base unit.
+  const substituteBaseQuantity = convertUomQuantity(substituteQuantity, substitution.uom, substituteMaterial.baseUom);
+  if (substituteBaseQuantity === null) {
+    throw new BusinessRuleError(
+      "UOM_CONVERSION_UNAVAILABLE",
+      `"${substitution.uom.name}" has no fixed conversion to "${substituteMaterial.styleName}"'s base unit.`,
+      { id: substitutionId }
+    );
+  }
+
+  const effectiveWarehouseId = options?.issueWarehouseId || line.materialRequest.warehouseId;
+
+  const available = await getAvailableQuantity(actor.companyId, substitution.substituteMaterialId, effectiveWarehouseId);
+  if (substituteBaseQuantity > available) {
+    throw new BusinessRuleError(
+      "INSUFFICIENT_RAW_MATERIAL_STOCK",
+      `Unable to issue ${substituteQuantity} of "${substituteMaterial.styleName}" — only ${available} available at this warehouse. Available: ${available}, Requested: ${substituteBaseQuantity}.`,
+      { available, requested: substituteBaseQuantity }
+    );
+  }
+
+  await prisma.$transaction(async (tx) => {
+    const result = await MaterialRequestItemRepository.guardedIncrementIssued(
+      tx,
+      line.id,
+      Number(line.requestedQuantity),
+      originalBaseQuantity,
+      options?.warehouseLocationId
+    );
+    if (result.count === 0) {
+      throw new BusinessRuleError(
+        "OVER_ISSUE_NOT_ALLOWED",
+        "This line was issued by someone else at the same time — reload and try again.",
+        { id: line.id }
+      );
+    }
+
+    const transaction = await recordInventoryTransaction(tx, actor, {
+      productId: substitution.substituteMaterialId,
+      warehouseId: effectiveWarehouseId,
+      transactionType: "MATERIAL_ISSUE",
+      quantity: -substituteBaseQuantity,
+      referenceModule: "MATERIAL_REQUEST",
+      referenceRecordId: line.id,
+      warehouseLocationId: options?.warehouseLocationId ?? null,
+    });
+
+    await MaterialSubstitutionRepository.setInventoryTransactionInTx(tx, substitutionId, transaction.id);
+  });
+
+  await recomputeAndPersistStatus(actor, line.materialRequest.id);
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "material_substitutions",
+    recordId: substitutionId,
+    action: "UPDATE",
+    newValues: {
+      issued: true,
+      substituteMaterialId: substitution.substituteMaterialId,
+      quantity: substituteQuantity,
+      uomCode: substitution.uom.code,
+    },
+  });
+
+  return MaterialSubstitutionRepository.findById(actor.companyId, substitutionId);
 }
 
 /**

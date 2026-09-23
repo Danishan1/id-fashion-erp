@@ -118,6 +118,10 @@ interface SampleRequestDetail {
   // line — null for every directly-created sample. Read-only here; the
   // price itself is only ever entered at Buyer Enquiry intake.
   buyerEnquiryLine: { targetUnitPrice: string | null; buyerEnquiry: { id: string; enquiryNumber: string } } | null;
+  // Only set for a request created via "Copy Design" — pure traceability,
+  // never a live/synced link (see duplicateSampleRequest() in
+  // sample.service.ts for exactly what was copied at the time).
+  copiedFrom: { id: string; requestNumber: string; styleName: string | null } | null;
   versions: SampleVersionRow[];
   comments: SampleCommentRow[];
 }
@@ -960,6 +964,16 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
           </>
         )}
       </div>
+
+      {request.copiedFrom && (
+        <div className="flex items-center gap-2 text-sm">
+          <span className="font-medium text-zinc-700 dark:text-zinc-200">Copied from:</span>
+          <a href={`/sampling/${request.copiedFrom.id}`} className="text-indigo-600 hover:underline dark:text-indigo-400">
+            {request.copiedFrom.requestNumber}
+            {request.copiedFrom.styleName ? ` — ${request.copiedFrom.styleName}` : ""}
+          </a>
+        </div>
+      )}
 
       {request.buyerEnquiryLine && (
         <div className="flex items-center gap-2 text-sm">

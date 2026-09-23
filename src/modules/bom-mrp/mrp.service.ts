@@ -6,6 +6,7 @@ import { sumAvailableByProductIds } from "@/modules/inventory/inventory.service"
 import { SalesOrderRepository } from "@/modules/sales-orders/sales-order.repository";
 import { SampleMaterialRepository } from "@/modules/sampling/sample.repository";
 import { BomRepository } from "./bom.repository";
+import { applyEffectiveBomResolution, fetchSalesOrderLineSnapshots, type SalesOrderLineSnapshot } from "./effective-bom.service";
 
 // Every quantity here accumulates through repeated floating-point addition
 // (contributingStyles across multiple BOM lines/order items), which
@@ -57,7 +58,7 @@ interface RequirementUom {
  * Order line has one), normalized to a common shape so the explosion loop
  * below never needs to know which source it came from.
  */
-interface ExplosionLineItem {
+export interface ExplosionLineItem {
   materialId: string;
   colorId: string | null;
   // The material's own real color/shade to pre-fill onto a Material Request
@@ -219,6 +220,12 @@ interface OrderItemForExplosion {
   productId: string;
   product: { styleName: string };
   sampleRequestId: string | null;
+  // Effective BOM (2026-09-24) — null for a legacy item that predates this
+  // feature, or one that was never confirmed (still DRAFT, so no snapshot
+  // was ever taken). explodeOrderItemsToRows/getSalesOrderRawBomLines treat
+  // a missing/unmatched id identically to "no snapshot exists" — the live
+  // base resolution unchanged, exactly today's behavior.
+  salesOrderLineId?: string | null;
   breakdown: Array<{ productVariant: { color: { id: string } }; orderedQuantity: number }>;
 }
 
@@ -307,14 +314,19 @@ function resolveExplosionItemsForOrderItem(
 function explodeOrderItemsToRows(
   items: OrderItemForExplosion[],
   bomByProductId: Map<string, Awaited<ReturnType<typeof BomRepository.findManyByProductIds>>[number]>,
-  sampleMaterialsById: Map<string, Awaited<ReturnType<typeof SampleMaterialRepository.findLatestVersionMaterialsForRequirement>>>
+  sampleMaterialsById: Map<string, Awaited<ReturnType<typeof SampleMaterialRepository.findLatestVersionMaterialsForRequirement>>>,
+  lineSnapshots: Map<string, SalesOrderLineSnapshot>
 ) {
   const stylesWithoutBom: Array<{ productId: string; styleName: string; reason: string }> = [];
   const rowsByMaterialId = new Map<string, MaterialRequirementRow>();
   const unconvertibleLines: Array<{ materialId: string; materialName: string; reason: string }> = [];
 
   for (const orderItem of items) {
-    const { explosionItems, emptySourceReason } = resolveExplosionItemsForOrderItem(orderItem, bomByProductId, sampleMaterialsById);
+    const base = resolveExplosionItemsForOrderItem(orderItem, bomByProductId, sampleMaterialsById);
+    const { explosionItems, emptySourceReason } = applyEffectiveBomResolution(
+      base,
+      orderItem.salesOrderLineId ? lineSnapshots.get(orderItem.salesOrderLineId) : undefined
+    );
 
     if (explosionItems.length === 0) {
       stylesWithoutBom.push({ productId: orderItem.productId, styleName: orderItem.product.styleName, reason: emptySourceReason });
@@ -419,7 +431,10 @@ export async function getMaterialRequirements(companyId: string, salesOrderId: s
     )
   );
 
-  const { rowsByMaterialId, stylesWithoutBom, unconvertibleLines } = explodeOrderItemsToRows(order.items, bomByProductId, sampleMaterialsById);
+  const lineIds = order.items.map((i) => i.salesOrderLineId).filter((id): id is string => !!id);
+  const lineSnapshots = await fetchSalesOrderLineSnapshots(companyId, lineIds);
+
+  const { rowsByMaterialId, stylesWithoutBom, unconvertibleLines } = explodeOrderItemsToRows(order.items, bomByProductId, sampleMaterialsById, lineSnapshots);
 
   const materialIds = [...rowsByMaterialId.keys()];
   const [availableByMaterialId, issuedBySalesOrder] = await Promise.all([
@@ -491,6 +506,7 @@ export async function getSalesOrdersMaterialStatus(companyId: string): Promise<S
           productId: true,
           product: { select: { styleName: true } },
           sampleRequestId: true,
+          salesOrderLineId: true,
           breakdown: { select: { orderedQuantity: true, productVariant: { select: { color: { select: { id: true } } } } } },
         },
       },
@@ -516,8 +532,14 @@ export async function getSalesOrdersMaterialStatus(companyId: string): Promise<S
 
   const issuedBySalesOrder = await getIssuedQuantitiesBySalesOrder(companyId, orders.map((o) => o.id));
 
+  // One batched snapshot fetch across every order's own lines, not one per
+  // order — stays cheap even at the 200-order cap (see
+  // fetchSalesOrderLineSnapshots' own doc comment).
+  const allLineIds = orders.flatMap((o) => o.items.map((i) => i.salesOrderLineId).filter((id): id is string => !!id));
+  const lineSnapshots = await fetchSalesOrderLineSnapshots(companyId, allLineIds);
+
   return orders.map((order) => {
-    const { rowsByMaterialId } = explodeOrderItemsToRows(order.items, bomByProductId, sampleMaterialsById);
+    const { rowsByMaterialId } = explodeOrderItemsToRows(order.items, bomByProductId, sampleMaterialsById, lineSnapshots);
     const issuedByMaterialId = issuedBySalesOrder.get(order.id) ?? new Map<string, number>();
 
     let pending = rowsByMaterialId.size === 0;
@@ -771,25 +793,106 @@ export async function getSampleMaterialRequirement(
  * Resolves which requirement source a Production Order (or its live create/
  * edit-form preview) should use for one Sales Order line, per the user's own
  * explicit rule: the linked Sample's own material list if that line has one,
- * otherwise the Style's own real BOM. The one real caller
- * (generateMaterialRequestForOrder) and the live preview both go through this
- * so a shortfall/cost figure a user sees can never disagree with what
- * "Generate Material Request" actually raises.
+ * otherwise the Style's own real BOM — then, Effective BOM (2026-09-24):
+ * layers the line's own frozen snapshot + any active overrides on top of
+ * that base resolution, exactly like every other consumer in this file, so
+ * "what Production actually needs" can never disagree with what MRP/the
+ * Material Requirement Preview already showed for the same line. The one
+ * real caller (generateMaterialRequestForOrder) and the live preview
+ * (getSalesOrderMaterialPreview below) both go through this.
+ *
+ * A line with no salesOrderLineId at all (a legacy item, or a still-DRAFT
+ * order whose lines were never snapshotted) behaves exactly as before this
+ * feature — falls straight through to the plain Sample-or-Style base
+ * resolution with zero override layer applied.
  */
 export async function getMaterialRequirementForOrderLine(
   companyId: string,
   args: { salesOrderItemId: string | null | undefined; productId: string; quantity: number }
 ): Promise<StyleMaterialRequirementResult> {
+  let sampleRequestId: string | null = null;
+  let salesOrderLineId: string | null = null;
+
   if (args.salesOrderItemId) {
     const item = await prisma.salesOrderItem.findFirst({
       where: { id: args.salesOrderItemId, salesOrder: { companyId } },
-      select: { sampleRequestId: true },
+      select: { sampleRequestId: true, salesOrderLineId: true },
     });
-    if (item?.sampleRequestId) {
-      return getSampleMaterialRequirement(companyId, item.sampleRequestId, args.quantity);
-    }
+    sampleRequestId = item?.sampleRequestId ?? null;
+    salesOrderLineId = item?.salesOrderLineId ?? null;
   }
-  return getStyleMaterialRequirement(companyId, args.productId, args.quantity);
+
+  // The common, unchanged-behavior path: no line to layer an Effective BOM
+  // on top of at all — reuse the two existing, independently-tested
+  // functions exactly as every other caller of them already does.
+  if (!salesOrderLineId) {
+    return sampleRequestId
+      ? getSampleMaterialRequirement(companyId, sampleRequestId, args.quantity)
+      : getStyleMaterialRequirement(companyId, args.productId, args.quantity);
+  }
+
+  // Resolve the base explosion items the exact same way
+  // getStyleMaterialRequirement/getSampleMaterialRequirement do internally —
+  // duplicated here (not delegated) because those two functions return an
+  // already-exploded numeric result, not the raw item list this function
+  // needs to layer a snapshot/override on top of before exploding once.
+  let baseExplosionItems: ExplosionLineItem[];
+  let bomId: string | null = null;
+
+  if (sampleRequestId) {
+    const sampleMaterials = await SampleMaterialRepository.findLatestVersionMaterialsForRequirement(sampleRequestId);
+    baseExplosionItems = sampleMaterials.map((m) => ({
+      materialId: m.materialId,
+      colorId: m.colorId,
+      quantityPerUnit: Number(m.plannedQuantity),
+      wastagePercentage: 0,
+      uom: m.uom,
+      material: {
+        styleName: m.material.styleName,
+        styleCode: m.material.styleCode,
+        baseUom: m.material.baseUom,
+        defaultSupplierId: m.material.defaultSupplierId,
+        unitCost: m.material.unitCost,
+      },
+    }));
+  } else {
+    const bom = await BomRepository.findByProductId(companyId, args.productId);
+    bomId = bom?.id ?? null;
+    const approvedItems = bom?.approvedVersion?.items ?? [];
+    baseExplosionItems = approvedItems.map((item) => ({
+      materialId: item.materialId,
+      colorId: item.colorId,
+      quantityPerUnit: Number(item.quantityPerUnit),
+      wastagePercentage: Number(item.wastagePercentage),
+      uom: item.uom,
+      material: {
+        styleName: item.material.styleName,
+        styleCode: item.material.styleCode,
+        baseUom: item.material.baseUom,
+        defaultSupplierId: item.material.defaultSupplierId,
+        unitCost: item.material.unitCost,
+      },
+    }));
+  }
+
+  const lineSnapshots = await fetchSalesOrderLineSnapshots(companyId, [salesOrderLineId]);
+  const { explosionItems } = applyEffectiveBomResolution({ explosionItems: baseExplosionItems, emptySourceReason: "" }, lineSnapshots.get(salesOrderLineId));
+
+  if (explosionItems.length === 0) {
+    return {
+      productId: sampleRequestId ? null : args.productId,
+      bomId,
+      sampleRequestId,
+      hasApprovedBom: false,
+      materials: [],
+      unconvertibleLines: [],
+      totalMaterialCost: null,
+      materialCostPerUnit: null,
+    };
+  }
+
+  const result = await explodeFlatQuantity(companyId, explosionItems, args.quantity);
+  return { productId: sampleRequestId ? null : args.productId, bomId, sampleRequestId, hasApprovedBom: true, ...result };
 }
 
 export interface SalesOrderMaterialPreviewItem {
@@ -940,13 +1043,20 @@ export async function getSalesOrderRawBomLines(companyId: string, salesOrderId: 
     )
   );
 
+  const lineIds = order.items.map((i) => i.salesOrderLineId).filter((id): id is string => !!id);
+  const lineSnapshots = await fetchSalesOrderLineSnapshots(companyId, lineIds);
+
   const unconvertibleLines: Array<{ materialId: string; materialName: string; reason: string }> = [];
   let anyUnknownCost = false;
   let knownCostTotal = 0;
 
   const items: SalesOrderRawBomLinesItem[] = order.items.map((orderItem) => {
     const orderedQuantity = orderItem.breakdown.reduce((sum, b) => sum + b.orderedQuantity, 0);
-    const { explosionItems } = resolveExplosionItemsForOrderItem(orderItem, bomByProductId, sampleMaterialsById);
+    const base = resolveExplosionItemsForOrderItem(orderItem, bomByProductId, sampleMaterialsById);
+    const { explosionItems } = applyEffectiveBomResolution(
+      base,
+      orderItem.salesOrderLineId ? lineSnapshots.get(orderItem.salesOrderLineId) : undefined
+    );
 
     const lines: SalesOrderRawBomLine[] = [];
     for (const explosionItem of explosionItems) {

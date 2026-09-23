@@ -69,7 +69,7 @@ beforeEach(() => {
   vi.mocked(PermissionService.assert).mockReset().mockResolvedValue(undefined);
   vi.mocked(PermissionService.getAllowedBranchIds).mockReset().mockResolvedValue(null);
   vi.mocked(SalesOrderRepository.findByIdWithDetails).mockReset();
-  vi.mocked(recordInventoryTransaction).mockReset().mockResolvedValue(undefined);
+  vi.mocked(recordInventoryTransaction).mockReset().mockResolvedValue({ id: "txn-1" } as never);
   vi.mocked(getAvailableQuantity).mockReset().mockResolvedValue(1000);
   vi.mocked(DispatchRepository.findAnyById).mockReset();
   vi.mocked(DispatchRepository.findByIdWithDetails).mockReset();

@@ -39,12 +39,21 @@ interface RecordInventoryTransactionInput {
  * transaction as the InventoryTransaction insert that justifies it, always).
  * Called from Purchasing's Goods Receipt service today; Production (5C) and
  * Dispatch (Phase 8) are expected to reuse this same engine later.
+ *
+ * Returns the created InventoryTransaction row (2026-09-24, Phase 6 of
+ * Material Substitution) — additive: every pre-existing caller already
+ * discards the return value (`await recordInventoryTransaction(...)`), so
+ * this is a non-breaking change. Needed so
+ * MaterialSubstitution.inventoryTransactionId can point at the exact real
+ * ledger row a substitute material's issue actually posted, inside the same
+ * transaction, rather than re-querying "the most recent matching row" —
+ * ambiguous under concurrent writes.
  */
 export async function recordInventoryTransaction(
   tx: Prisma.TransactionClient,
   actor: ActorContext,
   input: RecordInventoryTransactionInput
-): Promise<void> {
+) {
   const [product, warehouse] = await Promise.all([
     InventoryScopeRepository.findProductCompanyId(input.productId),
     InventoryScopeRepository.findWarehouseCompanyId(input.warehouseId),
@@ -56,7 +65,7 @@ export async function recordInventoryTransaction(
     throw new BusinessRuleError("NOT_FOUND", "Warehouse not found.", { id: input.warehouseId });
   }
 
-  await InventoryTransactionRepository.create(tx, {
+  const transaction = await InventoryTransactionRepository.create(tx, {
     companyId: actor.companyId,
     branchId: actor.branchId || null,
     productId: input.productId,
@@ -98,6 +107,8 @@ export async function recordInventoryTransaction(
       );
     }
   }
+
+  return transaction;
 }
 
 /** Available quantity for one product at one specific warehouse — what

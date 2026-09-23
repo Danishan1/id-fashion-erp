@@ -52,6 +52,10 @@ export const SampleRequestRepository = {
         color: { select: { id: true, name: true, hexValue: true } },
         size: { select: { id: true, name: true } },
         requestedBy: { select: { id: true, fullName: true } },
+        // Set once by duplicateSampleRequest() ("Copy Design") — purely for
+        // traceability, shown as a read-only "Copied from" link on the
+        // detail page. Null for every ordinarily-created request.
+        copiedFrom: { select: { id: true, requestNumber: true, styleName: true } },
         versions: {
           orderBy: { versionNumber: "desc" },
           include: {
@@ -240,6 +244,39 @@ export const SampleMaterialRepository = {
       },
     });
   },
+
+  /**
+   * Effective BOM (2026-09-24) — the same shape as
+   * findLatestVersionMaterialsForRequirement above, but batch-fetched for
+   * several EXPLICIT SampleVersion ids (a Sales Order Line's own frozen
+   * snapshot pointer, not "whatever is currently latest") and tagged with
+   * each row's own sampleVersionId so the caller can group them back per
+   * line. Used by the Effective BOM resolver only.
+   */
+  findManyByVersionIds: (sampleVersionIds: string[]) =>
+    prisma.sampleMaterial.findMany({
+      where: { sampleVersionId: { in: sampleVersionIds } },
+      select: {
+        sampleVersionId: true,
+        materialId: true,
+        plannedQuantity: true,
+        uomId: true,
+        colorId: true,
+        dyeId: true,
+        uom: { select: { id: true, code: true, name: true, baseUnitId: true, conversionFactor: true } },
+        material: {
+          select: {
+            id: true,
+            styleName: true,
+            styleCode: true,
+            baseUomId: true,
+            baseUom: { select: { id: true, name: true, code: true, baseUnitId: true, conversionFactor: true } },
+            defaultSupplierId: true,
+            unitCost: true,
+          },
+        },
+      },
+    }),
 
   /**
    * Materials shaped for generating a real Inventory Material Request from

@@ -1,5 +1,6 @@
 import { prisma } from "@/core/db/client";
 import type { Prisma, SalesOrderStatus } from "@prisma/client";
+import type { ReconciledSalesOrderItem } from "./sales-order-bom.service";
 
 export const SalesOrderRepository = {
   findMany: (where: Prisma.SalesOrderWhereInput, args: Omit<Prisma.SalesOrderFindManyArgs, "where">) =>
@@ -106,11 +107,14 @@ export const SalesOrderRepository = {
       select: { unitPrice: true, salesOrder: { select: { orderNumber: true, orderDate: true } } },
     }),
 
-  createWithItems: (data: Prisma.SalesOrderUncheckedCreateInput) =>
-    prisma.salesOrder.create({
-      data,
-      include: { items: { include: { breakdown: true } } },
-    }),
+  /**
+   * Effective BOM (2026-09-24) — creates the bare header only, no items.
+   * createSalesOrder() follows up with replaceItems() (below) to populate
+   * items via the exact same reconciled-write path updateSalesOrder() uses,
+   * rather than a second, parallel nested-create shape that would have to be
+   * kept in sync with it by hand.
+   */
+  createHeader: (data: Prisma.SalesOrderUncheckedCreateInput) => prisma.salesOrder.create({ data }),
 
   update: (id: string, data: Prisma.SalesOrderUncheckedUpdateInput) =>
     prisma.salesOrder.update({ where: { id }, data }),
@@ -144,18 +148,20 @@ export const SalesOrderRepository = {
    * have no cascade-delete configured, so they must be deleted before their
    * parent items; the whole thing runs in one transaction so a mid-way
    * failure never leaves the order with a partial item list.
+   *
+   * Effective BOM (2026-09-24) — each item's own `lineLink` (decided by
+   * sales-order-bom.service.ts's buildReconciledItemPlan(), never by this
+   * repository) says whether to point the new SalesOrderItem at an EXISTING
+   * SalesOrderLine (preserving its own frozen snapshot + any active
+   * SalesOrderBomOverride rows completely untouched) or to create a fresh
+   * one. Deliberately one item at a time (not a single bulk nested create,
+   * unlike the pre-2026-09-24 shape) — each item may need its own new
+   * SalesOrderLine row created first, whose id the item then references;
+   * this app's order sizes (a handful of style lines) make the sequential-
+   * awaits-inside-one-transaction shape a non-issue, the same tradeoff
+   * already accepted elsewhere in this codebase for per-line loops.
    */
-  replaceItems: (
-    salesOrderId: string,
-    headerData: Prisma.SalesOrderUncheckedUpdateInput,
-    items: Array<{
-      productId: string;
-      sampleRequestId: string | null;
-      unitPrice: number;
-      notes: string | null;
-      breakdown: Array<{ productVariantId: string; orderedQuantity: number }>;
-    }>
-  ) =>
+  replaceItems: (companyId: string, salesOrderId: string, headerData: Prisma.SalesOrderUncheckedUpdateInput, items: ReconciledSalesOrderItem[]) =>
     prisma.$transaction(async (tx) => {
       const existingItemIds = (await tx.salesOrderItem.findMany({ where: { salesOrderId }, select: { id: true } })).map(
         (i) => i.id
@@ -163,21 +169,40 @@ export const SalesOrderRepository = {
       await tx.salesOrderItemBreakdown.deleteMany({ where: { salesOrderItemId: { in: existingItemIds } } });
       await tx.salesOrderItem.deleteMany({ where: { salesOrderId } });
 
-      await tx.salesOrder.update({
-        where: { id: salesOrderId },
-        data: {
-          ...headerData,
-          items: {
-            create: items.map((item) => ({
-              productId: item.productId,
-              sampleRequestId: item.sampleRequestId,
-              unitPrice: item.unitPrice,
-              notes: item.notes,
-              breakdown: { create: item.breakdown },
-            })),
+      for (const item of items) {
+        let salesOrderLineId: string;
+        if (item.lineLink.kind === "reuse") {
+          salesOrderLineId = item.lineLink.salesOrderLineId;
+        } else {
+          const newLine = await tx.salesOrderLine.create({
+            data: {
+              companyId,
+              salesOrderId,
+              lineNumber: item.lineLink.lineNumber,
+              sourceType: item.lineLink.sourceType,
+              bomVersionId: item.lineLink.bomVersionId,
+              sampleVersionId: item.lineLink.sampleVersionId,
+              snapshotTakenAt: item.lineLink.snapshotTakenAt,
+              snapshotTakenByUserId: item.lineLink.snapshotTakenByUserId,
+            },
+          });
+          salesOrderLineId = newLine.id;
+        }
+
+        await tx.salesOrderItem.create({
+          data: {
+            salesOrderId,
+            salesOrderLineId,
+            productId: item.productId,
+            sampleRequestId: item.sampleRequestId,
+            unitPrice: item.unitPrice,
+            notes: item.notes,
+            breakdown: { create: item.breakdown },
           },
-        },
-      });
+        });
+      }
+
+      await tx.salesOrder.update({ where: { id: salesOrderId }, data: headerData });
 
       return tx.salesOrder.findFirstOrThrow({
         where: { id: salesOrderId },

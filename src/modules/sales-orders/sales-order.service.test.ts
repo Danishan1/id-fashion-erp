@@ -4,7 +4,20 @@ import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/numbering/DocumentNumberingService", () => ({ generateDocumentNumber: vi.fn() }));
 vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { assert: vi.fn(), getAllowedBranchIds: vi.fn() } }));
-vi.mock("@/core/db/client", () => ({ prisma: { deal: { findFirst: vi.fn() } } }));
+vi.mock("@/core/db/client", () => {
+  const salesOrderUpdateMany = vi.fn();
+  return {
+    prisma: {
+      deal: { findFirst: vi.fn() },
+      salesOrder: { updateMany: salesOrderUpdateMany },
+      // confirmSalesOrder() wraps its guarded status flip + snapshot backfill
+      // in one transaction — the mock `tx` reuses the exact same
+      // salesOrder.updateMany mock so tests can configure its resolved value
+      // once via the imported `prisma` object either way.
+      $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn({ salesOrder: { updateMany: salesOrderUpdateMany } })),
+    },
+  };
+});
 vi.mock("@/modules/customers/customer.repository", () => ({
   CustomerRepository: { findByIdWithBuyers: vi.fn() },
 }));
@@ -30,13 +43,22 @@ vi.mock("./sales-order.repository", () => ({
     count: vi.fn(),
     findByIdWithDetails: vi.fn(),
     findAnyById: vi.fn(),
-    createWithItems: vi.fn(),
+    createHeader: vi.fn(),
     update: vi.fn(),
     updateStatusConditional: vi.fn(),
     replaceItems: vi.fn(),
     findLastOrderedItem: vi.fn(),
     findOrderedPriceHistory: vi.fn(),
   },
+}));
+// Effective BOM (2026-09-24) — mocked as a pure pass-through here (identity
+// on the submitted items, tagged with a dummy lineLink no test in this file
+// inspects) since these tests only care about sales-order.service.ts's own
+// pre-existing guards/behavior. sales-order-bom.service.test.ts covers the
+// real reconciliation/snapshot logic in isolation.
+vi.mock("./sales-order-bom.service", () => ({
+  buildReconciledItemPlan: vi.fn(),
+  snapshotUnsnapshottedLinesInTx: vi.fn(),
 }));
 
 const { prisma } = await import("@/core/db/client");
@@ -48,6 +70,7 @@ const { SalesInvoiceRepository } = await import("@/modules/accounts/sales-invoic
 const { DispatchRepository } = await import("@/modules/dispatch/dispatch.repository");
 const { getSalesOrderItemProductionSummary } = await import("@/modules/production/production-progress.service");
 const { CompanyRepository, SalesOrderRepository } = await import("./sales-order.repository");
+const { buildReconciledItemPlan, snapshotUnsnapshottedLinesInTx } = await import("./sales-order-bom.service");
 const {
   createSalesOrder,
   updateSalesOrder,
@@ -76,13 +99,18 @@ beforeEach(() => {
   vi.mocked(ProductRepository.findStyleById).mockReset().mockResolvedValue({ id: "style-1", itemType: "STYLE" } as never);
   vi.mocked(CompanyRepository.findBaseCurrencyCode).mockReset().mockResolvedValue({ baseCurrencyCode: "INR" } as never);
   vi.mocked(prisma.deal.findFirst).mockReset();
-  vi.mocked(SalesOrderRepository.createWithItems).mockReset().mockResolvedValue({ id: "so-1", items: [] } as never);
+  vi.mocked(prisma.salesOrder.updateMany).mockReset().mockResolvedValue({ count: 1 } as never);
+  vi.mocked(SalesOrderRepository.createHeader).mockReset().mockResolvedValue({ id: "so-1" } as never);
   vi.mocked(SalesOrderRepository.findByIdWithDetails).mockReset();
   vi.mocked(SalesOrderRepository.findAnyById).mockReset();
   vi.mocked(SalesOrderRepository.update).mockReset();
   vi.mocked(SalesOrderRepository.updateStatusConditional).mockReset();
-  vi.mocked(SalesOrderRepository.replaceItems).mockReset();
+  vi.mocked(SalesOrderRepository.replaceItems).mockReset().mockResolvedValue({ id: "so-1", items: [] } as never);
   vi.mocked(SalesOrderRepository.findOrderedPriceHistory).mockReset();
+  vi.mocked(buildReconciledItemPlan)
+    .mockReset()
+    .mockImplementation(async (_actor, _id, _isConfirmed, items) => items as never);
+  vi.mocked(snapshotUnsnapshottedLinesInTx).mockReset().mockResolvedValue(undefined as never);
   vi.mocked(getSalesOrderItemProductionSummary).mockReset().mockResolvedValue({ orderedTotal: 0 } as never);
   vi.mocked(SalesInvoiceRepository.findActiveByOrderId).mockReset().mockResolvedValue(null);
   vi.mocked(DispatchRepository.findAnyByOrderId).mockReset().mockResolvedValue(null);
@@ -112,7 +140,7 @@ describe("createSalesOrder", () => {
         items: [oneItem({ productId: "raw-material-1" })],
       })
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
-    expect(SalesOrderRepository.createWithItems).not.toHaveBeenCalled();
+    expect(SalesOrderRepository.createHeader).not.toHaveBeenCalled();
   });
 
   it("rejects an originatingDealId that doesn't belong to this company", async () => {
@@ -132,7 +160,7 @@ describe("createSalesOrder", () => {
   it("always forces currencyCode to the company's own base currency with exchangeRate 1", async () => {
     await createSalesOrder(actor, { customerId: "cust-1", buyerId: "", orderDate: "2026-08-24", requiredShipDate: "", originatingDealId: "", items: [oneItem()] });
 
-    expect(SalesOrderRepository.createWithItems).toHaveBeenCalledWith(
+    expect(SalesOrderRepository.createHeader).toHaveBeenCalledWith(
       expect.objectContaining({ currencyCode: "INR", baseCurrencyCode: "INR", exchangeRate: 1 })
     );
   });
@@ -147,7 +175,7 @@ describe("createSalesOrder", () => {
       items: [oneItem({ unitPrice: 100, breakdown: [{ productVariantId: "v-1", orderedQuantity: 5 }, { productVariantId: "v-2", orderedQuantity: 5 }] })],
     });
 
-    expect(SalesOrderRepository.createWithItems).toHaveBeenCalledWith(expect.objectContaining({ totalAmount: 1000, baseTotalAmount: 1000 }));
+    expect(SalesOrderRepository.createHeader).toHaveBeenCalledWith(expect.objectContaining({ totalAmount: 1000, baseTotalAmount: 1000 }));
   });
 });
 
@@ -219,7 +247,7 @@ describe("confirmSalesOrder", () => {
     } as never);
 
     await expect(confirmSalesOrder(actor, "so-1", {})).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
-    expect(SalesOrderRepository.updateStatusConditional).not.toHaveBeenCalled();
+    expect(prisma.salesOrder.updateMany).not.toHaveBeenCalled();
   });
 
   it("allows a Management override with a reason, self-approval-guarded against the order's own requester", async () => {
@@ -229,20 +257,25 @@ describe("confirmSalesOrder", () => {
       requestedByUserId: "user-2",
       items: [{ sampleRequestId: "sam-1", sampleRequest: { status: "IN_DEVELOPMENT" } }],
     } as never);
-    vi.mocked(SalesOrderRepository.updateStatusConditional).mockResolvedValue({ count: 1 } as never);
     vi.mocked(SalesOrderRepository.findAnyById).mockResolvedValue({ id: "so-1", status: "CONFIRMED" } as never);
 
     await confirmSalesOrder(actor, "so-1", { overrideReason: "Customer urgently needs this before sample sign-off" });
 
     expect(PermissionService.assert).toHaveBeenCalledWith("user-1", "sales_orders", "approve", { createdBy: "user-2" });
-    expect(SalesOrderRepository.updateStatusConditional).toHaveBeenCalledWith("so-1", "DRAFT", { status: "CONFIRMED" });
+    expect(prisma.salesOrder.updateMany).toHaveBeenCalledWith({ where: { id: "so-1", status: "DRAFT" }, data: { status: "CONFIRMED" } });
+    // Effective BOM (2026-09-24) — every still-unsnapshotted line gets
+    // backfilled atomically inside the same transaction as the status flip.
+    expect(snapshotUnsnapshottedLinesInTx).toHaveBeenCalledWith(expect.anything(), actor, "so-1");
   });
 
   it("rejects when a concurrent confirm already moved the order out of DRAFT (the race guard)", async () => {
     vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue({ id: "so-1", status: "DRAFT", requestedByUserId: "user-1", items: [] } as never);
-    vi.mocked(SalesOrderRepository.updateStatusConditional).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.salesOrder.updateMany).mockResolvedValue({ count: 0 } as never);
 
     await expect(confirmSalesOrder(actor, "so-1", {})).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+    // The race guard failing must roll back the whole transaction — no
+    // snapshot should be backfilled for an order that didn't actually confirm.
+    expect(snapshotUnsnapshottedLinesInTx).not.toHaveBeenCalled();
   });
 
   it("confirms cleanly when no line has a linked sample at all", async () => {
@@ -252,7 +285,6 @@ describe("confirmSalesOrder", () => {
       requestedByUserId: "user-1",
       items: [{ sampleRequestId: null, sampleRequest: null }],
     } as never);
-    vi.mocked(SalesOrderRepository.updateStatusConditional).mockResolvedValue({ count: 1 } as never);
     vi.mocked(SalesOrderRepository.findAnyById).mockResolvedValue({ id: "so-1", status: "CONFIRMED" } as never);
 
     await confirmSalesOrder(actor, "so-1", {});

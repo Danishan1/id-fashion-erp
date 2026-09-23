@@ -37,6 +37,22 @@ export const BomRepository = {
       include: BOM_WITH_VERSIONS_INCLUDE,
     }),
 
+  // Effective BOM (2026-09-24) — a narrow, `select`-only lookup for the
+  // Sales Order snapshot resolver, which only ever needs the pointer, never
+  // the full version history/items findByProductId's own heavier include
+  // carries. Returns null when the Style has no Bom row at all yet.
+  findApprovedVersionIdByProductId: (companyId: string, productId: string) =>
+    prisma.bom.findFirst({ where: { productId, companyId }, select: { id: true, approvedVersionId: true } }),
+
+  // Effective BOM (2026-09-24) — batch-fetches the exact frozen items of
+  // several specific BomVersion rows by id (a Sales Order Line's own
+  // snapshot pointer, which may since have been superseded by a newer
+  // approved version — frozen means frozen). No companyId filter here: the
+  // caller only ever passes version ids it already resolved from its own
+  // company-scoped SalesOrderLine rows.
+  findManyVersionsByIds: (versionIds: string[]) =>
+    prisma.bomVersion.findMany({ where: { id: { in: versionIds } }, include: { items: { include: ITEMS_INCLUDE } } }),
+
   findVersionById: (companyId: string, versionId: string) =>
     prisma.bomVersion.findFirst({
       where: { id: versionId, bom: { companyId } },

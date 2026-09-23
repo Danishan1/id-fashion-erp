@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { FilePreviewModal } from "@/components/ui/FilePreviewModal";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { MaterialPicker, type MaterialPickerOption } from "@/components/ui/MaterialPicker";
 import { Modal } from "@/components/ui/Modal";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { formatCategoryLabel } from "@/lib/format-category-label";
@@ -12,6 +13,7 @@ import { dedupePriceOptions, type PurchaseHistoryEntry } from "@/lib/price-histo
 import { STATUS_BADGE_CLASS, STATUS_LABELS } from "./statusLabels";
 import { REQUEST_TYPE_BADGE_CLASS, REQUEST_TYPE_LABELS } from "./requestTypeLabels";
 import { MaterialRequestTimeline } from "./MaterialRequestTimeline";
+import { MaterialSubstitutionsSection } from "./MaterialSubstitutionsSection";
 
 type MaterialRequestStatus = keyof typeof STATUS_LABELS;
 
@@ -112,6 +114,12 @@ interface MaterialRequestDetail {
   originalMaterialRequest: { id: string; requestNumber: string } | null;
   requestedBy: Person;
   requiresPurchaseAction: boolean;
+  // Additional/Damage Material Request approval (Phase 7) — null for an
+  // ordinary PRODUCTION_REQUIREMENT request (no gate at all); only a
+  // DAMAGE_REPLACEMENT request is ever created with a real value here.
+  approvalStatus: "PENDING" | "APPROVED" | "REJECTED" | null;
+  approvedBy: Person | null;
+  approvalRemark: string | null;
   lines: LineRow[];
 }
 
@@ -144,6 +152,25 @@ export function MaterialRequestWorkflowPanel({
   const [request, setRequest] = useState(initialRequest);
   const [error, setError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
+
+  const [showRejectApproval, setShowRejectApproval] = useState(false);
+  const [rejectApprovalRemark, setRejectApprovalRemark] = useState("");
+
+  // Material Substitution — propose a stock-driven alternative for a line
+  // (Phase 5/6/9 of the Effective BOM work). `autoApprove` submits through
+  // the combined propose-approve-issue endpoint for an authorized user; a
+  // regular Store/Warehouse User leaves it unchecked and the resulting
+  // record sits PENDING until a Production Manager/Supervisor decides it
+  // elsewhere (see MaterialSubstitutionsSection below).
+  const [substitutingLine, setSubstitutingLine] = useState<LineRow | null>(null);
+  const [materials, setMaterials] = useState<MaterialPickerOption[]>([]);
+  const [substituteMaterialId, setSubstituteMaterialId] = useState("");
+  const [substituteQuantity, setSubstituteQuantity] = useState("");
+  const [substituteReason, setSubstituteReason] = useState<"ORIGINAL_MATERIAL_NOT_AVAILABLE" | "QUALITY_ISSUE" | "OTHER">(
+    "ORIGINAL_MATERIAL_NOT_AVAILABLE"
+  );
+  const [substituteRemarks, setSubstituteRemarks] = useState("");
+  const [substituteAutoApprove, setSubstituteAutoApprove] = useState(false);
 
   const [confirmAction, setConfirmAction] = useState<
     null | { title: string; message: string; isDangerous?: boolean; onConfirm: () => Promise<void> }
@@ -217,6 +244,13 @@ export function MaterialRequestWorkflowPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    if (!substitutingLine) return;
+    fetch("/api/v1/materials?pageSize=200")
+      .then((res) => res.json())
+      .then((body) => setMaterials(body.data ?? []));
+  }, [substitutingLine]);
+
   const fetchAttachments = async () => {
     const res = await fetch(`/api/v1/material-requests/${materialRequestId}/attachments`);
     const body = await res.json();
@@ -258,6 +292,22 @@ export function MaterialRequestWorkflowPanel({
     );
   const resumeFromHold = () =>
     run(() => fetch(`/api/v1/material-requests/${materialRequestId}/resume`, { method: "POST" }), "Failed to resume.");
+
+  // Additional/Damage Material Request approval (Phase 7) — reuses
+  // production.approve server-side; a coarse client-side guard isn't needed
+  // here since the buttons only render at all once approvalStatus is
+  // genuinely PENDING, and a denied attempt just surfaces the API's own
+  // clean PERMISSION_DENIED message via the existing `run()` error path.
+  const decideApproval = (decision: "approve" | "reject", approvalRemark: string) =>
+    run(
+      () =>
+        fetch(`/api/v1/material-requests/${materialRequestId}/${decision}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ approvalRemark: approvalRemark || null }),
+        }),
+      `Failed to ${decision} this request.`
+    );
 
   const submitIssue = async () => {
     if (!issuingLine) return;
@@ -340,6 +390,36 @@ export function MaterialRequestWorkflowPanel({
     }
   };
 
+  const submitSubstitute = async () => {
+    if (!substitutingLine) return;
+    const endpoint = substituteAutoApprove
+      ? `/api/v1/material-requests/lines/${substitutingLine.id}/substitutions/propose-approve-issue`
+      : `/api/v1/material-requests/lines/${substitutingLine.id}/substitutions`;
+    const ok = await run(
+      () =>
+        fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            substituteMaterialId,
+            quantity: Number(substituteQuantity),
+            uomId: substitutingLine.uom.id,
+            reason: substituteReason,
+            remarks: substituteRemarks || undefined,
+            autoApprove: substituteAutoApprove,
+          }),
+        }),
+      "Failed to propose this substitution."
+    );
+    if (ok) {
+      setSubstitutingLine(null);
+      setSubstituteMaterialId("");
+      setSubstituteQuantity("");
+      setSubstituteRemarks("");
+      setSubstituteAutoApprove(false);
+    }
+  };
+
   // "Change Warehouse" inside the Issue modal — re-scopes the roll picker
   // (for a FABRIC material) to whichever warehouse was just picked, exactly
   // like the mount-time fetch above but keyed on the chosen warehouse
@@ -402,7 +482,9 @@ export function MaterialRequestWorkflowPanel({
   };
 
   const canAct = request.status !== "CANCELLED" && request.status !== "CLOSED" && request.status !== "FULFILLED";
-  const canIssue = canAct && request.status !== "ON_HOLD";
+  // A DAMAGE_REPLACEMENT request still awaiting (or refused) approval can't
+  // be issued against at all — see assertNotPendingApproval server-side.
+  const canIssue = canAct && request.status !== "ON_HOLD" && request.approvalStatus !== "PENDING" && request.approvalStatus !== "REJECTED";
   const hasShortfallCandidates = request.lines.some((l) => l.availableToOrderQuantity > 0);
   // Matches the edit page's own real-state guard, applied per line — a line
   // is locked once anything has actually been issued or escalated against
@@ -425,8 +507,46 @@ export function MaterialRequestWorkflowPanel({
             Purchase Required
           </span>
         )}
+        {request.approvalStatus === "PENDING" && (
+          <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-700 dark:bg-amber-500/10 dark:text-amber-300">
+            Pending Approval
+          </span>
+        )}
+        {request.approvalStatus === "APPROVED" && (
+          <span className="rounded-full bg-green-100 px-3 py-1 text-xs font-medium text-green-700 dark:bg-green-500/10 dark:text-green-300">
+            Approved
+          </span>
+        )}
+        {request.approvalStatus === "REJECTED" && (
+          <span className="rounded-full bg-red-100 px-3 py-1 text-xs font-medium text-red-700 dark:bg-red-500/10 dark:text-red-300">
+            Rejected
+          </span>
+        )}
         {isBusy && <span className="text-xs text-zinc-400">Saving…</span>}
       </div>
+
+      {request.approvalStatus === "PENDING" && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950/30">
+          <p className="mb-3 text-sm text-amber-800 dark:text-amber-200">
+            This is an additional/damage material request — nothing can be issued against it until it&apos;s approved.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <ActionButton label="Approve Request" onClick={() => decideApproval("approve", "")} isBusy={isBusy} />
+            <ActionButton
+              label="Reject Request"
+              onClick={() => {
+                setRejectApprovalRemark("");
+                setShowRejectApproval(true);
+              }}
+              isBusy={isBusy}
+              variant="danger"
+            />
+          </div>
+        </div>
+      )}
+      {request.approvalStatus === "REJECTED" && request.approvalRemark && (
+        <p className="text-sm text-red-600 dark:text-red-400">Rejected: {request.approvalRemark}</p>
+      )}
 
       <p className="text-sm text-zinc-600 dark:text-zinc-300">
         {request.status === "ON_HOLD" && request.statusBeforeHold
@@ -654,6 +774,23 @@ export function MaterialRequestWorkflowPanel({
                           Issue
                         </button>
                       )}
+                      {canIssue && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSubstitutingLine(line);
+                            setSubstituteMaterialId("");
+                            setSubstituteQuantity("");
+                            setSubstituteReason("ORIGINAL_MATERIAL_NOT_AVAILABLE");
+                            setSubstituteRemarks("");
+                            setSubstituteAutoApprove(false);
+                            setError(null);
+                          }}
+                          className="ml-3 text-xs font-medium text-amber-700 hover:text-amber-600 dark:text-amber-400 dark:hover:text-amber-300"
+                        >
+                          Substitute
+                        </button>
+                      )}
                     </td>
                   </tr>
                 );
@@ -704,6 +841,8 @@ export function MaterialRequestWorkflowPanel({
         </div>
       </div>
 
+      <MaterialSubstitutionsSection lineIds={request.lines.map((l) => l.id)} />
+
       <MaterialRequestTimeline
         materialRequestId={materialRequestId}
         lines={request.lines.map((l) => ({ id: l.id, uomCode: l.uom.code }))}
@@ -735,6 +874,120 @@ export function MaterialRequestWorkflowPanel({
           onCancel={() => setConfirmAction(null)}
         />
       )}
+
+      <Modal open={showRejectApproval} onClose={() => setShowRejectApproval(false)} title="Reject This Request">
+        <div className="space-y-4">
+          <FormField label="Reason (optional)" htmlFor="rejectApprovalRemark">
+            <textarea
+              id="rejectApprovalRemark"
+              rows={3}
+              value={rejectApprovalRemark}
+              onChange={(e) => setRejectApprovalRemark(e.target.value)}
+              className={textInputClass()}
+            />
+          </FormField>
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setShowRejectApproval(false)}
+              className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={async () => {
+                const ok = await decideApproval("reject", rejectApprovalRemark);
+                if (ok) setShowRejectApproval(false);
+              }}
+              disabled={isBusy}
+              className="rounded-md bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-500 disabled:opacity-60"
+            >
+              {isBusy ? "Saving…" : "Reject"}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal open={!!substitutingLine} onClose={() => setSubstitutingLine(null)} title="Propose Substitute Material">
+        {substitutingLine && (
+          <div className="space-y-4">
+            <p className="text-sm text-zinc-600 dark:text-zinc-300">
+              Requesting <span className="font-medium">{substitutingLine.material.styleName}</span> ({substitutingLine.material.styleCode}
+              ). This does not change what the Effective BOM requires — it records an acceptable alternative, with a full
+              audit trail, for when the original material genuinely isn&apos;t available.
+            </p>
+            <FormField label="Substitute Material" htmlFor="substituteMaterialId" required>
+              <MaterialPicker
+                id="substituteMaterialId"
+                materials={materials.filter((m) => m.id !== substitutingLine.material.id)}
+                value={substituteMaterialId}
+                onChange={setSubstituteMaterialId}
+                required
+              />
+            </FormField>
+            <FormField label={`Quantity (${substitutingLine.uom.code})`} htmlFor="substituteQuantity" required>
+              <input
+                id="substituteQuantity"
+                type="number"
+                min={0}
+                step="0.0001"
+                value={substituteQuantity}
+                onChange={(e) => setSubstituteQuantity(e.target.value)}
+                className={textInputClass()}
+              />
+            </FormField>
+            <FormField label="Reason" htmlFor="substituteReason" required>
+              <select
+                id="substituteReason"
+                value={substituteReason}
+                onChange={(e) => setSubstituteReason(e.target.value as typeof substituteReason)}
+                className={textInputClass()}
+              >
+                <option value="ORIGINAL_MATERIAL_NOT_AVAILABLE">Original material not available</option>
+                <option value="QUALITY_ISSUE">Quality issue with original material</option>
+                <option value="OTHER">Other</option>
+              </select>
+            </FormField>
+            <FormField label="Remarks (optional)" htmlFor="substituteRemarks">
+              <textarea
+                id="substituteRemarks"
+                rows={2}
+                value={substituteRemarks}
+                onChange={(e) => setSubstituteRemarks(e.target.value)}
+                className={textInputClass()}
+              />
+            </FormField>
+            <label className="flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-200">
+              <input type="checkbox" checked={substituteAutoApprove} onChange={(e) => setSubstituteAutoApprove(e.target.checked)} />
+              I&apos;m authorized to approve this myself — approve and issue it immediately
+            </label>
+            {!substituteAutoApprove && (
+              <p className="text-xs text-zinc-500">
+                Without this, the substitution is recorded as Pending — a Production Manager/Supervisor must approve it
+                before anything is issued.
+              </p>
+            )}
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setSubstitutingLine(null)}
+                className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={submitSubstitute}
+                disabled={isBusy || !substituteMaterialId || !substituteQuantity || Number(substituteQuantity) <= 0}
+                className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
+              >
+                {isBusy ? "Saving…" : substituteAutoApprove ? "Approve & Issue" : "Propose"}
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
 
       <Modal
         open={!!issuingLine}

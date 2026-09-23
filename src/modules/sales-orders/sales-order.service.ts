@@ -13,6 +13,7 @@ import { DispatchRepository } from "@/modules/dispatch/dispatch.repository";
 import { getSalesOrderItemProductionSummary } from "@/modules/production/production-progress.service";
 import type { ConfirmSalesOrderInput, SalesOrderInput, UpdateSalesOrderInput } from "./sales-order.schema";
 import { CompanyRepository, SalesOrderRepository } from "./sales-order.repository";
+import { buildReconciledItemPlan, snapshotUnsnapshottedLinesInTx } from "./sales-order-bom.service";
 import { SalesOrderStatus, type Prisma } from "@prisma/client";
 
 interface ActorContext {
@@ -205,7 +206,12 @@ export async function createSalesOrder(actor: ActorContext, input: SalesOrderInp
     return orderSum + item.unitPrice * itemQty;
   }, 0);
 
-  const order = await SalesOrderRepository.createWithItems({
+  // Bare header first — createHeader() has no items yet, so
+  // buildReconciledItemPlan() below (called against this real order id with
+  // zero existing SalesOrderLines) correctly treats every submitted item as
+  // a fresh line, reusing the exact same write path updateSalesOrder() uses
+  // rather than a second, parallel nested-create shape.
+  const header = await SalesOrderRepository.createHeader({
     companyId: actor.companyId,
     branchId: actor.branchId || null,
     orderNumber,
@@ -222,21 +228,24 @@ export async function createSalesOrder(actor: ActorContext, input: SalesOrderInp
     totalAmount,
     baseTotalAmount: totalAmount,
     requestedByUserId: actor.userId,
-    items: {
-      create: input.items.map((item) => ({
-        productId: item.productId,
-        sampleRequestId: item.sampleRequestId || null,
-        unitPrice: item.unitPrice,
-        notes: item.notes || null,
-        breakdown: {
-          create: item.breakdown.map((b) => ({
-            productVariantId: b.productVariantId,
-            orderedQuantity: b.orderedQuantity,
-          })),
-        },
-      })),
-    },
   });
+
+  // A brand-new order always starts DRAFT — isConfirmed: false, so no line
+  // gets a BOM/Sample snapshot yet (that happens once, for every line, at
+  // confirmSalesOrder() time).
+  const itemPlan = await buildReconciledItemPlan(
+    actor,
+    header.id,
+    false,
+    input.items.map((item) => ({
+      productId: item.productId,
+      sampleRequestId: item.sampleRequestId || null,
+      unitPrice: item.unitPrice,
+      notes: item.notes || null,
+      breakdown: item.breakdown,
+    }))
+  );
+  const order = await SalesOrderRepository.replaceItems(actor.companyId, header.id, {}, itemPlan);
 
   await writeAuditLog({
     companyId: actor.companyId,
@@ -325,7 +334,31 @@ export async function updateSalesOrder(actor: ActorContext, id: string, input: U
     return orderSum + item.unitPrice * itemQty;
   }, 0);
 
+  // Effective BOM (2026-09-24) — reconciles each submitted item against the
+  // order's existing SalesOrderLines before writing: an unchanged line (same
+  // productId/sampleRequestId) keeps its own frozen snapshot and any active
+  // overrides untouched; a changed product/sample, or a genuinely new line,
+  // gets a fresh SalesOrderLine — snapshotted immediately only because this
+  // order is already CONFIRMED (a still-DRAFT edit defers snapshotting to
+  // confirmSalesOrder()). An existing line whose id isn't resubmitted at all
+  // (a deleted line) simply ends up with no live item after this write —
+  // its own overrides stop applying without ever being deleted.
+  const itemPlan = await buildReconciledItemPlan(
+    actor,
+    id,
+    existing.status === "CONFIRMED",
+    input.items.map((item) => ({
+      salesOrderLineId: item.salesOrderLineId || undefined,
+      productId: item.productId,
+      sampleRequestId: item.sampleRequestId || null,
+      unitPrice: item.unitPrice,
+      notes: item.notes || null,
+      breakdown: item.breakdown,
+    }))
+  );
+
   const updated = await SalesOrderRepository.replaceItems(
+    actor.companyId,
     id,
     {
       customerId: input.customerId,
@@ -336,13 +369,7 @@ export async function updateSalesOrder(actor: ActorContext, id: string, input: U
       totalAmount,
       baseTotalAmount: totalAmount,
     },
-    input.items.map((item) => ({
-      productId: item.productId,
-      sampleRequestId: item.sampleRequestId || null,
-      unitPrice: item.unitPrice,
-      notes: item.notes || null,
-      breakdown: item.breakdown,
-    }))
+    itemPlan
   );
 
   await writeAuditLog({
@@ -384,17 +411,25 @@ export async function confirmSalesOrder(actor: ActorContext, id: string, input: 
     input.overrideReason
   );
 
-  // Conditional on status still being DRAFT at write time — closes the race
-  // between the check above and this write (two concurrent "Confirm" clicks
-  // both reading DRAFT before either commits).
-  const { count } = await SalesOrderRepository.updateStatusConditional(id, "DRAFT", { status: "CONFIRMED" });
-  if (count === 0) {
-    throw new BusinessRuleError(
-      "INVALID_STATE_TRANSITION",
-      `Cannot confirm a sales order in "${order.status}" status.`,
-      { currentStatus: order.status }
-    );
-  }
+  await prisma.$transaction(async (tx) => {
+    // Conditional on status still being DRAFT at write time — closes the
+    // race between the check above and this write (two concurrent "Confirm"
+    // clicks both reading DRAFT before either commits).
+    const { count } = await tx.salesOrder.updateMany({ where: { id, status: "DRAFT" }, data: { status: "CONFIRMED" } });
+    if (count === 0) {
+      throw new BusinessRuleError(
+        "INVALID_STATE_TRANSITION",
+        `Cannot confirm a sales order in "${order.status}" status.`,
+        { currentStatus: order.status }
+      );
+    }
+
+    // Effective BOM (2026-09-24) — DRAFT -> CONFIRMED is the one true "this
+    // order is now committed" event the spec describes; every line without
+    // a snapshot yet gets one now, atomically alongside the status flip.
+    await snapshotUnsnapshottedLinesInTx(tx, actor, id);
+  });
+
   const updated = await SalesOrderRepository.findAnyById(actor.companyId, id);
   if (!updated) throw new BusinessRuleError("NOT_FOUND", "Sales order not found.", { id });
 

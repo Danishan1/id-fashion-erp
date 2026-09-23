@@ -7,6 +7,8 @@ vi.mock("@/modules/garment-attributes/garment-attributes.repository", () => ({
 }));
 vi.mock("./supplier.repository", () => ({
   SupplierRepository: {
+    findMany: vi.fn(),
+    count: vi.fn(),
     findByCode: vi.fn(),
     findById: vi.fn(),
     create: vi.fn(),
@@ -16,7 +18,7 @@ vi.mock("./supplier.repository", () => ({
 
 const { GarmentAttributeRepository } = await import("@/modules/garment-attributes/garment-attributes.repository");
 const { SupplierRepository } = await import("./supplier.repository");
-const { createSupplier, updateSupplier } = await import("./supplier.service");
+const { createSupplier, updateSupplier, listSuppliers } = await import("./supplier.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
 const baseInput = { code: "SUP100", name: "New Supplier", isActive: true };
@@ -27,6 +29,39 @@ beforeEach(() => {
   vi.mocked(SupplierRepository.findById).mockReset();
   vi.mocked(SupplierRepository.create).mockReset();
   vi.mocked(SupplierRepository.update).mockReset();
+  vi.mocked(SupplierRepository.findMany).mockReset().mockResolvedValue([] as never);
+  vi.mocked(SupplierRepository.count).mockReset().mockResolvedValue(0);
+});
+
+const baseQuery = { page: 1, pageSize: 20, skip: 0, take: 20, sortBy: "name", sortOrder: "asc" as const };
+
+describe("listSuppliers — jobWorkContractor filter", () => {
+  it("omits the isJobWorkContractor filter entirely by default", async () => {
+    await listSuppliers("co-1", baseQuery);
+    expect(SupplierRepository.findMany).toHaveBeenCalledWith(
+      { companyId: "co-1", deletedAt: null },
+      expect.anything()
+    );
+  });
+
+  it("scopes to isJobWorkContractor: true when the 'Send to External Job-Work' picker asks for it", async () => {
+    await listSuppliers("co-1", baseQuery, { jobWorkContractor: true });
+    expect(SupplierRepository.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ companyId: "co-1", isJobWorkContractor: true }),
+      expect.anything()
+    );
+  });
+});
+
+describe("updateSupplier — isJobWorkContractor", () => {
+  it("toggles isJobWorkContractor when present in the PATCH body", async () => {
+    vi.mocked(SupplierRepository.findById).mockResolvedValue({ id: "sup-1", code: "SUP001" } as never);
+    vi.mocked(SupplierRepository.update).mockResolvedValue({ id: "sup-1" } as never);
+
+    await updateSupplier(actor, "sup-1", { isJobWorkContractor: true } as never);
+
+    expect(SupplierRepository.update).toHaveBeenCalledWith("sup-1", { isJobWorkContractor: true });
+  });
 });
 
 describe("createSupplier — categoryId validation", () => {

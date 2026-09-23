@@ -23,6 +23,9 @@ vi.mock("@/core/db/client", () => ({
   prisma: {
     salesOrderItem: { findFirst: vi.fn() },
     productionOrder: { aggregate: vi.fn() },
+    materialRequestItem: { findMany: vi.fn() },
+    inventoryTransaction: { groupBy: vi.fn() },
+    product: { findMany: vi.fn() },
   },
 }));
 vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { getAllowedBranchIds: vi.fn() } }));
@@ -42,6 +45,7 @@ const {
   getProductionOrderById,
   updateProductionOrderQuantity,
   listProductionOrders,
+  getProductionOrderMaterialComparison,
 } = await import("./production-order.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
@@ -58,6 +62,10 @@ beforeEach(() => {
   vi.mocked(prisma.productionOrder.aggregate).mockReset().mockResolvedValue({ _sum: { plannedQuantity: null } } as never);
   vi.mocked(getProductionOrderProgress).mockReset().mockResolvedValue({ progressStatus: "PLANNED" } as never);
   vi.mocked(PermissionService.getAllowedBranchIds).mockReset().mockResolvedValue(null);
+  vi.mocked(getMaterialRequirementForOrderLine).mockReset();
+  vi.mocked(prisma.materialRequestItem.findMany).mockReset().mockResolvedValue([]);
+  vi.mocked(prisma.inventoryTransaction.groupBy).mockReset().mockResolvedValue([]);
+  vi.mocked(prisma.product.findMany).mockReset().mockResolvedValue([]);
 });
 
 describe("createProductionOrder", () => {
@@ -354,5 +362,83 @@ describe("branch access enforcement (2026-09-15)", () => {
     vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
 
     await expect(getProductionOrderById(actor, "po-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+});
+
+describe("getProductionOrderMaterialComparison — Planned vs Issued (Phase 8)", () => {
+  it("matches the spec's own worked example: Green Fabric Planned 100/Issued 60, Light Blue Planned 0/Issued 40 (a substitute never in the plan)", async () => {
+    vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue({
+      id: "po-1",
+      productId: "style-1",
+      plannedQuantity: "50",
+      salesOrderItemId: "soi-1",
+    } as never);
+    vi.mocked(getMaterialRequirementForOrderLine).mockResolvedValue({
+      materials: [{ materialId: "green-fabric", materialName: "Green Fabric", materialCode: "GF", uomCode: "MTR", neededQuantity: 100 }],
+    } as never);
+    vi.mocked(prisma.materialRequestItem.findMany).mockResolvedValue([{ id: "mri-1" }, { id: "mri-2" }] as never);
+    vi.mocked(prisma.inventoryTransaction.groupBy).mockResolvedValue([
+      { productId: "green-fabric", _sum: { quantity: -60 } },
+      { productId: "light-blue-fabric", _sum: { quantity: -40 } },
+    ] as never);
+    vi.mocked(prisma.product.findMany).mockResolvedValue([
+      { id: "light-blue-fabric", styleName: "Light Blue Fabric", styleCode: "LBF", baseUom: { code: "MTR" } },
+    ] as never);
+
+    const rows = await getProductionOrderMaterialComparison("co-1", "po-1");
+
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ materialId: "green-fabric", plannedQuantity: 100, issuedQuantity: 60, isSubstitute: false }),
+        expect.objectContaining({ materialId: "light-blue-fabric", plannedQuantity: 0, issuedQuantity: 40, isSubstitute: true }),
+      ])
+    );
+    expect(prisma.materialRequestItem.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { materialRequest: { companyId: "co-1", productionOrderId: "po-1" } } })
+    );
+  });
+
+  it("never modifies the Effective BOM's own planned figure just because a substitute was issued — Green stays 100 regardless", async () => {
+    vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue({
+      id: "po-1",
+      productId: "style-1",
+      plannedQuantity: "50",
+      salesOrderItemId: "soi-1",
+    } as never);
+    vi.mocked(getMaterialRequirementForOrderLine).mockResolvedValue({
+      materials: [{ materialId: "green-fabric", materialName: "Green Fabric", materialCode: "GF", uomCode: "MTR", neededQuantity: 100 }],
+    } as never);
+    vi.mocked(prisma.materialRequestItem.findMany).mockResolvedValue([{ id: "mri-1" }] as never);
+    vi.mocked(prisma.inventoryTransaction.groupBy).mockResolvedValue([{ productId: "light-blue-fabric", _sum: { quantity: -40 } }] as never);
+    vi.mocked(prisma.product.findMany).mockResolvedValue([
+      { id: "light-blue-fabric", styleName: "Light Blue Fabric", styleCode: "LBF", baseUom: { code: "MTR" } },
+    ] as never);
+
+    const rows = await getProductionOrderMaterialComparison("co-1", "po-1");
+
+    const green = rows.find((r) => r.materialId === "green-fabric")!;
+    expect(green.plannedQuantity).toBe(100);
+    expect(green.issuedQuantity).toBe(0); // nothing of the original material was actually issued in this scenario
+  });
+
+  it("returns an empty list with zero ledger queries when the order has no linked Material Requests at all", async () => {
+    vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue({
+      id: "po-1",
+      productId: "style-1",
+      plannedQuantity: "50",
+      salesOrderItemId: null,
+    } as never);
+    vi.mocked(getMaterialRequirementForOrderLine).mockResolvedValue({ materials: [] } as never);
+    vi.mocked(prisma.materialRequestItem.findMany).mockResolvedValue([]);
+
+    const rows = await getProductionOrderMaterialComparison("co-1", "po-1");
+
+    expect(rows).toEqual([]);
+    expect(prisma.inventoryTransaction.groupBy).not.toHaveBeenCalled();
+  });
+
+  it("rejects for an order that doesn't exist for this company", async () => {
+    vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue(null);
+    await expect(getProductionOrderMaterialComparison("co-1", "po-missing")).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 });

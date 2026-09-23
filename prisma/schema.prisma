@@ -69,6 +69,9 @@ model Company {
   sampleRequests                      SampleRequest[]
   buyerEnquiries                      BuyerEnquiry[]
   salesOrders                         SalesOrder[]
+  salesOrderLines                     SalesOrderLine[]
+  salesOrderBomOverrides              SalesOrderBomOverride[]
+  materialSubstitutions               MaterialSubstitution[]
   boms                                Bom[]
   purchaseOrders                      PurchaseOrder[]
   materialRequests                    MaterialRequest[]
@@ -299,6 +302,12 @@ model User {
   salesOrdersRequested                       SalesOrder[]                         @relation("SalesOrderRequestedBy")
   purchaseOrdersRequested                    PurchaseOrder[]                      @relation("PurchaseOrderRequestedBy")
   materialRequestsMade                       MaterialRequest[]                    @relation("MaterialRequestRequestedBy")
+  materialRequestsApproved                   MaterialRequest[]                    @relation("MaterialRequestApprovedBy")
+  salesOrderLinesSnapshotTaken               SalesOrderLine[]                     @relation("SalesOrderLineSnapshotTakenBy")
+  salesOrderBomOverridesChanged              SalesOrderBomOverride[]              @relation("SalesOrderBomOverrideChangedBy")
+  salesOrderBomOverridesDeactivated          SalesOrderBomOverride[]              @relation("SalesOrderBomOverrideDeactivatedBy")
+  materialSubstitutionsRequested             MaterialSubstitution[]               @relation("MaterialSubstitutionRequestedBy")
+  materialSubstitutionsApproved              MaterialSubstitution[]               @relation("MaterialSubstitutionApprovedBy")
   goodsReceiptsReceived                      GoodsReceipt[]                       @relation("GoodsReceiptReceivedBy")
   inventoryTransactionsPerformed             InventoryTransaction[]               @relation("InventoryTransactionPerformedBy")
   stockMovementsPerformed                    StockMovement[]                      @relation("StockMovementPerformedBy")
@@ -718,6 +727,12 @@ model Supplier {
   paymentTermsDays    Int?      @map("payment_terms_days")
   defaultCurrencyCode String?   @map("default_currency_code") @db.Char(3)
   bankDetailsJson     Json?     @map("bank_details_json")
+  // 2026-09-23 — distinct from Category (single-valued today): a supplier
+  // can be both a raw-material vendor AND an external job-work contractor at
+  // once. Filters the "Send to External Job-Work" picker in
+  // LotWorkflowPanel.tsx, which previously listed every Supplier
+  // undifferentiated (fabric/trim/packaging/machinery vendors included).
+  isJobWorkContractor Boolean   @default(false) @map("is_job_work_contractor")
   isActive            Boolean   @default(true) @map("is_active")
   deletedAt           DateTime? @map("deleted_at")
   createdAt           DateTime  @default(now()) @map("created_at")
@@ -966,49 +981,53 @@ model Product {
   createdAt             DateTime          @default(now()) @map("created_at")
   updatedAt             DateTime          @updatedAt @map("updated_at")
 
-  company                      Company                       @relation(fields: [companyId], references: [id])
-  customer                     Customer?                     @relation(fields: [customerId], references: [id])
-  baseUom                      UnitOfMeasure?                @relation(fields: [baseUomId], references: [id])
-  defaultSupplier              Supplier?                     @relation(fields: [defaultSupplierId], references: [id])
-  variants                     ProductVariant[]
-  category                     Category?                     @relation(fields: [categoryId], references: [id])
-  season                       Season?                       @relation(fields: [seasonId], references: [id])
-  brand                        Brand?                        @relation(fields: [brandId], references: [id])
-  productType                  ProductType?                  @relation(fields: [productTypeId], references: [id])
-  productFitting               ProductFitting?               @relation(fields: [productFittingId], references: [id])
-  sampleRequests               SampleRequest[]               @relation("SampleRequestStyle")
-  sampleMaterialUse            SampleMaterial[]              @relation("SampleMaterialProduct")
-  buyerEnquiryLines            BuyerEnquiryLine[]
-  salesOrderItems              SalesOrderItem[]
-  purchaseOrderItems           PurchaseOrderItem[]
-  goodsReceiptItems            GoodsReceiptItem[]
-  inventoryTransactions        InventoryTransaction[]
-  stockBalances                StockBalance[]
-  bom                          Bom?
-  bomItemUsages                BomItem[]                     @relation("BomItemMaterial")
-  materialRequestItems         MaterialRequestItem[]         @relation("MaterialRequestItemMaterial")
-  supplierLinks                SupplierMaterial[]
-  productionOrders             ProductionOrder[]
-  stockMovementItems           StockMovementItem[]
-  salesInvoiceItems            SalesInvoiceItem[]
-  purchaseInvoiceItems         PurchaseInvoiceItem[]
-  dispatchItems                DispatchItem[]
-  jobWorkOrderMaterials        JobWorkOrderMaterial[]
-  customInvoiceItems           CustomInvoiceItem[]
+  company                           Company                       @relation(fields: [companyId], references: [id])
+  customer                          Customer?                     @relation(fields: [customerId], references: [id])
+  baseUom                           UnitOfMeasure?                @relation(fields: [baseUomId], references: [id])
+  defaultSupplier                   Supplier?                     @relation(fields: [defaultSupplierId], references: [id])
+  variants                          ProductVariant[]
+  category                          Category?                     @relation(fields: [categoryId], references: [id])
+  season                            Season?                       @relation(fields: [seasonId], references: [id])
+  brand                             Brand?                        @relation(fields: [brandId], references: [id])
+  productType                       ProductType?                  @relation(fields: [productTypeId], references: [id])
+  productFitting                    ProductFitting?               @relation(fields: [productFittingId], references: [id])
+  sampleRequests                    SampleRequest[]               @relation("SampleRequestStyle")
+  sampleMaterialUse                 SampleMaterial[]              @relation("SampleMaterialProduct")
+  buyerEnquiryLines                 BuyerEnquiryLine[]
+  salesOrderItems                   SalesOrderItem[]
+  purchaseOrderItems                PurchaseOrderItem[]
+  goodsReceiptItems                 GoodsReceiptItem[]
+  inventoryTransactions             InventoryTransaction[]
+  stockBalances                     StockBalance[]
+  bom                               Bom?
+  bomItemUsages                     BomItem[]                     @relation("BomItemMaterial")
+  materialRequestItems              MaterialRequestItem[]         @relation("MaterialRequestItemMaterial")
+  supplierLinks                     SupplierMaterial[]
+  productionOrders                  ProductionOrder[]
+  stockMovementItems                StockMovementItem[]
+  salesInvoiceItems                 SalesInvoiceItem[]
+  purchaseInvoiceItems              PurchaseInvoiceItem[]
+  dispatchItems                     DispatchItem[]
+  jobWorkOrderMaterials             JobWorkOrderMaterial[]
+  customInvoiceItems                CustomInvoiceItem[]
   // Virtual back-relation only — the single authoritative FK lives on
   // AiGarmentProject.productId (@unique), set once by convertProjectToStyle().
-  aiGarmentProject             AiGarmentProject?
+  aiGarmentProject                  AiGarmentProject?
   // AI Designer's own read-only reference when a project picks this row as
   // its "existing fabric" — many AI Designer projects may point at the same
   // material, so this is a plain array, not a unique back-relation.
-  aiDesignerProjects           AiDesignerProject[]
+  aiDesignerProjects                AiDesignerProject[]
   // Replicate Design's own read-only reference when a project picks this row
   // as its "existing fabric" (fabricProductId) — same "many projects may
   // point at the same material" plain-array shape as AI Designer's own.
-  replicateDesignProjects      ReplicateDesignProject[]
-  replicateDesignMaterialLines ReplicateDesignMaterialLine[]
-  pieceRateCards               PieceRateCard[]
-  productionRoutes             ProductionRoute[]
+  replicateDesignProjects           ReplicateDesignProject[]
+  replicateDesignMaterialLines      ReplicateDesignMaterialLine[]
+  pieceRateCards                    PieceRateCard[]
+  productionRoutes                  ProductionRoute[]
+  salesOrderBomOverridesAsOriginal  SalesOrderBomOverride[]       @relation("SalesOrderBomOverrideOriginalMaterial")
+  salesOrderBomOverridesAsEffective SalesOrderBomOverride[]       @relation("SalesOrderBomOverrideEffectiveMaterial")
+  materialSubstitutionsAsOriginal   MaterialSubstitution[]        @relation("MaterialSubstitutionOriginalMaterial")
+  materialSubstitutionsAsSubstitute MaterialSubstitution[]        @relation("MaterialSubstitutionSubstituteMaterial")
 
   @@unique([companyId, styleCode])
   @@map("products")
@@ -1032,6 +1051,7 @@ model Color {
   purchaseOrderItems     PurchaseOrderItem[]
   aiGarmentFabricDetails AiGarmentFabricDetail[]
   sampleRequests         SampleRequest[]
+  salesOrderBomOverrides SalesOrderBomOverride[]
 
   @@unique([companyId, code])
   @@map("colors")
@@ -1080,6 +1100,8 @@ model UnitOfMeasure {
   jobWorkOrderMaterials        JobWorkOrderMaterial[]
   fabricWidths                 FabricWidth[]
   replicateDesignMaterialLines ReplicateDesignMaterialLine[]
+  salesOrderBomOverrides       SalesOrderBomOverride[]
+  materialSubstitutions        MaterialSubstitution[]
 
   @@map("units_of_measure")
 }
@@ -2059,6 +2081,13 @@ model SampleRequest {
   // — points at whichever uploaded gallery image (relatedModule
   // SAMPLE_REQUEST) is the designated cover/main image.
   mainImageAttachmentId String?       @map("main_image_attachment_id") @db.Uuid
+  // Set once, at creation, by duplicateSampleRequest() ("Copy Design") —
+  // pure traceability, never a live/synced link: the new request's header,
+  // tech pack notes, and materials are copied once and then diverge freely
+  // (images/pricing/damage/approvals/comments are deliberately NOT copied —
+  // see that function's own comment). Null for every ordinarily-created
+  // request.
+  copiedFromRequestId   String?       @map("copied_from_request_id") @db.Uuid
   requestedByUserId     String        @map("requested_by_user_id") @db.Uuid
   requestDate           DateTime      @map("request_date") @db.Date
   targetSubmissionDate  DateTime?     @map("target_submission_date") @db.Date
@@ -2076,6 +2105,8 @@ model SampleRequest {
   color            Color?            @relation(fields: [colorId], references: [id])
   size             Size?             @relation(fields: [sizeId], references: [id])
   requestedBy      User              @relation("SampleRequestedBy", fields: [requestedByUserId], references: [id])
+  copiedFrom       SampleRequest?    @relation("SampleRequestCopiedFrom", fields: [copiedFromRequestId], references: [id])
+  copiedInto       SampleRequest[]   @relation("SampleRequestCopiedFrom")
   versions         SampleVersion[]
   comments         SampleComment[]
   salesOrderItems  SalesOrderItem[]
@@ -2139,6 +2170,7 @@ model SampleVersion {
   // more than one over time (a soft duplicate-warning, not a hard cap — see
   // findMaterialRequestsBySampleVersion in material-request.service.ts).
   materialRequests MaterialRequest[]
+  salesOrderLines  SalesOrderLine[]
 
   @@unique([sampleRequestId, versionNumber])
   @@map("sample_versions")
@@ -3094,6 +3126,7 @@ model SalesOrder {
   originatingDeal  Deal?             @relation(fields: [originatingDealId], references: [id])
   requestedBy      User              @relation("SalesOrderRequestedBy", fields: [requestedByUserId], references: [id])
   items            SalesOrderItem[]
+  salesOrderLines  SalesOrderLine[]
   materialRequests MaterialRequest[]
   salesInvoices    SalesInvoice[]
   dispatches       Dispatch[]
@@ -3124,17 +3157,145 @@ model SalesOrderItem {
   // documents over time (partial dispatch), hence an accumulator here rather
   // than a one-shot flag.
   dispatchedQuantity Int      @default(0) @map("dispatched_quantity")
+  // Effective BOM (2026-09-24) — the STABLE line identity this concrete item
+  // row belongs to. Deliberately NOT the same as this row's own `id`:
+  // updateSalesOrder()'s replaceItems() deletes and recreates every
+  // SalesOrderItem on every edit, so `id` itself is not stable across edits.
+  // SalesOrderLine is the anchor that survives — the BOM snapshot and any
+  // SalesOrderBomOverride rows are keyed to it, not to this row. Nullable
+  // only because a row can theoretically be written by test/legacy code
+  // paths that predate this column; every real service-layer write sets it.
+  salesOrderLineId   String?  @map("sales_order_line_id") @db.Uuid
   createdAt          DateTime @default(now()) @map("created_at")
 
   salesOrder        SalesOrder                @relation(fields: [salesOrderId], references: [id])
   product           Product                   @relation(fields: [productId], references: [id])
   sampleRequest     SampleRequest?            @relation(fields: [sampleRequestId], references: [id])
+  salesOrderLine    SalesOrderLine?           @relation(fields: [salesOrderLineId], references: [id])
   breakdown         SalesOrderItemBreakdown[]
   productionOrders  ProductionOrder[]
   salesInvoiceItems SalesInvoiceItem[]
   dispatchItems     DispatchItem[]
 
   @@map("sales_order_items")
+}
+
+// Effective BOM / Sales Order Override / Material Substitution (2026-09-24)
+// ─────────────────────────────────────────────────────────────
+//
+// The stable identity of one Sales Order line, surviving updateSalesOrder()'s
+// full delete-and-recreate of the concrete SalesOrderItem rows on every edit.
+// `lineNumber` is assigned once (sequential per order, e.g. 1, 2, 3, ...) and
+// never reused — the same style/design can legitimately appear on more than
+// one line of the same order (e.g. two different color-ways), and each such
+// line must keep its own independent snapshot/overrides, never merged by
+// productId alone.
+//
+// The BOM/Sample snapshot fields below are the frozen "what this line was
+// confirmed against" fact — set ONCE, either when the order is first
+// confirmed or when a genuinely new line is added to an already-confirmed
+// order, and NEVER silently re-taken by an ordinary edit (quantity, dates,
+// remarks, ...). Only the explicit refreshSalesOrderLineBomSnapshot() action
+// (sales-order-bom.service.ts) updates it, with its own audit trail — moving
+// an existing confirmed line onto a newer Master BOM version is a deliberate
+// business decision, never a side effect of an unrelated edit.
+enum SalesOrderBomSourceType {
+  STYLE_BOM
+  SAMPLE_MATERIALS
+  // No approved Style BOM and no linked Sample existed to snapshot at the
+  // moment this line was confirmed — the Effective BOM resolver falls back
+  // to whatever the Style's live approved BOM says today, the same honest
+  // "nothing to snapshot" degradation MRP already used before this feature
+  // existed.
+  NONE
+}
+
+model SalesOrderLine {
+  id                    String                  @id @default(uuid()) @db.Uuid
+  companyId             String                  @map("company_id") @db.Uuid
+  salesOrderId          String                  @map("sales_order_id") @db.Uuid
+  lineNumber            Int                     @map("line_number")
+  sourceType            SalesOrderBomSourceType @default(NONE) @map("source_type")
+  // Set when sourceType = STYLE_BOM — which exact BomVersion was approved at
+  // snapshot time.
+  bomVersionId          String?                 @map("bom_version_id") @db.Uuid
+  // Set when sourceType = SAMPLE_MATERIALS — which exact (append-only)
+  // SampleVersion's materials were captured. Without freezing this too, a
+  // later sample revision would silently change what an already-confirmed
+  // order thinks it needs — the identical problem this whole feature exists
+  // to prevent for the Style-BOM case, applied symmetrically.
+  sampleVersionId       String?                 @map("sample_version_id") @db.Uuid
+  snapshotTakenAt       DateTime?               @map("snapshot_taken_at")
+  snapshotTakenByUserId String?                 @map("snapshot_taken_by_user_id") @db.Uuid
+  createdAt             DateTime                @default(now()) @map("created_at")
+  updatedAt             DateTime                @updatedAt @map("updated_at")
+
+  company         Company                 @relation(fields: [companyId], references: [id])
+  salesOrder      SalesOrder              @relation(fields: [salesOrderId], references: [id])
+  bomVersion      BomVersion?             @relation(fields: [bomVersionId], references: [id])
+  sampleVersion   SampleVersion?          @relation(fields: [sampleVersionId], references: [id])
+  snapshotTakenBy User?                   @relation("SalesOrderLineSnapshotTakenBy", fields: [snapshotTakenByUserId], references: [id])
+  items           SalesOrderItem[]
+  overrides       SalesOrderBomOverride[]
+
+  @@unique([salesOrderId, lineNumber])
+  @@map("sales_order_lines")
+}
+
+enum SalesOrderBomOverrideReason {
+  CUSTOMER_REQUIREMENT
+  BUYER_APPROVAL
+  SPECIFICATION_CHANGE
+  QUALITY_REQUIREMENT
+  OTHER
+}
+
+// One row per changed BOM line for one Sales Order line — Replace/Add/
+// Remove/Quantity-or-wastage-only, all covered by the same nullable-pair
+// shape rather than four separate tables:
+//   originalMaterialId null              -> pure addition
+//   effectiveMaterialId null             -> removal
+//   both set, different                  -> replace
+//   both set, same                       -> quantity/wastage/uom-only change
+// Never destroys the prior row on a further change — isActive/deactivatedBy/
+// deactivatedAt retire an override without deleting its audit trail, the
+// same "never truly delete, preserve traceability" convention already used
+// throughout this codebase (e.g. SampleVersion's own SUPERSEDED, not deleted).
+// Applying an ACTIVE override is gated purely by "sales_orders" edit/approve
+// permission, not a separate maker/checker workflow — the spec's own field
+// list (reason/remarks/changedBy/changedAt) is itself the audit trail;
+// unlike Material Substitution (a stock-driven, unplanned event), a BOM
+// override is a deliberate, authorized customization decision made once.
+model SalesOrderBomOverride {
+  id                       String                      @id @default(uuid()) @db.Uuid
+  companyId                String                      @map("company_id") @db.Uuid
+  salesOrderLineId         String                      @map("sales_order_line_id") @db.Uuid
+  originalMaterialId       String?                     @map("original_material_id") @db.Uuid
+  effectiveMaterialId      String?                     @map("effective_material_id") @db.Uuid
+  originalQuantityPerUnit  Decimal?                    @map("original_quantity_per_unit") @db.Decimal(18, 4)
+  effectiveQuantityPerUnit Decimal?                    @map("effective_quantity_per_unit") @db.Decimal(18, 4)
+  wastagePercentage        Decimal?                    @map("wastage_percentage") @db.Decimal(5, 2)
+  colorId                  String?                     @map("color_id") @db.Uuid
+  uomId                    String?                     @map("uom_id") @db.Uuid
+  reason                   SalesOrderBomOverrideReason @default(OTHER)
+  remarks                  String?
+  isActive                 Boolean                     @default(true) @map("is_active")
+  changedByUserId          String                      @map("changed_by_user_id") @db.Uuid
+  changedAt                DateTime                    @default(now()) @map("changed_at")
+  deactivatedByUserId      String?                     @map("deactivated_by_user_id") @db.Uuid
+  deactivatedAt            DateTime?                   @map("deactivated_at")
+
+  company           Company        @relation(fields: [companyId], references: [id])
+  salesOrderLine    SalesOrderLine @relation(fields: [salesOrderLineId], references: [id])
+  originalMaterial  Product?       @relation("SalesOrderBomOverrideOriginalMaterial", fields: [originalMaterialId], references: [id])
+  effectiveMaterial Product?       @relation("SalesOrderBomOverrideEffectiveMaterial", fields: [effectiveMaterialId], references: [id])
+  color             Color?         @relation(fields: [colorId], references: [id])
+  uom               UnitOfMeasure? @relation(fields: [uomId], references: [id])
+  changedBy         User           @relation("SalesOrderBomOverrideChangedBy", fields: [changedByUserId], references: [id])
+  deactivatedBy     User?          @relation("SalesOrderBomOverrideDeactivatedBy", fields: [deactivatedByUserId], references: [id])
+
+  @@index([salesOrderLineId])
+  @@map("sales_order_bom_overrides")
 }
 
 model SalesOrderItemBreakdown {
@@ -3212,11 +3373,12 @@ model BomVersion {
   approvedByUserId String?          @map("approved_by_user_id") @db.Uuid
   approvedAt       DateTime?        @map("approved_at")
 
-  bom            Bom       @relation("BomVersions", fields: [bomId], references: [id])
-  approvedForBom Bom?      @relation("BomApprovedVersion")
-  createdBy      User      @relation("BomVersionCreatedBy", fields: [createdByUserId], references: [id])
-  approvedBy     User?     @relation("BomVersionApprovedBy", fields: [approvedByUserId], references: [id])
-  items          BomItem[]
+  bom             Bom              @relation("BomVersions", fields: [bomId], references: [id])
+  approvedForBom  Bom?             @relation("BomApprovedVersion")
+  createdBy       User             @relation("BomVersionCreatedBy", fields: [createdByUserId], references: [id])
+  approvedBy      User?            @relation("BomVersionApprovedBy", fields: [approvedByUserId], references: [id])
+  items           BomItem[]
+  salesOrderLines SalesOrderLine[]
 
   @@unique([bomId, versionNumber])
   @@map("bom_versions")
@@ -3366,6 +3528,18 @@ model PurchaseOrderItem {
 // Order). Lines are simply fulfilled from stock (Material Issue) or, when
 // stock falls short, optionally escalated to Purchasing as a real Purchase
 // Order — escalation is never automatic and never gates on any approval step.
+// Effective BOM / Material Substitution (2026-09-24) — shared by
+// MaterialRequest.approvalStatus (the DAMAGE_REPLACEMENT approval gate) and
+// MaterialSubstitution.status (propose -> approve/reject a stock-driven
+// substitute) rather than two near-identical enums; both reuse the exact
+// PENDING/APPROVED/REJECTED vocabulary JobOrderProgressEntry.approvalStatus
+// and JobWorkReceipt.approvalStatus already established in this codebase.
+enum ApprovalDecisionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 enum MaterialRequestStatus {
   OPEN
   // Reachable only as a derived side effect of issuing/escalating lines —
@@ -3395,51 +3569,72 @@ enum MaterialRequestType {
 }
 
 model MaterialRequest {
-  id                        String                 @id @default(uuid()) @db.Uuid
-  companyId                 String                 @map("company_id") @db.Uuid
-  branchId                  String?                @map("branch_id") @db.Uuid
-  requestNumber             String                 @map("request_number")
-  requestType               MaterialRequestType    @default(PRODUCTION_REQUIREMENT) @map("request_type")
-  departmentId              String?                @map("department_id") @db.Uuid
+  id                        String                  @id @default(uuid()) @db.Uuid
+  companyId                 String                  @map("company_id") @db.Uuid
+  branchId                  String?                 @map("branch_id") @db.Uuid
+  requestNumber             String                  @map("request_number")
+  requestType               MaterialRequestType     @default(PRODUCTION_REQUIREMENT) @map("request_type")
+  departmentId              String?                 @map("department_id") @db.Uuid
   // Where the material should be issued from — required, unlike Purchase
   // Order's optional "Receive At", since Material Issue must decrement a
   // specific warehouse's real StockBalance.
-  warehouseId               String                 @map("warehouse_id") @db.Uuid
-  requiredDate              DateTime?              @map("required_date") @db.Date
+  warehouseId               String                  @map("warehouse_id") @db.Uuid
+  requiredDate              DateTime?               @map("required_date") @db.Date
   // Free-text "why" (e.g. "cutting shortage for Lot 42") — deliberately not a
   // structured reason-code table, matches the project's existing preference
   // for a single free-text reference field over several rigid ones.
   purpose                   String?
   // Nullable traceability only — a manually-raised request simply leaves
   // this null.
-  salesOrderId              String?                @map("sales_order_id") @db.Uuid
+  salesOrderId              String?                 @map("sales_order_id") @db.Uuid
   // Nullable traceability to the Production Order this requirement was
   // generated for (Phase 5C) — a request raised directly from BOM/MRP
   // against a Sales Order, with no Production Order yet, simply leaves this
   // null; both fields can be set together once a Production Order exists.
-  productionOrderId         String?                @map("production_order_id") @db.Uuid
+  productionOrderId         String?                 @map("production_order_id") @db.Uuid
   // Populated only when every line traces to exactly one style's BOM (a
   // multi-style-aggregated request leaves this null — salesOrderId remains
   // the primary traceability field; see material-request.service.ts).
-  bomId                     String?                @map("bom_id") @db.Uuid
+  bomId                     String?                 @map("bom_id") @db.Uuid
   // Set only when requestType = DAMAGE_REPLACEMENT — the original
   // requirement this damage relates to. Self-referencing rather than a
   // ProductionOrder FK, since no Production module exists yet (same
   // reasoning already applied above to salesOrderId).
-  originalMaterialRequestId String?                @map("original_material_request_id") @db.Uuid
+  originalMaterialRequestId String?                 @map("original_material_request_id") @db.Uuid
   // Nullable traceability to the SampleVersion this requirement's raw
   // materials were generated from (requestType = SAMPLING_REQUIREMENT) — the
   // Sampling equivalent of bomId above; a request raised any other way
   // simply leaves this null.
-  sampleVersionId           String?                @map("sample_version_id") @db.Uuid
+  sampleVersionId           String?                 @map("sample_version_id") @db.Uuid
+  // Effective BOM (2026-09-24) — nullable traceability to the specific Lot/
+  // JobOrder this requirement was raised for, siblings of productionOrderId
+  // above (header-level, not per-line — Lot/JobOrder have zero material
+  // awareness of their own, see the schema comment on JobOrder). Mainly
+  // populated for requestType = DAMAGE_REPLACEMENT ("Additional Material
+  // Request"), which is routinely raised from a specific Lot/stage context,
+  // but left available to any request type raised from that context.
+  lotId                     String?                 @map("lot_id") @db.Uuid
+  jobOrderId                String?                 @map("job_order_id") @db.Uuid
   remarks                   String?
   // Derived from lines except the manual ON_HOLD/CANCELLED/CLOSED
   // transitions — never hand-set to PARTIALLY_FULFILLED/FULFILLED.
-  status                    MaterialRequestStatus  @default(OPEN)
-  statusBeforeHold          MaterialRequestStatus? @map("status_before_hold")
-  requestedByUserId         String                 @map("requested_by_user_id") @db.Uuid
-  createdAt                 DateTime               @default(now()) @map("created_at")
-  updatedAt                 DateTime               @updatedAt @map("updated_at")
+  status                    MaterialRequestStatus   @default(OPEN)
+  statusBeforeHold          MaterialRequestStatus?  @map("status_before_hold")
+  // Effective BOM / Material Substitution (2026-09-24) — an approval gate
+  // scoped ONLY to requestType = DAMAGE_REPLACEMENT ("Additional Material
+  // Request"); every other request type leaves this null and issuance
+  // proceeds exactly as before this feature existed (no behavior change for
+  // ordinary PRODUCTION_REQUIREMENT/SAMPLING_REQUIREMENT requests). Reuses
+  // the existing "production" RBAC module's "approve" action — no new
+  // permission — self-approval-guarded the same way every other maker/
+  // checker gate in this codebase already is.
+  approvalStatus            ApprovalDecisionStatus? @map("approval_status")
+  approvedByUserId          String?                 @map("approved_by_user_id") @db.Uuid
+  approvedAt                DateTime?               @map("approved_at")
+  approvalRemark            String?                 @map("approval_remark")
+  requestedByUserId         String                  @map("requested_by_user_id") @db.Uuid
+  createdAt                 DateTime                @default(now()) @map("created_at")
+  updatedAt                 DateTime                @updatedAt @map("updated_at")
 
   company                 Company               @relation(fields: [companyId], references: [id])
   branch                  Branch?               @relation(fields: [branchId], references: [id])
@@ -3447,11 +3642,14 @@ model MaterialRequest {
   warehouse               Warehouse             @relation(fields: [warehouseId], references: [id])
   salesOrder              SalesOrder?           @relation(fields: [salesOrderId], references: [id])
   productionOrder         ProductionOrder?      @relation(fields: [productionOrderId], references: [id])
+  lot                     Lot?                  @relation(fields: [lotId], references: [id])
+  jobOrder                JobOrder?             @relation(fields: [jobOrderId], references: [id])
   bom                     Bom?                  @relation(fields: [bomId], references: [id])
   originalMaterialRequest MaterialRequest?      @relation("MaterialRequestReplacementOrigin", fields: [originalMaterialRequestId], references: [id])
   replacementRequests     MaterialRequest[]     @relation("MaterialRequestReplacementOrigin")
   sampleVersion           SampleVersion?        @relation(fields: [sampleVersionId], references: [id])
   requestedBy             User                  @relation("MaterialRequestRequestedBy", fields: [requestedByUserId], references: [id])
+  approvedBy              User?                 @relation("MaterialRequestApprovedBy", fields: [approvedByUserId], references: [id])
   lines                   MaterialRequestItem[]
 
   @@unique([companyId, requestNumber])
@@ -3459,6 +3657,8 @@ model MaterialRequest {
   @@index([companyId, requestType])
   @@index([productionOrderId])
   @@index([sampleVersionId])
+  @@index([lotId])
+  @@index([jobOrderId])
   @@map("material_requests")
 }
 
@@ -3503,20 +3703,80 @@ model MaterialRequestItem {
   createdAt                DateTime @default(now()) @map("created_at")
   updatedAt                DateTime @updatedAt @map("updated_at")
 
-  materialRequest    MaterialRequest     @relation(fields: [materialRequestId], references: [id])
-  material           Product             @relation("MaterialRequestItemMaterial", fields: [materialId], references: [id])
-  color              Color?              @relation(fields: [colorId], references: [id])
-  dye                FabricDye?          @relation(fields: [dyeId], references: [id])
-  uom                UnitOfMeasure       @relation(fields: [uomId], references: [id])
-  warehouseLocation  WarehouseLocation?  @relation(fields: [warehouseLocationId], references: [id])
+  materialRequest    MaterialRequest        @relation(fields: [materialRequestId], references: [id])
+  material           Product                @relation("MaterialRequestItemMaterial", fields: [materialId], references: [id])
+  color              Color?                 @relation(fields: [colorId], references: [id])
+  dye                FabricDye?             @relation(fields: [dyeId], references: [id])
+  uom                UnitOfMeasure          @relation(fields: [uomId], references: [id])
+  warehouseLocation  WarehouseLocation?     @relation(fields: [warehouseLocationId], references: [id])
   // Virtual back-relation only — the authoritative FK lives on
   // PurchaseOrderItem.materialRequestItemId (see that model). A line can
   // legitimately have more than one linked PurchaseOrderItem over its
   // lifetime (repeat/partial escalation) — see that model's own comment.
   purchaseOrderItems PurchaseOrderItem[]
+  // Effective BOM / Material Substitution (2026-09-24) — every stock-driven
+  // substitution proposed/approved/issued against this line. Deliberately
+  // 1:many, not 1:1 — one line's shortfall can be split across several
+  // different substitute materials (partial substitution), each its own row.
+  substitutions      MaterialSubstitution[]
 
   @@index([materialRequestId])
   @@map("material_request_items")
+}
+
+enum MaterialSubstitutionReason {
+  ORIGINAL_MATERIAL_NOT_AVAILABLE
+  QUALITY_ISSUE
+  OTHER
+}
+
+// A stock-driven substitution — the "acceptable alternative issued because
+// the Effective BOM's own material is unavailable" case (distinct from
+// SalesOrderBomOverride, a deliberate customer-driven BOM change). Never
+// modifies MaterialRequestItem.materialId or the Effective BOM in any way —
+// the requested material stays exactly what the Effective BOM said; this
+// table only records what was actually, physically handed out instead, plus
+// the full workflow/audit trail the spec requires. One MaterialRequestItem
+// can have many of these (partial/multiple substitution across several
+// different substitute materials); the item's own existing `issuedQuantity`
+// accumulator remains the single, already-guarded source of truth for "how
+// much of this line's requirement has been fulfilled so far," regardless of
+// which material(s) fulfilled it — no second accumulator is introduced here.
+model MaterialSubstitution {
+  id                     String                     @id @default(uuid()) @db.Uuid
+  companyId              String                     @map("company_id") @db.Uuid
+  materialRequestItemId  String                     @map("material_request_item_id") @db.Uuid
+  originalMaterialId     String                     @map("original_material_id") @db.Uuid
+  substituteMaterialId   String                     @map("substitute_material_id") @db.Uuid
+  quantity               Decimal                    @map("quantity") @db.Decimal(18, 4)
+  uomId                  String                     @map("uom_id") @db.Uuid
+  reason                 MaterialSubstitutionReason @default(OTHER)
+  remarks                String?
+  status                 ApprovalDecisionStatus     @default(PENDING)
+  requestedByUserId      String                     @map("requested_by_user_id") @db.Uuid
+  requestedAt            DateTime                   @default(now()) @map("requested_at")
+  approvedByUserId       String?                    @map("approved_by_user_id") @db.Uuid
+  approvedAt             DateTime?                  @map("approved_at")
+  approvalRemark         String?                    @map("approval_remark")
+  // Set only once APPROVED and actually posted to the ledger, in the same
+  // transaction as the InventoryTransaction insert — a PENDING or REJECTED
+  // row never has one. InventoryTransaction remains the sole physical-stock
+  // source of truth; this is a workflow/audit pointer to it, never a second
+  // ledger.
+  inventoryTransactionId String?                    @map("inventory_transaction_id") @db.Uuid
+
+  company              Company               @relation(fields: [companyId], references: [id])
+  materialRequestItem  MaterialRequestItem   @relation(fields: [materialRequestItemId], references: [id])
+  originalMaterial     Product               @relation("MaterialSubstitutionOriginalMaterial", fields: [originalMaterialId], references: [id])
+  substituteMaterial   Product               @relation("MaterialSubstitutionSubstituteMaterial", fields: [substituteMaterialId], references: [id])
+  uom                  UnitOfMeasure         @relation(fields: [uomId], references: [id])
+  requestedBy          User                  @relation("MaterialSubstitutionRequestedBy", fields: [requestedByUserId], references: [id])
+  approvedBy           User?                 @relation("MaterialSubstitutionApprovedBy", fields: [approvedByUserId], references: [id])
+  inventoryTransaction InventoryTransaction? @relation(fields: [inventoryTransactionId], references: [id])
+
+  @@index([materialRequestItemId])
+  @@index([companyId, status])
+  @@map("material_substitutions")
 }
 
 // CANCELLED means "every line fully reversed" — derived/cached, recomputed in
@@ -3769,6 +4029,7 @@ model Lot {
   stageTransactions ProductionStageTransaction[]
   qcInspections     QcInspection[]
   variantBreakdown  LotVariantBreakdown[]
+  materialRequests  MaterialRequest[]
 
   @@unique([companyId, lotNumber])
   @@index([productionOrderId])
@@ -3902,6 +4163,7 @@ model JobOrder {
   qcInspections        QcInspection[]
   jobWorkOrders        JobWorkOrder[]
   pieceRateEarnings    PieceRateEarning[]
+  materialRequests     MaterialRequest[]
 
   // Not unique on (lotId, productionStageId) — a lot can legitimately
   // revisit the same stage after rework; each revisit is a NEW row, never an
@@ -4410,13 +4672,14 @@ model InventoryTransaction {
   performedAt         DateTime                 @default(now()) @map("performed_at")
   notes               String?
 
-  company           Company            @relation(fields: [companyId], references: [id])
-  branch            Branch?            @relation(fields: [branchId], references: [id])
-  product           Product            @relation(fields: [productId], references: [id])
-  warehouse         Warehouse          @relation(fields: [warehouseId], references: [id])
-  warehouseLocation WarehouseLocation? @relation(fields: [warehouseLocationId], references: [id])
-  fabricRoll        FabricRoll?        @relation(fields: [fabricRollId], references: [id])
-  performedBy       User               @relation("InventoryTransactionPerformedBy", fields: [performedByUserId], references: [id])
+  company               Company                @relation(fields: [companyId], references: [id])
+  branch                Branch?                @relation(fields: [branchId], references: [id])
+  product               Product                @relation(fields: [productId], references: [id])
+  warehouse             Warehouse              @relation(fields: [warehouseId], references: [id])
+  warehouseLocation     WarehouseLocation?     @relation(fields: [warehouseLocationId], references: [id])
+  fabricRoll            FabricRoll?            @relation(fields: [fabricRollId], references: [id])
+  performedBy           User                   @relation("InventoryTransactionPerformedBy", fields: [performedByUserId], references: [id])
+  materialSubstitutions MaterialSubstitution[]
 
   @@index([companyId, productId, warehouseId])
   @@index([referenceModule, referenceRecordId])
@@ -8159,12 +8422,12 @@ model AiDesignerProject {
   // problem with a different coordinate space. brandedImageAttachmentId is
   // the real sharp-composited output, regenerated in place (not versioned --
   // this is a deterministic image composite, not an audited AI process).
-  brandName               String?  @map("brand_name")
-  brandLogoAttachmentId   String?  @map("brand_logo_attachment_id")
-  logoXPercent            Decimal? @map("logo_x_percent") @db.Decimal(5, 2)
-  logoYPercent            Decimal? @map("logo_y_percent") @db.Decimal(5, 2)
-  logoWidthPercent        Decimal? @map("logo_width_percent") @db.Decimal(5, 2)
-  brandedImageAttachmentId String? @map("branded_image_attachment_id")
+  brandName                String?  @map("brand_name")
+  brandLogoAttachmentId    String?  @map("brand_logo_attachment_id")
+  logoXPercent             Decimal? @map("logo_x_percent") @db.Decimal(5, 2)
+  logoYPercent             Decimal? @map("logo_y_percent") @db.Decimal(5, 2)
+  logoWidthPercent         Decimal? @map("logo_width_percent") @db.Decimal(5, 2)
+  brandedImageAttachmentId String?  @map("branded_image_attachment_id")
 
   // Set once version 1 exists (nullable-then-set-later, same precedent as
   // AiGarmentProject.selectedDesignDirectionId elsewhere in this schema).
@@ -8183,7 +8446,7 @@ model AiDesignerProject {
   prompts        AiDesignerPrompt[]
   generations    AiDesignerGeneration[]
   images         AiDesignerImage[]
-  versions       AiDesignerVersion[]        @relation("AiDesignerVersionsOfProject")
+  versions       AiDesignerVersion[]       @relation("AiDesignerVersionsOfProject")
   providerUsage  AIProviderUsage[]
   techPacks      AiDesignerTechPack[]
   sketchAnalysis AiDesignerSketchAnalysis?
@@ -8207,15 +8470,15 @@ model AiDesignerProject {
  * SupplierMaterialCategory elsewhere in this schema.
  */
 model AiDesignerProjectPiece {
-  id               String   @id @default(uuid()) @db.Uuid
-  companyId        String   @map("company_id") @db.Uuid
-  projectId        String   @map("project_id") @db.Uuid
-  pieceIndex       Int      @map("piece_index")
-  pieceLabel       String   @map("piece_label")
-  productCategory  String?  @map("product_category")
-  designNotes      String?  @map("design_notes")
-  createdAt        DateTime @default(now()) @map("created_at")
-  updatedAt        DateTime @updatedAt @map("updated_at")
+  id              String   @id @default(uuid()) @db.Uuid
+  companyId       String   @map("company_id") @db.Uuid
+  projectId       String   @map("project_id") @db.Uuid
+  pieceIndex      Int      @map("piece_index")
+  pieceLabel      String   @map("piece_label")
+  productCategory String?  @map("product_category")
+  designNotes     String?  @map("design_notes")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
 
   project AiDesignerProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
@@ -8250,25 +8513,25 @@ enum AiDesignerSketchAnalysisStatus {
 }
 
 model AiDesignerSketchAnalysis {
-  id                    String                          @id @default(uuid()) @db.Uuid
-  companyId             String                          @map("company_id") @db.Uuid
-  projectId             String                          @unique @map("project_id") @db.Uuid
-  sketchAttachmentId    String                          @map("sketch_attachment_id")
-  status                AiDesignerSketchAnalysisStatus  @default(DRAFT)
-  promptVersion         String                          @map("prompt_version")
+  id                    String                         @id @default(uuid()) @db.Uuid
+  companyId             String                         @map("company_id") @db.Uuid
+  projectId             String                         @unique @map("project_id") @db.Uuid
+  sketchAttachmentId    String                         @map("sketch_attachment_id")
+  status                AiDesignerSketchAnalysisStatus @default(DRAFT)
+  promptVersion         String                         @map("prompt_version")
   provider              String?
   model                 String?
-  rawResponseJson       Json?                           @map("raw_response_json")
-  sketchAnalysisSummary String?                         @map("sketch_analysis_summary")
-  approvedByUserId      String?                         @map("approved_by_user_id") @db.Uuid
-  approvedAt            DateTime?                       @map("approved_at")
-  createdByUserId       String                          @map("created_by_user_id") @db.Uuid
-  createdAt             DateTime                        @default(now()) @map("created_at")
-  updatedAt             DateTime                        @updatedAt @map("updated_at")
+  rawResponseJson       Json?                          @map("raw_response_json")
+  sketchAnalysisSummary String?                        @map("sketch_analysis_summary")
+  approvedByUserId      String?                        @map("approved_by_user_id") @db.Uuid
+  approvedAt            DateTime?                      @map("approved_at")
+  createdByUserId       String                         @map("created_by_user_id") @db.Uuid
+  createdAt             DateTime                       @default(now()) @map("created_at")
+  updatedAt             DateTime                       @updatedAt @map("updated_at")
 
-  project    AiDesignerProject             @relation(fields: [projectId], references: [id])
-  approvedBy User?                         @relation("AiDesignerSketchAnalysisApprovedBy", fields: [approvedByUserId], references: [id])
-  createdBy  User                          @relation("AiDesignerSketchAnalysisCreatedBy", fields: [createdByUserId], references: [id])
+  project    AiDesignerProject @relation(fields: [projectId], references: [id])
+  approvedBy User?             @relation("AiDesignerSketchAnalysisApprovedBy", fields: [approvedByUserId], references: [id])
+  createdBy  User              @relation("AiDesignerSketchAnalysisCreatedBy", fields: [createdByUserId], references: [id])
 
   observations AiDesignerSketchObservation[]
   runs         AiDesignerSketchAnalysisRun[]
@@ -8983,20 +9246,20 @@ model ReplicateDesignMaterialLine {
 // the feature's own spec, any rating other than COMPATIBLE just surfaces a
 // warning requiring an explicit "Continue Anyway" before Generate proceeds.
 model ReplicateDesignCompatibilityCheck {
-  id              String                        @id @default(uuid()) @db.Uuid
-  companyId       String                        @map("company_id") @db.Uuid
-  projectId       String                        @unique @map("project_id") @db.Uuid
-  promptVersion   String                        @map("prompt_version")
-  provider        String
-  model           String
-  rawResponseJson Json                          @map("raw_response_json")
-  overallSummary  String?                       @map("overall_summary")
-  overallRating   ReplicateCompatibilityRating? @map("overall_rating")
+  id                String                        @id @default(uuid()) @db.Uuid
+  companyId         String                        @map("company_id") @db.Uuid
+  projectId         String                        @unique @map("project_id") @db.Uuid
+  promptVersion     String                        @map("prompt_version")
+  provider          String
+  model             String
+  rawResponseJson   Json                          @map("raw_response_json")
+  overallSummary    String?                       @map("overall_summary")
+  overallRating     ReplicateCompatibilityRating? @map("overall_rating")
   // One concrete, actionable next step for the whole material selection
   // together (e.g. "no changes needed" when fully compatible, or a specific
   // fabric/material adjustment when not) — nullable so a check row created
   // before this field existed still renders without it, never a crash.
-  overallSuggestion String? @map("overall_suggestion")
+  overallSuggestion String?                       @map("overall_suggestion")
 
   createdByUserId String   @map("created_by_user_id") @db.Uuid
   createdAt       DateTime @default(now()) @map("created_at")

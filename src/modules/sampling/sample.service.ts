@@ -199,7 +199,15 @@ export async function getSampleRequestById(companyId: string, id: string) {
   return request;
 }
 
-export async function createSampleRequest(actor: ActorContext, input: SampleRequestInput) {
+export async function createSampleRequest(
+  actor: ActorContext,
+  input: SampleRequestInput,
+  // Set only by duplicateSampleRequest() ("Copy Design") — every other
+  // caller (the create route, Buyer Enquiry conversion, AI Garment Flow's
+  // own sample creation) omits this and gets exactly the same behavior as
+  // before this option existed.
+  options?: { copiedFromRequestId?: string }
+) {
   // Tenant-scoped, matching the discipline every other create* function in
   // this codebase follows (Sales/Purchase Order) — without this, a
   // customerId/buyerId/productId from another company would pass straight
@@ -244,6 +252,7 @@ export async function createSampleRequest(actor: ActorContext, input: SampleRequ
     targetSubmissionDate: input.targetSubmissionDate ? new Date(input.targetSubmissionDate) : null,
     status: "REQUESTED",
     currentVersionNumber: 0,
+    copiedFromRequestId: options?.copiedFromRequestId ?? null,
   });
 
   await writeAuditLog({
@@ -256,6 +265,81 @@ export async function createSampleRequest(actor: ActorContext, input: SampleRequ
   });
 
   return request;
+}
+
+/**
+ * "Copy Design" — clones an existing Sample Request's header plus its
+ * current version's Tech Pack notes and materials into a brand-new Sample
+ * Request, which starts its own workflow fresh from REQUESTED (never
+ * inherits the source's status — a copy is a new development attempt and
+ * needs its own approval cycle, even if the source was already Approved).
+ * Deliberately orchestrates the existing, unchanged createSampleRequest() /
+ * addSampleVersion() / addSampleMaterial() rather than re-implementing their
+ * validation — the same pattern already used by
+ * convertEnquiryLineToSampleRequest() and AI Garment Flow's own
+ * createSampleRequestFromProject().
+ *
+ * Deliberately NOT copied (per explicit user scope): images/attachments —
+ * each Attachment's storageKey points at one physical file on disk, and
+ * pointing two Attachment rows at the same file would leave the copy's
+ * image silently broken the day someone deletes the original's; rate/GST
+ * pricing, damaged quantity/reason, costing lock, approvals, and comments —
+ * none of that describes a sample that hasn't been made yet. Style, Sample
+ * Type, and Color/Size ARE copied (this action is scoped to one style's own
+ * Designs list); Customer/Buyer are copied too, but — per explicit request —
+ * only as a starting default: `input.customerId`/`buyerId` are exactly what
+ * the "Copy Design" popup lets the user change before creating the clone.
+ */
+export async function duplicateSampleRequest(
+  actor: ActorContext,
+  sourceId: string,
+  input: { styleName: string; customerId: string; buyerId: string | null }
+) {
+  const source = await SampleRequestRepository.findAnyById(actor.companyId, sourceId);
+  if (!source) throw new BusinessRuleError("NOT_FOUND", "Sample request not found.", { id: sourceId });
+
+  const created = await createSampleRequest(
+    actor,
+    {
+      customerId: input.customerId,
+      buyerId: input.buyerId ?? "",
+      productId: source.productId ?? "",
+      styleName: input.styleName,
+      // Nullable at the DB level for legacy rows predating this field
+      // (see the schema.prisma comment) — "OTHER" is a real, valid
+      // SAMPLE_TYPES value, never a fabricated one.
+      sampleType: source.sampleType ?? "OTHER",
+      colorId: source.colorId ?? "",
+      sizeId: source.sizeId ?? "",
+      requestDate: new Date().toISOString().slice(0, 10),
+      targetSubmissionDate: "",
+    },
+    { copiedFromRequestId: source.id }
+  );
+
+  const sourceVersion = await SampleVersionRepository.findLatest(sourceId);
+  if (sourceVersion) {
+    const { version } = await addSampleVersion(
+      actor,
+      created.id,
+      { techPackNotes: sourceVersion.techPackNotes ?? "" },
+      { seedFromStyleBom: false }
+    );
+
+    const sourceMaterials = await SampleMaterialRepository.findByVersionId(sourceVersion.id);
+    for (const m of sourceMaterials) {
+      await addSampleMaterial(actor, version.id, {
+        materialId: m.materialId,
+        plannedQuantity: Number(m.plannedQuantity),
+        uomId: m.uomId ?? "",
+        colorId: m.colorId ?? "",
+        dyeId: m.dyeId ?? "",
+        notes: m.notes ?? "",
+      });
+    }
+  }
+
+  return created;
 }
 
 // Color/Size are deliberately editable at any status, not just non-terminal
@@ -443,7 +527,19 @@ export async function resumeSampleFromHold(actor: ActorContext, id: string) {
  * The prior current version, if any, is marked SUPERSEDED — versions are
  * append-only and never edited past this point.
  */
-export async function addSampleVersion(actor: ActorContext, sampleRequestId: string, input: SampleVersionInput) {
+export async function addSampleVersion(
+  actor: ActorContext,
+  sampleRequestId: string,
+  input: SampleVersionInput,
+  // Set to false only by duplicateSampleRequest() ("Copy Design"), which is
+  // about to populate this brand-new version's materials itself (copied
+  // from the source design) — without this, the auto-seed-from-Style-BOM
+  // step below would run first and leave stray "Copied from Style BOM"
+  // lines mixed in alongside the copied design's own materials. The route
+  // handler and every other existing caller omit this and get the original,
+  // unchanged auto-seed behavior.
+  options?: { seedFromStyleBom?: boolean }
+) {
   const request = await SampleRequestRepository.findAnyById(actor.companyId, sampleRequestId);
   if (!request) throw new BusinessRuleError("NOT_FOUND", "Sample request not found.", { id: sampleRequestId });
 
@@ -481,7 +577,7 @@ export async function addSampleVersion(actor: ActorContext, sampleRequestId: str
   // this module (see updateSampleBomMaterials below). A brand-new style
   // (productId null) or a style with no approved BOM yet simply starts empty,
   // exactly as before this feature existed.
-  if (isFirstVersion && request.productId) {
+  if (isFirstVersion && request.productId && (options?.seedFromStyleBom ?? true)) {
     await copyStyleBomIntoSampleVersion(actor, version.id, request.productId);
   }
 

@@ -33,6 +33,11 @@ export default async function EditSalesOrderPage({ params }: { params: Promise<{
         productVariantId: b.productVariantId,
         orderedQuantity: b.orderedQuantity,
       })),
+      // Effective BOM (2026-09-24) — lets a save of this form reuse this
+      // exact line (preserving its own frozen BOM/Sample snapshot and any
+      // active overrides) instead of the server treating every submitted
+      // item as brand new — see SalesOrderForm's own submitOrder().
+      salesOrderLineId: item.salesOrderLineId,
     })),
   };
 

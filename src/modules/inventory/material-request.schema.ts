@@ -158,3 +158,25 @@ export const createMaterialRequestFromSampleVersionSchema = z.object({
   overrideDuplicateCheck: z.boolean().optional(),
 });
 export type CreateMaterialRequestFromSampleVersionInput = z.infer<typeof createMaterialRequestFromSampleVersionSchema>;
+
+// Additional/Damage Material Request approval (2026-09-24) — the catalog of
+// reasons the user's own decision #5 named. Kept as a plain constant list
+// validated at the Zod layer (not a Prisma enum) since damageReason is a
+// pre-existing free-text column on MaterialRequestItem — constraining the
+// choices here is the minimal-safe change, not a risky retroactive column-
+// type migration on an already-populated field.
+export const DAMAGE_REPLACEMENT_REASONS = [
+  "DAMAGE",
+  "REJECTION",
+  "CUTTING_LOSS",
+  "QC_FAILURE",
+  "REWORK",
+  "SHORTAGE",
+  "PRODUCTION_ERROR",
+  "OTHER",
+] as const;
+
+export const decideMaterialRequestApprovalSchema = z.object({
+  approvalRemark: z.string().trim().max(1000).nullable().optional(),
+});
+export type DecideMaterialRequestApprovalInput = z.infer<typeof decideMaterialRequestApprovalSchema>;

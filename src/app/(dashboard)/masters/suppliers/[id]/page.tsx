@@ -43,6 +43,7 @@ export default async function EditSupplierPage({ params }: { params: Promise<{ i
           paymentTermsDays: supplier.paymentTermsDays?.toString() ?? "",
           defaultCurrencyCode: supplier.defaultCurrencyCode ?? "",
           isActive: supplier.isActive,
+          isJobWorkContractor: supplier.isJobWorkContractor,
         }}
       />
     </div>

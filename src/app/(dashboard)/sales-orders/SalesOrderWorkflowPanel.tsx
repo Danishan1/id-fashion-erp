@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { FilePreviewModal } from "@/components/ui/FilePreviewModal";
 import { formatCurrency } from "@/lib/currency";
+import { SalesOrderBomOverridesSection } from "./SalesOrderBomOverridesSection";
 import { STATUS_BADGE_CLASS, STATUS_LABELS } from "./statusLabels";
 
 type SalesOrderStatus = keyof typeof STATUS_LABELS;
@@ -62,6 +63,7 @@ interface ItemRow {
   sampleRequest: SampleRequestRef | null;
   breakdown: BreakdownRow[];
   productionSummary?: ItemProductionSummary;
+  salesOrderLineId: string | null;
 }
 
 interface MaterialPreviewRow {
@@ -395,6 +397,8 @@ export function SalesOrderWorkflowPanel({
                   ))}
                 </tbody>
               </table>
+
+              <SalesOrderBomOverridesSection salesOrderLineId={item.salesOrderLineId} />
 
               {item.productionSummary && item.productionSummary.productionOrders.length > 0 && (
                 <div className="mt-3 rounded-md border border-zinc-100 bg-zinc-50 p-3 text-xs dark:border-zinc-800 dark:bg-zinc-900">

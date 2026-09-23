@@ -247,6 +247,125 @@ export async function generateMaterialRequestForOrder(actor: ActorContext, id: s
   });
 }
 
+export interface ProductionOrderMaterialComparisonRow {
+  materialId: string;
+  materialName: string;
+  materialCode: string;
+  uomCode: string;
+  /** From this order's own Effective BOM (getMaterialRequirementForOrderLine
+   * — already Sales-Order-Line-snapshot-and-override-aware, see
+   * bom-mrp/effective-bom.service.ts). Zero for a material that was never
+   * planned at all — a substitute issued in place of something else. */
+  plannedQuantity: number;
+  /** Real, physically-posted InventoryTransaction movement for this exact
+   * material against this order's own linked Material Requests — never
+   * re-derived from the plan, the actual ledger. */
+  issuedQuantity: number;
+  /** True when this material never appears in the Effective BOM at all —
+   * it only shows up here because it was actually issued (a Material
+   * Substitution's own substituteMaterialId). */
+  isSubstitute: boolean;
+}
+
+/**
+ * Production — Planned vs Issued material (2026-09-24, Phase 8). Planned
+ * material is this order's own Effective BOM (never the bare Style Master
+ * BOM once a Sales Order snapshot/override exists — the same resolver every
+ * other planning surface in this app already uses). Issued material is the
+ * real InventoryTransaction ledger — summed by productId across every
+ * MATERIAL_ISSUE row referencing one of this order's own linked Material
+ * Requests, regardless of whether that material was the original planned
+ * one or a Material Substitution's own substitute — the InventoryTransaction
+ * itself is what actually happened, never re-derived from the plan or from
+ * MaterialSubstitution's own audit trail (which is a workflow/traceability
+ * pointer to the ledger, not a second ledger). A material appearing here
+ * with plannedQuantity 0 is exactly a substitute the Effective BOM never
+ * called for — per the spec's own worked example, this view must never
+ * silently collapse a substitute's real issued quantity into the original
+ * material's row, or pretend the plan changed just because a substitute was
+ * physically issued.
+ *
+ * "Consumed" (a further distinction from "Issued" once unused material is
+ * returned to store) is deliberately NOT built in this pass — no
+ * return-to-store/consumption-tracking mechanism exists anywhere else in
+ * this codebase for material already issued to production (confirmed:
+ * InventoryTransactionType has no such value), and inventing one here would
+ * be new schema/scope beyond this phase's own literal name ("Production
+ * Planned vs Issued material view").
+ */
+export async function getProductionOrderMaterialComparison(companyId: string, id: string): Promise<ProductionOrderMaterialComparisonRow[]> {
+  const order = await ProductionOrderRepository.findAnyById(companyId, id);
+  if (!order) throw new BusinessRuleError("NOT_FOUND", "Production order not found.", { id });
+
+  const requirement = await getMaterialRequirementForOrderLine(companyId, {
+    salesOrderItemId: order.salesOrderItemId,
+    productId: order.productId,
+    quantity: Number(order.plannedQuantity),
+  });
+
+  const rows = new Map<string, ProductionOrderMaterialComparisonRow>();
+  for (const m of requirement.materials) {
+    rows.set(m.materialId, {
+      materialId: m.materialId,
+      materialName: m.materialName,
+      materialCode: m.materialCode,
+      uomCode: m.uomCode,
+      plannedQuantity: m.neededQuantity,
+      issuedQuantity: 0,
+      isSubstitute: false,
+    });
+  }
+
+  const linkedRequestItemIds = (
+    await prisma.materialRequestItem.findMany({
+      where: { materialRequest: { companyId, productionOrderId: id } },
+      select: { id: true },
+    })
+  ).map((i) => i.id);
+
+  if (linkedRequestItemIds.length > 0) {
+    const issued = await prisma.inventoryTransaction.groupBy({
+      by: ["productId"],
+      where: { companyId, referenceModule: "MATERIAL_REQUEST", referenceRecordId: { in: linkedRequestItemIds }, transactionType: "MATERIAL_ISSUE" },
+      _sum: { quantity: true },
+    });
+
+    const issuedMaterialIds = issued.map((i) => i.productId).filter((pid) => !rows.has(pid));
+    const missingMaterials =
+      issuedMaterialIds.length > 0
+        ? await prisma.product.findMany({
+            where: { id: { in: issuedMaterialIds } },
+            select: { id: true, styleName: true, styleCode: true, baseUom: { select: { code: true } } },
+          })
+        : [];
+    const missingById = new Map(missingMaterials.map((m) => [m.id, m]));
+
+    for (const entry of issued) {
+      // MATERIAL_ISSUE is always posted negative — flip to a positive
+      // "amount issued" for display, matching how the rest of this view
+      // reads (Planned/Issued both non-negative quantities).
+      const quantity = -Number(entry._sum.quantity ?? 0);
+      const existing = rows.get(entry.productId);
+      if (existing) {
+        existing.issuedQuantity = quantity;
+      } else {
+        const material = missingById.get(entry.productId);
+        rows.set(entry.productId, {
+          materialId: entry.productId,
+          materialName: material?.styleName ?? "Unknown material",
+          materialCode: material?.styleCode ?? "",
+          uomCode: material?.baseUom?.code ?? "",
+          plannedQuantity: 0,
+          issuedQuantity: quantity,
+          isSubstitute: true,
+        });
+      }
+    }
+  }
+
+  return [...rows.values()].sort((a, b) => a.materialName.localeCompare(b.materialName));
+}
+
 /**
  * The one place plannedQuantity can change after creation — a Production
  * Order's quantity is deliberately editable (up or down, independent of what

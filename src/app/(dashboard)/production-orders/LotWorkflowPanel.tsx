@@ -174,7 +174,11 @@ export function LotWorkflowPanel({
     fetch("/api/v1/defect-types")
       .then((res) => res.json())
       .then((body) => setDefectTypes(body.data ?? []));
-    fetch("/api/v1/suppliers?pageSize=200")
+    // Only Suppliers explicitly marked "Job-Work Contractor" (Masters ->
+    // Suppliers) — this used to list every active Supplier undifferentiated
+    // (fabric/trims/packaging/machinery vendors included), which is why the
+    // picker looked wrong; now it's scoped to real external contractors.
+    fetch("/api/v1/suppliers?pageSize=200&jobWorkContractor=true")
       .then((res) => res.json())
       .then((body) => setSuppliers(body.data ?? []));
     fetch("/api/v1/production-operations")
@@ -918,6 +922,12 @@ export function LotWorkflowPanel({
                 options={suppliers.map((s) => ({ id: s.id, label: s.name }))}
                 placeholder="Search contractor…"
               />
+              {suppliers.length === 0 && (
+                <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                  No suppliers are marked as a Job-Work Contractor yet — open Masters → Suppliers, edit the
+                  right supplier, and tick &ldquo;Job-Work Contractor&rdquo;.
+                </p>
+              )}
             </FormField>
             <FormField label={`Quantity (${lot.uom.code})`} htmlFor="jobWorkQty" required>
               <input id="jobWorkQty" type="number" min={0} step="0.0001" required value={jobWorkQty} onChange={(e) => setJobWorkQty(e.target.value)} className={textInputClass()} />

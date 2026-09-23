@@ -64,6 +64,13 @@ interface LineItem {
   notes: string;
   variants: VariantOption[];
   quantities: Record<string, string>;
+  // Effective BOM (2026-09-24) — the stable SalesOrderLine this item
+  // reuses on save, so its own frozen BOM/Sample snapshot and any active
+  // Sales-Order-specific BOM overrides survive an ordinary edit untouched.
+  // Absent for a genuinely new line (a fresh emptyLine(), or an existing
+  // line whose Style/Sample was changed — see buildReconciledItemPlan's own
+  // reuse-vs-new rule server-side).
+  salesOrderLineId?: string;
 }
 
 const TODAY = todayIsoDate();
@@ -78,6 +85,7 @@ export interface InitialOrderItem {
   unitPrice: string;
   notes: string | null;
   breakdown: Array<{ productVariantId: string; orderedQuantity: number }>;
+  salesOrderLineId: string | null;
 }
 
 export interface InitialOrder {
@@ -143,6 +151,7 @@ export function SalesOrderForm({
           notes: item.notes ?? "",
           variants: [],
           quantities: Object.fromEntries(item.breakdown.map((b) => [b.productVariantId, String(b.orderedQuantity)])),
+          salesOrderLineId: item.salesOrderLineId ?? undefined,
         }))
       : [emptyLine()]
   );
@@ -350,6 +359,12 @@ export function SalesOrderForm({
       breakdown: Object.entries(item.quantities)
         .filter(([, qty]) => Number(qty) > 0)
         .map(([productVariantId, qty]) => ({ productVariantId, orderedQuantity: Number(qty) })),
+      // A genuinely new line (never had one) omits this entirely; an
+      // existing, unchanged line's own id lets the server reuse it — see
+      // sales-order-bom.service.ts's buildReconciledItemPlan, which still
+      // safely re-evaluates as "new" if the Style/Sample changed underneath
+      // it, so nothing here needs to guess at that.
+      salesOrderLineId: item.salesOrderLineId,
     }));
 
     const url = initialOrder ? `/api/v1/sales-orders/${initialOrder.id}` : "/api/v1/sales-orders";
