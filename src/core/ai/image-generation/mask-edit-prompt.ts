@@ -9,7 +9,7 @@
  * to enumerate a "preserve everything else" list precisely because it has
  * no other way to scope the edit).
  */
-export const MASK_EDIT_PROMPT_VERSION = "mask-edit-v3";
+export const MASK_EDIT_PROMPT_VERSION = "mask-edit-v4";
 
 export function buildMaskEditPrompt(instruction: string): string {
   return [
@@ -18,7 +18,9 @@ export function buildMaskEditPrompt(instruction: string): string {
     "Designer instruction:",
     instruction,
     "",
-    "STRICT BOUNDARY RULE — the mask marks the ONLY area you may touch. Every pixel outside the masked area must remain exactly as it is in the original image: do not add, remove, duplicate, or alter anything anywhere else, even if it would look more balanced or symmetrical to do so. In particular, never add a second/matching copy of the change onto an unmasked part of the garment (e.g. elsewhere on the same figure, or onto a second figure/view shown alongside it in the same photo) — apply the change exactly once, only inside the masked area.",
+    "STRICT BOUNDARY RULE — judge this ONLY by pixels, never by which figure/pose/view they belong to. Every pixel OUTSIDE the masked area must remain exactly as it is in the original image: do not add, remove, duplicate, or alter anything there, even if it would look more balanced or symmetrical to do so.",
+    "",
+    "The reverse matters just as much: apply the change to EVERY pixel INSIDE the masked area, completely and uniformly, with no exceptions. If the supplied photo shows the same garment more than once (for example a combined front-view-and-back-view photo side by side) and the mask happens to cover the corresponding spot on more than one of those views, you MUST apply the exact same change to each of them — never leave one of them unedited while only applying it to another. Do not skip, soften, or omit the change on any part of the masked area just because it falls on a different figure, pose, or view than another masked part.",
     "",
     "Inside the masked area, make the requested change FULLY and CLEARLY VISIBLE as a real, structurally distinct element — it should read as something genuinely added or changed there (with its own visible edge, seam, or boundary where it meets the surrounding fabric), never as the existing fabric/print merely smoothed, flattened, or faded into a plain patch. Follow the instruction's own wording for exactly what the new element should look like (its own fabric, color, and pattern) — if the instruction says to match the existing/same fabric, keep the same color and print; if it asks for something different or contrasting, make that difference clearly visible.",
     "",
