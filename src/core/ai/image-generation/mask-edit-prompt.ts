@@ -9,7 +9,7 @@
  * to enumerate a "preserve everything else" list precisely because it has
  * no other way to scope the edit).
  */
-export const MASK_EDIT_PROMPT_VERSION = "mask-edit-v2";
+export const MASK_EDIT_PROMPT_VERSION = "mask-edit-v3";
 
 export function buildMaskEditPrompt(instruction: string): string {
   return [
@@ -18,13 +18,13 @@ export function buildMaskEditPrompt(instruction: string): string {
     "Designer instruction:",
     instruction,
     "",
-    "The mask already protects every other pixel of the image from any change — do not alter anything outside the masked area.",
+    "STRICT BOUNDARY RULE — the mask marks the ONLY area you may touch. Every pixel outside the masked area must remain exactly as it is in the original image: do not add, remove, duplicate, or alter anything anywhere else, even if it would look more balanced or symmetrical to do so. In particular, never add a second/matching copy of the change onto an unmasked part of the garment (e.g. elsewhere on the same figure, or onto a second figure/view shown alongside it in the same photo) — apply the change exactly once, only inside the masked area.",
     "",
-    "Inside the masked area, make the requested change FULLY and CLEARLY VISIBLE. If the instruction asks for a different fabric, trim, color, band, strip, print, or embellishment, it must look like a genuinely distinct, recognizable new element — do not simply smooth, flatten, or fade the existing fabric/print into a plain solid patch and call that the change; a real, contrasting piece of fabric or trim should visibly stand apart from what surrounds it, the same way it would in an actual garment.",
+    "Inside the masked area, make the requested change FULLY and CLEARLY VISIBLE as a real, structurally distinct element — it should read as something genuinely added or changed there (with its own visible edge, seam, or boundary where it meets the surrounding fabric), never as the existing fabric/print merely smoothed, flattened, or faded into a plain patch. Follow the instruction's own wording for exactly what the new element should look like (its own fabric, color, and pattern) — if the instruction says to match the existing/same fabric, keep the same color and print; if it asks for something different or contrasting, make that difference clearly visible.",
     "",
-    "At the same time, render that new element as a natural, photorealistic part of the garment — matching the correct lighting, shading, fabric drape/wrinkle behaviour, and camera perspective of the rest of the photo — so it looks like it was genuinely sewn/worn there, not pasted on as a flat sticker or an obviously edited patch.",
+    "Render the change as a natural, photorealistic part of the garment — correct lighting, shading, fabric drape/wrinkle behaviour, and camera perspective matching the rest of the photo — so it looks genuinely sewn/worn there, not pasted on as a flat sticker.",
     "",
-    "Do not under-apply the requested change — a subtle or barely-visible result is a failed result.",
+    "Do not under-apply the requested change within the masked area — a subtle or barely-visible result there is a failed result. But nothing about applying it more strongly ever justifies touching pixels outside the mask.",
     "",
     "If the instruction describes a garment construction detail, the result must be technically plausible and commercially manufacturable.",
     "",
