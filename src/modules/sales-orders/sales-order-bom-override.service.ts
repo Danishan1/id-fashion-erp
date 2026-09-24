@@ -1,6 +1,7 @@
 import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { PermissionService } from "@/core/rbac/PermissionService";
+import { getSalesOrderLineEffectiveBom } from "@/modules/bom-mrp/mrp.service";
 import { ProductRepository } from "@/modules/products/product.repository";
 import type { ProposeSalesOrderBomOverrideInput } from "./sales-order-bom-override.schema";
 import { SalesOrderBomOverrideRepository, SalesOrderLineRepository } from "./sales-order-bom.repository";
@@ -26,6 +27,15 @@ export async function listSalesOrderLineOverrides(actor: ActorContext, salesOrde
   await PermissionService.assert(actor.userId, "sales_orders", "view");
   await assertLineAccessible(actor, salesOrderLineId);
   return SalesOrderBomOverrideRepository.findManyForLine(salesOrderLineId);
+}
+
+/** The line's own current effective BOM materials — backs the "Propose BOM
+ * Override" modal's Original Material picker (see mrp.service.ts's own
+ * getSalesOrderLineEffectiveBom for what "effective" means here). */
+export async function getSalesOrderLineEffectiveBomMaterials(actor: ActorContext, salesOrderLineId: string) {
+  await PermissionService.assert(actor.userId, "sales_orders", "view");
+  await assertLineAccessible(actor, salesOrderLineId);
+  return getSalesOrderLineEffectiveBom(actor.companyId, salesOrderLineId);
 }
 
 /**

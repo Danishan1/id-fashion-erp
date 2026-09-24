@@ -1109,3 +1109,75 @@ export async function getSalesOrderRawBomLines(companyId: string, salesOrderId: 
     grandTotalMaterialCost: anyUnknownCost ? null : round4(knownCostTotal),
   };
 }
+
+export interface SalesOrderLineEffectiveBomMaterial {
+  materialId: string;
+  materialName: string;
+  materialCode: string;
+  colorId: string | null;
+  colorName: string | null;
+  dyeId: string | null;
+  uomId: string;
+  uomCode: string;
+  quantityPerUnit: number;
+  wastagePercentage: number;
+}
+
+/**
+ * The current, effective material list for exactly ONE Sales Order Line —
+ * base Style BOM/Sample snapshot with any already-active BOM Overrides
+ * already layered on top (reuses applyEffectiveBomResolution unchanged, so
+ * this can never disagree with what MRP/Material Request already compute
+ * for the same line). Powers the "Propose BOM Override" modal's Original
+ * Material picker: scoping it to only what's genuinely on this line right
+ * now (never the company's whole material catalog) and letting the modal
+ * pre-fill Quantity per Unit / Wastage % / Unit from that material's own
+ * real current values, instead of asking the user to guess them.
+ *
+ * Returns [] for a dormant line (no current item) or a line whose BOM/
+ * sample has nothing on it yet — the modal's own "Add New Line" path (leave
+ * Original Material empty) already covers that case with manual entry.
+ */
+export async function getSalesOrderLineEffectiveBom(
+  companyId: string,
+  salesOrderLineId: string
+): Promise<SalesOrderLineEffectiveBomMaterial[]> {
+  const item = await prisma.salesOrderItem.findFirst({
+    where: { salesOrderLineId, salesOrder: { companyId } },
+    select: { productId: true, sampleRequestId: true },
+  });
+  if (!item) return [];
+
+  const boms = await BomRepository.findManyByProductIds(companyId, [item.productId]);
+  const bomByProductId = new Map(boms.map((bom) => [bom.productId, bom]));
+  const sampleMaterialsById = new Map(
+    item.sampleRequestId
+      ? [[item.sampleRequestId, await SampleMaterialRepository.findLatestVersionMaterialsForRequirement(item.sampleRequestId)] as const]
+      : []
+  );
+
+  // Resolved only from the base BOM's own items — an override-introduced
+  // colorId (Add/Replace) has no such row to resolve a name from; the label
+  // simply omits the color suffix in that rare case, the colorId itself is
+  // still returned/sent correctly either way.
+  const colorNameById = new Map(
+    boms.flatMap((bom) => bom.approvedVersion?.items ?? []).flatMap((i) => (i.color ? [[i.colorId, i.color.name] as const] : []))
+  );
+
+  const base = resolveExplosionItemsForOrderItem(item, bomByProductId, sampleMaterialsById);
+  const lineSnapshots = await fetchSalesOrderLineSnapshots(companyId, [salesOrderLineId]);
+  const { explosionItems } = applyEffectiveBomResolution(base, lineSnapshots.get(salesOrderLineId));
+
+  return explosionItems.map((line) => ({
+    materialId: line.materialId,
+    materialName: line.material.styleName,
+    materialCode: line.material.styleCode,
+    colorId: line.colorId,
+    colorName: line.colorId ? (colorNameById.get(line.colorId) ?? null) : null,
+    dyeId: line.dyeId ?? null,
+    uomId: line.uom?.id ?? "",
+    uomCode: line.uom?.code ?? "",
+    quantityPerUnit: round4(line.quantityPerUnit),
+    wastagePercentage: line.wastagePercentage,
+  }));
+}

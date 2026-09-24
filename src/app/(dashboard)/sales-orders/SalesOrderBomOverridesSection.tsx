@@ -5,6 +5,19 @@ import { FormField, textInputClass } from "@/components/ui/FormField";
 import { MaterialPicker, type MaterialPickerOption } from "@/components/ui/MaterialPicker";
 import { Modal } from "@/components/ui/Modal";
 
+interface EffectiveBomMaterial {
+  materialId: string;
+  materialName: string;
+  materialCode: string;
+  colorId: string | null;
+  colorName: string | null;
+  dyeId: string | null;
+  uomId: string;
+  uomCode: string;
+  quantityPerUnit: number;
+  wastagePercentage: number;
+}
+
 interface OverrideRow {
   id: string;
   isActive: boolean;
@@ -44,8 +57,17 @@ export function SalesOrderBomOverridesSection({ salesOrderLineId }: { salesOrder
   const [showPropose, setShowPropose] = useState(false);
   const [materials, setMaterials] = useState<MaterialPickerOption[]>([]);
   const [units, setUnits] = useState<{ id: string; code: string }[]>([]);
+  const [effectiveBom, setEffectiveBom] = useState<EffectiveBomMaterial[]>([]);
+  const [effectiveBomLoaded, setEffectiveBomLoaded] = useState(false);
 
+  // "" means "Add New Line" (no original material) — every other value is
+  // the selected row's own index into effectiveBom, kept as a string index
+  // rather than materialId since one material can legitimately appear on
+  // the BOM more than once (once per color) and the two rows must stay
+  // distinguishable.
+  const [originalSelection, setOriginalSelection] = useState("");
   const [originalMaterialId, setOriginalMaterialId] = useState("");
+  const [colorId, setColorId] = useState<string | null>(null);
   const [effectiveMaterialId, setEffectiveMaterialId] = useState("");
   const [effectiveQuantityPerUnit, setEffectiveQuantityPerUnit] = useState("");
   const [wastagePercentage, setWastagePercentage] = useState("");
@@ -67,17 +89,55 @@ export function SalesOrderBomOverridesSection({ salesOrderLineId }: { salesOrder
   };
 
   const openPropose = async () => {
+    if (!salesOrderLineId) return;
     setShowPropose(true);
+    setOriginalSelection("");
     setOriginalMaterialId("");
+    setColorId(null);
     setEffectiveMaterialId("");
     setEffectiveQuantityPerUnit("");
     setWastagePercentage("");
     setUomId("");
     setReason("CUSTOMER_REQUIREMENT");
     setRemarks("");
-    const [materialsRes, unitsRes] = await Promise.all([fetch("/api/v1/materials?pageSize=200"), fetch("/api/v1/units")]);
+    setEffectiveBomLoaded(false);
+    const [materialsRes, unitsRes, bomRes] = await Promise.all([
+      fetch("/api/v1/materials?pageSize=200"),
+      fetch("/api/v1/units"),
+      fetch(`/api/v1/sales-order-lines/${salesOrderLineId}/effective-bom`),
+    ]);
     setMaterials((await materialsRes.json()).data ?? []);
     setUnits((await unitsRes.json()).data ?? []);
+    setEffectiveBom((await bomRes.json()).data ?? []);
+    setEffectiveBomLoaded(true);
+  };
+
+  // Picking a real BOM/Sample line pre-fills everything from its own
+  // current values (quantity, wastage, unit, color, and — as a sensible
+  // starting point for the common "just adjust this material's own
+  // quantity/wastage" case — the same material as the Effective Material
+  // too, still freely changeable to swap it for a different one). Picking
+  // "Add New Line" clears back to fully manual entry, matching the existing
+  // add-a-brand-new-line behavior.
+  const selectOriginal = (selection: string) => {
+    setOriginalSelection(selection);
+    if (selection === "") {
+      setOriginalMaterialId("");
+      setColorId(null);
+      setEffectiveMaterialId("");
+      setEffectiveQuantityPerUnit("");
+      setWastagePercentage("");
+      setUomId("");
+      return;
+    }
+    const line = effectiveBom[Number(selection)];
+    if (!line) return;
+    setOriginalMaterialId(line.materialId);
+    setColorId(line.colorId);
+    setEffectiveMaterialId(line.materialId);
+    setEffectiveQuantityPerUnit(String(line.quantityPerUnit));
+    setWastagePercentage(String(line.wastagePercentage));
+    setUomId(line.uomId);
   };
 
   const submitPropose = async () => {
@@ -92,6 +152,7 @@ export function SalesOrderBomOverridesSection({ salesOrderLineId }: { salesOrder
         effectiveMaterialId: effectiveMaterialId || null,
         effectiveQuantityPerUnit: effectiveQuantityPerUnit ? Number(effectiveQuantityPerUnit) : null,
         wastagePercentage: wastagePercentage ? Number(wastagePercentage) : null,
+        colorId: colorId || null,
         uomId: uomId || null,
         reason,
         remarks: remarks || undefined,
@@ -198,11 +259,31 @@ export function SalesOrderBomOverridesSection({ salesOrderLineId }: { salesOrder
       <Modal open={showPropose} onClose={() => setShowPropose(false)} title="Propose BOM Override">
         <div className="space-y-4">
           <p className="text-xs text-zinc-500">
-            Leave &quot;Original Material&quot; empty to add a new line; leave &quot;Effective Material&quot; empty to
-            remove the original line entirely; set both (same or different material) to replace or adjust quantity.
+            Pick a material already on this line&apos;s BOM to replace or adjust it — Quantity/Wastage/Unit pre-fill from
+            its current value automatically. Choose &quot;Add New Line&quot; for a material not on the BOM yet; leave
+            &quot;Effective Material&quot; empty to remove the original line entirely.
           </p>
-          <FormField label="Original Material (optional)" htmlFor="ovrOriginal">
-            <MaterialPicker id="ovrOriginal" materials={materials} value={originalMaterialId} onChange={setOriginalMaterialId} />
+          <FormField label="Original Material" htmlFor="ovrOriginal">
+            <select
+              id="ovrOriginal"
+              value={originalSelection}
+              onChange={(e) => selectOriginal(e.target.value)}
+              className={textInputClass()}
+            >
+              <option value="">— Add New Line (not currently on the BOM) —</option>
+              {effectiveBom.map((line, idx) => (
+                <option key={`${line.materialId}-${line.colorId ?? "any"}`} value={idx}>
+                  {line.materialName} ({line.materialCode}){line.colorName ? ` — ${line.colorName}` : ""} · {line.quantityPerUnit}{" "}
+                  {line.uomCode}
+                  {line.wastagePercentage ? ` + ${line.wastagePercentage}% wastage` : ""}
+                </option>
+              ))}
+            </select>
+            {effectiveBomLoaded && effectiveBom.length === 0 && (
+              <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                This line has no BOM materials yet — every override here will add a new line.
+              </p>
+            )}
           </FormField>
           <FormField label="Effective Material (optional)" htmlFor="ovrEffective">
             <MaterialPicker id="ovrEffective" materials={materials} value={effectiveMaterialId} onChange={setEffectiveMaterialId} />
