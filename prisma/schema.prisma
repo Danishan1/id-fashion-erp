@@ -9574,6 +9574,16 @@ enum AIProviderCapability {
   // vendor call may be identical) so provider health/failover stays
   // correctly attributed per feature.
   DESIGN_REPLICATION
+  // Draw & Describe (2026-09-24) -- a pencil-drawn mask + a free-text
+  // instruction, routed to `inpaint` (OpenAI's images.edit with a real
+  // `mask` parameter: only the mask's fully-transparent pixels are eligible
+  // to change). Distinct from IMAGE_EDIT's `generateVariation` -- a
+  // provider capable of a whole-image edit is not necessarily capable of a
+  // pixel-masked one (Gemini/Cloudflare have no mask-editing API at all),
+  // so this stays its own capability tag rather than overloading IMAGE_EDIT
+  // and risking a wasted failover attempt against a provider that would
+  // only ever return UNSUPPORTED_OPERATION for it.
+  MASK_EDIT
 }
 
 /**

@@ -18,6 +18,7 @@ import {
 } from "@/core/ai-designer/replicate-design/image-generation/prompt";
 import { ImageGenerationServiceError } from "@/core/ai/image-generation/types";
 import { runWithFailover } from "@/core/ai/provider-manager/AIProviderManager";
+import { buildMaskEditPrompt, MASK_EDIT_PROMPT_VERSION, runMaskEditGeneration } from "@/core/ai/image-generation/mask-edit";
 // Tech Pack — Replicate Design's OWN dedicated copy of AI Designer's
 // original "GARMENT TECH PACK SPEC SHEET GENERATOR" pipeline
 // (src/core/ai-designer/replicate-design/tech-pack/*, forked verbatim
@@ -1150,6 +1151,125 @@ export async function generateReplicateEditPreview(actor: ActorContext, projectI
 }
 
 /**
+ * Edit workspace, "Draw & Describe" tab — the mask-based sibling of
+ * generateReplicateEditPreview() above, mirroring AI Designer's own
+ * generateMaskEditPreview() exactly (same two-step preview/apply contract,
+ * same validation, same bookkeeping shape) except persisted into this
+ * module's own separate Prompt/Generation/Image tables. The actual prompt
+ * build + provider call is the ONE function every "Draw & Describe" call in
+ * this app shares — see runMaskEditGeneration in
+ * @/core/ai/image-generation/mask-edit.
+ */
+export async function generateReplicateMaskEditPreview(
+  actor: ActorContext,
+  projectId: string,
+  input: { instruction: string; imageCount: number; maskBuffer: Buffer }
+) {
+  const project = await ReplicateDesignProjectRepository.findByIdWithDetails(actor.companyId, projectId);
+  if (!project) throw new BusinessRuleError("NOT_FOUND", "Replicate Design project not found.", { id: projectId });
+  if (!project.currentVersion?.currentImage) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "Generate a design first before editing it.");
+  }
+  await assertNoActiveEditRun(projectId);
+
+  const parentImage = project.currentVersion.currentImage;
+  const { attachment: parentAttachment, buffer: parentBuffer } = await getAttachmentForDownload(actor.companyId, parentImage.imageAttachmentId);
+
+  const [baseMeta, maskMeta] = await Promise.all([sharp(parentBuffer).metadata(), sharp(input.maskBuffer).metadata()]);
+  if (baseMeta.width !== maskMeta.width || baseMeta.height !== maskMeta.height) {
+    throw new BusinessRuleError(
+      "VALIDATION_ERROR",
+      "The drawn mask doesn't match the current design's image size — reload the page and draw again."
+    );
+  }
+
+  const maskAttachment = await uploadAttachment(
+    actor,
+    "REPLICATE_DESIGN_PROJECT",
+    projectId,
+    { buffer: input.maskBuffer, fileName: `replicate-design-mask-${Date.now()}.png`, mimeType: "image/png" },
+    "EDIT_MASK_IMAGE"
+  );
+
+  const prompt = buildMaskEditPrompt(input.instruction);
+  const specJson = {
+    fabric: { source: project.fabricSource, name: project.fabricName, code: project.fabricCode },
+    edit: { mode: "MASK", featureLabel: "Custom Area (Drawn)", newValue: input.instruction, maskAttachmentId: maskAttachment.id },
+  };
+
+  const promptRow = await ReplicateDesignPromptRepository.create({
+    companyId: actor.companyId,
+    projectId,
+    promptType: "IMAGE_EDIT",
+    promptVersion: MASK_EDIT_PROMPT_VERSION,
+    specJson: specJson as Prisma.InputJsonValue,
+    promptText: prompt,
+    provider: "pending",
+    model: "pending",
+    status: "IN_PROGRESS",
+    createdByUserId: actor.userId,
+  });
+
+  const generation = await ReplicateDesignGenerationRepository.create({
+    companyId: actor.companyId,
+    projectId,
+    promptId: promptRow.id,
+    parentImageId: parentImage.id,
+    editedFeature: "Custom Area (Drawn)",
+    requestedImageCount: input.imageCount,
+    status: "IN_PROGRESS",
+    createdByUserId: actor.userId,
+  });
+
+  try {
+    const result = await runMaskEditGeneration({
+      companyId: actor.companyId,
+      userId: actor.userId,
+      generationContext: `Replicate Design / Project ${project.projectNumber} / Draw & Describe`,
+      replicateDesignProjectId: projectId,
+      prompt,
+      imageCount: input.imageCount,
+      baseImage: { buffer: parentBuffer, mimeType: parentAttachment.mimeType },
+      maskImage: { buffer: input.maskBuffer, mimeType: "image/png" },
+    });
+
+    const rows: Prisma.ReplicateDesignImageUncheckedCreateInput[] = [];
+    for (let i = 0; i < result.images.length; i++) {
+      const img = result.images[i];
+      const attachment = await uploadAttachment(
+        actor,
+        "REPLICATE_DESIGN_PROJECT",
+        projectId,
+        { buffer: img.buffer, fileName: `replicate-design-edit-${Date.now()}-${i + 1}.png`, mimeType: img.mimeType },
+        "EDIT_PREVIEW_IMAGE"
+      );
+      rows.push({ companyId: actor.companyId, projectId, generationId: generation.id, imageAttachmentId: attachment.id, createdByUserId: actor.userId });
+    }
+    await ReplicateDesignImageRepository.createMany(rows);
+    const images = await ReplicateDesignImageRepository.findByGenerationId(generation.id);
+
+    await ReplicateDesignGenerationRepository.markSuccess(generation.id);
+    await ReplicateDesignPromptRepository.markSuccessWithProvider(promptRow.id, result.providerName, result.model);
+
+    await writeAuditLog({
+      companyId: actor.companyId,
+      userId: actor.userId,
+      tableName: "replicate_design_generations",
+      recordId: generation.id,
+      action: "CREATE",
+      newValues: { editedFeature: "Custom Area (Drawn)", mode: "MASK", imageCount: images.length, provider: result.providerName, model: result.model },
+    });
+
+    return { generation, images, prompt: promptRow };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error.";
+    await ReplicateDesignGenerationRepository.markFailed(generation.id);
+    await ReplicateDesignPromptRepository.markFailed(promptRow.id, "PROVIDER_ERROR", message);
+    throw err;
+  }
+}
+
+/**
  * Step, part 2 of 2 — the explicit "Apply" action. Only a PENDING image
  * whose own generation was previewed from the project's CURRENT design may
  * be applied (a stale preview left over from before an intervening change
@@ -1189,13 +1309,20 @@ export async function applyReplicateEditVariation(actor: ActorContext, imageId: 
 
   const editSpec = (generation.prompt.specJson as { edit?: { mode?: string; featureLabel?: string; newValue?: string; technicalFields?: Record<string, string> } })
     .edit;
-  const mode = (editSpec?.mode as "QUICK" | "TECHNICAL" | "AI_PROMPT" | undefined) ?? "QUICK";
-  const changeSummary = changeSummaryForReplicateEdit({
-    mode,
-    featureLabel: editSpec?.featureLabel ?? generation.editedFeature ?? "Edit",
-    newValue: editSpec?.newValue,
-    imageCount: 1,
-  } as GenerateReplicateEditPreviewInput);
+  // "MASK" is generateReplicateMaskEditPreview()'s own mode tag (mirrors AI
+  // Designer's own generateMaskEditPreview exactly) — not one of the real
+  // /edit endpoint's REPLICATE_EDIT_MODES, so it's handled with its own
+  // one-line summary rather than fed through changeSummaryForReplicateEdit().
+  const mode = (editSpec?.mode as "QUICK" | "TECHNICAL" | "AI_PROMPT" | "MASK" | undefined) ?? "QUICK";
+  const changeSummary =
+    mode === "MASK"
+      ? `Drawn-area edit — ${editSpec?.newValue ?? "custom instruction"}`
+      : changeSummaryForReplicateEdit({
+          mode,
+          featureLabel: editSpec?.featureLabel ?? generation.editedFeature ?? "Edit",
+          newValue: editSpec?.newValue,
+          imageCount: 1,
+        } as GenerateReplicateEditPreviewInput);
 
   const version = await bumpVersion(actor, image.projectId, imageId, changeSummary, project.currentVersion.designSnapshotJson as Record<string, unknown>, {
     approvalStatus: "AI_MODIFIED",

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { FilePreviewModal } from "@/components/ui/FilePreviewModal";
+import { MaskCanvas, type MaskCanvasHandle } from "@/components/ui/MaskCanvas";
 import type { ReplicateEditMode } from "@/modules/ai-designer/replicate-design.schema";
 
 // Mirrors AI Designer's own EditDesignWorkspace.tsx exactly (same 3-column
@@ -158,12 +159,20 @@ export function EditReplicateDesignWorkspace({ projectId, initialProject }: { pr
 
   // Right panel — edit form
   const [rightOpen, setRightOpen] = useState(true);
-  const [editMode, setEditMode] = useState<ReplicateEditMode>("QUICK");
+  // Widened beyond ReplicateEditMode (the real /edit endpoint's own mode
+  // enum) to also cover Draw & Describe / "MASK" (its own multipart
+  // /mask-edit endpoint) — never sent as-is to the generic /edit call;
+  // generatePreview() guards against it.
+  const [editMode, setEditMode] = useState<ReplicateEditMode | "MASK">("QUICK");
   const [currentValue, setCurrentValue] = useState("");
   const [newValue, setNewValue] = useState("");
   const [techRows, setTechRows] = useState<{ key: string; value: string }[]>([{ key: "", value: "" }]);
   const [freeform, setFreeform] = useState("");
   const [imageCount, setImageCount] = useState(1);
+  // Draw & Describe — mirrors AI Designer's own EditDesignWorkspace exactly.
+  const maskCanvasRef = useRef<MaskCanvasHandle>(null);
+  const [maskHasStrokes, setMaskHasStrokes] = useState(false);
+  const [maskInstruction, setMaskInstruction] = useState("");
   // Item label -> picked value, accumulated across every category item the
   // user visits (not just the currently-focused one) -- mirrors AI
   // Designer's own EditDesignWorkspace fix for the identical bug: switching
@@ -212,7 +221,8 @@ export function EditReplicateDesignWorkspace({ projectId, initialProject }: { pr
   const hasUnsavedEdit =
     (editMode === "QUICK" && (currentValue.trim() || newValue.trim() || Object.keys(stagedSelections).length > 0)) ||
     (editMode === "TECHNICAL" && techRows.some((r) => r.key.trim() && r.value.trim())) ||
-    (editMode === "AI_PROMPT" && freeform.trim());
+    (editMode === "AI_PROMPT" && freeform.trim()) ||
+    (editMode === "MASK" && (maskHasStrokes || maskInstruction.trim()));
 
   function resetEditForm() {
     setCurrentValue("");
@@ -220,6 +230,8 @@ export function EditReplicateDesignWorkspace({ projectId, initialProject }: { pr
     setTechRows([{ key: "", value: "" }]);
     setFreeform("");
     setStagedSelections({});
+    setMaskInstruction("");
+    maskCanvasRef.current?.clear();
   }
 
   function selectCategoryItem(group: string, item: string) {
@@ -234,6 +246,7 @@ export function EditReplicateDesignWorkspace({ projectId, initialProject }: { pr
   }
 
   function generatePreview() {
+    if (editMode === "MASK") return; // has its own generate action — see generateReplicateMaskPreview()
     const stagedCount = Object.keys(stagedSelections).length;
     if (!activeItem && editMode !== "AI_PROMPT" && stagedCount === 0) {
       setError("Choose an edit category on the left first.");
@@ -272,6 +285,37 @@ export function EditReplicateDesignWorkspace({ projectId, initialProject }: { pr
             imageCount,
           }),
         })
+      );
+      setPreview({ generationId: body.data.generation.id, images: body.data.images });
+      setBottomTab("variations");
+      resetEditForm();
+    });
+  }
+
+  /**
+   * Draw & Describe — mirrors AI Designer's own generateMaskPreview exactly:
+   * exports the pencil-drawn mask, posts it (multipart, with the
+   * instruction) to this module's own /mask-edit endpoint, and lands the
+   * result in the same PENDING "AI Variations" review queue as any other
+   * edit mode.
+   */
+  function generateReplicateMaskPreview() {
+    if (!maskHasStrokes || !maskInstruction.trim()) {
+      setError("Draw on the area you want to change, and describe the change.");
+      return;
+    }
+    run("preview", async () => {
+      const maskBlob = await maskCanvasRef.current?.exportMask();
+      if (!maskBlob) {
+        setError("Draw on the area you want to change first.");
+        return;
+      }
+      const formData = new FormData();
+      formData.append("mask", maskBlob, "mask.png");
+      formData.append("instruction", maskInstruction.trim());
+      formData.append("imageCount", String(imageCount));
+      const body = await parseJson(
+        await fetch(`/api/v1/ai-designer/replicate-projects/${projectId}/mask-edit`, { method: "POST", body: formData })
       );
       setPreview({ generationId: body.data.generation.id, images: body.data.images });
       setBottomTab("variations");
@@ -471,27 +515,38 @@ export function EditReplicateDesignWorkspace({ projectId, initialProject }: { pr
             </button>
             <span className="ml-auto text-xs text-zinc-400">{Math.round(zoom * 100)}%</span>
           </div>
-          <div
-            className="flex flex-1 items-center justify-center overflow-hidden"
-            onMouseDown={onCanvasMouseDown}
-            onMouseMove={onCanvasMouseMove}
-            onMouseUp={onCanvasMouseUp}
-            onMouseLeave={onCanvasMouseUp}
-            style={{ cursor: zoom > 1 ? "grab" : "default" }}
-          >
-            {currentImage ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={imageUrl(currentImage.imageAttachmentId)}
-                alt={project.projectName}
-                draggable={false}
-                className="max-h-full max-w-full select-none object-contain"
-                style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transition: isDragging ? "none" : "transform 0.1s" }}
+          {editMode === "MASK" && currentImage ? (
+            <div className="flex flex-1 flex-col overflow-hidden">
+              <MaskCanvas
+                ref={maskCanvasRef}
+                imageUrl={imageUrl(currentImage.imageAttachmentId)}
+                disabled={busy === "preview"}
+                onStrokesChange={setMaskHasStrokes}
               />
-            ) : (
-              <p className="text-sm text-zinc-400">No design generated yet.</p>
-            )}
-          </div>
+            </div>
+          ) : (
+            <div
+              className="flex flex-1 items-center justify-center overflow-hidden"
+              onMouseDown={onCanvasMouseDown}
+              onMouseMove={onCanvasMouseMove}
+              onMouseUp={onCanvasMouseUp}
+              onMouseLeave={onCanvasMouseUp}
+              style={{ cursor: zoom > 1 ? "grab" : "default" }}
+            >
+              {currentImage ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={imageUrl(currentImage.imageAttachmentId)}
+                  alt={project.projectName}
+                  draggable={false}
+                  className="max-h-full max-w-full select-none object-contain"
+                  style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transition: isDragging ? "none" : "transform 0.1s" }}
+                />
+              ) : (
+                <p className="text-sm text-zinc-400">No design generated yet.</p>
+              )}
+            </div>
+          )}
 
           {/* Bottom area */}
           <div className="h-64 shrink-0 overflow-y-auto border-t border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
@@ -708,8 +763,8 @@ export function EditReplicateDesignWorkspace({ projectId, initialProject }: { pr
               </p>
             )}
 
-            <div className="mb-3 flex gap-1 rounded bg-zinc-100 p-0.5 text-xs dark:bg-zinc-900">
-              {(["QUICK", "TECHNICAL", "AI_PROMPT"] as ReplicateEditMode[]).map((m) => (
+            <div className="mb-3 flex flex-wrap gap-1 rounded bg-zinc-100 p-0.5 text-xs dark:bg-zinc-900">
+              {(["QUICK", "TECHNICAL", "AI_PROMPT", "MASK"] as const).map((m) => (
                 <button
                   key={m}
                   type="button"
@@ -718,7 +773,7 @@ export function EditReplicateDesignWorkspace({ projectId, initialProject }: { pr
                     editMode === m ? "bg-white text-indigo-700 shadow-sm dark:bg-zinc-800 dark:text-indigo-400" : "text-zinc-500"
                   }`}
                 >
-                  {m === "QUICK" ? "Quick Edit" : m === "TECHNICAL" ? "Technical Edit" : "AI Prompt"}
+                  {m === "QUICK" ? "Quick Edit" : m === "TECHNICAL" ? "Technical Edit" : m === "AI_PROMPT" ? "AI Prompt" : "Draw & Describe"}
                 </button>
               ))}
             </div>
@@ -841,6 +896,23 @@ export function EditReplicateDesignWorkspace({ projectId, initialProject }: { pr
               </div>
             )}
 
+            {editMode === "MASK" && (
+              <div>
+                <p className="mb-2 text-[10px] text-zinc-500">
+                  Draw directly on the design (center panel) to highlight the exact area you want changed, then describe
+                  the change below — the AI only touches the area you drew.
+                </p>
+                <label className="mb-0.5 block text-[10px] font-medium text-zinc-500">What should change in the drawn area?</label>
+                <textarea
+                  value={maskInstruction}
+                  onChange={(e) => setMaskInstruction(e.target.value)}
+                  rows={4}
+                  placeholder='e.g. "Add a row of pearl buttons here." / "Change this panel to a lace fabric."'
+                  className="w-full rounded border border-zinc-300 px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-900"
+                />
+              </div>
+            )}
+
             <div className="mt-3">
               <label className="mb-0.5 block text-[10px] font-medium text-zinc-500">Variations to generate</label>
               <div className="flex gap-1">
@@ -861,8 +933,8 @@ export function EditReplicateDesignWorkspace({ projectId, initialProject }: { pr
 
             <button
               type="button"
-              disabled={busy === "preview"}
-              onClick={generatePreview}
+              disabled={editMode === "MASK" ? busy === "preview" || !maskHasStrokes || !maskInstruction.trim() : busy === "preview"}
+              onClick={editMode === "MASK" ? generateReplicateMaskPreview : generatePreview}
               className="mt-3 w-full rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
             >
               {busy === "preview" ? "Generating preview…" : "Generate Preview"}

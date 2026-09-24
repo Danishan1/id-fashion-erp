@@ -174,6 +174,8 @@ function capabilityLabel(capability: AIProviderCapability): string {
       return "technical flat sketch generation";
     case "DESIGN_REPLICATION":
       return "design replication with a new material";
+    case "MASK_EDIT":
+      return "drawing-based (mask) editing";
   }
 }
 

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { FilePreviewModal } from "@/components/ui/FilePreviewModal";
+import { MaskCanvas, type MaskCanvasHandle } from "@/components/ui/MaskCanvas";
 import type { EditMode } from "@/modules/ai-designer/ai-designer.schema";
 import type { DesignAttributeDef } from "@/core/ai-designer/catalogs/design-attribute-catalog";
 import { DesignOptionImage } from "@/core/ai-designer/catalogs/design-icon-catalog";
@@ -206,15 +207,23 @@ export function EditDesignWorkspace({
   // Right panel — edit form
   const [rightOpen, setRightOpen] = useState(true);
   // Widened beyond EditMode (the real /edit endpoint's own mode enum) to also
-  // cover the Embellishments tab, which is a structurally different action
-  // (its own apply-embellishments endpoint, no preview/select step) — never
-  // sent as-is to the generic /edit call; generatePreview() guards against it.
-  const [editMode, setEditMode] = useState<EditMode | "EMBELLISHMENTS">("QUICK");
+  // cover the Embellishments tab (its own apply-embellishments endpoint, no
+  // preview/select step) and Draw & Describe / "MASK" (its own multipart
+  // /mask-edit endpoint) — neither is ever sent as-is to the generic /edit
+  // call; generatePreview() guards against both.
+  const [editMode, setEditMode] = useState<EditMode | "EMBELLISHMENTS" | "MASK">("QUICK");
   const [currentValue, setCurrentValue] = useState("");
   const [newValue, setNewValue] = useState("");
   const [techRows, setTechRows] = useState<{ key: string; value: string }[]>([{ key: "", value: "" }]);
   const [freeform, setFreeform] = useState("");
   const [imageCount, setImageCount] = useState(1);
+  // Draw & Describe — the canvas owns its own strokes internally; this
+  // component only needs to know whether anything has been drawn yet (to
+  // enable/disable Generate Preview) and the free-text instruction that
+  // goes with it.
+  const maskCanvasRef = useRef<MaskCanvasHandle>(null);
+  const [maskHasStrokes, setMaskHasStrokes] = useState(false);
+  const [maskInstruction, setMaskInstruction] = useState("");
   // Which side(s) of the garment an edit's regenerated image should show —
   // user-requested (2026-09-22). Defaults to FRONT, treated by the prompt
   // layer as "no change requested" so every pre-existing edit keeps working
@@ -301,7 +310,8 @@ export function EditDesignWorkspace({
   const hasUnsavedEdit =
     (editMode === "QUICK" && (currentValue.trim() || newValue.trim() || Object.keys(designAttrSelections).length > 0)) ||
     (editMode === "TECHNICAL" && techRows.some((r) => r.key.trim() && r.value.trim())) ||
-    (editMode === "AI_PROMPT" && freeform.trim());
+    (editMode === "AI_PROMPT" && freeform.trim()) ||
+    (editMode === "MASK" && (maskHasStrokes || maskInstruction.trim()));
 
   function resetEditForm() {
     setCurrentValue("");
@@ -309,6 +319,8 @@ export function EditDesignWorkspace({
     setTechRows([{ key: "", value: "" }]);
     setFreeform("");
     setDesignAttrSelections({});
+    setMaskInstruction("");
+    maskCanvasRef.current?.clear();
   }
 
   function selectCategoryItem(group: string, item: string) {
@@ -356,7 +368,7 @@ export function EditDesignWorkspace({
   }
 
   function generatePreview() {
-    if (editMode === "EMBELLISHMENTS") return; // has its own Apply button — see applyEmbellishmentsAction()
+    if (editMode === "EMBELLISHMENTS" || editMode === "MASK") return; // each has its own generate action — see applyEmbellishmentsAction()/generateMaskPreview()
     const stagedDesignAttrs = Object.keys(designAttrSelections).length > 0;
     if (!activeItem && editMode !== "AI_PROMPT" && !stagedDesignAttrs) {
       setError("Choose an edit category on the left first.");
@@ -462,6 +474,35 @@ export function EditDesignWorkspace({
       setEmbellishmentInstructions("");
       await Promise.all([refreshProject(), refreshVersions()]);
       setBottomTab("versions");
+    });
+  }
+
+  /**
+   * Draw & Describe — exports the pencil-drawn mask from the canvas, then
+   * posts it (multipart, alongside the instruction text) to the dedicated
+   * /mask-edit endpoint. Lands in the same PENDING "AI Variations" review
+   * queue as every other edit mode — Select & Apply / Reject below already
+   * works unchanged for these images too.
+   */
+  function generateMaskPreview() {
+    if (!maskHasStrokes || !maskInstruction.trim()) {
+      setError("Draw on the area you want to change, and describe the change.");
+      return;
+    }
+    run("preview", async () => {
+      const maskBlob = await maskCanvasRef.current?.exportMask();
+      if (!maskBlob) {
+        setError("Draw on the area you want to change first.");
+        return;
+      }
+      const formData = new FormData();
+      formData.append("mask", maskBlob, "mask.png");
+      formData.append("instruction", maskInstruction.trim());
+      formData.append("imageCount", String(imageCount));
+      const body = await parseJson(await fetch(`/api/v1/ai-designer/projects/${projectId}/mask-edit`, { method: "POST", body: formData }));
+      setPreview({ generationId: body.data.generation.id, images: body.data.images });
+      setBottomTab("variations");
+      resetEditForm();
     });
   }
 
@@ -640,27 +681,38 @@ export function EditDesignWorkspace({
             </button>
             <span className="ml-auto text-xs text-zinc-400">{Math.round(zoom * 100)}%</span>
           </div>
-          <div
-            className="flex flex-1 items-center justify-center overflow-hidden"
-            onMouseDown={onCanvasMouseDown}
-            onMouseMove={onCanvasMouseMove}
-            onMouseUp={onCanvasMouseUp}
-            onMouseLeave={onCanvasMouseUp}
-            style={{ cursor: zoom > 1 ? "grab" : "default" }}
-          >
-            {currentImage ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={imageUrl(currentImage.imageAttachmentId)}
-                alt={project.projectName}
-                draggable={false}
-                className="max-h-full max-w-full select-none object-contain"
-                style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transition: isDragging ? "none" : "transform 0.1s" }}
+          {editMode === "MASK" && currentImage ? (
+            <div className="flex flex-1 flex-col overflow-hidden">
+              <MaskCanvas
+                ref={maskCanvasRef}
+                imageUrl={imageUrl(currentImage.imageAttachmentId)}
+                disabled={busy === "preview"}
+                onStrokesChange={setMaskHasStrokes}
               />
-            ) : (
-              <p className="text-sm text-zinc-400">No design generated yet.</p>
-            )}
-          </div>
+            </div>
+          ) : (
+            <div
+              className="flex flex-1 items-center justify-center overflow-hidden"
+              onMouseDown={onCanvasMouseDown}
+              onMouseMove={onCanvasMouseMove}
+              onMouseUp={onCanvasMouseUp}
+              onMouseLeave={onCanvasMouseUp}
+              style={{ cursor: zoom > 1 ? "grab" : "default" }}
+            >
+              {currentImage ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={imageUrl(currentImage.imageAttachmentId)}
+                  alt={project.projectName}
+                  draggable={false}
+                  className="max-h-full max-w-full select-none object-contain"
+                  style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transition: isDragging ? "none" : "transform 0.1s" }}
+                />
+              ) : (
+                <p className="text-sm text-zinc-400">No design generated yet.</p>
+              )}
+            </div>
+          )}
 
           {/* Bottom area */}
           <div className="h-64 shrink-0 overflow-y-auto border-t border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
@@ -880,7 +932,7 @@ export function EditDesignWorkspace({
             )}
 
             <div className="mb-3 flex flex-wrap gap-1 rounded bg-zinc-100 p-0.5 text-xs dark:bg-zinc-900">
-              {(["QUICK", "TECHNICAL", "AI_PROMPT", "EMBELLISHMENTS"] as const).map((m) => (
+              {(["QUICK", "TECHNICAL", "AI_PROMPT", "MASK", "EMBELLISHMENTS"] as const).map((m) => (
                 <button
                   key={m}
                   type="button"
@@ -889,7 +941,15 @@ export function EditDesignWorkspace({
                     editMode === m ? "bg-white text-indigo-700 shadow-sm dark:bg-zinc-800 dark:text-indigo-400" : "text-zinc-500"
                   }`}
                 >
-                  {m === "QUICK" ? "Quick Edit" : m === "TECHNICAL" ? "Technical Edit" : m === "AI_PROMPT" ? "AI Prompt" : "Embellishments"}
+                  {m === "QUICK"
+                    ? "Quick Edit"
+                    : m === "TECHNICAL"
+                      ? "Technical Edit"
+                      : m === "AI_PROMPT"
+                        ? "AI Prompt"
+                        : m === "MASK"
+                          ? "Draw & Describe"
+                          : "Embellishments"}
                 </button>
               ))}
             </div>
@@ -1037,6 +1097,56 @@ export function EditDesignWorkspace({
               </div>
             )}
 
+            {editMode === "MASK" && (
+              <div className="space-y-3">
+                <p className="text-[10px] text-zinc-500">
+                  Draw directly on the design (center panel) to highlight the exact area you want changed, then describe
+                  the change below — the AI only touches the area you drew.
+                </p>
+
+                <div>
+                  <label className="mb-0.5 block text-[10px] font-medium text-zinc-500">What should change in the drawn area?</label>
+                  <textarea
+                    value={maskInstruction}
+                    onChange={(e) => setMaskInstruction(e.target.value)}
+                    rows={4}
+                    placeholder='e.g. "Add a row of pearl buttons here." / "Change this panel to a lace fabric."'
+                    className="w-full rounded border border-zinc-300 px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-900"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-0.5 block text-[10px] font-medium text-zinc-500">Variations to generate</label>
+                  <div className="flex gap-1">
+                    {[1, 2, 3, 4].map((n) => (
+                      <button
+                        key={n}
+                        type="button"
+                        onClick={() => setImageCount(n)}
+                        className={`flex-1 rounded border px-2 py-1 text-xs ${
+                          imageCount === n ? "border-indigo-500 bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300" : "border-zinc-300 dark:border-zinc-700"
+                        }`}
+                      >
+                        {n}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  disabled={busy === "preview" || !maskHasStrokes || !maskInstruction.trim()}
+                  onClick={generateMaskPreview}
+                  className="w-full rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+                >
+                  {busy === "preview" ? "Generating preview…" : "Generate Preview"}
+                </button>
+                {busy === "preview" && (
+                  <p className="mt-1 text-[10px] text-amber-600 dark:text-amber-400">This can take up to a minute. Nothing is applied until you review and select a result below.</p>
+                )}
+              </div>
+            )}
+
             {editMode === "EMBELLISHMENTS" && (
               <div className="space-y-3">
                 <p className="text-[10px] text-zinc-500">
@@ -1136,7 +1246,7 @@ export function EditDesignWorkspace({
               </div>
             )}
 
-            {editMode !== "EMBELLISHMENTS" && (
+            {editMode !== "EMBELLISHMENTS" && editMode !== "MASK" && (
               <>
                 <div className="mt-3">
                   <label className="mb-0.5 block text-[10px] font-medium text-zinc-500">View</label>

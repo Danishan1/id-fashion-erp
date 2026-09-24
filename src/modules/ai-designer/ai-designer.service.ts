@@ -17,6 +17,7 @@ import { flattenToObservations as flattenSketchObservations } from "@/core/ai-de
 import { SKETCH_FEATURE_LABELS, SKETCH_TO_DESIGN_ATTRIBUTE_KEYS, type SketchFeatureKey } from "@/core/ai-designer/sketch-analysis/feature-registry";
 import { ImageGenerationServiceError } from "@/core/ai/image-generation/types";
 import { runWithFailover } from "@/core/ai/provider-manager/AIProviderManager";
+import { buildMaskEditPrompt, MASK_EDIT_PROMPT_VERSION, runMaskEditGeneration } from "@/core/ai/image-generation/mask-edit";
 import {
   buildEmbellishmentPrompt,
   buildGenerationPrompt,
@@ -1571,6 +1572,129 @@ export async function generateEditPreview(actor: ActorContext, projectId: string
 }
 
 /**
+ * Edit Design workspace, "Draw & Describe" tab — the mask-based sibling of
+ * generateEditPreview() above, same two-step "preview first, explicit apply
+ * second" contract (this only creates PENDING images; applyEditVariation()
+ * below applies one exactly like any other edit-mode preview). The actual
+ * prompt build + provider call is the ONE function every "Draw & Describe"
+ * call in this app shares — see runMaskEditGeneration in
+ * @/core/ai/image-generation/mask-edit — this function's own job is purely
+ * AI-Designer-specific bookkeeping around that shared call: loading the
+ * current design, validating the drawn mask actually matches it, and
+ * persisting the result into this module's own Prompt/Generation/Image
+ * tables (Replicate Design's own generateReplicateMaskEditPreview does the
+ * identical bookkeeping against its own, separate tables).
+ */
+export async function generateMaskEditPreview(
+  actor: ActorContext,
+  projectId: string,
+  input: { instruction: string; imageCount: number; maskBuffer: Buffer }
+) {
+  const project = await AiDesignerProjectRepository.findByIdWithDetails(actor.companyId, projectId);
+  if (!project) throw new BusinessRuleError("NOT_FOUND", "AI Designer project not found.", { id: projectId });
+  if (!project.currentVersion?.currentImage) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "Generate a design first before editing it.");
+  }
+  await assertNoActiveRun(projectId, "IMAGE_EDIT");
+
+  const parentImage = project.currentVersion.currentImage;
+  const { attachment: parentAttachment, buffer: parentBuffer } = await getAttachmentForDownload(actor.companyId, parentImage.imageAttachmentId);
+
+  const [baseMeta, maskMeta] = await Promise.all([sharp(parentBuffer).metadata(), sharp(input.maskBuffer).metadata()]);
+  if (baseMeta.width !== maskMeta.width || baseMeta.height !== maskMeta.height) {
+    throw new BusinessRuleError(
+      "VALIDATION_ERROR",
+      "The drawn mask doesn't match the current design's image size — reload the page and draw again."
+    );
+  }
+
+  const maskAttachment = await uploadAttachment(
+    actor,
+    "AI_DESIGNER_PROJECT",
+    projectId,
+    { buffer: input.maskBuffer, fileName: `ai-designer-mask-${Date.now()}.png`, mimeType: "image/png" },
+    "EDIT_MASK_IMAGE"
+  );
+
+  const prompt = buildMaskEditPrompt(input.instruction);
+  const specJson = {
+    ...buildSpecJson(project),
+    edit: { mode: "MASK", featureLabel: "Custom Area (Drawn)", newValue: input.instruction, maskAttachmentId: maskAttachment.id },
+  };
+
+  const promptRow = await AiDesignerPromptRepository.create({
+    companyId: actor.companyId,
+    projectId,
+    promptType: "IMAGE_EDIT",
+    promptVersion: MASK_EDIT_PROMPT_VERSION,
+    specJson: specJson as Prisma.InputJsonValue,
+    promptText: prompt,
+    provider: "pending",
+    model: "pending",
+    status: "IN_PROGRESS",
+    createdByUserId: actor.userId,
+  });
+
+  const generation = await AiDesignerGenerationRepository.create({
+    companyId: actor.companyId,
+    projectId,
+    promptId: promptRow.id,
+    parentImageId: parentImage.id,
+    editedFeature: "Custom Area (Drawn)",
+    requestedImageCount: input.imageCount,
+    status: "IN_PROGRESS",
+    createdByUserId: actor.userId,
+  });
+
+  try {
+    const result = await runMaskEditGeneration({
+      companyId: actor.companyId,
+      userId: actor.userId,
+      generationContext: `AI Designer / Project ${project.projectNumber} / Draw & Describe`,
+      aiDesignerProjectId: projectId,
+      prompt,
+      imageCount: input.imageCount,
+      baseImage: { buffer: parentBuffer, mimeType: parentAttachment.mimeType },
+      maskImage: { buffer: input.maskBuffer, mimeType: "image/png" },
+    });
+
+    const rows: Prisma.AiDesignerImageUncheckedCreateInput[] = [];
+    for (let i = 0; i < result.images.length; i++) {
+      const img = result.images[i];
+      const attachment = await uploadAttachment(
+        actor,
+        "AI_DESIGNER_PROJECT",
+        projectId,
+        { buffer: img.buffer, fileName: `ai-designer-edit-${Date.now()}-${i + 1}.png`, mimeType: img.mimeType },
+        "EDIT_PREVIEW_IMAGE"
+      );
+      rows.push({ companyId: actor.companyId, projectId, generationId: generation.id, imageAttachmentId: attachment.id, createdByUserId: actor.userId });
+    }
+    await AiDesignerImageRepository.createMany(rows);
+    const images = await AiDesignerImageRepository.findByGenerationId(generation.id);
+
+    await AiDesignerGenerationRepository.markSuccess(generation.id);
+    await AiDesignerPromptRepository.markSuccessWithProvider(promptRow.id, result.providerName, result.model);
+
+    await writeAuditLog({
+      companyId: actor.companyId,
+      userId: actor.userId,
+      tableName: "ai_generations",
+      recordId: generation.id,
+      action: "CREATE",
+      newValues: { editedFeature: "Custom Area (Drawn)", mode: "MASK", imageCount: images.length, provider: result.providerName, model: result.model },
+    });
+
+    return { generation, images, prompt: promptRow };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error.";
+    await AiDesignerGenerationRepository.markFailed(generation.id);
+    await AiDesignerPromptRepository.markFailed(promptRow.id, "PROVIDER_ERROR", message);
+    throw err;
+  }
+}
+
+/**
  * Edit Design workspace, step 2 of 2 — the explicit "Apply" action. Only a
  * PENDING image whose own generation was previewed from the project's
  * CURRENT design may be applied (a stale preview left over from before an
@@ -1612,13 +1736,21 @@ export async function applyEditVariation(actor: ActorContext, imageId: string, i
 
   const editSpec = (generation.prompt.specJson as { edit?: { mode?: string; featureLabel?: string; newValue?: string; technicalFields?: Record<string, string> } })
     .edit;
-  const mode = (editSpec?.mode as "QUICK" | "TECHNICAL" | "AI_PROMPT" | undefined) ?? "QUICK";
-  const changeSummary = changeSummaryForEdit({
-    mode,
-    featureLabel: editSpec?.featureLabel ?? generation.editedFeature ?? "Edit",
-    newValue: editSpec?.newValue,
-    imageCount: 1,
-  } as GenerateEditPreviewInput);
+  // "MASK" is generateMaskEditPreview()'s own mode tag — not one of the
+  // real /edit endpoint's EDIT_MODES (that request shape has no file
+  // upload), so it deliberately isn't fed through changeSummaryForEdit()
+  // (whose own type only knows QUICK/TECHNICAL/AI_PROMPT) — handled here
+  // instead with its own one-line summary.
+  const mode = (editSpec?.mode as "QUICK" | "TECHNICAL" | "AI_PROMPT" | "MASK" | undefined) ?? "QUICK";
+  const changeSummary =
+    mode === "MASK"
+      ? `Drawn-area edit — ${editSpec?.newValue ?? "custom instruction"}`
+      : changeSummaryForEdit({
+          mode,
+          featureLabel: editSpec?.featureLabel ?? generation.editedFeature ?? "Edit",
+          newValue: editSpec?.newValue,
+          imageCount: 1,
+        } as GenerateEditPreviewInput);
 
   const version = await bumpVersion(actor, image.projectId, imageId, changeSummary, project.currentVersion.designSnapshotJson as Record<string, unknown>, {
     approvalStatus: "AI_MODIFIED",

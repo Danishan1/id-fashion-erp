@@ -144,4 +144,29 @@ export interface ImageGenerationProvider {
     referenceImage: { buffer: Buffer; mimeType: string };
     materialImage: { buffer: Buffer; mimeType: string };
   }): Promise<GenerateImagesResult>;
+
+  /**
+   * "Draw & Describe" — a pencil-drawn mask constrains WHERE an edit applies
+   * (`maskImage`'s fully-transparent pixels are the only eligible area),
+   * while `prompt` says WHAT to do there. This is the ONE shared entry
+   * point every "Draw & Describe" feature in this app goes through — AI
+   * Designer's Catalogue Designs and Sketch-to-Garment workspaces, and
+   * Replicate Design's own edit workspace, each build their own prompt/
+   * generation/image rows in their own separate schema (see
+   * src/core/ai/image-generation/mask-edit.ts's runMaskEditGeneration),
+   * but the actual generation call always lands here, on this one method —
+   * never a per-module reimplementation. Distinct from `generateVariation`
+   * (no mask — the whole image is fair game) and from `applyFabric`/
+   * `replicateWithNewMaterial` (a second REFERENCE image, not a mask that
+   * gates which pixels may change). Optional, same
+   * check-before-use/UNSUPPORTED_OPERATION discipline as every other
+   * optional capability here — Gemini and Cloudflare have no mask-editing
+   * API at all and simply omit this method.
+   */
+  inpaint?(params: {
+    prompt: string;
+    count: number;
+    baseImage: { buffer: Buffer; mimeType: string };
+    maskImage: { buffer: Buffer; mimeType: string };
+  }): Promise<GenerateImagesResult>;
 }

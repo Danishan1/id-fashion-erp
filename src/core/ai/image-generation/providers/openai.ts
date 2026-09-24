@@ -186,6 +186,31 @@ export function createOpenAiImageProvider(config: OpenAiImageConfig = getOpenAiI
       }
     },
 
+    // "Draw & Describe" — `mask`'s fully-transparent pixels are the only
+    // area gpt-image-1 will change; everywhere else is preserved by the
+    // provider itself, not just by prompt wording (confirmed from the
+    // installed SDK's own type definitions — mask must be a same-dimension
+    // PNG, checked client-side before this ever gets called).
+    async inpaint({ prompt, count, baseImage, maskImage }): Promise<GenerateImagesResult> {
+      try {
+        const baseFile = await toFile(baseImage.buffer, "base-image.png", { type: baseImage.mimeType });
+        const maskFile = await toFile(maskImage.buffer, "mask.png", { type: "image/png" });
+        const response = await openai.images.edit({
+          model: config.model,
+          image: baseFile,
+          mask: maskFile,
+          prompt,
+          n: count,
+          size: DEFAULT_SIZE,
+          quality: DEFAULT_QUALITY,
+        });
+        return { images: extractBuffers(response.data, count), model: config.model, raw: response };
+      } catch (err) {
+        if (err instanceof ImageGenerationServiceError) throw err;
+        throw mapSdkError(err);
+      }
+    },
+
     async generateTechnicalFlat({ prompt, count, baseImage }): Promise<GenerateImagesResult> {
       try {
         const file = await toFile(baseImage.buffer, "base-garment.png", { type: baseImage.mimeType });
