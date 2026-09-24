@@ -2426,6 +2426,24 @@ export async function listImages(companyId: string, projectId: string) {
   return AiDesignerImageRepository.findByProjectId(projectId);
 }
 
+/**
+ * Edit Design workspace — restores the "AI Variations" tab's PENDING preview
+ * on page load/re-navigation, so a genuinely successful edit generation
+ * (QUICK/TECHNICAL/AI_PROMPT/MASK, all promptType IMAGE_EDIT) never looks
+ * like it silently failed just because the workspace's own `preview` state
+ * had nothing to seed it with before this existed. Returns null when there
+ * is nothing to restore (no current image, or the most recent matching
+ * generation is stale/fully decided) — the workspace then shows its normal
+ * empty state exactly as before.
+ */
+export async function getActiveEditPreview(companyId: string, projectId: string) {
+  const project = await AiDesignerProjectRepository.findByIdWithDetails(companyId, projectId);
+  if (!project?.currentVersion?.currentImage) return null;
+  const generation = await AiDesignerGenerationRepository.findLatestPendingEditPreview(projectId, project.currentVersion.currentImage.id);
+  if (!generation) return null;
+  return { generationId: generation.id, images: generation.images };
+}
+
 export async function listVersions(companyId: string, projectId: string) {
   await getOwnedProject(companyId, projectId);
   return AiDesignerVersionRepository.findByProjectId(projectId);

@@ -206,6 +206,14 @@ export const ReplicateDesignGenerationRepository = {
 
   /** Used by applyReplicateEditVariation() to verify a preview's own parentImageId still matches the project's real current image, and to recover the originating prompt's edit spec (mode/technicalFields) for the new version. */
   findByIdWithPrompt: (id: string) => prisma.replicateDesignGeneration.findUnique({ where: { id }, include: { prompt: true } }),
+
+  /** Mirrors AiDesignerGenerationRepository.findLatestPendingEditPreview exactly — see that comment for why this exists. */
+  findLatestPendingEditPreview: (projectId: string, parentImageId: string) =>
+    prisma.replicateDesignGeneration.findFirst({
+      where: { projectId, parentImageId, status: "SUCCESS", prompt: { promptType: "IMAGE_EDIT" }, images: { some: { decision: "PENDING" } } },
+      orderBy: { createdAt: "desc" },
+      include: { images: { orderBy: { createdAt: "asc" } } },
+    }),
 };
 
 export const ReplicateDesignImageRepository = {

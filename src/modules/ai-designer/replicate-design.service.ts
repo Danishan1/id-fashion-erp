@@ -971,6 +971,15 @@ export async function listReplicateImages(companyId: string, projectId: string) 
   return ReplicateDesignImageRepository.findByProjectId(projectId);
 }
 
+/** Mirrors AI Designer's own getActiveEditPreview exactly — see that function's comment for why this exists. */
+export async function getActiveReplicateEditPreview(companyId: string, projectId: string) {
+  const project = await ReplicateDesignProjectRepository.findByIdWithDetails(companyId, projectId);
+  if (!project?.currentVersion?.currentImage) return null;
+  const generation = await ReplicateDesignGenerationRepository.findLatestPendingEditPreview(projectId, project.currentVersion.currentImage.id);
+  if (!generation) return null;
+  return { generationId: generation.id, images: generation.images };
+}
+
 export async function listReplicateVersions(companyId: string, projectId: string) {
   await getOwnedProject(companyId, projectId);
   return ReplicateDesignVersionRepository.findByProjectId(projectId);

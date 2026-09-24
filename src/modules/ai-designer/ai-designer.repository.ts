@@ -98,6 +98,28 @@ export const AiDesignerGenerationRepository = {
 
   /** Used by applyEditVariation() to verify a preview's own parentImageId still matches the project's real current image, and to recover the originating prompt's edit spec (mode/technicalFields) for the new version. */
   findByIdWithPrompt: (id: string) => prisma.aiDesignerGeneration.findUnique({ where: { id }, include: { prompt: true } }),
+
+  /**
+   * A real, previously-missing "restore the AI Variations tab" query — the
+   * Edit Design workspace's own `preview` state was only ever set by the
+   * generation call that just completed, with nothing to repopulate it on a
+   * fresh page load/re-navigation, so a genuinely successful edit could sit
+   * PENDING in the database while the workspace showed an empty "Generate a
+   * preview to see variations here" as if nothing had happened. Scoped to
+   * IMAGE_EDIT (QUICK/TECHNICAL/AI_PROMPT/MASK all share this promptType —
+   * Embellishments applies immediately with no preview step, and the
+   * initial Generate Design call has no parentImageId at all), the
+   * project's own CURRENT image (a stale preview from before an
+   * intervening change is never resurrected — matches
+   * applyEditVariation()'s own staleness guard), and only when at least one
+   * image is still undecided.
+   */
+  findLatestPendingEditPreview: (projectId: string, parentImageId: string) =>
+    prisma.aiDesignerGeneration.findFirst({
+      where: { projectId, parentImageId, status: "SUCCESS", prompt: { promptType: "IMAGE_EDIT" }, images: { some: { decision: "PENDING" } } },
+      orderBy: { createdAt: "desc" },
+      include: { images: { orderBy: { createdAt: "asc" } } },
+    }),
 };
 
 export const AiDesignerImageRepository = {

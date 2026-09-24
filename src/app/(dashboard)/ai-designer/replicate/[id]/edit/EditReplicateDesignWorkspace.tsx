@@ -217,6 +217,21 @@ export function EditReplicateDesignWorkspace({ projectId, initialProject }: { pr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Restores a genuinely successful, still-PENDING edit generation on page
+  // load/re-navigation — mirrors AI Designer's own identical fix exactly
+  // (see EditDesignWorkspace.tsx's own comment for the bug this closes).
+  useEffect(() => {
+    fetch(`/api/v1/ai-designer/replicate-projects/${projectId}/edit-preview`)
+      .then(parseJson)
+      .then((body) => {
+        if (body.data) {
+          setPreview({ generationId: body.data.generationId, images: body.data.images });
+          setBottomTab("variations");
+        }
+      })
+      .catch(() => {});
+  }, [projectId, project.currentVersion?.currentImageId]);
+
   const currentImage = project.currentVersion?.currentImage ?? null;
   const hasUnsavedEdit =
     (editMode === "QUICK" && (currentValue.trim() || newValue.trim() || Object.keys(stagedSelections).length > 0)) ||

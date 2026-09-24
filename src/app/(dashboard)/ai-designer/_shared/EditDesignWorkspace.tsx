@@ -284,6 +284,24 @@ export function EditDesignWorkspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Restores a genuinely successful, still-PENDING edit generation on page
+  // load/re-navigation — a real, confirmed-live bug fixed here: `preview`
+  // used to only ever be set by the generation call that just completed,
+  // with nothing to repopulate it afterward, so an edit that worked
+  // perfectly could sit PENDING in the database while a reload made it
+  // look like it had silently failed.
+  useEffect(() => {
+    fetch(`/api/v1/ai-designer/projects/${projectId}/edit-preview`)
+      .then(parseJson)
+      .then((body) => {
+        if (body.data) {
+          setPreview({ generationId: body.data.generationId, images: body.data.images });
+          setBottomTab("variations");
+        }
+      })
+      .catch(() => {});
+  }, [projectId, project.currentVersion?.currentImageId]);
+
   useEffect(() => {
     const category = project.productCategory;
     if (!category) return;
