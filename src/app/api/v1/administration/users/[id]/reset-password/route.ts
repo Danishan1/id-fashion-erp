@@ -11,7 +11,7 @@ interface RouteContext {
 export async function POST(req: Request, { params }: RouteContext) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "administration", "edit");
+    await PermissionService.assert(session.user.id, "administration_users", "edit");
 
     const { id } = await params;
     const { newPassword } = resetUserPasswordSchema.parse(await req.json());

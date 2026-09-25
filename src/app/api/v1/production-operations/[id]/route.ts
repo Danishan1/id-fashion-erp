@@ -11,7 +11,7 @@ interface RouteContext {
 export async function PATCH(req: NextRequest, { params }: RouteContext) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "piece_rate", "edit");
+    await PermissionService.assert(session.user.id, "rate_card", "edit");
 
     const { id } = await params;
     const body = await req.json();

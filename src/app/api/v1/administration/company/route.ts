@@ -7,7 +7,7 @@ import { companySettingsSchema } from "@/modules/administration/company-settings
 export async function GET() {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "administration", "view");
+    await PermissionService.assert(session.user.id, "administration_settings", "view");
 
     const company = await getCompanySettings(session.user.companyId);
     return NextResponse.json({ data: company });
@@ -19,7 +19,7 @@ export async function GET() {
 export async function PATCH(req: Request) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "administration", "edit");
+    await PermissionService.assert(session.user.id, "administration_settings", "edit");
 
     const input = companySettingsSchema.parse(await req.json());
     const company = await updateCompanySettings({ companyId: session.user.companyId, userId: session.user.id }, input);

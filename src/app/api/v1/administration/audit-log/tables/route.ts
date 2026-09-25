@@ -8,7 +8,7 @@ import { listDistinctAuditedTables } from "@/modules/administration/audit-log.se
 export async function GET() {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "administration", "view");
+    await PermissionService.assert(session.user.id, "administration_settings", "view");
 
     const tables = await listDistinctAuditedTables(session.user.companyId);
     return NextResponse.json({ data: tables });

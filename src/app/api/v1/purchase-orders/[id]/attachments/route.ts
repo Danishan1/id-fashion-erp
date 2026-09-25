@@ -12,7 +12,7 @@ interface RouteContext {
 export async function GET(_req: NextRequest, { params }: RouteContext) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "purchasing", "view");
+    await PermissionService.assert(session.user.id, "purchase_order", "view");
 
     const { id } = await params;
     const attachments = await listAttachments(session.user.companyId, "PURCHASE_ORDER", id);
@@ -26,7 +26,7 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
 export async function POST(req: NextRequest, { params }: RouteContext) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "purchasing", "edit");
+    await PermissionService.assert(session.user.id, "purchase_order", "edit");
 
     const { id } = await params;
     const formData = await req.formData();

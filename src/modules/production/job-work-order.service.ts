@@ -146,9 +146,20 @@ export async function listJobWorkOrders(
   return { data: filtered, totalCount: query.overdueOnly ? filtered.length : totalCount };
 }
 
-/** Backs the Supervisor-facing "Pending External Receipts" queue. */
+/**
+ * Backs the Supervisor-facing "Pending External Receipts" queue — every
+ * supplier's pending receipts, company-wide, by design (this is the
+ * internal approval queue, not a per-vendor view). `assertInternalUser()`
+ * is a deliberate defense-in-depth addition (RBAC audit, 2026-09-24): this
+ * was previously the one function in this file with no identity-level
+ * supplier/internal check at all, relying solely on the seeded
+ * EXTERNAL_UNIT_USER role never holding `production.approve` — safe today,
+ * but not structurally guaranteed the way every sibling function in this
+ * file already is.
+ */
 export async function listPendingJobWorkReceipts(actor: ActorContext) {
   await PermissionService.assert(actor.userId, "production", "approve");
+  await assertInternalUser(actor);
   return JobWorkReceiptRepository.findPendingForCompany(actor.companyId);
 }
 

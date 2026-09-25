@@ -7,10 +7,34 @@ import { AdminTabs } from "./AdminTabs";
 
 export default async function AdministrationPage() {
   const session = await auth();
-  await PermissionService.assert(session!.user.id, "administration", "view", { sessionIssuedAt: session!.user.sessionIssuedAt }).catch(() => notFound());
+  const userId = session!.user.id;
+  const resourceContext = { sessionIssuedAt: session!.user.sessionIssuedAt };
 
-  const users = await listUsers(session!.user.companyId);
-  const canManage = await PermissionService.can(session!.user.id, "administration", "create");
+  // The page-level gate is deliberately an OR across all 3 granular
+  // Administration modules (RBAC audit, 2026-09-24 split) — the page is the
+  // shared entry point for Users/Roles/Settings, and each tab below is then
+  // independently re-gated on its own specific module, so a viewer who only
+  // holds one of the three still reaches the page but only ever sees (and
+  // only ever has fetched on their behalf) the tab(s) they actually hold.
+  const [canViewUsers, canManageUsers, canViewRoles, canManageRoles, canViewSettings, canManageSettings] =
+    await Promise.all([
+      PermissionService.can(userId, "administration_users", "view", resourceContext),
+      PermissionService.can(userId, "administration_users", "create", resourceContext),
+      PermissionService.can(userId, "administration_roles", "view", resourceContext),
+      PermissionService.can(userId, "administration_roles", "create", resourceContext),
+      PermissionService.can(userId, "administration_settings", "view", resourceContext),
+      PermissionService.can(userId, "administration_settings", "create", resourceContext),
+    ]);
+  if (!canViewUsers && !canViewRoles && !canViewSettings) notFound();
+
+  // Only ever fetched (and therefore only ever present in this page's own
+  // server-rendered payload) when the viewer genuinely holds
+  // administration_users.view — previously this ran unconditionally for
+  // anyone who passed the single old "administration.view" gate, meaning
+  // e.g. ACCOUNTS_MANAGER's page payload always contained the full company
+  // User list (with emails) even though their own grant was only ever meant
+  // to cover Settings (RBAC_AUDIT_REPORT.md, finding G/D).
+  const users = canViewUsers ? await listUsers(session!.user.companyId) : [];
 
   return (
     <div className="space-y-4">
@@ -22,7 +46,15 @@ export default async function AdministrationPage() {
           changed what, and when, across every module.
         </p>
       </div>
-      <AdminTabs initialUsers={JSON.parse(JSON.stringify(users))} canManage={canManage} currentUserId={session!.user.id} />
+      <AdminTabs
+        initialUsers={JSON.parse(JSON.stringify(users))}
+        currentUserId={session!.user.id}
+        access={{
+          users: { view: canViewUsers, manage: canManageUsers },
+          roles: { view: canViewRoles, manage: canManageRoles },
+          settings: { view: canViewSettings, manage: canManageSettings },
+        }}
+      />
     </div>
   );
 }

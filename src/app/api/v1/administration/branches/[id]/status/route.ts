@@ -11,7 +11,7 @@ interface RouteContext {
 export async function PATCH(req: Request, { params }: RouteContext) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "administration", "edit");
+    await PermissionService.assert(session.user.id, "administration_settings", "edit");
 
     const { id } = await params;
     const { isActive } = branchStatusSchema.parse(await req.json());

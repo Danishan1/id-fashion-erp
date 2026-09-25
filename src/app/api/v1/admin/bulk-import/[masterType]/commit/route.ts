@@ -28,7 +28,7 @@ function assertMasterType(value: string): BulkImportMasterType {
 export async function POST(req: NextRequest, { params }: RouteContext) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "administration", "create");
+    await PermissionService.assert(session.user.id, "administration_settings", "create");
 
     const { masterType: rawMasterType } = await params;
     const masterType = assertMasterType(rawMasterType);

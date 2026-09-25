@@ -11,7 +11,7 @@ interface RouteContext {
 export async function GET(_req: NextRequest, { params }: RouteContext) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "purchasing", "view");
+    await PermissionService.assert(session.user.id, "purchase_order", "view");
 
     const { id } = await params;
     const order = await getPurchaseOrderById({ companyId: session.user.companyId, userId: session.user.id }, id);
@@ -25,7 +25,7 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
 export async function PATCH(req: NextRequest, { params }: RouteContext) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "purchasing", "edit");
+    await PermissionService.assert(session.user.id, "purchase_order", "edit");
 
     const { id } = await params;
     const input = updatePurchaseOrderSchema.parse(await req.json());

@@ -18,7 +18,7 @@ interface RouteContext {
 export async function GET(_req: Request, { params }: RouteContext) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "administration", "create");
+    await PermissionService.assert(session.user.id, "administration_settings", "create");
 
     const { id } = await params;
     const batch = await getImportBatchById(session.user.companyId, id);

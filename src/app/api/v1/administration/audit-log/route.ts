@@ -8,7 +8,7 @@ import { listAuditLogs } from "@/modules/administration/audit-log.service";
 export async function GET(req: NextRequest) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "administration", "view");
+    await PermissionService.assert(session.user.id, "administration_settings", "view");
 
     const params = req.nextUrl.searchParams;
     const query = parseListQuery(params, "performedAt");

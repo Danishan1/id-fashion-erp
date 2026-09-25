@@ -12,7 +12,7 @@ interface RouteContext {
 export async function GET(_req: NextRequest, { params }: RouteContext) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "purchasing", "view");
+    await PermissionService.assert(session.user.id, "purchase_order", "view");
 
     const { id } = await params;
     const order = await getPurchaseOrderById({ companyId: session.user.companyId, userId: session.user.id }, id);
@@ -23,10 +23,12 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
   }
 }
 
-// Gated on "inventory" (create), not "purchasing" — the persona who
-// physically receives goods at the dock (WAREHOUSE_USER/STORE_MANAGER) is
-// granted inventory:create/edit but not purchasing:edit/approve in the
-// seeded RBAC matrix; gating this on purchasing would lock them out.
+// Gated on "inventory" (create), not "purchase_order" — Goods Receipt stays
+// part of the inventory module by design (RBAC audit, 2026-09-24 — not
+// split out further), and the persona who physically receives goods at the
+// dock (WAREHOUSE_USER/STORE_MANAGER) is granted inventory:create/edit but
+// not purchase_order:edit/approve in the seeded RBAC matrix; gating this on
+// purchase_order would lock them out.
 export async function POST(req: NextRequest, { params }: RouteContext) {
   try {
     const session = await requireSession();

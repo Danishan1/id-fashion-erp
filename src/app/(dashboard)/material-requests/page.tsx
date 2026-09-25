@@ -5,7 +5,7 @@ import { MaterialRequestsListClient } from "./MaterialRequestsListClient";
 
 export default async function MaterialRequestsListPage() {
   const session = await auth();
-  await PermissionService.assert(session!.user.id, "inventory", "view").catch(() => notFound());
+  await PermissionService.assert(session!.user.id, "material_request", "view").catch(() => notFound());
 
   return <MaterialRequestsListClient />;
 }

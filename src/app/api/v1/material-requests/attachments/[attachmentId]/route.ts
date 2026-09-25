@@ -10,7 +10,7 @@ interface RouteContext {
 export async function DELETE(_req: Request, { params }: RouteContext) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "inventory", "edit");
+    await PermissionService.assert(session.user.id, "material_request", "edit");
 
     const { attachmentId } = await params;
     await deleteAttachment({ companyId: session.user.companyId, userId: session.user.id }, attachmentId);

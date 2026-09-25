@@ -19,7 +19,7 @@ interface MaterialRequestExportRow {
 export async function GET(req: NextRequest) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "inventory", "export");
+    await PermissionService.assert(session.user.id, "material_request", "export");
 
     const search = req.nextUrl.searchParams.get("search") || undefined;
     const { data } = await listMaterialRequests({ companyId: session.user.companyId, userId: session.user.id }, {

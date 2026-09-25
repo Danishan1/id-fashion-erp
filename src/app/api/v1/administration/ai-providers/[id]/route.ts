@@ -11,7 +11,7 @@ interface RouteContext {
 export async function GET(_req: NextRequest, { params }: RouteContext) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "administration", "view");
+    await PermissionService.assert(session.user.id, "administration_settings", "view");
 
     const { id } = await params;
     const provider = await getProviderById(session.user.companyId, id);
@@ -24,7 +24,7 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
 export async function PATCH(req: NextRequest, { params }: RouteContext) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "administration", "edit");
+    await PermissionService.assert(session.user.id, "administration_settings", "edit");
 
     const { id } = await params;
     const input = updateAIProviderSchema.parse(await req.json());
@@ -38,7 +38,7 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
 export async function DELETE(_req: NextRequest, { params }: RouteContext) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "administration", "delete");
+    await PermissionService.assert(session.user.id, "administration_settings", "delete");
 
     const { id } = await params;
     await deleteProvider({ companyId: session.user.companyId, userId: session.user.id }, id);

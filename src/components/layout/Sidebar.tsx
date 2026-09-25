@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
-import type { Module } from "@/config/rbac";
+import type { Module, Action } from "@/config/rbac";
 import { NAV_SECTIONS, filterNavSections, isPathActive, isSectionActive, type NavSection } from "./navigation";
 import { CompanySwitcher } from "./CompanySwitcher";
 
@@ -53,6 +53,7 @@ const LEAF_CLASSES = (isActive: boolean) =>
 export function Sidebar({
   isPlatformAdmin = false,
   viewableModules = "all",
+  actionModules,
   isCollapsed = false,
   onToggleCollapse,
 }: {
@@ -67,12 +68,21 @@ export function Sidebar({
    * sidebar.
    */
   viewableModules?: Module[] | "all";
+  /**
+   * Module-sets for any non-"view" action a NavLeaf's `requiredAction`
+   * declares (e.g. `{ approve: [...] }` for "Pending Approvals") — see
+   * filterNavSections(). Unlike `viewableModules`, this has no fail-open
+   * default: a leaf with an unmet `requiredAction` simply stays hidden,
+   * which is the correct, safer direction for a nav item that would
+   * otherwise 404 for the viewer anyway.
+   */
+  actionModules?: Partial<Record<Action, Module[] | "all">>;
   /** Desktop-only minimize/maximize — the width itself is owned by DashboardShell (the flex parent); this only changes what's rendered inside. */
   isCollapsed?: boolean;
   onToggleCollapse?: () => void;
 }) {
   const pathname = usePathname();
-  const visibleSections = filterNavSections(NAV_SECTIONS, viewableModules);
+  const visibleSections = filterNavSections(NAV_SECTIONS, viewableModules, actionModules);
   const sections = isPlatformAdmin ? [...visibleSections, PLATFORM_SECTION] : visibleSections;
 
   // The group containing the active route is expanded by default — derived

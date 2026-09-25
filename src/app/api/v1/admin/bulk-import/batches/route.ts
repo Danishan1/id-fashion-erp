@@ -15,7 +15,7 @@ import type { ImportBatchType } from "@prisma/client";
 export async function GET(req: NextRequest) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "administration", "create");
+    await PermissionService.assert(session.user.id, "administration_settings", "create");
 
     const query = parseListQuery(req.nextUrl.searchParams, "createdAt");
     const { data, totalCount } = await listImportBatches(session.user.companyId, query, [...BULK_IMPORT_MASTER_TYPES] as ImportBatchType[]);

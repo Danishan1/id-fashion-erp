@@ -8,7 +8,7 @@ import { createPurchaseOrder, listPurchaseOrders } from "@/modules/purchasing/pu
 export async function GET(req: NextRequest) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "purchasing", "view");
+    await PermissionService.assert(session.user.id, "purchase_order", "view");
 
     const query = parseListQuery(req.nextUrl.searchParams, "orderDate");
     const { data, totalCount } = await listPurchaseOrders({ companyId: session.user.companyId, userId: session.user.id }, query);
@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "purchasing", "create");
+    await PermissionService.assert(session.user.id, "purchase_order", "create");
 
     const input = purchaseOrderSchema.parse(await req.json());
     const order = await createPurchaseOrder(

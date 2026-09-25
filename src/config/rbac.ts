@@ -24,9 +24,24 @@ export const MODULES = [
   // separate module from "production": ordinary workers/unit users must
   // never edit their own rates unless explicitly authorized, and this
   // module's grants (below) are intentionally narrower than production's own.
+  // RBAC audit (2026-09-24) split this further: `piece_rate` now covers only
+  // worker-assignment/rate-resolution/earning-ledger actions; master Rate
+  // Card CRUD moved to its own `rate_card` module below, so a role that can
+  // assign a worker/trigger rate resolution no longer implicitly gets the
+  // ability to create or edit the company's priced Rate Card rows.
   "piece_rate",
+  "rate_card",
+  // Inventory/Purchasing granularity split (RBAC audit, 2026-09-24) — the
+  // old flat `inventory.create`/`inventory.edit` conflated three unrelated
+  // business operations (raising a Material Request, creating a Stock
+  // Movement, creating/reversing a Goods Receipt) under one key. Material
+  // Request now has its own module; `inventory` keeps Stock Balances/Stock
+  // Movements/Goods Receipt (not flagged as needing its own split — see
+  // RBAC_AUDIT_REPORT.md). Likewise `purchasing` is renamed `purchase_order`
+  // (a plainer, more precise name for what it actually gates).
+  "material_request",
   "inventory",
-  "purchasing",
+  "purchase_order",
   "accounts",
   "invoices",
   "payments",
@@ -34,7 +49,15 @@ export const MODULES = [
   "financial_reports",
   "dispatch",
   "reports",
-  "administration",
+  // Administration granularity split (RBAC audit, 2026-09-24) — the old flat
+  // `administration.view` exposed the full User list (with emails), the
+  // full Roles list + every role's permission matrix, and company/AI-provider
+  // settings as one undifferentiated bucket. Split into 3 modules mirroring
+  // the exact precedent already used once for `masters_core`/`masters_finance`
+  // (2026-08-17) — a plain string-column change, no schema migration needed.
+  "administration_users",
+  "administration_roles",
+  "administration_settings",
   "ai_garment_flow",
   "ai_designer",
 ] as const;
@@ -128,8 +151,12 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     // Earning approval checkpoint — same shape as production's own
     // view/approve/export above.
     piece_rate: ["view", "approve", "export"],
+    // View-only oversight, matching MANAGEMENT's own "sees every module"
+    // pattern — Rate Card CRUD itself stays owned by PRODUCTION_MANAGER only.
+    rate_card: ["view"],
     inventory: ["view", "export"],
-    purchasing: ["view", "approve"],
+    material_request: ["view", "export"],
+    purchase_order: ["view", "approve"],
     accounts: ["view", "export"],
     invoices: ["view", "export"],
     payments: ["view", "approve"],
@@ -139,7 +166,9 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     financial_reports: ["view", "export", "print"],
     dispatch: ["view", "export"],
     reports: ["view", "export", "print"],
-    administration: ["view"],
+    administration_users: ["view"],
+    administration_roles: ["view"],
+    administration_settings: ["view"],
     ai_garment_flow: ["view"],
     // "approve" added 2026-09-14 for Tech Pack's own approve/revision
     // discipline -- a maker/checker split (Merchandiser generates/edits,
@@ -159,10 +188,16 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     bom_mrp: ["view", "create", "edit"],
     production: ["view"],
     qc: ["view"],
-    // "create"/"edit" here are for raising and editing their own Material
-    // Requests — Merchandisers don't touch real commercial Purchase Orders.
-    inventory: ["view", "create", "edit"],
-    purchasing: ["view", "create"],
+    inventory: ["view"],
+    // Full control over their own Material Requests — including triggering
+    // the sanctioned "generate Purchase Order(s) from shortfall" flow
+    // (gated on material_request.edit, not purchase_order.create — see
+    // RBAC_AUDIT_REPORT.md). Deliberately NO purchase_order.create: a
+    // Merchandiser must never be able to create a direct, arbitrary
+    // commercial Purchase Order — only view one already generated from
+    // their own Material Request.
+    material_request: ["view", "create", "edit", "cancel"],
+    purchase_order: ["view"],
     reports: ["view", "export", "print"],
     ai_garment_flow: ["view", "create", "edit", "delete", "cancel", "export", "print"],
     ai_designer: ["view", "create", "edit", "delete", "cancel", "export", "print"],
@@ -191,12 +226,24 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     // overrides — see PRODUCTION_MODULE_DESIGN.md §7/§9.
     production: ["view", "create", "edit", "approve", "cancel", "export", "print"],
     qc: ["view"],
-    // Owns Rate Card CRUD and can authorize an assignment-time rate override.
-    piece_rate: ["view", "create", "edit", "approve", "override", "export"],
-    // Same reasoning as MERCHANDISER above — raising/editing Material
-    // Requests, not creating real commercial Purchase Orders.
-    inventory: ["view", "create", "edit"],
-    purchasing: ["view", "create"],
+    // Can assign workers / trigger rate resolution and authorize an
+    // assignment-time rate override. Master Rate Card CRUD is now its own
+    // module, below — assigning a worker no longer implies rate-card
+    // ownership (see RBAC_AUDIT_REPORT.md).
+    piece_rate: ["view", "create", "approve", "override", "export"],
+    // Owns the company's master Rate Card — the one role that can create/
+    // edit the priced rows worker assignments resolve against.
+    rate_card: ["view", "create", "edit"],
+    inventory: ["view"],
+    // Full control over their own Material Requests, including triggering
+    // "generate Purchase Order(s) from shortfall" (gated on
+    // material_request.edit — see RBAC_AUDIT_REPORT.md).
+    material_request: ["view", "create", "edit", "cancel"],
+    // Unlike MERCHANDISER, Production Manager's Purchasing access is kept
+    // exactly as it already was (explicit instruction: "Purchasing access
+    // must remain according to the existing matrix") — they can still
+    // create a Purchase Order directly.
+    purchase_order: ["view", "create"],
     reports: ["view", "export", "print"],
   },
   PRODUCTION_SUPERVISOR: {
@@ -210,9 +257,14 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     production: ["view", "create", "edit", "approve"],
     qc: ["view", "create"],
     // Can assign workers/trigger rate resolution but NOT override an
-    // authorized rate without escalating to Production Manager.
+    // authorized rate without escalating to Production Manager, and
+    // deliberately holds NO `rate_card` grant at all — assigning a worker
+    // must never imply the ability to create/edit the master Rate Card
+    // (RBAC audit, 2026-09-24 — this was a real gap: piece_rate.create used
+    // to also pass the Rate Card creation route's check).
     piece_rate: ["view", "create"],
-    inventory: ["view", "create"],
+    inventory: ["view"],
+    material_request: ["view", "create"],
     reports: ["view"],
   },
   // A shop-floor worker with their own login (linked via User.employeeId),
@@ -254,6 +306,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     production: ["view"],
     qc: ["view", "create", "edit", "approve", "reject", "export", "print"],
     inventory: ["view"],
+    material_request: ["view"],
     reports: ["view", "export", "print"],
   },
   STORE_MANAGER: {
@@ -262,7 +315,8 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     bom_mrp: ["view"],
     production: ["view"],
     inventory: ["view", "create", "edit", "delete", "export", "print"],
-    purchasing: ["view", "create", "edit", "approve", "export", "print"],
+    material_request: ["view", "create", "edit", "cancel", "export"],
+    purchase_order: ["view", "create", "edit", "approve", "export", "print"],
     dispatch: ["view"],
     reports: ["view", "export", "print"],
   },
@@ -271,7 +325,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     masters_core: ["view", "create", "edit"],
     masters_finance: ["view", "create", "edit"],
     sales_orders: ["view"],
-    purchasing: ["view", "approve"],
+    purchase_order: ["view", "approve"],
     accounts: ["view", "create", "edit", "post", "cancel", "export", "print"],
     invoices: ["view", "create", "edit", "post", "cancel", "export", "print"],
     payments: ["view", "create", "approve", "cancel", "export", "print"],
@@ -280,10 +334,16 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     // either, unlike ACCOUNTS_EXECUTIVE below which gets neither.
     expenses: ["view", "create", "edit", "approve", "reject", "post", "cancel", "export", "print"],
     financial_reports: ["view", "export", "print"],
-    administration: ["view"],
+    // Limited administrative visibility (company/AI-provider settings) only
+    // — deliberately NOT administration_users/administration_roles, per the
+    // RBAC audit's own explicit decision: this role should not automatically
+    // gain visibility into the full User list (with emails) or the Roles/
+    // permission matrix just because it needs to see company settings.
+    administration_settings: ["view"],
     reports: ["view", "export", "print"],
     // Read-only visibility into approved/payable earnings for
     // payroll/accounts to later consume — this is explicitly NOT payroll.
+    // No `rate_card` grant — Accounts must never modify production rates.
     piece_rate: ["view", "export"],
   },
   ACCOUNTS_EXECUTIVE: {
@@ -291,7 +351,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     masters_core: ["view"],
     masters_finance: ["view"],
     sales_orders: ["view", "create"],
-    purchasing: ["view", "create"],
+    purchase_order: ["view", "create"],
     accounts: ["view", "create"],
     invoices: ["view", "create", "edit"],
     payments: ["view", "create"],
@@ -305,6 +365,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     sales_orders: ["view"],
     production: ["view"],
     inventory: ["view"],
+    material_request: ["view"],
     dispatch: ["view", "create", "edit", "post", "delete", "cancel", "export", "print"],
     reports: ["view", "export", "print"],
   },
@@ -315,7 +376,8 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     production: ["view"],
     qc: ["view"],
     inventory: ["view", "create", "edit"],
-    purchasing: ["view", "create"],
+    material_request: ["view", "create", "edit", "cancel"],
+    purchase_order: ["view", "create"],
     dispatch: ["view", "create", "edit"],
     reports: ["view"],
   },

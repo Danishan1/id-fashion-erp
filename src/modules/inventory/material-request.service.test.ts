@@ -433,7 +433,7 @@ describe("generatePurchaseOrdersForShortfall", () => {
       lines: [{ materialRequestItemId: "line-1", purchaseQuantity: 500, supplierId: "sup-1", unitPrice: 25 }],
     });
 
-    expect(PermissionService.assert).toHaveBeenCalledWith(actor.userId, "purchasing", "create");
+    expect(PermissionService.assert).toHaveBeenCalledWith(actor.userId, "material_request", "edit");
     expect(createPurchaseOrder).toHaveBeenCalledWith(
       actor,
       expect.objectContaining({

@@ -10,7 +10,7 @@ interface RouteContext {
 export async function POST(_req: Request, { params }: RouteContext) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "administration", "create");
+    await PermissionService.assert(session.user.id, "administration_settings", "create");
 
     const { id } = await params;
     const actor = { companyId: session.user.companyId, userId: session.user.id, branchId: session.user.defaultBranchId };

@@ -7,7 +7,7 @@ import { getUsageDashboard } from "@/modules/ai-providers/ai-provider-admin.serv
 export async function GET() {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "administration", "view");
+    await PermissionService.assert(session.user.id, "administration_settings", "view");
 
     const usage = await getUsageDashboard(session.user.companyId);
     return NextResponse.json({ data: usage });

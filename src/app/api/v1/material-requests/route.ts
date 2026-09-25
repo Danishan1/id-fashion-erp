@@ -8,7 +8,7 @@ import { createMaterialRequest, listMaterialRequests } from "@/modules/inventory
 export async function GET(req: NextRequest) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "inventory", "view");
+    await PermissionService.assert(session.user.id, "material_request", "view");
 
     const query = parseListQuery(req.nextUrl.searchParams, "createdAt");
     const { data, totalCount } = await listMaterialRequests({ companyId: session.user.companyId, userId: session.user.id }, query);
@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "inventory", "create");
+    await PermissionService.assert(session.user.id, "material_request", "create");
 
     const input = materialRequestSchema.parse(await req.json());
     const request = await createMaterialRequest(

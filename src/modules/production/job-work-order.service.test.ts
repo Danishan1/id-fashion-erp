@@ -55,6 +55,7 @@ vi.mock("./job-work-order.repository", () => ({
     findAnyById: vi.fn(),
     findByIdempotencyKey: vi.fn(),
     updateInTx: vi.fn(),
+    findPendingForCompany: vi.fn(),
   },
 }));
 
@@ -83,6 +84,7 @@ const {
   transitionJobWorkOrderStatus,
   resumeJobWorkOrderFromHold,
   computeJobWorkOrderMetrics,
+  listPendingJobWorkReceipts,
 } = await import("./job-work-order.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
@@ -138,6 +140,7 @@ beforeEach(() => {
   vi.mocked(JobWorkReceiptRepository.findByIdempotencyKey).mockReset().mockResolvedValue(null);
   vi.mocked(JobWorkReceiptRepository.findAnyById).mockReset();
   vi.mocked(JobWorkReceiptRepository.updateInTx).mockReset();
+  vi.mocked(JobWorkReceiptRepository.findPendingForCompany).mockReset().mockResolvedValue([]);
   vi.mocked(PermissionService.getAllowedSupplierId).mockReset().mockResolvedValue(null);
   vi.mocked(PermissionService.assert).mockReset().mockResolvedValue(undefined as never);
   vi.mocked(getProductionSettings).mockReset().mockResolvedValue({
@@ -513,6 +516,29 @@ describe("resumeJobWorkOrderFromHold", () => {
   it("rejects resuming an order that isn't on hold", async () => {
     vi.mocked(JobWorkOrderRepository.findAnyById).mockResolvedValue(jobWorkOrder({ status: "ISSUED", statusBeforeHold: null }) as never);
     await expect(resumeJobWorkOrderFromHold(actor, "jwo-1")).rejects.toThrow(BusinessRuleError);
+  });
+});
+
+describe("listPendingJobWorkReceipts", () => {
+  // RBAC audit (2026-09-24): this was the one function in the file with no
+  // identity-level supplier/internal check at all — added assertInternalUser()
+  // as defense-in-depth, since it previously relied solely on the seeded
+  // EXTERNAL_UNIT_USER role never holding production.approve.
+  it("succeeds for an internal user and returns every supplier's pending receipts company-wide", async () => {
+    vi.mocked(JobWorkReceiptRepository.findPendingForCompany).mockResolvedValue([{ id: "r-1" }] as never);
+
+    const result = await listPendingJobWorkReceipts(actor);
+
+    expect(PermissionService.assert).toHaveBeenCalledWith(actor.userId, "production", "approve");
+    expect(JobWorkReceiptRepository.findPendingForCompany).toHaveBeenCalledWith(actor.companyId);
+    expect(result).toEqual([{ id: "r-1" }]);
+  });
+
+  it("rejects outright for an external-unit login, even if it somehow held production.approve", async () => {
+    vi.mocked(PermissionService.getAllowedSupplierId).mockResolvedValue("sup-1");
+
+    await expect(listPendingJobWorkReceipts(actor)).rejects.toThrow(BusinessRuleError);
+    expect(JobWorkReceiptRepository.findPendingForCompany).not.toHaveBeenCalled();
   });
 });
 

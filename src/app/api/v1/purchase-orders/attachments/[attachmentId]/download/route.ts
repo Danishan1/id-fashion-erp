@@ -10,7 +10,7 @@ interface RouteContext {
 export async function GET(req: NextRequest, { params }: RouteContext) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "purchasing", "view");
+    await PermissionService.assert(session.user.id, "purchase_order", "view");
 
     const { attachmentId } = await params;
     const { attachment, buffer } = await getAttachmentForDownload(session.user.companyId, attachmentId);

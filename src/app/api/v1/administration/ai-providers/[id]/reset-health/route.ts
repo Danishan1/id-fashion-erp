@@ -11,7 +11,7 @@ interface RouteContext {
 export async function POST(_req: NextRequest, { params }: RouteContext) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "administration", "edit");
+    await PermissionService.assert(session.user.id, "administration_settings", "edit");
 
     const { id } = await params;
     const provider = await resetProviderHealth({ companyId: session.user.companyId, userId: session.user.id }, id);

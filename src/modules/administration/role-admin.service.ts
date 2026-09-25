@@ -124,17 +124,42 @@ export async function getRoleProductionStageAccess(companyId: string, roleId: st
 }
 
 /**
- * Deliberately allowed on system roles too — unlike updateRolePermissions()
- * above. Stage restriction is a purely additive/narrowing dimension layered
- * on top of a role's existing module/action grants; it can never widen what
- * a role can do, only which ProductionStage(s) it can do it on. Blocking it
- * on the seeded PRODUCTION_SUPERVISOR/PRODUCTION_MANAGER roles would force
- * every company wanting a stage-scoped "Cutting Supervisor" to first clone a
- * brand-new custom role just to reach this control, for no safety benefit.
+ * SUPER_ADMIN is the one role name deliberately exempt from branch/stage
+ * restriction (2026-09-24) — unlike updateRolePermissions()'s isSystemRole
+ * block (which SUPER_ADMIN shares with every other seeded role), this is a
+ * SUPER_ADMIN-specific carve-out: restricting any OTHER seeded role's
+ * branch/stage access is the intentional, useful feature described below,
+ * but SUPER_ADMIN exists specifically to be the one role that always has
+ * full, unrestricted access — narrowing it would silently lock out whoever
+ * holds it (a company's real Super Admin is not always flagged
+ * `isPlatformAdmin`, which is the only thing that would otherwise bypass a
+ * restriction; see getAllowedBranchIds/getAllowedProductionStageIds).
+ */
+function assertNotSuperAdminRole(roleName: string, kind: "branch" | "production stage") {
+  if (roleName === "SUPER_ADMIN") {
+    throw new BusinessRuleError(
+      "REFERENCED_RECORD_IN_USE",
+      `SUPER_ADMIN must always have unrestricted access — its ${kind} access cannot be restricted.`,
+      { roleName }
+    );
+  }
+}
+
+/**
+ * Deliberately allowed on every OTHER system role — unlike
+ * updateRolePermissions() above. Stage restriction is a purely
+ * additive/narrowing dimension layered on top of a role's existing
+ * module/action grants; it can never widen what a role can do, only which
+ * ProductionStage(s) it can do it on. Blocking it on the seeded
+ * PRODUCTION_SUPERVISOR/PRODUCTION_MANAGER roles would force every company
+ * wanting a stage-scoped "Cutting Supervisor" to first clone a brand-new
+ * custom role just to reach this control, for no safety benefit. SUPER_ADMIN
+ * itself is the one exception — see assertNotSuperAdminRole() above.
  */
 export async function updateRoleProductionStages(actor: ActorContext, roleId: string, input: UpdateRoleProductionStagesInput) {
   const role = await RoleAdminRepository.findById(actor.companyId, roleId);
   if (!role) throw new BusinessRuleError("NOT_FOUND", "Role not found.", { id: roleId });
+  assertNotSuperAdminRole(role.name, "production stage");
 
   const activeStages = await RoleAdminRepository.findActiveProductionStages(actor.companyId);
   const activeStageIds = new Set(activeStages.map((s) => s.id));
@@ -186,15 +211,17 @@ export async function getRoleBranchAccess(companyId: string, roleId: string) {
 }
 
 /**
- * Deliberately allowed on system roles too — identical reasoning to
+ * Deliberately allowed on every OTHER system role — identical reasoning to
  * updateRoleProductionStages() above: branch restriction is a purely
  * additive/narrowing dimension layered on top of a role's existing
  * module/action grants, never widening what it can do, only which
- * branch(es) it can do it on.
+ * branch(es) it can do it on. SUPER_ADMIN itself is the one exception — see
+ * assertNotSuperAdminRole() above.
  */
 export async function updateRoleBranches(actor: ActorContext, roleId: string, input: UpdateRoleBranchesInput) {
   const role = await RoleAdminRepository.findById(actor.companyId, roleId);
   if (!role) throw new BusinessRuleError("NOT_FOUND", "Role not found.", { id: roleId });
+  assertNotSuperAdminRole(role.name, "branch");
 
   const activeBranches = await RoleAdminRepository.findActiveBranches(actor.companyId);
   const activeBranchIds = new Set(activeBranches.map((b) => b.id));

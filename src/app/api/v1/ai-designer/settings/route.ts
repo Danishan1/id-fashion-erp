@@ -7,7 +7,7 @@ import { getProductDesignDisplayMode, setProductDesignDisplayMode } from "@/modu
 // Cross-cutting, no-module-gated read -- same pattern as
 // /api/v1/submodule-visibility. Every AI Designer user filling the Product
 // Design step needs this to know which style to render, regardless of
-// their "administration" grant.
+// their "administration_settings" grant.
 export async function GET() {
   try {
     const session = await requireSession();
@@ -21,7 +21,7 @@ export async function GET() {
 export async function PATCH(req: Request) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "administration", "create");
+    await PermissionService.assert(session.user.id, "administration_settings", "create");
 
     const input = updateDisplayModeSchema.parse(await req.json());
     const productDesignDisplayMode = await setProductDesignDisplayMode(session.user.companyId, input.productDesignDisplayMode);

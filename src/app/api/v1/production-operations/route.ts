@@ -18,7 +18,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "piece_rate", "create");
+    await PermissionService.assert(session.user.id, "rate_card", "create");
     const input = productionOperationSchema.parse(await req.json());
     const operation = await createProductionOperation(
       { companyId: session.user.companyId, userId: session.user.id },

@@ -11,7 +11,7 @@ interface RouteContext {
 export async function POST(req: NextRequest, { params }: RouteContext) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "inventory", "edit");
+    await PermissionService.assert(session.user.id, "material_request", "edit");
 
     const { id } = await params;
     const { warehouseLocationId, issueWarehouseId } = issueSubstituteMaterialSchema.parse(await req.json().catch(() => ({})));

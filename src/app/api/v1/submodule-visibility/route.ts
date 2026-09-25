@@ -5,7 +5,7 @@ import { getSubmoduleVisibilityMap } from "@/core/submodule-visibility/Submodule
 // Cross-cutting, no-module-gated lookup -- same pattern as /api/v1/branches
 // and /api/v1/currencies. Every authenticated user filling a Goods
 // Receipt/Sampling/Material Request form needs this to know which fields
-// to show, regardless of their "administration" grant.
+// to show, regardless of their "administration_settings" grant.
 export async function GET() {
   try {
     const session = await requireSession();

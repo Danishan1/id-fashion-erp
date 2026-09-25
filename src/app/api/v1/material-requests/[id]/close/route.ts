@@ -10,7 +10,10 @@ interface RouteContext {
 export async function POST(_req: Request, { params }: RouteContext) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "inventory", "edit");
+    // "cancel" specifically, not "edit" — Close is the material_request.cancel
+    // business action (RBAC audit, 2026-09-24), distinct from ordinary edits
+    // like Resume/Issue/Substitution, which stay on material_request.edit.
+    await PermissionService.assert(session.user.id, "material_request", "cancel");
 
     const { id } = await params;
     const request = await closeMaterialRequest({ companyId: session.user.companyId, userId: session.user.id }, id);

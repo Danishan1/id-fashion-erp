@@ -13,8 +13,19 @@ describe("filterNavSections", () => {
   });
 
   it("keeps a parent section but only its visible children when some, not all, child modules are granted", () => {
-    // Manufacturing: BOM/MRP -> bom_mrp, Production + Job Work Orders + My Work + Pending Approvals -> production.
+    // Manufacturing: BOM/MRP -> bom_mrp, Production + Job Work Orders + My Work -> production.view.
+    // "Pending Approvals" additionally requires production.approve (requiredAction) —
+    // absent here since no actionModules were supplied, matching a
+    // PRODUCTION_WORKER/EXTERNAL_UNIT_USER who holds production.view but not
+    // production.approve (RBAC audit, 2026-09-24 — this used to incorrectly
+    // show the link, which then 404'd on click).
     const result = filterNavSections(NAV_SECTIONS, ["dashboard", "production"]);
+    const manufacturing = result.find((s) => s.label === "Manufacturing");
+    expect(manufacturing?.children?.map((c) => c.label)).toEqual(["Production", "Job Work Orders", "My Work"]);
+  });
+
+  it("shows 'Pending Approvals' only once the viewer's actionModules confirms production.approve", () => {
+    const result = filterNavSections(NAV_SECTIONS, ["dashboard", "production"], { approve: ["production"] });
     const manufacturing = result.find((s) => s.label === "Manufacturing");
     expect(manufacturing?.children?.map((c) => c.label)).toEqual([
       "Production",
@@ -22,6 +33,12 @@ describe("filterNavSections", () => {
       "My Work",
       "Pending Approvals",
     ]);
+  });
+
+  it("shows every leaf's requiredAction as satisfied when the viewer is fully unrestricted (\"all\")", () => {
+    const result = filterNavSections(NAV_SECTIONS, "all");
+    const manufacturing = result.find((s) => s.label === "Manufacturing");
+    expect(manufacturing?.children?.map((c) => c.label)).toContain("Pending Approvals");
   });
 
   it("keeps a section with no href visible via its children even though the section itself has no module of its own reachable directly", () => {

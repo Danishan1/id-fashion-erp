@@ -18,7 +18,7 @@ const querySchema = z.object({
 export async function GET(req: NextRequest) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "inventory", "view");
+    await PermissionService.assert(session.user.id, "material_request", "view");
 
     const { salesOrderId, materialIds } = querySchema.parse({
       salesOrderId: req.nextUrl.searchParams.get("salesOrderId"),

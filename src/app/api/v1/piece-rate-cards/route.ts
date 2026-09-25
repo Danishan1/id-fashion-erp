@@ -7,7 +7,7 @@ import { listPieceRateCards, createPieceRateCard } from "@/modules/production/pi
 export async function GET(req: NextRequest) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "piece_rate", "view");
+    await PermissionService.assert(session.user.id, "rate_card", "view");
 
     const params = req.nextUrl.searchParams;
     const data = await listPieceRateCards(session.user.companyId, {
@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "piece_rate", "create");
+    await PermissionService.assert(session.user.id, "rate_card", "create");
 
     const input = pieceRateCardSchema.parse(await req.json());
     const card = await createPieceRateCard(

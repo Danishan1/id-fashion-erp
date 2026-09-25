@@ -12,7 +12,7 @@ const bodySchema = z.object({ isVisible: z.boolean() });
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ key: string }> }) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "administration", "create");
+    await PermissionService.assert(session.user.id, "administration_settings", "create");
 
     const { key } = await params;
     const { isVisible } = bodySchema.parse(await req.json());

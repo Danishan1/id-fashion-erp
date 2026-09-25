@@ -228,16 +228,27 @@ class PermissionServiceImpl {
    * the correct — not broken — state to render in that instant).
    */
   async getViewableModules(userId: string): Promise<Set<Module> | "all"> {
+    return this.getModulesWithAction(userId, "view");
+  }
+
+  /**
+   * Generalization of getViewableModules() for a non-"view" action — added
+   * so a sidebar nav leaf can require a specific action (e.g. "Pending
+   * Approvals" needs production.approve, not just production.view) instead
+   * of only ever checking plain module visibility. See navigation.ts's
+   * `requiredAction` field and filterNavSections() (RBAC audit, 2026-09-24).
+   */
+  async getModulesWithAction(userId: string, action: Action): Promise<Set<Module> | "all"> {
     const user = await this.loadLiveUserState(userId);
     if (!user || user.status !== "ACTIVE") return new Set();
     if (user.isPlatformAdmin) return "all";
 
     const keys = await this.loadPermissionKeys(userId);
-    const viewable = new Set<Module>();
+    const matching = new Set<Module>();
     for (const mod of MODULES) {
-      if (keys.has(permissionKey(mod, "view"))) viewable.add(mod);
+      if (keys.has(permissionKey(mod, action))) matching.add(mod);
     }
-    return viewable;
+    return matching;
   }
 
   /** Throws BusinessRuleError("PERMISSION_DENIED") if the check fails — use in route handlers/services. */

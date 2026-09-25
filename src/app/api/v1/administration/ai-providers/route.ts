@@ -7,7 +7,7 @@ import { createProvider, listProviders } from "@/modules/ai-providers/ai-provide
 export async function GET() {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "administration", "view");
+    await PermissionService.assert(session.user.id, "administration_settings", "view");
 
     const providers = await listProviders(session.user.companyId);
     return NextResponse.json({ data: providers });
@@ -19,7 +19,7 @@ export async function GET() {
 export async function POST(req: Request) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "administration", "create");
+    await PermissionService.assert(session.user.id, "administration_settings", "create");
 
     const input = createAIProviderSchema.parse(await req.json());
     const provider = await createProvider({ companyId: session.user.companyId, userId: session.user.id }, input);

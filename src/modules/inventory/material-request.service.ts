@@ -950,7 +950,7 @@ export async function issueSubstituteMaterial(
   substitutionId: string,
   options?: { warehouseLocationId?: string | null; issueWarehouseId?: string | null }
 ) {
-  await PermissionService.assert(actor.userId, "inventory", "edit");
+  await PermissionService.assert(actor.userId, "material_request", "edit");
 
   const substitution = await MaterialSubstitutionRepository.findById(actor.companyId, substitutionId);
   if (!substitution) throw new BusinessRuleError("NOT_FOUND", "Material substitution not found.", { id: substitutionId });
@@ -1275,9 +1275,14 @@ export async function generatePurchaseOrdersForShortfall(
   const request = await MaterialRequestRepository.findAnyById(actor.companyId, id);
   if (!request) throw new BusinessRuleError("NOT_FOUND", "Material request not found.", { id });
 
-  // Functionally creates real PurchaseOrders — the same permission a direct
-  // PO create needs, asserted explicitly rather than assumed from "edit".
-  await PermissionService.assert(actor.userId, "purchasing", "create");
+  // RBAC audit (2026-09-24): deliberately gated on material_request.edit,
+  // NOT purchase_order.create — this is the sanctioned "generate PO(s) from
+  // my own Material Request's shortfall" action, distinct from creating an
+  // arbitrary direct commercial Purchase Order. A role like MERCHANDISER
+  // that owns Material Requests but must never create a direct PO (see
+  // RBAC_AUDIT_REPORT.md) keeps this capability through material_request.edit
+  // alone, without needing purchase_order.create at all.
+  await PermissionService.assert(actor.userId, "material_request", "edit");
 
   const candidateLines = await MaterialRequestItemRepository.findLinesForShortfallGeneration(id);
   const candidatesById = new Map(candidateLines.map((c) => [c.id, c] as const));

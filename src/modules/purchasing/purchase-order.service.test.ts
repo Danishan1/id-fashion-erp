@@ -273,7 +273,7 @@ describe("approvePurchaseOrder", () => {
 
     await approvePurchaseOrder(actor, "po-1");
 
-    expect(PermissionService.assert).toHaveBeenCalledWith("user-1", "purchasing", "approve", { createdBy: "user-2" });
+    expect(PermissionService.assert).toHaveBeenCalledWith("user-1", "purchase_order", "approve", { createdBy: "user-2" });
     expect(PurchaseOrderRepository.update).toHaveBeenCalledWith("po-1", { status: "APPROVED" });
   });
 });

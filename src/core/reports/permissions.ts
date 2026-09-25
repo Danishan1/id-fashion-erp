@@ -9,8 +9,8 @@ import type { Action, Module } from "@/config/rbac";
  */
 export const REPORT_CATEGORY_MODULES = {
   "sales-orders": ["sales_orders"],
-  purchase: ["purchasing"],
-  suppliers: ["purchasing"],
+  purchase: ["purchase_order"],
+  suppliers: ["purchase_order"],
   sampling: ["sampling"],
   "sampling-raw-material": ["sampling"],
   inventory: ["inventory"],
@@ -32,7 +32,7 @@ export const REPORT_CATEGORY_MODULES = {
   hr: ["hrms_attendance"],
   attendance: ["hrms_attendance"],
   payroll: ["hrms_attendance"],
-  audit: ["administration"],
+  audit: ["administration_settings"],
   dashboard: [],
   mis: [],
   "business-performance": ["financial_reports"],

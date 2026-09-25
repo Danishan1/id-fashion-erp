@@ -49,11 +49,13 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ sale
     const itemIds = order.items.map((i) => i.id);
     const sampleRequestIds = order.items.map((i) => i.sampleRequestId).filter((id): id is string => !!id);
 
-    const [canSalesOrders, canSampling, canInventory, canPurchasing, canProduction, canQc, canDispatch, canInvoices, canPayments] = await Promise.all([
+    const [canSalesOrders, canSampling, canMaterialRequests, canPurchasing, canProduction, canQc, canDispatch, canInvoices, canPayments] = await Promise.all([
       canAccessModule(userId, "sales_orders"),
       canAccessModule(userId, "sampling"),
-      canAccessModule(userId, "inventory"),
-      canAccessModule(userId, "purchasing"),
+      // The "Material Requirement" section — genuinely a material_request
+      // concern, not the coarse "inventory" module (RBAC audit, 2026-09-24).
+      canAccessModule(userId, "material_request"),
+      canAccessModule(userId, "purchase_order"),
       canAccessModule(userId, "production"),
       canAccessModule(userId, "qc"),
       canAccessModule(userId, "dispatch"),
@@ -90,7 +92,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ sale
       sections.sampling = [];
     }
 
-    if (canInventory) {
+    if (canMaterialRequests) {
       const materialRequests = await prisma.materialRequest.findMany({
         where: { salesOrderId, companyId },
         select: {

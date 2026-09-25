@@ -323,7 +323,7 @@ export async function approvePurchaseOrder(actor: ActorContext, id: string) {
     );
   }
 
-  await PermissionService.assert(actor.userId, "purchasing", "approve", { createdBy: order.requestedByUserId });
+  await PermissionService.assert(actor.userId, "purchase_order", "approve", { createdBy: order.requestedByUserId });
 
   const updated = await PurchaseOrderRepository.update(id, { status: "APPROVED" });
 

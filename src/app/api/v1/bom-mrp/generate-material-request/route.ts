@@ -11,7 +11,7 @@ import { createMaterialRequestFromShortfall } from "@/modules/inventory/material
 export async function POST(req: NextRequest) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "inventory", "create");
+    await PermissionService.assert(session.user.id, "material_request", "create");
 
     const input = createMaterialRequestFromShortfallSchema.parse(await req.json());
     const request = await createMaterialRequestFromShortfall(

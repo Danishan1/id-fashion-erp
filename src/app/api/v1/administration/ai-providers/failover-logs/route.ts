@@ -6,7 +6,7 @@ import { getFailoverLogs } from "@/modules/ai-providers/ai-provider-admin.servic
 export async function GET(req: NextRequest) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "administration", "view");
+    await PermissionService.assert(session.user.id, "administration_settings", "view");
 
     const limit = Math.min(200, Math.max(1, Number(req.nextUrl.searchParams.get("limit") ?? 50) || 50));
     const logs = await getFailoverLogs(session.user.companyId, limit);

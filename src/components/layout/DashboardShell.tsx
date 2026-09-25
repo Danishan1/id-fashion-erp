@@ -2,7 +2,7 @@
 
 import { useState, useSyncExternalStore, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
-import type { Module } from "@/config/rbac";
+import type { Module, Action } from "@/config/rbac";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
 
@@ -67,11 +67,13 @@ function setSidebarCollapsedStore(next: boolean) {
 export function DashboardShell({
   isPlatformAdmin,
   viewableModules,
+  actionModules,
   userName,
   children,
 }: {
   isPlatformAdmin?: boolean;
   viewableModules: Module[] | "all";
+  actionModules?: Partial<Record<Action, Module[] | "all">>;
   userName: string;
   children: ReactNode;
 }) {
@@ -121,6 +123,7 @@ export function DashboardShell({
         <Sidebar
           isPlatformAdmin={isPlatformAdmin}
           viewableModules={viewableModules}
+          actionModules={actionModules}
           // The desktop minimize preference must never apply while the
           // mobile off-canvas drawer is the thing actually on screen — the
           // drawer's own wrapper stays a fixed w-64 regardless of this

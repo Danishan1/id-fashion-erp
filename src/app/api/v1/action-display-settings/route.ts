@@ -12,7 +12,7 @@ const updateActionDisplaySettingsSchema = z.object({
 // Cross-cutting, no-module-gated read -- same pattern as
 // /api/v1/submodule-visibility and /api/v1/ai-designer/settings. Every
 // authenticated user's row actions app-wide are driven by this, regardless
-// of their "administration" grant.
+// of their "administration_settings" grant.
 export async function GET() {
   try {
     const session = await requireSession();
@@ -30,7 +30,7 @@ export async function PATCH(req: Request) {
     // canManage computation (also "create"), so the UI's enabled/disabled
     // toggle state and this route's real permission check can never
     // silently drift apart.
-    await PermissionService.assert(session.user.id, "administration", "create");
+    await PermissionService.assert(session.user.id, "administration_settings", "create");
 
     const input = updateActionDisplaySettingsSchema.parse(await req.json());
     const data = await setActionDisplaySettings(session.user.companyId, input);

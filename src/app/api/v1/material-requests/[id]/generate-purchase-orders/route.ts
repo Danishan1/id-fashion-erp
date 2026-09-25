@@ -15,7 +15,7 @@ interface RouteContext {
 export async function GET(_req: NextRequest, { params }: RouteContext) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "inventory", "view");
+    await PermissionService.assert(session.user.id, "material_request", "view");
 
     const { id } = await params;
     const review = await getGeneratePurchaseOrdersReview(
@@ -29,10 +29,11 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
   }
 }
 
-// No route-level PermissionService.assert here for "purchasing" —
-// generatePurchaseOrdersForShortfall() asserts "purchasing.create" itself,
-// since this functionally creates real PurchaseOrders and needs that
-// permission explicitly, not "inventory.edit".
+// No route-level PermissionService.assert here — generatePurchaseOrdersForShortfall()
+// asserts "material_request.edit" itself (RBAC audit, 2026-09-24 — deliberately
+// NOT "purchase_order.create", so a role that owns Material Requests but must
+// never create an arbitrary direct Purchase Order, e.g. MERCHANDISER, still
+// keeps this sanctioned shortfall-generation action).
 export async function POST(req: NextRequest, { params }: RouteContext) {
   try {
     const session = await requireSession();

@@ -8,13 +8,16 @@ vi.mock("./role-admin.repository", () => ({
     findActiveProductionStages: vi.fn(),
     findGrantedStageIds: vi.fn(),
     replaceStageAccessInTx: vi.fn(),
+    findActiveBranches: vi.fn(),
+    findGrantedBranchIds: vi.fn(),
+    replaceBranchAccessInTx: vi.fn(),
   },
 }));
 
 const { writeAuditLog } = await import("@/core/audit/AuditLogger");
 const { PermissionService } = await import("@/core/rbac/PermissionService");
 const { RoleAdminRepository } = await import("./role-admin.repository");
-const { getRoleProductionStageAccess, updateRoleProductionStages } = await import("./role-admin.service");
+const { getRoleProductionStageAccess, updateRoleProductionStages, updateRoleBranches } = await import("./role-admin.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
 const STAGES = [
@@ -29,6 +32,9 @@ beforeEach(() => {
   vi.mocked(RoleAdminRepository.findActiveProductionStages).mockReset().mockResolvedValue(STAGES as never);
   vi.mocked(RoleAdminRepository.findGrantedStageIds).mockReset().mockResolvedValue([]);
   vi.mocked(RoleAdminRepository.replaceStageAccessInTx).mockReset().mockResolvedValue(undefined as never);
+  vi.mocked(RoleAdminRepository.findActiveBranches).mockReset().mockResolvedValue([{ id: "branch-1", name: "Head Office", code: "HO" }] as never);
+  vi.mocked(RoleAdminRepository.findGrantedBranchIds).mockReset().mockResolvedValue([]);
+  vi.mocked(RoleAdminRepository.replaceBranchAccessInTx).mockReset().mockResolvedValue(undefined as never);
 });
 
 describe("getRoleProductionStageAccess", () => {
@@ -81,5 +87,55 @@ describe("updateRoleProductionStages", () => {
   it("throws NOT_FOUND for a role that doesn't belong to the company", async () => {
     vi.mocked(RoleAdminRepository.findById).mockResolvedValue(null);
     await expect(updateRoleProductionStages(actor, "role-x", { stageIds: [] })).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  // SUPER_ADMIN carve-out (2026-09-24): unlike every OTHER system role
+  // (PRODUCTION_SUPERVISOR above), SUPER_ADMIN must always stay fully
+  // unrestricted — narrowing its stage access would silently reduce real
+  // access for a company Super Admin who isn't separately flagged
+  // isPlatformAdmin.
+  it("blocks restricting the SUPER_ADMIN role's stage access, even for an empty (clearing) array", async () => {
+    vi.mocked(RoleAdminRepository.findById).mockResolvedValue({ id: "role-1", companyId: "co-1", name: "SUPER_ADMIN", isSystemRole: true } as never);
+
+    await expect(updateRoleProductionStages(actor, "role-1", { stageIds: ["stage-cutting"] })).rejects.toMatchObject({
+      code: "REFERENCED_RECORD_IN_USE",
+    });
+    expect(RoleAdminRepository.replaceStageAccessInTx).not.toHaveBeenCalled();
+  });
+});
+
+describe("updateRoleBranches", () => {
+  it("saves the selected branch ids, invalidates the permission cache, and writes an audit log", async () => {
+    await updateRoleBranches(actor, "role-1", { branchIds: ["branch-1"] });
+    expect(RoleAdminRepository.replaceBranchAccessInTx).toHaveBeenCalledWith("role-1", ["branch-1"]);
+    expect(PermissionService.invalidate).toHaveBeenCalled();
+    expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ tableName: "role_branch_access", action: "UPDATE" }));
+  });
+
+  it("rejects a branch id that isn't an active branch of this company", async () => {
+    await expect(updateRoleBranches(actor, "role-1", { branchIds: ["branch-from-another-company"] })).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+    });
+    expect(RoleAdminRepository.replaceBranchAccessInTx).not.toHaveBeenCalled();
+  });
+
+  it("is allowed on a system role other than SUPER_ADMIN", async () => {
+    vi.mocked(RoleAdminRepository.findById).mockResolvedValue({ id: "role-1", companyId: "co-1", name: "STORE_MANAGER", isSystemRole: true } as never);
+    await expect(updateRoleBranches(actor, "role-1", { branchIds: ["branch-1"] })).resolves.toBeDefined();
+    expect(RoleAdminRepository.replaceBranchAccessInTx).toHaveBeenCalledWith("role-1", ["branch-1"]);
+  });
+
+  // SUPER_ADMIN carve-out (2026-09-24) — same reasoning as
+  // updateRoleProductionStages()'s own regression test above.
+  it("blocks restricting the SUPER_ADMIN role's branch access", async () => {
+    vi.mocked(RoleAdminRepository.findById).mockResolvedValue({ id: "role-1", companyId: "co-1", name: "SUPER_ADMIN", isSystemRole: true } as never);
+
+    await expect(updateRoleBranches(actor, "role-1", { branchIds: ["branch-1"] })).rejects.toMatchObject({ code: "REFERENCED_RECORD_IN_USE" });
+    expect(RoleAdminRepository.replaceBranchAccessInTx).not.toHaveBeenCalled();
+  });
+
+  it("throws NOT_FOUND for a role that doesn't belong to the company", async () => {
+    vi.mocked(RoleAdminRepository.findById).mockResolvedValue(null);
+    await expect(updateRoleBranches(actor, "role-x", { branchIds: [] })).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 });

@@ -67,7 +67,7 @@ const SEARCH_ENTITIES: SearchEntityConfig[] = [
     },
   },
   {
-    module: "purchasing",
+    module: "purchase_order",
     label: "Purchase Orders",
     search: async (companyId, term, limit) => {
       const rows = await PurchaseOrderRepository.searchTop(companyId, term, limit);
@@ -106,7 +106,7 @@ const SEARCH_ENTITIES: SearchEntityConfig[] = [
     },
   },
   {
-    module: "inventory",
+    module: "material_request",
     label: "Material Requests",
     search: async (companyId, term, limit) => {
       const rows = await MaterialRequestRepository.searchTop(companyId, term, limit);

@@ -13,7 +13,7 @@ interface RouteContext {
 export async function GET(_req: NextRequest, { params }: RouteContext) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "purchasing", "export");
+    await PermissionService.assert(session.user.id, "purchase_order", "export");
 
     const { id } = await params;
     const order = await getPurchaseOrderById({ companyId: session.user.companyId, userId: session.user.id }, id);

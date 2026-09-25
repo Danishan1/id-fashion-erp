@@ -111,13 +111,13 @@ async function assertSubstitutionQuantityWithinRemaining(
  * never filtered, matching this project's "the audit trail is the point"
  * convention. */
 export async function listMaterialSubstitutionsForLine(actor: ActorContext, materialRequestItemId: string) {
-  await PermissionService.assert(actor.userId, "inventory", "view");
+  await PermissionService.assert(actor.userId, "material_request", "view");
   await loadLineForSubstitution(actor, materialRequestItemId);
   return MaterialSubstitutionRepository.findManyForLine(materialRequestItemId);
 }
 
 export async function proposeMaterialSubstitution(actor: ActorContext, materialRequestItemId: string, input: ProposeMaterialSubstitutionInput) {
-  await PermissionService.assert(actor.userId, "inventory", "edit");
+  await PermissionService.assert(actor.userId, "material_request", "edit");
 
   const line = await loadLineForSubstitution(actor, materialRequestItemId);
 

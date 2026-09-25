@@ -7,7 +7,7 @@ import { branchSchema } from "@/modules/administration/branch.schema";
 export async function GET() {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "administration", "view");
+    await PermissionService.assert(session.user.id, "administration_settings", "view");
 
     const branches = await listBranches(session.user.companyId);
     return NextResponse.json({ data: branches });
@@ -19,7 +19,7 @@ export async function GET() {
 export async function POST(req: Request) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "administration", "create");
+    await PermissionService.assert(session.user.id, "administration_settings", "create");
 
     const input = branchSchema.parse(await req.json());
     const branch = await createBranch({ companyId: session.user.companyId, userId: session.user.id }, input);

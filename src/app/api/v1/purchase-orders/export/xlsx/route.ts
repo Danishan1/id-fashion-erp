@@ -19,7 +19,7 @@ interface PurchaseOrderExportRow {
 export async function GET(req: NextRequest) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "purchasing", "export");
+    await PermissionService.assert(session.user.id, "purchase_order", "export");
 
     const search = req.nextUrl.searchParams.get("search") || undefined;
     const { data } = await listPurchaseOrders({ companyId: session.user.companyId, userId: session.user.id }, {

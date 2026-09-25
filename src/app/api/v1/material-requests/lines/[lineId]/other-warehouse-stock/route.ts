@@ -15,7 +15,7 @@ interface RouteContext {
 export async function GET(_req: NextRequest, { params }: RouteContext) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "inventory", "view");
+    await PermissionService.assert(session.user.id, "material_request", "view");
 
     const { lineId } = await params;
     const warehouses = await getOtherWarehouseStockForLine({ companyId: session.user.companyId, userId: session.user.id }, lineId);
