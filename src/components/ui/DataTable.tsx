@@ -32,6 +32,15 @@ interface DataTableProps<T> {
   fetchUrl: string;
   columns: DataTableColumn<T>[];
   rowHref?: (row: T) => string;
+  /**
+   * Overrides the built-in row-click affordance's label/icon — defaults to
+   * "Edit"/EditIcon (every existing caller's real behavior, unchanged).
+   * Set this when rowHref points somewhere read-only (e.g. a history/detail
+   * view rather than an edit form), so the Actions column doesn't claim an
+   * action ("Edit") the destination doesn't actually offer.
+   */
+  rowHrefLabel?: string;
+  rowHrefIcon?: ReactNode;
   newHref?: string;
   newLabel?: string;
   /**
@@ -95,6 +104,8 @@ export function DataTable<T extends { id: string }>({
   fetchUrl,
   columns,
   rowHref,
+  rowHrefLabel = "Edit",
+  rowHrefIcon = <EditIcon />,
   newHref,
   newLabel = "New",
   newAction,
@@ -338,7 +349,7 @@ export function DataTable<T extends { id: string }>({
                       <td className="px-4 py-2">
                         <div className="flex items-center gap-3">
                           {rowHref ? (
-                            <RowAction icon={<EditIcon />} label="Edit" href={href!} />
+                            <RowAction icon={rowHrefIcon} label={rowHrefLabel} href={href!} />
                           ) : onEditRow ? (
                             <RowAction icon={<EditIcon />} label="Edit" onClick={() => onEditRow(row)} />
                           ) : null}

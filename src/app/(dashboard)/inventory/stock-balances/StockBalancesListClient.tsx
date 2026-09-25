@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { DataTable } from "@/components/ui/DataTable";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
+import { ViewIcon } from "@/components/ui/icons";
 
 interface LocationBalance {
   code: string;
@@ -15,6 +16,7 @@ interface LocationBalance {
 
 interface StockBalanceRow {
   id: string;
+  productId: string;
   quantityOnHand: string;
   updatedAt: string;
   product: { styleName: string; styleCode: string; baseUom: { code: string } | null } | null;
@@ -89,6 +91,13 @@ export function StockBalancesListClient() {
         key={fetchUrl}
         fetchUrl={fetchUrl}
         searchPlaceholder="Search by material name or code…"
+        // Clicking a Material's row, or the "View" action in the Actions
+        // column, opens that material's full stock/transaction history —
+        // read-only, so this deliberately overrides DataTable's default
+        // "Edit" row-action label/icon (there's nothing to edit here).
+        rowHref={(row) => `/masters/materials/${row.productId}/stock-history`}
+        rowHrefLabel="View"
+        rowHrefIcon={<ViewIcon />}
         columns={[
           { key: "product", header: "Material", render: (row) => (row.product ? `${row.product.styleName} (${row.product.styleCode})` : "—") },
           { key: "warehouse", header: "Warehouse", render: (row) => row.warehouse?.name ?? "—" },

@@ -63,11 +63,19 @@ async function getStockSummaryDescriptor(companyId: string, generatedByName: str
 // ---------------------------------------------------------------------------
 const STOCK_LEDGER_ROW_CAP = 5000;
 
-async function getStockLedgerDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>): Promise<ReportDescriptor> {
+/**
+ * Exported (2026-09-24) so a focused, single-material page — Stock
+ * Balances' new "View" action → Material Stock History — can call this
+ * exact same query directly, rather than duplicating it. `filters.productId`
+ * is additive and optional: every existing caller (the registered "Stock
+ * Ledger" report, which never passes it) is completely unaffected.
+ */
+export async function getStockLedgerDescriptor(companyId: string, generatedByName: string, filters: Record<string, string>): Promise<ReportDescriptor> {
   const { dateFrom, dateToExclusive } = parseReportDateRange(filters);
   const where = {
     companyId,
     ...(filters.warehouseId ? { warehouseId: filters.warehouseId } : {}),
+    ...(filters.productId ? { productId: filters.productId } : {}),
     ...(dateFrom || dateToExclusive ? { performedAt: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateToExclusive ? { lt: dateToExclusive } : {}) } } : {}),
   };
 
@@ -110,7 +118,7 @@ async function getStockLedgerDescriptor(companyId: string, generatedByName: stri
       rows.length < totalCount
         ? `Showing the most recent ${rows.length.toLocaleString()} of ${totalCount.toLocaleString()} matching transactions. Totals below reflect all ${totalCount.toLocaleString()}.`
         : "Every inventory transaction matching the selected filters.",
-    filtersApplied: filtersApplied(filters, { dateFrom: "Date From", dateTo: "Date To", warehouseId: "Warehouse" }),
+    filtersApplied: filtersApplied(filters, { dateFrom: "Date From", dateTo: "Date To", warehouseId: "Warehouse", productId: "Material" }),
     columns: [
       { key: "performedAt", label: "Date", type: "date" },
       { key: "styleCode", label: "Style Code", linkTo: "product" },
