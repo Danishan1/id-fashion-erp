@@ -186,6 +186,7 @@ export function SampleWorkflowPanel({
   canSamplingEdit,
   canSamplingApprove,
   canSamplingReject,
+  canApproveThisSample,
   canGenerateMaterialRequest,
 }: {
   sampleRequestId: string;
@@ -209,10 +210,20 @@ export function SampleWorkflowPanel({
    * enforcement is entirely server-side in each route.
    */
   canSamplingEdit: boolean;
-  /** Whether this viewer holds `sampling.approve` — gates Lock/Unlock Costing and half of "Record Customer Decision". */
+  /** Whether this viewer holds `sampling.approve` — gates Lock/Unlock Costing (not self-approval-guarded) and half of "Record Customer Decision". */
   canSamplingApprove: boolean;
   /** Whether this viewer holds `sampling.reject` — gates the other half of "Record Customer Decision". */
   canSamplingReject: boolean;
+  /**
+   * Whether this viewer can actually record an APPROVED decision on THIS
+   * specific request — `canSamplingApprove` above, but re-checked with the
+   * self-approval guard against this request's own requestedByUserId
+   * (2026-09-25). This request's own creator sees `false` here even while
+   * `canSamplingApprove` is `true`, unless they're SUPER_ADMIN — gates
+   * "Mark as Approved (Skip Development)" and the "Approved" option inside
+   * "Record Customer Decision".
+   */
+  canApproveThisSample: boolean;
   /** Whether this viewer holds `material_request.create` — gates "Generate Material Request" (a genuinely different module than sampling itself). */
   canGenerateMaterialRequest: boolean;
 }) {
@@ -708,7 +719,10 @@ export function SampleWorkflowPanel({
     run(() => fetch(`/api/v1/sampling/versions/${versionId}/costing/unlock`, { method: "POST" }), "Failed to unlock costing.");
 
   const openDecisionModal = () => {
-    setDecision("APPROVED");
+    // Default to whichever outcome this viewer can actually record — a
+    // request's own creator can't self-approve it, so defaulting to
+    // APPROVED for them would just be a guaranteed 403 (2026-09-25).
+    setDecision(canApproveThisSample ? "APPROVED" : "REJECTED");
     setDecisionNotes("");
     // Defaults from the request's own linked Buyer — editable afterwards,
     // since the person who actually calls back with the decision may not
@@ -1117,12 +1131,12 @@ export function SampleWorkflowPanel({
         )}
 
         {request.status === "TECH_PACK_READY" && (
-          canSamplingEdit || canSamplingApprove ? (
+          canSamplingEdit || canApproveThisSample ? (
             <div className="flex flex-wrap items-center gap-3">
               {canSamplingEdit && (
                 <ActionButton label="Start Development" onClick={() => transitionTo("IN_DEVELOPMENT")} isBusy={isBusy} />
               )}
-              {canSamplingApprove && (
+              {canApproveThisSample && (
                 <ActionButton
                   label="Mark as Approved (Skip Development)"
                   onClick={openFastTrackModal}
@@ -1131,6 +1145,11 @@ export function SampleWorkflowPanel({
                 />
               )}
             </div>
+          ) : canSamplingApprove ? (
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              Tech pack is ready — you requested this sample yourself, so someone else needs to record its approval
+              (self-approval isn&apos;t allowed).
+            </p>
           ) : (
             <p className="text-sm text-zinc-500 dark:text-zinc-400">
               Tech pack is ready — waiting on a Merchandiser to start development.
@@ -2162,7 +2181,9 @@ export function SampleWorkflowPanel({
               onChange={(e) => setDecision(e.target.value as typeof decision)}
               className={textInputClass()}
             >
-              <option value="APPROVED">Approved</option>
+              <option value="APPROVED" disabled={!canApproveThisSample}>
+                Approved{!canApproveThisSample ? " (you requested this sample — someone else must approve it)" : ""}
+              </option>
               <option value="REJECTED">Rejected</option>
               <option value="REVISION_REQUESTED">Revision Requested</option>
             </select>

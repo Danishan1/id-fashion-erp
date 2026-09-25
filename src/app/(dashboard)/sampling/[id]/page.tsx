@@ -34,6 +34,18 @@ export default async function SampleRequestDetailPage({ params }: { params: Prom
   const canSamplingApprove = await PermissionService.can(session!.user.id, "sampling", "approve");
   const canSamplingReject = await PermissionService.can(session!.user.id, "sampling", "reject");
   const canGenerateMaterialRequest = await PermissionService.can(session!.user.id, "material_request", "create");
+  // "approve" is self-approval-guarded (SELF_APPROVAL_GUARDED_ACTIONS) —
+  // canSamplingApprove above is a blanket "does this role hold approve at
+  // all" check, correct for Lock/Unlock Costing (not self-approval-guarded)
+  // but WRONG for any action that actually checks resourceContext.createdBy
+  // server-side (fastTrackApproveSample, and the "Approved" outcome of
+  // recordSampleApproval) — a request's own creator would see the button,
+  // then get a confusing 403 on submit (2026-09-25, found live: the same
+  // account both copied a design and then tried to fast-track-approve it).
+  // This mirrors the exact server-side check for THIS specific request.
+  const canApproveThisSample = await PermissionService.can(session!.user.id, "sampling", "approve", {
+    createdBy: request.requestedByUserId,
+  });
 
   return (
     <div className="space-y-6">
@@ -71,6 +83,7 @@ export default async function SampleRequestDetailPage({ params }: { params: Prom
         canSamplingEdit={canSamplingEdit}
         canSamplingApprove={canSamplingApprove}
         canSamplingReject={canSamplingReject}
+        canApproveThisSample={canApproveThisSample}
         canGenerateMaterialRequest={canGenerateMaterialRequest}
       />
     </div>
