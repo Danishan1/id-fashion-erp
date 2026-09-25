@@ -58,19 +58,46 @@ export async function getRolePermissionMatrix(companyId: string, roleId: string)
 }
 
 /**
- * Blocked entirely for isSystemRole roles (SUPER_ADMIN, MANAGEMENT, ...) —
- * the same protection ChartOfAccount already applies to isSystemAccount:
- * these are the seeded roles every other permission decision in this app
- * assumes exist with their documented shape, and editing one through this
- * UI could silently lock an admin out of their own account. Custom
- * (non-system) roles created via createRole() above are the only ones this
- * ever touches.
+ * Purely a display-gate helper for the Permission Matrix page (2026-09-25)
+ * — whether the CURRENT viewer holds this exact role themselves, so the UI
+ * can render it read-only instead of showing editable controls that would
+ * just 403 on save. Real enforcement is the identical check inside
+ * updateRolePermissions() itself.
+ */
+export async function actorHoldsRole(userId: string, roleId: string): Promise<boolean> {
+  return RoleAdminRepository.actorHoldsRole(userId, roleId);
+}
+
+/**
+ * Editing a role's own permission matrix (2026-09-25, revised from the
+ * original "no system role, ever" blanket block) — now allowed for any
+ * role INCLUDING seeded/system ones (MANAGEMENT, SAMPLING_MANAGER, ...),
+ * gated by two real, independent guards instead of one blunt one:
+ *
+ *  1. SUPER_ADMIN's own row is always protected, for everyone, including
+ *     whoever currently holds SUPER_ADMIN themselves — its real access is
+ *     the wildcard grant in rbac.ts (SUPER_ADMIN: Object.fromEntries(...)),
+ *     never actually read from this table, so editing it here would be
+ *     meaningless at best and a genuine lockout risk at worst.
+ *  2. Self-escalation guard — a user can never edit the permission matrix
+ *     of a role they themselves currently hold, custom roles included.
+ *     Same "no self-approval" principle this app already applies to
+ *     Sample/Purchase Order/Journal approvals, applied here to prevent a
+ *     user from silently widening their own effective access.
  */
 export async function updateRolePermissions(actor: ActorContext, roleId: string, grantedKeys: string[]) {
   const role = await RoleAdminRepository.findById(actor.companyId, roleId);
   if (!role) throw new BusinessRuleError("NOT_FOUND", "Role not found.", { id: roleId });
-  if (role.isSystemRole) {
-    throw new BusinessRuleError("REFERENCED_RECORD_IN_USE", `"${role.name}" is a system role and its permissions cannot be edited.`, { id: roleId });
+
+  assertNotSuperAdminRole(role.name, "permission matrix");
+
+  const actorHoldsThisRole = await RoleAdminRepository.actorHoldsRole(actor.userId, roleId);
+  if (actorHoldsThisRole) {
+    throw new BusinessRuleError(
+      "PERMISSION_DENIED",
+      `You hold the "${role.name}" role yourself — you cannot edit its own permission matrix.`,
+      { roleId, roleName: role.name }
+    );
   }
 
   const catalog = await RoleAdminRepository.findPermissionCatalog();
@@ -80,6 +107,15 @@ export async function updateRolePermissions(actor: ActorContext, roleId: string,
   if (unknownKeys.length > 0) {
     throw new BusinessRuleError("VALIDATION_ERROR", `Unknown permission key(s): ${unknownKeys.join(", ")}`, { unknownKeys });
   }
+
+  // Captured before the write so the audit log records a real before/after
+  // diff, not just the new state (2026-09-25 — a change this sensitive
+  // deserves a genuine change log, not just "here's what it became").
+  const catalogById = new Map(catalog.map((p) => [p.id, p.key]));
+  const previousGranted = await RoleAdminRepository.findGrantedPermissionIds(roleId);
+  const previousGrantedKeys = previousGranted
+    .map((g) => catalogById.get(g.permissionId))
+    .filter((k): k is string => !!k);
 
   const permissionIds = grantedKeys.map((k) => catalogByKey.get(k)!);
   await RoleAdminRepository.replacePermissionsInTx(roleId, permissionIds);
@@ -96,7 +132,8 @@ export async function updateRolePermissions(actor: ActorContext, roleId: string,
     tableName: "role_permissions",
     recordId: roleId,
     action: "UPDATE",
-    newValues: { roleId, grantedKeys },
+    oldValues: { roleId, roleName: role.name, grantedKeys: previousGrantedKeys },
+    newValues: { roleId, roleName: role.name, grantedKeys },
   });
 
   return getRolePermissionMatrix(actor.companyId, roleId);
@@ -135,11 +172,13 @@ export async function getRoleProductionStageAccess(companyId: string, roleId: st
  * `isPlatformAdmin`, which is the only thing that would otherwise bypass a
  * restriction; see getAllowedBranchIds/getAllowedProductionStageIds).
  */
-function assertNotSuperAdminRole(roleName: string, kind: "branch" | "production stage") {
+function assertNotSuperAdminRole(roleName: string, kind: "branch" | "production stage" | "permission matrix") {
   if (roleName === "SUPER_ADMIN") {
     throw new BusinessRuleError(
       "REFERENCED_RECORD_IN_USE",
-      `SUPER_ADMIN must always have unrestricted access — its ${kind} access cannot be restricted.`,
+      kind === "permission matrix"
+        ? "SUPER_ADMIN must always have full, unrestricted access — its permission matrix can never be edited by anyone."
+        : `SUPER_ADMIN must always have unrestricted access — its ${kind} access cannot be restricted.`,
       { roleName }
     );
   }

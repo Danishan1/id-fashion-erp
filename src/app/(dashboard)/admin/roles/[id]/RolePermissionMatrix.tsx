@@ -12,12 +12,15 @@ interface CatalogEntry {
 export function RolePermissionMatrix({
   roleId,
   initialCatalog,
-  isSystemRole,
   canManage,
 }: {
   roleId: string;
   initialCatalog: CatalogEntry[];
-  isSystemRole: boolean;
+  // Fully pre-computed by the page (2026-09-25) — already accounts for the
+  // base administration_roles:edit grant AND the two hard locks
+  // (SUPER_ADMIN's own row, and a role the current actor holds themselves),
+  // so this component itself makes no further judgment call. See page.tsx
+  // for the explanatory messaging shown above this table for each lock.
   canManage: boolean;
 }) {
   const initialGranted = useMemo(() => new Set(initialCatalog.filter((c) => c.granted).map((c) => c.key)), [initialCatalog]);
@@ -26,7 +29,7 @@ export function RolePermissionMatrix({
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
-  const editable = canManage && !isSystemRole;
+  const editable = canManage;
 
   function toggle(key: string) {
     if (!editable) return;

@@ -11,18 +11,34 @@ vi.mock("./role-admin.repository", () => ({
     findActiveBranches: vi.fn(),
     findGrantedBranchIds: vi.fn(),
     replaceBranchAccessInTx: vi.fn(),
+    findPermissionCatalog: vi.fn(),
+    findGrantedPermissionIds: vi.fn(),
+    replacePermissionsInTx: vi.fn(),
+    actorHoldsRole: vi.fn(),
   },
 }));
 
 const { writeAuditLog } = await import("@/core/audit/AuditLogger");
 const { PermissionService } = await import("@/core/rbac/PermissionService");
 const { RoleAdminRepository } = await import("./role-admin.repository");
-const { getRoleProductionStageAccess, updateRoleProductionStages, updateRoleBranches } = await import("./role-admin.service");
+const {
+  getRoleProductionStageAccess,
+  updateRoleProductionStages,
+  updateRoleBranches,
+  getRolePermissionMatrix,
+  updateRolePermissions,
+  actorHoldsRole,
+} = await import("./role-admin.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
 const STAGES = [
   { id: "stage-cutting", name: "Cutting", code: "CUT", sequence: 1 },
   { id: "stage-stitching", name: "Stitching", code: "STI", sequence: 2 },
+];
+const PERMISSION_CATALOG = [
+  { id: "perm-view", key: "sampling.view", module: "sampling" },
+  { id: "perm-edit", key: "sampling.edit", module: "sampling" },
+  { id: "perm-approve", key: "sampling.approve", module: "sampling" },
 ];
 
 beforeEach(() => {
@@ -35,6 +51,10 @@ beforeEach(() => {
   vi.mocked(RoleAdminRepository.findActiveBranches).mockReset().mockResolvedValue([{ id: "branch-1", name: "Head Office", code: "HO" }] as never);
   vi.mocked(RoleAdminRepository.findGrantedBranchIds).mockReset().mockResolvedValue([]);
   vi.mocked(RoleAdminRepository.replaceBranchAccessInTx).mockReset().mockResolvedValue(undefined as never);
+  vi.mocked(RoleAdminRepository.findPermissionCatalog).mockReset().mockResolvedValue(PERMISSION_CATALOG as never);
+  vi.mocked(RoleAdminRepository.findGrantedPermissionIds).mockReset().mockResolvedValue([{ permissionId: "perm-view" }] as never);
+  vi.mocked(RoleAdminRepository.replacePermissionsInTx).mockReset().mockResolvedValue(undefined as never);
+  vi.mocked(RoleAdminRepository.actorHoldsRole).mockReset().mockResolvedValue(false);
 });
 
 describe("getRoleProductionStageAccess", () => {
@@ -137,5 +157,82 @@ describe("updateRoleBranches", () => {
   it("throws NOT_FOUND for a role that doesn't belong to the company", async () => {
     vi.mocked(RoleAdminRepository.findById).mockResolvedValue(null);
     await expect(updateRoleBranches(actor, "role-x", { branchIds: [] })).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+});
+
+describe("getRolePermissionMatrix", () => {
+  it("marks only the granted permission keys, leaving the rest ungranted", async () => {
+    const result = await getRolePermissionMatrix("co-1", "role-1");
+    expect(result.catalog.find((c) => c.key === "sampling.view")?.granted).toBe(true);
+    expect(result.catalog.find((c) => c.key === "sampling.edit")?.granted).toBe(false);
+    expect(result.catalog.find((c) => c.key === "sampling.approve")?.granted).toBe(false);
+  });
+
+  it("throws NOT_FOUND for a role that doesn't belong to the company", async () => {
+    vi.mocked(RoleAdminRepository.findById).mockResolvedValue(null);
+    await expect(getRolePermissionMatrix("co-1", "role-x")).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+});
+
+describe("actorHoldsRole", () => {
+  it("passes through the repository's true/false result", async () => {
+    vi.mocked(RoleAdminRepository.actorHoldsRole).mockResolvedValueOnce(true);
+    await expect(actorHoldsRole("user-1", "role-1")).resolves.toBe(true);
+
+    vi.mocked(RoleAdminRepository.actorHoldsRole).mockResolvedValueOnce(false);
+    await expect(actorHoldsRole("user-1", "role-1")).resolves.toBe(false);
+  });
+});
+
+describe("updateRolePermissions", () => {
+  it("saves the new granted keys, invalidates the permission cache, and writes a real before/after audit diff", async () => {
+    await updateRolePermissions(actor, "role-1", ["sampling.view", "sampling.edit"]);
+
+    expect(RoleAdminRepository.replacePermissionsInTx).toHaveBeenCalledWith("role-1", expect.arrayContaining(["perm-view", "perm-edit"]));
+    expect(PermissionService.invalidate).toHaveBeenCalled();
+    expect(writeAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tableName: "role_permissions",
+        recordId: "role-1",
+        action: "UPDATE",
+        oldValues: expect.objectContaining({ grantedKeys: ["sampling.view"] }),
+        newValues: expect.objectContaining({ grantedKeys: ["sampling.view", "sampling.edit"] }),
+      })
+    );
+  });
+
+  it("is now allowed on a system role other than SUPER_ADMIN — the old blanket block is gone", async () => {
+    vi.mocked(RoleAdminRepository.findById).mockResolvedValue({ id: "role-1", companyId: "co-1", name: "MANAGEMENT", isSystemRole: true } as never);
+    await expect(updateRolePermissions(actor, "role-1", ["sampling.approve"])).resolves.toBeDefined();
+    expect(RoleAdminRepository.replacePermissionsInTx).toHaveBeenCalled();
+  });
+
+  it("blocks editing SUPER_ADMIN's own permission matrix, for everyone including another Super Admin", async () => {
+    vi.mocked(RoleAdminRepository.findById).mockResolvedValue({ id: "role-1", companyId: "co-1", name: "SUPER_ADMIN", isSystemRole: true } as never);
+    await expect(updateRolePermissions(actor, "role-1", ["sampling.view"])).rejects.toMatchObject({ code: "REFERENCED_RECORD_IN_USE" });
+    expect(RoleAdminRepository.replacePermissionsInTx).not.toHaveBeenCalled();
+  });
+
+  it("blocks a user from editing the permission matrix of a role they themselves currently hold (self-escalation guard)", async () => {
+    vi.mocked(RoleAdminRepository.actorHoldsRole).mockResolvedValue(true);
+    await expect(updateRolePermissions(actor, "role-1", ["sampling.view", "sampling.approve"])).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    expect(RoleAdminRepository.replacePermissionsInTx).not.toHaveBeenCalled();
+    expect(writeAuditLog).not.toHaveBeenCalled();
+  });
+
+  it("allows editing a role the actor does not hold, even if they hold some other role", async () => {
+    vi.mocked(RoleAdminRepository.actorHoldsRole).mockResolvedValue(false);
+    await expect(updateRolePermissions(actor, "role-1", ["sampling.view"])).resolves.toBeDefined();
+    expect(RoleAdminRepository.replacePermissionsInTx).toHaveBeenCalled();
+  });
+
+  it("rejects an unknown permission key with VALIDATION_ERROR before writing anything", async () => {
+    await expect(updateRolePermissions(actor, "role-1", ["sampling.view", "not.a.real.key"])).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(RoleAdminRepository.replacePermissionsInTx).not.toHaveBeenCalled();
+  });
+
+  it("throws NOT_FOUND for a role that doesn't belong to the company", async () => {
+    vi.mocked(RoleAdminRepository.findById).mockResolvedValue(null);
+    await expect(updateRolePermissions(actor, "role-x", [])).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 });

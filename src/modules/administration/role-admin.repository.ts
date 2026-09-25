@@ -16,6 +16,15 @@ export const RoleAdminRepository = {
   create: (companyId: string, data: { name: string; description: string | null }) =>
     prisma.role.create({ data: { companyId, ...data }, select: { id: true, name: true, description: true, isSystemRole: true } }),
 
+  // Self-escalation guard for updateRolePermissions() (2026-09-25) — does
+  // this actor currently hold the very role whose permission matrix they're
+  // trying to edit? Any branch assignment counts, since holding the role at
+  // all is what matters here, not which branch.
+  actorHoldsRole: async (userId: string, roleId: string) => {
+    const count = await prisma.userBranchRole.count({ where: { userId, roleId } });
+    return count > 0;
+  },
+
   // The full, global permission catalog — Permission has no companyId (it's
   // shared across every tenant, seeded once), so this is the same 230-row
   // list for every company.
