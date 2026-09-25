@@ -203,6 +203,15 @@ export function createOpenAiImageProvider(config: OpenAiImageConfig = getOpenAiI
           n: count,
           size: DEFAULT_SIZE,
           quality: DEFAULT_QUALITY,
+          // A real, confirmed-live fix for mask-based edits regenerating far
+          // more of the image than the mask nominally allows (e.g. the whole
+          // garment's silhouette/length changing from a small shoulder-area
+          // mask) — "high" tells the model to work harder to match the
+          // original image's own style/features outside the edit, not just
+          // rely on the mask/prompt wording alone. Scoped to inpaint() only
+          // (the one masked-edit call) — the other, maskless edit methods
+          // don't have this same "unmasked area drifted" failure mode to fix.
+          input_fidelity: "high",
         });
         return { images: extractBuffers(response.data, count), model: config.model, raw: response };
       } catch (err) {

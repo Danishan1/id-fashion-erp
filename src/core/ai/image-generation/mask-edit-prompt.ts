@@ -9,7 +9,7 @@
  * to enumerate a "preserve everything else" list precisely because it has
  * no other way to scope the edit).
  */
-export const MASK_EDIT_PROMPT_VERSION = "mask-edit-v4";
+export const MASK_EDIT_PROMPT_VERSION = "mask-edit-v5";
 
 export function buildMaskEditPrompt(instruction: string): string {
   return [
@@ -19,6 +19,8 @@ export function buildMaskEditPrompt(instruction: string): string {
     instruction,
     "",
     "STRICT BOUNDARY RULE — judge this ONLY by pixels, never by which figure/pose/view they belong to. Every pixel OUTSIDE the masked area must remain exactly as it is in the original image: do not add, remove, duplicate, or alter anything there, even if it would look more balanced or symmetrical to do so.",
+    "",
+    "GARMENT STRUCTURE LOCK — unless the designer instruction explicitly names that exact structural element, do NOT change the garment's overall silhouette, hemline/garment length, sleeve presence or sleeve length, or neckline shape as a side effect of applying the instruction — even if the requested change (e.g. a strap, band, or trim) would conventionally appear on a different style of garment. Keep the rest of the garment's construction exactly as shown in the original photo; only the masked pixels may change.",
     "",
     "The reverse matters just as much: apply the change to EVERY pixel INSIDE the masked area, completely and uniformly, with no exceptions. If the supplied photo shows the same garment more than once (for example a combined front-view-and-back-view photo side by side) and the mask happens to cover the corresponding spot on more than one of those views, you MUST apply the exact same change to each of them — never leave one of them unedited while only applying it to another. Do not skip, soften, or omit the change on any part of the masked area just because it falls on a different figure, pose, or view than another masked part.",
     "",
