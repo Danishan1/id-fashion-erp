@@ -86,6 +86,7 @@ const {
   removeSampleMaterial,
   setSampleRequestMainImage,
   duplicateSampleRequest,
+  fastTrackApproveSample,
 } = await import("./sample.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
@@ -159,6 +160,53 @@ describe("recordSampleApproval — self-approval guard now lives in the service,
     await recordSampleApproval(actor, "v-1", { decision: "REJECTED" } as never);
 
     expect(PermissionService.assert).toHaveBeenCalledWith("user-1", "sampling", "reject", { createdBy: "user-1" });
+  });
+});
+
+// "Mark as Approved (Skip Development)" (2026-09-25) — only reachable from
+// TECH_PACK_READY, gated on the same self-approval-guarded "approve" action
+// as a real customer-decision approval.
+describe("fastTrackApproveSample", () => {
+  const techPackReadyRequest = { id: "sam-1", status: "TECH_PACK_READY", requestedByUserId: "user-1" };
+  const version = { id: "v-1", sampleRequestId: "sam-1", status: "TECH_PACK_READY" };
+
+  beforeEach(() => {
+    vi.mocked(SampleRequestRepository.findAnyById).mockResolvedValue(techPackReadyRequest as never);
+    vi.mocked(SampleVersionRepository.findLatest).mockResolvedValue(version as never);
+    vi.mocked(SampleApprovalRepository.create).mockResolvedValue({ id: "appr-1" } as never);
+    vi.mocked(SampleVersionRepository.update).mockResolvedValue({} as never);
+    vi.mocked(SampleRequestRepository.update).mockResolvedValue({ id: "sam-1", status: "APPROVED" } as never);
+  });
+
+  it("asserts the self-approval-guarded 'approve' action using the request's own requestedByUserId", async () => {
+    await fastTrackApproveSample(actor, "sam-1", {});
+
+    expect(PermissionService.assert).toHaveBeenCalledWith("user-1", "sampling", "approve", { createdBy: "user-1" });
+  });
+
+  it("rejects from any status other than TECH_PACK_READY", async () => {
+    vi.mocked(SampleRequestRepository.findAnyById).mockResolvedValue({ ...techPackReadyRequest, status: "IN_DEVELOPMENT" } as never);
+
+    await expect(fastTrackApproveSample(actor, "sam-1", {})).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+    expect(SampleApprovalRepository.create).not.toHaveBeenCalled();
+  });
+
+  it("flips both the version and the request straight to APPROVED, recording a real SampleApproval row", async () => {
+    await fastTrackApproveSample(actor, "sam-1", {});
+
+    expect(SampleApprovalRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({ sampleVersionId: "v-1", decision: "APPROVED", decidedByUserId: "user-1" })
+    );
+    expect(SampleVersionRepository.update).toHaveBeenCalledWith("v-1", expect.objectContaining({ status: "APPROVED" }));
+    expect(SampleRequestRepository.update).toHaveBeenCalledWith("sam-1", { status: "APPROVED" });
+  });
+
+  it("folds an optional user note into the recorded decisionNotes without losing the fast-track disclosure", async () => {
+    await fastTrackApproveSample(actor, "sam-1", { notes: "Same fabric, only the button changed." });
+
+    const call = vi.mocked(SampleApprovalRepository.create).mock.calls[0][0] as { decisionNotes: string };
+    expect(call.decisionNotes).toContain("Fast-tracked directly from Tech Pack Ready");
+    expect(call.decisionNotes).toContain("Same fabric, only the button changed.");
   });
 });
 

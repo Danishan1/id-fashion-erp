@@ -7,6 +7,7 @@ import { PermissionService } from "@/core/rbac/PermissionService";
 import type { ListQuery } from "@/lib/list-query";
 import type {
   ConvertSampleToStyleInput,
+  FastTrackApprovalInput,
   SampleApprovalInput,
   SampleCommentInput,
   SampleCostingInput,
@@ -1329,6 +1330,73 @@ export async function recordSampleApproval(actor: ActorContext, sampleVersionId:
   await SampleVersionRepository.update(sampleVersionId, { status: versionStatus, customerDecisionAt: new Date() });
 
   const updatedRequest = await SampleRequestRepository.update(request.id, { status: input.decision });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "sample_approvals",
+    recordId: approval.id,
+    action: "CREATE",
+    newValues: approval,
+  });
+
+  return { approval, request: updatedRequest };
+}
+
+/**
+ * "Mark as Approved (Skip Development)" — a deliberate shortcut for a copied
+ * design that only needed a materials/costing tweak, not a real physical
+ * re-sample/re-QC/re-submission-to-customer cycle (2026-09-25, explicit
+ * request). Only reachable from TECH_PACK_READY, right where the ordinary
+ * "Start Development" action lives — this is NOT wired into
+ * ALLOWED_TRANSITIONS, same precedent as recordSampleApproval()'s own
+ * outcomes, since it's a distinct, dedicated action rather than a generic
+ * status change. Gated on `sampling.approve` (self-approval-guarded, same
+ * as the real Customer Decision "Approved" outcome) — deliberately NOT
+ * `sampling.edit`, since this bypasses Development/Internal QC/Customer
+ * Submission entirely and needs the same Management-level sign-off a real
+ * approval would.
+ */
+export async function fastTrackApproveSample(actor: ActorContext, sampleRequestId: string, input: FastTrackApprovalInput) {
+  const request = await SampleRequestRepository.findAnyById(actor.companyId, sampleRequestId);
+  if (!request) throw new BusinessRuleError("NOT_FOUND", "Sample request not found.", { id: sampleRequestId });
+
+  await PermissionService.assert(actor.userId, "sampling", "approve", {
+    createdBy: request.requestedByUserId,
+  });
+
+  if (request.status !== "TECH_PACK_READY") {
+    throw new BusinessRuleError(
+      "INVALID_STATE_TRANSITION",
+      `This sample can only be fast-tracked to Approved directly from Tech Pack Ready (skipping Development, Internal QC, and Customer Submission), not from ${request.status}.`,
+      { from: request.status }
+    );
+  }
+
+  const version = await SampleVersionRepository.findLatest(sampleRequestId);
+  if (!version) {
+    throw new BusinessRuleError(
+      "NOT_FOUND",
+      "This request has no version to approve — that shouldn't be possible at Tech Pack Ready.",
+      { id: sampleRequestId }
+    );
+  }
+
+  const decisionNotes = input.notes
+    ? `Fast-tracked directly from Tech Pack Ready (Development, Internal QC, and Customer Submission skipped) — ${input.notes}`
+    : "Fast-tracked directly from Tech Pack Ready (Development, Internal QC, and Customer Submission skipped).";
+
+  const approval = await SampleApprovalRepository.create({
+    sampleVersionId: version.id,
+    decision: "APPROVED",
+    decidedByUserId: actor.userId,
+    customerContactName: null,
+    customerContactPhone: null,
+    decisionNotes,
+  });
+
+  await SampleVersionRepository.update(version.id, { status: "APPROVED", customerDecisionAt: new Date() });
+  const updatedRequest = await SampleRequestRepository.update(sampleRequestId, { status: "APPROVED" });
 
   await writeAuditLog({
     companyId: actor.companyId,

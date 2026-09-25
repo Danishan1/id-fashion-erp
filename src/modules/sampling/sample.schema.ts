@@ -88,6 +88,18 @@ export const duplicateSampleRequestSchema = z.object({
 
 export type DuplicateSampleRequestInput = z.infer<typeof duplicateSampleRequestSchema>;
 
+// "Mark as Approved (Skip Development)" — only reachable from TECH_PACK_READY
+// (2026-09-25, explicit request): sometimes a copied design only needs a
+// materials tweak, not a real physical re-sample/re-QC/re-submission-to-
+// customer cycle. `notes` is optional free text explaining why development
+// wasn't needed, folded into the recorded SampleApproval's own decisionNotes
+// for the audit trail — see fastTrackApproveSample() in sample.service.ts.
+export const fastTrackApprovalSchema = z.object({
+  notes: z.string().max(2000).optional().or(z.literal("")),
+});
+
+export type FastTrackApprovalInput = z.infer<typeof fastTrackApprovalSchema>;
+
 export const sampleVersionSchema = z.object({
   techPackNotes: z.string().max(4000).optional().or(z.literal("")),
   estimatedCostPerUnit: z.coerce.number().min(0).optional(),

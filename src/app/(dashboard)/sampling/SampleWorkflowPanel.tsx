@@ -256,6 +256,13 @@ export function SampleWorkflowPanel({
   const [isCommentModalOpen, setIsCommentModalOpen] = useState(false);
   const [commentBody, setCommentBody] = useState("");
 
+  // "Mark as Approved (Skip Development)" — only shown at TECH_PACK_READY,
+  // alongside "Start Development". A deliberate shortcut (2026-09-25) for a
+  // copied design that only needed a materials/costing tweak, not a real
+  // physical re-sample/re-QC/re-submission-to-customer cycle.
+  const [isFastTrackModalOpen, setIsFastTrackModalOpen] = useState(false);
+  const [fastTrackNotes, setFastTrackNotes] = useState("");
+
   const [categories, setCategories] = useState<Option[]>([]);
   const [seasons, setSeasons] = useState<Option[]>([]);
   const [convertStyleCode, setConvertStyleCode] = useState("");
@@ -736,6 +743,25 @@ export function SampleWorkflowPanel({
     setIsCommentModalOpen(true);
   };
 
+  const openFastTrackModal = () => {
+    setFastTrackNotes("");
+    setIsFastTrackModalOpen(true);
+  };
+
+  const fastTrackApprove = () => {
+    run(
+      () =>
+        fetch(`/api/v1/sampling/${sampleRequestId}/fast-track-approve`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ notes: fastTrackNotes || undefined }),
+        }),
+      "Failed to fast-track this request to Approved."
+    ).then((ok) => {
+      if (ok) setIsFastTrackModalOpen(false);
+    });
+  };
+
   const addComment = () =>
     run(
       () =>
@@ -1091,8 +1117,20 @@ export function SampleWorkflowPanel({
         )}
 
         {request.status === "TECH_PACK_READY" && (
-          canSamplingEdit ? (
-            <ActionButton label="Start Development" onClick={() => transitionTo("IN_DEVELOPMENT")} isBusy={isBusy} />
+          canSamplingEdit || canSamplingApprove ? (
+            <div className="flex flex-wrap items-center gap-3">
+              {canSamplingEdit && (
+                <ActionButton label="Start Development" onClick={() => transitionTo("IN_DEVELOPMENT")} isBusy={isBusy} />
+              )}
+              {canSamplingApprove && (
+                <ActionButton
+                  label="Mark as Approved (Skip Development)"
+                  onClick={openFastTrackModal}
+                  isBusy={isBusy}
+                  variant="secondary"
+                />
+              )}
+            </div>
           ) : (
             <p className="text-sm text-zinc-500 dark:text-zinc-400">
               Tech pack is ready — waiting on a Merchandiser to start development.
@@ -2159,6 +2197,33 @@ export function SampleWorkflowPanel({
           <div className="flex gap-3">
             <ActionButton label="Cancel" onClick={() => setIsDecisionModalOpen(false)} isBusy={false} variant="secondary" />
             <ActionButton label="Record Decision" onClick={recordDecision} isBusy={isBusy} />
+          </div>
+        </div>
+      </Modal>
+
+      {/* Mark as Approved (Skip Development) — a deliberate shortcut, not a
+          plain confirmation, so it's a Modal (like every other decision on
+          this page) rather than a ConfirmModal. */}
+      <Modal open={isFastTrackModalOpen} onClose={() => setIsFastTrackModalOpen(false)} title="Mark as Approved (Skip Development)">
+        <div className="space-y-3">
+          <p className="text-sm text-amber-600 dark:text-amber-400">
+            This skips Development, Internal QC, and Customer Submission entirely and marks the request Approved
+            right now — use this only when no real physical re-sampling or re-approval is needed (e.g. a copied
+            design with just a materials/costing correction).
+          </p>
+          <FormField label="Notes (optional)" htmlFor="modalFastTrackNotes">
+            <textarea
+              id="modalFastTrackNotes"
+              value={fastTrackNotes}
+              onChange={(e) => setFastTrackNotes(e.target.value)}
+              rows={2}
+              placeholder="Why development isn't needed here…"
+              className={textInputClass()}
+            />
+          </FormField>
+          <div className="flex gap-3">
+            <ActionButton label="Cancel" onClick={() => setIsFastTrackModalOpen(false)} isBusy={false} variant="secondary" />
+            <ActionButton label="Confirm & Approve" onClick={fastTrackApprove} isBusy={isBusy} />
           </div>
         </div>
       </Modal>
