@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { DataTable } from "@/components/ui/DataTable";
 import { Modal } from "@/components/ui/Modal";
+import { ViewIcon } from "@/components/ui/icons";
 import { STATUS_LABELS, STATUS_BADGE_CLASS } from "../sampling/statusLabels";
 import { BomVersionPanel } from "./[productId]/BomVersionPanel";
 import { BomEditor } from "./BomEditor";
@@ -73,11 +74,9 @@ interface StyleBomData {
 // reach the exact same editors without leaving /bom-mrp.
 export function BomMrpListClient({
   canViewDesignBom,
-  canEditSampleMaterials,
   canApproveBom,
 }: {
   canViewDesignBom: boolean;
-  canEditSampleMaterials: boolean;
   canApproveBom: boolean;
 }) {
   const [tab, setTab] = useState<"style" | "design">("style");
@@ -156,6 +155,8 @@ export function BomMrpListClient({
           fetchUrl="/api/v1/sampling?status=APPROVED"
           searchPlaceholder="Search by request number…"
           onEditRow={(row) => setSelectedSampleRequestId(row.id)}
+          rowHrefLabel="View"
+          rowHrefIcon={<ViewIcon />}
           columns={[
             { key: "requestNumber", header: "Request #" },
             { key: "styleName", header: "Design Name", sortable: true, render: (row) => row.styleName ?? "—" },
@@ -194,7 +195,6 @@ export function BomMrpListClient({
         <DesignBomModal
           key={selectedSampleRequestId}
           sampleRequestId={selectedSampleRequestId}
-          canEditMaterials={canEditSampleMaterials}
           onClose={() => setSelectedSampleRequestId(null)}
         />
       )}
@@ -278,15 +278,12 @@ function StyleBomModal({
   );
 }
 
-function DesignBomModal({
-  sampleRequestId,
-  canEditMaterials,
-  onClose,
-}: {
-  sampleRequestId: string;
-  canEditMaterials: boolean;
-  onClose: () => void;
-}) {
+// Deliberately always read-only here (2026-09-25, user request) — this
+// modal is a quick cross-design lookup off the /bom-mrp list, not the place
+// to edit a design's materials; the same real update/remove endpoints stay
+// reachable from the Sample Request's own detail page
+// (SampleWorkflowPanel) and the standalone /bom-mrp/design/[id] page.
+function DesignBomModal({ sampleRequestId, onClose }: { sampleRequestId: string; onClose: () => void }) {
   const [request, setRequest] = useState<Record<string, unknown> | null | undefined>(undefined);
 
   useEffect(() => {
@@ -330,10 +327,7 @@ function DesignBomModal({
 
   return (
     <Modal open onClose={onClose} title={title} maxWidthClass="max-w-3xl">
-      <DesignBomMaterialsPanel
-        materials={(currentVersion?.materials as never[]) ?? []}
-        canEditMaterials={canEditMaterials}
-      />
+      <DesignBomMaterialsPanel materials={(currentVersion?.materials as never[]) ?? []} canEditMaterials={false} />
     </Modal>
   );
 }

@@ -35,9 +35,13 @@ interface DataTableProps<T> {
   /**
    * Overrides the built-in row-click affordance's label/icon — defaults to
    * "Edit"/EditIcon (every existing caller's real behavior, unchanged).
-   * Set this when rowHref points somewhere read-only (e.g. a history/detail
-   * view rather than an edit form), so the Actions column doesn't claim an
-   * action ("Edit") the destination doesn't actually offer.
+   * Applies to BOTH rowHref and onEditRow (they're mutually exclusive — see
+   * onEditRow's own doc below) — the same override, since either way it's
+   * describing the same "what does clicking this row's action actually do"
+   * fact. Set this when the destination/modal is read-only (e.g. a
+   * history/detail view or a view-only lookup rather than an edit form), so
+   * the Actions column doesn't claim an action ("Edit") that isn't real —
+   * see /bom-mrp's Design BOM tab, which opens a view-only modal.
    */
   rowHrefLabel?: string;
   rowHrefIcon?: ReactNode;
@@ -351,7 +355,7 @@ export function DataTable<T extends { id: string }>({
                           {rowHref ? (
                             <RowAction icon={rowHrefIcon} label={rowHrefLabel} href={href!} />
                           ) : onEditRow ? (
-                            <RowAction icon={<EditIcon />} label="Edit" onClick={() => onEditRow(row)} />
+                            <RowAction icon={rowHrefIcon} label={rowHrefLabel} onClick={() => onEditRow(row)} />
                           ) : null}
                           {rowActions && (
                             <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
