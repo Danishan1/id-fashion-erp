@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 
 vi.mock("@/core/db/client", () => ({
   prisma: { crmFollowup: { create: vi.fn() }, $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn({})) },
@@ -543,6 +544,82 @@ describe("transitionSampleStatus", () => {
 
     expect(SampleVersionRepository.findLatest).not.toHaveBeenCalled();
     expect(SampleVersionRepository.update).not.toHaveBeenCalled();
+  });
+
+  // Internal QC gate (RBAC audit, 2026-09-24): a Merchandiser (sampling.edit
+  // only, no qc.edit) could previously walk a sample into and out of
+  // INTERNAL_QC single-handedly, since every non-terminal transition shared
+  // one generic sampling.edit check. These three transitions now require
+  // qc.edit specifically; every other transition stays on sampling.edit.
+  describe("Internal QC gate", () => {
+    it.each([
+      ["IN_DEVELOPMENT", "INTERNAL_QC"],
+      ["INTERNAL_QC", "SUBMITTED_TO_CUSTOMER"],
+      ["INTERNAL_QC", "IN_DEVELOPMENT"],
+    ])("asserts qc.edit, not sampling.edit, for %s -> %s", async (from, to) => {
+      vi.mocked(SampleRequestRepository.findAnyById).mockResolvedValue({ id: "sam-1", status: from, customerId: "cust-1" } as never);
+      vi.mocked(SampleRequestRepository.update).mockResolvedValue({ id: "sam-1", status: to } as never);
+
+      await transitionSampleStatus(actor, "sam-1", to as never);
+
+      expect(PermissionService.assert).toHaveBeenCalledWith(actor.userId, "qc", "edit");
+      expect(PermissionService.assert).not.toHaveBeenCalledWith(actor.userId, "sampling", "edit");
+    });
+
+    it.each([
+      ["TECH_PACK_READY", "IN_DEVELOPMENT"],
+      ["INTERNAL_QC", "ON_HOLD"],
+      ["INTERNAL_QC", "CANCELLED"],
+    ])("keeps asserting sampling.edit, not qc.edit, for %s -> %s", async (from, to) => {
+      vi.mocked(SampleRequestRepository.findAnyById).mockResolvedValue({ id: "sam-1", status: from, customerId: "cust-1" } as never);
+      vi.mocked(SampleRequestRepository.update).mockResolvedValue({ id: "sam-1", status: to } as never);
+
+      await transitionSampleStatus(actor, "sam-1", to as never);
+
+      expect(PermissionService.assert).toHaveBeenCalledWith(actor.userId, "sampling", "edit");
+      expect(PermissionService.assert).not.toHaveBeenCalledWith(actor.userId, "qc", "edit");
+    });
+
+    it("rejects the transition outright when the actor lacks qc.edit, even though sampling.edit would have passed", async () => {
+      vi.mocked(SampleRequestRepository.findAnyById).mockResolvedValue({ id: "sam-1", status: "IN_DEVELOPMENT", customerId: "cust-1" } as never);
+      vi.mocked(PermissionService.assert).mockImplementation(async (_userId, module) => {
+        if (module === "qc") throw new BusinessRuleError("PERMISSION_DENIED", "You do not have permission to edit in qc.");
+      });
+
+      await expect(transitionSampleStatus(actor, "sam-1", "INTERNAL_QC" as never)).rejects.toThrow(BusinessRuleError);
+      expect(SampleRequestRepository.update).not.toHaveBeenCalled();
+    });
+  });
+
+  // "Send Back to Development" from Submitted to Customer (2026-09-24) — a
+  // direct retraction for a sample submitted by mistake, before any real
+  // customer feedback exists. Deliberately NOT internal-QC-gated (it has
+  // nothing to do with QC sign-off) and deliberately does NOT go through
+  // recordSampleApproval()/create a new version — same current version,
+  // just its own display status mirrored back to IN_DEVELOPMENT.
+  describe("Send Back to Development from Submitted to Customer", () => {
+    it("allows SUBMITTED_TO_CUSTOMER -> IN_DEVELOPMENT and asserts plain sampling.edit, not qc.edit", async () => {
+      vi.mocked(SampleRequestRepository.findAnyById).mockResolvedValue({ id: "sam-1", status: "SUBMITTED_TO_CUSTOMER", customerId: "cust-1" } as never);
+      vi.mocked(SampleRequestRepository.update).mockResolvedValue({ id: "sam-1", status: "IN_DEVELOPMENT" } as never);
+      vi.mocked(SampleVersionRepository.findLatest).mockResolvedValue({ id: "ver-1", status: "SUBMITTED" } as never);
+
+      await transitionSampleStatus(actor, "sam-1", "IN_DEVELOPMENT" as never);
+
+      expect(PermissionService.assert).toHaveBeenCalledWith(actor.userId, "sampling", "edit");
+      expect(PermissionService.assert).not.toHaveBeenCalledWith(actor.userId, "qc", "edit");
+      expect(SampleRequestRepository.update).toHaveBeenCalledWith("sam-1", expect.objectContaining({ status: "IN_DEVELOPMENT" }));
+    });
+
+    it("mirrors the current version's own status back to IN_DEVELOPMENT, without creating a new version", async () => {
+      vi.mocked(SampleRequestRepository.findAnyById).mockResolvedValue({ id: "sam-1", status: "SUBMITTED_TO_CUSTOMER", customerId: "cust-1" } as never);
+      vi.mocked(SampleRequestRepository.update).mockResolvedValue({ id: "sam-1", status: "IN_DEVELOPMENT" } as never);
+      vi.mocked(SampleVersionRepository.findLatest).mockResolvedValue({ id: "ver-1", status: "SUBMITTED" } as never);
+
+      await transitionSampleStatus(actor, "sam-1", "IN_DEVELOPMENT" as never);
+
+      expect(SampleVersionRepository.update).toHaveBeenCalledWith("ver-1", { status: "IN_DEVELOPMENT" });
+      expect(SampleVersionRepository.create).not.toHaveBeenCalled();
+    });
   });
 });
 

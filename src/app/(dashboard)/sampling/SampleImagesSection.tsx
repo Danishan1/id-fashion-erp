@@ -11,6 +11,13 @@ interface ImageAttachment {
 
 interface SampleImagesSectionProps {
   sampleRequestId: string;
+  /**
+   * Whether this viewer holds `sampling.edit` (2026-09-24) — gates
+   * Upload/Set as Main/Remove. Display-convenience only, matching every
+   * other gate in this module — real enforcement is entirely server-side
+   * in the underlying attachment/main-image routes.
+   */
+  canEdit: boolean;
 }
 
 function inlineUrl(id: string) {
@@ -29,7 +36,7 @@ function attachmentDownloadUrl(id: string) {
  * image/* mime types so this stays a pure display concern layered on top of
  * that shared list, not a second parallel storage mechanism.
  */
-export function SampleImagesSection({ sampleRequestId }: SampleImagesSectionProps) {
+export function SampleImagesSection({ sampleRequestId, canEdit }: SampleImagesSectionProps) {
   const [images, setImages] = useState<ImageAttachment[]>([]);
   const [mainImageAttachmentId, setMainImageAttachmentId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -125,21 +132,23 @@ export function SampleImagesSection({ sampleRequestId }: SampleImagesSectionProp
     <div>
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Images</h2>
-        <label className="cursor-pointer rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800">
-          Upload Image
-          <input
-            key={uploadInputKey}
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            disabled={isBusy}
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) void handleUpload(file);
-            }}
-          />
-        </label>
+        {canEdit && (
+          <label className="cursor-pointer rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800">
+            Upload Image
+            <input
+              key={uploadInputKey}
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              disabled={isBusy}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) void handleUpload(file);
+              }}
+            />
+          </label>
+        )}
       </div>
 
       {error && <p className="mt-2 text-sm text-red-600 dark:text-red-400">{error}</p>}
@@ -173,23 +182,27 @@ export function SampleImagesSection({ sampleRequestId }: SampleImagesSectionProp
                         Main Image
                       </span>
                     ) : (
+                      canEdit && (
+                        <button
+                          type="button"
+                          onClick={() => setMainImage(img.id)}
+                          disabled={isBusy}
+                          className="block w-full rounded border border-zinc-300 px-1.5 py-0.5 text-[10px] font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                        >
+                          Set as Main
+                        </button>
+                      )
+                    )}
+                    {canEdit && (
                       <button
                         type="button"
-                        onClick={() => setMainImage(img.id)}
+                        onClick={() => removeImage(img.id)}
                         disabled={isBusy}
-                        className="block w-full rounded border border-zinc-300 px-1.5 py-0.5 text-[10px] font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                        className="block w-full text-center text-[10px] font-medium text-red-600 hover:text-red-500 disabled:opacity-50"
                       >
-                        Set as Main
+                        Remove
                       </button>
                     )}
-                    <button
-                      type="button"
-                      onClick={() => removeImage(img.id)}
-                      disabled={isBusy}
-                      className="block w-full text-center text-[10px] font-medium text-red-600 hover:text-red-500 disabled:opacity-50"
-                    >
-                      Remove
-                    </button>
                   </div>
                 </div>
               );

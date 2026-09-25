@@ -14,6 +14,10 @@ export default async function StyleDesignsPage({ params }: { params: Promise<{ i
   const { id } = await params;
   const session = await auth();
   await PermissionService.assert(session!.user.id, "sampling", "view").catch(() => notFound());
+  // Gates the Images gallery's Upload/Set-as-Main/Remove controls (2026-09-24)
+  // — same display-convenience-only discipline as the Sample Request detail
+  // page's own equivalent.
+  const canSamplingEdit = await PermissionService.can(session!.user.id, "sampling", "edit");
 
   const product = await getProductById(session!.user.companyId, id).catch(() => null);
   if (!product) notFound();
@@ -24,6 +28,7 @@ export default async function StyleDesignsPage({ params }: { params: Promise<{ i
       styleName={product.styleName}
       styleCode={product.styleCode}
       variantCount={product.variants.length}
+      canSamplingEdit={canSamplingEdit}
     />
   );
 }

@@ -80,7 +80,15 @@ const ALLOWED_TRANSITIONS: Record<SampleStatus, SampleStatus[]> = {
   TECH_PACK_READY: ["IN_DEVELOPMENT", "ON_HOLD", "CANCELLED"],
   IN_DEVELOPMENT: ["INTERNAL_QC", "ON_HOLD", "CANCELLED"],
   INTERNAL_QC: ["SUBMITTED_TO_CUSTOMER", "IN_DEVELOPMENT", "ON_HOLD", "CANCELLED"],
-  SUBMITTED_TO_CUSTOMER: ["CUSTOMER_FEEDBACK_RECEIVED", "ON_HOLD", "CANCELLED"],
+  // IN_DEVELOPMENT here (2026-09-24, explicit request) is a direct "Send
+  // Back to Development" retraction — for when a sample was submitted to
+  // the customer by mistake and needs pulling back BEFORE any real customer
+  // feedback exists. Deliberately distinct from the REVISION_REQUESTED path
+  // below (only reachable via recordSampleApproval()): that one represents
+  // genuine customer feedback and always starts a brand-new version; this
+  // one keeps working on the exact same current version, no new version
+  // number, since nothing about the sample itself has actually changed yet.
+  SUBMITTED_TO_CUSTOMER: ["CUSTOMER_FEEDBACK_RECEIVED", "IN_DEVELOPMENT", "ON_HOLD", "CANCELLED"],
   CUSTOMER_FEEDBACK_RECEIVED: [],
   REVISION_REQUESTED: ["ON_HOLD", "CANCELLED"],
   ON_HOLD: ["CANCELLED"],
@@ -88,6 +96,31 @@ const ALLOWED_TRANSITIONS: Record<SampleStatus, SampleStatus[]> = {
   REJECTED: [],
   CANCELLED: [],
 };
+
+/**
+ * Internal QC gate (2026-09-24) — the three transitions that move a sample
+ * into, out of (pass), or out of (send back) the INTERNAL_QC stage require a
+ * real QC sign-off (`qc.edit`), not the same generic `sampling.edit` every
+ * other non-terminal transition uses. Before this, a Merchandiser (who only
+ * ever holds `sampling.edit`, never `sampling.approve`/`reject`) could
+ * single-handedly walk a sample from Requested all the way to Submitted to
+ * Customer, including moving it into and out of "Internal QC" — nobody else
+ * ever had to sign off on that stage, and QC_MANAGER's own real `qc.*`
+ * grants had zero wiring into Sampling at all. This is the first time the
+ * `qc` module is actually consulted by the Sampling workflow. Scoped
+ * narrowly to exactly these three transitions — Hold/Cancel from INTERNAL_QC
+ * stay on the plain `sampling.edit` gate, since those are administrative
+ * actions, not a QC pass/fail decision.
+ */
+const INTERNAL_QC_GATED_TRANSITIONS: [SampleStatus, SampleStatus][] = [
+  ["IN_DEVELOPMENT", "INTERNAL_QC"],
+  ["INTERNAL_QC", "SUBMITTED_TO_CUSTOMER"],
+  ["INTERNAL_QC", "IN_DEVELOPMENT"],
+];
+
+function isInternalQcGatedTransition(from: SampleStatus, to: SampleStatus): boolean {
+  return INTERNAL_QC_GATED_TRANSITIONS.some(([f, t]) => f === from && t === to);
+}
 
 export interface SampleRequestListFilters {
   customerId?: string;
@@ -432,6 +465,16 @@ export async function setSampleRequestMainImage(actor: ActorContext, id: string,
 export async function transitionSampleStatus(actor: ActorContext, id: string, targetStatus: SampleStatus) {
   const before = await SampleRequestRepository.findAnyById(actor.companyId, id);
   if (!before) throw new BusinessRuleError("NOT_FOUND", "Sample request not found.", { id });
+
+  // The real, authoritative check — deliberately here (not just the route),
+  // same reasoning as recordSampleApproval()'s own self-approval-guarded
+  // check: it can't be bypassed by any future second caller, and it needs
+  // `before.status` (the CURRENT stage), which only exists after this fetch.
+  await PermissionService.assert(
+    actor.userId,
+    isInternalQcGatedTransition(before.status, targetStatus) ? "qc" : "sampling",
+    "edit"
+  );
 
   const allowed = ALLOWED_TRANSITIONS[before.status] ?? [];
   if (!allowed.includes(targetStatus)) {

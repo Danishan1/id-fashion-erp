@@ -31,6 +31,7 @@ interface DesignsListClientProps {
   styleName: string;
   styleCode: string;
   variantCount: number;
+  canSamplingEdit: boolean;
 }
 
 function formatDate(value: string | null) {
@@ -51,7 +52,7 @@ function mainImageDownloadUrl(attachmentId: string) {
  * fetching, same as the modal it replaces) so this page can grow real
  * sections/actions later without having to first migrate off a modal.
  */
-export function DesignsListClient({ productId, styleName, styleCode, variantCount }: DesignsListClientProps) {
+export function DesignsListClient({ productId, styleName, styleCode, variantCount, canSamplingEdit }: DesignsListClientProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [requests, setRequests] = useState<SampleRequestRow[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -214,7 +215,7 @@ export function DesignsListClient({ productId, styleName, styleCode, variantCoun
           title={`Design Images — ${imagesFor.requestNumber}`}
           maxWidthClass="max-w-2xl"
         >
-          <SampleImagesSection key={imagesFor.id} sampleRequestId={imagesFor.id} />
+          <SampleImagesSection key={imagesFor.id} sampleRequestId={imagesFor.id} canEdit={canSamplingEdit} />
         </Modal>
       )}
 

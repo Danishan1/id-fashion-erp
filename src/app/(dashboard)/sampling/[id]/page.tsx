@@ -18,6 +18,23 @@ export default async function SampleRequestDetailPage({ params }: { params: Prom
   const request = await getSampleRequestById(session!.user.companyId, id).catch(() => null);
   if (!request) notFound();
 
+  // Drives whether the Internal QC action buttons render or show an
+  // explanatory message instead (RBAC audit, 2026-09-24) — real enforcement
+  // is entirely server-side in transitionSampleStatus(), this is purely so
+  // a Merchandiser doesn't see a button that would 403 on click.
+  const canQcEdit = await PermissionService.can(session!.user.id, "qc", "edit");
+  // Same discipline, extended to every other mutation this panel offers
+  // (2026-09-24 — QC_MANAGER has sampling:view only, so every one of these
+  // "edit"/"approve"/"reject"-gated buttons was previously a dead end for
+  // them). MANAGEMENT holds approve+reject but NOT edit; MERCHANDISER holds
+  // edit but NOT approve/reject — genuinely disjoint grants (confirmed
+  // against src/config/rbac.ts), so these stay four separate booleans
+  // rather than being folded into one.
+  const canSamplingEdit = await PermissionService.can(session!.user.id, "sampling", "edit");
+  const canSamplingApprove = await PermissionService.can(session!.user.id, "sampling", "approve");
+  const canSamplingReject = await PermissionService.can(session!.user.id, "sampling", "reject");
+  const canGenerateMaterialRequest = await PermissionService.can(session!.user.id, "material_request", "create");
+
   return (
     <div className="space-y-6">
       <div>
@@ -46,7 +63,16 @@ export default async function SampleRequestDetailPage({ params }: { params: Prom
           instance and its `useState(initialRequest)` never re-initializes,
           so the panel can keep showing the *previous* sample's data (wrong
           productId, wrong versions) under the new URL. */}
-      <SampleWorkflowPanel key={id} sampleRequestId={id} initialRequest={JSON.parse(JSON.stringify(request))} />
+      <SampleWorkflowPanel
+        key={id}
+        sampleRequestId={id}
+        initialRequest={JSON.parse(JSON.stringify(request))}
+        canQcEdit={canQcEdit}
+        canSamplingEdit={canSamplingEdit}
+        canSamplingApprove={canSamplingApprove}
+        canSamplingReject={canSamplingReject}
+        canGenerateMaterialRequest={canGenerateMaterialRequest}
+      />
     </div>
   );
 }

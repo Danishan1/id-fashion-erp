@@ -162,7 +162,9 @@ const STATUS_HELP: Record<SampleStatus, string> = {
   TECH_PACK_READY: "Tech pack is in. Start development to begin making the physical sample.",
   IN_DEVELOPMENT: "The physical sample is being made. Once it's ready, send it for internal QC.",
   INTERNAL_QC: "Internal quality check in progress — pass it on to the customer, or send it back for more work.",
-  SUBMITTED_TO_CUSTOMER: "Waiting on the customer. Record their decision below as soon as you hear back.",
+  SUBMITTED_TO_CUSTOMER:
+    "Waiting on the customer. Record their decision below as soon as you hear back — or send it back to " +
+    "Development if it was submitted by mistake and no customer feedback exists yet.",
   CUSTOMER_FEEDBACK_RECEIVED: "Recording the customer's decision…",
   REVISION_REQUESTED: "The customer asked for changes. Start a revision below — it becomes version " +
     "2 (or the next number) and picks up right where version 1 left off.",
@@ -177,7 +179,43 @@ async function parseErrorMessage(res: Response, fallback: string) {
   return body?.error?.message ?? fallback;
 }
 
-export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampleRequestId: string; initialRequest: SampleRequestDetail }) {
+export function SampleWorkflowPanel({
+  sampleRequestId,
+  initialRequest,
+  canQcEdit,
+  canSamplingEdit,
+  canSamplingApprove,
+  canSamplingReject,
+  canGenerateMaterialRequest,
+}: {
+  sampleRequestId: string;
+  initialRequest: SampleRequestDetail;
+  /**
+   * Whether this viewer holds `qc.edit` — required (2026-09-24) for the
+   * three Internal QC transitions: entering QC, passing it on to the
+   * customer, and sending it back to Development. Purely a display
+   * convenience (avoids showing a button that would 403) — the real
+   * enforcement lives entirely server-side in transitionSampleStatus(),
+   * never here (this app's own "sidebar/buttons are not a security
+   * mechanism" discipline).
+   */
+  canQcEdit: boolean;
+  /**
+   * Whether this viewer holds `sampling.edit` — gates every ordinary
+   * mutation this panel offers (Design Name/Color/Size edit, non-QC status
+   * transitions, materials/damage/rate/other-charges/costing edits,
+   * attachments/images, comments, Convert to Style, Update BOM). Same
+   * display-convenience-only discipline as canQcEdit above — real
+   * enforcement is entirely server-side in each route.
+   */
+  canSamplingEdit: boolean;
+  /** Whether this viewer holds `sampling.approve` — gates Lock/Unlock Costing and half of "Record Customer Decision". */
+  canSamplingApprove: boolean;
+  /** Whether this viewer holds `sampling.reject` — gates the other half of "Record Customer Decision". */
+  canSamplingReject: boolean;
+  /** Whether this viewer holds `material_request.create` — gates "Generate Material Request" (a genuinely different module than sampling itself). */
+  canGenerateMaterialRequest: boolean;
+}) {
   const isVisible = useSubmoduleVisibility();
   const [request, setRequest] = useState(initialRequest);
   const [materials, setMaterials] = useState<MaterialOption[]>([]);
@@ -857,6 +895,9 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
         <span className={`rounded-full px-3 py-1 text-xs font-medium ${STATUS_BADGE_CLASS[request.status]}`}>
           {STATUS_LABELS[request.status]}
         </span>
+        <span className="whitespace-nowrap rounded-full bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-300">
+          Size: {request.size?.name ?? "Not specified"}
+        </span>
         {isBusy && <span className="text-xs text-zinc-400">Saving…</span>}
       </div>
 
@@ -893,13 +934,15 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
         ) : (
           <>
             <span className="text-zinc-600 dark:text-zinc-300">{request.styleName || "Not specified yet"}</span>
-            <button
-              type="button"
-              onClick={() => setIsEditingDesignName(true)}
-              className="text-xs font-medium text-indigo-600 hover:text-indigo-500"
-            >
-              Edit
-            </button>
+            {canSamplingEdit && (
+              <button
+                type="button"
+                onClick={() => setIsEditingDesignName(true)}
+                className="text-xs font-medium text-indigo-600 hover:text-indigo-500"
+              >
+                Edit
+              </button>
+            )}
           </>
         )}
       </div>
@@ -954,13 +997,15 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
             <span className="text-zinc-600 dark:text-zinc-300">
               {[request.color?.name, request.size?.name].filter(Boolean).join(" / ") || "Not specified yet"}
             </span>
-            <button
-              type="button"
-              onClick={() => setIsEditingColor(true)}
-              className="text-xs font-medium text-indigo-600 hover:text-indigo-500"
-            >
-              Edit
-            </button>
+            {canSamplingEdit && (
+              <button
+                type="button"
+                onClick={() => setIsEditingColor(true)}
+                className="text-xs font-medium text-indigo-600 hover:text-indigo-500"
+              >
+                Edit
+              </button>
+            )}
           </>
         )}
       </div>
@@ -1025,38 +1070,62 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
         <h2 className="mb-3 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Actions</h2>
 
         {request.status === "REQUESTED" && (
-          <VersionForm
-            title="Mark tech pack ready — this creates version 1"
-            notes={versionNotes}
-            setNotes={setVersionNotes}
-            cost={versionCost}
-            setCost={setVersionCost}
-            file={versionFile}
-            setFile={setVersionFile}
-            onSubmit={addVersion}
-            isBusy={isBusy}
-            submitLabel="Save Version 1"
-          />
+          canSamplingEdit ? (
+            <VersionForm
+              title="Mark tech pack ready — this creates version 1"
+              notes={versionNotes}
+              setNotes={setVersionNotes}
+              cost={versionCost}
+              setCost={setVersionCost}
+              file={versionFile}
+              setFile={setVersionFile}
+              onSubmit={addVersion}
+              isBusy={isBusy}
+              submitLabel="Save Version 1"
+            />
+          ) : (
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              Waiting on a Merchandiser to add the tech pack (version 1).
+            </p>
+          )
         )}
 
         {request.status === "TECH_PACK_READY" && (
-          <ActionButton label="Start Development" onClick={() => transitionTo("IN_DEVELOPMENT")} isBusy={isBusy} />
+          canSamplingEdit ? (
+            <ActionButton label="Start Development" onClick={() => transitionTo("IN_DEVELOPMENT")} isBusy={isBusy} />
+          ) : (
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              Tech pack is ready — waiting on a Merchandiser to start development.
+            </p>
+          )
         )}
 
         {request.status === "IN_DEVELOPMENT" && (
-          <ActionButton label="Send to Internal QC" onClick={() => transitionTo("INTERNAL_QC")} isBusy={isBusy} />
+          canQcEdit ? (
+            <ActionButton label="Send to Internal QC" onClick={() => transitionTo("INTERNAL_QC")} isBusy={isBusy} />
+          ) : (
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              Ready for Internal QC — a QC Manager needs to move this into QC.
+            </p>
+          )
         )}
 
         {request.status === "INTERNAL_QC" && (
-          <div className="flex gap-3">
-            <ActionButton label="Submit to Customer" onClick={() => transitionTo("SUBMITTED_TO_CUSTOMER")} isBusy={isBusy} />
-            <ActionButton
-              label="Send Back to Development"
-              onClick={() => transitionTo("IN_DEVELOPMENT")}
-              isBusy={isBusy}
-              variant="secondary"
-            />
-          </div>
+          canQcEdit ? (
+            <div className="flex gap-3">
+              <ActionButton label="Submit to Customer" onClick={() => transitionTo("SUBMITTED_TO_CUSTOMER")} isBusy={isBusy} />
+              <ActionButton
+                label="Send Back to Development"
+                onClick={() => transitionTo("IN_DEVELOPMENT")}
+                isBusy={isBusy}
+                variant="secondary"
+              />
+            </div>
+          ) : (
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              With Internal QC — waiting on a QC Manager to submit to the customer or send it back to Development.
+            </p>
+          )
         )}
 
         {request.status === "SUBMITTED_TO_CUSTOMER" && !latestVersion && (
@@ -1066,22 +1135,46 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
         )}
 
         {request.status === "SUBMITTED_TO_CUSTOMER" && latestVersion && (
-          <ActionButton label="Record Customer Decision" onClick={openDecisionModal} isBusy={isBusy} />
+          (canSamplingApprove || canSamplingReject || canSamplingEdit) ? (
+            <div className="flex gap-3">
+              {(canSamplingApprove || canSamplingReject) && (
+                <ActionButton label="Record Customer Decision" onClick={openDecisionModal} isBusy={isBusy} />
+              )}
+              {canSamplingEdit && (
+                <ActionButton
+                  label="Send Back to Development"
+                  onClick={() => transitionTo("IN_DEVELOPMENT")}
+                  isBusy={isBusy}
+                  variant="secondary"
+                />
+              )}
+            </div>
+          ) : (
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              Waiting on the customer — Management records their decision once received.
+            </p>
+          )
         )}
 
         {request.status === "REVISION_REQUESTED" && (
-          <VersionForm
-            title={`Start revision — this creates version ${request.currentVersionNumber + 1}`}
-            notes={versionNotes}
-            setNotes={setVersionNotes}
-            cost={versionCost}
-            setCost={setVersionCost}
-            file={versionFile}
-            setFile={setVersionFile}
-            onSubmit={addVersion}
-            isBusy={isBusy}
-            submitLabel="Save Revision"
-          />
+          canSamplingEdit ? (
+            <VersionForm
+              title={`Start revision — this creates version ${request.currentVersionNumber + 1}`}
+              notes={versionNotes}
+              setNotes={setVersionNotes}
+              cost={versionCost}
+              setCost={setVersionCost}
+              file={versionFile}
+              setFile={setVersionFile}
+              onSubmit={addVersion}
+              isBusy={isBusy}
+              submitLabel="Save Revision"
+            />
+          ) : (
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              The customer asked for changes — waiting on a Merchandiser to start a revision.
+            </p>
+          )
         )}
 
         {request.status === "ON_HOLD" && (
@@ -1090,17 +1183,21 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
               On hold from <span className="font-medium">{request.statusBeforeHold ? STATUS_LABELS[request.statusBeforeHold] : "—"}</span>.
               Resuming picks up from exactly there.
             </p>
-            <ActionButton label={`Resume to ${request.statusBeforeHold ? STATUS_LABELS[request.statusBeforeHold] : ""}`} onClick={resumeFromHold} isBusy={isBusy} />
+            {canSamplingEdit ? (
+              <ActionButton label={`Resume to ${request.statusBeforeHold ? STATUS_LABELS[request.statusBeforeHold] : ""}`} onClick={resumeFromHold} isBusy={isBusy} />
+            ) : (
+              <p className="text-sm text-zinc-500 dark:text-zinc-400">Waiting on a Merchandiser to resume this.</p>
+            )}
           </div>
         )}
 
-        {isNonTerminal && request.status !== "ON_HOLD" && (
+        {isNonTerminal && request.status !== "ON_HOLD" && canSamplingEdit && (
           <div className="mt-4 flex gap-3 border-t border-zinc-100 pt-4 dark:border-zinc-800">
             <ActionButton label="Put On Hold" onClick={() => transitionTo("ON_HOLD")} isBusy={isBusy} variant="secondary" />
             <ActionButton label="Cancel Request" onClick={() => transitionTo("CANCELLED")} isBusy={isBusy} variant="danger" />
           </div>
         )}
-        {request.status === "ON_HOLD" && (
+        {request.status === "ON_HOLD" && canSamplingEdit && (
           <div className="mt-4 border-t border-zinc-100 pt-4 dark:border-zinc-800">
             <ActionButton label="Cancel Request" onClick={() => transitionTo("CANCELLED")} isBusy={isBusy} variant="danger" />
           </div>
@@ -1113,7 +1210,7 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
           sampling an existing style. One-way action that creates a permanent
           Product/Style master, substantial enough to stay a page section
           rather than a small-CRUD modal. */}
-      {request.status === "APPROVED" && !request.productId && (
+      {request.status === "APPROVED" && !request.productId && canSamplingEdit && (
         <div className="rounded-lg border border-green-200 bg-green-50 p-4 dark:border-green-900 dark:bg-green-500/5">
           <h2 className="mb-1 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Convert to Style</h2>
           <p className="mb-3 text-sm text-zinc-600 dark:text-zinc-300">
@@ -1189,18 +1286,20 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
               </a>
               .
             </p>
-            {latestVersion && latestVersion.materials.length > 0 && (
+            {latestVersion && latestVersion.materials.length > 0 && canSamplingEdit && (
               <ActionButton label="Update BOM" onClick={openUpdateBomModal} isBusy={isBusy} variant="secondary" />
             )}
           </div>
-          <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
-            &quot;Update BOM&quot; confirms this sample&apos;s own raw-material quantities as actually used during
-            sampling — it never changes the Style&apos;s own real BOM.
-          </p>
+          {latestVersion && latestVersion.materials.length > 0 && canSamplingEdit && (
+            <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+              &quot;Update BOM&quot; confirms this sample&apos;s own raw-material quantities as actually used during
+              sampling — it never changes the Style&apos;s own real BOM.
+            </p>
+          )}
         </div>
       )}
 
-      <SampleImagesSection sampleRequestId={sampleRequestId} />
+      <SampleImagesSection sampleRequestId={sampleRequestId} canEdit={canSamplingEdit} />
 
       {/* Attachments — tech pack files, artwork, measurement sheets. Kept at the
           sample level (not per-version) to avoid over-complicating the model;
@@ -1209,7 +1308,7 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
       <div>
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Attachments</h2>
-          <ActionButton label="Upload Attachment" onClick={openUploadModal} isBusy={isBusy} variant="secondary" />
+          {canSamplingEdit && <ActionButton label="Upload Attachment" onClick={openUploadModal} isBusy={isBusy} variant="secondary" />}
         </div>
         <div className="mt-3 space-y-2">
           {attachments.length === 0 && <p className="text-sm text-zinc-500">No files uploaded yet.</p>}
@@ -1240,14 +1339,16 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
                   {new Date(a.uploadedAt).toLocaleString()}
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => setDeleteAttachmentTarget(a)}
-                disabled={isBusy}
-                className="text-xs font-medium text-red-600 hover:text-red-500 disabled:opacity-50"
-              >
-                Remove
-              </button>
+              {canSamplingEdit && (
+                <button
+                  type="button"
+                  onClick={() => setDeleteAttachmentTarget(a)}
+                  disabled={isBusy}
+                  className="text-xs font-medium text-red-600 hover:text-red-500 disabled:opacity-50"
+                >
+                  Remove
+                </button>
+              )}
             </div>
           ))}
         </div>
@@ -1260,25 +1361,56 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
         <div className="space-y-4">
           {request.versions.map((version) => {
             const isLatest = version.versionNumber === request.currentVersionNumber;
-            const canAddMaterial = isLatest && ["TECH_PACK_READY", "IN_DEVELOPMENT"].includes(request.status);
-            // Costing is never gated by the sample's own status — only by
-            // whether this version's costing itself is locked or superseded
-            // (a superseded version's costing is already permanently frozen
-            // by that status alone, same invariant the server enforces).
+            const canAddMaterial = canSamplingEdit && isLatest && ["TECH_PACK_READY", "IN_DEVELOPMENT"].includes(request.status);
+            // Once a request has moved past Internal QC (Submitted to
+            // Customer / Customer Feedback / Approved / Rejected), the
+            // current version's own data is under customer review — editing
+            // its material rates, damage, other charges, or costing figures
+            // stops making sense there (2026-09-24, explicit request). Still
+            // editable while genuinely in development, including during
+            // Internal QC itself — only "gone past QC" cuts it off. A
+            // revision (REVISION_REQUESTED) always lands back on
+            // IN_DEVELOPMENT the moment the new version is created (see
+            // addSampleVersion()), so this reopens automatically once a
+            // revision actually starts.
+            const isVersionEditableByStage = ["TECH_PACK_READY", "IN_DEVELOPMENT", "INTERNAL_QC"].includes(request.status);
+            const canEditMaterialFields = canSamplingEdit && isLatest && isVersionEditableByStage;
+            // Costing is additionally gated by whether this version's
+            // costing itself is locked or superseded (a superseded version's
+            // costing is already permanently frozen by that status alone,
+            // same invariant the server enforces) — combined with the stage
+            // window above at each usage site below.
             const canEditCosting = version.status !== "SUPERSEDED" && !version.isCostingLocked;
             const versionHasPricedData =
               version.materials.some((m) => m.rate !== null) || version.otherCharges.length > 0;
             return (
               <div key={version.id} className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
                 <div className="flex items-center justify-between">
-                  <p className="text-sm font-medium text-zinc-900 dark:text-zinc-50">
-                    Version {version.versionNumber} — {version.status}
-                  </p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-medium text-zinc-900 dark:text-zinc-50">
+                      Version {version.versionNumber} — {version.status}
+                    </p>
+                    {/* Repeated on every version card (2026-09-24, explicit
+                        request) so the size being sampled is visible no matter
+                        which part of the page — Materials, Costing, Comments —
+                        someone is currently looking at, not just the header
+                        above the stepper. */}
+                    <span className="whitespace-nowrap rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-300">
+                      Size: {request.size?.name ?? "Not specified"}
+                    </span>
+                  </div>
                   <p className="text-xs text-zinc-500">
                     by {version.createdBy.fullName} on {formatDate(version.createdAt)}
                   </p>
                 </div>
-                {version.techPackNotes && <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">{version.techPackNotes}</p>}
+                <div className="mt-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Tech Pack Notes</p>
+                  {version.techPackNotes ? (
+                    <p className="whitespace-pre-wrap text-sm text-zinc-600 dark:text-zinc-300">{version.techPackNotes}</p>
+                  ) : (
+                    <p className="text-sm italic text-zinc-400">No tech pack notes recorded for this version.</p>
+                  )}
+                </div>
                 {version.estimatedCostPerUnit && (
                   <p className="mt-1 text-xs text-zinc-500">
                     Estimated cost/unit: {version.estimatedCostPerUnit}
@@ -1331,15 +1463,17 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
                                   {m.rate}
                                   {m.gstPercentage !== null ? ` (+${m.gstPercentage}% GST)` : ""}
                                 </span>
-                                <button
-                                  type="button"
-                                  onClick={() => openRateModal(m)}
-                                  className="font-medium text-indigo-600 hover:text-indigo-500"
-                                >
-                                  Edit
-                                </button>
+                                {canEditMaterialFields && (
+                                  <button
+                                    type="button"
+                                    onClick={() => openRateModal(m)}
+                                    className="font-medium text-indigo-600 hover:text-indigo-500"
+                                  >
+                                    Edit
+                                  </button>
+                                )}
                               </span>
-                            ) : (
+                            ) : canEditMaterialFields ? (
                               <button
                                 type="button"
                                 onClick={() => openRateModal(m)}
@@ -1347,6 +1481,8 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
                               >
                                 Set rate
                               </button>
+                            ) : (
+                              "—"
                             )}
                           </td>
                           <td className="py-1 pr-3 text-zinc-700 dark:text-zinc-200">
@@ -1356,15 +1492,17 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
                                   {m.damagedQuantity} {m.uom?.code ?? ""}
                                   {m.damageReason ? ` — ${m.damageReason}` : ""}
                                 </span>
-                                <button
-                                  type="button"
-                                  onClick={() => openDamageModal(m)}
-                                  className="font-medium text-indigo-600 hover:text-indigo-500"
-                                >
-                                  Edit
-                                </button>
+                                {canEditMaterialFields && (
+                                  <button
+                                    type="button"
+                                    onClick={() => openDamageModal(m)}
+                                    className="font-medium text-indigo-600 hover:text-indigo-500"
+                                  >
+                                    Edit
+                                  </button>
+                                )}
                               </span>
-                            ) : (
+                            ) : canEditMaterialFields ? (
                               <button
                                 type="button"
                                 onClick={() => openDamageModal(m)}
@@ -1372,6 +1510,8 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
                               >
                                 Report damage
                               </button>
+                            ) : (
+                              "—"
                             )}
                           </td>
                           {canAddMaterial && (
@@ -1400,12 +1540,12 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
                   </table>
                 )}
 
-                {(canAddMaterial || version.materials.length > 0) && (
+                {(canAddMaterial || (version.materials.length > 0 && canGenerateMaterialRequest)) && (
                   <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-zinc-100 pt-3 dark:border-zinc-800">
                     {canAddMaterial && (
                       <ActionButton label="+ Add Material" onClick={() => openAddMaterialModal(version.id)} isBusy={isBusy} variant="secondary" />
                     )}
-                    {version.materials.length > 0 && (
+                    {version.materials.length > 0 && canGenerateMaterialRequest && (
                       <ActionButton
                         label="Generate Material Request"
                         onClick={() => openGenerateMaterialRequestModal(version.id)}
@@ -1423,7 +1563,7 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
                 <div className="mt-3 border-t border-zinc-100 pt-3 dark:border-zinc-800">
                   <div className="flex items-center justify-between">
                     <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-200">Other Charges</p>
-                    {canEditCosting && (
+                    {canEditCosting && canEditMaterialFields && (
                       <ActionButton label="+ Add Charge" onClick={() => openAddChargeModal(version.id)} isBusy={isBusy} variant="secondary" />
                     )}
                   </div>
@@ -1444,7 +1584,7 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
                             <td className="py-1 pr-3 text-zinc-700 dark:text-zinc-200">{c.description}</td>
                             <td className="py-1 pr-3 text-zinc-700 dark:text-zinc-200">{c.amount}</td>
                             <td className="py-1 text-right">
-                              {canEditCosting && (
+                              {canEditCosting && canEditMaterialFields && (
                                 <>
                                   <button
                                     type="button"
@@ -1510,13 +1650,13 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
                   </dl>
 
                   <div className="mt-2 flex gap-2">
-                    {canEditCosting && (
-                      <>
-                        <ActionButton label="Edit Costing" onClick={() => openCostingModal(version.id)} isBusy={isBusy} variant="secondary" />
-                        <ActionButton label="Lock Costing" onClick={() => lockCosting(version.id)} isBusy={isBusy} variant="secondary" />
-                      </>
+                    {canEditCosting && canEditMaterialFields && (
+                      <ActionButton label="Edit Costing" onClick={() => openCostingModal(version.id)} isBusy={isBusy} variant="secondary" />
                     )}
-                    {!canEditCosting && version.isCostingLocked && version.status !== "SUPERSEDED" && (
+                    {canEditCosting && canSamplingApprove && (
+                      <ActionButton label="Lock Costing" onClick={() => lockCosting(version.id)} isBusy={isBusy} variant="secondary" />
+                    )}
+                    {!canEditCosting && version.isCostingLocked && version.status !== "SUPERSEDED" && canSamplingApprove && (
                       <ActionButton label="Unlock Costing" onClick={() => unlockCosting(version.id)} isBusy={isBusy} variant="secondary" />
                     )}
                   </div>
@@ -1545,7 +1685,7 @@ export function SampleWorkflowPanel({ sampleRequestId, initialRequest }: { sampl
       <div>
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Comments</h2>
-          <ActionButton label="Add Comment" onClick={openCommentModal} isBusy={isBusy} variant="secondary" />
+          {canSamplingEdit && <ActionButton label="Add Comment" onClick={openCommentModal} isBusy={isBusy} variant="secondary" />}
         </div>
         <div className="mt-3 space-y-2">
           {request.comments.length === 0 && <p className="text-sm text-zinc-500">No comments yet.</p>}
