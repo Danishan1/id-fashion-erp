@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { Modal } from "@/components/ui/Modal";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
@@ -37,6 +37,7 @@ interface LineRow {
   lineStatus: LineStatus;
   rejectionReason: string | null;
   product: { id: string; styleName: string; styleCode: string } | null;
+  size: { id: string; name: string } | null;
   sampleRequest: SampleRequestRef | null;
 }
 
@@ -197,10 +198,14 @@ function EnquiryLineCard({
         </span>
       </div>
 
-      <dl className="mt-3 grid grid-cols-4 gap-3 text-xs text-zinc-600 dark:text-zinc-300">
+      <dl className="mt-3 grid grid-cols-5 gap-3 text-xs text-zinc-600 dark:text-zinc-300">
         <div>
           <dt className="text-zinc-400">Color</dt>
           <dd>{line.colorRemarks ?? "—"}</dd>
+        </div>
+        <div>
+          <dt className="text-zinc-400">Size</dt>
+          <dd>{line.size?.name ?? "—"}</dd>
         </div>
         <div>
           <dt className="text-zinc-400">Target Qty</dt>
@@ -350,9 +355,21 @@ function ConvertToSampleForm({
   const [styleName, setStyleName] = useState(line.product?.styleName ?? line.styleNameFreeText ?? "");
   const [sampleType, setSampleType] = useState("");
   const [color, setColor] = useState(line.colorRemarks ?? "");
+  // Pre-filled from the line's own real Size FK, unlike Color above — still
+  // editable here in case the buyer's size changed between raising the
+  // enquiry and converting it (see the schema.ts comment on
+  // convertEnquiryLineSchema.sizeId).
+  const [sizeId, setSizeId] = useState(line.size?.id ?? "");
+  const [sizes, setSizes] = useState<Array<{ id: string; name: string }>>([]);
   const [targetSubmissionDate, setTargetSubmissionDate] = useState(line.targetDeliveryDate?.slice(0, 10) ?? "");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/v1/sizes?pageSize=200")
+      .then((res) => res.json())
+      .then((body) => setSizes(body.data ?? []));
+  }, []);
 
   const handleConvert = async () => {
     setIsSubmitting(true);
@@ -365,6 +382,7 @@ function ConvertToSampleForm({
         styleName,
         sampleType,
         color: color || undefined,
+        sizeId: sizeId || undefined,
         targetSubmissionDate: targetSubmissionDate || undefined,
       }),
     });
@@ -405,6 +423,21 @@ function ConvertToSampleForm({
       </FormField>
       <FormField label="Color" htmlFor={`convert-color-${line.id}`}>
         <input id={`convert-color-${line.id}`} value={color} onChange={(e) => setColor(e.target.value)} className={textInputClass()} />
+      </FormField>
+      <FormField label="Size" htmlFor={`convert-size-${line.id}`}>
+        <select
+          id={`convert-size-${line.id}`}
+          value={sizeId}
+          onChange={(e) => setSizeId(e.target.value)}
+          className={textInputClass()}
+        >
+          <option value="">— Not decided —</option>
+          {sizes.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name}
+            </option>
+          ))}
+        </select>
       </FormField>
       <FormField label="Target Submission Date" htmlFor={`convert-date-${line.id}`}>
         <input

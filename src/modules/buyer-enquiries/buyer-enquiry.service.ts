@@ -6,6 +6,7 @@ import { todayIsoDate } from "@/lib/date";
 import { createSampleRequest } from "@/modules/sampling/sample.service";
 import { CustomerRepository } from "@/modules/customers/customer.repository";
 import { ProductRepository } from "@/modules/products/product.repository";
+import { LookupRepository } from "@/modules/lookups/lookup.repository";
 import type {
   BuyerEnquiryInput,
   BuyerEnquiryLineStatusChangeInput,
@@ -128,6 +129,10 @@ export async function createBuyerEnquiry(actor: ActorContext, input: BuyerEnquir
       const product = await ProductRepository.findAnyById(actor.companyId, line.productId);
       if (!product) throw new BusinessRuleError("NOT_FOUND", "Style not found.", { id: line.productId });
     }
+    if (line.sizeId) {
+      const size = await LookupRepository.size.findFirst({ where: { id: line.sizeId, companyId: actor.companyId } });
+      if (!size) throw new BusinessRuleError("NOT_FOUND", "Size not found.", { id: line.sizeId });
+    }
   }
 
   const enquiryNumber = await generateDocumentNumber({
@@ -158,6 +163,7 @@ export async function createBuyerEnquiry(actor: ActorContext, input: BuyerEnquir
         styleNameFreeText: line.styleNameFreeText || null,
         description: line.description || null,
         colorRemarks: line.colorRemarks || null,
+        sizeId: line.sizeId || null,
         targetQuantity: line.targetQuantity ?? null,
         targetUnitPrice: line.targetUnitPrice ?? null,
         targetDeliveryDate: line.targetDeliveryDate ? new Date(line.targetDeliveryDate) : null,
@@ -380,14 +386,22 @@ export async function convertEnquiryLineToSampleRequest(
   // own colorRemarks) is deliberately NOT threaded through here — Sample
   // Request's own color/size are now real Color/Size master FKs (2026-09-15),
   // and a free-text remark has no reliable match to pick from automatically.
-  // The merchandiser picks the real color/size on the created sample request
+  // The merchandiser picks the real color on the created sample request
   // directly afterward, the same way any other sample does.
+  //
+  // Size is different (2026-09-24): the enquiry line's own `sizeId` is
+  // already a real Size master FK, not free text, so it's always an
+  // unambiguous, reliable match — defaults to whatever was recorded on the
+  // line itself, but `input.sizeId` (the Convert form's own pre-filled,
+  // still-editable field) wins if the merchandiser changed it at conversion
+  // time. createSampleRequest() re-validates it belongs to this company.
   const sampleRequest = await createSampleRequest(actor, {
     customerId: line.buyerEnquiry.customerId,
     buyerId: line.buyerEnquiry.buyerId || undefined,
     productId: line.productId || undefined,
     styleName: input.styleName,
     sampleType: input.sampleType,
+    sizeId: input.sizeId || line.sizeId || undefined,
     requestDate: todayIsoDate(),
     targetSubmissionDate: input.targetSubmissionDate || undefined,
   });

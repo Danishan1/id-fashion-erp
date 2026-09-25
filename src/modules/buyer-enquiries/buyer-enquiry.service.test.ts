@@ -9,6 +9,9 @@ vi.mock("@/modules/customers/customer.repository", () => ({
 vi.mock("@/modules/products/product.repository", () => ({
   ProductRepository: { findAnyById: vi.fn() },
 }));
+vi.mock("@/modules/lookups/lookup.repository", () => ({
+  LookupRepository: { size: { findFirst: vi.fn() } },
+}));
 vi.mock("./buyer-enquiry.repository", () => ({
   BuyerEnquiryRepository: {
     findMany: vi.fn(),
@@ -21,14 +24,21 @@ vi.mock("./buyer-enquiry.repository", () => ({
   BuyerEnquiryLineRepository: {
     findAnyById: vi.fn(),
     update: vi.fn(),
+    findWithEnquiryOwner: vi.fn(),
+    convertGuarded: vi.fn(),
+    findByEnquiryId: vi.fn(),
   },
 }));
 
 const { generateDocumentNumber } = await import("@/core/numbering/DocumentNumberingService");
 const { CustomerRepository } = await import("@/modules/customers/customer.repository");
 const { ProductRepository } = await import("@/modules/products/product.repository");
-const { BuyerEnquiryRepository } = await import("./buyer-enquiry.repository");
-const { createBuyerEnquiry, linkCustomerToBuyerEnquiry } = await import("./buyer-enquiry.service");
+const { LookupRepository } = await import("@/modules/lookups/lookup.repository");
+const { createSampleRequest } = await import("@/modules/sampling/sample.service");
+const { BuyerEnquiryRepository, BuyerEnquiryLineRepository } = await import("./buyer-enquiry.repository");
+const { createBuyerEnquiry, linkCustomerToBuyerEnquiry, convertEnquiryLineToSampleRequest } = await import(
+  "./buyer-enquiry.service"
+);
 
 const actor = { companyId: "co-1", userId: "user-1", branchId: "br-1" };
 
@@ -44,7 +54,18 @@ beforeEach(() => {
   vi.mocked(generateDocumentNumber).mockReset().mockResolvedValue("ENQ-2026-00001");
   vi.mocked(CustomerRepository.findByIdWithBuyers).mockReset().mockResolvedValue({ id: "cust-1", buyers: [{ id: "buyer-1" }] } as never);
   vi.mocked(ProductRepository.findAnyById).mockReset().mockResolvedValue({ id: "prod-1" } as never);
+  vi.mocked(LookupRepository.size.findFirst).mockReset().mockResolvedValue({ id: "size-1", name: "Medium" } as never);
   vi.mocked(BuyerEnquiryRepository.createWithLines).mockReset().mockResolvedValue({ id: "enq-1", enquiryNumber: "ENQ-2026-00001", lines: [{}] } as never);
+  vi.mocked(createSampleRequest).mockReset().mockResolvedValue({ id: "sam-1" } as never);
+  vi.mocked(BuyerEnquiryLineRepository.findWithEnquiryOwner).mockReset();
+  vi.mocked(BuyerEnquiryLineRepository.convertGuarded).mockReset().mockResolvedValue({ count: 1 } as never);
+  // recomputeAndPersistEnquiryStatus()'s own dependencies — a plausible
+  // "nothing actually changes" default (status already PARTIALLY_CONVERTED,
+  // matching the one CONVERTED line) so it's a harmless no-op unless a test
+  // specifically cares about the recompute itself.
+  vi.mocked(BuyerEnquiryRepository.findAnyById).mockReset().mockResolvedValue({ id: "enq-1", status: "PARTIALLY_CONVERTED" } as never);
+  vi.mocked(BuyerEnquiryLineRepository.findByEnquiryId).mockReset().mockResolvedValue([{ lineStatus: "CONVERTED" }] as never);
+  vi.mocked(BuyerEnquiryRepository.update).mockReset().mockResolvedValue({ id: "enq-1" } as never);
 });
 
 describe("createBuyerEnquiry", () => {
@@ -76,6 +97,24 @@ describe("createBuyerEnquiry", () => {
     vi.mocked(ProductRepository.findAnyById).mockResolvedValue(null);
     await expect(createBuyerEnquiry(actor, baseInput as never)).rejects.toMatchObject({ code: "NOT_FOUND" });
     expect(BuyerEnquiryRepository.createWithLines).not.toHaveBeenCalled();
+  });
+
+  // Size (2026-09-24) — a real Size master FK on the line, same tenant-scoping
+  // discipline as productId above.
+  it("rejects a line sizeId belonging to another company", async () => {
+    vi.mocked(LookupRepository.size.findFirst).mockResolvedValue(null);
+    await expect(
+      createBuyerEnquiry(actor, { ...baseInput, lines: [{ productId: "prod-1", sizeId: "size-other-tenant" }] } as never)
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(BuyerEnquiryRepository.createWithLines).not.toHaveBeenCalled();
+  });
+
+  it("threads a line's sizeId through to the created line", async () => {
+    await createBuyerEnquiry(actor, { ...baseInput, lines: [{ productId: "prod-1", sizeId: "size-1" }] } as never);
+
+    const call = vi.mocked(BuyerEnquiryRepository.createWithLines).mock.calls[0][0];
+    const created = (call.lines?.create as Array<{ sizeId?: string }>)[0];
+    expect(created).toMatchObject({ sizeId: "size-1" });
   });
 
   it("allows a prospect enquiry with no customerId at all", async () => {
@@ -173,5 +212,46 @@ describe("linkCustomerToBuyerEnquiry", () => {
     await expect(linkCustomerToBuyerEnquiry(actor, "enq-1", { customerId: "cust-other-tenant" })).rejects.toMatchObject({
       code: "NOT_FOUND",
     });
+  });
+});
+
+// Size threading at conversion time (2026-09-24) — unlike `color`, which the
+// service deliberately drops (see its own code comment), `sizeId` is a real
+// FK carried through to the created Sample Request, defaulting to whatever
+// was recorded on the enquiry line itself.
+describe("convertEnquiryLineToSampleRequest", () => {
+  const line = {
+    id: "line-1",
+    buyerEnquiryId: "enq-1",
+    lineStatus: "APPROVED_FOR_SAMPLING",
+    sampleRequestId: null,
+    productId: null,
+    sizeId: "size-from-line",
+    buyerEnquiry: { companyId: "co-1", status: "OPEN", customerId: "cust-1", buyerId: null },
+  };
+  const input = { styleName: "Track Pant", sampleType: "PROTO" };
+
+  it("passes the Convert form's own sizeId to createSampleRequest when supplied", async () => {
+    vi.mocked(BuyerEnquiryLineRepository.findWithEnquiryOwner).mockResolvedValue(line as never);
+
+    await convertEnquiryLineToSampleRequest(actor, "line-1", { ...input, sizeId: "size-from-form" } as never);
+
+    expect(createSampleRequest).toHaveBeenCalledWith(actor, expect.objectContaining({ sizeId: "size-from-form" }));
+  });
+
+  it("defaults to the enquiry line's own sizeId when the Convert form didn't supply one", async () => {
+    vi.mocked(BuyerEnquiryLineRepository.findWithEnquiryOwner).mockResolvedValue(line as never);
+
+    await convertEnquiryLineToSampleRequest(actor, "line-1", input as never);
+
+    expect(createSampleRequest).toHaveBeenCalledWith(actor, expect.objectContaining({ sizeId: "size-from-line" }));
+  });
+
+  it("passes undefined when neither the line nor the form has a size", async () => {
+    vi.mocked(BuyerEnquiryLineRepository.findWithEnquiryOwner).mockResolvedValue({ ...line, sizeId: null } as never);
+
+    await convertEnquiryLineToSampleRequest(actor, "line-1", input as never);
+
+    expect(createSampleRequest).toHaveBeenCalledWith(actor, expect.objectContaining({ sizeId: undefined }));
   });
 });

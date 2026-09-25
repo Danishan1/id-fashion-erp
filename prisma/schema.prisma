@@ -1071,6 +1071,7 @@ model Size {
   variants                   ProductVariant[]
   aiGarmentMeasurementValues AiGarmentMeasurementValue[]
   sampleRequests             SampleRequest[]
+  buyerEnquiryLines          BuyerEnquiryLine[]
 
   @@unique([companyId, code])
   @@map("sizes")
@@ -2379,6 +2380,12 @@ model BuyerEnquiryLine {
   styleNameFreeText  String?                @map("style_name_free_text")
   description        String?
   colorRemarks       String?                @map("color_remarks")
+  // A real Size master FK (2026-09-24, explicit request) — deliberately NOT
+  // free text like colorRemarks above, since it needs to reliably carry
+  // through into the created SampleRequest's own real sizeId at conversion
+  // time (see convertEnquiryLineToSampleRequest()), which a free-text value
+  // could never do without a human matching it against the master by hand.
+  sizeId             String?                @map("size_id") @db.Uuid
   targetQuantity     Decimal?               @map("target_quantity") @db.Decimal(18, 2)
   targetUnitPrice    Decimal?               @map("target_unit_price") @db.Decimal(18, 2)
   targetDeliveryDate DateTime?              @map("target_delivery_date") @db.Date
@@ -2397,6 +2404,7 @@ model BuyerEnquiryLine {
 
   buyerEnquiry  BuyerEnquiry   @relation(fields: [buyerEnquiryId], references: [id])
   product       Product?       @relation(fields: [productId], references: [id])
+  size          Size?          @relation(fields: [sizeId], references: [id])
   sampleRequest SampleRequest? @relation(fields: [sampleRequestId], references: [id])
 
   @@map("buyer_enquiry_lines")

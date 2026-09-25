@@ -28,6 +28,7 @@ interface LineDraft {
   styleNameFreeText: string;
   description: string;
   colorRemarks: string;
+  sizeId: string;
   targetQuantity: string;
   targetUnitPrice: string;
   targetDeliveryDate: string;
@@ -40,6 +41,7 @@ function emptyLine(): LineDraft {
     styleNameFreeText: "",
     description: "",
     colorRemarks: "",
+    sizeId: "",
     targetQuantity: "",
     targetUnitPrice: "",
     targetDeliveryDate: "",
@@ -69,6 +71,7 @@ export function BuyerEnquiryForm() {
   const [customers, setCustomers] = useState<Option[]>([]);
   const [buyers, setBuyers] = useState<Option[]>([]);
   const [styles, setStyles] = useState<Option[]>([]);
+  const [sizes, setSizes] = useState<Option[]>([]);
   const [lines, setLines] = useState<LineDraft[]>([emptyLine()]);
 
   const [error, setError] = useState<string | null>(null);
@@ -81,6 +84,9 @@ export function BuyerEnquiryForm() {
     fetch("/api/v1/products?pageSize=200")
       .then((res) => res.json())
       .then((body) => setStyles(body.data ?? []));
+    fetch("/api/v1/sizes?pageSize=200")
+      .then((res) => res.json())
+      .then((body) => setSizes(body.data ?? []));
   }, []);
 
   useEffect(() => {
@@ -121,6 +127,7 @@ export function BuyerEnquiryForm() {
           styleNameFreeText: line.styleNameFreeText || undefined,
           description: line.description || undefined,
           colorRemarks: line.colorRemarks || undefined,
+          sizeId: line.sizeId || undefined,
           targetQuantity: line.targetQuantity ? Number(line.targetQuantity) : undefined,
           targetUnitPrice: line.targetUnitPrice ? Number(line.targetUnitPrice) : undefined,
           targetDeliveryDate: line.targetDeliveryDate || undefined,
@@ -313,7 +320,7 @@ export function BuyerEnquiryForm() {
               />
             </FormField>
 
-            <div className="grid grid-cols-4 gap-3">
+            <div className="grid grid-cols-5 gap-3">
               <FormField label="Color" htmlFor={`color-${index}`}>
                 <input
                   id={`color-${index}`}
@@ -321,6 +328,21 @@ export function BuyerEnquiryForm() {
                   onChange={(e) => updateLine(index, { colorRemarks: e.target.value })}
                   className={textInputClass()}
                 />
+              </FormField>
+              <FormField label="Size" htmlFor={`size-${index}`}>
+                <select
+                  id={`size-${index}`}
+                  value={line.sizeId}
+                  onChange={(e) => updateLine(index, { sizeId: e.target.value })}
+                  className={textInputClass()}
+                >
+                  <option value="">— Not decided —</option>
+                  {sizes.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
               </FormField>
               <FormField label="Target Qty" htmlFor={`qty-${index}`}>
                 <input

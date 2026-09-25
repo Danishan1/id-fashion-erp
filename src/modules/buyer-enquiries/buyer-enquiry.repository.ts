@@ -40,6 +40,7 @@ export const BuyerEnquiryRepository = {
           orderBy: { createdAt: "asc" },
           include: {
             product: { select: { id: true, styleName: true, styleCode: true } },
+            size: { select: { id: true, name: true } },
             sampleRequest: { select: { id: true, requestNumber: true, status: true } },
           },
         },

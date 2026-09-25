@@ -10,6 +10,9 @@ export const buyerEnquiryLineSchema = z.object({
   styleNameFreeText: z.string().max(200).optional().or(z.literal("")),
   description: z.string().max(2000).optional().or(z.literal("")),
   colorRemarks: z.string().max(200).optional().or(z.literal("")),
+  // A real Size master FK, unlike colorRemarks above — see the schema.prisma
+  // comment on BuyerEnquiryLine.sizeId.
+  sizeId: z.string().uuid().optional().or(z.literal("")),
   targetQuantity: z.coerce.number().positive().optional(),
   targetUnitPrice: z.coerce.number().min(0).optional(),
   targetDeliveryDate: z.string().optional().or(z.literal("")),
@@ -58,6 +61,11 @@ export const convertEnquiryLineSchema = z.object({
   // a deliberate choice, conversion is not exempt from that.
   sampleType: z.enum(SAMPLE_TYPES),
   color: z.string().max(100).optional().or(z.literal("")),
+  // Real Size master FK, pre-filled from the line's own sizeId but still
+  // editable at conversion time (2026-09-24) — the created Sample Request's
+  // own sizeId is set from this directly, since (unlike color above) it's
+  // always a real, unambiguous match against the same company's Size master.
+  sizeId: z.string().uuid().optional().or(z.literal("")),
   targetSubmissionDate: z.string().optional().or(z.literal("")),
 });
 
