@@ -7216,6 +7216,116 @@ user chose the flag.
   `JobWorkOrder` (`JWO-2026-00001`) against it end-to-end. Full suite green throughout. Kept as a real,
   working demonstration.
 
+## Administration — Role Permission Matrix editing overhaul (2026-09-25)
+
+User asked for `/admin/roles/[id]`'s Permission Matrix specifically: Admin and Super Admin should have full
+access to change permissions; Super Admin should NOT be able to change SUPER_ADMIN's own permissions; Admin
+should NOT be able to change Admin's or Super Admin's permissions; every change should be logged. Confirmed
+via AskUserQuestion: the previous rule (`updateRolePermissions()` blanket-blocked editing on ANY
+`isSystemRole` row, including MANAGEMENT/SAMPLING_MANAGER/etc.) was actually wrong per the user's own intent
+— system roles should become genuinely editable, with exactly two independent locks instead: SUPER_ADMIN's
+own row stays permanently protected for everyone (its real access is the wildcard grant in `rbac.ts`, never
+actually read from this table), and a new self-escalation guard blocks any user — including a custom-role
+holder, not just Super Admin — from editing the permission matrix of a role they themselves currently hold.
+
+- **`RoleAdminRepository.actorHoldsRole(userId, roleId)`** — a plain `userBranchRole.count()` check (any
+  branch assignment counts, since holding the role at all is what matters, not which branch).
+  `assertNotSuperAdminRole()` (existing, already used by Branch/Production-Stage access) gained a third
+  `kind: "permission matrix"` value with its own tailored message.
+- **`updateRolePermissions()`** rewritten: `assertNotSuperAdminRole(role.name, "permission matrix")` replaces
+  the old blanket `isSystemRole` block; a new self-escalation check throws `PERMISSION_DENIED` naming the
+  role; the audit log now captures a genuine before/after `grantedKeys` diff (fetched via
+  `findGrantedPermissionIds()` before the write, not just the new state) — a change this sensitive deserves a
+  real change log, not just "here's what it became." Deliberately scoped to the permission matrix only — the
+  sibling `updateRoleProductionStages()`/`updateRoleBranches()` functions keep their existing, unrelated
+  "every system role except SUPER_ADMIN" rule untouched (no self-escalation guard there — stage/branch
+  restriction is purely additive/narrowing, never a privilege-widening risk the way a permission grant is).
+- **UI** (`page.tsx`/`RolePermissionMatrix.tsx`): a new `actorHoldsRole()` service export drives a
+  server-computed `canEditPermissionMatrix = canManage && !isSuperAdminRole && !actorHoldsThisRole`, passed
+  down as the component's sole `canManage` prop (the `isSystemRole` prop was dropped from the component
+  entirely — no longer meaningful for gating). Three mutually-exclusive messages above the matrix: the
+  existing SUPER_ADMIN-locked paragraph (now also naming "permission matrix" explicitly), a new
+  self-escalation paragraph ("You hold the "X" role yourself — to prevent self-escalation, you cannot edit
+  its own permission matrix"), or — for any other system role — a plain informational note that it's now
+  editable like a custom role.
+- 10 new unit tests (`role-admin.service.test.ts`) — the SUPER_ADMIN lock, the self-escalation block (and
+  its own regression proving `replacePermissionsInTx` is never called), a system role other than SUPER_ADMIN
+  now succeeding, an unknown-key rejection, and the real before/after audit diff.
+- **Verified live end-to-end**: as Super Admin, VIEWER's own permission matrix (a system role Super Admin
+  does not hold) toggled and saved for real through the actual checkbox+Save UI (confirmed via a direct API
+  read before/after, then reverted to its original 30-permission state); SUPER_ADMIN's own row correctly
+  shows the locked message with no Save button, and a direct API bypass attempt correctly `409`s. Built a
+  temporary real custom "Self-Escalation Test Role" (granted `administration_roles: view/edit`) and a real
+  test user holding only that role — confirmed the self-escalation message (distinct from the SUPER_ADMIN
+  one) renders on that role's own page with no Save button, a direct API PUT bypass correctly `403`s with the
+  new message, and the same user CAN edit a different role they don't hold (VIEWER) through the real UI.
+  Confirmed the real `audit_logs` table recorded every one of these changes with correct actor attribution
+  and genuine before/after `grantedKeys` diffs. Test user suspended afterward (no delete-user endpoint
+  exists); the test role kept as a real, working demonstration. `npx tsc --noEmit`, `npx eslint .`, and the
+  full `npx vitest run` (1990/1990, 10 new) all clean throughout.
+
+## RBAC — real bug: `PermissionService.invalidate()` never reached Server Component pages (2026-09-25)
+
+User reported: "kisi role me ydi kisi Module me koi bhi permission nhi hai to sidebar me o module show na kre"
+(if a role has zero permission on a module, the sidebar shouldn't show it) — describing behavior that was
+already, on paper, the point of the 2026-08-29 "Sidebar navigation now reflects real per-role permissions"
+feature. Reading `navigation.ts`/`Sidebar.tsx`/`PermissionService.getViewableModules()` confirmed the design
+was correct; live-testing against a real narrowly-scoped test role uncovered why it wasn't behaving that way
+in practice — a genuine, previously-undiscovered bug with real blast radius, not a missing feature.
+
+**Root cause**: `PermissionService` (`src/core/rbac/PermissionService.ts`) is a plain module-level singleton
+(`export const PermissionService = new PermissionServiceImpl();`), unlike the Prisma client
+(`src/core/db/client.ts`), which already uses a `globalThis`-backed singleton specifically to survive
+Next.js/Turbopack bundling this same source file separately per runtime "layer" (Server Components vs. Route
+Handlers) — each layer getting its own independent module evaluation, and therefore its own independent
+`cache` Map. Every permission-mutating action in this app (role permission edits, user status/role changes,
+branch/stage-restriction changes) calls `PermissionService.invalidate()` from a Route Handler — with two
+separate instances, that only ever cleared the Route Handler layer's own copy. The Server Component layer —
+which is what renders the Sidebar (`getViewableModules()`) and gates roughly a dozen detail pages that call
+`.assert()`/`.can()` directly (`admin/roles/[id]/page.tsx`, `sampling/[id]/page.tsx`, `leads/[id]/page.tsx`,
+the Marketing Dashboard, etc. — see the 2026-08-24 P1 pass that added these checks) — never got invalidated
+at all, and kept serving whatever permission set it had first cached for that user, indefinitely, until the
+whole dev server restarted. This explains CLAUDE.md's own earlier note ("a dev-server restart was required
+after reseeding for the change to take effect for an already-logged-in session") — that note treated the
+restart as expected friction specific to reseeding; it was actually this same bug firing on *every* live
+permission change, not just reseeding.
+
+**Confirmed live, step by step, not just theorized**: created a real custom role, granted it only
+`dashboard.view` + `production.view/create/approve`, created a real test user holding only that role, logged
+in — the sidebar correctly showed Dashboard + Manufacturing (Production, no BOM/MRP, no Pending Approvals).
+Then, from a separate Super Admin session, edited the SAME role's permissions (swapped `production.approve`
+for `bom_mrp.view`) via the real API — a direct API call as the test user immediately reflected the change
+(`403` on the now-removed permission), but the Sidebar, reloaded repeatedly on the same still-running server,
+kept showing the pre-edit set indefinitely. `admin/roles/[id]/page.tsx` (a Server-Component-gated page) kept
+rendering fully for a user who'd already lost `administration_roles.view` entirely.
+
+**Fix**: gave `PermissionService` the exact same `globalThis`-backed singleton pattern already established
+for the Prisma client — guarantees one shared instance (and one shared `cache` Map) regardless of which
+layer's copy of the module a given call site imports. Deliberately **not** scoped to non-production only
+(unlike the Prisma client's own guard, which exists for an unrelated serverless-cold-start concern) — the
+cross-layer duplication this fixes is a build-time bundling characteristic, not a dev-mode-only HMR artifact,
+so the same risk exists in a production deployment.
+
+**Re-verified against a freshly restarted server, then — the real test — against an already-running one**:
+after restarting the dev server with the fix applied, the sidebar was immediately correct for the existing
+test session. Then, **without any further restart**, repeated the exact live-edit scenario above: changed
+the test role's permissions again from a Super Admin session, signed back in as the test user on the SAME
+running server, and confirmed the Sidebar picked up the change instantly (BOM/MRP now visible, Pending
+Approvals now hidden) and `admin/roles/[id]/page.tsx` correctly 404'd. Test user suspended afterward; test
+role kept as a working demonstration.
+
+**Impact assessed, not glossed over**: this was never a data-mutation security hole — every actual write
+still went through a Route Handler, which always enforced fresh permissions correctly. The real impact was
+(a) UI/UX drift — a user whose access was just narrowed or revoked would keep seeing sidebar links and
+Server-Component-rendered *read* data (whatever a stale-but-still-cached permission set allowed) until the
+app process happened to restart, and (b) the inverse — a user whose access was just *widened* wouldn't see
+new sidebar links/pages until the same restart, undermining this exact feature the user asked about.
+
+`npx tsc --noEmit`, `npx eslint .`, and the full `npx vitest run` (1990/1990, no regressions — no new test
+was added, since the bug was a cross-request/cross-layer caching artifact that Vitest's own single-process,
+single-module-graph execution model can't reproduce; the fix's correctness was established via live
+verification against the real dev server instead) all clean.
+
 ## Reference
 
 Full architecture rationale, complete table-by-table field lists, and the full role×module permission matrix were developed in the Phase 1 planning session and are condensed here. Consult that history if a design decision needs deeper justification than what's summarized above.

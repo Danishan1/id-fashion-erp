@@ -270,4 +270,29 @@ class PermissionServiceImpl {
   }
 }
 
-export const PermissionService = new PermissionServiceImpl();
+// Next.js/Turbopack can bundle this module separately per runtime "layer"
+// (Server Components vs. Route Handlers) — each layer then gets its OWN
+// copy of `new PermissionServiceImpl()`, with its own independent `cache`
+// Map. Every permission-mutating action in this app (role edits, user
+// status/role changes, branch/stage-restriction changes) calls
+// `PermissionService.invalidate()` from a Route Handler — with two separate
+// instances, that clears only the Route Handler layer's own copy, leaving
+// the Server Component layer (the Sidebar's `getViewableModules()`, and
+// every page that calls `.assert()`/`.can()` directly, e.g.
+// `admin/roles/[id]/page.tsx`) permanently stale until the whole dev server
+// restarts. Confirmed live (2026-09-25): after editing a role's permissions,
+// a fresh API route call correctly reflected the new state while the
+// Sidebar and a Server-Component-gated detail page for the SAME user kept
+// showing the pre-edit permission set indefinitely, across repeated
+// reloads. Fixed with the exact same `globalThis`-backed singleton pattern
+// already used for the Prisma client (src/core/db/client.ts) — guarantees
+// one shared instance (and one shared cache) regardless of which layer's
+// copy of this module a given call site actually imports. Deliberately not
+// scoped to non-production only (unlike the Prisma client's own guard,
+// which exists for an unrelated serverless-cold-start concern) — the
+// cross-layer duplication this fixes is a build-time bundling
+// characteristic, not a dev-mode-only HMR artifact.
+const globalForPermissionService = globalThis as unknown as { __permissionService?: PermissionServiceImpl };
+
+export const PermissionService = globalForPermissionService.__permissionService ?? new PermissionServiceImpl();
+globalForPermissionService.__permissionService = PermissionService;
