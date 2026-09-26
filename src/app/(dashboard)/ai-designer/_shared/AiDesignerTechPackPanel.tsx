@@ -391,6 +391,128 @@ function EditableDataTable({
   );
 }
 
+function safeSv(v: unknown): StatusValue {
+  if (v && typeof v === "object" && "value" in (v as object) && "status" in (v as object)) {
+    const obj = v as { value?: unknown; status?: unknown };
+    return { value: typeof obj.value === "string" ? obj.value : String(obj.value ?? ""), status: (obj.status as string) ?? "NOT_VISIBLE" };
+  }
+  return { value: typeof v === "string" ? v : "", status: "NOT_VISIBLE" };
+}
+
+/**
+ * The Tech Pack's v4 prompt/schema (2026-09-22) added several whole new
+ * sections (Fabric & Materials, Production Instructions, QC Checkpoints,
+ * Hangtag & Barcode, Assumptions & Missing Data, ...) on top of the earlier
+ * v1-v3 shape — an older, already-generated `garmentAnalysisJson` blob
+ * simply won't have those keys at all. Every render call site below assumes
+ * every array/StatusValue field always exists (that's what makes the JSX
+ * readable); this function is the one place that reconciles an
+ * arbitrarily-shaped stored blob into that fully-populated shape, so an old
+ * or partial record renders its old sections correctly and its newer,
+ * missing sections as empty ("None.") rather than crashing the whole panel.
+ */
+type Loose = Record<string, unknown>;
+function asLoose(v: unknown): Loose {
+  return (v && typeof v === "object" ? (v as Loose) : {}) as Loose;
+}
+function str(v: unknown): string {
+  return typeof v === "string" ? v : v == null ? "" : String(v);
+}
+
+function normalizeAnalysis(raw: unknown): TechPackGarmentAnalysis {
+  const a = asLoose(raw);
+  const p1 = asLoose(a.part1);
+  const p2 = asLoose(a.part2);
+  const p3 = asLoose(a.part3);
+  const p4 = asLoose(a.part4);
+
+  const asArray = (v: unknown): Loose[] => (Array.isArray(v) ? (v as Loose[]) : []);
+  const closure = asLoose(p1.closure);
+
+  return {
+    part1: {
+      identification: (p1.identification ?? {}) as Record<string, StatusValue>,
+      construction: (p1.construction ?? {}) as Record<string, StatusValue>,
+      closure: {
+        closureType: safeSv(closure.closureType),
+        closureDetails: safeSv(closure.closureDetails),
+      },
+      seamCallouts: asArray(p1.seamCallouts) as unknown as TechPackGarmentAnalysis["part1"]["seamCallouts"],
+      visibleColors: asArray(p1.visibleColors).map((c) => ({
+        colorName: str(c.colorName),
+        pantoneEstimate: safeSv(c.pantoneEstimate),
+        hexEstimate: safeSv(c.hexEstimate),
+        garmentPanel: str(c.garmentPanel),
+      })),
+      suggestedColorways: asArray(p1.suggestedColorways) as unknown as TechPackGarmentAnalysis["part1"]["suggestedColorways"],
+      artworkItems: asArray(p1.artworkItems).map((it) => ({
+        artworkType: str(it.artworkType),
+        placement: str(it.placement),
+        scale: str(it.scale),
+        dimensions: safeSv(it.dimensions),
+        alignment: str(it.alignment),
+        printMethod: str(it.printMethod),
+        distanceFromHps: safeSv(it.distanceFromHps),
+        distanceFromCf: safeSv(it.distanceFromCf),
+      })),
+      artworkSummary: str(p1.artworkSummary),
+      patternPrintType: str(p1.patternPrintType),
+      patternPrintNotes: str(p1.patternPrintNotes),
+    },
+    part2: {
+      fabricMaterials: asArray(p2.fabricMaterials).map((m) => ({
+        materialRole: str(m.materialRole),
+        fabricType: str(m.fabricType),
+        composition: safeSv(m.composition),
+        gsm: safeSv(m.gsm),
+        width: safeSv(m.width),
+        finish: str(m.finish),
+        consumption: safeSv(m.consumption),
+        supplierNotes: str(m.supplierNotes),
+        garmentPiece: m.garmentPiece == null ? undefined : str(m.garmentPiece),
+      })),
+      bomItems: asArray(p2.bomItems).map((b) => ({
+        materialType: str(b.materialType),
+        composition: safeSv(b.composition),
+        gsm: safeSv(b.gsm),
+        color: str(b.color),
+        consumption: safeSv(b.consumption),
+        notes: str(b.notes),
+        garmentPiece: b.garmentPiece == null ? undefined : str(b.garmentPiece),
+      })),
+      measurementPoints: asArray(p2.measurementPoints).map((m) => ({
+        pointName: str(m.pointName),
+        howToMeasure: str(m.howToMeasure),
+        toleranceCm: str(m.toleranceCm),
+        status: str(m.status) || "NOT_VISIBLE",
+        values: asLoose(m.values) as unknown as Record<string, string>,
+        garmentPiece: m.garmentPiece == null ? undefined : str(m.garmentPiece),
+      })),
+      gradeRulesNotes: str(p2.gradeRulesNotes),
+    },
+    part3: {
+      productionInstructions: asArray(p3.productionInstructions) as unknown as TechPackGarmentAnalysis["part3"]["productionInstructions"],
+      qcCheckpoints: asArray(p3.qcCheckpoints) as unknown as TechPackGarmentAnalysis["part3"]["qcCheckpoints"],
+      mainLabelSpec: safeSv(p3.mainLabelSpec),
+      sizeLabelSpec: safeSv(p3.sizeLabelSpec),
+      careLabelSpec: safeSv(p3.careLabelSpec),
+      polybagSpec: safeSv(p3.polybagSpec),
+      foldingInstructions: str(p3.foldingInstructions),
+      cartonPackingSpec: safeSv(p3.cartonPackingSpec),
+      hangtagSpec: safeSv(p3.hangtagSpec),
+      barcodeType: safeSv(p3.barcodeType),
+      barcodeContent: safeSv(p3.barcodeContent),
+      barcodePlacement: safeSv(p3.barcodePlacement),
+    },
+    part4: {
+      assumptionsAndMissingData: asArray(p4.assumptionsAndMissingData) as unknown as TechPackGarmentAnalysis["part4"]["assumptionsAndMissingData"],
+      additionalReferenceImagesRequired:
+        asArray(p4.additionalReferenceImagesRequired) as unknown as TechPackGarmentAnalysis["part4"]["additionalReferenceImagesRequired"],
+      designerNotes: str(p4.designerNotes),
+    },
+  };
+}
+
 export function AiDesignerTechPackPanel({
   projectId,
   techPack,
@@ -450,7 +572,7 @@ export function AiDesignerTechPackPanel({
     }
   };
 
-  const analysis = techPack?.garmentAnalysisJson;
+  const analysis = techPack?.garmentAnalysisJson ? normalizeAnalysis(techPack.garmentAnalysisJson) : null;
 
   return (
     <div>
