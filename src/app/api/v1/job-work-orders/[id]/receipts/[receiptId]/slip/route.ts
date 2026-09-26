@@ -43,7 +43,7 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
         { label: "Lot No.", value: jobWorkOrder.jobOrder.lot.lotNumber },
         { label: "Against Job Order", value: `${jobWorkOrder.jobOrder.jobNumber} (${jobWorkOrder.jobOrder.productionStage.name})` },
         { label: "Issued By (Sent Out By)", value: jobWorkOrder.requestedBy.fullName },
-        { label: "Vendor / Supplier (Sent To)", value: jobWorkOrder.supplier.name },
+        { label: "Vendor / Supplier (Sent To)", value: jobWorkOrder.contractor.name },
         { label: "Received Quantity", value: `${Number(receipt.receivedQuantity).toLocaleString("en-IN")} ${jobWorkOrder.uom.code}` },
         { label: "Rejected Quantity", value: `${Number(receipt.rejectedQuantity).toLocaleString("en-IN")} ${jobWorkOrder.uom.code}` },
         { label: "Damaged Quantity", value: `${Number(receipt.damagedQuantity).toLocaleString("en-IN")} ${jobWorkOrder.uom.code}` },

@@ -11,8 +11,7 @@ export async function GET(req: NextRequest) {
     await PermissionService.assert(session.user.id, "masters_core", "view");
 
     const query = parseListQuery(req.nextUrl.searchParams, "name");
-    const jobWorkContractor = req.nextUrl.searchParams.get("jobWorkContractor") === "true";
-    const { data, totalCount } = await listSuppliers(session.user.companyId, query, { jobWorkContractor });
+    const { data, totalCount } = await listSuppliers(session.user.companyId, query);
 
     return NextResponse.json({ data, meta: buildListMeta(totalCount, query.page, query.pageSize) });
   } catch (error) {

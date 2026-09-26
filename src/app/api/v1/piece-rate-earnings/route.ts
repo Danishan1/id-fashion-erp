@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
 
     const data = await listPieceRateEarnings(session.user.companyId, {
       employeeId,
-      supplierId: params.get("supplierId") || undefined,
+      contractorId: params.get("contractorId") || undefined,
       status: params.get("status") || undefined,
     });
     return NextResponse.json({ data });

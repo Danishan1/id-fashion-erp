@@ -19,18 +19,10 @@ async function assertSupplierCategoryBelongsToCompany(companyId: string, categor
   if (!category) throw new BusinessRuleError("NOT_FOUND", "Supplier category not found.", { id: categoryId });
 }
 
-export async function listSuppliers(
-  companyId: string,
-  query: ListQuery,
-  // Set by the "Send to External Job-Work" contractor picker
-  // (GET /api/v1/suppliers?jobWorkContractor=true) — every other caller
-  // omits this and sees the full supplier list, unchanged.
-  filters?: { jobWorkContractor?: boolean }
-) {
+export async function listSuppliers(companyId: string, query: ListQuery) {
   const where = {
     companyId,
     deletedAt: null,
-    ...(filters?.jobWorkContractor ? { isJobWorkContractor: true } : {}),
     ...(query.search
       ? {
           OR: [
@@ -77,7 +69,6 @@ function toData(input: SupplierInput) {
     paymentTermsDays: input.paymentTermsDays ?? null,
     defaultCurrencyCode: input.defaultCurrencyCode || null,
     isActive: input.isActive,
-    isJobWorkContractor: input.isJobWorkContractor,
   };
 }
 
@@ -103,7 +94,6 @@ function toUpdateData(input: SupplierUpdateInput): Prisma.SupplierUncheckedUpdat
   if (input.paymentTermsDays !== undefined) data.paymentTermsDays = input.paymentTermsDays ?? null;
   if (input.defaultCurrencyCode !== undefined) data.defaultCurrencyCode = input.defaultCurrencyCode || null;
   if (input.isActive !== undefined) data.isActive = input.isActive;
-  if (input.isJobWorkContractor !== undefined) data.isJobWorkContractor = input.isJobWorkContractor;
   return data;
 }
 

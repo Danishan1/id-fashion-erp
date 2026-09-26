@@ -843,7 +843,7 @@ async function getProductionFullTraceDescriptor(
         issueDate: true,
         issuedQuantity: true,
         status: true,
-        supplier: { select: { name: true } },
+        contractor: { select: { name: true } },
         jobOrder: { select: { productionStage: { select: { name: true } } } },
         receipts: {
           select: { receivedDate: true, receivedQuantity: true, rejectedQuantity: true, damagedQuantity: true, receivedBy: { select: { fullName: true } } },
@@ -889,7 +889,7 @@ async function getProductionFullTraceDescriptor(
       eventDate: jwo.issueDate.toISOString(),
       eventType: "Job Work — Issued",
       stage: jwo.jobOrder.productionStage.name,
-      actor: jwo.supplier.name,
+      actor: jwo.contractor.name,
       quantity: Number(jwo.issuedQuantity),
       detail: `Status: ${jwo.status}`,
     });
@@ -900,7 +900,7 @@ async function getProductionFullTraceDescriptor(
         stage: jwo.jobOrder.productionStage.name,
         actor: r.receivedBy.fullName,
         quantity: Number(r.receivedQuantity),
-        detail: `Received ${r.receivedQuantity} / Rejected ${r.rejectedQuantity} / Damaged ${r.damagedQuantity} (from ${jwo.supplier.name})`,
+        detail: `Received ${r.receivedQuantity} / Rejected ${r.rejectedQuantity} / Damaged ${r.damagedQuantity} (from ${jwo.contractor.name})`,
       });
     }
   }

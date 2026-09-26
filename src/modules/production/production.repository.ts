@@ -420,7 +420,7 @@ const PIECE_RATE_CARD_INCLUDE = {
   product: { select: { id: true, styleName: true, styleCode: true } },
   employee: { select: { id: true, fullName: true, employeeCode: true } },
   employeeCategory: { select: { id: true, name: true } },
-  supplier: { select: { id: true, name: true, code: true } },
+  contractor: { select: { id: true, name: true, code: true } },
 } as const;
 
 export const PieceRateCardRepository = {
@@ -439,7 +439,7 @@ export const PieceRateCardRepository = {
       productId: string | null;
       employeeId: string | null;
       employeeCategoryId: string | null;
-      supplierId: string | null;
+      contractorId: string | null;
     },
     excludeId?: string
   ) =>
@@ -451,7 +451,7 @@ export const PieceRateCardRepository = {
         productId: dims.productId,
         employeeId: dims.employeeId,
         employeeCategoryId: dims.employeeCategoryId,
-        supplierId: dims.supplierId,
+        contractorId: dims.contractorId,
         ...(excludeId ? { id: { not: excludeId } } : {}),
       },
     }),
@@ -497,7 +497,7 @@ export const PieceRateEarningRepository = {
       where,
       include: {
         employee: { select: { id: true, fullName: true, employeeCode: true } },
-        supplier: { select: { id: true, name: true, code: true } },
+        contractor: { select: { id: true, name: true, code: true } },
         productionOperation: { select: { id: true, name: true } },
         jobOrder: {
           select: {

@@ -22,7 +22,7 @@ export async function resolvePieceRate(params: {
   productId?: string | null;
   productionOperationId: string;
   employeeId: string;
-  supplierId?: string | null;
+  contractorId?: string | null;
   asOfDate: Date;
 }): Promise<RateResolution> {
   const employee = await prisma.employee.findUnique({
@@ -39,7 +39,7 @@ export async function resolvePieceRate(params: {
     productionOperationId: params.productionOperationId,
     employeeId: params.employeeId,
     employeeCategoryId: null,
-    supplierId: null,
+    contractorId: null,
   });
   const workerSpecificMatch =
     workerSpecific.filter(activeAt).find((c) => c.productId === (params.productId ?? null)) ??
@@ -54,7 +54,7 @@ export async function resolvePieceRate(params: {
       productionOperationId: params.productionOperationId,
       employeeCategoryId: employee.employeeCategoryId,
       employeeId: null,
-      supplierId: null,
+      contractorId: null,
     });
     const gradeMatch =
       gradeCards.filter(activeAt).find((c) => c.productId === (params.productId ?? null)) ??
@@ -71,7 +71,7 @@ export async function resolvePieceRate(params: {
       productId: params.productId,
       employeeId: null,
       employeeCategoryId: null,
-      supplierId: null,
+      contractorId: null,
     });
     const styleMatch = styleDefaults.filter(activeAt)[0];
     if (styleMatch) {
@@ -85,7 +85,7 @@ export async function resolvePieceRate(params: {
     productId: null,
     employeeId: null,
     employeeCategoryId: null,
-    supplierId: null,
+    contractorId: null,
   });
   const operationMatch = operationDefaults.filter(activeAt)[0];
   if (operationMatch) {
@@ -102,34 +102,37 @@ export async function resolvePieceRate(params: {
 }
 
 /**
- * The External Unit (Supplier) analogue of resolvePieceRate() — the
- * worker-specific/worker-grade tiers above are meaningless for a Supplier,
+ * The External Unit (Contractor) analogue of resolvePieceRate() — the
+ * worker-specific/worker-grade tiers above are meaningless for a Contractor,
  * so this walks a shorter ladder over the SAME generalized PieceRateCard
- * table: Supplier+Operation (optionally Style-scoped) -> Operation-level
+ * table: Contractor+Operation (optionally Style-scoped) -> Operation-level
  * fallback (shared with the internal ladder) -> unresolved. Never a silent
- * 0 — same contract as resolvePieceRate().
+ * 0 — same contract as resolvePieceRate(). The `source` returned when a
+ * contractor-specific row matches stays the enum's own value name,
+ * "SUPPLIER_SPECIFIC" (2026-09-25 Contractor-promotion rename) — renaming a
+ * live Postgres enum value needs its own migration and isn't required here.
  */
-export async function resolveSupplierPieceRate(params: {
+export async function resolveContractorPieceRate(params: {
   companyId: string;
   productId?: string | null;
   productionOperationId: string;
-  supplierId: string;
+  contractorId: string;
   asOfDate: Date;
 }): Promise<RateResolution> {
   const activeAt = (card: { effectiveFrom: Date; effectiveTo: Date | null }) =>
     card.effectiveFrom <= params.asOfDate && (!card.effectiveTo || card.effectiveTo > params.asOfDate);
 
-  const supplierCards = await PieceRateCardRepository.findActiveForResolution(params.companyId, {
+  const contractorCards = await PieceRateCardRepository.findActiveForResolution(params.companyId, {
     productionOperationId: params.productionOperationId,
-    supplierId: params.supplierId,
+    contractorId: params.contractorId,
     employeeId: null,
     employeeCategoryId: null,
   });
-  const supplierMatch =
-    supplierCards.filter(activeAt).find((c) => c.productId === (params.productId ?? null)) ??
-    supplierCards.filter(activeAt).find((c) => c.productId === null);
-  if (supplierMatch) {
-    return { resolved: true, rate: Number(supplierMatch.rate), source: "SUPPLIER_SPECIFIC", rateCardId: supplierMatch.id };
+  const contractorMatch =
+    contractorCards.filter(activeAt).find((c) => c.productId === (params.productId ?? null)) ??
+    contractorCards.filter(activeAt).find((c) => c.productId === null);
+  if (contractorMatch) {
+    return { resolved: true, rate: Number(contractorMatch.rate), source: "SUPPLIER_SPECIFIC", rateCardId: contractorMatch.id };
   }
 
   const operationDefaults = await PieceRateCardRepository.findActiveForResolution(params.companyId, {
@@ -137,7 +140,7 @@ export async function resolveSupplierPieceRate(params: {
     productId: null,
     employeeId: null,
     employeeCategoryId: null,
-    supplierId: null,
+    contractorId: null,
   });
   const operationMatch = operationDefaults.filter(activeAt)[0];
   if (operationMatch) {

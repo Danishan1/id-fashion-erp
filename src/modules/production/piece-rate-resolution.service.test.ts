@@ -7,7 +7,7 @@ vi.mock("./production.repository", () => ({
 
 const { prisma } = await import("@/core/db/client");
 const { PieceRateCardRepository } = await import("./production.repository");
-const { resolvePieceRate, resolveSupplierPieceRate } = await import("./piece-rate-resolution.service");
+const { resolvePieceRate, resolveContractorPieceRate } = await import("./piece-rate-resolution.service");
 
 const asOf = new Date("2026-09-18");
 const params = { companyId: "co-1", productId: "prod-1", productionOperationId: "op-1", employeeId: "emp-1", asOfDate: asOf };
@@ -90,28 +90,28 @@ describe("resolvePieceRate — priority order", () => {
   });
 });
 
-describe("resolveSupplierPieceRate", () => {
-  const supplierParams = { companyId: "co-1", productId: "prod-1", productionOperationId: "op-1", supplierId: "sup-1", asOfDate: asOf };
+describe("resolveContractorPieceRate", () => {
+  const contractorParams = { companyId: "co-1", productId: "prod-1", productionOperationId: "op-1", contractorId: "con-1", asOfDate: asOf };
 
-  it("prefers a supplier-specific rate over the operation default", async () => {
-    vi.mocked(PieceRateCardRepository.findActiveForResolution).mockResolvedValueOnce([card({ rate: 6, id: "sup-card" })] as never);
+  it("prefers a contractor-specific rate over the operation default", async () => {
+    vi.mocked(PieceRateCardRepository.findActiveForResolution).mockResolvedValueOnce([card({ rate: 6, id: "con-card" })] as never);
 
-    const result = await resolveSupplierPieceRate(supplierParams);
-    expect(result).toEqual({ resolved: true, rate: 6, source: "SUPPLIER_SPECIFIC", rateCardId: "sup-card" });
+    const result = await resolveContractorPieceRate(contractorParams);
+    expect(result).toEqual({ resolved: true, rate: 6, source: "SUPPLIER_SPECIFIC", rateCardId: "con-card" });
   });
 
-  it("falls through to the operation default when no supplier-specific row matches", async () => {
+  it("falls through to the operation default when no contractor-specific row matches", async () => {
     vi.mocked(PieceRateCardRepository.findActiveForResolution)
-      .mockResolvedValueOnce([]) // supplier-specific
+      .mockResolvedValueOnce([]) // contractor-specific
       .mockResolvedValueOnce([card({ rate: 4, id: "op-card" })] as never); // operation default
 
-    const result = await resolveSupplierPieceRate(supplierParams);
+    const result = await resolveContractorPieceRate(contractorParams);
     expect(result).toEqual({ resolved: true, rate: 4, source: "OPERATION_DEFAULT", rateCardId: "op-card" });
   });
 
   it("returns resolved:false when neither tier matches", async () => {
     vi.mocked(PieceRateCardRepository.findActiveForResolution).mockResolvedValue([]);
-    const result = await resolveSupplierPieceRate(supplierParams);
+    const result = await resolveContractorPieceRate(contractorParams);
     expect(result).toEqual({ resolved: false });
   });
 });

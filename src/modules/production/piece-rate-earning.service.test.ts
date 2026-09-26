@@ -268,7 +268,7 @@ describe("generateEarningsForQcAcceptance — multi-worker attribution", () => {
   });
 });
 
-describe("generateEarningForJobWorkReceipt — external Supplier earner", () => {
+describe("generateEarningForJobWorkReceipt — external Contractor earner", () => {
   it("pays only the genuinely received quantity, never rejected/damaged", async () => {
     const tx = makeTx();
     await generateEarningForJobWorkReceipt(tx as never, {
@@ -276,7 +276,7 @@ describe("generateEarningForJobWorkReceipt — external Supplier earner", () => 
       jobOrderId: "jo-1",
       jobWorkOrderId: "jwo-1",
       jobWorkReceiptId: "receipt-1",
-      supplierId: "sup-1",
+      contractorId: "con-1",
       productionOperationId: "op-1",
       resolvedRate: 6,
       receivedQuantityDelta: 580,
@@ -284,7 +284,7 @@ describe("generateEarningForJobWorkReceipt — external Supplier earner", () => 
 
     expect(PieceRateEarningRepository.createInTx).toHaveBeenCalledWith(
       tx,
-      expect.objectContaining({ earnerType: "SUPPLIER", supplierId: "sup-1", payableQuantity: 580, rateApplied: 6, amount: 3480 })
+      expect.objectContaining({ earnerType: "SUPPLIER", contractorId: "con-1", payableQuantity: 580, rateApplied: 6, amount: 3480 })
     );
   });
 
@@ -295,7 +295,7 @@ describe("generateEarningForJobWorkReceipt — external Supplier earner", () => 
       jobOrderId: "jo-1",
       jobWorkOrderId: "jwo-1",
       jobWorkReceiptId: "receipt-1",
-      supplierId: "sup-1",
+      contractorId: "con-1",
       productionOperationId: "op-1",
       resolvedRate: null,
       receivedQuantityDelta: 580,

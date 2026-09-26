@@ -35,32 +35,13 @@ beforeEach(() => {
 
 const baseQuery = { page: 1, pageSize: 20, skip: 0, take: 20, sortBy: "name", sortOrder: "asc" as const };
 
-describe("listSuppliers — jobWorkContractor filter", () => {
-  it("omits the isJobWorkContractor filter entirely by default", async () => {
+describe("listSuppliers", () => {
+  it("scopes to companyId and deletedAt: null", async () => {
     await listSuppliers("co-1", baseQuery);
     expect(SupplierRepository.findMany).toHaveBeenCalledWith(
       { companyId: "co-1", deletedAt: null },
       expect.anything()
     );
-  });
-
-  it("scopes to isJobWorkContractor: true when the 'Send to External Job-Work' picker asks for it", async () => {
-    await listSuppliers("co-1", baseQuery, { jobWorkContractor: true });
-    expect(SupplierRepository.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ companyId: "co-1", isJobWorkContractor: true }),
-      expect.anything()
-    );
-  });
-});
-
-describe("updateSupplier — isJobWorkContractor", () => {
-  it("toggles isJobWorkContractor when present in the PATCH body", async () => {
-    vi.mocked(SupplierRepository.findById).mockResolvedValue({ id: "sup-1", code: "SUP001" } as never);
-    vi.mocked(SupplierRepository.update).mockResolvedValue({ id: "sup-1" } as never);
-
-    await updateSupplier(actor, "sup-1", { isJobWorkContractor: true } as never);
-
-    expect(SupplierRepository.update).toHaveBeenCalledWith("sup-1", { isJobWorkContractor: true });
   });
 });
 

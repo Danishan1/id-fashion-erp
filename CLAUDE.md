@@ -7326,6 +7326,102 @@ was added, since the bug was a cross-request/cross-layer caching artifact that V
 single-module-graph execution model can't reproduce; the fix's correctness was established via live
 verification against the real dev server instead) all clean.
 
+## Contractor promoted from a Supplier flag into a real Masters entity (2026-09-25)
+
+User asked to promote Job-Work Contractor out of `Supplier.isJobWorkContractor` (a boolean flag) into its
+own first-class Masters entity — "abhi jo contractor supplier se bnta hai but contractor ka module bna do
+master me." Investigated the real blast radius before building (a Job-Work Contractor is genuinely paid via
+Piece-Rate earnings, not the Purchase/Invoice/Payment pipeline a Supplier uses, so conflating the two in one
+table was always going to be awkward) — confirmed via `AskUserQuestion`: a lighter, contractor-specific
+field set (Name/Code/Contact Person/Phone/Email/Address/Active — no GST/Payment Terms/Bank Details), and a
+clean migration of the one real existing flagged-Supplier row ("HP Cotton") into a genuine new Contractor
+row, re-pointing its real `JobWorkOrder` (`JWO-2026-00001`) and its real external-unit login
+(`hpcotton.jobwork@indradhar.com`) at the new row, with the old flag removed from Supplier entirely.
+
+- **Schema** (two migrations — `20260925125900_add_contractor_document_type` then
+  `20260925130000_add_contractor_master`, split because Postgres refuses to use a newly-added enum value
+  within the same transaction it was added in): new `Contractor` model (`companyId`+`code` unique,
+  `contactPerson`/`phone`/`email`/`address` all optional, soft-deleted like every other master), a new
+  `DocumentType.CONTRACTOR` value (prefix `CONTR`) added to `MASTER_CODE_DOCUMENT_TYPES` alongside Customer/
+  Supplier/Employee/Style/Material — reuses the existing `previewNextMasterCode()`/`advanceMasterCodeSequence()`
+  master-code counter mechanism verbatim, no new numbering scheme. `JobWorkOrder.supplierId` →
+  `contractorId` (NOT NULL, FK to `contractors`), `PieceRateCard.supplierId`/`PieceRateEarning.supplierId` →
+  `contractorId` (both nullable, confirmed zero real rows used them at the time), `ProductionRouteStage
+  .preferredSupplierId` → `preferredContractorId` (nullable, confirmed unused by any application code),
+  `User.supplierId` → `contractorId` (`@unique`, the external-unit-login identity FK). The migration's own
+  data-migration step selected the real "contractor" set via a three-way OR (flag true, OR referenced by a
+  real `JobWorkOrder`, OR referenced by a real `User`) rather than trusting the flag alone — a live query
+  during design had found the flag had drifted to `false` on HP Cotton even though its real JobWorkOrder and
+  User login still pointed at it. `Supplier.isJobWorkContractor` was dropped from the table entirely once
+  the migration completed.
+- **Module** (`src/modules/contractors/`) follows the exact `schema.ts`/`repository.ts`/`service.ts`
+  three-layer convention every other "rich" master already uses (Customer/Supplier/Employee/Warehouse/
+  Product), mirroring `supplier.repository.ts`/`supplier.service.ts` almost line-for-line but without any
+  category/GST/payment-terms/currency logic, since Contractor has none of those. Routes
+  (`/api/v1/contractors`, `[id]`, `[id]/status`, `next-code`) and Masters UI (`/masters/contractors` — list
+  + Add-Contractor modal + `[id]` edit page) mirror the Suppliers masters pages' exact shape.
+- **`isJobWorkContractor` removed everywhere**: `supplier.schema.ts`/`supplier.service.ts` (the field, the
+  `listSuppliers()` filter param, `toData()`/`toUpdateData()`), `GET /api/v1/suppliers`'s `jobWorkContractor`
+  query param, `SuppliersListClient.tsx`'s badge column, `SupplierForm.tsx`'s checkbox, and the `[id]/page.tsx`
+  `initialValues` prop that fed it.
+- **`PermissionService.getAllowedSupplierId()` renamed to `getAllowedContractorId()`**, now reading
+  `User.contractorId` — every caller updated: `job-work-order.service.ts`'s `assertJobWorkOrderSupplierAccess`
+  → `assertJobWorkOrderContractorAccess` (and every internal call site: `assertInternalUser`,
+  `listJobWorkOrders`, `getJobWorkOrderById`, `receiveJobWork`), the `job-work-orders/export/xlsx` route's
+  external-unit-block check, and `job-work-order.service.test.ts`'s mocks. `src/config/rbac.ts`'s
+  `EXTERNAL_UNIT_USER` doc comments updated to match (its actual grants were already correct — no permission
+  change).
+- **`supplierId` → `contractorId` throughout Job Work Order + Piece-Rate**: `job-work-order.schema.ts`
+  (`createJobWorkOrderSchema`), `job-work-order.repository.ts`'s `JOB_WORK_ORDER_INCLUDE` (`supplier:` →
+  `contractor:`), `production.repository.ts`'s `PieceRateCardRepository`/`PieceRateEarningRepository`
+  includes and `findMatchingDimension`'s dimension tuple, `piece-rate-resolution.service.ts`'s
+  `resolveSupplierPieceRate()` renamed to `resolveContractorPieceRate()` (its own `source` value stays the
+  enum's existing name, `SUPPLIER_SPECIFIC` — renaming a live Postgres enum value needs its own migration and
+  wasn't required for this rename to compile; deliberately deferred as cosmetic-only, documented in-schema),
+  `piece-rate-earning.service.ts`'s `generateEarningForJobWorkReceipt()`/`listPieceRateEarnings()`,
+  `piece-rate-card.service.ts`'s two hardcoded-`null` dimension writes (mechanical, no behavior change — this
+  write path never accepted a supplier/contractor field to begin with), and the `job-work-orders`/
+  `piece-rate-earnings` API routes' query params (`?supplierId=` → `?contractorId=`).
+- **UI consumers updated**: `JobWorkOrdersListClient.tsx` (fetches `/api/v1/contractors` instead of the now-
+  removed filtered-suppliers endpoint, `row.supplier` → `row.contractor`), `production/job-work/[id]/page.tsx`
+  and its slip-generation route (`order.supplier.name` → `order.contractor.name`), and
+  `LotWorkflowPanel.tsx`'s "Send to External Job-Work" modal (fetches the real Contractor list instead of a
+  filtered Supplier list, with an updated empty-state hint pointing at Masters → Contractors instead of a
+  Supplier checkbox that no longer exists). The Production Full Trace report (`production.reports.ts`) updated
+  the same way.
+- **New unit tests**: `contractor.service.test.ts` (6 tests, mirroring `customer.service.test.ts`'s exact
+  shape — duplicate-code rejection, partial-PATCH field-touching, NOT_FOUND guards, the status-toggle's
+  single-field write). `supplier.service.test.ts`'s two now-obsolete `isJobWorkContractor`-specific tests were
+  removed (the behavior they tested no longer exists) and replaced with one plain `listSuppliers` scoping
+  test. `job-work-order.service.test.ts`/`piece-rate-resolution.service.test.ts`/`piece-rate-earning.service
+  .test.ts` all had their mocks/fixtures renamed to match (`ContractorRepository`, `getAllowedContractorId`,
+  `resolveContractorPieceRate`, `contractorId: "con-1"`) with zero change to what each test actually verifies.
+- **Verified**: `npx prisma validate`, `NODE_OPTIONS="--max-old-space-size=6144" npx tsc --noEmit`, `npx
+  eslint .` (0 errors — only pre-existing, unrelated `<img>`/unused-var warnings from other in-flight work),
+  and `npx vitest run` (1995/1995, 6 new) all clean. `npx prisma migrate status` confirmed both Contractor
+  migrations were already applied to the live dev DB (the only pending migration reported is the pre-existing,
+  unrelated `20260924100000_add_mask_edit_capability` drift already documented above) — every renamed
+  column/table independently re-verified via the schema/migration SQL rather than trusted from tooling output
+  alone.
+- **Verified live end-to-end**, not just via `tsc`/`eslint`/`vitest`: through the real dev server and the
+  real dev DB — Masters → Contractors correctly listed the migrated "HP Cotton" row (code `CONTR-00001`,
+  `isActive: true`), confirming the data migration's three-way-OR selection worked as designed; created a
+  throwaway "Test Verification Contractor" through the real Add-Contractor modal (auto-suggested the next
+  code, `CONTR-00002`), confirmed it appeared in the list, then deactivated it via the real Active/Inactive
+  toggle (left `Inactive`, matching this project's own no-hard-delete convention for masters). On a real,
+  pre-existing Production Lot's "Send to External Job-Work" modal, confirmed the Contractor picker now
+  sources from `GET /api/v1/contractors` (only "HP Cotton" listed, not the whole Supplier catalog) and
+  successfully created a real Job Work Order (`JWO-2026-00002`) against it end-to-end through the actual UI
+  → API → service → database path — then cleanly cancelled it and confirmed the lot's pooled/committed
+  quantity correctly reverted to its original value, proving both the write and the reversal path work
+  against the renamed `contractorId` column. Also confirmed the Job Work Orders Excel export route and the
+  `GET /api/v1/piece-rate-earnings` endpoint both execute without a runtime error against the renamed schema
+  fields. Zero console/network errors throughout beyond one deliberately-triggered `OVER_PRODUCTION_NOT_ALLOWED`
+  409 from an intentional over-quantity test.
+- **Not built this pass** (unaffected by this rename, unrelated pre-existing gaps): a Rate Card management
+  screen for Contractor-specific piece rates, and a Worker/Contractor Earnings report — both remain the same
+  "not built yet" items already documented in the Production Module Advanced Upgrade section above.
+
 ## Reference
 
 Full architecture rationale, complete table-by-table field lists, and the full role×module permission matrix were developed in the Phase 1 planning session and are condensed here. Consult that history if a design decision needs deeper justification than what's summarized above.

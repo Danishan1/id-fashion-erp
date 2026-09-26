@@ -32,6 +32,7 @@ model Company {
   roles                               Role[]
   customers                           Customer[]
   suppliers                           Supplier[]
+  contractors                         Contractor[]
   supplierCategories                  SupplierCategory[]
   supplierMaterials                   SupplierMaterial[]
   supplierMaterialCategories          SupplierMaterialCategory[]
@@ -255,13 +256,14 @@ model User {
   companyId         String     @map("company_id") @db.Uuid
   defaultBranchId   String?    @map("default_branch_id") @db.Uuid
   employeeId        String?    @unique @map("employee_id") @db.Uuid
-  // A vendor/external-unit login — this account genuinely IS that Supplier's
-  // own portal identity (same 1:1 "this login is that real-world entity"
-  // shape as employeeId just above, not a role-style many-to-many). Nullable
-  // for every ordinary internal user. Scoped server-side via
-  // PermissionService.getAllowedSupplierId() in every Job Work Order route —
-  // an EXTERNAL_UNIT_USER role sees/acts on only its own supplier's jobs.
-  supplierId        String?    @unique @map("supplier_id") @db.Uuid
+  // A vendor/external-unit login — this account genuinely IS that
+  // Contractor's own portal identity (same 1:1 "this login is that
+  // real-world entity" shape as employeeId just above, not a role-style
+  // many-to-many). Nullable for every ordinary internal user. Scoped
+  // server-side via PermissionService.getAllowedContractorId() in every Job
+  // Work Order route — an EXTERNAL_UNIT_USER role sees/acts on only its own
+  // contractor's jobs.
+  contractorId      String?    @unique @map("contractor_id") @db.Uuid
   email             String     @unique
   passwordHash      String     @map("password_hash")
   fullName          String     @map("full_name")
@@ -292,7 +294,7 @@ model User {
   company                                    Company                              @relation(fields: [companyId], references: [id])
   defaultBranch                              Branch?                              @relation("UserDefaultBranch", fields: [defaultBranchId], references: [id])
   employee                                   Employee?                            @relation(fields: [employeeId], references: [id])
-  supplierPortalFor                          Supplier?                            @relation("SupplierPortalUser", fields: [supplierId], references: [id])
+  contractorPortalFor                        Contractor?                          @relation("ContractorPortalUser", fields: [contractorId], references: [id])
   branchRoles                                UserBranchRole[]
   auditLogs                                  AuditLog[]
   notifications                              Notification[]
@@ -727,12 +729,6 @@ model Supplier {
   paymentTermsDays    Int?      @map("payment_terms_days")
   defaultCurrencyCode String?   @map("default_currency_code") @db.Char(3)
   bankDetailsJson     Json?     @map("bank_details_json")
-  // 2026-09-23 — distinct from Category (single-valued today): a supplier
-  // can be both a raw-material vendor AND an external job-work contractor at
-  // once. Filters the "Send to External Job-Work" picker in
-  // LotWorkflowPanel.tsx, which previously listed every Supplier
-  // undifferentiated (fabric/trim/packaging/machinery vendors included).
-  isJobWorkContractor Boolean   @default(false) @map("is_job_work_contractor")
   isActive            Boolean   @default(true) @map("is_active")
   deletedAt           DateTime? @map("deleted_at")
   createdAt           DateTime  @default(now()) @map("created_at")
@@ -748,17 +744,48 @@ model Supplier {
   purchaseInvoices        PurchaseInvoice[]
   payments                Payment[]
   expenses                Expense[]
-  jobWorkOrders           JobWorkOrder[]
   aiGarmentFabricDetails  AiGarmentFabricDetail[]
   aiDesignerProjects      AiDesignerProject[]
   replicateDesignProjects ReplicateDesignProject[]
-  portalUser              User?                      @relation("SupplierPortalUser")
-  pieceRateCards          PieceRateCard[]
-  pieceRateEarnings       PieceRateEarning[]
-  preferredForRouteStages ProductionRouteStage[]
 
   @@unique([companyId, code])
   @@map("suppliers")
+}
+
+/**
+ * A genuinely separate master from Supplier (2026-09-25, promoted from the
+ * short-lived `Supplier.isJobWorkContractor` flag) — an external job-work
+ * unit/contractor is a different real-world relationship than a
+ * raw-material vendor (paid via the Piece-Rate earning ledger, not the
+ * Purchase Order/Invoice/Payment pipeline Suppliers use), so it gets its
+ * own identity rather than riding on Supplier's much larger, PO-oriented
+ * shape. Deliberately a lighter field set than Supplier (no category, tax
+ * registration, payment terms, or bank details) — see CLAUDE.md's own
+ * dated note for the reasoning.
+ */
+model Contractor {
+  id            String    @id @default(uuid()) @db.Uuid
+  companyId     String    @map("company_id") @db.Uuid
+  code          String
+  name          String
+  contactPerson String?   @map("contact_person")
+  phone         String?
+  email         String?
+  address       String?
+  isActive      Boolean   @default(true) @map("is_active")
+  deletedAt     DateTime? @map("deleted_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  company                 Company                 @relation(fields: [companyId], references: [id])
+  jobWorkOrders           JobWorkOrder[]
+  pieceRateCards          PieceRateCard[]
+  pieceRateEarnings       PieceRateEarning[]
+  portalUser              User?                   @relation("ContractorPortalUser")
+  preferredForRouteStages ProductionRouteStage[]
+
+  @@unique([companyId, code])
+  @@map("contractors")
 }
 
 /**
@@ -1291,9 +1318,12 @@ enum RateCardRateSource {
   WORKER_GRADE
   STYLE_OPERATION_DEFAULT
   OPERATION_DEFAULT
-  // The External Unit (Supplier) analogue of WORKER_SPECIFIC — resolved via
-  // resolveSupplierPieceRate(), never resolvePieceRate() (which is
-  // Employee-only).
+  // The External Unit (Contractor) analogue of WORKER_SPECIFIC — resolved via
+  // resolveContractorPieceRate(), never resolvePieceRate() (which is
+  // Employee-only). Enum value name kept as SUPPLIER_SPECIFIC (2026-09-25
+  // Contractor-promotion rename) — renaming a live Postgres enum value needs
+  // its own migration and isn't required for the FK-field rename to compile;
+  // deliberately deferred as cosmetic-only.
   SUPPLIER_SPECIFIC
 }
 
@@ -1318,7 +1348,7 @@ model PieceRateCard {
   productId             String?   @map("product_id") @db.Uuid
   employeeId            String?   @map("employee_id") @db.Uuid
   employeeCategoryId    String?   @map("employee_category_id") @db.Uuid
-  supplierId            String?   @map("supplier_id") @db.Uuid
+  contractorId          String?   @map("contractor_id") @db.Uuid
   rate                  Decimal   @db.Decimal(18, 4)
   effectiveFrom         DateTime  @map("effective_from") @db.Date
   effectiveTo           DateTime? @map("effective_to") @db.Date
@@ -1333,7 +1363,7 @@ model PieceRateCard {
   product                Product?             @relation(fields: [productId], references: [id])
   employee               Employee?            @relation(fields: [employeeId], references: [id])
   employeeCategory       EmployeeCategory?    @relation(fields: [employeeCategoryId], references: [id])
-  supplier               Supplier?            @relation(fields: [supplierId], references: [id])
+  contractor             Contractor?          @relation(fields: [contractorId], references: [id])
   createdBy              User                 @relation("PieceRateCardCreatedBy", fields: [createdByUserId], references: [id])
   updatedBy              User?                @relation("PieceRateCardUpdatedBy", fields: [updatedByUserId], references: [id])
   resolvedForAssignments JobOrderAssignment[]
@@ -1342,7 +1372,7 @@ model PieceRateCard {
   @@index([companyId, productId, productionOperationId])
   @@index([companyId, employeeId, productionOperationId])
   @@index([companyId, employeeCategoryId, productionOperationId])
-  @@index([companyId, supplierId, productionOperationId])
+  @@index([companyId, contractorId, productionOperationId])
   @@map("piece_rate_cards")
 }
 
@@ -1392,7 +1422,7 @@ model PieceRateEarning {
   employeeId                  String?                      @map("employee_id") @db.Uuid
   jobWorkOrderId              String?                      @map("job_work_order_id") @db.Uuid
   jobWorkReceiptId            String?                      @map("job_work_receipt_id") @db.Uuid
-  supplierId                  String?                      @map("supplier_id") @db.Uuid
+  contractorId                String?                      @map("contractor_id") @db.Uuid
   productionOperationId       String?                      @map("production_operation_id") @db.Uuid
   qtyBasis                    PieceRatePaymentQuantityRule @map("qty_basis")
   payableQuantity             Decimal                      @map("payable_quantity") @db.Decimal(18, 4)
@@ -1415,12 +1445,12 @@ model PieceRateEarning {
   employee            Employee?            @relation(fields: [employeeId], references: [id])
   jobWorkOrder        JobWorkOrder?        @relation(fields: [jobWorkOrderId], references: [id])
   jobWorkReceipt      JobWorkReceipt?      @relation(fields: [jobWorkReceiptId], references: [id])
-  supplier            Supplier?            @relation(fields: [supplierId], references: [id])
+  contractor          Contractor?          @relation(fields: [contractorId], references: [id])
   productionOperation ProductionOperation? @relation(fields: [productionOperationId], references: [id])
   approvedBy          User?                @relation("PieceRateEarningApprovedBy", fields: [approvedByUserId], references: [id])
 
   @@index([companyId, employeeId])
-  @@index([companyId, supplierId])
+  @@index([companyId, contractorId])
   @@index([jobOrderId, jobOrderAssignmentId])
   @@index([jobOrderId, jobWorkOrderId])
   @@index([companyId, status])
@@ -1481,15 +1511,15 @@ model ProductionRoute {
 }
 
 model ProductionRouteStage {
-  id                  String  @id @default(uuid()) @db.Uuid
-  productionRouteId   String  @map("production_route_id") @db.Uuid
-  productionStageId   String  @map("production_stage_id") @db.Uuid
-  isExternal          Boolean @default(false) @map("is_external")
-  preferredSupplierId String? @map("preferred_supplier_id") @db.Uuid
+  id                    String  @id @default(uuid()) @db.Uuid
+  productionRouteId     String  @map("production_route_id") @db.Uuid
+  productionStageId     String  @map("production_stage_id") @db.Uuid
+  isExternal            Boolean @default(false) @map("is_external")
+  preferredContractorId String? @map("preferred_contractor_id") @db.Uuid
 
-  productionRoute   ProductionRoute @relation(fields: [productionRouteId], references: [id], onDelete: Cascade)
-  productionStage   ProductionStage @relation(fields: [productionStageId], references: [id])
-  preferredSupplier Supplier?       @relation(fields: [preferredSupplierId], references: [id])
+  productionRoute     ProductionRoute @relation(fields: [productionRouteId], references: [id], onDelete: Cascade)
+  productionStage     ProductionStage @relation(fields: [productionStageId], references: [id])
+  preferredContractor Contractor?     @relation(fields: [preferredContractorId], references: [id])
 
   @@unique([productionRouteId, productionStageId])
   @@map("production_route_stages")
@@ -4496,7 +4526,7 @@ model JobWorkOrder {
   companyId              String                 @map("company_id") @db.Uuid
   branchId               String?                @map("branch_id") @db.Uuid
   jobWorkNumber          String                 @map("job_work_number")
-  supplierId             String                 @map("supplier_id") @db.Uuid
+  contractorId           String                 @map("contractor_id") @db.Uuid
   jobOrderId             String                 @map("job_order_id") @db.Uuid
   // Piece-Rate/External-costing (2026-09-18) — set explicitly at creation
   // (a JobWorkOrder's single stage may have more than one configured
@@ -4527,7 +4557,7 @@ model JobWorkOrder {
 
   company             Company                @relation(fields: [companyId], references: [id])
   branch              Branch?                @relation(fields: [branchId], references: [id])
-  supplier            Supplier               @relation(fields: [supplierId], references: [id])
+  contractor          Contractor             @relation(fields: [contractorId], references: [id])
   jobOrder            JobOrder               @relation(fields: [jobOrderId], references: [id])
   uom                 UnitOfMeasure          @relation(fields: [uomId], references: [id])
   requestedBy         User                   @relation(fields: [requestedByUserId], references: [id])
@@ -4538,7 +4568,7 @@ model JobWorkOrder {
 
   @@unique([companyId, jobWorkNumber])
   @@index([companyId, status])
-  @@index([supplierId])
+  @@index([contractorId])
   @@index([jobOrderId])
   @@map("job_work_orders")
 }
@@ -8167,6 +8197,7 @@ enum DocumentType {
   EMPLOYEE
   STYLE
   MATERIAL
+  CONTRACTOR
   LEAD
   DEAL
   CAMPAIGN

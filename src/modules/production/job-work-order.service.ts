@@ -10,10 +10,10 @@ import { getAvailableQuantity, recordInventoryTransaction } from "@/modules/inve
 import { LookupRepository } from "@/modules/lookups/lookup.repository";
 import { ProductRepository } from "@/modules/products/product.repository";
 import { FabricRollRepository } from "@/modules/purchasing/fabric-roll.repository";
-import { SupplierRepository } from "@/modules/suppliers/supplier.repository";
+import { ContractorRepository } from "@/modules/contractors/contractor.repository";
 import { JobWorkOrderStatus, type Prisma } from "@prisma/client";
 import { applyJobOrderQuantityDelta, assertStageAccess } from "./job-order.service";
-import { resolveSupplierPieceRate } from "./piece-rate-resolution.service";
+import { resolveContractorPieceRate } from "./piece-rate-resolution.service";
 import { generateEarningForJobWorkReceipt } from "./piece-rate-earning.service";
 import { JobOrderRepository, ProductionOrderRepository } from "./production.repository";
 import type { CreateJobWorkOrderInput, ReceiveJobWorkInput } from "./job-work-order.schema";
@@ -31,12 +31,12 @@ const EPSILON = 0.0001;
  * External Unit User (2026-09-18) — deny-as-NOT_FOUND, the same convention
  * already established by getAllowedBranchIds/getAllowedProductionStageIds
  * (never reveal a record exists to someone who can't see it). `null` from
- * PermissionService.getAllowedSupplierId means an ordinary internal user
+ * PermissionService.getAllowedContractorId means an ordinary internal user
  * with no restriction — this is a no-op for every pre-existing caller.
  */
-async function assertJobWorkOrderSupplierAccess(actor: { userId: string }, order: { supplierId: string }) {
-  const allowedSupplierId = await PermissionService.getAllowedSupplierId(actor.userId);
-  if (allowedSupplierId !== null && order.supplierId !== allowedSupplierId) {
+async function assertJobWorkOrderContractorAccess(actor: { userId: string }, order: { contractorId: string }) {
+  const allowedContractorId = await PermissionService.getAllowedContractorId(actor.userId);
+  if (allowedContractorId !== null && order.contractorId !== allowedContractorId) {
     throw new BusinessRuleError("NOT_FOUND", "Job-work order not found.", {});
   }
 }
@@ -45,8 +45,8 @@ async function assertJobWorkOrderSupplierAccess(actor: { userId: string }, order
  * cancelling/holding/closing an order, or reversing a receipt are internal
  * business decisions a vendor's own account must never be able to make. */
 async function assertInternalUser(actor: { userId: string }) {
-  const allowedSupplierId = await PermissionService.getAllowedSupplierId(actor.userId);
-  if (allowedSupplierId !== null) {
+  const allowedContractorId = await PermissionService.getAllowedContractorId(actor.userId);
+  if (allowedContractorId !== null) {
     throw new BusinessRuleError("PERMISSION_DENIED", "This action is not available to an external unit account.", {});
   }
 }
@@ -117,19 +117,19 @@ const VALID_JOB_WORK_ORDER_STATUSES = new Set<string>(Object.values(JobWorkOrder
 
 export async function listJobWorkOrders(
   companyId: string,
-  query: ListQuery & { supplierId?: string; overdueOnly?: boolean },
+  query: ListQuery & { contractorId?: string; overdueOnly?: boolean },
   userId?: string
 ) {
-  // External Unit User (2026-09-18) — an external login's own supplierId
-  // always wins over any client-supplied ?supplierId= filter, never the
+  // External Unit User (2026-09-18) — an external login's own contractorId
+  // always wins over any client-supplied ?contractorId= filter, never the
   // other way around (a client-supplied value must never WIDEN what an
   // external user can see).
-  const allowedSupplierId = userId ? await PermissionService.getAllowedSupplierId(userId) : null;
+  const allowedContractorId = userId ? await PermissionService.getAllowedContractorId(userId) : null;
 
   const where: Prisma.JobWorkOrderWhereInput = {
     companyId,
     ...(query.search ? { jobWorkNumber: { contains: query.search, mode: "insensitive" as const } } : {}),
-    ...(allowedSupplierId ? { supplierId: allowedSupplierId } : query.supplierId ? { supplierId: query.supplierId } : {}),
+    ...(allowedContractorId ? { contractorId: allowedContractorId } : query.contractorId ? { contractorId: query.contractorId } : {}),
     ...(query.status && VALID_JOB_WORK_ORDER_STATUSES.has(query.status)
       ? { status: query.status as JobWorkOrderStatus }
       : {}),
@@ -166,7 +166,7 @@ export async function listPendingJobWorkReceipts(actor: ActorContext) {
 export async function getJobWorkOrderById(companyId: string, id: string, userId?: string) {
   const order = await JobWorkOrderRepository.findAnyById(companyId, id);
   if (!order) throw new BusinessRuleError("NOT_FOUND", "Job-work order not found.", { id });
-  if (userId) await assertJobWorkOrderSupplierAccess({ userId }, order);
+  if (userId) await assertJobWorkOrderContractorAccess({ userId }, order);
   return { ...order, metrics: computeJobWorkOrderMetrics(order) };
 }
 
@@ -312,10 +312,10 @@ export async function createJobWorkOrder(actor: ActorContext, input: CreateJobWo
   }
   await assertStageAccess(actor, jobOrder.productionStageId);
 
-  // Tenant-scoped — a supplierId from another company would otherwise sit
+  // Tenant-scoped — a contractorId from another company would otherwise sit
   // unvalidated on the record and be embedded in every subsequent read.
-  const supplier = await SupplierRepository.findById(actor.companyId, input.supplierId);
-  if (!supplier) throw new BusinessRuleError("NOT_FOUND", "Contractor/supplier not found.", { id: input.supplierId });
+  const contractor = await ContractorRepository.findById(actor.companyId, input.contractorId);
+  if (!contractor) throw new BusinessRuleError("NOT_FOUND", "Contractor not found.", { id: input.contractorId });
 
   const unprocessed =
     Number(jobOrder.plannedQuantity) - Number(jobOrder.completedQuantity) - Number(jobOrder.rejectedQuantity) - Number(jobOrder.damagedQuantity);
@@ -343,7 +343,7 @@ export async function createJobWorkOrder(actor: ActorContext, input: CreateJobWo
 
   // Piece-Rate external costing (2026-09-18) — resolved and snapshotted once
   // at issuance, plugging into the SAME generalized Rate Card table internal
-  // piece-rate assignments use (dimensioned by supplierId here instead of
+  // piece-rate assignments use (dimensioned by contractorId here instead of
   // employeeId). An unresolved rate never blocks issuance — business
   // continuity — it just flags UNRESOLVED for later correction.
   let resolvedRate: number | null = null;
@@ -353,11 +353,11 @@ export async function createJobWorkOrder(actor: ActorContext, input: CreateJobWo
     const settings = await getProductionSettings(actor.companyId);
     if (settings.pieceRateTrackingEnabled) {
       const order = await ProductionOrderRepository.findAnyById(actor.companyId, jobOrder.productionOrderId);
-      const resolution = await resolveSupplierPieceRate({
+      const resolution = await resolveContractorPieceRate({
         companyId: actor.companyId,
         productId: order?.productId ?? null,
         productionOperationId: input.productionOperationId,
-        supplierId: input.supplierId,
+        contractorId: input.contractorId,
         asOfDate: new Date(input.issueDate),
       });
       if (resolution.resolved) {
@@ -381,7 +381,7 @@ export async function createJobWorkOrder(actor: ActorContext, input: CreateJobWo
         companyId: actor.companyId,
         branchId: actor.branchId || null,
         jobWorkNumber,
-        supplierId: input.supplierId,
+        contractorId: input.contractorId,
         jobOrderId: input.jobOrderId,
         productionOperationId: input.productionOperationId || null,
         resolvedRate,
@@ -442,7 +442,7 @@ export async function createJobWorkOrder(actor: ActorContext, input: CreateJobWo
     tableName: "job_work_orders",
     recordId: created.id,
     action: "CREATE",
-    newValues: { jobWorkNumber, supplierId: input.supplierId, jobOrderId: input.jobOrderId, issuedQuantity: input.issuedQuantity },
+    newValues: { jobWorkNumber, contractorId: input.contractorId, jobOrderId: input.jobOrderId, issuedQuantity: input.issuedQuantity },
   });
 
   return created;
@@ -467,15 +467,15 @@ export async function receiveJobWork(actor: ActorContext, jobWorkOrderId: string
   if (!order) throw new BusinessRuleError("NOT_FOUND", "Job-work order not found.", { id: jobWorkOrderId });
 
   // External Unit User (2026-09-18) — an external login may only report
-  // against its own supplier's order, and only when the company's own
+  // against its own contractor's order, and only when the company's own
   // ProductionSettings.externalEntryBy actually allows it. A submission that
   // passes both checks is held PENDING with zero quantity applied — the same
   // "a worker's own unverified claim must never count as real production
   // before someone checks it" discipline as the internal self-entry flow.
-  const allowedSupplierId = await PermissionService.getAllowedSupplierId(actor.userId);
-  const isExternalSubmission = allowedSupplierId !== null;
+  const allowedContractorId = await PermissionService.getAllowedContractorId(actor.userId);
+  const isExternalSubmission = allowedContractorId !== null;
   if (isExternalSubmission) {
-    await assertJobWorkOrderSupplierAccess(actor, order);
+    await assertJobWorkOrderContractorAccess(actor, order);
     const settings = await getProductionSettings(actor.companyId);
     if (settings.externalEntryBy === "INTERNAL_SUPERVISOR") {
       throw new BusinessRuleError(
@@ -588,7 +588,7 @@ export async function receiveJobWork(actor: ActorContext, jobWorkOrderId: string
       });
 
       // Piece-Rate (2026-09-18) — the external "worker" here is the
-      // Supplier; only genuinely received quantity is ever paid, never
+      // Contractor; only genuinely received quantity is ever paid, never
       // rejected/damaged. No-op when the order has no resolved rate.
       if (current.resolvedRate !== null && current.resolvedRate !== undefined) {
         await generateEarningForJobWorkReceipt(tx, {
@@ -596,7 +596,7 @@ export async function receiveJobWork(actor: ActorContext, jobWorkOrderId: string
           jobOrderId: order.jobOrderId,
           jobWorkOrderId,
           jobWorkReceiptId: receipt.id,
-          supplierId: current.supplierId,
+          contractorId: current.contractorId,
           productionOperationId: current.productionOperationId,
           resolvedRate: Number(current.resolvedRate),
           receivedQuantityDelta: input.receivedQuantity,
@@ -686,7 +686,7 @@ export async function approveJobWorkReceipt(actor: ActorContext, receiptId: stri
         jobOrderId: current.jobOrderId,
         jobWorkOrderId: receipt.jobWorkOrderId,
         jobWorkReceiptId: receipt.id,
-        supplierId: current.supplierId,
+        contractorId: current.contractorId,
         productionOperationId: current.productionOperationId,
         resolvedRate: Number(current.resolvedRate),
         receivedQuantityDelta: Number(receipt.receivedQuantity),

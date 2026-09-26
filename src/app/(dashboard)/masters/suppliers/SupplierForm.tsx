@@ -19,7 +19,6 @@ export interface SupplierFormValues {
   paymentTermsDays: string;
   defaultCurrencyCode: string;
   isActive: boolean;
-  isJobWorkContractor: boolean;
 }
 
 const EMPTY_VALUES: SupplierFormValues = {
@@ -37,7 +36,6 @@ const EMPTY_VALUES: SupplierFormValues = {
   paymentTermsDays: "",
   defaultCurrencyCode: "INR",
   isActive: true,
-  isJobWorkContractor: false,
 };
 
 interface Currency {
@@ -273,25 +271,14 @@ export function SupplierForm({ initialValues, submitUrl, method, onSuccess, onCa
         </FormField>
       </div>
 
-      <div className="flex flex-col gap-2">
-        <label className="flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
-          <input
-            type="checkbox"
-            checked={values.isActive}
-            onChange={(e) => setValues({ ...values, isActive: e.target.checked })}
-          />
-          Active
-        </label>
-        <label className="flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
-          <input
-            type="checkbox"
-            checked={values.isJobWorkContractor}
-            onChange={(e) => setValues({ ...values, isJobWorkContractor: e.target.checked })}
-          />
-          Job-Work Contractor
-          <span className="text-xs text-zinc-400">(appears in &quot;Send to External Job-Work&quot;&apos;s Contractor picker)</span>
-        </label>
-      </div>
+      <label className="flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+        <input
+          type="checkbox"
+          checked={values.isActive}
+          onChange={(e) => setValues({ ...values, isActive: e.target.checked })}
+        />
+        Active
+      </label>
 
       {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
 

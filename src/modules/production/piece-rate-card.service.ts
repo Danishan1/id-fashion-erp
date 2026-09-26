@@ -46,7 +46,7 @@ async function assertNoOverlap(
       productId: input.productId ?? null,
       employeeId: input.employeeId ?? null,
       employeeCategoryId: input.employeeCategoryId ?? null,
-      supplierId: null,
+      contractorId: null,
     },
     excludeId
   );
@@ -91,7 +91,7 @@ export async function createPieceRateCard(actor: ActorContext, input: PieceRateC
     productId: input.productId || null,
     employeeId: input.employeeId || null,
     employeeCategoryId: input.employeeCategoryId || null,
-    supplierId: null,
+    contractorId: null,
     rate: input.rate,
     effectiveFrom,
     effectiveTo,

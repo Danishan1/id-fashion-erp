@@ -11,7 +11,7 @@ import { EXPORT_ROW_CAP_EXCEL as EXPORT_ROW_CAP } from "@/core/reports/constants
 // JobWorkOrderRepository.findMany's own `include`.
 interface JobWorkOrderExportRow {
   jobWorkNumber: string;
-  supplier: { name: string };
+  contractor: { name: string };
   jobOrder: { jobNumber: string; lot: { lotNumber: string } };
   issuedQuantity: unknown;
   receivedQuantity: unknown;
@@ -27,10 +27,10 @@ export async function GET(req: NextRequest) {
     const session = await requireSession();
     await PermissionService.assert(session.user.id, "production", "export");
     // External Unit User (2026-09-18) — blocked outright, even filtered to
-    // their own supplier: a spreadsheet export of this business document
+    // their own contractor: a spreadsheet export of this business document
     // type is an internal audit tool, not something a vendor's own account
     // should be able to download.
-    if ((await PermissionService.getAllowedSupplierId(session.user.id)) !== null) {
+    if ((await PermissionService.getAllowedContractorId(session.user.id)) !== null) {
       throw new BusinessRuleError("PERMISSION_DENIED", "This action is not available to an external unit account.", {});
     }
 
@@ -43,7 +43,7 @@ export async function GET(req: NextRequest) {
       search: params.get("search") || undefined,
       sortBy: "createdAt",
       sortOrder: "desc",
-      supplierId: params.get("supplierId") || undefined,
+      contractorId: params.get("contractorId") || undefined,
       overdueOnly: params.get("overdueOnly") === "true",
     });
 
@@ -66,7 +66,7 @@ export async function GET(req: NextRequest) {
       ],
       (data as unknown as JobWorkOrderExportRow[]).map((o) => ({
         jobWorkNumber: o.jobWorkNumber,
-        contractor: o.supplier.name,
+        contractor: o.contractor.name,
         lot: o.jobOrder.lot.lotNumber,
         jobOrder: o.jobOrder.jobNumber,
         issued: Number(o.issuedQuantity),

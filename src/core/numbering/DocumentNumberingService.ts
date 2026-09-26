@@ -21,6 +21,7 @@ const PREFIX_BY_DOCUMENT_TYPE: Record<DocumentType, string> = {
   EMPLOYEE: "EMP",
   STYLE: "ST",
   MATERIAL: "MAT",
+  CONTRACTOR: "CONTR",
   LEAD: "LEAD",
   DEAL: "DEAL",
   CAMPAIGN: "CAMP",
@@ -36,7 +37,7 @@ const PREFIX_BY_DOCUMENT_TYPE: Record<DocumentType, string> = {
 };
 
 /** DocumentTypes that represent master-data codes, not transactional documents. */
-export const MASTER_CODE_DOCUMENT_TYPES = ["CUSTOMER", "SUPPLIER", "EMPLOYEE", "STYLE", "MATERIAL"] as const;
+export const MASTER_CODE_DOCUMENT_TYPES = ["CUSTOMER", "SUPPLIER", "EMPLOYEE", "STYLE", "MATERIAL", "CONTRACTOR"] as const;
 export type MasterCodeDocumentType = (typeof MASTER_CODE_DOCUMENT_TYPES)[number];
 
 // Master codes never reset per fiscal year (unlike invoices/orders) — every

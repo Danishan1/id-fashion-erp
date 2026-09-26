@@ -11,7 +11,7 @@ type JobWorkStatus = keyof typeof JOB_WORK_ORDER_STATUS_LABELS;
 interface JobWorkOrderRow {
   id: string;
   jobWorkNumber: string;
-  supplier: { id: string; name: string };
+  contractor: { id: string; name: string };
   jobOrder: { jobNumber: string; lot: { lotNumber: string; productionOrder: { orderNumber: string } } };
   issuedQuantity: string;
   receivedQuantity: string;
@@ -23,24 +23,24 @@ interface JobWorkOrderRow {
   metrics: { pendingQuantity: number; daysElapsed: number; isOverdue: boolean };
 }
 
-interface SupplierOption {
+interface ContractorOption {
   id: string;
   name: string;
 }
 
 export function JobWorkOrdersListClient() {
-  const [suppliers, setSuppliers] = useState<SupplierOption[]>([]);
-  const [supplierId, setSupplierId] = useState("");
+  const [contractors, setContractors] = useState<ContractorOption[]>([]);
+  const [contractorId, setContractorId] = useState("");
   const [overdueOnly, setOverdueOnly] = useState(false);
 
   useEffect(() => {
-    fetch("/api/v1/suppliers?pageSize=200")
+    fetch("/api/v1/contractors?pageSize=200")
       .then((res) => res.json())
-      .then((body) => setSuppliers(body.data ?? []));
+      .then((body) => setContractors(body.data ?? []));
   }, []);
 
   const params = new URLSearchParams();
-  if (supplierId) params.set("supplierId", supplierId);
+  if (contractorId) params.set("contractorId", contractorId);
   if (overdueOnly) params.set("overdueOnly", "true");
   const fetchUrl = `/api/v1/job-work-orders${params.toString() ? `?${params.toString()}` : ""}`;
   const exportUrl = `/api/v1/job-work-orders/export/xlsx${params.toString() ? `?${params.toString()}` : ""}`;
@@ -68,10 +68,10 @@ export function JobWorkOrdersListClient() {
       <div className="flex flex-wrap items-center gap-3">
         <div className="w-56">
           <SearchableSelect
-            id="jobWorkSupplierFilter"
-            value={supplierId}
-            onChange={setSupplierId}
-            options={suppliers.map((s) => ({ id: s.id, label: s.name }))}
+            id="jobWorkContractorFilter"
+            value={contractorId}
+            onChange={setContractorId}
+            options={contractors.map((c) => ({ id: c.id, label: c.name }))}
             placeholder="Search contractor…"
             emptyOptionLabel="All Contractors"
           />
@@ -83,7 +83,7 @@ export function JobWorkOrdersListClient() {
       </div>
 
       <DataTable<JobWorkOrderRow>
-        key={`${supplierId}|${overdueOnly}`}
+        key={`${contractorId}|${overdueOnly}`}
         fetchUrl={fetchUrl}
         searchPlaceholder="Search by job-work #…"
         rowHref={(row) => `/production/job-work/${row.id}`}
@@ -92,7 +92,7 @@ export function JobWorkOrdersListClient() {
         }}
         columns={[
           { key: "jobWorkNumber", header: "Job-Work #", sortable: true },
-          { key: "supplier", header: "Contractor", render: (row) => row.supplier.name },
+          { key: "contractor", header: "Contractor", render: (row) => row.contractor.name },
           {
             key: "jobOrder",
             header: "Lot / Job Order",

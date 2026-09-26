@@ -75,7 +75,7 @@ interface DefectTypeOption {
   name: string;
 }
 
-interface SupplierOption {
+interface ContractorOption {
   id: string;
   name: string;
 }
@@ -106,10 +106,10 @@ export function LotWorkflowPanel({
   const [employees, setEmployees] = useState<EmployeeOption[]>([]);
   const [warehouses, setWarehouses] = useState<WarehouseOption[]>([]);
   const [defectTypes, setDefectTypes] = useState<DefectTypeOption[]>([]);
-  const [suppliers, setSuppliers] = useState<SupplierOption[]>([]);
+  const [contractors, setContractors] = useState<ContractorOption[]>([]);
 
   const [jobWorkTarget, setJobWorkTarget] = useState<JobOrderRow | null>(null);
-  const [jobWorkSupplierId, setJobWorkSupplierId] = useState("");
+  const [jobWorkContractorId, setJobWorkContractorId] = useState("");
   const [jobWorkQty, setJobWorkQty] = useState("");
   const [jobWorkIssueDate, setJobWorkIssueDate] = useState(todayIsoDate());
   const [jobWorkExpectedDate, setJobWorkExpectedDate] = useState("");
@@ -174,13 +174,14 @@ export function LotWorkflowPanel({
     fetch("/api/v1/defect-types")
       .then((res) => res.json())
       .then((body) => setDefectTypes(body.data ?? []));
-    // Only Suppliers explicitly marked "Job-Work Contractor" (Masters ->
-    // Suppliers) — this used to list every active Supplier undifferentiated
-    // (fabric/trims/packaging/machinery vendors included), which is why the
-    // picker looked wrong; now it's scoped to real external contractors.
-    fetch("/api/v1/suppliers?pageSize=200&jobWorkContractor=true")
+    // The real Contractor master (Masters -> Contractors) — promoted out of
+    // Supplier's own former "Job-Work Contractor" flag (2026-09-25), which
+    // used to list every active Supplier undifferentiated (fabric/trims/
+    // packaging/machinery vendors included); now scoped to genuine external
+    // job-work contractors, a wholly separate entity from Supplier.
+    fetch("/api/v1/contractors?pageSize=200")
       .then((res) => res.json())
-      .then((body) => setSuppliers(body.data ?? []));
+      .then((body) => setContractors(body.data ?? []));
     fetch("/api/v1/production-operations")
       .then((res) => res.json())
       .then((body) => setProductionOperations(body.data ?? []))
@@ -390,7 +391,7 @@ export function LotWorkflowPanel({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         jobOrderId: jobWorkTarget.id,
-        supplierId: jobWorkSupplierId,
+        contractorId: jobWorkContractorId,
         issuedQuantity: Number(jobWorkQty),
         uomId: lot.uom.id,
         issueDate: jobWorkIssueDate,
@@ -407,7 +408,7 @@ export function LotWorkflowPanel({
     await refresh();
     setIsBusy(false);
     setJobWorkTarget(null);
-    setJobWorkSupplierId("");
+    setJobWorkContractorId("");
     setJobWorkQty("");
     setJobWorkExpectedDate("");
     setJobWorkRemarks("");
@@ -913,19 +914,18 @@ export function LotWorkflowPanel({
               Sends part of &ldquo;{jobWorkTarget.productionStage.name}&rdquo;&apos;s remaining work to an outside contractor. Receiving it back later
               completes this quantity exactly like an internal progress entry would — QC and Forward remain available on it either way.
             </p>
-            <FormField label="Contractor" htmlFor="jobWorkSupplierId" required>
+            <FormField label="Contractor" htmlFor="jobWorkContractorId" required>
               <SearchableSelect
-                id="jobWorkSupplierId"
+                id="jobWorkContractorId"
                 required
-                value={jobWorkSupplierId}
-                onChange={setJobWorkSupplierId}
-                options={suppliers.map((s) => ({ id: s.id, label: s.name }))}
+                value={jobWorkContractorId}
+                onChange={setJobWorkContractorId}
+                options={contractors.map((c) => ({ id: c.id, label: c.name }))}
                 placeholder="Search contractor…"
               />
-              {suppliers.length === 0 && (
+              {contractors.length === 0 && (
                 <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
-                  No suppliers are marked as a Job-Work Contractor yet — open Masters → Suppliers, edit the
-                  right supplier, and tick &ldquo;Job-Work Contractor&rdquo;.
+                  No contractors exist yet — open Masters → Contractors and add one.
                 </p>
               )}
             </FormField>
@@ -950,7 +950,7 @@ export function LotWorkflowPanel({
               <button
                 type="button"
                 onClick={submitJobWork}
-                disabled={isBusy || !jobWorkSupplierId || !jobWorkQty}
+                disabled={isBusy || !jobWorkContractorId || !jobWorkQty}
                 className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
               >
                 {isBusy ? "Saving…" : "Send to Job-Work"}

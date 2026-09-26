@@ -2,7 +2,7 @@ import { prisma } from "@/core/db/client";
 import type { JobWorkOrderStatus, Prisma } from "@prisma/client";
 
 const JOB_WORK_ORDER_INCLUDE = {
-  supplier: { select: { id: true, name: true, code: true } },
+  contractor: { select: { id: true, name: true, code: true } },
   uom: { select: { id: true, code: true } },
   requestedBy: { select: { id: true, fullName: true } },
   jobOrder: {
@@ -114,7 +114,7 @@ export const JobWorkReceiptRepository = {
     prisma.jobWorkReceipt.findMany({
       where: { companyId, approvalStatus: "PENDING" },
       include: {
-        jobWorkOrder: { select: { id: true, jobWorkNumber: true, supplier: { select: { id: true, name: true } } } },
+        jobWorkOrder: { select: { id: true, jobWorkNumber: true, contractor: { select: { id: true, name: true } } } },
         submittedBy: { select: { id: true, fullName: true } },
       },
       orderBy: { createdAt: "asc" },

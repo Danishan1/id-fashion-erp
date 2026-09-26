@@ -1,13 +1,13 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+﻿import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/numbering/DocumentNumberingService", () => ({ generateDocumentNumber: vi.fn() }));
 // External Unit User (2026-09-18) — every existing test in this file
-// exercises the INTERNAL path, so getAllowedSupplierId defaults to null
+// exercises the INTERNAL path, so getAllowedContractorId defaults to null
 // (unrestricted/internal) unless a test explicitly overrides it.
 vi.mock("@/core/rbac/PermissionService", () => ({
-  PermissionService: { getAllowedSupplierId: vi.fn().mockResolvedValue(null), assert: vi.fn() },
+  PermissionService: { getAllowedContractorId: vi.fn().mockResolvedValue(null), assert: vi.fn() },
 }));
 vi.mock("@/core/production-settings/ProductionSettingsService", () => ({
   getProductionSettings: vi.fn().mockResolvedValue({
@@ -18,7 +18,7 @@ vi.mock("@/core/production-settings/ProductionSettingsService", () => ({
     workersCanViewOwnRate: false,
   }),
 }));
-vi.mock("./piece-rate-resolution.service", () => ({ resolveSupplierPieceRate: vi.fn() }));
+vi.mock("./piece-rate-resolution.service", () => ({ resolveContractorPieceRate: vi.fn() }));
 vi.mock("./piece-rate-earning.service", () => ({ generateEarningForJobWorkReceipt: vi.fn() }));
 vi.mock("@/modules/inventory/inventory.service", () => ({ recordInventoryTransaction: vi.fn(), getAvailableQuantity: vi.fn() }));
 vi.mock("@/modules/products/product.repository", () => ({
@@ -30,8 +30,8 @@ vi.mock("@/modules/lookups/lookup.repository", () => ({
 vi.mock("@/modules/purchasing/fabric-roll.repository", () => ({
   FabricRollRepository: { findByIdWithContext: vi.fn(), guardedDecrementRemaining: vi.fn(), incrementRemaining: vi.fn() },
 }));
-vi.mock("@/modules/suppliers/supplier.repository", () => ({
-  SupplierRepository: { findById: vi.fn() },
+vi.mock("@/modules/contractors/contractor.repository", () => ({
+  ContractorRepository: { findById: vi.fn() },
 }));
 vi.mock("./job-order.service", () => ({ applyJobOrderQuantityDelta: vi.fn(), assertStageAccess: vi.fn() }));
 vi.mock("./production.repository", () => ({
@@ -69,13 +69,13 @@ const { recordInventoryTransaction, getAvailableQuantity } = await import("@/mod
 const { ProductRepository } = await import("@/modules/products/product.repository");
 const { LookupRepository } = await import("@/modules/lookups/lookup.repository");
 const { FabricRollRepository } = await import("@/modules/purchasing/fabric-roll.repository");
-const { SupplierRepository } = await import("@/modules/suppliers/supplier.repository");
+const { ContractorRepository } = await import("@/modules/contractors/contractor.repository");
 const { applyJobOrderQuantityDelta, assertStageAccess } = await import("./job-order.service");
 const { JobOrderRepository, ProductionOrderRepository } = await import("./production.repository");
 const { JobWorkOrderRepository, JobWorkReceiptRepository } = await import("./job-work-order.repository");
 const { PermissionService } = await import("@/core/rbac/PermissionService");
 const { getProductionSettings } = await import("@/core/production-settings/ProductionSettingsService");
-const { resolveSupplierPieceRate } = await import("./piece-rate-resolution.service");
+const { resolveContractorPieceRate } = await import("./piece-rate-resolution.service");
 const { generateEarningForJobWorkReceipt } = await import("./piece-rate-earning.service");
 const {
   createJobWorkOrder,
@@ -112,7 +112,7 @@ function jobWorkOrder(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.mocked(generateDocumentNumber).mockReset().mockResolvedValue("JWO-2026-00001");
-  vi.mocked(SupplierRepository.findById).mockReset().mockResolvedValue({ id: "sup-1" } as never);
+  vi.mocked(ContractorRepository.findById).mockReset().mockResolvedValue({ id: "con-1" } as never);
   vi.mocked(recordInventoryTransaction).mockReset().mockResolvedValue(undefined as never);
   vi.mocked(getAvailableQuantity).mockReset().mockResolvedValue(1000);
   // Every existing test's material line uses uomId "uom-2" — set here to
@@ -141,7 +141,7 @@ beforeEach(() => {
   vi.mocked(JobWorkReceiptRepository.findAnyById).mockReset();
   vi.mocked(JobWorkReceiptRepository.updateInTx).mockReset();
   vi.mocked(JobWorkReceiptRepository.findPendingForCompany).mockReset().mockResolvedValue([]);
-  vi.mocked(PermissionService.getAllowedSupplierId).mockReset().mockResolvedValue(null);
+  vi.mocked(PermissionService.getAllowedContractorId).mockReset().mockResolvedValue(null);
   vi.mocked(PermissionService.assert).mockReset().mockResolvedValue(undefined as never);
   vi.mocked(getProductionSettings).mockReset().mockResolvedValue({
     supervisorApprovalRequired: false,
@@ -151,23 +151,23 @@ beforeEach(() => {
     workersCanViewOwnRate: false,
   } as never);
   vi.mocked(ProductionOrderRepository.findAnyById).mockReset();
-  vi.mocked(resolveSupplierPieceRate).mockReset();
+  vi.mocked(resolveContractorPieceRate).mockReset();
   vi.mocked(generateEarningForJobWorkReceipt).mockReset();
 });
 
 describe("createJobWorkOrder", () => {
-  // supplierId was previously written straight from client input with zero
-  // ownership check — a direct API call with another tenant's supplierId
+  // contractorId was previously written straight from client input with zero
+  // ownership check — a direct API call with another tenant's contractorId
   // would succeed and embed that tenant's name/code in every subsequent
   // read (confirmed cross-tenant disclosure risk, fixed).
-  it("rejects a supplierId belonging to another company", async () => {
+  it("rejects a contractorId belonging to another company", async () => {
     vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder({ plannedQuantity: 100 }) as never);
-    vi.mocked(SupplierRepository.findById).mockResolvedValue(null);
+    vi.mocked(ContractorRepository.findById).mockResolvedValue(null);
 
     await expect(
       createJobWorkOrder(actor, {
         jobOrderId: "jo-1",
-        supplierId: "sup-x",
+        contractorId: "con-x",
         issuedQuantity: 5,
         uomId: "uom-1",
         issueDate: "2026-08-24",
@@ -185,7 +185,7 @@ describe("createJobWorkOrder", () => {
 
     await createJobWorkOrder(actor, {
       jobOrderId: "jo-1",
-      supplierId: "sup-1",
+      contractorId: "con-1",
       issuedQuantity: 50,
       uomId: "uom-1",
       issueDate: "2026-08-24",
@@ -210,7 +210,7 @@ describe("createJobWorkOrder", () => {
     await expect(
       createJobWorkOrder(actor, {
         jobOrderId: "jo-1",
-        supplierId: "sup-1",
+        contractorId: "con-1",
         issuedQuantity: 20,
         uomId: "uom-1",
         issueDate: "2026-08-24",
@@ -226,7 +226,7 @@ describe("createJobWorkOrder", () => {
     vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder({ status: "CANCELLED" }) as never);
 
     await expect(
-      createJobWorkOrder(actor, { jobOrderId: "jo-1", supplierId: "sup-1", issuedQuantity: 5, uomId: "uom-1", issueDate: "2026-08-24", expectedCompletionDate: "", remarks: "", materials: [] })
+      createJobWorkOrder(actor, { jobOrderId: "jo-1", contractorId: "con-1", issuedQuantity: 5, uomId: "uom-1", issueDate: "2026-08-24", expectedCompletionDate: "", remarks: "", materials: [] })
     ).rejects.toThrow(BusinessRuleError);
   });
 
@@ -239,7 +239,7 @@ describe("createJobWorkOrder", () => {
     await expect(
       createJobWorkOrder(actor, {
         jobOrderId: "jo-1",
-        supplierId: "sup-1",
+        contractorId: "con-1",
         issuedQuantity: 5,
         uomId: "uom-1",
         issueDate: "2026-08-24",
@@ -257,7 +257,7 @@ describe("createJobWorkOrder", () => {
     await expect(
       createJobWorkOrder(actor, {
         jobOrderId: "jo-1",
-        supplierId: "sup-1",
+        contractorId: "con-1",
         issuedQuantity: 5,
         uomId: "uom-1",
         issueDate: "2026-08-24",
@@ -289,7 +289,7 @@ describe("createJobWorkOrder", () => {
 
     await createJobWorkOrder(actor, {
       jobOrderId: "jo-1",
-      supplierId: "sup-1",
+      contractorId: "con-1",
       issuedQuantity: 5,
       uomId: "uom-1",
       issueDate: "2026-08-24",
@@ -521,10 +521,10 @@ describe("resumeJobWorkOrderFromHold", () => {
 
 describe("listPendingJobWorkReceipts", () => {
   // RBAC audit (2026-09-24): this was the one function in the file with no
-  // identity-level supplier/internal check at all — added assertInternalUser()
+  // identity-level contractor/internal check at all — added assertInternalUser()
   // as defense-in-depth, since it previously relied solely on the seeded
   // EXTERNAL_UNIT_USER role never holding production.approve.
-  it("succeeds for an internal user and returns every supplier's pending receipts company-wide", async () => {
+  it("succeeds for an internal user and returns every contractor's pending receipts company-wide", async () => {
     vi.mocked(JobWorkReceiptRepository.findPendingForCompany).mockResolvedValue([{ id: "r-1" }] as never);
 
     const result = await listPendingJobWorkReceipts(actor);
@@ -535,7 +535,7 @@ describe("listPendingJobWorkReceipts", () => {
   });
 
   it("rejects outright for an external-unit login, even if it somehow held production.approve", async () => {
-    vi.mocked(PermissionService.getAllowedSupplierId).mockResolvedValue("sup-1");
+    vi.mocked(PermissionService.getAllowedContractorId).mockResolvedValue("con-1");
 
     await expect(listPendingJobWorkReceipts(actor)).rejects.toThrow(BusinessRuleError);
     expect(JobWorkReceiptRepository.findPendingForCompany).not.toHaveBeenCalled();

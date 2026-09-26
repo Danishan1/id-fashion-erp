@@ -120,7 +120,7 @@ generic column — it's four independent, live, tested mechanisms:
 | Conceptual scope | Real implementation | Composition rule |
 |---|---|---|
 | `own` | `User.employeeId` + `resolveSelfEntryEmployee()` (job-order.service.ts) | 1:1 identity, no union needed |
-| `assigned` | `User.supplierId` + `PermissionService.getAllowedSupplierId()` | 1:1 identity, no union needed |
+| `assigned` | `User.contractorId` + `PermissionService.getAllowedContractorId()` | 1:1 identity, no union needed |
 | `department` (closest fit: production stage) | `RoleProductionStageAccess` + `PermissionService.getAllowedProductionStageIds()` | per-role; any held role with zero restriction rows wins outright (unrestricted) |
 | `company`/branch | `RoleBranchAccess` + `PermissionService.getAllowedBranchIds()` | same any-unrestricted-role-wins union rule |
 | `all` | `null` return from either getAllowed* function | — |
@@ -263,8 +263,8 @@ coarse `inventory` module — re-gated onto `material_request`, the module that 
 ## Phase 6 — Ownership/scope
 
 No changes needed here — the audit's Phase 1 finding stands: branch/production-stage/employee-self/
-supplier-self scoping (`RoleBranchAccess`, `RoleProductionStageAccess`, `User.employeeId`,
-`User.supplierId` + their respective `PermissionService` methods) already correctly implements the
+contractor-self scoping (`RoleBranchAccess`, `RoleProductionStageAccess`, `User.employeeId`,
+`User.contractorId` + their respective `PermissionService` methods) already correctly implements the
 `own`/`assigned`/`department`/`company`/`all` model conceptually requested, and was deliberately kept
 as-is (see "Scope model" above) rather than rebuilt. `PermissionService` gained one new generalized method,
 `getModulesWithAction()`, purely additive — `getViewableModules()` now just calls it with `"view"`, zero

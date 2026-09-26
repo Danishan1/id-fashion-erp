@@ -189,9 +189,9 @@ export async function generateEarningsForQcAcceptance(
 }
 
 /**
- * Same algorithm, for a SUPPLIER earner (external Job Work) — called from
- * receiveJobWork() inside the same transaction as the receipt's own
- * applyJobOrderQuantityDelta call. Keyed by (jobOrderId, jobWorkOrderId)
+ * Same algorithm, for a SUPPLIER (Contractor) earner (external Job Work) —
+ * called from receiveJobWork() inside the same transaction as the receipt's
+ * own applyJobOrderQuantityDelta call. Keyed by (jobOrderId, jobWorkOrderId)
  * rather than (jobOrderId, jobOrderAssignmentId); rejected/damaged quantity
  * is never passed in as payableQuantity — only genuinely received quantity
  * is ever paid.
@@ -203,7 +203,7 @@ export async function generateEarningForJobWorkReceipt(
     jobOrderId: string;
     jobWorkOrderId: string;
     jobWorkReceiptId: string;
-    supplierId: string;
+    contractorId: string;
     productionOperationId: string | null;
     resolvedRate: number | null;
     rateSource?: RateCardRateSource;
@@ -221,7 +221,7 @@ export async function generateEarningForJobWorkReceipt(
     earnerType: "SUPPLIER",
     jobWorkOrderId: params.jobWorkOrderId,
     jobWorkReceiptId: params.jobWorkReceiptId,
-    supplierId: params.supplierId,
+    contractorId: params.contractorId,
     productionOperationId: params.productionOperationId,
     qtyBasis: "GOOD_COMPLETED_QTY",
     payableQuantity: params.receivedQuantityDelta,
@@ -235,12 +235,12 @@ export async function generateEarningForJobWorkReceipt(
 
 export async function listPieceRateEarnings(
   companyId: string,
-  filters: { employeeId?: string; supplierId?: string; status?: string }
+  filters: { employeeId?: string; contractorId?: string; status?: string }
 ) {
   return PieceRateEarningRepository.findMany({
     companyId,
     ...(filters.employeeId ? { employeeId: filters.employeeId } : {}),
-    ...(filters.supplierId ? { supplierId: filters.supplierId } : {}),
+    ...(filters.contractorId ? { contractorId: filters.contractorId } : {}),
     ...(filters.status ? { status: filters.status as never } : {}),
   });
 }

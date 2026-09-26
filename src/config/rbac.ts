@@ -92,7 +92,7 @@ export const ROLES = [
   "PRODUCTION_SUPERVISOR",
   "PRODUCTION_WORKER",
   // A vendor/contractor-side login (2026-09-18) — scoped server-side via
-  // User.supplierId + PermissionService.getAllowedSupplierId, the same
+  // User.contractorId + PermissionService.getAllowedContractorId, the same
   // "minimal grant + narrow server-side identity check" shape as
   // PRODUCTION_WORKER's employeeId-based self-entry scoping above.
   // Deliberately gets NO other module — sales_orders/accounts/
@@ -284,9 +284,9 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     piece_rate: ["view"],
   },
   // A vendor/contractor-side login, added for the External Job-Work upgrade
-  // (2026-09-18) — scoped server-side via User.supplierId +
-  // PermissionService.getAllowedSupplierId (job-work-order.service.ts's
-  // assertJobWorkOrderSupplierAccess/assertInternalUser), same "minimal
+  // (2026-09-18) — scoped server-side via User.contractorId +
+  // PermissionService.getAllowedContractorId (job-work-order.service.ts's
+  // assertJobWorkOrderContractorAccess/assertInternalUser), same "minimal
   // grant + narrow server-side identity check" shape as PRODUCTION_WORKER's
   // own employeeId-based self-entry scoping just above. Deliberately gets NO
   // other module — sales_orders/accounts/financial_reports etc. are

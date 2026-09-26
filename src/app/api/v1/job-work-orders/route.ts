@@ -11,10 +11,10 @@ export async function GET(req: NextRequest) {
     await PermissionService.assert(session.user.id, "production", "view");
 
     const query = parseListQuery(req.nextUrl.searchParams, "createdAt");
-    const supplierId = req.nextUrl.searchParams.get("supplierId") || undefined;
+    const contractorId = req.nextUrl.searchParams.get("contractorId") || undefined;
     const overdueOnly = req.nextUrl.searchParams.get("overdueOnly") === "true";
 
-    const { data, totalCount } = await listJobWorkOrders(session.user.companyId, { ...query, supplierId, overdueOnly }, session.user.id);
+    const { data, totalCount } = await listJobWorkOrders(session.user.companyId, { ...query, contractorId, overdueOnly }, session.user.id);
 
     return NextResponse.json({ data, meta: buildListMeta(totalCount, query.page, query.pageSize) });
   } catch (error) {

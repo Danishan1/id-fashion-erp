@@ -201,21 +201,21 @@ class PermissionServiceImpl {
   }
 
   /**
-   * The single Supplier this user's login is scoped to, or `null` for an
+   * The single Contractor this user's login is scoped to, or `null` for an
    * ordinary internal user with no such restriction (every pre-existing
    * user). Unlike getAllowedBranchIds/getAllowedProductionStageIds this is
-   * NOT a role-level union — User.supplierId is a direct, 1:1 identity fact
+   * NOT a role-level union — User.contractorId is a direct, 1:1 identity fact
    * (the same shape as User.employeeId), so there is nothing to union across
    * multiple roles: this account genuinely IS that vendor's own login.
    * Uncached (matches loadLiveUserState's live-check discipline) — a cheap
-   * single-column lookup. A platform admin never has a supplierId set in
+   * single-column lookup. A platform admin never has a contractorId set in
    * practice, but if one somehow were, it would still apply — this account
-   * IS that vendor's login and should never see other suppliers'/other
+   * IS that vendor's login and should never see other contractors'/other
    * companies' production data regardless of any other flag.
    */
-  async getAllowedSupplierId(userId: string): Promise<string | null> {
-    const user = await prisma.user.findUnique({ where: { id: userId }, select: { supplierId: true } });
-    return user?.supplierId ?? null;
+  async getAllowedContractorId(userId: string): Promise<string | null> {
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { contractorId: true } });
+    return user?.contractorId ?? null;
   }
 
   /**

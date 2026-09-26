@@ -16,10 +16,6 @@ export const supplierSchema = z.object({
   paymentTermsDays: z.coerce.number().int().min(0).optional(),
   defaultCurrencyCode: z.string().length(3).optional().or(z.literal("")),
   isActive: z.boolean().default(true),
-  // Distinct from Category (single-valued) — a supplier can be a
-  // raw-material vendor AND an external job-work contractor at once.
-  // Filters the "Send to External Job-Work" picker (LotWorkflowPanel.tsx).
-  isJobWorkContractor: z.boolean().default(false),
 });
 
 export type SupplierInput = z.infer<typeof supplierSchema>;

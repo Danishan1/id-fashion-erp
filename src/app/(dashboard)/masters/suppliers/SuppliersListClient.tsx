@@ -14,7 +14,6 @@ interface SupplierRow {
   name: string;
   category: { name: string };
   isActive: boolean;
-  isJobWorkContractor: boolean;
 }
 
 export function SuppliersListClient() {
@@ -52,18 +51,6 @@ export function SuppliersListClient() {
           { key: "code", header: "Code", sortable: true },
           { key: "name", header: "Name", sortable: true },
           { key: "category", header: "Category", render: (row) => row.category?.name ?? "—" },
-          {
-            key: "isJobWorkContractor",
-            header: "Job-Work Contractor",
-            render: (row) =>
-              row.isJobWorkContractor ? (
-                <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-400">
-                  Contractor
-                </span>
-              ) : (
-                <span className="text-zinc-400">—</span>
-              ),
-          },
           {
             key: "isActive",
             header: "Status",

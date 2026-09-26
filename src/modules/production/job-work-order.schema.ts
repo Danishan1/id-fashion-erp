@@ -2,7 +2,7 @@ import { z } from "zod";
 
 export const createJobWorkOrderSchema = z.object({
   jobOrderId: z.string().uuid("Job order is required"),
-  supplierId: z.string().uuid("Contractor is required"),
+  contractorId: z.string().uuid("Contractor is required"),
   issuedQuantity: z.coerce.number().positive("Issued quantity must be greater than 0"),
   uomId: z.string().uuid("Unit is required"),
   issueDate: z.string().min(1, "Issue date is required"),
