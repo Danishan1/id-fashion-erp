@@ -137,6 +137,20 @@ function hasCompleteConfig(row: AIProviderRow): boolean {
 }
 
 /**
+ * Read-only pre-check: does this company have at least one active,
+ * fully-configured provider with `capability` ticked? Lets a caller pick
+ * the best capability it can actually use (e.g. AI Designer's New Design
+ * falls back from DESIGN_REPLICATION to MULTI_FABRIC) before calling
+ * runWithFailover, instead of parsing its "no provider" error message.
+ * Ignores health cooldowns/limits on purpose — those are runWithFailover's
+ * job and produce their own clear error.
+ */
+export async function hasProviderForCapability(companyId: string, capability: AIProviderCapability): Promise<boolean> {
+  const candidates = await AIProviderRepository.findCandidates(companyId, capability);
+  return candidates.some(hasCompleteConfig);
+}
+
+/**
  * Real enforcement of the admin-configured Daily/Monthly Generation Limit
  * fields — a provider whose real, locally-tracked usage has already
  * reached its own limit is excluded from the candidate list for the rest

@@ -7449,6 +7449,30 @@ SALES_MANAGER / SALES_EXECUTIVE roles with own-records scoping.
   **Not verified in a browser** — another session's `next dev` held the folder lock and its in-memory Prisma client
   predates this migration (it must be restarted before its CRM pages work again).
 
+## AI Designer — 4-step "New Design" flow + Catalogue Designs gallery (2026-09-27)
+
+The sidebar now shows only **New Design** (`/ai-designer/new-design`) and **Catalogue Designs**
+(`/ai-designer/catalogue-designs`). Replicate Design and Sketch to Garment still work by URL; they just have
+no sidebar link. The classic 13-step wizard is unchanged and still opens for any project whose
+`designSource` is null.
+
+**The four steps:**
+1. **Source.** Tabs for Fabric, Garment and Sketch. Uploading a photo runs the analysis automatically and shows it in the right-hand panel. A strip underneath suggests garment types and auto-selects the best match.
+   - Fabric: reuses `runFabricAnalysis`, then **auto-creates a Fabric Master row** (a FABRIC `Product` with the photo as its main image). It links to a same-named fabric if one exists, and is skipped when the user lacks `masters_core.create`.
+   - Garment/Sketch: a new vision call, `src/core/ai-designer/garment-analysis/`. It also suggests fabrics from the company's own Fabric Master using a keyword match.
+2. **Garment type.** Each type uses a fixed model photo from `public/ai-designer-templates/`, copied from `D:\ai`. Only Dress, Top and Lehenga (Women) have photos today. The user can also upload their own template. The catalog is `garment-template-catalog.ts`; Lehenga was added as a new Women category.
+3. **Brand, environment and generate.** Studio is the default environment. Generation calls `replicateWithNewMaterial` (DESIGN_REPLICATION) with the template as image 1 and the fabric as image 2. The prompt, `image-generation/new-design-prompt.ts`, locks the model, face, pose and framing, changes only the dress, and replaces the background only when the environment isn't Studio. A garment type with no photo falls back to the classic `generateDesign()`.
+4. **Designs.** A grid with View and Edit buttons. Both call `make-current` first, which records the chosen image as a new version.
+
+**View page** (`catalogue-designs/[id]/view`): a hero image, the details panel, downloads, and **AI colour variants**. Colour variants are one `generateVariation` (IMAGE_EDIT) per colour, stored as `COLOR_VARIANT` generations.
+
+**Edit page:** the existing `EditDesignWorkspace`, which now defaults to AI Prompt mode and has example prompt chips.
+
+**Code:**
+- Service: `src/modules/ai-designer/new-design.service.ts`
+- Routes: `/api/v1/ai-designer/new-design` and `/api/v1/ai-designer/projects/[id]/new-design/*`
+- Migration: `20260927120000_ai_designer_new_design_flow`. It adds nullable `ai_projects` columns plus the `GARMENT_ANALYSIS`/`COLOR_VARIANT` prompt types.
+
 ## Reference
 
 Full architecture rationale, complete table-by-table field lists, and the full role×module permission matrix were developed in the Phase 1 planning session and are condensed here. Consult that history if a design decision needs deeper justification than what's summarized above.

@@ -28,5 +28,12 @@ export default async function AiDesignerProjectDetailPage({ params }: PageProps)
   // route. Redirect rather than 404 so old bookmarks/links still work.
   if (project.creationMode === "SKETCH") redirect(`/ai-designer/sketch-to-garment/${id}`);
 
+  // New Design (4-step) projects live in their own workspace until a design
+  // exists, then open on the View page — the classic wizard below is only for
+  // projects created through it.
+  if (project.designSource) {
+    redirect(project.currentVersionId ? `/ai-designer/catalogue-designs/${id}/view` : `/ai-designer/new-design/${id}`);
+  }
+
   return <AiDesignerWorkflowPanel key={id} projectId={id} initialProject={JSON.parse(JSON.stringify(project))} />;
 }

@@ -1,5 +1,5 @@
 import { prisma } from "@/core/db/client";
-import type { Prisma } from "@prisma/client";
+import type { AiDesignerPromptType, Prisma } from "@prisma/client";
 
 export const AiDesignerProjectRepository = {
   findMany: (where: Prisma.AiDesignerProjectWhereInput, args: Omit<Prisma.AiDesignerProjectFindManyArgs, "where">) =>
@@ -9,6 +9,7 @@ export const AiDesignerProjectRepository = {
         fabricProduct: { select: { id: true, styleName: true, styleCode: true } },
         createdBy: { select: { id: true, fullName: true } },
         _count: { select: { versions: true } },
+        currentVersion: { select: { versionNumber: true, currentImage: { select: { id: true, imageAttachmentId: true } } } },
       },
       ...args,
     }),
@@ -83,7 +84,7 @@ export const AiDesignerPromptRepository = {
     }),
 
   /** A stuck IN_PROGRESS row older than the freshness window is treated as abandoned, not a permanent lock — same discipline as every AI Garment Flow run-log table. */
-  findActiveSince: (projectId: string, promptType: "FABRIC_ANALYSIS" | "PRODUCT_SUGGESTIONS" | "IMAGE_GENERATE" | "IMAGE_EDIT", freshSince: Date) =>
+  findActiveSince: (projectId: string, promptType: AiDesignerPromptType, freshSince: Date) =>
     prisma.aiDesignerPrompt.findFirst({
       where: { projectId, promptType, status: "IN_PROGRESS", requestedAt: { gte: freshSince } },
     }),
@@ -117,6 +118,14 @@ export const AiDesignerGenerationRepository = {
   findLatestPendingEditPreview: (projectId: string, parentImageId: string) =>
     prisma.aiDesignerGeneration.findFirst({
       where: { projectId, parentImageId, status: "SUCCESS", prompt: { promptType: "IMAGE_EDIT" }, images: { some: { decision: "PENDING" } } },
+      orderBy: { createdAt: "desc" },
+      include: { images: { orderBy: { createdAt: "asc" } } },
+    }),
+
+  /** New Design flow's colour variants — every successful generation of one prompt type, newest first. */
+  findManyByProjectAndPromptType: (projectId: string, promptType: AiDesignerPromptType) =>
+    prisma.aiDesignerGeneration.findMany({
+      where: { projectId, status: "SUCCESS", prompt: { promptType } },
       orderBy: { createdAt: "desc" },
       include: { images: { orderBy: { createdAt: "asc" } } },
     }),

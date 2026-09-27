@@ -42,7 +42,7 @@ export const AGE_GROUPS_BY_CUSTOMER: Record<TargetCustomer, string[]> = {
  */
 export const PRODUCT_CATEGORIES_BY_CUSTOMER: Record<TargetCustomer, string[]> = {
   MEN: ["Shirt", "T-Shirt", "Pant", "Jeans", "Kurta", "Jacket", "Hoodie", "Shorts"],
-  WOMEN: ["Dress", "Top", "Kurti", "Pant", "Skirt", "Blouse", "Co-ord", "Shirt"],
+  WOMEN: ["Dress", "Top", "Kurti", "Lehenga", "Pant", "Skirt", "Blouse", "Co-ord", "Shirt"],
   BOYS: ["Shirt", "T-Shirt", "Pant", "Shorts", "Jacket", "Hoodie"],
   GIRLS: ["Dress", "Top", "Frock", "Skirt", "Pant", "Jacket"],
   BABY: ["Onesie", "Romper", "Baby Dress", "Sleepwear", "Top-Bottom Set"],

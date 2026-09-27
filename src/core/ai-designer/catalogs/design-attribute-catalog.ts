@@ -129,6 +129,13 @@ const BASE_CATEGORY_ATTRIBUTES: Record<string, DesignAttributeDef[]> = {
     { key: "hem", label: "Hem", options: ["Straight Hem", "Curved Hem", "Peplum"] },
     { key: "bodyCutouts", label: "Body Cut-Outs", options: ["No Cut-Outs", "Waist Cut-Out", "Side Cut-Out"] },
   ],
+  Lehenga: [
+    { key: "neckline", label: "Blouse Neck", options: ["Sweetheart Neck", "V-Neck", "Square Neck", "Round Neck", "Halter"] },
+    { key: "sleeve", label: "Blouse Sleeve", options: ["Sleeveless", "Cap Sleeve", "Half Sleeve", "Elbow Sleeve", "Full Sleeve"] },
+    { key: "flare", label: "Skirt Flare", options: ["A-Line", "Circular Flare", "Mermaid", "Panelled Kalidar"] },
+    { key: "dupattaStyle", label: "Dupatta Style", options: ["Shoulder Drape", "Head Drape", "Double Dupatta", "No Dupatta"] },
+    { key: "border", label: "Border", options: ["Embroidered Border", "Gota Border", "Scalloped Border", "Plain Hem"] },
+  ],
   Kurti: [
     { key: "neckline", label: "Front Neck", options: ["Round Neck", "V-Neck", "Mandarin Collar", "Boat Neck"] },
     { key: "sleeve", label: "Sleeve", options: ["Full Sleeve", "Three-Quarter Sleeve", "Half Sleeve", "Sleeveless"] },

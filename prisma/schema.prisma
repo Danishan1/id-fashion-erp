@@ -8496,6 +8496,8 @@ enum AiDesignerPromptType {
   PRODUCT_SUGGESTIONS
   IMAGE_GENERATE
   IMAGE_EDIT
+  GARMENT_ANALYSIS
+  COLOR_VARIANT
 }
 
 enum AiDesignerRunStatus {
@@ -8551,6 +8553,26 @@ enum AiDesignerCreationMode {
 enum AiDesignerProjectMode {
   SINGLE
   SET
+}
+
+/**
+ * 4-step "New Design" flow (2026-09-27) -- which kind of photo the user
+ * started from. Null = a project created through the original 13-step wizard
+ * (which keeps working unchanged). FABRIC uses the existing
+ * fabricImageAttachmentId; GARMENT/SKETCH use sourceImageAttachmentId and
+ * pick a fabric from the Fabric Master (or upload a swatch) before generating.
+ */
+enum AiDesignerDesignSource {
+  FABRIC
+  GARMENT
+  SKETCH
+}
+
+enum AiDesignerNewDesignStep {
+  SOURCE
+  GARMENT
+  GENERATE
+  DESIGNS
 }
 
 model AiDesignerProject {
@@ -8667,6 +8689,19 @@ model AiDesignerProject {
   logoYPercent             Decimal? @map("logo_y_percent") @db.Decimal(5, 2)
   logoWidthPercent         Decimal? @map("logo_width_percent") @db.Decimal(5, 2)
   brandedImageAttachmentId String?  @map("branded_image_attachment_id")
+
+  // 4-step "New Design" flow (2026-09-27) -- see AiDesignerDesignSource.
+  // garmentTemplateKey is a slug into garment-template-catalog.ts (a fixed
+  // model photo per garment type under public/ai-designer-templates/);
+  // customTemplateAttachmentId is the user's own uploaded template, which
+  // wins over the catalog photo when set.
+  designSource               AiDesignerDesignSource?  @map("design_source")
+  newDesignStep              AiDesignerNewDesignStep? @map("new_design_step")
+  sourceImageAttachmentId    String?                  @map("source_image_attachment_id")
+  sourceAnalysisJson         Json?                    @map("source_analysis_json")
+  garmentSuggestionsJson     Json?                    @map("garment_suggestions_json")
+  garmentTemplateKey         String?                  @map("garment_template_key")
+  customTemplateAttachmentId String?                  @map("custom_template_attachment_id")
 
   // Set once version 1 exists (nullable-then-set-later, same precedent as
   // AiGarmentProject.selectedDesignDirectionId elsewhere in this schema).

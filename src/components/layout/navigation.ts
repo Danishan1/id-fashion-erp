@@ -62,11 +62,11 @@ export const NAV_SECTIONS: NavSection[] = [
     label: "AI Designer",
     href: "/ai-designer",
     modules: ["ai_designer"],
+    // Only two entries (2026-09-27). Replicate Design and Sketch to Garment
+    // still exist and stay reachable by URL; they are no longer in the sidebar.
     children: [
-      { label: "Dashboard", href: "/ai-designer", modules: ["ai_designer"] },
+      { label: "New Design", href: "/ai-designer/new-design", modules: ["ai_designer"] },
       { label: "Catalogue Designs", href: "/ai-designer/catalogue-designs", modules: ["ai_designer"] },
-      { label: "Replicate Design", href: "/ai-designer/replicate", modules: ["ai_designer"] },
-      { label: "Sketch to Garment", href: "/ai-designer/sketch-to-garment", modules: ["ai_designer"] },
     ],
   },
   { label: "Masters", href: "/masters", modules: ["masters_core", "masters_finance"] },

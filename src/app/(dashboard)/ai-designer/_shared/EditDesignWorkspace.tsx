@@ -211,7 +211,7 @@ export function EditDesignWorkspace({
   // preview/select step) and Draw & Describe / "MASK" (its own multipart
   // /mask-edit endpoint) — neither is ever sent as-is to the generic /edit
   // call; generatePreview() guards against both.
-  const [editMode, setEditMode] = useState<EditMode | "EMBELLISHMENTS" | "MASK">("QUICK");
+  const [editMode, setEditMode] = useState<EditMode | "EMBELLISHMENTS" | "MASK">("AI_PROMPT");
   const [currentValue, setCurrentValue] = useState("");
   const [newValue, setNewValue] = useState("");
   const [techRows, setTechRows] = useState<{ key: string; value: string }[]>([{ key: "", value: "" }]);
@@ -1103,15 +1103,34 @@ export function EditDesignWorkspace({
             )}
 
             {editMode === "AI_PROMPT" && (
-              <div>
-                <label className="mb-0.5 block text-[10px] font-medium text-zinc-500">Describe the design change you want…</label>
+              <div className="rounded-xl border border-violet-200 bg-gradient-to-br from-violet-50 to-fuchsia-50 p-3 dark:border-violet-900 dark:from-violet-950/30 dark:to-fuchsia-950/20">
+                <label className="mb-1 block text-xs font-semibold text-violet-800 dark:text-violet-300">✨ Describe the design change you want</label>
                 <textarea
                   value={freeform}
                   onChange={(e) => setFreeform(e.target.value)}
                   rows={5}
                   placeholder='e.g. "Change the round neck into a mandarin collar." / "Reduce sleeve length by 2 cm."'
-                  className="w-full rounded border border-zinc-300 px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-900"
+                  className="w-full rounded-lg border border-violet-200 bg-white px-2.5 py-2 text-sm shadow-inner focus:border-violet-500 focus:outline-none dark:border-violet-800 dark:bg-zinc-900"
                 />
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {[
+                    "Make the sleeves puffed",
+                    "Add a gold embroidered border at the hem",
+                    "Change to a V-neckline",
+                    "Make it floor length",
+                    "Add a matching belt at the waist",
+                    "Add delicate lace trim",
+                  ].map((example) => (
+                    <button
+                      key={example}
+                      type="button"
+                      onClick={() => setFreeform((prev) => (prev.trim() ? `${prev.trim()} ${example}.` : `${example}.`))}
+                      className="rounded-full border border-violet-200 bg-white px-2.5 py-1 text-[11px] text-violet-700 transition hover:bg-violet-100 dark:border-violet-800 dark:bg-zinc-900 dark:text-violet-300"
+                    >
+                      + {example}
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
 

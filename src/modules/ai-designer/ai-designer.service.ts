@@ -1141,7 +1141,7 @@ function buildSpecJson(project: AiDesignerProject, sketch?: { overrides: SketchG
   };
 }
 
-async function bumpVersion(
+export async function bumpVersion(
   actor: ActorContext,
   projectId: string,
   imageId: string,
