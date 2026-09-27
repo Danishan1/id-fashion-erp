@@ -218,7 +218,7 @@ export default function CrmDashboardPage() {
                 <ul className="space-y-1 text-sm">
                   {Object.entries(data.leadsBySource).map(([source, count]) => (
                     <li key={source} className="flex justify-between">
-                      <span>{humanizeStatus(source)}</span>
+                      <span>{source}</span>
                       <span className="font-medium">{count}</span>
                     </li>
                   ))}

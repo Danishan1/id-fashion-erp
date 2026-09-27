@@ -4,8 +4,17 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Modal } from "@/components/ui/Modal";
 import { FormField, textInputClass } from "@/components/ui/FormField";
-import { STATUS_LABELS, PRIORITY_LABELS, SOURCE_LABELS } from "../statusLabels";
+import {
+  BUSINESS_TYPE_LABELS,
+  LEAD_PRIORITY_BADGE_CLASS,
+  LEAD_PRIORITY_LABELS,
+  QUALITY_BADGE_CLASS,
+  QUALITY_LABELS,
+  STAGE_KIND_BADGE_CLASS,
+  type StageKind,
+} from "../statusLabels";
 import { formatNumber } from "@/lib/currency";
+import { LeadStagePanel } from "./LeadStagePanel";
 
 interface LeadDetail {
   id: string;
@@ -13,11 +22,38 @@ interface LeadDetail {
   name: string;
   email: string | null;
   phone: string | null;
+  whatsappNumber: string | null;
+  alternativePhone: string | null;
+  designation: string | null;
+  website: string | null;
   companyName: string | null;
-  source: keyof typeof SOURCE_LABELS;
+  businessType: keyof typeof BUSINESS_TYPE_LABELS | null;
+  country: string | null;
+  state: string | null;
+  city: string | null;
+  productCategory: { name: string } | null;
+  season: { name: string } | null;
+  productInterests: Array<{ productType: { id: string; name: string } }>;
+  market: string | null;
+  expectedQuantity: number | null;
+  targetPrice: string | null;
+  currencyCode: string | null;
+  moqRequirement: string | null;
+  requiredDeliveryDate: string | null;
+  samplingRequired: boolean;
+  techPackAvailable: boolean;
+  referenceImageAvailable: boolean;
+  source: { name: string } | null;
+  stage: { id: string; name: string; kind: StageKind };
+  lostReason: { name: string } | null;
+  lostCompetitor: string | null;
+  lostComment: string | null;
   leadScore: string;
-  priority: keyof typeof PRIORITY_LABELS;
-  status: keyof typeof STATUS_LABELS;
+  quality: keyof typeof QUALITY_LABELS;
+  priority: keyof typeof LEAD_PRIORITY_LABELS;
+  daysSinceCreated: number;
+  daysInCurrentStage: number;
+  daysSinceLastActivity: number | null;
   value: string;
   expectedCloseDate: string | null;
   notes: string | null;
@@ -156,45 +192,59 @@ export function LeadWorkflowPanel({ lead }: { lead: LeadDetail }) {
 
   return (
     <div className="space-y-8">
-      <div className="flex flex-wrap items-center gap-3">
-        <span className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-          {STATUS_LABELS[lead.status]}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={`rounded-full px-3 py-1 text-xs font-medium ${STAGE_KIND_BADGE_CLASS[lead.stage.kind]}`}>{lead.stage.name}</span>
+        <span className={`rounded-full px-3 py-1 text-xs font-medium ${QUALITY_BADGE_CLASS[lead.quality]}`}>
+          {QUALITY_LABELS[lead.quality]} · Score {Number(lead.leadScore).toFixed(0)}
         </span>
-        <span className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-300">
-          {PRIORITY_LABELS[lead.priority]} · Score {Number(lead.leadScore).toFixed(1)}
+        <span className={`rounded-full px-3 py-1 text-xs font-medium ${LEAD_PRIORITY_BADGE_CLASS[lead.priority]}`}>
+          {LEAD_PRIORITY_LABELS[lead.priority]} priority
         </span>
-        <Link href={`/leads/${lead.id}/edit`} className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400">
+        <span className="text-xs text-zinc-500">
+          {lead.daysInCurrentStage}d in stage · created {lead.daysSinceCreated}d ago ·{" "}
+          {lead.daysSinceLastActivity === null ? (
+            <span className="font-medium text-red-600 dark:text-red-400">never contacted</span>
+          ) : (
+            `last activity ${lead.daysSinceLastActivity}d ago`
+          )}
+        </span>
+        <Link href={`/leads/${lead.id}/edit`} className="ml-auto text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400">
           Edit
         </Link>
       </div>
 
       {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
 
-      <dl className="grid grid-cols-2 gap-4 rounded-lg border border-zinc-200 p-4 text-sm dark:border-zinc-800 sm:grid-cols-3">
-        <div>
-          <dt className="text-xs font-medium uppercase text-zinc-500">Company</dt>
-          <dd className="mt-0.5 text-zinc-900 dark:text-zinc-50">{lead.companyName ?? "—"}</dd>
-        </div>
-        <div>
-          <dt className="text-xs font-medium uppercase text-zinc-500">Email</dt>
-          <dd className="mt-0.5 text-zinc-900 dark:text-zinc-50">{lead.email ?? "—"}</dd>
-        </div>
-        <div>
-          <dt className="text-xs font-medium uppercase text-zinc-500">Phone</dt>
-          <dd className="mt-0.5 text-zinc-900 dark:text-zinc-50">{lead.phone ?? "—"}</dd>
-        </div>
-        <div>
-          <dt className="text-xs font-medium uppercase text-zinc-500">Source</dt>
-          <dd className="mt-0.5 text-zinc-900 dark:text-zinc-50">{SOURCE_LABELS[lead.source]}</dd>
-        </div>
-        <div>
-          <dt className="text-xs font-medium uppercase text-zinc-500">Potential Value</dt>
-          <dd className="mt-0.5 text-zinc-900 dark:text-zinc-50">₹{formatNumber(lead.value)}</dd>
-        </div>
-        <div>
-          <dt className="text-xs font-medium uppercase text-zinc-500">Assigned To</dt>
-          <dd className="mt-0.5 text-zinc-900 dark:text-zinc-50">{lead.assignedTo?.fullName ?? "Unassigned"}</dd>
-        </div>
+      <LeadStagePanel leadId={lead.id} currentStage={lead.stage} lostReason={lead.lostReason} lostCompetitor={lead.lostCompetitor} lostComment={lead.lostComment} />
+
+      <dl className="grid grid-cols-1 gap-4 rounded-lg border border-zinc-200 p-4 text-sm dark:border-zinc-800 sm:grid-cols-2 lg:grid-cols-3">
+        <Detail label="Company" value={lead.companyName} />
+        <Detail label="Contact Person" value={[lead.name, lead.designation].filter(Boolean).join(" · ")} />
+        <Detail label="Business Type" value={lead.businessType ? BUSINESS_TYPE_LABELS[lead.businessType] : null} />
+        <Detail label="Email" value={lead.email} />
+        <Detail label="Mobile" value={lead.phone} />
+        <Detail label="WhatsApp" value={lead.whatsappNumber} />
+        <Detail label="Location" value={[lead.city, lead.state, lead.country].filter(Boolean).join(", ")} />
+        <Detail label="Website" value={lead.website} />
+        <Detail label="Source" value={lead.source?.name} />
+        <Detail label="Product Category" value={lead.productCategory?.name} />
+        <Detail label="Product Interest" value={lead.productInterests.map((p) => p.productType.name).join(", ")} />
+        <Detail label="Season / Market" value={[lead.season?.name, lead.market].filter(Boolean).join(" · ")} />
+        <Detail label="Expected Quantity" value={lead.expectedQuantity != null ? `${lead.expectedQuantity.toLocaleString()} pcs` : null} />
+        <Detail
+          label="Target Price"
+          value={lead.targetPrice != null ? `${lead.currencyCode ?? ""} ${formatNumber(lead.targetPrice)}`.trim() : null}
+        />
+        <Detail label="Expected Order Value" value={`₹${formatNumber(lead.value)}`} />
+        <Detail label="MOQ Requirement" value={lead.moqRequirement} />
+        <Detail label="Required Delivery" value={lead.requiredDeliveryDate ? new Date(lead.requiredDeliveryDate).toLocaleDateString() : null} />
+        <Detail
+          label="Sampling / Tech Pack / Reference"
+          value={[lead.samplingRequired && "Sampling required", lead.techPackAvailable && "Tech pack available", lead.referenceImageAvailable && "Reference image available"]
+            .filter(Boolean)
+            .join(" · ")}
+        />
+        <Detail label="Assigned Salesperson" value={lead.assignedTo?.fullName ?? "Unassigned"} />
         {lead.buyerEnquiry && (
           <div>
             <dt className="text-xs font-medium uppercase text-zinc-500">Linked Buyer Enquiry</dt>
@@ -380,6 +430,15 @@ export function LeadWorkflowPanel({ lead }: { lead: LeadDetail }) {
           </div>
         </div>
       </Modal>
+    </div>
+  );
+}
+
+function Detail({ label, value }: { label: string; value: string | null | undefined }) {
+  return (
+    <div>
+      <dt className="text-xs font-medium uppercase text-zinc-500">{label}</dt>
+      <dd className="mt-0.5 break-words text-zinc-900 dark:text-zinc-50">{value || "—"}</dd>
     </div>
   );
 }

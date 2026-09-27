@@ -7,8 +7,10 @@ vi.mock("@/core/db/client", () => ({
     lead: { findFirst: vi.fn() },
     customer: { findFirst: vi.fn() },
     campaign: { findFirst: vi.fn() },
+    crmLeadSource: { findFirst: vi.fn() },
   },
 }));
+vi.mock("@/modules/crm/crm-config.service", () => ({ ensureCrmDefaults: vi.fn() }));
 vi.mock("@/modules/crm/lead.service", () => ({ createLead: vi.fn() }));
 vi.mock("@/modules/crm/deal.service", () => ({ createDeal: vi.fn() }));
 vi.mock("@/modules/marketing/campaign.service", () => ({ recordDailyMetric: vi.fn() }));
@@ -34,6 +36,11 @@ beforeEach(() => {
   vi.mocked(prisma.lead.findFirst).mockReset();
   vi.mocked(prisma.customer.findFirst).mockReset();
   vi.mocked(prisma.campaign.findFirst).mockReset();
+  // Only WEBSITE is a configured source in these tests.
+  vi.mocked(prisma.crmLeadSource.findFirst)
+    .mockReset()
+    .mockImplementation(((args: { where: { OR: Array<{ code?: string }> } }) =>
+      Promise.resolve(args.where.OR.some((c) => c.code === "WEBSITE") ? { id: "11111111-1111-4111-8111-111111111111" } : null)) as never);
   vi.mocked(createLead).mockReset().mockResolvedValue({} as never);
   vi.mocked(createDeal).mockReset().mockResolvedValue({} as never);
   vi.mocked(recordDailyMetric).mockReset().mockResolvedValue({} as never);
@@ -52,7 +59,7 @@ describe("runImport — LEAD", () => {
 
     expect(result.importedCount).toBe(1);
     expect(result.skippedCount).toBe(0);
-    expect(createLead).toHaveBeenCalledWith(actor, expect.objectContaining({ name: "Jane Doe", email: "jane@example.com", source: "WEBSITE", leadScore: 85 }));
+    expect(createLead).toHaveBeenCalledWith(actor, expect.objectContaining({ name: "Jane Doe", email: "jane@example.com", sourceId: "11111111-1111-4111-8111-111111111111", leadScore: 85 }));
   });
 
   it("skips a row with an invalid Source without ever calling createLead", async () => {

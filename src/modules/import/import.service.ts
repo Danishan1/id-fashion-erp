@@ -8,6 +8,8 @@ import { createDealSchema } from "@/modules/crm/deal.schema";
 import { createDeal } from "@/modules/crm/deal.service";
 import { createLeadSchema } from "@/modules/crm/lead.schema";
 import { createLead } from "@/modules/crm/lead.service";
+import { ensureCrmDefaults } from "@/modules/crm/crm-config.service";
+import { LEGACY_SOURCE_CODE_MAP } from "@/modules/crm/crm-defaults";
 import { recordDailyMetricSchema } from "@/modules/marketing/campaign.schema";
 import { recordDailyMetric } from "@/modules/marketing/campaign.service";
 import { ImportBatchRepository } from "./import.repository";
@@ -49,29 +51,49 @@ export function undefinedIfBlank(value: string | undefined): string | undefined 
 }
 
 async function importLeadRow(actor: ActorContext, raw: Record<string, string>) {
-  // Deliberately no manual pre-check for an invalid source here — that used
-  // to throw immediately with only that one issue, short-circuiting before
-  // createLeadSchema.parse() below got a chance to run and report every
-  // issue in the row together (matching importDealRow's own behavior,
-  // which has no such pre-check). The schema's own `z.enum(LEAD_SOURCES)`
-  // already rejects an invalid value as one Zod issue among however many
-  // the row actually has, which messageFromError() then joins into one
-  // combined message.
-  const source = undefinedIfBlank(raw.source)?.toUpperCase();
+  // Source is resolved against the company's own configurable Lead Source master (by
+  // code or name, case-insensitive); the old fixed enum values are still
+  // accepted via LEGACY_SOURCE_CODE_MAP. An unknown source fails the row —
+  // but together with every other issue in that row (reported as one
+  // combined message), never short-circuiting before schema validation runs.
+  const sourceResult = await resolveLeadSourceId(actor.companyId, raw.source);
 
-  const input = createLeadSchema.parse({
+  const parsed = createLeadSchema.safeParse({
     name: raw.name?.trim(),
     email: raw.email?.trim() ?? "",
     phone: raw.phone?.trim() ?? "",
+    whatsappNumber: raw.whatsappNumber?.trim() ?? "",
     companyName: raw.companyName?.trim() ?? "",
-    source,
+    country: raw.country?.trim() ?? "",
+    city: raw.city?.trim() ?? "",
+    sourceId: sourceResult.id ?? "",
     leadScore: raw.leadScore,
     value: raw.value,
     expectedCloseDate: undefinedIfBlank(raw.expectedCloseDate),
     notes: raw.notes?.trim() ?? "",
   });
 
-  await createLead(actor, input);
+  const issues = [
+    ...(sourceResult.error ? [`source: ${sourceResult.error}`] : []),
+    ...(parsed.success ? [] : [messageFromError(parsed.error)]),
+  ];
+  if (issues.length > 0 || !parsed.success) throw new BusinessRuleError("VALIDATION_ERROR", issues.join("; "));
+
+  await createLead(actor, parsed.data);
+}
+
+async function resolveLeadSourceId(companyId: string, rawSource: string | undefined): Promise<{ id?: string; error?: string }> {
+  const trimmed = undefinedIfBlank(rawSource);
+  if (!trimmed) return {};
+  await ensureCrmDefaults(companyId);
+  const upper = trimmed.toUpperCase();
+  const code = LEGACY_SOURCE_CODE_MAP[upper] ?? upper.replace(/[\s/-]+/g, "_");
+  const source = await prisma.crmLeadSource.findFirst({
+    where: { companyId, OR: [{ code }, { name: { equals: trimmed, mode: "insensitive" } }] },
+    select: { id: true },
+  });
+  if (!source) return { error: `Lead source "${trimmed}" is not configured in CRM Settings.` };
+  return { id: source.id };
 }
 
 async function resolveLeadId(companyId: string, leadNumber: string | undefined): Promise<string | undefined> {

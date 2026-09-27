@@ -36,7 +36,7 @@ export async function getCrmDashboard(companyId: string, filters: CrmDashboardFi
   const [leads, deals, followupCounters, leaderboard] = await Promise.all([
     prisma.lead.findMany({
       where: { companyId, ...dateWhere },
-      select: { id: true, status: true, source: true },
+      select: { id: true, stage: { select: { code: true, kind: true } }, source: { select: { name: true } } },
     }),
     prisma.deal.findMany({
       where: { companyId, ...dateWhere },
@@ -70,7 +70,10 @@ export async function getCrmDashboard(companyId: string, filters: CrmDashboardFi
   for (const d of deals) dealsByStage[d.stage] = (dealsByStage[d.stage] ?? 0) + 1;
 
   const leadsBySource: Record<string, number> = {};
-  for (const l of leads) leadsBySource[l.source] = (leadsBySource[l.source] ?? 0) + 1;
+  for (const l of leads) {
+    const key = l.source?.name ?? "Unspecified";
+    leadsBySource[key] = (leadsBySource[key] ?? 0) + 1;
+  }
 
   const customerWonValue = new Map<string, { id: string; name: string; value: number }>();
   for (const d of wonDeals) {
@@ -87,8 +90,10 @@ export async function getCrmDashboard(companyId: string, filters: CrmDashboardFi
 
   return {
     totalLeads: leads.length,
-    newLeads: leads.filter((l) => l.status === "NEW").length,
-    qualifiedLeads: leads.filter((l) => l.status === "QUALIFIED").length,
+    // Interim mapping onto the configurable stages; the dashboard itself is
+    // reworked in the next CRM slice.
+    newLeads: leads.filter((l) => l.stage.code === "NEW_LEAD").length,
+    qualifiedLeads: leads.filter((l) => l.stage.code === "QUALIFICATION").length,
     openDeals: openDeals.length,
     wonDeals: wonDeals.length,
     lostDeals: lostDeals.length,

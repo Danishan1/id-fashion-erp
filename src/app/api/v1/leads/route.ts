@@ -11,7 +11,14 @@ export async function GET(req: NextRequest) {
     await PermissionService.assert(session.user.id, "crm", "view");
 
     const query = parseListQuery(req.nextUrl.searchParams, "createdAt");
-    const { data, totalCount } = await listLeads(session.user.companyId, query);
+    const sp = req.nextUrl.searchParams;
+    const { data, totalCount } = await listLeads(session.user.companyId, query, {
+      stageId: sp.get("stageId") ?? undefined,
+      sourceId: sp.get("sourceId") ?? undefined,
+      priority: sp.get("priority") ?? undefined,
+      assignedToUserId: sp.get("assignedToUserId") ?? undefined,
+      country: sp.get("country") ?? undefined,
+    });
 
     return NextResponse.json({ data, meta: buildListMeta(totalCount, query.page, query.pageSize) });
   } catch (error) {

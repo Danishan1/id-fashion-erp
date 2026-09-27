@@ -67,7 +67,7 @@ async function computeCampaignMetricsMap(companyId: string, campaignIds: string[
     CampaignDailyMetricRepository.sumByCampaignIds(campaignIds),
     prisma.lead.groupBy({ by: ["campaignId"], where: { companyId, campaignId: { in: campaignIds } }, _count: { _all: true } }),
     prisma.lead.groupBy({ by: ["campaignId"], where: { companyId, campaignId: { in: campaignIds }, leadScore: { gte: warmThreshold } }, _count: { _all: true } }),
-    prisma.lead.groupBy({ by: ["campaignId"], where: { companyId, campaignId: { in: campaignIds }, status: "WON" }, _count: { _all: true } }),
+    prisma.lead.groupBy({ by: ["campaignId"], where: { companyId, campaignId: { in: campaignIds }, stage: { kind: "WON" } }, _count: { _all: true } }),
     Promise.all(
       campaignIds.map(async (id) => {
         const agg = await prisma.deal.aggregate({ where: { stage: "WON", lead: { campaignId: id } }, _sum: { value: true } });
@@ -503,7 +503,7 @@ export async function getMarketingTrends(companyId: string, days = 30): Promise<
     }),
     prisma.lead.findMany({
       where: { companyId, campaignId: { not: null }, createdAt: { gte: startDate } },
-      select: { createdAt: true, status: true },
+      select: { createdAt: true, stage: { select: { kind: true } } },
     }),
     prisma.deal.findMany({
       where: { companyId, stage: "WON", createdAt: { gte: startDate }, lead: { campaignId: { not: null } } },
@@ -528,7 +528,7 @@ export async function getMarketingTrends(companyId: string, days = 30): Promise<
     const bucket = buckets.get(dayKey(new Date(l.createdAt)));
     if (!bucket) continue;
     bucket.leads += 1;
-    if (l.status === "WON") bucket.customers += 1;
+    if (l.stage.kind === "WON") bucket.customers += 1;
   }
   for (const d of wonDeals) {
     const bucket = buckets.get(dayKey(new Date(d.createdAt)));

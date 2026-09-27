@@ -297,8 +297,8 @@ describe("getMarketingDashboard", () => {
       { campaignId: "camp-1", _sum: { spend: "800" } },
       { campaignId: "camp-2", _sum: { spend: "200" } },
     ] as never);
-    const groupByImpl = (args: { where?: { status?: unknown; leadScore?: unknown } }) => {
-      if (args.where?.status === "WON") return Promise.resolve([{ campaignId: "camp-1", _count: { _all: 2 } }]);
+    const groupByImpl = (args: { where?: { stage?: { kind?: unknown }; leadScore?: unknown } }) => {
+      if (args.where?.stage?.kind === "WON") return Promise.resolve([{ campaignId: "camp-1", _count: { _all: 2 } }]);
       if (args.where?.leadScore) return Promise.resolve([{ campaignId: "camp-1", _count: { _all: 3 } }]);
       return Promise.resolve([
         { campaignId: "camp-1", _count: { _all: 5 } },
@@ -343,8 +343,8 @@ describe("getMarketingTrends", () => {
       { metricDate: new Date("2026-08-22"), spend: "500", impressions: "1000", clicks: "50" },
     ] as never);
     vi.mocked(prisma.lead.findMany).mockResolvedValue([
-      { createdAt: new Date("2026-08-22T09:00:00"), status: "NEW" },
-      { createdAt: new Date("2026-08-22T15:00:00"), status: "WON" },
+      { createdAt: new Date("2026-08-22T09:00:00"), stage: { kind: "OPEN" } },
+      { createdAt: new Date("2026-08-22T15:00:00"), stage: { kind: "WON" } },
     ] as never);
     vi.mocked(prisma.deal.findMany).mockResolvedValue([{ createdAt: new Date("2026-08-22T10:00:00"), value: "2000" }] as never);
 

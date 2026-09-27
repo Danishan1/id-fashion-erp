@@ -32,7 +32,7 @@ export async function getCustomer360(companyId: string, customerId: string) {
         probabilityPercent: true,
         expectedCloseDate: true,
         createdAt: true,
-        lead: { select: { id: true, leadNumber: true, name: true, source: true } },
+        lead: { select: { id: true, leadNumber: true, name: true, source: { select: { name: true } } } },
         assignedTo: { select: { id: true, fullName: true } },
         salesAgent: { select: { id: true, name: true } },
         resultingSalesOrders: { select: { id: true, orderNumber: true, status: true } },

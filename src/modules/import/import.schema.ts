@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { LEAD_SOURCES } from "@/modules/crm/lead.schema";
 
 export const IMPORT_BATCH_TYPES = ["LEAD", "DEAL", "CAMPAIGN_DAILY_METRIC"] as const;
 export type ImportBatchTypeValue = (typeof IMPORT_BATCH_TYPES)[number];
@@ -529,7 +528,10 @@ export const IMPORT_COLUMNS: Record<ImportBatchTypeValue, ImportColumnSpec[]> = 
     { key: "email", label: "Email", required: false },
     { key: "phone", label: "Phone", required: false },
     { key: "companyName", label: "Company Name", required: false },
-    { key: "source", label: `Source (${LEAD_SOURCES.join("/")})`, required: false },
+    { key: "whatsappNumber", label: "WhatsApp Number", required: false },
+    { key: "country", label: "Country", required: false },
+    { key: "city", label: "City", required: false },
+    { key: "source", label: "Source (code or name from CRM Settings, e.g. WEBSITE)", required: false },
     { key: "leadScore", label: "Lead Score (0-100)", required: false },
     { key: "value", label: "Potential Value", required: false },
     { key: "expectedCloseDate", label: "Expected Close Date (YYYY-MM-DD)", required: false },

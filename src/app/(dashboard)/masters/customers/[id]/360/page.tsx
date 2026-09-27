@@ -99,7 +99,7 @@ export default async function Customer360Page({ params }: { params: Promise<{ id
                   <a href={`/leads/${l.id}`} className="text-indigo-600 hover:underline dark:text-indigo-400">
                     {l.name} ({l.leadNumber})
                   </a>{" "}
-                  · {humanizeStatus(l.source)}
+                  · {l.source?.name ?? "—"}
                 </li>
               ))}
             </ul>

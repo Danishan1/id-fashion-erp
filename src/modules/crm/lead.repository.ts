@@ -7,6 +7,18 @@ const DETAIL_INCLUDE = {
   buyerEnquiry: { select: { id: true, enquiryNumber: true } },
   campaign: { select: { id: true, campaignNumber: true, name: true } },
   deals: { select: { id: true, dealNumber: true, title: true, stage: true, value: true } },
+  stage: { select: { id: true, code: true, name: true, kind: true } },
+  source: { select: { id: true, code: true, name: true } },
+  lostReason: { select: { id: true, code: true, name: true } },
+  productCategory: { select: { id: true, name: true } },
+  season: { select: { id: true, name: true } },
+  productInterests: { select: { productType: { select: { id: true, name: true } } } },
+} satisfies Prisma.LeadInclude;
+
+const LIST_INCLUDE = {
+  assignedTo: { select: { id: true, fullName: true } },
+  stage: { select: { id: true, code: true, name: true, kind: true } },
+  source: { select: { id: true, name: true } },
 } satisfies Prisma.LeadInclude;
 
 export const LeadRepository = {
@@ -21,7 +33,7 @@ export const LeadRepository = {
   findMany: (where: Prisma.LeadWhereInput, args: Omit<Prisma.LeadFindManyArgs, "where">) =>
     prisma.lead.findMany({
       where,
-      include: { assignedTo: { select: { id: true, fullName: true } } },
+      include: LIST_INCLUDE,
       ...args,
     }),
 
@@ -29,14 +41,30 @@ export const LeadRepository = {
 
   /** Same email-or-phone duplicate check the source performs, scoped by
    * company (the source has no tenancy at all to scope by). */
-  findDuplicates: (companyId: string, email: string | null, phone: string | null, excludeId?: string) => {
+  findDuplicates: (
+    companyId: string,
+    keys: { email: string | null; phones: string[]; companyName: string | null; country: string | null },
+    excludeId?: string
+  ) => {
     const or: Prisma.LeadWhereInput[] = [];
-    if (email) or.push({ email });
-    if (phone) or.push({ phone });
+    if (keys.email) or.push({ email: { equals: keys.email, mode: "insensitive" } });
+    // A number entered as a lead's mobile may be stored as another lead's
+    // WhatsApp (and vice versa) — match every phone-like field against both.
+    for (const phone of keys.phones) {
+      or.push({ phone }, { whatsappNumber: phone });
+    }
+    // Company name alone is too loose (two unrelated "ABC Fashion"s in
+    // different countries are common) — only paired with country.
+    if (keys.companyName && keys.country) {
+      or.push({
+        companyName: { equals: keys.companyName, mode: "insensitive" },
+        country: { equals: keys.country, mode: "insensitive" },
+      });
+    }
     if (or.length === 0) return Promise.resolve([]);
     return prisma.lead.findMany({
       where: { companyId, OR: or, ...(excludeId ? { id: { not: excludeId } } : {}) },
-      select: { id: true, leadNumber: true, name: true },
+      select: { id: true, leadNumber: true, name: true, companyName: true, email: true, phone: true, country: true },
       take: 5,
     });
   },

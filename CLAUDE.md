@@ -7422,6 +7422,33 @@ row, re-pointing its real `JobWorkOrder` (`JWO-2026-00001`) and its real externa
   screen for Contractor-specific piece rates, and a Worker/Contractor Earnings report — both remain the same
   "not built yet" items already documented in the Production Module Advanced Upgrade section above.
 
+## CRM Lead-to-Customer upgrade — slice 1: configurable pipeline, history, garment lead fields (2026-09-27, branch `crm-lead-to-customer`)
+
+First slice of a 12-slice plan (approved; plan file `radiant-wiggling-moth.md`) upgrading the existing CRM (not a
+greenfield build — Lead/Deal/Activity/Follow-up/Dashboard/Kanban/Import/Customer 360 already existed). Confirmed
+decisions for the whole initiative: a new lightweight CRM Quotation document; Opportunity = the existing Deal extended
+(not a new table); automation evaluated on page load + a manual "Run now" button (no background scheduler); new
+SALES_MANAGER / SALES_EXECUTIVE roles with own-records scoping.
+- **`Lead.status` (fixed enum) → `Lead.stageId`** FK to a new company-configurable `CrmPipelineStage` master
+  (`pipeline` LEAD|OPPORTUNITY, `kind` OPEN|WON|LOST|DORMANT). Every rule keys on `kind`, never code/name.
+  **`Lead.source` (EnquirySource enum) → `Lead.sourceId`** FK to `CrmLeadSource`. New `CrmLostReason` master.
+  Defaults (12 stages / 22 sources / 13 reasons) live in `src/modules/crm/crm-defaults.ts`; existing companies were
+  backfilled by migration `20260927100000_crm_pipeline_stages_and_lead_expansion` (hand-authored: seed → backfill old
+  status/source → NOT NULL → drop), later companies are seeded lazily by `ensureCrmDefaults()`.
+- Append-only `CrmStageHistory` + `CrmAssignmentHistory`. Stage moves go ONLY through `changeLeadStage()`
+  (`POST /api/v1/leads/:id/stage`) — `updateLead` no longer touches stage. LOST-kind requires a lost reason
+  (+ competitor/comment/revisit follow-up); leaving LOST clears the lead's lost snapshot (history keeps it).
+- Lead gained designation/WhatsApp/alt phone/website/business type/location and garment fields (Category + Season
+  masters, product interest via `CrmLeadProductInterest` → ProductType master, qty/target price/currency/MOQ/
+  delivery/sampling/tech-pack/reference flags) and a stored `priority` (LOW..URGENT). The score-derived computed field
+  was renamed `priority`→`quality` (`LeadQuality` COLD/WARM/HOT). Duplicate detection now covers email, every phone
+  field cross-matched (mobile↔WhatsApp↔alt), and company+country.
+- CRM Settings page `/crm/settings` (Pipeline Stages / Lead Sources / Lost Reasons, via `SimpleLookupManager`); a stage
+  holding leads can't be deactivated or change kind, and at least one active OPEN/WON/LOST stage must remain.
+- Verified: prisma validate, tsc, eslint, full vitest (2017/2017), and a 23-check script against the real dev DB.
+  **Not verified in a browser** — another session's `next dev` held the folder lock and its in-memory Prisma client
+  predates this migration (it must be restarted before its CRM pages work again).
+
 ## Reference
 
 Full architecture rationale, complete table-by-table field lists, and the full role×module permission matrix were developed in the Phase 1 planning session and are condensed here. Consult that history if a design decision needs deeper justification than what's summarized above.
