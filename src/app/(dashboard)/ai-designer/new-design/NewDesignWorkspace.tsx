@@ -330,7 +330,11 @@ export function NewDesignWorkspace({ initialProject }: { initialProject: NewDesi
       const res = await fetch(`/api/v1/ai-designer/projects/${id}/new-design/source-image`, { method: "POST", body: form });
       if (!res.ok) throw new Error(await readError(res));
       await reload(id);
-      if (!projectId) router.replace(`/ai-designer/new-design/${id}`);
+      // Update the URL without a navigation: router.replace() would remount this
+      // workspace from the server's pre-analysis snapshot, and the analysis
+      // result below would land in the unmounted instance (the panel stayed
+      // empty even though the API returned data).
+      if (!projectId) window.history.replaceState(null, "", `/ai-designer/new-design/${id}`);
       // Analyse straight away — the right panel fills in as soon as it's done.
       setBusy("analyze");
       await post(`/api/v1/ai-designer/projects/${id}/new-design/analyze`);

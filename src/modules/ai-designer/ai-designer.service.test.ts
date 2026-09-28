@@ -13,7 +13,7 @@ vi.mock("@/core/attachments/AttachmentService", () => ({
 vi.mock("@/core/ai-designer/fabric-analysis/analyze", () => ({ analyzeFabric: vi.fn() }));
 vi.mock("@/core/ai-designer/product-suggestions/generate", () => ({ generateProductSuggestions: vi.fn() }));
 vi.mock("@/core/ai-designer/sketch-analysis/analyze", () => ({ analyzeSketch: vi.fn() }));
-vi.mock("@/core/ai/provider-manager/AIProviderManager", () => ({ runWithFailover: vi.fn() }));
+vi.mock("@/core/ai/provider-manager/AIProviderManager", () => ({ runWithFailover: vi.fn(), hasProviderForCapability: vi.fn().mockResolvedValue(true) }));
 vi.mock("@/core/documents/company-header", () => ({
   getCompanyHeaderLines: vi.fn().mockResolvedValue({ companyName: "Test Co", companyDetailLines: [] }),
   formatDocDate: vi.fn((d: Date) => new Date(d).toISOString().slice(0, 10)),
@@ -104,7 +104,7 @@ vi.mock("./ai-designer.repository", () => ({
 
 const { generateDocumentNumber } = await import("@/core/numbering/DocumentNumberingService");
 const { uploadAttachment, getAttachmentForDownload, deleteAttachment } = await import("@/core/attachments/AttachmentService");
-const { runWithFailover } = await import("@/core/ai/provider-manager/AIProviderManager");
+const { runWithFailover, hasProviderForCapability } = await import("@/core/ai/provider-manager/AIProviderManager");
 const { PermissionService } = await import("@/core/rbac/PermissionService");
 const { generateGarmentAnalysisPart1, generateGarmentAnalysisPart2, generateGarmentAnalysisPart3, generateGarmentAnalysisPart4 } = await import(
   "@/core/ai-designer/tech-pack/generate"
@@ -716,6 +716,36 @@ describe("generateEditPreview — Edit Design workspace, step 1", () => {
       featureLabel: "Collar",
       currentValue: "Round Neck",
       newValue: "Mandarin Collar",
+      imageCount: 1,
+      viewAngle: "FRONT",
+    });
+
+    expect(runWithFailover).toHaveBeenCalledWith(expect.objectContaining({ capability: "IMAGE_EDIT" }));
+    expect(generateVariation).toHaveBeenCalled();
+  });
+
+  it("falls back to a plain single-image edit when no provider has Multi-Fabric enabled", async () => {
+    vi.mocked(hasProviderForCapability).mockResolvedValueOnce(false);
+    vi.mocked(AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(
+      baseProject({
+        fabricImageAttachmentId: "att-fabric-original",
+        currentVersion: { id: "version-1", currentImageId: "img-parent", currentImage: { id: "img-parent", imageAttachmentId: "att-parent" } },
+      }) as never
+    );
+    vi.mocked(getAttachmentForDownload).mockResolvedValue({ attachment: { mimeType: "image/png" }, buffer: Buffer.from("parent") } as never);
+    const generateVariation = vi
+      .fn()
+      .mockResolvedValue({ images: [{ buffer: Buffer.from("edited"), mimeType: "image/png" }], model: "gpt-image-1", raw: {} });
+    vi.mocked(runWithFailover).mockImplementation(async (params) => {
+      const result = await params.call({ name: "openai", model: "gpt-image-1", generate: vi.fn(), generateVariation } as never);
+      return { images: result.images, model: result.model, raw: result.raw, providerId: "provider-1", providerName: "openai" };
+    });
+    vi.mocked(AiDesignerImageRepository.findByGenerationId).mockResolvedValue([{ id: "img-preview-1" }] as never);
+
+    await generateEditPreview(actor, "proj-1", {
+      mode: "AI_PROMPT",
+      featureLabel: "Sleeve",
+      freeformInstructions: "Make the sleeves puffed",
       imageCount: 1,
       viewAngle: "FRONT",
     });

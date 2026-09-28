@@ -216,7 +216,8 @@ export async function runWithFailover(params: RunWithFailoverParams): Promise<Ru
       "AI_SERVICE_ERROR",
       params.capability === "FABRIC_REFERENCE"
         ? NO_COMPATIBLE_PROVIDER_MESSAGE
-        : `No configured AI provider currently supports ${capabilityLabel(params.capability)}.`
+        : `No configured AI provider currently supports ${capabilityLabel(params.capability)}. ` +
+            `Tick the "${params.capability}" capability on a provider that supports it (e.g. OpenAI) in Administration → AI Configuration.`
     );
   }
 

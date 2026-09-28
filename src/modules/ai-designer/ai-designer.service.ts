@@ -16,7 +16,7 @@ import { PROMPT_VERSION as SKETCH_PROMPT_VERSION } from "@/core/ai-designer/sket
 import { flattenToObservations as flattenSketchObservations } from "@/core/ai-designer/sketch-analysis/schema";
 import { SKETCH_FEATURE_LABELS, SKETCH_TO_DESIGN_ATTRIBUTE_KEYS, type SketchFeatureKey } from "@/core/ai-designer/sketch-analysis/feature-registry";
 import { ImageGenerationServiceError } from "@/core/ai/image-generation/types";
-import { runWithFailover } from "@/core/ai/provider-manager/AIProviderManager";
+import { hasProviderForCapability, runWithFailover } from "@/core/ai/provider-manager/AIProviderManager";
 import { buildMaskEditPrompt, MASK_EDIT_PROMPT_VERSION, runMaskEditGeneration } from "@/core/ai/image-generation/mask-edit";
 import {
   buildEmbellishmentPrompt,
@@ -1436,7 +1436,14 @@ export async function generateEditPreview(actor: ActorContext, projectId: string
   // the source of truth, never text/memory alone" discipline already used
   // for the original Generate Design/Multi-Fabric calls.
   const fabricAttachmentId = project.fabricImageAttachmentId;
-  const fabricRef = fabricAttachmentId ? await getAttachmentForDownload(actor.companyId, fabricAttachmentId) : null;
+  // Fabric-grounded editing (applyFabric) needs a provider with MULTI_FABRIC
+  // ticked. When none has it, fall back to the ordinary single-image edit
+  // (IMAGE_EDIT) instead of failing — the prompt drops its fabric-reference
+  // wording via hasFabricReference below.
+  const fabricRef =
+    fabricAttachmentId && (await hasProviderForCapability(actor.companyId, "MULTI_FABRIC"))
+      ? await getAttachmentForDownload(actor.companyId, fabricAttachmentId)
+      : null;
 
   const prompt = buildWorkspaceEditPrompt({
     mode: input.mode,
