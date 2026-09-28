@@ -1,5 +1,6 @@
 "use client";
 
+import { TechPackMasterPanel } from "./TechPackMasterPanel";
 import { useState } from "react";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 
@@ -513,7 +514,7 @@ function normalizeAnalysis(raw: unknown): TechPackGarmentAnalysis {
   };
 }
 
-export function AiDesignerTechPackPanel({
+function LegacyTechPackPanel({
   projectId,
   techPack,
   busy,
@@ -1048,6 +1049,32 @@ export function AiDesignerTechPackPanel({
         onConfirm={approve}
         onCancel={() => setConfirmApprove(false)}
       />
+    </div>
+  );
+}
+
+/**
+ * Tech Pack step entry point. New tech packs use the master-prompt 7-page
+ * image flow (TechPackMasterPanel); an older table-based tech pack still
+ * opens in its original editor, and its "Generate" button now starts a new
+ * master-prompt tech pack (the POST route's current behaviour).
+ */
+export function AiDesignerTechPackPanel(props: {
+  projectId: string;
+  techPack: TechPackData | null;
+  busy: boolean;
+  onGenerate: () => void;
+  onChanged: (techPack: TechPackData) => void;
+}) {
+  const raw = props.techPack as unknown as { status?: string; garmentAnalysisJson?: { format?: string } | null } | null;
+  const isLegacy = !!raw && raw.status === "SUCCESS" && !!raw.garmentAnalysisJson && raw.garmentAnalysisJson.format !== "MASTER_V1";
+  if (!isLegacy) return <TechPackMasterPanel projectId={props.projectId} />;
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
+        <span>This is an older table-based tech pack. Generate a new one to get the 7 AI page images.</span>
+      </div>
+      <LegacyTechPackPanel {...props} />
     </div>
   );
 }

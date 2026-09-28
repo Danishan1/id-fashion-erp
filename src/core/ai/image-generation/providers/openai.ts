@@ -124,7 +124,7 @@ export function createOpenAiImageProvider(config: OpenAiImageConfig = getOpenAiI
       }
     },
 
-    async generateVariation({ prompt, count, parentImage }): Promise<GenerateImagesResult> {
+    async generateVariation({ prompt, count, parentImage, output }): Promise<GenerateImagesResult> {
       try {
         const file = await toFile(parentImage.buffer, "parent-image.png", { type: parentImage.mimeType });
         const response = await openai.images.edit({
@@ -132,8 +132,8 @@ export function createOpenAiImageProvider(config: OpenAiImageConfig = getOpenAiI
           image: file,
           prompt,
           n: count,
-          size: DEFAULT_SIZE,
-          quality: DEFAULT_QUALITY,
+          size: output?.size ?? DEFAULT_SIZE,
+          quality: output?.quality ?? DEFAULT_QUALITY,
         });
         return { images: extractBuffers(response.data, count), model: config.model, raw: response };
       } catch (err) {

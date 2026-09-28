@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { getGarmentTemplate } from "@/core/ai-designer/catalogs/garment-template-catalog";
 import { attachmentUrl } from "../../../new-design/NewDesignWorkspace";
+import { TechPackMasterPanel } from "../../../_shared/TechPackMasterPanel";
 
 interface VersionRow {
   id: string;
@@ -146,6 +147,12 @@ export function DesignViewClient({ project }: { project: DesignViewProject }) {
           >
             🎨 See all colour variants
           </button>
+          <a
+            href="#tech-pack"
+            className="rounded-xl border-2 border-zinc-300 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-violet-400 dark:border-zinc-700 dark:text-zinc-200"
+          >
+            📄 Tech Pack
+          </a>
           <Link
             href={`/ai-designer/catalogue-designs/${project.id}/edit`}
             className="rounded-xl bg-gradient-to-r from-indigo-600 to-fuchsia-600 px-4 py-2 text-sm font-semibold text-white shadow-md hover:brightness-110"
@@ -275,6 +282,13 @@ export function DesignViewClient({ project }: { project: DesignViewProject }) {
           </section>
         </div>
       </div>
+
+      {project.currentVersion && (
+        <section id="tech-pack" className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+          <h2 className="mb-3 text-sm font-semibold text-zinc-900 dark:text-zinc-100">Tech Pack</h2>
+          <TechPackMasterPanel projectId={project.id} />
+        </section>
+      )}
 
       <section className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
         <div className="mb-3 flex items-center justify-between">

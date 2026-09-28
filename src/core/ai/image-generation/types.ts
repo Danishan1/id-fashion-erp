@@ -42,6 +42,11 @@ export class ImageGenerationServiceError extends Error {
   }
 }
 
+export interface ImageOutputOptions {
+  size?: "1024x1024" | "1024x1536" | "1536x1024";
+  quality?: "low" | "medium" | "high";
+}
+
 export interface ImageGenerationProvider {
   readonly name: string;
   readonly model: string;
@@ -58,6 +63,8 @@ export interface ImageGenerationProvider {
     prompt: string;
     count: number;
     parentImage: { buffer: Buffer; mimeType: string };
+    /** Optional output shape hint (e.g. a tall, high-quality tech pack page). Providers that cannot honour it ignore it. */
+    output?: ImageOutputOptions;
   }): Promise<GenerateImagesResult>;
 
   /**

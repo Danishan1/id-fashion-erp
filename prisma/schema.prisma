@@ -9116,6 +9116,13 @@ model AiDesignerTechPackPage {
   imageAttachmentId         String? @map("image_attachment_id")
   technicalFlatAttachmentId String? @map("technical_flat_attachment_id")
 
+  // Master-prompt Tech Pack (2026-09-28): each of the 7 pages is its own AI
+  // page image, generated in the background. Null on the older table-based
+  // tech packs, which never generate page images.
+  imageStatus  AiDesignerRunStatus? @map("image_status")
+  imageError   String?              @map("image_error")
+  promptEdited Boolean              @default(false) @map("prompt_edited")
+
   techPack AiDesignerTechPack @relation(fields: [techPackId], references: [id], onDelete: Cascade)
 
   @@unique([techPackId, pageNumber])

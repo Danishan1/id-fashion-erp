@@ -7473,6 +7473,25 @@ no sidebar link. The classic 13-step wizard is unchanged and still opens for any
 - Routes: `/api/v1/ai-designer/new-design` and `/api/v1/ai-designer/projects/[id]/new-design/*`
 - Migration: `20260927120000_ai_designer_new_design_flow`. It adds nullable `ai_projects` columns plus the `GARMENT_ANALYSIS`/`COLOR_VARIANT` prompt types.
 
+## AI Designer — Tech Pack rebuilt on the master prompt: 7 AI page images + PDF (2026-09-28)
+
+This replaces the v4 table-based Tech Pack as the default. It follows the company's own ChatGPT workflow:
+
+1. **Analysis.** One vision call runs the "GARMENT TECH PACK SPEC SHEET GENERATOR" master prompt (`src/core/ai-designer/tech-pack-master/`) over the current design image and returns the A–J analysis.
+   - Every fact is tagged CONFIRMED, ASSUMED or NOT_VISIBLE.
+   - ERP facts are passed in as CONFIRMED and used verbatim: brand, style name, style number (project number), category, gender and age, designer (creator), date and fabric. Before this, the AI guessed them from the photo and returned "Unknown".
+   - The validator requires at least 14 BOM rows and at least 8 points of measure; anything thinner triggers the AI retry.
+   - Graded size values are **computed in code** (`gradedValue`: base value + size steps × grade rule), never by the AI.
+2. **Page prompts.** The 7 page prompts are **built in code** from the analysis (`page-prompts.ts`), using the master prompt's global visual rules, page header and footer, and per-page requirements. This keeps every page's data identical. Saving an edited analysis rebuilds every prompt the user hasn't hand-edited (`promptEdited`).
+3. **Page images.** Each page is one `generateVariation` (IMAGE_EDIT) call with the design photo as reference, at 1024×1536 and quality "high". A new optional `output` option on `generateVariation` carries the size and quality; OpenAI honours it. The POST `/tech-pack` route returns once the analysis is done, and the images render afterwards via Next's `after()`, two at a time. Each page stores its own `imageStatus`/`imageError` (migration `20260928090000_ai_tech_pack_page_images`), and the UI polls every 5 s.
+4. **Editing and output.** The user can edit any analysis row, edit any page prompt (or reset it to auto), regenerate one page or all pages, and download a 7-page PDF of the images (`tech-pack-images-pdf.tsx`).
+
+The stored JSON is tagged `{ format: "MASTER_V1" }`. Older tech packs, which have no tag, still open in the old editor and export their typeset PDF. The service is `tech-pack-master.service.ts`, and the UI is `_shared/TechPackMasterPanel.tsx`. The panel appears in the wizard's Tech Pack step and on the Catalogue Designs View page.
+
+**Hybrid PDF (same day, user-approved).** A live run showed the image model scrambling dense tables: a 14-row BOM came back with duplicated and shuffled rows even though the data was correct. So only the drawing pages are AI images: 1 (cover), 2 (construction), 4 (colorways) and 7 (labels). Pages 3 (BOM), 5 (spec table) and 6 (grading) are **typeset** by `tech-pack-images-pdf.tsx` straight from the analysis, so every number is exact; they use the same header and footer. `MASTER_PAGE_DEFINITIONS[].mode` / `pageMode()` drive this. Typeset pages never get an image run, a prompt editor, or a Regenerate button. They refresh automatically when the analysis is saved.
+
+**Known limitation:** the AI pages can still misspell text occasionally, e.g. a date or heading. Regenerating that page usually fixes it.
+
 ## Reference
 
 Full architecture rationale, complete table-by-table field lists, and the full role×module permission matrix were developed in the Phase 1 planning session and are condensed here. Consult that history if a design decision needs deeper justification than what's summarized above.
