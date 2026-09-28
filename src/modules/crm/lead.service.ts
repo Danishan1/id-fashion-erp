@@ -8,6 +8,7 @@ import { CrmRoundRobinRepository, LeadRepository } from "./lead.repository";
 import { DEFAULT_LEAD_PRIORITY_THRESHOLDS, getCrmSettings, type LeadPriorityThresholds } from "./crm-settings.service";
 import { ensureCrmDefaults, getEntryStage, getStageForCompany } from "./crm-config.service";
 import { FALLBACK_SOURCE_CODE } from "./crm-defaults";
+import { buildLeadSegmentWhere, createdRangeWhere, isLeadSegment } from "./lead-segments";
 import type { ChangeLeadStageInput, CreateLeadInput, UpdateLeadInput } from "./lead.schema";
 import { CRM_LEAD_PRIORITIES } from "./lead.schema";
 
@@ -178,6 +179,11 @@ export interface LeadListFilters {
   priority?: string;
   assignedToUserId?: string;
   country?: string;
+  /** A named segment from lead-segments.ts — the same definition the CRM
+   * dashboard counts with, so a card's number matches this list exactly. */
+  segment?: string;
+  createdFrom?: string;
+  createdTo?: string;
 }
 
 const VALID_PRIORITIES = new Set<string>(CRM_LEAD_PRIORITIES);
@@ -207,7 +213,11 @@ export async function listLeads(companyId: string, query: ListQuery, filters: Le
     ...(filters.assignedToUserId && UUID_RE.test(filters.assignedToUserId) ? { assignedToUserId: filters.assignedToUserId } : {}),
     ...(filters.priority && VALID_PRIORITIES.has(filters.priority) ? { priority: filters.priority as CrmLeadPriority } : {}),
     ...(filters.country ? { country: { equals: filters.country, mode: "insensitive" as const } } : {}),
+    ...createdRangeWhere(filters.createdFrom, filters.createdTo),
   };
+  if (isLeadSegment(filters.segment)) {
+    where.AND = [await buildLeadSegmentWhere(companyId, filters.segment)];
+  }
 
   const [data, totalCount, thresholds] = await Promise.all([
     LeadRepository.findMany(where, { orderBy: { [query.sortBy]: query.sortOrder }, skip: query.skip, take: query.take }),

@@ -136,7 +136,11 @@ export function DashboardShell({
           onToggleCollapse={toggleSidebarCollapsed}
         />
       </div>
-      <div className="flex min-h-0 flex-1 flex-col">
+      {/* min-w-0: a flex item defaults to min-width:auto (its content's
+          width), so a table wider than the viewport would otherwise stretch
+          this whole column — topbar included — off-screen instead of
+          scrolling inside its own overflow-x-auto wrapper. */}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <Topbar userName={userName} onMenuClick={() => setMobileNavOpen((open) => !open)} />
         <main className="min-h-0 flex-1 overflow-y-auto bg-zinc-50 p-6 dark:bg-zinc-950">{children}</main>
       </div>

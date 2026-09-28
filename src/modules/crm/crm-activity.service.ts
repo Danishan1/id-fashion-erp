@@ -91,7 +91,7 @@ export async function changeCrmFollowupStatus(actor: ActorContext, id: string, i
  * by `getFollowupCounters()` and `listFollowupsForManagement()`, so
  * "overdue" vs. "due today" never drifts between the dashboard's counters
  * and the management screen's own bucketing. */
-function getTodayBoundaries(now: Date) {
+export function getTodayBoundaries(now: Date) {
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const startOfTomorrow = new Date(startOfToday.getTime() + 24 * 60 * 60 * 1000);
   return { startOfToday, startOfTomorrow };
@@ -123,37 +123,48 @@ export async function getFollowupCounters(companyId: string) {
  * Lead/Deal/Customer, not one query per follow-up) since a company can have
  * many follow-ups and an N+1 here would scale badly.
  */
-export async function listFollowupsForManagement(companyId: string) {
-  const { startOfToday, startOfTomorrow } = getTodayBoundaries(new Date());
-  const all = await CrmFollowupRepository.findAllForCompany(companyId);
-
-  const idsByModule = { LEAD: new Set<string>(), DEAL: new Set<string>(), CUSTOMER: new Set<string>() } as const;
-  for (const f of all) {
-    if (f.relatedModule === "LEAD" || f.relatedModule === "DEAL" || f.relatedModule === "CUSTOMER") {
-      idsByModule[f.relatedModule].add(f.relatedRecordId);
+/**
+ * Resolves each row's polymorphic LEAD/DEAL/CUSTOMER target to a readable
+ * label — batched per module (one query each, never one per row). A lead is
+ * labelled by company name when it has one (that's who the buyer is), else
+ * by the contact person. Shared by Follow-up Management and the dashboard.
+ */
+export async function withRelatedLabels<T extends { relatedModule: string; relatedRecordId: string }>(companyId: string, rows: T[]) {
+  const idsByModule = { LEAD: new Set<string>(), DEAL: new Set<string>(), CUSTOMER: new Set<string>() };
+  for (const r of rows) {
+    if (r.relatedModule === "LEAD" || r.relatedModule === "DEAL" || r.relatedModule === "CUSTOMER") {
+      idsByModule[r.relatedModule].add(r.relatedRecordId);
     }
   }
 
   const [leads, deals, customers] = await Promise.all([
-    idsByModule.LEAD.size ? prisma.lead.findMany({ where: { id: { in: [...idsByModule.LEAD] } }, select: { id: true, name: true } }) : [],
-    idsByModule.DEAL.size ? prisma.deal.findMany({ where: { id: { in: [...idsByModule.DEAL] } }, select: { id: true, title: true } }) : [],
+    idsByModule.LEAD.size
+      ? prisma.lead.findMany({ where: { companyId, id: { in: [...idsByModule.LEAD] } }, select: { id: true, name: true, companyName: true } })
+      : [],
+    idsByModule.DEAL.size ? prisma.deal.findMany({ where: { companyId, id: { in: [...idsByModule.DEAL] } }, select: { id: true, title: true } }) : [],
     idsByModule.CUSTOMER.size
-      ? prisma.customer.findMany({ where: { id: { in: [...idsByModule.CUSTOMER] } }, select: { id: true, name: true } })
+      ? prisma.customer.findMany({ where: { companyId, id: { in: [...idsByModule.CUSTOMER] } }, select: { id: true, name: true } })
       : [],
   ]);
-  const leadNames = new Map(leads.map((l) => [l.id, l.name]));
+  const leadNames = new Map(leads.map((l) => [l.id, l.companyName ?? l.name]));
   const dealTitles = new Map(deals.map((d) => [d.id, d.title]));
   const customerNames = new Map(customers.map((c) => [c.id, c.name]));
 
-  const decorated = all.map((f) => ({
-    ...f,
+  return rows.map((r) => ({
+    ...r,
     relatedLabel:
-      f.relatedModule === "LEAD"
-        ? (leadNames.get(f.relatedRecordId) ?? "Deleted Lead")
-        : f.relatedModule === "DEAL"
-          ? (dealTitles.get(f.relatedRecordId) ?? "Deleted Deal")
-          : (customerNames.get(f.relatedRecordId) ?? "Deleted Customer"),
+      r.relatedModule === "LEAD"
+        ? (leadNames.get(r.relatedRecordId) ?? "Deleted Lead")
+        : r.relatedModule === "DEAL"
+          ? (dealTitles.get(r.relatedRecordId) ?? "Deleted Deal")
+          : (customerNames.get(r.relatedRecordId) ?? "Deleted Customer"),
   }));
+}
+
+export async function listFollowupsForManagement(companyId: string) {
+  const { startOfToday, startOfTomorrow } = getTodayBoundaries(new Date());
+  const all = await CrmFollowupRepository.findAllForCompany(companyId);
+  const decorated = await withRelatedLabels(companyId, all);
 
   return {
     overdue: decorated.filter((f) => f.status === "PENDING" && f.followupDate < startOfToday),

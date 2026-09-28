@@ -18,6 +18,9 @@ export async function GET(req: NextRequest) {
       priority: sp.get("priority") ?? undefined,
       assignedToUserId: sp.get("assignedToUserId") ?? undefined,
       country: sp.get("country") ?? undefined,
+      segment: sp.get("segment") ?? undefined,
+      createdFrom: sp.get("createdFrom") ?? undefined,
+      createdTo: sp.get("createdTo") ?? undefined,
     });
 
     return NextResponse.json({ data, meta: buildListMeta(totalCount, query.page, query.pageSize) });

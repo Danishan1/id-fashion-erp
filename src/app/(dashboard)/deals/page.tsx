@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { DataTable } from "@/components/ui/DataTable";
@@ -20,16 +21,27 @@ interface DealRow {
 }
 
 export default function DealsListPage() {
+  return (
+    <Suspense>
+      <DealsList />
+    </Suspense>
+  );
+}
+
+function DealsList() {
+  const searchParams = useSearchParams();
+  const stageParam = searchParams.get("stage");
+  const initialStage = stageParam && stageParam in STAGE_LABELS ? stageParam : "";
   const [importOpen, setImportOpen] = useState(false);
   const [importKey, setImportKey] = useState(0);
   const [refreshKey, setRefreshKey] = useState(0);
 
   return (
     <div className="space-y-4">
-      <Breadcrumb items={[{ label: "Dashboard", href: "/dashboard" }, { label: "Deals" }]} />
+      <Breadcrumb items={[{ label: "Dashboard", href: "/dashboard" }, { label: "CRM", href: "/crm" }, { label: "Opportunities" }]} />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Deals</h1>
+          <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Opportunities</h1>
           <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
             Sales pipeline — deal stage, value, and weighted revenue. A won deal that turns into a real order
             can be linked forward from the Sales Order it produces.
@@ -53,6 +65,7 @@ export default function DealsListPage() {
       </div>
 
       <DataTable<DealRow>
+        key={initialStage}
         fetchUrl="/api/v1/deals"
         searchPlaceholder="Search by deal title…"
         newHref="/deals/new"
@@ -61,6 +74,7 @@ export default function DealsListPage() {
         refreshKey={refreshKey}
         statusFilter={{
           options: Object.entries(STAGE_LABELS).map(([value, label]) => ({ value, label })),
+          initialValue: initialStage,
         }}
         columns={[
           { key: "dealNumber", header: "Deal #", sortable: true },

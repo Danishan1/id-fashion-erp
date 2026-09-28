@@ -96,6 +96,9 @@ interface DataTableProps<T> {
     paramName?: string;
     /** Defaults to "All Statuses". */
     allLabel?: string;
+    /** Pre-selected value (e.g. from a dashboard click-through link). Only
+     * read on mount — callers that change it should remount via `key`. */
+    initialValue?: string;
   };
 }
 
@@ -123,7 +126,7 @@ export function DataTable<T extends { id: string }>({
   const router = useRouter();
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
-  const [statusValue, setStatusValue] = useState("");
+  const [statusValue, setStatusValue] = useState(statusFilter?.initialValue ?? "");
   const [result, setResult] = useState<ListResponse<T> | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

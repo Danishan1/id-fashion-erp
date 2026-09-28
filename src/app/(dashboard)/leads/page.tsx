@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { LEAD_SEGMENT_LABELS, isLeadSegment } from "@/modules/crm/lead-segment-labels";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { DataTable } from "@/components/ui/DataTable";
 import { CsvImportModal } from "@/components/ui/CsvImportModal";
@@ -35,7 +37,23 @@ interface StageOption {
   name: string;
 }
 
+/** URL filters this list understands — the CRM dashboard links here with
+ * these so every card opens exactly the records it counted. */
+const URL_FILTERS = ["segment", "stageId", "sourceId", "assignedToUserId", "priority", "country", "createdFrom", "createdTo"] as const;
+
 export default function LeadsListPage() {
+  return (
+    <Suspense>
+      <LeadsList />
+    </Suspense>
+  );
+}
+
+function LeadsList() {
+  const searchParams = useSearchParams();
+  const active = URL_FILTERS.map((k) => [k, searchParams.get(k)] as const).filter((e): e is readonly [(typeof URL_FILTERS)[number], string] => !!e[1]);
+  const query = new URLSearchParams(active.map(([k, v]) => [k, v])).toString();
+  const fetchUrl = `/api/v1/leads${query ? `?${query}` : ""}`;
   const [importOpen, setImportOpen] = useState(false);
   const [importKey, setImportKey] = useState(0);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -75,9 +93,35 @@ export default function LeadsListPage() {
         </div>
       </div>
 
+      {active.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-800 dark:border-indigo-900 dark:bg-indigo-950/30 dark:text-indigo-200">
+          <span className="font-medium">Filtered:</span>
+          {active.map(([k, v]) => (
+            <span key={k} className="rounded bg-white px-2 py-0.5 text-xs dark:bg-zinc-900">
+              {k === "segment"
+                ? (isLeadSegment(v) ? LEAD_SEGMENT_LABELS[v] : v)
+                : k === "stageId"
+                  ? `Stage: ${stages.find((s) => s.id === v)?.name ?? "selected"}`
+                  : k === "createdFrom"
+                    ? `Created from ${v}`
+                    : k === "createdTo"
+                      ? `Created to ${v}`
+                      : k === "assignedToUserId"
+                        ? "Selected salesperson"
+                        : k === "sourceId"
+                          ? "Selected source"
+                          : `${k}: ${v}`}
+            </span>
+          ))}
+          <Link href="/leads" className="ml-auto text-xs font-medium underline">
+            Clear filters
+          </Link>
+        </div>
+      )}
+
       <DataTable<LeadRow>
-        key={stages.length}
-        fetchUrl="/api/v1/leads"
+        key={`${stages.length}-${query}`}
+        fetchUrl={fetchUrl}
         searchPlaceholder="Search lead #, company, contact, email, phone, WhatsApp, country…"
         newHref="/leads/new"
         newLabel="New Lead"

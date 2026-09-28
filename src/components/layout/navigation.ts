@@ -75,9 +75,14 @@ export const NAV_SECTIONS: NavSection[] = [
     href: "/crm",
     modules: ["crm"],
     children: [
+      // Only screens that genuinely exist are listed — Activities, Sales Team,
+      // Automation Rules and CRM Reports get entries as their slices land.
+      { label: "CRM Dashboard", href: "/crm", modules: ["crm"] },
       { label: "Leads", href: "/leads", modules: ["crm"] },
-      { label: "Deals", href: "/deals", modules: ["crm"] },
+      { label: "Sales Pipeline", href: "/deals/board", modules: ["crm"] },
+      { label: "Opportunities", href: "/deals", modules: ["crm"] },
       { label: "Follow-ups", href: "/follow-ups", modules: ["crm"] },
+      { label: "Customers / Buyers", href: "/masters/customers", modules: ["masters_core"] },
       { label: "Import History", href: "/imports", modules: ["crm", "marketing"] },
       { label: "CRM Settings", href: "/crm/settings", modules: ["crm"] },
     ],

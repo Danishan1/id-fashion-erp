@@ -8,18 +8,13 @@ export async function GET(req: NextRequest) {
     const session = await requireSession();
     await PermissionService.assert(session.user.id, "crm", "view");
 
-    const dateFrom = req.nextUrl.searchParams.get("dateFrom");
-    const dateTo = req.nextUrl.searchParams.get("dateTo");
-
+    // Plain YYYY-MM-DD strings, passed through unchanged — createdRangeWhere()
+    // (lead-segments.ts) turns them into an inclusive local-day range, the
+    // exact same conversion the Leads list's createdFrom/createdTo uses, so
+    // a dashboard card and its click-through list always agree.
     const dashboard = await getCrmDashboard(session.user.companyId, {
-      dateFrom: dateFrom ? new Date(dateFrom) : undefined,
-      // Leads/Deals carry a full timestamp (createdAt), not a plain date
-      // column — `new Date("2026-08-24")` parses as that day's UTC midnight,
-      // which combined with a `lte` comparison would silently exclude every
-      // record created later the same day (i.e. every "today" preset would
-      // exclude today's own activity). Push to the end of that calendar day
-      // so a "dateTo" the user picked is genuinely inclusive.
-      dateTo: dateTo ? new Date(`${dateTo}T23:59:59.999`) : undefined,
+      dateFrom: req.nextUrl.searchParams.get("dateFrom") ?? undefined,
+      dateTo: req.nextUrl.searchParams.get("dateTo") ?? undefined,
     });
 
     return NextResponse.json({ data: dashboard });
