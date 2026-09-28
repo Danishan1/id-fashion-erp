@@ -63,6 +63,15 @@ export function ProductionConfigClient() {
                 { value: "false", label: "No" },
               ],
             },
+            {
+              key: "allowsExtraQuantity",
+              label: "Allows Extra Pieces (e.g. Cutting)",
+              type: "select",
+              options: [
+                { value: "false", label: "No" },
+                { value: "true", label: "Yes" },
+              ],
+            },
           ]}
         />
       )}

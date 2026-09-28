@@ -1,4 +1,4 @@
-﻿import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
@@ -33,9 +33,22 @@ vi.mock("@/modules/purchasing/fabric-roll.repository", () => ({
 vi.mock("@/modules/contractors/contractor.repository", () => ({
   ContractorRepository: { findById: vi.fn() },
 }));
-vi.mock("./job-order.service", () => ({ applyJobOrderQuantityDelta: vi.fn(), assertStageAccess: vi.fn() }));
+vi.mock("./job-order.service", () => ({
+  applyJobOrderQuantityDelta: vi.fn(),
+  assertStageAccess: vi.fn(),
+  cascadeReceivedThroughStagesInTx: vi.fn(),
+}));
+// Shared worker/contractor capacity pool — real rules in assignment-capacity.test.ts.
+vi.mock("./assignment-capacity", () => ({ computeAvailableToCommit: vi.fn() }));
+// Stage-wise costing — the real resolver is covered by stage-cost.service.test.ts;
+// here every covered stage resolves to a ₹5 Style default unless a test overrides it.
+vi.mock("@/modules/stage-costs/stage-cost.service", () => ({
+  resolveCostContextForProductionOrder: vi.fn(),
+  resolveEffectiveStageCosts: vi.fn(),
+  round2: (v: number) => Math.round(v * 100) / 100,
+}));
 vi.mock("./production.repository", () => ({
-  JobOrderRepository: { findAnyById: vi.fn() },
+  JobOrderRepository: { findAnyById: vi.fn(), findForGuardedUpdateInTx: vi.fn() },
   ProductionOrderRepository: { findAnyById: vi.fn() },
 }));
 vi.mock("./job-work-order.repository", () => ({
@@ -60,8 +73,12 @@ vi.mock("./job-work-order.repository", () => ({
 }));
 
 const mockTx = { jobWorkOrder: {}, jobWorkReceipt: {} };
+const mockPrisma = vi.hoisted(() => ({
+  productionStage: { findMany: vi.fn() },
+  warehouse: { findFirst: vi.fn() },
+}));
 vi.mock("@/core/db/client", () => ({
-  prisma: { $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(mockTx)) },
+  prisma: { ...mockPrisma, $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(mockTx)) },
 }));
 
 const { generateDocumentNumber } = await import("@/core/numbering/DocumentNumberingService");
@@ -70,7 +87,9 @@ const { ProductRepository } = await import("@/modules/products/product.repositor
 const { LookupRepository } = await import("@/modules/lookups/lookup.repository");
 const { FabricRollRepository } = await import("@/modules/purchasing/fabric-roll.repository");
 const { ContractorRepository } = await import("@/modules/contractors/contractor.repository");
-const { applyJobOrderQuantityDelta, assertStageAccess } = await import("./job-order.service");
+const { applyJobOrderQuantityDelta, assertStageAccess, cascadeReceivedThroughStagesInTx } = await import("./job-order.service");
+const { computeAvailableToCommit } = await import("./assignment-capacity");
+const { resolveCostContextForProductionOrder, resolveEffectiveStageCosts } = await import("@/modules/stage-costs/stage-cost.service");
 const { JobOrderRepository, ProductionOrderRepository } = await import("./production.repository");
 const { JobWorkOrderRepository, JobWorkReceiptRepository } = await import("./job-work-order.repository");
 const { PermissionService } = await import("@/core/rbac/PermissionService");
@@ -89,8 +108,26 @@ const {
 
 const actor = { companyId: "co-1", userId: "user-1" };
 
+const STAGES = [
+  { id: "stage-sew", code: "SEW", name: "Stitching", sequence: 2, isFinal: false, isActive: true },
+  { id: "stage-fin", code: "FIN", name: "Finishing", sequence: 4, isFinal: false, isActive: true },
+  { id: "stage-pak", code: "PAK", name: "Packing", sequence: 6, isFinal: true, isActive: true },
+];
+
 function jobOrder(overrides: Record<string, unknown> = {}) {
-  return { id: "jo-1", companyId: "co-1", status: "IN_PROGRESS", plannedQuantity: 100, completedQuantity: 0, rejectedQuantity: 0, damagedQuantity: 0, ...overrides };
+  return {
+    id: "jo-1",
+    companyId: "co-1",
+    productionOrderId: "po-1",
+    productionStageId: "stage-sew",
+    productionStage: { id: "stage-sew", sequence: 2, name: "Stitching" },
+    status: "IN_PROGRESS",
+    plannedQuantity: 100,
+    completedQuantity: 0,
+    rejectedQuantity: 0,
+    damagedQuantity: 0,
+    ...overrides,
+  };
 }
 
 function jobWorkOrder(overrides: Record<string, unknown> = {}) {
@@ -112,7 +149,17 @@ function jobWorkOrder(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.mocked(generateDocumentNumber).mockReset().mockResolvedValue("JWO-2026-00001");
-  vi.mocked(ContractorRepository.findById).mockReset().mockResolvedValue({ id: "con-1" } as never);
+  vi.mocked(ContractorRepository.findById).mockReset().mockResolvedValue({ id: "con-1", name: "HP Cotton", isActive: true, stages: [] } as never);
+  vi.mocked(computeAvailableToCommit).mockReset().mockResolvedValue({ available: 100, capacity: 100, done: 0, unworkedInternal: 0, pendingExternal: 0 });
+  vi.mocked(cascadeReceivedThroughStagesInTx).mockReset().mockResolvedValue(undefined as never);
+  vi.mocked(resolveCostContextForProductionOrder)
+    .mockReset()
+    .mockResolvedValue({ productId: "style-1", styleName: "Kurta", styleCode: "ST-1", sampleRequestId: null, designLabel: null });
+  vi.mocked(resolveEffectiveStageCosts)
+    .mockReset()
+    .mockImplementation(async (_c, _co, params) => new Map(params.stageIds.map((id) => [id, { productionStageId: id, rate: 5, source: "STYLE_DEFAULT" as const }])));
+  mockPrisma.productionStage.findMany.mockReset().mockResolvedValue(STAGES);
+  mockPrisma.warehouse.findFirst.mockReset().mockResolvedValue({ id: "wh-fg" });
   vi.mocked(recordInventoryTransaction).mockReset().mockResolvedValue(undefined as never);
   vi.mocked(getAvailableQuantity).mockReset().mockResolvedValue(1000);
   // Every existing test's material line uses uomId "uom-2" — set here to
@@ -129,6 +176,7 @@ beforeEach(() => {
   vi.mocked(applyJobOrderQuantityDelta).mockReset().mockResolvedValue(undefined as never);
   vi.mocked(assertStageAccess).mockReset().mockResolvedValue(undefined as never);
   vi.mocked(JobOrderRepository.findAnyById).mockReset();
+  vi.mocked(JobOrderRepository.findForGuardedUpdateInTx).mockReset().mockResolvedValue(jobOrder() as never);
   vi.mocked(JobWorkOrderRepository.findAnyById).mockReset();
   vi.mocked(JobWorkOrderRepository.createWithMaterialsInTx).mockReset();
   vi.mocked(JobWorkOrderRepository.update).mockReset();
@@ -165,7 +213,7 @@ describe("createJobWorkOrder", () => {
     vi.mocked(ContractorRepository.findById).mockResolvedValue(null);
 
     await expect(
-      createJobWorkOrder(actor, {
+      createJobWorkOrder(actor, { stageCosts: [], extraCharges: [],
         jobOrderId: "jo-1",
         contractorId: "con-x",
         issuedQuantity: 5,
@@ -183,7 +231,7 @@ describe("createJobWorkOrder", () => {
     vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder({ plannedQuantity: 100, completedQuantity: 20 }) as never);
     vi.mocked(JobWorkOrderRepository.createWithMaterialsInTx).mockResolvedValue(jobWorkOrder() as never);
 
-    await createJobWorkOrder(actor, {
+    await createJobWorkOrder(actor, { stageCosts: [], extraCharges: [],
       jobOrderId: "jo-1",
       contractorId: "con-1",
       issuedQuantity: 50,
@@ -204,11 +252,11 @@ describe("createJobWorkOrder", () => {
 
   it("rejects issuing more than the job order's unprocessed-and-uncommitted pool", async () => {
     vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder({ plannedQuantity: 100, completedQuantity: 60 }) as never);
-    vi.mocked(JobWorkOrderRepository.sumPendingByJobOrderId).mockResolvedValue(30);
-    // unprocessed = 100-60 = 40; alreadyPendingElsewhere = 30; availableToIssue = 10
+    // Shared pool with internal assignments: only 10 still free.
+    vi.mocked(computeAvailableToCommit).mockResolvedValue({ available: 10, capacity: 100, done: 60, unworkedInternal: 0, pendingExternal: 30 });
 
     await expect(
-      createJobWorkOrder(actor, {
+      createJobWorkOrder(actor, { stageCosts: [], extraCharges: [],
         jobOrderId: "jo-1",
         contractorId: "con-1",
         issuedQuantity: 20,
@@ -226,7 +274,7 @@ describe("createJobWorkOrder", () => {
     vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder({ status: "CANCELLED" }) as never);
 
     await expect(
-      createJobWorkOrder(actor, { jobOrderId: "jo-1", contractorId: "con-1", issuedQuantity: 5, uomId: "uom-1", issueDate: "2026-08-24", expectedCompletionDate: "", remarks: "", materials: [] })
+      createJobWorkOrder(actor, { stageCosts: [], extraCharges: [], jobOrderId: "jo-1", contractorId: "con-1", issuedQuantity: 5, uomId: "uom-1", issueDate: "2026-08-24", expectedCompletionDate: "", remarks: "", materials: [] })
     ).rejects.toThrow(BusinessRuleError);
   });
 
@@ -237,7 +285,7 @@ describe("createJobWorkOrder", () => {
     vi.mocked(JobWorkOrderRepository.createWithMaterialsInTx).mockResolvedValue(jobWorkOrder() as never);
 
     await expect(
-      createJobWorkOrder(actor, {
+      createJobWorkOrder(actor, { stageCosts: [], extraCharges: [],
         jobOrderId: "jo-1",
         contractorId: "con-1",
         issuedQuantity: 5,
@@ -255,7 +303,7 @@ describe("createJobWorkOrder", () => {
     vi.mocked(getAvailableQuantity).mockResolvedValue(3);
 
     await expect(
-      createJobWorkOrder(actor, {
+      createJobWorkOrder(actor, { stageCosts: [], extraCharges: [],
         jobOrderId: "jo-1",
         contractorId: "con-1",
         issuedQuantity: 5,
@@ -287,7 +335,7 @@ describe("createJobWorkOrder", () => {
     } as never);
     vi.mocked(getAvailableQuantity).mockResolvedValue(1000);
 
-    await createJobWorkOrder(actor, {
+    await createJobWorkOrder(actor, { stageCosts: [], extraCharges: [],
       jobOrderId: "jo-1",
       contractorId: "con-1",
       issuedQuantity: 5,
@@ -597,5 +645,141 @@ describe("computeJobWorkOrderMetrics", () => {
       expectedCompletionDate: null,
     });
     expect(metrics.pendingQuantity).toBe(0);
+  });
+});
+
+describe("createJobWorkOrder — multi-stage job work + stage-wise cost sheet (2026-09-28)", () => {
+  const base = {
+    jobOrderId: "jo-1",
+    contractorId: "con-1",
+    issuedQuantity: 100,
+    uomId: "uom-1",
+    issueDate: "2026-09-28",
+    expectedCompletionDate: "",
+    remarks: "",
+    materials: [],
+    stageCosts: [],
+    extraCharges: [],
+  };
+
+  beforeEach(() => {
+    vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder() as never);
+    vi.mocked(JobWorkOrderRepository.createWithMaterialsInTx).mockResolvedValue(jobWorkOrder() as never);
+  });
+
+  it("covers every stage from the job order's own stage through the chosen end stage, freezing each rate × qty", async () => {
+    await createJobWorkOrder(actor, {
+      ...base,
+      throughStageId: "stage-fin",
+      stageCosts: [{ productionStageId: "stage-fin", rate: 7 }],
+      extraCharges: [{ costType: "Transportation", description: "", amount: 300 }],
+    });
+
+    const [, data] = vi.mocked(JobWorkOrderRepository.createWithMaterialsInTx).mock.calls[0];
+    const covered = (data as { coveredStages: { create: Record<string, unknown>[] } }).coveredStages.create;
+    expect(covered).toEqual([
+      expect.objectContaining({ productionStageId: "stage-sew", sequence: 0, rate: 5, defaultRate: 5, defaultSource: "STYLE_DEFAULT", isOverridden: false, amount: 500 }),
+      expect.objectContaining({ productionStageId: "stage-fin", sequence: 1, rate: 7, defaultRate: 5, isOverridden: true, amount: 700 }),
+    ]);
+    expect(data).toEqual(expect.objectContaining({ stageCostTotal: 1200, extraCostTotal: 300, totalCost: 1500 }));
+  });
+
+  it("covers only the job order's own stage when no end stage is chosen", async () => {
+    await createJobWorkOrder(actor, base);
+    const [, data] = vi.mocked(JobWorkOrderRepository.createWithMaterialsInTx).mock.calls[0];
+    expect((data as { coveredStages: { create: unknown[] } }).coveredStages.create).toHaveLength(1);
+  });
+
+  it("rejects a contractor that doesn't perform one of the covered stages", async () => {
+    vi.mocked(ContractorRepository.findById).mockResolvedValue({
+      id: "con-1",
+      name: "HP Cotton",
+      isActive: true,
+      stages: [{ productionStageId: "stage-sew" }],
+    } as never);
+    await expect(createJobWorkOrder(actor, { ...base, throughStageId: "stage-fin" })).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("does not perform Finishing"),
+    });
+    expect(JobWorkOrderRepository.createWithMaterialsInTx).not.toHaveBeenCalled();
+  });
+
+  it("rejects an inactive contractor", async () => {
+    vi.mocked(ContractorRepository.findById).mockResolvedValue({ id: "con-1", name: "Old Co", isActive: false, stages: [] } as never);
+    await expect(createJobWorkOrder(actor, base)).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("never uses a silent 0 — a stage with no configured cost must be given a rate", async () => {
+    vi.mocked(resolveEffectiveStageCosts).mockImplementation(
+      async (_c, _co, params) => new Map(params.stageIds.map((id) => [id, { productionStageId: id, rate: null, source: "NOT_CONFIGURED" as const }]))
+    );
+    await expect(createJobWorkOrder(actor, base)).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("enter a rate"),
+    });
+    await createJobWorkOrder(actor, { ...base, stageCosts: [{ productionStageId: "stage-sew", rate: 4 }] });
+    const [, data] = vi.mocked(JobWorkOrderRepository.createWithMaterialsInTx).mock.calls[0];
+    expect((data as { coveredStages: { create: Record<string, unknown>[] } }).coveredStages.create[0]).toEqual(
+      expect.objectContaining({ rate: 4, defaultRate: null, defaultSource: "NOT_CONFIGURED", isOverridden: true })
+    );
+  });
+
+  it("rejects a cost entered for a stage the job work doesn't cover", async () => {
+    await expect(
+      createJobWorkOrder(actor, { ...base, stageCosts: [{ productionStageId: "stage-pak", rate: 2 }] })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("requires a Finished Goods warehouse when the covered range ends at the final stage", async () => {
+    await expect(createJobWorkOrder(actor, { ...base, throughStageId: "stage-pak" })).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("Finished Goods warehouse"),
+    });
+    await createJobWorkOrder(actor, { ...base, throughStageId: "stage-pak", finishedGoodsWarehouseId: "wh-fg" });
+    const [, data] = vi.mocked(JobWorkOrderRepository.createWithMaterialsInTx).mock.calls[0];
+    expect(data).toEqual(expect.objectContaining({ finishedGoodsWarehouseId: "wh-fg" }));
+  });
+
+  it("rejects an end stage that isn't at/after the job order's own stage", async () => {
+    await expect(createJobWorkOrder(actor, { ...base, throughStageId: "stage-unknown" })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+});
+
+describe("receiveJobWork — multi-stage cascade (2026-09-28)", () => {
+  it("moves received good pieces through every further covered stage", async () => {
+    const order = jobWorkOrder({
+      coveredStages: [
+        { productionStageId: "stage-sew", sequence: 0 },
+        { productionStageId: "stage-fin", sequence: 1 },
+      ],
+      finishedGoodsWarehouseId: null,
+    });
+    vi.mocked(JobWorkOrderRepository.findAnyById).mockResolvedValue(order as never);
+    vi.mocked(JobWorkOrderRepository.findForGuardedUpdateInTx).mockResolvedValue(order as never);
+    vi.mocked(JobWorkReceiptRepository.createInTx).mockResolvedValue({ id: "rcpt-1" } as never);
+
+    await receiveJobWork(actor, "jwo-1", { receivedDate: "2026-09-28", receivedQuantity: 40, rejectedQuantity: 2, damagedQuantity: 0, remarks: "" });
+
+    expect(cascadeReceivedThroughStagesInTx).toHaveBeenCalledWith(
+      mockTx,
+      actor,
+      expect.objectContaining({ sourceJobOrderId: "jo-1", downstreamStageIds: ["stage-fin"], quantity: 40 })
+    );
+  });
+
+  it("blocks reversing a receipt whose pieces already cascaded to later stages", async () => {
+    vi.mocked(JobWorkReceiptRepository.findAnyById).mockResolvedValue({
+      id: "rcpt-1",
+      jobWorkOrderId: "jwo-1",
+      status: "COMPLETED",
+      receivedQuantity: 10,
+      rejectedQuantity: 0,
+      damagedQuantity: 0,
+    } as never);
+    vi.mocked(JobWorkOrderRepository.findAnyById).mockResolvedValue(
+      jobWorkOrder({ coveredStages: [{ productionStageId: "stage-sew", sequence: 0 }, { productionStageId: "stage-fin", sequence: 1 }] }) as never
+    );
+    await expect(reverseJobWorkReceipt(actor, "rcpt-1", "wrong count")).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+    expect(applyJobOrderQuantityDelta).not.toHaveBeenCalled();
   });
 });

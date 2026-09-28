@@ -6,7 +6,8 @@ import { DataTable } from "@/components/ui/DataTable";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { Modal } from "@/components/ui/Modal";
 import { FilePreviewModal } from "@/components/ui/FilePreviewModal";
-import { ViewIcon, EditIcon, BomIcon, VariantsIcon, DesignsIcon, ImagesIcon } from "@/components/ui/icons";
+import { ViewIcon, EditIcon, BomIcon, VariantsIcon, DesignsIcon, ImagesIcon, CostIcon } from "@/components/ui/icons";
+import { StageCostEditor } from "@/components/ui/StageCostEditor";
 import { RowAction } from "@/components/ui/RowAction";
 import { ProductForm, type ProductFormValues } from "./ProductForm";
 import { VariantsSection } from "./VariantsSection";
@@ -68,15 +69,15 @@ function toFormValues(product: ProductDetail): ProductFormValues {
   };
 }
 
-export function ProductsListClient() {
+export function ProductsListClient({ canEditStageCosts = false }: { canEditStageCosts?: boolean }) {
   return (
     <Suspense>
-      <ProductsListContent />
+      <ProductsListContent canEditStageCosts={canEditStageCosts} />
     </Suspense>
   );
 }
 
-function ProductsListContent() {
+function ProductsListContent({ canEditStageCosts }: { canEditStageCosts: boolean }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -97,7 +98,7 @@ function ProductsListContent() {
   // consolidated here rather than each having its own trigger, per the same
   // "don't crowd a row with many inline buttons once it grows past 2-3"
   // standard ActionMenu.tsx's own doc comment already states.
-  const [rowModal, setRowModal] = useState<{ type: "variants" | "images"; row: ProductRow } | null>(null);
+  const [rowModal, setRowModal] = useState<{ type: "variants" | "images" | "stageCosts"; row: ProductRow } | null>(null);
   // Clicking the row's own thumbnail (the leftmost column) opens the same
   // shared full-screen preview the Images modal's own thumbnails use —
   // mainImageUrl is already the inline-disposition download URL, so the
@@ -269,6 +270,7 @@ function ProductsListContent() {
               href={`/masters/products/${row.id}/designs`}
             />
             <RowAction icon={<ImagesIcon />} label="Images" onClick={() => setRowModal({ type: "images", row })} />
+            <RowAction icon={<CostIcon />} label="Stage Costs" onClick={() => setRowModal({ type: "stageCosts", row })} />
           </div>
         )}
         columns={[
@@ -338,6 +340,22 @@ function ProductsListContent() {
           }}
         />
       )}
+
+      <Modal
+        open={rowModal?.type === "stageCosts"}
+        onClose={() => setRowModal(null)}
+        title={`Stage-wise Job Work Cost — ${rowModal?.row.styleName ?? ""}`}
+        maxWidthClass="max-w-xl"
+      >
+        {rowModal?.type === "stageCosts" && (
+          <StageCostEditor
+            key={rowModal.row.id}
+            mode="style"
+            url={`/api/v1/products/${rowModal.row.id}/stage-costs`}
+            canEdit={canEditStageCosts}
+          />
+        )}
+      </Modal>
 
       <Modal open={addOpen} onClose={() => setAddOpen(false)} title="New Style" maxWidthClass="max-w-xl">
         <ProductForm submitUrl="/api/v1/products" method="POST" onSuccess={handleCreated} onCancel={() => setAddOpen(false)} />

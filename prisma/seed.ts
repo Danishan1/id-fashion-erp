@@ -346,7 +346,7 @@ async function main() {
 
   await prisma.productionStage.createMany({
     data: [
-      { companyId, code: "CUT", name: "Cutting", sequence: 1 },
+      { companyId, code: "CUT", name: "Cutting", sequence: 1, allowsExtraQuantity: true },
       { companyId, code: "SEW", name: "Stitching", sequence: 2 },
       { companyId, code: "CHK", name: "Checking", sequence: 3 },
       { companyId, code: "FIN", name: "Finishing", sequence: 4 },

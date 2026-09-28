@@ -193,6 +193,9 @@ model Company {
   aiGarmentBuyerCommentsAnalyses      AiGarmentBuyerCommentsAnalysis[]
   actionDisplaySettings               ActionDisplaySettings?
 
+  styleStageCosts  StyleStageCost[]
+  designStageCosts DesignStageCost[]
+
   @@map("companies")
 }
 
@@ -793,6 +796,10 @@ model Contractor {
   pieceRateEarnings       PieceRateEarning[]
   portalUser              User?                  @relation("ContractorPortalUser")
   preferredForRouteStages ProductionRouteStage[]
+  // Which production stages this contractor performs (2026-09-28), in their
+  // working order. Zero rows = unrestricted (every pre-existing contractor),
+  // matching RoleProductionStageAccess's "no rows means no restriction".
+  stages                  ContractorStage[]
 
   @@unique([companyId, code])
   @@map("contractors")
@@ -1066,6 +1073,8 @@ model Product {
   materialSubstitutionsAsOriginal   MaterialSubstitution[]        @relation("MaterialSubstitutionOriginalMaterial")
   materialSubstitutionsAsSubstitute MaterialSubstitution[]        @relation("MaterialSubstitutionSubstituteMaterial")
 
+  stageCosts StyleStageCost[]
+
   @@unique([companyId, styleCode])
   @@map("products")
 }
@@ -1204,6 +1213,8 @@ model Warehouse {
   dispatches            Dispatch[]
   jobWorkOrderMaterials JobWorkOrderMaterial[]
 
+  jobWorkOrdersFgDestination JobWorkOrder[] @relation("JobWorkOrderFgWarehouse")
+
   @@unique([branchId, code])
   @@map("warehouses")
 }
@@ -1265,6 +1276,10 @@ model ProductionStage {
   // Advisory only — QC remains possible at any stage regardless of this
   // flag; it just pre-selects a sensible default in the UI.
   isQcRecommended        Boolean  @default(false) @map("is_qc_recommended")
+  // A stage that can legitimately produce MORE pieces than it was given —
+  // Cutting cuts extra from the fabric lay. Only on such a stage may a
+  // progress entry carry an explicit extraQuantity (never silently inferred).
+  allowsExtraQuantity    Boolean  @default(false) @map("allows_extra_quantity")
   departmentId           String?  @map("department_id") @db.Uuid
   // UI default only ("who's usually responsible here") — never an
   // enforcement gate.
@@ -1285,6 +1300,10 @@ model ProductionStage {
   roleAccess           RoleProductionStageAccess[]
   productionOperations ProductionOperation[]
   routeStages          ProductionRouteStage[]
+  contractorStages     ContractorStage[]
+  styleStageCosts      StyleStageCost[]
+  designStageCosts     DesignStageCost[]
+  jobWorkOrderStages   JobWorkOrderStage[]
 
   @@unique([companyId, code])
   @@map("production_stages")
@@ -2162,6 +2181,8 @@ model SampleRequest {
   // Same virtual-back-relation shape, for AiGarmentProject.sampleRequestId
   // (@unique), set once by createSampleRequestFromProject().
   aiGarmentProject AiGarmentProject?
+
+  stageCosts DesignStageCost[]
 
   @@unique([companyId, requestNumber])
   @@map("sample_requests")
@@ -4396,6 +4417,11 @@ model JobOrder {
   completedQuantity Decimal            @default(0) @map("completed_quantity") @db.Decimal(18, 4)
   rejectedQuantity  Decimal            @default(0) @map("rejected_quantity") @db.Decimal(18, 4)
   damagedQuantity   Decimal            @default(0) @map("damaged_quantity") @db.Decimal(18, 4)
+  // Explicitly-recorded extra pieces beyond plannedQuantity (only on a stage
+  // with allowsExtraQuantity, e.g. Cutting). The quantity CHECK constraint is
+  // completed + rejected + damaged <= planned + extra, so extras are
+  // auditable and forwardable like any other completed piece.
+  extraQuantity     Decimal            @default(0) @map("extra_quantity") @db.Decimal(18, 4)
   // How much of completedQuantity has already been pushed to the next stage
   // — forwarding is an explicit action, never automatic on every progress
   // entry (this is what makes partial, continuous hand-off between stages
@@ -4465,6 +4491,10 @@ model JobOrderAssignment {
   assignedAt       DateTime         @default(now()) @map("assigned_at")
   startedAt        DateTime?        @map("started_at")
   completedAt      DateTime?        @map("completed_at")
+  // Expected time window for this worker's share (2026-09-28). Nullable at
+  // the DB level (pre-existing rows); required for new assignments by Zod.
+  expectedStartAt  DateTime?        @map("expected_start_at")
+  expectedEndAt    DateTime?        @map("expected_end_at")
 
   // Piece-Rate Job Rate Snapshot (2026-09-18) — resolved and frozen ONCE by
   // assignWorker() via resolvePieceRate(), never recomputed even if the Rate
@@ -4524,6 +4554,10 @@ model JobOrderProgressEntry {
   completedQuantity    Decimal                     @default(0) @map("completed_quantity") @db.Decimal(18, 4)
   rejectedQuantity     Decimal                     @default(0) @map("rejected_quantity") @db.Decimal(18, 4)
   damagedQuantity      Decimal                     @default(0) @map("damaged_quantity") @db.Decimal(18, 4)
+  // Explicit extra pieces (only on an allowsExtraQuantity stage). Part of
+  // completedQuantity, not additional to it — completed 105 with extra 5 on a
+  // 100-piece assignment consumes exactly the 100 assigned.
+  extraQuantity        Decimal                     @default(0) @map("extra_quantity") @db.Decimal(18, 4)
   isAdjustment         Boolean                     @default(false) @map("is_adjustment")
   remarks              String?
   startedAt            DateTime?                   @map("started_at")
@@ -4747,49 +4781,62 @@ enum JobWorkReceiptApprovalStatus {
 // from — job-work-out is an external alternative to that, not a different
 // concept.
 model JobWorkOrder {
-  id                     String                 @id @default(uuid()) @db.Uuid
-  companyId              String                 @map("company_id") @db.Uuid
-  branchId               String?                @map("branch_id") @db.Uuid
-  jobWorkNumber          String                 @map("job_work_number")
-  contractorId           String                 @map("contractor_id") @db.Uuid
-  jobOrderId             String                 @map("job_order_id") @db.Uuid
+  id                       String                 @id @default(uuid()) @db.Uuid
+  companyId                String                 @map("company_id") @db.Uuid
+  branchId                 String?                @map("branch_id") @db.Uuid
+  jobWorkNumber            String                 @map("job_work_number")
+  contractorId             String                 @map("contractor_id") @db.Uuid
+  jobOrderId               String                 @map("job_order_id") @db.Uuid
   // Piece-Rate/External-costing (2026-09-18) — set explicitly at creation
   // (a JobWorkOrder's single stage may have more than one configured
   // Operation, so this is never inferred). Nullable: an unresolved rate never
   // blocks WIP issuance (business continuity) — it just flags UNRESOLVED for
   // later correction. resolvedRate is a snapshot, frozen at creation, never
   // recomputed if the Rate Card later changes.
-  productionOperationId  String?                @map("production_operation_id") @db.Uuid
-  resolvedRate           Decimal?               @map("resolved_rate") @db.Decimal(18, 4)
-  rateResolutionStatus   JobWorkOrderRateStatus @default(UNRESOLVED) @map("rate_resolution_status")
-  rateSourceId           String?                @map("rate_source_id") @db.Uuid
-  issuedQuantity         Decimal                @map("issued_quantity") @db.Decimal(18, 4)
-  uomId                  String                 @map("uom_id") @db.Uuid
-  issueDate              DateTime               @map("issue_date") @db.Date
-  expectedCompletionDate DateTime?              @map("expected_completion_date") @db.Date
-  status                 JobWorkOrderStatus     @default(ISSUED)
-  statusBeforeHold       JobWorkOrderStatus?    @map("status_before_hold")
+  productionOperationId    String?                @map("production_operation_id") @db.Uuid
+  resolvedRate             Decimal?               @map("resolved_rate") @db.Decimal(18, 4)
+  rateResolutionStatus     JobWorkOrderRateStatus @default(UNRESOLVED) @map("rate_resolution_status")
+  rateSourceId             String?                @map("rate_source_id") @db.Uuid
+  issuedQuantity           Decimal                @map("issued_quantity") @db.Decimal(18, 4)
+  uomId                    String                 @map("uom_id") @db.Uuid
+  issueDate                DateTime               @map("issue_date") @db.Date
+  expectedCompletionDate   DateTime?              @map("expected_completion_date") @db.Date
+  status                   JobWorkOrderStatus     @default(ISSUED)
+  statusBeforeHold         JobWorkOrderStatus?    @map("status_before_hold")
   // Guarded accumulators — the exact PurchaseOrderItem.receivedQuantity
   // idiom, capped at issuedQuantity via a guarded updateMany, never a
   // plain read-then-write.
-  receivedQuantity       Decimal                @default(0) @map("received_quantity") @db.Decimal(18, 4)
-  rejectedQuantity       Decimal                @default(0) @map("rejected_quantity") @db.Decimal(18, 4)
-  damagedQuantity        Decimal                @default(0) @map("damaged_quantity") @db.Decimal(18, 4)
-  remarks                String?
-  requestedByUserId      String                 @map("requested_by_user_id") @db.Uuid
-  createdAt              DateTime               @default(now()) @map("created_at")
-  updatedAt              DateTime               @updatedAt @map("updated_at")
+  receivedQuantity         Decimal                @default(0) @map("received_quantity") @db.Decimal(18, 4)
+  rejectedQuantity         Decimal                @default(0) @map("rejected_quantity") @db.Decimal(18, 4)
+  damagedQuantity          Decimal                @default(0) @map("damaged_quantity") @db.Decimal(18, 4)
+  // Multi-stage job work + cost sheet (2026-09-28). The covered stages and
+  // their frozen rates live in JobWorkOrderStage; these totals are
+  // snapshotted at creation and never recomputed from master data, so a
+  // later Style/Design cost change can't alter this historical record.
+  stageCostTotal           Decimal                @default(0) @map("stage_cost_total") @db.Decimal(18, 2)
+  extraCostTotal           Decimal                @default(0) @map("extra_cost_total") @db.Decimal(18, 2)
+  totalCost                Decimal                @default(0) @map("total_cost") @db.Decimal(18, 2)
+  // Required only when the covered range ends on an isFinal stage — the
+  // received pieces then land in Finished Goods at this warehouse.
+  finishedGoodsWarehouseId String?                @map("finished_goods_warehouse_id") @db.Uuid
+  remarks                  String?
+  requestedByUserId        String                 @map("requested_by_user_id") @db.Uuid
+  createdAt                DateTime               @default(now()) @map("created_at")
+  updatedAt                DateTime               @updatedAt @map("updated_at")
 
-  company             Company                @relation(fields: [companyId], references: [id])
-  branch              Branch?                @relation(fields: [branchId], references: [id])
-  contractor          Contractor             @relation(fields: [contractorId], references: [id])
-  jobOrder            JobOrder               @relation(fields: [jobOrderId], references: [id])
-  uom                 UnitOfMeasure          @relation(fields: [uomId], references: [id])
-  requestedBy         User                   @relation(fields: [requestedByUserId], references: [id])
-  materials           JobWorkOrderMaterial[]
-  receipts            JobWorkReceipt[]
-  productionOperation ProductionOperation?   @relation(fields: [productionOperationId], references: [id])
-  pieceRateEarnings   PieceRateEarning[]
+  company                Company                   @relation(fields: [companyId], references: [id])
+  branch                 Branch?                   @relation(fields: [branchId], references: [id])
+  contractor             Contractor                @relation(fields: [contractorId], references: [id])
+  jobOrder               JobOrder                  @relation(fields: [jobOrderId], references: [id])
+  uom                    UnitOfMeasure             @relation(fields: [uomId], references: [id])
+  requestedBy            User                      @relation(fields: [requestedByUserId], references: [id])
+  materials              JobWorkOrderMaterial[]
+  receipts               JobWorkReceipt[]
+  coveredStages          JobWorkOrderStage[]
+  extraCharges           JobWorkOrderExtraCharge[]
+  finishedGoodsWarehouse Warehouse?                @relation("JobWorkOrderFgWarehouse", fields: [finishedGoodsWarehouseId], references: [id])
+  productionOperation    ProductionOperation?      @relation(fields: [productionOperationId], references: [id])
+  pieceRateEarnings      PieceRateEarning[]
 
   @@unique([companyId, jobWorkNumber])
   @@index([companyId, status])
@@ -10046,4 +10093,109 @@ model AIFailoverLog {
   fallbackProvider  AIProvider? @relation("AIFailoverFallbackProvider", fields: [fallbackProviderId], references: [id])
 
   @@map("ai_failover_logs")
+}
+
+/// Contractor ↔ Production Stage (which stages an external unit performs),
+/// ordered by `sequence`. See Contractor.stages.
+model ContractorStage {
+  id                String   @id @default(uuid()) @db.Uuid
+  contractorId      String   @map("contractor_id") @db.Uuid
+  productionStageId String   @map("production_stage_id") @db.Uuid
+  sequence          Int      @default(0)
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  contractor      Contractor      @relation(fields: [contractorId], references: [id], onDelete: Cascade)
+  productionStage ProductionStage @relation(fields: [productionStageId], references: [id])
+
+  @@unique([contractorId, productionStageId])
+  @@index([productionStageId])
+  @@map("contractor_stages")
+}
+
+/// Master Style → Stage → default job-work cost per piece.
+model StyleStageCost {
+  id                String   @id @default(uuid()) @db.Uuid
+  companyId         String   @map("company_id") @db.Uuid
+  productId         String   @map("product_id") @db.Uuid
+  productionStageId String   @map("production_stage_id") @db.Uuid
+  cost              Decimal  @db.Decimal(18, 4)
+  updatedByUserId   String?  @map("updated_by_user_id") @db.Uuid
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  company         Company         @relation(fields: [companyId], references: [id])
+  product         Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productionStage ProductionStage @relation(fields: [productionStageId], references: [id])
+
+  @@unique([productId, productionStageId])
+  @@index([companyId])
+  @@map("style_stage_costs")
+}
+
+/// Design-specific override of a Style's stage cost. Only overridden stages
+/// have a row — every other stage inherits the Style's current default, so a
+/// Style cost change never overwrites a customized Design cost.
+model DesignStageCost {
+  id                String   @id @default(uuid()) @db.Uuid
+  companyId         String   @map("company_id") @db.Uuid
+  sampleRequestId   String   @map("sample_request_id") @db.Uuid
+  productionStageId String   @map("production_stage_id") @db.Uuid
+  cost              Decimal  @db.Decimal(18, 4)
+  updatedByUserId   String?  @map("updated_by_user_id") @db.Uuid
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  company         Company         @relation(fields: [companyId], references: [id])
+  sampleRequest   SampleRequest   @relation(fields: [sampleRequestId], references: [id], onDelete: Cascade)
+  productionStage ProductionStage @relation(fields: [productionStageId], references: [id])
+
+  @@unique([sampleRequestId, productionStageId])
+  @@index([companyId])
+  @@map("design_stage_costs")
+}
+
+enum StageCostSource {
+  STYLE_DEFAULT
+  DESIGN_OVERRIDE
+  NOT_CONFIGURED
+}
+
+/// One covered stage of a (possibly multi-stage) Job Work Order, with its
+/// cost frozen at creation. `defaultRate`/`defaultSource` record what the
+/// Style/Design hierarchy suggested; `rate` is what this transaction actually
+/// uses (isOverridden when they differ).
+model JobWorkOrderStage {
+  id                String          @id @default(uuid()) @db.Uuid
+  jobWorkOrderId    String          @map("job_work_order_id") @db.Uuid
+  productionStageId String          @map("production_stage_id") @db.Uuid
+  sequence          Int
+  quantity          Decimal         @db.Decimal(18, 4)
+  defaultRate       Decimal?        @map("default_rate") @db.Decimal(18, 4)
+  defaultSource     StageCostSource @map("default_source")
+  rate              Decimal         @db.Decimal(18, 4)
+  isOverridden      Boolean         @default(false) @map("is_overridden")
+  amount            Decimal         @db.Decimal(18, 2)
+  createdAt         DateTime        @default(now()) @map("created_at")
+
+  jobWorkOrder    JobWorkOrder    @relation(fields: [jobWorkOrderId], references: [id], onDelete: Cascade)
+  productionStage ProductionStage @relation(fields: [productionStageId], references: [id])
+
+  @@unique([jobWorkOrderId, productionStageId])
+  @@map("job_work_order_stages")
+}
+
+/// Additional non-stage charges on a Job Work Order (transport, urgent work,
+/// special processing, ...).
+model JobWorkOrderExtraCharge {
+  id             String   @id @default(uuid()) @db.Uuid
+  jobWorkOrderId String   @map("job_work_order_id") @db.Uuid
+  costType       String   @map("cost_type")
+  description    String?
+  amount         Decimal  @db.Decimal(18, 2)
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  jobWorkOrder JobWorkOrder @relation(fields: [jobWorkOrderId], references: [id], onDelete: Cascade)
+
+  @@index([jobWorkOrderId])
+  @@map("job_work_order_extra_charges")
 }

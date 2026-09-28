@@ -9,6 +9,16 @@ export const contractorSchema = z.object({
   email: z.string().email().optional().or(z.literal("")),
   address: z.string().max(500).optional().or(z.literal("")),
   isActive: z.boolean().default(true),
+  /**
+   * Production stages this contractor performs, IN WORKING ORDER (index 0
+   * first). Omitted = leave unchanged on PATCH / none on create. An empty
+   * array clears the list (contractor becomes unrestricted again).
+   */
+  stageIds: z
+    .array(z.string().uuid("Invalid stage"))
+    .max(50)
+    .refine((ids) => new Set(ids).size === ids.length, "A stage can only be selected once.")
+    .optional(),
 });
 
 export type ContractorInput = z.infer<typeof contractorSchema>;

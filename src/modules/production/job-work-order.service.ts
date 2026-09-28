@@ -12,7 +12,13 @@ import { ProductRepository } from "@/modules/products/product.repository";
 import { FabricRollRepository } from "@/modules/purchasing/fabric-roll.repository";
 import { ContractorRepository } from "@/modules/contractors/contractor.repository";
 import { JobWorkOrderStatus, type Prisma } from "@prisma/client";
-import { applyJobOrderQuantityDelta, assertStageAccess } from "./job-order.service";
+import { applyJobOrderQuantityDelta, assertStageAccess, cascadeReceivedThroughStagesInTx } from "./job-order.service";
+import { computeAvailableToCommit } from "./assignment-capacity";
+import {
+  resolveCostContextForProductionOrder,
+  resolveEffectiveStageCosts,
+  round2,
+} from "@/modules/stage-costs/stage-cost.service";
 import { resolveContractorPieceRate } from "./piece-rate-resolution.service";
 import { generateEarningForJobWorkReceipt } from "./piece-rate-earning.service";
 import { JobOrderRepository, ProductionOrderRepository } from "./production.repository";
@@ -111,6 +117,14 @@ export function computeJobWorkOrderMetrics(order: {
   const isOverdue = !isDone && !!order.expectedCompletionDate && Date.now() > order.expectedCompletionDate.getTime();
 
   return { pendingQuantity, daysElapsed, isOverdue };
+}
+
+/** Covered stages after the source stage, in working order (empty for a single-stage job work). */
+function downstreamStageIdsOf(order: { coveredStages?: { productionStageId: string; sequence: number }[] }) {
+  return [...(order.coveredStages ?? [])]
+    .sort((a, b) => a.sequence - b.sequence)
+    .slice(1)
+    .map((s) => s.productionStageId);
 }
 
 const VALID_JOB_WORK_ORDER_STATUSES = new Set<string>(Object.values(JobWorkOrderStatus));
@@ -295,6 +309,70 @@ async function reverseIssuedMaterialsInTx(
   }
 }
 
+
+/**
+ * The stages a job work can cover, starting at the job order's own stage:
+ * every ACTIVE stage at or after it in production sequence, stopping after
+ * the first final (Finished Goods) stage — nothing can come after that.
+ */
+async function listCoverableStages(companyId: string, source: { id: string; sequence: number }) {
+  const stages = await prisma.productionStage.findMany({
+    where: { companyId, OR: [{ id: source.id }, { isActive: true, sequence: { gt: source.sequence } }] },
+    select: { id: true, code: true, name: true, sequence: true, isFinal: true, isActive: true },
+    orderBy: { sequence: "asc" },
+  });
+  const result: typeof stages = [];
+  for (const stage of stages) {
+    result.push(stage);
+    if (stage.isFinal) break;
+  }
+  return result;
+}
+
+/** Covered range = source stage … throughStageId (inclusive). */
+async function resolveCoveredStages(companyId: string, source: { id: string; sequence: number }, throughStageId?: string | null) {
+  const coverable = await listCoverableStages(companyId, source);
+  if (!throughStageId || throughStageId === source.id) return coverable.slice(0, 1);
+  const endIndex = coverable.findIndex((s) => s.id === throughStageId);
+  if (endIndex === -1) {
+    throw new BusinessRuleError(
+      "VALIDATION_ERROR",
+      "The job work must end at an active stage at or after this job order's own stage (and no later than the final stage).",
+      { throughStageId },
+    );
+  }
+  return coverable.slice(0, endIndex + 1);
+}
+
+/** Everything the "Send to External Job-Work" form needs, from one call. */
+export async function getJobWorkPlanningOptions(actor: ActorContext, jobOrderId: string) {
+  await assertInternalUser(actor);
+  const jobOrder = await JobOrderRepository.findAnyById(actor.companyId, jobOrderId);
+  if (!jobOrder) throw new BusinessRuleError("NOT_FOUND", "Job order not found.", { id: jobOrderId });
+  await assertStageAccess(actor, jobOrder.productionStageId);
+
+  const coverable = await listCoverableStages(actor.companyId, jobOrder.productionStage);
+  const context = await resolveCostContextForProductionOrder(prisma, actor.companyId, jobOrder.productionOrderId);
+  const costs = await resolveEffectiveStageCosts(prisma, actor.companyId, {
+    productId: context.productId,
+    sampleRequestId: context.sampleRequestId,
+    stageIds: coverable.map((s) => s.id),
+  });
+  const { available } = await computeAvailableToCommit(prisma, jobOrder);
+
+  return {
+    jobOrderId,
+    sourceStageId: jobOrder.productionStageId,
+    availableToIssue: available,
+    style: { id: context.productId, name: context.styleName, code: context.styleCode },
+    design: context.sampleRequestId ? { id: context.sampleRequestId, label: context.designLabel } : null,
+    stages: coverable.map((stage) => {
+      const cost = costs.get(stage.id)!;
+      return { ...stage, defaultRate: cost.rate, defaultSource: cost.source };
+    }),
+  };
+}
+
 /**
  * issuedQuantity draws down the parent JobOrder's "remaining/unprocessed"
  * pool (plannedQuantity - completed - rejected - damaged), minus whatever's
@@ -317,18 +395,92 @@ export async function createJobWorkOrder(actor: ActorContext, input: CreateJobWo
   const contractor = await ContractorRepository.findById(actor.companyId, input.contractorId);
   if (!contractor) throw new BusinessRuleError("NOT_FOUND", "Contractor not found.", { id: input.contractorId });
 
-  const unprocessed =
-    Number(jobOrder.plannedQuantity) - Number(jobOrder.completedQuantity) - Number(jobOrder.rejectedQuantity) - Number(jobOrder.damagedQuantity);
-  const alreadyPendingElsewhere = await JobWorkOrderRepository.sumPendingByJobOrderId(input.jobOrderId);
-  const availableToIssue = unprocessed - alreadyPendingElsewhere;
-
-  if (input.issuedQuantity > availableToIssue + EPSILON) {
-    throw new BusinessRuleError(
-      "OVER_PRODUCTION_NOT_ALLOWED",
-      `Cannot issue ${input.issuedQuantity} to job-work — only ${availableToIssue} of this job order's work is still unprocessed and not already committed to another job-work order.`,
-      { availableToIssue }
-    );
+  if (!contractor.isActive) {
+    throw new BusinessRuleError("VALIDATION_ERROR", `Contractor "${contractor.name}" is inactive.`, { id: contractor.id });
   }
+  if (jobOrder.status === "ON_HOLD") {
+    throw new BusinessRuleError("INVALID_STATE_TRANSITION", "This job order is on hold — resume it before sending work out.", {});
+  }
+
+  // Covered stages (multi-stage job work) — validated server-side, never
+  // trusted from the client beyond the chosen end stage.
+  const coveredStages = await resolveCoveredStages(actor.companyId, jobOrder.productionStage, input.throughStageId || null);
+  const contractorStageIds = new Set(contractor.stages.map((s) => s.productionStageId));
+  if (contractorStageIds.size > 0) {
+    const unsupported = coveredStages.filter((s) => !contractorStageIds.has(s.id));
+    if (unsupported.length) {
+      throw new BusinessRuleError(
+        "VALIDATION_ERROR",
+        `${contractor.name} does not perform ${unsupported.map((s) => s.name).join(", ")}. Update the contractor's stages in Masters → Contractors, or choose a different contractor.`,
+        { unsupportedStageIds: unsupported.map((s) => s.id) }
+      );
+    }
+  }
+  const lastStage = coveredStages[coveredStages.length - 1];
+  let finishedGoodsWarehouseId: string | null = null;
+  if (lastStage.isFinal && coveredStages.length > 1) {
+    if (!input.finishedGoodsWarehouseId) {
+      throw new BusinessRuleError(
+        "VALIDATION_ERROR",
+        `This job work ends at ${lastStage.name} (the final stage) — select the Finished Goods warehouse the pieces will be received into.`,
+        {}
+      );
+    }
+    const warehouse = await prisma.warehouse.findFirst({
+      where: { id: input.finishedGoodsWarehouseId, companyId: actor.companyId, isActive: true },
+      select: { id: true },
+    });
+    if (!warehouse) throw new BusinessRuleError("NOT_FOUND", "Warehouse not found.", { id: input.finishedGoodsWarehouseId });
+    finishedGoodsWarehouseId = warehouse.id;
+  }
+
+  // Stage-wise cost sheet, frozen on this transaction: Design override →
+  // Style default → (a rate the user must type). Supplied rates override.
+  const costContext = await resolveCostContextForProductionOrder(prisma, actor.companyId, jobOrder.productionOrderId);
+  const defaults = await resolveEffectiveStageCosts(prisma, actor.companyId, {
+    productId: costContext.productId,
+    sampleRequestId: costContext.sampleRequestId,
+    stageIds: coveredStages.map((s) => s.id),
+  });
+  const coveredIds = new Set(coveredStages.map((s) => s.id));
+  const supplied = new Map<string, number>();
+  for (const row of input.stageCosts) {
+    if (!coveredIds.has(row.productionStageId)) {
+      throw new BusinessRuleError("VALIDATION_ERROR", "A cost was entered for a stage this job work does not cover.", {
+        productionStageId: row.productionStageId,
+      });
+    }
+    supplied.set(row.productionStageId, row.rate);
+  }
+  const stageRows = coveredStages.map((stage, index) => {
+    const def = defaults.get(stage.id)!;
+    const rate = supplied.has(stage.id) ? supplied.get(stage.id)! : def.rate;
+    if (rate === null) {
+      throw new BusinessRuleError(
+        "VALIDATION_ERROR",
+        `No cost is configured for ${stage.name} on this style/design — enter a rate for it.`,
+        { productionStageId: stage.id }
+      );
+    }
+    return {
+      productionStageId: stage.id,
+      sequence: index,
+      quantity: input.issuedQuantity,
+      defaultRate: def.rate,
+      defaultSource: def.source,
+      rate,
+      isOverridden: def.rate === null || Math.abs(rate - def.rate) > EPSILON,
+      amount: round2(rate * input.issuedQuantity),
+    };
+  });
+  const extraRows = input.extraCharges.map((c) => ({
+    costType: c.costType,
+    description: c.description || null,
+    amount: round2(c.amount),
+  }));
+  const stageCostTotal = round2(stageRows.reduce((sum, r) => sum + r.amount, 0));
+  const extraCostTotal = round2(extraRows.reduce((sum, r) => sum + r.amount, 0));
+  const totalCost = round2(stageCostTotal + extraCostTotal);
 
   for (const material of input.materials) {
     if (material.fabricRollId) {
@@ -375,6 +527,19 @@ export async function createJobWorkOrder(actor: ActorContext, input: CreateJobWo
   });
 
   const created = await prisma.$transaction(async (tx) => {
+    // Shared pool with internal worker assignment, under the job order's row
+    // lock — the same piece can never be committed to a worker and a
+    // contractor at once.
+    const lockedJobOrder = await JobOrderRepository.findForGuardedUpdateInTx(tx, input.jobOrderId);
+    const { available } = await computeAvailableToCommit(tx, lockedJobOrder);
+    if (input.issuedQuantity > available + EPSILON) {
+      throw new BusinessRuleError(
+        "OVER_PRODUCTION_NOT_ALLOWED",
+        `Cannot send ${input.issuedQuantity} to job-work — only ${available} of this job order's pieces are still free (not already worked, assigned to a worker, or with another contractor).`,
+        { availableToIssue: available }
+      );
+    }
+
     const order = await JobWorkOrderRepository.createWithMaterialsInTx(
       tx,
       {
@@ -393,6 +558,12 @@ export async function createJobWorkOrder(actor: ActorContext, input: CreateJobWo
         expectedCompletionDate: input.expectedCompletionDate ? new Date(input.expectedCompletionDate) : null,
         remarks: input.remarks || null,
         requestedByUserId: actor.userId,
+        finishedGoodsWarehouseId,
+        stageCostTotal,
+        extraCostTotal,
+        totalCost,
+        coveredStages: { create: stageRows },
+        extraCharges: { create: extraRows },
       },
       input.materials.map((m) => ({
         productId: m.productId,
@@ -442,7 +613,17 @@ export async function createJobWorkOrder(actor: ActorContext, input: CreateJobWo
     tableName: "job_work_orders",
     recordId: created.id,
     action: "CREATE",
-    newValues: { jobWorkNumber, contractorId: input.contractorId, jobOrderId: input.jobOrderId, issuedQuantity: input.issuedQuantity },
+    newValues: {
+      jobWorkNumber,
+      contractorId: input.contractorId,
+      jobOrderId: input.jobOrderId,
+      issuedQuantity: input.issuedQuantity,
+      coveredStages: stageRows.map((r) => ({ productionStageId: r.productionStageId, rate: r.rate, source: r.defaultSource, isOverridden: r.isOverridden })),
+      extraCharges: extraRows,
+      stageCostTotal,
+      extraCostTotal,
+      totalCost,
+    },
   });
 
   return created;
@@ -586,6 +767,15 @@ export async function receiveJobWork(actor: ActorContext, jobWorkOrderId: string
         rejected: input.rejectedQuantity,
         damaged: input.damagedQuantity,
       });
+      // Multi-stage job work: good pieces have been through every covered
+      // stage — move them forward through the rest of the covered range.
+      await cascadeReceivedThroughStagesInTx(tx, actor, {
+        sourceJobOrderId: order.jobOrderId,
+        downstreamStageIds: downstreamStageIdsOf(order),
+        quantity: input.receivedQuantity,
+        finishedGoodsWarehouseId: order.finishedGoodsWarehouseId,
+        jobWorkNumber: order.jobWorkNumber,
+      });
 
       // Piece-Rate (2026-09-18) — the external "worker" here is the
       // Contractor; only genuinely received quantity is ever paid, never
@@ -679,6 +869,16 @@ export async function approveJobWorkReceipt(actor: ActorContext, receiptId: stri
       rejected: Number(receipt.rejectedQuantity),
       damaged: Number(receipt.damagedQuantity),
     });
+    const fullOrder = await JobWorkOrderRepository.findAnyById(actor.companyId, receipt.jobWorkOrderId);
+    if (fullOrder) {
+      await cascadeReceivedThroughStagesInTx(tx, actor, {
+        sourceJobOrderId: current.jobOrderId,
+        downstreamStageIds: downstreamStageIdsOf(fullOrder),
+        quantity: Number(receipt.receivedQuantity),
+        finishedGoodsWarehouseId: fullOrder.finishedGoodsWarehouseId,
+        jobWorkNumber: fullOrder.jobWorkNumber,
+      });
+    }
 
     if (current.resolvedRate !== null && current.resolvedRate !== undefined) {
       await generateEarningForJobWorkReceipt(tx, {
@@ -757,6 +957,14 @@ export async function reverseJobWorkReceipt(actor: ActorContext, receiptId: stri
   if (!receipt) throw new BusinessRuleError("NOT_FOUND", "Job-work receipt not found.", { id: receiptId });
   if (receipt.status !== "COMPLETED") {
     throw new BusinessRuleError("INVALID_STATE_TRANSITION", `Cannot reverse a receipt in "${receipt.status}" status.`, {});
+  }
+  const parentOrder = await JobWorkOrderRepository.findAnyById(actor.companyId, receipt.jobWorkOrderId);
+  if (parentOrder && downstreamStageIdsOf(parentOrder).length > 0 && Number(receipt.receivedQuantity) > 0) {
+    throw new BusinessRuleError(
+      "INVALID_STATE_TRANSITION",
+      "This job work covered several stages, so the received pieces were already moved forward to the later stages. Correct it with a Revert on the downstream job order instead of reversing this receipt.",
+      {}
+    );
   }
 
   await prisma.$transaction(async (tx) => {

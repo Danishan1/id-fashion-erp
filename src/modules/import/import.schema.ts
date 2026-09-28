@@ -321,6 +321,7 @@ export const BULK_IMPORT_COLUMNS: Record<BulkImportMasterType, ImportColumnSpec[
     { key: "sequence", label: "Sequence", required: false },
     { key: "isFinal", label: "Is Final Stage (true/false)", required: false },
     { key: "allowRework", label: "Allow Rework (true/false)", required: false },
+    { key: "allowsExtraQuantity", label: "Allows Extra Pieces (true/false)", required: false },
   ],
   PRODUCTION_LINE: [
     { key: "code", label: "Code", required: true },

@@ -7492,6 +7492,65 @@ The stored JSON is tagged `{ format: "MASTER_V1" }`. Older tech packs, which hav
 
 **Known limitation:** the AI pages can still misspell text occasionally, e.g. a date or heading. Regenerating that page usually fixes it.
 
+## Production worker rules, multi-stage job work, stage-wise costing, global toast (2026-09-28)
+
+One pass implementing a 20-section functional spec. Scope decisions confirmed via AskUserQuestion: per-worker
+quantity rule is **cumulative ≤ assigned** (partial logging stays possible); Cutting extras are **tracked and
+forwardable**; stage costs live in **new tables** (not Piece-Rate cards); job work is **multi-stage**. "Constructor"
+in the spec was read as the existing **Contractor** master (no Constructor module exists).
+
+- **Global toast** (`src/components/ui/Toast.tsx`, `src/lib/api-client.ts`, mounted in `Providers.tsx`): a module-level
+  store (`toast.success/error/warning/info`) plus a `window.fetch` interceptor that toasts every same-origin
+  `/api/v1` **mutation** (POST/PATCH/PUT/DELETE) — the API's own error message on failure, a generic or
+  `x-toast-success` message on success, a network-error toast on a rejected fetch. GETs are never toasted.
+  Opt out per request with header `x-toast: off` (or `errors` for errors-only); both control headers are stripped
+  before sending. Header values must be Latin-1 (English success text only). This covers all ~130 existing
+  inline-error components without editing them; the existing inline `setError` text still shows too.
+- **API error envelope**: `toErrorResponse()` now returns `{ success:false, message, errors?, error:{code,message,details} }` —
+  additive; `errors` is a field-keyed map for Zod errors. The legacy `error` object is unchanged (~250 readers).
+- **Sale Order (item 1)**: the design picker is company-wide (any customer → any approved design, referenced not
+  duplicated; option sublabel shows the original customer). `assertLinkedDesignsValid()` enforces same company,
+  same Style as the line, not REJECTED/CANCELLED; new orders reject an inactive Style. Approval stays at the
+  existing confirm-time gate (with its Management override).
+- **Contractor stages (item 2)**: `ContractorStage` (ordered by `sequence`); zero rows = unrestricted. Reusable
+  `StageSequencePicker` (checkboxes + ↑/↓ working order). Validated as this company's stages; newly-added must be active.
+- **Worker assignment / Log Process (items 3–8)**: logic in `src/modules/production/assignment-capacity.ts`.
+  *Consumed* = completed + rejected + damaged − extra per assignment (PENDING counts, REJECTED doesn't), locked
+  `FOR UPDATE`, capped at assigned, auto IN_PROGRESS → COMPLETED. `recordProgressEntry` now **requires**
+  `jobOrderAssignmentId` and derives the worker from it (API rejects a non-assigned worker / no assignment).
+  `JobOrderAssignment.expectedStartAt/expectedEndAt` (end required on new assignments, must be future and after
+  start). `computeAvailableToCommit()` = planned + extra − done − unworked internal assignments − pending external
+  job work, used by BOTH assignWorker and createJobWorkOrder under the job order's row lock — closes the
+  previously-documented worker/contractor double-commit gap. Worker quantities are whole pieces (Zod `.int()`).
+  The Lot payload adds `availableToAssign` and per-assignment `loggedQuantity`/`remainingQuantity`.
+  LotWorkflowPanel shows errors **inside** each modal (they previously rendered behind the overlay — the
+  "Assign Worker shows no error" bug).
+- **Cutting extras (item 6)**: `ProductionStage.allowsExtraQuantity` (Masters → Production Config; flagged on
+  existing Cutting stages by migrations `…100100` and the whitespace/variant-tolerant `…100200` — real data had
+  code `CUTTING` / name `"Cutting "`). `JobOrder.extraQuantity` / `JobOrderProgressEntry.extraQuantity`; extras are
+  part of completed, explicit only, and the CHECK is now `completed+rejected+damaged <= planned + extra`.
+- **Stage costs (items 9–12)**: `StyleStageCost` (Style×Stage) and `DesignStageCost` (overrides only — un-overridden
+  stages inherit the Style's *current* default, so a Style change never overwrites a customized Design).
+  `src/modules/stage-costs/`, `GET/PUT /api/v1/products/:id/stage-costs` (masters_core) and
+  `/api/v1/sampling/:id/stage-costs` (sampling). `StageCostEditor` opens from a "Stage Costs" row action on the
+  Styles list and the Designs list.
+- **Multi-stage job work**: a Job Work Order covers the job order's own stage **through** a chosen later stage
+  (`throughStageId`; stops at the first final stage). Covered stages + frozen rates live in `JobWorkOrderStage`
+  (`defaultRate/defaultSource` = what Design→Style suggested, `rate` = what this transaction uses, `isOverridden`);
+  `JobWorkOrderExtraCharge`; frozen `stageCostTotal/extraCostTotal/totalCost` (CHECK total = stage + extra). A stage
+  with no configured cost must be given a rate (never a silent 0). Contractor stages restrict which contractor
+  can cover the range. On receipt, `cascadeReceivedThroughStagesInTx()` moves the received good pieces through
+  each further covered stage via the same `postStageTransactionInTx` + forwarded guard + FG receipt a manual
+  Forward uses. Reversing a cascaded multi-stage receipt is deliberately blocked (correct via downstream Revert).
+  `GET /api/v1/job-orders/:id/job-work-options` feeds the form. Existing job-work orders were backfilled with one
+  covered-stage row (their source stage, `NOT_CONFIGURED`, rate = old piece-rate snapshot or 0).
+- Migration `20260928100000_production_costing_and_worker_rules` (additive; excludes the unrelated
+  `contractors.updated_at` drift line). Verified: typecheck, lint (0 errors), 2098/2098 tests (69 new), and a
+  31-check script against the real dev DB through the real services. Test data tagged `QA-VERIFY-0928` (PROD-2026-00013-L01,
+  its sales/job-work orders, a deactivated test contractor) was left in the dev DB.
+- **Not verified in the browser**: the only dev server that could run was an orphaned pre-migration process on
+  :3000 (stale in-memory Prisma client → `Unknown field stages`); restart it before UI testing.
+
 ## Reference
 
 Full architecture rationale, complete table-by-table field lists, and the full role×module permission matrix were developed in the Phase 1 planning session and are condensed here. Consult that history if a design decision needs deeper justification than what's summarized above.

@@ -28,6 +28,9 @@ interface SampleOption {
   // merchandiser actually recognizes instead of a bare document number.
   styleName: string | null;
   product: { id: string; styleName: string } | null;
+  // The customer the design was originally developed/approved for — shown in
+  // the picker so it's obvious when a design from another customer is used.
+  customer?: { id: string; name: string } | null;
   // Current version's own costing only — see sample.repository.ts's
   // findMany include. Null until the sample has been costed at all.
   versions: { estimatedCostPerUnit: string | null }[];
@@ -48,6 +51,11 @@ interface SampleOption {
 function sampleDisplayLabel(s: SampleOption): string {
   const name = s.styleName ?? s.product?.styleName;
   return name ? `${name} (${s.requestNumber})` : s.requestNumber;
+}
+
+function sampleSublabel(s: SampleOption, orderCustomerId: string): string | undefined {
+  if (!s.customer) return undefined;
+  return s.customer.id === orderCustomerId ? `Customer: ${s.customer.name}` : `Originally for: ${s.customer.name}`;
 }
 
 interface VariantOption {
@@ -138,10 +146,6 @@ export function SalesOrderForm({
   // Purchase Order's own Unit Price fields, just sourced from what we
   // charged rather than what we paid).
   const [priceHistoryByLine, setPriceHistoryByLine] = useState<Record<number, SalesPriceHistoryEntry[]>>({});
-  // Off by default (the common case: reference this order's own customer's
-  // approved samples) — on, when a customer wants to order based on a
-  // sample that was actually made/approved for a different customer.
-  const [searchAllCustomers, setSearchAllCustomers] = useState(false);
   const [items, setItems] = useState<LineItem[]>(
     initialOrder
       ? initialOrder.items.map((item) => ({
@@ -189,19 +193,15 @@ export function SalesOrderForm({
       .then((body) => setBuyers(body.data?.buyers ?? []));
   }, [customerId]);
 
-  // The approved-sample pool is scoped to the customer by default, or
-  // company-wide when "search all customers" is on — either way, still
-  // narrowed down to the line's own Style at render time (see the sample
-  // <select> below).
+  // Customer and Design selection are independent: ANY customer can order
+  // ANY approved design (one developed for another customer is referenced
+  // as-is, never duplicated). The pool is company-wide and only narrowed to
+  // the line's own Style at render time (see the design picker below).
   useEffect(() => {
-    if (!searchAllCustomers && !customerId) return;
-    const url = searchAllCustomers
-      ? "/api/v1/sampling?status=APPROVED&pageSize=200"
-      : `/api/v1/sampling?status=APPROVED&customerId=${customerId}&pageSize=200`;
-    fetch(url)
+    fetch("/api/v1/sampling?status=APPROVED&pageSize=200")
       .then((res) => res.json())
       .then((body) => setApprovedSamples(body.data ?? []));
-  }, [customerId, searchAllCustomers]);
+  }, []);
 
   const updateItem = (index: number, patch: Partial<LineItem>) => {
     setItems((prev) => prev.map((item, i) => (i === index ? { ...item, ...patch } : item)));
@@ -423,9 +423,6 @@ export function SalesOrderForm({
               setCustomerId(next);
               setBuyerId("");
               setBuyers([]);
-              // Company-wide sample search is independent of the customer,
-              // so only reset the pool when scoped search is actually in use.
-              if (!searchAllCustomers) setApprovedSamples([]);
               setLastOrderPrices({});
               setPriceHistoryByLine({});
             }}
@@ -488,17 +485,9 @@ export function SalesOrderForm({
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Style Lines</h2>
-          <label className="flex items-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-400">
-            <input
-              type="checkbox"
-              checked={searchAllCustomers}
-              onChange={(e) => {
-                setSearchAllCustomers(e.target.checked);
-                if (!e.target.checked && !customerId) setApprovedSamples([]);
-              }}
-            />
-            Search approved samples from all customers
-          </label>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">
+            Any customer can order any approved design.
+          </p>
         </div>
         {items.map((item, index) => (
           <div key={index} className="space-y-3 rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
@@ -549,15 +538,13 @@ export function SalesOrderForm({
                       void applySampleVariantDefault(index, selected, item.variants, item.productId);
                     }
                   }}
-                  disabled={(!searchAllCustomers && !customerId) || !item.productId}
+                  disabled={!item.productId}
                   options={approvedSamples
                     .filter((s) => s.product?.id === item.productId)
-                    .map((s) => ({ id: s.id, label: sampleDisplayLabel(s) }))}
+                    .map((s) => ({ id: s.id, label: sampleDisplayLabel(s), sublabel: sampleSublabel(s, customerId) }))}
                   placeholder="Search design / sample…"
                 />
-                {!searchAllCustomers && !customerId ? (
-                  <p className="mt-1 text-xs text-zinc-400">Pick a Customer first, or search all customers above.</p>
-                ) : !item.productId ? (
+                {!item.productId ? (
                   <p className="mt-1 text-xs text-zinc-400">Pick a Style first.</p>
                 ) : approvedSamples.filter((s) => s.product?.id === item.productId).length === 0 ? (
                   <p className="mt-1 text-xs text-zinc-400">No approved samples for this style yet.</p>

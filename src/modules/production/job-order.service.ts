@@ -6,6 +6,11 @@ import { recordInventoryTransaction } from "@/modules/inventory/inventory.servic
 import { EmployeeRepository } from "@/modules/employees/employee.repository";
 import { getProductionSettings } from "@/core/production-settings/ProductionSettingsService";
 import { resolvePieceRate } from "./piece-rate-resolution.service";
+import {
+  assertEntryWithinAssignmentInTx,
+  computeAvailableToCommit,
+  syncAssignmentStatusInTx,
+} from "./assignment-capacity";
 import { generateEarningForJobOrderProgress, generateEarningsForQcAcceptance } from "./piece-rate-earning.service";
 import type { JobOrderStatus, Prisma, ProductionStage } from "@prisma/client";
 import {
@@ -220,27 +225,34 @@ async function completeAtFinalStageInTx(
 export async function applyJobOrderQuantityDelta(
   tx: Prisma.TransactionClient,
   jobOrderId: string,
-  deltas: { completed?: number; rejected?: number; damaged?: number }
+  deltas: { completed?: number; rejected?: number; damaged?: number; extra?: number }
 ) {
   const jo = await JobOrderRepository.findForGuardedUpdateInTx(tx, jobOrderId);
   const planned = Number(jo.plannedQuantity);
   const newCompleted = Number(jo.completedQuantity) + (deltas.completed ?? 0);
   const newRejected = Number(jo.rejectedQuantity) + (deltas.rejected ?? 0);
   const newDamaged = Number(jo.damagedQuantity) + (deltas.damaged ?? 0);
+  // Explicit extra pieces (Cutting) widen this job order's capacity — never
+  // inferred from an over-count, only ever from a recorded extraQuantity.
+  const newExtra = Number(jo.extraQuantity) + (deltas.extra ?? 0);
 
-  if (newCompleted < -EPSILON || newRejected < -EPSILON || newDamaged < -EPSILON) {
+  if (newCompleted < -EPSILON || newRejected < -EPSILON || newDamaged < -EPSILON || newExtra < -EPSILON) {
     throw new BusinessRuleError("OVER_PRODUCTION_NOT_ALLOWED", "This adjustment would make a quantity negative.", {
       newCompleted,
       newRejected,
       newDamaged,
+      newExtra,
     });
   }
   const total = newCompleted + newRejected + newDamaged;
-  if (total > planned + EPSILON) {
+  const capacity = planned + newExtra;
+  if (total > capacity + EPSILON) {
     throw new BusinessRuleError(
       "OVER_PRODUCTION_NOT_ALLOWED",
-      `Cannot record this entry — completed + rejected + damaged (${total}) would exceed the planned quantity (${planned}).`,
-      { planned, attempted: total }
+      newExtra > 0
+        ? `Cannot record this entry — completed + rejected + damaged (${total}) would exceed the planned quantity (${planned}) plus recorded extra pieces (${newExtra}).`
+        : `Cannot record this entry — completed + rejected + damaged (${total}) would exceed the planned quantity (${planned}).`,
+      { planned, extra: newExtra, attempted: total }
     );
   }
 
@@ -248,6 +260,7 @@ export async function applyJobOrderQuantityDelta(
     completedQuantity: Math.max(0, newCompleted),
     rejectedQuantity: Math.max(0, newRejected),
     damagedQuantity: Math.max(0, newDamaged),
+    extraQuantity: Math.max(0, newExtra),
     status: computeWritableJobOrderStatus({
       status: jo.status,
       plannedQuantity: planned,
@@ -346,6 +359,90 @@ function guardedIncrementQcPassed(tx: Prisma.TransactionClient, jobOrderId: stri
   });
 }
 
+/**
+ * Multi-stage external job work (2026-09-28): a contractor who performs
+ * several consecutive stages (e.g. Stitching → Finishing) hands back pieces
+ * that have been through ALL of them. Once the received quantity has been
+ * applied as completed on the source job order, this moves those same pieces
+ * forward through each further covered stage using exactly the ledger a
+ * manual Forward uses — postStageTransactionInTx + the guarded forwarded
+ * accumulator + (on an isFinal stage) the Finished-Goods receipt — so the
+ * stage-transaction audit trail and Lot completion stay correct.
+ *
+ * Each intermediate stage's new job order is marked completed for the
+ * cascaded quantity; the last covered stage's job order is left completed
+ * (ready to forward/QC internally) unless it is a final stage, in which case
+ * the pieces land in Finished Goods.
+ */
+export async function cascadeReceivedThroughStagesInTx(
+  tx: Prisma.TransactionClient,
+  actor: ActorContext,
+  params: {
+    sourceJobOrderId: string;
+    /** Covered stages AFTER the source stage, in working order. */
+    downstreamStageIds: string[];
+    quantity: number;
+    finishedGoodsWarehouseId: string | null;
+    jobWorkNumber: string;
+  },
+) {
+  if (params.quantity <= EPSILON || params.downstreamStageIds.length === 0) return;
+
+  let current = await tx.jobOrder.findUniqueOrThrow({
+    where: { id: params.sourceJobOrderId },
+    include: { productionStage: true, lot: { select: { id: true, lotNumber: true } }, productionOrder: { select: { productId: true } } },
+  });
+
+  for (const stageId of params.downstreamStageIds) {
+    const toStage = await tx.productionStage.findFirst({ where: { id: stageId, companyId: actor.companyId } });
+    if (!toStage) throw new BusinessRuleError("NOT_FOUND", "Production stage not found.", { id: stageId });
+
+    const posted = await postStageTransactionInTx(tx, actor, {
+      productionOrderId: current.productionOrderId,
+      lot: current.lot,
+      fromJobOrder: current,
+      toStage,
+      quantity: params.quantity,
+      transactionType: "FORWARD",
+      notes: `Received from external job-work ${params.jobWorkNumber}`,
+    });
+
+    const fresh = await tx.jobOrder.findUniqueOrThrow({ where: { id: current.id } });
+    const guard = await guardedIncrementForwarded(tx, current.id, Number(fresh.completedQuantity), params.quantity);
+    if (guard.count === 0) {
+      throw new BusinessRuleError(
+        "OVER_PRODUCTION_NOT_ALLOWED",
+        `Cannot move ${params.quantity} received pieces on from ${current.productionStage.name} — not enough completed, un-forwarded pieces there.`,
+        {},
+      );
+    }
+
+    if (toStage.isFinal) {
+      if (!params.finishedGoodsWarehouseId) {
+        throw new BusinessRuleError(
+          "VALIDATION_ERROR",
+          "This job work ends at a final stage but has no Finished Goods warehouse set.",
+          {},
+        );
+      }
+      await completeAtFinalStageInTx(tx, actor, {
+        productId: current.productionOrder.productId,
+        lotId: current.lot.id,
+        jobOrderId: posted.jobOrder.id,
+        quantity: params.quantity,
+        warehouseId: params.finishedGoodsWarehouseId,
+      });
+      return;
+    }
+
+    await applyJobOrderQuantityDelta(tx, posted.jobOrder.id, { completed: params.quantity });
+    current = await tx.jobOrder.findUniqueOrThrow({
+      where: { id: posted.jobOrder.id },
+      include: { productionStage: true, lot: { select: { id: true, lotNumber: true } }, productionOrder: { select: { productId: true } } },
+    });
+  }
+}
+
 /** A branch-restricted user gets NOT_FOUND for a job order outside their allowed branches — derived from its own Lot's branch, since JobOrder itself carries no branchId column. */
 export async function getJobOrderById(companyId: string, id: string, userId?: string) {
   const jobOrder = await JobOrderRepository.findAnyById(companyId, id);
@@ -415,23 +512,47 @@ export async function startLot(actor: ActorContext, lotId: string, input: StartL
   return result.jobOrder;
 }
 
+/** The job order must exist, be live, and not already be fully finished at a final stage. */
+function assertJobOrderAcceptsWork(jobOrder: { status: string; productionStage: { isFinal: boolean } }, action: string) {
+  if (jobOrder.status === "CANCELLED") {
+    throw new BusinessRuleError("INVALID_STATE_TRANSITION", `Cannot ${action} on a cancelled job order.`, {});
+  }
+  if (jobOrder.status === "ON_HOLD") {
+    throw new BusinessRuleError("INVALID_STATE_TRANSITION", `This job order is on hold — resume it before you ${action}.`, {});
+  }
+  if (jobOrder.status === "COMPLETED" && jobOrder.productionStage.isFinal) {
+    throw new BusinessRuleError("INVALID_STATE_TRANSITION", `This job order is already completed — you can no longer ${action}.`, {});
+  }
+}
+
 export async function assignWorker(actor: ActorContext, jobOrderId: string, input: CreateJobOrderAssignmentInput) {
   const jobOrder = await JobOrderRepository.findAnyById(actor.companyId, jobOrderId);
   if (!jobOrder) throw new BusinessRuleError("NOT_FOUND", "Job order not found.", { id: jobOrderId });
+  assertJobOrderAcceptsWork(jobOrder, "assign a worker");
+  if (!jobOrder.productionStage.isActive) {
+    throw new BusinessRuleError("VALIDATION_ERROR", `Stage "${jobOrder.productionStage.name}" is inactive.`, {});
+  }
   await assertStageAccess(actor, jobOrder.productionStageId);
 
   // Tenant-scoped — an employeeId from another company would otherwise sit
   // unvalidated on the assignment record.
   const employee = await EmployeeRepository.findById(actor.companyId, input.employeeId);
-  if (!employee) throw new BusinessRuleError("NOT_FOUND", "Employee not found.", { id: input.employeeId });
+  if (!employee) throw new BusinessRuleError("NOT_FOUND", "Worker not found.", { id: input.employeeId });
+  if (employee.isActive === false) {
+    throw new BusinessRuleError("VALIDATION_ERROR", `${employee.fullName} is inactive and cannot be assigned work.`, {});
+  }
 
-  const alreadyAssigned = await JobOrderAssignmentRepository.sumAssignedByJobOrderId(jobOrderId);
-  if (alreadyAssigned + input.assignedQuantity > Number(jobOrder.plannedQuantity) + EPSILON) {
-    throw new BusinessRuleError(
-      "OVER_PRODUCTION_NOT_ALLOWED",
-      `Assigning ${input.assignedQuantity} would bring total assignments to ${alreadyAssigned + input.assignedQuantity}, above the planned quantity of ${jobOrder.plannedQuantity}.`,
-      { alreadyAssigned, planned: jobOrder.plannedQuantity }
-    );
+  const expectedStartAt = input.expectedStartAt ? new Date(input.expectedStartAt) : new Date();
+  const expectedEndAt = new Date(input.expectedEndAt);
+  if (Number.isNaN(expectedEndAt.getTime()) || Number.isNaN(expectedStartAt.getTime())) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "Expected time is not a valid date/time.", {});
+  }
+  if (expectedEndAt.getTime() <= expectedStartAt.getTime()) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "Expected completion time must be after the expected start time.", {});
+  }
+  // A small grace window so a form opened a minute ago doesn't bounce.
+  if (expectedEndAt.getTime() < Date.now() - 5 * 60 * 1000) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "Expected completion time cannot be in the past.", {});
   }
 
   // Piece-Rate Job Rate Snapshot (2026-09-18) — only enforced when the
@@ -488,13 +609,30 @@ export async function assignWorker(actor: ActorContext, jobOrderId: string, inpu
     };
   }
 
-  const assignment = await JobOrderAssignmentRepository.createInTx(prisma, {
-    jobOrderId,
-    employeeId: input.employeeId,
-    assignedQuantity: input.assignedQuantity,
-    status: "ASSIGNED",
-    assignedByUserId: actor.userId,
-    ...rateFields,
+  // Capacity check and insert under one row lock on the job order, so two
+  // supervisors assigning at the same moment can't both pass the check.
+  const assignment = await prisma.$transaction(async (tx) => {
+    const locked = await JobOrderRepository.findForGuardedUpdateInTx(tx, jobOrderId);
+    const { available } = await computeAvailableToCommit(tx, locked);
+    if (input.assignedQuantity > available + EPSILON) {
+      throw new BusinessRuleError(
+        "OVER_PRODUCTION_NOT_ALLOWED",
+        available <= 0
+          ? "No pieces are available to assign on this job order — everything is already assigned, worked, or sent to job-work."
+          : `Assigned quantity cannot be greater than available quantity. Available: ${available}, requested: ${input.assignedQuantity}.`,
+        { available, requested: input.assignedQuantity }
+      );
+    }
+    return JobOrderAssignmentRepository.createInTx(tx, {
+      jobOrderId,
+      employeeId: input.employeeId,
+      assignedQuantity: input.assignedQuantity,
+      status: "ASSIGNED",
+      assignedByUserId: actor.userId,
+      expectedStartAt,
+      expectedEndAt,
+      ...rateFields,
+    });
   });
 
   await writeAuditLog({
@@ -503,7 +641,14 @@ export async function assignWorker(actor: ActorContext, jobOrderId: string, inpu
     tableName: "job_order_assignments",
     recordId: assignment.id,
     action: "CREATE",
-    newValues: { jobOrderId, employeeId: input.employeeId, assignedQuantity: input.assignedQuantity, ...rateFields },
+    newValues: {
+      jobOrderId,
+      employeeId: input.employeeId,
+      assignedQuantity: input.assignedQuantity,
+      expectedStartAt,
+      expectedEndAt,
+      ...rateFields,
+    },
   });
 
   return assignment;
@@ -517,36 +662,42 @@ export async function assignWorker(actor: ActorContext, jobOrderId: string, inpu
 export async function recordProgressEntry(actor: ActorContext, jobOrderId: string, input: CreateProgressEntryInput) {
   const jobOrder = await JobOrderRepository.findAnyById(actor.companyId, jobOrderId);
   if (!jobOrder) throw new BusinessRuleError("NOT_FOUND", "Job order not found.", { id: jobOrderId });
-  if (jobOrder.status === "CANCELLED") {
-    throw new BusinessRuleError("INVALID_STATE_TRANSITION", "Cannot log progress against a cancelled job order.", {});
-  }
+  assertJobOrderAcceptsWork(jobOrder, "log production");
   await assertStageAccess(actor, jobOrder.productionStageId);
 
-  if (input.jobOrderAssignmentId) {
-    const assignment = await JobOrderAssignmentRepository.findAnyById(input.jobOrderAssignmentId);
-    if (!assignment || assignment.jobOrderId !== jobOrderId) {
-      throw new BusinessRuleError("NOT_FOUND", "Assignment not found on this job order.", { id: input.jobOrderAssignmentId });
-    }
-  }
-
-  // Tenant-scoped — an employeeId from another company would otherwise sit
-  // unvalidated on the progress entry record.
-  const employee = await EmployeeRepository.findById(actor.companyId, input.employeeId);
-  if (!employee) throw new BusinessRuleError("NOT_FOUND", "Employee not found.", { id: input.employeeId });
-
-  const settings = await getProductionSettings(actor.companyId);
-
-  // Piece-Rate (2026-09-18) — an assignment is required to attribute this
-  // entry's earning to the right worker/rate once tracking is enabled;
-  // every non-piece-rate flow (or any flow while the setting is off) is
-  // completely unaffected.
-  if (settings.pieceRateTrackingEnabled && employee.payType === "PIECE_RATE" && !input.jobOrderAssignmentId) {
+  // Log Process requires a real worker assignment (2026-09-28): no assigned
+  // worker → no entry, even via a direct API call. The worker is always the
+  // assignment's own employee, never a client-chosen one.
+  const liveAssignments = jobOrder.assignments.filter((a) => a.status !== "CANCELLED" && a.status !== "REASSIGNED");
+  if (liveAssignments.length === 0) {
     throw new BusinessRuleError(
       "VALIDATION_ERROR",
-      "Select which assignment this progress belongs to — required for piece-rate workers.",
+      "Please assign a worker before logging the production process.",
       {}
     );
   }
+  // (A specific assignment that is already COMPLETED is rejected below by
+  // assertEntryWithinAssignmentInTx with its own, more precise message.)
+  const assignment = await JobOrderAssignmentRepository.findAnyById(input.jobOrderAssignmentId);
+  if (!assignment || assignment.jobOrderId !== jobOrderId) {
+    throw new BusinessRuleError("NOT_FOUND", "That worker is not assigned to this job order.", { id: input.jobOrderAssignmentId });
+  }
+  if (input.employeeId && input.employeeId !== assignment.employeeId) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "The selected worker does not match this assignment.", {});
+  }
+  const employeeId = assignment.employeeId;
+
+  // Tenant-scoped — the assignment's employee must belong to this company.
+  const employee = await EmployeeRepository.findById(actor.companyId, employeeId);
+  if (!employee) throw new BusinessRuleError("NOT_FOUND", "Worker not found.", { id: employeeId });
+
+  const settings = await getProductionSettings(actor.companyId);
+  const entryQuantities = {
+    completed: input.completedQuantity,
+    rejected: input.rejectedQuantity,
+    damaged: input.damagedQuantity,
+    extra: input.extraQuantity,
+  };
 
   // P0 — company-wide "always require approval" setting: route the
   // ordinary Supervisor-direct path through the exact same PENDING+approve
@@ -556,20 +707,28 @@ export async function recordProgressEntry(actor: ActorContext, jobOrderId: strin
   // — they already operate generically on any PENDING entry regardless of
   // enteredBy.
   if (settings.supervisorApprovalRequired) {
-    const entry = await JobOrderProgressEntryRepository.createInTx(prisma, {
-      jobOrderId,
-      jobOrderAssignmentId: input.jobOrderAssignmentId || null,
-      employeeId: input.employeeId,
-      recordedByUserId: actor.userId,
-      completedQuantity: input.completedQuantity,
-      rejectedQuantity: input.rejectedQuantity,
-      damagedQuantity: input.damagedQuantity,
-      isAdjustment: false,
-      remarks: input.remarks || null,
-      enteredBy: "SUPERVISOR",
-      approvalStatus: "PENDING",
-      startedAt: input.startedAt ? new Date(input.startedAt) : null,
-      endedAt: input.endedAt ? new Date(input.endedAt) : null,
+    const entry = await prisma.$transaction(async (tx) => {
+      await assertEntryWithinAssignmentInTx(tx, {
+        assignmentId: assignment.id,
+        stage: jobOrder.productionStage,
+        entry: entryQuantities,
+      });
+      return JobOrderProgressEntryRepository.createInTx(tx, {
+        jobOrderId,
+        jobOrderAssignmentId: assignment.id,
+        employeeId,
+        recordedByUserId: actor.userId,
+        completedQuantity: input.completedQuantity,
+        rejectedQuantity: input.rejectedQuantity,
+        damagedQuantity: input.damagedQuantity,
+        extraQuantity: input.extraQuantity,
+        isAdjustment: false,
+        remarks: input.remarks || null,
+        enteredBy: "SUPERVISOR",
+        approvalStatus: "PENDING",
+        startedAt: input.startedAt ? new Date(input.startedAt) : null,
+        endedAt: input.endedAt ? new Date(input.endedAt) : null,
+      });
     });
 
     await writeAuditLog({
@@ -591,30 +750,33 @@ export async function recordProgressEntry(actor: ActorContext, jobOrderId: strin
   }
 
   const updated = await prisma.$transaction(async (tx) => {
-    const jo = await applyJobOrderQuantityDelta(tx, jobOrderId, {
-      completed: input.completedQuantity,
-      rejected: input.rejectedQuantity,
-      damaged: input.damagedQuantity,
+    await assertEntryWithinAssignmentInTx(tx, {
+      assignmentId: assignment.id,
+      stage: jobOrder.productionStage,
+      entry: entryQuantities,
     });
+    const jo = await applyJobOrderQuantityDelta(tx, jobOrderId, entryQuantities);
     const entry = await JobOrderProgressEntryRepository.createInTx(tx, {
       jobOrderId,
-      jobOrderAssignmentId: input.jobOrderAssignmentId || null,
-      employeeId: input.employeeId,
+      jobOrderAssignmentId: assignment.id,
+      employeeId,
       recordedByUserId: actor.userId,
       completedQuantity: input.completedQuantity,
       rejectedQuantity: input.rejectedQuantity,
       damagedQuantity: input.damagedQuantity,
+      extraQuantity: input.extraQuantity,
       isAdjustment: false,
       remarks: input.remarks || null,
       startedAt: input.startedAt ? new Date(input.startedAt) : null,
       endedAt: input.endedAt ? new Date(input.endedAt) : null,
     });
+    await syncAssignmentStatusInTx(tx, assignment.id);
 
-    if (settings.pieceRateTrackingEnabled && settings.pieceRatePaymentQuantityRule === "GOOD_COMPLETED_QTY" && input.jobOrderAssignmentId) {
+    if (settings.pieceRateTrackingEnabled && settings.pieceRatePaymentQuantityRule === "GOOD_COMPLETED_QTY") {
       await generateEarningForJobOrderProgress(tx, {
         companyId: actor.companyId,
         jobOrderId,
-        jobOrderAssignmentId: input.jobOrderAssignmentId,
+        jobOrderAssignmentId: assignment.id,
         generatedFromEntryId: entry.id,
       });
     }
@@ -629,9 +791,12 @@ export async function recordProgressEntry(actor: ActorContext, jobOrderId: strin
     recordId: jobOrderId,
     action: "CREATE",
     newValues: {
+      jobOrderAssignmentId: assignment.id,
+      employeeId,
       completedQuantity: input.completedQuantity,
       rejectedQuantity: input.rejectedQuantity,
       damagedQuantity: input.damagedQuantity,
+      extraQuantity: input.extraQuantity,
     },
   });
 
@@ -726,9 +891,7 @@ async function resolveSelfEntryEmployee(actor: ActorContext) {
 export async function submitSelfProgressEntry(actor: ActorContext, jobOrderId: string, input: SubmitSelfProgressEntryInput) {
   const jobOrder = await JobOrderRepository.findAnyById(actor.companyId, jobOrderId);
   if (!jobOrder) throw new BusinessRuleError("NOT_FOUND", "Job order not found.", { id: jobOrderId });
-  if (jobOrder.status === "CANCELLED") {
-    throw new BusinessRuleError("INVALID_STATE_TRANSITION", "Cannot log progress against a cancelled job order.", {});
-  }
+  assertJobOrderAcceptsWork(jobOrder, "log production");
   await assertStageAccess(actor, jobOrder.productionStageId);
 
   const employee = await resolveSelfEntryEmployee(actor);
@@ -738,18 +901,31 @@ export async function submitSelfProgressEntry(actor: ActorContext, jobOrderId: s
     throw new BusinessRuleError("VALIDATION_ERROR", "You are not assigned to this job order.", {});
   }
 
-  const entry = await JobOrderProgressEntryRepository.createInTx(prisma, {
-    jobOrderId,
-    jobOrderAssignmentId: assignment.id,
-    employeeId: employee.id,
-    recordedByUserId: actor.userId,
-    completedQuantity: input.completedQuantity,
-    rejectedQuantity: input.rejectedQuantity,
-    damagedQuantity: input.damagedQuantity,
-    isAdjustment: false,
-    remarks: input.remarks || null,
-    enteredBy: "SELF",
-    approvalStatus: "PENDING",
+  const entry = await prisma.$transaction(async (tx) => {
+    await assertEntryWithinAssignmentInTx(tx, {
+      assignmentId: assignment.id,
+      stage: jobOrder.productionStage,
+      entry: {
+        completed: input.completedQuantity,
+        rejected: input.rejectedQuantity,
+        damaged: input.damagedQuantity,
+        extra: input.extraQuantity,
+      },
+    });
+    return JobOrderProgressEntryRepository.createInTx(tx, {
+      jobOrderId,
+      jobOrderAssignmentId: assignment.id,
+      employeeId: employee.id,
+      recordedByUserId: actor.userId,
+      completedQuantity: input.completedQuantity,
+      rejectedQuantity: input.rejectedQuantity,
+      damagedQuantity: input.damagedQuantity,
+      extraQuantity: input.extraQuantity,
+      isAdjustment: false,
+      remarks: input.remarks || null,
+      enteredBy: "SELF",
+      approvalStatus: "PENDING",
+    });
   });
 
   await writeAuditLog({
@@ -802,11 +978,30 @@ export async function updatePendingProgressEntry(actor: ActorContext, entryId: s
     remarks: entry.remarks,
   };
 
-  const updated = await JobOrderProgressEntryRepository.update(entryId, {
-    completedQuantity: input.completedQuantity,
-    rejectedQuantity: input.rejectedQuantity,
-    damagedQuantity: input.damagedQuantity,
-    remarks: input.remarks || null,
+  const updated = await prisma.$transaction(async (tx) => {
+    if (entry.jobOrderAssignmentId) {
+      await assertEntryWithinAssignmentInTx(tx, {
+        assignmentId: entry.jobOrderAssignmentId,
+        stage: entry.jobOrder.productionStage,
+        entry: {
+          completed: input.completedQuantity,
+          rejected: input.rejectedQuantity,
+          damaged: input.damagedQuantity,
+          extra: input.extraQuantity ?? Number(entry.extraQuantity),
+        },
+        excludeEntryId: entryId,
+      });
+    }
+    return tx.jobOrderProgressEntry.update({
+      where: { id: entryId },
+      data: {
+        completedQuantity: input.completedQuantity,
+        rejectedQuantity: input.rejectedQuantity,
+        damagedQuantity: input.damagedQuantity,
+        extraQuantity: input.extraQuantity ?? Number(entry.extraQuantity),
+        remarks: input.remarks || null,
+      },
+    });
   });
 
   await writeAuditLog({
@@ -853,11 +1048,25 @@ export async function approveProgressEntry(actor: ActorContext, entryId: string,
       );
     }
 
-    await applyJobOrderQuantityDelta(tx, entry.jobOrderId, {
+    const approvedQuantities = {
       completed: Number(entry.completedQuantity),
       rejected: Number(entry.rejectedQuantity),
       damaged: Number(entry.damagedQuantity),
-    });
+      extra: Number(entry.extraQuantity),
+    };
+    // Re-validated against the assignment's CURRENT state (it may have moved
+    // since submission) — this entry is excluded from the prior sum so it
+    // isn't counted twice.
+    if (entry.jobOrderAssignmentId) {
+      await assertEntryWithinAssignmentInTx(tx, {
+        assignmentId: entry.jobOrderAssignmentId,
+        stage: entry.jobOrder.productionStage,
+        entry: approvedQuantities,
+        excludeEntryId: entry.id,
+      });
+    }
+    await applyJobOrderQuantityDelta(tx, entry.jobOrderId, approvedQuantities);
+    if (entry.jobOrderAssignmentId) await syncAssignmentStatusInTx(tx, entry.jobOrderAssignmentId);
 
     const settings = await getProductionSettings(actor.companyId);
     if (settings.pieceRateTrackingEnabled && settings.pieceRatePaymentQuantityRule === "GOOD_COMPLETED_QTY" && entry.jobOrderAssignmentId) {

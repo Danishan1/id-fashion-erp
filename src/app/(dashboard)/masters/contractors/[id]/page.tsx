@@ -36,6 +36,7 @@ export default async function EditContractorPage({ params }: { params: Promise<{
           email: contractor.email ?? "",
           address: contractor.address ?? "",
           isActive: contractor.isActive,
+          stageIds: contractor.stages.map((s) => s.productionStageId),
         }}
       />
     </div>

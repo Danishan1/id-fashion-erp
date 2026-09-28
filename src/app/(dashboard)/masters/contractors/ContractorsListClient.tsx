@@ -13,6 +13,7 @@ interface ContractorRow {
   contactPerson: string | null;
   phone: string | null;
   isActive: boolean;
+  stages?: { productionStage: { name: string } }[];
 }
 
 export function ContractorsListClient() {
@@ -47,6 +48,18 @@ export function ContractorsListClient() {
           { key: "name", header: "Name", sortable: true },
           { key: "contactPerson", header: "Contact Person", render: (row) => row.contactPerson ?? "—" },
           { key: "phone", header: "Phone", render: (row) => row.phone ?? "—" },
+          {
+            key: "stages",
+            header: "Stages",
+            render: (row) =>
+              row.stages && row.stages.length ? (
+                <span className="text-xs text-zinc-700 dark:text-zinc-300">
+                  {row.stages.map((s) => s.productionStage.name).join(" → ")}
+                </span>
+              ) : (
+                <span className="text-xs text-zinc-400">Any stage</span>
+              ),
+          },
           {
             key: "isActive",
             header: "Status",

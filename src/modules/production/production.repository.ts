@@ -86,8 +86,13 @@ export const LotRepository = {
         jobOrders: {
           orderBy: { createdAt: "asc" },
           include: {
-            productionStage: { select: { id: true, name: true, code: true, sequence: true } },
-            assignments: { include: { employee: { select: { id: true, fullName: true, employeeCode: true } } } },
+            productionStage: {
+              select: { id: true, name: true, code: true, sequence: true, isFinal: true, allowsExtraQuantity: true },
+            },
+            assignments: {
+              orderBy: { assignedAt: "asc" },
+              include: { employee: { select: { id: true, fullName: true, employeeCode: true } } },
+            },
           },
         },
       },
@@ -123,7 +128,9 @@ export const LotRelationRepository = {
 };
 
 const JOB_ORDER_INCLUDE = {
-  productionStage: { select: { id: true, name: true, code: true, sequence: true, allowRework: true, isFinal: true, isActive: true } },
+  productionStage: {
+    select: { id: true, name: true, code: true, sequence: true, allowRework: true, isFinal: true, isActive: true, allowsExtraQuantity: true },
+  },
   productionLine: { select: { id: true, name: true } },
   lot: { select: { id: true, lotNumber: true, productionOrderId: true, branchId: true } },
   assignments: {
@@ -245,7 +252,16 @@ export const JobOrderProgressEntryRepository = {
   findAnyById: (id: string) =>
     prisma.jobOrderProgressEntry.findUnique({
       where: { id },
-      include: { jobOrder: { select: { id: true, companyId: true, productionStageId: true } } },
+      include: {
+        jobOrder: {
+          select: {
+            id: true,
+            companyId: true,
+            productionStageId: true,
+            productionStage: { select: { name: true, allowsExtraQuantity: true } },
+          },
+        },
+      },
     }),
 
   findPendingForCompany: (companyId: string) =>

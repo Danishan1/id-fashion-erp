@@ -20,6 +20,12 @@ export const productionStageSchema = z.object({
     .enum(["true", "false", ""])
     .default("true")
     .transform((v) => v !== "false"),
+  // Cutting-style stage that may legitimately produce extra pieces beyond
+  // what it was assigned (recorded explicitly, never silently).
+  allowsExtraQuantity: z
+    .enum(["true", "false", ""])
+    .default("false")
+    .transform((v) => v === "true"),
 });
 export type ProductionStageInput = z.infer<typeof productionStageSchema>;
 

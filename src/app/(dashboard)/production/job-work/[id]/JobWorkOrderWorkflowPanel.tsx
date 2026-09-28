@@ -45,6 +45,34 @@ interface JobWorkOrderDetail {
   materials: MaterialRow[];
   receipts: ReceiptRow[];
   metrics: { pendingQuantity: number; daysElapsed: number; isOverdue: boolean };
+  // Multi-stage job work + frozen cost sheet (2026-09-28). Optional so an
+  // older payload shape never crashes the page.
+  coveredStages?: {
+    id: string;
+    sequence: number;
+    quantity: string;
+    defaultRate: string | null;
+    defaultSource: "STYLE_DEFAULT" | "DESIGN_OVERRIDE" | "NOT_CONFIGURED";
+    rate: string;
+    isOverridden: boolean;
+    amount: string;
+    productionStage: { id: string; name: string; isFinal: boolean };
+  }[];
+  extraCharges?: { id: string; costType: string; description: string | null; amount: string }[];
+  stageCostTotal?: string;
+  extraCostTotal?: string;
+  totalCost?: string;
+  finishedGoodsWarehouse?: { id: string; name: string } | null;
+}
+
+const COST_SOURCE_LABELS = {
+  STYLE_DEFAULT: "Style default",
+  DESIGN_OVERRIDE: "Design cost",
+  NOT_CONFIGURED: "Not configured",
+} as const;
+
+function money(v: string | number | null | undefined) {
+  return `₹${Number(v ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 async function parseErrorMessage(res: Response, fallback: string) {
@@ -243,6 +271,69 @@ export function JobWorkOrderWorkflowPanel({ jobWorkOrderId, initialOrder }: { jo
           </button>
         )}
       </div>
+
+      {order.coveredStages && order.coveredStages.length > 0 && (
+        <div>
+          <h2 className="mb-1 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Stages &amp; Job Work Cost</h2>
+          <p className="mb-2 text-xs text-zinc-500">
+            {order.coveredStages.map((s) => s.productionStage.name).join(" → ")}
+            {order.coveredStages.length > 1 && " — received pieces move through every stage automatically."}
+            {order.finishedGoodsWarehouse && <> Finished goods land in {order.finishedGoodsWarehouse.name}.</>} Costs are frozen at
+            issue and don&apos;t change if the Style/Design cost is edited later.
+          </p>
+          <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+            <table className="min-w-full divide-y divide-zinc-200 text-sm dark:divide-zinc-800">
+              <thead className="bg-zinc-50 dark:bg-zinc-900">
+                <tr>
+                  <th className="px-4 py-2 text-left font-medium text-zinc-500">Stage</th>
+                  <th className="px-4 py-2 text-left font-medium text-zinc-500">Cost Source</th>
+                  <th className="px-4 py-2 text-right font-medium text-zinc-500">Rate / pc</th>
+                  <th className="px-4 py-2 text-right font-medium text-zinc-500">Qty</th>
+                  <th className="px-4 py-2 text-right font-medium text-zinc-500">Amount</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                {order.coveredStages.map((s) => (
+                  <tr key={s.id}>
+                    <td className="px-4 py-2 text-zinc-800 dark:text-zinc-200">{s.productionStage.name}</td>
+                    <td className="px-4 py-2 text-zinc-600 dark:text-zinc-400">
+                      {COST_SOURCE_LABELS[s.defaultSource]}
+                      {s.defaultRate !== null && <> (₹{Number(s.defaultRate)})</>}
+                      {s.isOverridden && <span className="ml-1 text-amber-600">· overridden for this job work</span>}
+                    </td>
+                    <td className="px-4 py-2 text-right text-zinc-800 dark:text-zinc-200">₹{Number(s.rate)}</td>
+                    <td className="px-4 py-2 text-right text-zinc-800 dark:text-zinc-200">{Number(s.quantity)}</td>
+                    <td className="px-4 py-2 text-right text-zinc-800 dark:text-zinc-200">{money(s.amount)}</td>
+                  </tr>
+                ))}
+                {(order.extraCharges ?? []).map((x) => (
+                  <tr key={x.id}>
+                    <td className="px-4 py-2 text-zinc-800 dark:text-zinc-200" colSpan={4}>
+                      Extra: {x.costType}
+                      {x.description && <span className="text-zinc-500"> — {x.description}</span>}
+                    </td>
+                    <td className="px-4 py-2 text-right text-zinc-800 dark:text-zinc-200">{money(x.amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot className="bg-zinc-50 text-sm dark:bg-zinc-900">
+                <tr>
+                  <td className="px-4 py-1.5 text-zinc-500" colSpan={4}>Stage-wise Job Work Cost</td>
+                  <td className="px-4 py-1.5 text-right font-medium">{money(order.stageCostTotal)}</td>
+                </tr>
+                <tr>
+                  <td className="px-4 py-1.5 text-zinc-500" colSpan={4}>Extra Cost</td>
+                  <td className="px-4 py-1.5 text-right font-medium">{money(order.extraCostTotal)}</td>
+                </tr>
+                <tr>
+                  <td className="px-4 py-1.5 font-semibold text-zinc-800 dark:text-zinc-100" colSpan={4}>Total Job Work Cost</td>
+                  <td className="px-4 py-1.5 text-right font-semibold">{money(order.totalCost)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      )}
 
       {order.materials.length > 0 && (
         <div>

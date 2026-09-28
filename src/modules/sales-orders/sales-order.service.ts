@@ -162,11 +162,60 @@ async function assertSamplesApprovedOrOverride(
  * API call (the UI's own picker was the only thing preventing it). Closes
  * that gap the same way every sibling module already does.
  */
-async function assertItemsAreStyles(companyId: string, items: { productId: string }[]) {
+async function assertItemsAreStyles(
+  companyId: string,
+  items: { productId: string }[],
+  opts: { rejectInactive?: boolean } = {},
+) {
   const distinctProductIds = [...new Set(items.map((item) => item.productId))];
   for (const productId of distinctProductIds) {
     const style = await ProductRepository.findStyleById(companyId, productId);
     if (!style) throw new BusinessRuleError("NOT_FOUND", "Style not found.", { id: productId });
+    // Only enforced on create — an existing order whose style was deactivated
+    // later must stay editable, it just can't gain new lines on it via a new order.
+    if (opts.rejectInactive && !style.isActive) {
+      throw new BusinessRuleError(
+        "VALIDATION_ERROR",
+        `Style "${style.styleName}" is inactive and cannot be used on a new sales order.`,
+        { id: productId },
+      );
+    }
+  }
+}
+
+/**
+ * Any customer may order any design (a SampleRequest) — a design originally
+ * developed/approved for Customer B can be referenced on Customer A's order
+ * as-is, never duplicated. What IS enforced: the design exists in this
+ * company, belongs to the same Style as the line it's linked on, and is not
+ * a dead (Rejected/Cancelled) design. Approval status itself stays enforced
+ * by the existing confirm-time gate (assertSamplesApprovedOrOverride), which
+ * carries its own Management override path.
+ */
+async function assertLinkedDesignsValid(
+  companyId: string,
+  items: { productId: string; sampleRequestId?: string | null }[],
+) {
+  for (const item of items) {
+    if (!item.sampleRequestId) continue;
+    const design = await SampleRequestRepository.findAnyById(companyId, item.sampleRequestId);
+    if (!design) {
+      throw new BusinessRuleError("NOT_FOUND", "The linked design was not found.", { id: item.sampleRequestId });
+    }
+    if (design.status === "REJECTED" || design.status === "CANCELLED") {
+      throw new BusinessRuleError(
+        "VALIDATION_ERROR",
+        `Design ${design.requestNumber} is ${design.status.toLowerCase()} and cannot be ordered.`,
+        { id: item.sampleRequestId },
+      );
+    }
+    if (design.productId && design.productId !== item.productId) {
+      throw new BusinessRuleError(
+        "VALIDATION_ERROR",
+        `Design ${design.requestNumber} belongs to a different Style than the one selected on this line.`,
+        { id: item.sampleRequestId },
+      );
+    }
   }
 }
 
@@ -174,7 +223,8 @@ export async function createSalesOrder(actor: ActorContext, input: SalesOrderInp
   const customer = await CustomerRepository.findByIdWithBuyers(actor.companyId, input.customerId);
   if (!customer) throw new BusinessRuleError("NOT_FOUND", "Customer not found.", { id: input.customerId });
 
-  await assertItemsAreStyles(actor.companyId, input.items);
+  await assertItemsAreStyles(actor.companyId, input.items, { rejectInactive: true });
+  await assertLinkedDesignsValid(actor.companyId, input.items);
 
   const company = await CompanyRepository.findBaseCurrencyCode(actor.companyId);
   if (!company) throw new BusinessRuleError("NOT_FOUND", "Company not found.", { id: actor.companyId });
@@ -273,6 +323,7 @@ export async function updateSalesOrder(actor: ActorContext, id: string, input: U
   if (!existing) throw new BusinessRuleError("NOT_FOUND", "Sales order not found.", { id });
 
   await assertItemsAreStyles(actor.companyId, input.items);
+  await assertLinkedDesignsValid(actor.companyId, input.items);
 
   if (existing.status !== "DRAFT" && existing.status !== "CONFIRMED") {
     throw new BusinessRuleError(
