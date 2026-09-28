@@ -64,10 +64,35 @@ export const mergeLotsSchema = z.object({
 });
 export type MergeLotsInput = z.infer<typeof mergeLotsSchema>;
 
+/** Whole garment pieces — no fractional pieces anywhere a worker's quantity is recorded. */
+const pieces = (label: string) =>
+  z.coerce
+    .number({ message: `${label} must be a number.` })
+    .int(`${label} must be a whole number of pieces.`)
+    .min(0, `${label} cannot be negative.`);
+
+/** A client datetime string that must parse to a real date. */
+const validDateTimeString = (label: string) =>
+  z
+    .string()
+    .min(1, `${label} is required.`)
+    .refine((v) => !Number.isNaN(new Date(v).getTime()), `${label} is not a valid date/time.`);
+
 export const createJobOrderAssignmentSchema = z
   .object({
-    employeeId: z.string().uuid("Employee is required"),
-    assignedQuantity: z.coerce.number().positive("Assigned quantity must be greater than 0"),
+    employeeId: z.string({ message: "Worker is required." }).uuid("Worker is required."),
+    assignedQuantity: z.coerce
+      .number({ message: "Assigned quantity is required." })
+      .int("Assigned quantity must be a whole number of pieces.")
+      .positive("Assigned quantity must be greater than 0."),
+    // Expected time window (2026-09-28). Start defaults to "now" server-side
+    // when omitted; end is required and must be after start.
+    expectedStartAt: z
+      .string()
+      .optional()
+      .or(z.literal(""))
+      .refine((v) => !v || !Number.isNaN(new Date(v).getTime()), "Expected start is not a valid date/time."),
+    expectedEndAt: validDateTimeString("Expected completion time"),
     // Piece-Rate (2026-09-18) — optional: a FIXED_SALARY worker, or a
     // company that hasn't enabled piece-rate tracking, never needs this.
     productionOperationId: z.string().uuid().optional().or(z.literal("")),
@@ -80,7 +105,14 @@ export const createJobOrderAssignmentSchema = z
   .refine((data) => !data.overriddenRate || (data.overrideReason && data.overrideReason.length > 0), {
     message: "A reason is required when overriding the resolved rate.",
     path: ["overrideReason"],
-  });
+  })
+  .refine(
+    (data) => {
+      const start = data.expectedStartAt ? new Date(data.expectedStartAt).getTime() : Date.now();
+      return new Date(data.expectedEndAt).getTime() > start;
+    },
+    { message: "Expected completion time must be after the expected start time.", path: ["expectedEndAt"] },
+  );
 export type CreateJobOrderAssignmentInput = z.infer<typeof createJobOrderAssignmentSchema>;
 
 // ─────────────────────────────────────────────────────────────
@@ -117,12 +149,23 @@ export const resolvePieceRateSchema = z.object({
 });
 export type ResolvePieceRateInput = z.infer<typeof resolvePieceRateSchema>;
 
+/**
+ * Log Process (2026-09-28): an entry is always FOR a real worker assignment —
+ * the worker is derived from the assignment server-side, never trusted from
+ * the client. `employeeId` is still accepted for backward compatibility and,
+ * when sent, must match the assignment's own worker.
+ */
 export const createProgressEntrySchema = z.object({
-  jobOrderAssignmentId: z.string().uuid().optional().or(z.literal("")),
-  employeeId: z.string().uuid("Employee is required"),
-  completedQuantity: z.coerce.number().min(0).default(0),
-  rejectedQuantity: z.coerce.number().min(0).default(0),
-  damagedQuantity: z.coerce.number().min(0).default(0),
+  jobOrderAssignmentId: z
+    .string({ message: "Select an assigned worker." })
+    .uuid("Select an assigned worker."),
+  employeeId: z.string().uuid().optional().or(z.literal("")),
+  completedQuantity: pieces("Completed").default(0),
+  rejectedQuantity: pieces("Rejected").default(0),
+  damagedQuantity: pieces("Damage").default(0),
+  // Explicit extra pieces — only accepted on a stage that allows extras
+  // (e.g. Cutting); part of completedQuantity, never additional to it.
+  extraQuantity: pieces("Extra").default(0),
   remarks: z.string().max(500).optional().or(z.literal("")),
   startedAt: z.string().optional().or(z.literal("")),
   endedAt: z.string().optional().or(z.literal("")),
@@ -235,17 +278,20 @@ export type CreateQcInspectionInput = z.infer<typeof createQcInspectionSchema>;
 // field: the service resolves both itself from the caller's own linked
 // Employee, so a worker can never submit progress crediting someone else.
 export const submitSelfProgressEntrySchema = z.object({
-  completedQuantity: z.coerce.number().min(0).default(0),
-  rejectedQuantity: z.coerce.number().min(0).default(0),
-  damagedQuantity: z.coerce.number().min(0).default(0),
+  completedQuantity: pieces("Completed").default(0),
+  rejectedQuantity: pieces("Rejected").default(0),
+  damagedQuantity: pieces("Damage").default(0),
+  extraQuantity: pieces("Extra").default(0),
   remarks: z.string().max(500).optional().or(z.literal("")),
 });
 export type SubmitSelfProgressEntryInput = z.infer<typeof submitSelfProgressEntrySchema>;
 
 export const updatePendingProgressEntrySchema = z.object({
-  completedQuantity: z.coerce.number().min(0),
-  rejectedQuantity: z.coerce.number().min(0),
-  damagedQuantity: z.coerce.number().min(0),
+  completedQuantity: pieces("Completed"),
+  rejectedQuantity: pieces("Rejected"),
+  damagedQuantity: pieces("Damage"),
+  // Optional on edit — omitted keeps the entry's existing extra pieces.
+  extraQuantity: pieces("Extra").optional(),
   remarks: z.string().max(500).optional().or(z.literal("")),
 });
 export type UpdatePendingProgressEntryInput = z.infer<typeof updatePendingProgressEntrySchema>;

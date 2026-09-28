@@ -38,6 +38,13 @@ const JOB_WORK_ORDER_INCLUDE = {
     include: { product: { select: { id: true, styleName: true, styleCode: true } }, uom: { select: { id: true, code: true } } },
   },
   receipts: { orderBy: { createdAt: "asc" as const }, include: { receivedBy: { select: { id: true, fullName: true } } } },
+  // Multi-stage job work + frozen cost sheet (2026-09-28).
+  coveredStages: {
+    orderBy: { sequence: "asc" as const },
+    include: { productionStage: { select: { id: true, name: true, code: true, isFinal: true } } },
+  },
+  extraCharges: { orderBy: { createdAt: "asc" as const } },
+  finishedGoodsWarehouse: { select: { id: true, name: true } },
 } as const;
 
 export const JobWorkOrderRepository = {

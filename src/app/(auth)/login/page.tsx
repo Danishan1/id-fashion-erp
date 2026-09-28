@@ -3,6 +3,7 @@
 import { Suspense, useState, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { signIn } from "next-auth/react";
+import { toast } from "@/components/ui/Toast";
 
 export default function LoginPage() {
   return (
@@ -38,6 +39,7 @@ function LoginForm() {
 
     if (result?.error) {
       setError("Invalid email or password.");
+      toast.error("Invalid email or password.");
       return;
     }
 

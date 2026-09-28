@@ -27,6 +27,7 @@ export async function createProductionStage(actor: ActorContext, input: Producti
       isActive: input.isActive,
       isFinal: input.isFinal,
       allowRework: input.allowRework,
+      allowsExtraQuantity: input.allowsExtraQuantity,
     },
   });
 
@@ -55,6 +56,7 @@ export async function updateProductionStage(actor: ActorContext, id: string, inp
       isActive: input.isActive,
       isFinal: input.isFinal,
       allowRework: input.allowRework,
+      allowsExtraQuantity: input.allowsExtraQuantity,
     },
   });
 

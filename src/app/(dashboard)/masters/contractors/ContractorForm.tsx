@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { StageSequencePicker, type StageOption } from "@/components/ui/StageSequencePicker";
 
 export interface ContractorFormValues {
   code: string;
@@ -11,6 +12,8 @@ export interface ContractorFormValues {
   email: string;
   address: string;
   isActive: boolean;
+  /** Production stages this contractor performs, in working order. */
+  stageIds: string[];
 }
 
 const EMPTY_VALUES: ContractorFormValues = {
@@ -21,6 +24,7 @@ const EMPTY_VALUES: ContractorFormValues = {
   email: "",
   address: "",
   isActive: true,
+  stageIds: [],
 };
 
 interface ContractorFormProps {
@@ -35,6 +39,14 @@ export function ContractorForm({ initialValues, submitUrl, method, onSuccess, on
   const [values, setValues] = useState<ContractorFormValues>(initialValues ?? EMPTY_VALUES);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [stages, setStages] = useState<StageOption[]>([]);
+
+  useEffect(() => {
+    fetch("/api/v1/production-stages")
+      .then((res) => (res.ok ? res.json() : { data: [] }))
+      .then((body) => setStages(body.data ?? []))
+      .catch(() => setStages([]));
+  }, []);
 
   useEffect(() => {
     if (initialValues) return;
@@ -53,11 +65,21 @@ export function ContractorForm({ initialValues, submitUrl, method, onSuccess, on
     setIsSubmitting(true);
     setError(null);
 
-    const res = await fetch(submitUrl, {
-      method,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(values),
-    });
+    let res: Response;
+    try {
+      res = await fetch(submitUrl, {
+        method,
+        headers: {
+          "Content-Type": "application/json",
+          "x-toast-success": method === "POST" ? "Contractor created successfully." : "Contractor updated successfully.",
+        },
+        body: JSON.stringify(values),
+      });
+    } catch {
+      setIsSubmitting(false);
+      setError("Could not reach the server. Check your connection and try again.");
+      return;
+    }
 
     setIsSubmitting(false);
 
@@ -132,6 +154,15 @@ export function ContractorForm({ initialValues, submitUrl, method, onSuccess, on
           value={values.address}
           onChange={(e) => setValues({ ...values, address: e.target.value })}
           className={textInputClass()}
+        />
+      </FormField>
+
+      <FormField label="Stages Performed" htmlFor="stages">
+        <StageSequencePicker
+          stages={stages}
+          value={values.stageIds}
+          onChange={(stageIds) => setValues({ ...values, stageIds })}
+          emptyHint="No stages selected — this contractor can be sent job-work for any stage."
         />
       </FormField>
 

@@ -754,6 +754,7 @@ const importProductionStageRow: BulkImportRowHandler = async (actor, raw, ctx) =
   if (!Number.isFinite(sequence)) throw new BusinessRuleError("VALIDATION_ERROR", "Sequence must be a number.");
   const isFinal = parseBooleanCell(raw.isFinal, false);
   const allowRework = parseBooleanCell(raw.allowRework, true);
+  const allowsExtraQuantity = parseBooleanCell(raw.allowsExtraQuantity, false);
 
   if (ctx.dryRun) {
     const existing = await ProductionConfigRepository.stage.findFirst({ where: { companyId: actor.companyId, code } });
@@ -761,7 +762,7 @@ const importProductionStageRow: BulkImportRowHandler = async (actor, raw, ctx) =
     return { recordId: DRY_RUN_PLACEHOLDER_ID, tableName: "production_stages" };
   }
 
-  const stage = await createProductionStage(actor, { code, name, sequence, isActive: true, isFinal, allowRework });
+  const stage = await createProductionStage(actor, { code, name, sequence, isActive: true, isFinal, allowRework, allowsExtraQuantity });
   return { recordId: stage.id, tableName: "production_stages" };
 };
 

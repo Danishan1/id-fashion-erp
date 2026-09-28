@@ -156,3 +156,10 @@ export const LinkIcon = () => (
     <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
   </IconBase>
 );
+/** Rupee coin — stage-wise job-work costs. */
+export const CostIcon = () => (
+  <IconBase>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M9 8h6M9 11h6M13 8c1.5 0 2 1.5 1 2.5S12 12 9 12l5 4" />
+  </IconBase>
+);

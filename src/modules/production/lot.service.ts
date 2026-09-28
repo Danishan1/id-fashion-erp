@@ -6,6 +6,7 @@ import type { Prisma } from "@prisma/client";
 import { LotRelationRepository, LotRepository, ProductionOrderRepository } from "./production.repository";
 import type { CreateLotInput, MergeLotsInput, SplitLotInput } from "./production.schema";
 import type { ActorContext } from "./production-order.service";
+import { computeAvailableToCommit, sumAssignmentConsumed } from "./assignment-capacity";
 
 const EPSILON = 0.0001;
 
@@ -41,9 +42,30 @@ export async function getLotById(companyId: string, id: string, userId: string) 
   }
 
   const allowedStageIds = await PermissionService.getAllowedProductionStageIds(userId);
-  if (allowedStageIds === null) return lot;
+  const visibleJobOrders =
+    allowedStageIds === null ? lot.jobOrders : lot.jobOrders.filter((jo) => allowedStageIds.has(jo.productionStage.id));
 
-  return { ...lot, jobOrders: lot.jobOrders.filter((jo) => allowedStageIds.has(jo.productionStage.id)) };
+  // Worker-assignment figures for the Assign Worker / Log Process screens,
+  // computed with the exact same helpers the write paths enforce — so a UI
+  // hint can never disagree with what the API will actually accept.
+  const jobOrders = await Promise.all(
+    visibleJobOrders.map(async (jo) => {
+      const { available } = await computeAvailableToCommit(prisma, jo);
+      const assignments = await Promise.all(
+        jo.assignments.map(async (a) => {
+          const logged = await sumAssignmentConsumed(prisma, a.id, { includePending: true });
+          return {
+            ...a,
+            loggedQuantity: logged,
+            remainingQuantity: Math.max(0, Number(a.assignedQuantity) - logged),
+          };
+        }),
+      );
+      return { ...jo, availableToAssign: available, assignments };
+    }),
+  );
+
+  return { ...lot, jobOrders };
 }
 
 export async function getLotGenealogy(companyId: string, id: string) {

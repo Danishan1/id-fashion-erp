@@ -58,6 +58,13 @@ vi.mock("./production.repository", () => ({
 // job-order.service.ts calls them correctly when ProductionSettings turns
 // the feature on.
 vi.mock("./piece-rate-resolution.service", () => ({ resolvePieceRate: vi.fn() }));
+// Worker-assignment capacity (2026-09-28) — mocked at the module boundary;
+// the real rules are covered by assignment-capacity.test.ts.
+vi.mock("./assignment-capacity", () => ({
+  computeAvailableToCommit: vi.fn(),
+  assertEntryWithinAssignmentInTx: vi.fn(),
+  syncAssignmentStatusInTx: vi.fn(),
+}));
 vi.mock("./piece-rate-earning.service", () => ({
   generateEarningForJobOrderProgress: vi.fn(),
   generateEarningsForQcAcceptance: vi.fn(),
@@ -77,13 +84,22 @@ const {
 } = await import("./production.repository");
 const { resolvePieceRate } = await import("./piece-rate-resolution.service");
 const { generateEarningForJobOrderProgress, generateEarningsForQcAcceptance } = await import("./piece-rate-earning.service");
+const { computeAvailableToCommit, assertEntryWithinAssignmentInTx, syncAssignmentStatusInTx } = await import("./assignment-capacity");
 const { computeJobOrderStatus, assignWorker, recordProgressEntry, forwardJobOrder, revertJobOrder, recordQcInspection, recordAdjustmentEntry, getJobOrderById } = await import("./job-order.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
 
-function stage(overrides: Partial<{ id: string; sequence: number; isActive: boolean; allowRework: boolean; isFinal: boolean; name: string; code: string }> = {}) {
-  return { id: "stage-1", sequence: 1, isActive: true, allowRework: true, isFinal: false, name: "Stage", code: "STG", ...overrides };
+function stage(
+  overrides: Partial<{ id: string; sequence: number; isActive: boolean; allowRework: boolean; isFinal: boolean; name: string; code: string; allowsExtraQuantity: boolean }> = {}
+) {
+  return { id: "stage-1", sequence: 1, isActive: true, allowRework: true, isFinal: false, name: "Stage", code: "STG", allowsExtraQuantity: false, ...overrides };
 }
+
+const FUTURE = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+const assignInput = (overrides: Record<string, unknown> = {}) =>
+  ({ employeeId: "emp-1", assignedQuantity: 10, expectedEndAt: FUTURE, ...overrides }) as never;
+const progressInput = (overrides: Record<string, unknown> = {}) =>
+  ({ jobOrderAssignmentId: "asg-1", completedQuantity: 1, rejectedQuantity: 0, damagedQuantity: 0, extraQuantity: 0, ...overrides }) as never;
 
 function jobOrder(overrides: Record<string, unknown> = {}) {
   return {
@@ -99,17 +115,25 @@ function jobOrder(overrides: Record<string, unknown> = {}) {
     completedQuantity: "40",
     rejectedQuantity: "0",
     damagedQuantity: "0",
+    extraQuantity: "0",
     forwardedQuantity: "0",
     qcPassedQuantity: "0",
+    assignments: [{ id: "asg-1", employeeId: "emp-1", status: "ASSIGNED", assignedQuantity: "50" }],
     ...overrides,
   };
 }
 
 beforeEach(() => {
   vi.mocked(JobOrderRepository.findAnyById).mockReset();
-  vi.mocked(EmployeeRepository.findById).mockReset().mockResolvedValue({ id: "emp-1" } as never);
+  vi.mocked(EmployeeRepository.findById).mockReset().mockResolvedValue({ id: "emp-1", fullName: "Asha", isActive: true } as never);
+  vi.mocked(computeAvailableToCommit).mockReset().mockResolvedValue({ available: 100, capacity: 100, done: 0, unworkedInternal: 0, pendingExternal: 0 });
+  vi.mocked(assertEntryWithinAssignmentInTx).mockReset().mockResolvedValue({ assignment: {} as never, assigned: 50, consumedAfter: 1 });
+  vi.mocked(syncAssignmentStatusInTx).mockReset().mockResolvedValue({} as never);
   vi.mocked(JobOrderAssignmentRepository.sumAssignedByJobOrderId).mockReset();
   vi.mocked(JobOrderAssignmentRepository.createInTx).mockReset();
+  vi.mocked(JobOrderAssignmentRepository.findAnyById)
+    .mockReset()
+    .mockResolvedValue({ id: "asg-1", jobOrderId: "jo-1", employeeId: "emp-1", status: "ASSIGNED" } as never);
   vi.mocked(ProductionOrderRepository.findAnyById).mockReset();
   vi.mocked(PermissionService.assert).mockReset().mockResolvedValue(undefined);
   vi.mocked(PermissionService.getAllowedProductionStageIds).mockReset().mockResolvedValue(null);
@@ -178,43 +202,164 @@ describe("assignWorker", () => {
     vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder({ plannedQuantity: "100" }) as never);
     vi.mocked(EmployeeRepository.findById).mockResolvedValue(null);
 
-    await expect(assignWorker(actor, "jo-1", { employeeId: "emp-x", assignedQuantity: 10 })).rejects.toMatchObject({
+    await expect(assignWorker(actor, "jo-1", assignInput({ employeeId: "emp-x" }))).rejects.toMatchObject({
       code: "NOT_FOUND",
     });
     expect(JobOrderAssignmentRepository.createInTx).not.toHaveBeenCalled();
   });
 
-  it("rejects an assignment that would push total assigned quantity past the planned quantity", async () => {
+  it("rejects an assignment above the available quantity with the exact message", async () => {
     vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder({ plannedQuantity: "100" }) as never);
-    vi.mocked(JobOrderAssignmentRepository.sumAssignedByJobOrderId).mockResolvedValue(80);
+    vi.mocked(computeAvailableToCommit).mockResolvedValue({ available: 20, capacity: 100, done: 0, unworkedInternal: 80, pendingExternal: 0 });
 
-    await expect(assignWorker(actor, "jo-1", { employeeId: "emp-1", assignedQuantity: 30 })).rejects.toMatchObject({
+    await expect(assignWorker(actor, "jo-1", assignInput({ assignedQuantity: 30 }))).rejects.toMatchObject({
       code: "OVER_PRODUCTION_NOT_ALLOWED",
+      message: expect.stringContaining("Assigned quantity cannot be greater than available quantity"),
     });
     expect(JobOrderAssignmentRepository.createInTx).not.toHaveBeenCalled();
   });
 
-  it("allows an assignment that exactly fills the remaining planned quantity", async () => {
+  it("allows an assignment that exactly fills the available quantity, storing the expected time window", async () => {
     vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder({ plannedQuantity: "100" }) as never);
-    vi.mocked(JobOrderAssignmentRepository.sumAssignedByJobOrderId).mockResolvedValue(80);
+    vi.mocked(computeAvailableToCommit).mockResolvedValue({ available: 20, capacity: 100, done: 0, unworkedInternal: 80, pendingExternal: 0 });
     vi.mocked(JobOrderAssignmentRepository.createInTx).mockResolvedValue({ id: "assignment-1" } as never);
 
-    await assignWorker(actor, "jo-1", { employeeId: "emp-1", assignedQuantity: 20 });
-    expect(JobOrderAssignmentRepository.createInTx).toHaveBeenCalled();
+    await assignWorker(actor, "jo-1", assignInput({ assignedQuantity: 20 }));
+    expect(JobOrderAssignmentRepository.createInTx).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ assignedQuantity: 20, expectedEndAt: new Date(FUTURE), expectedStartAt: expect.any(Date) })
+    );
+  });
+
+  it("checks capacity under the job order's row lock (inside the transaction)", async () => {
+    vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder() as never);
+    vi.mocked(JobOrderRepository.findForGuardedUpdateInTx).mockResolvedValue(jobOrder() as never);
+    vi.mocked(JobOrderAssignmentRepository.createInTx).mockResolvedValue({ id: "assignment-1" } as never);
+
+    await assignWorker(actor, "jo-1", assignInput());
+    expect(JobOrderRepository.findForGuardedUpdateInTx).toHaveBeenCalledWith(expect.anything(), "jo-1");
+  });
+
+  it("rejects assigning on a cancelled or on-hold job order", async () => {
+    vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder({ status: "CANCELLED" }) as never);
+    await expect(assignWorker(actor, "jo-1", assignInput())).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+    vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder({ status: "ON_HOLD" }) as never);
+    await expect(assignWorker(actor, "jo-1", assignInput())).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+  });
+
+  it("rejects an inactive worker", async () => {
+    vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder() as never);
+    vi.mocked(EmployeeRepository.findById).mockResolvedValue({ id: "emp-1", fullName: "Asha", isActive: false } as never);
+    await expect(assignWorker(actor, "jo-1", assignInput())).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("rejects an expected completion time in the past or before the expected start", async () => {
+    vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder() as never);
+    const past = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    await expect(assignWorker(actor, "jo-1", assignInput({ expectedStartAt: new Date(Date.now() - 3 * 3600_000).toISOString(), expectedEndAt: past }))).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("past"),
+    });
+    const start = new Date(Date.now() + 48 * 3600_000).toISOString();
+    await expect(assignWorker(actor, "jo-1", assignInput({ expectedStartAt: start, expectedEndAt: FUTURE }))).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("after the expected start"),
+    });
+    expect(JobOrderAssignmentRepository.createInTx).not.toHaveBeenCalled();
   });
 });
 
 describe("recordProgressEntry", () => {
   // Same class of gap as assignWorker's employeeId check above, fixed the
   // same way in the same file.
-  it("rejects an employeeId belonging to another company", async () => {
+  it("rejects an assignment whose worker doesn't belong to this company", async () => {
     vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder({ status: "IN_PROGRESS" }) as never);
     vi.mocked(EmployeeRepository.findById).mockResolvedValue(null);
 
-    await expect(
-      recordProgressEntry(actor, "jo-1", { employeeId: "emp-x", completedQuantity: 1, rejectedQuantity: 0, damagedQuantity: 0 } as never)
-    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(recordProgressEntry(actor, "jo-1", progressInput())).rejects.toMatchObject({ code: "NOT_FOUND" });
     expect(JobOrderProgressEntryRepository.createInTx).not.toHaveBeenCalled();
+  });
+
+  it("blocks logging entirely when no worker has been assigned (even via a direct API call)", async () => {
+    vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder({ assignments: [] }) as never);
+
+    await expect(recordProgressEntry(actor, "jo-1", progressInput())).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: "Please assign a worker before logging the production process.",
+    });
+    expect(JobOrderProgressEntryRepository.createInTx).not.toHaveBeenCalled();
+  });
+
+  it("rejects an assignment that belongs to a different job order", async () => {
+    vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder() as never);
+    vi.mocked(JobOrderAssignmentRepository.findAnyById).mockResolvedValue({ id: "asg-9", jobOrderId: "jo-9", employeeId: "emp-9" } as never);
+
+    await expect(recordProgressEntry(actor, "jo-1", progressInput({ jobOrderAssignmentId: "asg-9" }))).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("rejects an explicit employeeId that doesn't match the assignment's own worker", async () => {
+    vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder() as never);
+    await expect(recordProgressEntry(actor, "jo-1", progressInput({ employeeId: "emp-2" }))).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("always records the assignment's worker and runs the per-assignment cap before applying", async () => {
+    vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder() as never);
+    vi.mocked(JobOrderRepository.findForGuardedUpdateInTx).mockResolvedValue(jobOrder() as never);
+    vi.mocked(JobOrderRepository.updateInTx).mockResolvedValue({ id: "jo-1" } as never);
+    vi.mocked(JobOrderProgressEntryRepository.createInTx).mockResolvedValue({ id: "entry-1" } as never);
+
+    await recordProgressEntry(actor, "jo-1", progressInput({ completedQuantity: 5 }));
+
+    expect(assertEntryWithinAssignmentInTx).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ assignmentId: "asg-1", entry: { completed: 5, rejected: 0, damaged: 0, extra: 0 } })
+    );
+    expect(JobOrderProgressEntryRepository.createInTx).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ employeeId: "emp-1", jobOrderAssignmentId: "asg-1" })
+    );
+    expect(syncAssignmentStatusInTx).toHaveBeenCalledWith(expect.anything(), "asg-1");
+  });
+
+  it("does not write anything when the per-assignment cap rejects the entry", async () => {
+    vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder() as never);
+    vi.mocked(assertEntryWithinAssignmentInTx).mockRejectedValue(
+      Object.assign(new Error("Completed + Rejected + Damage cannot exceed Asha's assigned pieces."), { code: "OVER_PRODUCTION_NOT_ALLOWED" })
+    );
+    await expect(recordProgressEntry(actor, "jo-1", progressInput({ completedQuantity: 999 }))).rejects.toMatchObject({
+      code: "OVER_PRODUCTION_NOT_ALLOWED",
+    });
+    expect(JobOrderRepository.updateInTx).not.toHaveBeenCalled();
+    expect(JobOrderProgressEntryRepository.createInTx).not.toHaveBeenCalled();
+  });
+
+  it("widens the job order's capacity by explicitly-recorded extra pieces (Cutting)", async () => {
+    vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(
+      jobOrder({ productionStage: stage({ allowsExtraQuantity: true, name: "Cutting" }) }) as never
+    );
+    vi.mocked(JobOrderRepository.findForGuardedUpdateInTx).mockResolvedValue(
+      jobOrder({ plannedQuantity: "100", completedQuantity: "0" }) as never
+    );
+    vi.mocked(JobOrderRepository.updateInTx).mockResolvedValue({ id: "jo-1" } as never);
+    vi.mocked(JobOrderProgressEntryRepository.createInTx).mockResolvedValue({ id: "entry-1" } as never);
+
+    await recordProgressEntry(actor, "jo-1", progressInput({ completedQuantity: 105, extraQuantity: 5 }));
+
+    expect(JobOrderRepository.updateInTx).toHaveBeenCalledWith(
+      expect.anything(),
+      "jo-1",
+      expect.objectContaining({ completedQuantity: 105, extraQuantity: 5 })
+    );
+  });
+
+  it("still rejects an over-count with no extra recorded (never silently added)", async () => {
+    vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder() as never);
+    vi.mocked(JobOrderRepository.findForGuardedUpdateInTx).mockResolvedValue(
+      jobOrder({ plannedQuantity: "100", completedQuantity: "0" }) as never
+    );
+    await expect(recordProgressEntry(actor, "jo-1", progressInput({ completedQuantity: 105 }))).rejects.toMatchObject({
+      code: "OVER_PRODUCTION_NOT_ALLOWED",
+    });
   });
 
   // Regression test for ERP-BUG-Q10-0001 (P0): logging progress that brings
@@ -235,7 +380,7 @@ describe("recordProgressEntry", () => {
     );
     vi.mocked(JobOrderRepository.updateInTx).mockResolvedValue({ id: "jo-1", status: "IN_PROGRESS" } as never);
 
-    await recordProgressEntry(actor, "jo-1", { employeeId: "emp-1", completedQuantity: 15, rejectedQuantity: 0, damagedQuantity: 0 } as never);
+    await recordProgressEntry(actor, "jo-1", progressInput({ completedQuantity: 15 }));
 
     expect(JobOrderRepository.updateInTx).toHaveBeenCalledWith(
       expect.anything(),
@@ -665,15 +810,15 @@ describe("assignWorker — Piece-Rate rate snapshot (2026-09-18)", () => {
   it("behaves exactly as before when ProductionSettings.pieceRateTrackingEnabled is off (the default)", async () => {
     stubProductionSettings({ pieceRateTrackingEnabled: false });
     vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder({ plannedQuantity: "100" }) as never);
-    vi.mocked(EmployeeRepository.findById).mockResolvedValue({ id: "emp-1", payType: "PIECE_RATE" } as never);
+    vi.mocked(EmployeeRepository.findById).mockResolvedValue({ id: "emp-1", payType: "PIECE_RATE", isActive: true } as never);
     vi.mocked(JobOrderAssignmentRepository.sumAssignedByJobOrderId).mockResolvedValue(0);
     vi.mocked(JobOrderAssignmentRepository.createInTx).mockResolvedValue({ id: "assignment-1" } as never);
 
-    await assignWorker(actor, "jo-1", { employeeId: "emp-1", assignedQuantity: 10 } as never);
+    await assignWorker(actor, "jo-1", assignInput());
 
     expect(resolvePieceRate).not.toHaveBeenCalled();
     expect(JobOrderAssignmentRepository.createInTx).toHaveBeenCalledWith(
-      prisma,
+      expect.anything(),
       expect.not.objectContaining({ resolvedRate: expect.anything() })
     );
   });
@@ -681,13 +826,13 @@ describe("assignWorker — Piece-Rate rate snapshot (2026-09-18)", () => {
   it("blocks the assignment when tracking is on, the employee is PIECE_RATE, and no rate resolves — never a silent 0", async () => {
     stubProductionSettings({ pieceRateTrackingEnabled: true });
     vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder({ plannedQuantity: "100" }) as never);
-    vi.mocked(EmployeeRepository.findById).mockResolvedValue({ id: "emp-1", payType: "PIECE_RATE" } as never);
+    vi.mocked(EmployeeRepository.findById).mockResolvedValue({ id: "emp-1", payType: "PIECE_RATE", isActive: true } as never);
     vi.mocked(JobOrderAssignmentRepository.sumAssignedByJobOrderId).mockResolvedValue(0);
     vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue({ id: "po-1", productId: "prod-1" } as never);
     vi.mocked(resolvePieceRate).mockResolvedValue({ resolved: false });
 
     await expect(
-      assignWorker(actor, "jo-1", { employeeId: "emp-1", assignedQuantity: 10, productionOperationId: "op-1" } as never)
+      assignWorker(actor, "jo-1", assignInput({ productionOperationId: "op-1" }))
     ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
     expect(JobOrderAssignmentRepository.createInTx).not.toHaveBeenCalled();
   });
@@ -695,16 +840,16 @@ describe("assignWorker — Piece-Rate rate snapshot (2026-09-18)", () => {
   it("snapshots the resolved rate onto the assignment when tracking is on and a rate resolves", async () => {
     stubProductionSettings({ pieceRateTrackingEnabled: true });
     vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder({ plannedQuantity: "100" }) as never);
-    vi.mocked(EmployeeRepository.findById).mockResolvedValue({ id: "emp-1", payType: "PIECE_RATE" } as never);
+    vi.mocked(EmployeeRepository.findById).mockResolvedValue({ id: "emp-1", payType: "PIECE_RATE", isActive: true } as never);
     vi.mocked(JobOrderAssignmentRepository.sumAssignedByJobOrderId).mockResolvedValue(0);
     vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue({ id: "po-1", productId: "prod-1" } as never);
     vi.mocked(resolvePieceRate).mockResolvedValue({ resolved: true, rate: 2.5, source: "STYLE_OPERATION_DEFAULT", rateCardId: "card-1" });
     vi.mocked(JobOrderAssignmentRepository.createInTx).mockResolvedValue({ id: "assignment-1" } as never);
 
-    await assignWorker(actor, "jo-1", { employeeId: "emp-1", assignedQuantity: 10, productionOperationId: "op-1" } as never);
+    await assignWorker(actor, "jo-1", assignInput({ productionOperationId: "op-1" }));
 
     expect(JobOrderAssignmentRepository.createInTx).toHaveBeenCalledWith(
-      prisma,
+      expect.anything(),
       expect.objectContaining({ resolvedRate: 2.5, resolvedRateSource: "STYLE_OPERATION_DEFAULT", resolvedRateCardId: "card-1", rateOverridden: false })
     );
   });
@@ -712,23 +857,17 @@ describe("assignWorker — Piece-Rate rate snapshot (2026-09-18)", () => {
   it("requires piece_rate.override permission when an authorized override rate is supplied", async () => {
     stubProductionSettings({ pieceRateTrackingEnabled: true });
     vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder({ plannedQuantity: "100" }) as never);
-    vi.mocked(EmployeeRepository.findById).mockResolvedValue({ id: "emp-1", payType: "PIECE_RATE" } as never);
+    vi.mocked(EmployeeRepository.findById).mockResolvedValue({ id: "emp-1", payType: "PIECE_RATE", isActive: true } as never);
     vi.mocked(JobOrderAssignmentRepository.sumAssignedByJobOrderId).mockResolvedValue(0);
     vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue({ id: "po-1", productId: "prod-1" } as never);
     vi.mocked(resolvePieceRate).mockResolvedValue({ resolved: false });
     vi.mocked(JobOrderAssignmentRepository.createInTx).mockResolvedValue({ id: "assignment-1" } as never);
 
-    await assignWorker(actor, "jo-1", {
-      employeeId: "emp-1",
-      assignedQuantity: 10,
-      productionOperationId: "op-1",
-      overriddenRate: 3,
-      overrideReason: "Negotiated rate",
-    } as never);
+    await assignWorker(actor, "jo-1", assignInput({ productionOperationId: "op-1", overriddenRate: 3, overrideReason: "Negotiated rate" }));
 
     expect(PermissionService.assert).toHaveBeenCalledWith(actor.userId, "piece_rate", "override");
     expect(JobOrderAssignmentRepository.createInTx).toHaveBeenCalledWith(
-      prisma,
+      expect.anything(),
       expect.objectContaining({ rateOverridden: true, overriddenRate: 3, overrideReason: "Negotiated rate" })
     );
   });
@@ -741,13 +880,17 @@ describe("recordProgressEntry — company-wide supervisor-approval-required sett
     vi.mocked(EmployeeRepository.findById).mockResolvedValue({ id: "emp-1" } as never);
     vi.mocked(JobOrderProgressEntryRepository.createInTx).mockResolvedValue({ id: "entry-1", approvalStatus: "PENDING" } as never);
 
-    const result = await recordProgressEntry(actor, "jo-1", { employeeId: "emp-1", completedQuantity: 10, rejectedQuantity: 0, damagedQuantity: 0 } as never);
+    const result = await recordProgressEntry(actor, "jo-1", progressInput({ completedQuantity: 10 }));
 
     expect(result).toEqual({ status: "PENDING", entry: { id: "entry-1", approvalStatus: "PENDING" } });
     expect(JobOrderRepository.updateInTx).not.toHaveBeenCalled();
+    // A pending claim is still capped against the assignment, but never
+    // closes the assignment until it is actually approved.
+    expect(assertEntryWithinAssignmentInTx).toHaveBeenCalled();
+    expect(syncAssignmentStatusInTx).not.toHaveBeenCalled();
     expect(JobOrderProgressEntryRepository.createInTx).toHaveBeenCalledWith(
-      prisma,
-      expect.objectContaining({ enteredBy: "SUPERVISOR", approvalStatus: "PENDING" })
+      expect.anything(),
+      expect.objectContaining({ enteredBy: "SUPERVISOR", approvalStatus: "PENDING", jobOrderAssignmentId: "asg-1" })
     );
   });
 
@@ -760,7 +903,7 @@ describe("recordProgressEntry — company-wide supervisor-approval-required sett
     );
     vi.mocked(JobOrderRepository.updateInTx).mockResolvedValue({ id: "jo-1", status: "IN_PROGRESS" } as never);
 
-    const result = await recordProgressEntry(actor, "jo-1", { employeeId: "emp-1", completedQuantity: 15, rejectedQuantity: 0, damagedQuantity: 0 } as never);
+    const result = await recordProgressEntry(actor, "jo-1", progressInput({ completedQuantity: 15 }));
 
     expect(result.status).toBe("APPLIED");
     expect(JobOrderRepository.updateInTx).toHaveBeenCalled();

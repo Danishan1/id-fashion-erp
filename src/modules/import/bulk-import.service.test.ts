@@ -653,6 +653,7 @@ describe("importProductionStageRow — boolean-cell parsing", () => {
       isActive: true,
       isFinal: true,
       allowRework: false,
+      allowsExtraQuantity: false,
     });
   });
 

@@ -129,9 +129,42 @@ export function isUniqueConstraintViolationOnColumn(error: unknown, columnName: 
   return Array.isArray(fields) && fields.includes(columnName);
 }
 
+/**
+ * Wraps the legacy `{ error: { code, message, details } }` body (read by
+ * ~250 client call sites, so it is never removed) with the additive
+ * top-level `{ success: false, message, errors? }` envelope — the
+ * predictable, field-keyed shape the global Toast/API-client layer
+ * (src/lib/api-client.ts) consumes.
+ */
+function envelope(
+  inner: { code: string; message: string; details: unknown },
+  errors?: Record<string, string[]>,
+) {
+  return { success: false as const, message: inner.message, ...(errors ? { errors } : {}), error: inner };
+}
+
+/** Builds a `{ "items.0.quantity": ["..."] }`-style field map from Zod issues. */
+function zodIssuesToFieldErrors(issues: { path: (string | number)[]; message: string }[]): Record<string, string[]> {
+  const map: Record<string, string[]> = {};
+  for (const issue of issues) {
+    const key = issue.path.length ? issue.path.join(".") : "_form";
+    (map[key] ??= []).push(issue.message);
+  }
+  return map;
+}
+
 export function toErrorResponse(error: unknown): { status: number; body: unknown } {
+  const inner = toInnerErrorResponse(error);
+  return { status: inner.status, body: envelope(inner.error, inner.errors) };
+}
+
+function toInnerErrorResponse(error: unknown): {
+  status: number;
+  error: { code: string; message: string; details: unknown };
+  errors?: Record<string, string[]>;
+} {
   if (error instanceof BusinessRuleError) {
-    return { status: error.httpStatus, body: error.toResponseBody() };
+    return { status: error.httpStatus, error: error.toResponseBody().error };
   }
 
   if (error && typeof error === "object" && "issues" in error && Array.isArray((error as { issues: unknown }).issues)) {
@@ -139,13 +172,16 @@ export function toErrorResponse(error: unknown): { status: number; body: unknown
     const firstIssue = zodError.issues[0];
     return {
       status: 400,
-      body: {
-        error: {
-          code: "VALIDATION_ERROR",
-          message: firstIssue ? `${firstIssue.path.join(".")}: ${firstIssue.message}` : "Invalid input.",
-          details: { issues: zodError.issues },
-        },
+      error: {
+        code: "VALIDATION_ERROR",
+        message: firstIssue
+          ? firstIssue.path.length
+            ? `${firstIssue.path.join(".")}: ${firstIssue.message}`
+            : firstIssue.message
+          : "Invalid input.",
+        details: { issues: zodError.issues },
       },
+      errors: zodIssuesToFieldErrors(zodError.issues),
     };
   }
 
@@ -163,12 +199,10 @@ export function toErrorResponse(error: unknown): { status: number; body: unknown
     if (prismaError.code === "P2007") {
       return {
         status: 400,
-        body: {
-          error: {
-            code: "VALIDATION_ERROR",
-            message: "One or more values in this request are not in the expected format.",
-            details: null,
-          },
+        error: {
+          code: "VALIDATION_ERROR",
+          message: "One or more values in this request are not in the expected format.",
+          details: null,
         },
       };
     }
@@ -177,12 +211,10 @@ export function toErrorResponse(error: unknown): { status: number; body: unknown
       const field = Array.isArray(target) ? target.join(", ") : target;
       return {
         status: 409,
-        body: {
-          error: {
-            code: "DUPLICATE_DOC_NUMBER",
-            message: field ? `A record with this ${field} already exists.` : "A record with these values already exists.",
-            details: null,
-          },
+        error: {
+          code: "DUPLICATE_DOC_NUMBER",
+          message: field ? `A record with this ${field} already exists.` : "A record with these values already exists.",
+          details: null,
         },
       };
     }
@@ -191,12 +223,10 @@ export function toErrorResponse(error: unknown): { status: number; body: unknown
   logger.error("Unhandled API error", { error });
   return {
     status: 500,
-    body: {
-      error: {
-        code: "INTERNAL_ERROR",
-        message: "Something went wrong. Please try again or contact support if the problem persists.",
-        details: null,
-      },
+    error: {
+      code: "INTERNAL_ERROR",
+      message: "Something went wrong. Please try again or contact support if the problem persists.",
+      details: null,
     },
   };
 }

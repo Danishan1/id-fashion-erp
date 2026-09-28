@@ -25,7 +25,7 @@ vi.mock("@/modules/products/product.repository", () => ({
   ProductRepository: { findStyleById: vi.fn() },
 }));
 vi.mock("@/modules/sampling/sample.repository", () => ({
-  SampleRequestRepository: { findMany: vi.fn() },
+  SampleRequestRepository: { findMany: vi.fn(), findAnyById: vi.fn() },
 }));
 vi.mock("@/modules/accounts/sales-invoice.repository", () => ({
   SalesInvoiceRepository: { findActiveByOrderId: vi.fn() },
@@ -96,7 +96,7 @@ const oneItem = (overrides: Record<string, unknown> = {}) => ({
 
 beforeEach(() => {
   vi.mocked(CustomerRepository.findByIdWithBuyers).mockReset().mockResolvedValue({ id: "cust-1", buyers: [] } as never);
-  vi.mocked(ProductRepository.findStyleById).mockReset().mockResolvedValue({ id: "style-1", itemType: "STYLE" } as never);
+  vi.mocked(ProductRepository.findStyleById).mockReset().mockResolvedValue({ id: "style-1", itemType: "STYLE", isActive: true, styleName: "Kurta" } as never);
   vi.mocked(CompanyRepository.findBaseCurrencyCode).mockReset().mockResolvedValue({ baseCurrencyCode: "INR" } as never);
   vi.mocked(prisma.deal.findFirst).mockReset();
   vi.mocked(prisma.salesOrder.updateMany).mockReset().mockResolvedValue({ count: 1 } as never);
@@ -115,6 +115,9 @@ beforeEach(() => {
   vi.mocked(SalesInvoiceRepository.findActiveByOrderId).mockReset().mockResolvedValue(null);
   vi.mocked(DispatchRepository.findAnyByOrderId).mockReset().mockResolvedValue(null);
   vi.mocked(SampleRequestRepository.findMany).mockReset().mockResolvedValue([]);
+  vi.mocked(SampleRequestRepository.findAnyById)
+    .mockReset()
+    .mockResolvedValue({ id: "sam-1", requestNumber: "SAM-2026-00001", status: "APPROVED", productId: "style-1", customerId: "other-customer" } as never);
   vi.mocked(PermissionService.assert).mockReset().mockResolvedValue(undefined as never);
   vi.mocked(PermissionService.getAllowedBranchIds).mockReset().mockResolvedValue(null);
 });
@@ -176,6 +179,45 @@ describe("createSalesOrder", () => {
     });
 
     expect(SalesOrderRepository.createHeader).toHaveBeenCalledWith(expect.objectContaining({ totalAmount: 1000, baseTotalAmount: 1000 }));
+  });
+  it("lets a new customer order a design originally developed for ANOTHER customer — referenced as-is, not duplicated", async () => {
+    await createSalesOrder(actor, {
+      customerId: "cust-1",
+      buyerId: "",
+      orderDate: "2026-08-24",
+      requiredShipDate: "",
+      originatingDealId: "",
+      items: [oneItem({ sampleRequestId: "sam-1" })],
+    });
+    expect(SalesOrderRepository.createHeader).toHaveBeenCalled();
+  });
+
+  it("rejects a linked design that doesn't exist in this company", async () => {
+    vi.mocked(SampleRequestRepository.findAnyById).mockResolvedValue(null);
+    await expect(
+      createSalesOrder(actor, { customerId: "cust-1", buyerId: "", orderDate: "2026-08-24", requiredShipDate: "", originatingDealId: "", items: [oneItem({ sampleRequestId: "sam-x" })] })
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("rejects a cancelled/rejected design", async () => {
+    vi.mocked(SampleRequestRepository.findAnyById).mockResolvedValue({ id: "sam-1", requestNumber: "SAM-1", status: "CANCELLED", productId: "style-1" } as never);
+    await expect(
+      createSalesOrder(actor, { customerId: "cust-1", buyerId: "", orderDate: "2026-08-24", requiredShipDate: "", originatingDealId: "", items: [oneItem({ sampleRequestId: "sam-1" })] })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("rejects a design belonging to a different Style than the line's", async () => {
+    vi.mocked(SampleRequestRepository.findAnyById).mockResolvedValue({ id: "sam-1", requestNumber: "SAM-1", status: "APPROVED", productId: "style-2" } as never);
+    await expect(
+      createSalesOrder(actor, { customerId: "cust-1", buyerId: "", orderDate: "2026-08-24", requiredShipDate: "", originatingDealId: "", items: [oneItem({ sampleRequestId: "sam-1" })] })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("rejects an inactive Style on a new order", async () => {
+    vi.mocked(ProductRepository.findStyleById).mockResolvedValue({ id: "style-1", itemType: "STYLE", isActive: false, styleName: "Old" } as never);
+    await expect(
+      createSalesOrder(actor, { customerId: "cust-1", buyerId: "", orderDate: "2026-08-24", requiredShipDate: "", originatingDealId: "", items: [oneItem()] })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
 });
 

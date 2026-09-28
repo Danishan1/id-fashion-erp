@@ -4,12 +4,13 @@ import { useEffect, useState } from "react";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { Modal } from "@/components/ui/Modal";
 import { FilePreviewModal } from "@/components/ui/FilePreviewModal";
-import { ViewIcon, BomIcon, VariantsIcon, ImagesIcon, CopyIcon } from "@/components/ui/icons";
+import { ViewIcon, BomIcon, VariantsIcon, ImagesIcon, CopyIcon, CostIcon } from "@/components/ui/icons";
 import { RowAction } from "@/components/ui/RowAction";
 import { STATUS_LABELS, STATUS_BADGE_CLASS } from "@/app/(dashboard)/sampling/statusLabels";
 import { SampleImagesSection } from "@/app/(dashboard)/sampling/SampleImagesSection";
 import { VariantsSection } from "../../VariantsSection";
 import { CopyDesignModal } from "./CopyDesignModal";
+import { StageCostEditor } from "@/components/ui/StageCostEditor";
 
 interface SampleRequestRow {
   id: string;
@@ -69,6 +70,8 @@ export function DesignsListClient({ productId, styleName, styleCode, variantCoun
   // "Copy Design" — stores the whole source row (not just an id), same
   // convention as every other modal-target state in this app.
   const [copyTarget, setCopyTarget] = useState<SampleRequestRow | null>(null);
+  // Design-level stage costs (inherit the Style default unless overridden).
+  const [costTarget, setCostTarget] = useState<SampleRequestRow | null>(null);
 
   // Deliberately does no setState itself — kept as a pure fetch so it can
   // be called both from the mount effect below (which must stay free of
@@ -198,6 +201,7 @@ export function DesignsListClient({ productId, styleName, styleCode, variantCoun
                         />
                         <RowAction icon={<ImagesIcon />} label="Images" onClick={() => setImagesFor(r)} />
                         <RowAction icon={<CopyIcon />} label="Copy Design" onClick={() => setCopyTarget(r)} />
+                        <RowAction icon={<CostIcon />} label="Stage Costs" onClick={() => setCostTarget(r)} />
                       </div>
                     </td>
                   </tr>
@@ -228,6 +232,17 @@ export function DesignsListClient({ productId, styleName, styleCode, variantCoun
           onClose={() => setCopyTarget(null)}
           onCreated={() => setCopyTarget(null)}
         />
+      )}
+
+      {costTarget && (
+        <Modal
+          open
+          onClose={() => setCostTarget(null)}
+          title={`Stage-wise Job Work Cost — ${costTarget.styleName || costTarget.requestNumber}`}
+          maxWidthClass="max-w-2xl"
+        >
+          <StageCostEditor key={costTarget.id} mode="design" url={`/api/v1/sampling/${costTarget.id}/stage-costs`} canEdit={canSamplingEdit} />
+        </Modal>
       )}
 
       {thumbnailPreview && (
