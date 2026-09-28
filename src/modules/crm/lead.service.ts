@@ -54,14 +54,14 @@ function normalizePhone(value: string | null | undefined): string | null {
   return trimmed ? trimmed : null;
 }
 
-async function assertNoDuplicate(
-  companyId: string,
-  input: Pick<CreateLeadInput, "email" | "phone" | "whatsappNumber" | "alternativePhone" | "companyName" | "country" | "overrideDuplicateCheck">,
-  excludeId?: string
-) {
-  if (input.overrideDuplicateCheck) return;
+export type DuplicateCheckInput = Pick<CreateLeadInput, "email" | "phone" | "whatsappNumber" | "alternativePhone" | "companyName" | "country">;
+
+/** The one duplicate definition — used by the save-time guard below and by
+ * the live "possible duplicate" panel on the Add Lead form (so the warning
+ * the user sees while typing is exactly what saving would reject). */
+export async function findPossibleDuplicates(companyId: string, input: DuplicateCheckInput, excludeId?: string) {
   const phones = [input.phone, input.whatsappNumber, input.alternativePhone].map(normalizePhone).filter((p): p is string => !!p);
-  const dups = await LeadRepository.findDuplicates(
+  return LeadRepository.findDuplicates(
     companyId,
     {
       email: input.email?.trim() || null,
@@ -71,6 +71,11 @@ async function assertNoDuplicate(
     },
     excludeId
   );
+}
+
+async function assertNoDuplicate(companyId: string, input: DuplicateCheckInput & { overrideDuplicateCheck?: boolean }, excludeId?: string) {
+  if (input.overrideDuplicateCheck) return;
+  const dups = await findPossibleDuplicates(companyId, input, excludeId);
   if (dups.length > 0) {
     throw new BusinessRuleError(
       "DUPLICATE_LEAD_EXISTS",
@@ -532,4 +537,109 @@ export async function getLeadHistory(companyId: string, id: string) {
     }),
   ]);
   return { stageHistory, assignmentHistory };
+}
+
+const MERGE_FILLABLE_FIELDS = [
+  "companyName",
+  "designation",
+  "email",
+  "phone",
+  "whatsappNumber",
+  "alternativePhone",
+  "website",
+  "businessType",
+  "country",
+  "state",
+  "city",
+  "address",
+  "productCategoryId",
+  "seasonId",
+  "market",
+  "expectedQuantity",
+  "targetPrice",
+  "currencyCode",
+  "moqRequirement",
+  "requiredDeliveryDate",
+] as const;
+
+/**
+ * "Merge" from the duplicate panel: a new enquiry is folded into an existing
+ * lead instead of creating a second record. Strictly non-destructive — it only
+ * fills fields the existing lead has left blank, adds any new product
+ * interests, appends the new notes, and logs a timeline note recording exactly
+ * what was merged. Nothing already on the existing lead is ever overwritten.
+ */
+export async function mergeEnquiryIntoLead(actor: ActorContext, id: string, input: CreateLeadInput) {
+  const existing = await prisma.lead.findFirst({ where: { id, companyId: actor.companyId }, include: { productInterests: true } });
+  if (!existing) throw new BusinessRuleError("NOT_FOUND", "Lead not found.", { id });
+
+  // Validate every incoming master FK belongs to this company (the blank
+  // source fallback is irrelevant here — source is never overwritten).
+  await resolveLeadRefs(actor.companyId, { ...input, sourceId: input.sourceId || "" });
+  const incoming = leadDataFromInput(input, null);
+
+  const patch: Prisma.LeadUncheckedUpdateInput = {};
+  const filled: string[] = [];
+  for (const key of MERGE_FILLABLE_FIELDS) {
+    const current = existing[key];
+    const next = incoming[key];
+    if ((current === null || current === "") && next !== null && next !== "") {
+      (patch as Record<string, unknown>)[key] = next;
+      filled.push(key);
+    }
+  }
+  for (const flag of ["samplingRequired", "techPackAvailable", "referenceImageAvailable"] as const) {
+    if (!existing[flag] && incoming[flag]) {
+      patch[flag] = true;
+      filled.push(flag);
+    }
+  }
+  if (Number(existing.value) === 0 && Number(incoming.value) > 0) {
+    patch.value = incoming.value;
+    filled.push("value");
+  }
+  const newNotes = input.notes?.trim();
+  if (newNotes) patch.notes = existing.notes ? `${existing.notes}\n\n[Merged enquiry] ${newNotes}` : newNotes;
+
+  const existingTypeIds = new Set(existing.productInterests.map((p) => p.productTypeId));
+  const addTypeIds = [...new Set(input.productInterestTypeIds ?? [])].filter((t) => !existingTypeIds.has(t));
+  const now = new Date();
+
+  await prisma.$transaction(async (tx) => {
+    await tx.lead.update({ where: { id }, data: { ...patch, lastActivityAt: now } });
+    if (addTypeIds.length > 0) {
+      await tx.crmLeadProductInterest.createMany({ data: addTypeIds.map((productTypeId) => ({ leadId: id, productTypeId })) });
+    }
+    await tx.crmActivity.create({
+      data: {
+        companyId: actor.companyId,
+        relatedModule: "LEAD",
+        relatedRecordId: id,
+        activityType: "NOTE",
+        subject: "Duplicate enquiry merged into this lead",
+        body: [
+          `From: ${[input.companyName, input.name, input.email, input.phone || input.whatsappNumber].filter(Boolean).join(" · ")}`,
+          filled.length ? `Filled blank fields: ${filled.join(", ")}` : "No blank fields needed filling.",
+          addTypeIds.length ? `Added ${addTypeIds.length} product interest(s).` : null,
+          newNotes ? `Notes: ${newNotes}` : null,
+        ]
+          .filter(Boolean)
+          .join("\n"),
+        activityAt: now,
+        performedByUserId: actor.userId,
+      },
+    });
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "crm_leads",
+    recordId: id,
+    action: "UPDATE",
+    oldValues: Object.fromEntries(filled.map((k) => [k, (existing as Record<string, unknown>)[k] ?? null])),
+    newValues: { mergedEnquiry: true, filledFields: filled, addedProductInterests: addTypeIds.length },
+  });
+
+  return getLeadById(actor.companyId, id);
 }

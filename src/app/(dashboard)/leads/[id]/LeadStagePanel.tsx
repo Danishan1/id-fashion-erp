@@ -38,6 +38,10 @@ interface Props {
   lostReason: { name: string } | null;
   lostCompetitor: string | null;
   lostComment: string | null;
+  /** Set by the header's Mark Won / Mark Lost quick actions: pre-selects the
+   * first active stage of that kind (and opens the lost-reason form for
+   * LOST). The parent remounts this panel via `key` to re-trigger it. */
+  intentKind?: StageKind;
 }
 
 /**
@@ -46,7 +50,7 @@ interface Props {
  * is always recorded in history), a mandatory lost-reason capture when the
  * target stage is a LOST-kind stage, and the stage/assignment history.
  */
-export function LeadStagePanel({ leadId, currentStage, lostReason, lostCompetitor, lostComment }: Props) {
+export function LeadStagePanel({ leadId, currentStage, lostReason, lostCompetitor, lostComment, intentKind }: Props) {
   const router = useRouter();
   const [stages, setStages] = useState<Stage[]>([]);
   const [lostReasons, setLostReasons] = useState<LostReason[]>([]);
@@ -64,12 +68,23 @@ export function LeadStagePanel({ leadId, currentStage, lostReason, lostCompetito
   useEffect(() => {
     fetch("/api/v1/crm/pipeline-stages?activeOnly=true")
       .then((res) => (res.ok ? res.json() : null))
-      .then((body) => setStages(body?.data ?? []))
+      .then((body) => {
+        const list: Stage[] = body?.data ?? [];
+        setStages(list);
+        const intended = intentKind ? list.find((s) => s.kind === intentKind && s.id !== currentStage.id) : undefined;
+        if (intended) {
+          setTargetId(intended.id);
+          if (intended.kind === "LOST") setShowLostModal(true);
+        }
+      })
       .catch(() => setStages([]));
     fetch("/api/v1/crm/lost-reasons?activeOnly=true")
       .then((res) => (res.ok ? res.json() : null))
       .then((body) => setLostReasons(body?.data ?? []))
       .catch(() => setLostReasons([]));
+    // Mount-only by design: the parent remounts this panel (via `key`) when
+    // the stage or the Mark Won/Lost intent changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadHistory = () =>

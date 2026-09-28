@@ -25,12 +25,17 @@ export interface InitialDeal {
   notes: string | null;
 }
 
-export function DealForm({ initialDeal }: { initialDeal?: InitialDeal } = {}) {
+export function DealForm({
+  initialDeal,
+  defaultLeadId,
+  defaultTitle,
+  defaultValue,
+}: { initialDeal?: InitialDeal; defaultLeadId?: string; defaultTitle?: string; defaultValue?: string } = {}) {
   const router = useRouter();
-  const [title, setTitle] = useState(initialDeal?.title ?? "");
-  const [leadId, setLeadId] = useState(initialDeal?.lead?.id ?? "");
+  const [title, setTitle] = useState(initialDeal?.title ?? defaultTitle ?? "");
+  const [leadId, setLeadId] = useState(initialDeal?.lead?.id ?? defaultLeadId ?? "");
   const [customerId, setCustomerId] = useState(initialDeal?.customer?.id ?? "");
-  const [value, setValue] = useState(initialDeal?.value ?? "0");
+  const [value, setValue] = useState(initialDeal?.value ?? defaultValue ?? "0");
   const [probabilityPercent, setProbabilityPercent] = useState(initialDeal?.probabilityPercent ?? "0");
   const [assignedToUserId, setAssignedToUserId] = useState(initialDeal?.assignedTo?.id ?? "");
   const [salesAgentId, setSalesAgentId] = useState(initialDeal?.salesAgent?.id ?? "");

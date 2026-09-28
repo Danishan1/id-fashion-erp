@@ -32,6 +32,7 @@ vi.mock("@/core/db/client", () => ({
     season: { findFirst: vi.fn() },
     campaign: { findFirst: vi.fn() },
     productType: { count: vi.fn() },
+    lead: { findFirst: vi.fn() },
   },
 }));
 vi.mock("./lead.repository", () => ({
@@ -50,7 +51,7 @@ const { prisma } = await import("@/core/db/client");
 const { generateDocumentNumber } = await import("@/core/numbering/DocumentNumberingService");
 const { LeadRepository, CrmRoundRobinRepository } = await import("./lead.repository");
 const { getEntryStage, getStageForCompany } = await import("./crm-config.service");
-const { computeLeadQuality, createLead, updateLead, changeLeadStage } = await import("./lead.service");
+const { computeLeadQuality, createLead, updateLead, changeLeadStage, mergeEnquiryIntoLead } = await import("./lead.service");
 
 const actor = { companyId: "co-1", userId: "user-1", branchId: "br-1" };
 const DETAIL = { id: "lead-new", leadScore: "0", createdAt: new Date(), stageChangedAt: new Date(), lastActivityAt: null };
@@ -317,6 +318,58 @@ describe("changeLeadStage", () => {
   it("rejects moving to the current stage or to an inactive stage", async () => {
     await expect(changeLeadStage(actor, "lead-1", { stageId: "st-new" })).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
     await expect(changeLeadStage(actor, "lead-1", { stageId: "st-old" })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(tx.lead.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("mergeEnquiryIntoLead", () => {
+  const existing = {
+    id: "lead-1",
+    companyName: "ABC Fashion",
+    email: "buyer@abc.com",
+    phone: null,
+    whatsappNumber: null,
+    country: "Germany",
+    city: null,
+    expectedQuantity: null,
+    samplingRequired: false,
+    techPackAvailable: true,
+    referenceImageAvailable: false,
+    value: 0,
+    notes: "First enquiry",
+    productInterests: [{ productTypeId: "pt-1" }],
+  };
+
+  it("fills only blank fields — never overwrites what the existing lead already has", async () => {
+    vi.mocked(prisma.lead.findFirst).mockResolvedValue(existing as never);
+    vi.mocked(prisma.productType.count).mockResolvedValue(2 as never);
+
+    await mergeEnquiryIntoLead(actor, "lead-1", {
+      name: "Anna",
+      companyName: "ABC Fashion GmbH",
+      email: "other@abc.com",
+      phone: "+4915100000",
+      city: "Berlin",
+      expectedQuantity: 1500,
+      samplingRequired: true,
+      value: 5000,
+      notes: "Wants knitwear",
+      productInterestTypeIds: ["pt-1", "pt-2"],
+    } as never);
+
+    const data = tx.lead.update.mock.calls[0][0].data;
+    expect(data).toMatchObject({ phone: "+4915100000", city: "Berlin", expectedQuantity: 1500, samplingRequired: true, value: 5000 });
+    expect(data).not.toHaveProperty("companyName");
+    expect(data).not.toHaveProperty("email");
+    expect(data.notes).toBe("First enquiry\n\n[Merged enquiry] Wants knitwear");
+    // Only the new interest is added.
+    expect(tx.crmLeadProductInterest.createMany).toHaveBeenCalledWith({ data: [{ leadId: "lead-1", productTypeId: "pt-2" }] });
+    expect(tx.crmActivity.create).toHaveBeenCalledWith({ data: expect.objectContaining({ subject: "Duplicate enquiry merged into this lead" }) });
+  });
+
+  it("rejects a lead from another company", async () => {
+    vi.mocked(prisma.lead.findFirst).mockResolvedValue(null);
+    await expect(mergeEnquiryIntoLead(actor, "lead-x", { name: "A" } as never)).rejects.toMatchObject({ code: "NOT_FOUND" });
     expect(tx.lead.update).not.toHaveBeenCalled();
   });
 });

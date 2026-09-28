@@ -108,6 +108,7 @@ model Company {
   crmLostReasons                      CrmLostReason[]
   crmStageHistory                     CrmStageHistory[]
   crmAssignmentHistory                CrmAssignmentHistory[]
+  crmLeadContacts                     CrmLeadContact[]
   importBatches                       ImportBatch[]
   campaigns                           Campaign[]
   campaignAttributions                CampaignAttribution[]
@@ -2593,6 +2594,7 @@ model Lead {
   productCategory  Category?                @relation(fields: [productCategoryId], references: [id])
   season           Season?                  @relation(fields: [seasonId], references: [id])
   productInterests CrmLeadProductInterest[]
+  contacts         CrmLeadContact[]
   deals            Deal[]
   attributions     CampaignAttribution[]
 
@@ -2879,6 +2881,29 @@ model CrmLeadProductInterest {
 
   @@id([leadId, productTypeId])
   @@map("crm_lead_product_interests")
+}
+
+// Additional people at the buyer (merchandiser, designer, QA, accounts). The
+// lead's own name/email/phone columns stay the primary contact, so every
+// existing report/search keeps working unchanged.
+model CrmLeadContact {
+  id             String   @id @default(uuid()) @db.Uuid
+  companyId      String   @map("company_id") @db.Uuid
+  leadId         String   @map("lead_id") @db.Uuid
+  name           String
+  designation    String?
+  email          String?
+  phone          String?
+  whatsappNumber String?  @map("whatsapp_number")
+  notes          String?
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+  lead    Lead    @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, leadId])
+  @@map("crm_lead_contacts")
 }
 
 // ─────────────────────────────────────────────────────────────

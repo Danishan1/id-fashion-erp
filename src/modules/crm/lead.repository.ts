@@ -4,7 +4,22 @@ import type { Prisma } from "@prisma/client";
 const DETAIL_INCLUDE = {
   assignedTo: { select: { id: true, fullName: true } },
   createdBy: { select: { id: true, fullName: true } },
-  buyerEnquiry: { select: { id: true, enquiryNumber: true } },
+  // Lines → sample requests give the lead's Samples tab real, already-
+  // linked data (Lead → Buyer Enquiry → line → Sample Request).
+  buyerEnquiry: {
+    select: {
+      id: true,
+      enquiryNumber: true,
+      lines: {
+        select: {
+          id: true,
+          styleNameFreeText: true,
+          sampleRequest: { select: { id: true, requestNumber: true, styleName: true, status: true } },
+        },
+      },
+    },
+  },
+  contacts: { orderBy: { createdAt: "asc" } },
   campaign: { select: { id: true, campaignNumber: true, name: true } },
   deals: { select: { id: true, dealNumber: true, title: true, stage: true, value: true } },
   stage: { select: { id: true, code: true, name: true, kind: true } },

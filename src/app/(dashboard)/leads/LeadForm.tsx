@@ -141,6 +141,7 @@ export function LeadForm({ initialLead }: { initialLead?: InitialLead } = {}) {
 
   const [error, setError] = useState<string | null>(null);
   const [duplicates, setDuplicates] = useState<Duplicate[] | null>(null);
+  const [liveDuplicates, setLiveDuplicates] = useState<Duplicate[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
@@ -165,6 +166,56 @@ export function LeadForm({ initialLead }: { initialLead?: InitialLead } = {}) {
     />
   );
 
+  const payload = () => ({
+    ...f,
+    leadScore: Number(f.leadScore || 0),
+    value: Number(f.value || 0),
+    ...flags,
+    productInterestTypeIds: interestIds,
+  });
+
+  // Live duplicate check while typing — the same server-side matching the
+  // save applies, so the warning appears before the user finishes the form.
+  const dupKey = [f.email, f.phone, f.whatsappNumber, f.alternativePhone, f.companyName, f.country].map((v) => v.trim()).join("|");
+  useEffect(() => {
+    const [email, phone, whatsappNumber, alternativePhone, companyName, country] = dupKey.split("|");
+    const hasKey = email || phone || whatsappNumber || alternativePhone || (companyName && country);
+    const timer = setTimeout(() => {
+      if (!hasKey) {
+        setLiveDuplicates([]);
+        return;
+      }
+      const qs = new URLSearchParams(
+        Object.entries({ email, phone, whatsappNumber, alternativePhone, companyName, country, excludeId: initialLead?.id ?? "" }).filter(([, v]) => v)
+      );
+      fetch(`/api/v1/leads/duplicate-check?${qs.toString()}`)
+        .then((res) => (res.ok ? res.json() : { data: [] }))
+        .then((body) => setLiveDuplicates(body.data ?? []))
+        .catch(() => setLiveDuplicates([]));
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [dupKey, initialLead?.id]);
+
+  const shownDuplicates = duplicates && duplicates.length > 0 ? duplicates : liveDuplicates;
+
+  const mergeInto = async (existingId: string) => {
+    setIsSubmitting(true);
+    setError(null);
+    const res = await fetch(`/api/v1/leads/${existingId}/merge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload()),
+    }).catch(() => null);
+    setIsSubmitting(false);
+    if (!res || !res.ok) {
+      const body = await res?.json().catch(() => null);
+      setError(body?.error?.message ?? "Failed to merge into the existing lead.");
+      return;
+    }
+    router.push(`/leads/${existingId}`);
+    router.refresh();
+  };
+
   const submit = async (overrideDuplicateCheck: boolean) => {
     setIsSubmitting(true);
     setError(null);
@@ -173,14 +224,7 @@ export function LeadForm({ initialLead }: { initialLead?: InitialLead } = {}) {
     const res = await fetch(url, {
       method: initialLead ? "PATCH" : "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ...f,
-        leadScore: Number(f.leadScore || 0),
-        value: Number(f.value || 0),
-        ...flags,
-        productInterestTypeIds: interestIds,
-        overrideDuplicateCheck,
-      }),
+      body: JSON.stringify({ ...payload(), overrideDuplicateCheck }),
     }).catch(() => null);
 
     setIsSubmitting(false);
@@ -428,31 +472,48 @@ export function LeadForm({ initialLead }: { initialLead?: InitialLead } = {}) {
         </FormField>
       </Section>
 
-      {error && (
+      {shownDuplicates.length > 0 && (
         <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200">
-          <p>{error}</p>
-          {duplicates && duplicates.length > 0 && (
-            <ul className="mt-2 space-y-1">
-              {duplicates.map((d) => (
-                <li key={d.id}>
-                  <a href={`/leads/${d.id}`} target="_blank" rel="noreferrer" className="font-medium underline">
+          <p className="font-medium">
+            Possible duplicate{shownDuplicates.length === 1 ? "" : "s"} — this buyer may already be in the CRM (matched on email, phone/WhatsApp, or company + country):
+          </p>
+          <ul className="mt-2 space-y-2">
+            {shownDuplicates.map((d) => (
+              <li key={d.id} className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span>
+                  <span className="font-medium">
                     {d.leadNumber} — {d.companyName ?? d.name}
-                  </a>
+                  </span>
                   <span className="text-xs"> · {[d.name, d.email, d.phone, d.country].filter(Boolean).join(" · ")}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-          {duplicates && (
-            <button
-              type="button"
-              onClick={() => submit(true)}
-              className="mt-3 rounded-md border border-amber-400 px-3 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-100 dark:text-amber-100 dark:hover:bg-amber-900/40"
-            >
-              Create Anyway
-            </button>
-          )}
+                </span>
+                <a href={`/leads/${d.id}`} target="_blank" rel="noreferrer" className="text-xs font-medium underline">
+                  Open Existing
+                </a>
+                {!initialLead && (
+                  <button type="button" onClick={() => mergeInto(d.id)} disabled={isSubmitting} className="text-xs font-medium underline disabled:opacity-60">
+                    Merge into this lead
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-xs">
+            Merge fills only the blank fields on the existing lead, adds new product interests and notes, and records it on its timeline — nothing
+            already there is overwritten.
+          </p>
+          <button
+            type="button"
+            onClick={() => submit(true)}
+            disabled={isSubmitting}
+            className="mt-3 rounded-md border border-amber-400 px-3 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-60 dark:text-amber-100 dark:hover:bg-amber-900/40"
+          >
+            {initialLead ? "Save Anyway" : "Create Anyway"}
+          </button>
         </div>
+      )}
+
+      {error && !(duplicates && duplicates.length > 0) && (
+        <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">{error}</div>
       )}
 
       <button
