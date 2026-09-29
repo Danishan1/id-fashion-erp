@@ -4,6 +4,7 @@ import { useState } from "react";
 import { DataTable } from "@/components/ui/DataTable";
 import { Modal } from "@/components/ui/Modal";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
+import { GenerateBarcodeButton } from "@/components/ui/GenerateBarcodeButton";
 import { MaterialForm } from "./MaterialForm";
 
 interface MaterialRow {
@@ -66,6 +67,7 @@ export function MaterialsListClient() {
             ),
           },
         ]}
+        rowActions={(row) => <GenerateBarcodeButton entityType="ITEM" entityId={row.id} />}
       />
 
       <Modal open={modalOpen} onClose={closeModal} title="Add Material" maxWidthClass="max-w-xl">

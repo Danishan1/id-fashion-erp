@@ -98,4 +98,16 @@ describe("master code numbering (never resets by fiscal year)", () => {
       data: { companyId: "co-1", branchId: null, documentType: "STYLE", prefix: "ST", fiscalYear: 0, currentNumber: 1 },
     });
   });
+
+  // Barcode Management & Scanning System, Phase 1 (2026-09-29) — the two new
+  // master-code document types, same mechanism, new prefixes.
+  it("previewNextMasterCode formats FABRIC_ROLL with the FR prefix", async () => {
+    findFirstMock.mockResolvedValue({ currentNumber: 4 });
+    expect(await previewNextMasterCode("co-1", "FABRIC_ROLL")).toBe("FR-00005");
+  });
+
+  it("previewNextMasterCode formats SKU with the SKU prefix", async () => {
+    findFirstMock.mockResolvedValue(null);
+    expect(await previewNextMasterCode("co-1", "SKU")).toBe("SKU-00001");
+  });
 });

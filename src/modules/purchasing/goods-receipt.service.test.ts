@@ -40,6 +40,7 @@ vi.mock("./goods-receipt.repository", () => ({
   },
 }));
 vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { getAllowedBranchIds: vi.fn() } }));
+vi.mock("@/core/barcode/barcode.service", () => ({ mintFabricRollBarcode: vi.fn() }));
 vi.mock("./purchase-order.repository", () => ({
   PurchaseOrderRepository: { findByIdWithDetails: vi.fn(), updateStatusInTx: vi.fn() },
   PurchaseOrderItemRepository: {
@@ -55,6 +56,7 @@ const { FabricRollRepository } = await import("./fabric-roll.repository");
 const { GoodsReceiptRepository, GoodsReceiptItemRepository } = await import("./goods-receipt.repository");
 const { PurchaseOrderRepository, PurchaseOrderItemRepository } = await import("./purchase-order.repository");
 const { PermissionService } = await import("@/core/rbac/PermissionService");
+const { mintFabricRollBarcode } = await import("@/core/barcode/barcode.service");
 const { prisma } = await import("@/core/db/client");
 const { createGoodsReceipt, reverseGoodsReceiptLine, listGoodsReceipts, getGoodsReceiptById, getMaterialRateHistory } = await import(
   "./goods-receipt.service"
@@ -114,6 +116,7 @@ beforeEach(() => {
   vi.mocked(PurchaseOrderItemRepository.findManyForStatusRecompute).mockReset().mockResolvedValue([{ orderedQuantity: 100, receivedQuantity: 50 }] as never);
   vi.mocked(PermissionService.getAllowedBranchIds).mockReset().mockResolvedValue(null);
   vi.mocked(prisma.goodsReceiptItem.findMany).mockReset().mockResolvedValue([]);
+  vi.mocked(mintFabricRollBarcode).mockReset().mockResolvedValue({} as never);
   vi.mocked(prisma.product.findFirst).mockReset().mockResolvedValue(null);
 });
 
@@ -394,6 +397,69 @@ function reversibleItem(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
+
+describe("createGoodsReceipt — Fabric Roll barcode minting, best-effort (2026-09-29)", () => {
+  it("mints one Fabric Roll barcode per physical roll actually created", async () => {
+    vi.mocked(GoodsReceiptRepository.createWithItemsAndRolls).mockResolvedValue({
+      id: "gr-1",
+      receiptNumber: "REC-2026-00001",
+      items: [
+        {
+          id: "gri-1",
+          purchaseOrderItemId: "poi-1",
+          productId: "mat-1",
+          warehouseId: "wh-1",
+          warehouseLocationId: null,
+          receivedQuantity: 500,
+          rolls: [{ id: "roll-1" }, { id: "roll-2" }],
+        },
+      ],
+    } as never);
+
+    await createGoodsReceipt(actor, "po-1", {
+      receivedDate: "2026-08-24",
+      items: [
+        oneRollItem({
+          receivedQuantity: 500,
+          rolls: [
+            { rollNumber: "R1", rollQuantity: 250, batchNo: "", gsmId: "", dyeId: "", weaveTypeId: "", widthId: "", compositionId: "", warehouseLocationId: "", notes: "" },
+            { rollNumber: "R2", rollQuantity: 250, batchNo: "", gsmId: "", dyeId: "", weaveTypeId: "", widthId: "", compositionId: "", warehouseLocationId: "", notes: "" },
+          ],
+        }),
+      ],
+    });
+
+    expect(mintFabricRollBarcode).toHaveBeenCalledTimes(2);
+    expect(mintFabricRollBarcode).toHaveBeenCalledWith({ companyId: "co-1", userId: "user-1" }, "roll-1");
+    expect(mintFabricRollBarcode).toHaveBeenCalledWith({ companyId: "co-1", userId: "user-1" }, "roll-2");
+  });
+
+  it("never fails the goods receipt itself when barcode minting throws", async () => {
+    vi.mocked(GoodsReceiptRepository.createWithItemsAndRolls).mockResolvedValue({
+      id: "gr-1",
+      receiptNumber: "REC-2026-00001",
+      items: [
+        {
+          id: "gri-1",
+          purchaseOrderItemId: "poi-1",
+          productId: "mat-1",
+          warehouseId: "wh-1",
+          warehouseLocationId: null,
+          receivedQuantity: 500,
+          rolls: [{ id: "roll-1" }],
+        },
+      ],
+    } as never);
+    vi.mocked(mintFabricRollBarcode).mockRejectedValue(new Error("boom"));
+
+    await expect(
+      createGoodsReceipt(actor, "po-1", {
+        receivedDate: "2026-08-24",
+        items: [oneRollItem({ receivedQuantity: 500, rolls: [{ rollNumber: "R1", rollQuantity: 500, batchNo: "", gsmId: "", dyeId: "", weaveTypeId: "", widthId: "", compositionId: "", warehouseLocationId: "", notes: "" }] })],
+      })
+    ).resolves.toMatchObject({ id: "gr-1" });
+  });
+});
 
 describe("reverseGoodsReceiptLine", () => {
   it("rejects when the line doesn't exist", async () => {

@@ -163,6 +163,14 @@ export const NAV_SECTIONS: NavSection[] = [
   },
   { label: "Accounts", href: "/accounts", modules: ["accounts", "invoices", "payments", "expenses", "financial_reports"] },
   { label: "Dispatch", href: "/dispatch", modules: ["dispatch"] },
+  {
+    label: "Barcodes",
+    modules: ["barcodes"],
+    children: [
+      { label: "Scanner", href: "/production/scan", modules: ["barcodes"], requiredAction: "scan" },
+      { label: "Barcode Management", href: "/barcodes", modules: ["barcodes"] },
+    ],
+  },
   { label: "Reports", href: "/reports", modules: ["reports"] },
   {
     label: "Administration",

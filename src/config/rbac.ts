@@ -60,6 +60,13 @@ export const MODULES = [
   "administration_settings",
   "ai_garment_flow",
   "ai_designer",
+  // Barcode Management & Scanning System, Phase 1 (2026-09-29) — a single
+  // registry/scan/print module cutting across Fabric Roll/Production Lot/
+  // Carton/Item/SKU entities (see src/core/barcode/). Deliberately its own
+  // module rather than folded into inventory/production/dispatch, since a
+  // scan action is a generic cross-cutting capability, not owned by any one
+  // of those modules.
+  "barcodes",
 ] as const;
 export type Module = (typeof MODULES)[number];
 
@@ -80,6 +87,12 @@ export const ACTIONS = [
   // ordinary Supervisor (who has piece_rate.create/edit) can assign work
   // without also being able to hand-pick a rate outside the Rate Card.
   "override",
+  // Resolve a barcode into its real entity (Fabric Roll/Lot/Carton/Item/SKU)
+  // via the universal scan endpoint — distinct from "view" so a role can be
+  // granted the ability to scan-navigate without the broader "view" grant on
+  // every module a scanned entity might belong to (see barcode.service.ts's
+  // resolve endpoint).
+  "scan",
 ] as const;
 export type Action = (typeof ACTIONS)[number];
 
@@ -176,6 +189,9 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     // self-approval guard would block them from approving their own tech
     // pack anyway unless they're also SUPER_ADMIN).
     ai_designer: ["view", "approve"],
+    // View-only oversight, matching every other module above — barcode
+    // generation/scanning stays owned by the operational manager roles below.
+    barcodes: ["view"],
   },
   MERCHANDISER: {
     dashboard: ["view"],
@@ -245,6 +261,12 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     // create a Purchase Order directly.
     purchase_order: ["view", "create"],
     reports: ["view", "export", "print"],
+    // Generates/reprints/disables Production Lot barcodes and scans them on
+    // the Production scan screen (Forward/Revert/QC) — a manager-tier grant,
+    // matching the existing piece_rate "override" precedent for reserving
+    // generate/reprint to this role rather than every Supervisor. "edit"
+    // gates disabling a barcode (no delete action exists for this module).
+    barcodes: ["view", "scan", "create", "edit", "print"],
   },
   PRODUCTION_SUPERVISOR: {
     dashboard: ["view"],
@@ -266,6 +288,9 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     inventory: ["view"],
     material_request: ["view", "create"],
     reports: ["view"],
+    // Can scan a Lot on the Production scan screen to drive Forward/Revert/QC
+    // — but not generate/reprint labels, reserved to Production Manager.
+    barcodes: ["view", "scan"],
   },
   // A shop-floor worker with their own login (linked via User.employeeId),
   // added 2026-09-02 for the optional self-entry workflow — see
@@ -319,6 +344,9 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     purchase_order: ["view", "create", "edit", "approve", "export", "print"],
     dispatch: ["view"],
     reports: ["view", "export", "print"],
+    // Generates/reprints/disables Fabric Roll barcodes at Goods Receipt and
+    // scans them during Material Request issuance.
+    barcodes: ["view", "scan", "create", "edit", "print"],
   },
   ACCOUNTS_MANAGER: {
     dashboard: ["view"],
@@ -368,6 +396,9 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     material_request: ["view"],
     dispatch: ["view", "create", "edit", "post", "delete", "cancel", "export", "print"],
     reports: ["view", "export", "print"],
+    // Generates/reprints/disables Carton barcodes and scans them during the
+    // pack step.
+    barcodes: ["view", "scan", "create", "edit", "print"],
   },
   WAREHOUSE_USER: {
     dashboard: ["view"],
@@ -380,6 +411,10 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     purchase_order: ["view", "create"],
     dispatch: ["view", "create", "edit"],
     reports: ["view"],
+    // Scans Fabric Rolls (Material Request issuance) and Cartons (Dispatch
+    // pack step) — not a generate/print grant, matching STORE_MANAGER/
+    // DISPATCH_MANAGER's own reservation of that to the manager tier.
+    barcodes: ["view", "scan"],
   },
   VIEWER: Object.fromEntries(MODULES.map((m) => [m, ["view"] as Action[]])) as Record<Module, Action[]>,
 };

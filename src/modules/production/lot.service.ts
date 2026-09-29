@@ -2,6 +2,8 @@ import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { prisma } from "@/core/db/client";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { PermissionService } from "@/core/rbac/PermissionService";
+import { logger } from "@/core/logging/logger";
+import { registerProductionLotBarcode } from "@/core/barcode/barcode.service";
 import type { Prisma } from "@prisma/client";
 import { LotRelationRepository, LotRepository, ProductionOrderRepository } from "./production.repository";
 import type { CreateLotInput, MergeLotsInput, SplitLotInput } from "./production.schema";
@@ -185,6 +187,17 @@ export async function createLot(actor: ActorContext, productionOrderId: string, 
     started.assignments,
     prepared
   );
+
+  // Best-effort, post-commit: register this lot's own PRODUCTION_LOT barcode
+  // (reusing lotNumber verbatim — no minting needed). Never allowed to fail
+  // lot creation itself — see registerProductionLotBarcode's own doc
+  // comment and mintFabricRollBarcode's identical reasoning in
+  // goods-receipt.service.ts.
+  try {
+    await registerProductionLotBarcode({ companyId: actor.companyId, userId: actor.userId }, lot.id, lot.lotNumber);
+  } catch (err) {
+    logger.error("Failed to register Production Lot barcode after Lot creation", { error: err, lotId: lot.id });
+  }
 
   return { ...lot, status: "IN_PROGRESS" as const, currentStageId: stage.id, firstJobOrderId: started.jobOrder.id };
 }

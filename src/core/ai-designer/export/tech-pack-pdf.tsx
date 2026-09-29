@@ -10,7 +10,7 @@ import {
   resolveColorHex,
   tryParseNumberedSteps,
 } from "./tech-pack-format";
-import { encodeCode128 } from "./barcode128";
+import { encodeCode128 } from "@/core/barcode/code128-encoder";
 
 const styles = StyleSheet.create({
   page: { padding: 28, fontSize: 9 },

@@ -3,6 +3,8 @@ import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingService";
 import { PermissionService } from "@/core/rbac/PermissionService";
 import { prisma } from "@/core/db/client";
+import { logger } from "@/core/logging/logger";
+import { replaceCartonBarcodes } from "@/core/barcode/barcode.service";
 import type { ListQuery } from "@/lib/list-query";
 import { branchScopeWhere } from "@/lib/branch-access";
 import { DispatchStatus, type Prisma } from "@prisma/client";
@@ -272,6 +274,25 @@ export async function setCartons(actor: ActorContext, id: string, input: SetCart
 
   const updated = await DispatchRepository.setCartons(id, cartons);
 
+  // Best-effort: cartons are deleted and recreated with fresh ids on every
+  // call (see DispatchRepository.setCartons), so the prior call's own CARTON
+  // barcode rows are dangling the instant new ones exist — replaceCartonBarcodes
+  // cleans those up and registers a fresh one per new carton. Never allowed
+  // to fail the real carton write itself, same reasoning as
+  // mintFabricRollBarcode/registerProductionLotBarcode above.
+  try {
+    await replaceCartonBarcodes(
+      { companyId: actor.companyId, userId: actor.userId },
+      {
+        previousCartonIds: existing.cartons.map((c) => c.id),
+        dispatchNumber: existing.dispatchNumber,
+        newCartons: updated.cartons.map((c) => ({ id: c.id, cartonNumber: c.cartonNumber })),
+      }
+    );
+  } catch (err) {
+    logger.error("Failed to replace Carton barcodes after setCartons", { error: err, dispatchId: id });
+  }
+
   await writeAuditLog({
     companyId: actor.companyId,
     userId: actor.userId,
@@ -289,8 +310,16 @@ export async function setCartons(actor: ActorContext, id: string, input: SetCart
  * carton-item quantities across every carton exactly equals its own
  * dispatchedQuantity — every line actually packed, not just an aggregate
  * total that happens to match by coincidence across different items.
+ *
+ * `scannedCartonIds` is optional (2026-09-29, Barcode Management & Scanning
+ * System Phase 1) — when the pack screen has the warehouse user scan every
+ * physical carton's label before confirming, this cross-checks that the
+ * scanned set is EXACTLY the dispatch's own real carton set (same cardinality,
+ * no missing carton, no carton scanned twice, no stray carton from a
+ * different dispatch) before the existing quantity validation below even
+ * runs. Every existing caller omits it and behaves identically to before.
  */
-export async function markPacked(actor: ActorContext, id: string) {
+export async function markPacked(actor: ActorContext, id: string, scannedCartonIds?: string[]) {
   const existing = await DispatchRepository.findByIdWithDetails(actor.companyId, id);
   if (!existing) throw new BusinessRuleError("NOT_FOUND", "Dispatch not found.", { id });
 
@@ -300,6 +329,25 @@ export async function markPacked(actor: ActorContext, id: string) {
       `Cannot pack a dispatch in "${existing.status}" status.`,
       { currentStatus: existing.status }
     );
+  }
+
+  if (scannedCartonIds) {
+    const realCartonIds = new Set(existing.cartons.map((c) => c.id));
+    const scannedSet = new Set(scannedCartonIds);
+    if (scannedSet.size !== scannedCartonIds.length) {
+      throw new BusinessRuleError("VALIDATION_ERROR", "The same carton was scanned more than once.", {});
+    }
+    const missing = existing.cartons.filter((c) => !scannedSet.has(c.id));
+    const unexpected = scannedCartonIds.filter((cid) => !realCartonIds.has(cid));
+    if (missing.length > 0 || unexpected.length > 0) {
+      throw new BusinessRuleError(
+        "VALIDATION_ERROR",
+        missing.length > 0
+          ? `Carton #${missing[0].cartonNumber} has not been scanned yet.`
+          : "A scanned carton does not belong to this dispatch.",
+        { missingCartonNumbers: missing.map((c) => c.cartonNumber), unexpectedCartonIds: unexpected }
+      );
+    }
   }
 
   const packedByItemId = new Map<string, number>();

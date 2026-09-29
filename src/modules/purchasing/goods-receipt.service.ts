@@ -3,6 +3,8 @@ import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingService";
 import { PermissionService } from "@/core/rbac/PermissionService";
+import { logger } from "@/core/logging/logger";
+import { mintFabricRollBarcode } from "@/core/barcode/barcode.service";
 import type { ListQuery } from "@/lib/list-query";
 import { branchScopeWhere } from "@/lib/branch-access";
 import { convertUomQuantity } from "@/lib/uom-conversion";
@@ -397,6 +399,24 @@ export async function createGoodsReceipt(actor: ActorContext, purchaseOrderId: s
       if (existing) return existing;
     }
     throw err;
+  }
+
+  // Best-effort, post-commit: register one FABRIC_ROLL barcode per physical
+  // roll just received. Deliberately outside the transaction above (see
+  // mintFabricRollBarcode's own doc comment — numbering is always drawn
+  // outside any surrounding business transaction, matching
+  // generateDocumentNumber's own established call-before/after-transaction
+  // convention) and never allowed to fail the goods receipt itself — barcode
+  // registration is an identification mechanism, not the source of truth
+  // for this transaction (see prisma/schema.prisma's Barcode model comment).
+  for (const item of receipt.items) {
+    for (const roll of item.rolls) {
+      try {
+        await mintFabricRollBarcode({ companyId: actor.companyId, userId: actor.userId }, roll.id);
+      } catch (err) {
+        logger.error("Failed to mint Fabric Roll barcode after Goods Receipt", { error: err, fabricRollId: roll.id });
+      }
+    }
   }
 
   await writeAuditLog({

@@ -33,10 +33,12 @@ vi.mock("./job-order.service", () => ({
   startLotAtStageInTx: vi.fn(),
   writeLotStartAuditLogs: vi.fn(),
 }));
+vi.mock("@/core/barcode/barcode.service", () => ({ registerProductionLotBarcode: vi.fn() }));
 
 const { LotRepository, ProductionOrderRepository } = await import("./production.repository");
 const { PermissionService } = await import("@/core/rbac/PermissionService");
 const { assertLotMaterialReady } = await import("./lot-readiness.service");
+const { registerProductionLotBarcode } = await import("@/core/barcode/barcode.service");
 const JobOrderService = await import("./job-order.service");
 const { splitLot, mergeLots, getLotById, createLot, getVariantBreakdownSuggestions } = await import("./lot.service");
 
@@ -80,6 +82,7 @@ beforeEach(() => {
     .mockReset()
     .mockResolvedValue({ jobOrder: { id: "jo-cut" }, assignments: [{ id: "as-1", jobOrderId: "jo-cut" }] } as never);
   vi.mocked(JobOrderService.writeLotStartAuditLogs).mockReset().mockResolvedValue(undefined);
+  vi.mocked(registerProductionLotBarcode).mockReset().mockResolvedValue({} as never);
   mockPrismaClient.lotVariantBreakdown.groupBy.mockReset().mockResolvedValue([]);
   mockPrismaClient.salesOrderItem.findFirst.mockReset();
   mockTx.productionOrder.update.mockReset();
@@ -231,6 +234,29 @@ describe("createLot", () => {
       expect.anything(),
       expect.not.objectContaining({ variantBreakdown: expect.anything() })
     );
+  });
+
+  // Barcode Management & Scanning System, Phase 1 (2026-09-29) — a best-effort
+  // post-commit step; never allowed to fail lot creation itself.
+  it("registers the new lot's own PRODUCTION_LOT barcode, reusing its lotNumber verbatim", async () => {
+    vi.mocked(LotRepository.createInTx).mockResolvedValue({ id: "lot-new", lotNumber: "PROD-2026-00001-L01" } as never);
+
+    await createLot(actor, "po-1", { quantity: 100, uomId: "uom-1", cuttingAssignments: [{ employeeId: "emp-1", assignedQuantity: 100, expectedEndAt: "2099-01-01T10:00:00.000Z" }] });
+
+    expect(registerProductionLotBarcode).toHaveBeenCalledWith(
+      { companyId: "co-1", userId: "user-1" },
+      "lot-new",
+      "PROD-2026-00001-L01"
+    );
+  });
+
+  it("never fails lot creation when barcode registration throws", async () => {
+    vi.mocked(LotRepository.createInTx).mockResolvedValue({ id: "lot-new", lotNumber: "PROD-2026-00001-L01" } as never);
+    vi.mocked(registerProductionLotBarcode).mockRejectedValue(new Error("boom"));
+
+    await expect(
+      createLot(actor, "po-1", { quantity: 100, uomId: "uom-1", cuttingAssignments: [{ employeeId: "emp-1", assignedQuantity: 100, expectedEndAt: "2099-01-01T10:00:00.000Z" }] })
+    ).resolves.toMatchObject({ id: "lot-new" });
   });
 });
 

@@ -34,10 +34,12 @@ const PREFIX_BY_DOCUMENT_TYPE: Record<DocumentType, string> = {
   AI_GARMENT_PROJECT: "AGF",
   AI_DESIGNER_PROJECT: "AID",
   REPLICATE_DESIGN_PROJECT: "RPD",
+  FABRIC_ROLL: "FR",
+  SKU: "SKU",
 };
 
 /** DocumentTypes that represent master-data codes, not transactional documents. */
-export const MASTER_CODE_DOCUMENT_TYPES = ["CUSTOMER", "SUPPLIER", "EMPLOYEE", "STYLE", "MATERIAL", "CONTRACTOR"] as const;
+export const MASTER_CODE_DOCUMENT_TYPES = ["CUSTOMER", "SUPPLIER", "EMPLOYEE", "STYLE", "MATERIAL", "CONTRACTOR", "FABRIC_ROLL", "SKU"] as const;
 export type MasterCodeDocumentType = (typeof MASTER_CODE_DOCUMENT_TYPES)[number];
 
 // Master codes never reset per fiscal year (unlike invoices/orders) — every

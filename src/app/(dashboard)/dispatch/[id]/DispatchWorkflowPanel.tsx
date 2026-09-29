@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { BarcodeScanInput } from "@/components/ui/BarcodeScanInput";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { Modal } from "@/components/ui/Modal";
 import { FilePreviewModal } from "@/components/ui/FilePreviewModal";
@@ -108,6 +109,14 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [showDeliverConfirm, setShowDeliverConfirm] = useState(false);
   const [receivedByName, setReceivedByName] = useState("");
+  // Barcode Management & Scanning System, Phase 1 (2026-09-29) — scanning
+  // every carton before "Mark Packed" is optional, not mandatory: leaving
+  // this empty sends no scannedCartonIds at all, matching the plain
+  // one-click behavior this button has always had. Scanning even one carton
+  // switches the button over to sending the scanned set, so the server's own
+  // cross-check (every real carton scanned exactly once) applies.
+  const [scannedCartonIds, setScannedCartonIds] = useState<string[]>([]);
+  const [cartonScanMessage, setCartonScanMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
   const editable = dispatch.status === "DRAFT" || dispatch.status === "PACKED";
 
@@ -423,11 +432,56 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
           <p className="text-sm text-zinc-500">No cartons were recorded.</p>
         ) : (
           <div className="space-y-4">
+            {dispatch.status === "DRAFT" && (
+              <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
+                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                  Scan cartons before Mark Packed (optional)
+                </p>
+                <BarcodeScanInput
+                  placeholder="Scan a carton label…"
+                  autoFocus={false}
+                  onResolve={(outcome) => {
+                    if (!outcome.ok) {
+                      setCartonScanMessage({ ok: false, text: outcome.message });
+                      return;
+                    }
+                    const { data } = outcome;
+                    if (data.entityType !== "CARTON") {
+                      setCartonScanMessage({ ok: false, text: "That barcode is not a carton." });
+                      return;
+                    }
+                    if (!dispatch.cartons.some((c) => c.id === data.entityId)) {
+                      setCartonScanMessage({ ok: false, text: "That carton does not belong to this dispatch." });
+                      return;
+                    }
+                    if (scannedCartonIds.includes(data.entityId)) {
+                      setCartonScanMessage({ ok: false, text: "This carton was already scanned." });
+                      return;
+                    }
+                    setScannedCartonIds((prev) => [...prev, data.entityId]);
+                    setCartonScanMessage({ ok: true, text: `Scanned: ${data.code}` });
+                  }}
+                />
+                {cartonScanMessage && (
+                  <p className={`mt-1 text-xs ${cartonScanMessage.ok ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
+                    {cartonScanMessage.text}
+                  </p>
+                )}
+                {scannedCartonIds.length > 0 && (
+                  <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                    Scanned {scannedCartonIds.length} of {dispatch.cartons.length} carton(s).
+                  </p>
+                )}
+              </div>
+            )}
             {dispatch.cartons.map((carton) => (
               <div key={carton.id} className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
                 <div className="mb-2 flex items-center justify-between">
                   <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
                     Carton {carton.cartonNumber} — {carton.totalQuantity} pcs
+                    {scannedCartonIds.includes(carton.id) && (
+                      <span className="ml-2 text-xs font-normal text-green-700 dark:text-green-400">✓ Scanned</span>
+                    )}
                   </p>
                   <Barcode value={`${dispatch.dispatchNumber}-C${carton.cartonNumber}`} height={40} />
                 </div>
@@ -454,7 +508,16 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
             <Link href={`/dispatch/${dispatch.id}/edit`} className="rounded-md border border-zinc-300 px-4 py-2 text-sm text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200">
               Edit
             </Link>
-            <button onClick={() => runAction(`/api/v1/dispatches/${dispatch.id}/pack`)} disabled={isBusy} className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60">
+            <button
+              onClick={() =>
+                runAction(
+                  `/api/v1/dispatches/${dispatch.id}/pack`,
+                  scannedCartonIds.length > 0 ? { scannedCartonIds } : undefined
+                )
+              }
+              disabled={isBusy}
+              className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
+            >
               Mark Packed
             </button>
             <button onClick={() => runAction(`/api/v1/dispatches/${dispatch.id}/hold`)} disabled={isBusy} className="rounded-md border border-orange-300 px-4 py-2 text-sm text-orange-700 hover:bg-orange-50 disabled:opacity-60 dark:border-orange-800 dark:text-orange-400">

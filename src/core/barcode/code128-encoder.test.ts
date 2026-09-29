@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { encodeCode128 } from "./barcode128";
+import { encodeCode128 } from "./code128-encoder";
 
 /** Reconstructs the raw bit string a set of run-length-encoded bars represents, for round-trip verification. */
 function reconstructBits(bars: { x: number; width: number }[], totalModules: number): string {

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { BarcodeScanInput } from "@/components/ui/BarcodeScanInput";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { FilePreviewModal } from "@/components/ui/FilePreviewModal";
 import { FormField, textInputClass } from "@/components/ui/FormField";
@@ -202,6 +203,13 @@ export function MaterialRequestWorkflowPanel({
   // combinations) can be issued together in one action.
   const [rollQuantities, setRollQuantities] = useState<Record<string, string>>({});
   const [rollsLoading, setRollsLoading] = useState(false);
+  // Barcode Management & Scanning System, Phase 1 (2026-09-29) — scanning a
+  // Fabric Roll's own label here is purely a shortcut into the existing
+  // rollQuantities state this table already writes; it never bypasses the
+  // roll table's own real availability data (a scan for a roll not present
+  // in THIS line's own availableRolls is a clean error, not silently
+  // accepted).
+  const [rollScanMessage, setRollScanMessage] = useState<{ ok: boolean; text: string } | null>(null);
   // "Change Warehouse" (2026-09-16) — offered inline in the Issue modal
   // whenever the request's own warehouse has nothing, populated only from
   // warehouses getOtherWarehouseStockForLine already confirmed have real
@@ -1109,7 +1117,37 @@ export function MaterialRequestWorkflowPanel({
                   // several colors/shades can be issued together in one
                   // action; a roll with a blank/zero qty simply isn't part
                   // of this issue.
-                  <div className="max-h-64 overflow-y-auto rounded-md border border-zinc-200 dark:border-zinc-800">
+                  <>
+                    <div className="mb-2">
+                      <BarcodeScanInput
+                        placeholder="Scan a Fabric Roll label to fill its quantity…"
+                        autoFocus={false}
+                        onResolve={(outcome) => {
+                          if (!outcome.ok) {
+                            setRollScanMessage({ ok: false, text: outcome.message });
+                            return;
+                          }
+                          const { data } = outcome;
+                          if (data.entityType !== "FABRIC_ROLL") {
+                            setRollScanMessage({ ok: false, text: "That barcode is not a Fabric Roll." });
+                            return;
+                          }
+                          const roll = availableRolls.find((r) => r.id === data.entityId);
+                          if (!roll) {
+                            setRollScanMessage({ ok: false, text: "That roll is not available for this material/warehouse." });
+                            return;
+                          }
+                          setRollQuantities((prev) => ({ ...prev, [roll.id]: roll.remainingQuantity }));
+                          setRollScanMessage({ ok: true, text: `Filled ${formatRollLabel(roll)} — ${roll.remainingQuantity} ${issuingLine.uom.code}.` });
+                        }}
+                      />
+                      {rollScanMessage && (
+                        <p className={`mt-1 text-xs ${rollScanMessage.ok ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
+                          {rollScanMessage.text}
+                        </p>
+                      )}
+                    </div>
+                    <div className="max-h-64 overflow-y-auto rounded-md border border-zinc-200 dark:border-zinc-800">
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="border-b border-zinc-200 bg-zinc-50 text-left text-xs text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/40">
@@ -1151,7 +1189,8 @@ export function MaterialRequestWorkflowPanel({
                         })}
                       </tbody>
                     </table>
-                  </div>
+                    </div>
+                  </>
                 )}
               </FormField>
             )}

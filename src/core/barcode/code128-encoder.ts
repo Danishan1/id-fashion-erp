@@ -13,6 +13,14 @@
  * resulting barcode is genuinely scannable, not just visually barcode-shaped.
  * Each entry is an 11-bit (13-bit for the STOP symbol) binary string where
  * '1' = a black module and '0' = a white module, all 1 unit wide.
+ *
+ * Originally built for the AI Designer Tech Pack's own in-PDF barcode
+ * (`src/core/ai-designer/export/tech-pack-pdf.tsx`); promoted here (2026-09-29)
+ * as the one shared encoder for the whole app's Barcode Management &
+ * Scanning System, per this project's own "reuse, never duplicate" discipline
+ * — `tech-pack-pdf.tsx` still imports it from this new location, and
+ * `src/core/documents/barcode-label-pdf.tsx` (Fabric Roll/Production Lot/
+ * Carton label printing) uses it too.
  */
 
 const START_B = 104;

@@ -24,14 +24,17 @@ vi.mock("./dispatch.repository", () => ({
   },
 }));
 vi.mock("@/core/db/client", () => ({ prisma: { $transaction: vi.fn() } }));
+vi.mock("@/core/barcode/barcode.service", () => ({ replaceCartonBarcodes: vi.fn() }));
 
 const { prisma } = await import("@/core/db/client");
 const { PermissionService } = await import("@/core/rbac/PermissionService");
 const { SalesOrderRepository } = await import("@/modules/sales-orders/sales-order.repository");
 const { recordInventoryTransaction, getAvailableQuantity } = await import("@/modules/inventory/inventory.service");
 const { DispatchRepository } = await import("./dispatch.repository");
+const { replaceCartonBarcodes } = await import("@/core/barcode/barcode.service");
 const {
   createDispatch,
+  setCartons,
   markPacked,
   confirmDispatch,
   markDelivered,
@@ -75,7 +78,9 @@ beforeEach(() => {
   vi.mocked(DispatchRepository.findByIdWithDetails).mockReset();
   vi.mocked(DispatchRepository.createWithItems).mockReset();
   vi.mocked(DispatchRepository.updateStatusConditional).mockReset();
+  vi.mocked(DispatchRepository.setCartons).mockReset();
   vi.mocked(prisma.$transaction).mockReset();
+  vi.mocked(replaceCartonBarcodes).mockReset();
 });
 
 describe("createDispatch — order eligibility and remaining-quantity guard", () => {
@@ -133,6 +138,49 @@ describe("createDispatch — order eligibility and remaining-quantity guard", ()
   });
 });
 
+describe("setCartons — replaces Carton barcodes to match the freshly recreated carton ids (2026-09-29)", () => {
+  it("cleans up the previous cartons' barcodes and registers one per new carton using the dispatch number", async () => {
+    vi.mocked(DispatchRepository.findByIdWithDetails).mockResolvedValue({
+      id: "disp-1",
+      status: "DRAFT",
+      dispatchNumber: "DSP-2026-00007",
+      items: [{ id: "di-1", productId: "prod-1" }],
+      cartons: [{ id: "old-carton-1" }],
+    } as never);
+    vi.mocked(DispatchRepository.setCartons).mockResolvedValue({
+      id: "disp-1",
+      cartons: [{ id: "new-carton-1", cartonNumber: 1 }],
+    } as never);
+
+    await setCartons(actor, "disp-1", { cartons: [{ items: [{ dispatchItemId: "di-1", quantity: 5 }] }] } as never);
+
+    expect(replaceCartonBarcodes).toHaveBeenCalledWith(
+      { companyId: "co-1", userId: "user-1" },
+      {
+        previousCartonIds: ["old-carton-1"],
+        dispatchNumber: "DSP-2026-00007",
+        newCartons: [{ id: "new-carton-1", cartonNumber: 1 }],
+      }
+    );
+  });
+
+  it("never fails the real carton write even if barcode registration throws", async () => {
+    vi.mocked(DispatchRepository.findByIdWithDetails).mockResolvedValue({
+      id: "disp-1",
+      status: "DRAFT",
+      dispatchNumber: "DSP-2026-00007",
+      items: [{ id: "di-1", productId: "prod-1" }],
+      cartons: [],
+    } as never);
+    vi.mocked(DispatchRepository.setCartons).mockResolvedValue({ id: "disp-1", cartons: [] } as never);
+    vi.mocked(replaceCartonBarcodes).mockRejectedValue(new Error("boom"));
+
+    await expect(
+      setCartons(actor, "disp-1", { cartons: [{ items: [{ dispatchItemId: "di-1", quantity: 5 }] }] } as never)
+    ).resolves.toMatchObject({ id: "disp-1" });
+  });
+});
+
 describe("markPacked — every line's packed quantity must exactly match", () => {
   const baseDispatch = {
     id: "disp-1",
@@ -179,6 +227,49 @@ describe("markPacked — every line's packed quantity must exactly match", () =>
     vi.mocked(DispatchRepository.updateStatusConditional).mockResolvedValue({ count: 0 } as never);
 
     await expect(markPacked(actor, "disp-1")).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+  });
+
+  // Barcode Management & Scanning System, Phase 1 (2026-09-29) — scanning
+  // cartons is optional; omitting scannedCartonIds behaves exactly as every
+  // test above already proves. These cover the new cross-check itself.
+  describe("optional scannedCartonIds cross-check", () => {
+    const dispatchWithCartons = {
+      ...baseDispatch,
+      cartons: [
+        { id: "carton-1", cartonNumber: 1, items: [{ dispatchItem: { id: "di-1" }, quantity: 20 }] },
+        { id: "carton-2", cartonNumber: 2, items: [{ dispatchItem: { id: "di-1" }, quantity: 10 }] },
+      ],
+    };
+
+    it("rejects when a real carton was never scanned", async () => {
+      vi.mocked(DispatchRepository.findByIdWithDetails).mockResolvedValue(dispatchWithCartons as never);
+
+      await expect(markPacked(actor, "disp-1", ["carton-1"])).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+      expect(DispatchRepository.updateStatusConditional).not.toHaveBeenCalled();
+    });
+
+    it("rejects a scanned id that doesn't belong to this dispatch", async () => {
+      vi.mocked(DispatchRepository.findByIdWithDetails).mockResolvedValue(dispatchWithCartons as never);
+
+      await expect(markPacked(actor, "disp-1", ["carton-1", "carton-2", "someone-elses-carton"])).rejects.toMatchObject({
+        code: "VALIDATION_ERROR",
+      });
+    });
+
+    it("rejects the same carton scanned twice", async () => {
+      vi.mocked(DispatchRepository.findByIdWithDetails).mockResolvedValue(dispatchWithCartons as never);
+
+      await expect(markPacked(actor, "disp-1", ["carton-1", "carton-1"])).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    });
+
+    it("succeeds once every real carton has been scanned exactly once", async () => {
+      vi.mocked(DispatchRepository.findByIdWithDetails)
+        .mockResolvedValueOnce(dispatchWithCartons as never)
+        .mockResolvedValueOnce({ id: "disp-1", status: "PACKED" } as never);
+      vi.mocked(DispatchRepository.updateStatusConditional).mockResolvedValue({ count: 1 } as never);
+
+      await expect(markPacked(actor, "disp-1", ["carton-1", "carton-2"])).resolves.toBeDefined();
+    });
   });
 });
 

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Modal } from "@/components/ui/Modal";
+import { GenerateBarcodeButton } from "@/components/ui/GenerateBarcodeButton";
 
 interface Variant {
   id: string;
@@ -160,6 +161,7 @@ export function VariantsSection({ productId, onClose }: VariantsSectionProps) {
                       <th className="px-3 py-2 font-medium">SKU</th>
                       <th className="px-3 py-2 font-medium">Color</th>
                       <th className="px-3 py-2 font-medium">Size</th>
+                      <th className="px-3 py-2 font-medium">Barcode</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -168,6 +170,9 @@ export function VariantsSection({ productId, onClose }: VariantsSectionProps) {
                         <td className="px-3 py-2 font-mono text-xs text-zinc-700 dark:text-zinc-200">{v.skuCode}</td>
                         <td className="px-3 py-2 text-zinc-700 dark:text-zinc-200">{v.color.name}</td>
                         <td className="px-3 py-2 text-zinc-700 dark:text-zinc-200">{v.size.name}</td>
+                        <td className="px-3 py-2">
+                          <GenerateBarcodeButton entityType="SKU" entityId={v.id} />
+                        </td>
                       </tr>
                     ))}
                   </tbody>
