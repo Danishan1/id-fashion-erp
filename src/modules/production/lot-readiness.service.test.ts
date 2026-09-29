@@ -4,6 +4,7 @@ const mockPrisma = vi.hoisted(() => ({
   lot: { aggregate: vi.fn() },
   materialRequest: { count: vi.fn() },
   materialRequestItem: { findMany: vi.fn() },
+  salesOrderItem: { findUnique: vi.fn() },
 }));
 vi.mock("@/core/db/client", () => ({ prisma: mockPrisma }));
 vi.mock("./production.repository", () => ({ ProductionOrderRepository: { findAnyById: vi.fn() } }));
@@ -117,6 +118,21 @@ describe("getLotMaterialReadiness", () => {
     expect(mockPrisma.lot.aggregate).toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ status: { in: ["PLANNED", "IN_PROGRESS", "ON_HOLD", "COMPLETED"] } }) })
     );
+  });
+});
+
+describe("Sales-Order-level material requests", () => {
+  it("counts a request raised from BOM/MRP against the order's Sales Order", async () => {
+    vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue({ id: "po-1", salesOrderItemId: "soi-1", productId: "prod-1" } as never);
+    mockPrisma.salesOrderItem.findUnique.mockResolvedValue({ salesOrderId: "so-1" });
+    mockPrisma.materialRequestItem.findMany.mockResolvedValue(issued(9));
+
+    const r = await getLotMaterialReadiness("co-1", "po-1", { newLotPieces: 6 });
+
+    const where = { companyId: "co-1", OR: [{ productionOrderId: "po-1" }, { productionOrderId: null, salesOrderId: "so-1" }] };
+    expect(mockPrisma.materialRequest.count).toHaveBeenCalledWith({ where: { ...where, status: { not: "CANCELLED" } } });
+    expect(r.rows[0]).toMatchObject({ requiredQuantity: 9, issuedQuantity: 9, remainingQuantity: 0 });
+    expect(r.ready).toBe(true);
   });
 });
 

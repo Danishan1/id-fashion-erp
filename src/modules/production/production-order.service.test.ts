@@ -3,6 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/numbering/DocumentNumberingService", () => ({ generateDocumentNumber: vi.fn() }));
 vi.mock("@/modules/bom-mrp/bom.repository", () => ({ BomRepository: { findByProductId: vi.fn() } }));
+vi.mock("./material-request-scope", () => ({
+  materialRequestScopeForOrder: vi.fn(async (companyId: string, productionOrderId: string) => ({ companyId, OR: [{ productionOrderId }] })),
+}));
 vi.mock("@/modules/bom-mrp/mrp.service", () => ({ getMaterialRequirementForOrderLine: vi.fn() }));
 vi.mock("./production-progress.service", () => ({ getProductionOrderProgress: vi.fn() }));
 vi.mock("@/modules/inventory/material-request.service", () => ({ createMaterialRequest: vi.fn() }));
@@ -525,7 +528,7 @@ describe("getProductionOrderMaterialComparison — Planned vs Issued (Phase 8)",
       ])
     );
     expect(prisma.materialRequestItem.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { materialRequest: { companyId: "co-1", productionOrderId: "po-1" } } })
+      expect.objectContaining({ where: { materialRequest: { companyId: "co-1", OR: [{ productionOrderId: "po-1" }] } } })
     );
   });
 

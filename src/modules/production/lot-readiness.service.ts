@@ -3,6 +3,7 @@ import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { convertUomQuantity } from "@/lib/uom-conversion";
 import { getMaterialRequirementForOrderLine } from "@/modules/bom-mrp/mrp.service";
 import { ProductionOrderRepository } from "./production.repository";
+import { materialRequestScopeForOrder } from "./material-request-scope";
 
 const EPSILON = 0.0001;
 
@@ -82,8 +83,10 @@ export async function getLotMaterialReadiness(
   const newLotPieces = options.newLotPieces;
   const totalPieces = existingLotPieces + newLotPieces;
 
+  // Requests raised from this order, or earlier from BOM/MRP against its Sales Order.
+  const requestScope = await materialRequestScopeForOrder(companyId, productionOrderId, order.salesOrderItemId);
   const materialRequestCount = await prisma.materialRequest.count({
-    where: { companyId, productionOrderId, status: { not: "CANCELLED" } },
+    where: { ...requestScope, status: { not: "CANCELLED" } },
   });
 
   // Per-piece consumption from the same Effective-BOM resolver every other
@@ -99,7 +102,7 @@ export async function getLotMaterialReadiness(
   // issuedQuantity, so a substitute correctly counts toward the material it
   // replaced.
   const lines = await prisma.materialRequestItem.findMany({
-    where: { materialRequest: { companyId, productionOrderId, status: { not: "CANCELLED" } } },
+    where: { materialRequest: { ...requestScope, status: { not: "CANCELLED" } } },
     select: {
       materialId: true,
       issuedQuantity: true,
@@ -147,7 +150,7 @@ export async function getLotMaterialReadiness(
       : "This style has no approved BOM, so no material requirement can be calculated. Approve a BOM version first.";
   } else if (materialRequestCount === 0) {
     blockingMessage =
-      "Cutting worker assignment, material request and material issue are required before creating the production lot. No material request exists for this production order yet — generate one first.";
+      "Cutting worker assignment, material request and material issue are required before creating the production lot. No material request exists for this production order or its Sales Order yet — generate one first.";
   } else {
     const short = rows.find((r) => r.remainingQuantity > EPSILON);
     if (short) {
