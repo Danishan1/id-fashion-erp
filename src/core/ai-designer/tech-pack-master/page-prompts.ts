@@ -1,4 +1,4 @@
-import { gradedValue, MASTER_PAGE_DEFINITIONS, type MasterAnalysis, type MasterField } from "./schema";
+import { MASTER_PAGE_DEFINITIONS, type MasterAnalysis, type MasterField } from "./schema";
 
 /**
  * Builds the 7 tech-pack page image prompts from the (possibly user-edited)
@@ -88,12 +88,10 @@ function page3(a: MasterAnalysis): string {
 
 ${header(a, 3, "BILL OF MATERIALS / BOM")}
 
-PAGE CONTENT — BILL OF MATERIALS / BOM (a full-width table is the main element; a small thumbnail CAD flat of the garment in the top-right corner):
-${table(
-  ["#", "Item", "Description", "Composition", "GSM", "Color", "Consumption", "Supplier", "Notes"],
-  a.bom.map((b, i) => [String(i + 1), b.item, b.description, b.composition, b.gsm, b.color, b.consumption, b.supplier || "TBD", b.notes])
-)}
-Below the table: "MATERIAL NOTES" and "QUALITY NOTES" boxes — all materials to meet buyer quality standards; shade band approval before bulk; colour fastness and shrinkage tests required.`;
+PAGE CONTENT — MATERIALS BOARD ILLUSTRATION ONLY, occupying roughly the top 40% of the page (a real BOM data table is placed underneath it separately by the document system — do NOT draw any table, list, item names, descriptions, compositions, GSM values, consumption numbers or supplier names anywhere on this image):
+1. A tidy flat-lay "materials & trims board": individual generic swatch/icon tiles arranged in a clean grid — a main fabric swatch square, a lining/contrast swatch, a thread spool icon, a button icon, a zipper pull icon, a woven main-label tag icon, a size-label icon, a care-label icon, a hangtag icon, a polybag icon, a small carton icon — connected with thin leader lines to a small garment CAD thumbnail in a corner.
+2. The only text allowed on the image is generic one-word icon captions such as "Fabric", "Thread", "Trim", "Label", "Packaging" — nothing product-specific, no numbers, no supplier names.
+3. Leave the bottom ~55% of the page a plain empty white area with nothing drawn on it — the real BOM table goes there.`;
 }
 
 function page4(a: MasterAnalysis): string {
@@ -128,16 +126,11 @@ function page5(a: MasterAnalysis): string {
 
 ${header(a, 5, "MEASUREMENTS & SPEC TABLE")}
 
-PAGE CONTENT — MEASUREMENTS & SPEC TABLE:
-1. A BLACK-AND-WHITE line-art measurement diagram of the garment (front and back flats, no color, no shading) with thin arrows labelled by POM code (${a.measurements.map((m) => m.code).join(", ")}).
-2. Spec table for base size ${a.baseSize}:
-${table(
-  ["Code", "Point of Measure", `${a.baseSize} (cm)`, "Tolerance"],
-  a.measurements.map((m) => [m.code, m.pom, String(gradedValue(a, m, a.baseSize)), m.tolerance])
-)}
-3. HOW TO MEASURE section:
-${a.measurements.map((m) => `${m.code} — ${m.pom}: ${m.howToMeasure}`).join("\n")}
-4. Measurement notes: measure garment flat and unstretched; all measurements in cm.`;
+${garmentRef(a)}
+
+PAGE CONTENT — MEASUREMENT DIAGRAM ONLY, occupying roughly the top 45% of the page (the real spec table and how-to-measure instructions are placed underneath it separately by the document system — do NOT draw any spec table, measurement values, tolerances or instruction text anywhere on this image):
+1. A BLACK-AND-WHITE line-art measurement diagram of the garment (front and back flats, no colour, no shading, no fill) with thin arrows/leader lines labelled ONLY with short single point-of-measure codes (${a.measurements.map((m) => m.code).join(", ")}) at the exact location each measurement is taken — no measurement numbers, no words, no other text anywhere on the diagram besides these short codes.
+2. Leave the bottom ~50% of the page a plain empty white area with nothing drawn on it — the real spec table goes there.`;
 }
 
 function page6(a: MasterAnalysis): string {
@@ -145,15 +138,11 @@ function page6(a: MasterAnalysis): string {
 
 ${header(a, 6, "SIZE GRADING")}
 
-PAGE CONTENT — SIZE GRADING:
-1. Grade table (the main element):
-${table(
-  ["Code", "Point of Measure", ...a.sizes, "Grade Rule"],
-  a.measurements.map((m) => [m.code, m.pom, ...a.sizes.map((s) => String(gradedValue(a, m, s))), `± ${m.gradeRule}`])
-)}
-2. Grade progression diagram: nested black outline silhouettes of the garment from smallest (${a.sizes[0]}) to largest (${a.sizes[a.sizes.length - 1]}) size, base size ${a.baseSize} highlighted.
-3. Size explanation: base sample size ${a.baseSize}; grading is applied equally per size step using the grade rules above.
-4. Fit notes: ${val(a.identification, "fit")} fit; maintain proportions across sizes.`;
+${garmentRef(a)}
+
+PAGE CONTENT — GRADE PROGRESSION DIAGRAM ONLY, occupying roughly the top 45% of the page (the real numeric grade table is placed underneath it separately by the document system — do NOT draw any grade table or measurement numbers anywhere on this image):
+1. A grade progression diagram: nested black-outline silhouettes of the garment front view, from smallest (${a.sizes[0]}) to largest (${a.sizes[a.sizes.length - 1]}) size, layered concentrically (smallest innermost, largest outermost) so the size progression is visually clear, with the base size ${a.baseSize} silhouette drawn as a bold solid black outline while every other size is a lighter grey outline. Label each silhouette with only its size code (${a.sizes.join(", ")}) placed just outside its own outline — no measurement numbers anywhere.
+2. Leave the bottom ~50% of the page a plain empty white area with nothing drawn on it — the real grade table goes there.`;
 }
 
 function page7(a: MasterAnalysis): string {

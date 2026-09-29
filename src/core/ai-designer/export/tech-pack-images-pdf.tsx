@@ -4,14 +4,21 @@ import { gradedValue, type MasterAnalysis, type MasterField } from "@/core/ai-de
 /**
  * Master-prompt (hybrid) Tech Pack PDF — 7 portrait pages in order:
  *   AI pages (1, 2, 4, 7): the AI-generated page image, full page.
- *   TYPESET pages (3, 5, 6): drawn here from the analysis — BOM, spec table,
- *     grading — so every number is exact. Same header/footer as the AI pages.
- * A missing AI image gets a clear placeholder, so the PDF always has 7 pages.
+ *   HYBRID pages (3, 5, 6 — BOM, spec table, grading): the AI-generated
+ *     illustration (a materials board / measurement diagram / grade
+ *     silhouettes — never the actual numbers, see page-prompts.ts) composited
+ *     at the top of the page, with the real table drawn here directly from
+ *     the analysis underneath it, so every number is exact. Same
+ *     header/footer as the AI pages. A missing illustration (still
+ *     generating, failed, or an older tech pack generated before this
+ *     illustration existed) is simply omitted — the real table alone still
+ *     renders correctly.
+ * A missing AI page image gets a clear placeholder, so the PDF always has 7 pages.
  */
 export interface TechPackPdfPage {
   pageNumber: number;
   pageTitle: string;
-  mode: "AI" | "TYPESET";
+  mode: "AI" | "HYBRID";
   image: { buffer: Buffer; mimeType: string } | null;
 }
 
@@ -39,7 +46,8 @@ const s = StyleSheet.create({
   noteBox: { borderWidth: 0.5, borderColor: "#a1a1aa", padding: 6, marginTop: 10 },
   noteTitle: { fontFamily: "Helvetica-Bold", fontSize: 8, marginBottom: 3 },
   footer: { position: "absolute", bottom: 20, left: 32, right: 32, fontSize: 7, fontFamily: "Helvetica-Oblique", color: "#52525b", borderTopWidth: 0.5, borderTopColor: "#d4d4d8", paddingTop: 5 },
-  refImage: { width: 120, height: 180, objectFit: "contain", marginLeft: 12 },
+  illustrationBox: { height: 260, marginBottom: 10, alignItems: "center", justifyContent: "center", borderWidth: 0.5, borderColor: "#e4e4e7" },
+  illustrationImage: { width: "100%", height: "100%", objectFit: "contain" },
   placeholder: { flex: 1, alignItems: "center", justifyContent: "center", padding: 40 },
 });
 
@@ -83,6 +91,16 @@ function Table({ cols, rows, highlightCol }: { cols: Col[]; rows: string[][]; hi
   );
 }
 
+function Illustration({ image }: { image: { buffer: Buffer; mimeType: string } | null }) {
+  if (!image) return null;
+  return (
+    <View style={s.illustrationBox}>
+      {/* eslint-disable-next-line jsx-a11y/alt-text -- @react-pdf Image */}
+      <Image src={dataUri(image)} style={s.illustrationImage} />
+    </View>
+  );
+}
+
 function TypesetFrame({ a, pageNumber, title, children }: { a: MasterAnalysis; pageNumber: number; title: string; children: React.ReactNode }) {
   const brand = val(a.identification, "brand");
   return (
@@ -112,9 +130,10 @@ function TypesetFrame({ a, pageNumber, title, children }: { a: MasterAnalysis; p
   );
 }
 
-function BomPage({ a }: { a: MasterAnalysis }) {
+function BomPage({ a, illustration }: { a: MasterAnalysis; illustration: { buffer: Buffer; mimeType: string } | null }) {
   return (
     <TypesetFrame a={a} pageNumber={3} title="BILL OF MATERIALS / BOM">
+      <Illustration image={illustration} />
       <Table
         cols={[
           { label: "#", flex: 0.4, align: "center" },
@@ -141,25 +160,20 @@ function BomPage({ a }: { a: MasterAnalysis }) {
   );
 }
 
-function SpecPage({ a, reference }: { a: MasterAnalysis; reference: { buffer: Buffer; mimeType: string } | null }) {
+function SpecPage({ a, illustration }: { a: MasterAnalysis; illustration: { buffer: Buffer; mimeType: string } | null }) {
   return (
     <TypesetFrame a={a} pageNumber={5} title="MEASUREMENTS & SPEC TABLE">
-      <View style={{ flexDirection: "row" }}>
-        <View style={{ flex: 1 }}>
-          <Text style={s.sectionTitle}>SPEC TABLE — BASE SIZE {a.baseSize}</Text>
-          <Table
-            cols={[
-              { label: "Code", flex: 0.5, align: "center" },
-              { label: "Point of Measure", flex: 2 },
-              { label: `${a.baseSize} (cm)`, flex: 0.8, align: "center" },
-              { label: "Tolerance", flex: 0.8, align: "center" },
-            ]}
-            rows={a.measurements.map((m) => [m.code, m.pom, String(gradedValue(a, m, a.baseSize)), m.tolerance])}
-          />
-        </View>
-        {/* eslint-disable-next-line jsx-a11y/alt-text -- @react-pdf Image */}
-        {reference && <Image src={dataUri(reference)} style={s.refImage} />}
-      </View>
+      <Illustration image={illustration} />
+      <Text style={s.sectionTitle}>SPEC TABLE — BASE SIZE {a.baseSize}</Text>
+      <Table
+        cols={[
+          { label: "Code", flex: 0.5, align: "center" },
+          { label: "Point of Measure", flex: 2 },
+          { label: `${a.baseSize} (cm)`, flex: 0.8, align: "center" },
+          { label: "Tolerance", flex: 0.8, align: "center" },
+        ]}
+        rows={a.measurements.map((m) => [m.code, m.pom, String(gradedValue(a, m, a.baseSize)), m.tolerance])}
+      />
       <Text style={s.sectionTitle}>HOW TO MEASURE</Text>
       <Table
         cols={[
@@ -177,10 +191,11 @@ function SpecPage({ a, reference }: { a: MasterAnalysis; reference: { buffer: Bu
   );
 }
 
-function GradingPage({ a }: { a: MasterAnalysis }) {
+function GradingPage({ a, illustration }: { a: MasterAnalysis; illustration: { buffer: Buffer; mimeType: string } | null }) {
   const baseIdx = a.sizes.indexOf(a.baseSize);
   return (
     <TypesetFrame a={a} pageNumber={6} title="SIZE GRADING">
+      <Illustration image={illustration} />
       <Text style={s.sectionTitle}>GRADE TABLE (cm)</Text>
       <Table
         cols={[
@@ -207,21 +222,15 @@ function GradingPage({ a }: { a: MasterAnalysis }) {
   );
 }
 
-export async function renderTechPackImagesPdf(params: {
-  title: string;
-  analysis: MasterAnalysis;
-  pages: TechPackPdfPage[];
-  /** The design photo, shown beside the spec table on page 5. */
-  reference: { buffer: Buffer; mimeType: string } | null;
-}): Promise<Buffer> {
+export async function renderTechPackImagesPdf(params: { title: string; analysis: MasterAnalysis; pages: TechPackPdfPage[] }): Promise<Buffer> {
   const { analysis: a } = params;
   const doc = (
     <Document title={params.title}>
       {params.pages.map((p) => {
-        if (p.mode === "TYPESET") {
-          if (p.pageNumber === 3) return <BomPage key={p.pageNumber} a={a} />;
-          if (p.pageNumber === 5) return <SpecPage key={p.pageNumber} a={a} reference={params.reference} />;
-          if (p.pageNumber === 6) return <GradingPage key={p.pageNumber} a={a} />;
+        if (p.mode === "HYBRID") {
+          if (p.pageNumber === 3) return <BomPage key={p.pageNumber} a={a} illustration={p.image} />;
+          if (p.pageNumber === 5) return <SpecPage key={p.pageNumber} a={a} illustration={p.image} />;
+          if (p.pageNumber === 6) return <GradingPage key={p.pageNumber} a={a} illustration={p.image} />;
         }
         return (
           <Page key={p.pageNumber} size={PAGE_SIZE} style={s.page}>

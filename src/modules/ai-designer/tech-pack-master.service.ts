@@ -109,11 +109,13 @@ export async function startMasterTechPack(actor: ActorContext, projectId: string
     });
 
     const json: MasterTechPackJson = { format: "MASTER_V1", analysis };
-    // Typeset pages (BOM / spec / grading) are drawn by the PDF renderer, never by the AI.
+    // Every page now gets a real AI-generated image (HYBRID pages 3/5/6 get an
+    // illustration-only image; the real table is composited beside/below it by
+    // the PDF renderer — see schema.ts's MasterPageMode doc comment).
     const pages = buildTechPackPagePrompts(analysis).map((p) => ({
       ...p,
       imageAttachmentId: null,
-      imageStatus: pageMode(p.pageNumber) === "AI" ? ("IN_PROGRESS" as const) : null,
+      imageStatus: "IN_PROGRESS" as const,
     }));
 
     const updated = await prisma.aiDesignerTechPack.update({
@@ -197,9 +199,7 @@ export async function generateTechPackPageImages(actor: ActorContext, projectId:
     const { attachment, buffer } = await getAttachmentForDownload(actor.companyId, imageAttachmentId);
     const reference = { buffer, mimeType: attachment.mimeType };
 
-    const queue = techPack.pages.filter(
-      (p) => pageMode(p.pageNumber) === "AI" && (pageNumbers ? pageNumbers.includes(p.pageNumber) : p.imageStatus !== "SUCCESS")
-    );
+    const queue = techPack.pages.filter((p) => (pageNumbers ? pageNumbers.includes(p.pageNumber) : p.imageStatus !== "SUCCESS"));
     const workers = Array.from({ length: Math.min(PAGE_CONCURRENCY, queue.length) }, async () => {
       for (let page = queue.shift(); page; page = queue.shift()) {
         await generateOnePage(actor, projectId, project.projectNumber, page.id, page.promptText ?? "", reference);
@@ -217,7 +217,7 @@ export async function generateTechPackPageImages(actor: ActorContext, projectId:
 /** Marks the chosen pages as queued; the caller then runs generateTechPackPageImages (in `after()`). */
 export async function queuePageRegeneration(actor: ActorContext, projectId: string, techPackId: string, pageNumbers: number[]) {
   const { techPack } = await getMasterTechPack(actor.companyId, projectId, techPackId);
-  const targets = techPack.pages.map((p) => p.pageNumber).filter((n) => pageNumbers.includes(n) && pageMode(n) === "AI");
+  const targets = techPack.pages.map((p) => p.pageNumber).filter((n) => pageNumbers.includes(n));
   if (targets.length === 0) throw new BusinessRuleError("VALIDATION_ERROR", "No matching tech pack pages to regenerate.");
   await prisma.aiDesignerTechPackPage.updateMany({
     where: { techPackId, pageNumber: { in: targets } },
@@ -314,13 +314,8 @@ export async function exportMasterTechPackPdf(actor: ActorContext, projectId: st
       : Promise.resolve(null);
 
   const pages = await Promise.all(
-    techPack.pages.map(async (p) => {
-      const mode = pageMode(p.pageNumber);
-      return { pageNumber: p.pageNumber, pageTitle: p.pageTitle, mode, image: mode === "AI" ? await loadImage(p.imageAttachmentId) : null };
-    })
+    techPack.pages.map(async (p) => ({ pageNumber: p.pageNumber, pageTitle: p.pageTitle, mode: pageMode(p.pageNumber), image: await loadImage(p.imageAttachmentId) }))
   );
-  const full = await AiDesignerProjectRepository.findByIdWithDetails(actor.companyId, projectId);
-  const reference = await loadImage(full?.currentVersion?.currentImage?.imageAttachmentId);
 
   const { renderTechPackImagesPdf } = await import("@/core/ai-designer/export/tech-pack-images-pdf");
   const styleNumber = project?.projectNumber ?? "tech-pack";
@@ -328,7 +323,6 @@ export async function exportMasterTechPackPdf(actor: ActorContext, projectId: st
     title: `Tech Pack ${styleNumber}`,
     analysis: json.analysis,
     pages,
-    reference,
   });
   return { buffer, mimeType: "application/pdf", fileName: `tech-pack-${styleNumber}.pdf` };
 }

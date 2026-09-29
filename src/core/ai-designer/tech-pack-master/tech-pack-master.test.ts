@@ -79,9 +79,9 @@ describe("master tech pack schema", () => {
     expect(validateMasterAnalysis(analysis({ measurements: measurementsWithZeroGrade, artwork: [] }))).toMatchObject({ success: true });
   });
 
-  it("typesets the table-heavy pages and leaves the drawing pages to the AI", () => {
+  it("keeps pages 1/2/4/7 as full AI images and pages 3/5/6 as an AI illustration plus the real typeset table", () => {
     expect(AI_PAGE_NUMBERS).toEqual([1, 2, 4, 7]);
-    expect([3, 5, 6].map(pageMode)).toEqual(["TYPESET", "TYPESET", "TYPESET"]);
+    expect([3, 5, 6].map(pageMode)).toEqual(["HYBRID", "HYBRID", "HYBRID"]);
   });
 
   it("tags the stored JSON so older table-based tech packs are distinguishable", () => {
@@ -104,11 +104,14 @@ describe("buildTechPackPagePrompts", () => {
     }
   });
 
-  it("puts the computed grade table on page 6 and a black-and-white diagram on page 5", () => {
+  it("asks the AI for an illustration only on pages 3/5/6, never the real BOM/measurement/grade numbers (so the image can't scramble them)", () => {
     const pages = buildTechPackPagePrompts(analysis());
-    expect(pages[5].promptText).toContain("| A | POM 0 | 46 | 48 | 50 | 52 | 54 | ± 2 |");
     expect(pages[4].promptText).toContain("BLACK-AND-WHITE line-art measurement diagram");
-    expect(pages[2].promptText.match(/\| \d+ \| Item/g)?.length).toBe(14);
+    expect(pages[4].promptText).not.toMatch(/±\s*\d/);
+    expect(pages[4].promptText).not.toMatch(/\d+\s*\(cm\)/);
+    expect(pages[2].promptText).not.toMatch(/\| \d+ \| Item/);
+    expect(pages[5].promptText).not.toMatch(/±\s*\d/);
+    expect(pages[5].promptText).not.toMatch(/\| Grade Rule \|/);
   });
 
   it("states NO ARTWORK when the garment has none", () => {

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { MasterAnalysis, MasterField } from "@/core/ai-designer/tech-pack-master/schema";
-import { AI_PAGE_NUMBERS, gradedValue, pageMode } from "@/core/ai-designer/tech-pack-master/schema";
+import { gradedValue, pageMode } from "@/core/ai-designer/tech-pack-master/schema";
 
 /**
  * Master-prompt Tech Pack (2026-09-28): one click analyses the current
@@ -169,12 +169,12 @@ function RowTable<T extends Record<string, unknown>>({
 }
 
 /**
- * Pages 3/5/6 are never rendered as AI images (see pageMode) — but a
- * generic "trust us, it's in the PDF" card with no visible numbers looked
- * indistinguishable from "this failed to generate" (user-reported). This
- * shows the actual saved data right here, live, using the exact same
- * gradedValue() math the PDF itself uses, so the real content is visible
- * on screen without needing to download anything.
+ * Pages 3/5/6 (HYBRID) get a real AI-generated illustration too, but their
+ * image deliberately never contains the actual numbers (see page-prompts.ts —
+ * image models scramble dense tables). This shows the guaranteed-correct
+ * saved data right here, live, using the exact same gradedValue() math the
+ * PDF itself uses, so the real content is always visible on screen next to
+ * the illustration, and stays visible even before/without a generated image.
  */
 function TypesetPreview({ pageNumber, analysis }: { pageNumber: number; analysis: MasterAnalysis | undefined }) {
   if (!analysis) return <span className="text-2xl">📋</span>;
@@ -359,7 +359,7 @@ export function TechPackMasterPanel({ projectId, onChanged }: { projectId: strin
           await fetch(`/api/v1/ai-designer/projects/${projectId}/tech-pack/${techPack.id}/pages/regenerate`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ pageNumbers: AI_PAGE_NUMBERS }),
+            body: JSON.stringify({ pageNumbers: techPack.pages.map((p) => p.pageNumber) }),
           })
         );
         apply(r.data, false);
@@ -391,8 +391,8 @@ export function TechPackMasterPanel({ projectId, onChanged }: { projectId: strin
 
   const unconfirmed = useMemo(() => (draft ? countUnconfirmed(draft) : null), [draft]);
   const totalUnconfirmed = unconfirmed ? Object.values(unconfirmed).reduce((a, b) => a + b, 0) : 0;
-  // Typeset pages are always ready — they are drawn from the data at PDF time.
-  const doneCount = techPack?.pages.filter((p) => pageMode(p.pageNumber) === "TYPESET" || p.imageStatus === "SUCCESS").length ?? 0;
+  const allPageNumbers = useMemo(() => techPack?.pages.map((p) => p.pageNumber) ?? [], [techPack]);
+  const doneCount = techPack?.pages.filter((p) => p.imageStatus === "SUCCESS").length ?? 0;
 
   if (techPack === undefined) return <p className="text-sm text-zinc-400">Loading tech pack…</p>;
 
@@ -444,50 +444,49 @@ export function TechPackMasterPanel({ projectId, onChanged }: { projectId: strin
           <div>
             <div className="mb-2 flex items-center justify-between">
               <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">Pages</h3>
-              <button type="button" onClick={() => regenerate(AI_PAGE_NUMBERS)} disabled={Boolean(busy) || generating} className="text-xs font-medium text-violet-700 hover:underline disabled:opacity-50 dark:text-violet-300">
+              <button type="button" onClick={() => regenerate(allPageNumbers)} disabled={Boolean(busy) || generating} className="text-xs font-medium text-violet-700 hover:underline disabled:opacity-50 dark:text-violet-300">
                 ↻ Regenerate all pages
               </button>
             </div>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
-              {techPack.pages.map((p) =>
-                pageMode(p.pageNumber) === "TYPESET" ? (
-                  <div key={p.id} className="overflow-hidden rounded-lg border border-emerald-200 bg-white dark:border-emerald-900 dark:bg-zinc-900">
-                    <div className="flex aspect-[2/3] w-full flex-col items-start justify-start gap-1 overflow-hidden bg-emerald-50/60 p-2 dark:bg-emerald-950/20">
-                      <span className="mb-0.5 text-[9px] font-semibold text-emerald-700 dark:text-emerald-300">📋 Your real data:</span>
-                      <TypesetPreview pageNumber={p.pageNumber} analysis={techPack.garmentAnalysisJson?.analysis} />
-                    </div>
+              {techPack.pages.map((p) => {
+                const hybrid = pageMode(p.pageNumber) === "HYBRID";
+                return (
+                  <div key={p.id} className="overflow-hidden rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+                    <button type="button" onClick={() => p.imageAttachmentId && setPreview(p)} className="block aspect-[2/3] w-full bg-zinc-50 dark:bg-zinc-950">
+                      {p.imageStatus === "IN_PROGRESS" ? (
+                        <span className="flex h-full animate-pulse items-center justify-center text-[10px] text-violet-600">Generating…</span>
+                      ) : p.imageAttachmentId ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={imgUrl(p.imageAttachmentId)} alt={p.pageTitle} className="h-full w-full object-contain" />
+                      ) : (
+                        <span className="flex h-full items-center justify-center p-2 text-center text-[10px] text-rose-600" title={p.imageError ?? ""}>
+                          {p.imageStatus === "FAILED" ? `Failed: ${(p.imageError ?? "").slice(0, 80)}` : "Not generated"}
+                        </span>
+                      )}
+                    </button>
                     <div className="p-1.5">
                       <p className="truncate text-[10px] font-semibold text-zinc-700 dark:text-zinc-200">
                         {p.pageNumber}. {p.pageTitle}
                       </p>
-                      <p className="text-[10px] text-zinc-400">Typeset exactly like this in the PDF — updates when you save the analysis.</p>
+                      {hybrid && (
+                        <div className="mt-1 rounded border border-emerald-200 bg-emerald-50/60 p-1 dark:border-emerald-900 dark:bg-emerald-950/20">
+                          <p className="mb-0.5 text-[9px] font-semibold text-emerald-700 dark:text-emerald-300">📋 Real data (always exact):</p>
+                          <TypesetPreview pageNumber={p.pageNumber} analysis={techPack.garmentAnalysisJson?.analysis} />
+                        </div>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => regenerate([p.pageNumber])}
+                        disabled={Boolean(busy) || p.imageStatus === "IN_PROGRESS"}
+                        className="mt-1 text-[10px] font-medium text-violet-700 hover:underline disabled:opacity-40 dark:text-violet-300"
+                      >
+                        ↻ Regenerate
+                      </button>
                     </div>
                   </div>
-                ) : (
-                <div key={p.id} className="overflow-hidden rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
-                  <button type="button" onClick={() => p.imageAttachmentId && setPreview(p)} className="block aspect-[2/3] w-full bg-zinc-50 dark:bg-zinc-950">
-                    {p.imageStatus === "IN_PROGRESS" ? (
-                      <span className="flex h-full animate-pulse items-center justify-center text-[10px] text-violet-600">Generating…</span>
-                    ) : p.imageAttachmentId ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={imgUrl(p.imageAttachmentId)} alt={p.pageTitle} className="h-full w-full object-contain" />
-                    ) : (
-                      <span className="flex h-full items-center justify-center p-2 text-center text-[10px] text-rose-600" title={p.imageError ?? ""}>
-                        {p.imageStatus === "FAILED" ? `Failed: ${(p.imageError ?? "").slice(0, 80)}` : "Not generated"}
-                      </span>
-                    )}
-                  </button>
-                  <div className="p-1.5">
-                    <p className="truncate text-[10px] font-semibold text-zinc-700 dark:text-zinc-200">
-                      {p.pageNumber}. {p.pageTitle}
-                    </p>
-                    <button type="button" onClick={() => regenerate([p.pageNumber])} disabled={Boolean(busy) || p.imageStatus === "IN_PROGRESS"} className="text-[10px] font-medium text-violet-700 hover:underline disabled:opacity-40 dark:text-violet-300">
-                      ↻ Regenerate
-                    </button>
-                  </div>
-                </div>
-                )
-              )}
+                );
+              })}
             </div>
           </div>
 
@@ -687,7 +686,7 @@ export function TechPackMasterPanel({ projectId, onChanged }: { projectId: strin
           {/* Page prompts */}
           <Section title="Page Prompts (advanced — edit the exact prompt sent for each page)">
             <div className="space-y-3">
-              {techPack.pages.filter((p) => pageMode(p.pageNumber) === "AI").map((p) => {
+              {techPack.pages.map((p) => {
                 const value = promptDrafts[p.pageNumber] ?? p.promptText ?? "";
                 const changed = promptDrafts[p.pageNumber] !== undefined && promptDrafts[p.pageNumber] !== p.promptText;
                 return (

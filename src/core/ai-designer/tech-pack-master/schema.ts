@@ -166,21 +166,29 @@ export function isMasterTechPackJson(value: unknown): value is MasterTechPackJso
 }
 
 /**
- * Hybrid tech pack (2026-09-28): pages that are mostly garment drawings are
- * AI page images; the three table-heavy pages (BOM, spec table, grading) are
- * TYPESET by the PDF renderer straight from the analysis, because image
- * models scramble dense tables (confirmed live: a 14-row BOM came back with
- * duplicated/shuffled rows even though the data was correct).
+ * Hybrid tech pack (2026-09-28, revised 2026-09-29): every page now gets a
+ * real AI-generated image, matching the visual style the user asked for
+ * across all 7 pages. Pages 1/2/4/7 (AI) are a full-page AI illustration.
+ * Pages 3/5/6 (HYBRID — BOM, spec table, grading) are the table-heavy pages:
+ * the AI still draws a real illustration for them (a materials board, a
+ * measurement diagram, a grade-progression silhouette diagram), but its
+ * prompt (see page-prompts.ts) deliberately asks for ONLY that illustration,
+ * never the actual numbers/table — because image models scramble dense
+ * tables (confirmed live: a 14-row BOM came back with duplicated/shuffled
+ * rows even though the data was correct). The real table for a HYBRID page
+ * is always typeset by the PDF renderer straight from the analysis and
+ * composited below the AI illustration, so the illustration can never make a
+ * number wrong.
  */
-export type MasterPageMode = "AI" | "TYPESET";
+export type MasterPageMode = "AI" | "HYBRID";
 
 export const MASTER_PAGE_DEFINITIONS: readonly { pageNumber: number; title: string; mode: MasterPageMode }[] = [
   { pageNumber: 1, title: "COVER PAGE / STYLE SUMMARY", mode: "AI" },
   { pageNumber: 2, title: "CONSTRUCTION & DETAIL CALLOUTS", mode: "AI" },
-  { pageNumber: 3, title: "BILL OF MATERIALS / BOM", mode: "TYPESET" },
+  { pageNumber: 3, title: "BILL OF MATERIALS / BOM", mode: "HYBRID" },
   { pageNumber: 4, title: "COLORWAYS & ARTWORK PLACEMENT", mode: "AI" },
-  { pageNumber: 5, title: "MEASUREMENTS & SPEC TABLE", mode: "TYPESET" },
-  { pageNumber: 6, title: "SIZE GRADING", mode: "TYPESET" },
+  { pageNumber: 5, title: "MEASUREMENTS & SPEC TABLE", mode: "HYBRID" },
+  { pageNumber: 6, title: "SIZE GRADING", mode: "HYBRID" },
   { pageNumber: 7, title: "LABELS & PACKAGING", mode: "AI" },
 ];
 
