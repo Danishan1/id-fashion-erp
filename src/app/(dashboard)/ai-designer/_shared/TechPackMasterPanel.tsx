@@ -168,6 +168,79 @@ function RowTable<T extends Record<string, unknown>>({
   );
 }
 
+/**
+ * Pages 3/5/6 are never rendered as AI images (see pageMode) — but a
+ * generic "trust us, it's in the PDF" card with no visible numbers looked
+ * indistinguishable from "this failed to generate" (user-reported). This
+ * shows the actual saved data right here, live, using the exact same
+ * gradedValue() math the PDF itself uses, so the real content is visible
+ * on screen without needing to download anything.
+ */
+function TypesetPreview({ pageNumber, analysis }: { pageNumber: number; analysis: MasterAnalysis | undefined }) {
+  if (!analysis) return <span className="text-2xl">📋</span>;
+
+  if (pageNumber === 3) {
+    const rows = analysis.bom.slice(0, 6);
+    return (
+      <div className="w-full space-y-0.5 overflow-hidden text-[8px] leading-tight text-zinc-600 dark:text-zinc-400">
+        {rows.map((b, i) => (
+          <p key={i} className="truncate">
+            <span className="font-medium text-zinc-800 dark:text-zinc-200">{b.item || `Row ${i + 1}`}</span>
+            {b.composition ? ` — ${b.composition}` : ""}
+          </p>
+        ))}
+        {analysis.bom.length > rows.length && <p className="text-zinc-400">+{analysis.bom.length - rows.length} more…</p>}
+      </div>
+    );
+  }
+
+  if (pageNumber === 5) {
+    const rows = analysis.measurements.slice(0, 6);
+    return (
+      <div className="w-full space-y-0.5 overflow-hidden text-[8px] leading-tight text-zinc-600 dark:text-zinc-400">
+        {rows.map((m, i) => (
+          <p key={i} className="truncate">
+            <span className="font-medium text-zinc-800 dark:text-zinc-200">{m.code || i + 1}.</span> {m.pom || "—"} — {m.baseValue} cm
+          </p>
+        ))}
+        {analysis.measurements.length > rows.length && <p className="text-zinc-400">+{analysis.measurements.length - rows.length} more…</p>}
+      </div>
+    );
+  }
+
+  if (pageNumber === 6) {
+    const rows = analysis.measurements.slice(0, 5);
+    return (
+      <table className="w-full text-left text-[7px] leading-tight text-zinc-600 dark:text-zinc-400">
+        <thead>
+          <tr>
+            <th className="pr-1 font-medium">POM</th>
+            {analysis.sizes.map((s) => (
+              <th key={s} className={`px-0.5 text-center ${s === analysis.baseSize ? "text-emerald-700 dark:text-emerald-300" : ""}`}>
+                {s}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((m, i) => (
+            <tr key={i}>
+              <td className="truncate pr-1 font-medium text-zinc-800 dark:text-zinc-200">{m.code || i + 1}</td>
+              {analysis.sizes.map((s) => (
+                <td key={s} className="px-0.5 text-center">
+                  {gradedValue(analysis, m, s)}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    );
+  }
+
+  return null;
+}
+
 function countUnconfirmed(a: MasterAnalysis): Record<string, number> {
   const n = (xs: { status: string }[]) => xs.filter((x) => x.status === "NOT_VISIBLE").length;
   return {
@@ -379,16 +452,15 @@ export function TechPackMasterPanel({ projectId, onChanged }: { projectId: strin
               {techPack.pages.map((p) =>
                 pageMode(p.pageNumber) === "TYPESET" ? (
                   <div key={p.id} className="overflow-hidden rounded-lg border border-emerald-200 bg-white dark:border-emerald-900 dark:bg-zinc-900">
-                    <div className="flex aspect-[2/3] w-full flex-col items-center justify-center gap-1 bg-emerald-50/60 p-2 text-center dark:bg-emerald-950/20">
-                      <span className="text-2xl">📋</span>
-                      <span className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-300">Exact data page</span>
-                      <span className="text-[9px] leading-tight text-zinc-500">Typeset from your analysis in the PDF — every number exact.</span>
+                    <div className="flex aspect-[2/3] w-full flex-col items-start justify-start gap-1 overflow-hidden bg-emerald-50/60 p-2 dark:bg-emerald-950/20">
+                      <span className="mb-0.5 text-[9px] font-semibold text-emerald-700 dark:text-emerald-300">📋 Your real data:</span>
+                      <TypesetPreview pageNumber={p.pageNumber} analysis={techPack.garmentAnalysisJson?.analysis} />
                     </div>
                     <div className="p-1.5">
                       <p className="truncate text-[10px] font-semibold text-zinc-700 dark:text-zinc-200">
                         {p.pageNumber}. {p.pageTitle}
                       </p>
-                      <p className="text-[10px] text-zinc-400">Updates when you save the analysis</p>
+                      <p className="text-[10px] text-zinc-400">Typeset exactly like this in the PDF — updates when you save the analysis.</p>
                     </div>
                   </div>
                 ) : (
