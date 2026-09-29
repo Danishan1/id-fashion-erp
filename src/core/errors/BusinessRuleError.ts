@@ -81,13 +81,29 @@ const HTTP_STATUS_BY_CODE: Record<BusinessRuleErrorCode, number> = {
  * handlers can map it to the structured `{ error: { code, message, details } }`
  * response shape instead of a bare 500.
  */
+/**
+ * Brand shared by every copy of this class. Next.js bundles this file once per
+ * runtime layer (Server Components vs. Route Handlers), so an error thrown by a
+ * singleton created in one layer (e.g. the globalThis-backed PermissionService)
+ * is an instance of a *different* class than the one a route handler imports.
+ * Plain prototype-based `instanceof` then fails and the error falls through to
+ * the generic 500. `Symbol.for` is global to the process, so checking the brand
+ * makes `instanceof BusinessRuleError` work across every copy.
+ */
+const BUSINESS_RULE_ERROR_BRAND = Symbol.for("fashion-erp.BusinessRuleError");
+
 export class BusinessRuleError extends Error {
   readonly code: BusinessRuleErrorCode;
   readonly httpStatus: number;
   readonly details?: Record<string, unknown>;
 
+  static [Symbol.hasInstance](value: unknown): boolean {
+    return typeof value === "object" && value !== null && (value as Record<symbol, unknown>)[BUSINESS_RULE_ERROR_BRAND] === true;
+  }
+
   constructor(code: BusinessRuleErrorCode, message: string, details?: Record<string, unknown>) {
     super(message);
+    Object.defineProperty(this, BUSINESS_RULE_ERROR_BRAND, { value: true });
     this.name = "BusinessRuleError";
     this.code = code;
     this.httpStatus = HTTP_STATUS_BY_CODE[code];
