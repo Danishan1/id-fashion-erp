@@ -1,6 +1,6 @@
 import { FACT_STATUSES } from "./schema";
 
-export const MASTER_TECH_PACK_PROMPT_VERSION = "ai-designer-tech-pack-master-v1";
+export const MASTER_TECH_PACK_PROMPT_VERSION = "ai-designer-tech-pack-master-v2";
 
 /**
  * The company's own "GARMENT TECH PACK SPEC SHEET GENERATOR" master prompt,
@@ -19,6 +19,8 @@ FACT STATUS — every fact carries a status:
 - ASSUMED: inferred from the image or from garment-industry norms — must be confirmed by the designer.
 - NOT_VISIBLE: cannot be determined from the image. Still give your best professional default value where a factory needs a number (e.g. a standard measurement), and mark it NOT_VISIBLE or ASSUMED.
 Never invent a detail without flagging it. ERP facts are always CONFIRMED and must be used verbatim.
+
+NEVER LEAVE A FIELD BLANK. This applies to every single value you return — every field's "value", every BOM row's every column (item, description, composition, GSM, color, consumption, supplier, notes), every measurement row's every column (POM, how-to-measure, tolerance), every seam callout, color, colorway, and artwork row's every column. If you genuinely cannot determine something, do NOT return an empty string — instead give your best professional, standard-garment-industry default value for that exact field and mark its status ASSUMED or NOT_VISIBLE so the designer knows to double-check it. An empty string is never an acceptable answer for any field.
 
 REQUIRED ANALYSIS:
 A. GARMENT IDENTIFICATION (identification): Brand name, Style name, Style number, Garment category, Sub-category, Fit type, Gender/category, Target season, Base sample size, Date created, Designer.

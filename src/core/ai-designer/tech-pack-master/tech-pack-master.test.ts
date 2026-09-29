@@ -11,13 +11,31 @@ function analysis(overrides: Partial<MasterAnalysis> = {}): MasterAnalysis {
     closure: [field("Closure", "Pullover — no closure")],
     seamCallouts: [{ number: 1, location: "Shoulder strap", specification: "Self-fabric tube, 1 cm", status: "PROPOSED" }],
     colors: [{ name: "Lilac", pantone: "15-3716 TCX", hex: "#C8A2C8", panel: "Body" }],
-    colorways: [{ code: "CW01", name: "Lilac", main: "Lilac", contrast: "—", trim: "Lilac", artwork: "—", notes: "" }],
+    colorways: [{ code: "CW01", name: "Lilac", main: "Lilac", contrast: "—", trim: "Lilac", artwork: "—", notes: "—" }],
     artwork: [],
     patternPrint: [field("Pattern", "Swiss dot")],
-    bom: Array.from({ length: 14 }, (_, i) => ({ item: `Item ${i + 1}`, description: "", composition: "", gsm: "", color: "", consumption: "", supplier: "TBD", notes: "", status: "CONFIRMED" as const })),
+    bom: Array.from({ length: 14 }, (_, i) => ({
+      item: `Item ${i + 1}`,
+      description: `Description ${i + 1}`,
+      composition: "100% Cotton",
+      gsm: "180",
+      color: "Lilac",
+      consumption: "0.5 m",
+      supplier: "TBD — supplier placeholder",
+      notes: "—",
+      status: "CONFIRMED" as const,
+    })),
     sizes: ["XS", "S", "M", "L", "XL"],
     baseSize: "M",
-    measurements: Array.from({ length: 8 }, (_, i) => ({ code: String.fromCharCode(65 + i), pom: `POM ${i}`, howToMeasure: "", tolerance: "± 1.0", baseValue: 50, gradeRule: 2, status: "CONFIRMED" as const })),
+    measurements: Array.from({ length: 8 }, (_, i) => ({
+      code: String.fromCharCode(65 + i),
+      pom: `POM ${i}`,
+      howToMeasure: "Measure flat, edge to edge",
+      tolerance: "± 1.0",
+      baseValue: 50,
+      gradeRule: 2,
+      status: "CONFIRMED" as const,
+    })),
     labelsPackaging: [field("Main label", "Woven, 5 × 2 cm, CB neck")],
     notesForDesigner: [],
     suggestedAdditionalViews: [],
@@ -39,9 +57,31 @@ describe("master tech pack schema", () => {
     expect(validateMasterAnalysis(analysis())).toMatchObject({ success: true });
   });
 
-  it("typesets the table-heavy pages and leaves the drawing pages to the AI", () => {
+  it("rejects any blank text column so the AI's corrective retry fills it in", () => {
+    const bomWithBlank = analysis().bom;
+    bomWithBlank[2] = { ...bomWithBlank[2], description: "" };
+    const result = validateMasterAnalysis(analysis({ bom: bomWithBlank }));
+    expect(result).toMatchObject({ success: false });
+    expect((result as { error: string }).error).toContain("bom[2].description");
+
+    const measurementsWithBlank = analysis().measurements;
+    measurementsWithBlank[1] = { ...measurementsWithBlank[1], howToMeasure: "" };
+    expect(validateMasterAnalysis(analysis({ measurements: measurementsWithBlank }))).toMatchObject({ success: false });
+
+    const fieldsWithBlank = analysis().identification;
+    fieldsWithBlank[0] = { ...fieldsWithBlank[0], value: "" };
+    expect(validateMasterAnalysis(analysis({ identification: fieldsWithBlank }))).toMatchObject({ success: false });
+  });
+
+  it("does not flag a legitimate zero grade rule or an empty artwork array as blank", () => {
+    const measurementsWithZeroGrade = analysis().measurements;
+    measurementsWithZeroGrade[0] = { ...measurementsWithZeroGrade[0], gradeRule: 0, baseValue: 0 };
+    expect(validateMasterAnalysis(analysis({ measurements: measurementsWithZeroGrade, artwork: [] }))).toMatchObject({ success: true });
+  });
+
+  it("keeps pages 1/2/4/7 as full AI images and pages 3/5/6 as an AI illustration plus the real typeset table", () => {
     expect(AI_PAGE_NUMBERS).toEqual([1, 2, 4, 7]);
-    expect([3, 5, 6].map(pageMode)).toEqual(["TYPESET", "TYPESET", "TYPESET"]);
+    expect([3, 5, 6].map(pageMode)).toEqual(["HYBRID", "HYBRID", "HYBRID"]);
   });
 
   it("tags the stored JSON so older table-based tech packs are distinguishable", () => {
@@ -64,11 +104,14 @@ describe("buildTechPackPagePrompts", () => {
     }
   });
 
-  it("puts the computed grade table on page 6 and a black-and-white diagram on page 5", () => {
+  it("asks the AI for an illustration only on pages 3/5/6, never the real BOM/measurement/grade numbers (so the image can't scramble them)", () => {
     const pages = buildTechPackPagePrompts(analysis());
-    expect(pages[5].promptText).toContain("| A | POM 0 | 46 | 48 | 50 | 52 | 54 | ± 2 |");
     expect(pages[4].promptText).toContain("BLACK-AND-WHITE line-art measurement diagram");
-    expect(pages[2].promptText.match(/\| \d+ \| Item/g)?.length).toBe(14);
+    expect(pages[4].promptText).not.toMatch(/±\s*\d/);
+    expect(pages[4].promptText).not.toMatch(/\d+\s*\(cm\)/);
+    expect(pages[2].promptText).not.toMatch(/\| \d+ \| Item/);
+    expect(pages[5].promptText).not.toMatch(/±\s*\d/);
+    expect(pages[5].promptText).not.toMatch(/\| Grade Rule \|/);
   });
 
   it("states NO ARTWORK when the garment has none", () => {
