@@ -61,6 +61,66 @@ export const masterAnalysisSchema = z.object({
 export type MasterAnalysis = z.infer<typeof masterAnalysisSchema>;
 export type MasterField = z.infer<typeof fieldSchema>;
 
+/**
+ * Every column the UI renders as an editable table cell must start with a
+ * real AI-suggested value, never a blank the user has to notice and fill in
+ * themselves — the prompt already asks for this (see NOT_VISIBLE guidance
+ * above), but a model can and does still skip it on some rows/fields, so
+ * this is enforced here too: an empty string on any of these columns is
+ * treated as a validation failure, which triggers the existing one-shot
+ * corrective retry (see requestStructuredVisionOutput) naming exactly which
+ * fields came back blank. This never touches numeric columns (0 is a
+ * legitimate real value, e.g. a POM that genuinely doesn't grade across
+ * sizes) and never requires an array itself to be non-empty (e.g. a garment
+ * with no artwork legitimately has zero artwork rows) — only that whatever
+ * rows the model DID return have every text column filled in.
+ */
+function findBlankFields(a: MasterAnalysis): string[] {
+  const issues: string[] = [];
+  const checkFieldArray = (name: string, arr: { label: string; value: string }[]) => {
+    arr.forEach((f, i) => {
+      if (!f.value.trim()) issues.push(`${name}[${i}] ("${f.label}")`);
+    });
+  };
+  checkFieldArray("identification", a.identification);
+  checkFieldArray("construction", a.construction);
+  checkFieldArray("closure", a.closure);
+  checkFieldArray("patternPrint", a.patternPrint);
+  checkFieldArray("labelsPackaging", a.labelsPackaging);
+
+  a.seamCallouts.forEach((c, i) => {
+    if (!c.location.trim()) issues.push(`seamCallouts[${i}].location`);
+    if (!c.specification.trim()) issues.push(`seamCallouts[${i}].specification`);
+  });
+  a.colors.forEach((c, i) => {
+    (["name", "pantone", "hex", "panel"] as const).forEach((k) => {
+      if (!c[k].trim()) issues.push(`colors[${i}].${k}`);
+    });
+  });
+  a.colorways.forEach((c, i) => {
+    (["code", "name", "main", "contrast", "trim", "artwork", "notes"] as const).forEach((k) => {
+      if (!c[k].trim()) issues.push(`colorways[${i}].${k}`);
+    });
+  });
+  a.artwork.forEach((art, i) => {
+    (["type", "placement", "scale", "dimensions", "method", "fromHps", "fromCf", "alignment"] as const).forEach((k) => {
+      if (!art[k].trim()) issues.push(`artwork[${i}].${k}`);
+    });
+  });
+  a.bom.forEach((b, i) => {
+    (["item", "description", "composition", "gsm", "color", "consumption", "supplier", "notes"] as const).forEach((k) => {
+      if (!b[k].trim()) issues.push(`bom[${i}].${k}`);
+    });
+  });
+  a.measurements.forEach((m, i) => {
+    (["pom", "howToMeasure", "tolerance"] as const).forEach((k) => {
+      if (!m[k].trim()) issues.push(`measurements[${i}].${k}`);
+    });
+  });
+
+  return issues;
+}
+
 export function validateMasterAnalysis(input: unknown): { success: true; data: MasterAnalysis } | { success: false; error: string } {
   const result = masterAnalysisSchema.safeParse(input);
   if (!result.success) {
@@ -70,6 +130,15 @@ export function validateMasterAnalysis(input: unknown): { success: true; data: M
   if (result.data.bom.length < 14) return { success: false, error: `bom: at least 14 rows are required (got ${result.data.bom.length}).` };
   if (result.data.measurements.length < 8) {
     return { success: false, error: `measurements: at least 8 points of measure are required (got ${result.data.measurements.length}).` };
+  }
+  const blanks = findBlankFields(result.data);
+  if (blanks.length > 0) {
+    const shown = blanks.slice(0, 20).join(", ");
+    const more = blanks.length > 20 ? ` (+${blanks.length - 20} more)` : "";
+    return {
+      success: false,
+      error: `These fields were left blank: ${shown}${more}. Every field must have a real, specific value — give your best professional default per the NOT_VISIBLE rule, never an empty string.`,
+    };
   }
   return { success: true, data: result.data };
 }
