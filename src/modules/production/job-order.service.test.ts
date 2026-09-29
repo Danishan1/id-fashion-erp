@@ -85,7 +85,7 @@ const {
 const { resolvePieceRate } = await import("./piece-rate-resolution.service");
 const { generateEarningForJobOrderProgress, generateEarningsForQcAcceptance } = await import("./piece-rate-earning.service");
 const { computeAvailableToCommit, assertEntryWithinAssignmentInTx, syncAssignmentStatusInTx } = await import("./assignment-capacity");
-const { computeJobOrderStatus, assignWorker, recordProgressEntry, forwardJobOrder, revertJobOrder, recordQcInspection, recordAdjustmentEntry, getJobOrderById } = await import("./job-order.service");
+const { computeJobOrderStatus, assignWorker, recordProgressEntry, forwardJobOrder, revertJobOrder, recordQcInspection, recordAdjustmentEntry, getJobOrderById, prepareLotStartAssignments } = await import("./job-order.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
 
@@ -958,5 +958,20 @@ describe("recordQcInspection — Piece-Rate earning trigger (2026-09-18)", () =>
     } as never);
 
     expect(generateEarningsForQcAcceptance).not.toHaveBeenCalled();
+  });
+});
+
+describe("prepareLotStartAssignments — no lot starts without a worker (2026-09-29)", () => {
+  it("refuses a lot with no worker at all", async () => {
+    await expect(prepareLotStartAssignments(actor, { productId: "prod-1", lotQuantity: 10 }, [])).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("Cutting worker assignment, material request and material issue are required"),
+    });
+  });
+
+  it("refuses assigning more pieces than the lot holds", async () => {
+    await expect(
+      prepareLotStartAssignments(actor, { productId: "prod-1", lotQuantity: 10 }, [assignInput({ assignedQuantity: 6 }), assignInput({ employeeId: "emp-2", assignedQuantity: 5 })])
+    ).rejects.toMatchObject({ code: "OVER_PRODUCTION_NOT_ALLOWED" });
   });
 });

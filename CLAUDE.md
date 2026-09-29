@@ -7551,6 +7551,55 @@ in the spec was read as the existing **Contractor** master (no Constructor modul
 - **Not verified in the browser**: the only dev server that could run was an orphaned pre-migration process on
   :3000 (stale in-memory Prisma client → `Unknown field stages`); restart it before UI testing.
 
+## Production lot gate, Embroidery stage, extra production, job-work stage tracking, stage timeline (2026-09-29)
+
+Scope decisions (AskUserQuestion): order-level material request with a cumulative check; partial issues allowed
+(gated at lot time, not at issue time); extra production **increases the existing order** instead of creating a
+second one.
+
+- **Lot gate** (`lot-readiness.service.ts`): Add Lot now creates the lot, starts it at the first active stage
+  (Cutting) and assigns the cutting worker(s), all in one transaction. The `createLotSchema.cuttingAssignments`
+  field is required (min 1).
+  - Blocked unless the order has a non-cancelled material request, and issued ≥ Effective-BOM per-piece
+    consumption × (all counted lots + this lot). Counted lots exclude SPLIT/MERGED/CANCELLED.
+  - "Issued" is `MaterialRequestItem.issuedQuantity` converted to the base unit, so substitutes count toward
+    the original material.
+  - `startLot` (legacy PLANNED lots) applies the same gate and requires `assignments`.
+  - The worker rules are shared with Assign Worker through `prepareAssignmentData` / `prepareLotStartAssignments`
+    / `startLotAtStageInTx` in `job-order.service.ts`.
+  - `GET /production-orders/:id/lot-readiness?quantity=` powers the Add Lot preview.
+- **Material request generation fix**: "Generate Material Request" now requests the full need minus what the
+  order has already requested. Before, it only raised lines short *in stock*, so a stocked material could never
+  be requested or issued. The store still issues from stock; a real shortage still escalates to a Purchase
+  Order. A unit-conversion gap now gets a named error instead of "no shortfall".
+- **EMBROIDERY stage**: inserted after STITCHING by migration `20260929100000_...` for every company with a
+  STITCHING stage; later stages shift down one. Accessories are ordinary raw materials — nothing is hardcoded,
+  and there is no per-stage BOM tagging yet.
+- **Duplicate production order**: `createProductionOrder` rejects a second non-cancelled order for the same Sales
+  Order *line* with `PRODUCTION_ORDER_EXISTS` (409, new code), including the existing order's id. The New form
+  shows YES/NO; YES opens `/production-orders/:id?extra=1`. The check is per line, not per Sales Order, because
+  multi-style Sales Orders legitimately need one order per line. Older duplicates (PROD-2026-00015/00016) were
+  left as they are.
+- **Extra quantity**: `addExtraProductionQuantity` (`POST /production-orders/:id/extra-quantity`) is allowed only
+  when produced + rejected/damaged ≥ planned.
+  - It uses a guarded `plannedQuantity` update and reopens a CLOSED order.
+  - Each addition is logged in the new `production_order_quantity_changes` table.
+- **Job work stage tracking**: `getJobWorkOrderById` returns a derived `stageTracking` field: sent from →
+  received at (last covered stage) → next stage, plus received pieces available to forward. It is shown on the
+  job-work page (with a Move-to-next-stage button that uses the existing forward API) and on the receipt slip.
+- **Receipt-slip 404**: not a code bug. The long-running dev server's route table was stale, so every nested
+  two-param route (slip, stage-slip, goods-receipt reverse, tech-pack approve) returned HTML 404. A restart with
+  a `.next` wipe fixed it.
+- **Timeline + audit trail** (`production-timeline.service.ts`): per-stage received / assigned / completed /
+  sent-to-JW / received-from-JW / rejected / moved-on / available, plus a dated history of lot, assignment,
+  material, movement, progress, QC, job-work and extra-production events.
+  - Shown on lot and production-order pages (`GET /lots/:id/timeline`, `/production-orders/:id/timeline`).
+  - The Production Full Trace report now reuses the same history.
+- Verified: tsc, eslint (0 errors), 2149/2149 tests, `next build`, and live against the real dev DB. Every
+  backend block (no worker, no material request, short issue, duplicate order, early extra) was confirmed. The
+  happy path was run on `PROD-2026-00019` (tagged `QA-VERIFY-0929`, with a +4 button adjustment and a 2 MTR
+  Cambric transfer as test stock), and the real receipt slip returned a PDF (200).
+
 ## Reference
 
 Full architecture rationale, complete table-by-table field lists, and the full role×module permission matrix were developed in the Phase 1 planning session and are condensed here. Consult that history if a design decision needs deeper justification than what's summarized above.

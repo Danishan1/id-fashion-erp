@@ -33,14 +33,15 @@ export const WIZARD_STEP_LABELS: Record<string, string> = {
 // Mirrors ai-designer.service.ts's own STANDARD_STEPS exactly (a
 // duplicated, client-safe copy, same convention as every other
 // client/server pair in this app — this file has zero Prisma imports).
-// PRODUCT_DESIGN, MODEL, and EMBELLISHMENTS are all hidden from the wizard
-// for now, per explicit request — Embellishments' own real feature is still
-// fully reachable from the Edit Design workspace's own Embellishments tab.
+// PRODUCT_DESIGN, MODEL, TARGET_CUSTOMER, and EMBELLISHMENTS are all hidden
+// from the wizard for now, per explicit request — Embellishments' own real
+// feature is still fully reachable from the Edit Design workspace's own
+// Embellishments tab; Target Customer defaults to UNISEX at project
+// creation instead (see ai-designer.service.ts's createProject()).
 export const WIZARD_STEP_ORDER = [
   "FABRIC_SELECTION",
   "FABRIC_ANALYSIS",
   "PRODUCT_SUGGESTIONS",
-  "TARGET_CUSTOMER",
   "AGE_GROUP",
   "PRODUCT_CATEGORY",
   "ENVIRONMENT",

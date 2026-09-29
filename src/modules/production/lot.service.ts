@@ -7,6 +7,14 @@ import { LotRelationRepository, LotRepository, ProductionOrderRepository } from 
 import type { CreateLotInput, MergeLotsInput, SplitLotInput } from "./production.schema";
 import type { ActorContext } from "./production-order.service";
 import { computeAvailableToCommit, sumAssignmentConsumed } from "./assignment-capacity";
+import { assertLotMaterialReady } from "./lot-readiness.service";
+import {
+  assertStageAccess,
+  findFirstActiveStage,
+  prepareLotStartAssignments,
+  startLotAtStageInTx,
+  writeLotStartAuditLogs,
+} from "./job-order.service";
 
 const EPSILON = 0.0001;
 
@@ -74,6 +82,15 @@ export async function getLotGenealogy(companyId: string, id: string) {
   return LotRelationRepository.findByParentOrChild(id);
 }
 
+/**
+ * Creates a production lot and starts it at the first stage (Cutting) with
+ * its cutting worker(s), all in one transaction (2026-09-29). Blocked unless:
+ *  1. at least one cutting worker is assigned (pieces > 0, total ≤ lot qty),
+ *  2. a material request exists for this production order, and
+ *  3. material ISSUED so far covers every counted lot's pieces (this one
+ *     included) × the Effective-BOM per-piece consumption.
+ * Every rule is enforced here, server-side — the Add Lot modal only previews.
+ */
 export async function createLot(actor: ActorContext, productionOrderId: string, input: CreateLotInput) {
   const order = await ProductionOrderRepository.findAnyById(actor.companyId, productionOrderId);
   if (!order) throw new BusinessRuleError("NOT_FOUND", "Production order not found.", { id: productionOrderId });
@@ -105,26 +122,25 @@ export async function createLot(actor: ActorContext, productionOrderId: string, 
     }
   }
 
-  const lot = await prisma.$transaction(async (tx) => {
+  const stage = await findFirstActiveStage(actor.companyId);
+  await assertStageAccess(actor, stage.id);
+  await assertLotMaterialReady(actor.companyId, order.id, { newLotPieces: input.quantity });
+  const prepared = await prepareLotStartAssignments(
+    actor,
+    { productId: order.productId, lotQuantity: input.quantity },
+    input.cuttingAssignments ?? []
+  );
+
+  const { lot, started } = await prisma.$transaction(async (tx) => {
     // Claiming the next lot-number suffix is a genuine row UPDATE on the
     // ProductionOrder, which takes a Postgres row lock for the rest of this
-    // transaction — that lock is what makes the quantity-cap check below
-    // atomic against a concurrent createLot on the same order (the second
-    // transaction blocks here until the first commits, then re-reads the
-    // now-committed sibling Lots before it sums them).
+    // transaction — so two Add Lots on the same order serialize here.
     const lotNumber = await claimNextLotNumber(tx, order.id, order.orderNumber);
 
     // Deliberately NOT capped against the Production Order's own
     // plannedQuantity — over-production is a real, allowed business outcome
-    // (future demand, replacements; see the Production Progress Tracking
-    // spec), so lot quantities summing past the plan must be creatable, not
-    // rejected. This mirrors the identical "informational, never a cap"
-    // principle already applied one level up, at Production-Order-vs-
-    // Sales-Order-quantity (see createProductionOrder/getSalesOrderLineCommitment
-    // in production-order.service.ts) — the real over-production figure the
-    // user actually sees is always derived fresh from completed production
-    // (production-progress.service.ts's getProductionOrderProgress), never
-    // gated at lot-creation time.
+    // (future demand, replacements), and the material gate above already
+    // requires issued material to cover it.
     const created = await LotRepository.createInTx(tx, {
       companyId: actor.companyId,
       branchId: actor.branchId || null,
@@ -140,14 +156,19 @@ export async function createLot(actor: ActorContext, productionOrderId: string, 
     });
 
     // Creating the first lot moves the order forward — a side effect, not a
-    // caller-chosen generic status change, mirroring how
-    // SalesOrderStatus.IN_PRODUCTION is reserved for exactly this kind of
-    // real business action elsewhere in this project.
+    // caller-chosen generic status change.
     if (order.status === "PLANNED" || order.status === "MATERIAL_ALLOCATED") {
       await tx.productionOrder.update({ where: { id: order.id }, data: { status: "IN_PROGRESS" } });
     }
 
-    return created;
+    const startedAtStage = await startLotAtStageInTx(tx, actor, {
+      productionOrderId: order.id,
+      lot: created,
+      stage,
+      assignments: prepared,
+    });
+
+    return { lot: created, started: startedAtStage };
   });
 
   await writeAuditLog({
@@ -156,10 +177,16 @@ export async function createLot(actor: ActorContext, productionOrderId: string, 
     tableName: "lots",
     recordId: lot.id,
     action: "CREATE",
-    newValues: { lotNumber: lot.lotNumber, quantity: input.quantity },
+    newValues: { lotNumber: lot.lotNumber, quantity: input.quantity, startedAtStage: stage.code },
   });
+  await writeLotStartAuditLogs(
+    actor,
+    { lotId: lot.id, stageId: stage.id, quantity: lot.quantity, jobOrderId: started.jobOrder.id },
+    started.assignments,
+    prepared
+  );
 
-  return lot;
+  return { ...lot, status: "IN_PROGRESS" as const, currentStageId: stage.id, firstJobOrderId: started.jobOrder.id };
 }
 
 export interface VariantBreakdownSuggestionRow {

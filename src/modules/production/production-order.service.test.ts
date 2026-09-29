@@ -19,10 +19,16 @@ vi.mock("./production.repository", () => ({
     count: vi.fn(),
   },
 }));
+const mockTx = vi.hoisted(() => ({
+  productionOrder: { updateMany: vi.fn() },
+  productionOrderQuantityChange: { create: vi.fn() },
+}));
 vi.mock("@/core/db/client", () => ({
   prisma: {
+    $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(mockTx)),
     salesOrderItem: { findFirst: vi.fn() },
-    productionOrder: { aggregate: vi.fn() },
+    productionOrder: { aggregate: vi.fn(), findFirst: vi.fn() },
+    productionOrderQuantityChange: { findMany: vi.fn() },
     materialRequestItem: { findMany: vi.fn() },
     inventoryTransaction: { groupBy: vi.fn() },
     product: { findMany: vi.fn() },
@@ -44,6 +50,7 @@ const {
   getSalesOrderLineCommitment,
   getProductionOrderById,
   updateProductionOrderQuantity,
+  addExtraProductionQuantity,
   listProductionOrders,
   getProductionOrderMaterialComparison,
 } = await import("./production-order.service");
@@ -66,6 +73,85 @@ beforeEach(() => {
   vi.mocked(prisma.materialRequestItem.findMany).mockReset().mockResolvedValue([]);
   vi.mocked(prisma.inventoryTransaction.groupBy).mockReset().mockResolvedValue([]);
   vi.mocked(prisma.product.findMany).mockReset().mockResolvedValue([]);
+  vi.mocked(prisma.productionOrder.findFirst).mockReset().mockResolvedValue(null);
+  vi.mocked(prisma.productionOrderQuantityChange.findMany).mockReset().mockResolvedValue([]);
+  mockTx.productionOrder.updateMany.mockReset().mockResolvedValue({ count: 1 });
+  mockTx.productionOrderQuantityChange.create.mockReset().mockResolvedValue({ id: "chg-1" });
+});
+
+describe("duplicate production order for the same Sale Order line (2026-09-29)", () => {
+  it("refuses a second production order and names the existing one", async () => {
+    vi.mocked(prisma.productionOrder.findFirst).mockResolvedValue({ id: "po-existing", orderNumber: "PROD-2026-00016", status: "IN_PROGRESS" } as never);
+
+    await expect(
+      createProductionOrder(actor, { productId: "prod-1", salesOrderItemId: "soi-1", plannedQuantity: 50, priority: "NORMAL" } as never)
+    ).rejects.toMatchObject({
+      code: "PRODUCTION_ORDER_EXISTS",
+      details: { existingProductionOrderId: "po-existing", existingOrderNumber: "PROD-2026-00016" },
+    });
+    expect(ProductionOrderRepository.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("addExtraProductionQuantity (2026-09-29)", () => {
+  const order = { id: "po-1", status: "IN_PROGRESS", plannedQuantity: "100" };
+
+  it("blocks extra production while the assigned quantity isn't fully processed", async () => {
+    vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue(order as never);
+    vi.mocked(getProductionOrderProgress).mockResolvedValue({ plannedQuantity: 100, producedQuantity: 80, rejectedQuantity: 0 } as never);
+
+    await expect(addExtraProductionQuantity(actor, "po-1", { extraQuantity: 20 })).rejects.toMatchObject({
+      code: "INVALID_STATE_TRANSITION",
+      message: expect.stringContaining("Completed quantity is not equal to assigned quantity"),
+    });
+    expect(mockTx.productionOrder.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("adds the extra quantity once everything assigned is processed, and records the change", async () => {
+    vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue(order as never);
+    vi.mocked(getProductionOrderProgress).mockResolvedValue({ plannedQuantity: 100, producedQuantity: 100, rejectedQuantity: 0 } as never);
+
+    await addExtraProductionQuantity(actor, "po-1", { extraQuantity: 20, reason: "Buyer top-up" });
+
+    expect(mockTx.productionOrder.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ id: "po-1", plannedQuantity: "100" }), data: { plannedQuantity: 120 } })
+    );
+    expect(mockTx.productionOrderQuantityChange.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ changeType: "EXTRA_PRODUCTION", previousQuantity: 100, addedQuantity: 20, newQuantity: 120, reason: "Buyer top-up" }),
+    });
+  });
+
+  it("counts rejected/damaged pieces as processed (they were worked, just not good)", async () => {
+    vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue(order as never);
+    vi.mocked(getProductionOrderProgress).mockResolvedValue({ plannedQuantity: 100, producedQuantity: 95, rejectedQuantity: 5 } as never);
+
+    await addExtraProductionQuantity(actor, "po-1", { extraQuantity: 5 });
+    expect(mockTx.productionOrderQuantityChange.create).toHaveBeenCalled();
+  });
+
+  it("reopens a CLOSED order when extra quantity is added", async () => {
+    vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue({ ...order, status: "CLOSED" } as never);
+    vi.mocked(getProductionOrderProgress).mockResolvedValue({ plannedQuantity: 100, producedQuantity: 100, rejectedQuantity: 0 } as never);
+
+    await addExtraProductionQuantity(actor, "po-1", { extraQuantity: 10 });
+    expect(mockTx.productionOrder.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { plannedQuantity: 110, status: "IN_PROGRESS", actualEndDate: null } })
+    );
+  });
+
+  it("fails cleanly when someone else changed the quantity at the same moment", async () => {
+    vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue(order as never);
+    vi.mocked(getProductionOrderProgress).mockResolvedValue({ plannedQuantity: 100, producedQuantity: 100, rejectedQuantity: 0 } as never);
+    mockTx.productionOrder.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(addExtraProductionQuantity(actor, "po-1", { extraQuantity: 10 })).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+    expect(mockTx.productionOrderQuantityChange.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses a cancelled order", async () => {
+    vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue({ ...order, status: "CANCELLED" } as never);
+    await expect(addExtraProductionQuantity(actor, "po-1", { extraQuantity: 10 })).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+  });
 });
 
 describe("createProductionOrder", () => {
@@ -244,29 +330,73 @@ describe("generateMaterialRequestForOrder", () => {
     });
   });
 
-  it("rejects when nothing is short", async () => {
+  it("rejects when this order's existing requests already cover everything it needs", async () => {
     vi.mocked(getMaterialRequirementForOrderLine).mockResolvedValue({
       hasApprovedBom: true,
       bomId: "bom-1",
       sampleRequestId: null,
-      materials: [{ materialId: "mat-1", uomId: "uom-1", shortfallQuantity: 0 }],
+      materials: [{ materialId: "mat-1", uomId: "uom-1", neededQuantity: 40, shortfallQuantity: 0 }],
+      unconvertibleLines: [],
     } as never);
+    const U = { id: "uom-1", baseUnitId: null, conversionFactor: "1" };
+    vi.mocked(prisma.materialRequestItem.findMany).mockResolvedValue([
+      { materialId: "mat-1", requestedQuantity: "40", uom: U, material: { baseUom: U } },
+    ] as never);
 
     await expect(generateMaterialRequestForOrder(actor, "po-1", { warehouseId: "wh-1" })).rejects.toMatchObject({
       code: "VALIDATION_ERROR",
+      message: expect.stringContaining("already cover everything"),
     });
   });
 
-  it("raises a Material Request for exactly the shortfall lines, using the shared calc's own bomId/uomId", async () => {
+  it("requests the full need even when stock already covers it (the store issues from stock)", async () => {
+    vi.mocked(getMaterialRequirementForOrderLine).mockResolvedValue({
+      hasApprovedBom: true,
+      bomId: "bom-1",
+      sampleRequestId: null,
+      materials: [{ materialId: "mat-1", uomId: "uom-1", neededQuantity: 25, availableQuantity: 100, shortfallQuantity: 0 }],
+      unconvertibleLines: [],
+    } as never);
+
+    await generateMaterialRequestForOrder(actor, "po-1", { warehouseId: "wh-1" });
+    expect(createMaterialRequest).toHaveBeenCalledWith(
+      actor,
+      expect.objectContaining({ lines: [{ materialId: "mat-1", uomId: "uom-1", requestedQuantity: 25 }] })
+    );
+  });
+
+  it("names a unit-conversion problem instead of silently raising nothing", async () => {
+    vi.mocked(getMaterialRequirementForOrderLine).mockResolvedValue({
+      hasApprovedBom: true,
+      bomId: "bom-1",
+      sampleRequestId: null,
+      materials: [],
+      unconvertibleLines: [{ materialId: "mat-1", materialName: "Cotton Lycra", reason: '"Kilogram" has no fixed conversion to its base unit' }],
+    } as never);
+
+    await expect(generateMaterialRequestForOrder(actor, "po-1", { warehouseId: "wh-1" })).rejects.toMatchObject({
+      code: "UOM_CONVERSION_UNAVAILABLE",
+      message: expect.stringContaining("Cotton Lycra"),
+    });
+  });
+
+  it("raises a Material Request for need minus what's already requested, using the shared calc's own bomId/uomId", async () => {
     vi.mocked(getMaterialRequirementForOrderLine).mockResolvedValue({
       hasApprovedBom: true,
       bomId: "bom-1",
       sampleRequestId: null,
       materials: [
-        { materialId: "mat-1", uomId: "uom-1", shortfallQuantity: 40 },
-        { materialId: "mat-2", uomId: "uom-2", shortfallQuantity: 0 },
+        { materialId: "mat-1", uomId: "uom-1", neededQuantity: 50, shortfallQuantity: 40 },
+        { materialId: "mat-2", uomId: "uom-2", neededQuantity: 8, shortfallQuantity: 0 },
       ],
+      unconvertibleLines: [],
     } as never);
+    const U1 = { id: "uom-1", baseUnitId: null, conversionFactor: "1" };
+    const U2 = { id: "uom-2", baseUnitId: null, conversionFactor: "1" };
+    vi.mocked(prisma.materialRequestItem.findMany).mockResolvedValue([
+      { materialId: "mat-1", requestedQuantity: "10", uom: U1, material: { baseUom: U1 } },
+      { materialId: "mat-2", requestedQuantity: "8", uom: U2, material: { baseUom: U2 } },
+    ] as never);
 
     await generateMaterialRequestForOrder(actor, "po-1", { warehouseId: "wh-1" });
 
@@ -280,7 +410,7 @@ describe("generateMaterialRequestForOrder", () => {
       expect.objectContaining({
         bomId: "bom-1",
         productionOrderId: "po-1",
-        lines: [{ materialId: "mat-1", uomId: "uom-1", requestedQuantity: 40 }],
+        lines: [{ materialId: "mat-1", uomId: "uom-1", requestedQuantity: 40 }], // 50 needed − 10 already requested
       })
     );
   });
@@ -296,7 +426,8 @@ describe("generateMaterialRequestForOrder", () => {
       hasApprovedBom: true,
       bomId: null,
       sampleRequestId: "sam-1",
-      materials: [{ materialId: "mat-1", uomId: "uom-1", shortfallQuantity: 40 }],
+      materials: [{ materialId: "mat-1", uomId: "uom-1", neededQuantity: 40, shortfallQuantity: 40 }],
+      unconvertibleLines: [],
     } as never);
 
     await generateMaterialRequestForOrder(actor, "po-1", { warehouseId: "wh-1" });

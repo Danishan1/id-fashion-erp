@@ -1,4 +1,5 @@
 import { prisma } from "@/core/db/client";
+import { getProductionHistory, PRODUCTION_HISTORY_ACTION_LABELS } from "@/modules/production/production-timeline.service";
 import type { ReportDescriptor } from "@/core/reports/report-types";
 import { registerReport } from "./registry";
 import { parseReportDateRange } from "./report-date-range";
@@ -797,122 +798,34 @@ async function getProductionFullTraceDescriptor(
     };
   }
 
-  const [transactions, progressEntries, qcInspections, jobWorkOrders] = await Promise.all([
-    prisma.productionStageTransaction.findMany({
-      where: { lotId: filters.lotId },
-      select: {
-        performedAt: true,
-        transactionType: true,
-        quantity: true,
-        revertReason: true,
-        notes: true,
-        toProductionStage: { select: { name: true } },
-        performedBy: { select: { fullName: true } },
-      },
-    }),
-    prisma.jobOrderProgressEntry.findMany({
-      where: { jobOrder: { lotId: filters.lotId } },
-      select: {
-        createdAt: true,
-        completedQuantity: true,
-        rejectedQuantity: true,
-        damagedQuantity: true,
-        isAdjustment: true,
-        enteredBy: true,
-        approvalStatus: true,
-        employee: { select: { fullName: true } },
-        jobOrder: { select: { productionStage: { select: { name: true } } } },
-      },
-    }),
-    prisma.qcInspection.findMany({
-      where: { lotId: filters.lotId },
-      select: {
-        inspectedAt: true,
-        result: true,
-        inspectedQuantity: true,
-        acceptedQuantity: true,
-        rejectedQuantity: true,
-        damagedQuantity: true,
-        inspector: { select: { fullName: true } },
-        jobOrder: { select: { productionStage: { select: { name: true } } } },
-      },
-    }),
-    prisma.jobWorkOrder.findMany({
-      where: { jobOrder: { lotId: filters.lotId } },
-      select: {
-        issueDate: true,
-        issuedQuantity: true,
-        status: true,
-        contractor: { select: { name: true } },
-        jobOrder: { select: { productionStage: { select: { name: true } } } },
-        receipts: {
-          select: { receivedDate: true, receivedQuantity: true, rejectedQuantity: true, damagedQuantity: true, receivedBy: { select: { fullName: true } } },
-        },
-      },
-    }),
-  ]);
+  // Shared with the lot page's own history panel (production-timeline.service.ts)
+  // so the report and the screen can never disagree about what happened.
+  const history = await getProductionHistory(companyId, { lotId: filters.lotId });
+  const rows = history.map((e) => ({
+    eventDate: e.at,
+    eventType: PRODUCTION_HISTORY_ACTION_LABELS[e.action],
+    stage: e.nextStage ? `${e.stage ?? "—"} → ${e.nextStage}` : (e.stage ?? "—"),
+    actor: e.user,
+    quantity: e.quantity ?? 0,
+    detail: [
+      e.assignedQuantity !== null ? `Assigned ${e.assignedQuantity}` : null,
+      e.sentQuantity !== null ? `Sent ${e.sentQuantity}` : null,
+      e.receivedQuantity !== null ? `Received ${e.receivedQuantity}` : null,
+      e.rejectedQuantity ? `Rejected ${e.rejectedQuantity}` : null,
+      e.damagedQuantity ? `Damaged ${e.damagedQuantity}` : null,
+      e.remarks || null,
+    ]
+      .filter(Boolean)
+      .join(" · "),
+  }));
 
-  const rows: { eventDate: string; eventType: string; stage: string; actor: string; quantity: number; detail: string }[] = [];
-
-  for (const t of transactions) {
-    rows.push({
-      eventDate: t.performedAt.toISOString(),
-      eventType: t.transactionType === "FORWARD" ? "Movement — Forward" : t.transactionType === "REWORK" ? "Movement — Rework" : "Movement — Adjustment",
-      stage: t.toProductionStage.name,
-      actor: t.performedBy.fullName,
-      quantity: Number(t.quantity),
-      detail: t.revertReason || t.notes || "",
-    });
-  }
-  for (const p of progressEntries) {
-    rows.push({
-      eventDate: p.createdAt.toISOString(),
-      eventType: p.isAdjustment ? "Progress — Adjustment" : `Progress (${p.enteredBy})`,
-      stage: p.jobOrder.productionStage.name,
-      actor: p.employee?.fullName ?? "—",
-      quantity: Number(p.completedQuantity),
-      detail: `Completed ${p.completedQuantity} / Rejected ${p.rejectedQuantity} / Damaged ${p.damagedQuantity}${p.approvalStatus !== "NOT_REQUIRED" ? ` (${p.approvalStatus})` : ""}`,
-    });
-  }
-  for (const qc of qcInspections) {
-    rows.push({
-      eventDate: qc.inspectedAt.toISOString(),
-      eventType: `QC — ${qc.result}`,
-      stage: qc.jobOrder.productionStage.name,
-      actor: qc.inspector.fullName,
-      quantity: Number(qc.inspectedQuantity),
-      detail: `Accepted ${qc.acceptedQuantity} / Rejected ${qc.rejectedQuantity} / Damaged ${qc.damagedQuantity}`,
-    });
-  }
-  for (const jwo of jobWorkOrders) {
-    rows.push({
-      eventDate: jwo.issueDate.toISOString(),
-      eventType: "Job Work — Issued",
-      stage: jwo.jobOrder.productionStage.name,
-      actor: jwo.contractor.name,
-      quantity: Number(jwo.issuedQuantity),
-      detail: `Status: ${jwo.status}`,
-    });
-    for (const r of jwo.receipts) {
-      rows.push({
-        eventDate: r.receivedDate.toISOString(),
-        eventType: "Job Work — Received",
-        stage: jwo.jobOrder.productionStage.name,
-        actor: r.receivedBy.fullName,
-        quantity: Number(r.receivedQuantity),
-        detail: `Received ${r.receivedQuantity} / Rejected ${r.rejectedQuantity} / Damaged ${r.damagedQuantity} (from ${jwo.contractor.name})`,
-      });
-    }
-  }
-
-  rows.sort((a, b) => a.eventDate.localeCompare(b.eventDate));
 
   const orderNumber = lot.productionOrder.orderNumber;
   const salesOrderNumber = lot.productionOrder.salesOrderItem?.salesOrder.orderNumber;
 
   return {
     title: "Production Full Trace",
-    subtitle: `Lot ${lot.lotNumber} (Production Order ${orderNumber}${salesOrderNumber ? `, Sales Order ${salesOrderNumber}` : ""}) — complete stage/worker/movement/QC/job-work history.`,
+    subtitle: `Lot ${lot.lotNumber} (Production Order ${orderNumber}${salesOrderNumber ? `, Sales Order ${salesOrderNumber}` : ""}) — complete lot/worker/material/movement/QC/job-work/extra-production history.`,
     filtersApplied: filtersApplied(filters, { lotId: "Lot" }),
     columns: [
       { key: "eventDate", label: "Date/Time", type: "date" },

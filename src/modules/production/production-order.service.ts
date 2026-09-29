@@ -5,6 +5,7 @@ import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingServic
 import { PermissionService } from "@/core/rbac/PermissionService";
 import type { ListQuery } from "@/lib/list-query";
 import { branchScopeWhere } from "@/lib/branch-access";
+import { convertUomQuantity } from "@/lib/uom-conversion";
 import { BomRepository } from "@/modules/bom-mrp/bom.repository";
 import { getMaterialRequirementForOrderLine } from "@/modules/bom-mrp/mrp.service";
 import { createMaterialRequest } from "@/modules/inventory/material-request.service";
@@ -12,7 +13,9 @@ import { ProductRepository } from "@/modules/products/product.repository";
 import { ProductionOrderStatus, type Prisma } from "@prisma/client";
 import { LotRepository, ProductionOrderRepository } from "./production.repository";
 import { getProductionOrderProgress } from "./production-progress.service";
-import type { CreateProductionOrderInput, GenerateMaterialRequestInput } from "./production.schema";
+import type { AddExtraProductionQuantityInput, CreateProductionOrderInput, GenerateMaterialRequestInput } from "./production.schema";
+
+const EPSILON = 0.0001;
 
 export interface ActorContext {
   companyId: string;
@@ -135,8 +138,13 @@ export async function getProductionOrderById(actor: { companyId: string; userId:
     ? await getSalesOrderLineCommitment(actor.companyId, order.salesOrderItemId, id)
     : null;
   const progress = await getProductionOrderProgress(actor.companyId, id);
+  const quantityChanges = await prisma.productionOrderQuantityChange.findMany({
+    where: { productionOrderId: id, companyId: actor.companyId },
+    orderBy: { createdAt: "asc" },
+    include: { createdBy: { select: { fullName: true } } },
+  });
 
-  return { ...order, salesOrderContext, progress };
+  return { ...order, salesOrderContext, progress, quantityChanges };
 }
 
 export async function createProductionOrder(actor: ActorContext, input: CreateProductionOrderInput) {
@@ -150,6 +158,17 @@ export async function createProductionOrder(actor: ActorContext, input: CreatePr
   // context is returned so the UI can show it, never to block creation.
   let salesOrderContext: SalesOrderLineCommitment | null = null;
   if (input.salesOrderItemId) {
+    // One Sales Order line keeps ONE Production Order (2026-09-29). More
+    // quantity for the same line is added to the existing order via
+    // addExtraProductionQuantity — never a silent second, duplicate order.
+    const existing = await findActiveProductionOrderForSalesOrderItem(actor.companyId, input.salesOrderItemId);
+    if (existing) {
+      throw new BusinessRuleError(
+        "PRODUCTION_ORDER_EXISTS",
+        `A production order (${existing.orderNumber}) has already been created for this Sale Order. Add extra quantity to it instead of creating another production order.`,
+        { existingProductionOrderId: existing.id, existingOrderNumber: existing.orderNumber }
+      );
+    }
     salesOrderContext = await getSalesOrderLineCommitment(actor.companyId, input.salesOrderItemId);
   }
 
@@ -228,12 +247,36 @@ export async function generateMaterialRequestForOrder(actor: ActorContext, id: s
     );
   }
 
+  if (requirement.materials.length === 0 && requirement.unconvertibleLines.length > 0) {
+    const first = requirement.unconvertibleLines[0];
+    throw new BusinessRuleError(
+      "UOM_CONVERSION_UNAVAILABLE",
+      `Cannot calculate the material requirement: ${first.materialName} — ${first.reason}. Fix the unit on the BOM line or the material's base unit.`,
+      { unconvertibleLines: requirement.unconvertibleLines }
+    );
+  }
+
+  // Requests the FULL need minus what this order has already requested
+  // (2026-09-29). A Material Request is the internal "production needs this"
+  // document — the store then issues it from stock, and only a genuine stock
+  // shortage escalates to a Purchase Order. Previously this raised lines only
+  // for materials short in stock, so a fully-stocked material could never be
+  // requested (and so never issued) — which the lot material gate now needs.
+  const alreadyRequested = await sumRequestedByMaterialForOrder(actor.companyId, id);
   const lines = requirement.materials
-    .filter((m) => m.shortfallQuantity > 0)
-    .map((m) => ({ materialId: m.materialId, uomId: m.uomId, requestedQuantity: m.shortfallQuantity }));
+    .map((m) => ({
+      materialId: m.materialId,
+      uomId: m.uomId,
+      requestedQuantity: Math.round((m.neededQuantity - (alreadyRequested.get(m.materialId) ?? 0)) * 10000) / 10000,
+    }))
+    .filter((l) => l.requestedQuantity > EPSILON);
 
   if (lines.length === 0) {
-    throw new BusinessRuleError("VALIDATION_ERROR", "No shortfall — every required material is already available in stock.", {});
+    throw new BusinessRuleError(
+      "VALIDATION_ERROR",
+      "Material requests for this production order already cover everything it needs. Issue the requested material from the store.",
+      {}
+    );
   }
 
   return createMaterialRequest(actor, {
@@ -245,6 +288,26 @@ export async function generateMaterialRequestForOrder(actor: ActorContext, id: s
     bomId: requirement.bomId ?? undefined,
     lines,
   });
+}
+
+/** Everything already requested for this order (non-cancelled requests), per material, in its base unit. */
+async function sumRequestedByMaterialForOrder(companyId: string, productionOrderId: string) {
+  const lines = await prisma.materialRequestItem.findMany({
+    where: { materialRequest: { companyId, productionOrderId, status: { not: "CANCELLED" } } },
+    select: {
+      materialId: true,
+      requestedQuantity: true,
+      uom: { select: { id: true, baseUnitId: true, conversionFactor: true } },
+      material: { select: { baseUom: { select: { id: true, baseUnitId: true, conversionFactor: true } } } },
+    },
+  });
+  const byMaterial = new Map<string, number>();
+  for (const line of lines) {
+    const base = line.material.baseUom;
+    const qty = base ? convertUomQuantity(Number(line.requestedQuantity), line.uom, base) ?? 0 : Number(line.requestedQuantity);
+    byMaterial.set(line.materialId, (byMaterial.get(line.materialId) ?? 0) + qty);
+  }
+  return byMaterial;
 }
 
 export interface ProductionOrderMaterialComparisonRow {
@@ -413,6 +476,101 @@ export async function updateProductionOrderQuantity(actor: ActorContext, id: str
   });
 
   return updated;
+}
+
+/** The non-cancelled Production Order already raised for a Sales Order line, if any (oldest first). */
+export async function findActiveProductionOrderForSalesOrderItem(companyId: string, salesOrderItemId: string) {
+  return prisma.productionOrder.findFirst({
+    where: { companyId, salesOrderItemId, status: { not: "CANCELLED" } },
+    orderBy: { createdAt: "asc" },
+    select: { id: true, orderNumber: true, status: true, plannedQuantity: true },
+  });
+}
+
+/**
+ * Extra production (2026-09-29): adds quantity to an order that already has
+ * lots, instead of raising a second Production Order for the same Sales
+ * Order line. Allowed only once everything already planned has been fully
+ * processed — produced + rejected/damaged ≥ planned — so extra is never
+ * stacked on top of work still in the pipeline. A CLOSED order is reopened
+ * (back to IN_PROGRESS) since new lots are about to be raised on it. Every
+ * addition is kept in production_order_quantity_changes.
+ */
+export async function addExtraProductionQuantity(actor: ActorContext, id: string, input: AddExtraProductionQuantityInput) {
+  const order = await ProductionOrderRepository.findAnyById(actor.companyId, id);
+  if (!order) throw new BusinessRuleError("NOT_FOUND", "Production order not found.", { id });
+
+  if (order.status === "CANCELLED") {
+    throw new BusinessRuleError("INVALID_STATE_TRANSITION", "Cannot add extra quantity to a cancelled production order.", {
+      currentStatus: order.status,
+    });
+  }
+  if (order.status === "ON_HOLD") {
+    throw new BusinessRuleError("INVALID_STATE_TRANSITION", "Resume the production order before adding extra quantity.", {
+      currentStatus: order.status,
+    });
+  }
+
+  const progress = await getProductionOrderProgress(actor.companyId, id);
+  const assigned = progress.plannedQuantity;
+  const processed = progress.producedQuantity + progress.rejectedQuantity;
+  if (processed + EPSILON < assigned) {
+    throw new BusinessRuleError(
+      "INVALID_STATE_TRANSITION",
+      `Completed quantity is not equal to assigned quantity. Extra production cannot be created until the assigned quantity is completed. Assigned: ${assigned}, completed: ${progress.producedQuantity}${
+        progress.rejectedQuantity > 0 ? `, rejected/damaged: ${progress.rejectedQuantity}` : ""
+      }.`,
+      { assigned, completed: progress.producedQuantity, rejected: progress.rejectedQuantity }
+    );
+  }
+
+  const previousQuantity = Number(order.plannedQuantity);
+  const newQuantity = previousQuantity + input.extraQuantity;
+
+  const change = await prisma.$transaction(async (tx) => {
+    // Guarded on the value just read, so two concurrent "add extra" clicks
+    // can't both apply against the same starting quantity.
+    const guard = await tx.productionOrder.updateMany({
+      where: { id, companyId: actor.companyId, plannedQuantity: order.plannedQuantity },
+      data: {
+        plannedQuantity: newQuantity,
+        ...(order.status === "CLOSED" ? { status: "IN_PROGRESS" as const, actualEndDate: null } : {}),
+      },
+    });
+    if (guard.count === 0) {
+      throw new BusinessRuleError("INVALID_STATE_TRANSITION", "This production order was just changed by someone else — reload and try again.", {});
+    }
+    return tx.productionOrderQuantityChange.create({
+      data: {
+        companyId: actor.companyId,
+        productionOrderId: id,
+        changeType: "EXTRA_PRODUCTION",
+        previousQuantity,
+        addedQuantity: input.extraQuantity,
+        newQuantity,
+        reason: input.reason || null,
+        createdByUserId: actor.userId,
+      },
+    });
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "production_orders",
+    recordId: id,
+    action: "UPDATE",
+    oldValues: { plannedQuantity: previousQuantity, status: order.status },
+    newValues: {
+      event: "EXTRA_PRODUCTION_CREATED",
+      plannedQuantity: newQuantity,
+      extraQuantity: input.extraQuantity,
+      reason: input.reason || null,
+      ...(order.status === "CLOSED" ? { status: "IN_PROGRESS" } : {}),
+    },
+  });
+
+  return change;
 }
 
 export async function transitionProductionOrderStatus(actor: ActorContext, id: string, targetStatus: ProductionOrderStatus) {

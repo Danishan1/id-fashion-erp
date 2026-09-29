@@ -39,10 +39,16 @@ export const lotVariantBreakdownRowSchema = z.object({
   quantity: z.coerce.number().positive("Quantity must be greater than 0"),
 });
 
+// Production Lot gate (2026-09-29): a lot is created AND started at the
+// first stage (Cutting) in one step, so at least one cutting worker must be
+// assigned with it — see createLot in lot.service.ts.
 export const createLotSchema = z.object({
   quantity: z.coerce.number().positive("Quantity must be greater than 0"),
   uomId: z.string().uuid("Unit is required"),
   variantBreakdown: z.array(lotVariantBreakdownRowSchema).optional(),
+  cuttingAssignments: z
+    .array(z.lazy(() => createJobOrderAssignmentSchema))
+    .min(1, "Assign at least one cutting worker before creating the production lot."),
 });
 export type CreateLotInput = z.infer<typeof createLotSchema>;
 
@@ -196,7 +202,19 @@ export type ForwardJobOrderInput = z.infer<typeof forwardJobOrderSchema>;
 
 export const startLotSchema = z.object({
   stageId: z.string().uuid().optional().or(z.literal("")),
+  // Same rule as createLot: no lot starts without a worker on its first stage.
+  assignments: z
+    .array(z.lazy(() => createJobOrderAssignmentSchema))
+    .min(1, "Assign at least one worker before starting this lot."),
 });
+
+export const addExtraProductionQuantitySchema = z.object({
+  extraQuantity: z.coerce
+    .number({ message: "Extra quantity is required." })
+    .positive("Extra quantity must be greater than 0."),
+  reason: z.string().max(500).optional().or(z.literal("")),
+});
+export type AddExtraProductionQuantityInput = z.infer<typeof addExtraProductionQuantitySchema>;
 export type StartLotInput = z.infer<typeof startLotSchema>;
 
 export const revertJobOrderSchema = z.object({

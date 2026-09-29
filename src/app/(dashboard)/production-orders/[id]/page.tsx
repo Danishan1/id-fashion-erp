@@ -5,8 +5,15 @@ import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { Barcode } from "@/components/ui/Barcode";
 import { ProductionOrderWorkflowPanel } from "../ProductionOrderWorkflowPanel";
 
-export default async function ProductionOrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function ProductionOrderDetailPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ extra?: string }>;
+}) {
   const { id } = await params;
+  const { extra } = await searchParams;
   const session = await auth();
 
   const order = await getProductionOrderById({ companyId: session!.user.companyId, userId: session!.user.id }, id).catch(() => null);
@@ -34,7 +41,12 @@ export default async function ProductionOrderDetailPage({ params }: { params: Pr
       {/* Decimal/Date fields round-trip through JSON before crossing to the
           Client Component. key={id} forces a remount on client-side
           navigation between two different orders. */}
-      <ProductionOrderWorkflowPanel key={id} productionOrderId={id} initialOrder={JSON.parse(JSON.stringify(order))} />
+      <ProductionOrderWorkflowPanel
+        key={id}
+        productionOrderId={id}
+        initialOrder={JSON.parse(JSON.stringify(order))}
+        openExtraOnLoad={extra === "1"}
+      />
     </div>
   );
 }

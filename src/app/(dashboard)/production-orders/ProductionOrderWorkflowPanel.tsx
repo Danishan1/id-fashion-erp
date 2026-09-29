@@ -9,6 +9,16 @@ import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { MaterialPlannedVsIssuedPanel } from "./MaterialPlannedVsIssuedPanel";
 import { MaterialRequirementPreview } from "./MaterialRequirementPreview";
 import {
+  LotMaterialReadinessPanel,
+  WorkerAssignmentRowsEditor,
+  newWorkerRow,
+  validateWorkerRows,
+  workerRowsToPayload,
+  type LotMaterialReadiness,
+  type WorkerRowDraft,
+} from "./LotStartFields";
+import { StageTimelinePanel } from "./StageTimelinePanel";
+import {
   STATUS_BADGE_CLASS,
   STATUS_LABELS,
   LOT_STATUS_LABELS,
@@ -66,6 +76,15 @@ interface OrderDetail {
   salesOrderContext: SalesOrderContext | null;
   progress: ProductionProgress;
   lots: LotRow[];
+  quantityChanges?: Array<{
+    id: string;
+    previousQuantity: string;
+    addedQuantity: string;
+    newQuantity: string;
+    reason: string | null;
+    createdAt: string;
+    createdBy: { fullName: string };
+  }>;
 }
 
 interface UnitOption {
@@ -105,9 +124,12 @@ const STATUS_HELP: Record<ProductionOrderStatus, string> = {
 export function ProductionOrderWorkflowPanel({
   productionOrderId,
   initialOrder,
+  openExtraOnLoad = false,
 }: {
   productionOrderId: string;
   initialOrder: OrderDetail;
+  /** Opened from the "Sale Order already has a production order → YES" prompt. */
+  openExtraOnLoad?: boolean;
 }) {
   const [order, setOrder] = useState(initialOrder);
   const [error, setError] = useState<string | null>(null);
@@ -120,6 +142,14 @@ export function ProductionOrderWorkflowPanel({
   const [lotUomId, setLotUomId] = useState("");
   const [variantSuggestions, setVariantSuggestions] = useState<VariantBreakdownSuggestionRow[]>([]);
   const [variantQtyById, setVariantQtyById] = useState<Record<string, string>>({});
+  const [lotWorkers, setLotWorkers] = useState<WorkerRowDraft[]>(() => [newWorkerRow()]);
+  const [lotReadiness, setLotReadiness] = useState<LotMaterialReadiness | null>(null);
+  const [modalError, setModalError] = useState<string | null>(null);
+
+  const [showExtra, setShowExtra] = useState(openExtraOnLoad);
+  const [extraQty, setExtraQty] = useState("");
+  const [extraReason, setExtraReason] = useState("");
+  const [timelineKey, setTimelineKey] = useState(0);
 
   const [showGenerateMr, setShowGenerateMr] = useState(false);
   const [warehouses, setWarehouses] = useState<WarehouseOption[]>([]);
@@ -168,6 +198,7 @@ export function ProductionOrderWorkflowPanel({
     const res = await fetch(`/api/v1/production-orders/${productionOrderId}`);
     const body = await res.json();
     if (res.ok) setOrder(body.data);
+    setTimelineKey((k) => k + 1);
   };
 
   const run = async (action: () => Promise<Response>, fallbackError: string) => {
@@ -198,24 +229,77 @@ export function ProductionOrderWorkflowPanel({
   const resumeFromHold = () =>
     run(() => fetch(`/api/v1/production-orders/${productionOrderId}/resume`, { method: "POST" }), "Failed to resume.");
 
+  const addLotQuantity = hasVariantOptions ? breakdownTotal : Number(lotQuantity) || 0;
+  const lotWorkerError = validateWorkerRows(lotWorkers, addLotQuantity);
+
+  const openAddLot = () => {
+    setModalError(null);
+    setLotWorkers([newWorkerRow()]);
+    setLotReadiness(null);
+    setShowAddLot(true);
+  };
+
+  // Errors from a modal action show inside that modal, not behind it.
+  const runInModal = async (action: () => Promise<Response>, fallbackError: string) => {
+    setIsBusy(true);
+    setModalError(null);
+    try {
+      const res = await action();
+      if (!res.ok) {
+        setModalError(await parseErrorMessage(res, fallbackError));
+        return false;
+      }
+      await refresh();
+      return true;
+    } catch {
+      setModalError("Could not reach the server. Check your connection and try again.");
+      return false;
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const submitExtra = async () => {
+    const ok = await runInModal(
+      () =>
+        fetch(`/api/v1/production-orders/${productionOrderId}/extra-quantity`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-toast-success": "Extra production quantity added." },
+          body: JSON.stringify({ extraQuantity: Number(extraQty), reason: extraReason || undefined }),
+        }),
+      "Failed to add extra quantity."
+    );
+    if (ok) {
+      setShowExtra(false);
+      setExtraQty("");
+      setExtraReason("");
+    }
+  };
+
   const submitAddLot = async () => {
-    const quantity = hasVariantOptions ? breakdownTotal : Number(lotQuantity);
+    const quantity = addLotQuantity;
     const variantBreakdown = hasVariantOptions
       ? Object.entries(variantQtyById)
           .filter(([, v]) => Number(v) > 0)
           .map(([productVariantId, v]) => ({ productVariantId, quantity: Number(v) }))
       : undefined;
-    const ok = await run(
+    const ok = await runInModal(
       () =>
         fetch(`/api/v1/production-orders/${productionOrderId}/lots`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ quantity, uomId: lotUomId, ...(variantBreakdown ? { variantBreakdown } : {}) }),
+          headers: { "Content-Type": "application/json", "x-toast-success": "Lot created and started at the first stage." },
+          body: JSON.stringify({
+            quantity,
+            uomId: lotUomId,
+            cuttingAssignments: workerRowsToPayload(lotWorkers),
+            ...(variantBreakdown ? { variantBreakdown } : {}),
+          }),
         }),
       "Failed to create this lot."
     );
     if (ok) {
       setShowAddLot(false);
+      setLotWorkers([newWorkerRow()]);
       setLotQuantity("");
       setLotUomId("");
       setVariantSuggestions([]);
@@ -366,6 +450,22 @@ export function ProductionOrderWorkflowPanel({
 
       <MaterialPlannedVsIssuedPanel productionOrderId={productionOrderId} />
 
+      <StageTimelinePanel kind="productionOrder" id={productionOrderId} refreshKey={timelineKey} />
+
+      {order.quantityChanges && order.quantityChanges.length > 0 && (
+        <div className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
+          <h2 className="mb-2 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Extra Production History</h2>
+          <ul className="space-y-1 text-xs text-zinc-600 dark:text-zinc-300">
+            {order.quantityChanges.map((c) => (
+              <li key={c.id}>
+                {new Date(c.createdAt).toLocaleString("en-IN")} — <strong>+{Number(c.addedQuantity)}</strong> by {c.createdBy.fullName} (planned{" "}
+                {Number(c.previousQuantity)} → {Number(c.newQuantity)}){c.reason ? ` · ${c.reason}` : ""}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <div className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
         <h2 className="mb-3 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Actions</h2>
         {canAct && order.status !== "ON_HOLD" && (
@@ -382,7 +482,18 @@ export function ProductionOrderWorkflowPanel({
               />
             )}
             <ActionButton label="Generate Material Request" onClick={() => setShowGenerateMr(true)} isBusy={isBusy} variant="secondary" />
-            <ActionButton label="Add Lot" onClick={() => setShowAddLot(true)} isBusy={isBusy} />
+            <ActionButton label="Add Lot" onClick={openAddLot} isBusy={isBusy} />
+            {order.lots.length > 0 && (
+              <ActionButton
+                label="Add Extra Quantity"
+                onClick={() => {
+                  setModalError(null);
+                  setShowExtra(true);
+                }}
+                isBusy={isBusy}
+                variant="secondary"
+              />
+            )}
             {selectedLotIds.size >= 2 && (
               <ActionButton label={`Merge ${selectedLotIds.size} Selected Lots`} onClick={mergeSelected} isBusy={isBusy} variant="secondary" />
             )}
@@ -554,7 +665,65 @@ export function ProductionOrderWorkflowPanel({
         </div>
       </Modal>
 
-      <Modal open={showAddLot} onClose={() => setShowAddLot(false)} title="Add Lot" maxWidthClass="max-w-lg">
+      <Modal open={showExtra} onClose={() => setShowExtra(false)} title="Add Extra Production Quantity" maxWidthClass="max-w-lg">
+        <div className="space-y-4">
+          <p className="text-xs text-zinc-500">
+            Adds quantity to this production order (the same Sale Order line keeps one production order). Allowed only once
+            the assigned quantity is fully processed.
+          </p>
+          <dl className="grid grid-cols-3 gap-3 text-sm">
+            <SummaryStat label="Assigned Qty" value={order.progress.plannedQuantity} />
+            <SummaryStat label="Completed Qty" value={order.progress.producedQuantity} tone="positive" />
+            <SummaryStat label="Rejected / Damaged" value={order.progress.rejectedQuantity} />
+          </dl>
+          {order.progress.producedQuantity + order.progress.rejectedQuantity < order.progress.plannedQuantity && (
+            <p className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
+              Completed quantity is not equal to assigned quantity. Extra production cannot be created until the assigned
+              quantity is completed.
+            </p>
+          )}
+          <FormField label="Extra Quantity" htmlFor="extraQty" required>
+            <input
+              id="extraQty"
+              type="number"
+              min={1}
+              step={1}
+              value={extraQty}
+              onChange={(e) => setExtraQty(e.target.value)}
+              className={textInputClass()}
+            />
+          </FormField>
+          <FormField label="Reason" htmlFor="extraReason">
+            <input id="extraReason" value={extraReason} onChange={(e) => setExtraReason(e.target.value)} className={textInputClass()} />
+          </FormField>
+          {extraQty && Number(extraQty) > 0 && (
+            <p className="text-xs text-zinc-500">
+              Planned quantity will become {order.progress.plannedQuantity + Number(extraQty)}. Generate a material request for
+              the extra pieces, then add a lot for them.
+            </p>
+          )}
+          {modalError && <p className="text-sm text-red-600 dark:text-red-400">{modalError}</p>}
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setShowExtra(false)}
+              className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={submitExtra}
+              disabled={isBusy || !extraQty || Number(extraQty) <= 0}
+              className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
+            >
+              {isBusy ? "Saving…" : "Add Extra Quantity"}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal open={showAddLot} onClose={() => setShowAddLot(false)} title="Add Lot" maxWidthClass="max-w-2xl">
         <div className="space-y-4">
           {hasVariantOptions ? (
             <div>
@@ -621,6 +790,14 @@ export function ProductionOrderWorkflowPanel({
               ))}
             </select>
           </FormField>
+          <p className="text-xs text-zinc-500">
+            The lot starts at the first stage (Cutting) as soon as it is created, so assign the cutting worker(s) now.
+            Material must already be issued for every piece.
+          </p>
+          <WorkerAssignmentRowsEditor rows={lotWorkers} onChange={setLotWorkers} stageName="Cutting" />
+          {addLotQuantity > 0 && lotWorkerError && <p className="text-xs text-red-600 dark:text-red-400">{lotWorkerError}</p>}
+          <LotMaterialReadinessPanel productionOrderId={productionOrderId} newLotPieces={addLotQuantity} onReadinessChange={setLotReadiness} />
+          {modalError && <p className="text-sm text-red-600 dark:text-red-400">{modalError}</p>}
           <div className="flex justify-end gap-2">
             <button type="button" onClick={() => setShowAddLot(false)} className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800">
               Cancel
@@ -628,7 +805,7 @@ export function ProductionOrderWorkflowPanel({
             <button
               type="button"
               onClick={submitAddLot}
-              disabled={isBusy || !lotUomId || (hasVariantOptions ? breakdownTotal <= 0 : !lotQuantity)}
+              disabled={isBusy || !lotUomId || addLotQuantity <= 0 || !!lotWorkerError || !lotReadiness?.ready}
               className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
             >
               {isBusy ? "Saving…" : "Add Lot"}

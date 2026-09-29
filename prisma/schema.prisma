@@ -329,6 +329,7 @@ model User {
   sampleApprovalsMade                        SampleApproval[]                     @relation("SampleApprovalDecidedBy")
   sampleCommentsMade                         SampleComment[]                      @relation("SampleCommentAuthor")
   productionOrdersRequested                  ProductionOrder[]                    @relation("ProductionOrderRequestedBy")
+  productionOrderQuantityChanges             ProductionOrderQuantityChange[]
   lotsCreated                                Lot[]                                @relation("LotCreatedBy")
   lotRelationsPerformed                      LotRelation[]                        @relation("LotRelationPerformedBy")
   jobOrderAssignmentsMade                    JobOrderAssignment[]                 @relation("JobOrderAssignmentAssignedBy")
@@ -4257,12 +4258,41 @@ model ProductionOrder {
   stageTransactions ProductionStageTransaction[]
   qcInspections     QcInspection[]
   materialRequests  MaterialRequest[]
+  quantityChanges   ProductionOrderQuantityChange[]
 
   @@unique([companyId, orderNumber])
   @@index([companyId, status])
   @@index([salesOrderItemId])
   @@index([productId])
   @@map("production_orders")
+}
+
+enum ProductionOrderQuantityChangeType {
+  EXTRA_PRODUCTION
+}
+
+// Append-only history of quantity added to a Production Order after lots
+// already exist (2026-09-29). One Sales Order line keeps ONE Production
+// Order; extra quantity is added to it here (only once everything already
+// planned has been processed), never as a second, duplicate order.
+model ProductionOrderQuantityChange {
+  id                String                            @id @default(uuid()) @db.Uuid
+  companyId         String                            @map("company_id") @db.Uuid
+  productionOrderId String                            @map("production_order_id") @db.Uuid
+  changeType        ProductionOrderQuantityChangeType @map("change_type")
+  previousQuantity  Decimal                           @map("previous_quantity") @db.Decimal(18, 4)
+  addedQuantity     Decimal                           @map("added_quantity") @db.Decimal(18, 4)
+  newQuantity       Decimal                           @map("new_quantity") @db.Decimal(18, 4)
+  reason            String?
+  createdByUserId   String                            @map("created_by_user_id") @db.Uuid
+  createdAt         DateTime                          @default(now()) @map("created_at")
+
+  productionOrder ProductionOrder @relation(fields: [productionOrderId], references: [id], onDelete: Cascade)
+  createdBy       User            @relation(fields: [createdByUserId], references: [id])
+
+  @@index([productionOrderId])
+  @@index([companyId])
+  @@map("production_order_quantity_changes")
 }
 
 enum LotStatus {

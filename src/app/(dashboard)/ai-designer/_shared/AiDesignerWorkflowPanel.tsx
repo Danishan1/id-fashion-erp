@@ -10,7 +10,6 @@ import {
   AGE_GROUPS_BY_CUSTOMER,
   PRODUCT_CATEGORIES_BY_CUSTOMER,
   TARGET_CUSTOMER_LABELS,
-  TARGET_CUSTOMER_VALUES,
   type TargetCustomer,
 } from "@/core/ai-designer/catalogs/customer-catalog";
 import { ENVIRONMENTS } from "@/core/ai-designer/catalogs/environment-catalog";
@@ -541,8 +540,13 @@ export function AiDesignerWorkflowPanel({
       fetch(`/api/v1/ai-designer/projects/${projectId}/product-suggestions/skip`, { method: "POST" }).then(parseJson)
     ).then(() => goToNextStep("PRODUCT_SUGGESTIONS"));
 
-  const ageGroups = project.targetCustomer ? AGE_GROUPS_BY_CUSTOMER[project.targetCustomer] : [];
-  const productCategories = project.targetCustomer ? PRODUCT_CATEGORIES_BY_CUSTOMER[project.targetCustomer] : [];
+  // Target Customer's own manual picker is hidden (see the wizard's own
+  // STANDARD_STEPS) — every new project defaults to UNISEX at creation, but
+  // a project created before that default existed can still have `null`
+  // here, so this treats that the same way for display purposes.
+  const effectiveTargetCustomer = project.targetCustomer ?? "UNISEX";
+  const ageGroups = AGE_GROUPS_BY_CUSTOMER[effectiveTargetCustomer];
+  const productCategories = PRODUCT_CATEGORIES_BY_CUSTOMER[effectiveTargetCustomer];
   const designSelections = project.designSelectionsJson ?? {};
 
   const currentImage = project.currentVersion?.currentImage ?? null;
@@ -771,38 +775,10 @@ export function AiDesignerWorkflowPanel({
         <StepNextButton step="PRODUCT_SUGGESTIONS" steps={steps} onNext={goToNextStep} />
       </WizardSection>
 
-      {/* Step 3 — Target Customer */}
-      <WizardSection
-        sectionRef={(el) => (sectionRefs.current.TARGET_CUSTOMER = el)}
-        index={steps.indexOf("TARGET_CUSTOMER") + 1}
-        title="Target Customer"
-        isDone={project.completedSteps.includes("TARGET_CUSTOMER")}
-        isCurrent={project.currentStep === "TARGET_CUSTOMER"}
-        isOpen={expandedStep === "TARGET_CUSTOMER"}
-      >
-        {suggestionApplied && project.targetCustomer === suggestionApplied.targetCustomer && (
-          <div className="mb-2">
-            <AiSuggestedBadge />
-          </div>
-        )}
-        <div className="flex flex-wrap gap-2">
-          {TARGET_CUSTOMER_VALUES.map((c) => (
-            <button
-              key={c}
-              type="button"
-              onClick={() => run("customer", () => patchWizard({ targetCustomer: c }))}
-              className={`rounded-md border px-3 py-1.5 text-sm ${
-                project.targetCustomer === c
-                  ? "border-indigo-600 bg-indigo-600 text-white"
-                  : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200"
-              }`}
-            >
-              {TARGET_CUSTOMER_LABELS[c]}
-            </button>
-          ))}
-        </div>
-        <StepNextButton step="TARGET_CUSTOMER" steps={steps} onNext={goToNextStep} />
-      </WizardSection>
+      {/* Step 3 — Target Customer hidden from the wizard for now, per explicit
+          request — defaults to UNISEX at project creation instead (see
+          ai-designer.service.ts's createProject()); a Product Suggestion can
+          still override it via applyProductSuggestionAndGenerate(). */}
 
       {/* Step 4 — Age Group */}
       <WizardSection
@@ -813,7 +789,6 @@ export function AiDesignerWorkflowPanel({
         isCurrent={project.currentStep === "AGE_GROUP"}
         isOpen={expandedStep === "AGE_GROUP"}
       >
-        {!project.targetCustomer && <p className="text-xs text-zinc-500">Pick a Target Customer first.</p>}
         {suggestionApplied && project.ageGroup === suggestionApplied.ageGroup && (
           <div className="mb-2">
             <AiSuggestedBadge />
@@ -838,16 +813,21 @@ export function AiDesignerWorkflowPanel({
         <StepNextButton step="AGE_GROUP" steps={steps} onNext={goToNextStep} />
       </WizardSection>
 
-      {/* Step 5 — Product Category (SET mode: the outfit's own piece list instead of one category) */}
-      <WizardSection
-        sectionRef={(el) => (sectionRefs.current.PRODUCT_CATEGORY = el)}
-        index={steps.indexOf("PRODUCT_CATEGORY") + 1}
-        title={project.projectMode === "SET" ? "Set Pieces" : "Product Category"}
-        isDone={project.completedSteps.includes("PRODUCT_CATEGORY")}
-        isCurrent={project.currentStep === "PRODUCT_CATEGORY"}
-        isOpen={expandedStep === "PRODUCT_CATEGORY"}
-      >
-        {project.projectMode === "SET" ? (
+      {/* Step 5 — Product Category. The SINGLE-mode manual category-chip
+          picker is hidden for now, per explicit request (createProject()
+          marks this step already-complete for a SINGLE-mode project, so it
+          never shows as a dead "current" step with no visible UI here) — a
+          SET-mode project still needs this step real: its own outfit piece
+          list ("Set Pieces") renders on this exact step slot instead. */}
+      {project.projectMode === "SET" && (
+        <WizardSection
+          sectionRef={(el) => (sectionRefs.current.PRODUCT_CATEGORY = el)}
+          index={steps.indexOf("PRODUCT_CATEGORY") + 1}
+          title="Set Pieces"
+          isDone={project.completedSteps.includes("PRODUCT_CATEGORY")}
+          isCurrent={project.currentStep === "PRODUCT_CATEGORY"}
+          isOpen={expandedStep === "PRODUCT_CATEGORY"}
+        >
           <SetPiecesEditor
             categories={productCategories}
             savedPieces={project.pieces}
@@ -858,34 +838,9 @@ export function AiDesignerWorkflowPanel({
               body: JSON.stringify({ pieces }),
             }).then(parseJson))}
           />
-        ) : (
-          <>
-            {!project.targetCustomer && <p className="text-xs text-zinc-500">Pick a Target Customer first.</p>}
-            {suggestionApplied && project.productCategory === suggestionApplied.productCategory && (
-              <div className="mb-2">
-                <AiSuggestedBadge />
-              </div>
-            )}
-            <div className="mt-2 flex flex-wrap gap-2">
-              {productCategories.map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => run("category", () => patchWizard({ productCategory: c }))}
-                  className={`rounded-md border px-3 py-1.5 text-sm ${
-                    project.productCategory === c
-                      ? "border-indigo-600 bg-indigo-600 text-white"
-                      : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200"
-                  }`}
-                >
-                  {c}
-                </button>
-              ))}
-            </div>
-          </>
-        )}
-        <StepNextButton step="PRODUCT_CATEGORY" steps={steps} onNext={goToNextStep} />
-      </WizardSection>
+          <StepNextButton step="PRODUCT_CATEGORY" steps={steps} onNext={goToNextStep} />
+        </WizardSection>
+      )}
 
       {/* Step 8 — Environment (Model step hidden for now, per explicit request; Product Design step hidden for now, per explicit request) */}
       <WizardSection

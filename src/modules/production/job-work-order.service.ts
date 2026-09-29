@@ -181,7 +181,83 @@ export async function getJobWorkOrderById(companyId: string, id: string, userId?
   const order = await JobWorkOrderRepository.findAnyById(companyId, id);
   if (!order) throw new BusinessRuleError("NOT_FOUND", "Job-work order not found.", { id });
   if (userId) await assertJobWorkOrderContractorAccess({ userId }, order);
-  return { ...order, metrics: computeJobWorkOrderMetrics(order) };
+  const stageTracking = await getJobWorkStageTracking(companyId, order);
+  return { ...order, metrics: computeJobWorkOrderMetrics(order), stageTracking };
+}
+
+export interface JobWorkStageTracking {
+  /** The stage the pieces were sent out from (the job order's own stage). */
+  sentFromStage: { id: string; name: string };
+  /** The last stage this job work covered — where received pieces land. */
+  receivedAtStage: { id: string; name: string };
+  /** The next active production stage after receivedAtStage, or null when the job work already finished the garment. */
+  nextStage: { id: string; name: string; isFinal: boolean } | null;
+  /** The lot's job order at receivedAtStage (the one to Forward from), if it exists yet. */
+  receivingJobOrder: { id: string; jobNumber: string; completedQuantity: number; forwardedQuantity: number } | null;
+  /** Received good pieces not yet moved on: receivingJobOrder completed − forwarded. */
+  availableForNextStage: number;
+  /** True when received pieces are already finished goods (the last covered stage is final). */
+  finishedAtReceipt: boolean;
+}
+
+/**
+ * Where a job work order's received pieces are in the pipeline (2026-09-29):
+ * sent from → received at → next stage, and how many received pieces are
+ * still waiting to move on. Derived from the job order ledger, never stored,
+ * so it can't drift from the real quantities.
+ */
+async function getJobWorkStageTracking(
+  companyId: string,
+  order: NonNullable<Awaited<ReturnType<typeof JobWorkOrderRepository.findAnyById>>>
+): Promise<JobWorkStageTracking> {
+  const sentFrom = order.jobOrder.productionStage;
+  const lastCovered = order.coveredStages.length > 0 ? order.coveredStages[order.coveredStages.length - 1].productionStage : null;
+  const receivedAt = lastCovered ?? { id: sentFrom.id, name: sentFrom.name, code: "", isFinal: false };
+
+  const receivedAtStage = await prisma.productionStage.findFirst({
+    where: { id: receivedAt.id, companyId },
+    select: { id: true, name: true, sequence: true, isFinal: true },
+  });
+  const nextStage =
+    receivedAtStage && !receivedAtStage.isFinal
+      ? await prisma.productionStage.findFirst({
+          where: { companyId, isActive: true, sequence: { gt: receivedAtStage.sequence } },
+          orderBy: { sequence: "asc" },
+          select: { id: true, name: true, isFinal: true },
+        })
+      : null;
+
+  const receivingJobOrderRow =
+    receivedAt.id === sentFrom.id
+      ? await prisma.jobOrder.findFirst({
+          where: { id: order.jobOrderId },
+          select: { id: true, jobNumber: true, completedQuantity: true, forwardedQuantity: true },
+        })
+      : await prisma.jobOrder.findFirst({
+          where: { lotId: order.jobOrder.lot.id, productionStageId: receivedAt.id, status: { not: "CANCELLED" } },
+          orderBy: { createdAt: "desc" },
+          select: { id: true, jobNumber: true, completedQuantity: true, forwardedQuantity: true },
+        });
+
+  const receivingJobOrder = receivingJobOrderRow
+    ? {
+        id: receivingJobOrderRow.id,
+        jobNumber: receivingJobOrderRow.jobNumber,
+        completedQuantity: Number(receivingJobOrderRow.completedQuantity),
+        forwardedQuantity: Number(receivingJobOrderRow.forwardedQuantity),
+      }
+    : null;
+
+  return {
+    sentFromStage: { id: sentFrom.id, name: sentFrom.name },
+    receivedAtStage: { id: receivedAt.id, name: receivedAt.name },
+    nextStage,
+    receivingJobOrder,
+    availableForNextStage: receivingJobOrder
+      ? Math.max(0, Math.round((receivingJobOrder.completedQuantity - receivingJobOrder.forwardedQuantity) * 10000) / 10000)
+      : 0,
+    finishedAtReceipt: Boolean(receivedAtStage?.isFinal),
+  };
 }
 
 /**

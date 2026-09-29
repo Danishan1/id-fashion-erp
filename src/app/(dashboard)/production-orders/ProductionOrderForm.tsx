@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { todayIsoDate } from "@/lib/date";
@@ -66,6 +67,9 @@ export function ProductionOrderForm() {
   const [remarks, setRemarks] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Set when the server refuses a second production order for the same Sale
+  // Order line — the user then chooses YES (add extra to the existing one) or NO.
+  const [existingOrder, setExistingOrder] = useState<{ id: string; orderNumber: string } | null>(null);
 
   useEffect(() => {
     fetch("/api/v1/products?pageSize=200")
@@ -121,7 +125,8 @@ export function ProductionOrderForm() {
 
     const res = await fetch("/api/v1/production-orders", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      // Errors-only toast: a duplicate Sale Order is answered by the YES/NO prompt below instead.
+      headers: { "Content-Type": "application/json", "x-toast": "off" },
       body: JSON.stringify({
         salesOrderItemId: salesOrderItemId || undefined,
         productId,
@@ -137,6 +142,10 @@ export function ProductionOrderForm() {
 
     if (!res.ok) {
       const body = await res.json().catch(() => null);
+      if (body?.error?.code === "PRODUCTION_ORDER_EXISTS" && body.error.details?.existingProductionOrderId) {
+        setExistingOrder({ id: body.error.details.existingProductionOrderId, orderNumber: body.error.details.existingOrderNumber });
+        return;
+      }
       setError(body?.error?.message ?? "Failed to create this production order.");
       return;
     }
@@ -148,6 +157,18 @@ export function ProductionOrderForm() {
 
   return (
     <form onSubmit={handleSubmit} className="max-w-2xl space-y-6">
+      <ConfirmModal
+        open={!!existingOrder}
+        title="Production order already exists"
+        message={`A production order (${existingOrder?.orderNumber ?? ""}) has already been created for this Sale Order. Do you want to add extra quantity to production?`}
+        confirmLabel="YES"
+        cancelLabel="NO"
+        onConfirm={() => {
+          if (!existingOrder) return;
+          router.push(`/production-orders/${existingOrder.id}?extra=1`);
+        }}
+        onCancel={() => setExistingOrder(null)}
+      />
       <FormField label="Linked Sales Order (optional — leave blank for Make-to-Stock)" htmlFor="salesOrderId">
         <SearchableSelect
           id="salesOrderId"

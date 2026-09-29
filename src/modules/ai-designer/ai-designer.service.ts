@@ -137,8 +137,20 @@ const STANDARD_STEPS = [
   "FABRIC_SELECTION",
   "FABRIC_ANALYSIS",
   "PRODUCT_SUGGESTIONS",
-  "TARGET_CUSTOMER",
+  // TARGET_CUSTOMER hidden for now, per explicit request — createProject()
+  // defaults every project to UNISEX instead, so Age Group's own per-
+  // customer option list, and Product Category/Set Pieces' category list,
+  // always have real values even with the manual picker gone; a later
+  // Product Suggestion can still override it (see saveWizardSelections).
   "AGE_GROUP",
+  // PRODUCT_CATEGORY is kept in this array (unlike TARGET_CUSTOMER above) —
+  // a SET-mode project's "Set Pieces" editor renders on this exact step slot
+  // and must keep working (see AiDesignerWorkflowPanel.tsx). Only the
+  // SINGLE-mode manual category-chip picker is hidden, per explicit request;
+  // createProject() marks this step already-complete at creation for a
+  // SINGLE-mode project specifically, so it behaves exactly like a removed
+  // step there (never blocks Generate, never shows as a dead "current" step
+  // with no visible UI) while staying a real, interactive step for SET mode.
   "PRODUCT_CATEGORY",
   // PRODUCT_DESIGN hidden for now, per explicit request — designSelectionsJson
   // data survives (still writable via saveWizardSelections, still read by the
@@ -297,7 +309,17 @@ export async function createProject(actor: ActorContext, input: CreateProjectInp
     creationMode: input.creationMode,
     projectMode: input.projectMode,
     currentStep: stepsForCreationMode(input.creationMode)[0],
-    completedSteps: [],
+    // A SINGLE-mode project has no interactive use for the PRODUCT_CATEGORY
+    // step slot (its manual chip picker is hidden — see STANDARD_STEPS
+    // above), so it starts already-complete; a SET-mode project still needs
+    // it real and incomplete until Set Pieces are actually added
+    // (replaceProjectPieces marks it complete once pieces.length > 0).
+    completedSteps: input.projectMode === "SET" ? [] : ["PRODUCT_CATEGORY"],
+    // Target Customer's manual picker is hidden from the wizard (see
+    // STANDARD_STEPS above) — every project silently starts as UNISEX so
+    // Age Group/Category option lists always have real values; a later
+    // Product Suggestion can still override this (saveWizardSelections).
+    targetCustomer: "UNISEX",
     createdByUserId: actor.userId,
   });
 
@@ -921,7 +943,10 @@ export async function applyProductSuggestionAndGenerate(actor: ActorContext, pro
 }
 
 // ---------------------------------------------------------------------------
-// Steps 3-8 — Target Customer / Age Group / Product Category / Design / Model / Environment
+// Steps 3-8 — Age Group / Product Category / Design / Model / Environment
+// (Target Customer's own manual step is hidden — see STANDARD_STEPS above —
+// but this function's targetCustomer write stays reachable, since
+// applyProductSuggestionAndGenerate() still needs to set it from a suggestion.)
 // ---------------------------------------------------------------------------
 
 export async function saveWizardSelections(actor: ActorContext, projectId: string, input: SaveWizardSelectionsInput) {
@@ -931,9 +956,12 @@ export async function saveWizardSelections(actor: ActorContext, projectId: strin
   const touchedSteps: WizardStep[] = [];
   const effectiveCustomer = (input.targetCustomer ?? project.targetCustomer) as TargetCustomer | null;
 
+  // Target Customer is hidden from the wizard for now — this write is kept
+  // reachable (applyProductSuggestionAndGenerate() still calls it with a
+  // suggestion's own targetCustomer) but no longer marks any step complete
+  // ("TARGET_CUSTOMER" no longer exists in the step order).
   if (input.targetCustomer !== undefined) {
     data.targetCustomer = input.targetCustomer;
-    touchedSteps.push("TARGET_CUSTOMER");
   }
   if (input.ageGroup !== undefined) {
     if (effectiveCustomer && !isValidAgeGroup(effectiveCustomer, input.ageGroup)) {
@@ -1081,13 +1109,19 @@ function assertReadyToGenerate(project: AiDesignerProject, sketchAnalysisStatus?
   if (!project.fabricImageAttachmentId) {
     missing.push("a real fabric reference photo (Step 1 — upload the actual fabric image, even if you picked an existing fabric's details)");
   }
-  if (!project.targetCustomer) missing.push("Target Customer");
+  // Target Customer is hidden from the wizard for now, per explicit request
+  // — defaults to UNISEX at project creation (createProject), so it's never
+  // actually null in practice, but no longer a hard precondition even for a
+  // pre-existing project created before this default existed.
   if (!project.ageGroup) missing.push("Age Group");
   if (project.projectMode === "SET") {
     if (!pieceCount) missing.push("at least one Set piece (Step 5 — add each garment piece, e.g. Kurta, Pant, Dupatta)");
-  } else if (!project.productCategory) {
-    missing.push("Product Category");
   }
+  // Product Category's manual picker is hidden from the wizard for now, per
+  // explicit request, and is no longer a hard precondition for a SINGLE-mode
+  // project (SET-mode's own Set Pieces requirement above is unaffected).
+  // generateDesign()'s own prompt-building already tolerates a null
+  // productCategory (`|| "Not specified"`), same as Model's precedent below.
   // Model is hidden from the wizard for now, per explicit request — no
   // longer a hard precondition. generateDesign()'s own prompt-building
   // already tolerates all-null model fields (`|| "Not specified"`).

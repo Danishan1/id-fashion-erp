@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import Link from "next/link";
+import { useEffect, useState } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { Modal } from "@/components/ui/Modal";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
@@ -63,6 +64,26 @@ interface JobWorkOrderDetail {
   extraCostTotal?: string;
   totalCost?: string;
   finishedGoodsWarehouse?: { id: string; name: string } | null;
+  contractor?: { id: string; name: string };
+  jobOrder: {
+    id: string;
+    jobNumber: string;
+    productionStage: { id: string; name: string };
+    lot: {
+      id: string;
+      lotNumber: string;
+      productionOrder: { id: string; orderNumber: string; salesOrderItem: { salesOrder: { orderNumber: string } } | null };
+    };
+  };
+  // Sent from → received at → next stage (2026-09-29), derived from the ledger.
+  stageTracking?: {
+    sentFromStage: { id: string; name: string };
+    receivedAtStage: { id: string; name: string };
+    nextStage: { id: string; name: string; isFinal: boolean } | null;
+    receivingJobOrder: { id: string; jobNumber: string; completedQuantity: number; forwardedQuantity: number } | null;
+    availableForNextStage: number;
+    finishedAtReceipt: boolean;
+  };
 }
 
 const COST_SOURCE_LABELS = {
@@ -102,6 +123,39 @@ export function JobWorkOrderWorkflowPanel({ jobWorkOrderId, initialOrder }: { jo
   const [reverseReason, setReverseReason] = useState("");
 
   const [confirmCancel, setConfirmCancel] = useState(false);
+
+  const [showForward, setShowForward] = useState(false);
+  const [forwardQty, setForwardQty] = useState("");
+  const [forwardFgWarehouseId, setForwardFgWarehouseId] = useState("");
+  const [warehouses, setWarehouses] = useState<{ id: string; name: string }[]>([]);
+  const tracking = order.stageTracking;
+  const nextIsFinal = !!tracking?.nextStage?.isFinal;
+
+  useEffect(() => {
+    if (!showForward || !nextIsFinal) return;
+    fetch("/api/v1/warehouses?pageSize=200")
+      .then((res) => res.json())
+      .then((body) => setWarehouses(body.data ?? []))
+      .catch(() => {});
+  }, [showForward, nextIsFinal]);
+
+  const submitForward = async () => {
+    if (!tracking?.receivingJobOrder) return;
+    const ok = await run(
+      () =>
+        fetch(`/api/v1/job-orders/${tracking.receivingJobOrder!.id}/forward`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-toast-success": "Moved to the next stage." },
+          body: JSON.stringify({
+            quantity: Number(forwardQty),
+            targetStageId: tracking.nextStage?.id,
+            finishedGoodsWarehouseId: nextIsFinal ? forwardFgWarehouseId : undefined,
+          }),
+        }),
+      "Failed to move these pieces to the next stage."
+    );
+    if (ok) setShowForward(false);
+  };
 
   const refresh = async () => {
     const res = await fetch(`/api/v1/job-work-orders/${jobWorkOrderId}`);
@@ -241,6 +295,70 @@ export function JobWorkOrderWorkflowPanel({ jobWorkOrderId, initialOrder }: { jo
           </div>
         </div>
       </div>
+
+      {tracking && (
+        <div className="rounded-lg border border-indigo-200 bg-indigo-50/60 p-4 text-sm dark:border-indigo-900 dark:bg-indigo-950/30">
+          <h2 className="mb-2 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Production Stage Tracking</h2>
+          <div className="grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-4">
+            <div>
+              <div className="text-xs text-zinc-500">Production Order / Lot</div>
+              <div className="font-medium">
+                <Link href={`/production-orders/${order.jobOrder.lot.productionOrder.id}/lots/${order.jobOrder.lot.id}`} className="text-indigo-600 hover:underline dark:text-indigo-400">
+                  {order.jobOrder.lot.lotNumber}
+                </Link>
+              </div>
+            </div>
+            <div>
+              <div className="text-xs text-zinc-500">Sale Order</div>
+              <div className="font-medium">{order.jobOrder.lot.productionOrder.salesOrderItem?.salesOrder.orderNumber ?? "— (Make-to-Stock)"}</div>
+            </div>
+            <div>
+              <div className="text-xs text-zinc-500">Sent From Stage</div>
+              <div className="font-medium">{tracking.sentFromStage.name}</div>
+            </div>
+            <div>
+              <div className="text-xs text-zinc-500">Received At Stage</div>
+              <div className="font-medium">{tracking.receivedAtStage.name}</div>
+            </div>
+            <div>
+              <div className="text-xs text-zinc-500">Next Stage</div>
+              <div className="font-medium">
+                {tracking.finishedAtReceipt ? "— (finished goods)" : tracking.nextStage?.name ?? "—"}
+              </div>
+            </div>
+            <div>
+              <div className="text-xs text-zinc-500">Available for Next Stage</div>
+              <div className="font-semibold text-emerald-700 dark:text-emerald-400">
+                {tracking.availableForNextStage} {order.uom.code}
+              </div>
+            </div>
+            {tracking.receivingJobOrder && (
+              <div>
+                <div className="text-xs text-zinc-500">Received Into Job Order</div>
+                <div className="font-medium">{tracking.receivingJobOrder.jobNumber}</div>
+              </div>
+            )}
+          </div>
+          <p className="mt-2 text-xs text-zinc-500">
+            {order.jobOrder.productionStage.name} → Job Work ({order.contractor?.name ?? "contractor"}) → Received at {tracking.receivedAtStage.name}
+            {tracking.nextStage && !tracking.finishedAtReceipt ? ` → next: ${tracking.nextStage.name}` : ""}. Available counts every completed
+            piece at {tracking.receivedAtStage.name} on this lot that hasn&apos;t moved on yet.
+          </p>
+          {tracking.nextStage && !tracking.finishedAtReceipt && tracking.availableForNextStage > 0 && tracking.receivingJobOrder && (
+            <button
+              type="button"
+              onClick={() => {
+                setError(null);
+                setForwardQty(String(tracking.availableForNextStage));
+                setShowForward(true);
+              }}
+              className="mt-3 rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500"
+            >
+              Move to {tracking.nextStage.name}
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="flex flex-wrap gap-3">
         {canReceive && (
@@ -469,6 +587,63 @@ export function JobWorkOrderWorkflowPanel({ jobWorkOrderId, initialOrder }: { jo
         onConfirm={confirmCancelAction}
         onCancel={() => setConfirmCancel(false)}
       />
+      <Modal open={showForward} onClose={() => setShowForward(false)} title={`Move to ${tracking?.nextStage?.name ?? "next stage"}`}>
+        <div className="space-y-4">
+          <p className="text-xs text-zinc-500">
+            Moves received pieces from {tracking?.receivedAtStage.name} ({tracking?.receivingJobOrder?.jobNumber}) to {tracking?.nextStage?.name}.
+            Available: <strong>{tracking?.availableForNextStage}</strong> {order.uom.code}.
+          </p>
+          <FormField label="Quantity" htmlFor="forwardQty" required>
+            <input
+              id="forwardQty"
+              type="number"
+              min={1}
+              max={tracking?.availableForNextStage}
+              step={1}
+              value={forwardQty}
+              onChange={(e) => setForwardQty(e.target.value)}
+              className={textInputClass()}
+            />
+          </FormField>
+          {Number(forwardQty) > (tracking?.availableForNextStage ?? 0) && (
+            <p className="text-xs text-red-600 dark:text-red-400">
+              Cannot move more than the {tracking?.availableForNextStage} pieces available at {tracking?.receivedAtStage.name}.
+            </p>
+          )}
+          {nextIsFinal && (
+            <FormField label="Finished Goods Warehouse" htmlFor="forwardFgWarehouseId" required>
+              <select id="forwardFgWarehouseId" value={forwardFgWarehouseId} onChange={(e) => setForwardFgWarehouseId(e.target.value)} className={textInputClass()}>
+                <option value="">— Select —</option>
+                {warehouses.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.name}
+                  </option>
+                ))}
+              </select>
+            </FormField>
+          )}
+          {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+          <div className="flex justify-end gap-2">
+            <button type="button" onClick={() => setShowForward(false)} className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800">
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={submitForward}
+              disabled={
+                isBusy ||
+                !forwardQty ||
+                Number(forwardQty) <= 0 ||
+                Number(forwardQty) > (tracking?.availableForNextStage ?? 0) ||
+                (nextIsFinal && !forwardFgWarehouseId)
+              }
+              className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
+            >
+              {isBusy ? "Saving…" : "Move"}
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

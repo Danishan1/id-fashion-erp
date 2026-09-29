@@ -42,6 +42,15 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
         },
         { label: "Lot No.", value: jobWorkOrder.jobOrder.lot.lotNumber },
         { label: "Against Job Order", value: `${jobWorkOrder.jobOrder.jobNumber} (${jobWorkOrder.jobOrder.productionStage.name})` },
+        { label: "Sent From Stage", value: jobWorkOrder.stageTracking.sentFromStage.name.trim() },
+        { label: "Job Work Stage(s)", value: jobWorkOrder.coveredStages.map((s) => s.productionStage.name.trim()).join(" → ") || jobWorkOrder.jobOrder.productionStage.name },
+        { label: "Received At Stage", value: jobWorkOrder.stageTracking.receivedAtStage.name.trim() },
+        {
+          label: "Next Stage",
+          value: jobWorkOrder.stageTracking.finishedAtReceipt
+            ? "— (finished goods)"
+            : jobWorkOrder.stageTracking.nextStage?.name.trim() ?? "—",
+        },
         { label: "Issued By (Sent Out By)", value: jobWorkOrder.requestedBy.fullName },
         { label: "Vendor / Supplier (Sent To)", value: jobWorkOrder.contractor.name },
         { label: "Received Quantity", value: `${Number(receipt.receivedQuantity).toLocaleString("en-IN")} ${jobWorkOrder.uom.code}` },

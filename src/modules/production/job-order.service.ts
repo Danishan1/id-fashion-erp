@@ -12,6 +12,7 @@ import {
   syncAssignmentStatusInTx,
 } from "./assignment-capacity";
 import { generateEarningForJobOrderProgress, generateEarningsForQcAcceptance } from "./piece-rate-earning.service";
+import { assertLotMaterialReady } from "./lot-readiness.service";
 import type { JobOrderStatus, Prisma, ProductionStage } from "@prisma/client";
 import {
   JobOrderAssignmentRepository,
@@ -462,6 +463,12 @@ export async function getJobOrderById(companyId: string, id: string, userId?: st
  * later move, just with no `fromJobOrder`. Always moves the lot's full
  * quantity (a lot has no separate "not yet started" sub-quantity to track;
  * a user wanting a partial start splits the lot first). */
+/**
+ * Starts an existing PLANNED lot (a lot raised before 2026-09-29, when Add
+ * Lot still left lots unstarted). Same gate as createLot: the order's issued
+ * material must cover every counted lot, and at least one worker must be
+ * assigned to the lot's first stage in the same step.
+ */
 export async function startLot(actor: ActorContext, lotId: string, input: StartLotInput) {
   const lot = await LotRepository.findAnyById(actor.companyId, lotId);
   if (!lot) throw new BusinessRuleError("NOT_FOUND", "Lot not found.", { id: lotId });
@@ -482,32 +489,24 @@ export async function startLot(actor: ActorContext, lotId: string, input: StartL
     stage = await findActiveStageById(actor.companyId, input.stageId);
     if (!stage || !stage.isActive) throw new BusinessRuleError("NOT_FOUND", "Production stage not found.", { id: input.stageId });
   } else {
-    stage = await prisma.productionStage.findFirst({ where: { companyId: actor.companyId, isActive: true }, orderBy: { sequence: "asc" } });
-    if (!stage) {
-      throw new BusinessRuleError("VALIDATION_ERROR", "No active production stages are configured for this company yet.", {});
-    }
+    stage = await findFirstActiveStage(actor.companyId);
   }
   await assertStageAccess(actor, stage.id);
 
+  // This lot is already counted among the order's lots, so nothing new is added.
+  await assertLotMaterialReady(actor.companyId, order.id, { newLotPieces: 0 });
+  const prepared = await prepareLotStartAssignments(actor, { productId: order.productId, lotQuantity: Number(lot.quantity) }, input.assignments);
+
   const result = await prisma.$transaction((tx) =>
-    postStageTransactionInTx(tx, actor, {
-      productionOrderId: order.id,
-      lot,
-      fromJobOrder: null,
-      toStage: stage,
-      quantity: Number(lot.quantity),
-      transactionType: "FORWARD",
-    })
+    startLotAtStageInTx(tx, actor, { productionOrderId: order.id, lot, stage, assignments: prepared })
   );
 
-  await writeAuditLog({
-    companyId: actor.companyId,
-    userId: actor.userId,
-    tableName: "job_orders",
-    recordId: result.jobOrder.id,
-    action: "CREATE",
-    newValues: { lotId, stageId: stage.id, quantity: lot.quantity },
-  });
+  await writeLotStartAuditLogs(
+    actor,
+    { lotId, stageId: stage.id, quantity: lot.quantity, jobOrderId: result.jobOrder.id },
+    result.assignments,
+    prepared
+  );
 
   return result.jobOrder;
 }
@@ -525,15 +524,18 @@ function assertJobOrderAcceptsWork(jobOrder: { status: string; productionStage: 
   }
 }
 
-export async function assignWorker(actor: ActorContext, jobOrderId: string, input: CreateJobOrderAssignmentInput) {
-  const jobOrder = await JobOrderRepository.findAnyById(actor.companyId, jobOrderId);
-  if (!jobOrder) throw new BusinessRuleError("NOT_FOUND", "Job order not found.", { id: jobOrderId });
-  assertJobOrderAcceptsWork(jobOrder, "assign a worker");
-  if (!jobOrder.productionStage.isActive) {
-    throw new BusinessRuleError("VALIDATION_ERROR", `Stage "${jobOrder.productionStage.name}" is inactive.`, {});
-  }
-  await assertStageAccess(actor, jobOrder.productionStageId);
-
+/**
+ * Validates one worker assignment (tenant-scoped worker, active, expected
+ * time window, piece-rate snapshot) and returns the row data ready to insert.
+ * Shared by assignWorker (an already-running job order) and startLot/createLot
+ * (the lot's first-stage workers, inserted in the same transaction that
+ * creates the job order) so both paths enforce exactly the same rules.
+ */
+export async function prepareAssignmentData(
+  actor: ActorContext,
+  context: { productId: string | null },
+  input: CreateJobOrderAssignmentInput
+): Promise<PreparedAssignment> {
   // Tenant-scoped — an employeeId from another company would otherwise sit
   // unvalidated on the assignment record.
   const employee = await EmployeeRepository.findById(actor.companyId, input.employeeId);
@@ -576,11 +578,10 @@ export async function assignWorker(actor: ActorContext, jobOrderId: string, inpu
       );
     }
 
-    const order = await ProductionOrderRepository.findAnyById(actor.companyId, jobOrder.productionOrderId);
     const resolution = input.productionOperationId
       ? await resolvePieceRate({
           companyId: actor.companyId,
-          productId: order?.productId ?? null,
+          productId: context.productId,
           productionOperationId: input.productionOperationId,
           employeeId: input.employeeId,
           asOfDate: new Date(),
@@ -609,6 +610,129 @@ export async function assignWorker(actor: ActorContext, jobOrderId: string, inpu
     };
   }
 
+  return {
+    employeeName: employee.fullName,
+    data: {
+      employeeId: input.employeeId,
+      assignedQuantity: input.assignedQuantity,
+      status: "ASSIGNED",
+      assignedByUserId: actor.userId,
+      expectedStartAt,
+      expectedEndAt,
+      ...rateFields,
+    },
+  };
+}
+
+export interface PreparedAssignment {
+  employeeName: string;
+  data: Omit<Prisma.JobOrderAssignmentUncheckedCreateInput, "jobOrderId">;
+}
+
+async function writeAssignmentAuditLog(actor: ActorContext, assignment: { id: string; jobOrderId: string }, prepared: PreparedAssignment) {
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "job_order_assignments",
+    recordId: assignment.id,
+    action: "CREATE",
+    newValues: { ...prepared.data, jobOrderId: assignment.jobOrderId },
+  });
+}
+
+/**
+ * Validates every first-stage worker for a lot before anything is written.
+ * The assigned pieces may not exceed the lot's own quantity (the job order is
+ * brand new, so nothing else is committed against it yet).
+ */
+export async function prepareLotStartAssignments(
+  actor: ActorContext,
+  context: { productId: string | null; lotQuantity: number },
+  inputs: CreateJobOrderAssignmentInput[]
+): Promise<PreparedAssignment[]> {
+  if (inputs.length === 0) {
+    throw new BusinessRuleError(
+      "VALIDATION_ERROR",
+      "Cutting worker assignment, material request and material issue are required before creating the production lot. Assign at least one cutting worker.",
+      {}
+    );
+  }
+  const totalAssigned = inputs.reduce((sum, a) => sum + a.assignedQuantity, 0);
+  if (totalAssigned > context.lotQuantity + EPSILON) {
+    throw new BusinessRuleError(
+      "OVER_PRODUCTION_NOT_ALLOWED",
+      `Assigned quantity cannot be greater than the lot quantity. Lot: ${context.lotQuantity}, assigned: ${totalAssigned}.`,
+      { lotQuantity: context.lotQuantity, assigned: totalAssigned }
+    );
+  }
+  const prepared: PreparedAssignment[] = [];
+  for (const input of inputs) prepared.push(await prepareAssignmentData(actor, { productId: context.productId }, input));
+  return prepared;
+}
+
+/** Posts the lot onto its first stage and inserts its workers — one transaction, no half-started lot. */
+export async function startLotAtStageInTx(
+  tx: Prisma.TransactionClient,
+  actor: ActorContext,
+  params: {
+    productionOrderId: string;
+    lot: { id: string; lotNumber: string; quantity: unknown };
+    stage: ProductionStage;
+    assignments: PreparedAssignment[];
+  }
+) {
+  const result = await postStageTransactionInTx(tx, actor, {
+    productionOrderId: params.productionOrderId,
+    lot: params.lot,
+    fromJobOrder: null,
+    toStage: params.stage,
+    quantity: Number(params.lot.quantity),
+    transactionType: "FORWARD",
+  });
+  const createdAssignments = [];
+  for (const prepared of params.assignments) {
+    createdAssignments.push(await JobOrderAssignmentRepository.createInTx(tx, { jobOrderId: result.jobOrder.id, ...prepared.data }));
+  }
+  return { jobOrder: result.jobOrder, assignments: createdAssignments };
+}
+
+/** Audit rows for a lot start — called after the start transaction commits. */
+export async function writeLotStartAuditLogs(
+  actor: ActorContext,
+  params: { lotId: string; stageId: string; quantity: unknown; jobOrderId: string },
+  assignments: Array<{ id: string; jobOrderId: string }>,
+  prepared: PreparedAssignment[]
+) {
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "job_orders",
+    recordId: params.jobOrderId,
+    action: "CREATE",
+    newValues: { lotId: params.lotId, stageId: params.stageId, quantity: params.quantity },
+  });
+  for (let i = 0; i < assignments.length; i++) await writeAssignmentAuditLog(actor, assignments[i], prepared[i]);
+}
+
+/** The first active stage by sequence — where every new lot starts (Cutting). */
+export async function findFirstActiveStage(companyId: string) {
+  const stage = await prisma.productionStage.findFirst({ where: { companyId, isActive: true }, orderBy: { sequence: "asc" } });
+  if (!stage) throw new BusinessRuleError("VALIDATION_ERROR", "No active production stages are configured for this company yet.", {});
+  return stage;
+}
+
+export async function assignWorker(actor: ActorContext, jobOrderId: string, input: CreateJobOrderAssignmentInput) {
+  const jobOrder = await JobOrderRepository.findAnyById(actor.companyId, jobOrderId);
+  if (!jobOrder) throw new BusinessRuleError("NOT_FOUND", "Job order not found.", { id: jobOrderId });
+  assertJobOrderAcceptsWork(jobOrder, "assign a worker");
+  if (!jobOrder.productionStage.isActive) {
+    throw new BusinessRuleError("VALIDATION_ERROR", `Stage "${jobOrder.productionStage.name}" is inactive.`, {});
+  }
+  await assertStageAccess(actor, jobOrder.productionStageId);
+
+  const order = await ProductionOrderRepository.findAnyById(actor.companyId, jobOrder.productionOrderId);
+  const prepared = await prepareAssignmentData(actor, { productId: order?.productId ?? null }, input);
+
   // Capacity check and insert under one row lock on the job order, so two
   // supervisors assigning at the same moment can't both pass the check.
   const assignment = await prisma.$transaction(async (tx) => {
@@ -623,33 +747,10 @@ export async function assignWorker(actor: ActorContext, jobOrderId: string, inpu
         { available, requested: input.assignedQuantity }
       );
     }
-    return JobOrderAssignmentRepository.createInTx(tx, {
-      jobOrderId,
-      employeeId: input.employeeId,
-      assignedQuantity: input.assignedQuantity,
-      status: "ASSIGNED",
-      assignedByUserId: actor.userId,
-      expectedStartAt,
-      expectedEndAt,
-      ...rateFields,
-    });
+    return JobOrderAssignmentRepository.createInTx(tx, { jobOrderId, ...prepared.data });
   });
 
-  await writeAuditLog({
-    companyId: actor.companyId,
-    userId: actor.userId,
-    tableName: "job_order_assignments",
-    recordId: assignment.id,
-    action: "CREATE",
-    newValues: {
-      jobOrderId,
-      employeeId: input.employeeId,
-      assignedQuantity: input.assignedQuantity,
-      expectedStartAt,
-      expectedEndAt,
-      ...rateFields,
-    },
-  });
+  await writeAssignmentAuditLog(actor, assignment, prepared);
 
   return assignment;
 }

@@ -25,9 +25,19 @@ vi.mock("./production.repository", () => ({
 vi.mock("@/core/rbac/PermissionService", () => ({
   PermissionService: { getAllowedBranchIds: vi.fn(), getAllowedProductionStageIds: vi.fn() },
 }));
+vi.mock("./lot-readiness.service", () => ({ assertLotMaterialReady: vi.fn() }));
+vi.mock("./job-order.service", () => ({
+  assertStageAccess: vi.fn(),
+  findFirstActiveStage: vi.fn(),
+  prepareLotStartAssignments: vi.fn(),
+  startLotAtStageInTx: vi.fn(),
+  writeLotStartAuditLogs: vi.fn(),
+}));
 
 const { LotRepository, ProductionOrderRepository } = await import("./production.repository");
 const { PermissionService } = await import("@/core/rbac/PermissionService");
+const { assertLotMaterialReady } = await import("./lot-readiness.service");
+const JobOrderService = await import("./job-order.service");
 const { splitLot, mergeLots, getLotById, createLot, getVariantBreakdownSuggestions } = await import("./lot.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
@@ -58,6 +68,18 @@ beforeEach(() => {
   vi.mocked(ProductionOrderRepository.incrementLotSequenceInTx).mockReset().mockResolvedValue({ nextLotSequence: 2 } as never);
   mockPrismaClient.productVariant.count.mockReset();
   mockPrismaClient.productVariant.findMany.mockReset();
+  vi.mocked(assertLotMaterialReady).mockReset().mockResolvedValue({ ready: true } as never);
+  vi.mocked(JobOrderService.assertStageAccess).mockReset().mockResolvedValue(undefined);
+  vi.mocked(JobOrderService.findFirstActiveStage)
+    .mockReset()
+    .mockResolvedValue({ id: "stage-cut", code: "CUTTING", name: "Cutting", sequence: 1, isFinal: false } as never);
+  vi.mocked(JobOrderService.prepareLotStartAssignments)
+    .mockReset()
+    .mockResolvedValue([{ employeeName: "Ravi", data: { employeeId: "emp-1", assignedQuantity: 100 } }] as never);
+  vi.mocked(JobOrderService.startLotAtStageInTx)
+    .mockReset()
+    .mockResolvedValue({ jobOrder: { id: "jo-cut" }, assignments: [{ id: "as-1", jobOrderId: "jo-cut" }] } as never);
+  vi.mocked(JobOrderService.writeLotStartAuditLogs).mockReset().mockResolvedValue(undefined);
   mockPrismaClient.lotVariantBreakdown.groupBy.mockReset().mockResolvedValue([]);
   mockPrismaClient.salesOrderItem.findFirst.mockReset();
   mockTx.productionOrder.update.mockReset();
@@ -153,6 +175,7 @@ describe("createLot", () => {
       createLot(actor, "po-1", {
         quantity: 100,
         uomId: "uom-1",
+        cuttingAssignments: [{ employeeId: "emp-1", assignedQuantity: 100, expectedEndAt: "2099-01-01T10:00:00.000Z" }],
         variantBreakdown: [{ productVariantId: "pv-1", quantity: 40 }, { productVariantId: "pv-2", quantity: 50 }],
       })
     ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
@@ -166,6 +189,7 @@ describe("createLot", () => {
       createLot(actor, "po-1", {
         quantity: 100,
         uomId: "uom-1",
+        cuttingAssignments: [{ employeeId: "emp-1", assignedQuantity: 100, expectedEndAt: "2099-01-01T10:00:00.000Z" }],
         variantBreakdown: [{ productVariantId: "pv-1", quantity: 40 }, { productVariantId: "pv-other-style", quantity: 60 }],
       })
     ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
@@ -179,6 +203,7 @@ describe("createLot", () => {
     await createLot(actor, "po-1", {
       quantity: 100,
       uomId: "uom-1",
+      cuttingAssignments: [{ employeeId: "emp-1", assignedQuantity: 100, expectedEndAt: "2099-01-01T10:00:00.000Z" }],
       variantBreakdown: [{ productVariantId: "pv-1", quantity: 40 }, { productVariantId: "pv-2", quantity: 60 }],
     });
 
@@ -199,13 +224,57 @@ describe("createLot", () => {
   it("creates the lot with no breakdown at all when none is supplied", async () => {
     vi.mocked(LotRepository.createInTx).mockResolvedValue({ id: "lot-new", lotNumber: "PROD-2026-00001-L01" } as never);
 
-    await createLot(actor, "po-1", { quantity: 100, uomId: "uom-1" });
+    await createLot(actor, "po-1", { quantity: 100, uomId: "uom-1", cuttingAssignments: [{ employeeId: "emp-1", assignedQuantity: 100, expectedEndAt: "2099-01-01T10:00:00.000Z" }], });
 
     expect(mockPrismaClient.productVariant.count).not.toHaveBeenCalled();
     expect(LotRepository.createInTx).toHaveBeenCalledWith(
       expect.anything(),
       expect.not.objectContaining({ variantBreakdown: expect.anything() })
     );
+  });
+});
+
+describe("createLot — lot gate (worker + material request + material issue)", () => {
+  const input = { quantity: 5, uomId: "uom-1", cuttingAssignments: [{ employeeId: "emp-1", assignedQuantity: 5, expectedEndAt: "2099-01-01T10:00:00.000Z" }] };
+
+  it("blocks the lot when issued material doesn't cover the pieces, before anything is written", async () => {
+    vi.mocked(assertLotMaterialReady).mockRejectedValue(
+      Object.assign(new Error("Insufficient material quantity. Required quantity is 7.5 MTR of Cotton for 5 PCS"), {
+        code: "INSUFFICIENT_RAW_MATERIAL_STOCK",
+      })
+    );
+
+    await expect(createLot(actor, "po-1", input)).rejects.toMatchObject({ code: "INSUFFICIENT_RAW_MATERIAL_STOCK" });
+    expect(assertLotMaterialReady).toHaveBeenCalledWith("co-1", "po-1", { newLotPieces: 5 });
+    expect(LotRepository.createInTx).not.toHaveBeenCalled();
+    expect(JobOrderService.startLotAtStageInTx).not.toHaveBeenCalled();
+  });
+
+  it("blocks the lot when the worker rows are invalid, before anything is written", async () => {
+    vi.mocked(JobOrderService.prepareLotStartAssignments).mockRejectedValue(
+      Object.assign(new Error("Assign at least one cutting worker."), { code: "VALIDATION_ERROR" })
+    );
+
+    await expect(createLot(actor, "po-1", input)).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(LotRepository.createInTx).not.toHaveBeenCalled();
+  });
+
+  it("creates the lot, starts it at the first stage and assigns the cutting worker in one transaction", async () => {
+    vi.mocked(LotRepository.createInTx).mockResolvedValue({ id: "lot-new", lotNumber: "PROD-2026-00001-L01", quantity: 5 } as never);
+
+    const result = await createLot(actor, "po-1", input);
+
+    expect(JobOrderService.prepareLotStartAssignments).toHaveBeenCalledWith(
+      actor,
+      { productId: "prod-1", lotQuantity: 5 },
+      input.cuttingAssignments
+    );
+    expect(JobOrderService.startLotAtStageInTx).toHaveBeenCalledWith(
+      mockTx,
+      actor,
+      expect.objectContaining({ productionOrderId: "po-1", stage: expect.objectContaining({ id: "stage-cut" }) })
+    );
+    expect(result).toMatchObject({ id: "lot-new", status: "IN_PROGRESS", firstJobOrderId: "jo-cut" });
   });
 });
 

@@ -5,6 +5,16 @@ import { useEffect, useState } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { Modal } from "@/components/ui/Modal";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
+import {
+  LotMaterialReadinessPanel,
+  WorkerAssignmentRowsEditor,
+  newWorkerRow,
+  validateWorkerRows,
+  workerRowsToPayload,
+  type LotMaterialReadiness,
+  type WorkerRowDraft,
+} from "./LotStartFields";
+import { StageTimelinePanel } from "./StageTimelinePanel";
 import { todayIsoDate } from "@/lib/date";
 import { getApiErrorMessage } from "@/lib/api-client";
 import { LOT_STATUS_LABELS, JOB_ORDER_STATUS_LABELS } from "./statusLabels";
@@ -204,6 +214,9 @@ export function LotWorkflowPanel({
 
   const [showStart, setShowStart] = useState(false);
   const [startStageId, setStartStageId] = useState("");
+  const [startWorkers, setStartWorkers] = useState<WorkerRowDraft[]>(() => [newWorkerRow()]);
+  const [startReadiness, setStartReadiness] = useState<LotMaterialReadiness | null>(null);
+  const [timelineKey, setTimelineKey] = useState(0);
 
   const [assignTarget, setAssignTarget] = useState<JobOrderRow | null>(null);
   const [assignEmployeeId, setAssignEmployeeId] = useState("");
@@ -307,6 +320,7 @@ export function LotWorkflowPanel({
     const res = await fetch(`/api/v1/lots/${lotId}`);
     const body = await res.json();
     if (res.ok) setLot(body.data);
+    setTimelineKey((k) => k + 1);
   };
 
   // Errors are shown INSIDE the open modal (previously they rendered behind
@@ -368,17 +382,22 @@ export function LotWorkflowPanel({
   const nextStageAfter = (sequence: number) =>
     stages.filter((s) => s.isActive && s.sequence > sequence).sort((a, b) => a.sequence - b.sequence)[0];
 
+  const startWorkerError = validateWorkerRows(startWorkers, Number(lot.quantity));
+
   const submitStart = async () => {
     const ok = await run(
       () =>
         fetch(`/api/v1/lots/${lotId}/start`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ stageId: startStageId || undefined }),
+          body: JSON.stringify({ stageId: startStageId || undefined, assignments: workerRowsToPayload(startWorkers) }),
         }),
       "Failed to start this lot."
     );
-    if (ok) setShowStart(false);
+    if (ok) {
+      setShowStart(false);
+      setStartWorkers([newWorkerRow()]);
+    }
   };
 
   const submitAssign = async () => {
@@ -645,7 +664,7 @@ export function LotWorkflowPanel({
     const remaining = progressAssignment.remainingQuantity ?? Number(progressAssignment.assignedQuantity);
     if (consumed > remaining) {
       return {
-        error: `Completed + Rejected + Damage (${completed + rejected + damaged}${extra ? ` − ${extra} extra` : ""} = ${consumed}) cannot exceed ${progressAssignment.employee.fullName}'s remaining ${remaining} assigned pieces.${
+        error: `Completed + Rejected + Damage (${extra ? `${completed + rejected + damaged} − ${extra} extra = ${consumed}` : consumed}) cannot exceed ${progressAssignment.employee.fullName}'s remaining ${remaining} assigned pieces.${
           progressAllowsExtra ? " Record genuinely extra cut pieces in \"Extra\"." : ""
         }`,
         consumed,
@@ -714,12 +733,14 @@ export function LotWorkflowPanel({
       {lot.status === "PLANNED" && (
         <button
           type="button"
-          onClick={() => setShowStart(true)}
+          onClick={() => openModal(() => setShowStart(true))}
           className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500"
         >
           Start Lot
         </button>
       )}
+
+      <StageTimelinePanel kind="lot" id={lotId} refreshKey={timelineKey} />
 
       <div className="space-y-4">
         <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Job Orders</h2>
@@ -874,7 +895,7 @@ export function LotWorkflowPanel({
         })}
       </div>
 
-      <Modal open={showStart} onClose={() => setShowStart(false)} title="Start Lot">
+      <Modal open={showStart} onClose={() => setShowStart(false)} title="Start Lot" maxWidthClass="max-w-2xl">
         <div className="space-y-4">
           <FormField label="Starting Stage (optional — defaults to the first configured stage)" htmlFor="startStageId">
             <select id="startStageId" value={startStageId} onChange={(e) => setStartStageId(e.target.value)} className={textInputClass()}>
@@ -889,11 +910,15 @@ export function LotWorkflowPanel({
                 ))}
             </select>
           </FormField>
+          <WorkerAssignmentRowsEditor rows={startWorkers} onChange={setStartWorkers} stageName="First stage" />
+          {startWorkerError && <p className="text-xs text-red-600 dark:text-red-400">{startWorkerError}</p>}
+          <LotMaterialReadinessPanel productionOrderId={productionOrderId} newLotPieces={0} onReadinessChange={setStartReadiness} />
+          <ModalError message={error} />
           <div className="flex justify-end gap-2">
             <button type="button" onClick={() => setShowStart(false)} className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800">
               Cancel
             </button>
-            <button type="button" onClick={submitStart} disabled={isBusy} className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60">
+            <button type="button" onClick={submitStart} disabled={isBusy || !!startWorkerError || !startReadiness?.ready} className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60">
               {isBusy ? "Saving…" : "Start"}
             </button>
           </div>
