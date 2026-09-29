@@ -11,6 +11,8 @@ vi.mock("./employee.repository", () => ({
     findById: vi.fn(),
     create: vi.fn(),
     update: vi.fn(),
+    replaceWorkSkills: vi.fn(),
+    countCompanyStages: vi.fn(),
   },
 }));
 
@@ -27,6 +29,8 @@ beforeEach(() => {
   vi.mocked(EmployeeRepository.findById).mockReset();
   vi.mocked(EmployeeRepository.create).mockReset();
   vi.mocked(EmployeeRepository.update).mockReset();
+  vi.mocked(EmployeeRepository.replaceWorkSkills).mockReset();
+  vi.mocked(EmployeeRepository.countCompanyStages).mockReset();
 });
 
 describe("createEmployee — reportsToId validation", () => {
@@ -109,5 +113,48 @@ describe("updateEmployee — reportsToId validation", () => {
     await updateEmployee(actor, "emp-1", { reportsToId: "mgr-2" } as never);
 
     expect(EmployeeRepository.update).toHaveBeenCalledWith("emp-1", expect.objectContaining({ reportsToId: "mgr-2" }));
+  });
+});
+
+describe("Work Skills (2026-09-29)", () => {
+  it("saves the selected stages on create, de-duplicated", async () => {
+    vi.mocked(EmployeeRepository.countCompanyStages).mockResolvedValue(2);
+    vi.mocked(EmployeeRepository.create).mockResolvedValue({ id: "emp-new" } as never);
+
+    await createEmployee(actor, { ...baseInput, workSkillStageIds: ["st-cut", "st-stitch", "st-cut"] } as never);
+
+    expect(EmployeeRepository.countCompanyStages).toHaveBeenCalledWith("co-1", ["st-cut", "st-stitch"]);
+    expect(EmployeeRepository.replaceWorkSkills).toHaveBeenCalledWith("emp-new", ["st-cut", "st-stitch"]);
+  });
+
+  it("rejects a stage that isn't one of this company's production stages", async () => {
+    vi.mocked(EmployeeRepository.countCompanyStages).mockResolvedValue(1);
+
+    await expect(createEmployee(actor, { ...baseInput, workSkillStageIds: ["st-cut", "st-foreign"] } as never)).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
+    expect(EmployeeRepository.create).not.toHaveBeenCalled();
+  });
+
+  it("creates an employee with no skills without touching the skills table", async () => {
+    vi.mocked(EmployeeRepository.create).mockResolvedValue({ id: "emp-new" } as never);
+    await createEmployee(actor, baseInput as never);
+    expect(EmployeeRepository.replaceWorkSkills).not.toHaveBeenCalled();
+  });
+
+  it("an update that omits Work Skills leaves them as they are", async () => {
+    vi.mocked(EmployeeRepository.findById).mockResolvedValue({ id: "emp-1", employeeCode: "EMP1", workSkills: [{ productionStageId: "st-cut" }] } as never);
+    vi.mocked(EmployeeRepository.update).mockResolvedValue({ id: "emp-1" } as never);
+
+    await updateEmployee(actor, "emp-1", { fullName: "Renamed" } as never);
+    expect(EmployeeRepository.replaceWorkSkills).not.toHaveBeenCalled();
+  });
+
+  it("an update with an empty list clears every skill", async () => {
+    vi.mocked(EmployeeRepository.findById).mockResolvedValue({ id: "emp-1", employeeCode: "EMP1", workSkills: [{ productionStageId: "st-cut" }] } as never);
+    vi.mocked(EmployeeRepository.update).mockResolvedValue({ id: "emp-1" } as never);
+
+    await updateEmployee(actor, "emp-1", { workSkillStageIds: [] } as never);
+    expect(EmployeeRepository.replaceWorkSkills).toHaveBeenCalledWith("emp-1", []);
   });
 });

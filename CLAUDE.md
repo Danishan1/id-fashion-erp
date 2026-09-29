@@ -7600,6 +7600,26 @@ second one.
   happy path was run on `PROD-2026-00019` (tagged `QA-VERIFY-0929`, with a +4 button adjustment and a 2 MTR
   Cambric transfer as test stock), and the real receipt slip returned a PDF (200).
 
+## Employee Work Skills — only skilled workers can be assigned to a stage (2026-09-29)
+
+- **Schema**: new `EmployeeWorkSkill` (employee × production stage, unique pair, cascade delete). Migration
+  `20260929120000_add_employee_work_skills` (excludes the unrelated `contractors.updated_at` drift line).
+- **Employee Master**: `workSkillStageIds` on the employee create/PATCH schema. Omitted on PATCH = untouched; an
+  empty array clears all skills. Every id must be one of this company's stages. The form has a chip multi-select
+  (`masters/employees/WorkSkillsSelect.tsx`); the Employees list shows a Work Skills column. Deliberately optional —
+  office staff have no production skills.
+- **Backend rule**: `prepareAssignmentData()` (`job-order.service.ts`) now takes the stage and rejects a worker
+  whose Work Skills don't include it. It is the single step behind Assign Worker, Add Lot and Start Lot, so all three
+  enforce it.
+- **UI filtering**: Assign Worker and the lot-start worker rows (`WorkerAssignmentRowsEditor`, now given a
+  `stageId`) list only employees holding that stage, with a hint when nobody has the skill yet.
+- **Rollout impact**: every existing employee starts with no skills, so nobody can be assigned production work
+  until an Admin adds skills in Masters → Employees. Existing assignments are untouched.
+- Also fixed: the lot page's worker "Expected" column caused a hydration mismatch (server vs browser locale);
+  `formatDateTime` in `LotWorkflowPanel.tsx` now uses a fixed `en-IN` locale and `Asia/Kolkata` time zone.
+- Verified: tsc, eslint, 2162/2162 tests (8 new), and live — skills saved via the real form, invalid stage → 404,
+  unskilled worker → 400 with the named-stage message, Assign Worker listed only the skilled employee.
+
 ## Reference
 
 Full architecture rationale, complete table-by-table field lists, and the full role×module permission matrix were developed in the Phase 1 planning session and are condensed here. Consult that history if a design decision needs deeper justification than what's summarized above.

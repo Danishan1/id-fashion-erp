@@ -13,6 +13,7 @@ import { ProductRepository } from "@/modules/products/product.repository";
 import { ProductionOrderStatus, type Prisma } from "@prisma/client";
 import { LotRepository, ProductionOrderRepository } from "./production.repository";
 import { getProductionOrderProgress } from "./production-progress.service";
+import { materialRequestScopeForOrder } from "./material-request-scope";
 import type { AddExtraProductionQuantityInput, CreateProductionOrderInput, GenerateMaterialRequestInput } from "./production.schema";
 
 const EPSILON = 0.0001;
@@ -262,7 +263,7 @@ export async function generateMaterialRequestForOrder(actor: ActorContext, id: s
   // shortage escalates to a Purchase Order. Previously this raised lines only
   // for materials short in stock, so a fully-stocked material could never be
   // requested (and so never issued) — which the lot material gate now needs.
-  const alreadyRequested = await sumRequestedByMaterialForOrder(actor.companyId, id);
+  const alreadyRequested = await sumRequestedByMaterialForOrder(actor.companyId, id, order.salesOrderItemId);
   const lines = requirement.materials
     .map((m) => ({
       materialId: m.materialId,
@@ -291,9 +292,10 @@ export async function generateMaterialRequestForOrder(actor: ActorContext, id: s
 }
 
 /** Everything already requested for this order (non-cancelled requests), per material, in its base unit. */
-async function sumRequestedByMaterialForOrder(companyId: string, productionOrderId: string) {
+async function sumRequestedByMaterialForOrder(companyId: string, productionOrderId: string, salesOrderItemId: string | null) {
+  const scope = await materialRequestScopeForOrder(companyId, productionOrderId, salesOrderItemId);
   const lines = await prisma.materialRequestItem.findMany({
-    where: { materialRequest: { companyId, productionOrderId, status: { not: "CANCELLED" } } },
+    where: { materialRequest: { ...scope, status: { not: "CANCELLED" } } },
     select: {
       materialId: true,
       requestedQuantity: true,
@@ -381,7 +383,7 @@ export async function getProductionOrderMaterialComparison(companyId: string, id
 
   const linkedRequestItemIds = (
     await prisma.materialRequestItem.findMany({
-      where: { materialRequest: { companyId, productionOrderId: id } },
+      where: { materialRequest: await materialRequestScopeForOrder(companyId, id, order.salesOrderItemId) },
       select: { id: true },
     })
   ).map((i) => i.id);

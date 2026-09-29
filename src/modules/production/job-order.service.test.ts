@@ -44,6 +44,7 @@ vi.mock("./production.repository", () => ({
     sumAssignedByJobOrderId: vi.fn(),
     createInTx: vi.fn(),
     findAnyById: vi.fn(),
+    findByJobOrderAndEmployee: vi.fn(),
   },
   JobOrderProgressEntryRepository: { createInTx: vi.fn() },
   ProductionOrderRepository: { findAnyById: vi.fn() },
@@ -85,9 +86,12 @@ const {
 const { resolvePieceRate } = await import("./piece-rate-resolution.service");
 const { generateEarningForJobOrderProgress, generateEarningsForQcAcceptance } = await import("./piece-rate-earning.service");
 const { computeAvailableToCommit, assertEntryWithinAssignmentInTx, syncAssignmentStatusInTx } = await import("./assignment-capacity");
-const { computeJobOrderStatus, assignWorker, recordProgressEntry, forwardJobOrder, revertJobOrder, recordQcInspection, recordAdjustmentEntry, getJobOrderById, prepareLotStartAssignments } = await import("./job-order.service");
+const { computeJobOrderStatus, assignWorker, recordProgressEntry, forwardJobOrder, revertJobOrder, recordQcInspection, recordAdjustmentEntry, getJobOrderById, prepareLotStartAssignments, submitSelfProgressEntry } = await import("./job-order.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
+
+// Every mocked worker holds the fixture stages, so assignment tests pass the Work Skills check.
+const ALL_SKILLS = [{ productionStageId: "stage-1" }, { productionStageId: "stage-cut" }];
 
 function stage(
   overrides: Partial<{ id: string; sequence: number; isActive: boolean; allowRework: boolean; isFinal: boolean; name: string; code: string; allowsExtraQuantity: boolean }> = {}
@@ -125,7 +129,7 @@ function jobOrder(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.mocked(JobOrderRepository.findAnyById).mockReset();
-  vi.mocked(EmployeeRepository.findById).mockReset().mockResolvedValue({ id: "emp-1", fullName: "Asha", isActive: true } as never);
+  vi.mocked(EmployeeRepository.findById).mockReset().mockResolvedValue({ id: "emp-1", workSkills: ALL_SKILLS, fullName: "Asha", isActive: true } as never);
   vi.mocked(computeAvailableToCommit).mockReset().mockResolvedValue({ available: 100, capacity: 100, done: 0, unworkedInternal: 0, pendingExternal: 0 });
   vi.mocked(assertEntryWithinAssignmentInTx).mockReset().mockResolvedValue({ assignment: {} as never, assigned: 50, consumedAfter: 1 });
   vi.mocked(syncAssignmentStatusInTx).mockReset().mockResolvedValue({} as never);
@@ -249,7 +253,7 @@ describe("assignWorker", () => {
 
   it("rejects an inactive worker", async () => {
     vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder() as never);
-    vi.mocked(EmployeeRepository.findById).mockResolvedValue({ id: "emp-1", fullName: "Asha", isActive: false } as never);
+    vi.mocked(EmployeeRepository.findById).mockResolvedValue({ id: "emp-1", workSkills: ALL_SKILLS, fullName: "Asha", isActive: false } as never);
     await expect(assignWorker(actor, "jo-1", assignInput())).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
 
@@ -810,7 +814,7 @@ describe("assignWorker — Piece-Rate rate snapshot (2026-09-18)", () => {
   it("behaves exactly as before when ProductionSettings.pieceRateTrackingEnabled is off (the default)", async () => {
     stubProductionSettings({ pieceRateTrackingEnabled: false });
     vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder({ plannedQuantity: "100" }) as never);
-    vi.mocked(EmployeeRepository.findById).mockResolvedValue({ id: "emp-1", payType: "PIECE_RATE", isActive: true } as never);
+    vi.mocked(EmployeeRepository.findById).mockResolvedValue({ id: "emp-1", workSkills: ALL_SKILLS, payType: "PIECE_RATE", isActive: true } as never);
     vi.mocked(JobOrderAssignmentRepository.sumAssignedByJobOrderId).mockResolvedValue(0);
     vi.mocked(JobOrderAssignmentRepository.createInTx).mockResolvedValue({ id: "assignment-1" } as never);
 
@@ -826,7 +830,7 @@ describe("assignWorker — Piece-Rate rate snapshot (2026-09-18)", () => {
   it("blocks the assignment when tracking is on, the employee is PIECE_RATE, and no rate resolves — never a silent 0", async () => {
     stubProductionSettings({ pieceRateTrackingEnabled: true });
     vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder({ plannedQuantity: "100" }) as never);
-    vi.mocked(EmployeeRepository.findById).mockResolvedValue({ id: "emp-1", payType: "PIECE_RATE", isActive: true } as never);
+    vi.mocked(EmployeeRepository.findById).mockResolvedValue({ id: "emp-1", workSkills: ALL_SKILLS, payType: "PIECE_RATE", isActive: true } as never);
     vi.mocked(JobOrderAssignmentRepository.sumAssignedByJobOrderId).mockResolvedValue(0);
     vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue({ id: "po-1", productId: "prod-1" } as never);
     vi.mocked(resolvePieceRate).mockResolvedValue({ resolved: false });
@@ -840,7 +844,7 @@ describe("assignWorker — Piece-Rate rate snapshot (2026-09-18)", () => {
   it("snapshots the resolved rate onto the assignment when tracking is on and a rate resolves", async () => {
     stubProductionSettings({ pieceRateTrackingEnabled: true });
     vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder({ plannedQuantity: "100" }) as never);
-    vi.mocked(EmployeeRepository.findById).mockResolvedValue({ id: "emp-1", payType: "PIECE_RATE", isActive: true } as never);
+    vi.mocked(EmployeeRepository.findById).mockResolvedValue({ id: "emp-1", workSkills: ALL_SKILLS, payType: "PIECE_RATE", isActive: true } as never);
     vi.mocked(JobOrderAssignmentRepository.sumAssignedByJobOrderId).mockResolvedValue(0);
     vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue({ id: "po-1", productId: "prod-1" } as never);
     vi.mocked(resolvePieceRate).mockResolvedValue({ resolved: true, rate: 2.5, source: "STYLE_OPERATION_DEFAULT", rateCardId: "card-1" });
@@ -857,7 +861,7 @@ describe("assignWorker — Piece-Rate rate snapshot (2026-09-18)", () => {
   it("requires piece_rate.override permission when an authorized override rate is supplied", async () => {
     stubProductionSettings({ pieceRateTrackingEnabled: true });
     vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder({ plannedQuantity: "100" }) as never);
-    vi.mocked(EmployeeRepository.findById).mockResolvedValue({ id: "emp-1", payType: "PIECE_RATE", isActive: true } as never);
+    vi.mocked(EmployeeRepository.findById).mockResolvedValue({ id: "emp-1", workSkills: ALL_SKILLS, payType: "PIECE_RATE", isActive: true } as never);
     vi.mocked(JobOrderAssignmentRepository.sumAssignedByJobOrderId).mockResolvedValue(0);
     vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue({ id: "po-1", productId: "prod-1" } as never);
     vi.mocked(resolvePieceRate).mockResolvedValue({ resolved: false });
@@ -877,7 +881,7 @@ describe("recordProgressEntry — company-wide supervisor-approval-required sett
   it("routes through the PENDING+approve queue instead of applying immediately when the setting is on", async () => {
     stubProductionSettings({ supervisorApprovalRequired: true });
     vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder({ status: "IN_PROGRESS" }) as never);
-    vi.mocked(EmployeeRepository.findById).mockResolvedValue({ id: "emp-1" } as never);
+    vi.mocked(EmployeeRepository.findById).mockResolvedValue({ id: "emp-1", workSkills: ALL_SKILLS } as never);
     vi.mocked(JobOrderProgressEntryRepository.createInTx).mockResolvedValue({ id: "entry-1", approvalStatus: "PENDING" } as never);
 
     const result = await recordProgressEntry(actor, "jo-1", progressInput({ completedQuantity: 10 }));
@@ -897,7 +901,7 @@ describe("recordProgressEntry — company-wide supervisor-approval-required sett
   it("applies immediately (unchanged, pre-existing behavior) when the setting is off", async () => {
     stubProductionSettings({ supervisorApprovalRequired: false });
     vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder({ status: "IN_PROGRESS" }) as never);
-    vi.mocked(EmployeeRepository.findById).mockResolvedValue({ id: "emp-1" } as never);
+    vi.mocked(EmployeeRepository.findById).mockResolvedValue({ id: "emp-1", workSkills: ALL_SKILLS } as never);
     vi.mocked(JobOrderRepository.findForGuardedUpdateInTx).mockResolvedValue(
       jobOrder({ status: "IN_PROGRESS", plannedQuantity: "40", completedQuantity: "25", rejectedQuantity: "0", damagedQuantity: "0" }) as never
     );
@@ -963,7 +967,7 @@ describe("recordQcInspection — Piece-Rate earning trigger (2026-09-18)", () =>
 
 describe("prepareLotStartAssignments — no lot starts without a worker (2026-09-29)", () => {
   it("refuses a lot with no worker at all", async () => {
-    await expect(prepareLotStartAssignments(actor, { productId: "prod-1", lotQuantity: 10 }, [])).rejects.toMatchObject({
+    await expect(prepareLotStartAssignments(actor, { productId: "prod-1", lotQuantity: 10, stage: { id: "stage-cut", name: "Cutting" } }, [])).rejects.toMatchObject({
       code: "VALIDATION_ERROR",
       message: expect.stringContaining("Cutting worker assignment, material request and material issue are required"),
     });
@@ -971,7 +975,75 @@ describe("prepareLotStartAssignments — no lot starts without a worker (2026-09
 
   it("refuses assigning more pieces than the lot holds", async () => {
     await expect(
-      prepareLotStartAssignments(actor, { productId: "prod-1", lotQuantity: 10 }, [assignInput({ assignedQuantity: 6 }), assignInput({ employeeId: "emp-2", assignedQuantity: 5 })])
+      prepareLotStartAssignments(actor, { productId: "prod-1", lotQuantity: 10, stage: { id: "stage-cut", name: "Cutting" } }, [assignInput({ assignedQuantity: 6 }), assignInput({ employeeId: "emp-2", assignedQuantity: 5 })])
     ).rejects.toMatchObject({ code: "OVER_PRODUCTION_NOT_ALLOWED" });
+  });
+});
+
+describe("Work Skills — a worker can only be assigned to a stage they are skilled for (2026-09-29)", () => {
+  it("assignWorker rejects a worker whose Work Skills don't include the job order's stage", async () => {
+    vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder({ plannedQuantity: "100" }) as never);
+    vi.mocked(EmployeeRepository.findById).mockResolvedValue({
+      id: "emp-1", fullName: "Asha", isActive: true, workSkills: [{ productionStageId: "stage-other" }],
+    } as never);
+
+    await expect(assignWorker(actor, "jo-1", assignInput())).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining('Asha does not have "Stage" in their Work Skills'),
+    });
+    expect(JobOrderAssignmentRepository.createInTx).not.toHaveBeenCalled();
+  });
+
+  it("assignWorker rejects a worker with no Work Skills at all", async () => {
+    vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder({ plannedQuantity: "100" }) as never);
+    vi.mocked(EmployeeRepository.findById).mockResolvedValue({ id: "emp-1", fullName: "Asha", isActive: true, workSkills: [] } as never);
+
+    await expect(assignWorker(actor, "jo-1", assignInput())).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("lot start rejects a cutting worker who lacks the Cutting skill", async () => {
+    vi.mocked(EmployeeRepository.findById).mockResolvedValue({
+      id: "emp-1", fullName: "Asha", isActive: true, workSkills: [{ productionStageId: "stage-1" }],
+    } as never);
+
+    await expect(
+      prepareLotStartAssignments(actor, { productId: "prod-1", lotQuantity: 10, stage: { id: "stage-cut", name: "Cutting" } }, [assignInput({ assignedQuantity: 5 })])
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR", message: expect.stringContaining('"Cutting" in their Work Skills') });
+  });
+});
+
+describe("submitSelfProgressEntry — My Work is authorized by the Work Skill, not Production create (2026-09-29)", () => {
+  const selfInput = { completedQuantity: 1, rejectedQuantity: 0, damagedQuantity: 0, extraQuantity: 0 } as never;
+
+  beforeEach(() => {
+    vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(jobOrder() as never);
+    mockPrismaClient.user.findUnique.mockResolvedValue({ employeeId: "emp-1" });
+    vi.mocked(JobOrderAssignmentRepository.findByJobOrderAndEmployee).mockReset().mockResolvedValue({ id: "asg-1" } as never);
+    vi.mocked(JobOrderProgressEntryRepository.createInTx).mockReset().mockResolvedValue({ id: "entry-1" } as never);
+  });
+
+  it("lets a self-entry worker with the stage's Work Skill submit a pending entry", async () => {
+    vi.mocked(EmployeeRepository.findById).mockResolvedValue({
+      id: "emp-1", fullName: "Satya", isActive: true, selfEntryEnabled: true, workSkills: [{ productionStageId: "stage-1" }],
+    } as never);
+
+    await submitSelfProgressEntry(actor, "jo-1", selfInput);
+
+    expect(JobOrderProgressEntryRepository.createInTx).toHaveBeenCalledWith(
+      mockPrismaClient,
+      expect.objectContaining({ employeeId: "emp-1", enteredBy: "SELF", approvalStatus: "PENDING" })
+    );
+  });
+
+  it("refuses a worker who lacks the stage's Work Skill, even when assigned", async () => {
+    vi.mocked(EmployeeRepository.findById).mockResolvedValue({
+      id: "emp-1", fullName: "Satya", isActive: true, selfEntryEnabled: true, workSkills: [{ productionStageId: "stage-other" }],
+    } as never);
+
+    await expect(submitSelfProgressEntry(actor, "jo-1", selfInput)).rejects.toMatchObject({
+      code: "PERMISSION_DENIED",
+      message: expect.stringContaining('"Stage" in your Work Skills'),
+    });
+    expect(JobOrderProgressEntryRepository.createInTx).not.toHaveBeenCalled();
   });
 });

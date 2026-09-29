@@ -495,7 +495,7 @@ export async function startLot(actor: ActorContext, lotId: string, input: StartL
 
   // This lot is already counted among the order's lots, so nothing new is added.
   await assertLotMaterialReady(actor.companyId, order.id, { newLotPieces: 0 });
-  const prepared = await prepareLotStartAssignments(actor, { productId: order.productId, lotQuantity: Number(lot.quantity) }, input.assignments);
+  const prepared = await prepareLotStartAssignments(actor, { productId: order.productId, lotQuantity: Number(lot.quantity), stage }, input.assignments);
 
   const result = await prisma.$transaction((tx) =>
     startLotAtStageInTx(tx, actor, { productionOrderId: order.id, lot, stage, assignments: prepared })
@@ -533,7 +533,7 @@ function assertJobOrderAcceptsWork(jobOrder: { status: string; productionStage: 
  */
 export async function prepareAssignmentData(
   actor: ActorContext,
-  context: { productId: string | null },
+  context: { productId: string | null; stage: { id: string; name: string } },
   input: CreateJobOrderAssignmentInput
 ): Promise<PreparedAssignment> {
   // Tenant-scoped — an employeeId from another company would otherwise sit
@@ -542,6 +542,16 @@ export async function prepareAssignmentData(
   if (!employee) throw new BusinessRuleError("NOT_FOUND", "Worker not found.", { id: input.employeeId });
   if (employee.isActive === false) {
     throw new BusinessRuleError("VALIDATION_ERROR", `${employee.fullName} is inactive and cannot be assigned work.`, {});
+  }
+  // Work Skills (2026-09-29): only a worker trained for this stage may be
+  // assigned to it. Enforced here so every assign path (Assign Worker, Add
+  // Lot, Start Lot) applies it, not just the filtered dropdown.
+  if (!employee.workSkills.some((w) => w.productionStageId === context.stage.id)) {
+    throw new BusinessRuleError(
+      "VALIDATION_ERROR",
+      `${employee.fullName} does not have "${context.stage.name.trim()}" in their Work Skills, so they can't be assigned to this stage. Add the skill in Masters → Employees first.`,
+      { employeeId: employee.id, stageId: context.stage.id }
+    );
   }
 
   const expectedStartAt = input.expectedStartAt ? new Date(input.expectedStartAt) : new Date();
@@ -647,7 +657,7 @@ async function writeAssignmentAuditLog(actor: ActorContext, assignment: { id: st
  */
 export async function prepareLotStartAssignments(
   actor: ActorContext,
-  context: { productId: string | null; lotQuantity: number },
+  context: { productId: string | null; lotQuantity: number; stage: { id: string; name: string } },
   inputs: CreateJobOrderAssignmentInput[]
 ): Promise<PreparedAssignment[]> {
   if (inputs.length === 0) {
@@ -666,7 +676,7 @@ export async function prepareLotStartAssignments(
     );
   }
   const prepared: PreparedAssignment[] = [];
-  for (const input of inputs) prepared.push(await prepareAssignmentData(actor, { productId: context.productId }, input));
+  for (const input of inputs) prepared.push(await prepareAssignmentData(actor, { productId: context.productId, stage: context.stage }, input));
   return prepared;
 }
 
@@ -731,7 +741,7 @@ export async function assignWorker(actor: ActorContext, jobOrderId: string, inpu
   await assertStageAccess(actor, jobOrder.productionStageId);
 
   const order = await ProductionOrderRepository.findAnyById(actor.companyId, jobOrder.productionOrderId);
-  const prepared = await prepareAssignmentData(actor, { productId: order?.productId ?? null }, input);
+  const prepared = await prepareAssignmentData(actor, { productId: order?.productId ?? null, stage: jobOrder.productionStage }, input);
 
   // Capacity check and insert under one row lock on the job order, so two
   // supervisors assigning at the same moment can't both pass the check.
@@ -1000,6 +1010,16 @@ export async function submitSelfProgressEntry(actor: ActorContext, jobOrderId: s
   const assignment = await JobOrderAssignmentRepository.findByJobOrderAndEmployee(jobOrderId, employee.id);
   if (!assignment) {
     throw new BusinessRuleError("VALIDATION_ERROR", "You are not assigned to this job order.", {});
+  }
+  // Work Skills (2026-09-29): a worker may log their own work only on a stage
+  // they are skilled for. This (plus Self Entry and their own assignment) is
+  // what authorizes a self-entry — not the Production "create" permission.
+  if (!employee.workSkills.some((w) => w.productionStageId === jobOrder.productionStageId)) {
+    throw new BusinessRuleError(
+      "PERMISSION_DENIED",
+      `You don't have "${jobOrder.productionStage.name.trim()}" in your Work Skills, so you can't log progress on this stage. Ask an Admin to add it in Masters → Employees.`,
+      { stageId: jobOrder.productionStageId }
+    );
   }
 
   const entry = await prisma.$transaction(async (tx) => {

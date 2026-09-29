@@ -143,6 +143,8 @@ export function ProductionOrderWorkflowPanel({
   const [variantSuggestions, setVariantSuggestions] = useState<VariantBreakdownSuggestionRow[]>([]);
   const [variantQtyById, setVariantQtyById] = useState<Record<string, string>>({});
   const [lotWorkers, setLotWorkers] = useState<WorkerRowDraft[]>(() => [newWorkerRow()]);
+  // A new lot starts at the first active stage — its workers must hold that stage's Work Skill.
+  const [firstStage, setFirstStage] = useState<{ id: string; name: string } | null>(null);
   const [lotReadiness, setLotReadiness] = useState<LotMaterialReadiness | null>(null);
   const [modalError, setModalError] = useState<string | null>(null);
 
@@ -171,6 +173,15 @@ export function ProductionOrderWorkflowPanel({
     fetch("/api/v1/warehouses?pageSize=200")
       .then((res) => res.json())
       .then((body) => setWarehouses(body.data ?? []));
+    fetch("/api/v1/production-stages")
+      .then((res) => res.json())
+      .then((body) => {
+        const active = ((body.data ?? []) as Array<{ id: string; name: string; sequence: number; isActive: boolean }>)
+          .filter((st) => st.isActive)
+          .sort((a, b) => a.sequence - b.sequence);
+        setFirstStage(active[0] ? { id: active[0].id, name: active[0].name.trim() } : null);
+      })
+      .catch(() => {});
   }, []);
 
   // Fetches the size/color picker's own suggested quantities fresh every
@@ -794,7 +805,12 @@ export function ProductionOrderWorkflowPanel({
             The lot starts at the first stage (Cutting) as soon as it is created, so assign the cutting worker(s) now.
             Material must already be issued for every piece.
           </p>
-          <WorkerAssignmentRowsEditor rows={lotWorkers} onChange={setLotWorkers} stageName="Cutting" />
+          <WorkerAssignmentRowsEditor
+            rows={lotWorkers}
+            onChange={setLotWorkers}
+            stageName={firstStage?.name ?? "Cutting"}
+            stageId={firstStage?.id ?? null}
+          />
           {addLotQuantity > 0 && lotWorkerError && <p className="text-xs text-red-600 dark:text-red-400">{lotWorkerError}</p>}
           <LotMaterialReadinessPanel productionOrderId={productionOrderId} newLotPieces={addLotQuantity} onReadinessChange={setLotReadiness} />
           {modalError && <p className="text-sm text-red-600 dark:text-red-400">{modalError}</p>}

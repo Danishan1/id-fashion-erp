@@ -45,6 +45,7 @@ export default async function EditEmployeePage({ params }: { params: Promise<{ i
           country: employee.country ?? "",
           joinDate: employee.joinDate ? employee.joinDate.toISOString().slice(0, 10) : "",
           isActive: employee.isActive,
+          workSkillStageIds: employee.workSkills.map((w) => w.productionStageId),
         }}
       />
 

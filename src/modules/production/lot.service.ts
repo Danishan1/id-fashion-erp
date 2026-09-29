@@ -129,7 +129,7 @@ export async function createLot(actor: ActorContext, productionOrderId: string, 
   await assertLotMaterialReady(actor.companyId, order.id, { newLotPieces: input.quantity });
   const prepared = await prepareLotStartAssignments(
     actor,
-    { productId: order.productId, lotQuantity: input.quantity },
+    { productId: order.productId, lotQuantity: input.quantity, stage },
     input.cuttingAssignments ?? []
   );
 

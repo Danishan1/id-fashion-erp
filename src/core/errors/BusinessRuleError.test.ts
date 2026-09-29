@@ -123,3 +123,25 @@ describe("isUniqueConstraintViolationOnColumn", () => {
     expect(isUniqueConstraintViolationOnColumn(new Error("boom"), "idempotency_key")).toBe(false);
   });
 });
+
+describe("BusinessRuleError across bundled copies", () => {
+  it("is recognized when thrown by a second copy of the module (another Next.js runtime layer)", async () => {
+    const { vi } = await import("vitest");
+    vi.resetModules();
+    // A query suffix makes Vite load a second, separate copy of the module.
+    // @ts-expect-error -- the "?copy" suffix is a Vite module-id trick, not a real path.
+    const other: typeof import("./BusinessRuleError") = await import("./BusinessRuleError?copy");
+    const foreign = new other.BusinessRuleError("PERMISSION_DENIED", "You do not have permission to create in production.");
+
+    expect(other.BusinessRuleError).not.toBe(BusinessRuleError);
+    expect(foreign instanceof BusinessRuleError).toBe(true);
+    const res = toErrorResponse(foreign);
+    expect(res.status).toBe(403);
+    expect(JSON.stringify(res.body)).toContain("You do not have permission to create in production.");
+  });
+
+  it("does not treat a plain Error as a BusinessRuleError", () => {
+    expect(new Error("x") instanceof BusinessRuleError).toBe(false);
+    expect(toErrorResponse(new Error("x")).status).toBe(500);
+  });
+});

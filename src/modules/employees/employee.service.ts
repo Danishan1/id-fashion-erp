@@ -74,6 +74,18 @@ async function assertReportsToIsValid(companyId: string, reportsToId: string, se
   if (!manager) throw new BusinessRuleError("NOT_FOUND", "Reporting manager not found.", { id: reportsToId });
 }
 
+/** Work Skills must be this company's own production stages. */
+async function normalizeWorkSkills(companyId: string, stageIds: string[] | undefined) {
+  if (stageIds === undefined) return undefined;
+  const unique = [...new Set(stageIds)];
+  if (unique.length === 0) return unique;
+  const found = await EmployeeRepository.countCompanyStages(companyId, unique);
+  if (found !== unique.length) {
+    throw new BusinessRuleError("NOT_FOUND", "One or more selected Work Skills are not production stages of this company.", {});
+  }
+  return unique;
+}
+
 function toData(input: EmployeeInput) {
   return {
     employeeCode: input.employeeCode,
@@ -145,7 +157,10 @@ export async function createEmployee(actor: ActorContext, input: EmployeeInput) 
     await assertReportsToIsValid(actor.companyId, input.reportsToId);
   }
 
+  const workSkills = await normalizeWorkSkills(actor.companyId, input.workSkillStageIds);
+
   const employee = await EmployeeRepository.create({ companyId: actor.companyId, ...toData(input) });
+  if (workSkills && workSkills.length > 0) await EmployeeRepository.replaceWorkSkills(employee.id, workSkills);
 
   await advanceMasterCodeSequence(actor.companyId, "EMPLOYEE");
 
@@ -155,7 +170,7 @@ export async function createEmployee(actor: ActorContext, input: EmployeeInput) 
     tableName: "employees",
     recordId: employee.id,
     action: "CREATE",
-    newValues: employee,
+    newValues: { ...employee, workSkillStageIds: workSkills ?? [] },
   });
 
   return employee;
@@ -183,7 +198,10 @@ export async function updateEmployee(actor: ActorContext, id: string, input: Emp
     await assertReportsToIsValid(actor.companyId, input.reportsToId, id);
   }
 
+  const workSkills = await normalizeWorkSkills(actor.companyId, input.workSkillStageIds);
+
   const updated = await EmployeeRepository.update(id, toUpdateData(input));
+  if (workSkills !== undefined) await EmployeeRepository.replaceWorkSkills(id, workSkills);
 
   await writeAuditLog({
     companyId: actor.companyId,
@@ -191,8 +209,8 @@ export async function updateEmployee(actor: ActorContext, id: string, input: Emp
     tableName: "employees",
     recordId: id,
     action: "UPDATE",
-    oldValues: before,
-    newValues: updated,
+    oldValues: { ...before, workSkillStageIds: (before.workSkills ?? []).map((w) => w.productionStageId) },
+    newValues: workSkills !== undefined ? { ...updated, workSkillStageIds: workSkills } : updated,
   });
 
   return updated;

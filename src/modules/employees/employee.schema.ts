@@ -48,6 +48,10 @@ export const employeeSchema = z.object({
   // above — the Pay Config modal's own PATCH never sends this field, and
   // must never silently reset it.
   selfEntryEnabled: z.boolean().optional(),
+  // Work Skills (2026-09-29): the production stages this employee can do.
+  // Optional — office staff have none. Omitted on PATCH = left untouched;
+  // an empty array clears every skill.
+  workSkillStageIds: z.array(z.string().uuid()).max(100).optional(),
 });
 
 export type EmployeeInput = z.infer<typeof employeeSchema>;

@@ -8,14 +8,15 @@ interface RouteContext {
   params: Promise<{ id: string }>;
 }
 
-// Coarse gate here; submitSelfProgressEntry() re-verifies the caller's own
-// linked Employee, that Employee's selfEntryEnabled flag, and their real
-// assignment on this job order — "create" alone never lets a worker credit
-// someone else's work.
+// Only Production "view" is required here (2026-09-29). What actually
+// authorizes a self-entry is checked in submitSelfProgressEntry(): the
+// caller's own linked Employee, its Self Entry flag, the Work Skill for this
+// job order's stage, and a real assignment on it. Entries always wait for
+// Supervisor approval, so a worker can never credit someone else's work.
 export async function POST(req: NextRequest, { params }: RouteContext) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "production", "create");
+    await PermissionService.assert(session.user.id, "production", "view");
 
     const { id } = await params;
     const input = submitSelfProgressEntrySchema.parse(await req.json());

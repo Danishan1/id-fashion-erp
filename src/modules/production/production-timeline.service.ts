@@ -1,4 +1,5 @@
 import { prisma } from "@/core/db/client";
+import { materialRequestScopeForOrder } from "./material-request-scope";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 
 function r4(n: number) {
@@ -219,11 +220,13 @@ export async function getProductionHistory(companyId: string, scope: TimelineSco
 
   const order = await prisma.productionOrder.findFirst({
     where: { id: productionOrderId, companyId },
-    select: { orderNumber: true, salesOrderItem: { select: { salesOrder: { select: { orderNumber: true } } } } },
+    select: { orderNumber: true, salesOrderItemId: true, salesOrderItem: { select: { salesOrder: { select: { orderNumber: true } } } } },
   });
   if (!order) throw new BusinessRuleError("NOT_FOUND", "Production order not found.", { id: productionOrderId });
   const po = order.orderNumber;
   const so = order.salesOrderItem?.salesOrder.orderNumber ?? null;
+
+  const requestScope = await materialRequestScopeForOrder(companyId, productionOrderId, order.salesOrderItemId);
 
   const lotWhere = lotFilter ? { id: lotFilter } : { productionOrderId, companyId };
   const jobOrderLotWhere = lotFilter ? { lotId: lotFilter } : { lot: { productionOrderId, companyId } };
@@ -316,7 +319,7 @@ export async function getProductionHistory(companyId: string, scope: TimelineSco
       }),
       // Material is requested/issued per production order, so it shows in a lot's history too.
       prisma.materialRequest.findMany({
-        where: { companyId, productionOrderId },
+        where: requestScope,
         select: {
           id: true,
           requestNumber: true,
