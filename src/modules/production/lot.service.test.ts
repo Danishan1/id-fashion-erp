@@ -266,7 +266,7 @@ describe("createLot — lot gate (worker + material request + material issue)", 
 
     expect(JobOrderService.prepareLotStartAssignments).toHaveBeenCalledWith(
       actor,
-      { productId: "prod-1", lotQuantity: 5 },
+      { productId: "prod-1", lotQuantity: 5, stage: expect.objectContaining({ id: "stage-cut" }) },
       input.cuttingAssignments
     );
     expect(JobOrderService.startLotAtStageInTx).toHaveBeenCalledWith(

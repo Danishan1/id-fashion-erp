@@ -4,6 +4,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { COUNTRIES } from "@/lib/countries";
+import { WorkSkillsSelect } from "./WorkSkillsSelect";
 
 export interface EmployeeFormValues {
   employeeCode: string;
@@ -21,6 +22,8 @@ export interface EmployeeFormValues {
   country: string;
   joinDate: string;
   isActive: boolean;
+  /** Production stage ids this employee can work on. */
+  workSkillStageIds: string[];
 }
 
 const EMPTY_VALUES: EmployeeFormValues = {
@@ -39,6 +42,7 @@ const EMPTY_VALUES: EmployeeFormValues = {
   country: "India",
   joinDate: "",
   isActive: true,
+  workSkillStageIds: [],
 };
 
 interface Department {
@@ -244,6 +248,14 @@ export function EmployeeForm({ initialValues, submitUrl, method, onSuccess, onCa
             .filter((m) => m.id !== excludeEmployeeId)
             .map((m) => ({ id: m.id, label: m.fullName, sublabel: m.employeeCode }))}
           placeholder="Search employee…"
+        />
+      </FormField>
+
+      <FormField label="Work Skills" htmlFor="workSkills">
+        <WorkSkillsSelect
+          id="workSkills"
+          value={values.workSkillStageIds}
+          onChange={(workSkillStageIds) => setValues({ ...values, workSkillStageIds })}
         />
       </FormField>
 

@@ -8,6 +8,7 @@ import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import {
   LotMaterialReadinessPanel,
   WorkerAssignmentRowsEditor,
+  hasWorkSkill,
   newWorkerRow,
   validateWorkerRows,
   workerRowsToPayload,
@@ -83,6 +84,7 @@ interface EmployeeOption {
   id: string;
   fullName: string;
   employeeCode: string;
+  workSkills?: Array<{ productionStageId: string }>;
 }
 
 interface WarehouseOption {
@@ -156,7 +158,7 @@ function toLocalDateTimeInput(d: Date) {
 function formatDateTime(value?: string | null) {
   if (!value) return "—";
   const d = new Date(value);
-  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Kolkata" });
 }
 
 /** Whole, non-negative piece count, or null when the field isn't a valid one. */
@@ -383,6 +385,10 @@ export function LotWorkflowPanel({
     stages.filter((s) => s.isActive && s.sequence > sequence).sort((a, b) => a.sequence - b.sequence)[0];
 
   const startWorkerError = validateWorkerRows(startWorkers, Number(lot.quantity));
+  // The stage the lot will start at: the one picked, else the first active one (same rule as the backend).
+  const startStage = startStageId
+    ? stages.find((s) => s.id === startStageId)
+    : [...stages].filter((s) => s.isActive).sort((a, b) => a.sequence - b.sequence)[0];
 
   const submitStart = async () => {
     const ok = await run(
@@ -910,7 +916,12 @@ export function LotWorkflowPanel({
                 ))}
             </select>
           </FormField>
-          <WorkerAssignmentRowsEditor rows={startWorkers} onChange={setStartWorkers} stageName="First stage" />
+          <WorkerAssignmentRowsEditor
+            rows={startWorkers}
+            onChange={setStartWorkers}
+            stageName={startStage?.name.trim() ?? "First stage"}
+            stageId={startStage?.id ?? null}
+          />
           {startWorkerError && <p className="text-xs text-red-600 dark:text-red-400">{startWorkerError}</p>}
           <LotMaterialReadinessPanel productionOrderId={productionOrderId} newLotPieces={0} onReadinessChange={setStartReadiness} />
           <ModalError message={error} />
@@ -937,10 +948,18 @@ export function LotWorkflowPanel({
                 required
                 value={assignEmployeeId}
                 onChange={setAssignEmployeeId}
-                options={employees.map((e) => ({ id: e.id, label: e.fullName, sublabel: e.employeeCode }))}
+                options={employees
+                  .filter((e) => hasWorkSkill(e, assignTarget.productionStage.id))
+                  .map((e) => ({ id: e.id, label: e.fullName, sublabel: e.employeeCode }))}
                 placeholder="Search worker…"
               />
-              {!assignEmployeeId && <p className="mt-1 text-xs text-zinc-400">Worker is required.</p>}
+              {employees.length > 0 && !employees.some((e) => hasWorkSkill(e, assignTarget.productionStage.id)) ? (
+                <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
+                  No employee has the {assignTarget.productionStage.name.trim()} skill yet. Add it under Work Skills in Masters → Employees.
+                </p>
+              ) : (
+                !assignEmployeeId && <p className="mt-1 text-xs text-zinc-400">Only workers with the {assignTarget.productionStage.name.trim()} skill are listed.</p>
+              )}
             </FormField>
             <FormField label="Assigned Quantity (pieces)" htmlFor="assignQty" required>
               <input

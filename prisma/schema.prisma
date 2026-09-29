@@ -960,6 +960,9 @@ model Employee {
   jobOrderProgressEntries JobOrderProgressEntry[] @relation("JobOrderProgressEntryEmployee")
   pieceRateCards          PieceRateCard[]
   pieceRateEarnings       PieceRateEarning[]
+  // Which production stages this worker can do (2026-09-29). Assign Worker
+  // only offers, and the backend only accepts, workers holding the stage.
+  workSkills              EmployeeWorkSkill[]
 
   // HRMS (migrated from WordPress "EQ HRMS")
   attendanceRecords            AttendanceRecord[]
@@ -970,6 +973,23 @@ model Employee {
 
   @@unique([companyId, employeeCode])
   @@map("employees")
+}
+
+/// An employee's Work Skill = one production stage they are trained for
+/// (2026-09-29). An employee with none can't be assigned production work
+/// until an Admin adds skills in Employee Master.
+model EmployeeWorkSkill {
+  id                String   @id @default(uuid()) @db.Uuid
+  employeeId        String   @map("employee_id") @db.Uuid
+  productionStageId String   @map("production_stage_id") @db.Uuid
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  employee        Employee        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  productionStage ProductionStage @relation(fields: [productionStageId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, productionStageId])
+  @@index([productionStageId])
+  @@map("employee_work_skills")
 }
 
 enum EmployeePayType {
@@ -1299,6 +1319,7 @@ model ProductionStage {
   transactionsFromHere ProductionStageTransaction[] @relation("StageTransactionFromStage")
   transactionsToHere   ProductionStageTransaction[] @relation("StageTransactionToStage")
   roleAccess           RoleProductionStageAccess[]
+  employeeWorkSkills   EmployeeWorkSkill[]
   productionOperations ProductionOperation[]
   routeStages          ProductionRouteStage[]
   contractorStages     ContractorStage[]

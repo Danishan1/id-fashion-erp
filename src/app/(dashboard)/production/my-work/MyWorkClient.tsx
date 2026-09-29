@@ -189,7 +189,12 @@ export function MyWorkClient() {
           )}
           {filteredAssignments.map((a) => {
             const jo = a.jobOrder;
-            const remaining = remainingOf(jo);
+            // My own entries still waiting for the Supervisor: they don't count
+            // toward Completed yet, but those pieces are no longer "remaining".
+            const pending = entries
+              .filter((e) => e.approvalStatus === "PENDING" && e.jobOrder.jobNumber === jo.jobNumber)
+              .reduce((sum, e) => sum + Number(e.completedQuantity) + Number(e.rejectedQuantity) + Number(e.damagedQuantity), 0);
+            const remaining = Math.max(0, remainingOf(jo) - pending);
             const canLog = remaining > 0 && jo.status !== "CANCELLED";
             return (
               <div key={a.id} className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
@@ -206,6 +211,11 @@ export function MyWorkClient() {
                   <div>Completed: {jo.completedQuantity}</div>
                   <div>My assigned qty: {a.assignedQuantity}</div>
                   <div>Remaining: {remaining}</div>
+                  {pending > 0 && (
+                    <div className="col-span-2 text-amber-700 dark:text-amber-400 sm:col-span-4">
+                      Awaiting Supervisor approval: {pending} — these count toward Completed once approved.
+                    </div>
+                  )}
                 </div>
                 {canLog && (
                   <button

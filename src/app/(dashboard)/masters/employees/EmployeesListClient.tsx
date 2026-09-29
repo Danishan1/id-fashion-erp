@@ -13,6 +13,7 @@ interface EmployeeRow {
   designation: { name: string } | null;
   department: { name: string } | null;
   employeeCategory: { name: string } | null;
+  workSkills?: Array<{ productionStage: { name: string; sequence: number } }>;
   isActive: boolean;
 }
 
@@ -52,6 +53,17 @@ export function EmployeesListClient() {
           { key: "department", header: "Department", render: (row) => row.department?.name ?? "—" },
           { key: "designation", header: "Designation", render: (row) => row.designation?.name ?? "—" },
           { key: "employeeCategory", header: "Category", render: (row) => row.employeeCategory?.name ?? "—" },
+          {
+            key: "workSkills",
+            header: "Work Skills",
+            render: (row) =>
+              row.workSkills && row.workSkills.length > 0
+                ? [...row.workSkills]
+                    .sort((a, b) => a.productionStage.sequence - b.productionStage.sequence)
+                    .map((w) => w.productionStage.name.trim())
+                    .join(", ")
+                : "—",
+          },
           {
             key: "isActive",
             header: "Status",

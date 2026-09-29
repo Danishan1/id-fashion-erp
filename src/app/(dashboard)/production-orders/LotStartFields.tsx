@@ -16,6 +16,12 @@ interface EmployeeOption {
   id: string;
   fullName: string;
   employeeCode?: string | null;
+  workSkills?: Array<{ productionStageId: string }>;
+}
+
+/** True when this employee has the stage in their Work Skills. */
+export function hasWorkSkill(employee: { workSkills?: Array<{ productionStageId: string }> }, stageId: string | null | undefined) {
+  return !!stageId && (employee.workSkills ?? []).some((w) => w.productionStageId === stageId);
 }
 
 interface OperationOption {
@@ -66,10 +72,13 @@ export function WorkerAssignmentRowsEditor({
   rows,
   onChange,
   stageName,
+  stageId,
 }: {
   rows: WorkerRowDraft[];
   onChange: (rows: WorkerRowDraft[]) => void;
   stageName: string;
+  /** The stage these workers start at — only employees skilled for it are offered. */
+  stageId: string | null;
 }) {
   const [employees, setEmployees] = useState<EmployeeOption[]>([]);
   const [operations, setOperations] = useState<OperationOption[]>([]);
@@ -86,6 +95,8 @@ export function WorkerAssignmentRowsEditor({
   }, []);
 
   const update = (key: string, patch: Partial<WorkerRowDraft>) => onChange(rows.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+  // Work Skills: only workers trained for this stage (the backend enforces the same rule).
+  const skilledEmployees = employees.filter((e) => hasWorkSkill(e, stageId));
 
   return (
     <div className="space-y-3 rounded-md border border-zinc-200 p-3 dark:border-zinc-700">
@@ -101,6 +112,11 @@ export function WorkerAssignmentRowsEditor({
           + Add worker
         </button>
       </div>
+      {stageId && employees.length > 0 && skilledEmployees.length === 0 && (
+        <p className="text-xs text-amber-700 dark:text-amber-400">
+          No employee has the {stageName} skill yet. Add it under Work Skills in Masters → Employees.
+        </p>
+      )}
       {rows.map((row, i) => (
         <div key={row.key} className="space-y-2 rounded border border-zinc-100 p-2 dark:border-zinc-800">
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-[2fr_1fr]">
@@ -110,7 +126,7 @@ export function WorkerAssignmentRowsEditor({
                 required
                 value={row.employeeId}
                 onChange={(v) => update(row.key, { employeeId: v })}
-                options={employees.map((e) => ({ id: e.id, label: e.fullName, sublabel: e.employeeCode ?? undefined }))}
+                options={skilledEmployees.map((e) => ({ id: e.id, label: e.fullName, sublabel: e.employeeCode ?? undefined }))}
                 placeholder="Search worker…"
               />
             </FormField>
