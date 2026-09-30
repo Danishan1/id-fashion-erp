@@ -26,6 +26,8 @@ export default async function EditDispatchPage({ params }: { params: Promise<{ i
     items: dispatch.items.map((item) => ({
       salesOrderItemId: item.salesOrderItemId,
       dispatchedQuantity: item.dispatchedQuantity,
+      extraDispatchReason: item.extraDispatchReason,
+      extraDispatchRemarks: item.extraDispatchRemarks,
     })),
   };
 

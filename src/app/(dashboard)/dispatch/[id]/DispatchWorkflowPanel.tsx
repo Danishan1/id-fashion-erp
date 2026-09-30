@@ -15,8 +15,22 @@ interface DispatchItemRow {
   id: string;
   productId: string;
   dispatchedQuantity: number;
+  regularDispatchQuantity: number;
+  extraDispatchQuantity: number;
+  extraDispatchReason: string | null;
+  extraDispatchRemarks: string | null;
   product: { styleName: string; styleCode: string };
 }
+
+const EXTRA_DISPATCH_REASON_LABELS: Record<string, string> = {
+  CUSTOMER_REQUEST: "Customer Request",
+  REPLACEMENT: "Replacement",
+  FREE_FOC: "Free / FOC",
+  SAMPLE: "Sample",
+  PROMOTIONAL: "Promotional",
+  PACKING_ADJUSTMENT: "Packing Adjustment",
+  OTHER: "Other",
+};
 
 interface VariantRef {
   id: string;
@@ -334,7 +348,10 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
             <thead>
               <tr className="border-b border-zinc-200 text-left text-xs uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
                 <th className="px-3 py-2 font-medium">Style</th>
-                <th className="px-3 py-2 font-medium">Dispatch Quantity</th>
+                <th className="px-3 py-2 font-medium">Total Qty</th>
+                <th className="px-3 py-2 font-medium">Regular</th>
+                <th className="px-3 py-2 font-medium">Extra</th>
+                <th className="px-3 py-2 font-medium">Extra Reason</th>
                 <th className="px-3 py-2 font-medium">Packed</th>
               </tr>
             </thead>
@@ -345,12 +362,29 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
                     {item.product.styleCode} — {item.product.styleName}
                   </td>
                   <td className="px-3 py-2">{item.dispatchedQuantity}</td>
+                  <td className="px-3 py-2">{item.regularDispatchQuantity}</td>
+                  <td className={`px-3 py-2 ${item.extraDispatchQuantity > 0 ? "font-medium text-amber-700 dark:text-amber-400" : "text-zinc-400"}`}>
+                    {item.extraDispatchQuantity}
+                  </td>
+                  <td className="px-3 py-2 text-zinc-500 dark:text-zinc-400">
+                    {item.extraDispatchQuantity > 0
+                      ? `${EXTRA_DISPATCH_REASON_LABELS[item.extraDispatchReason ?? ""] ?? item.extraDispatchReason ?? "—"}${
+                          item.extraDispatchRemarks ? ` — ${item.extraDispatchRemarks}` : ""
+                        }`
+                      : "—"}
+                  </td>
                   <td className="px-3 py-2">{packedByItemId.get(item.id) ?? 0}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+        {dispatch.items.some((i) => i.extraDispatchQuantity > 0) && (
+          <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
+            This dispatch includes Extra Dispatch Quantity — the Extra portion is never counted toward the Sales
+            Order&apos;s own fulfillment, only toward Finished-Goods stock consumption.
+          </p>
+        )}
       </div>
 
       <div>

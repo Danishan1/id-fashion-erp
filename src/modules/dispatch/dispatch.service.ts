@@ -10,6 +10,7 @@ import { branchScopeWhere } from "@/lib/branch-access";
 import { DispatchStatus, type Prisma } from "@prisma/client";
 import { SalesOrderRepository } from "@/modules/sales-orders/sales-order.repository";
 import { recordInventoryTransaction, getAvailableQuantity } from "@/modules/inventory/inventory.service";
+import { getDispatchSettings, extraDispatchNeedsApproval, type DispatchSettingsValue } from "@/core/dispatch-settings/DispatchSettingsService";
 import type { DispatchInput, UpdateDispatchInput, SetCartonsInput } from "./dispatch.schema";
 import { DispatchRepository } from "./dispatch.repository";
 
@@ -21,10 +22,21 @@ interface ActorContext {
 
 // A Dispatch may be created against an order that's CONFIRMED (the normal
 // case), still PARTIALLY_DISPATCHED (a prior Dispatch already shipped part
-// of it), or already INVOICED (advance billing before shipment — a real,
+// of it), already INVOICED (advance billing before shipment — a real,
 // deliberately-supported ordering, not assumed to only happen after
-// shipment). DISPATCHED itself is excluded — nothing left to ship.
-const DISPATCH_ELIGIBLE_ORDER_STATUSES = ["CONFIRMED", "PARTIALLY_DISPATCHED", "INVOICED"] as const;
+// shipment), or already DISPATCHED.
+//
+// DISPATCHED was originally excluded here ("nothing left to ship") before
+// Extra Dispatch Quantity existed — with it, that's no longer true: an
+// order the Regular fulfillment logic already considers fully shipped can
+// still legitimately need a further shipment (a replacement, a free/FOC
+// piece, an extra sample) entirely as Extra. Re-including DISPATCHED here
+// doesn't weaken anything — buildDispatchItems() still computes Regular=0
+// for every line on such an order (remaining is already 0), so the whole
+// quantity is forced through the Extra path: a reason is still required,
+// the allowExtraDispatch/approval settings still apply, and Regular
+// fulfillment (already 100%) is untouched.
+const DISPATCH_ELIGIBLE_ORDER_STATUSES = ["CONFIRMED", "PARTIALLY_DISPATCHED", "INVOICED", "DISPATCHED"] as const;
 
 /**
  * ON_HOLD is reachable only from DRAFT/PACKED — post-dispatch "hold" doesn't
@@ -46,16 +58,46 @@ const ALLOWED_TRANSITIONS: Record<DispatchStatus, DispatchStatus[]> = {
 interface OrderItemLike {
   id: string;
   productId: string;
+  // TOTAL physical quantity ever dispatched (regular + extra) — kept for
+  // reference/display; NOT what remaining-to-dispatch is computed from
+  // anymore (see regularDispatchedQuantity below).
   dispatchedQuantity: number;
+  // Extra Dispatch Quantity (2026-09-30) — the portion of dispatchedQuantity
+  // that counts toward Sale Order fulfillment; this is what "remaining"
+  // must be based on, per the spec's own invariant ("Sale Order Fulfillment
+  // = Regular Dispatch Only").
+  regularDispatchedQuantity: number;
   breakdown: Array<{ orderedQuantity: number }>;
 }
 
-function remainingToDispatch(item: OrderItemLike): number {
-  const orderedTotal = item.breakdown.reduce((sum, b) => sum + b.orderedQuantity, 0);
-  return orderedTotal - item.dispatchedQuantity;
+function orderedTotalOf(item: OrderItemLike): number {
+  return item.breakdown.reduce((sum, b) => sum + b.orderedQuantity, 0);
 }
 
-async function buildDispatchItems(orderItems: OrderItemLike[], inputItems: DispatchInput["items"]) {
+/** Remaining Order Qty = MAX(0, SO Qty - Already Regular Dispatched Qty). */
+function remainingToDispatch(item: OrderItemLike): number {
+  return Math.max(0, orderedTotalOf(item) - item.regularDispatchedQuantity);
+}
+
+/**
+ * Extra Dispatch Quantity's own cumulative-Regular split (2026-09-30) —
+ * NOT `MAX(0, dispatchQty - orderedTotal)`, which is wrong the instant a
+ * second dispatch exists against the same line (see the spec's own
+ * DSP-001/DSP-002 worked example). Regular is capped by what's genuinely
+ * still remaining against the order right now; anything past that is Extra.
+ */
+function splitRegularExtra(item: OrderItemLike, dispatchQty: number): { regularQty: number; extraQty: number } {
+  const remaining = remainingToDispatch(item);
+  const regularQty = Math.min(dispatchQty, remaining);
+  const extraQty = Math.max(0, dispatchQty - remaining);
+  return { regularQty, extraQty };
+}
+
+async function buildDispatchItems(
+  orderItems: OrderItemLike[],
+  inputItems: DispatchInput["items"],
+  settings: DispatchSettingsValue
+) {
   const itemsById = new Map(orderItems.map((i) => [i.id, i]));
   const items = [];
   for (const line of inputItems) {
@@ -67,18 +109,38 @@ async function buildDispatchItems(orderItems: OrderItemLike[], inputItems: Dispa
         { salesOrderItemId: line.salesOrderItemId }
       );
     }
-    const remaining = remainingToDispatch(orderItem);
-    if (line.dispatchedQuantity > remaining) {
-      throw new BusinessRuleError(
-        "VALIDATION_ERROR",
-        `Cannot dispatch ${line.dispatchedQuantity} for this line — only ${remaining} remains to be dispatched.`,
-        { salesOrderItemId: line.salesOrderItemId, requestedQuantity: line.dispatchedQuantity, remaining }
-      );
+
+    const { regularQty, extraQty } = splitRegularExtra(orderItem, line.dispatchedQuantity);
+
+    if (extraQty > 0) {
+      if (!settings.allowExtraDispatch) {
+        throw new BusinessRuleError(
+          "VALIDATION_ERROR",
+          `Cannot dispatch ${line.dispatchedQuantity} for this line — only ${regularQty} remains against the sales order, and Extra Dispatch is disabled for this company.`,
+          { salesOrderItemId: line.salesOrderItemId, requestedQuantity: line.dispatchedQuantity, remaining: regularQty }
+        );
+      }
+      // "Extra Qty > 0 -> Extra Reason Required" (the spec's own invariant) —
+      // enforced HERE, not in Zod, since the split above is only knowable
+      // once the order's own cumulative Regular total is read; Zod's own
+      // remarks-required-when-OTHER rule already ran on the raw input.
+      if (!line.extraDispatchReason) {
+        throw new BusinessRuleError(
+          "VALIDATION_ERROR",
+          `${extraQty} of this line's ${line.dispatchedQuantity} pieces is Extra (beyond the ${regularQty} remaining on the sales order) — an Extra Dispatch Reason is required.`,
+          { salesOrderItemId: line.salesOrderItemId, regularQty, extraQty }
+        );
+      }
     }
+
     items.push({
       salesOrderItemId: orderItem.id,
       productId: orderItem.productId,
       dispatchedQuantity: line.dispatchedQuantity,
+      regularDispatchQuantity: regularQty,
+      extraDispatchQuantity: extraQty,
+      extraDispatchReason: extraQty > 0 ? (line.extraDispatchReason ?? null) : null,
+      extraDispatchRemarks: extraQty > 0 ? (line.extraDispatchRemarks?.trim() || null) : null,
     });
   }
   return items;
@@ -132,7 +194,8 @@ export async function createDispatch(actor: ActorContext, input: DispatchInput) 
     );
   }
 
-  const items = await buildDispatchItems(order.items, input.items);
+  const settings = await getDispatchSettings(actor.companyId);
+  const items = await buildDispatchItems(order.items, input.items, settings);
 
   const dispatchNumber = await generateDocumentNumber({
     companyId: actor.companyId,
@@ -191,10 +254,12 @@ export async function updateDispatch(actor: ActorContext, id: string, input: Upd
   if (!order) throw new BusinessRuleError("NOT_FOUND", "Sales order not found.", { id: existing.salesOrderId });
 
   // This dispatch's own not-yet-confirmed lines don't count against
-  // "remaining" — only dispatchedQuantity (from OTHER, already-confirmed
-  // dispatches) does, so re-editing the same DRAFT dispatch's own quantities
-  // isn't blocked by itself.
-  const items = await buildDispatchItems(order.items, input.items);
+  // "remaining" — only regularDispatchedQuantity (from OTHER, already-
+  // confirmed dispatches) does, so re-editing the same DRAFT dispatch's own
+  // quantities isn't blocked by itself; Regular/Extra are recomputed fresh
+  // on every edit rather than stored as independent input.
+  const settings = await getDispatchSettings(actor.companyId);
+  const items = await buildDispatchItems(order.items, input.items, settings);
 
   const updated = await DispatchRepository.replaceItems(
     id,
@@ -396,17 +461,29 @@ export async function markPacked(actor: ActorContext, id: string, scannedCartonI
  * PACKED -> DISPATCHED. Self-approval-guarded via "post" (mirroring Invoice/
  * Journal's precedent — this is posting a ledger-affecting confirmation, not
  * approving someone else's request, so "post" is the right verb, not
- * Payment's "approve"). One transaction: for each DispatchItem — a
- * pre-check against real FG stock (INSUFFICIENT_FG_STOCK), a guarded
- * increment of SalesOrderItem.dispatchedQuantity (capped by a FRESH read of
+ * Payment's "approve"). Extra Dispatch Quantity (2026-09-30): when this
+ * dispatch's own extra quantity requires sign-off (per DispatchSettings — a
+ * blanket company requirement, or either configured threshold), a SECOND,
+ * separately self-approval-guarded "approve" assert additionally runs before
+ * anything is posted — Reason (why) and Approval (a real sign-off) are
+ * deliberately different checkpoints, not the same click. One transaction:
+ * for each DispatchItem — a pre-check against real FG stock
+ * (INSUFFICIENT_FG_STOCK, checked against the TOTAL regular+extra quantity —
+ * extra dispatch never bypasses this), a guarded increment of
+ * SalesOrderItem.regularDispatchedQuantity ONLY (capped by a FRESH read of
  * sum(breakdown.orderedQuantity) inside this same transaction — safe with
  * the plain Prisma updateMany idiom, not raw SQL, because updateSalesOrder()
  * now blocks edits while any Dispatch references the order, so that sum
- * cannot move underneath this transaction), and a negative DISPATCH
- * InventoryTransaction. Then a fresh-read-plus-unconditional-write recompute
- * of SalesOrder.status (same idiom as goods-receipt.service.ts's own
- * received-quantity recompute — not a guarded conditional transition, since
- * multiple Dispatches over time have no single "expected prior status").
+ * cannot move underneath this transaction; dispatchedQuantity, the TOTAL,
+ * is incremented unconditionally in the same write — extra is never capped
+ * by the order's own quantity, only by real stock, already checked above),
+ * and a negative DISPATCH InventoryTransaction for the total physical
+ * quantity. Then a fresh-read-plus-unconditional-write recompute of
+ * SalesOrder.status — Regular-only, per the spec's own invariant ("Sale
+ * Order Fulfillment = Regular Dispatch Only") — same idiom as goods-
+ * receipt.service.ts's own received-quantity recompute (not a guarded
+ * conditional transition, since multiple Dispatches over time have no single
+ * "expected prior status").
  */
 export async function confirmDispatch(actor: ActorContext, id: string) {
   const dispatch = await DispatchRepository.findByIdWithDetails(actor.companyId, id);
@@ -425,7 +502,8 @@ export async function confirmDispatch(actor: ActorContext, id: string) {
   // Pre-check against real FG stock — the same "pre-check is enough, a
   // hot-path race guard isn't warranted for a manual, low-frequency action"
   // tradeoff already accepted project-wide for Stock Movement's own
-  // negative-quantity paths, applied consistently here.
+  // negative-quantity paths, applied consistently here. Checked against the
+  // TOTAL (regular+extra) — extra dispatch never bypasses this gate.
   for (const item of dispatch.items) {
     const available = await getAvailableQuantity(actor.companyId, item.productId, dispatch.warehouseId);
     if (item.dispatchedQuantity > available) {
@@ -437,17 +515,37 @@ export async function confirmDispatch(actor: ActorContext, id: string) {
     }
   }
 
+  const totalRegular = dispatch.items.reduce((sum, i) => sum + i.regularDispatchQuantity, 0);
+  const totalExtra = dispatch.items.reduce((sum, i) => sum + i.extraDispatchQuantity, 0);
+  const settings = await getDispatchSettings(actor.companyId);
+  const needsApproval = extraDispatchNeedsApproval(settings, { totalRegular, totalExtra });
+  if (needsApproval) {
+    // Genuinely separate from "post" above — the same actor may hold both
+    // (e.g. SUPER_ADMIN), but a role that holds only "post" (e.g.
+    // DISPATCH_MANAGER, who packs/ships the ordinary case) will be denied
+    // here with a clean PERMISSION_DENIED, and the creator of this dispatch
+    // still cannot approve their own extra quantity even if they do hold
+    // "approve" — "approve" is already self-approval-guarded project-wide.
+    await PermissionService.assert(actor.userId, "dispatch", "approve", { createdBy: dispatch.requestedByUserId });
+  }
+
   await prisma.$transaction(async (tx) => {
     for (const item of dispatch.items) {
       const orderItem = await tx.salesOrderItem.findUniqueOrThrow({
         where: { id: item.salesOrderItem.id },
-        select: { dispatchedQuantity: true, breakdown: { select: { orderedQuantity: true } } },
+        select: { regularDispatchedQuantity: true, breakdown: { select: { orderedQuantity: true } } },
       });
       const orderedTotal = orderItem.breakdown.reduce((sum, b) => sum + b.orderedQuantity, 0);
 
       const { count } = await tx.salesOrderItem.updateMany({
-        where: { id: item.salesOrderItem.id, dispatchedQuantity: { lte: orderedTotal - item.dispatchedQuantity } },
-        data: { dispatchedQuantity: { increment: item.dispatchedQuantity } },
+        where: {
+          id: item.salesOrderItem.id,
+          regularDispatchedQuantity: { lte: orderedTotal - item.regularDispatchQuantity },
+        },
+        data: {
+          regularDispatchedQuantity: { increment: item.regularDispatchQuantity },
+          dispatchedQuantity: { increment: item.dispatchedQuantity },
+        },
       });
       if (count === 0) {
         throw new BusinessRuleError(
@@ -469,10 +567,12 @@ export async function confirmDispatch(actor: ActorContext, id: string) {
 
     const allItems = await tx.salesOrderItem.findMany({
       where: { salesOrderId: dispatch.salesOrderId },
-      select: { dispatchedQuantity: true, breakdown: { select: { orderedQuantity: true } } },
+      select: { regularDispatchedQuantity: true, breakdown: { select: { orderedQuantity: true } } },
     });
+    // Regular-only, per the spec's own invariant — Extra never inflates
+    // Sale Order fulfillment.
     const allFullyDispatched = allItems.every(
-      (i) => i.dispatchedQuantity >= i.breakdown.reduce((sum, b) => sum + b.orderedQuantity, 0)
+      (i) => i.regularDispatchedQuantity >= i.breakdown.reduce((sum, b) => sum + b.orderedQuantity, 0)
     );
     await tx.salesOrder.update({
       where: { id: dispatch.salesOrderId },
@@ -498,7 +598,17 @@ export async function confirmDispatch(actor: ActorContext, id: string) {
     recordId: id,
     action: "POST",
     oldValues: { status: "PACKED" },
-    newValues: { status: "DISPATCHED" },
+    newValues: {
+      status: "DISPATCHED",
+      // Extra Dispatch Quantity auditability (2026-09-30) — who confirmed
+      // it, when (the audit log's own existing timestamp/actor columns), and
+      // whether this shipment included Extra quantity requiring a distinct
+      // approval sign-off, reusing the existing Audit Log system rather than
+      // adding new Dispatch columns purely to record who/when approved.
+      totalRegularQuantity: totalRegular,
+      totalExtraQuantity: totalExtra,
+      ...(totalExtra > 0 ? { extraDispatchApprovalRequired: needsApproval, approvedByUserId: actor.userId } : {}),
+    },
   });
 
   return updated;

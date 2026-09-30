@@ -1,9 +1,51 @@
 import { z } from "zod";
 
-export const dispatchItemInputSchema = z.object({
-  salesOrderItemId: z.string().uuid("Order line is required"),
-  dispatchedQuantity: z.coerce.number().int().positive("Quantity must be greater than 0"),
-});
+// Extra Dispatch Quantity (2026-09-30) — suggested reason values a line's
+// extra (beyond the sale order's own remaining quantity) is being shipped.
+// Reused client-side for the UI's own dropdown and by reports, so this list
+// is the single source of truth rather than duplicated.
+export const EXTRA_DISPATCH_REASONS = [
+  "CUSTOMER_REQUEST",
+  "REPLACEMENT",
+  "FREE_FOC",
+  "SAMPLE",
+  "PROMOTIONAL",
+  "PACKING_ADJUSTMENT",
+  "OTHER",
+] as const;
+
+export const EXTRA_DISPATCH_REASON_LABELS: Record<(typeof EXTRA_DISPATCH_REASONS)[number], string> = {
+  CUSTOMER_REQUEST: "Customer Request",
+  REPLACEMENT: "Replacement",
+  FREE_FOC: "Free / FOC",
+  SAMPLE: "Sample",
+  PROMOTIONAL: "Promotional",
+  PACKING_ADJUSTMENT: "Packing Adjustment",
+  OTHER: "Other",
+};
+
+export const dispatchItemInputSchema = z
+  .object({
+    salesOrderItemId: z.string().uuid("Order line is required"),
+    dispatchedQuantity: z.coerce.number().int().positive("Quantity must be greater than 0"),
+    // Both optional at the Zod layer — "reason is required whenever the
+    // SERVER-COMPUTED extra quantity is > 0" can't be expressed here (the
+    // Regular/Extra split is only known once the service reads the order's
+    // own cumulative Regular total), so that rule is enforced in
+    // dispatch.service.ts. The one rule Zod CAN express from input shape
+    // alone — remarks required when reason is OTHER — is enforced below.
+    extraDispatchReason: z.enum(EXTRA_DISPATCH_REASONS).optional(),
+    extraDispatchRemarks: z.string().max(1000).optional().or(z.literal("")),
+  })
+  .superRefine((val, ctx) => {
+    if (val.extraDispatchReason === "OTHER" && !val.extraDispatchRemarks?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["extraDispatchRemarks"],
+        message: 'Remarks are required when Extra Dispatch Reason is "Other".',
+      });
+    }
+  });
 
 export type DispatchItemInput = z.infer<typeof dispatchItemInputSchema>;
 

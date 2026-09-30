@@ -215,6 +215,143 @@ function ProductionSettingsSection({ canManage }: { canManage: boolean }) {
   );
 }
 
+interface DispatchSettingsValue {
+  allowExtraDispatch: boolean;
+  extraDispatchApprovalRequired: boolean;
+  extraDispatchApprovalThresholdQty: number | null;
+  extraDispatchApprovalThresholdPercent: number | null;
+}
+
+/**
+ * Extra Dispatch Quantity (2026-09-30) — company-wide toggles for whether a
+ * dispatch may ship more than a sales order's own remaining quantity at all,
+ * and when that extra requires a distinct Management sign-off before the
+ * dispatch can be confirmed (a blanket requirement, and/or either
+ * threshold). Same self-contained fetch-on-mount/toggle-and-PUT shape as
+ * ProductionSettingsSection above.
+ */
+function DispatchSettingsSection({ canManage }: { canManage: boolean }) {
+  const [settings, setSettings] = useState<DispatchSettingsValue | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [thresholdQtyInput, setThresholdQtyInput] = useState("");
+  const [thresholdPercentInput, setThresholdPercentInput] = useState("");
+
+  useEffect(() => {
+    fetch("/api/v1/dispatch-settings")
+      .then(parseJson)
+      .then((body) => {
+        setSettings(body.data);
+        setThresholdQtyInput(body.data.extraDispatchApprovalThresholdQty?.toString() ?? "");
+        setThresholdPercentInput(body.data.extraDispatchApprovalThresholdPercent?.toString() ?? "");
+      })
+      .catch((e) => setError(e.message));
+  }, []);
+
+  async function update(patch: Partial<DispatchSettingsValue>) {
+    if (!settings) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const body = await parseJson(
+        await fetch("/api/v1/dispatch-settings", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(patch),
+        })
+      );
+      setSettings(body.data);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!settings) return null;
+
+  return (
+    <div className="mb-4 space-y-2 rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
+      <p className="text-sm font-medium text-zinc-900 dark:text-zinc-50">Extra Dispatch Quantity</p>
+
+      <div className="flex items-center justify-between border-t border-zinc-100 pt-2 dark:border-zinc-800">
+        <div>
+          <p className="text-xs text-zinc-700 dark:text-zinc-300">Allow dispatching more than the sales order quantity</p>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">
+            When off, a dispatch line is hard-capped at what remains against its sales order — no extra dispatch at all.
+          </p>
+        </div>
+        <ToggleSwitch
+          checked={settings.allowExtraDispatch}
+          disabled={!canManage || saving}
+          label={settings.allowExtraDispatch ? "Allowed" : "Not allowed"}
+          onToggle={() => update({ allowExtraDispatch: !settings.allowExtraDispatch })}
+        />
+      </div>
+
+      {settings.allowExtraDispatch && (
+        <>
+          <div className="flex items-center justify-between border-t border-zinc-100 pt-2 dark:border-zinc-800">
+            <div>
+              <p className="text-xs text-zinc-700 dark:text-zinc-300">Always require Management approval for any extra</p>
+              <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                A distinct sign-off from Reason/Remarks — the dispatch&apos;s own creator can never approve their own extra
+                quantity.
+              </p>
+            </div>
+            <ToggleSwitch
+              checked={settings.extraDispatchApprovalRequired}
+              disabled={!canManage || saving}
+              label={settings.extraDispatchApprovalRequired ? "Required" : "Not required"}
+              onToggle={() => update({ extraDispatchApprovalRequired: !settings.extraDispatchApprovalRequired })}
+            />
+          </div>
+
+          <div className="flex items-center justify-between gap-2 border-t border-zinc-100 pt-2 dark:border-zinc-800">
+            <p className="text-xs text-zinc-700 dark:text-zinc-300">Or require approval above this many extra pieces</p>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={0}
+                placeholder="No limit"
+                disabled={!canManage || saving}
+                value={thresholdQtyInput}
+                onChange={(e) => setThresholdQtyInput(e.target.value)}
+                onBlur={() =>
+                  update({ extraDispatchApprovalThresholdQty: thresholdQtyInput.trim() === "" ? null : Number(thresholdQtyInput) })
+                }
+                className={textInputClass() + " w-28"}
+              />
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between gap-2 border-t border-zinc-100 pt-2 dark:border-zinc-800">
+            <p className="text-xs text-zinc-700 dark:text-zinc-300">Or require approval above this % of the dispatch</p>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={0}
+                max={100}
+                placeholder="No limit"
+                disabled={!canManage || saving}
+                value={thresholdPercentInput}
+                onChange={(e) => setThresholdPercentInput(e.target.value)}
+                onBlur={() =>
+                  update({
+                    extraDispatchApprovalThresholdPercent: thresholdPercentInput.trim() === "" ? null : Number(thresholdPercentInput),
+                  })
+                }
+                className={textInputClass() + " w-28"}
+              />
+            </div>
+          </div>
+        </>
+      )}
+      {error && <p className="mt-2 text-xs text-red-600 dark:text-red-400">{error}</p>}
+    </div>
+  );
+}
+
 interface CompanyData {
   name: string;
   legalName: string | null;
@@ -275,6 +412,7 @@ export function AdminCompanySettingsPanel({ canManage }: { canManage: boolean })
     <div className="max-w-lg space-y-3">
       <ActionDisplaySettingsSection canManage={canManage} />
       <ProductionSettingsSection canManage={canManage} />
+      <DispatchSettingsSection canManage={canManage} />
       {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
       {saved && <p className="text-sm text-emerald-600 dark:text-emerald-400">Saved.</p>}
 

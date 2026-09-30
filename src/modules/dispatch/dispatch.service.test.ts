@@ -25,6 +25,12 @@ vi.mock("./dispatch.repository", () => ({
 }));
 vi.mock("@/core/db/client", () => ({ prisma: { $transaction: vi.fn() } }));
 vi.mock("@/core/barcode/barcode.service", () => ({ replaceCartonBarcodes: vi.fn() }));
+vi.mock("@/core/dispatch-settings/DispatchSettingsService", async () => {
+  const actual = await vi.importActual<typeof import("@/core/dispatch-settings/DispatchSettingsService")>(
+    "@/core/dispatch-settings/DispatchSettingsService"
+  );
+  return { ...actual, getDispatchSettings: vi.fn() };
+});
 
 const { prisma } = await import("@/core/db/client");
 const { PermissionService } = await import("@/core/rbac/PermissionService");
@@ -32,6 +38,14 @@ const { SalesOrderRepository } = await import("@/modules/sales-orders/sales-orde
 const { recordInventoryTransaction, getAvailableQuantity } = await import("@/modules/inventory/inventory.service");
 const { DispatchRepository } = await import("./dispatch.repository");
 const { replaceCartonBarcodes } = await import("@/core/barcode/barcode.service");
+const { getDispatchSettings } = await import("@/core/dispatch-settings/DispatchSettingsService");
+
+const DEFAULT_SETTINGS = {
+  allowExtraDispatch: true,
+  extraDispatchApprovalRequired: false,
+  extraDispatchApprovalThresholdQty: null,
+  extraDispatchApprovalThresholdPercent: null,
+};
 const {
   createDispatch,
   setCartons,
@@ -46,11 +60,12 @@ const {
 
 const actor = { companyId: "co-1", userId: "user-1", branchId: null };
 
-function orderItem(id: string, dispatchedQuantity: number, orderedQuantities: number[]) {
+function orderItem(id: string, regularDispatchedQuantity: number, orderedQuantities: number[]) {
   return {
     id,
     productId: `prod-${id}`,
-    dispatchedQuantity,
+    dispatchedQuantity: regularDispatchedQuantity, // pre-feature fixtures: total === regular, no extra existed yet
+    regularDispatchedQuantity,
     breakdown: orderedQuantities.map((q) => ({ orderedQuantity: q })),
   };
 }
@@ -59,9 +74,9 @@ function makeFakeTx(overrides: { updateManyCount?: number; dispatchUpdateManyCou
   const { updateManyCount = 1, dispatchUpdateManyCount = 1 } = overrides;
   return {
     salesOrderItem: {
-      findUniqueOrThrow: vi.fn().mockResolvedValue({ dispatchedQuantity: 0, breakdown: [{ orderedQuantity: 100 }] }),
+      findUniqueOrThrow: vi.fn().mockResolvedValue({ regularDispatchedQuantity: 0, breakdown: [{ orderedQuantity: 100 }] }),
       updateMany: vi.fn().mockResolvedValue({ count: updateManyCount }),
-      findMany: vi.fn().mockResolvedValue([{ dispatchedQuantity: 100, breakdown: [{ orderedQuantity: 100 }] }]),
+      findMany: vi.fn().mockResolvedValue([{ regularDispatchedQuantity: 100, breakdown: [{ orderedQuantity: 100 }] }]),
     },
     salesOrder: { update: vi.fn().mockResolvedValue({}) },
     dispatch: { updateMany: vi.fn().mockResolvedValue({ count: dispatchUpdateManyCount }) },
@@ -74,6 +89,7 @@ beforeEach(() => {
   vi.mocked(SalesOrderRepository.findByIdWithDetails).mockReset();
   vi.mocked(recordInventoryTransaction).mockReset().mockResolvedValue({ id: "txn-1" } as never);
   vi.mocked(getAvailableQuantity).mockReset().mockResolvedValue(1000);
+  vi.mocked(getDispatchSettings).mockReset().mockResolvedValue(DEFAULT_SETTINGS as never);
   vi.mocked(DispatchRepository.findAnyById).mockReset();
   vi.mocked(DispatchRepository.findByIdWithDetails).mockReset();
   vi.mocked(DispatchRepository.createWithItems).mockReset();
@@ -84,7 +100,7 @@ beforeEach(() => {
 });
 
 describe("createDispatch — order eligibility and remaining-quantity guard", () => {
-  it.each(["DRAFT", "DISPATCHED", "CLOSED", "CANCELLED"])("rejects an order in %s status", async (status) => {
+  it.each(["DRAFT", "CLOSED", "CANCELLED"])("rejects an order in %s status", async (status) => {
     vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue({ id: "so-1", status, items: [] } as never);
 
     await expect(
@@ -98,7 +114,10 @@ describe("createDispatch — order eligibility and remaining-quantity guard", ()
     ).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
   });
 
-  it.each(["CONFIRMED", "PARTIALLY_DISPATCHED", "INVOICED"])("accepts an order in %s status", async (status) => {
+  // DISPATCHED is included (2026-09-30, Extra Dispatch Quantity) — an order
+  // the Regular fulfillment logic already considers fully shipped can still
+  // legitimately receive a further shipment, entirely as Extra.
+  it.each(["CONFIRMED", "PARTIALLY_DISPATCHED", "INVOICED", "DISPATCHED"])("accepts an order in %s status", async (status) => {
     vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue({
       id: "so-1",
       status,
@@ -118,23 +137,126 @@ describe("createDispatch — order eligibility and remaining-quantity guard", ()
     ).resolves.toBeDefined();
   });
 
-  it("rejects a quantity exceeding what remains to be dispatched", async () => {
-    vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue({
-      id: "so-1",
-      status: "CONFIRMED",
-      customerId: "cust-1",
-      items: [orderItem("item-1", 30, [50])], // 20 remaining
-    } as never);
+  // Extra Dispatch Quantity (2026-09-30) — a request beyond what remains
+  // is no longer a hard rejection; it splits into Regular (capped at what's
+  // remaining) + Extra (the rest), per the spec's own invariant.
+  describe("Extra Dispatch Quantity split", () => {
+    it("splits into regular + extra when the requested quantity exceeds what remains", async () => {
+      vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue({
+        id: "so-1",
+        status: "CONFIRMED",
+        customerId: "cust-1",
+        items: [orderItem("item-1", 30, [50])], // 20 remaining
+      } as never);
+      vi.mocked(DispatchRepository.createWithItems).mockResolvedValue({ id: "disp-1" } as never);
 
-    await expect(
-      createDispatch(actor, {
+      await createDispatch(actor, {
         salesOrderId: "so-1",
         warehouseId: "wh-1",
         dispatchDate: "2026-08-24",
         deliveryAddress: "123 Street",
-        items: [{ salesOrderItemId: "item-1", dispatchedQuantity: 21 }],
-      } as never)
-    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+        items: [{ salesOrderItemId: "item-1", dispatchedQuantity: 21, extraDispatchReason: "CUSTOMER_REQUEST" }],
+      } as never);
+
+      expect(DispatchRepository.createWithItems).toHaveBeenCalledWith(
+        expect.anything(),
+        [
+          expect.objectContaining({
+            salesOrderItemId: "item-1",
+            dispatchedQuantity: 21,
+            regularDispatchQuantity: 20,
+            extraDispatchQuantity: 1,
+            extraDispatchReason: "CUSTOMER_REQUEST",
+          }),
+        ]
+      );
+    });
+
+    it("reproduces the spec's own two-dispatch worked example: DSP-001=60 (all regular), DSP-002=50 (40 regular + 10 extra)", async () => {
+      // DSP-001 already regular-dispatched 60 of 100 ordered.
+      vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue({
+        id: "so-1",
+        status: "PARTIALLY_DISPATCHED",
+        customerId: "cust-1",
+        items: [orderItem("item-1", 60, [100])], // 40 remaining
+      } as never);
+      vi.mocked(DispatchRepository.createWithItems).mockResolvedValue({ id: "disp-2" } as never);
+
+      await createDispatch(actor, {
+        salesOrderId: "so-1",
+        warehouseId: "wh-1",
+        dispatchDate: "2026-08-24",
+        deliveryAddress: "123 Street",
+        items: [{ salesOrderItemId: "item-1", dispatchedQuantity: 50, extraDispatchReason: "CUSTOMER_REQUEST" }],
+      } as never);
+
+      expect(DispatchRepository.createWithItems).toHaveBeenCalledWith(
+        expect.anything(),
+        [expect.objectContaining({ regularDispatchQuantity: 40, extraDispatchQuantity: 10 })]
+      );
+    });
+
+    it("rejects extra quantity with no reason supplied", async () => {
+      vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue({
+        id: "so-1",
+        status: "CONFIRMED",
+        customerId: "cust-1",
+        items: [orderItem("item-1", 30, [50])], // 20 remaining
+      } as never);
+
+      await expect(
+        createDispatch(actor, {
+          salesOrderId: "so-1",
+          warehouseId: "wh-1",
+          dispatchDate: "2026-08-24",
+          deliveryAddress: "123 Street",
+          items: [{ salesOrderItemId: "item-1", dispatchedQuantity: 21 }],
+        } as never)
+      ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    });
+
+    it("rejects extra quantity entirely when DispatchSettings.allowExtraDispatch is false", async () => {
+      vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue({
+        id: "so-1",
+        status: "CONFIRMED",
+        customerId: "cust-1",
+        items: [orderItem("item-1", 30, [50])], // 20 remaining
+      } as never);
+      vi.mocked(getDispatchSettings).mockResolvedValue({ ...DEFAULT_SETTINGS, allowExtraDispatch: false } as never);
+
+      await expect(
+        createDispatch(actor, {
+          salesOrderId: "so-1",
+          warehouseId: "wh-1",
+          dispatchDate: "2026-08-24",
+          deliveryAddress: "123 Street",
+          items: [{ salesOrderItemId: "item-1", dispatchedQuantity: 21, extraDispatchReason: "CUSTOMER_REQUEST" }],
+        } as never)
+      ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    });
+
+    it("allows a dispatch quantity at or below what remains with zero extra, no reason needed", async () => {
+      vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue({
+        id: "so-1",
+        status: "CONFIRMED",
+        customerId: "cust-1",
+        items: [orderItem("item-1", 30, [50])], // 20 remaining
+      } as never);
+      vi.mocked(DispatchRepository.createWithItems).mockResolvedValue({ id: "disp-1" } as never);
+
+      await createDispatch(actor, {
+        salesOrderId: "so-1",
+        warehouseId: "wh-1",
+        dispatchDate: "2026-08-24",
+        deliveryAddress: "123 Street",
+        items: [{ salesOrderItemId: "item-1", dispatchedQuantity: 20 }],
+      } as never);
+
+      expect(DispatchRepository.createWithItems).toHaveBeenCalledWith(
+        expect.anything(),
+        [expect.objectContaining({ regularDispatchQuantity: 20, extraDispatchQuantity: 0, extraDispatchReason: null })]
+      );
+    });
   });
 });
 
@@ -285,6 +407,8 @@ describe("confirmDispatch — self-approval, stock guard, guarded increment, sta
         id: "di-1",
         productId: "prod-1",
         dispatchedQuantity: 100,
+        regularDispatchQuantity: 100,
+        extraDispatchQuantity: 0,
         product: { styleName: "Round Neck T-Shirt" },
         salesOrderItem: { id: "soi-1" },
       },
@@ -324,7 +448,7 @@ describe("confirmDispatch — self-approval, stock guard, guarded increment, sta
       .mockResolvedValueOnce(packedDispatch as never)
       .mockResolvedValueOnce({ id: "disp-1", status: "DISPATCHED" } as never);
     const fakeTx = makeFakeTx();
-    fakeTx.salesOrderItem.findMany.mockResolvedValue([{ dispatchedQuantity: 100, breakdown: [{ orderedQuantity: 250 }] }]);
+    fakeTx.salesOrderItem.findMany.mockResolvedValue([{ regularDispatchedQuantity: 100, breakdown: [{ orderedQuantity: 250 }] }]);
     vi.mocked(prisma.$transaction).mockImplementation((cb: unknown) => (cb as (tx: unknown) => Promise<unknown>)(fakeTx));
 
     await confirmDispatch(actor, "disp-1");
@@ -345,12 +469,130 @@ describe("confirmDispatch — self-approval, stock guard, guarded increment, sta
       .mockResolvedValueOnce(packedDispatch as never)
       .mockResolvedValueOnce({ id: "disp-1", status: "DISPATCHED" } as never);
     const fakeTx = makeFakeTx();
-    fakeTx.salesOrderItem.findMany.mockResolvedValue([{ dispatchedQuantity: 100, breakdown: [{ orderedQuantity: 100 }] }]);
+    fakeTx.salesOrderItem.findMany.mockResolvedValue([{ regularDispatchedQuantity: 100, breakdown: [{ orderedQuantity: 100 }] }]);
     vi.mocked(prisma.$transaction).mockImplementation((cb: unknown) => (cb as (tx: unknown) => Promise<unknown>)(fakeTx));
 
     await confirmDispatch(actor, "disp-1");
 
     expect(fakeTx.salesOrder.update).toHaveBeenCalledWith({ where: { id: "so-1" }, data: { status: "DISPATCHED" } });
+  });
+
+  // Extra Dispatch Quantity (2026-09-30)
+  describe("Extra Dispatch Quantity — approval gate and Regular-only fulfillment", () => {
+    const dispatchWithExtra = {
+      ...packedDispatch,
+      items: [
+        {
+          id: "di-1",
+          productId: "prod-1",
+          dispatchedQuantity: 110,
+          regularDispatchQuantity: 100,
+          extraDispatchQuantity: 10,
+          product: { styleName: "Round Neck T-Shirt" },
+          salesOrderItem: { id: "soi-1" },
+        },
+      ],
+    };
+
+    it("does NOT assert 'approve' when the dispatch has zero extra quantity, regardless of settings", async () => {
+      vi.mocked(getDispatchSettings).mockResolvedValue({ ...DEFAULT_SETTINGS, extraDispatchApprovalRequired: true } as never);
+      vi.mocked(DispatchRepository.findByIdWithDetails)
+        .mockResolvedValueOnce(packedDispatch as never)
+        .mockResolvedValueOnce({ id: "disp-1", status: "DISPATCHED" } as never);
+      const fakeTx = makeFakeTx();
+      vi.mocked(prisma.$transaction).mockImplementation((cb: unknown) => (cb as (tx: unknown) => Promise<unknown>)(fakeTx));
+
+      await confirmDispatch(actor, "disp-1");
+
+      expect(PermissionService.assert).not.toHaveBeenCalledWith(expect.anything(), "dispatch", "approve", expect.anything());
+    });
+
+    it("asserts the self-approval-guarded 'approve' action when extraDispatchApprovalRequired is true and extra > 0", async () => {
+      vi.mocked(getDispatchSettings).mockResolvedValue({ ...DEFAULT_SETTINGS, extraDispatchApprovalRequired: true } as never);
+      vi.mocked(DispatchRepository.findByIdWithDetails)
+        .mockResolvedValueOnce(dispatchWithExtra as never)
+        .mockResolvedValueOnce({ id: "disp-1", status: "DISPATCHED" } as never);
+      const fakeTx = makeFakeTx();
+      vi.mocked(prisma.$transaction).mockImplementation((cb: unknown) => (cb as (tx: unknown) => Promise<unknown>)(fakeTx));
+
+      await confirmDispatch(actor, "disp-1");
+
+      expect(PermissionService.assert).toHaveBeenCalledWith("user-1", "dispatch", "approve", { createdBy: "user-1" });
+    });
+
+    it("blocks confirm (never reaching the transaction) when approval is required but the actor lacks it", async () => {
+      vi.mocked(getDispatchSettings).mockResolvedValue({ ...DEFAULT_SETTINGS, extraDispatchApprovalRequired: true } as never);
+      vi.mocked(DispatchRepository.findByIdWithDetails).mockResolvedValueOnce(dispatchWithExtra as never);
+      vi.mocked(PermissionService.assert).mockImplementation(async (_u, _m, action) => {
+        if (action === "approve") throw new Error("PERMISSION_DENIED");
+      });
+
+      await expect(confirmDispatch(actor, "disp-1")).rejects.toThrow();
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it("triggers approval purely from the quantity threshold, even when extraDispatchApprovalRequired is false", async () => {
+      vi.mocked(getDispatchSettings).mockResolvedValue({
+        ...DEFAULT_SETTINGS,
+        extraDispatchApprovalThresholdQty: 5, // extra=10 exceeds this
+      } as never);
+      vi.mocked(DispatchRepository.findByIdWithDetails)
+        .mockResolvedValueOnce(dispatchWithExtra as never)
+        .mockResolvedValueOnce({ id: "disp-1", status: "DISPATCHED" } as never);
+      const fakeTx = makeFakeTx();
+      vi.mocked(prisma.$transaction).mockImplementation((cb: unknown) => (cb as (tx: unknown) => Promise<unknown>)(fakeTx));
+
+      await confirmDispatch(actor, "disp-1");
+
+      expect(PermissionService.assert).toHaveBeenCalledWith("user-1", "dispatch", "approve", { createdBy: "user-1" });
+    });
+
+    it("never requires approval when both allowExtraDispatch defaults and no threshold is configured", async () => {
+      vi.mocked(DispatchRepository.findByIdWithDetails)
+        .mockResolvedValueOnce(dispatchWithExtra as never)
+        .mockResolvedValueOnce({ id: "disp-1", status: "DISPATCHED" } as never);
+      const fakeTx = makeFakeTx();
+      vi.mocked(prisma.$transaction).mockImplementation((cb: unknown) => (cb as (tx: unknown) => Promise<unknown>)(fakeTx));
+
+      await confirmDispatch(actor, "disp-1");
+
+      expect(PermissionService.assert).not.toHaveBeenCalledWith(expect.anything(), "dispatch", "approve", expect.anything());
+    });
+
+    it("increments regularDispatchedQuantity by ONLY the regular portion, and dispatchedQuantity (total) by regular+extra", async () => {
+      vi.mocked(DispatchRepository.findByIdWithDetails)
+        .mockResolvedValueOnce(dispatchWithExtra as never)
+        .mockResolvedValueOnce({ id: "disp-1", status: "DISPATCHED" } as never);
+      const fakeTx = makeFakeTx();
+      vi.mocked(prisma.$transaction).mockImplementation((cb: unknown) => (cb as (tx: unknown) => Promise<unknown>)(fakeTx));
+
+      await confirmDispatch(actor, "disp-1");
+
+      expect(fakeTx.salesOrderItem.updateMany).toHaveBeenCalledWith({
+        where: { id: "soi-1", regularDispatchedQuantity: { lte: expect.any(Number) } },
+        data: { regularDispatchedQuantity: { increment: 100 }, dispatchedQuantity: { increment: 110 } },
+      });
+      expect(recordInventoryTransaction).toHaveBeenCalledWith(
+        fakeTx,
+        actor,
+        expect.objectContaining({ transactionType: "DISPATCH", quantity: -110 })
+      );
+    });
+
+    it("Sale Order fulfillment (DISPATCHED status) is based on Regular only — a large Extra never inflates it", async () => {
+      vi.mocked(DispatchRepository.findByIdWithDetails)
+        .mockResolvedValueOnce(dispatchWithExtra as never)
+        .mockResolvedValueOnce({ id: "disp-1", status: "PARTIALLY_DISPATCHED" } as never);
+      const fakeTx = makeFakeTx();
+      // Order qty 100, regular-so-far only 100 (this item's own regular=100) — fully regular-fulfilled...
+      fakeTx.salesOrderItem.findMany.mockResolvedValue([{ regularDispatchedQuantity: 100, breakdown: [{ orderedQuantity: 100 }] }]);
+      vi.mocked(prisma.$transaction).mockImplementation((cb: unknown) => (cb as (tx: unknown) => Promise<unknown>)(fakeTx));
+
+      await confirmDispatch(actor, "disp-1");
+
+      // ...so status is DISPATCHED, unaffected by the extra 10 pieces that also shipped.
+      expect(fakeTx.salesOrder.update).toHaveBeenCalledWith({ where: { id: "so-1" }, data: { status: "DISPATCHED" } });
+    });
   });
 
   it("rejects confirming a non-PACKED dispatch, never touching the transaction", async () => {

@@ -93,6 +93,7 @@ model Company {
   pieceRateCards                      PieceRateCard[]
   pieceRateEarnings                   PieceRateEarning[]
   productionSettings                  ProductionSettings?
+  dispatchSettings                    DispatchSettings?
   productionRoutes                    ProductionRoute[]
   documentSequences                   DocumentSequence[]
   auditLogs                           AuditLog[]
@@ -3463,13 +3464,27 @@ model SalesOrderItem {
   sampleRequestId    String?  @map("sample_request_id") @db.Uuid
   unitPrice          Decimal  @map("unit_price") @db.Decimal(18, 2)
   notes              String?
-  // Guarded accumulator (Phase 8), same idiom as PurchaseOrderItem's
-  // receivedQuantity/invoicedQuantity — capped by sum(breakdown.orderedQuantity),
-  // incremented only at Confirm-Dispatch time, never at Draft creation. One
-  // SalesOrderItem can be dispatched across multiple separate Dispatch
-  // documents over time (partial dispatch), hence an accumulator here rather
-  // than a one-shot flag.
+  // Guarded accumulator (Phase 8) — TOTAL physical quantity ever dispatched
+  // against this line, regular + extra combined (Extra Dispatch Quantity,
+  // 2026-09-30). Incremented only at Confirm-Dispatch time, never at Draft
+  // creation. One SalesOrderItem can be dispatched across multiple separate
+  // Dispatch documents over time (partial dispatch), hence an accumulator
+  // here rather than a one-shot flag. Deliberately UNCAPPED by
+  // sum(breakdown.orderedQuantity) — a customer can legitimately receive
+  // more than they ordered (FOC, replacement, promotional, etc.); the real
+  // cap against real stock still applies (see confirmDispatch()'s
+  // getAvailableQuantity() check). regularDispatchedQuantity below is the
+  // one capped at the ordered total and is what Sale Order fulfillment is
+  // actually computed from.
   dispatchedQuantity Int      @default(0) @map("dispatched_quantity")
+  // Extra Dispatch Quantity (2026-09-30) — the portion of dispatchedQuantity
+  // that counts toward Sale Order fulfillment. Guarded, capped by
+  // sum(breakdown.orderedQuantity) exactly the way the unsplit
+  // dispatchedQuantity column used to be capped before this feature —
+  // see confirmDispatch()'s guarded updateMany. Any quantity beyond this
+  // (dispatchedQuantity - regularDispatchedQuantity) is Extra and must never
+  // be counted as fulfilling the order.
+  regularDispatchedQuantity Int @default(0) @map("regular_dispatched_quantity")
   // Effective BOM (2026-09-24) — the STABLE line identity this concrete item
   // row belongs to. Deliberately NOT the same as this row's own `id`:
   // updateSalesOrder()'s replaceItems() deletes and recreates every
@@ -4372,6 +4387,9 @@ model Lot {
   qcInspections     QcInspection[]
   variantBreakdown  LotVariantBreakdown[]
   materialRequests  MaterialRequest[]
+  // Informational only (Extra Dispatch Quantity, 2026-09-30) — see
+  // DispatchItem.sourceLotId's own comment.
+  dispatchItems     DispatchItem[]
 
   @@unique([companyId, lotNumber])
   @@index([productionOrderId])
@@ -5178,6 +5196,43 @@ enum DispatchStatus {
   CANCELLED
 }
 
+// Extra Dispatch Quantity (2026-09-30) — a Dispatch line may ship more than
+// the Sale Order's own remaining ordered quantity (customer request,
+// replacement, FOC, sample, promotional, packing rounding, etc.). Mandatory
+// whenever a line's own extraDispatchQuantity > 0 (enforced in
+// dispatch.service.ts, since the split is computed server-side from a
+// cumulative Regular total the client can't itself know in advance).
+enum ExtraDispatchReason {
+  CUSTOMER_REQUEST
+  REPLACEMENT
+  FREE_FOC
+  SAMPLE
+  PROMOTIONAL
+  PACKING_ADJUSTMENT
+  OTHER
+}
+
+// Company-wide Extra Dispatch behavior toggles — a missing row means the
+// defaults below, same "single flat row, no backfill" precedent as
+// ProductionSettings/ActionDisplaySettings.
+model DispatchSettings {
+  id                                    String   @id @default(uuid()) @db.Uuid
+  companyId                             String   @unique @map("company_id") @db.Uuid
+  allowExtraDispatch                    Boolean  @default(true) @map("allow_extra_dispatch")
+  extraDispatchApprovalRequired         Boolean  @default(false) @map("extra_dispatch_approval_required")
+  // Either threshold, if set, independently triggers the approval gate even
+  // when extraDispatchApprovalRequired is false — a company may want "only
+  // approve if it's a lot of extra," not every single extra unit.
+  extraDispatchApprovalThresholdQty     Int?     @map("extra_dispatch_approval_threshold_qty")
+  extraDispatchApprovalThresholdPercent Decimal? @map("extra_dispatch_approval_threshold_percent") @db.Decimal(5, 2)
+  createdAt                             DateTime @default(now()) @map("created_at")
+  updatedAt                             DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@map("dispatch_settings")
+}
+
 model Dispatch {
   id                String          @id @default(uuid()) @db.Uuid
   companyId         String          @map("company_id") @db.Uuid
@@ -5231,15 +5286,49 @@ model DispatchItem {
   dispatchId         String   @map("dispatch_id") @db.Uuid
   salesOrderItemId   String   @map("sales_order_item_id") @db.Uuid
   productId          String   @map("product_id") @db.Uuid
+  // TOTAL physical quantity for this line — regularDispatchQuantity +
+  // extraDispatchQuantity, an invariant enforced entirely in
+  // dispatch.service.ts (never independently client-supplied; both
+  // components are always derived server-side from the split formula).
+  // This is the number markPacked()'s carton-sum check and confirmDispatch()'s
+  // real FG-stock check both use — unchanged meaning/mechanism from before
+  // Extra Dispatch Quantity existed, since it was already "the total to ship."
   dispatchedQuantity Int      @map("dispatched_quantity")
+  // Extra Dispatch Quantity (2026-09-30) — split of dispatchedQuantity.
+  // regularDispatchQuantity is what SalesOrderItem.regularDispatchedQuantity
+  // is incremented by (capped at the order's own remaining quantity);
+  // extraDispatchQuantity is the remainder, never counted toward Sale Order
+  // fulfillment. regularDispatchQuantity + extraDispatchQuantity ===
+  // dispatchedQuantity always.
+  regularDispatchQuantity Int                  @default(0) @map("regular_dispatch_quantity")
+  extraDispatchQuantity   Int                  @default(0) @map("extra_dispatch_quantity")
+  // Mandatory whenever extraDispatchQuantity > 0 (service-layer check —
+  // Zod can't enforce this alone since the split is computed server-side).
+  extraDispatchReason     ExtraDispatchReason? @map("extra_dispatch_reason")
+  // Mandatory whenever extraDispatchReason = OTHER (Zod .superRefine(), a
+  // pure input-shape rule).
+  extraDispatchRemarks    String?              @map("extra_dispatch_remarks")
+  // Informational traceability only (2026-09-30) — which Production Lot this
+  // line was understood to be fulfilled from at dispatch time. Deliberately
+  // NEVER enforced against a real per-lot stock balance: Finished-Goods
+  // stock in this schema is pooled at (productId, warehouseId) with no lot
+  // dimension on the consumption side (InventoryTransaction has no lotId
+  // column at all — see PRODUCTION_MODULE_DESIGN.md). Building genuine
+  // lot-level allocation would mean making Production's own finished-goods
+  // posting lot-aware everywhere it already isn't; explicitly out of scope
+  // here, matching CartonItem.productVariantId's own identical
+  // "informational only, never enforced" precedent two models below.
+  sourceLotId             String?              @map("source_lot_id") @db.Uuid
   createdAt          DateTime @default(now()) @map("created_at")
 
   dispatch       Dispatch       @relation(fields: [dispatchId], references: [id])
   salesOrderItem SalesOrderItem @relation(fields: [salesOrderItemId], references: [id])
   product        Product        @relation(fields: [productId], references: [id])
+  sourceLot      Lot?           @relation(fields: [sourceLotId], references: [id])
   cartonItems    CartonItem[]
 
   @@index([dispatchId])
+  @@index([sourceLotId])
   @@map("dispatch_items")
 }
 
