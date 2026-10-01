@@ -100,6 +100,16 @@ interface DataTableProps<T> {
      * read on mount — callers that change it should remount via `key`. */
     initialValue?: string;
   };
+  /**
+   * Extra query params sent with every fetch (blank values are skipped) —
+   * lets a wrapper such as CrmTable drive several filters at once. Changing
+   * any value resets to page 1. Purely additive: omitted, nothing changes.
+   */
+  extraParams?: Record<string, string | undefined>;
+  /** Hide the built-in search box (when a wrapper renders its own search and passes it via extraParams.search). */
+  hideSearch?: boolean;
+  /** Extra controls rendered in the toolbar row, after the search box. */
+  toolbar?: ReactNode;
 }
 
 interface ListResponse<T> {
@@ -122,6 +132,9 @@ export function DataTable<T extends { id: string }>({
   onEditRow,
   exportUrl,
   statusFilter,
+  extraParams,
+  hideSearch = false,
+  toolbar,
 }: DataTableProps<T>) {
   const router = useRouter();
   const [page, setPage] = useState(1);
@@ -139,6 +152,21 @@ export function DataTable<T extends { id: string }>({
   const [sortBy, setSortBy] = useState<string | undefined>(undefined);
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
 
+  // A stable string key, so a new-but-equal extraParams object (re-created on
+  // every parent render) never triggers a refetch on its own.
+  const extraParamsKey = JSON.stringify(
+    Object.entries(extraParams ?? {})
+      .filter(([, v]) => v !== undefined && v !== "")
+      .sort(([a], [b]) => a.localeCompare(b))
+  );
+  const [lastExtraParamsKey, setLastExtraParamsKey] = useState(extraParamsKey);
+  if (lastExtraParamsKey !== extraParamsKey) {
+    // Adjust state during render (React's documented pattern) rather than in
+    // an effect, so the fetch below never runs once with the stale page.
+    setLastExtraParamsKey(extraParamsKey);
+    setPage(1);
+  }
+
   useEffect(() => {
     const controller = new AbortController();
     const timeout = setTimeout(async () => {
@@ -154,6 +182,9 @@ export function DataTable<T extends { id: string }>({
         }
         if (statusFilter && statusValue) {
           url.searchParams.set(statusFilter.paramName ?? "status", statusValue);
+        }
+        for (const [key, value] of JSON.parse(extraParamsKey) as [string, string][]) {
+          url.searchParams.set(key, value);
         }
 
         const res = await fetch(url.toString(), { signal: controller.signal });
@@ -173,7 +204,7 @@ export function DataTable<T extends { id: string }>({
       clearTimeout(timeout);
       controller.abort();
     };
-  }, [fetchUrl, page, search, refreshKey, reloadTick, sortBy, sortOrder, statusFilter, statusValue]);
+  }, [fetchUrl, page, search, refreshKey, reloadTick, sortBy, sortOrder, statusFilter, statusValue, extraParamsKey]);
 
   const actionsColCount = rowHref || onEditRow || rowActions ? 1 : 0;
 
@@ -221,16 +252,19 @@ export function DataTable<T extends { id: string }>({
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-3">
-        <input
-          type="search"
-          placeholder={searchPlaceholder}
-          value={search}
-          onChange={(e) => {
-            setSearch(e.target.value);
-            setPage(1);
-          }}
-          className="w-full max-w-sm rounded-md border border-zinc-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-800"
-        />
+        {!hideSearch && (
+          <input
+            type="search"
+            placeholder={searchPlaceholder}
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setPage(1);
+            }}
+            className="w-full max-w-sm rounded-md border border-zinc-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-800"
+          />
+        )}
+        {toolbar}
         {statusFilter && (
           <select
             aria-label="Filter by status"

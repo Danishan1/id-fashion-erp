@@ -70,6 +70,17 @@ export const NAV_SECTIONS: NavSection[] = [
     ],
   },
   { label: "Masters", href: "/masters", modules: ["masters_core", "masters_finance"] },
+  // CRM rebuild (2026-10-01, docs/crm/CRM_MASTER_BLUEPRINT.md) — each phase
+  // adds its own leaf here when its screens exist; never link unbuilt pages.
+  {
+    label: "CRM",
+    href: "/crm",
+    modules: ["crm"],
+    children: [
+      { label: "Dashboard", href: "/crm", modules: ["crm"] },
+      { label: "Activity Log", href: "/crm/activity", modules: ["crm"] },
+    ],
+  },
   {
     label: "HRMS",
     modules: ["hrms_attendance", "hrms_leave"],
@@ -158,6 +169,19 @@ export const NAV_SECTIONS: NavSection[] = [
 
 function isPathActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);
+}
+
+/**
+ * True if this child is the one to highlight. A child whose href is a prefix
+ * of a sibling's (e.g. "Dashboard" at /crm next to "Activity Log" at
+ * /crm/activity) is only active when no more specific sibling matches, so
+ * exactly one leaf is highlighted.
+ */
+export function isLeafActive(siblings: NavLeaf[], child: NavLeaf, pathname: string): boolean {
+  if (!isPathActive(pathname, child.href)) return false;
+  return !siblings.some(
+    (other) => other.href !== child.href && other.href.length > child.href.length && isPathActive(pathname, other.href)
+  );
 }
 
 /** True if this section's own href, or any child's href, matches the current path. */

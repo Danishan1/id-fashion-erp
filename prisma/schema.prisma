@@ -99,6 +99,7 @@ model Company {
   notifications                       Notification[]
   attachments                         Attachment[]
   importBatches                       ImportBatch[]
+  crmEvents                           CrmEvent[]
   attendanceRecords                   AttendanceRecord[]
   attendanceCorrectionRequests        AttendanceCorrectionRequest[]
   leaveTypes                          LeaveType[]
@@ -321,6 +322,7 @@ model User {
   productionStageTransactionsPerformed       ProductionStageTransaction[]         @relation("ProductionStageTransactionPerformedBy")
   qcInspectionsMade                          QcInspection[]                       @relation("QcInspectionInspector")
   importBatchesCreated                       ImportBatch[]
+  crmEventsActed                             CrmEvent[]                           @relation("CrmEventActor")
   attendanceRecordsRecorded                  AttendanceRecord[]
   attendanceCorrectionsApproved              AttendanceCorrectionRequest[]        @relation("AttendanceCorrectionApprovedBy")
   attendanceCorrectionsCreated               AttendanceCorrectionRequest[]        @relation("AttendanceCorrectionCreatedBy")
@@ -7634,6 +7636,49 @@ model Notification {
 
   @@index([userId, isRead])
   @@map("notifications")
+}
+
+// ─────────────────────────────────────────────────────────────
+// CRM — foundation (Phase 01, 2026-10-01). See docs/crm/CRM_MASTER_BLUEPRINT.md.
+// ─────────────────────────────────────────────────────────────
+
+// The CRM record types that can own timeline events, tags, notes, tasks and
+// custom-field values. Grows one value per phase as each entity is built
+// (e.g. TASK, APPOINTMENT, CONVERSATION later).
+enum CrmEntityType {
+  LEAD
+  CONTACT
+  COMPANY
+  OPPORTUNITY
+}
+
+// Append-only business event log for the CRM. One row per thing that
+// happened to a CRM record ("lead.created", "opportunity.stage_changed").
+// It is the source for record timelines today and the input for workflow
+// triggers (Phase 18) and outbound webhooks (Phase 29) later, so rows are
+// never updated or deleted. AuditLog remains the compliance trail; this is
+// the user-facing story. `eventType` is validated in code against the event
+// registry (src/modules/crm/core/crm-event-types.ts) rather than a DB enum, so
+// adding an event type never needs a migration.
+model CrmEvent {
+  id            String        @id @default(uuid()) @db.Uuid
+  companyId     String        @map("company_id") @db.Uuid
+  entityType    CrmEntityType @map("entity_type")
+  entityId      String        @map("entity_id") @db.Uuid
+  eventType     String        @map("event_type")
+  summary       String?
+  payload       Json?
+  actorUserId   String?       @map("actor_user_id") @db.Uuid
+  correlationId String?       @map("correlation_id")
+  occurredAt    DateTime      @default(now()) @map("occurred_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+  actor   User?   @relation("CrmEventActor", fields: [actorUserId], references: [id])
+
+  @@index([companyId, entityType, entityId, occurredAt])
+  @@index([companyId, eventType, occurredAt])
+  @@index([companyId, occurredAt])
+  @@map("crm_events")
 }
 
 enum ImportBatchType {

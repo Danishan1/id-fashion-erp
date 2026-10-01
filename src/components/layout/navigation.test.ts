@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { filterNavSections, NAV_SECTIONS, type NavSection } from "./navigation";
+import { filterNavSections, isLeafActive, NAV_SECTIONS, type NavSection } from "./navigation";
 
 describe("filterNavSections", () => {
   it("returns every section unchanged when the viewer is unrestricted (\"all\")", () => {
@@ -71,5 +71,20 @@ describe("filterNavSections", () => {
         expect(child.modules.length).toBeGreaterThan(0);
       }
     }
+  });
+});
+
+describe("isLeafActive", () => {
+  const crm = NAV_SECTIONS.find((s) => s.label === "CRM")!;
+  const leaf = (label: string) => crm.children!.find((c) => c.label === label)!;
+
+  it("highlights only the most specific matching child", () => {
+    expect(isLeafActive(crm.children!, leaf("Activity Log"), "/crm/activity")).toBe(true);
+    expect(isLeafActive(crm.children!, leaf("Dashboard"), "/crm/activity")).toBe(false);
+  });
+
+  it("still highlights the parent-path child on its own page", () => {
+    expect(isLeafActive(crm.children!, leaf("Dashboard"), "/crm")).toBe(true);
+    expect(isLeafActive(crm.children!, leaf("Activity Log"), "/crm")).toBe(false);
   });
 });

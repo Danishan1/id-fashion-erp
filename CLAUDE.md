@@ -7641,3 +7641,14 @@ The whole CRM (Leads, Deals/Opportunities, pipeline/sources/lost-reason masters,
 - Cross-module hooks removed: Customer 360 now shows Buyers/Samples/Sales Orders only; Sales Order no longer records an originating Deal; Sampling no longer auto-creates a follow-up on SUBMITTED_TO_CUSTOMER; Bulk Import keeps only its own helpers in `import.service.ts`.
 - Kept for the rebuild: RBAC module keys `crm` / `marketing` (+ role grants), `core/communication`, `lib/communication.ts`, `core/security/oauth-state`, `NotificationService`.
 - Full file list and verification: `danishan-understanding.md` → "Removal log".
+- **Rebuild plan:** `docs/crm/CRM_MASTER_BLUEPRINT.md` (phases 00–37, built one phase at a time) and `docs/crm/CRM_INTEGRATION_AWARENESS.md` (adapter/provider rule for external integrations — build only what the current phase needs). Read both before starting any CRM phase.
+
+## CRM rebuild — Phase 01 Foundation (2026-10-01, branch `crm-marketing-rebuild-v1`)
+
+- CRM shell: sidebar group CRM (Dashboard `/crm`, Activity Log `/crm/activity`), `crm/layout.tsx` gates on `crm.view`, `loading.tsx` / `error.tsx`.
+- Shared UI in `src/components/crm/` (page/record headers, CrmTable over DataTable with URL-synced filters, CrmFilterBar, CrmSearchInput, CrmTimeline, CrmActivityItem, CrmDrawer, state components). DataTable gained additive props `extraParams`, `hideSearch`, `toolbar`.
+- `src/modules/crm/core/`: `crmRoute()` API wrapper (uses ERP `crm` permission module), `crm_events` append-only event log + typed registry (`crm-event-types.ts` — never rename a published event), `runCrmMutation()` = change + AuditLog + events in one transaction, then post-commit subscribers (`crm-event-bus.ts`). **All CRM writes from Phase 02 on go through `runCrmMutation`**, and all CRM queries through `crmOwnerWhere(getCrmRecordScope())` (currently ALL; decision D5 pending).
+- `writeAuditLog(options, tx?)` — optional transaction client, backward compatible.
+- Sidebar: `isLeafActive()` highlights only the most specific child (fixes /crm vs /crm/activity, also AI Garment Flow).
+- Dev only: `node scripts/crm-dev-sample-events.mjs [--remove]`.
+- Report + manual checklist: `docs/crm/PHASE_01_FOUNDATION.md`.
