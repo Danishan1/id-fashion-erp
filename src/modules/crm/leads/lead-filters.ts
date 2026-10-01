@@ -35,6 +35,9 @@ export function buildLeadWhere(
   if (filter.statusIds?.length) and.push({ statusId: { in: filter.statusIds } });
   if (filter.statusKinds?.length) and.push({ status: { kind: { in: filter.statusKinds } } });
   if (filter.sourceIds?.length) and.push({ sourceId: { in: filter.sourceIds } });
+  if (filter.captureChannels?.length) and.push({ captureChannel: { in: filter.captureChannels } });
+  if (filter.importJobId) and.push({ importJobId: filter.importJobId });
+
   if (filter.ownerUserIds?.length || filter.unassigned) {
     and.push({
       OR: [

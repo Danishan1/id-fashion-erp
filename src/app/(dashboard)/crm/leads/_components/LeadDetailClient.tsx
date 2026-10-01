@@ -22,6 +22,17 @@ import { useLeadLookups } from "./useLeadLookups";
 
 type Dialog = null | "assign" | "status" | "tags" | "opportunity" | "convert" | "archive" | "restore";
 
+const CAPTURE_LABELS: Record<string, string> = {
+  MANUAL: "Manual entry",
+  CSV: "CSV import",
+  XLSX: "Excel import",
+  WEBSITE_FORM: "Website form",
+  API: "API",
+  WEBHOOK: "Webhook",
+  INTEGRATION: "Integration",
+};
+
+
 const dash = <span className="text-zinc-400">—</span>;
 
 function Section({ title, id, children, action }: { title: string; id?: string; children: ReactNode; action?: ReactNode }) {
@@ -317,7 +328,23 @@ export function LeadDetailClient({ initialLead, permissions, openConvert = false
             <Facts
               rows={[
                 [
+                  "Captured via",
+                  <span key="cv">
+                    {CAPTURE_LABELS[lead.captureChannel] ?? lead.captureChannel}
+                    {lead.importJob ? (
+                      <>
+                        {" · "}
+                        <Link href={`/crm/leads/imports/${lead.importJob.id}`} className="text-indigo-600 hover:underline dark:text-indigo-400">
+                          {lead.importJob.fileName}
+                        </Link>
+                      </>
+                    ) : null}
+                    {lead.externalRefs.length > 0 && <span className="block text-xs text-zinc-500 dark:text-zinc-400">External id: {lead.externalRefs.map((r) => `${r.externalId} (${r.provider})`).join(", ")}</span>}
+                  </span>,
+                ],
+                [
                   "Created",
+
                   <span key="c">
                     <ClientDateTime value={lead.createdAt} /> by {lead.createdBy.fullName}
                   </span>,

@@ -7662,3 +7662,13 @@ The whole CRM (Leads, Deals/Opportunities, pipeline/sources/lost-reason masters,
 - Server pages build the actor + permission flags with `getCrmPageContext()` (`src/modules/crm/core/crm-page.ts`).
 - DB integration tests (`lead.integration.test.ts`) run only with `CRM_IT_DATABASE_URL` set to a disposable database.
 - Report + manual checklist: `docs/crm/PHASE_02_LEADS.md`.
+
+## CRM rebuild — Phase 03 Lead Import & Capture (2026-10-02, branch `crm-marketing-rebuild-v1`)
+
+- Every non-interactive lead source goes through `src/modules/crm/ingestion/lead-ingest.service.ts` (normalize → resolve → validate → duplicates → SKIP/UPDATE/CREATE/FLAG_FOR_REVIEW → lead.service). Never create leads directly from an import/API/webhook/adapter. Manual form: `captureManualLead`.
+- Field catalog + auto-mapping: `ingestion/lead-field-catalog.ts` (client-safe, shared by wizard/API/webhooks; custom fields `cf:<key>`). Normalizer rules in `lead-normalizer.ts` (never guess a phone country code).
+- Imports: `crm_import_jobs` + one `crm_import_rows` row per file line (every row ends IMPORTED/UPDATED/SKIPPED/FLAGGED/FAILED). Validation inline ≤1000 rows, else queued; processing always in the worker (`crm-import.worker.ts`, queue `crm-lead-ingest-<db hash>`, registered in `src/core/jobs/worker.ts`).
+- UPDATE = fill empty fields only (`fillEmptyLeadFields`); source attribution and `capture_channel` never change after create.
+- Capture: API keys (hashed, `crmk_…`), signed generic webhooks (adapter registry `capture/providers/`), inbox `crm_ingest_events` (idempotency key unique per provider; external ids in `crm_lead_external_refs`; retries via `ingest.retry`).
+- CRM document numbers (CRM_LEAD, CRM_OPPORTUNITY) are company-wide: always `branchId: null`.
+- Report + manual checklist: `docs/crm/PHASE_03_LEAD_IMPORT_CAPTURE.md`.

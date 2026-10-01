@@ -93,7 +93,16 @@ describe("isLeafActive", () => {
     expect(isLeafActive(crm.children!, leaf("Dashboard"), "/crm/leads/abc")).toBe(false);
   });
 
+  it("tells Import Leads and Import History apart from Leads", () => {
+    expect(isLeafActive(crm.children!, leaf("Import History"), "/crm/leads/imports/abc")).toBe(true);
+    expect(isLeafActive(crm.children!, leaf("Import Leads"), "/crm/leads/imports/abc")).toBe(false);
+    expect(isLeafActive(crm.children!, leaf("Leads"), "/crm/leads/imports/abc")).toBe(false);
+    expect(isLeafActive(crm.children!, leaf("Import Leads"), "/crm/leads/import")).toBe(true);
+    expect(isLeafActive(crm.children!, leaf("Leads"), "/crm/leads/import")).toBe(false);
+  });
+
   it("gates CRM Settings behind crm_settings", () => {
+
     expect(leaf("Settings").modules).toEqual(["crm_settings"]);
   });
 });

@@ -13,7 +13,8 @@ import { CrmOpportunityRepository } from "./crm-opportunity.repository";
  * the same behaviour as every other numbered document in this ERP.
  */
 export async function reserveOpportunityNumber(actor: CrmActor) {
-  return generateDocumentNumber({ companyId: actor.companyId, branchId: actor.branchId ?? null, documentType: "CRM_OPPORTUNITY" });
+  // Company-wide sequence: opportunity numbers are unique per company.
+  return generateDocumentNumber({ companyId: actor.companyId, branchId: null, documentType: "CRM_OPPORTUNITY" });
 }
 
 export async function createOpportunityInMutation(

@@ -28,6 +28,8 @@ export const DEFAULT_LEAD_SOURCES: { key: string; name: string; isSystem: boolea
   { key: "indiamart", name: "IndiaMART", isSystem: true },
   { key: "google", name: "Google", isSystem: true },
   { key: "linkedin", name: "LinkedIn", isSystem: true },
+  { key: "trade_portal", name: "Trade portal", isSystem: true },
+
   { key: "referral", name: "Referral", isSystem: false },
   { key: "import", name: "Import", isSystem: true },
   { key: "api", name: "API", isSystem: true },

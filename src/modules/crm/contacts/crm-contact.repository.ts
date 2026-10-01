@@ -8,7 +8,10 @@ const CONTACT_SELECT = {
   email: true,
   phone: true,
   mobile: true,
+  emailKeys: true,
+  phoneKeys: true,
   crmCompanyId: true,
+
   ownerUserId: true,
   createdByUserId: true,
   crmCompany: { select: { id: true, name: true } },

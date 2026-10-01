@@ -1,4 +1,4 @@
-import type { CrmLead, Prisma } from "@prisma/client";
+import type { CrmLead, CrmLeadCaptureChannel, Prisma } from "@prisma/client";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingService";
 import type { CrmActor } from "../core/crm-actor";
@@ -194,6 +194,24 @@ const toDate = (v: string | null | undefined) => (blank(v) ? null : new Date(v a
 export interface CreateLeadOptions {
   /** For integrations/imports: resolve the source by stable key (e.g. "indiamart") when sourceId is absent. */
   sourceKey?: string;
+  /** How the lead came in (stored once, never changed later). Defaults to MANUAL. */
+  channel?: CrmLeadCaptureChannel;
+  /** Connector / adapter that delivered it, e.g. "generic", "facebook". */
+  provider?: string | null;
+  importJobId?: string | null;
+  /** Remember the lead's id in the external system (unique per provider). */
+  externalRef?: { provider: string; externalId: string } | null;
+  /**
+   * The ingestion pipeline has already applied the company's duplicate
+   * rules and decided to create (policy CREATE, or no match). BLOCK rules
+   * are still enforced here.
+   */
+  duplicatesReviewed?: boolean;
+  /**
+   * Trusted system links (ingestion linking a matched contact): skip the
+   * actor-visibility check on crmContactId / crmCompanyId.
+   */
+  trustedLinks?: boolean;
 }
 
 export async function createLead(actor: CrmActor, raw: unknown, options: CreateLeadOptions = {}) {
@@ -216,17 +234,18 @@ export async function createLead(actor: CrmActor, raw: unknown, options: CreateL
     await assertAssignableOwner(actor.companyId, ownerUserId);
   }
 
-  if (input.crmCompanyId) await getCrmCompanyForActor(actor, input.crmCompanyId);
-  if (input.crmContactId) await getCrmContactForActor(actor, input.crmContactId);
+  if (input.crmCompanyId && !options.trustedLinks) await getCrmCompanyForActor(actor, input.crmCompanyId);
+  if (input.crmContactId && !options.trustedLinks) await getCrmContactForActor(actor, input.crmContactId);
 
   const definitions = await listCustomFields(actor.companyId, "LEAD", { includeInactive: true });
   const customFields = validateCustomFieldValues(definitions, input.customFields);
 
   const keys = leadContactKeys(input);
-  assertNoBlockingDuplicates(await findLeadDuplicates(actor.companyId, keys), input.confirmDuplicate);
+  assertNoBlockingDuplicates(await findLeadDuplicates(actor.companyId, keys), input.confirmDuplicate || options.duplicatesReviewed);
 
   const company = !blank(input.estimatedValue) && blank(input.currencyCode) ? await LeadRepository.companyBaseCurrency(actor.companyId) : null;
-  const leadNumber = await generateDocumentNumber({ companyId: actor.companyId, branchId: actor.branchId ?? null, documentType: "CRM_LEAD" });
+  // Lead numbers are unique per company, so the sequence is company-wide (never per branch).
+  const leadNumber = await generateDocumentNumber({ companyId: actor.companyId, branchId: null, documentType: "CRM_LEAD" });
 
   const texts = Object.fromEntries(TEXT_FIELDS.map((f) => [f, textOrNull(input[f] as string | null | undefined)])) as Record<(typeof TEXT_FIELDS)[number], string | null>;
   const snapshot: LeadSnapshot = { leadNumber, firstName: input.firstName.trim(), ...texts };
@@ -254,11 +273,17 @@ export async function createLead(actor: CrmActor, raw: unknown, options: CreateL
         customFields: customFields as Prisma.InputJsonValue,
         lastContactedAt: toDate(input.lastContactedAt),
         nextFollowUpAt: toDate(input.nextFollowUpAt),
+        captureChannel: options.channel ?? "MANUAL",
+        captureProvider: options.provider ?? null,
+        importJobId: options.importJobId ?? null,
         createdByUserId: actor.userId,
         updatedByUserId: actor.userId,
       },
       tx
     );
+    if (options.externalRef) {
+      await tx.crmLeadExternalRef.create({ data: { companyId: actor.companyId, leadId: lead.id, provider: options.externalRef.provider, externalId: options.externalRef.externalId } });
+    }
     const tagResult = await applyEntityTagChange(actor, "LEAD", lead.id, { addTagIds: input.tagIds ?? [], addTagNames: input.tagNames ?? [], removeTagIds: [] }, tx);
     await audit({ tableName: TABLE, recordId: lead.id, action: "CREATE", newValues: { ...lead, tags: tagResult.added.map((t) => t.name) } });
     emit({
@@ -266,9 +291,20 @@ export async function createLead(actor: CrmActor, raw: unknown, options: CreateL
       entityId: lead.id,
       eventType: "lead.created",
       summary: [lead.fullName, lead.companyName].filter(Boolean).join(" · "),
-      payload: { leadNumber, statusId: status.id, sourceId, ownerUserId, tags: tagResult.added.map((t) => t.name) },
+      payload: {
+        leadNumber,
+        statusId: status.id,
+        sourceId,
+        ownerUserId,
+        tags: tagResult.added.map((t) => t.name),
+        channel: lead.captureChannel,
+        ...(lead.captureProvider ? { provider: lead.captureProvider } : {}),
+        ...(lead.importJobId ? { importJobId: lead.importJobId } : {}),
+        ...(options.externalRef ? { externalId: options.externalRef.externalId } : {}),
+      },
     });
     return lead;
+
   });
 }
 
@@ -384,7 +420,123 @@ export async function updateLead(actor: CrmActor, id: string, raw: unknown) {
   });
 }
 
+// ── Non-destructive merge (ingestion UPDATE policy) ──────────────
+
+/** Fields an ingestion update may fill. Source attribution (sourceId, UTM, campaign, referral, capture channel) is never touched. */
+const FILLABLE_TEXT_FIELDS = [
+  "lastName",
+  "companyName",
+  "designation",
+  "email",
+  "alternateEmail",
+  "phone",
+  "mobile",
+  "whatsapp",
+  "industry",
+  "city",
+  "state",
+  "country",
+  "requirement",
+] as const;
+
+export interface LeadMergeMeta {
+  channel: CrmLeadCaptureChannel;
+  provider?: string | null;
+  importJobId?: string | null;
+  externalRef?: { provider: string; externalId: string } | null;
+  /** Shown on the timeline, e.g. "import leads.csv row 14" or "API key Website". */
+  via: string;
+}
+
+/**
+ * Fills only the fields that are empty on the existing lead — nothing the
+ * team has entered is overwritten. A different requirement text is kept as a
+ * note instead of being dropped. Tags are added, never removed.
+ */
+export async function fillEmptyLeadFields(actor: CrmActor, leadId: string, raw: unknown, meta: LeadMergeMeta) {
+  const input: CreateLeadInput = createLeadSchema.parse(raw);
+  const before = await LeadRepository.findRaw({ id: leadId, companyId: actor.companyId });
+  if (!before) throw new BusinessRuleError("NOT_FOUND", "Lead not found.", { id: leadId });
+  if (before.archivedAt) throw new BusinessRuleError("INVALID_STATE_TRANSITION", "The matching lead is archived.");
+
+  const data: Prisma.CrmLeadUncheckedUpdateManyInput = {};
+  const changed: string[] = [];
+  for (const f of FILLABLE_TEXT_FIELDS) {
+    const incoming = textOrNull(input[f] as string | null | undefined);
+    if (!incoming || !blank(before[f])) continue;
+    data[f] = f === "email" || f === "alternateEmail" ? incoming.toLowerCase() : incoming;
+    changed.push(f);
+  }
+  if (input.temperature && !before.temperature) {
+    data.temperature = input.temperature as CrmLead["temperature"];
+    changed.push("temperature");
+  }
+  if (input.estimatedValue != null && before.estimatedValue == null) {
+    data.estimatedValue = input.estimatedValue;
+    if (!before.currencyCode && input.currencyCode) data.currencyCode = textOrNull(input.currencyCode);
+    changed.push("estimatedValue");
+  }
+  if (input.nextFollowUpAt && !before.nextFollowUpAt) {
+    data.nextFollowUpAt = toDate(input.nextFollowUpAt);
+    changed.push("nextFollowUpAt");
+  }
+  if (input.ownerUserId && !before.ownerUserId && (await LeadRepository.activeUserInCompany(actor.companyId, input.ownerUserId))) {
+    data.ownerUserId = input.ownerUserId;
+    changed.push("ownerUserId");
+  }
+  if (input.customFields && Object.keys(input.customFields).length) {
+    const existing = (before.customFields as Record<string, unknown>) ?? {};
+    const additions = Object.fromEntries(Object.entries(input.customFields).filter(([k]) => existing[k] === undefined || existing[k] === null));
+    if (Object.keys(additions).length) {
+      const definitions = await listCustomFields(actor.companyId, "LEAD", { includeInactive: true });
+      data.customFields = validateCustomFieldValues(definitions, additions, existing) as Prisma.InputJsonValue;
+      changed.push(...Object.keys(additions).map((k) => `customFields.${k}`));
+    }
+  }
+  const incomingRequirement = textOrNull(input.requirement);
+  const requirementNote = incomingRequirement && before.requirement && incomingRequirement !== before.requirement.trim() ? incomingRequirement : null;
+  const hasTags = Boolean(input.tagIds?.length || input.tagNames?.length);
+
+  const result = await runCrmMutation(actor, async (ctx) => {
+    let after = before;
+    if (changed.length) {
+      const merged = { ...before, ...data } as CrmLead;
+      after = await versionedUpdate(ctx, before, undefined, { ...data, ...derivedFields(merged) }, actor);
+      await ctx.audit({ tableName: TABLE, recordId: leadId, action: "UPDATE", oldValues: before, newValues: { ...after, via: meta.via } });
+      ctx.emit({
+        entityType: "LEAD",
+        entityId: leadId,
+        eventType: "lead.updated",
+        summary: `Filled ${changed.length} empty field(s) from ${meta.via}`,
+        payload: {
+          changes: Object.fromEntries(changed.filter((f) => !f.startsWith("customFields.")).map((f) => [f, { from: null, to: comparable((data as Record<string, unknown>)[f]) }])),
+          via: meta.via,
+          channel: meta.channel,
+          ...(meta.provider ? { provider: meta.provider } : {}),
+          ...(meta.importJobId ? { importJobId: meta.importJobId } : {}),
+        },
+      });
+    }
+    if (requirementNote) {
+      const note = await ctx.tx.crmNote.create({
+        data: { companyId: actor.companyId, entityType: "LEAD", entityId: leadId, body: `New enquiry received via ${meta.via}:\n${requirementNote}`, createdByUserId: actor.userId },
+      });
+      ctx.emit({ entityType: "LEAD", entityId: leadId, eventType: "lead.note_added", summary: requirementNote.slice(0, 137), payload: { noteId: note.id, via: meta.via } });
+    }
+    if (hasTags) await applyTagsAndEmit(ctx, actor, leadId, { addTagIds: input.tagIds ?? [], addTagNames: input.tagNames ?? [], removeTagIds: [] });
+    if (meta.externalRef) {
+      await ctx.tx.crmLeadExternalRef.createMany({
+        data: [{ companyId: actor.companyId, leadId, provider: meta.externalRef.provider, externalId: meta.externalRef.externalId }],
+        skipDuplicates: true,
+      });
+    }
+    return after;
+  });
+  return { lead: result, changedFields: changed, addedNote: Boolean(requirementNote) };
+}
+
 function emitStatusChange(ctx: CrmMutationContext, leadId: string, fromStatusId: string, to: { id: string; name: string; key: string; kind: string }, fromName?: string) {
+
   ctx.emit({
     entityType: "LEAD",
     entityId: leadId,

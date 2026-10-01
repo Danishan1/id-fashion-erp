@@ -108,6 +108,8 @@ export const leadFilterSchema = z
     statusIds: idList.optional(),
     statusKinds: z.array(z.enum(["OPEN", "CONVERTED", "LOST"])).optional(),
     sourceIds: idList.optional(),
+    captureChannels: z.array(z.enum(["MANUAL", "CSV", "XLSX", "WEBSITE_FORM", "API", "WEBHOOK", "INTEGRATION"])).optional(),
+    importJobId: z.string().uuid().optional(),
     ownerUserIds: idList.optional(),
     unassigned: z.boolean().optional(),
     temperatures: z.array(z.enum(["COLD", "WARM", "HOT"])).optional(),
@@ -161,6 +163,9 @@ export function parseLeadFilterParams(sp: URLSearchParams): LeadFilter {
     statusIds: list("statusIds"),
     statusKinds: list("statusKinds"),
     sourceIds: list("sourceIds"),
+    captureChannels: list("captureChannels"),
+    importJobId: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(get("importJobId") ?? "") ? get("importJobId") : undefined,
+
     ownerUserIds: list("ownerUserIds"),
     unassigned: get("unassigned") === "true" ? true : undefined,
     temperatures: list("temperatures"),
@@ -243,8 +248,9 @@ export function leadFilterToParams(filter: Partial<LeadFilter>): Record<string, 
     if (v === undefined || v === null || v === "" || (Array.isArray(v) && v.length === 0)) return;
     out[k] = Array.isArray(v) ? v.join(",") : String(v);
   };
-  for (const k of ["statusIds", "statusKinds", "sourceIds", "ownerUserIds", "temperatures", "tagIds"] as const) put(k, filter[k]);
-  for (const k of ["crmCompanyId", "crmContactId", "companyName", "industry", "location", "campaignSource", "referralSource"] as const) put(k, filter[k]);
+  for (const k of ["statusIds", "statusKinds", "sourceIds", "captureChannels", "ownerUserIds", "temperatures", "tagIds"] as const) put(k, filter[k]);
+  for (const k of ["crmCompanyId", "crmContactId", "importJobId", "companyName", "industry", "location", "campaignSource", "referralSource"] as const) put(k, filter[k]);
+
   if (filter.unassigned) out.unassigned = "true";
   if (filter.archived && filter.archived !== "exclude") out.archived = filter.archived;
   for (const k of ["score", "estimatedValue"] as const) {

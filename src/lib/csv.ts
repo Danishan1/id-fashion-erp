@@ -7,7 +7,7 @@
  * file can't be assumed comma-split-safe the way this project's own
  * generated exports are.
  */
-export function parseCsv(text: string): string[][] {
+export function parseCsv(text: string, delimiter = ","): string[][] {
   const rows: string[][] = [];
   let row: string[] = [];
   let field = "";
@@ -34,7 +34,8 @@ export function parseCsv(text: string): string[][] {
 
     if (char === '"') {
       inQuotes = true;
-    } else if (char === ",") {
+    } else if (char === delimiter) {
+
       row.push(field);
       field = "";
     } else if (char === "\n") {

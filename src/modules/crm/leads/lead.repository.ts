@@ -28,6 +28,8 @@ export const LEAD_LIST_SELECT = {
   ownerUserId: true,
   createdByUserId: true,
   version: true,
+  captureChannel: true,
+  captureProvider: true,
   status: { select: { id: true, name: true, kind: true, color: true } },
   source: { select: { id: true, name: true, key: true } },
   owner: { select: USER_SELECT },
@@ -35,7 +37,10 @@ export const LEAD_LIST_SELECT = {
 } satisfies Prisma.CrmLeadSelect;
 
 export const LEAD_DETAIL_INCLUDE = {
+  importJob: { select: { id: true, fileName: true } },
+  externalRefs: { select: { provider: true, externalId: true } },
   status: { select: { id: true, name: true, kind: true, color: true, key: true } },
+
   source: { select: { id: true, name: true, key: true } },
   owner: { select: USER_SELECT },
   createdBy: { select: { id: true, fullName: true } },
@@ -88,8 +93,12 @@ export const LeadRepository = {
         emailKeys: true,
         phoneKeys: true,
         archivedAt: true,
+        ownerUserId: true,
+        createdByUserId: true,
+        importJobId: true,
         status: { select: { name: true } },
         owner: { select: { fullName: true } },
+
       },
       orderBy: { createdAt: "desc" },
       take,

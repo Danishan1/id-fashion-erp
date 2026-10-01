@@ -1,13 +1,15 @@
 "use client";
 
 import { useState } from "react";
+import { ApiKeysTab } from "./ApiKeysTab";
 import { CustomFieldsTab } from "./CustomFieldsTab";
 import { DuplicateRulesTab } from "./DuplicateRulesTab";
 import { LeadSourcesTab } from "./LeadSourcesTab";
 import { LeadStatusesTab } from "./LeadStatusesTab";
 import { TagsTab } from "./TagsTab";
+import { WebhooksTab } from "./WebhooksTab";
 
-export type CrmSettingsTab = "statuses" | "sources" | "tags" | "custom-fields" | "duplicates";
+export type CrmSettingsTab = "statuses" | "sources" | "tags" | "custom-fields" | "duplicates" | "api-keys" | "webhooks";
 
 const TABS: { id: CrmSettingsTab; label: string }[] = [
   { id: "statuses", label: "Lead statuses" },
@@ -15,6 +17,8 @@ const TABS: { id: CrmSettingsTab; label: string }[] = [
   { id: "tags", label: "Tags" },
   { id: "custom-fields", label: "Lead custom fields" },
   { id: "duplicates", label: "Duplicate rules" },
+  { id: "api-keys", label: "API keys" },
+  { id: "webhooks", label: "Webhooks" },
 ];
 
 export function CrmSettingsClient({ initialTab, canEdit }: { initialTab: CrmSettingsTab; canEdit: boolean }) {
@@ -55,6 +59,9 @@ export function CrmSettingsClient({ initialTab, canEdit }: { initialTab: CrmSett
         {tab === "tags" && <TagsTab canEdit={canEdit} />}
         {tab === "custom-fields" && <CustomFieldsTab canEdit={canEdit} />}
         {tab === "duplicates" && <DuplicateRulesTab canEdit={canEdit} />}
+        {tab === "api-keys" && <ApiKeysTab canEdit={canEdit} />}
+        {tab === "webhooks" && <WebhooksTab canEdit={canEdit} />}
+
       </div>
     </div>
   );

@@ -83,7 +83,12 @@ export interface LeadDetailDto extends LeadRowDto {
   crmContact: { id: string; fullName: string; email: string | null; phone: string | null } | null;
   convertedOpportunity: { id: string; name: string; opportunityNumber: string; status: string } | null;
   opportunities: { id: string; name: string; opportunityNumber: string; status: string; amount: string | null; currencyCode: string | null; createdAt: string }[];
+  captureChannel: string;
+  captureProvider: string | null;
+  importJob: { id: string; fileName: string } | null;
+  externalRefs: { provider: string; externalId: string }[];
   convertedByName: string | null;
+
   archivedByName: string | null;
   updatedByName: string | null;
 }

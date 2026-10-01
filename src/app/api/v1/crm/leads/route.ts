@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { parseListQuery } from "@/lib/list-query";
 import { crmListResponse, crmRoute } from "@/modules/crm/core/crm-route";
 import { leadSortSchema, parseLeadFilterParams } from "@/modules/crm/leads/lead.schema";
-import { createLead, listLeads } from "@/modules/crm/leads/lead.service";
+import { captureManualLead } from "@/modules/crm/ingestion/lead-ingest.service";
+import { listLeads } from "@/modules/crm/leads/lead.service";
 
 /**
  * GET: server-side search, filters, sort and paging (see parseLeadFilterParams
@@ -20,6 +21,7 @@ export const GET = crmRoute("view", async ({ req, actor }) => {
 });
 
 export const POST = crmRoute("create", async ({ req, actor }) => {
-  const lead = await createLead(actor, await req.json());
+  const lead = await captureManualLead(actor, await req.json());
+
   return NextResponse.json({ data: lead }, { status: 201 });
 });

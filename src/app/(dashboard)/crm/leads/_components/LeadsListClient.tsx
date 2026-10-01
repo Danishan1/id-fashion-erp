@@ -133,6 +133,20 @@ export function LeadsListClient({ permissions }: { permissions: LeadPermissions 
     () => [
       { type: "select", key: "statusIds", label: "Status", options: (meta?.statuses ?? []).map((s) => ({ value: s.id, label: s.name })) },
       { type: "select", key: "sourceIds", label: "Source", options: (meta?.sources ?? []).map((s) => ({ value: s.id, label: s.name })) },
+      {
+        type: "select",
+        key: "captureChannels",
+        label: "Captured via",
+        options: [
+          { value: "MANUAL", label: "Manual entry" },
+          { value: "CSV", label: "CSV import" },
+          { value: "XLSX", label: "Excel import" },
+          { value: "WEBSITE_FORM", label: "Website form" },
+          { value: "API", label: "API" },
+          { value: "WEBHOOK", label: "Webhook" },
+        ],
+      },
+      { type: "text", key: "importJobId", label: "Import ID", placeholder: "From Import history" },
       { type: "select", key: "ownerUserIds", label: "Owner", options: users.map((u) => ({ value: u.id, label: u.fullName })) },
       { type: "select", key: "unassigned", label: "Assignment", options: [{ value: "true", label: "Unassigned only" }] },
       {
@@ -306,10 +320,16 @@ export function LeadsListClient({ permissions }: { permissions: LeadPermissions 
       )}
       <CrmColumnPicker columns={ALL_COLUMNS.map((c) => ({ key: c.key, header: c.header }))} visibleKeys={visibleColumns} onChange={setVisibleColumns} />
       {permissions.create && (
-        <Link href="/crm/leads/new" className={buttonClasses("primary", "sm")}>
-          New lead
-        </Link>
+        <>
+          <Link href="/crm/leads/import" className={buttonClasses("secondary", "sm")}>
+            Import
+          </Link>
+          <Link href="/crm/leads/new" className={buttonClasses("primary", "sm")}>
+            New lead
+          </Link>
+        </>
       )}
+
     </div>
   );
 

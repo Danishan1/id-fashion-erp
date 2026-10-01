@@ -112,6 +112,11 @@ model Company {
   crmCustomFieldDefinitions           CrmCustomFieldDefinition[]
   crmSettings                         CrmSettings?
   crmSavedViews                       CrmSavedView[]
+  crmImportJobs                       CrmImportJob[]
+  crmLeadExternalRefs                 CrmLeadExternalRef[]
+  crmIngestEvents                     CrmIngestEvent[]
+  crmApiKeys                          CrmApiKey[]
+  crmWebhookEndpoints                 CrmWebhookEndpoint[]
   attendanceRecords                   AttendanceRecord[]
   attendanceCorrectionRequests        AttendanceCorrectionRequest[]
   leaveTypes                          LeaveType[]
@@ -347,6 +352,12 @@ model User {
   crmOpportunitiesCreated                    CrmOpportunity[]                     @relation("CrmOpportunityCreatedBy")
   crmNotesAuthored                           CrmNote[]                            @relation("CrmNoteAuthor")
   crmSavedViews                              CrmSavedView[]                       @relation("CrmSavedViewOwner")
+  crmImportJobsCreated                       CrmImportJob[]                       @relation("CrmImportJobCreatedBy")
+  crmImportRowsReviewed                      CrmImportRow[]                       @relation("CrmImportRowReviewedBy")
+  crmApiKeysCreated                          CrmApiKey[]                          @relation("CrmApiKeyCreatedBy")
+  crmApiKeysOwning                           CrmApiKey[]                          @relation("CrmApiKeyDefaultOwner")
+  crmWebhookEndpointsCreated                 CrmWebhookEndpoint[]                 @relation("CrmWebhookEndpointCreatedBy")
+  crmWebhookEndpointsOwning                  CrmWebhookEndpoint[]                 @relation("CrmWebhookEndpointDefaultOwner")
   attendanceRecordsRecorded                  AttendanceRecord[]
   attendanceCorrectionsApproved              AttendanceCorrectionRequest[]        @relation("AttendanceCorrectionApprovedBy")
   attendanceCorrectionsCreated               AttendanceCorrectionRequest[]        @relation("AttendanceCorrectionCreatedBy")
@@ -7728,6 +7739,255 @@ enum CrmLeadTemperature {
   HOT
 }
 
+// ── Lead import & capture (Phase 03) ────────────────────────────────
+
+// The channel a lead came in through (distinct from CrmLeadSource, which is
+// the configurable marketing source such as "Trade fair" or "IndiaMART").
+enum CrmLeadCaptureChannel {
+  MANUAL
+  CSV
+  XLSX
+  WEBSITE_FORM
+  API
+  WEBHOOK
+  INTEGRATION
+}
+
+enum CrmImportFileType {
+  CSV
+  XLSX
+}
+
+enum CrmImportJobStatus {
+  PENDING
+  VALIDATING
+  READY
+  PROCESSING
+  COMPLETED
+  PARTIALLY_COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum CrmDuplicatePolicy {
+  SKIP
+  UPDATE
+  CREATE
+  FLAG_FOR_REVIEW
+}
+
+enum CrmImportRowValidation {
+  PENDING
+  VALID
+  WARNING
+  ERROR
+}
+
+enum CrmIngestOutcome {
+  PENDING
+  IMPORTED
+  UPDATED
+  SKIPPED
+  FLAGGED
+  FAILED
+}
+
+enum CrmIngestEventStatus {
+  RECEIVED
+  PROCESSED
+  FLAGGED
+  FAILED
+}
+
+/// One CSV/XLSX import. Rows live in crm_import_rows so preview, review of
+/// flagged rows and the error file all read from the database; the uploaded
+/// file itself is temporary and removed once the job finishes.
+model CrmImportJob {
+  id                String             @id @default(uuid()) @db.Uuid
+  companyId         String             @map("company_id") @db.Uuid
+  fileName          String             @map("file_name")
+  fileType          CrmImportFileType  @map("file_type")
+  fileSizeBytes     Int                @map("file_size_bytes")
+  // FileStorage key of the (temporary) uploaded file; null once cleaned up.
+  fileKey           String?            @map("file_key")
+  status            CrmImportJobStatus @default(PENDING)
+  sourceId          String?            @map("source_id") @db.Uuid
+  duplicatePolicy   CrmDuplicatePolicy @default(SKIP) @map("duplicate_policy")
+  headers           Json               @default("[]")
+  mapping           Json               @default("{}")
+  options           Json               @default("{}")
+  totalRows         Int                @default(0) @map("total_rows")
+  validRows         Int                @default(0) @map("valid_rows")
+  warningRows       Int                @default(0) @map("warning_rows")
+  errorRows         Int                @default(0) @map("error_rows")
+  duplicateRows     Int                @default(0) @map("duplicate_rows")
+  processedRows     Int                @default(0) @map("processed_rows")
+  importedRows      Int                @default(0) @map("imported_rows")
+  updatedRows       Int                @default(0) @map("updated_rows")
+  skippedRows       Int                @default(0) @map("skipped_rows")
+  flaggedRows       Int                @default(0) @map("flagged_rows")
+  failedRows        Int                @default(0) @map("failed_rows")
+  errorSummary      String?            @map("error_summary")
+  queueJobId        String?            @map("queue_job_id")
+  validatedAt       DateTime?          @map("validated_at")
+  startedAt         DateTime?          @map("started_at")
+  completedAt       DateTime?          @map("completed_at")
+  cancelRequestedAt DateTime?          @map("cancel_requested_at")
+  createdByUserId   String             @map("created_by_user_id") @db.Uuid
+  createdAt         DateTime           @default(now()) @map("created_at")
+  updatedAt         DateTime           @updatedAt @map("updated_at")
+
+  company   Company        @relation(fields: [companyId], references: [id])
+  source    CrmLeadSource? @relation(fields: [sourceId], references: [id])
+  createdBy User           @relation("CrmImportJobCreatedBy", fields: [createdByUserId], references: [id])
+  rows      CrmImportRow[]
+  leads     CrmLead[]
+
+  @@index([companyId, createdAt])
+  @@index([companyId, createdByUserId])
+  @@index([status, updatedAt])
+  @@map("crm_import_jobs")
+}
+
+/// One line of an import file and what happened to it. Every row ends in a
+/// known outcome — rows are never silently dropped.
+model CrmImportRow {
+  id                String                 @id @default(uuid()) @db.Uuid
+  jobId             String                 @map("job_id") @db.Uuid
+  rowNumber         Int                    @map("row_number")
+  raw               Json
+  normalized        Json?
+  validation        CrmImportRowValidation @default(PENDING)
+  messages          Json                   @default("[]")
+  duplicateMatches  Json?                  @map("duplicate_matches")
+  inFileDuplicateOf Int?                   @map("in_file_duplicate_of")
+  outcome           CrmIngestOutcome       @default(PENDING)
+  outcomeReason     String?                @map("outcome_reason")
+  leadId            String?                @map("lead_id") @db.Uuid
+  reviewedAt        DateTime?              @map("reviewed_at")
+  reviewedByUserId  String?                @map("reviewed_by_user_id") @db.Uuid
+  processedAt       DateTime?              @map("processed_at")
+
+  job        CrmImportJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  lead       CrmLead?     @relation("CrmImportRowLead", fields: [leadId], references: [id], onDelete: SetNull)
+  reviewedBy User?        @relation("CrmImportRowReviewedBy", fields: [reviewedByUserId], references: [id])
+
+  @@unique([jobId, rowNumber])
+  @@index([jobId, outcome])
+  @@index([jobId, validation])
+  @@map("crm_import_rows")
+}
+
+/// A lead's id in an external system (provider + external id, unique per
+/// company) — how a re-delivered external lead is recognised.
+model CrmLeadExternalRef {
+  id         String   @id @default(uuid()) @db.Uuid
+  companyId  String   @map("company_id") @db.Uuid
+  leadId     String   @map("lead_id") @db.Uuid
+  provider   String
+  externalId String   @map("external_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+  lead    CrmLead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, provider, externalId])
+  @@index([leadId])
+  @@map("crm_lead_external_refs")
+}
+
+/// Inbox of every API / webhook lead submission: raw payload, idempotency
+/// key, outcome and retry state.
+model CrmIngestEvent {
+  id                String                @id @default(uuid()) @db.Uuid
+  companyId         String                @map("company_id") @db.Uuid
+  channel           CrmLeadCaptureChannel
+  provider          String
+  apiKeyId          String?               @map("api_key_id") @db.Uuid
+  webhookEndpointId String?               @map("webhook_endpoint_id") @db.Uuid
+  idempotencyKey    String?               @map("idempotency_key")
+  externalEventId   String?               @map("external_event_id")
+  externalLeadId    String?               @map("external_lead_id")
+  payload           Json
+  status            CrmIngestEventStatus  @default(RECEIVED)
+  outcome           CrmIngestOutcome      @default(PENDING)
+  outcomeReason     String?               @map("outcome_reason")
+  duplicateMatches  Json?                 @map("duplicate_matches")
+  leadId            String?               @map("lead_id") @db.Uuid
+  attempts          Int                   @default(0)
+  lastError         String?               @map("last_error")
+  nextRetryAt       DateTime?             @map("next_retry_at")
+  processedAt       DateTime?             @map("processed_at")
+  receivedAt        DateTime              @default(now()) @map("received_at")
+
+  company         Company             @relation(fields: [companyId], references: [id])
+  apiKey          CrmApiKey?          @relation(fields: [apiKeyId], references: [id], onDelete: SetNull)
+  webhookEndpoint CrmWebhookEndpoint? @relation(fields: [webhookEndpointId], references: [id], onDelete: SetNull)
+  lead            CrmLead?            @relation(fields: [leadId], references: [id], onDelete: SetNull)
+
+  @@unique([companyId, provider, idempotencyKey])
+  @@index([companyId, receivedAt])
+  @@index([companyId, status])
+  @@map("crm_ingest_events")
+}
+
+/// API key for POST /api/v1/crm/leads/ingest. Only a SHA-256 hash is stored;
+/// the full key is shown once at creation.
+model CrmApiKey {
+  id                 String             @id @default(uuid()) @db.Uuid
+  companyId          String             @map("company_id") @db.Uuid
+  name               String
+  prefix             String             @unique
+  keyHash            String             @map("key_hash")
+  scopes             String[]           @default(["leads:ingest"])
+  defaultSourceId    String?            @map("default_source_id") @db.Uuid
+  defaultOwnerUserId String?            @map("default_owner_user_id") @db.Uuid
+  duplicatePolicy    CrmDuplicatePolicy @default(UPDATE) @map("duplicate_policy")
+  lastUsedAt         DateTime?          @map("last_used_at")
+  expiresAt          DateTime?          @map("expires_at")
+  revokedAt          DateTime?          @map("revoked_at")
+  createdByUserId    String             @map("created_by_user_id") @db.Uuid
+  createdAt          DateTime           @default(now()) @map("created_at")
+
+  company       Company          @relation(fields: [companyId], references: [id])
+  defaultSource CrmLeadSource?   @relation(fields: [defaultSourceId], references: [id])
+  defaultOwner  User?            @relation("CrmApiKeyDefaultOwner", fields: [defaultOwnerUserId], references: [id])
+  createdBy     User             @relation("CrmApiKeyCreatedBy", fields: [createdByUserId], references: [id])
+  events        CrmIngestEvent[]
+
+  @@index([companyId])
+  @@map("crm_api_keys")
+}
+
+/// Incoming webhook endpoint: unique URL per endpoint, HMAC signing secret
+/// (encrypted at rest) and a payload → lead field mapping. `provider` picks
+/// the adapter ("generic" now; Meta / IndiaMART adapters later).
+model CrmWebhookEndpoint {
+  id                 String             @id @default(uuid()) @db.Uuid
+  companyId          String             @map("company_id") @db.Uuid
+  name               String
+  provider           String             @default("generic")
+  secretEncrypted    String             @map("secret_encrypted")
+  fieldMapping       Json               @default("{}") @map("field_mapping")
+  defaultSourceId    String?            @map("default_source_id") @db.Uuid
+  defaultOwnerUserId String?            @map("default_owner_user_id") @db.Uuid
+  duplicatePolicy    CrmDuplicatePolicy @default(UPDATE) @map("duplicate_policy")
+  isActive           Boolean            @default(true) @map("is_active")
+  lastReceivedAt     DateTime?          @map("last_received_at")
+  createdByUserId    String             @map("created_by_user_id") @db.Uuid
+  createdAt          DateTime           @default(now()) @map("created_at")
+  updatedAt          DateTime           @updatedAt @map("updated_at")
+
+  company       Company          @relation(fields: [companyId], references: [id])
+  defaultSource CrmLeadSource?   @relation(fields: [defaultSourceId], references: [id])
+  defaultOwner  User?            @relation("CrmWebhookEndpointDefaultOwner", fields: [defaultOwnerUserId], references: [id])
+  createdBy     User             @relation("CrmWebhookEndpointCreatedBy", fields: [createdByUserId], references: [id])
+  events        CrmIngestEvent[]
+
+  @@index([companyId])
+  @@map("crm_webhook_endpoints")
+}
+
 // Field types for the shared CRM custom-field engine (Lead now; Contact,
 // Company, Opportunity, Custom Objects and Forms later reuse the same table).
 enum CrmCustomFieldType {
@@ -7793,9 +8053,12 @@ model CrmLeadSource {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  company       Company          @relation(fields: [companyId], references: [id])
-  leads         CrmLead[]
-  opportunities CrmOpportunity[]
+  company          Company              @relation(fields: [companyId], references: [id])
+  leads            CrmLead[]
+  opportunities    CrmOpportunity[]
+  importJobs       CrmImportJob[]
+  apiKeys          CrmApiKey[]
+  webhookEndpoints CrmWebhookEndpoint[]
 
   @@unique([companyId, key])
   @@index([companyId, sortOrder])
@@ -7803,74 +8066,83 @@ model CrmLeadSource {
 }
 
 model CrmLead {
-  id                     String              @id @default(uuid()) @db.Uuid
-  companyId              String              @map("company_id") @db.Uuid
-  branchId               String?             @map("branch_id") @db.Uuid
-  leadNumber             String              @map("lead_number")
-  firstName              String              @map("first_name")
-  lastName               String?             @map("last_name")
-  fullName               String              @map("full_name")
+  id                     String                @id @default(uuid()) @db.Uuid
+  companyId              String                @map("company_id") @db.Uuid
+  branchId               String?               @map("branch_id") @db.Uuid
+  leadNumber             String                @map("lead_number")
+  firstName              String                @map("first_name")
+  lastName               String?               @map("last_name")
+  fullName               String                @map("full_name")
   // Prospect's organisation as typed on the lead; crmCompanyId links a real
   // CRM Company once known (on conversion or when picked on the form).
-  companyName            String?             @map("company_name")
+  companyName            String?               @map("company_name")
   designation            String?
-  crmCompanyId           String?             @map("crm_company_id") @db.Uuid
-  crmContactId           String?             @map("crm_contact_id") @db.Uuid
+  crmCompanyId           String?               @map("crm_company_id") @db.Uuid
+  crmContactId           String?               @map("crm_contact_id") @db.Uuid
   email                  String?
-  alternateEmail         String?             @map("alternate_email")
+  alternateEmail         String?               @map("alternate_email")
   phone                  String?
   mobile                 String?
   whatsapp               String?
   // Normalised match keys maintained by the lead service (lower-cased emails;
   // last 10 digits of every phone field) for indexed duplicate detection.
-  emailKeys              String[]            @default([]) @map("email_keys")
-  phoneKeys              String[]            @default([]) @map("phone_keys")
+  emailKeys              String[]              @default([]) @map("email_keys")
+  phoneKeys              String[]              @default([]) @map("phone_keys")
   // Lower-cased name/number/company/contact/requirement text for search.
-  searchText             String              @default("") @map("search_text")
-  statusId               String              @map("status_id") @db.Uuid
-  sourceId               String?             @map("source_id") @db.Uuid
-  ownerUserId            String?             @map("owner_user_id") @db.Uuid
-  score                  Int                 @default(0)
+  searchText             String                @default("") @map("search_text")
+  statusId               String                @map("status_id") @db.Uuid
+  sourceId               String?               @map("source_id") @db.Uuid
+  ownerUserId            String?               @map("owner_user_id") @db.Uuid
+  score                  Int                   @default(0)
   temperature            CrmLeadTemperature?
   industry               String?
   city                   String?
   state                  String?
   country                String?
   requirement            String?
-  estimatedValue         Decimal?            @map("estimated_value") @db.Decimal(15, 2)
-  currencyCode           String?             @map("currency_code") @db.Char(3)
-  utmSource              String?             @map("utm_source")
-  utmMedium              String?             @map("utm_medium")
-  utmCampaign            String?             @map("utm_campaign")
-  utmTerm                String?             @map("utm_term")
-  utmContent             String?             @map("utm_content")
-  campaignSource         String?             @map("campaign_source")
-  referralSource         String?             @map("referral_source")
-  customFields           Json                @default("{}") @map("custom_fields")
-  lastContactedAt        DateTime?           @map("last_contacted_at")
-  nextFollowUpAt         DateTime?           @map("next_follow_up_at")
-  convertedAt            DateTime?           @map("converted_at")
-  convertedByUserId      String?             @map("converted_by_user_id") @db.Uuid
-  convertedOpportunityId String?             @map("converted_opportunity_id") @db.Uuid
-  archivedAt             DateTime?           @map("archived_at")
-  archivedByUserId       String?             @map("archived_by_user_id") @db.Uuid
-  createdByUserId        String              @map("created_by_user_id") @db.Uuid
-  updatedByUserId        String?             @map("updated_by_user_id") @db.Uuid
+  estimatedValue         Decimal?              @map("estimated_value") @db.Decimal(15, 2)
+  currencyCode           String?               @map("currency_code") @db.Char(3)
+  utmSource              String?               @map("utm_source")
+  utmMedium              String?               @map("utm_medium")
+  utmCampaign            String?               @map("utm_campaign")
+  utmTerm                String?               @map("utm_term")
+  utmContent             String?               @map("utm_content")
+  campaignSource         String?               @map("campaign_source")
+  referralSource         String?               @map("referral_source")
+  customFields           Json                  @default("{}") @map("custom_fields")
+  // How the lead entered the CRM (set once on create, never changed by later
+  // updates) and, for connectors, which provider sent it.
+  captureChannel         CrmLeadCaptureChannel @default(MANUAL) @map("capture_channel")
+  captureProvider        String?               @map("capture_provider")
+  importJobId            String?               @map("import_job_id") @db.Uuid
+  lastContactedAt        DateTime?             @map("last_contacted_at")
+  nextFollowUpAt         DateTime?             @map("next_follow_up_at")
+  convertedAt            DateTime?             @map("converted_at")
+  convertedByUserId      String?               @map("converted_by_user_id") @db.Uuid
+  convertedOpportunityId String?               @map("converted_opportunity_id") @db.Uuid
+  archivedAt             DateTime?             @map("archived_at")
+  archivedByUserId       String?               @map("archived_by_user_id") @db.Uuid
+  createdByUserId        String                @map("created_by_user_id") @db.Uuid
+  updatedByUserId        String?               @map("updated_by_user_id") @db.Uuid
   // Optimistic-locking counter: every update must send the version it loaded.
-  version                Int                 @default(1)
-  createdAt              DateTime            @default(now()) @map("created_at")
-  updatedAt              DateTime            @updatedAt @map("updated_at")
+  version                Int                   @default(1)
+  createdAt              DateTime              @default(now()) @map("created_at")
+  updatedAt              DateTime              @updatedAt @map("updated_at")
 
-  company              Company          @relation(fields: [companyId], references: [id])
-  branch               Branch?          @relation(fields: [branchId], references: [id])
-  status               CrmLeadStatus    @relation(fields: [statusId], references: [id])
-  source               CrmLeadSource?   @relation(fields: [sourceId], references: [id])
-  owner                User?            @relation("CrmLeadOwner", fields: [ownerUserId], references: [id])
-  createdBy            User             @relation("CrmLeadCreatedBy", fields: [createdByUserId], references: [id])
-  crmCompany           CrmCompany?      @relation(fields: [crmCompanyId], references: [id], onDelete: SetNull)
-  crmContact           CrmContact?      @relation(fields: [crmContactId], references: [id], onDelete: SetNull)
-  convertedOpportunity CrmOpportunity?  @relation("CrmLeadConvertedOpportunity", fields: [convertedOpportunityId], references: [id], onDelete: SetNull)
-  opportunities        CrmOpportunity[] @relation("CrmOpportunityLead")
+  company              Company              @relation(fields: [companyId], references: [id])
+  branch               Branch?              @relation(fields: [branchId], references: [id])
+  status               CrmLeadStatus        @relation(fields: [statusId], references: [id])
+  source               CrmLeadSource?       @relation(fields: [sourceId], references: [id])
+  owner                User?                @relation("CrmLeadOwner", fields: [ownerUserId], references: [id])
+  createdBy            User                 @relation("CrmLeadCreatedBy", fields: [createdByUserId], references: [id])
+  crmCompany           CrmCompany?          @relation(fields: [crmCompanyId], references: [id], onDelete: SetNull)
+  crmContact           CrmContact?          @relation(fields: [crmContactId], references: [id], onDelete: SetNull)
+  convertedOpportunity CrmOpportunity?      @relation("CrmLeadConvertedOpportunity", fields: [convertedOpportunityId], references: [id], onDelete: SetNull)
+  opportunities        CrmOpportunity[]     @relation("CrmOpportunityLead")
+  importJob            CrmImportJob?        @relation(fields: [importJobId], references: [id], onDelete: SetNull)
+  externalRefs         CrmLeadExternalRef[]
+  importRows           CrmImportRow[]       @relation("CrmImportRowLead")
+  ingestEvents         CrmIngestEvent[]
 
   @@unique([companyId, leadNumber])
   @@index([companyId, archivedAt, createdAt])
@@ -7878,6 +8150,7 @@ model CrmLead {
   @@index([companyId, ownerUserId])
   @@index([companyId, sourceId])
   @@index([companyId, nextFollowUpAt])
+  @@index([companyId, captureChannel])
   @@index([emailKeys], type: Gin)
   @@index([phoneKeys], type: Gin)
   @@map("crm_leads")

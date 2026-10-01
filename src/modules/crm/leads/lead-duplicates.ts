@@ -35,6 +35,9 @@ export interface LeadDuplicateMatch {
   status: string;
   owner: string | null;
   archived: boolean;
+  ownerUserId: string | null;
+  createdByUserId: string;
+  importJobId: string | null;
   /** Which configured rules this lead matched, and the strictest action. */
   rules: LeadDuplicateRuleKey[];
   action: Exclude<LeadDuplicateAction, "OFF">;
@@ -54,10 +57,20 @@ export interface LeadDuplicateResult {
  * (they are flagged so the UI can say so).
  */
 export async function findLeadDuplicates(companyId: string, keys: LeadContactKeys, excludeLeadId?: string, rules?: LeadDuplicateRule[]): Promise<LeadDuplicateResult> {
-  const active = (rules ?? (await getLeadDuplicateRules(companyId))).filter((r) => r.action !== "OFF");
+  const active = activeRules(rules ?? (await getLeadDuplicateRules(companyId)));
   if (!active.length) return { matches: [], blocking: false };
   const candidates = await LeadRepository.findMatches(companyId, keys.emailKeys, keys.phoneKeys, excludeLeadId);
+  return evaluateLeadCandidates(candidates, keys, active);
+}
 
+type LeadCandidate = Awaited<ReturnType<typeof LeadRepository.findMatches>>[number];
+
+export function activeRules(rules: LeadDuplicateRule[]) {
+  return rules.filter((r) => r.action !== "OFF");
+}
+
+/** Applies the active rules to already-fetched candidates (shared by single checks and batch import checks). */
+export function evaluateLeadCandidates(candidates: LeadCandidate[], keys: LeadContactKeys, active: LeadDuplicateRule[]): LeadDuplicateResult {
   const matches: LeadDuplicateMatch[] = [];
   for (const c of candidates) {
     const sameEmail = c.emailKeys.some((k) => keys.emailKeys.includes(k));
@@ -81,11 +94,34 @@ export async function findLeadDuplicates(companyId: string, keys: LeadContactKey
       status: c.status.name,
       owner: c.owner?.fullName ?? null,
       archived: c.archivedAt !== null,
+      ownerUserId: c.ownerUserId,
+      createdByUserId: c.createdByUserId,
+      importJobId: c.importJobId,
       rules: hit.map((r) => r.rule),
       action: hit.some((r) => r.action === "BLOCK") ? "BLOCK" : "WARN",
     });
   }
   return { matches, blocking: matches.some((m) => m.action === "BLOCK") };
+}
+
+/**
+ * Duplicate check for many records at once (import preview / processing):
+ * one indexed query for every key in the batch, then the same per-record
+ * rule evaluation as findLeadDuplicates.
+ */
+export async function findLeadDuplicatesBatch(companyId: string, keysList: LeadContactKeys[], rules?: LeadDuplicateRule[]): Promise<LeadDuplicateResult[]> {
+  const active = activeRules(rules ?? (await getLeadDuplicateRules(companyId)));
+  if (!active.length) return keysList.map(() => ({ matches: [], blocking: false }));
+  const emailKeys = [...new Set(keysList.flatMap((k) => k.emailKeys))];
+  const phoneKeys = [...new Set(keysList.flatMap((k) => k.phoneKeys))];
+  const candidates = await LeadRepository.findMatches(companyId, emailKeys, phoneKeys, undefined, 5000);
+  return keysList.map((keys) =>
+    evaluateLeadCandidates(
+      candidates.filter((c) => c.emailKeys.some((k) => keys.emailKeys.includes(k)) || c.phoneKeys.some((k) => keys.phoneKeys.includes(k))),
+      keys,
+      active
+    )
+  );
 }
 
 /** Throws when the configured rules say this save must not go ahead silently. */
