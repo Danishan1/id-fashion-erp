@@ -78,7 +78,9 @@ export const NAV_SECTIONS: NavSection[] = [
     modules: ["crm"],
     children: [
       { label: "Dashboard", href: "/crm", modules: ["crm"] },
+      { label: "Leads", href: "/crm/leads", modules: ["crm"] },
       { label: "Activity Log", href: "/crm/activity", modules: ["crm"] },
+      { label: "Settings", href: "/crm/settings", modules: ["crm_settings"] },
     ],
   },
   {

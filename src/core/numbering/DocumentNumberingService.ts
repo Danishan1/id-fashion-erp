@@ -33,6 +33,8 @@ const PREFIX_BY_DOCUMENT_TYPE: Record<DocumentType, string> = {
   REPLICATE_DESIGN_PROJECT: "RPD",
   FABRIC_ROLL: "FR",
   SKU: "SKU",
+  CRM_LEAD: "LEAD",
+  CRM_OPPORTUNITY: "OPP",
 };
 
 /** DocumentTypes that represent master-data codes, not transactional documents. */

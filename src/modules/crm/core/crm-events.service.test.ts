@@ -65,7 +65,9 @@ describe("buildCrmEventWhere", () => {
       "acme"
     );
     expect(where).toMatchObject({ companyId: "co-1", entityType: "LEAD", entityId: ID, eventType: "lead.created", actorUserId: "u-2" });
-    expect(where.occurredAt).toEqual({ gte: new Date("2026-10-01T00:00:00.000Z"), lte: new Date("2026-10-02T23:59:59.999Z") });
+    // Business days are Asia/Kolkata calendar days.
+    expect(where.occurredAt).toEqual({ gte: new Date("2026-09-30T18:30:00.000Z"), lte: new Date("2026-10-02T18:29:59.999Z") });
+
     expect(where.OR).toHaveLength(2);
   });
 });
@@ -74,7 +76,8 @@ describe("listCrmEvents", () => {
   it("returns presented rows with labels and the total", async () => {
     const result = await listCrmEvents("co-1", {}, query);
     expect(result.totalCount).toBe(1);
-    expect(result.data[0]).toMatchObject({ label: "Lead created", category: "created", entityLabel: "Lead", entityHref: null });
+    expect(result.data[0]).toMatchObject({ label: "Lead created", category: "created", entityLabel: "Lead", entityHref: `/crm/leads/${ID}` });
+
     expect(CrmEventRepository.findMany).toHaveBeenCalledWith({ companyId: "co-1" }, 0, 20, "desc");
   });
 });

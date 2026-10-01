@@ -11,6 +11,10 @@ export const MODULES = [
   "masters_core",
   "masters_finance",
   "crm",
+  // CRM configuration (lead statuses, sources, tags, custom fields, duplicate
+  // rules) — split from "crm" so a salesperson who can edit leads cannot
+  // also redefine the pipeline vocabulary everyone else uses (2026-10-01).
+  "crm_settings",
   "marketing",
   "hrms_attendance",
   "hrms_leave",
@@ -93,6 +97,11 @@ export const ACTIONS = [
   // every module a scanned entity might belong to (see barcode.service.ts's
   // resolve endpoint).
   "scan",
+  // See every record in a module instead of only the ones you own — used by
+  // the CRM's record-visibility rule (crm.view = own records, crm.view_all =
+  // everyone's; 2026-10-01). Same "catalog-wide verb, granted per module"
+  // shape as override/scan above.
+  "view_all",
 ] as const;
 export type Action = (typeof ACTIONS)[number];
 
@@ -135,7 +144,8 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     dashboard: ["view"],
     masters_core: ["view"],
     masters_finance: ["view"],
-    crm: ["view", "export"],
+    crm: ["view", "view_all", "export"],
+    crm_settings: ["view", "edit"],
     // Approve/reject added deliberately for the Campaign approval workflow —
     // MANAGEMENT is the checkpoint (mirrors their identical approve/reject
     // shape on `sampling` just below), MERCHANDISER (the creator) stays

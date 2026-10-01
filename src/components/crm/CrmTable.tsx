@@ -7,6 +7,8 @@ import { CrmFilterBar, crmFilterKeys, type CrmFilterDefinition } from "./CrmFilt
 import { CrmSearchInput } from "./CrmSearchInput";
 import { useCrmListState } from "./useCrmListState";
 
+export type CrmListState = ReturnType<typeof useCrmListState>;
+
 /**
  * Standard CRM list: debounced search + (optional) collapsible filter panel
  * on top of the app's shared DataTable, so pagination, sorting, the
@@ -16,6 +18,8 @@ import { useCrmListState } from "./useCrmListState";
  *
  * Row click: `rowHref` navigates to a detail page; `onRowClick` (e.g. open a
  * CrmDrawer) is used when there is no page. Only one of the two is used.
+ * Pass `listState` (from useCrmListState) when the page needs to drive the
+ * filters itself, e.g. to apply a saved view.
  */
 export function CrmTable<T extends { id: string }>({
   fetchUrl,
@@ -25,6 +29,7 @@ export function CrmTable<T extends { id: string }>({
   rowHref,
   onRowClick,
   rowActionLabel = "View",
+  rowActions,
   newHref,
   newLabel,
   newAction,
@@ -32,6 +37,12 @@ export function CrmTable<T extends { id: string }>({
   refreshKey,
   syncWithUrl = true,
   toolbar,
+  listState,
+  selection,
+  initialSort,
+  onSortChange,
+  tableKey,
+  aboveTable,
 }: {
   fetchUrl: string;
   columns: DataTableColumn<T>[];
@@ -40,6 +51,7 @@ export function CrmTable<T extends { id: string }>({
   rowHref?: (row: T) => string;
   onRowClick?: (row: T) => void;
   rowActionLabel?: string;
+  rowActions?: (row: T) => ReactNode;
   newHref?: string;
   newLabel?: string;
   newAction?: { label: string; onClick: () => void };
@@ -47,8 +59,17 @@ export function CrmTable<T extends { id: string }>({
   refreshKey?: number;
   syncWithUrl?: boolean;
   toolbar?: ReactNode;
+  listState?: CrmListState;
+  selection?: { selectedIds: string[]; onChange: (ids: string[]) => void; label?: (row: T) => string };
+  initialSort?: { sortBy: string; sortOrder: "asc" | "desc" };
+  onSortChange?: (sort: { sortBy: string; sortOrder: "asc" | "desc" }) => void;
+  /** Change to remount the table (e.g. after applying a saved view's sort). */
+  tableKey?: string;
+  /** Rendered between the filter panel and the table (e.g. a bulk-action bar). */
+  aboveTable?: ReactNode;
 }) {
-  const state = useCrmListState(crmFilterKeys(filters), { syncWithUrl });
+  const ownState = useCrmListState(crmFilterKeys(filters), { syncWithUrl });
+  const state = listState ?? ownState;
 
   return (
     <div className="space-y-3">
@@ -66,7 +87,9 @@ export function CrmTable<T extends { id: string }>({
           onToggleOpen={state.toggleFilterPanel}
         />
       )}
+      {aboveTable}
       <DataTable<T>
+        key={tableKey}
         fetchUrl={fetchUrl}
         columns={columns}
         hideSearch
@@ -75,11 +98,15 @@ export function CrmTable<T extends { id: string }>({
         onEditRow={rowHref ? undefined : onRowClick}
         rowHrefLabel={rowActionLabel}
         rowHrefIcon={<ViewIcon />}
+        rowActions={rowActions}
         newHref={newHref}
         newLabel={newLabel}
         newAction={newAction}
         exportUrl={exportUrl}
         refreshKey={refreshKey}
+        selection={selection}
+        initialSort={initialSort}
+        onSortChange={onSortChange}
       />
     </div>
   );

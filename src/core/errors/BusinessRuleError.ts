@@ -20,6 +20,13 @@ export type BusinessRuleErrorCode =
   | "LOT_GENEALOGY_INVALID"
   | "INSUFFICIENT_STOCK_FOR_MOVEMENT"
   | "DUPLICATE_LEAD_EXISTS"
+  // CRM (2026-10-01): a configured "warn" duplicate rule matched — the client
+  // may retry with explicit confirmation (details.matches lists the records).
+  | "CRM_POSSIBLE_DUPLICATE"
+  // CRM: creating this contact/company would duplicate an existing record.
+  | "CRM_DUPLICATE_RECORD"
+  // Optimistic locking: the record changed since the caller loaded it.
+  | "RECORD_VERSION_CONFLICT"
   | "DUPLICATE_CUSTOMER_EXISTS"
   | "LEAVE_BALANCE_EXCEEDED"
   | "AD_INTEGRATION_NOT_CONFIGURED"
@@ -57,6 +64,9 @@ const HTTP_STATUS_BY_CODE: Record<BusinessRuleErrorCode, number> = {
   LOT_GENEALOGY_INVALID: 409,
   INSUFFICIENT_STOCK_FOR_MOVEMENT: 409,
   DUPLICATE_LEAD_EXISTS: 409,
+  CRM_POSSIBLE_DUPLICATE: 409,
+  CRM_DUPLICATE_RECORD: 409,
+  RECORD_VERSION_CONFLICT: 409,
   DUPLICATE_CUSTOMER_EXISTS: 409,
   LEAVE_BALANCE_EXCEEDED: 409,
   AD_INTEGRATION_NOT_CONFIGURED: 400,

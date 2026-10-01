@@ -1,9 +1,12 @@
 import { NextResponse, type NextRequest } from "next/server";
-import type { Action } from "@/config/rbac";
+import type { Action, Module } from "@/config/rbac";
 import { PermissionService } from "@/core/rbac/PermissionService";
 import { handleApiError, requireSession } from "@/lib/api-route";
 import { buildListMeta, type ListQuery } from "@/lib/list-query";
 import type { CrmActor } from "./crm-actor";
+
+/** "crm" for records, "crm_settings" for configuration screens. */
+export type CrmPermission = Action | { module: Extract<Module, "crm" | "crm_settings">; action: Action };
 
 export interface CrmRouteContext<P> {
   req: NextRequest;
@@ -18,18 +21,21 @@ export interface CrmRouteContext<P> {
  *
  *   export const GET = crmRoute("view", async ({ req, actor }) => { ... });
  *   export const PATCH = crmRoute<{ id: string }>("edit", async ({ params, actor }) => { ... });
+ *   export const POST = crmRoute({ module: "crm_settings", action: "edit" }, async (...) => { ... });
  *
  * Uses the existing ERP permission module "crm" — the CRM never defines its own
  * permission system. Finer-grained modules can be split out later.
  */
 export function crmRoute<P extends Record<string, string> = Record<string, never>>(
-  action: Action,
+  permission: CrmPermission,
   handler: (ctx: CrmRouteContext<P>) => Promise<Response>
+
 ) {
   return async (req: NextRequest, context: { params: Promise<P> }): Promise<Response> => {
     try {
       const session = await requireSession();
-      await PermissionService.assert(session.user.id, "crm", action);
+      const { module, action } = typeof permission === "string" ? { module: "crm" as const, action: permission } : permission;
+      await PermissionService.assert(session.user.id, module, action);
       const params = context?.params ? await context.params : ({} as P);
       const actor: CrmActor = {
         companyId: session.user.companyId,

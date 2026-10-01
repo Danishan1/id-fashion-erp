@@ -87,4 +87,13 @@ describe("isLeafActive", () => {
     expect(isLeafActive(crm.children!, leaf("Dashboard"), "/crm")).toBe(true);
     expect(isLeafActive(crm.children!, leaf("Activity Log"), "/crm")).toBe(false);
   });
+
+  it("keeps Leads highlighted on nested lead pages", () => {
+    expect(isLeafActive(crm.children!, leaf("Leads"), "/crm/leads/abc/edit")).toBe(true);
+    expect(isLeafActive(crm.children!, leaf("Dashboard"), "/crm/leads/abc")).toBe(false);
+  });
+
+  it("gates CRM Settings behind crm_settings", () => {
+    expect(leaf("Settings").modules).toEqual(["crm_settings"]);
+  });
 });

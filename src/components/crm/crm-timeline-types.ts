@@ -24,7 +24,15 @@ const CATEGORY_TONES: Record<string, CrmActivityTone> = {
   status: "amber",
   won: "green",
   lost: "red",
+  assignment: "indigo",
+  tag: "neutral",
+  note: "neutral",
+  converted: "green",
+  archived: "amber",
+  restored: "green",
+  linked: "indigo",
 };
+
 
 export function crmEventTone(category: string): CrmActivityTone {
   return CATEGORY_TONES[category] ?? "neutral";

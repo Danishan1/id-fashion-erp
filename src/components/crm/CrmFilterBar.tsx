@@ -18,16 +18,19 @@ import { toIsoDate } from "@/lib/date";
 export type CrmFilterDefinition =
   | { type: "select"; key: string; label: string; options: { value: string; label: string }[]; anyLabel?: string }
   | { type: "text"; key: string; label: string; placeholder?: string }
-  | { type: "dateRange"; label: string; fromKey: string; toKey: string };
+  | { type: "dateRange"; label: string; fromKey: string; toKey: string }
+  | { type: "numberRange"; label: string; minKey: string; maxKey: string; step?: number };
 
 export type CrmFilterValues = Record<string, string>;
 
 export function crmFilterKeys(definitions: CrmFilterDefinition[]): string[] {
-  return definitions.flatMap((d) => (d.type === "dateRange" ? [d.fromKey, d.toKey] : [d.key]));
+  return definitions.flatMap((d) => (d.type === "dateRange" ? [d.fromKey, d.toKey] : d.type === "numberRange" ? [d.minKey, d.maxKey] : [d.key]));
 }
 
 export function countActiveCrmFilters(definitions: CrmFilterDefinition[], values: CrmFilterValues): number {
-  return definitions.filter((d) => (d.type === "dateRange" ? values[d.fromKey] || values[d.toKey] : values[d.key])).length;
+  return definitions.filter((d) =>
+    d.type === "dateRange" ? values[d.fromKey] || values[d.toKey] : d.type === "numberRange" ? values[d.minKey] || values[d.maxKey] : values[d.key]
+  ).length;
 }
 
 /** Today / This Week (Mon–today) / This Month (1st–today), from LOCAL calendar dates — never toISOString(). */
@@ -120,8 +123,39 @@ export function CrmFilterBar({
                   </div>
                 );
               }
+              if (d.type === "numberRange") {
+                return (
+                  <div key={d.minKey}>
+                    <span className={labelClass}>{d.label}</span>
+                    <div className="mt-1 flex items-center gap-2">
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        step={d.step ?? "any"}
+                        aria-label={`${d.label} minimum`}
+                        placeholder="Min"
+                        value={draft[d.minKey] ?? ""}
+                        onChange={(e) => set(d.minKey, e.target.value)}
+                        className={textInputClass()}
+                      />
+                      <span className="text-xs text-zinc-400">to</span>
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        step={d.step ?? "any"}
+                        aria-label={`${d.label} maximum`}
+                        placeholder="Max"
+                        value={draft[d.maxKey] ?? ""}
+                        onChange={(e) => set(d.maxKey, e.target.value)}
+                        className={textInputClass()}
+                      />
+                    </div>
+                  </div>
+                );
+              }
               return (
                 <div key={d.fromKey}>
+
                   <span className={labelClass}>{d.label}</span>
                   <div className="mt-1 flex items-center gap-2">
                     <input

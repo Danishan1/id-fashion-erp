@@ -35,6 +35,11 @@ describe("crmRoute", () => {
     expect(await res.json()).toEqual({ actor: { companyId: "co-1", userId: "user-1", branchId: "br-1" }, params: { id: "x1" } });
   });
 
+  it("can check a CRM settings permission instead", async () => {
+    await crmRoute({ module: "crm_settings", action: "edit" }, async () => Response.json({}))(req, { params: Promise.resolve({}) });
+    expect(assertMock).toHaveBeenCalledWith("user-1", "crm_settings", "edit");
+  });
+
   it("maps a missing session / denied permission to the standard error response without calling the handler", async () => {
     const handler = vi.fn();
     assertMock.mockRejectedValue(new BusinessRuleError("PERMISSION_DENIED", "No access."));

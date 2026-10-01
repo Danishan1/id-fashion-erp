@@ -3,6 +3,8 @@ import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { getRequestContext } from "@/core/logging/requestContext";
 import type { ListQuery } from "@/lib/list-query";
 import type { CrmActor } from "./crm-actor";
+import { businessDayRange } from "./crm-dates";
+
 import { crmEntityHref, crmEntityLabel } from "./crm-entity-types";
 import { crmEventCategory, crmEventLabel } from "./crm-event-types";
 import { CrmEventRepository, type CrmEventDb, type CrmEventRow } from "./crm-event.repository";
@@ -47,25 +49,14 @@ export function presentCrmEvent(row: CrmEventRow) {
 }
 export type CrmTimelineEvent = ReturnType<typeof presentCrmEvent>;
 
-function startOfDay(iso: string) {
-  return new Date(`${iso}T00:00:00.000Z`);
-}
-function endOfDay(iso: string) {
-  return new Date(`${iso}T23:59:59.999Z`);
-}
-
 export function buildCrmEventWhere(companyId: string, filters: CrmEventFilters, search?: string): Prisma.CrmEventWhereInput {
   const where: Prisma.CrmEventWhereInput = { companyId };
   if (filters.entityType) where.entityType = filters.entityType as Prisma.CrmEventWhereInput["entityType"];
   if (filters.entityId) where.entityId = filters.entityId;
   if (filters.eventType) where.eventType = filters.eventType;
   if (filters.actorUserId) where.actorUserId = filters.actorUserId;
-  if (filters.from || filters.to) {
-    where.occurredAt = {
-      ...(filters.from ? { gte: startOfDay(filters.from) } : {}),
-      ...(filters.to ? { lte: endOfDay(filters.to) } : {}),
-    };
-  }
+  const occurred = businessDayRange({ from: filters.from, to: filters.to });
+  if (occurred) where.occurredAt = occurred;
   if (search) {
     where.OR = [
       { summary: { contains: search, mode: "insensitive" } },

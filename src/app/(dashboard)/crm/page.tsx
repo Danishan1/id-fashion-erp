@@ -4,7 +4,7 @@ import { CrmEmptyState } from "@/components/crm/CrmStates";
 import { CrmTimeline } from "@/components/crm/CrmTimeline";
 
 /**
- * CRM Dashboard — Phase 01 shell. KPIs and widgets are added in Phase 32 from
+ * CRM Dashboard — Phase 01 shell (Leads link added in Phase 02). KPIs and widgets are added in Phase 32 from
  * real data; until CRM records exist this page only shows the live activity
  * feed, so it never displays numbers that aren't backed by records.
  */
@@ -27,8 +27,13 @@ export default function CrmDashboardPage() {
         <section className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
           <h2 className="mb-3 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Pipeline summary</h2>
           <CrmEmptyState
-            title="No CRM records yet"
-            description="Leads, contacts and opportunities haven't been set up in this CRM yet, so there is nothing to summarise."
+            title="Pipeline summary comes with pipelines"
+            description="Leads are live now. Pipeline stages and totals are added in a later CRM phase, so no numbers are shown here yet."
+            action={
+              <Link href="/crm/leads" className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400">
+                Go to leads →
+              </Link>
+            }
           />
         </section>
       </div>

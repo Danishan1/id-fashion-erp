@@ -110,6 +110,16 @@ interface DataTableProps<T> {
   hideSearch?: boolean;
   /** Extra controls rendered in the toolbar row, after the search box. */
   toolbar?: ReactNode;
+  /**
+   * Adds a leading checkbox column for bulk actions. The header checkbox
+   * selects / clears the rows on the current page. Selection is owned by the
+   * caller (kept across pages). Omitted: no checkbox column, as before.
+   */
+  selection?: { selectedIds: string[]; onChange: (ids: string[]) => void; label?: (row: T) => string };
+  /** Starting sort (e.g. from a saved view). Change via `key` to re-apply. */
+  initialSort?: { sortBy: string; sortOrder: "asc" | "desc" };
+  /** Told whenever the user changes the sort by clicking a header. */
+  onSortChange?: (sort: { sortBy: string; sortOrder: "asc" | "desc" }) => void;
 }
 
 interface ListResponse<T> {
@@ -135,6 +145,9 @@ export function DataTable<T extends { id: string }>({
   extraParams,
   hideSearch = false,
   toolbar,
+  selection,
+  initialSort,
+  onSortChange,
 }: DataTableProps<T>) {
   const router = useRouter();
   const [page, setPage] = useState(1);
@@ -149,8 +162,8 @@ export function DataTable<T extends { id: string }>({
   // Undefined until a user actually clicks a sortable header — the request
   // then carries no sortBy/sortOrder params at all, so every page's existing
   // default server-side order is completely unaffected until opted into.
-  const [sortBy, setSortBy] = useState<string | undefined>(undefined);
-  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
+  const [sortBy, setSortBy] = useState<string | undefined>(initialSort?.sortBy);
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">(initialSort?.sortOrder ?? "asc");
 
   // A stable string key, so a new-but-equal extraParams object (re-created on
   // every parent render) never triggers a refetch on its own.
@@ -206,16 +219,33 @@ export function DataTable<T extends { id: string }>({
     };
   }, [fetchUrl, page, search, refreshKey, reloadTick, sortBy, sortOrder, statusFilter, statusValue, extraParamsKey]);
 
-  const actionsColCount = rowHref || onEditRow || rowActions ? 1 : 0;
+  const actionsColCount = (rowHref || onEditRow || rowActions ? 1 : 0) + (selection ? 1 : 0);
 
   const toggleSort = (key: string) => {
-    if (sortBy === key) {
-      setSortOrder((o) => (o === "asc" ? "desc" : "asc"));
-    } else {
-      setSortBy(key);
-      setSortOrder("asc");
-    }
+    const next = sortBy === key ? { sortBy: key, sortOrder: sortOrder === "asc" ? ("desc" as const) : ("asc" as const) } : { sortBy: key, sortOrder: "asc" as const };
+    setSortBy(next.sortBy);
+    setSortOrder(next.sortOrder);
     setPage(1);
+    onSortChange?.(next);
+  };
+
+  const pageIds = result?.data.map((r) => r.id) ?? [];
+  const selectedSet = new Set(selection?.selectedIds ?? []);
+  const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedSet.has(id));
+  const somePageSelected = pageIds.some((id) => selectedSet.has(id));
+  const togglePage = () => {
+    if (!selection) return;
+    const next = new Set(selection.selectedIds);
+    if (allPageSelected) pageIds.forEach((id) => next.delete(id));
+    else pageIds.forEach((id) => next.add(id));
+    selection.onChange([...next]);
+  };
+  const toggleRow = (id: string) => {
+    if (!selection) return;
+    const next = new Set(selection.selectedIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    selection.onChange([...next]);
   };
 
   // The exact same element renders in the header's own toolbar AND (only
@@ -297,6 +327,20 @@ export function DataTable<T extends { id: string }>({
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-zinc-200 text-left text-xs uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
+              {selection && (
+                <th className="w-10 px-4 py-2">
+                  <input
+                    type="checkbox"
+                    aria-label="Select all rows on this page"
+                    checked={allPageSelected}
+                    ref={(el) => {
+                      if (el) el.indeterminate = !allPageSelected && somePageSelected;
+                    }}
+                    onChange={togglePage}
+                    disabled={pageIds.length === 0}
+                  />
+                </th>
+              )}
               {columns.map((col) =>
                 col.sortable ? (
                   <th
@@ -347,7 +391,7 @@ export function DataTable<T extends { id: string }>({
             {!error && !isLoading && result?.data.length === 0 && (
               <tr>
                 <td colSpan={columns.length + actionsColCount} className="px-4 py-8 text-center">
-                  {search.trim() || statusValue ? (
+                  {search.trim() || statusValue || extraParamsKey !== "[]" ? (
                     <p className="text-sm text-zinc-500">No records match your search or filter.</p>
                   ) : (
                     <div className="space-y-1">
@@ -385,8 +429,19 @@ export function DataTable<T extends { id: string }>({
                       href ? "cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800/60" : ""
                     }`}
                   >
+                    {selection && (
+                      <td className="w-10 px-4 py-2" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${selection.label ? selection.label(row) : rowLabel(row)}`}
+                          checked={selectedSet.has(row.id)}
+                          onChange={() => toggleRow(row.id)}
+                        />
+                      </td>
+                    )}
                     {cells}
                     {(rowHref || onEditRow || rowActions) && (
+
                       <td className="px-4 py-2">
                         <div className="flex items-center gap-3">
                           {rowHref ? (

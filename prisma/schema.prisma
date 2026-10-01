@@ -100,6 +100,18 @@ model Company {
   attachments                         Attachment[]
   importBatches                       ImportBatch[]
   crmEvents                           CrmEvent[]
+  crmLeadStatuses                     CrmLeadStatus[]
+  crmLeadSources                      CrmLeadSource[]
+  crmLeads                            CrmLead[]
+  crmCompanies                        CrmCompany[]
+  crmContacts                         CrmContact[]
+  crmOpportunities                    CrmOpportunity[]
+  crmTags                             CrmTag[]
+  crmEntityTags                       CrmEntityTag[]
+  crmNotes                            CrmNote[]
+  crmCustomFieldDefinitions           CrmCustomFieldDefinition[]
+  crmSettings                         CrmSettings?
+  crmSavedViews                       CrmSavedView[]
   attendanceRecords                   AttendanceRecord[]
   attendanceCorrectionRequests        AttendanceCorrectionRequest[]
   leaveTypes                          LeaveType[]
@@ -233,6 +245,8 @@ model Branch {
   employeeAdvances      EmployeeAdvance[]
   aiGarmentProjects     AiGarmentProject[]
 
+  crmLeads CrmLead[]
+
   @@unique([companyId, code])
   @@map("branches")
 }
@@ -323,6 +337,16 @@ model User {
   qcInspectionsMade                          QcInspection[]                       @relation("QcInspectionInspector")
   importBatchesCreated                       ImportBatch[]
   crmEventsActed                             CrmEvent[]                           @relation("CrmEventActor")
+  crmLeadsOwned                              CrmLead[]                            @relation("CrmLeadOwner")
+  crmLeadsCreated                            CrmLead[]                            @relation("CrmLeadCreatedBy")
+  crmCompaniesOwned                          CrmCompany[]                         @relation("CrmCompanyOwner")
+  crmCompaniesCreated                        CrmCompany[]                         @relation("CrmCompanyCreatedBy")
+  crmContactsOwned                           CrmContact[]                         @relation("CrmContactOwner")
+  crmContactsCreated                         CrmContact[]                         @relation("CrmContactCreatedBy")
+  crmOpportunitiesOwned                      CrmOpportunity[]                     @relation("CrmOpportunityOwner")
+  crmOpportunitiesCreated                    CrmOpportunity[]                     @relation("CrmOpportunityCreatedBy")
+  crmNotesAuthored                           CrmNote[]                            @relation("CrmNoteAuthor")
+  crmSavedViews                              CrmSavedView[]                       @relation("CrmSavedViewOwner")
   attendanceRecordsRecorded                  AttendanceRecord[]
   attendanceCorrectionsApproved              AttendanceCorrectionRequest[]        @relation("AttendanceCorrectionApprovedBy")
   attendanceCorrectionsCreated               AttendanceCorrectionRequest[]        @relation("AttendanceCorrectionCreatedBy")
@@ -603,6 +627,8 @@ model Customer {
   dispatches        Dispatch[]
   customInvoices    CustomInvoice[]
   aiGarmentProjects AiGarmentProject[]
+
+  crmCompany CrmCompany?
 
   @@unique([companyId, code])
   @@map("customers")
@@ -7681,6 +7707,412 @@ model CrmEvent {
   @@map("crm_events")
 }
 
+// ─────────────────────────────────────────────────────────────
+// CRM — Phase 02 Leads (2026-10-01). See docs/crm/PHASE_02_LEADS.md.
+// Statuses/sources/tags/custom fields are per-company configuration; every
+// rule keys on stable `key` / `kind` values, never on display names.
+// ─────────────────────────────────────────────────────────────
+
+// What a status *means* to the system. Display names are free to change;
+// conversion moves a lead to the company's CONVERTED status, and reports
+// treat LOST as closed. OPEN covers every working status (new, contacted…).
+enum CrmLeadStatusKind {
+  OPEN
+  CONVERTED
+  LOST
+}
+
+enum CrmLeadTemperature {
+  COLD
+  WARM
+  HOT
+}
+
+// Field types for the shared CRM custom-field engine (Lead now; Contact,
+// Company, Opportunity, Custom Objects and Forms later reuse the same table).
+enum CrmCustomFieldType {
+  TEXT
+  TEXTAREA
+  NUMBER
+  DECIMAL
+  CURRENCY
+  DATE
+  DATETIME
+  BOOLEAN
+  DROPDOWN
+  MULTI_SELECT
+  PHONE
+  EMAIL
+  URL
+}
+
+// Opportunity lifecycle status. Pipelines/stages arrive in Phase 07 as extra
+// nullable columns on CrmOpportunity, not a replacement table.
+enum CrmOpportunityStatus {
+  OPEN
+  WON
+  LOST
+  ABANDONED
+}
+
+enum CrmSavedViewVisibility {
+  PRIVATE
+  SHARED
+}
+
+model CrmLeadStatus {
+  id        String            @id @default(uuid()) @db.Uuid
+  companyId String            @map("company_id") @db.Uuid
+  key       String
+  name      String
+  kind      CrmLeadStatusKind @default(OPEN)
+  color     String?
+  sortOrder Int               @default(0) @map("sort_order")
+  isDefault Boolean           @default(false) @map("is_default")
+  isActive  Boolean           @default(true) @map("is_active")
+  createdAt DateTime          @default(now()) @map("created_at")
+  updatedAt DateTime          @updatedAt @map("updated_at")
+
+  company Company   @relation(fields: [companyId], references: [id])
+  leads   CrmLead[]
+
+  @@unique([companyId, key])
+  @@index([companyId, sortOrder])
+  @@map("crm_lead_statuses")
+}
+
+// `key` is how integrations identify their source ("facebook", "indiamart").
+model CrmLeadSource {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  key       String
+  name      String
+  sortOrder Int      @default(0) @map("sort_order")
+  isSystem  Boolean  @default(false) @map("is_system")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company       Company          @relation(fields: [companyId], references: [id])
+  leads         CrmLead[]
+  opportunities CrmOpportunity[]
+
+  @@unique([companyId, key])
+  @@index([companyId, sortOrder])
+  @@map("crm_lead_sources")
+}
+
+model CrmLead {
+  id                     String              @id @default(uuid()) @db.Uuid
+  companyId              String              @map("company_id") @db.Uuid
+  branchId               String?             @map("branch_id") @db.Uuid
+  leadNumber             String              @map("lead_number")
+  firstName              String              @map("first_name")
+  lastName               String?             @map("last_name")
+  fullName               String              @map("full_name")
+  // Prospect's organisation as typed on the lead; crmCompanyId links a real
+  // CRM Company once known (on conversion or when picked on the form).
+  companyName            String?             @map("company_name")
+  designation            String?
+  crmCompanyId           String?             @map("crm_company_id") @db.Uuid
+  crmContactId           String?             @map("crm_contact_id") @db.Uuid
+  email                  String?
+  alternateEmail         String?             @map("alternate_email")
+  phone                  String?
+  mobile                 String?
+  whatsapp               String?
+  // Normalised match keys maintained by the lead service (lower-cased emails;
+  // last 10 digits of every phone field) for indexed duplicate detection.
+  emailKeys              String[]            @default([]) @map("email_keys")
+  phoneKeys              String[]            @default([]) @map("phone_keys")
+  // Lower-cased name/number/company/contact/requirement text for search.
+  searchText             String              @default("") @map("search_text")
+  statusId               String              @map("status_id") @db.Uuid
+  sourceId               String?             @map("source_id") @db.Uuid
+  ownerUserId            String?             @map("owner_user_id") @db.Uuid
+  score                  Int                 @default(0)
+  temperature            CrmLeadTemperature?
+  industry               String?
+  city                   String?
+  state                  String?
+  country                String?
+  requirement            String?
+  estimatedValue         Decimal?            @map("estimated_value") @db.Decimal(15, 2)
+  currencyCode           String?             @map("currency_code") @db.Char(3)
+  utmSource              String?             @map("utm_source")
+  utmMedium              String?             @map("utm_medium")
+  utmCampaign            String?             @map("utm_campaign")
+  utmTerm                String?             @map("utm_term")
+  utmContent             String?             @map("utm_content")
+  campaignSource         String?             @map("campaign_source")
+  referralSource         String?             @map("referral_source")
+  customFields           Json                @default("{}") @map("custom_fields")
+  lastContactedAt        DateTime?           @map("last_contacted_at")
+  nextFollowUpAt         DateTime?           @map("next_follow_up_at")
+  convertedAt            DateTime?           @map("converted_at")
+  convertedByUserId      String?             @map("converted_by_user_id") @db.Uuid
+  convertedOpportunityId String?             @map("converted_opportunity_id") @db.Uuid
+  archivedAt             DateTime?           @map("archived_at")
+  archivedByUserId       String?             @map("archived_by_user_id") @db.Uuid
+  createdByUserId        String              @map("created_by_user_id") @db.Uuid
+  updatedByUserId        String?             @map("updated_by_user_id") @db.Uuid
+  // Optimistic-locking counter: every update must send the version it loaded.
+  version                Int                 @default(1)
+  createdAt              DateTime            @default(now()) @map("created_at")
+  updatedAt              DateTime            @updatedAt @map("updated_at")
+
+  company              Company          @relation(fields: [companyId], references: [id])
+  branch               Branch?          @relation(fields: [branchId], references: [id])
+  status               CrmLeadStatus    @relation(fields: [statusId], references: [id])
+  source               CrmLeadSource?   @relation(fields: [sourceId], references: [id])
+  owner                User?            @relation("CrmLeadOwner", fields: [ownerUserId], references: [id])
+  createdBy            User             @relation("CrmLeadCreatedBy", fields: [createdByUserId], references: [id])
+  crmCompany           CrmCompany?      @relation(fields: [crmCompanyId], references: [id], onDelete: SetNull)
+  crmContact           CrmContact?      @relation(fields: [crmContactId], references: [id], onDelete: SetNull)
+  convertedOpportunity CrmOpportunity?  @relation("CrmLeadConvertedOpportunity", fields: [convertedOpportunityId], references: [id], onDelete: SetNull)
+  opportunities        CrmOpportunity[] @relation("CrmOpportunityLead")
+
+  @@unique([companyId, leadNumber])
+  @@index([companyId, archivedAt, createdAt])
+  @@index([companyId, statusId])
+  @@index([companyId, ownerUserId])
+  @@index([companyId, sourceId])
+  @@index([companyId, nextFollowUpAt])
+  @@index([emailKeys], type: Gin)
+  @@index([phoneKeys], type: Gin)
+  @@map("crm_leads")
+}
+
+// Lean Phase 02 version (created/linked by lead conversion). Phase 05 adds
+// pages, more fields and merge; optional link to the authoritative ERP
+// Customer — no customer data is copied here.
+model CrmCompany {
+  id              String    @id @default(uuid()) @db.Uuid
+  companyId       String    @map("company_id") @db.Uuid
+  name            String
+  nameKey         String    @map("name_key")
+  website         String?
+  industry        String?
+  email           String?
+  phone           String?
+  city            String?
+  state           String?
+  country         String?
+  customerId      String?   @unique @map("customer_id") @db.Uuid
+  ownerUserId     String?   @map("owner_user_id") @db.Uuid
+  customFields    Json      @default("{}") @map("custom_fields")
+  archivedAt      DateTime? @map("archived_at")
+  createdByUserId String    @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  company       Company          @relation(fields: [companyId], references: [id])
+  customer      Customer?        @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  owner         User?            @relation("CrmCompanyOwner", fields: [ownerUserId], references: [id])
+  createdBy     User             @relation("CrmCompanyCreatedBy", fields: [createdByUserId], references: [id])
+  leads         CrmLead[]
+  contacts      CrmContact[]
+  opportunities CrmOpportunity[]
+
+  @@index([companyId, nameKey])
+  @@map("crm_companies")
+}
+
+// Lean Phase 02 version (created/linked by lead conversion). Phase 04 adds
+// pages, DND/contactability, merge.
+model CrmContact {
+  id              String    @id @default(uuid()) @db.Uuid
+  companyId       String    @map("company_id") @db.Uuid
+  crmCompanyId    String?   @map("crm_company_id") @db.Uuid
+  firstName       String    @map("first_name")
+  lastName        String?   @map("last_name")
+  fullName        String    @map("full_name")
+  designation     String?
+  email           String?
+  phone           String?
+  mobile          String?
+  whatsapp        String?
+  emailKeys       String[]  @default([]) @map("email_keys")
+  phoneKeys       String[]  @default([]) @map("phone_keys")
+  ownerUserId     String?   @map("owner_user_id") @db.Uuid
+  customFields    Json      @default("{}") @map("custom_fields")
+  archivedAt      DateTime? @map("archived_at")
+  createdByUserId String    @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  company       Company          @relation(fields: [companyId], references: [id])
+  crmCompany    CrmCompany?      @relation(fields: [crmCompanyId], references: [id], onDelete: SetNull)
+  owner         User?            @relation("CrmContactOwner", fields: [ownerUserId], references: [id])
+  createdBy     User             @relation("CrmContactCreatedBy", fields: [createdByUserId], references: [id])
+  leads         CrmLead[]
+  opportunities CrmOpportunity[]
+
+  @@index([companyId, crmCompanyId])
+  @@index([emailKeys], type: Gin)
+  @@index([phoneKeys], type: Gin)
+  @@map("crm_contacts")
+}
+
+// Lean Phase 02 version (created from a lead). Phase 06/07 add pages,
+// pipeline and stage.
+model CrmOpportunity {
+  id                String               @id @default(uuid()) @db.Uuid
+  companyId         String               @map("company_id") @db.Uuid
+  opportunityNumber String               @map("opportunity_number")
+  name              String
+  leadId            String?              @map("lead_id") @db.Uuid
+  crmContactId      String?              @map("crm_contact_id") @db.Uuid
+  crmCompanyId      String?              @map("crm_company_id") @db.Uuid
+  sourceId          String?              @map("source_id") @db.Uuid
+  ownerUserId       String?              @map("owner_user_id") @db.Uuid
+  status            CrmOpportunityStatus @default(OPEN)
+  amount            Decimal?             @db.Decimal(15, 2)
+  currencyCode      String?              @map("currency_code") @db.Char(3)
+  expectedCloseDate DateTime?            @map("expected_close_date") @db.Date
+  description       String?
+  customFields      Json                 @default("{}") @map("custom_fields")
+  archivedAt        DateTime?            @map("archived_at")
+  createdByUserId   String               @map("created_by_user_id") @db.Uuid
+  createdAt         DateTime             @default(now()) @map("created_at")
+  updatedAt         DateTime             @updatedAt @map("updated_at")
+
+  company            Company        @relation(fields: [companyId], references: [id])
+  lead               CrmLead?       @relation("CrmOpportunityLead", fields: [leadId], references: [id], onDelete: SetNull)
+  crmContact         CrmContact?    @relation(fields: [crmContactId], references: [id], onDelete: SetNull)
+  crmCompany         CrmCompany?    @relation(fields: [crmCompanyId], references: [id], onDelete: SetNull)
+  source             CrmLeadSource? @relation(fields: [sourceId], references: [id])
+  owner              User?          @relation("CrmOpportunityOwner", fields: [ownerUserId], references: [id])
+  createdBy          User           @relation("CrmOpportunityCreatedBy", fields: [createdByUserId], references: [id])
+  convertedFromLeads CrmLead[]      @relation("CrmLeadConvertedOpportunity")
+
+  @@unique([companyId, opportunityNumber])
+  @@index([companyId, status])
+  @@index([companyId, leadId])
+  @@map("crm_opportunities")
+}
+
+// Reusable tags for every CRM record type. `nameKey` (lower-cased, trimmed,
+// single-spaced) stops "VIP", "vip " and "Vip" becoming three tags.
+model CrmTag {
+  id              String   @id @default(uuid()) @db.Uuid
+  companyId       String   @map("company_id") @db.Uuid
+  name            String
+  nameKey         String   @map("name_key")
+  color           String?
+  createdByUserId String?  @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  company     Company        @relation(fields: [companyId], references: [id])
+  assignments CrmEntityTag[]
+
+  @@unique([companyId, nameKey])
+  @@map("crm_tags")
+}
+
+model CrmEntityTag {
+  id              String        @id @default(uuid()) @db.Uuid
+  companyId       String        @map("company_id") @db.Uuid
+  tagId           String        @map("tag_id") @db.Uuid
+  entityType      CrmEntityType @map("entity_type")
+  entityId        String        @map("entity_id") @db.Uuid
+  createdByUserId String?       @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime      @default(now()) @map("created_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+  tag     CrmTag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@unique([tagId, entityType, entityId])
+  @@index([companyId, entityType, entityId])
+  @@map("crm_entity_tags")
+}
+
+// Notes on any CRM record. Soft-deleted (deletedAt) so history survives;
+// edits are kept in AuditLog.
+model CrmNote {
+  id              String        @id @default(uuid()) @db.Uuid
+  companyId       String        @map("company_id") @db.Uuid
+  entityType      CrmEntityType @map("entity_type")
+  entityId        String        @map("entity_id") @db.Uuid
+  body            String
+  createdByUserId String        @map("created_by_user_id") @db.Uuid
+  updatedByUserId String?       @map("updated_by_user_id") @db.Uuid
+  editedAt        DateTime?     @map("edited_at")
+  deletedAt       DateTime?     @map("deleted_at")
+  deletedByUserId String?       @map("deleted_by_user_id") @db.Uuid
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  company   Company @relation(fields: [companyId], references: [id])
+  createdBy User    @relation("CrmNoteAuthor", fields: [createdByUserId], references: [id])
+
+  @@index([companyId, entityType, entityId, createdAt])
+  @@map("crm_notes")
+}
+
+// Metadata for the shared custom-field engine. Values live in each record's
+// `customFields` JSON keyed by `key`, so adding a field never needs a
+// migration. `key` and `fieldType` are fixed once created.
+model CrmCustomFieldDefinition {
+  id          String             @id @default(uuid()) @db.Uuid
+  companyId   String             @map("company_id") @db.Uuid
+  entityType  CrmEntityType      @map("entity_type")
+  key         String
+  label       String
+  fieldType   CrmCustomFieldType @map("field_type")
+  description String?
+  // DROPDOWN / MULTI_SELECT: [{ "value": "...", "label": "..." }]
+  options     Json?
+  isRequired  Boolean            @default(false) @map("is_required")
+  sortOrder   Int                @default(0) @map("sort_order")
+  isActive    Boolean            @default(true) @map("is_active")
+  createdAt   DateTime           @default(now()) @map("created_at")
+  updatedAt   DateTime           @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, entityType, key])
+  @@index([companyId, entityType, sortOrder])
+  @@map("crm_custom_field_definitions")
+}
+
+// Per-company CRM settings that are not lists (duplicate rules for now).
+model CrmSettings {
+  id                 String   @id @default(uuid()) @db.Uuid
+  companyId          String   @unique @map("company_id") @db.Uuid
+  // [{ "rule": "EMAIL" | "PHONE" | "COMPANY_AND_EMAIL" | "COMPANY_AND_PHONE", "action": "WARN" | "BLOCK" | "OFF" }]
+  leadDuplicateRules Json     @map("lead_duplicate_rules")
+  updatedByUserId    String?  @map("updated_by_user_id") @db.Uuid
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@map("crm_settings")
+}
+
+// A named list configuration (filters + sort + columns). Smart Lists
+// (Phase 13) reuse the same filter object, so views carry over unchanged.
+model CrmSavedView {
+  id          String                 @id @default(uuid()) @db.Uuid
+  companyId   String                 @map("company_id") @db.Uuid
+  entityType  CrmEntityType          @map("entity_type")
+  name        String
+  filters     Json                   @default("{}")
+  sort        Json?
+  columns     Json?
+  visibility  CrmSavedViewVisibility @default(PRIVATE)
+  ownerUserId String                 @map("owner_user_id") @db.Uuid
+  createdAt   DateTime               @default(now()) @map("created_at")
+  updatedAt   DateTime               @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+  owner   User    @relation("CrmSavedViewOwner", fields: [ownerUserId], references: [id])
+
+  @@index([companyId, entityType, ownerUserId])
+  @@map("crm_saved_views")
+}
+
 enum ImportBatchType {
   CUSTOMER
   SUPPLIER
@@ -7859,6 +8291,8 @@ enum DocumentType {
   REPLICATE_DESIGN_PROJECT
   FABRIC_ROLL
   SKU
+  CRM_LEAD
+  CRM_OPPORTUNITY
 }
 
 model DocumentSequence {

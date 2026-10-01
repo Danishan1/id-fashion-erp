@@ -14,7 +14,20 @@ import { humanizeStatus } from "@/lib/humanize-status";
  * Only events for entity types that exist in `CrmEntityType` are listed.
  * task.*, appointment.*, message.*, form.* arrive with their phases.
  */
-export type CrmEventCategory = "created" | "updated" | "stage" | "status" | "won" | "lost";
+export type CrmEventCategory =
+  | "created"
+  | "updated"
+  | "stage"
+  | "status"
+  | "won"
+  | "lost"
+  | "assignment"
+  | "tag"
+  | "note"
+  | "converted"
+  | "archived"
+  | "restored"
+  | "linked";
 
 export interface CrmEventDefinition {
   label: string;
@@ -25,6 +38,17 @@ export interface CrmEventDefinition {
 export const CRM_EVENT_TYPES = {
   "lead.created": { label: "Lead created", entityType: "LEAD", category: "created" },
   "lead.updated": { label: "Lead updated", entityType: "LEAD", category: "updated" },
+  "lead.status_changed": { label: "Status changed", entityType: "LEAD", category: "status" },
+  "lead.owner_changed": { label: "Owner changed", entityType: "LEAD", category: "assignment" },
+  "lead.tag_added": { label: "Tag added", entityType: "LEAD", category: "tag" },
+  "lead.tag_removed": { label: "Tag removed", entityType: "LEAD", category: "tag" },
+  "lead.note_added": { label: "Note added", entityType: "LEAD", category: "note" },
+  "lead.note_updated": { label: "Note edited", entityType: "LEAD", category: "note" },
+  "lead.note_deleted": { label: "Note deleted", entityType: "LEAD", category: "note" },
+  "lead.converted": { label: "Lead converted", entityType: "LEAD", category: "converted" },
+  "lead.opportunity_created": { label: "Opportunity created", entityType: "LEAD", category: "linked" },
+  "lead.archived": { label: "Lead archived", entityType: "LEAD", category: "archived" },
+  "lead.restored": { label: "Lead restored", entityType: "LEAD", category: "restored" },
   "contact.created": { label: "Contact created", entityType: "CONTACT", category: "created" },
   "contact.updated": { label: "Contact updated", entityType: "CONTACT", category: "updated" },
   "company.created": { label: "Company created", entityType: "COMPANY", category: "created" },

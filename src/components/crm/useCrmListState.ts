@@ -65,6 +65,15 @@ export function useCrmListState(filterKeys: string[], { syncWithUrl = true }: { 
     },
     [writeUrl, filters]
   );
+  /** Replace filters and search at once (e.g. applying a saved view). */
+  const replaceAll = useCallback(
+    (values: CrmFilterValues, nextSearch: string) => {
+      setFilters(values);
+      setSearchState(nextSearch);
+      writeUrl(values, nextSearch);
+    },
+    [writeUrl]
+  );
 
   return {
     filters,
@@ -72,7 +81,9 @@ export function useCrmListState(filterKeys: string[], { syncWithUrl = true }: { 
     applyFilters,
     clearFilters,
     setSearch,
+    replaceAll,
     isFilterPanelOpen,
+
     toggleFilterPanel: () => setFilterPanelOpen((o) => !o),
   };
 }

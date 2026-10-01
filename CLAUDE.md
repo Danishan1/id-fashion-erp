@@ -7652,3 +7652,13 @@ The whole CRM (Leads, Deals/Opportunities, pipeline/sources/lost-reason masters,
 - Sidebar: `isLeafActive()` highlights only the most specific child (fixes /crm vs /crm/activity, also AI Garment Flow).
 - Dev only: `node scripts/crm-dev-sample-events.mjs [--remove]`.
 - Report + manual checklist: `docs/crm/PHASE_01_FOUNDATION.md`.
+
+## CRM rebuild — Phase 02 Leads (2026-10-01, branch `crm-marketing-rebuild-v1`)
+
+- Lead entity (`crm_leads`, number `LEAD-YYYY-#####`) + per-company statuses/sources created lazily (`ensureCrmLeadDefaults`), custom fields engine (`src/modules/crm/custom-fields`, `entityType`-ready), polymorphic tags and notes, saved views, duplicate rules (EMAIL/PHONE/COMPANY_AND_* = WARN/BLOCK/OFF; default warn + confirm).
+- Conversion creates/links minimal `crm_companies` (optional unique link to ERP Customer), `crm_contacts`, `crm_opportunities` in one transaction; never silently duplicates (`CRM_DUPLICATE_RECORD` unless allowDuplicate). Bulk actions are synchronous, max 500.
+- Visibility D5 decided: own records (owner, or creator when unassigned) unless `crm.view_all`. New RBAC module `crm_settings` and action `view_all` (migration `20261001150000_crm_leads`).
+- All lead writes go through `src/modules/crm/leads/lead.service.ts` → `runCrmMutation`. Future imports/integrations must call `createLead(actor, input, { sourceKey })`.
+- Server pages build the actor + permission flags with `getCrmPageContext()` (`src/modules/crm/core/crm-page.ts`).
+- DB integration tests (`lead.integration.test.ts`) run only with `CRM_IT_DATABASE_URL` set to a disposable database.
+- Report + manual checklist: `docs/crm/PHASE_02_LEADS.md`.
