@@ -514,26 +514,6 @@ export async function transitionSampleStatus(actor: ActorContext, id: string, ta
     }
   }
 
-  // Marketing automation trigger: "Sample Sent -> Wait 3 Days -> Follow-up"
-  // from the CRM/Marketing enhancement request's own example list — the one
-  // sample-related trigger that's actually buildable, since a real Sample
-  // state machine exists (unlike "Quotation Sent," which has no backing
-  // schema anywhere in this project and was left un-built for that reason).
-  if (targetStatus === "SUBMITTED_TO_CUSTOMER") {
-    await prisma.crmFollowup.create({
-      data: {
-        companyId: actor.companyId,
-        relatedModule: "CUSTOMER",
-        relatedRecordId: before.customerId,
-        followupDate: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000),
-        type: "EMAIL",
-        priority: "MEDIUM",
-        notes: `Auto-created — follow up on sample ${before.requestNumber}${before.styleName ? ` (${before.styleName})` : ""} submitted to customer.`,
-        createdByUserId: actor.userId,
-      },
-    });
-  }
-
   return updated;
 }
 

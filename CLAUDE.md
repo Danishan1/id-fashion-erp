@@ -7633,3 +7633,11 @@ This version has breaking changes — APIs, conventions, and file structure may 
 This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
 
 <!-- END:nextjs-agent-rules -->
+
+## CRM + Marketing removed for a from-scratch rebuild (2026-10-01, branch `crm-marketing-rebuild`)
+
+The whole CRM (Leads, Deals/Opportunities, pipeline/sources/lost-reason masters, activities, follow-ups, CRM dashboard/settings, CRM CSV import) and Marketing (Campaigns, daily metrics, attribution, alerts, dashboards, channel report, customer segments, Meta/Google Ads) were deleted so both modules can be redesigned from scratch. The "CRM Lead-to-Customer upgrade" 12-slice plan above is abandoned.
+- Migration `20261001100000_remove_crm_and_marketing` drops every `crm_*` / `mkt_*` / `ad_*` table and enum type, drops `sales_orders.originating_deal_id`, and removes LEAD/DEAL/CRM_FOLLOWUP from `RelatedModule`, LEAD/DEAL/CAMPAIGN from `DocumentType`, LEAD/DEAL/CAMPAIGN_DAILY_METRIC from `ImportBatchType` (deleting the attachment/notification/sequence/import-batch rows that used them first).
+- Cross-module hooks removed: Customer 360 now shows Buyers/Samples/Sales Orders only; Sales Order no longer records an originating Deal; Sampling no longer auto-creates a follow-up on SUBMITTED_TO_CUSTOMER; Bulk Import keeps only its own helpers in `import.service.ts`.
+- Kept for the rebuild: RBAC module keys `crm` / `marketing` (+ role grants), `core/communication`, `lib/communication.ts`, `core/security/oauth-state`, `NotificationService`.
+- Full file list and verification: `danishan-understanding.md` → "Removal log".

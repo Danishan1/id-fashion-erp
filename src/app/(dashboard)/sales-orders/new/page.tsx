@@ -4,15 +4,15 @@ import { SalesOrderForm } from "../SalesOrderForm";
 export default async function NewSalesOrderPage({
   searchParams,
 }: {
-  searchParams: Promise<{ customerId?: string; originatingDealId?: string; originatingDealNumber?: string }>;
+  searchParams: Promise<{ customerId?: string }>;
 }) {
-  const { customerId, originatingDealId, originatingDealNumber } = await searchParams;
+  const { customerId } = await searchParams;
 
   return (
     <div className="space-y-4">
       <Breadcrumb items={[{ label: "Dashboard", href: "/dashboard" }, { label: "Sales Orders", href: "/sales-orders" }, { label: "New" }]} />
       <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">New Sales Order</h1>
-      <SalesOrderForm presetCustomerId={customerId} originatingDealId={originatingDealId} originatingDealNumber={originatingDealNumber} />
+      <SalesOrderForm presetCustomerId={customerId} />
     </div>
   );
 }

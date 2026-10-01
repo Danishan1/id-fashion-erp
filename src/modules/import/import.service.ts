@@ -1,34 +1,12 @@
-import { writeAuditLog } from "@/core/audit/AuditLogger";
-import { prisma } from "@/core/db/client";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
-import type { ImportBatchType, Prisma } from "@prisma/client";
+import type { ImportBatchType } from "@prisma/client";
 import type { ListQuery } from "@/lib/list-query";
-import type { ActorContext } from "@/modules/crm/lead.service";
-import { createDealSchema } from "@/modules/crm/deal.schema";
-import { createDeal } from "@/modules/crm/deal.service";
-import { createLeadSchema } from "@/modules/crm/lead.schema";
-import { createLead } from "@/modules/crm/lead.service";
-import { ensureCrmDefaults } from "@/modules/crm/crm-config.service";
-import { LEGACY_SOURCE_CODE_MAP } from "@/modules/crm/crm-defaults";
-import { recordDailyMetricSchema } from "@/modules/marketing/campaign.schema";
-import { recordDailyMetric } from "@/modules/marketing/campaign.service";
 import { ImportBatchRepository } from "./import.repository";
-import { IMPORT_COLUMNS, type ImportBatchTypeValue, type RunImportInput } from "./import.schema";
 
-export interface ImportRowFailure {
-  rowNumber: number;
-  data: Record<string, string>;
-  reason: string;
-}
-
-export interface RunImportResult {
-  batchId: string;
-  importType: ImportBatchTypeValue;
-  totalRows: number;
-  importedCount: number;
-  skippedCount: number;
-  failedRows: ImportRowFailure[];
-}
+// Shared helpers + batch read APIs for the Bulk Master Data Import portal
+// (bulk-import.service.ts). The old synchronous CRM/Marketing CSV importer
+// (LEAD / DEAL / CAMPAIGN_DAILY_METRIC) that used to live here was removed
+// with the CRM and Marketing modules (2026-10-01).
 
 export function messageFromError(error: unknown): string {
   if (error instanceof BusinessRuleError) return error.message;
@@ -48,183 +26,6 @@ export function messageFromError(error: unknown): string {
 export function undefinedIfBlank(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
-}
-
-async function importLeadRow(actor: ActorContext, raw: Record<string, string>) {
-  // Source is resolved against the company's own configurable Lead Source master (by
-  // code or name, case-insensitive); the old fixed enum values are still
-  // accepted via LEGACY_SOURCE_CODE_MAP. An unknown source fails the row —
-  // but together with every other issue in that row (reported as one
-  // combined message), never short-circuiting before schema validation runs.
-  const sourceResult = await resolveLeadSourceId(actor.companyId, raw.source);
-
-  const parsed = createLeadSchema.safeParse({
-    name: raw.name?.trim(),
-    email: raw.email?.trim() ?? "",
-    phone: raw.phone?.trim() ?? "",
-    whatsappNumber: raw.whatsappNumber?.trim() ?? "",
-    companyName: raw.companyName?.trim() ?? "",
-    country: raw.country?.trim() ?? "",
-    city: raw.city?.trim() ?? "",
-    sourceId: sourceResult.id ?? "",
-    leadScore: raw.leadScore,
-    value: raw.value,
-    expectedCloseDate: undefinedIfBlank(raw.expectedCloseDate),
-    notes: raw.notes?.trim() ?? "",
-  });
-
-  const issues = [
-    ...(sourceResult.error ? [`source: ${sourceResult.error}`] : []),
-    ...(parsed.success ? [] : [messageFromError(parsed.error)]),
-  ];
-  if (issues.length > 0 || !parsed.success) throw new BusinessRuleError("VALIDATION_ERROR", issues.join("; "));
-
-  await createLead(actor, parsed.data);
-}
-
-async function resolveLeadSourceId(companyId: string, rawSource: string | undefined): Promise<{ id?: string; error?: string }> {
-  const trimmed = undefinedIfBlank(rawSource);
-  if (!trimmed) return {};
-  await ensureCrmDefaults(companyId);
-  const upper = trimmed.toUpperCase();
-  const code = LEGACY_SOURCE_CODE_MAP[upper] ?? upper.replace(/[\s/-]+/g, "_");
-  const source = await prisma.crmLeadSource.findFirst({
-    where: { companyId, OR: [{ code }, { name: { equals: trimmed, mode: "insensitive" } }] },
-    select: { id: true },
-  });
-  if (!source) return { error: `Lead source "${trimmed}" is not configured in CRM Settings.` };
-  return { id: source.id };
-}
-
-async function resolveLeadId(companyId: string, leadNumber: string | undefined): Promise<string | undefined> {
-  const trimmed = undefinedIfBlank(leadNumber);
-  if (!trimmed) return undefined;
-  const lead = await prisma.lead.findFirst({ where: { companyId, leadNumber: trimmed }, select: { id: true } });
-  if (!lead) throw new BusinessRuleError("NOT_FOUND", `Lead "${trimmed}" not found.`);
-  return lead.id;
-}
-
-async function resolveCustomerId(companyId: string, customerCode: string | undefined): Promise<string | undefined> {
-  const trimmed = undefinedIfBlank(customerCode);
-  if (!trimmed) return undefined;
-  const customer = await prisma.customer.findFirst({ where: { companyId, code: trimmed }, select: { id: true } });
-  if (!customer) throw new BusinessRuleError("NOT_FOUND", `Customer "${trimmed}" not found.`);
-  return customer.id;
-}
-
-async function importDealRow(actor: ActorContext, raw: Record<string, string>) {
-  const [leadId, customerId] = await Promise.all([
-    resolveLeadId(actor.companyId, raw.leadNumber),
-    resolveCustomerId(actor.companyId, raw.customerCode),
-  ]);
-
-  const input = createDealSchema.parse({
-    title: raw.title?.trim(),
-    leadId,
-    customerId,
-    value: raw.value,
-    probabilityPercent: raw.probabilityPercent,
-    expectedCloseDate: undefinedIfBlank(raw.expectedCloseDate),
-    notes: raw.notes?.trim() ?? "",
-  });
-
-  await createDeal(actor, input);
-}
-
-async function resolveCampaignId(companyId: string, campaignNumber: string | undefined, campaignName: string | undefined): Promise<string> {
-  const number = undefinedIfBlank(campaignNumber);
-  const name = undefinedIfBlank(campaignName);
-
-  if (!number && !name) {
-    // Guards a real Prisma footgun, not just a UX nicety: `equals: undefined`
-    // is treated by Prisma as "no filter on this field" rather than "match
-    // nothing", so leaving both blank would otherwise silently match an
-    // arbitrary campaign instead of failing loudly.
-    throw new BusinessRuleError("VALIDATION_ERROR", "Either Campaign # or Campaign Name is required to identify the campaign.");
-  }
-
-  const campaign = number
-    ? await prisma.campaign.findFirst({ where: { companyId, campaignNumber: number }, select: { id: true } })
-    : await prisma.campaign.findFirst({ where: { companyId, name: { equals: name, mode: "insensitive" } }, select: { id: true } });
-
-  if (!campaign) {
-    throw new BusinessRuleError("NOT_FOUND", `Campaign "${number ?? name}" not found.`);
-  }
-  return campaign.id;
-}
-
-async function importCampaignMetricRow(actor: ActorContext, raw: Record<string, string>) {
-  const campaignId = await resolveCampaignId(actor.companyId, raw.campaignNumber, raw.campaignName);
-
-  const input = recordDailyMetricSchema.parse({
-    metricDate: raw.metricDate?.trim(),
-    spend: raw.spend,
-    impressions: raw.impressions,
-    clicks: raw.clicks,
-    notes: raw.notes?.trim() ?? "",
-  });
-
-  await recordDailyMetric(actor, campaignId, input);
-}
-
-const IMPORTERS: Record<ImportBatchTypeValue, (actor: ActorContext, raw: Record<string, string>) => Promise<void>> = {
-  LEAD: importLeadRow,
-  DEAL: importDealRow,
-  CAMPAIGN_DAILY_METRIC: importCampaignMetricRow,
-};
-
-/**
- * Deliberately per-row isolation, not one all-or-nothing transaction: a CSV
- * import's whole point is "import what's valid, report what isn't" (the
- * plan's own explicit imported/skipped/failed-rows summary), not
- * abort-everything-on-first-bad-row. Every row goes through the exact same
- * schema + service function (createLead/createDeal/recordDailyMetric) the
- * manual UI form uses — same duplicate detection, numbering, audit logging,
- * and business rules, with zero duplicated logic here.
- */
-export async function runImport(actor: ActorContext, input: RunImportInput): Promise<RunImportResult> {
-  const importRow = IMPORTERS[input.importType];
-  const failedRows: ImportRowFailure[] = [];
-  let importedCount = 0;
-
-  for (let i = 0; i < input.rows.length; i++) {
-    const raw = input.rows[i];
-    try {
-      await importRow(actor, raw);
-      importedCount++;
-    } catch (error) {
-      failedRows.push({ rowNumber: i + 1, data: raw, reason: messageFromError(error) });
-    }
-  }
-
-  const batch = await ImportBatchRepository.create({
-    companyId: actor.companyId,
-    importType: input.importType,
-    fileName: input.fileName,
-    totalRows: input.rows.length,
-    importedCount,
-    skippedCount: failedRows.length,
-    failedRowsJson: failedRows.length > 0 ? (failedRows as unknown as Prisma.InputJsonValue) : null,
-    createdByUserId: actor.userId,
-  });
-
-  await writeAuditLog({
-    companyId: actor.companyId,
-    userId: actor.userId,
-    tableName: "import_batches",
-    recordId: batch.id,
-    action: "CREATE",
-    newValues: { importType: input.importType, fileName: input.fileName, importedCount, skippedCount: failedRows.length },
-  });
-
-  return {
-    batchId: batch.id,
-    importType: input.importType,
-    totalRows: input.rows.length,
-    importedCount,
-    skippedCount: failedRows.length,
-    failedRows,
-  };
 }
 
 export async function listImportBatches(companyId: string, query: ListQuery, importTypes?: ImportBatchType[]) {
@@ -250,5 +51,3 @@ export async function getImportBatchById(companyId: string, id: string) {
   if (!batch) throw new BusinessRuleError("NOT_FOUND", "Import batch not found.", { id });
   return batch;
 }
-
-export { IMPORT_COLUMNS };

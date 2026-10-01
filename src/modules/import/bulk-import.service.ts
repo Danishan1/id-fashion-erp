@@ -1115,7 +1115,7 @@ function normalizeHeader(s: string): string {
 }
 
 /** Matches an uploaded file's own header row to each column's key/label —
- * same normalize-and-compare heuristic already proven by CsvImportModal, so
+ * normalize-and-compare (case/punctuation-insensitive), so
  * a template downloaded from this feature and re-uploaded unmodified always
  * auto-maps with zero manual column-mapping step. */
 function mapRowsToColumns(headerRow: string[], dataRows: string[][], columns: ImportColumnSpec[]): Record<string, string>[] {
@@ -1285,8 +1285,8 @@ export async function commitBulkImport(
 
 /**
  * Runs entirely inside the worker process (src/core/jobs/worker.ts) — never
- * called from an API route. Per-row isolation, matching the CRM import's
- * own runImport(): a bad row is reported, not fatal to the whole batch.
+ * called from an API route. Per-row isolation: a bad row is reported, not
+ * fatal to the whole batch.
  */
 export async function processBulkImportJob(
   batchId: string,

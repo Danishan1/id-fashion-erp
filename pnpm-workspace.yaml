@@ -1,0 +1,19 @@
+allowBuilds:
+  '@anthropic-ai/claude-code': true
+  '@google/genai': true
+  '@prisma/engines': true
+  esbuild: true
+  msgpackr-extract: true
+  prisma: true
+  protobufjs: true
+  unrs-resolver: true
+minimumReleaseAgeExclude:
+  - '@anthropic-ai/claude-code-darwin-arm64@2.1.285'
+  - '@anthropic-ai/claude-code-darwin-x64@2.1.285'
+  - '@anthropic-ai/claude-code-linux-arm64-musl@2.1.285'
+  - '@anthropic-ai/claude-code-linux-arm64@2.1.285'
+  - '@anthropic-ai/claude-code-linux-x64-musl@2.1.285'
+  - '@anthropic-ai/claude-code-linux-x64@2.1.285'
+  - '@anthropic-ai/claude-code-win32-arm64@2.1.285'
+  - '@anthropic-ai/claude-code-win32-x64@2.1.285'
+  - '@anthropic-ai/claude-code@2.1.285'
