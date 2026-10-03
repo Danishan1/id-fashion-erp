@@ -2,21 +2,26 @@
 
 import { useState } from "react";
 import { ApiKeysTab } from "./ApiKeysTab";
+import { ContactDuplicateRulesTab } from "./ContactDuplicateRulesTab";
 import { CustomFieldsTab } from "./CustomFieldsTab";
 import { DuplicateRulesTab } from "./DuplicateRulesTab";
 import { LeadSourcesTab } from "./LeadSourcesTab";
 import { LeadStatusesTab } from "./LeadStatusesTab";
+import { OptionValuesTab } from "./OptionValuesTab";
 import { TagsTab } from "./TagsTab";
 import { WebhooksTab } from "./WebhooksTab";
 
-export type CrmSettingsTab = "statuses" | "sources" | "tags" | "custom-fields" | "duplicates" | "api-keys" | "webhooks";
+export type CrmSettingsTab = "statuses" | "sources" | "tags" | "custom-fields" | "duplicates" | "contact-fields" | "contact-duplicates" | "contact-options" | "api-keys" | "webhooks";
 
 const TABS: { id: CrmSettingsTab; label: string }[] = [
   { id: "statuses", label: "Lead statuses" },
-  { id: "sources", label: "Lead sources" },
+  { id: "sources", label: "Sources" },
   { id: "tags", label: "Tags" },
   { id: "custom-fields", label: "Lead custom fields" },
-  { id: "duplicates", label: "Duplicate rules" },
+  { id: "duplicates", label: "Lead duplicate rules" },
+  { id: "contact-fields", label: "Contact custom fields" },
+  { id: "contact-duplicates", label: "Contact duplicate rules" },
+  { id: "contact-options", label: "Contact options" },
   { id: "api-keys", label: "API keys" },
   { id: "webhooks", label: "Webhooks" },
 ];
@@ -57,8 +62,11 @@ export function CrmSettingsClient({ initialTab, canEdit }: { initialTab: CrmSett
         {tab === "statuses" && <LeadStatusesTab canEdit={canEdit} />}
         {tab === "sources" && <LeadSourcesTab canEdit={canEdit} />}
         {tab === "tags" && <TagsTab canEdit={canEdit} />}
-        {tab === "custom-fields" && <CustomFieldsTab canEdit={canEdit} />}
+        {tab === "custom-fields" && <CustomFieldsTab key="LEAD" canEdit={canEdit} entityType="LEAD" />}
         {tab === "duplicates" && <DuplicateRulesTab canEdit={canEdit} />}
+        {tab === "contact-fields" && <CustomFieldsTab key="CONTACT" canEdit={canEdit} entityType="CONTACT" />}
+        {tab === "contact-duplicates" && <ContactDuplicateRulesTab canEdit={canEdit} />}
+        {tab === "contact-options" && <OptionValuesTab canEdit={canEdit} />}
         {tab === "api-keys" && <ApiKeysTab canEdit={canEdit} />}
         {tab === "webhooks" && <WebhooksTab canEdit={canEdit} />}
 

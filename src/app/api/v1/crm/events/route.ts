@@ -3,7 +3,7 @@ import { crmListResponse, crmRoute } from "@/modules/crm/core/crm-route";
 import { parseCrmEventFilters } from "@/modules/crm/core/crm-event.schema";
 import { listCrmEvents } from "@/modules/crm/core/crm-events.service";
 import { getCrmRecordScope } from "@/modules/crm/core/crm-visibility";
-import { assertCrmEntityAccess } from "@/modules/crm/crm-entity-access";
+import { assertCrmEntityAccess, mergedContactIds } from "@/modules/crm/crm-entity-access";
 
 /**
  * CRM activity/timeline feed for the caller's company.
@@ -18,11 +18,14 @@ import { assertCrmEntityAccess } from "@/modules/crm/crm-entity-access";
 export const GET = crmRoute("view", async ({ req, actor }) => {
   const query = parseListQuery(req.nextUrl.searchParams, "occurredAt");
   const filters = parseCrmEventFilters(req.nextUrl.searchParams);
+  let related: string[] = [];
   if (filters.entityType && filters.entityId) {
     await assertCrmEntityAccess(actor, filters.entityType as never, filters.entityId);
+    // A contact's timeline includes the history of contacts merged into it.
+    if (filters.entityType === "CONTACT") related = await mergedContactIds(actor.companyId, filters.entityId);
   } else if ((await getCrmRecordScope(actor)).mode === "OWN") {
     filters.actorUserId = actor.userId;
   }
-  const { data, totalCount } = await listCrmEvents(actor.companyId, filters, query);
+  const { data, totalCount } = await listCrmEvents(actor.companyId, filters, query, related);
   return crmListResponse(data, totalCount, query);
 });

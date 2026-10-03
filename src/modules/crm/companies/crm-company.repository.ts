@@ -14,6 +14,21 @@ export const CrmCompanyRepository = {
   search(where: Prisma.CrmCompanyWhereInput, take = 20) {
     return prisma.crmCompany.findMany({ where, select: COMPANY_SELECT, orderBy: { name: "asc" }, take });
   },
+  findByCustomerId(companyId: string, customerId: string, db: CrmDb = prisma) {
+    return db.crmCompany.findFirst({ where: { companyId, customerId }, select: { ...COMPANY_SELECT, archivedAt: true } });
+  },
+  customer(companyId: string, customerId: string, db: CrmDb = prisma) {
+    return db.customer.findFirst({ where: { id: customerId, companyId }, select: { id: true, code: true, name: true, city: true, country: true, email: true, phone: true } });
+  },
+  /** ERP customers for the company picker (with their CRM company link, if any). */
+  searchCustomers(companyId: string, term: string | undefined, take = 20) {
+    return prisma.customer.findMany({
+      where: { companyId, ...(term ? { OR: [{ name: { contains: term, mode: "insensitive" } }, { code: { contains: term, mode: "insensitive" } }] } : {}) },
+      select: { id: true, code: true, name: true, city: true, country: true, crmCompany: { select: { id: true, archivedAt: true } } },
+      orderBy: { name: "asc" },
+      take,
+    });
+  },
   create(data: Prisma.CrmCompanyUncheckedCreateInput, db: CrmDb) {
     return db.crmCompany.create({ data, select: COMPANY_SELECT });
   },

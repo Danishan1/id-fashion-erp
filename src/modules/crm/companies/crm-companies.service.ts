@@ -10,7 +10,7 @@ import { CrmCompanyRepository } from "./crm-company.repository";
  * Phase 02 surface of CRM Companies: lookup for linking and creation during
  * lead conversion. Pages, edit, merge and the Customer link UI come in Phase 05.
  */
-export async function searchCrmCompanies(actor: CrmActor, term: string | undefined) {
+export async function searchCrmCompanies(actor: CrmActor, term: string | undefined, take = 20) {
   const scope = await getCrmRecordScope(actor);
   const where: Prisma.CrmCompanyWhereInput = {
     AND: [
@@ -19,7 +19,7 @@ export async function searchCrmCompanies(actor: CrmActor, term: string | undefin
       ...(term?.trim() ? [{ name: { contains: term.trim(), mode: "insensitive" as const } }] : []),
     ],
   };
-  return CrmCompanyRepository.search(where);
+  return CrmCompanyRepository.search(where, take);
 }
 
 /** Existing (visible) companies with the same normalised name — shown before creating a new one. */
@@ -33,6 +33,44 @@ export async function getCrmCompanyForActor(actor: CrmActor, id: string, db?: Pr
   const company = await CrmCompanyRepository.findById({ AND: [{ id, companyId: actor.companyId, archivedAt: null }, crmOwnerWhere(scope) as Prisma.CrmCompanyWhereInput] }, db);
   if (!company) throw new BusinessRuleError("NOT_FOUND", "Company not found.", { id });
   return company;
+}
+
+/**
+ * "This contact works at ERP customer X": reuses the CRM company that
+ * references the customer, or creates one (name + location only — the
+ * customer's commercial data stays on the ERP Customer). Trusted link: the
+ * ERP customer master is company-wide, so the CRM company's owner scope does
+ * not apply here.
+ */
+export async function findOrCreateCrmCompanyForCustomer(ctx: CrmMutationContext, actor: CrmActor, customerId: string, ownerUserId: string | null) {
+  const existing = await CrmCompanyRepository.findByCustomerId(actor.companyId, customerId, ctx.tx);
+  if (existing) {
+    if (existing.archivedAt) throw new BusinessRuleError("INVALID_STATE_TRANSITION", `The CRM company "${existing.name}" for this customer is archived.`, { crmCompanyId: existing.id });
+    return { company: existing, created: false };
+  }
+  const customer = await CrmCompanyRepository.customer(actor.companyId, customerId, ctx.tx);
+  if (!customer) throw new BusinessRuleError("NOT_FOUND", "Customer not found.", { id: customerId });
+  const company = await CrmCompanyRepository.create(
+    {
+      companyId: actor.companyId,
+      name: customer.name,
+      nameKey: nameKey(customer.name),
+      city: customer.city ?? null,
+      country: customer.country ?? null,
+      customerId: customer.id,
+      ownerUserId,
+      createdByUserId: actor.userId,
+    },
+    ctx.tx
+  );
+  await ctx.audit({ tableName: "crm_companies", recordId: company.id, action: "CREATE", newValues: { ...company, fromCustomerId: customer.id } });
+  ctx.emit({ entityType: "COMPANY", entityId: company.id, eventType: "company.created", summary: company.name, payload: { fromCustomerId: customer.id, customerCode: customer.code } });
+  return { company, created: true };
+}
+
+export async function searchCustomersForLinking(actor: CrmActor, term: string | undefined, take = 20) {
+  const rows = await CrmCompanyRepository.searchCustomers(actor.companyId, term?.trim() || undefined, take);
+  return rows.map((c) => ({ id: c.id, code: c.code, name: c.name, city: c.city, country: c.country, crmCompanyId: c.crmCompany && !c.crmCompany.archivedAt ? c.crmCompany.id : null }));
 }
 
 export async function createCrmCompanyInMutation(

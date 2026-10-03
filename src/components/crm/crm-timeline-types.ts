@@ -31,6 +31,10 @@ const CATEGORY_TONES: Record<string, CrmActivityTone> = {
   archived: "amber",
   restored: "green",
   linked: "indigo",
+  merged: "indigo",
+  contactability: "amber",
+  document: "neutral",
+  duplicate: "amber",
 };
 
 

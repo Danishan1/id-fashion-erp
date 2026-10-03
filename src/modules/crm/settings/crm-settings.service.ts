@@ -8,15 +8,20 @@ import {
   type LeadDuplicateRule,
   type LeadDuplicateRuleKey,
 } from "./crm-defaults";
-import { CrmLeadSourceRepository, CrmLeadStatusRepository, CrmSettingsRepository } from "./crm-settings.repository";
+import { nameKey } from "../core/crm-normalize";
+import { CRM_OPTION_LIST_KEYS, DEFAULT_CONTACT_DUPLICATE_RULES, DEFAULT_OPTION_VALUES, type ContactDuplicateRule, type ContactDuplicateRuleKey, type CrmOptionListKey } from "../contacts/contact-registry";
+import { CrmLeadSourceRepository, CrmLeadStatusRepository, CrmOptionValueRepository, CrmSettingsRepository } from "./crm-settings.repository";
 import {
+  contactDuplicateRulesSchema,
   createLeadSourceSchema,
   createLeadStatusSchema,
+  createOptionValueSchema,
   keyFromName,
   leadDuplicateRulesSchema,
   reorderSchema,
   updateLeadSourceSchema,
   updateLeadStatusSchema,
+  updateOptionValueSchema,
 } from "./crm-settings.schema";
 
 /**
@@ -229,4 +234,75 @@ export async function updateLeadDuplicateRules(actor: CrmActor, raw: unknown) {
   await CrmSettingsRepository.upsertDuplicateRules(actor.companyId, merged as never, actor.userId);
   await writeAuditLog({ companyId: actor.companyId, userId: actor.userId, tableName: "crm_settings", recordId: actor.companyId, action: "UPDATE", oldValues: { leadDuplicateRules: before }, newValues: { leadDuplicateRules: merged } });
   return merged;
+}
+
+// ── Contact duplicate rules (Phase 04) ───────────────────────────
+
+export async function getContactDuplicateRules(companyId: string): Promise<ContactDuplicateRule[]> {
+  const settings = await CrmSettingsRepository.find(companyId);
+  const stored = Array.isArray(settings?.contactDuplicateRules) ? (settings!.contactDuplicateRules as unknown as ContactDuplicateRule[]) : [];
+  const byRule = new Map<ContactDuplicateRuleKey, ContactDuplicateRule>(stored.map((r) => [r.rule, r]));
+  return DEFAULT_CONTACT_DUPLICATE_RULES.map((d) => byRule.get(d.rule) ?? d);
+}
+
+export async function updateContactDuplicateRules(actor: CrmActor, raw: unknown) {
+  const { rules } = contactDuplicateRulesSchema.parse(raw);
+  const before = await getContactDuplicateRules(actor.companyId);
+  const byRule = new Map(rules.map((r) => [r.rule, r]));
+  const merged = before.map((r) => byRule.get(r.rule) ?? r);
+  await CrmSettingsRepository.upsertContactDuplicateRules(actor.companyId, merged as never, DEFAULT_LEAD_DUPLICATE_RULES as never, actor.userId);
+  await writeAuditLog({ companyId: actor.companyId, userId: actor.userId, tableName: "crm_settings", recordId: actor.companyId, action: "UPDATE", oldValues: { contactDuplicateRules: before }, newValues: { contactDuplicateRules: merged } });
+  return merged;
+}
+
+// ── Option lists (departments, designations, roles) ─────────────
+
+/** Seeds the default suggestions the first time a company uses option lists (idempotent). */
+export async function ensureCrmOptionDefaults(companyId: string) {
+  if ((await CrmOptionValueRepository.count(companyId)) > 0) return;
+  await CrmOptionValueRepository.createMany(
+    CRM_OPTION_LIST_KEYS.flatMap((listKey) => DEFAULT_OPTION_VALUES[listKey].map((value, i) => ({ companyId, listKey, value, valueKey: nameKey(value), sortOrder: (i + 1) * 10 })))
+  );
+}
+
+export async function listOptionValues(companyId: string, { includeInactive = true } = {}) {
+  await ensureCrmOptionDefaults(companyId);
+  const rows = await CrmOptionValueRepository.listAll(companyId, includeInactive);
+  return rows.map(({ id, listKey, value, sortOrder, isActive }) => ({ id, listKey: listKey as CrmOptionListKey, value, sortOrder, isActive }));
+}
+
+/** Active suggestions grouped by list, for the contact form. */
+export async function optionSuggestions(companyId: string): Promise<Record<CrmOptionListKey, string[]>> {
+  const rows = await listOptionValues(companyId, { includeInactive: false });
+  const out = Object.fromEntries(CRM_OPTION_LIST_KEYS.map((k) => [k, [] as string[]])) as Record<CrmOptionListKey, string[]>;
+  for (const r of rows) out[r.listKey]?.push(r.value);
+  return out;
+}
+
+export async function createOptionValue(actor: CrmActor, raw: unknown) {
+  const input = createOptionValueSchema.parse(raw);
+  await ensureCrmOptionDefaults(actor.companyId);
+  const key = nameKey(input.value);
+  if (await CrmOptionValueRepository.findByKey(actor.companyId, input.listKey, key)) throw new BusinessRuleError("VALIDATION_ERROR", `"${input.value}" is already in this list.`);
+  const max = await CrmOptionValueRepository.maxSortOrder(actor.companyId, input.listKey);
+  const row = await CrmOptionValueRepository.create({ companyId: actor.companyId, listKey: input.listKey, value: input.value, valueKey: key, sortOrder: (max._max.sortOrder ?? 0) + 10 });
+  await writeAuditLog({ companyId: actor.companyId, userId: actor.userId, tableName: "crm_option_values", recordId: row.id, action: "CREATE", newValues: row });
+  return row;
+}
+
+export async function updateOptionValue(actor: CrmActor, id: string, raw: unknown) {
+  const input = updateOptionValueSchema.parse(raw);
+  const before = await CrmOptionValueRepository.findById(actor.companyId, id);
+  if (!before) throw new BusinessRuleError("NOT_FOUND", "Option not found.", { id });
+  if (input.value !== undefined) {
+    const clash = await CrmOptionValueRepository.findByKey(actor.companyId, before.listKey, nameKey(input.value));
+    if (clash && clash.id !== id) throw new BusinessRuleError("VALIDATION_ERROR", `"${input.value}" is already in this list.`);
+  }
+  const row = await CrmOptionValueRepository.update(id, {
+    ...(input.value !== undefined ? { value: input.value, valueKey: nameKey(input.value) } : {}),
+    ...(input.isActive !== undefined ? { isActive: input.isActive } : {}),
+    ...(input.sortOrder !== undefined ? { sortOrder: input.sortOrder } : {}),
+  });
+  await writeAuditLog({ companyId: actor.companyId, userId: actor.userId, tableName: "crm_option_values", recordId: id, action: "UPDATE", oldValues: before, newValues: row });
+  return row;
 }

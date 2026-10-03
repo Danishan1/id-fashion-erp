@@ -41,6 +41,27 @@ export const leadDuplicateRulesSchema = z.object({
     .min(1),
 });
 
+export const contactDuplicateRulesSchema = z.object({
+  rules: z
+    .array(
+      z.object({
+        rule: z.enum(["EMAIL", "PHONE", "MOBILE", "WHATSAPP", "NAME_AND_COMPANY", "NAME_AND_EMAIL"]),
+        action: z.enum(["WARN", "BLOCK", "FLAG", "OFF"]),
+      })
+    )
+    .min(1),
+});
+
+export const createOptionValueSchema = z.object({
+  listKey: z.enum(["contact_department", "contact_designation", "contact_role"]),
+  value: z.string().trim().min(1, "Value is required").max(100),
+});
+export const updateOptionValueSchema = z.object({
+  value: z.string().trim().min(1).max(100).optional(),
+  isActive: z.boolean().optional(),
+  sortOrder: z.number().int().min(0).max(100000).optional(),
+});
+
 /** "Hot Lead!" → "hot_lead" */
 export function keyFromName(name: string): string {
   const k = name

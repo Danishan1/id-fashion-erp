@@ -25,6 +25,19 @@ export interface CrmMutationContext {
 }
 
 /**
+ * Records that keep a "last activity" timestamp get it bumped by every event
+ * written about them, in the same transaction — whichever service emitted
+ * the event (notes, tags, merge…). Contacts since Phase 04.
+ */
+async function touchLastActivity(tx: Prisma.TransactionClient, rows: CrmEventRow[]) {
+  const contactIds = [...new Set(rows.filter((r) => r.entityType === "CONTACT").map((r) => r.entityId))];
+  if (!contactIds.length) return;
+  const at = rows.reduce<Date>((max, r) => (r.occurredAt && r.occurredAt > max ? r.occurredAt : max), new Date(0));
+  const when = at.getTime() ? at : new Date();
+  await tx.crmContact.updateMany({ where: { id: { in: contactIds }, OR: [{ lastActivityAt: null }, { lastActivityAt: { lt: when } }] }, data: { lastActivityAt: when } });
+}
+
+/**
  * The one way a CRM service changes data. Runs `fn` in a single database
  * transaction, then writes every emitted CRM event in that same transaction,
  * so the record, its AuditLog row and its timeline events either all exist
@@ -55,6 +68,7 @@ export async function runCrmMutation<T>(actor: CrmActor, fn: (ctx: CrmMutationCo
     const value = await fn(ctx);
     const rows: CrmEventRow[] = [];
     for (const data of pending) rows.push(await CrmEventRepository.create(data, tx));
+    await touchLastActivity(tx, rows);
     return { result: value, written: rows };
   });
   await dispatchCrmEvents(written);

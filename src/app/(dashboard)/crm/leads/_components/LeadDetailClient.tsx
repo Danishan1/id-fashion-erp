@@ -286,7 +286,9 @@ export function LeadDetailClient({ initialLead, permissions, openConvert = false
                 <p className="text-xs font-medium uppercase text-zinc-500 dark:text-zinc-400">Contact</p>
                 {lead.crmContact ? (
                   <p className="mt-0.5 text-zinc-900 dark:text-zinc-100">
-                    {lead.crmContact.fullName}
+                    <Link href={`/crm/contacts/${lead.crmContact.id}`} className="text-indigo-600 hover:underline dark:text-indigo-400">
+                      {lead.crmContact.fullName}
+                    </Link>
                     {(lead.crmContact.email || lead.crmContact.phone) && (
                       <span className="block text-xs text-zinc-500 dark:text-zinc-400">{[lead.crmContact.email, lead.crmContact.phone].filter(Boolean).join(" · ")}</span>
                     )}
@@ -320,7 +322,7 @@ export function LeadDetailClient({ initialLead, permissions, openConvert = false
                   </ul>
                 )}
               </div>
-              <p className="text-xs text-zinc-500 dark:text-zinc-400">Contact, company and opportunity pages are added in the next CRM phases.</p>
+              <p className="text-xs text-zinc-500 dark:text-zinc-400">Company and opportunity pages are added in the next CRM phases.</p>
             </div>
           </Section>
 

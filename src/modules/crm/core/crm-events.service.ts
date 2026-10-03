@@ -49,10 +49,14 @@ export function presentCrmEvent(row: CrmEventRow) {
 }
 export type CrmTimelineEvent = ReturnType<typeof presentCrmEvent>;
 
-export function buildCrmEventWhere(companyId: string, filters: CrmEventFilters, search?: string): Prisma.CrmEventWhereInput {
+/**
+ * `relatedEntityIds` widens a record timeline to records folded into it
+ * (e.g. contacts merged into a contact), so its history stays complete.
+ */
+export function buildCrmEventWhere(companyId: string, filters: CrmEventFilters, search?: string, relatedEntityIds: string[] = []): Prisma.CrmEventWhereInput {
   const where: Prisma.CrmEventWhereInput = { companyId };
   if (filters.entityType) where.entityType = filters.entityType as Prisma.CrmEventWhereInput["entityType"];
-  if (filters.entityId) where.entityId = filters.entityId;
+  if (filters.entityId) where.entityId = relatedEntityIds.length ? { in: [filters.entityId, ...relatedEntityIds] } : filters.entityId;
   if (filters.eventType) where.eventType = filters.eventType;
   if (filters.actorUserId) where.actorUserId = filters.actorUserId;
   const occurred = businessDayRange({ from: filters.from, to: filters.to });
@@ -67,8 +71,8 @@ export function buildCrmEventWhere(companyId: string, filters: CrmEventFilters, 
 }
 
 /** Newest first by default; `?sortOrder=asc` gives oldest first. */
-export async function listCrmEvents(companyId: string, filters: CrmEventFilters, query: ListQuery) {
-  const where = buildCrmEventWhere(companyId, filters, query.search);
+export async function listCrmEvents(companyId: string, filters: CrmEventFilters, query: ListQuery, relatedEntityIds: string[] = []) {
+  const where = buildCrmEventWhere(companyId, filters, query.search, relatedEntityIds);
   const [rows, totalCount] = await Promise.all([
     CrmEventRepository.findMany(where, query.skip, query.take, query.sortOrder),
     CrmEventRepository.count(where),

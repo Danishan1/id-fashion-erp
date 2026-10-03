@@ -6,7 +6,7 @@ import { runCrmMutation, type CrmMutationContext } from "../core/crm-mutation";
 import { buildSearchText, fullNameOf } from "../core/crm-normalize";
 import { crmOwnerWhere, getCrmRecordScope, type CrmRecordScope } from "../core/crm-visibility";
 import { createCrmCompanyInMutation, findCompanyNameMatches, getCrmCompanyForActor } from "../companies/crm-companies.service";
-import { createCrmContactInMutation, findContactMatches, getCrmContactForActor } from "../contacts/crm-contacts.service";
+import { createCrmContactInMutation, findContactMatches, getCrmContactForActor, refreshContactDerived } from "../contacts/crm-contacts.service";
 import { CrmContactRepository } from "../contacts/crm-contact.repository";
 import { listCustomFields, validateCustomFieldValues } from "../custom-fields/crm-custom-fields.service";
 import { createOpportunityInMutation, reserveOpportunityNumber } from "../opportunities/crm-opportunities.service";
@@ -416,6 +416,9 @@ export async function updateLead(actor: CrmActor, id: string, raw: unknown) {
     }
     if (newStatus) emitStatusChange(ctx, id, before.statusId, newStatus);
     if (newOwner !== undefined) await emitOwnerChange(ctx, id, before.ownerUserId, newOwner);
+    if (changes.crmContactId && after.crmContactId) {
+      ctx.emit({ entityType: "CONTACT", entityId: after.crmContactId, eventType: "contact.lead_linked", summary: `${after.leadNumber} — ${after.fullName}`, payload: { leadId: id, via: "lead edit" } });
+    }
     return after;
   });
 }
@@ -720,17 +723,23 @@ export async function convertLead(actor: CrmActor, id: string, raw: unknown) {
           mobile: lead.mobile,
           whatsapp: lead.whatsapp,
           crmCompanyId: companyId,
+          // The contact keeps the lead's source; sourceLeadId preserves the link back to the lead.
+          sourceId: lead.sourceId,
           ownerUserId: owner,
         },
         { allowDuplicate: input.contact.allowDuplicate, sourceLeadId: lead.id }
       );
       contactId = contact.id;
       created.contactId = contact.id;
-    } else if (linkedContact && companyId && !linkedContact.crmCompanyId) {
-      // An existing contact without a company gets linked to the chosen one.
-      await CrmContactRepository.update(linkedContact.id, { crmCompanyId: companyId }, ctx.tx);
-      await ctx.audit({ tableName: "crm_contacts", recordId: linkedContact.id, action: "UPDATE", oldValues: { crmCompanyId: null }, newValues: { crmCompanyId: companyId } });
-      ctx.emit({ entityType: "CONTACT", entityId: linkedContact.id, eventType: "contact.updated", summary: "Linked to company during lead conversion", payload: { crmCompanyId: companyId, fromLeadId: lead.id } });
+    } else if (linkedContact) {
+      if (companyId && !linkedContact.crmCompanyId) {
+        // An existing contact without a company gets linked to the chosen one.
+        await CrmContactRepository.update(linkedContact.id, { crmCompanyId: companyId }, ctx.tx);
+        await refreshContactDerived(ctx, linkedContact.id, actor.companyId);
+        await ctx.audit({ tableName: "crm_contacts", recordId: linkedContact.id, action: "UPDATE", oldValues: { crmCompanyId: null }, newValues: { crmCompanyId: companyId } });
+        ctx.emit({ entityType: "CONTACT", entityId: linkedContact.id, eventType: "contact.updated", summary: "Linked to company during lead conversion", payload: { changes: { crmCompanyId: { from: null, to: companyId } }, fromLeadId: lead.id } });
+      }
+      ctx.emit({ entityType: "CONTACT", entityId: linkedContact.id, eventType: "contact.lead_linked", summary: `${lead.leadNumber} — ${lead.fullName}`, payload: { leadId: lead.id, via: "conversion" } });
     }
 
     let opportunityId: string | null = null;

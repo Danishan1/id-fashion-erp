@@ -27,7 +27,11 @@ export type CrmEventCategory =
   | "converted"
   | "archived"
   | "restored"
-  | "linked";
+  | "linked"
+  | "merged"
+  | "contactability"
+  | "document"
+  | "duplicate";
 
 export interface CrmEventDefinition {
   label: string;
@@ -51,6 +55,27 @@ export const CRM_EVENT_TYPES = {
   "lead.restored": { label: "Lead restored", entityType: "LEAD", category: "restored" },
   "contact.created": { label: "Contact created", entityType: "CONTACT", category: "created" },
   "contact.updated": { label: "Contact updated", entityType: "CONTACT", category: "updated" },
+  "contact.owner_changed": { label: "Owner changed", entityType: "CONTACT", category: "assignment" },
+  "contact.tag_added": { label: "Tag added", entityType: "CONTACT", category: "tag" },
+  "contact.tag_removed": { label: "Tag removed", entityType: "CONTACT", category: "tag" },
+  "contact.note_added": { label: "Note added", entityType: "CONTACT", category: "note" },
+  "contact.note_updated": { label: "Note edited", entityType: "CONTACT", category: "note" },
+  "contact.note_deleted": { label: "Note deleted", entityType: "CONTACT", category: "note" },
+  "contact.address_added": { label: "Address added", entityType: "CONTACT", category: "updated" },
+  "contact.address_updated": { label: "Address updated", entityType: "CONTACT", category: "updated" },
+  "contact.address_removed": { label: "Address removed", entityType: "CONTACT", category: "updated" },
+  "contact.channel_added": { label: "Contact detail added", entityType: "CONTACT", category: "updated" },
+  "contact.channel_removed": { label: "Contact detail removed", entityType: "CONTACT", category: "updated" },
+  "contact.contactability_changed": { label: "Contactability changed", entityType: "CONTACT", category: "contactability" },
+  "contact.document_added": { label: "Document added", entityType: "CONTACT", category: "document" },
+  "contact.document_removed": { label: "Document removed", entityType: "CONTACT", category: "document" },
+  "contact.lead_linked": { label: "Lead linked", entityType: "CONTACT", category: "linked" },
+  "contact.duplicate_flagged": { label: "Flagged as possible duplicate", entityType: "CONTACT", category: "duplicate" },
+  "contact.duplicate_dismissed": { label: "Duplicate flag cleared", entityType: "CONTACT", category: "duplicate" },
+  "contact.merged": { label: "Contact merged in", entityType: "CONTACT", category: "merged" },
+  "contact.merged_into": { label: "Merged into another contact", entityType: "CONTACT", category: "merged" },
+  "contact.archived": { label: "Contact archived", entityType: "CONTACT", category: "archived" },
+  "contact.restored": { label: "Contact restored", entityType: "CONTACT", category: "restored" },
   "company.created": { label: "Company created", entityType: "COMPANY", category: "created" },
   "company.updated": { label: "Company updated", entityType: "COMPANY", category: "updated" },
   "opportunity.created": { label: "Opportunity created", entityType: "OPPORTUNITY", category: "created" },

@@ -20,7 +20,7 @@ export interface CrmEntityTypeConfig {
 
 export const CRM_ENTITY_TYPE_CONFIG: Record<CrmEntityType, CrmEntityTypeConfig> = {
   LEAD: { label: "Lead", pluralLabel: "Leads", tableName: "crm_leads", basePath: "/crm/leads" },
-  CONTACT: { label: "Contact", pluralLabel: "Contacts", tableName: "crm_contacts" },
+  CONTACT: { label: "Contact", pluralLabel: "Contacts", tableName: "crm_contacts", basePath: "/crm/contacts" },
   COMPANY: { label: "Company", pluralLabel: "Companies", tableName: "crm_companies" },
   OPPORTUNITY: { label: "Opportunity", pluralLabel: "Opportunities", tableName: "crm_opportunities" },
 };

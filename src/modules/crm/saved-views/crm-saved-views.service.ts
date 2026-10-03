@@ -2,6 +2,7 @@ import { Prisma, type CrmEntityType } from "@prisma/client";
 import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import type { CrmActor } from "../core/crm-actor";
+import { contactFilterSchema, CONTACT_SORT_FIELDS } from "../contacts/contact.schema";
 import { leadFilterSchema, LEAD_SORT_FIELDS } from "../leads/lead.schema";
 import { CrmSavedViewRepository } from "./crm-saved-view.repository";
 import { savedViewBaseSchema, updateSavedViewSchema } from "./crm-saved-view.schema";
@@ -15,6 +16,7 @@ import { savedViewBaseSchema, updateSavedViewSchema } from "./crm-saved-view.sch
  */
 const VALIDATORS: Partial<Record<CrmEntityType, { filters: (f: unknown) => unknown; sortFields: readonly string[] }>> = {
   LEAD: { filters: (f) => leadFilterSchema.parse(f), sortFields: LEAD_SORT_FIELDS },
+  CONTACT: { filters: (f) => contactFilterSchema.parse(f), sortFields: CONTACT_SORT_FIELDS },
 };
 
 function validateFor(entityType: CrmEntityType, filters: unknown, sort: { sortBy: string } | null | undefined) {

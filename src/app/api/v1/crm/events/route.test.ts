@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
-const { requireSessionMock, assertMock, listMock, getMock, scopeMock, accessMock } = vi.hoisted(() => ({
+const { requireSessionMock, assertMock, listMock, getMock, scopeMock, accessMock, mergedMock } = vi.hoisted(() => ({
+  mergedMock: vi.fn(),
   requireSessionMock: vi.fn(),
   assertMock: vi.fn(),
   listMock: vi.fn(),
@@ -23,7 +24,7 @@ vi.mock("@/lib/api-route", async () => {
 vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { assert: assertMock } }));
 vi.mock("@/modules/crm/core/crm-events.service", () => ({ listCrmEvents: listMock, getCrmEventById: getMock }));
 vi.mock("@/modules/crm/core/crm-visibility", () => ({ getCrmRecordScope: scopeMock }));
-vi.mock("@/modules/crm/crm-entity-access", () => ({ assertCrmEntityAccess: accessMock }));
+vi.mock("@/modules/crm/crm-entity-access", () => ({ assertCrmEntityAccess: accessMock, mergedContactIds: mergedMock }));
 
 const { GET: listGET } = await import("./route");
 const { GET: detailGET } = await import("./[id]/route");
@@ -37,6 +38,7 @@ beforeEach(() => {
   getMock.mockReset().mockResolvedValue({ id: "ev-1", entityType: "LEAD", entityId: ID, actor: { id: "someone-else" } });
   scopeMock.mockReset().mockResolvedValue({ mode: "ALL" });
   accessMock.mockReset().mockResolvedValue(undefined);
+  mergedMock.mockReset().mockResolvedValue([]);
 });
 
 describe("GET /api/v1/crm/events", () => {
@@ -49,7 +51,8 @@ describe("GET /api/v1/crm/events", () => {
     expect(listMock).toHaveBeenCalledWith(
       "co-1",
       expect.objectContaining({ eventType: "lead.created", entityType: "LEAD", entityId: ID, from: "2026-10-01" }),
-      expect.objectContaining({ page: 2, skip: 20, take: 20, sortOrder: "desc" })
+      expect.objectContaining({ page: 2, skip: 20, take: 20, sortOrder: "desc" }),
+      []
     );
     expect(await res.json()).toEqual({ data: [{ id: "ev-1" }], meta: { page: 2, pageSize: 20, totalCount: 41, totalPages: 3 } });
   });
@@ -75,6 +78,14 @@ describe("CRM event visibility", () => {
     expect(accessMock).toHaveBeenCalledWith(expect.objectContaining({ userId: "user-1", companyId: "co-1" }), "LEAD", ID);
   });
 
+  it("includes contacts merged into a contact in its timeline", async () => {
+    const MERGED = "7f1c2f1e-1f2a-4b1a-9d1a-2b3c4d5e6f71";
+    mergedMock.mockResolvedValue([MERGED]);
+    await listGET(new NextRequest(`http://x/api/v1/crm/events?entityType=CONTACT&entityId=${ID}`), { params: Promise.resolve({}) });
+    expect(mergedMock).toHaveBeenCalledWith("co-1", ID);
+    expect(listMock).toHaveBeenCalledWith("co-1", expect.objectContaining({ entityType: "CONTACT", entityId: ID }), expect.anything(), [MERGED]);
+  });
+
   it("returns 404 for a record timeline the caller cannot see", async () => {
     const { BusinessRuleError } = await import("@/core/errors/BusinessRuleError");
     accessMock.mockRejectedValueOnce(new BusinessRuleError("NOT_FOUND", "Lead not found."));
@@ -86,7 +97,7 @@ describe("CRM event visibility", () => {
   it("limits the company-wide feed to the caller's own actions without crm.view_all", async () => {
     scopeMock.mockResolvedValue({ mode: "OWN", userId: "user-1" });
     await listGET(new NextRequest("http://x/api/v1/crm/events"), { params: Promise.resolve({}) });
-    expect(listMock).toHaveBeenCalledWith("co-1", expect.objectContaining({ actorUserId: "user-1" }), expect.anything());
+    expect(listMock).toHaveBeenCalledWith("co-1", expect.objectContaining({ actorUserId: "user-1" }), expect.anything(), []);
   });
 
   it("hides another user's event on a record the caller cannot see", async () => {

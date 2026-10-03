@@ -79,7 +79,7 @@ export function ConvertLeadDrawer({ open, onClose, lead, onDone }: { open: boole
   const [oppClose, setOppClose] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [duplicate, setDuplicate] = useState<{ entityType: "COMPANY" | "CONTACT"; matches: (CompanyOption & ContactOption)[] } | null>(null);
+  const [duplicate, setDuplicate] = useState<{ entityType: "COMPANY" | "CONTACT"; matches: (CompanyOption & ContactOption)[]; blocking?: boolean } | null>(null);
   const companyLookup = useLookup<CompanyOption>("/api/v1/crm/companies/lookup", "");
   const contactLookup = useLookup<ContactOption>("/api/v1/crm/contacts/lookup", "");
 
@@ -131,7 +131,11 @@ export function ConvertLeadDrawer({ open, onClose, lead, onDone }: { open: boole
       return onDone();
     }
     if (res.error.code === "CRM_DUPLICATE_RECORD" && res.error.details) {
-      setDuplicate({ entityType: res.error.details.entityType as "COMPANY" | "CONTACT", matches: (res.error.details.matches as (CompanyOption & ContactOption)[]) ?? [] });
+      setDuplicate({
+        entityType: res.error.details.entityType as "COMPANY" | "CONTACT",
+        matches: (res.error.details.matches as (CompanyOption & ContactOption)[]) ?? [],
+        blocking: Boolean(res.error.details.blocking),
+      });
     } else {
       setDuplicate(null);
     }
@@ -263,9 +267,13 @@ export function ConvertLeadDrawer({ open, onClose, lead, onDone }: { open: boole
                   </li>
                 ))}
               </ul>
-              <button type="button" className="mt-2 text-xs text-amber-800 underline dark:text-amber-300" onClick={() => submit(duplicate.entityType)}>
-                Create a new one anyway
-              </button>
+              {duplicate.blocking ? (
+                <p className="mt-2 text-xs text-amber-800 dark:text-amber-300">Your duplicate rules don&apos;t allow another one — link the existing record.</p>
+              ) : (
+                <button type="button" className="mt-2 text-xs text-amber-800 underline dark:text-amber-300" onClick={() => submit(duplicate.entityType)}>
+                  Create a new one anyway
+                </button>
+              )}
             </div>
           )}
           <p className="text-xs text-zinc-500 dark:text-zinc-400">The lead is kept and marked Converted; its timeline, notes and tags stay intact.</p>

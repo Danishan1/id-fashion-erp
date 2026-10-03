@@ -7672,3 +7672,13 @@ The whole CRM (Leads, Deals/Opportunities, pipeline/sources/lost-reason masters,
 - Capture: API keys (hashed, `crmk_…`), signed generic webhooks (adapter registry `capture/providers/`), inbox `crm_ingest_events` (idempotency key unique per provider; external ids in `crm_lead_external_refs`; retries via `ingest.retry`).
 - CRM document numbers (CRM_LEAD, CRM_OPPORTUNITY) are company-wide: always `branchId: null`.
 - Report + manual checklist: `docs/crm/PHASE_03_LEAD_IMPORT_CAPTURE.md`.
+
+## CRM rebuild — Phase 04 Contacts (2026-10-03, branch `crm-build-v2`)
+- `crm_contacts` is the CRM person record (ERP has no person master). It reaches the ERP Customer only via `crm_companies.customer_id`; picking a customer uses `findOrCreateCrmCompanyForCustomer` — never copy customer data.
+- All contact writes go through `src/modules/crm/contacts/crm-contacts.service.ts` (lead conversion uses `createCrmContactInMutation`). Derived columns (`name_key`, `email_keys`, `phone_keys`, `search_text`) come from `contact-keys.ts`; call `refreshContactDerived` after channel/company changes.
+- Contact duplicate rules (WARN/BLOCK/FLAG/OFF, per field) live in `crm_settings.contact_duplicate_rules`; BLOCK → `CRM_DUPLICATE_RECORD` with `details.blocking`.
+- Merge (`contact-merge.service.ts`) never deletes: merged contact gets `merged_into_id` + archived, everything moves to the survivor, `crm_contact_merges` keeps a snapshot. Every contact query must exclude `merged_into_id IS NOT NULL` (buildContactWhere does).
+- Contactability: `crm_contact_consents` per channel (`ALL` overrides). Anything that sends messages must check `canContactContact` / `canContact` first.
+- `runCrmMutation` bumps `crm_contacts.last_activity_at` for CONTACT events; contact timelines include merged contacts (`mergedContactIds`).
+- Documents: ERP AttachmentService with `RelatedModule.CRM_CONTACT`; only via the CRM document routes (visibility-checked).
+- Report + manual checklist: `docs/crm/PHASE_04_CONTACTS.md`.

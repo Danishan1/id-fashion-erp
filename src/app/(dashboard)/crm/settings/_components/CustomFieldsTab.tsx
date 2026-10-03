@@ -18,6 +18,8 @@ import { keyFromName } from "@/modules/crm/settings/crm-settings.schema";
 import { useSettingsList } from "./useSettingsList";
 
 const URL_BASE = "/api/v1/crm/settings/custom-fields";
+type CustomFieldEntity = "LEAD" | "CONTACT";
+const ENTITY_NOUN: Record<CustomFieldEntity, string> = { LEAD: "lead", CONTACT: "contact" };
 type FieldType = CrmCustomFieldDefinitionDto["fieldType"];
 
 function OptionsEditor({ options, onChange, lockedValues }: { options: CrmCustomFieldOption[]; onChange: (o: CrmCustomFieldOption[]) => void; lockedValues: Set<string> }) {
@@ -77,7 +79,8 @@ function OptionsEditor({ options, onChange, lockedValues }: { options: CrmCustom
   );
 }
 
-function FieldModal({ field, onClose, onSaved }: { field: CrmCustomFieldDefinitionDto | null; onClose: () => void; onSaved: () => void }) {
+function FieldModal({ field, entityType, onClose, onSaved }: { field: CrmCustomFieldDefinitionDto | null; entityType: CustomFieldEntity; onClose: () => void; onSaved: () => void }) {
+  const noun = ENTITY_NOUN[entityType];
   const [label, setLabel] = useState(field?.label ?? "");
   const [key, setKey] = useState(field?.key ?? "");
   const [keyTouched, setKeyTouched] = useState(Boolean(field));
@@ -97,7 +100,7 @@ function FieldModal({ field, onClose, onSaved }: { field: CrmCustomFieldDefiniti
     setFormError(null);
     const body = field
       ? { label, description, isRequired, ...(isChoice ? { options } : {}) }
-      : { entityType: "LEAD", label, key: key || undefined, fieldType, description, isRequired, ...(isChoice ? { options } : {}) };
+      : { entityType, label, key: key || undefined, fieldType, description, isRequired, ...(isChoice ? { options } : {}) };
     const res = await crmRequest(field ? `${URL_BASE}/${field.id}` : URL_BASE, { method: field ? "PATCH" : "POST", body, successMessage: field ? "Field updated." : "Field added." });
     setBusy(false);
     if (!res.ok) {
@@ -109,7 +112,7 @@ function FieldModal({ field, onClose, onSaved }: { field: CrmCustomFieldDefiniti
   };
 
   return (
-    <Modal open onClose={onClose} title={field ? `Edit "${field.label}"` : "Add lead custom field"} maxWidthClass="max-w-lg">
+    <Modal open onClose={onClose} title={field ? `Edit "${field.label}"` : `Add ${noun} custom field`} maxWidthClass="max-w-lg">
       <form onSubmit={submit} className="mt-4 space-y-4">
         <FormField label="Label" htmlFor="cf-label" required error={errors.label}>
           <input
@@ -160,7 +163,7 @@ function FieldModal({ field, onClose, onSaved }: { field: CrmCustomFieldDefiniti
         )}
         <label className="flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-200">
           <input type="checkbox" checked={isRequired} onChange={(e) => setIsRequired(e.target.checked)} />
-          Required on the lead form
+          Required on the {noun} form
         </label>
         {formError && <p className="text-sm text-red-600 dark:text-red-400">{formError}</p>}
         <div className="flex justify-end gap-2 pt-2">
@@ -176,8 +179,9 @@ function FieldModal({ field, onClose, onSaved }: { field: CrmCustomFieldDefiniti
   );
 }
 
-export function CustomFieldsTab({ canEdit }: { canEdit: boolean }) {
-  const { rows, error, reload, setRows } = useSettingsList<CrmCustomFieldDefinitionDto>(`${URL_BASE}?entityType=LEAD`);
+export function CustomFieldsTab({ canEdit, entityType = "LEAD" }: { canEdit: boolean; entityType?: CustomFieldEntity }) {
+  const noun = ENTITY_NOUN[entityType];
+  const { rows, error, reload, setRows } = useSettingsList<CrmCustomFieldDefinitionDto>(`${URL_BASE}?entityType=${entityType}`);
   const [editing, setEditing] = useState<CrmCustomFieldDefinitionDto | "new" | null>(null);
 
   const toggle = async (f: CrmCustomFieldDefinitionDto) => {
@@ -203,7 +207,7 @@ export function CustomFieldsTab({ canEdit }: { canEdit: boolean }) {
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">Extra fields on every lead, shown in this order on the form and detail page. Archived fields keep their stored values.</p>
+        <p className="text-sm text-zinc-500 dark:text-zinc-400">Extra fields on every {noun}, shown in this order on the form and detail page. Archived fields keep their stored values.</p>
         {canEdit && <Button onClick={() => setEditing("new")}>Add field</Button>}
       </div>
       {rows.length === 0 ? (
@@ -262,6 +266,7 @@ export function CustomFieldsTab({ canEdit }: { canEdit: boolean }) {
       {editing && (
         <FieldModal
           field={editing === "new" ? null : editing}
+          entityType={entityType}
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
