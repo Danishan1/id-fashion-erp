@@ -60,5 +60,7 @@ export async function createOpportunityInMutation(
     summary: `${opp.opportunityNumber} — ${opp.name}`,
     payload: { leadId: data.leadId ?? null, amount: data.amount ?? null, currencyCode: data.currencyCode ?? null },
   });
+  // Company timeline: the opportunity is associated with the account.
+  if (opp.crmCompanyId) ctx.emit({ entityType: "COMPANY", entityId: opp.crmCompanyId, eventType: "company.opportunity_linked", summary: `${opp.opportunityNumber} — ${opp.name}`, payload: { opportunityId: opp.id } });
   return opp;
 }

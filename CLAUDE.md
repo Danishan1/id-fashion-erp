@@ -7682,3 +7682,11 @@ The whole CRM (Leads, Deals/Opportunities, pipeline/sources/lost-reason masters,
 - `runCrmMutation` bumps `crm_contacts.last_activity_at` for CONTACT events; contact timelines include merged contacts (`mergedContactIds`).
 - Documents: ERP AttachmentService with `RelatedModule.CRM_CONTACT`; only via the CRM document routes (visibility-checked).
 - Report + manual checklist: `docs/crm/PHASE_04_CONTACTS.md`.
+
+## CRM rebuild — Phase 05 Companies (2026-10-03)
+- `crm_companies` is the CRM account (prospects + customers). The ERP `Customer` stays the only customer master: link via unique `customer_id` only (`linkErpCustomer` validates exists/not deleted/permission/not linked elsewhere). Never write customer rows from CRM code; never copy balances/invoices.
+- All company writes go through `src/modules/crm/companies/crm-companies.service.ts` (relations: `company-relations.service.ts`, merge: `company-merge.service.ts`). Derived keys come from `company-keys.ts` — keep `companyMatchKey` identical to the SQL in migration 20261004100000.
+- Company duplicate rules (NAME/LEGAL_NAME/WEBSITE/EMAIL/PHONE x WARN/BLOCK/FLAG/OFF) in `crm_settings.company_duplicate_rules`; same ERP customer is always BLOCK. Never auto-merge.
+- Merge never deletes and refuses different ERP customers; only one ERP link survives. Every company query must exclude `merged_into_id IS NOT NULL` (buildCompanyWhere does).
+- Statuses: `crm_company_statuses` (lazy defaults via ensureCompanyStatusDefaults). ERP references (contacts + companies) live in `src/modules/crm/erp/`; documents for both in `src/modules/crm/documents/` (routes `/api/v1/crm/documents/:id`).
+- Report + manual checklist: `docs/crm/PHASE_05_COMPANIES.md`.

@@ -60,7 +60,7 @@ const ALL_COLUMNS: (DataTableColumn<ContactRowDto> & { defaultVisible: boolean }
       </div>
     ),
   },
-  { key: "companyName", header: "Company", sortable: true, defaultVisible: true, render: (c) => c.crmCompany?.name ?? "—" },
+  { key: "companyName", header: "Company", sortable: true, defaultVisible: true, render: (c) => (c.crmCompany ? <Link href={`/crm/companies/${c.crmCompany.id}`} className="hover:underline" onClick={(e) => e.stopPropagation()}>{c.crmCompany.name}</Link> : "—") },
   { key: "email", header: "Email", defaultVisible: true, render: (c) => c.email ?? "—" },
   { key: "phone", header: "Phone", defaultVisible: true, render: (c) => <span className="whitespace-nowrap">{c.mobile ?? c.phone ?? c.whatsapp ?? "—"}</span> },
   { key: "department", header: "Department", defaultVisible: false, render: (c) => c.department ?? "—" },
@@ -89,8 +89,8 @@ const ALL_COLUMNS: (DataTableColumn<ContactRowDto> & { defaultVisible: boolean }
 const DEFAULT_COLUMNS = ALL_COLUMNS.filter((c) => c.defaultVisible).map((c) => c.key);
 
 type Dialog =
-  | { kind: "assign"; target: { contactId: string; version: number } | { ids: string[] }; ownerId?: string | null }
-  | { kind: "tags"; target: { contactId: string } | { ids: string[] }; mode: "edit" | "add" | "remove"; tags?: TagDto[] }
+  | { kind: "assign"; target: { recordId: string; version: number } | { ids: string[] }; ownerId?: string | null }
+  | { kind: "tags"; target: { recordId: string } | { ids: string[] }; mode: "edit" | "add" | "remove"; tags?: TagDto[] }
   | { kind: "archive"; ids: string[]; label: string }
   | { kind: "restore"; contact: ContactRowDto }
   | { kind: "saveView" }
@@ -234,8 +234,8 @@ export function ContactsListClient({ permissions }: { permissions: ContactPermis
     if (permissions.edit && !c.archivedAt) {
       items.push(
         { label: "Edit", onClick: () => router.push(`/crm/contacts/${c.id}/edit`) },
-        { label: "Assign", onClick: () => setDialog({ kind: "assign", target: { contactId: c.id, version: c.version }, ownerId: c.ownerUserId }) },
-        { label: "Edit tags", onClick: () => setDialog({ kind: "tags", target: { contactId: c.id }, mode: "edit", tags: c.tags }) },
+        { label: "Assign", onClick: () => setDialog({ kind: "assign", target: { recordId: c.id, version: c.version }, ownerId: c.ownerUserId }) },
+        { label: "Edit tags", onClick: () => setDialog({ kind: "tags", target: { recordId: c.id }, mode: "edit", tags: c.tags }) },
         { label: "Add note", onClick: () => router.push(`/crm/contacts/${c.id}#notes`) },
         { label: "Merge with…", onClick: () => router.push(`/crm/contacts/merge?ids=${c.id}`) },
         { label: "Archive", onClick: () => setDialog({ kind: "archive", ids: [c.id], label: c.fullName }) }

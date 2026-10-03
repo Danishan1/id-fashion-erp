@@ -27,14 +27,17 @@ export interface CrmMutationContext {
 /**
  * Records that keep a "last activity" timestamp get it bumped by every event
  * written about them, in the same transaction — whichever service emitted
- * the event (notes, tags, merge…). Contacts since Phase 04.
+ * the event (notes, tags, merge…). Contacts since Phase 04, companies since Phase 05.
  */
 async function touchLastActivity(tx: Prisma.TransactionClient, rows: CrmEventRow[]) {
   const contactIds = [...new Set(rows.filter((r) => r.entityType === "CONTACT").map((r) => r.entityId))];
-  if (!contactIds.length) return;
+  const companyIds = [...new Set(rows.filter((r) => r.entityType === "COMPANY").map((r) => r.entityId))];
+  if (!contactIds.length && !companyIds.length) return;
   const at = rows.reduce<Date>((max, r) => (r.occurredAt && r.occurredAt > max ? r.occurredAt : max), new Date(0));
   const when = at.getTime() ? at : new Date();
-  await tx.crmContact.updateMany({ where: { id: { in: contactIds }, OR: [{ lastActivityAt: null }, { lastActivityAt: { lt: when } }] }, data: { lastActivityAt: when } });
+  const stale = { OR: [{ lastActivityAt: null }, { lastActivityAt: { lt: when } }] };
+  if (contactIds.length) await tx.crmContact.updateMany({ where: { id: { in: contactIds }, ...stale }, data: { lastActivityAt: when } });
+  if (companyIds.length) await tx.crmCompany.updateMany({ where: { id: { in: companyIds }, ...stale }, data: { lastActivityAt: when } });
 }
 
 /**

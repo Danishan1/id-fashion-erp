@@ -172,6 +172,7 @@ export async function createCrmContactInMutation(
     summary: [contact.fullName, company?.name].filter(Boolean).join(" · "),
     payload: { ...(sourceLeadId ? { fromLeadId: sourceLeadId } : {}), ownerUserId: contact.ownerUserId, sourceId: contact.sourceId, crmCompanyId },
   });
+  if (crmCompanyId) ctx.emit({ entityType: "COMPANY", entityId: crmCompanyId, eventType: "company.contact_added", summary: contact.fullName, payload: { contactId: contact.id } });
   if (flagged.length) {
     ctx.emit({ entityType: "CONTACT", entityId: contact.id, eventType: "contact.duplicate_flagged", summary: `${flagged.length} possible duplicate(s)`, payload: { contactIds: flagged } });
   }
@@ -485,6 +486,14 @@ export async function updateContact(actor: CrmActor, id: string, raw: unknown) {
     const after = (await CrmContactRepository.findRaw({ id }, ctx.tx))!;
     await ctx.audit({ tableName: TABLE, recordId: id, action: "UPDATE", oldValues: before, newValues: after });
     if (Object.keys(changes).length) ctx.emit({ entityType: "CONTACT", entityId: id, eventType: "contact.updated", summary: `Updated ${Object.keys(changes).length} field(s)`, payload: { changes } });
+    if (changes.crmCompanyId) {
+      // Company timeline: the person joined / left. A leaving primary contact stops being primary.
+      if (before.crmCompanyId) {
+        await ctx.tx.crmCompany.updateMany({ where: { id: before.crmCompanyId, primaryContactId: id }, data: { primaryContactId: null } });
+        ctx.emit({ entityType: "COMPANY", entityId: before.crmCompanyId, eventType: "company.contact_removed", summary: after.fullName, payload: { contactId: id } });
+      }
+      if (after.crmCompanyId) ctx.emit({ entityType: "COMPANY", entityId: after.crmCompanyId, eventType: "company.contact_added", summary: after.fullName, payload: { contactId: id } });
+    }
     if (newOwner !== undefined) await emitOwnerChange(ctx, id, before.ownerUserId, newOwner);
     return after;
   });

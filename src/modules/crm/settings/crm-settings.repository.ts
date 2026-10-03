@@ -84,6 +84,13 @@ export const CrmSettingsRepository = {
   find(companyId: string) {
     return prisma.crmSettings.findUnique({ where: { companyId } });
   },
+  upsertCompanyDuplicateRules(companyId: string, rules: Prisma.InputJsonValue, defaultLeadRules: Prisma.InputJsonValue, userId: string) {
+    return prisma.crmSettings.upsert({
+      where: { companyId },
+      create: { companyId, leadDuplicateRules: defaultLeadRules, companyDuplicateRules: rules, updatedByUserId: userId },
+      update: { companyDuplicateRules: rules, updatedByUserId: userId },
+    });
+  },
   upsertContactDuplicateRules(companyId: string, rules: Prisma.InputJsonValue, defaultLeadRules: Prisma.InputJsonValue, userId: string) {
     return prisma.crmSettings.upsert({
       where: { companyId },
@@ -101,6 +108,10 @@ export const CrmSettingsRepository = {
 };
 
 export const CrmOptionValueRepository = {
+  async listKeysInUse(companyId: string) {
+    const rows = await prisma.crmOptionValue.findMany({ where: { companyId }, select: { listKey: true }, distinct: ["listKey"] });
+    return rows.map((r) => r.listKey);
+  },
   list(companyId: string, listKey: string, includeInactive = true) {
     return prisma.crmOptionValue.findMany({
       where: { companyId, listKey, ...(includeInactive ? {} : { isActive: true }) },
@@ -130,5 +141,47 @@ export const CrmOptionValueRepository = {
   },
   maxSortOrder(companyId: string, listKey: string) {
     return prisma.crmOptionValue.aggregate({ where: { companyId, listKey }, _max: { sortOrder: true } });
+  },
+};
+
+export const CrmCompanyStatusRepository = {
+  list(companyId: string, includeInactive = true) {
+    return prisma.crmCompanyStatus.findMany({ where: { companyId, ...(includeInactive ? {} : { isActive: true }) }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] });
+  },
+  count(companyId: string) {
+    return prisma.crmCompanyStatus.count({ where: { companyId } });
+  },
+  createMany(data: Prisma.CrmCompanyStatusCreateManyInput[]) {
+    return prisma.crmCompanyStatus.createMany({ data, skipDuplicates: true });
+  },
+  findById(companyId: string, id: string) {
+    return prisma.crmCompanyStatus.findFirst({ where: { id, companyId } });
+  },
+  findByKey(companyId: string, key: string) {
+    return prisma.crmCompanyStatus.findFirst({ where: { companyId, key } });
+  },
+  findDefault(companyId: string) {
+    return prisma.crmCompanyStatus.findFirst({ where: { companyId, isDefault: true, isActive: true } });
+  },
+  firstActive(companyId: string) {
+    return prisma.crmCompanyStatus.findFirst({ where: { companyId, isActive: true }, orderBy: { sortOrder: "asc" } });
+  },
+  create(data: Prisma.CrmCompanyStatusUncheckedCreateInput) {
+    return prisma.crmCompanyStatus.create({ data });
+  },
+  update(id: string, data: Prisma.CrmCompanyStatusUncheckedUpdateInput, db: CrmDb = prisma) {
+    return db.crmCompanyStatus.update({ where: { id }, data });
+  },
+  clearDefault(companyId: string, db: CrmDb = prisma) {
+    return db.crmCompanyStatus.updateMany({ where: { companyId, isDefault: true }, data: { isDefault: false } });
+  },
+  countActive(companyId: string, excludeId?: string) {
+    return prisma.crmCompanyStatus.count({ where: { companyId, isActive: true, ...(excludeId ? { id: { not: excludeId } } : {}) } });
+  },
+  maxSortOrder(companyId: string) {
+    return prisma.crmCompanyStatus.aggregate({ where: { companyId }, _max: { sortOrder: true } });
+  },
+  transaction<T>(fn: (tx: Prisma.TransactionClient) => Promise<T>) {
+    return prisma.$transaction(fn);
   },
 };

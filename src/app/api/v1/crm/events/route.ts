@@ -3,7 +3,7 @@ import { crmListResponse, crmRoute } from "@/modules/crm/core/crm-route";
 import { parseCrmEventFilters } from "@/modules/crm/core/crm-event.schema";
 import { listCrmEvents } from "@/modules/crm/core/crm-events.service";
 import { getCrmRecordScope } from "@/modules/crm/core/crm-visibility";
-import { assertCrmEntityAccess, mergedContactIds } from "@/modules/crm/crm-entity-access";
+import { assertCrmEntityAccess, companyTimelineScope, mergedContactIds } from "@/modules/crm/crm-entity-access";
 
 /**
  * CRM activity/timeline feed for the caller's company.
@@ -19,13 +19,23 @@ export const GET = crmRoute("view", async ({ req, actor }) => {
   const query = parseListQuery(req.nextUrl.searchParams, "occurredAt");
   const filters = parseCrmEventFilters(req.nextUrl.searchParams);
   let related: string[] = [];
+  let scopes: { entityType: "CONTACT" | "LEAD"; ids: string[] }[] = [];
   if (filters.entityType && filters.entityId) {
     await assertCrmEntityAccess(actor, filters.entityType as never, filters.entityId);
-    // A contact's timeline includes the history of contacts merged into it.
+    // A record's timeline includes the history of records merged into it.
     if (filters.entityType === "CONTACT") related = await mergedContactIds(actor.companyId, filters.entityId);
+    if (filters.entityType === "COMPANY") {
+      // ?includeRelated=true also shows the company's contacts' and leads' events (visible ones only).
+      const t = await companyTimelineScope(actor, filters.entityId, req.nextUrl.searchParams.get("includeRelated") === "true");
+      related = t.companyIds;
+      scopes = [
+        { entityType: "CONTACT", ids: t.contactIds },
+        { entityType: "LEAD", ids: t.leadIds },
+      ];
+    }
   } else if ((await getCrmRecordScope(actor)).mode === "OWN") {
     filters.actorUserId = actor.userId;
   }
-  const { data, totalCount } = await listCrmEvents(actor.companyId, filters, query, related);
+  const { data, totalCount } = await listCrmEvents(actor.companyId, filters, query, related, scopes);
   return crmListResponse(data, totalCount, query);
 });

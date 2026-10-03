@@ -73,11 +73,14 @@ export const ADDRESS_TYPES = {
 export type AddressType = keyof typeof ADDRESS_TYPES;
 export const ADDRESS_TYPE_KEYS = Object.keys(ADDRESS_TYPES) as [AddressType, ...AddressType[]];
 
-/** Admin-managed suggestion lists (crm_option_values.list_key). */
+import { COMPANY_OPTION_LISTS, DEFAULT_COMPANY_OPTION_VALUES } from "../companies/company-registry";
+
+/** Admin-managed suggestion lists (crm_option_values.list_key). Company lists since Phase 05. */
 export const CRM_OPTION_LISTS = {
   contact_department: { label: "Departments", help: "Suggested on the contact form — e.g. Sourcing, Merchandising, Accounts, Quality." },
   contact_designation: { label: "Designations", help: "Suggested on the contact form — e.g. Buyer, Merchandiser, Owner, Director." },
   contact_role: { label: "Relationship roles", help: "The person's role in the deal — e.g. Decision maker, Influencer, Approver, Payments." },
+  ...COMPANY_OPTION_LISTS,
 } as const;
 export type CrmOptionListKey = keyof typeof CRM_OPTION_LISTS;
 export const CRM_OPTION_LIST_KEYS = Object.keys(CRM_OPTION_LISTS) as [CrmOptionListKey, ...CrmOptionListKey[]];
@@ -86,6 +89,7 @@ export const DEFAULT_OPTION_VALUES: Record<CrmOptionListKey, string[]> = {
   contact_department: ["Sourcing", "Merchandising", "Design", "Quality", "Production", "Accounts", "Logistics", "Management"],
   contact_designation: ["Owner", "Director", "Buyer", "Merchandiser", "Designer", "QA Manager", "Accounts Manager"],
   contact_role: ["Decision maker", "Influencer", "Approver", "Technical contact", "Payments", "Day-to-day contact"],
+  ...DEFAULT_COMPANY_OPTION_VALUES,
 };
 
 // ── Duplicate rules ──────────────────────────────────────────────

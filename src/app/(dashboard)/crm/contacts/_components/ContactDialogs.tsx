@@ -2,14 +2,11 @@
 
 import { useState } from "react";
 import { crmRequest } from "@/components/crm/crm-api";
-import { CrmTagInput, type CrmTagChip } from "@/components/crm/CrmTagInput";
+import { AddressModal, AssignOwnerModal, bulkMessage as recordBulkMessage, RecordTagsModal } from "@/components/crm/CrmRecordDialogs";
 import { Button } from "@/components/ui/Button";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { Modal } from "@/components/ui/Modal";
-import { SearchableSelect } from "@/components/ui/SearchableSelect";
-import { COUNTRIES } from "@/lib/countries";
 import {
-  ADDRESS_TYPES,
   CONTACT_CHANNEL_TYPES,
   CONTACTABILITY_CHANNELS,
   CONTACTABILITY_SOURCES,
@@ -18,7 +15,9 @@ import {
   type ContactabilityChannel,
   type ContactabilityStatus,
 } from "@/modules/crm/contacts/contact-registry";
-import type { AddressDto, BulkResult, ConsentDto, TagDto, UserRefDto } from "./contact-types";
+import type { BulkResult, ConsentDto } from "./contact-types";
+
+export { AddressModal };
 
 function ErrorLine({ message }: { message: string | null }) {
   return message ? <p className="text-sm text-red-600 dark:text-red-400">{message}</p> : null;
@@ -38,114 +37,15 @@ function Footer({ onCancel, busy, label, disabled, danger }: { onCancel: () => v
 }
 
 export function bulkMessage(r: BulkResult, verb: string) {
-  return r.skipped.length ? `${verb} ${r.updated} of ${r.requested}. ${r.skipped.length} skipped.` : `${verb} ${r.updated} contact${r.updated === 1 ? "" : "s"}.`;
+  return recordBulkMessage(r, verb, "contact");
 }
 
-/** Assign one contact (contactId + version) or many (ids → bulk endpoint). */
-export function AssignContactModal({
-  onClose,
-  users,
-  target,
-  currentOwnerId,
-  onDone,
-}: {
-  onClose: () => void;
-  users: UserRefDto[];
-  target: { contactId: string; version?: number } | { ids: string[] };
-  currentOwnerId?: string | null;
-  onDone: (result?: BulkResult) => void;
-}) {
-  const [ownerId, setOwnerId] = useState(currentOwnerId ?? "");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const bulk = "ids" in target;
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setBusy(true);
-    setError(null);
-    const res = bulk
-      ? await crmRequest<BulkResult>("/api/v1/crm/contacts/bulk", { method: "POST", body: { action: "assign", ids: target.ids, ownerUserId: ownerId || null }, toast: "errors" })
-      : await crmRequest(`/api/v1/crm/contacts/${target.contactId}/assign`, { method: "POST", body: { ownerUserId: ownerId || null, version: target.version }, successMessage: "Owner updated." });
-    setBusy(false);
-    if (!res.ok) return setError(res.error.message);
-    onDone(bulk ? (res.data as BulkResult) : undefined);
-  };
-
-  return (
-    <Modal open onClose={onClose} title={bulk ? `Assign ${target.ids.length} contact(s)` : "Assign contact"}>
-      <form onSubmit={submit} className="mt-4 space-y-4">
-        <FormField label="Owner" htmlFor="assign-owner">
-          <SearchableSelect id="assign-owner" value={ownerId} onChange={setOwnerId} options={users.map((u) => ({ id: u.id, label: u.fullName }))} placeholder="Search people…" emptyOptionLabel="— Unassigned —" />
-        </FormField>
-        <ErrorLine message={error} />
-        <Footer onCancel={onClose} busy={busy} label="Assign" />
-      </form>
-    </Modal>
-  );
+export function AssignContactModal(props: Omit<Parameters<typeof AssignOwnerModal>[0], "apiBase" | "noun">) {
+  return <AssignOwnerModal apiBase="/api/v1/crm/contacts" noun="contact" {...props} />;
 }
 
-/** Edit tags on one contact, or add / remove tags in bulk. */
-export function ContactTagsModal({
-  onClose,
-  target,
-  currentTags = [],
-  mode = "edit",
-  onDone,
-}: {
-  onClose: () => void;
-  target: { contactId: string } | { ids: string[] };
-  currentTags?: TagDto[];
-  mode?: "edit" | "add" | "remove";
-  onDone: (result?: BulkResult) => void;
-}) {
-  const [tags, setTags] = useState<CrmTagChip[]>(mode === "edit" ? currentTags : []);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const bulk = "ids" in target;
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setBusy(true);
-    setError(null);
-    let res;
-    if (bulk) {
-      const existing = tags.filter((t) => t.id).map((t) => t.id as string);
-      res =
-        mode === "remove"
-          ? await crmRequest<BulkResult>("/api/v1/crm/contacts/bulk", { method: "POST", body: { action: "removeTags", ids: target.ids, tagIds: existing }, toast: "errors" })
-          : await crmRequest<BulkResult>("/api/v1/crm/contacts/bulk", { method: "POST", body: { action: "addTags", ids: target.ids, tagIds: existing, tagNames: tags.filter((t) => !t.id).map((t) => t.name) }, toast: "errors" });
-    } else {
-      const before = new Set(currentTags.map((t) => t.id));
-      const keep = new Set(tags.filter((t) => t.id).map((t) => t.id));
-      const body = {
-        addTagIds: tags.filter((t) => t.id && !before.has(t.id)).map((t) => t.id),
-        addTagNames: tags.filter((t) => !t.id).map((t) => t.name),
-        removeTagIds: currentTags.filter((t) => !keep.has(t.id)).map((t) => t.id),
-      };
-      if (!body.addTagIds.length && !body.addTagNames.length && !body.removeTagIds.length) {
-        setBusy(false);
-        return onClose();
-      }
-      res = await crmRequest(`/api/v1/crm/contacts/${target.contactId}/tags`, { method: "POST", body, successMessage: "Tags updated." });
-    }
-    setBusy(false);
-    if (!res.ok) return setError(res.error.message);
-    onDone(bulk ? (res.data as BulkResult) : undefined);
-  };
-
-  const title = bulk ? (mode === "remove" ? `Remove tags from ${target.ids.length} contact(s)` : `Add tags to ${target.ids.length} contact(s)`) : "Edit tags";
-  return (
-    <Modal open onClose={onClose} title={title} maxWidthClass="max-w-lg">
-      <form onSubmit={submit} className="mt-4 space-y-4">
-        <FormField label="Tags" htmlFor="contact-tags-input">
-          <CrmTagInput id="contact-tags-input" value={tags} onChange={setTags} allowCreate={mode !== "remove"} />
-        </FormField>
-        <ErrorLine message={error} />
-        <Footer onCancel={onClose} busy={busy} label={mode === "remove" ? "Remove tags" : "Save tags"} disabled={bulk && tags.length === 0} />
-      </form>
-    </Modal>
-  );
+export function ContactTagsModal(props: Omit<Parameters<typeof RecordTagsModal>[0], "apiBase" | "noun">) {
+  return <RecordTagsModal apiBase="/api/v1/crm/contacts" noun="contact" {...props} />;
 }
 
 /** Set contactability (DND) for one channel or for all channels. */
@@ -206,87 +106,6 @@ export function ContactabilityModal({
         {channel === "ALL" && status !== "ALLOWED" && <p className="text-xs text-amber-700 dark:text-amber-300">This blocks every channel, whatever each channel&apos;s own setting is.</p>}
         <ErrorLine message={error} />
         <Footer onCancel={onClose} busy={busy} label="Save" />
-      </form>
-    </Modal>
-  );
-}
-
-const emptyAddress = { addressType: "OFFICE", label: "", line1: "", line2: "", city: "", state: "", postalCode: "", country: "", isPrimary: false };
-
-/** Add or edit one address. */
-export function AddressModal({ contactId, address, onClose, onDone }: { contactId: string; address: AddressDto | null; onClose: () => void; onDone: () => void }) {
-  const [v, setV] = useState(() =>
-    address
-      ? {
-          addressType: address.addressType,
-          label: address.label ?? "",
-          line1: address.line1,
-          line2: address.line2 ?? "",
-          city: address.city ?? "",
-          state: address.state ?? "",
-          postalCode: address.postalCode ?? "",
-          country: address.country ?? "",
-          isPrimary: address.isPrimary,
-        }
-      : emptyAddress
-  );
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const set = (k: keyof typeof v, value: string | boolean) => setV((p) => ({ ...p, [k]: value }));
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!v.line1.trim()) return setError("Address line 1 is required.");
-    setBusy(true);
-    setError(null);
-    const body = { ...v, isPrimary: v.isPrimary || undefined };
-    const res = address
-      ? await crmRequest(`/api/v1/crm/contacts/${contactId}/addresses/${address.id}`, { method: "PATCH", body, successMessage: "Address updated." })
-      : await crmRequest(`/api/v1/crm/contacts/${contactId}/addresses`, { method: "POST", body, successMessage: "Address added." });
-    setBusy(false);
-    if (!res.ok) return setError(res.error.message);
-    onDone();
-  };
-
-  const input = (k: keyof typeof v, label: string, props: React.InputHTMLAttributes<HTMLInputElement> = {}) => (
-    <FormField label={label} htmlFor={`addr-${k}`} required={k === "line1"}>
-      <input id={`addr-${k}`} className={textInputClass()} value={String(v[k])} onChange={(e) => set(k, e.target.value)} {...props} />
-    </FormField>
-  );
-
-  return (
-    <Modal open onClose={onClose} title={address ? "Edit address" : "Add address"} maxWidthClass="max-w-xl">
-      <form onSubmit={submit} className="mt-4 space-y-4">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <FormField label="Type" htmlFor="addr-type">
-            <select id="addr-type" className={textInputClass()} value={v.addressType} onChange={(e) => set("addressType", e.target.value)}>
-              {Object.entries(ADDRESS_TYPES).map(([k, label]) => (
-                <option key={k} value={k}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </FormField>
-          {input("label", "Label", { maxLength: 80, placeholder: "e.g. Head office" })}
-        </div>
-        {input("line1", "Address line 1", { maxLength: 200 })}
-        {input("line2", "Address line 2", { maxLength: 200 })}
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          {input("city", "City", { maxLength: 100 })}
-          {input("state", "State / region", { maxLength: 100 })}
-          {input("postalCode", "Postal code", { maxLength: 20 })}
-          <FormField label="Country" htmlFor="addr-country">
-            <SearchableSelect id="addr-country" value={v.country} onChange={(c) => set("country", c)} options={COUNTRIES.map((c) => ({ id: c, label: c }))} placeholder="Search countries…" emptyOptionLabel="—" />
-          </FormField>
-        </div>
-        {!address?.isPrimary && (
-          <label className="flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-200">
-            <input type="checkbox" checked={v.isPrimary} onChange={(e) => set("isPrimary", e.target.checked)} />
-            Make this the primary address
-          </label>
-        )}
-        <ErrorLine message={error} />
-        <Footer onCancel={onClose} busy={busy} label={address ? "Save address" : "Add address"} />
       </form>
     </Modal>
   );

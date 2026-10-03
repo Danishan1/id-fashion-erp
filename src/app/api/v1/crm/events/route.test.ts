@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
-const { requireSessionMock, assertMock, listMock, getMock, scopeMock, accessMock, mergedMock } = vi.hoisted(() => ({
+const { requireSessionMock, assertMock, listMock, getMock, scopeMock, accessMock, mergedMock, companyScopeMock } = vi.hoisted(() => ({
   mergedMock: vi.fn(),
+  companyScopeMock: vi.fn(),
   requireSessionMock: vi.fn(),
   assertMock: vi.fn(),
   listMock: vi.fn(),
@@ -24,7 +25,7 @@ vi.mock("@/lib/api-route", async () => {
 vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { assert: assertMock } }));
 vi.mock("@/modules/crm/core/crm-events.service", () => ({ listCrmEvents: listMock, getCrmEventById: getMock }));
 vi.mock("@/modules/crm/core/crm-visibility", () => ({ getCrmRecordScope: scopeMock }));
-vi.mock("@/modules/crm/crm-entity-access", () => ({ assertCrmEntityAccess: accessMock, mergedContactIds: mergedMock }));
+vi.mock("@/modules/crm/crm-entity-access", () => ({ assertCrmEntityAccess: accessMock, mergedContactIds: mergedMock, companyTimelineScope: companyScopeMock }));
 
 const { GET: listGET } = await import("./route");
 const { GET: detailGET } = await import("./[id]/route");
@@ -39,6 +40,7 @@ beforeEach(() => {
   scopeMock.mockReset().mockResolvedValue({ mode: "ALL" });
   accessMock.mockReset().mockResolvedValue(undefined);
   mergedMock.mockReset().mockResolvedValue([]);
+  companyScopeMock.mockReset().mockResolvedValue({ companyIds: [], contactIds: [], leadIds: [] });
 });
 
 describe("GET /api/v1/crm/events", () => {
@@ -52,6 +54,7 @@ describe("GET /api/v1/crm/events", () => {
       "co-1",
       expect.objectContaining({ eventType: "lead.created", entityType: "LEAD", entityId: ID, from: "2026-10-01" }),
       expect.objectContaining({ page: 2, skip: 20, take: 20, sortOrder: "desc" }),
+      [],
       []
     );
     expect(await res.json()).toEqual({ data: [{ id: "ev-1" }], meta: { page: 2, pageSize: 20, totalCount: 41, totalPages: 3 } });
@@ -83,7 +86,7 @@ describe("CRM event visibility", () => {
     mergedMock.mockResolvedValue([MERGED]);
     await listGET(new NextRequest(`http://x/api/v1/crm/events?entityType=CONTACT&entityId=${ID}`), { params: Promise.resolve({}) });
     expect(mergedMock).toHaveBeenCalledWith("co-1", ID);
-    expect(listMock).toHaveBeenCalledWith("co-1", expect.objectContaining({ entityType: "CONTACT", entityId: ID }), expect.anything(), [MERGED]);
+    expect(listMock).toHaveBeenCalledWith("co-1", expect.objectContaining({ entityType: "CONTACT", entityId: ID }), expect.anything(), [MERGED], []);
   });
 
   it("returns 404 for a record timeline the caller cannot see", async () => {
@@ -94,10 +97,24 @@ describe("CRM event visibility", () => {
     expect(listMock).not.toHaveBeenCalled();
   });
 
+  it("includes merged companies and, on request, the company's visible contacts and leads", async () => {
+    const MERGED = "7f1c2f1e-1f2a-4b1a-9d1a-2b3c4d5e6f72";
+    const CONTACT = "7f1c2f1e-1f2a-4b1a-9d1a-2b3c4d5e6f73";
+    const LEAD = "7f1c2f1e-1f2a-4b1a-9d1a-2b3c4d5e6f74";
+    companyScopeMock.mockResolvedValue({ companyIds: [MERGED], contactIds: [CONTACT], leadIds: [LEAD] });
+    await listGET(new NextRequest(`http://x/api/v1/crm/events?entityType=COMPANY&entityId=${ID}&includeRelated=true`), { params: Promise.resolve({}) });
+    expect(accessMock).toHaveBeenCalledWith(expect.anything(), "COMPANY", ID);
+    expect(companyScopeMock).toHaveBeenCalledWith(expect.objectContaining({ companyId: "co-1" }), ID, true);
+    expect(listMock).toHaveBeenCalledWith("co-1", expect.objectContaining({ entityType: "COMPANY", entityId: ID }), expect.anything(), [MERGED], [
+      { entityType: "CONTACT", ids: [CONTACT] },
+      { entityType: "LEAD", ids: [LEAD] },
+    ]);
+  });
+
   it("limits the company-wide feed to the caller's own actions without crm.view_all", async () => {
     scopeMock.mockResolvedValue({ mode: "OWN", userId: "user-1" });
     await listGET(new NextRequest("http://x/api/v1/crm/events"), { params: Promise.resolve({}) });
-    expect(listMock).toHaveBeenCalledWith("co-1", expect.objectContaining({ actorUserId: "user-1" }), expect.anything(), []);
+    expect(listMock).toHaveBeenCalledWith("co-1", expect.objectContaining({ actorUserId: "user-1" }), expect.anything(), [], []);
   });
 
   it("hides another user's event on a record the caller cannot see", async () => {

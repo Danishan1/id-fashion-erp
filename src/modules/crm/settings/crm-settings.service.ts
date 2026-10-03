@@ -10,9 +10,13 @@ import {
 } from "./crm-defaults";
 import { nameKey } from "../core/crm-normalize";
 import { CRM_OPTION_LIST_KEYS, DEFAULT_CONTACT_DUPLICATE_RULES, DEFAULT_OPTION_VALUES, type ContactDuplicateRule, type ContactDuplicateRuleKey, type CrmOptionListKey } from "../contacts/contact-registry";
-import { CrmLeadSourceRepository, CrmLeadStatusRepository, CrmOptionValueRepository, CrmSettingsRepository } from "./crm-settings.repository";
+import { DEFAULT_COMPANY_DUPLICATE_RULES, DEFAULT_COMPANY_STATUSES, type CompanyDuplicateRule, type CompanyDuplicateRuleKey } from "../companies/company-registry";
+import { CrmCompanyStatusRepository, CrmLeadSourceRepository, CrmLeadStatusRepository, CrmOptionValueRepository, CrmSettingsRepository } from "./crm-settings.repository";
 import {
+  companyDuplicateRulesSchema,
   contactDuplicateRulesSchema,
+  createCompanyStatusSchema,
+  updateCompanyStatusSchema,
   createLeadSourceSchema,
   createLeadStatusSchema,
   createOptionValueSchema,
@@ -257,11 +261,13 @@ export async function updateContactDuplicateRules(actor: CrmActor, raw: unknown)
 
 // ── Option lists (departments, designations, roles) ─────────────
 
-/** Seeds the default suggestions the first time a company uses option lists (idempotent). */
+/** Seeds the default suggestions of every list that has never had a value (idempotent; lists added later get seeded too). */
 export async function ensureCrmOptionDefaults(companyId: string) {
-  if ((await CrmOptionValueRepository.count(companyId)) > 0) return;
+  const used = new Set(await CrmOptionValueRepository.listKeysInUse(companyId));
+  const missing = CRM_OPTION_LIST_KEYS.filter((k) => !used.has(k));
+  if (!missing.length) return;
   await CrmOptionValueRepository.createMany(
-    CRM_OPTION_LIST_KEYS.flatMap((listKey) => DEFAULT_OPTION_VALUES[listKey].map((value, i) => ({ companyId, listKey, value, valueKey: nameKey(value), sortOrder: (i + 1) * 10 })))
+    missing.flatMap((listKey) => DEFAULT_OPTION_VALUES[listKey].map((value, i) => ({ companyId, listKey, value, valueKey: nameKey(value), sortOrder: (i + 1) * 10 })))
   );
 }
 
@@ -305,4 +311,97 @@ export async function updateOptionValue(actor: CrmActor, id: string, raw: unknow
   });
   await writeAuditLog({ companyId: actor.companyId, userId: actor.userId, tableName: "crm_option_values", recordId: id, action: "UPDATE", oldValues: before, newValues: row });
   return row;
+}
+
+// ── Company duplicate rules (Phase 05) ───────────────────────────
+
+export async function getCompanyDuplicateRules(companyId: string): Promise<CompanyDuplicateRule[]> {
+  const settings = await CrmSettingsRepository.find(companyId);
+  const stored = Array.isArray(settings?.companyDuplicateRules) ? (settings!.companyDuplicateRules as unknown as CompanyDuplicateRule[]) : [];
+  const byRule = new Map<CompanyDuplicateRuleKey, CompanyDuplicateRule>(stored.map((r) => [r.rule, r]));
+  return DEFAULT_COMPANY_DUPLICATE_RULES.map((d) => byRule.get(d.rule) ?? d);
+}
+
+export async function updateCompanyDuplicateRules(actor: CrmActor, raw: unknown) {
+  const { rules } = companyDuplicateRulesSchema.parse(raw);
+  const before = await getCompanyDuplicateRules(actor.companyId);
+  const byRule = new Map(rules.map((r) => [r.rule, r]));
+  const merged = before.map((r) => byRule.get(r.rule) ?? r);
+  await CrmSettingsRepository.upsertCompanyDuplicateRules(actor.companyId, merged as never, DEFAULT_LEAD_DUPLICATE_RULES as never, actor.userId);
+  await writeAuditLog({ companyId: actor.companyId, userId: actor.userId, tableName: "crm_settings", recordId: actor.companyId, action: "UPDATE", oldValues: { companyDuplicateRules: before }, newValues: { companyDuplicateRules: merged } });
+  return merged;
+}
+
+// ── Company statuses (Phase 05) ──────────────────────────────────
+
+/** Creates the default company statuses the first time they are needed (idempotent). */
+export async function ensureCompanyStatusDefaults(companyId: string) {
+  if ((await CrmCompanyStatusRepository.count(companyId)) > 0) return;
+  await CrmCompanyStatusRepository.createMany(
+    DEFAULT_COMPANY_STATUSES.map((s, i) => ({ companyId, key: s.key, name: s.name, color: s.color, isDefault: Boolean(s.isDefault), sortOrder: (i + 1) * 10 }))
+  );
+}
+
+export async function listCompanyStatuses(companyId: string, { includeInactive = true } = {}) {
+  await ensureCompanyStatusDefaults(companyId);
+  return CrmCompanyStatusRepository.list(companyId, includeInactive);
+}
+
+export async function getCompanyStatusForCompany(companyId: string, id: string) {
+  const status = await CrmCompanyStatusRepository.findById(companyId, id);
+  if (!status) throw new BusinessRuleError("NOT_FOUND", "Company status not found.", { id });
+  return status;
+}
+
+export async function getDefaultCompanyStatus(companyId: string) {
+  await ensureCompanyStatusDefaults(companyId);
+  return (await CrmCompanyStatusRepository.findDefault(companyId)) ?? (await CrmCompanyStatusRepository.firstActive(companyId));
+}
+
+export async function createCompanyStatus(actor: CrmActor, raw: unknown) {
+  const input = createCompanyStatusSchema.parse(raw);
+  await ensureCompanyStatusDefaults(actor.companyId);
+  const key = input.key ?? (await uniqueKey(actor.companyId, keyFromName(input.name), (k) => CrmCompanyStatusRepository.findByKey(actor.companyId, k)));
+  if (await CrmCompanyStatusRepository.findByKey(actor.companyId, key)) throw new BusinessRuleError("VALIDATION_ERROR", `A status with key "${key}" already exists.`);
+  const max = await CrmCompanyStatusRepository.maxSortOrder(actor.companyId);
+  const status = await CrmCompanyStatusRepository.create({ companyId: actor.companyId, key, name: input.name, color: input.color, sortOrder: (max._max.sortOrder ?? 0) + 10 });
+  await writeAuditLog({ companyId: actor.companyId, userId: actor.userId, tableName: "crm_company_statuses", recordId: status.id, action: "CREATE", newValues: status });
+  return status;
+}
+
+/** Keeps the list usable: one active default, at least one active status. Statuses in use can be renamed or retired, never deleted. */
+export async function updateCompanyStatus(actor: CrmActor, id: string, raw: unknown) {
+  const input = updateCompanyStatusSchema.parse(raw);
+  const before = await getCompanyStatusForCompany(actor.companyId, id);
+  const nextActive = input.isActive ?? before.isActive;
+  if (before.isDefault && !nextActive) throw new BusinessRuleError("VALIDATION_ERROR", "This is the default status for new companies. Make another status the default first.");
+  if (input.isDefault && !nextActive) throw new BusinessRuleError("VALIDATION_ERROR", "Only an active status can be the default.");
+  if (before.isActive && !nextActive && (await CrmCompanyStatusRepository.countActive(actor.companyId, id)) === 0) throw new BusinessRuleError("VALIDATION_ERROR", "At least one active status is required.");
+  const updated = await CrmCompanyStatusRepository.transaction(async (tx) => {
+    if (input.isDefault) await CrmCompanyStatusRepository.clearDefault(actor.companyId, tx);
+    return CrmCompanyStatusRepository.update(
+      id,
+      {
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.color !== undefined ? { color: input.color } : {}),
+        ...(input.isActive !== undefined ? { isActive: input.isActive } : {}),
+        ...(input.isDefault ? { isDefault: true } : {}),
+      },
+      tx
+    );
+  });
+  await writeAuditLog({ companyId: actor.companyId, userId: actor.userId, tableName: "crm_company_statuses", recordId: id, action: "UPDATE", oldValues: before, newValues: updated });
+  return updated;
+}
+
+export async function reorderCompanyStatuses(actor: CrmActor, raw: unknown) {
+  const { ids } = reorderSchema.parse(raw);
+  const existing = await CrmCompanyStatusRepository.list(actor.companyId);
+  const known = new Set(existing.map((s) => s.id));
+  if (ids.length !== known.size || ids.some((i) => !known.has(i))) throw new BusinessRuleError("VALIDATION_ERROR", "Send every status exactly once to reorder.");
+  await CrmCompanyStatusRepository.transaction(async (tx) => {
+    for (const [i, sid] of ids.entries()) await CrmCompanyStatusRepository.update(sid, { sortOrder: (i + 1) * 10 }, tx);
+  });
+  await writeAuditLog({ companyId: actor.companyId, userId: actor.userId, tableName: "crm_company_statuses", recordId: ids[0], action: "UPDATE", newValues: { order: ids } });
+  return CrmCompanyStatusRepository.list(actor.companyId);
 }

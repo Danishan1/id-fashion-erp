@@ -52,8 +52,31 @@ export const contactDuplicateRulesSchema = z.object({
     .min(1),
 });
 
+export const companyDuplicateRulesSchema = z.object({
+  rules: z
+    .array(
+      z.object({
+        rule: z.enum(["NAME", "LEGAL_NAME", "WEBSITE", "EMAIL", "PHONE"]),
+        action: z.enum(["WARN", "BLOCK", "FLAG", "OFF"]),
+      })
+    )
+    .min(1),
+});
+
+export const createCompanyStatusSchema = z.object({
+  name: z.string().trim().min(1, "Name is required").max(60),
+  key: keySchema.optional(),
+  color: z.enum(LEAD_STATUS_COLORS).default("neutral"),
+});
+export const updateCompanyStatusSchema = z.object({
+  name: z.string().trim().min(1).max(60).optional(),
+  color: z.enum(LEAD_STATUS_COLORS).optional(),
+  isActive: z.boolean().optional(),
+  isDefault: z.literal(true).optional(),
+});
+
 export const createOptionValueSchema = z.object({
-  listKey: z.enum(["contact_department", "contact_designation", "contact_role"]),
+  listKey: z.enum(["contact_department", "contact_designation", "contact_role", "company_industry", "company_type"]),
   value: z.string().trim().min(1, "Value is required").max(100),
 });
 export const updateOptionValueSchema = z.object({

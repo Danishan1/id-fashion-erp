@@ -90,11 +90,11 @@ function initialValues(contact?: ContactDetailDto, defaults?: { sourceId?: strin
   return v;
 }
 
-export function ContactForm({ contact, currentUserId }: { contact?: ContactDetailDto; currentUserId: string }) {
+export function ContactForm({ contact, currentUserId, initialCompany }: { contact?: ContactDetailDto; currentUserId: string; initialCompany?: { id: string; name: string } | null }) {
   const router = useRouter();
   const { meta, users, error: lookupError, reload } = useContactLookups();
   const [values, setValues] = useState<Values | null>(contact ? initialValues(contact) : null);
-  const [company, setCompany] = useState(contact?.crmCompanyId ? `co:${contact.crmCompanyId}` : "");
+  const [company, setCompany] = useState(contact?.crmCompanyId ? `co:${contact.crmCompanyId}` : initialCompany ? `co:${initialCompany.id}` : "");
   const [options, setOptions] = useState<CompanyOptions>({ companies: [], customers: null });
   const [customFields, setCustomFields] = useState<Record<string, unknown>>(contact?.customFields ?? {});
   const [tags, setTags] = useState<CrmTagChip[]>([]);
@@ -122,12 +122,13 @@ export function ContactForm({ contact, currentUserId }: { contact?: ContactDetai
   const companyOptions = useMemo(() => {
     const list: { id: string; label: string; sublabel?: string }[] = options.companies.map((c) => ({ id: `co:${c.id}`, label: c.name, sublabel: [c.customerId ? "ERP customer" : "CRM company", c.city, c.country].filter(Boolean).join(" · ") }));
     if (contact?.crmCompany && !options.companies.some((c) => c.id === contact.crmCompany!.id)) list.unshift({ id: `co:${contact.crmCompany.id}`, label: contact.crmCompany.name, sublabel: "Current company" });
+    if (!contact && initialCompany && !list.some((o) => o.id === `co:${initialCompany.id}`)) list.unshift({ id: `co:${initialCompany.id}`, label: initialCompany.name, sublabel: "CRM company" });
     for (const cu of options.customers ?? []) {
       if (cu.crmCompanyId && list.some((o) => o.id === `co:${cu.crmCompanyId}`)) continue;
       list.push({ id: `cu:${cu.id}`, label: cu.name, sublabel: ["ERP customer", cu.code, cu.city, cu.country].filter(Boolean).join(" · ") });
     }
     return list;
-  }, [options, contact?.crmCompany]);
+  }, [options, contact, initialCompany]);
 
   const crmCompanyIdForDup = company.startsWith("co:") ? company.slice(3) : null;
   const dupKey = values ? [...DUP_KEYS.map((k) => values[k]), crmCompanyIdForDup].join("|") : "";

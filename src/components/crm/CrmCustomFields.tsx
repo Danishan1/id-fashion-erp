@@ -162,9 +162,9 @@ export function formatCustomFieldValue(d: CrmCustomFieldDefinitionDto, value: un
 }
 
 /** Read-only list of custom-field values (inactive fields still show if they hold data). */
-export function CrmCustomFieldValues({ definitions, values }: { definitions: CrmCustomFieldDefinitionDto[]; values: CustomFieldFormValues }) {
+export function CrmCustomFieldValues({ definitions, values, noun = "leads" }: { definitions: CrmCustomFieldDefinitionDto[]; values: CustomFieldFormValues; noun?: string }) {
   const shown = definitions.filter((d) => d.isActive || (values[d.key] !== undefined && values[d.key] !== null));
-  if (!shown.length) return <p className="text-sm text-zinc-500 dark:text-zinc-400">No custom fields are set up for leads. Admins can add them in CRM Settings.</p>;
+  if (!shown.length) return <p className="text-sm text-zinc-500 dark:text-zinc-400">No custom fields are set up for {noun}. Admins can add them in CRM Settings.</p>;
   return (
     <dl className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
       {shown.map((d) => (

@@ -54,6 +54,10 @@ export const ContactMergeRepository = {
   deleteChannels(contactId: string, db: CrmDb) {
     return db.crmContactChannel.deleteMany({ where: { contactId } });
   },
+  /** Companies whose primary contact was the merged contact now point at the survivor. */
+  repointPrimaryContact(from: string, to: string, db: CrmDb) {
+    return db.crmCompany.updateMany({ where: { primaryContactId: from }, data: { primaryContactId: to } });
+  },
   /** Contacts that were merged into the merged contact now point at the survivor (no merge chains). */
   repointEarlierMerges(from: string, to: string, db: CrmDb) {
     return db.crmContact.updateMany({ where: { mergedIntoId: from }, data: { mergedIntoId: to } });

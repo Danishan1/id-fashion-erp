@@ -3,8 +3,8 @@ import { z } from "zod";
 import { crmRoute } from "@/modules/crm/core/crm-route";
 import { createCustomField, listCustomFields } from "@/modules/crm/custom-fields/crm-custom-fields.service";
 
-// Lead fields since Phase 02, contact fields since Phase 04; other entity types open up with their phases.
-const entityTypeSchema = z.enum(["LEAD", "CONTACT"]);
+// Lead fields since Phase 02, contact fields since Phase 04, company fields since Phase 05.
+const entityTypeSchema = z.enum(["LEAD", "CONTACT", "COMPANY"]);
 
 export const GET = crmRoute({ module: "crm_settings", action: "view" }, async ({ req, actor }) => {
   const entityType = entityTypeSchema.parse(req.nextUrl.searchParams.get("entityType") ?? "LEAD");

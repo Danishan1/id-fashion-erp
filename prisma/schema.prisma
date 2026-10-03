@@ -122,6 +122,8 @@ model Company {
   crmContactConsents                  CrmContactConsent[]
   crmContactMerges                    CrmContactMerge[]
   crmOptionValues                     CrmOptionValue[]
+  crmCompanyStatuses                  CrmCompanyStatus[]
+  crmCompanyMerges                    CrmCompanyMerge[]
   attendanceRecords                   AttendanceRecord[]
   attendanceCorrectionRequests        AttendanceCorrectionRequest[]
   leaveTypes                          LeaveType[]
@@ -7631,6 +7633,9 @@ enum RelatedModule {
   // CRM Contacts (Phase 04, 2026-10-02) -- documents attached to a CRM
   // contact (relatedRecordId = CrmContact.id). Moved to the survivor on merge.
   CRM_CONTACT
+  // CRM Companies (Phase 05, 2026-10-03) -- documents attached to a CRM
+  // company (relatedRecordId = CrmCompany.id). Moved to the survivor on merge.
+  CRM_COMPANY
 }
 
 model Attachment {
@@ -8068,6 +8073,7 @@ model CrmLeadSource {
   apiKeys          CrmApiKey[]
   webhookEndpoints CrmWebhookEndpoint[]
   contacts         CrmContact[]
+  companies        CrmCompany[]
 
   @@unique([companyId, key])
   @@index([companyId, sortOrder])
@@ -8153,6 +8159,7 @@ model CrmLead {
   importRows           CrmImportRow[]       @relation("CrmImportRowLead")
   ingestEvents         CrmIngestEvent[]
   sourcedContacts      CrmContact[]         @relation("CrmContactSourceLead")
+  sourcedCompanies     CrmCompany[]         @relation("CrmCompanySourceLead")
 
   @@unique([companyId, leadNumber])
   @@index([companyId, archivedAt, createdAt])
@@ -8166,40 +8173,131 @@ model CrmLead {
   @@map("crm_leads")
 }
 
-// Lean Phase 02 version (created/linked by lead conversion). Phase 05 adds
-// pages, more fields and merge; optional link to the authoritative ERP
-// Customer — no customer data is copied here.
+// The CRM's view of a business relationship (Phase 05, 2026-10-03). The
+// authoritative customer master stays the ERP `Customer`: a CRM company only
+// references it (customer_id, unique) and never copies its commercial,
+// tax or financial data. city/state/country are the company's headline
+// location; full postal addresses live in crm_addresses.
 model CrmCompany {
-  id              String    @id @default(uuid()) @db.Uuid
-  companyId       String    @map("company_id") @db.Uuid
-  name            String
-  nameKey         String    @map("name_key")
-  website         String?
-  industry        String?
-  email           String?
-  phone           String?
-  city            String?
-  state           String?
-  country         String?
-  customerId      String?   @unique @map("customer_id") @db.Uuid
-  ownerUserId     String?   @map("owner_user_id") @db.Uuid
-  customFields    Json      @default("{}") @map("custom_fields")
-  archivedAt      DateTime? @map("archived_at")
-  createdByUserId String    @map("created_by_user_id") @db.Uuid
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
+  id                  String    @id @default(uuid()) @db.Uuid
+  companyId           String    @map("company_id") @db.Uuid
+  name                String
+  nameKey             String    @map("name_key")
+  // Name without punctuation / legal suffixes ("Rao Exports Pvt. Ltd." →
+  // "rao exports") — the duplicate-matching key; legalMatchKey the same for legalName.
+  nameMatchKey        String    @default("") @map("name_match_key")
+  legalName           String?   @map("legal_name")
+  legalMatchKey       String?   @map("legal_match_key")
+  displayName         String?   @map("display_name")
+  companyType         String?   @map("company_type")
+  website             String?
+  // Bare host ("abc.com") for duplicate matching.
+  websiteKey          String?   @map("website_key")
+  industry            String?
+  email               String?
+  phone               String?
+  mobile              String?
+  city                String?
+  state               String?
+  postalCode          String?   @map("postal_code")
+  country             String?
+  emailKeys           String[]  @default([]) @map("email_keys")
+  phoneKeys           String[]  @default([]) @map("phone_keys")
+  searchText          String    @default("") @map("search_text")
+  statusId            String?   @map("status_id") @db.Uuid
+  sourceId            String?   @map("source_id") @db.Uuid
+  sourceLeadId        String?   @map("source_lead_id") @db.Uuid
+  primaryContactId    String?   @map("primary_contact_id") @db.Uuid
+  customerId          String?   @unique @map("customer_id") @db.Uuid
+  ownerUserId         String?   @map("owner_user_id") @db.Uuid
+  customFields        Json      @default("{}") @map("custom_fields")
+  lastActivityAt      DateTime? @map("last_activity_at")
+  duplicateFlaggedAt  DateTime? @map("duplicate_flagged_at")
+  flaggedDuplicateIds String[]  @default([]) @map("flagged_duplicate_ids") @db.Uuid
+  mergedIntoId        String?   @map("merged_into_id") @db.Uuid
+  mergedAt            DateTime? @map("merged_at")
+  mergedByUserId      String?   @map("merged_by_user_id") @db.Uuid
+  archivedAt          DateTime? @map("archived_at")
+  archivedByUserId    String?   @map("archived_by_user_id") @db.Uuid
+  createdByUserId     String    @map("created_by_user_id") @db.Uuid
+  updatedByUserId     String?   @map("updated_by_user_id") @db.Uuid
+  version             Int       @default(1)
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
 
-  company       Company          @relation(fields: [companyId], references: [id])
-  customer      Customer?        @relation(fields: [customerId], references: [id], onDelete: SetNull)
-  owner         User?            @relation("CrmCompanyOwner", fields: [ownerUserId], references: [id])
-  createdBy     User             @relation("CrmCompanyCreatedBy", fields: [createdByUserId], references: [id])
-  leads         CrmLead[]
-  contacts      CrmContact[]
-  opportunities CrmOpportunity[]
-  addresses     CrmAddress[]
+  company        Company            @relation(fields: [companyId], references: [id])
+  customer       Customer?          @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  owner          User?              @relation("CrmCompanyOwner", fields: [ownerUserId], references: [id])
+  createdBy      User               @relation("CrmCompanyCreatedBy", fields: [createdByUserId], references: [id])
+  status         CrmCompanyStatus?  @relation(fields: [statusId], references: [id])
+  source         CrmLeadSource?     @relation(fields: [sourceId], references: [id])
+  sourceLead     CrmLead?           @relation("CrmCompanySourceLead", fields: [sourceLeadId], references: [id], onDelete: SetNull)
+  primaryContact CrmContact?        @relation("CrmCompanyPrimaryContact", fields: [primaryContactId], references: [id], onDelete: SetNull)
+  mergedInto     CrmCompany?        @relation("CrmCompanyMergedInto", fields: [mergedIntoId], references: [id])
+  mergedFrom     CrmCompany[]       @relation("CrmCompanyMergedInto")
+  leads          CrmLead[]
+  contacts       CrmContact[]
+  opportunities  CrmOpportunity[]
+  addresses      CrmAddress[]
+  mergesSurvived CrmCompanyMerge[]  @relation("CrmCompanyMergeSurvivor")
+  mergeRecord    CrmCompanyMerge?   @relation("CrmCompanyMergeMerged")
 
   @@index([companyId, nameKey])
+  @@index([companyId, nameMatchKey])
+  @@index([companyId, legalMatchKey])
+  @@index([companyId, websiteKey])
+  @@index([companyId, archivedAt, createdAt])
+  @@index([companyId, ownerUserId])
+  @@index([companyId, statusId])
+  @@index([companyId, lastActivityAt])
+  @@index([mergedIntoId])
+  @@index([emailKeys], type: Gin)
+  @@index([phoneKeys], type: Gin)
   @@map("crm_companies")
+}
+
+// Configurable company relationship statuses (Prospect, Customer, Partner…).
+// Nothing in the code depends on a particular status; `key` is stable for
+// integrations, names/colours/order are free to change.
+model CrmCompanyStatus {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  key       String
+  name      String
+  color     String?
+  isDefault Boolean  @default(false) @map("is_default")
+  isActive  Boolean  @default(true) @map("is_active")
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company   Company      @relation(fields: [companyId], references: [id])
+  companies CrmCompany[]
+
+  @@unique([companyId, key])
+  @@index([companyId, sortOrder])
+  @@map("crm_company_statuses")
+}
+
+// One row per completed company merge (snapshot of the merged company;
+// moved counts). Same contract as crm_contact_merges.
+model CrmCompanyMerge {
+  id             String   @id @default(uuid()) @db.Uuid
+  companyId      String   @map("company_id") @db.Uuid
+  survivorId     String   @map("survivor_id") @db.Uuid
+  mergedId       String   @unique @map("merged_id") @db.Uuid
+  fieldChoices   Json     @default("{}") @map("field_choices")
+  mergedSnapshot Json     @map("merged_snapshot")
+  moved          Json     @default("{}")
+  mergedByUserId String   @map("merged_by_user_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  company  Company    @relation(fields: [companyId], references: [id])
+  survivor CrmCompany @relation("CrmCompanyMergeSurvivor", fields: [survivorId], references: [id])
+  merged   CrmCompany @relation("CrmCompanyMergeMerged", fields: [mergedId], references: [id])
+
+  @@index([companyId, survivorId])
+  @@map("crm_company_merges")
 }
 
 // The CRM's person record (the ERP has no person master). Created manually,
@@ -8269,6 +8367,7 @@ model CrmContact {
   consents       CrmContactConsent[]
   mergesSurvived CrmContactMerge[]   @relation("CrmContactMergeSurvivor")
   mergeRecord    CrmContactMerge?    @relation("CrmContactMergeMerged")
+  primaryOf      CrmCompany[]        @relation("CrmCompanyPrimaryContact")
 
   @@index([companyId, crmCompanyId])
   @@index([companyId, archivedAt, createdAt])
@@ -8549,6 +8648,8 @@ model CrmSettings {
   leadDuplicateRules    Json     @map("lead_duplicate_rules")
   // Phase 04: [{ "rule": "EMAIL" | "PHONE" | "MOBILE" | "WHATSAPP" | "NAME_AND_COMPANY" | "NAME_AND_EMAIL", "action": "WARN" | "BLOCK" | "FLAG" | "OFF" }]; null = defaults.
   contactDuplicateRules Json?    @map("contact_duplicate_rules")
+  // Phase 05: [{ "rule": "NAME" | "LEGAL_NAME" | "WEBSITE" | "EMAIL" | "PHONE", "action": "WARN" | "BLOCK" | "FLAG" | "OFF" }]; null = defaults.
+  companyDuplicateRules Json?    @map("company_duplicate_rules")
   updatedByUserId       String?  @map("updated_by_user_id") @db.Uuid
   updatedAt             DateTime @updatedAt @map("updated_at")
 

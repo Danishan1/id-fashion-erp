@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { CrmBadge } from "@/components/crm/CrmBadge";
 import { CrmCustomFieldValues } from "@/components/crm/CrmCustomFields";
+import { CrmDocumentsPanel } from "@/components/crm/CrmDocumentsPanel";
 import { CrmNotesPanel } from "@/components/crm/CrmNotesPanel";
 import { CrmRecordHeader } from "@/components/crm/CrmRecordHeader";
 import { CrmTimeline } from "@/components/crm/CrmTimeline";
@@ -16,7 +17,6 @@ import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { ADDRESS_TYPES, CONTACT_CHANNEL_TYPES, CONTACTABILITY_CHANNELS, CONTACTABILITY_SOURCES, CONTACTABILITY_STATUSES, type ContactabilityChannel } from "@/modules/crm/contacts/contact-registry";
 import { OwnerName } from "../../leads/_components/LeadBadges";
 import { AddressModal, AssignContactModal, ChannelModal, ContactabilityModal, ContactTagsModal } from "./ContactDialogs";
-import { ContactDocuments } from "./ContactDocuments";
 import { ContactErpReferences, ContactRelatedRecords, ContactUpcomingSections } from "./ContactRelatedPanels";
 import type { AddressDto, ContactDetailDto, ContactPermissions } from "./contact-types";
 import { useContactLookups } from "./useContactLookups";
@@ -164,7 +164,7 @@ export function ContactDetailClient({ initialContact, permissions, currentUserId
             { label: "Email", value: mailto(contact.email) ?? dash },
             { label: "Mobile", value: tel(contact.mobile ?? contact.phone) ?? dash },
             { label: "Source", value: contact.source?.name ?? dash },
-            { label: "Company", value: company ? company.name : dash },
+            { label: "Company", value: company ? <Link href={`/crm/companies/${company.id}`} className={linkClass}>{company.name}</Link> : dash },
             { label: "Role", value: contact.relationshipRole ?? dash },
             { label: "Last activity", value: contact.lastActivityAt ? <ClientDateTime value={contact.lastActivityAt} /> : dash },
             { label: "Created", value: <ClientDateTime value={contact.createdAt} mode="date" /> },
@@ -269,7 +269,12 @@ export function ContactDetailClient({ initialContact, permissions, currentUserId
             {company ? (
               <Facts
                 rows={[
-                  ["Company", company.name],
+                  [
+                    "Company",
+                    <Link key="co" href={`/crm/companies/${company.id}`} className={linkClass}>
+                      {company.name}
+                    </Link>,
+                  ],
                   ["Industry", company.industry],
                   ["Location", [company.city, company.country].filter(Boolean).join(", ")],
                   ["Website", company.website ? <a href={company.website} target="_blank" rel="noopener noreferrer" className={linkClass}>{company.website}</a> : null],
@@ -279,7 +284,6 @@ export function ContactDetailClient({ initialContact, permissions, currentUserId
             ) : (
               <p className="text-sm text-zinc-500 dark:text-zinc-400">No company. Edit the contact to pick a CRM company or an ERP customer.</p>
             )}
-            <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">Company pages arrive with Phase 05.</p>
           </Section>
 
           <Section
@@ -323,7 +327,7 @@ export function ContactDetailClient({ initialContact, permissions, currentUserId
           </Section>
 
           <Section title="Custom fields">
-            {meta ? <CrmCustomFieldValues definitions={meta.customFields} values={contact.customFields ?? {}} /> : <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>}
+            {meta ? <CrmCustomFieldValues definitions={meta.customFields} values={contact.customFields ?? {}} noun="contacts" /> : <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>}
           </Section>
 
           <Section title="Notes" id="notes">
@@ -371,7 +375,7 @@ export function ContactDetailClient({ initialContact, permissions, currentUserId
           </Section>
 
           <Section title="Documents">
-            <ContactDocuments contactId={contact.id} canUpload={permissions.create && !archived && !merged} canEdit={canEdit} viewAll={permissions.viewAll} currentUserId={currentUserId} onChanged={() => setTimelineKey((k) => k + 1)} />
+            <CrmDocumentsPanel baseUrl={`/api/v1/crm/contacts/${contact.id}`} canUpload={permissions.create && !archived && !merged} canEdit={canEdit} viewAll={permissions.viewAll} currentUserId={currentUserId} onChanged={() => setTimelineKey((k) => k + 1)} />
           </Section>
 
           <Section title="ERP references">
@@ -418,10 +422,10 @@ export function ContactDetailClient({ initialContact, permissions, currentUserId
         </div>
       </div>
 
-      {dialog?.kind === "assign" && <AssignContactModal onClose={() => setDialog(null)} users={users} target={{ contactId: contact.id, version: contact.version }} currentOwnerId={contact.ownerUserId} onDone={done} />}
-      {dialog?.kind === "tags" && <ContactTagsModal onClose={() => setDialog(null)} target={{ contactId: contact.id }} currentTags={contact.tags} onDone={done} />}
+      {dialog?.kind === "assign" && <AssignContactModal onClose={() => setDialog(null)} users={users} target={{ recordId: contact.id, version: contact.version }} currentOwnerId={contact.ownerUserId} onDone={done} />}
+      {dialog?.kind === "tags" && <ContactTagsModal onClose={() => setDialog(null)} target={{ recordId: contact.id }} currentTags={contact.tags} onDone={done} />}
       {dialog?.kind === "channel" && <ChannelModal contactId={contact.id} onClose={() => setDialog(null)} onDone={done} />}
-      {dialog?.kind === "address" && <AddressModal contactId={contact.id} address={dialog.address} onClose={() => setDialog(null)} onDone={done} />}
+      {dialog?.kind === "address" && <AddressModal baseUrl={`/api/v1/crm/contacts/${contact.id}`} address={dialog.address} onClose={() => setDialog(null)} onDone={done} />}
       {dialog?.kind === "consent" && (
         <ContactabilityModal contactId={contact.id} channel={dialog.channel} current={contact.consents.find((c) => c.channel === dialog.channel) ?? null} onClose={() => setDialog(null)} onDone={done} />
       )}

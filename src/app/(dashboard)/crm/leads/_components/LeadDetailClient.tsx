@@ -302,7 +302,15 @@ export function LeadDetailClient({ initialLead, permissions, openConvert = false
               </div>
               <div>
                 <p className="text-xs font-medium uppercase text-zinc-500 dark:text-zinc-400">Company</p>
-                <p className="mt-0.5 text-zinc-900 dark:text-zinc-100">{lead.crmCompany?.name ?? <span className="text-zinc-500 dark:text-zinc-400">Not linked yet.</span>}</p>
+                <p className="mt-0.5 text-zinc-900 dark:text-zinc-100">
+                  {lead.crmCompany ? (
+                    <Link href={`/crm/companies/${lead.crmCompany.id}`} className="font-medium text-indigo-600 hover:underline dark:text-indigo-400">
+                      {lead.crmCompany.name}
+                    </Link>
+                  ) : (
+                    <span className="text-zinc-500 dark:text-zinc-400">Not linked yet.</span>
+                  )}
+                </p>
               </div>
               <div>
                 <p className="text-xs font-medium uppercase text-zinc-500 dark:text-zinc-400">Opportunities</p>
@@ -322,7 +330,7 @@ export function LeadDetailClient({ initialLead, permissions, openConvert = false
                   </ul>
                 )}
               </div>
-              <p className="text-xs text-zinc-500 dark:text-zinc-400">Company and opportunity pages are added in the next CRM phases.</p>
+              <p className="text-xs text-zinc-500 dark:text-zinc-400">Opportunity pages are added in the next CRM phases.</p>
             </div>
           </Section>
 

@@ -22,8 +22,12 @@ interface DocumentDto {
 
 const size = (bytes: number) => (bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(0)} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`);
 
-/** Contact documents through the ERP's shared attachment service (same file types and 20 MB limit as every module). */
-export function ContactDocuments({ contactId, canUpload, canEdit, viewAll, currentUserId, onChanged }: { contactId: string; canUpload: boolean; canEdit: boolean; viewAll: boolean; currentUserId: string; onChanged?: () => void }) {
+/**
+ * Documents of one CRM record (contact, company…) through the ERP's shared
+ * attachment service (same file types and 20 MB limit as every module).
+ * `baseUrl` is the record's API path, e.g. /api/v1/crm/companies/<id>.
+ */
+export function CrmDocumentsPanel({ baseUrl, canUpload, canEdit, viewAll, currentUserId, onChanged }: { baseUrl: string; canUpload: boolean; canEdit: boolean; viewAll: boolean; currentUserId: string; onChanged?: () => void }) {
   const [docs, setDocs] = useState<DocumentDto[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
@@ -37,7 +41,7 @@ export function ContactDocuments({ contactId, canUpload, canEdit, viewAll, curre
 
   useEffect(() => {
     let cancelled = false;
-    crmRequest<DocumentDto[]>(`/api/v1/crm/contacts/${contactId}/documents`).then((res) => {
+    crmRequest<DocumentDto[]>(`${baseUrl}/documents`).then((res) => {
       if (cancelled) return;
       if (res.ok) {
         setDocs(res.data);
@@ -47,7 +51,7 @@ export function ContactDocuments({ contactId, canUpload, canEdit, viewAll, curre
     return () => {
       cancelled = true;
     };
-  }, [contactId, tick]);
+  }, [baseUrl, tick]);
 
   const upload = async () => {
     if (!file) return;
@@ -55,7 +59,7 @@ export function ContactDocuments({ contactId, canUpload, canEdit, viewAll, curre
     const form = new FormData();
     form.append("file", file);
     if (label.trim()) form.append("label", label.trim());
-    const res = await fetch(`/api/v1/crm/contacts/${contactId}/documents`, { method: "POST", body: form });
+    const res = await fetch(`${baseUrl}/documents`, { method: "POST", body: form });
     setBusy(false);
     if (!res.ok) return toast.error((await readApiError(res, "Upload failed.")).message);
     toast.success("Document uploaded.");
@@ -68,7 +72,7 @@ export function ContactDocuments({ contactId, canUpload, canEdit, viewAll, curre
 
   const remove = async (d: DocumentDto) => {
     setBusy(true);
-    const res = await crmRequest(`/api/v1/crm/contact-documents/${d.id}`, { method: "DELETE", successMessage: "Document removed." });
+    const res = await crmRequest(`/api/v1/crm/documents/${d.id}`, { method: "DELETE", successMessage: "Document removed." });
     setBusy(false);
     if (res.ok) {
       load();
@@ -104,14 +108,14 @@ export function ContactDocuments({ contactId, canUpload, canEdit, viewAll, curre
       {canUpload && (
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2">
-            <label htmlFor="contact-doc-file" className="sr-only">
+            <label htmlFor="crm-doc-file" className="sr-only">
               File
             </label>
-            <input id="contact-doc-file" key={inputKey} type="file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="text-sm text-zinc-600 dark:text-zinc-300" />
-            <label htmlFor="contact-doc-label" className="sr-only">
+            <input id="crm-doc-file" key={inputKey} type="file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="text-sm text-zinc-600 dark:text-zinc-300" />
+            <label htmlFor="crm-doc-label" className="sr-only">
               Label
             </label>
-            <input id="contact-doc-label" className="rounded-md border border-zinc-300 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-800" placeholder="Label (optional)" value={label} maxLength={60} onChange={(e) => setLabel(e.target.value)} />
+            <input id="crm-doc-label" className="rounded-md border border-zinc-300 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-800" placeholder="Label (optional)" value={label} maxLength={60} onChange={(e) => setLabel(e.target.value)} />
             <Button size="sm" onClick={upload} disabled={!file} isLoading={busy} loadingLabel="Uploading…">
               Upload
             </Button>
@@ -124,8 +128,8 @@ export function ContactDocuments({ contactId, canUpload, canEdit, viewAll, curre
           key={preview.id}
           open
           onClose={() => setPreview(null)}
-          previewUrl={`/api/v1/crm/contact-documents/${preview.id}/download?disposition=inline`}
-          downloadUrl={`/api/v1/crm/contact-documents/${preview.id}/download`}
+          previewUrl={`/api/v1/crm/documents/${preview.id}/download?disposition=inline`}
+          downloadUrl={`/api/v1/crm/documents/${preview.id}/download`}
           fileName={preview.fileName}
           mimeType={preview.mimeType}
         />

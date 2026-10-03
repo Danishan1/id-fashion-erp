@@ -19,6 +19,7 @@ export function CrmTimeline({
   emptyTitle = "No activity yet",
   emptyDescription = "Changes to CRM records will appear here as they happen.",
   refreshKey,
+  extraParams,
 }: {
   entityType?: string;
   entityId?: string;
@@ -26,6 +27,8 @@ export function CrmTimeline({
   emptyTitle?: string;
   emptyDescription?: string;
   refreshKey?: number;
+  /** Extra query params for /api/v1/crm/events (e.g. { includeRelated: "true" } on company timelines). */
+  extraParams?: Record<string, string>;
 }) {
   const [events, setEvents] = useState<CrmTimelineEventDto[]>([]);
   const [page, setPage] = useState(1);
@@ -35,14 +38,16 @@ export function CrmTimeline({
   const [reloadTick, setReloadTick] = useState(0);
   const isRecordTimeline = Boolean(entityType && entityId);
 
+  const extraKey = JSON.stringify(extraParams ?? {});
   const buildUrl = useCallback(
     (p: number) => {
       const params = new URLSearchParams({ page: String(p), pageSize: String(pageSize) });
       if (entityType) params.set("entityType", entityType);
       if (entityId) params.set("entityId", entityId);
+      for (const [k, v] of Object.entries(JSON.parse(extraKey) as Record<string, string>)) params.set(k, v);
       return `/api/v1/crm/events?${params.toString()}`;
     },
-    [entityType, entityId, pageSize]
+    [entityType, entityId, pageSize, extraKey]
   );
 
   useEffect(() => {

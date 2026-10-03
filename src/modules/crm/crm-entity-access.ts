@@ -1,6 +1,7 @@
 import type { CrmEntityType, Prisma } from "@prisma/client";
 import { prisma } from "@/core/db/client";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
+import { CrmCompanyRepository } from "./companies/crm-company.repository";
 import { CrmContactRepository } from "./contacts/crm-contact.repository";
 import type { CrmActor } from "./core/crm-actor";
 import { crmOwnerWhere, getCrmRecordScope } from "./core/crm-visibility";
@@ -29,4 +30,21 @@ export async function assertCrmEntityAccess(actor: CrmActor, entityType: CrmEnti
 /** Contacts merged (directly or via a chain) into this contact — their history belongs to it. */
 export function mergedContactIds(companyId: string, contactId: string): Promise<string[]> {
   return CrmContactRepository.mergedIdsInto(companyId, contactId);
+}
+
+/**
+ * Company timeline scope: companies merged into it, and — when asked — the
+ * company's contacts and leads that the viewer can see (newest 500 each).
+ */
+export async function companyTimelineScope(actor: CrmActor, companyId: string, includeRelated: boolean) {
+  const merged = await CrmCompanyRepository.mergedIdsInto(actor.companyId, companyId);
+  if (!includeRelated) return { companyIds: merged, contactIds: [] as string[], leadIds: [] as string[] };
+  const scope = await getCrmRecordScope(actor);
+  const owner = crmOwnerWhere(scope);
+  const ids = [companyId, ...merged];
+  const [contacts, leads] = await Promise.all([
+    prisma.crmContact.findMany({ where: { AND: [{ companyId: actor.companyId, crmCompanyId: { in: ids } }, owner as Prisma.CrmContactWhereInput] }, select: { id: true }, take: 500, orderBy: { createdAt: "desc" } }),
+    prisma.crmLead.findMany({ where: { AND: [{ companyId: actor.companyId, crmCompanyId: { in: ids } }, owner as Prisma.CrmLeadWhereInput] }, select: { id: true }, take: 500, orderBy: { createdAt: "desc" } }),
+  ]);
+  return { companyIds: merged, contactIds: contacts.map((c) => c.id), leadIds: leads.map((l) => l.id) };
 }

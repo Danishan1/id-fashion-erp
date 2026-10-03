@@ -154,6 +154,8 @@ export async function mergeContacts(actor: CrmActor, raw: unknown) {
       addresses: (await ContactMergeRepository.moveAddresses(merged.id, survivor.id, survivorAddresses.some((a) => a.isPrimary), tx)).count,
       channels: keep.length,
       earlierMerges: (await ContactMergeRepository.repointEarlierMerges(merged.id, survivor.id, tx)).count,
+      // Companies whose primary contact was the merged person now point at the survivor.
+      primaryOf: (await ContactMergeRepository.repointPrimaryContact(merged.id, survivor.id, tx)).count,
     };
 
     // 4. Contactability: stricter wins

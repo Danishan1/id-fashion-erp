@@ -416,6 +416,9 @@ export async function updateLead(actor: CrmActor, id: string, raw: unknown) {
     }
     if (newStatus) emitStatusChange(ctx, id, before.statusId, newStatus);
     if (newOwner !== undefined) await emitOwnerChange(ctx, id, before.ownerUserId, newOwner);
+    if (changes.crmCompanyId && after.crmCompanyId) {
+      ctx.emit({ entityType: "COMPANY", entityId: after.crmCompanyId, eventType: "company.lead_linked", summary: `${after.leadNumber} — ${after.fullName}`, payload: { leadId: id, via: "lead edit" } });
+    }
     if (changes.crmContactId && after.crmContactId) {
       ctx.emit({ entityType: "CONTACT", entityId: after.crmContactId, eventType: "contact.lead_linked", summary: `${after.leadNumber} — ${after.fullName}`, payload: { leadId: id, via: "lead edit" } });
     }
@@ -701,7 +704,8 @@ export async function convertLead(actor: CrmActor, id: string, raw: unknown) {
       const company = await createCrmCompanyInMutation(
         ctx,
         actor,
-        { name: input.company.name, industry: lead.industry, city: lead.city, state: lead.state, country: lead.country, ownerUserId: owner },
+        // The company keeps the lead's source; sourceLeadId preserves the link back to the lead.
+        { name: input.company.name, industry: lead.industry, city: lead.city, state: lead.state, country: lead.country, ownerUserId: owner, sourceId: lead.sourceId },
         { allowDuplicate: input.company.allowDuplicate, sourceLeadId: lead.id }
       );
       companyId = company.id;
@@ -784,6 +788,9 @@ export async function convertLead(actor: CrmActor, id: string, raw: unknown) {
       payload: { crmCompanyId: companyId, crmContactId: contactId, opportunityId, created },
     });
     emitStatusChange(ctx, lead.id, lead.statusId, convertedStatus, previousStatus.name);
+    if (companyId && !created.companyId && companyId !== lead.crmCompanyId) {
+      ctx.emit({ entityType: "COMPANY", entityId: companyId, eventType: "company.lead_linked", summary: `${lead.leadNumber} — ${lead.fullName}`, payload: { leadId: lead.id, via: "conversion" } });
+    }
     if (opportunityId) ctx.emit({ entityType: "LEAD", entityId: lead.id, eventType: "lead.opportunity_created", summary: input.opportunity.create ? input.opportunity.name : "", payload: { opportunityId } });
     return { lead: after, crmCompanyId: companyId, crmContactId: contactId, opportunityId, created };
   });

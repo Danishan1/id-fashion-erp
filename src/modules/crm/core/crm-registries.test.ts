@@ -11,10 +11,11 @@ describe("CRM entity type registry", () => {
     expect(crmEntityLabel("OPPORTUNITY")).toBe("Opportunity");
   });
 
-  it("links leads and contacts to their detail pages and has no links for entities without pages yet", () => {
+  it("links leads, contacts and companies to their detail pages and has no links for entities without pages yet", () => {
     expect(crmEntityHref("LEAD", "abc")).toBe("/crm/leads/abc");
     expect(crmEntityHref("CONTACT", "abc")).toBe("/crm/contacts/abc");
-    for (const type of ["COMPANY", "OPPORTUNITY"] as const) expect(crmEntityHref(type, "abc")).toBeNull();
+    expect(crmEntityHref("COMPANY", "abc")).toBe("/crm/companies/abc");
+    expect(crmEntityHref("OPPORTUNITY", "abc")).toBeNull();
   });
 
 

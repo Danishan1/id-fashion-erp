@@ -48,7 +48,7 @@ export function OptionValuesTab({ canEdit }: { canEdit: boolean }) {
 
   return (
     <div className="space-y-6">
-      <p className="text-sm text-zinc-500 dark:text-zinc-400">Suggestions on the contact form. People can still type their own value; turning a suggestion off never changes contacts that already use it.</p>
+      <p className="text-sm text-zinc-500 dark:text-zinc-400">Suggestions on the contact and company forms. People can still type their own value; turning a suggestion off never changes records that already use it.</p>
       <div className="grid gap-4 lg:grid-cols-3">
         {CRM_OPTION_LIST_KEYS.map((listKey) => (
           <section key={listKey} className="space-y-3 rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">

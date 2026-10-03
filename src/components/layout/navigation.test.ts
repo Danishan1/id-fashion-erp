@@ -107,6 +107,13 @@ describe("isLeafActive", () => {
     expect(isLeafActive(crm.children!, leaf("Leads"), "/crm/contacts")).toBe(false);
   });
 
+  it("highlights Companies for company pages, including merge", () => {
+    expect(isLeafActive(crm.children!, leaf("Companies"), "/crm/companies/abc")).toBe(true);
+    expect(isLeafActive(crm.children!, leaf("Companies"), "/crm/companies/merge")).toBe(true);
+    expect(isLeafActive(crm.children!, leaf("Contacts"), "/crm/companies")).toBe(false);
+    expect(leaf("Companies").modules).toEqual(["crm"]);
+  });
+
   it("gates CRM Settings behind crm_settings", () => {
 
     expect(leaf("Settings").modules).toEqual(["crm_settings"]);
