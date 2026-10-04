@@ -27,7 +27,7 @@ export function getAnthropicConfig(): AnthropicConfig {
   };
 }
 
-export type AiTextProviderKind = "anthropic" | "openai";
+export type AiTextProviderKind = "anthropic" | "openai" | "gemini";
 
 /**
  * Selects which real backend `requestStructuredVisionOutput`/
@@ -44,7 +44,9 @@ export type AiTextProviderKind = "anthropic" | "openai";
  * fully intact and one env-var flip away from being active again.
  */
 export function getAiTextProvider(): AiTextProviderKind {
-  return process.env.AI_TEXT_PROVIDER === "openai" ? "openai" : "anthropic";
+  const value = process.env.AI_TEXT_PROVIDER;
+  if (value === "openai" || value === "gemini") return value;
+  return "anthropic";
 }
 
 export interface OpenAiTextConfig {
@@ -65,5 +67,25 @@ export function getOpenAiTextConfig(): OpenAiTextConfig {
     // if a deployment wants a cheaper/different model for the text-only path.
     defaultModel: process.env.OPENAI_TEXT_MODEL || "gpt-4o",
     visionModel: process.env.OPENAI_VISION_MODEL || "gpt-4o",
+  };
+}
+
+export interface GeminiTextConfig {
+  apiKey: string;
+  defaultModel: string;
+  visionModel: string;
+}
+
+/** Config for the Gemini structured text/vision backend (AI_TEXT_PROVIDER=gemini). Reuses GEMINI_API_KEY, the same key image generation already uses. */
+export function getGeminiTextConfig(): GeminiTextConfig {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new AiConfigMissingError("AI service configuration is missing.");
+  }
+  return {
+    apiKey,
+    // "gemini-flash-latest" is an alias Google keeps pointed at its current Flash model, so a retired version (gemini-2.5-flash was) never breaks this.
+    defaultModel: process.env.GEMINI_TEXT_MODEL || "gemini-flash-latest",
+    visionModel: process.env.GEMINI_VISION_MODEL || "gemini-flash-latest",
   };
 }

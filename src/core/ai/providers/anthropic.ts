@@ -10,6 +10,7 @@ import {
   type RequestStructuredTextOutputParams,
 } from "./text-provider-types";
 import { requestStructuredVisionOutputViaOpenAi, requestStructuredTextOutputViaOpenAi } from "./openai-text";
+import { requestStructuredVisionOutputViaGemini, requestStructuredTextOutputViaGemini } from "./gemini-text";
 
 /**
  * Low-level, provider-specific wrapper around the Anthropic SDK — the only
@@ -241,6 +242,9 @@ const VISION_MAX_OUTPUT_TOKENS = 16000;
 export async function requestStructuredVisionOutput<T>(
   params: RequestStructuredVisionOutputParams<T>
 ): Promise<StructuredToolCallResult<T>> {
+  if (getAiTextProvider() === "gemini") {
+    return requestStructuredVisionOutputViaGemini<T>(params);
+  }
   if (getAiTextProvider() === "openai") {
     return requestStructuredVisionOutputViaOpenAi<T>(params);
   }
@@ -265,6 +269,9 @@ const TEXT_MAX_OUTPUT_TOKENS = 16000;
 export async function requestStructuredTextOutput<T>(
   params: RequestStructuredTextOutputParams<T>
 ): Promise<StructuredToolCallResult<T>> {
+  if (getAiTextProvider() === "gemini") {
+    return requestStructuredTextOutputViaGemini<T>(params);
+  }
   if (getAiTextProvider() === "openai") {
     return requestStructuredTextOutputViaOpenAi<T>(params);
   }
