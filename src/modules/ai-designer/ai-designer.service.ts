@@ -4,7 +4,7 @@ import { PermissionService } from "@/core/rbac/PermissionService";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingService";
 import { deleteAttachment, getAttachmentForDownload, uploadAttachment } from "@/core/attachments/AttachmentService";
-import { AiConfigMissingError } from "@/core/ai/config";
+import { AiConfigMissingError, getAiTextProvider } from "@/core/ai/config";
 import { AiInvalidResponseError, AiServiceError } from "@/core/ai/providers/anthropic";
 import { analyzeFabric } from "@/core/ai-designer/fabric-analysis/analyze";
 import { buildUserText, PROMPT_VERSION as FABRIC_PROMPT_VERSION } from "@/core/ai-designer/fabric-analysis/prompt";
@@ -415,7 +415,7 @@ export async function runSketchAnalysis(actor: ActorContext, projectId: string) 
     companyId: actor.companyId,
     projectId,
     sketchAttachmentId: project.sketchImageAttachmentId,
-    provider: "anthropic",
+    provider: getAiTextProvider(),
     model: process.env.ANTHROPIC_VISION_MODEL || "claude-opus-5",
     promptVersion: SKETCH_PROMPT_VERSION,
     status: "IN_PROGRESS",
@@ -442,7 +442,7 @@ export async function runSketchAnalysis(actor: ActorContext, projectId: string) 
         sketchAttachmentId: project.sketchImageAttachmentId,
         status: "AI_ANALYSED",
         promptVersion: SKETCH_PROMPT_VERSION,
-        provider: "anthropic",
+        provider: getAiTextProvider(),
         model: result.model,
         rawResponseJson: result.rawResponse as Prisma.InputJsonValue,
         sketchAnalysisSummary: result.data.sketchAnalysisSummary,
@@ -728,7 +728,7 @@ export async function runFabricAnalysis(actor: ActorContext, projectId: string) 
     promptVersion: FABRIC_PROMPT_VERSION,
     specJson: projectContext,
     promptText: userText,
-    provider: "anthropic",
+    provider: getAiTextProvider(),
     model: process.env.ANTHROPIC_VISION_MODEL || "claude-opus-5",
     status: "IN_PROGRESS",
     createdByUserId: actor.userId,
@@ -835,7 +835,7 @@ export async function runProductSuggestions(actor: ActorContext, projectId: stri
     promptVersion: PRODUCT_SUGGESTIONS_PROMPT_VERSION,
     specJson: fabricContext,
     promptText: JSON.stringify(fabricContext),
-    provider: "anthropic",
+    provider: getAiTextProvider(),
     model: process.env.ANTHROPIC_DEFAULT_MODEL || "claude-sonnet-5",
     status: "IN_PROGRESS",
     createdByUserId: actor.userId,

@@ -1167,7 +1167,7 @@ export function AiDesignerWorkflowPanel({
             <input
               id="brandName"
               className={textInputClass()}
-              defaultValue={project.brandName ?? brandDefaultName ?? ""}
+              defaultValue={project.brandName ?? ""}
               placeholder={brandDefaultName ? `Defaults to "${brandDefaultName}"` : undefined}
               onBlur={(e) => {
                 if (e.target.value === (project.brandName ?? "")) return;

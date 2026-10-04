@@ -121,7 +121,7 @@ export function BrandingPanel({
         <input
           id="replicate-brand-name"
           className={textInputClass()}
-          defaultValue={brandName ?? brandDefaultName ?? ""}
+          defaultValue={brandName ?? ""}
           placeholder={brandDefaultName ? `Defaults to "${brandDefaultName}"` : undefined}
           onBlur={(e) => {
             if (e.target.value === (brandName ?? "")) return;
