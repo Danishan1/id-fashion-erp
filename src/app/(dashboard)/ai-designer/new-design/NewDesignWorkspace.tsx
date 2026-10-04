@@ -239,7 +239,10 @@ export function NewDesignWorkspace({ initialProject }: { initialProject: NewDesi
   const source = project?.designSource ?? activeTab;
 
   const reload = useCallback(async (id: string) => {
-    const res = await fetch(`/api/v1/ai-designer/projects/${id}`);
+    const res = await fetch(`/api/v1/ai-designer/projects/${id}?_t=${Date.now()}`, {
+      cache: "no-store",
+      headers: { "Cache-Control": "no-cache" },
+    });
     if (res.ok) {
       const body = await res.json();
       setProject(body.data);
@@ -247,6 +250,7 @@ export function NewDesignWorkspace({ initialProject }: { initialProject: NewDesi
     }
     return null;
   }, []);
+
 
   const loadImages = useCallback(async (id: string) => {
     const res = await fetch(`/api/v1/ai-designer/projects/${id}/new-design/designs`);
@@ -337,7 +341,10 @@ export function NewDesignWorkspace({ initialProject }: { initialProject: NewDesi
       if (!projectId) window.history.replaceState(null, "", `/ai-designer/new-design/${id}`);
       // Analyse straight away — the right panel fills in as soon as it's done.
       setBusy("analyze");
-      await post(`/api/v1/ai-designer/projects/${id}/new-design/analyze`);
+      const analyzed = await post(`/api/v1/ai-designer/projects/${id}/new-design/analyze`);
+      if (analyzed?.data) {
+        setProject(analyzed.data);
+      }
       await reload(id);
     });
   }
@@ -345,10 +352,14 @@ export function NewDesignWorkspace({ initialProject }: { initialProject: NewDesi
   async function reanalyze() {
     if (!projectId) return;
     await run("analyze", async () => {
-      await post(`/api/v1/ai-designer/projects/${projectId}/new-design/analyze`);
+      const analyzed = await post(`/api/v1/ai-designer/projects/${projectId}/new-design/analyze`);
+      if (analyzed?.data) {
+        setProject(analyzed.data);
+      }
       await reload(projectId);
     });
   }
+
 
   async function saveAnalysisField(field: string, value: string) {
     if (!projectId) return;
