@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ImageGenerationServiceError } from "@/core/ai/image-generation/types";
 
 vi.mock("@/core/security/encryption", () => ({ decryptSecret: vi.fn((v: string) => `decrypted:${v}`) }));
@@ -294,5 +294,74 @@ describe("runWithFailover — usage tracking", () => {
       expect.objectContaining({ providerId: "provider-1", success: true, outputCount: 2, inputImagePresent: true, generationType: "FABRIC_REFERENCE" })
     );
     expect(AIProviderRepository.markHealthy).toHaveBeenCalledWith("provider-1");
+  });
+});
+
+describe("AI_MODEL provider preference", () => {
+  const saved = { AI_MODEL: process.env.AI_MODEL, GEMINI_API_KEY: process.env.GEMINI_API_KEY, OPENAI_API_KEY: process.env.OPENAI_API_KEY };
+  const fakeResult = { images: [{ buffer: Buffer.from("x"), mimeType: "image/png" }], model: "m", raw: {} };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(AIProviderUsageRepository.countSince).mockResolvedValue(0 as never);
+  });
+  afterEach(() => {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+
+  it("tries the AI_MODEL vendor's own rows first, ahead of a higher-priority other vendor", async () => {
+    process.env.AI_MODEL = "gemini";
+    const openai = providerRow({ id: "p-openai", name: "OpenAI", providerType: "OPENAI", priority: 1 });
+    const gemini = providerRow({ id: "p-gemini", name: "Gemini", providerType: "GEMINI", priority: 50 });
+    vi.mocked(AIProviderRepository.findCandidates).mockResolvedValue([openai, gemini] as never);
+    const call = vi.fn().mockResolvedValue(fakeResult);
+    vi.mocked(createGeminiImageProvider).mockReturnValue({ name: "gemini" } as never);
+
+    const result = await runWithFailover({ companyId: "co-1", userId: "u-1", capability: "FABRIC_REFERENCE", generationContext: "t", inputImagePresent: true, call });
+
+    expect(result.providerName).toBe("Gemini");
+    expect(createOpenAiImageProvider).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the vendor's .env key when the company has no row for it", async () => {
+    process.env.AI_MODEL = "gemini";
+    process.env.GEMINI_API_KEY = "env-key";
+    vi.mocked(AIProviderRepository.findCandidates).mockResolvedValue([] as never);
+    vi.mocked(createGeminiImageProvider).mockReturnValue({ name: "gemini-env" } as never);
+    const call = vi.fn().mockResolvedValue(fakeResult);
+
+    const result = await runWithFailover({ companyId: "co-1", userId: "u-1", capability: "IMAGE_EDIT", generationContext: "t", inputImagePresent: true, call });
+
+    expect(createGeminiImageProvider).toHaveBeenCalledWith();
+    expect(result.providerName).toContain("Gemini");
+    expect(AIProviderRepository.markHealthy).not.toHaveBeenCalled();
+    expect(AIProviderUsageRepository.create).toHaveBeenCalledWith(expect.objectContaining({ providerId: null, success: true }));
+  });
+
+  it("does not use the Gemini .env fallback for mask editing, which Gemini can't do", async () => {
+    process.env.AI_MODEL = "gemini";
+    process.env.GEMINI_API_KEY = "env-key";
+    vi.mocked(AIProviderRepository.findCandidates).mockResolvedValue([] as never);
+
+    await expect(
+      runWithFailover({ companyId: "co-1", userId: "u-1", capability: "MASK_EDIT", generationContext: "t", inputImagePresent: true, call: vi.fn() })
+    ).rejects.toThrow(/No configured AI provider/);
+    expect(createGeminiImageProvider).not.toHaveBeenCalled();
+  });
+
+  it("leaves the normal priority order alone when AI_MODEL is anthropic", async () => {
+    process.env.AI_MODEL = "anthropic";
+    const openai = providerRow({ id: "p-openai", name: "OpenAI", providerType: "OPENAI", priority: 1 });
+    const gemini = providerRow({ id: "p-gemini", name: "Gemini", providerType: "GEMINI", priority: 50 });
+    vi.mocked(AIProviderRepository.findCandidates).mockResolvedValue([openai, gemini] as never);
+    vi.mocked(createOpenAiImageProvider).mockReturnValue({ name: "openai" } as never);
+    const call = vi.fn().mockResolvedValue(fakeResult);
+
+    const result = await runWithFailover({ companyId: "co-1", userId: "u-1", capability: "FABRIC_REFERENCE", generationContext: "t", inputImagePresent: true, call });
+
+    expect(result.providerName).toBe("OpenAI");
   });
 });

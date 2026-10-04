@@ -1,4 +1,5 @@
 import { writeAuditLog } from "@/core/audit/AuditLogger";
+import { getImageGenerationProviderName } from "@/core/ai/image-generation/config";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { uploadAttachment, getAttachmentForDownload } from "@/core/attachments/AttachmentService";
 import { getImageGenerationProvider } from "@/core/ai/image-generation/factory";
@@ -35,7 +36,7 @@ const RUN_FRESHNESS_WINDOW_MS = 5 * 60 * 1000;
 // edit endpoint only accepts png/webp/jpg.
 const ALLOWED_SWATCH_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
-const CONFIGURED_PROVIDER_NAME = (process.env.IMAGE_GENERATION_PROVIDER || "openai").toLowerCase();
+const CONFIGURED_PROVIDER_NAME = getImageGenerationProviderName();
 const CONFIGURED_MODEL_NAME = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1";
 
 function errorCategoryFor(err: unknown): string {
