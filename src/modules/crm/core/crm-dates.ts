@@ -35,3 +35,14 @@ export function calendarDateRange(range: { from?: string; to?: string } | undefi
   if (!range || (!range.from && !range.to)) return undefined;
   return { ...(range.from ? { gte: new Date(`${range.from}T00:00:00.000Z`) } : {}), ...(range.to ? { lte: new Date(`${range.to}T00:00:00.000Z`) } : {}) };
 }
+
+/** A business-time date + "HH:mm" as an instant (Phase 09 due dates / times). */
+export function businessDateTime(isoDate: string, time = "00:00"): Date {
+  return new Date(`${isoDate}T${time}:00.000${BUSINESS_UTC_OFFSET}`);
+}
+
+/** Business-time calendar date (YYYY-MM-DD) and time (HH:mm) of an instant. */
+export function businessDateParts(at: Date): { date: string; time: string } {
+  const shifted = new Date(at.getTime() + (5 * 60 + 30) * 60_000).toISOString();
+  return { date: shifted.slice(0, 10), time: shifted.slice(11, 16) };
+}

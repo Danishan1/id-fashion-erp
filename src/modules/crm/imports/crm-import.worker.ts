@@ -4,6 +4,7 @@ import { retryIngestEvent } from "../capture/crm-ingest-events.service";
 import { CrmCaptureRepository } from "../capture/crm-capture.repository";
 import { cleanupStaleImports, processImportJob, runImportValidation } from "./crm-import.service";
 import { CRM_INGEST_QUEUE_NAME, enqueueCrmIngestJob, getCrmIngestQueue } from "./crm-import.queue";
+import { processDueActivityReminders } from "../activities/crm-activities.service";
 
 /**
  * CRM lead-ingestion jobs, run inside the shared worker process
@@ -26,6 +27,9 @@ export async function handleCrmIngestJob(job: Job) {
       for (const ev of await CrmCaptureRepository.dueRetries(new Date())) await retryIngestEvent(ev.id);
       return result;
     }
+    case "activity.reminders":
+      // Idempotent: each reminder is claimed once in the database (see processDueActivityReminders).
+      return processDueActivityReminders(new Date());
     default:
       throw new Error(`Unknown CRM ingest job "${job.name}"`);
   }
@@ -37,12 +41,19 @@ export function startCrmIngestWorker() {
     console.error(JSON.stringify({ level: "error", message: "CRM ingest job failed", jobName: job?.name, jobId: job?.id, attempt: job?.attemptsMade, error: error?.message }));
   });
   worker.on("completed", (job) => {
+    // The per-minute reminder sweep only logs when it did something.
+    const rv = job.returnvalue as { sent?: number; cancelled?: number } | undefined;
+    if (job.name === "activity.reminders" && !(rv?.sent || rv?.cancelled)) return;
     console.log(JSON.stringify({ level: "info", message: "CRM ingest job completed", jobName: job.name, jobId: job.id }));
   });
   // Daily housekeeping at 02:15 server time; idempotent if several workers start.
   getCrmIngestQueue()
     .upsertJobScheduler("crm-import-cleanup", { pattern: "15 2 * * *" }, { name: "import.cleanup", data: {} })
     .catch((e: Error) => console.error(JSON.stringify({ level: "error", message: "Could not schedule CRM import cleanup", error: e.message })));
+  // Activity reminders (Phase 09): every minute; the scheduler id makes this idempotent across restarts / workers.
+  getCrmIngestQueue()
+    .upsertJobScheduler("crm-activity-reminders", { every: 60_000 }, { name: "activity.reminders", data: {}, opts: { attempts: 1, removeOnComplete: { count: 100 }, removeOnFail: { age: 24 * 3600 } } })
+    .catch((e: Error) => console.error(JSON.stringify({ level: "error", message: "Could not schedule CRM activity reminders", error: e.message })));
   console.log(JSON.stringify({ level: "info", message: `CRM ingest worker started, listening on queue "${CRM_INGEST_QUEUE_NAME}"` }));
   return worker;
 }

@@ -45,10 +45,11 @@ describe("opportunity UI pieces", () => {
     expect(screen.queryByText(/overdue/)).toBeNull();
   });
 
-  it("lists activities and tasks as later-phase placeholders", () => {
+  it("lists only the sections still to come as later-phase placeholders", () => {
     render(<OpportunityUpcomingSections />);
-    expect(screen.getByText("Tasks")).toBeTruthy();
-    expect(screen.getAllByText(/Arrives with/).length).toBeGreaterThanOrEqual(4);
+    expect(screen.getByText("Appointments")).toBeTruthy();
+    expect(screen.queryByText("Tasks")).toBeNull(); // delivered in Phase 09
+    expect(screen.getAllByText(/Arrives with/).length).toBe(3);
   });
 
   it("only offers Reopen for a closed opportunity", () => {

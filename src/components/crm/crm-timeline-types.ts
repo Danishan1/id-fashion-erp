@@ -35,6 +35,8 @@ const CATEGORY_TONES: Record<string, CrmActivityTone> = {
   contactability: "amber",
   document: "neutral",
   duplicate: "amber",
+  task: "indigo",
+  activity: "green",
 };
 
 

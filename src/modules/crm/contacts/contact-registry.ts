@@ -75,6 +75,7 @@ export const ADDRESS_TYPE_KEYS = Object.keys(ADDRESS_TYPES) as [AddressType, ...
 
 import { COMPANY_OPTION_LISTS, DEFAULT_COMPANY_OPTION_VALUES } from "../companies/company-registry";
 import { DEFAULT_OPPORTUNITY_OPTION_VALUES, OPPORTUNITY_OPTION_LISTS } from "../opportunities/opportunity-registry";
+import { ACTIVITY_OPTION_LISTS, DEFAULT_ACTIVITY_OPTION_VALUES } from "../activities/activity-registry";
 
 /** Admin-managed suggestion lists (crm_option_values.list_key). Company lists since Phase 05, opportunity lists since Phase 06. */
 export const CRM_OPTION_LISTS = {
@@ -83,6 +84,7 @@ export const CRM_OPTION_LISTS = {
   contact_role: { label: "Relationship roles", help: "The person's role in the deal — e.g. Decision maker, Influencer, Approver, Payments." },
   ...COMPANY_OPTION_LISTS,
   ...OPPORTUNITY_OPTION_LISTS,
+  ...ACTIVITY_OPTION_LISTS,
 } as const;
 export type CrmOptionListKey = keyof typeof CRM_OPTION_LISTS;
 export const CRM_OPTION_LIST_KEYS = Object.keys(CRM_OPTION_LISTS) as [CrmOptionListKey, ...CrmOptionListKey[]];
@@ -93,6 +95,7 @@ export const DEFAULT_OPTION_VALUES: Record<CrmOptionListKey, string[]> = {
   contact_role: ["Decision maker", "Influencer", "Approver", "Technical contact", "Payments", "Day-to-day contact"],
   ...DEFAULT_COMPANY_OPTION_VALUES,
   ...DEFAULT_OPPORTUNITY_OPTION_VALUES,
+  ...DEFAULT_ACTIVITY_OPTION_VALUES,
 };
 
 // ── Duplicate rules ──────────────────────────────────────────────
@@ -136,8 +139,6 @@ export const DEFAULT_CONTACT_DUPLICATE_RULES: ContactDuplicateRule[] = [
  * this honest placeholder — never sample data.
  */
 export const CONTACT_FUTURE_SECTIONS = [
-  { key: "activities", title: "Activities", phase: "Phase 09 — Activities, Tasks & Follow-ups" },
-  { key: "tasks", title: "Tasks & follow-ups", phase: "Phase 09 — Activities, Tasks & Follow-ups" },
   { key: "appointments", title: "Appointments", phase: "Phase 10 — Calendar & Appointments" },
   { key: "conversations", title: "Conversations", phase: "Phase 11 — Unified Conversations" },
   { key: "sequences", title: "Sequences", phase: "Phase 17 — Sales Sequences" },

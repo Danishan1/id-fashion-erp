@@ -6,6 +6,7 @@ import { CrmBadge } from "@/components/crm/CrmBadge";
 import { CrmCustomFieldValues } from "@/components/crm/CrmCustomFields";
 import { CrmDocumentsPanel } from "@/components/crm/CrmDocumentsPanel";
 import { CrmNotesPanel } from "@/components/crm/CrmNotesPanel";
+import { ActivityPanel } from "@/components/crm/activities/ActivityPanel";
 import { AssignOwnerModal, RecordTagsModal } from "@/components/crm/CrmRecordDialogs";
 import { CrmRecordHeader } from "@/components/crm/CrmRecordHeader";
 import { CrmTimeline } from "@/components/crm/CrmTimeline";
@@ -205,6 +206,17 @@ export function OpportunityDetailClient({ initialOpportunity, permissions, curre
             {meta ? <CrmCustomFieldValues definitions={meta.customFields} values={opp.customFields ?? {}} noun="opportunities" /> : <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>}
           </Section>
 
+          <Section title="Activities & tasks" id="activities">
+            <ActivityPanel
+              parent={{ entityType: "OPPORTUNITY", entityId: opp.id, label: opp.name }}
+              canCreate={permissions.create && !archived}
+              canEdit={permissions.edit}
+              currentUserId={currentUserId}
+              onAddNote={() => document.getElementById("notes")?.scrollIntoView({ behavior: "smooth" })}
+              onChanged={() => setRefreshKey((k) => k + 1)}
+            />
+          </Section>
+
           <Section title="Notes" id="notes">
             <CrmNotesPanel listUrl={`${API}/${opp.id}/notes`} canAdd={permissions.create && !archived} onChanged={() => setRefreshKey((k) => k + 1)} />
           </Section>
@@ -270,7 +282,7 @@ export function OpportunityDetailClient({ initialOpportunity, permissions, curre
             <CrmDocumentsPanel baseUrl={`${API}/${opp.id}`} canUpload={permissions.create && !archived} canEdit={canEdit} viewAll={permissions.viewAll} currentUserId={currentUserId} onChanged={() => setRefreshKey((k) => k + 1)} />
           </Section>
 
-          <Section title="Activities & tasks">
+          <Section title="Coming in later phases">
             <OpportunityUpcomingSections />
           </Section>
 

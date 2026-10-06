@@ -31,7 +31,9 @@ export type CrmEventCategory =
   | "merged"
   | "contactability"
   | "document"
-  | "duplicate";
+  | "duplicate"
+  | "task"
+  | "activity";
 
 export interface CrmEventDefinition {
   label: string;
@@ -132,6 +134,21 @@ export const CRM_EVENT_TYPES = {
   "opportunity.archived": { label: "Opportunity archived", entityType: "OPPORTUNITY", category: "archived" },
   "opportunity.restored": { label: "Opportunity restored", entityType: "OPPORTUNITY", category: "restored" },
   "contact.opportunity_linked": { label: "Opportunity associated", entityType: "CONTACT", category: "linked" },
+  // Phase 09 — activities. Stored on the activity (entityType ACTIVITY); a
+  // record's timeline shows the events of every activity linked to it.
+  "activity.created": { label: "Activity scheduled", entityType: "ACTIVITY", category: "task" },
+  "activity.updated": { label: "Activity updated", entityType: "ACTIVITY", category: "updated" },
+  "activity.assigned": { label: "Activity assigned", entityType: "ACTIVITY", category: "assignment" },
+  "activity.rescheduled": { label: "Activity rescheduled", entityType: "ACTIVITY", category: "task" },
+  "activity.completed": { label: "Activity completed", entityType: "ACTIVITY", category: "won" },
+  "activity.reopened": { label: "Activity reopened", entityType: "ACTIVITY", category: "status" },
+  "activity.cancelled": { label: "Activity cancelled", entityType: "ACTIVITY", category: "archived" },
+  "activity.deleted": { label: "Activity deleted", entityType: "ACTIVITY", category: "archived" },
+  "activity.reminder_sent": { label: "Reminder sent", entityType: "ACTIVITY", category: "task" },
+  "activity.call_logged": { label: "Call logged", entityType: "ACTIVITY", category: "activity" },
+  "activity.meeting_logged": { label: "Meeting logged", entityType: "ACTIVITY", category: "activity" },
+  "activity.message_logged": { label: "Message logged", entityType: "ACTIVITY", category: "activity" },
+  "activity.logged": { label: "Activity logged", entityType: "ACTIVITY", category: "activity" },
 } as const satisfies Record<string, CrmEventDefinition>;
 
 export type CrmEventType = keyof typeof CRM_EVENT_TYPES;

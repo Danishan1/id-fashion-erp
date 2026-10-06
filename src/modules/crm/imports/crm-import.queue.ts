@@ -4,8 +4,8 @@ import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { createRedisConnection } from "@/core/jobs/queue";
 
 /**
- * Background queue for CRM lead ingestion work: import validation, import
- * processing, webhook/API retries and housekeeping. Runs in the existing
+ * Background queue for CRM work: lead import validation / processing,
+ * webhook/API retries, housekeeping and (Phase 09) activity reminders. Runs in the existing
  * worker process (`npm run worker`, started by `npm run dev`). The queue
  * name is derived from DATABASE_URL exactly like the bulk-import queue (see
  * src/core/jobs/queue.ts — two checkouts sharing one Redis must never pick
@@ -24,7 +24,9 @@ export type CrmIngestJob =
   | { name: "import.validate"; data: { importJobId: string } }
   | { name: "import.process"; data: { importJobId: string } }
   | { name: "ingest.retry"; data: { eventId: string } }
-  | { name: "import.cleanup"; data: Record<string, never> };
+  | { name: "import.cleanup"; data: Record<string, never> }
+  // Phase 09: activity reminders, scheduled every minute by the worker.
+  | { name: "activity.reminders"; data: Record<string, never> };
 
 let queue: Queue | null = null;
 

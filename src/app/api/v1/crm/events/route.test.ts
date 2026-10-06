@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
-const { requireSessionMock, assertMock, listMock, getMock, scopeMock, accessMock, mergedMock, companyScopeMock } = vi.hoisted(() => ({
+const { requireSessionMock, assertMock, listMock, getMock, scopeMock, accessMock, mergedMock, companyScopeMock, activityIdsMock } = vi.hoisted(() => ({
+  activityIdsMock: vi.fn(),
   mergedMock: vi.fn(),
   companyScopeMock: vi.fn(),
   requireSessionMock: vi.fn(),
@@ -26,6 +27,7 @@ vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { assert: a
 vi.mock("@/modules/crm/core/crm-events.service", () => ({ listCrmEvents: listMock, getCrmEventById: getMock }));
 vi.mock("@/modules/crm/core/crm-visibility", () => ({ getCrmRecordScope: scopeMock }));
 vi.mock("@/modules/crm/crm-entity-access", () => ({ assertCrmEntityAccess: accessMock, mergedContactIds: mergedMock, companyTimelineScope: companyScopeMock }));
+vi.mock("@/modules/crm/activities/crm-activity.repository", () => ({ CrmActivityRepository: { linkedActivityIds: activityIdsMock } }));
 
 const { GET: listGET } = await import("./route");
 const { GET: detailGET } = await import("./[id]/route");
@@ -41,6 +43,7 @@ beforeEach(() => {
   accessMock.mockReset().mockResolvedValue(undefined);
   mergedMock.mockReset().mockResolvedValue([]);
   companyScopeMock.mockReset().mockResolvedValue({ companyIds: [], contactIds: [], leadIds: [] });
+  activityIdsMock.mockReset().mockResolvedValue([]);
 });
 
 describe("GET /api/v1/crm/events", () => {
@@ -109,6 +112,20 @@ describe("CRM event visibility", () => {
       { entityType: "CONTACT", ids: [CONTACT] },
       { entityType: "LEAD", ids: [LEAD] },
     ]);
+  });
+
+  it("adds the events of activities linked to the record (Phase 09)", async () => {
+    const ACT = "7f1c2f1e-1f2a-4b1a-9d1a-2b3c4d5e6f75";
+    activityIdsMock.mockResolvedValue([ACT]);
+    await listGET(new NextRequest(`http://x/api/v1/crm/events?entityType=OPPORTUNITY&entityId=${ID}`), { params: Promise.resolve({}) });
+    expect(activityIdsMock).toHaveBeenCalledWith("co-1", "OPPORTUNITY", [ID]);
+    expect(listMock).toHaveBeenCalledWith("co-1", expect.objectContaining({ entityType: "OPPORTUNITY", entityId: ID }), expect.anything(), [], [{ entityType: "ACTIVITY", ids: [ACT] }]);
+  });
+
+  it("an activity's own history is checked like any record and gets no extra scope", async () => {
+    await listGET(new NextRequest(`http://x/api/v1/crm/events?entityType=ACTIVITY&entityId=${ID}`), { params: Promise.resolve({}) });
+    expect(accessMock).toHaveBeenCalledWith(expect.anything(), "ACTIVITY", ID);
+    expect(activityIdsMock).not.toHaveBeenCalled();
   });
 
   it("limits the company-wide feed to the caller's own actions without crm.view_all", async () => {

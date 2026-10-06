@@ -23,8 +23,9 @@ describe("contact UI pieces", () => {
 
   it("lists later-phase sections as placeholders without data", () => {
     render(<ContactUpcomingSections />);
-    expect(screen.getByText("Activities")).toBeTruthy();
+    expect(screen.getByText("Appointments")).toBeTruthy();
+    expect(screen.queryByText("Activities")).toBeNull(); // delivered in Phase 09
     expect(screen.getByText("Conversations")).toBeTruthy();
-    expect(screen.getAllByText(/Arrives with Phase/).length).toBe(5);
+    expect(screen.getAllByText(/Arrives with Phase/).length).toBe(3);
   });
 });

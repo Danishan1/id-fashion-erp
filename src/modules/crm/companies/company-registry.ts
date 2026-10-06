@@ -67,9 +67,7 @@ export const DEFAULT_COMPANY_OPTION_VALUES: Record<CompanyOptionListKey, string[
  * page shows this honest placeholder — never sample data.
  */
 export const COMPANY_FUTURE_SECTIONS = [
-  { key: "activities", title: "Activities (calls, emails, meetings)", phase: "Phase 09 — Activities, Tasks & Follow-ups" },
   { key: "appointments", title: "Appointments", phase: "Phase 10 — Calendar & Appointments" },
   { key: "conversations", title: "Conversations", phase: "Phase 11 — Unified Conversations" },
-  { key: "pipeline", title: "Pipeline & stages for opportunities", phase: "Phase 06/07 — Opportunities & Pipelines" },
   { key: "tickets", title: "Support tickets", phase: "the Ticketing phase (the ERP has no ticket module)" },
 ] as const;

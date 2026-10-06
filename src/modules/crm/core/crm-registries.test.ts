@@ -3,8 +3,9 @@ import { CRM_ENTITY_TYPE_CONFIG, CRM_ENTITY_TYPES, crmEntityHref, crmEntityLabel
 import { CRM_EVENT_TYPES, CRM_EVENT_TYPE_NAMES, crmEventCategory, crmEventLabel, isCrmEventType } from "./crm-event-types";
 
 describe("CRM entity type registry", () => {
-  it("covers the four Phase 01 record types with labels and audit table names", () => {
-    expect(CRM_ENTITY_TYPES.sort()).toEqual(["COMPANY", "CONTACT", "LEAD", "OPPORTUNITY"]);
+  it("covers every CRM record type (incl. Phase 09 activities) with labels and audit table names", () => {
+    expect(CRM_ENTITY_TYPES.sort()).toEqual(["ACTIVITY", "COMPANY", "CONTACT", "LEAD", "OPPORTUNITY"]);
+    expect(crmEntityHref("ACTIVITY", "abc")).toBe("/crm/activities/abc");
     for (const type of CRM_ENTITY_TYPES) {
       expect(CRM_ENTITY_TYPE_CONFIG[type].tableName).toMatch(/^crm_/);
     }

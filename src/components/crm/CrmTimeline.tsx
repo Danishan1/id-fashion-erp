@@ -104,8 +104,9 @@ export function CrmTimeline({
                 description={e.summary}
                 occurredAt={e.occurredAt}
                 actorName={e.actor?.fullName ?? "System"}
-                context={isRecordTimeline ? undefined : e.entityLabel}
-                contextHref={isRecordTimeline ? undefined : e.entityHref}
+                // On a record's timeline, rows from related records (e.g. its activities) still say where they come from.
+                context={isRecordTimeline && e.entityType === entityType ? undefined : e.entityLabel}
+                contextHref={isRecordTimeline && e.entityType === entityType ? undefined : e.entityHref}
                 tone={crmEventTone(e.category)}
               />
             ))}

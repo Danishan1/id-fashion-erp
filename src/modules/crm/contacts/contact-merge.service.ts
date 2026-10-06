@@ -1,3 +1,4 @@
+import { CrmActivityRepository } from "../activities/crm-activity.repository";
 import type { CrmContact, Prisma } from "@prisma/client";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import type { CrmActor } from "../core/crm-actor";
@@ -149,6 +150,7 @@ export async function mergeContacts(actor: CrmActor, raw: unknown) {
       leads: (await ContactMergeRepository.moveLeads(actor.companyId, merged.id, survivor.id, tx)).count,
       opportunities: (await ContactMergeRepository.moveOpportunities(actor.companyId, merged.id, survivor.id, tx)).count,
       notes: (await ContactMergeRepository.moveNotes(actor.companyId, merged.id, survivor.id, tx)).count,
+      activities: await CrmActivityRepository.moveToSurvivor(actor.companyId, "CONTACT", merged.id, survivor.id, tx),
       documents: (await ContactMergeRepository.moveDocuments(actor.companyId, merged.id, survivor.id, tx)).count,
       tags: await ContactMergeRepository.moveTags(actor.companyId, merged.id, survivor.id, actor.userId, tx),
       addresses: (await ContactMergeRepository.moveAddresses(merged.id, survivor.id, survivorAddresses.some((a) => a.isPrimary), tx)).count,

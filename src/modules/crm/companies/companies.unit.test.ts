@@ -227,6 +227,6 @@ describe("company schemas and registry", () => {
   it("ships one default status and honest placeholders for missing modules", () => {
     expect(DEFAULT_COMPANY_STATUSES.filter((s) => s.isDefault)).toHaveLength(1);
     expect(DEFAULT_COMPANY_STATUSES.map((s) => s.key)).toContain("customer");
-    expect(COMPANY_FUTURE_SECTIONS.map((s) => s.key)).toEqual(expect.arrayContaining(["activities", "tickets"]));
+    expect(COMPANY_FUTURE_SECTIONS.map((s) => s.key)).toEqual(expect.arrayContaining(["appointments", "tickets"]));
   });
 });

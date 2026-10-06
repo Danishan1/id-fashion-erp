@@ -13,6 +13,7 @@ import { crmOwnerWhere, getCrmRecordScope } from "./core/crm-visibility";
  * visibility scope behaves as not found.
  */
 export async function assertCrmEntityAccess(actor: CrmActor, entityType: CrmEntityType, entityId: string): Promise<void> {
+  if (entityType === "ACTIVITY") return assertActivityAccess(actor, entityId);
   const scope = await getCrmRecordScope(actor);
   const where = { AND: [{ id: entityId, companyId: actor.companyId }, crmOwnerWhere(scope)] };
   const select = { id: true } as const;
@@ -25,6 +26,20 @@ export async function assertCrmEntityAccess(actor: CrmActor, entityType: CrmEnti
           ? await prisma.crmCompany.findFirst({ where: where as Prisma.CrmCompanyWhereInput, select })
           : await prisma.crmOpportunity.findFirst({ where: where as Prisma.CrmOpportunityWhereInput, select });
   if (!found) throw new BusinessRuleError("NOT_FOUND", "Record not found.", { entityType, entityId });
+}
+
+/**
+ * Activities (Phase 09): visible to crm.view_all, to the assignee and the
+ * creator, and to anyone who can see the record it was created on. Same rule
+ * as crm-activities.service.ts (kept here to avoid an import cycle).
+ */
+async function assertActivityAccess(actor: CrmActor, activityId: string): Promise<void> {
+  const a = await prisma.crmActivity.findFirst({ where: { id: activityId, companyId: actor.companyId, deletedAt: null }, select: { assignedToUserId: true, createdByUserId: true, entityType: true, entityId: true } });
+  if (!a) throw new BusinessRuleError("NOT_FOUND", "Record not found.", { entityType: "ACTIVITY", entityId: activityId });
+  const scope = await getCrmRecordScope(actor);
+  if (scope.mode === "ALL" || a.assignedToUserId === actor.userId || a.createdByUserId === actor.userId) return;
+  if (a.entityType === "ACTIVITY") throw new BusinessRuleError("NOT_FOUND", "Record not found.", { entityType: "ACTIVITY", entityId: activityId });
+  await assertCrmEntityAccess(actor, a.entityType, a.entityId);
 }
 
 /** Contacts merged (directly or via a chain) into this contact — their history belongs to it. */

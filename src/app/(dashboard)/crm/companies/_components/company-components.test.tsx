@@ -61,7 +61,7 @@ describe("company UI pieces", () => {
   it("lists later-phase sections as placeholders without data", () => {
     render(<CompanyUpcomingSections />);
     expect(screen.getByText("Support tickets")).toBeTruthy();
-    expect(screen.getAllByText(/Arrives with/).length).toBe(5);
+    expect(screen.getAllByText(/Arrives with/).length).toBe(3);
   });
 
   it("changes status in bulk through the bulk endpoint", async () => {

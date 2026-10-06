@@ -1,3 +1,4 @@
+import { CrmActivityRepository } from "../activities/crm-activity.repository";
 import type { CrmCompany, Prisma } from "@prisma/client";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import type { CrmActor } from "../core/crm-actor";
@@ -176,6 +177,7 @@ export async function mergeCompanies(actor: CrmActor, raw: unknown) {
       leads: (await tx.crmLead.updateMany({ where: { companyId: actor.companyId, crmCompanyId: merged.id }, data: { crmCompanyId: survivor.id } })).count,
       opportunities: (await tx.crmOpportunity.updateMany({ where: { companyId: actor.companyId, crmCompanyId: merged.id }, data: { crmCompanyId: survivor.id } })).count,
       notes: (await tx.crmNote.updateMany({ where: { companyId: actor.companyId, entityType: "COMPANY", entityId: merged.id }, data: { entityId: survivor.id } })).count,
+      activities: await CrmActivityRepository.moveToSurvivor(actor.companyId, "COMPANY", merged.id, survivor.id, tx),
       documents: (await tx.attachment.updateMany({ where: { companyId: actor.companyId, relatedModule: "CRM_COMPANY", relatedRecordId: merged.id }, data: { relatedRecordId: survivor.id } })).count,
       addresses: (await tx.crmAddress.updateMany({ where: { crmCompanyId: merged.id }, data: { crmCompanyId: survivor.id, isPrimary: false } })).count,
       tags: 0,

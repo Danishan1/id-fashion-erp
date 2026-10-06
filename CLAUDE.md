@@ -7705,3 +7705,9 @@ The whole CRM (Leads, Deals/Opportunities, pipeline/sources/lost-reason masters,
 - Probability: `probability_source` STAGE/MANUAL; `resolveStageProbability` keeps manual values.
 - Refused moves -> 422 `CRM_STAGE_TRANSITION_BLOCKED` with `details.missingFields`. Board/report data: `crm-pipeline-insights.service.ts` (no Kanban UI until Phase 08).
 - Report: `docs/crm/PHASE_07_PIPELINES_STAGES.md`.
+
+## CRM rebuild — Phase 09 Activities, Tasks & Follow-ups (2026-10-06)
+- All activity writes go through `src/modules/crm/activities/crm-activities.service.ts` (create/log, update, complete, reopen, cancel, reschedule, assign, delete, bulk). Types/statuses/priorities/reminders: `activity-registry.ts` (text columns - add a type there). Overdue is derived (`activity-due.ts`), never stored.
+- `crm_activities` + `crm_activity_links` (polymorphic; deal -> its company/contact linked automatically). Events `activity.*` are stored on CrmEntityType ACTIVITY; `/api/v1/crm/events` adds linked activities' events to a record timeline. Notes stay in `crm_notes`.
+- Reminders: worker job `activity.reminders` every minute -> `processDueActivityReminders` (claims PENDING->SENT with the ERP notification in one transaction - never send twice). Assignees = active ERP users with crm.view.
+- Report: `docs/crm/PHASE_09_ACTIVITIES_TASKS.md`.

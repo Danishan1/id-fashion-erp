@@ -128,6 +128,8 @@ model Company {
   crmOpportunityErpLinks              CrmOpportunityErpLink[]
   crmStageTransitionRules             CrmStageTransitionRule[]
   crmOpportunityStageHistory          CrmOpportunityStageHistory[]
+  crmActivities                       CrmActivity[]
+  crmActivityLinks                    CrmActivityLink[]
   crmCompanyMerges                    CrmCompanyMerge[]
   attendanceRecords                   AttendanceRecord[]
   attendanceCorrectionRequests        AttendanceCorrectionRequest[]
@@ -363,6 +365,8 @@ model User {
   crmOpportunitiesOwned                      CrmOpportunity[]                     @relation("CrmOpportunityOwner")
   crmOpportunitiesCreated                    CrmOpportunity[]                     @relation("CrmOpportunityCreatedBy")
   crmNotesAuthored                           CrmNote[]                            @relation("CrmNoteAuthor")
+  crmActivitiesAssigned                      CrmActivity[]                        @relation("CrmActivityAssignee")
+  crmActivitiesCreated                       CrmActivity[]                        @relation("CrmActivityCreatedBy")
   crmSavedViews                              CrmSavedView[]                       @relation("CrmSavedViewOwner")
   crmImportJobsCreated                       CrmImportJob[]                       @relation("CrmImportJobCreatedBy")
   crmImportRowsReviewed                      CrmImportRow[]                       @relation("CrmImportRowReviewedBy")
@@ -7644,6 +7648,9 @@ enum RelatedModule {
   // CRM Opportunities (Phase 06, 2026-10-04) -- documents attached to an
   // opportunity (relatedRecordId = CrmOpportunity.id).
   CRM_OPPORTUNITY
+  // CRM Activities (Phase 09, 2026-10-06) -- in-app task reminders and
+  // assignment notifications point at the activity (relatedRecordId = CrmActivity.id).
+  CRM_ACTIVITY
 }
 
 model Attachment {
@@ -7708,6 +7715,9 @@ enum CrmEntityType {
   CONTACT
   COMPANY
   OPPORTUNITY
+  // Phase 09: tasks, calls, meetings… (crm_activities). Its events
+  // (activity.*) appear on the timelines of the records it is linked to.
+  ACTIVITY
 }
 
 // Append-only business event log for the CRM. One row per thing that
@@ -8809,6 +8819,92 @@ model CrmNote {
 
   @@index([companyId, entityType, entityId, createdAt])
   @@map("crm_notes")
+}
+
+// Phase 09 — CRM activities: tasks, calls, meetings, appointments and logged
+// communication (email / SMS / WhatsApp / other). The ERP has no task or
+// activity module; notes stay in crm_notes. `type`, `status`, `priority`,
+// `direction` and `source` are validated in code (src/modules/crm/activities/
+// activity-registry.ts) so a new type needs no migration. Overdue is derived
+// from due_at / all_day / status, never stored. Rows are soft-deleted and a
+// completed activity is never deleted.
+model CrmActivity {
+  id                    String        @id @default(uuid()) @db.Uuid
+  companyId             String        @map("company_id") @db.Uuid
+  type                  String
+  subject               String
+  description           String?
+  // PENDING | IN_PROGRESS | COMPLETED | CANCELLED (logged activities are COMPLETED).
+  status                String        @default("PENDING")
+  // LOW | NORMAL | HIGH | URGENT
+  priority              String        @default("NORMAL")
+  // The record it was created on; crm_activity_links holds every record it shows on.
+  entityType            CrmEntityType @map("entity_type")
+  entityId              String        @map("entity_id") @db.Uuid
+  assignedToUserId      String?       @map("assigned_to_user_id") @db.Uuid
+  // When it is due / scheduled to start. All-day items store the business-day start.
+  dueAt                 DateTime?     @map("due_at")
+  allDay                Boolean       @default(false) @map("all_day")
+  endAt                 DateTime?     @map("end_at")
+  // First due date ever set (kept when rescheduled).
+  originalDueAt         DateTime?     @map("original_due_at")
+  rescheduleCount       Int           @default(0) @map("reschedule_count")
+  // Minutes before due (0 = at due time); null = no reminder.
+  reminderOffsetMinutes Int?          @map("reminder_offset_minutes")
+  reminderAt            DateTime?     @map("reminder_at")
+  // PENDING (scheduled) | SENT | CANCELLED; null = no reminder.
+  reminderState         String?       @map("reminder_state")
+  reminderSentAt        DateTime?     @map("reminder_sent_at")
+  outcome               String?
+  // INBOUND | OUTBOUND (calls and messages)
+  direction             String?
+  durationMinutes       Int?          @map("duration_minutes")
+  location              String?
+  completedAt           DateTime?     @map("completed_at")
+  completedByUserId     String?       @map("completed_by_user_id") @db.Uuid
+  // MANUAL | API | an integration key (future email / WhatsApp / telephony connectors).
+  source                String        @default("MANUAL")
+  externalRef           String?       @map("external_ref")
+  metadata              Json          @default("{}")
+  deletedAt             DateTime?     @map("deleted_at")
+  deletedByUserId       String?       @map("deleted_by_user_id") @db.Uuid
+  createdByUserId       String        @map("created_by_user_id") @db.Uuid
+  updatedByUserId       String?       @map("updated_by_user_id") @db.Uuid
+  version               Int           @default(1)
+  createdAt             DateTime      @default(now()) @map("created_at")
+  updatedAt             DateTime      @updatedAt @map("updated_at")
+
+  company    Company           @relation(fields: [companyId], references: [id])
+  assignedTo User?             @relation("CrmActivityAssignee", fields: [assignedToUserId], references: [id])
+  createdBy  User              @relation("CrmActivityCreatedBy", fields: [createdByUserId], references: [id])
+  links      CrmActivityLink[]
+
+  @@index([companyId, assignedToUserId, status, dueAt], map: "crm_activities_assignee_idx")
+  @@index([companyId, status, dueAt], map: "crm_activities_due_idx")
+  @@index([companyId, entityType, entityId, createdAt], map: "crm_activities_entity_idx")
+  @@index([companyId, type, createdAt], map: "crm_activities_type_idx")
+  @@index([companyId, createdByUserId, createdAt], map: "crm_activities_creator_idx")
+  @@map("crm_activities")
+}
+
+// Every CRM record an activity appears on (polymorphic, like notes and tags).
+// The record it was created on is `isPrimary`; an activity on an opportunity
+// is also linked to that opportunity's company and contact.
+model CrmActivityLink {
+  id         String        @id @default(uuid()) @db.Uuid
+  companyId  String        @map("company_id") @db.Uuid
+  activityId String        @map("activity_id") @db.Uuid
+  entityType CrmEntityType @map("entity_type")
+  entityId   String        @map("entity_id") @db.Uuid
+  isPrimary  Boolean       @default(false) @map("is_primary")
+  createdAt  DateTime      @default(now()) @map("created_at")
+
+  company  Company     @relation(fields: [companyId], references: [id])
+  activity CrmActivity @relation(fields: [activityId], references: [id])
+
+  @@unique([activityId, entityType, entityId], map: "crm_activity_links_unique")
+  @@index([companyId, entityType, entityId, activityId], map: "crm_activity_links_entity_idx")
+  @@map("crm_activity_links")
 }
 
 // Metadata for the shared custom-field engine. Values live in each record's

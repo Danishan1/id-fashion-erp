@@ -86,8 +86,6 @@ export const QUOTATION_NOT_AVAILABLE = "The ERP has no quotation module yet. Lin
 // ── Related sections with no data source yet ─────────────────────
 
 export const OPPORTUNITY_FUTURE_SECTIONS = [
-  { key: "activities", title: "Activities (calls, emails, meetings, demos)", phase: "Phase 09 — Activities, Tasks & Follow-ups" },
-  { key: "tasks", title: "Tasks", phase: "Phase 09 — Activities, Tasks & Follow-ups" },
   { key: "appointments", title: "Appointments", phase: "Phase 10 — Calendar & Appointments" },
   { key: "conversations", title: "Conversations", phase: "Phase 11 — Unified Conversations" },
   { key: "board", title: "Pipeline board (Kanban)", phase: "Phase 08 — Opportunity Board" },

@@ -80,6 +80,10 @@ describe("isLeafActive", () => {
 
   it("highlights only the most specific matching child", () => {
     expect(isLeafActive(crm.children!, leaf("Activity Log"), "/crm/activity")).toBe(true);
+    // Phase 09: /crm/activities is its own page, not the Activity Log
+    expect(isLeafActive(crm.children!, leaf("Activities"), "/crm/activities/abc")).toBe(true);
+    expect(isLeafActive(crm.children!, leaf("Activity Log"), "/crm/activities")).toBe(false);
+    expect(isLeafActive(crm.children!, leaf("My Tasks"), "/crm/my-tasks")).toBe(true);
     expect(isLeafActive(crm.children!, leaf("Dashboard"), "/crm/activity")).toBe(false);
   });
 

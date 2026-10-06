@@ -1,6 +1,6 @@
 import { prisma } from "@/core/db/client";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
-import type { NotificationChannel, RelatedModule } from "@prisma/client";
+import type { NotificationChannel, Prisma, RelatedModule } from "@prisma/client";
 
 /**
  * The `Notification` table has existed since Phase 1/2 planning but had zero
@@ -21,8 +21,9 @@ export interface CreateNotificationInput {
   channel?: NotificationChannel;
 }
 
-export async function createNotification(input: CreateNotificationInput) {
-  return prisma.notification.create({
+/** `db` lets a caller write the notification inside its own transaction (CRM activity reminders / assignments). */
+export async function createNotification(input: CreateNotificationInput, db: Prisma.TransactionClient | typeof prisma = prisma) {
+  return db.notification.create({
     data: {
       companyId: input.companyId,
       userId: input.userId,
