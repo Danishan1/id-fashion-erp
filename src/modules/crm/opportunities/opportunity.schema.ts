@@ -58,7 +58,19 @@ export const updateOpportunitySchema = z
 export type UpdateOpportunityInput = z.infer<typeof updateOpportunitySchema>;
 
 export const assignOpportunitySchema = z.object({ ownerUserId: uuid.nullable(), version: z.number().int().min(1).optional() });
-export const changeStageSchema = z.object({ stageId: uuid, pipelineId: uuid.optional(), probability, version: z.number().int().min(1).optional() });
+/**
+ * Stage change (Phase 07: validated by crm-stage-transition.service). A blank
+ * probability keeps the usual rule (stage default unless set by hand);
+ * `useStageProbability` resets a hand-set probability to the stage default.
+ */
+export const changeStageSchema = z.object({
+  stageId: uuid,
+  pipelineId: uuid.optional(),
+  probability,
+  useStageProbability: z.boolean().optional(),
+  reason: z.string().trim().max(500).optional().or(z.literal("")).nullable(),
+  version: z.number().int().min(1).optional(),
+});
 export const changeOpportunityStatusSchema = z.object({
   status: z.enum(OPPORTUNITY_STATUS_KEYS),
   reason: z.string().trim().max(500).optional().or(z.literal("")).nullable(),

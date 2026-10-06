@@ -10,10 +10,11 @@ import { DuplicateRulesTab } from "./DuplicateRulesTab";
 import { LeadSourcesTab } from "./LeadSourcesTab";
 import { LeadStatusesTab } from "./LeadStatusesTab";
 import { OptionValuesTab } from "./OptionValuesTab";
+import { PipelinesTab } from "./PipelinesTab";
 import { TagsTab } from "./TagsTab";
 import { WebhooksTab } from "./WebhooksTab";
 
-export type CrmSettingsTab = "statuses" | "sources" | "tags" | "custom-fields" | "duplicates" | "contact-fields" | "contact-duplicates" | "contact-options" | "company-statuses" | "company-fields" | "company-duplicates" | "opportunity-fields" | "api-keys" | "webhooks";
+export type CrmSettingsTab = "statuses" | "sources" | "tags" | "custom-fields" | "duplicates" | "contact-fields" | "contact-duplicates" | "contact-options" | "company-statuses" | "company-fields" | "company-duplicates" | "opportunity-fields" | "pipelines" | "api-keys" | "webhooks";
 
 const TABS: { id: CrmSettingsTab; label: string }[] = [
   { id: "statuses", label: "Lead statuses" },
@@ -26,6 +27,7 @@ const TABS: { id: CrmSettingsTab; label: string }[] = [
   { id: "company-statuses", label: "Company statuses" },
   { id: "company-fields", label: "Company custom fields" },
   { id: "company-duplicates", label: "Company duplicate rules" },
+  { id: "pipelines", label: "Pipelines & stages" },
   { id: "opportunity-fields", label: "Opportunity custom fields" },
   { id: "contact-options", label: "Form options" },
   { id: "api-keys", label: "API keys" },
@@ -75,6 +77,7 @@ export function CrmSettingsClient({ initialTab, canEdit }: { initialTab: CrmSett
         {tab === "company-statuses" && <CompanyStatusesTab canEdit={canEdit} />}
         {tab === "company-fields" && <CustomFieldsTab key="COMPANY" canEdit={canEdit} entityType="COMPANY" />}
         {tab === "company-duplicates" && <CompanyDuplicateRulesTab canEdit={canEdit} />}
+        {tab === "pipelines" && <PipelinesTab canEdit={canEdit} />}
         {tab === "opportunity-fields" && <CustomFieldsTab key="OPPORTUNITY" canEdit={canEdit} entityType="OPPORTUNITY" />}
         {tab === "contact-options" && <OptionValuesTab canEdit={canEdit} />}
         {tab === "api-keys" && <ApiKeysTab canEdit={canEdit} />}

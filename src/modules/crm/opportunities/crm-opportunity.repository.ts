@@ -28,6 +28,7 @@ export const OPPORTUNITY_LIST_SELECT = {
   amount: true,
   currencyCode: true,
   probability: true,
+  probabilitySource: true,
   expectedCloseDate: true,
   closedAt: true,
   lastActivityAt: true,

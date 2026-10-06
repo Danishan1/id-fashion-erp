@@ -18,14 +18,14 @@ import { isClosedStatus, OPPORTUNITY_STATUSES, type OpportunityStatus } from "@/
 import { OwnerName } from "../../leads/_components/LeadBadges";
 import { CompanyStatusBadge } from "../../companies/_components/CompaniesListClient";
 import { CloseDate, OpportunityStatusBadge, opportunityValue } from "./OpportunityBadges";
-import { ChangeOpportunityStatusModal, ChangeStageModal, LinkErpDocumentModal } from "./OpportunityDialogs";
-import { OpportunityErpDocuments, OpportunityUpcomingSections } from "./OpportunityRelatedPanels";
+import { ChangeOpportunityStatusModal, ChangeStageModal, LinkErpDocumentModal, TransferPipelineModal } from "./OpportunityDialogs";
+import { OpportunityErpDocuments, OpportunityStageHistory, OpportunityUpcomingSections } from "./OpportunityRelatedPanels";
 import type { OpportunityDetailDto, OpportunityPermissions } from "./opportunity-types";
 import { useOpportunityLookups } from "./useOpportunityLookups";
 
 const API = "/api/v1/crm/opportunities";
 
-type Dialog = null | { kind: "assign" | "tags" | "stage" | "archive" | "restore" | "linkErp" } | { kind: "status"; status: OpportunityStatus } | { kind: "unlinkErp"; linkId: string; docNumber: string };
+type Dialog = null | { kind: "assign" | "tags" | "stage" | "transfer" | "archive" | "restore" | "linkErp" } | { kind: "status"; status: OpportunityStatus } | { kind: "unlinkErp"; linkId: string; docNumber: string };
 
 const dash = <span className="text-zinc-400">—</span>;
 const linkClass = "text-indigo-600 hover:underline dark:text-indigo-400";
@@ -97,6 +97,7 @@ export function OpportunityDetailClient({ initialOpportunity, permissions, curre
   if (canEdit) {
     if (!closed) {
       menu.push({ label: "Change stage", onClick: () => setDialog({ kind: "stage" }) });
+      if ((meta?.pipelines.filter((p) => p.isActive).length ?? 0) > 1) menu.push({ label: "Move to another pipeline", onClick: () => setDialog({ kind: "transfer" }) });
       menu.push({ label: "Mark won", onClick: () => setDialog({ kind: "status", status: "WON" }) });
       menu.push({ label: "Mark lost", onClick: () => setDialog({ kind: "status", status: "LOST" }) });
       menu.push({ label: "Mark abandoned", onClick: () => setDialog({ kind: "status", status: "ABANDONED" }) });
@@ -187,7 +188,7 @@ export function OpportunityDetailClient({ initialOpportunity, permissions, curre
                 ["Pipeline", opp.pipeline?.name],
                 ["Stage", opp.stage?.name],
                 ["Stage since", opp.stageChangedAt ? <ClientDateTime key="s" value={opp.stageChangedAt} /> : null],
-                ["Probability", opp.probability !== null ? `${opp.probability}%` : null],
+                ["Probability", opp.probability !== null ? `${opp.probability}%${opp.probabilitySource === "MANUAL" ? " (set by hand)" : opp.probabilitySource === "STAGE" ? " (stage default)" : ""}` : null],
                 ["Estimated value", opportunityValue(opp.amount, opp.currencyCode)],
                 ["Weighted value", opp.amount !== null && opp.probability !== null ? opportunityValue((Number(opp.amount) * opp.probability) / 100, opp.currencyCode) : null],
                 ["Expected close", opp.expectedCloseDate ? opp.expectedCloseDate.slice(0, 10) : null],
@@ -206,6 +207,10 @@ export function OpportunityDetailClient({ initialOpportunity, permissions, curre
 
           <Section title="Notes" id="notes">
             <CrmNotesPanel listUrl={`${API}/${opp.id}/notes`} canAdd={permissions.create && !archived} onChanged={() => setRefreshKey((k) => k + 1)} />
+          </Section>
+
+          <Section title="Stage history">
+            <OpportunityStageHistory opportunityId={opp.id} refreshKey={refreshKey} />
           </Section>
 
           <Section title="Timeline">
@@ -307,8 +312,9 @@ export function OpportunityDetailClient({ initialOpportunity, permissions, curre
       {dialog?.kind === "assign" && <AssignOwnerModal apiBase={API} noun="opportunity" onClose={() => setDialog(null)} users={users} target={{ recordId: opp.id, version: opp.version }} currentOwnerId={opp.ownerUserId} onDone={done} />}
       {dialog?.kind === "tags" && <RecordTagsModal apiBase={API} noun="opportunity" onClose={() => setDialog(null)} target={{ recordId: opp.id }} currentTags={opp.tags} onDone={done} />}
       {dialog?.kind === "stage" && meta && (
-        <ChangeStageModal pipelines={meta.pipelines} target={{ recordId: opp.id, version: opp.version }} current={{ pipelineId: opp.pipelineId, stageId: opp.stageId, probability: opp.probability }} onClose={() => setDialog(null)} onDone={done} />
+        <ChangeStageModal pipelines={meta.pipelines} target={{ recordId: opp.id, version: opp.version }} current={{ pipelineId: opp.pipelineId, stageId: opp.stageId, probability: opp.probability, probabilitySource: opp.probabilitySource }} onClose={() => setDialog(null)} onDone={done} />
       )}
+      {dialog?.kind === "transfer" && meta && <TransferPipelineModal pipelines={meta.pipelines} target={{ recordId: opp.id, version: opp.version }} currentPipelineId={opp.pipelineId} onClose={() => setDialog(null)} onDone={done} />}
       {dialog?.kind === "status" && (
         <ChangeOpportunityStatusModal target={{ recordId: opp.id, version: opp.version }} current={status} initialStatus={dialog.status} reasons={meta?.suggestions.opportunity_close_reason ?? []} onClose={() => setDialog(null)} onDone={done} />
       )}

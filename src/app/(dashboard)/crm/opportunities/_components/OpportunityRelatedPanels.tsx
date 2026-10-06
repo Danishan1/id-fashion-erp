@@ -8,6 +8,7 @@ import { ClientDateTime } from "@/components/ui/ClientDateTime";
 import { humanizeStatus } from "@/lib/humanize-status";
 import { OPPORTUNITY_FUTURE_SECTIONS } from "@/modules/crm/opportunities/opportunity-registry";
 import { opportunityValue } from "./OpportunityBadges";
+import type { StageHistoryDto } from "./opportunity-types";
 
 interface ErpDocDto {
   id: string;
@@ -122,6 +123,64 @@ export function OpportunityErpDocuments({ opportunityId, refreshKey, canEdit, on
       )}
       <p className="text-xs text-zinc-500 dark:text-zinc-400">Amounts and statuses come from the ERP and never change the opportunity&apos;s estimated value.</p>
     </div>
+  );
+}
+
+const CHANGE_LABEL: Record<StageHistoryDto["changeType"], string> = {
+  INITIAL: "Started in",
+  STAGE_CHANGE: "Moved",
+  PIPELINE_TRANSFER: "Moved to another pipeline",
+  STAGE_REASSIGNED: "Moved (stage archived)",
+};
+const SOURCE_LABEL: Record<string, string> = { FORM: "edit form", STAGE_ACTION: "stage change", BULK: "bulk change", TRANSFER: "pipeline move", STAGE_ARCHIVE: "stage archived", PIPELINE_ARCHIVE: "pipeline archived", CREATE: "created", BACKFILL: "earlier history" };
+
+/** Applied stage / pipeline changes (newest first) from crm_opportunity_stage_history. */
+export function OpportunityStageHistory({ opportunityId, refreshKey }: { opportunityId: string; refreshKey: number }) {
+  const [rows, setRows] = useState<StageHistoryDto[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    crmRequest<StageHistoryDto[]>(`/api/v1/crm/opportunities/${opportunityId}/stage-history`).then((res) => {
+      if (cancelled) return;
+      if (res.ok) {
+        setRows(res.data);
+        setError(null);
+      } else setError(res.error.message);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [opportunityId, refreshKey, tick]);
+
+  if (error) return <CrmErrorState message={error} onRetry={() => setTick((t) => t + 1)} />;
+  if (!rows) return <CrmLoadingState />;
+  if (!rows.length) return <p className="text-sm text-zinc-500 dark:text-zinc-400">No stage changes yet.</p>;
+  const pct = (v: number | null) => (v === null ? "—" : `${v}%`);
+  return (
+    <ol className="space-y-2 text-sm">
+      {rows.map((h) => (
+        <li key={h.id} className="flex flex-wrap items-baseline justify-between gap-x-3">
+          <span className="min-w-0">
+            <span className="text-zinc-500 dark:text-zinc-400">{CHANGE_LABEL[h.changeType] ?? h.changeType}: </span>
+            {h.fromStage && h.changeType !== "INITIAL" ? `${h.fromStage.name} → ` : ""}
+            <span className="font-medium">{h.toStage.name}</span>
+            {h.changeType === "PIPELINE_TRANSFER" && <span className="text-zinc-500 dark:text-zinc-400"> ({h.fromPipeline?.name ?? "—"} → {h.toPipeline.name})</span>}
+            <span className="block text-xs text-zinc-500 dark:text-zinc-400">
+              Probability {h.changeType === "INITIAL" ? pct(h.toProbability) : `${pct(h.fromProbability)} → ${pct(h.toProbability)}`}
+              {h.probabilitySource === "MANUAL" ? " (set by hand)" : ""}
+              {` · ${SOURCE_LABEL[h.source] ?? h.source}`}
+              {h.changedBy?.name ? ` · ${h.changedBy.name}` : ""}
+              {h.reason ? ` · ${h.reason}` : ""}
+            </span>
+          </span>
+          <span className="text-xs text-zinc-500 dark:text-zinc-400">
+            <ClientDateTime value={h.changedAt} />
+          </span>
+        </li>
+      ))}
+    </ol>
   );
 }
 

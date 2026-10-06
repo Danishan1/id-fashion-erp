@@ -2,8 +2,8 @@
  * Client-safe vocabulary for CRM Opportunities (no Prisma runtime / server
  * imports). Pipelines and stages are per-company configuration
  * (crm_pipelines / crm_pipeline_stages); DEFAULT_PIPELINE is only what a
- * company gets the first time it uses opportunities. Pipeline management
- * (create / reorder / rules) is Phase 07.
+ * company gets the first time it uses opportunities. Pipelines and stages
+ * are managed in CRM Settings → Pipelines & stages (Phase 07).
  */
 
 export const DEFAULT_PIPELINE = {
@@ -90,5 +90,5 @@ export const OPPORTUNITY_FUTURE_SECTIONS = [
   { key: "tasks", title: "Tasks", phase: "Phase 09 — Activities, Tasks & Follow-ups" },
   { key: "appointments", title: "Appointments", phase: "Phase 10 — Calendar & Appointments" },
   { key: "conversations", title: "Conversations", phase: "Phase 11 — Unified Conversations" },
-  { key: "board", title: "Pipeline board and pipeline / stage management", phase: "Phases 07–08 — Pipelines & Opportunity Board" },
+  { key: "board", title: "Pipeline board (Kanban)", phase: "Phase 08 — Opportunity Board" },
 ] as const;

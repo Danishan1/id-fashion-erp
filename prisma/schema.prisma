@@ -126,6 +126,8 @@ model Company {
   crmPipelines                        CrmPipeline[]
   crmPipelineStages                   CrmPipelineStage[]
   crmOpportunityErpLinks              CrmOpportunityErpLink[]
+  crmStageTransitionRules             CrmStageTransitionRule[]
+  crmOpportunityStageHistory          CrmOpportunityStageHistory[]
   crmCompanyMerges                    CrmCompanyMerge[]
   attendanceRecords                   AttendanceRecord[]
   attendanceCorrectionRequests        AttendanceCorrectionRequest[]
@@ -8547,6 +8549,8 @@ model CrmOpportunity {
   currencyCode      String?              @map("currency_code") @db.Char(3)
   // 0–100 (CHECK constraint in the migration).
   probability       Int?
+  // Phase 07: STAGE = follows the stage default; MANUAL = set by a user (kept on stage changes).
+  probabilitySource String?              @map("probability_source")
   expectedCloseDate DateTime?            @map("expected_close_date") @db.Date
   description       String?
   customFields      Json                 @default("{}") @map("custom_fields")
@@ -8564,17 +8568,18 @@ model CrmOpportunity {
   createdAt         DateTime             @default(now()) @map("created_at")
   updatedAt         DateTime             @updatedAt @map("updated_at")
 
-  company            Company                  @relation(fields: [companyId], references: [id])
-  lead               CrmLead?                 @relation("CrmOpportunityLead", fields: [leadId], references: [id], onDelete: SetNull)
-  crmContact         CrmContact?              @relation(fields: [crmContactId], references: [id], onDelete: SetNull)
-  crmCompany         CrmCompany?              @relation(fields: [crmCompanyId], references: [id], onDelete: SetNull)
-  source             CrmLeadSource?           @relation(fields: [sourceId], references: [id])
-  owner              User?                    @relation("CrmOpportunityOwner", fields: [ownerUserId], references: [id])
-  createdBy          User                     @relation("CrmOpportunityCreatedBy", fields: [createdByUserId], references: [id])
-  pipeline           CrmPipeline?             @relation(fields: [pipelineId], references: [id])
-  stage              CrmPipelineStage?        @relation(fields: [stageId], references: [id])
-  convertedFromLeads CrmLead[]                @relation("CrmLeadConvertedOpportunity")
+  company            Company                      @relation(fields: [companyId], references: [id])
+  lead               CrmLead?                     @relation("CrmOpportunityLead", fields: [leadId], references: [id], onDelete: SetNull)
+  crmContact         CrmContact?                  @relation(fields: [crmContactId], references: [id], onDelete: SetNull)
+  crmCompany         CrmCompany?                  @relation(fields: [crmCompanyId], references: [id], onDelete: SetNull)
+  source             CrmLeadSource?               @relation(fields: [sourceId], references: [id])
+  owner              User?                        @relation("CrmOpportunityOwner", fields: [ownerUserId], references: [id])
+  createdBy          User                         @relation("CrmOpportunityCreatedBy", fields: [createdByUserId], references: [id])
+  pipeline           CrmPipeline?                 @relation(fields: [pipelineId], references: [id], onDelete: Restrict)
+  stage              CrmPipelineStage?            @relation(fields: [stageId], references: [id], onDelete: Restrict)
+  convertedFromLeads CrmLead[]                    @relation("CrmLeadConvertedOpportunity")
   erpLinks           CrmOpportunityErpLink[]
+  stageHistory       CrmOpportunityStageHistory[]
 
   @@unique([companyId, opportunityNumber])
   @@index([companyId, status])
@@ -8594,19 +8599,30 @@ model CrmOpportunity {
 // need. Pipeline management (CRUD, ordering, rules, board) is Phase 07; until
 // then a default "Sales" pipeline is created lazily per company.
 model CrmPipeline {
-  id        String   @id @default(uuid()) @db.Uuid
-  companyId String   @map("company_id") @db.Uuid
-  key       String
-  name      String
-  isDefault Boolean  @default(false) @map("is_default")
-  isActive  Boolean  @default(true) @map("is_active")
-  sortOrder Int      @default(0) @map("sort_order")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id               String    @id @default(uuid()) @db.Uuid
+  companyId        String    @map("company_id") @db.Uuid
+  key              String
+  name             String
+  // Phase 07: lower/space-normalised name — unique among non-archived pipelines (partial index in SQL).
+  nameKey          String    @default("") @map("name_key")
+  description      String?
+  // Exactly one default per company (partial unique index in SQL); used when an opportunity is created without a pipeline.
+  isDefault        Boolean   @default(false) @map("is_default")
+  // Kept in sync with archivedAt (false while archived) for Phase 06 readers.
+  isActive         Boolean   @default(true) @map("is_active")
+  sortOrder        Int       @default(0) @map("sort_order")
+  archivedAt       DateTime? @map("archived_at")
+  archivedByUserId String?   @map("archived_by_user_id") @db.Uuid
+  updatedByUserId  String?   @map("updated_by_user_id") @db.Uuid
+  version          Int       @default(1)
+  createdByUserId  String?   @map("created_by_user_id") @db.Uuid
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
 
-  company       Company            @relation(fields: [companyId], references: [id])
-  stages        CrmPipelineStage[]
-  opportunities CrmOpportunity[]
+  company         Company                  @relation(fields: [companyId], references: [id])
+  stages          CrmPipelineStage[]
+  opportunities   CrmOpportunity[]
+  transitionRules CrmStageTransitionRule[]
 
   @@unique([companyId, key])
   @@index([companyId, sortOrder])
@@ -8614,25 +8630,103 @@ model CrmPipeline {
 }
 
 model CrmPipelineStage {
-  id          String   @id @default(uuid()) @db.Uuid
-  companyId   String   @map("company_id") @db.Uuid
-  pipelineId  String   @map("pipeline_id") @db.Uuid
-  key         String
-  name        String
-  // Default probability (0–100) suggested when an opportunity enters the stage.
-  probability Int?
-  isActive    Boolean  @default(true) @map("is_active")
-  sortOrder   Int      @default(0) @map("sort_order")
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  id               String    @id @default(uuid()) @db.Uuid
+  companyId        String    @map("company_id") @db.Uuid
+  pipelineId       String    @map("pipeline_id") @db.Uuid
+  key              String
+  name             String
+  // Phase 07: unique among the pipeline's non-archived stages (partial index in SQL).
+  nameKey          String    @default("") @map("name_key")
+  description      String?
+  // Default probability (0–100) applied when an opportunity enters the stage (unless set by hand).
+  probability      Int?
+  // One default (starting) stage per pipeline (partial unique index in SQL).
+  isDefault        Boolean   @default(false) @map("is_default")
+  // Kept in sync with archivedAt (false while archived) for Phase 06 readers.
+  isActive         Boolean   @default(true) @map("is_active")
+  sortOrder        Int       @default(0) @map("sort_order")
+  // Field keys an opportunity must have before it may enter this stage
+  // (registry: src/modules/crm/pipelines/stage-requirements.ts).
+  requiredFields   Json      @default("[]") @map("required_fields")
+  // ANY = every move out of this stage is allowed unless a rule blocks it;
+  // ONLY_LISTED = only moves to stages with an "allowed" rule.
+  transitionMode   String    @default("ANY") @map("transition_mode")
+  archivedAt       DateTime? @map("archived_at")
+  archivedByUserId String?   @map("archived_by_user_id") @db.Uuid
+  updatedByUserId  String?   @map("updated_by_user_id") @db.Uuid
+  version          Int       @default(1)
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
 
-  company       Company          @relation(fields: [companyId], references: [id])
-  pipeline      CrmPipeline      @relation(fields: [pipelineId], references: [id])
+  company       Company                  @relation(fields: [companyId], references: [id])
+  pipeline      CrmPipeline              @relation(fields: [pipelineId], references: [id])
   opportunities CrmOpportunity[]
+  rulesFrom     CrmStageTransitionRule[] @relation("CrmStageTransitionFrom")
+  rulesTo       CrmStageTransitionRule[] @relation("CrmStageTransitionTo")
 
   @@unique([pipelineId, key])
   @@index([companyId, pipelineId, sortOrder])
   @@map("crm_pipeline_stages")
+}
+
+// Phase 07: a move between two stages of one pipeline — allowed or blocked —
+// with extra fields required for that specific move.
+model CrmStageTransitionRule {
+  id              String   @id @default(uuid()) @db.Uuid
+  companyId       String   @map("company_id") @db.Uuid
+  pipelineId      String   @map("pipeline_id") @db.Uuid
+  fromStageId     String   @map("from_stage_id") @db.Uuid
+  toStageId       String   @map("to_stage_id") @db.Uuid
+  allowed         Boolean  @default(true)
+  requiredFields  Json     @default("[]") @map("required_fields")
+  message         String?
+  createdByUserId String?  @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  company   Company          @relation(fields: [companyId], references: [id])
+  pipeline  CrmPipeline      @relation(fields: [pipelineId], references: [id])
+  fromStage CrmPipelineStage @relation("CrmStageTransitionFrom", fields: [fromStageId], references: [id])
+  toStage   CrmPipelineStage @relation("CrmStageTransitionTo", fields: [toStageId], references: [id])
+
+  @@unique([fromStageId, toStageId])
+  @@index([companyId, pipelineId])
+  @@map("crm_stage_transition_rules")
+}
+
+// Phase 07: one row per applied stage / pipeline change of an opportunity
+// (rejected moves are never written). Read by the detail page and the
+// conversion report.
+model CrmOpportunityStageHistory {
+  id                String   @id @default(uuid()) @db.Uuid
+  companyId         String   @map("company_id") @db.Uuid
+  opportunityId     String   @map("opportunity_id") @db.Uuid
+  // INITIAL | STAGE_CHANGE | PIPELINE_TRANSFER | STAGE_REASSIGNED
+  changeType        String   @map("change_type")
+  // FORM | STAGE_ACTION | BULK | TRANSFER | STAGE_ARCHIVE | PIPELINE_ARCHIVE | CREATE | BACKFILL
+  source            String
+  fromPipelineId    String?  @map("from_pipeline_id") @db.Uuid
+  toPipelineId      String   @map("to_pipeline_id") @db.Uuid
+  fromStageId       String?  @map("from_stage_id") @db.Uuid
+  toStageId         String   @map("to_stage_id") @db.Uuid
+  // Names at the time of the change (stages can be renamed later).
+  fromStageName     String?  @map("from_stage_name")
+  toStageName       String   @map("to_stage_name")
+  fromProbability   Int?     @map("from_probability")
+  toProbability     Int?     @map("to_probability")
+  probabilitySource String?  @map("probability_source")
+  // Always APPLIED today; kept for future audited rejections.
+  result            String   @default("APPLIED")
+  reason            String?
+  changedByUserId   String?  @map("changed_by_user_id") @db.Uuid
+  changedAt         DateTime @default(now()) @map("changed_at")
+
+  company     Company        @relation(fields: [companyId], references: [id])
+  opportunity CrmOpportunity @relation(fields: [opportunityId], references: [id])
+
+  @@index([companyId, opportunityId, changedAt], map: "crm_opp_stage_history_opportunity_idx")
+  @@index([companyId, toPipelineId, toStageId], map: "crm_opp_stage_history_stage_idx")
+  @@map("crm_opportunity_stage_history")
 }
 
 // Phase 06: an opportunity's references to authoritative ERP documents

@@ -108,7 +108,7 @@ export function OpportunityForm({ opportunity, currentUserId, prefill }: { oppor
   const defaults = useMemo<Values | null>(() => {
     if (!meta) return null;
     const pipeline = meta.pipelines.find((p) => p.isDefault && p.isActive) ?? meta.pipelines.find((p) => p.isActive);
-    const stage = pipeline?.stages.find((s) => s.isActive);
+    const stage = pipeline?.stages.find((s) => s.isActive && s.isDefault) ?? pipeline?.stages.find((s) => s.isActive);
     const manual = meta.sources.find((s) => s.key === "manual" && s.isActive !== false);
     const owner = lead?.ownerUserId && users.some((u) => u.id === lead.ownerUserId) ? lead.ownerUserId : users.some((u) => u.id === currentUserId) ? currentUserId : "";
     return {
@@ -268,7 +268,7 @@ export function OpportunityForm({ opportunity, currentUserId, prefill }: { oppor
                 value={values.pipelineId}
                 onChange={(e) => {
                   const p = pipelines.find((x) => x.id === e.target.value);
-                  const first = p?.stages.find((s) => s.isActive);
+                  const first = p?.stages.find((s) => s.isActive && s.isDefault) ?? p?.stages.find((s) => s.isActive);
                   const followsStage = values.probability === "" || values.probability === String(stage?.probability ?? "");
                   setValues((prev) => ({ ...prev, pipelineId: e.target.value, stageId: first?.id ?? "", ...(followsStage && first?.probability != null ? { probability: String(first.probability) } : {}) }));
                 }}

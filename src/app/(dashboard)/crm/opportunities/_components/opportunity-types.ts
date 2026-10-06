@@ -12,6 +12,9 @@ export interface StageDto {
   probability: number | null;
   isActive: boolean;
   sortOrder: number;
+  isDefault?: boolean;
+  requiredFields?: string[];
+  archivedAt?: string | null;
 }
 export interface PipelineDto {
   id: string;
@@ -19,6 +22,7 @@ export interface PipelineDto {
   name: string;
   isDefault: boolean;
   isActive: boolean;
+  archivedAt?: string | null;
   stages: StageDto[];
 }
 
@@ -30,6 +34,8 @@ export interface OpportunityRowDto {
   amount: string | null;
   currencyCode: string | null;
   probability: number | null;
+  /** STAGE = follows the stage default; MANUAL = set by hand (Phase 07). */
+  probabilitySource?: "STAGE" | "MANUAL" | null;
   expectedCloseDate: string | null;
   closedAt: string | null;
   lastActivityAt: string | null;
@@ -121,4 +127,31 @@ export interface OpportunityDuplicateMatchDto {
   company: string | null;
   contact: string | null;
   visible: boolean;
+}
+
+/** POST /opportunities/{id}/stage/validate */
+export interface TransitionCheckDto {
+  allowed: boolean;
+  noop: boolean;
+  changeType: string;
+  reasons: { code: string; message: string }[];
+  missingFields: { key: string; label: string; field: string | null }[];
+  probability: { from: number | null; to: number | null; source: "STAGE" | "MANUAL" | null };
+}
+
+/** GET /opportunities/{id}/stage-history */
+export interface StageHistoryDto {
+  id: string;
+  changeType: "INITIAL" | "STAGE_CHANGE" | "PIPELINE_TRANSFER" | "STAGE_REASSIGNED";
+  source: string;
+  fromPipeline: { id: string; name: string | null } | null;
+  toPipeline: { id: string; name: string | null };
+  fromStage: { id: string; name: string | null } | null;
+  toStage: { id: string; name: string };
+  fromProbability: number | null;
+  toProbability: number | null;
+  probabilitySource: string | null;
+  reason: string | null;
+  changedBy: { id: string; name: string | null } | null;
+  changedAt: string;
 }

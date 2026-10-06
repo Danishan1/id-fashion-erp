@@ -7,6 +7,19 @@ import { buildSearchText, nameKey } from "../core/crm-normalize";
 import { crmOwnerWhere, getCrmRecordScope, isWithinCrmScope, type CrmRecordScope } from "../core/crm-visibility";
 import { listCustomFields, validateCustomFieldValues } from "../custom-fields/crm-custom-fields.service";
 import { getDefaultPipelineStage, getStage, listPipelines, resolvePipelineStage } from "../pipelines/crm-pipelines.service";
+import {
+  assertCanStartInStage,
+  assertTransitionAllowed,
+  evaluateTransition,
+  listStageHistory,
+  presentEvaluation,
+  probabilitySourceFor,
+  recordInitialStage,
+  recordTransition,
+  resolveStageProbability,
+  transitionUpdate,
+} from "../pipelines/crm-stage-transition.service";
+import { transferPipelineSchema, validateTransitionSchema } from "../pipelines/pipeline.schema";
 import { getLeadSourceByKey, getLeadSourceForCompany, listLeadSources, optionSuggestions } from "../settings/crm-settings.service";
 import { applyEntityTagChange, tagsByEntity } from "../tags/crm-tags.service";
 import type { EntityTagChange } from "../tags/crm-tag.schema";
@@ -51,9 +64,10 @@ export function opportunitySearchText(o: { opportunityNumber: string; name: stri
 }
 
 /**
- * Stage default probability is applied when the opportunity enters a stage,
- * unless the user set their own probability (it no longer equals the old
- * stage's default) or passes one explicitly.
+ * Phase 06 rule, kept for compatibility: stage default probability is applied
+ * when the opportunity enters a stage, unless the user set their own
+ * probability or passes one explicitly. Phase 07 stores the source instead
+ * (probability_source) — see resolveStageProbability.
  */
 export function nextProbability(current: number | null, oldStageProbability: number | null | undefined, newStageProbability: number | null | undefined, explicit?: number | null) {
   if (explicit !== undefined) return explicit;
@@ -95,17 +109,20 @@ export async function createOpportunityInMutation(ctx: CrmMutationContext, actor
   // New opportunities start in the given stage, or the default pipeline's first stage.
   let pipelineId = data.pipelineId ?? null;
   let stageId = data.stageId ?? null;
-  let stageProbability: number | null = null;
+  let stage: { id: string; name: string; probability: number | null } | null = null;
   if (stageId) {
-    const stage = await getStage(actor.companyId, stageId);
-    pipelineId = stage?.pipelineId ?? pipelineId;
-    stageProbability = stage?.probability ?? null;
+    const found = await getStage(actor.companyId, stageId);
+    pipelineId = found?.pipelineId ?? pipelineId;
+    stage = found;
   } else {
     const def = await getDefaultPipelineStage(actor.companyId);
     pipelineId = def?.pipeline.id ?? null;
     stageId = def?.stage.id ?? null;
-    stageProbability = def?.stage.probability ?? null;
+    stage = def?.stage ?? null;
   }
+  const stageProbability = stage?.probability ?? null;
+  const probability = data.probability ?? stageProbability;
+  const probabilitySource = data.probability !== undefined && data.probability !== null ? probabilitySourceFor(data.probability, stageProbability) : probability === null ? null : "STAGE";
   const name = data.name.trim();
   const now = new Date();
   const opp = await CrmOpportunityRepository.create(
@@ -123,7 +140,8 @@ export async function createOpportunityInMutation(ctx: CrmMutationContext, actor
       pipelineId,
       stageId,
       stageChangedAt: stageId ? now : null,
-      probability: data.probability ?? stageProbability,
+      probability,
+      probabilitySource,
       amount: data.amount ?? null,
       currencyCode: data.currencyCode || null,
       expectedCloseDate: toDate(data.expectedCloseDate || null),
@@ -135,6 +153,7 @@ export async function createOpportunityInMutation(ctx: CrmMutationContext, actor
     ctx.tx
   );
   await ctx.audit({ tableName: TABLE, recordId: opp.id, action: "CREATE", newValues: opp });
+  if (stage) await recordInitialStage(ctx, actor, { id: opp.id, pipelineId, stageId, probability, probabilitySource }, stage);
   ctx.emit({
     entityType: "OPPORTUNITY",
     entityId: opp.id,
@@ -383,27 +402,6 @@ async function emitOwnerChange(ctx: CrmMutationContext, id: string, from: string
   ctx.emit({ entityType: "OPPORTUNITY", entityId: id, eventType: "opportunity.owner_changed", summary: from ? `${label(from)} → ${label(to)}` : `Assigned to ${label(to)}`, payload: { fromUserId: from, toUserId: to } });
 }
 
-type StageRef = { id: string; name: string; probability: number | null; pipelineId: string } | null;
-
-function emitStageChange(ctx: CrmMutationContext, id: string, from: StageRef, to: NonNullable<StageRef>, probability: { from: number | null; to: number | null }, pipelines?: { from: string | null; to: string }) {
-  ctx.emit({
-    entityType: "OPPORTUNITY",
-    entityId: id,
-    eventType: "opportunity.stage_changed",
-    summary: from ? `${from.name} → ${to.name}` : `Stage: ${to.name}`,
-    payload: {
-      fromStageId: from?.id ?? null,
-      fromStage: from?.name ?? null,
-      toStageId: to.id,
-      toStage: to.name,
-      fromPipelineId: pipelines?.from ?? from?.pipelineId ?? null,
-      toPipelineId: to.pipelineId,
-      fromProbability: probability.from,
-      toProbability: probability.to,
-    },
-  });
-}
-
 export async function applyOpportunityTagsAndEmit(ctx: CrmMutationContext, actor: CrmActor, id: string, change: Pick<EntityTagChange, "addTagIds" | "addTagNames" | "removeTagIds">) {
   const { added, removed } = await applyEntityTagChange(actor, "OPPORTUNITY", id, change, ctx.tx);
   for (const t of added) ctx.emit({ entityType: "OPPORTUNITY", entityId: id, eventType: "opportunity.tag_added", summary: t.name, payload: { tagId: t.id } });
@@ -447,6 +445,23 @@ export async function createOpportunity(actor: CrmActor, raw: unknown) {
 
   const definitions = await listCustomFields(actor.companyId, "OPPORTUNITY", { includeInactive: true });
   const customFields = validateCustomFieldValues(definitions, input.customFields);
+
+  // Phase 07: the stage it starts in may require fields (same rule as moving into it).
+  const startStage = resolved?.stage ?? (await getDefaultPipelineStage(actor.companyId))?.stage ?? null;
+  if (startStage) {
+    await assertCanStartInStage(actor.companyId, startStage, {
+      crmCompanyId,
+      crmContactId,
+      amount: input.amount ?? null,
+      currencyCode: textOrNull(input.currencyCode),
+      expectedCloseDate: textOrNull(input.expectedCloseDate),
+      description: textOrNull(input.description),
+      ownerUserId,
+      sourceId,
+      probability: input.probability ?? startStage.probability ?? null,
+      customFields: customFields as Record<string, unknown>,
+    });
+  }
 
   assertOpportunityDuplicatesAllowed(await findOpportunityDuplicates(actor, input.name, crmCompanyId, crmContactId), input.confirmDuplicate);
   // A value without a currency is in the company's base currency.
@@ -513,18 +528,6 @@ export async function updateOpportunity(actor: CrmActor, id: string, raw: unknow
     if (data.crmContactId && data.crmContactId !== before.crmContactId) await assertLinkableContact(actor, scope, data.crmContactId as string);
   }
 
-  // Stage (and pipeline) through the edit form is tracked exactly like the stage action.
-  const stageIdInput = input.stageId !== undefined ? textOrNull(input.stageId) : undefined;
-  if (stageIdInput === null && before.stageId) throw new BusinessRuleError("VALIDATION_ERROR", "Choose a stage.", { fieldErrors: { stageId: "Choose a stage." } });
-  const stageChange = stageIdInput && stageIdInput !== before.stageId ? await resolvePipelineStage(actor.companyId, { pipelineId: textOrNull(input.pipelineId), stageId: stageIdInput }, before.stageId) : null;
-  const oldStage = before.stageId ? await getStage(actor.companyId, before.stageId) : null;
-  if (stageChange) {
-    data.stageId = stageChange.stage.id;
-    data.pipelineId = stageChange.pipeline.id;
-    data.stageChangedAt = new Date();
-    data.probability = nextProbability(before.probability, oldStage?.probability, stageChange.stage.probability, input.probability);
-  } else if (input.probability !== undefined) data.probability = input.probability;
-
   let newOwner: string | null | undefined;
   if (input.ownerUserId !== undefined) {
     const next = textOrNull(input.ownerUserId);
@@ -532,6 +535,40 @@ export async function updateOpportunity(actor: CrmActor, id: string, raw: unknow
       if (next) await assertAssignableOwner(actor.companyId, next);
       newOwner = next;
     }
+  }
+
+  // Stage (and pipeline) through the edit form goes through the same transition
+  // check as the stage action — against the values this edit is saving.
+  const stageIdInput = input.stageId !== undefined ? textOrNull(input.stageId) : undefined;
+  if (stageIdInput === null && before.stageId) throw new BusinessRuleError("VALIDATION_ERROR", "Choose a stage.", { fieldErrors: { stageId: "Choose a stage." } });
+  const merged = <T,>(v: T | undefined, b: T) => (v === undefined ? b : v);
+  const stageChange =
+    stageIdInput && stageIdInput !== before.stageId
+      ? await evaluateTransition(actor.companyId, before, {
+          pipelineId: textOrNull(input.pipelineId),
+          stageId: stageIdInput,
+          probability: input.probability,
+          overrides: {
+            crmCompanyId: merged(data.crmCompanyId as string | null | undefined, before.crmCompanyId),
+            crmContactId: merged(data.crmContactId as string | null | undefined, before.crmContactId),
+            amount: merged(data.amount as unknown, before.amount),
+            currencyCode: merged(data.currencyCode as string | null | undefined, before.currencyCode),
+            expectedCloseDate: merged(data.expectedCloseDate as unknown, before.expectedCloseDate),
+            description: merged(data.description as string | null | undefined, before.description),
+            sourceId: merged(data.sourceId as string | null | undefined, before.sourceId),
+            ownerUserId: merged(newOwner, before.ownerUserId),
+            probability: merged(input.probability, before.probability),
+            customFields: (merged(data.customFields as Record<string, unknown> | undefined, before.customFields as Record<string, unknown>) ?? {}) as Record<string, unknown>,
+          },
+        })
+      : null;
+  if (stageChange) {
+    assertTransitionAllowed(stageChange);
+    Object.assign(data, transitionUpdate(stageChange));
+  } else if (input.probability !== undefined && input.probability !== before.probability) {
+    const current = before.stageId ? await getStage(actor.companyId, before.stageId) : null;
+    data.probability = input.probability;
+    data.probabilitySource = probabilitySourceFor(input.probability, current?.probability);
   }
 
   const changed = (f: keyof CrmOpportunity) => data[f as keyof typeof data] !== undefined && comparable(data[f as keyof typeof data]) !== comparable(before[f]);
@@ -571,7 +608,7 @@ export async function updateOpportunity(actor: CrmActor, id: string, raw: unknow
     const emit = (eventType: Parameters<typeof ctx.emit>[0]["eventType"], summary: string, payload: Record<string, unknown>) => ctx.emit({ entityType: "OPPORTUNITY", entityId: id, eventType, summary, payload });
     if (Object.keys(plainChanges).length) emit("opportunity.updated", `Updated ${Object.keys(plainChanges).length} field(s)`, { changes: plainChanges });
     if (valueChanged) emit("opportunity.value_changed", `${fmtValue(before.amount, before.currencyCode)} → ${fmtValue(after.amount, after.currencyCode)}`, { from: { amount: money(before.amount), currencyCode: before.currencyCode }, to: { amount: money(after.amount), currencyCode: after.currencyCode } });
-    if (stageChange) emitStageChange(ctx, id, oldStage, stageChange.stage, { from: before.probability, to: after.probability }, { from: before.pipelineId, to: stageChange.pipeline.id });
+    if (stageChange) await recordTransition(ctx, actor, before, stageChange, { source: "FORM", audit: false });
     else if (probabilityChanged) emit("opportunity.probability_changed", `${before.probability ?? "—"}% → ${after.probability ?? "—"}%`, { from: before.probability, to: after.probability });
     if (closeDateChanged) emit("opportunity.close_date_changed", `${comparable(before.expectedCloseDate) ?? "—"} → ${comparable(after.expectedCloseDate) ?? "—"}`, { from: comparable(before.expectedCloseDate), to: comparable(after.expectedCloseDate) });
     if (companyChanged) {
@@ -602,32 +639,74 @@ export async function assignOpportunity(actor: CrmActor, id: string, raw: unknow
   });
 }
 
-/** Moves an open opportunity to another stage (optionally of another pipeline); history is always recorded. */
+/**
+ * Stage change API: load (visibility) → validate pipeline, stage, rules,
+ * required fields and business checks (crm-stage-transition.service) →
+ * optimistic-lock update → stage history + audit + timeline, all in one
+ * transaction. A move to another pipeline's stage is a pipeline transfer.
+ */
 export async function changeOpportunityStage(actor: CrmActor, id: string, raw: unknown) {
   const input = changeStageSchema.parse(raw);
-  const before = await loadEditableOpportunity(actor, id, "changing its stage");
-  if (input.stageId === before.stageId && (input.probability === undefined || input.probability === before.probability)) return before;
-  const target = input.stageId === before.stageId ? null : await resolvePipelineStage(actor.companyId, { pipelineId: input.pipelineId, stageId: input.stageId }, before.stageId);
-  const oldStage = before.stageId ? await getStage(actor.companyId, before.stageId) : null;
+  const before = await loadOpportunityForActor(actor, id);
+  const probabilityOnly = input.stageId === before.stageId;
+  if (probabilityOnly) return changeOpportunityProbability(actor, before, input);
+  const ev = await evaluateTransition(actor.companyId, before, { pipelineId: input.pipelineId, stageId: input.stageId, probability: input.probability, useStageProbability: input.useStageProbability });
+  assertTransitionAllowed(ev);
+  const reason = textOrNull(input.reason);
   return runCrmMutation(actor, async (ctx) => {
-    if (!target) {
-      const after = await versionedUpdate(ctx, before, input.version, { probability: input.probability }, actor);
-      await ctx.audit({ tableName: TABLE, recordId: id, action: "UPDATE", oldValues: { probability: before.probability }, newValues: { probability: after.probability } });
-      ctx.emit({ entityType: "OPPORTUNITY", entityId: id, eventType: "opportunity.probability_changed", summary: `${before.probability ?? "—"}% → ${after.probability ?? "—"}%`, payload: { from: before.probability, to: after.probability } });
-      return after;
-    }
-    const probability = nextProbability(before.probability, oldStage?.probability, target.stage.probability, input.probability);
-    const after = await versionedUpdate(ctx, before, input.version, { stageId: target.stage.id, pipelineId: target.pipeline.id, stageChangedAt: new Date(), probability }, actor);
-    await ctx.audit({
-      tableName: TABLE,
-      recordId: id,
-      action: "UPDATE",
-      oldValues: { pipelineId: before.pipelineId, stageId: before.stageId, probability: before.probability },
-      newValues: { pipelineId: after.pipelineId, stageId: after.stageId, probability: after.probability },
-    });
-    emitStageChange(ctx, id, oldStage, target.stage, { from: before.probability, to: after.probability }, { from: before.pipelineId, to: target.pipeline.id });
+    const after = await versionedUpdate(ctx, before, input.version, transitionUpdate(ev), actor);
+    await recordTransition(ctx, actor, before, ev, { source: "STAGE_ACTION", reason });
     return after;
   });
+}
+
+/** Same stage, new probability (or back to the stage default). */
+async function changeOpportunityProbability(actor: CrmActor, before: CrmOpportunity, input: { probability?: number | null; useStageProbability?: boolean; version?: number }) {
+  if (before.archivedAt || isClosedStatus(before.status as OpportunityStatus)) await loadEditableOpportunity(actor, before.id, "changing its probability");
+  const stage = before.stageId ? await getStage(actor.companyId, before.stageId) : null;
+  const next = input.useStageProbability && input.probability === undefined
+    ? resolveStageProbability({ current: before.probability, currentSource: before.probabilitySource, oldStageProbability: stage?.probability, newStageProbability: stage?.probability, useStageProbability: true })
+    : input.probability === undefined
+      ? null
+      : { value: input.probability, source: probabilitySourceFor(input.probability, stage?.probability) };
+  if (!next || (next.value === before.probability && next.source === before.probabilitySource)) return before;
+  return runCrmMutation(actor, async (ctx) => {
+    const after = await versionedUpdate(ctx, before, input.version, { probability: next.value, probabilitySource: next.source }, actor);
+    await ctx.audit({ tableName: TABLE, recordId: before.id, action: "UPDATE", oldValues: { probability: before.probability, probabilitySource: before.probabilitySource }, newValues: { probability: after.probability, probabilitySource: after.probabilitySource } });
+    ctx.emit({ entityType: "OPPORTUNITY", entityId: before.id, eventType: "opportunity.probability_changed", summary: `${before.probability ?? "—"}% → ${after.probability ?? "—"}%`, payload: { from: before.probability, to: after.probability, source: after.probabilitySource } });
+    return after;
+  });
+}
+
+/** Dry run of a stage move for the UI ("what's missing?"); never writes. */
+export async function validateOpportunityTransition(actor: CrmActor, id: string, raw: unknown) {
+  const input = validateTransitionSchema.parse(raw);
+  const opp = await loadOpportunityForActor(actor, id);
+  return presentEvaluation(await evaluateTransition(actor.companyId, opp, { pipelineId: input.pipelineId, stageId: input.stageId }));
+}
+
+/**
+ * Moves an opportunity to another pipeline — into the chosen stage or the
+ * destination's default stage, after the same validation as a stage move
+ * (destination required fields). Recorded as a pipeline transfer.
+ */
+export async function transferOpportunityPipeline(actor: CrmActor, id: string, raw: unknown) {
+  const input = transferPipelineSchema.parse(raw);
+  const before = await loadOpportunityForActor(actor, id);
+  if (before.pipelineId === input.pipelineId) throw new BusinessRuleError("VALIDATION_ERROR", "The opportunity is already in this pipeline. Change its stage instead.", { fieldErrors: { pipelineId: "Choose a different pipeline." } });
+  const ev = await evaluateTransition(actor.companyId, before, { pipelineId: input.pipelineId, stageId: input.stageId ?? null, probability: input.probability ?? undefined });
+  assertTransitionAllowed(ev);
+  const reason = textOrNull(input.reason);
+  return runCrmMutation(actor, async (ctx) => {
+    const after = await versionedUpdate(ctx, before, input.version, transitionUpdate(ev), actor);
+    await recordTransition(ctx, actor, before, ev, { source: "TRANSFER", reason });
+    return after;
+  });
+}
+
+export async function getOpportunityStageHistory(actor: CrmActor, id: string) {
+  await loadOpportunityForActor(actor, id);
+  return listStageHistory(actor.companyId, id);
 }
 
 /**
@@ -713,15 +792,7 @@ export async function bulkOpportunityAction(actor: CrmActor, raw: unknown) {
     if (input.ownerUserId) await assertAssignableOwner(actor.companyId, input.ownerUserId);
     targets = targets.filter((o) => (o.ownerUserId === input.ownerUserId ? (skipped.push({ id: o.id, reason: "Already assigned to this owner" }), false) : true));
   }
-  const target = input.action === "stage" ? await resolvePipelineStage(actor.companyId, { stageId: input.stageId }) : null;
-  if (target) {
-    targets = targets.filter((o) => {
-      if (isClosedStatus(o.status)) return (skipped.push({ id: o.id, reason: "Closed — reopen it first" }), false);
-      if (o.stageId === target.stage.id) return (skipped.push({ id: o.id, reason: "Already in this stage" }), false);
-      if (o.pipelineId && o.pipelineId !== target.pipeline.id) return (skipped.push({ id: o.id, reason: "In a different pipeline" }), false);
-      return true;
-    });
-  }
+  if (input.action === "stage") return bulkChangeStage(actor, input.stageId, targets, ids.length, skipped);
   if (input.action === "status") {
     const to = input.status as OpportunityStatus;
     targets = targets.filter((o) => {
@@ -730,8 +801,6 @@ export async function bulkOpportunityAction(actor: CrmActor, raw: unknown) {
       return true;
     });
   }
-  const oldStageIds = target ? [...new Set(targets.map((o) => o.stageId).filter((v): v is string => Boolean(v)))] : [];
-  const oldStages = new Map((await Promise.all(oldStageIds.map((sid) => getStage(actor.companyId, sid)))).filter((s): s is NonNullable<typeof s> => Boolean(s)).map((s) => [s.id, s]));
 
   let updated = 0;
   await runCrmMutation(actor, async (ctx) => {
@@ -740,13 +809,6 @@ export async function bulkOpportunityAction(actor: CrmActor, raw: unknown) {
         await CrmOpportunityRepository.updateRaw(o.id, { ownerUserId: input.ownerUserId, updatedByUserId: actor.userId }, ctx.tx);
         await ctx.audit({ tableName: TABLE, recordId: o.id, action: "UPDATE", oldValues: { ownerUserId: o.ownerUserId }, newValues: { ownerUserId: input.ownerUserId, bulk: true } });
         await emitOwnerChange(ctx, o.id, o.ownerUserId, input.ownerUserId);
-        updated++;
-      } else if (input.action === "stage" && target) {
-        const oldStage = o.stageId ? (oldStages.get(o.stageId) ?? null) : null;
-        const probability = nextProbability(o.probability, oldStage?.probability, target.stage.probability);
-        await CrmOpportunityRepository.updateRaw(o.id, { stageId: target.stage.id, pipelineId: target.pipeline.id, stageChangedAt: new Date(), probability, updatedByUserId: actor.userId }, ctx.tx);
-        await ctx.audit({ tableName: TABLE, recordId: o.id, action: "UPDATE", oldValues: { stageId: o.stageId, probability: o.probability }, newValues: { stageId: target.stage.id, probability, bulk: true } });
-        emitStageChange(ctx, o.id, oldStage, target.stage, { from: o.probability, to: probability });
         updated++;
       } else if (input.action === "status") {
         const to = input.status as OpportunityStatus;
@@ -776,4 +838,43 @@ export async function bulkOpportunityAction(actor: CrmActor, raw: unknown) {
     }
   });
   return { requested: ids.length, updated, skipped };
+}
+
+/**
+ * Bulk stage change: each record is validated by the central transition
+ * service and saved in its own transaction, so one blocked record never
+ * blocks the rest. Moves are within the record's own pipeline.
+ */
+async function bulkChangeStage(actor: CrmActor, stageId: string, targets: CrmOpportunity[], requested: number, skipped: { id: string; reason: string }[]) {
+  const target = await resolvePipelineStage(actor.companyId, { stageId });
+  const blocked: { id: string; opportunityNumber: string; reasons: string[]; missingFields: { key: string; label: string }[] }[] = [];
+  let updated = 0;
+  for (const o of targets) {
+    if (o.stageId === target.stage.id) {
+      skipped.push({ id: o.id, reason: "Already in this stage" });
+      continue;
+    }
+    if (o.pipelineId && o.pipelineId !== target.pipeline.id) {
+      skipped.push({ id: o.id, reason: "In a different pipeline" });
+      continue;
+    }
+    const ev = await evaluateTransition(actor.companyId, o, { stageId: target.stage.id });
+    if (!ev.allowed) {
+      const closedOnly = ev.issues.every((i) => i.code === "OPPORTUNITY_CLOSED");
+      skipped.push({ id: o.id, reason: closedOnly ? "Closed — reopen it first" : ev.missingFields.length ? `Missing ${ev.missingFields.map((m) => m.label).join(", ")}` : ev.issues.map((i) => i.message).join(" ") });
+      if (!closedOnly) blocked.push({ id: o.id, opportunityNumber: o.opportunityNumber, reasons: ev.issues.map((i) => i.message), missingFields: ev.missingFields.map(({ key, label }) => ({ key, label })) });
+      continue;
+    }
+    try {
+      await runCrmMutation(actor, async (ctx) => {
+        await versionedUpdate(ctx, o, o.version, transitionUpdate(ev), actor);
+        await recordTransition(ctx, actor, o, ev, { source: "BULK", bulk: true });
+      });
+      updated++;
+    } catch (e) {
+      if (e instanceof BusinessRuleError && e.code === "RECORD_VERSION_CONFLICT") skipped.push({ id: o.id, reason: "Changed by someone else — try again" });
+      else throw e;
+    }
+  }
+  return { requested, updated, skipped, blocked };
 }

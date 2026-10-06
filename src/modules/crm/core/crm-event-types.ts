@@ -107,6 +107,7 @@ export const CRM_EVENT_TYPES = {
   "opportunity.created": { label: "Opportunity created", entityType: "OPPORTUNITY", category: "created" },
   "opportunity.updated": { label: "Opportunity updated", entityType: "OPPORTUNITY", category: "updated" },
   "opportunity.stage_changed": { label: "Stage changed", entityType: "OPPORTUNITY", category: "stage" },
+  "opportunity.pipeline_transferred": { label: "Moved to another pipeline", entityType: "OPPORTUNITY", category: "stage" },
   "opportunity.status_changed": { label: "Status changed", entityType: "OPPORTUNITY", category: "status" },
   "opportunity.won": { label: "Opportunity won", entityType: "OPPORTUNITY", category: "won" },
   "opportunity.lost": { label: "Opportunity lost", entityType: "OPPORTUNITY", category: "lost" },

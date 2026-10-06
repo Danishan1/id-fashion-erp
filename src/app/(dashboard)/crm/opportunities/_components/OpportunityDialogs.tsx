@@ -9,7 +9,7 @@ import { Modal } from "@/components/ui/Modal";
 import { humanizeStatus } from "@/lib/humanize-status";
 import { ERP_DOC_TYPE_KEYS, ERP_DOC_TYPES, OPPORTUNITY_STATUS_TRANSITIONS, OPPORTUNITY_STATUSES, type ErpDocType, type OpportunityStatus } from "@/modules/crm/opportunities/opportunity-registry";
 import { opportunityValue } from "./OpportunityBadges";
-import type { PipelineDto } from "./opportunity-types";
+import type { PipelineDto, TransitionCheckDto } from "./opportunity-types";
 
 const API = "/api/v1/crm/opportunities";
 type Target = { recordId: string; version?: number } | { ids: string[] };
@@ -31,10 +31,56 @@ function Footer({ onCancel, busy, label, disabled, danger }: { onCancel: () => v
   );
 }
 
+/** Reasons a move is refused (rules, missing required fields), as returned by the server. */
+function BlockedMoveNotice({ check }: { check: Pick<TransitionCheckDto, "reasons" | "missingFields"> }) {
+  const reasons = check.reasons.filter((r) => r.code !== "REQUIRED_FIELDS_MISSING");
+  return (
+    <div role="alert" className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+      {reasons.map((r) => (
+        <p key={r.code + r.message}>{r.message}</p>
+      ))}
+      {check.missingFields.length > 0 && (
+        <>
+          <p className="font-medium">Fill these in first:</p>
+          <ul className="ml-4 list-disc">
+            {check.missingFields.map((m) => (
+              <li key={m.key}>{m.label}</li>
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
+  );
+}
+
+const blockedFromError = (error: { code: string | null; details: Record<string, unknown> | null }) =>
+  error.code === "CRM_STAGE_TRANSITION_BLOCKED" && error.details
+    ? { reasons: (error.details.reasons as TransitionCheckDto["reasons"]) ?? [], missingFields: (error.details.missingFields as TransitionCheckDto["missingFields"]) ?? [] }
+    : null;
+
+/** Server dry run of a single-record move (rules + required fields); null while loading or not applicable. */
+function useTransitionCheck(recordId: string | null, stageId: string, currentStageId: string | null | undefined) {
+  const [result, setResult] = useState<{ key: string; check: TransitionCheckDto | null } | null>(null);
+  const key = `${recordId}:${stageId}`;
+  useEffect(() => {
+    if (!recordId || !stageId || stageId === currentStageId) return;
+    let cancelled = false;
+    crmRequest<TransitionCheckDto>(`${API}/${recordId}/stage/validate`, { method: "POST", body: { stageId }, toast: "off" }).then((res) => {
+      if (!cancelled) setResult({ key: `${recordId}:${stageId}`, check: res.ok ? res.data : null });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [recordId, stageId, currentStageId]);
+  return result?.key === key ? result.check : null;
+}
+
 /**
  * Move one open opportunity (or many, within their pipeline) to a stage.
- * The stage's default probability is suggested; the server records the old
- * and new stage and probability on the timeline.
+ * The server validates every move (transition rules, the stage's required
+ * fields); for a single record the result is checked as soon as a stage is
+ * picked, and a refused move lists what is missing. A probability set by
+ * hand is kept unless "use the stage's probability" is ticked.
  */
 export function ChangeStageModal({
   pipelines,
@@ -45,7 +91,7 @@ export function ChangeStageModal({
 }: {
   pipelines: PipelineDto[];
   target: Target;
-  current?: { pipelineId: string | null; stageId: string | null; probability: number | null };
+  current?: { pipelineId: string | null; stageId: string | null; probability: number | null; probabilitySource?: string | null };
   onClose: () => void;
   onDone: (result?: BulkResult) => void;
 }) {
@@ -57,11 +103,17 @@ export function ChangeStageModal({
   const [stageId, setStageId] = useState(current?.stageId ?? stages[0]?.id ?? "");
   const oldStage = pipelines.flatMap((p) => p.stages).find((s) => s.id === current?.stageId);
   const newStage = stages.find((s) => s.id === stageId);
-  const keepsManual = current && current.probability !== null && current.probability !== (oldStage?.probability ?? null);
-  const suggested = keepsManual ? current!.probability : (newStage?.probability ?? current?.probability ?? null);
+  const keepsManual = Boolean(
+    current && current.probability !== null && (current.probabilitySource ? current.probabilitySource === "MANUAL" : current.probability !== (oldStage?.probability ?? null))
+  );
+  const [useStageProbability, setUseStageProbability] = useState(false);
+  const suggested = keepsManual && !useStageProbability ? current!.probability : (newStage?.probability ?? current?.probability ?? null);
   const [probability, setProbability] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [blocked, setBlocked] = useState<{ stageId: string; reasons: TransitionCheckDto["reasons"]; missingFields: TransitionCheckDto["missingFields"] } | null>(null);
+  const check = useTransitionCheck(bulk ? null : target.recordId, stageId, current?.stageId);
+  const refusal = blocked?.stageId === stageId ? blocked : check?.allowed === false ? check : null;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -76,9 +128,14 @@ export function ChangeStageModal({
     }
     const body: Record<string, unknown> = { stageId, pipelineId, version: target.version };
     if (probability.trim() !== "") body.probability = probability.trim();
-    const res = await crmRequest(`${API}/${target.recordId}/stage`, { method: "POST", body, successMessage: "Stage updated." });
+    else if (useStageProbability) body.useStageProbability = true;
+    const res = await crmRequest(`${API}/${target.recordId}/stage`, { method: "POST", body, successMessage: "Stage updated.", toast: "errors" });
     setBusy(false);
-    if (!res.ok) return setError(res.error.fieldErrors.probability ?? res.error.message);
+    if (!res.ok) {
+      const b = blockedFromError(res.error);
+      if (b) return setBlocked({ stageId, ...b });
+      return setError(res.error.fieldErrors.probability ?? res.error.message);
+    }
     onDone();
   };
 
@@ -93,7 +150,8 @@ export function ChangeStageModal({
               value={pipelineId}
               onChange={(e) => {
                 setPipelineId(e.target.value);
-                setStageId(usable.find((p) => p.id === e.target.value)?.stages.find((s) => s.isActive)?.id ?? "");
+                const p = usable.find((x) => x.id === e.target.value);
+                setStageId(p?.stages.find((s) => s.isActive && s.isDefault)?.id ?? p?.stages.find((s) => s.isActive)?.id ?? "");
               }}
             >
               {usable.map((p) => (
@@ -117,14 +175,95 @@ export function ChangeStageModal({
         {!bulk && (
           <FormField label="Probability %" htmlFor="opp-stage-probability">
             <input id="opp-stage-probability" type="number" min={0} max={100} step={1} className={textInputClass()} value={probability} onChange={(e) => setProbability(e.target.value)} placeholder={suggested !== null ? String(suggested) : "0–100"} />
-            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-              {keepsManual ? "Your own probability is kept unless you enter a new one." : "Leave blank to use the stage's default probability."}
-            </p>
+            {keepsManual ? (
+              <label className="mt-1 flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
+                <input type="checkbox" checked={useStageProbability} onChange={(e) => setUseStageProbability(e.target.checked)} />
+                Your own probability ({current!.probability}%) is kept. Tick to use the stage&apos;s default instead.
+              </label>
+            ) : (
+              <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Leave blank to use the stage&apos;s default probability.</p>
+            )}
           </FormField>
         )}
-        {bulk && <p className="text-xs text-zinc-500 dark:text-zinc-400">Closed opportunities and ones in another pipeline are skipped. Each one keeps a probability its owner set by hand.</p>}
+        {bulk && <p className="text-xs text-zinc-500 dark:text-zinc-400">Each opportunity is checked on its own: closed ones, ones in another pipeline and ones missing the stage&apos;s required fields are skipped and listed. A probability set by hand is kept.</p>}
+        {refusal && <BlockedMoveNotice check={refusal} />}
         <ErrorLine message={error} />
-        <Footer onCancel={onClose} busy={busy} label="Save" disabled={!stageId || (!bulk && stageId === current?.stageId && probability.trim() === "")} />
+        <Footer onCancel={onClose} busy={busy} label="Save" disabled={!stageId || Boolean(refusal) || (!bulk && stageId === current?.stageId && probability.trim() === "" && !useStageProbability)} />
+      </form>
+    </Modal>
+  );
+}
+
+/** Move an opportunity to another pipeline (its default stage unless another is chosen). */
+export function TransferPipelineModal({ pipelines, target, currentPipelineId, onClose, onDone }: { pipelines: PipelineDto[]; target: { recordId: string; version?: number }; currentPipelineId: string | null; onClose: () => void; onDone: () => void }) {
+  const others = pipelines.filter((p) => p.isActive && p.id !== currentPipelineId);
+  const [pipelineId, setPipelineId] = useState(others.find((p) => p.isDefault)?.id ?? others[0]?.id ?? "");
+  const pipeline = others.find((p) => p.id === pipelineId);
+  const activeStages = (pipeline?.stages ?? []).filter((s) => s.isActive);
+  const [stageId, setStageId] = useState("");
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [blocked, setBlocked] = useState<{ key: string; reasons: TransitionCheckDto["reasons"]; missingFields: TransitionCheckDto["missingFields"] } | null>(null);
+  const key = `${pipelineId}:${stageId}`;
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    const res = await crmRequest(`${API}/${target.recordId}/transfer`, { method: "POST", body: { pipelineId, ...(stageId ? { stageId } : {}), reason, version: target.version }, successMessage: "Moved to another pipeline.", toast: "errors" });
+    setBusy(false);
+    if (!res.ok) {
+      const b = blockedFromError(res.error);
+      if (b) return setBlocked({ key, ...b });
+      return setError(res.error.message);
+    }
+    onDone();
+  };
+
+  return (
+    <Modal open onClose={onClose} title="Move to another pipeline" maxWidthClass="max-w-md">
+      <form onSubmit={submit} className="mt-4 space-y-4">
+        {others.length === 0 ? (
+          <p className="text-sm text-zinc-600 dark:text-zinc-300">There is no other active pipeline. Add one in CRM Settings → Pipelines &amp; stages.</p>
+        ) : (
+          <>
+            <FormField label="Pipeline" htmlFor="opp-transfer-pipeline" required>
+              <select
+                id="opp-transfer-pipeline"
+                className={textInputClass()}
+                value={pipelineId}
+                onChange={(e) => {
+                  setPipelineId(e.target.value);
+                  setStageId("");
+                }}
+              >
+                {others.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </FormField>
+            <FormField label="Stage" htmlFor="opp-transfer-stage">
+              <select id="opp-transfer-stage" className={textInputClass()} value={stageId} onChange={(e) => setStageId(e.target.value)}>
+                <option value="">Default stage{activeStages.find((s) => s.isDefault) ? ` (${activeStages.find((s) => s.isDefault)!.name})` : ""}</option>
+                {activeStages.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </FormField>
+            <FormField label="Reason" htmlFor="opp-transfer-reason">
+              <input id="opp-transfer-reason" className={textInputClass()} maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Optional — shown on the timeline" />
+            </FormField>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400">The destination stage&apos;s required fields apply. A probability set by hand is kept; otherwise the new stage&apos;s default is used.</p>
+          </>
+        )}
+        {blocked?.key === key && <BlockedMoveNotice check={blocked} />}
+        <ErrorLine message={error} />
+        <Footer onCancel={onClose} busy={busy} label="Move" disabled={!pipelineId || blocked?.key === key} />
       </form>
     </Modal>
   );

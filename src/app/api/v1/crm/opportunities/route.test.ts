@@ -125,7 +125,7 @@ describe("CRM opportunity routes", () => {
     await erpSearch.GET(new NextRequest(`http://x/api/v1/crm/opportunities/${ID}/erp-documents/search?docType=SALES_ORDER&search=SO-1`), ctx({ id: ID }));
     expect(m.searchLinkableErpDocuments).toHaveBeenCalledWith(ACTOR, ID, { docType: "SALES_ORDER", search: "SO-1" });
     await pipelines.GET(new NextRequest("http://x/api/v1/crm/pipelines"), ctx({}));
-    expect(m.listPipelines).toHaveBeenCalledWith("co-1");
+    expect(m.listPipelines).toHaveBeenCalledWith("co-1", { includeArchived: true });
     expect(m.assert).toHaveBeenLastCalledWith("user-1", "crm", "view");
   });
 });

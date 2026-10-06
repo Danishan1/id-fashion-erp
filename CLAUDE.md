@@ -7698,3 +7698,10 @@ The whole CRM (Leads, Deals/Opportunities, pipeline/sources/lost-reason masters,
 - ERP documents: `crm_opportunity_erp_links` (many per opportunity, id+number only, live ERP data, per-module permission + branch scope, must match the company's ERP customer). The ERP has no quotations — add a provider in `crm-opportunity-erp.service.ts` when it does. Never write ERP tables from CRM code.
 - Duplicate check is warn-only (same name + company + contact, open).
 - Report + manual checklist: `docs/crm/PHASE_06_OPPORTUNITIES.md`.
+
+## CRM rebuild — Phase 07 Pipelines & Stages (2026-10-06)
+- Every opportunity stage/pipeline change goes through `src/modules/crm/pipelines/crm-stage-transition.service.ts` (`evaluateTransition` -> `assertTransitionAllowed` -> `transitionUpdate` + `recordTransition`): rules, required fields, history row (`crm_opportunity_stage_history`), audit, timeline. Never update `stage_id`/`pipeline_id` directly.
+- Config: `crm-pipelines.service.ts` (CRUD, one default pipeline / one default stage, reorder, archive with reassignment — never NULL a stage; FKs are RESTRICT). Required-field keys live in `stage-requirements.ts` (built-in, `erp:*`, `custom:*`).
+- Probability: `probability_source` STAGE/MANUAL; `resolveStageProbability` keeps manual values.
+- Refused moves -> 422 `CRM_STAGE_TRANSITION_BLOCKED` with `details.missingFields`. Board/report data: `crm-pipeline-insights.service.ts` (no Kanban UI until Phase 08).
+- Report: `docs/crm/PHASE_07_PIPELINES_STAGES.md`.
