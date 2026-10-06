@@ -123,11 +123,11 @@ export function LeadDetailClient({ initialLead, permissions, openConvert = false
     menu.push({ label: "Assign", onClick: () => setDialog("assign") });
     if (!converted) menu.push({ label: "Change status", onClick: () => setDialog("status") });
     menu.push({ label: "Edit tags", onClick: () => setDialog("tags") });
-    if (permissions.create)
-      menu.push({
-        label: "Create opportunity",
-        onClick: () => setDialog("opportunity"),
-      });
+    if (permissions.create) {
+      // Full form: company/contact, pipeline & stage, tags, custom fields, duplicate warning; the lead link and source are kept.
+      menu.push({ label: "Create opportunity", onClick: () => router.push(`/crm/opportunities/new?leadId=${lead.id}`) });
+      menu.push({ label: "Quick opportunity…", onClick: () => setDialog("opportunity") });
+    }
     menu.push({
       label: "Add note",
       onClick: () => document.getElementById("crm-note-new")?.focus(),
@@ -320,7 +320,10 @@ export function LeadDetailClient({ initialLead, permissions, openConvert = false
                   <ul className="mt-1 space-y-2">
                     {lead.opportunities.map((o) => (
                       <li key={o.id}>
-                        <span className="font-medium text-zinc-900 dark:text-zinc-100">{o.opportunityNumber}</span> · {o.name}
+                        <Link href={`/crm/opportunities/${o.id}`} className="font-medium text-indigo-600 hover:underline dark:text-indigo-400">
+                          {o.opportunityNumber}
+                        </Link>{" "}
+                        · {o.name}
                         <span className="block text-xs text-zinc-500 dark:text-zinc-400">
                           {[o.status, money(o.amount, o.currencyCode)].filter(Boolean).join(" · ")}
                           {lead.convertedOpportunityId === o.id && " · from conversion"}
@@ -330,7 +333,6 @@ export function LeadDetailClient({ initialLead, permissions, openConvert = false
                   </ul>
                 )}
               </div>
-              <p className="text-xs text-zinc-500 dark:text-zinc-400">Opportunity pages are added in the next CRM phases.</p>
             </div>
           </Section>
 

@@ -32,12 +32,14 @@ export interface CrmMutationContext {
 async function touchLastActivity(tx: Prisma.TransactionClient, rows: CrmEventRow[]) {
   const contactIds = [...new Set(rows.filter((r) => r.entityType === "CONTACT").map((r) => r.entityId))];
   const companyIds = [...new Set(rows.filter((r) => r.entityType === "COMPANY").map((r) => r.entityId))];
-  if (!contactIds.length && !companyIds.length) return;
+  const opportunityIds = [...new Set(rows.filter((r) => r.entityType === "OPPORTUNITY").map((r) => r.entityId))];
+  if (!contactIds.length && !companyIds.length && !opportunityIds.length) return;
   const at = rows.reduce<Date>((max, r) => (r.occurredAt && r.occurredAt > max ? r.occurredAt : max), new Date(0));
   const when = at.getTime() ? at : new Date();
   const stale = { OR: [{ lastActivityAt: null }, { lastActivityAt: { lt: when } }] };
   if (contactIds.length) await tx.crmContact.updateMany({ where: { id: { in: contactIds }, ...stale }, data: { lastActivityAt: when } });
   if (companyIds.length) await tx.crmCompany.updateMany({ where: { id: { in: companyIds }, ...stale }, data: { lastActivityAt: when } });
+  if (opportunityIds.length) await tx.crmOpportunity.updateMany({ where: { id: { in: opportunityIds }, ...stale }, data: { lastActivityAt: when } });
 }
 
 /**

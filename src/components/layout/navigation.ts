@@ -83,6 +83,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Import History", href: "/crm/leads/imports", modules: ["crm"] },
       { label: "Contacts", href: "/crm/contacts", modules: ["crm"] },
       { label: "Companies", href: "/crm/companies", modules: ["crm"] },
+      { label: "Opportunities", href: "/crm/opportunities", modules: ["crm"] },
 
       { label: "Activity Log", href: "/crm/activity", modules: ["crm"] },
       { label: "Settings", href: "/crm/settings", modules: ["crm_settings"] },

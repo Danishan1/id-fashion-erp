@@ -3,7 +3,7 @@ import { CrmPageHeader } from "@/components/crm/CrmPageHeader";
 import { getCrmPageContext } from "@/modules/crm/core/crm-page";
 import { CrmSettingsClient, type CrmSettingsTab } from "./_components/CrmSettingsClient";
 
-const TABS: CrmSettingsTab[] = ["statuses", "sources", "tags", "custom-fields", "duplicates", "contact-fields", "contact-duplicates", "company-statuses", "company-fields", "company-duplicates", "contact-options", "api-keys", "webhooks"];
+const TABS: CrmSettingsTab[] = ["statuses", "sources", "tags", "custom-fields", "duplicates", "contact-fields", "contact-duplicates", "company-statuses", "company-fields", "company-duplicates", "opportunity-fields", "contact-options", "api-keys", "webhooks"];
 
 /** CRM configuration — requires crm_settings.view; changes require crm_settings.edit. */
 export default async function CrmSettingsPage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {

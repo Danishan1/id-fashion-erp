@@ -35,7 +35,7 @@ function useLoad<T>(url: string, refreshKey?: number) {
 
 interface RelatedDto {
   leads: { id: string; leadNumber: string; fullName: string; convertedAt: string | null; archivedAt: string | null; createdAt: string; status: { name: string; color: string | null } }[];
-  opportunities: { id: string; opportunityNumber: string; name: string; status: string; amount: string | null; currencyCode: string | null; createdAt: string }[];
+  opportunities: { id: string; opportunityNumber: string; name: string; status: string; amount: string | null; currencyCode: string | null; createdAt: string; stage: { name: string } | null }[];
 }
 
 /** Leads and opportunities linked to the contact (and to contacts merged into it). */
@@ -73,13 +73,15 @@ export function ContactRelatedRecords({ contactId, refreshKey }: { contactId: st
           <ul className="mt-1 space-y-1.5">
             {data.opportunities.map((o) => (
               <li key={o.id}>
-                <span className="font-medium text-zinc-900 dark:text-zinc-100">{o.opportunityNumber}</span> · {o.name}
-                <span className="block text-xs text-zinc-500 dark:text-zinc-400">{[humanizeStatus(o.status), money(o.amount, o.currencyCode)].filter(Boolean).join(" · ")}</span>
+                <Link href={`/crm/opportunities/${o.id}`} className="font-medium text-indigo-600 hover:underline dark:text-indigo-400">
+                  {o.opportunityNumber}
+                </Link>{" "}
+                · {o.name}
+                <span className="block text-xs text-zinc-500 dark:text-zinc-400">{[humanizeStatus(o.status), o.stage?.name, money(o.amount, o.currencyCode)].filter(Boolean).join(" · ")}</span>
               </li>
             ))}
           </ul>
         )}
-        <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Opportunity pages arrive with Phase 06.</p>
       </div>
     </div>
   );

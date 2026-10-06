@@ -123,6 +123,9 @@ model Company {
   crmContactMerges                    CrmContactMerge[]
   crmOptionValues                     CrmOptionValue[]
   crmCompanyStatuses                  CrmCompanyStatus[]
+  crmPipelines                        CrmPipeline[]
+  crmPipelineStages                   CrmPipelineStage[]
+  crmOpportunityErpLinks              CrmOpportunityErpLink[]
   crmCompanyMerges                    CrmCompanyMerge[]
   attendanceRecords                   AttendanceRecord[]
   attendanceCorrectionRequests        AttendanceCorrectionRequest[]
@@ -7636,6 +7639,9 @@ enum RelatedModule {
   // CRM Companies (Phase 05, 2026-10-03) -- documents attached to a CRM
   // company (relatedRecordId = CrmCompany.id). Moved to the survivor on merge.
   CRM_COMPANY
+  // CRM Opportunities (Phase 06, 2026-10-04) -- documents attached to an
+  // opportunity (relatedRecordId = CrmOpportunity.id).
+  CRM_OPPORTUNITY
 }
 
 model Attachment {
@@ -8524,35 +8530,132 @@ model CrmOpportunity {
   companyId         String               @map("company_id") @db.Uuid
   opportunityNumber String               @map("opportunity_number")
   name              String
+  // Phase 06: lower/space-normalised name for the open-duplicate warning.
+  nameKey           String               @default("") @map("name_key")
   leadId            String?              @map("lead_id") @db.Uuid
   crmContactId      String?              @map("crm_contact_id") @db.Uuid
   crmCompanyId      String?              @map("crm_company_id") @db.Uuid
   sourceId          String?              @map("source_id") @db.Uuid
   ownerUserId       String?              @map("owner_user_id") @db.Uuid
+  // Phase 06: minimum pipeline/stage relationship (management UI is Phase 07).
+  pipelineId        String?              @map("pipeline_id") @db.Uuid
+  stageId           String?              @map("stage_id") @db.Uuid
+  stageChangedAt    DateTime?            @map("stage_changed_at")
   status            CrmOpportunityStatus @default(OPEN)
+  // Estimated CRM value — never overwritten from ERP documents.
   amount            Decimal?             @db.Decimal(15, 2)
   currencyCode      String?              @map("currency_code") @db.Char(3)
+  // 0–100 (CHECK constraint in the migration).
+  probability       Int?
   expectedCloseDate DateTime?            @map("expected_close_date") @db.Date
   description       String?
   customFields      Json                 @default("{}") @map("custom_fields")
+  closedAt          DateTime?            @map("closed_at")
+  closedByUserId    String?              @map("closed_by_user_id") @db.Uuid
+  closeReason       String?              @map("close_reason")
+  // Name, number and linked ERP document numbers (company/contact are searched through their own keys).
+  searchText        String               @default("") @map("search_text")
+  lastActivityAt    DateTime?            @map("last_activity_at")
   archivedAt        DateTime?            @map("archived_at")
+  archivedByUserId  String?              @map("archived_by_user_id") @db.Uuid
+  updatedByUserId   String?              @map("updated_by_user_id") @db.Uuid
+  version           Int                  @default(1)
   createdByUserId   String               @map("created_by_user_id") @db.Uuid
   createdAt         DateTime             @default(now()) @map("created_at")
   updatedAt         DateTime             @updatedAt @map("updated_at")
 
-  company            Company        @relation(fields: [companyId], references: [id])
-  lead               CrmLead?       @relation("CrmOpportunityLead", fields: [leadId], references: [id], onDelete: SetNull)
-  crmContact         CrmContact?    @relation(fields: [crmContactId], references: [id], onDelete: SetNull)
-  crmCompany         CrmCompany?    @relation(fields: [crmCompanyId], references: [id], onDelete: SetNull)
-  source             CrmLeadSource? @relation(fields: [sourceId], references: [id])
-  owner              User?          @relation("CrmOpportunityOwner", fields: [ownerUserId], references: [id])
-  createdBy          User           @relation("CrmOpportunityCreatedBy", fields: [createdByUserId], references: [id])
-  convertedFromLeads CrmLead[]      @relation("CrmLeadConvertedOpportunity")
+  company            Company                  @relation(fields: [companyId], references: [id])
+  lead               CrmLead?                 @relation("CrmOpportunityLead", fields: [leadId], references: [id], onDelete: SetNull)
+  crmContact         CrmContact?              @relation(fields: [crmContactId], references: [id], onDelete: SetNull)
+  crmCompany         CrmCompany?              @relation(fields: [crmCompanyId], references: [id], onDelete: SetNull)
+  source             CrmLeadSource?           @relation(fields: [sourceId], references: [id])
+  owner              User?                    @relation("CrmOpportunityOwner", fields: [ownerUserId], references: [id])
+  createdBy          User                     @relation("CrmOpportunityCreatedBy", fields: [createdByUserId], references: [id])
+  pipeline           CrmPipeline?             @relation(fields: [pipelineId], references: [id])
+  stage              CrmPipelineStage?        @relation(fields: [stageId], references: [id])
+  convertedFromLeads CrmLead[]                @relation("CrmLeadConvertedOpportunity")
+  erpLinks           CrmOpportunityErpLink[]
 
   @@unique([companyId, opportunityNumber])
   @@index([companyId, status])
   @@index([companyId, leadId])
+  @@index([companyId, archivedAt, createdAt])
+  @@index([companyId, crmCompanyId])
+  @@index([companyId, crmContactId])
+  @@index([companyId, pipelineId, stageId])
+  @@index([companyId, ownerUserId])
+  @@index([companyId, expectedCloseDate])
+  @@index([companyId, lastActivityAt])
+  @@index([companyId, nameKey])
   @@map("crm_opportunities")
+}
+
+// Phase 06 (2026-10-04): the minimum pipeline/stage relationship opportunities
+// need. Pipeline management (CRUD, ordering, rules, board) is Phase 07; until
+// then a default "Sales" pipeline is created lazily per company.
+model CrmPipeline {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  key       String
+  name      String
+  isDefault Boolean  @default(false) @map("is_default")
+  isActive  Boolean  @default(true) @map("is_active")
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company       Company            @relation(fields: [companyId], references: [id])
+  stages        CrmPipelineStage[]
+  opportunities CrmOpportunity[]
+
+  @@unique([companyId, key])
+  @@index([companyId, sortOrder])
+  @@map("crm_pipelines")
+}
+
+model CrmPipelineStage {
+  id          String   @id @default(uuid()) @db.Uuid
+  companyId   String   @map("company_id") @db.Uuid
+  pipelineId  String   @map("pipeline_id") @db.Uuid
+  key         String
+  name        String
+  // Default probability (0–100) suggested when an opportunity enters the stage.
+  probability Int?
+  isActive    Boolean  @default(true) @map("is_active")
+  sortOrder   Int      @default(0) @map("sort_order")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  company       Company          @relation(fields: [companyId], references: [id])
+  pipeline      CrmPipeline      @relation(fields: [pipelineId], references: [id])
+  opportunities CrmOpportunity[]
+
+  @@unique([pipelineId, key])
+  @@index([companyId, pipelineId, sortOrder])
+  @@map("crm_pipeline_stages")
+}
+
+// Phase 06: an opportunity's references to authoritative ERP documents
+// (many per opportunity — e.g. several revisions). `docType` is validated in
+// code by a provider registry (crm-opportunity-erp.service.ts), so a future
+// ERP Quotation module plugs in without a migration. Only the document's
+// identifier and number are stored; everything else is read live from the ERP.
+model CrmOpportunityErpLink {
+  id             String   @id @default(uuid()) @db.Uuid
+  companyId      String   @map("company_id") @db.Uuid
+  opportunityId  String   @map("opportunity_id") @db.Uuid
+  docType        String   @map("doc_type")
+  docId          String   @map("doc_id") @db.Uuid
+  docNumber      String   @map("doc_number")
+  linkedByUserId String   @map("linked_by_user_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  company     Company        @relation(fields: [companyId], references: [id])
+  opportunity CrmOpportunity @relation(fields: [opportunityId], references: [id])
+
+  @@unique([opportunityId, docType, docId])
+  @@index([companyId, docType, docId])
+  @@map("crm_opportunity_erp_links")
 }
 
 // Reusable tags for every CRM record type. `nameKey` (lower-cased, trimmed,

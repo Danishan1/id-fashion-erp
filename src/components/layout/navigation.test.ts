@@ -114,6 +114,13 @@ describe("isLeafActive", () => {
     expect(leaf("Companies").modules).toEqual(["crm"]);
   });
 
+  it("highlights Opportunities for opportunity pages", () => {
+    expect(isLeafActive(crm.children!, leaf("Opportunities"), "/crm/opportunities/abc/edit")).toBe(true);
+    expect(isLeafActive(crm.children!, leaf("Opportunities"), "/crm/opportunities/new")).toBe(true);
+    expect(isLeafActive(crm.children!, leaf("Companies"), "/crm/opportunities")).toBe(false);
+    expect(leaf("Opportunities").modules).toEqual(["crm"]);
+  });
+
   it("gates CRM Settings behind crm_settings", () => {
 
     expect(leaf("Settings").modules).toEqual(["crm_settings"]);

@@ -244,7 +244,8 @@ describe.skipIf(!DB_URL)("CRM companies (database integration)", async () => {
     await leads.convertLead(rep, lead.id, { company: { mode: "link", id: co.id }, contact: { mode: "create" }, opportunity: { create: true, name: `Deal ${run}`, amount: 50000, currencyCode: "INR" } });
     const opps = await relations.listCompanyOpportunities(rep, co.id, { page: 1, pageSize: 10, includeArchived: false });
     expect(opps.data.map((o) => o.name)).toEqual([`Deal ${run}`]);
-    expect(opps.data[0]).toMatchObject({ pipeline: null, stage: null });
+    expect(opps.data[0].stage?.name).toBe("New");
+    expect(opps.data[0].pipeline?.name).toBe("Sales");
     expect(await eventTypes(co.id)).toContain("company.opportunity_linked");
     expect((await companies.getCompany(rep, co.id)).counts.openOpportunities).toBe(1);
 

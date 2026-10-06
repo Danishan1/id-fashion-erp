@@ -370,7 +370,16 @@ export function ContactDetailClient({ initialContact, permissions, currentUserId
             <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">Campaigns, sequences and messaging (later phases) check this before contacting anyone.</p>
           </Section>
 
-          <Section title="Related records">
+          <Section
+            title="Related records"
+            action={
+              canEdit && permissions.create ? (
+                <Link href={`/crm/opportunities/new?contactId=${contact.id}${contact.crmCompany ? `&companyId=${contact.crmCompany.id}` : ""}`} className={smallButton}>
+                  + New opportunity
+                </Link>
+              ) : undefined
+            }
+          >
             <ContactRelatedRecords contactId={contact.id} refreshKey={timelineKey} />
           </Section>
 

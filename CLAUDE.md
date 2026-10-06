@@ -7690,3 +7690,11 @@ The whole CRM (Leads, Deals/Opportunities, pipeline/sources/lost-reason masters,
 - Merge never deletes and refuses different ERP customers; only one ERP link survives. Every company query must exclude `merged_into_id IS NOT NULL` (buildCompanyWhere does).
 - Statuses: `crm_company_statuses` (lazy defaults via ensureCompanyStatusDefaults). ERP references (contacts + companies) live in `src/modules/crm/erp/`; documents for both in `src/modules/crm/documents/` (routes `/api/v1/crm/documents/:id`).
 - Report + manual checklist: `docs/crm/PHASE_05_COMPANIES.md`.
+
+## CRM rebuild — Phase 06 Opportunities (2026-10-04)
+- All opportunity writes go through `src/modules/crm/opportunities/crm-opportunities.service.ts` (creation always via `createOpportunityInMutation`: number, default pipeline/stage, keys, audit, events). Value = `amount`+`currency_code`, never overwritten from ERP documents.
+- Pipelines/stages: minimal `crm_pipelines` / `crm_pipeline_stages` with a lazily created default "Sales" pipeline (`src/modules/crm/pipelines/`); no management UI until Phase 07. Validate with `resolvePipelineStage`; stage changes always emit `opportunity.stage_changed` with old/new stage + probability.
+- Status: enum OPEN/WON/LOST/ABANDONED; transitions in `opportunity-registry.ts` (open closes any way; closed only reopens). Closing sets closed_at/closed_by/close_reason; closed deals can't be edited until reopened.
+- ERP documents: `crm_opportunity_erp_links` (many per opportunity, id+number only, live ERP data, per-module permission + branch scope, must match the company's ERP customer). The ERP has no quotations — add a provider in `crm-opportunity-erp.service.ts` when it does. Never write ERP tables from CRM code.
+- Duplicate check is warn-only (same name + company + contact, open).
+- Report + manual checklist: `docs/crm/PHASE_06_OPPORTUNITIES.md`.

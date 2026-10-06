@@ -279,7 +279,16 @@ export function CompanyDetailClient({ initialCompany, permissions, currentUserId
             <CompanyLeadsList companyId={company.id} refreshKey={refreshKey} canEdit={canEdit} onUnlink={(l) => setDialog({ kind: "unlinkLead", lead: l })} />
           </Section>
 
-          <Section title={`Opportunities (${company.counts.openOpportunities} open)`}>
+          <Section
+            title={`Opportunities (${company.counts.openOpportunities} open)`}
+            action={
+              canEdit && permissions.create ? (
+                <Link href={`/crm/opportunities/new?companyId=${company.id}${company.primaryContact ? `&contactId=${company.primaryContact.id}` : ""}`} className={smallButton}>
+                  + New opportunity
+                </Link>
+              ) : undefined
+            }
+          >
             <CompanyOpportunitiesList companyId={company.id} refreshKey={refreshKey} />
           </Section>
 

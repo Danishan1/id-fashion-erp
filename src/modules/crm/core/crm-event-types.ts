@@ -110,6 +110,27 @@ export const CRM_EVENT_TYPES = {
   "opportunity.status_changed": { label: "Status changed", entityType: "OPPORTUNITY", category: "status" },
   "opportunity.won": { label: "Opportunity won", entityType: "OPPORTUNITY", category: "won" },
   "opportunity.lost": { label: "Opportunity lost", entityType: "OPPORTUNITY", category: "lost" },
+  // Phase 06
+  "opportunity.abandoned": { label: "Opportunity abandoned", entityType: "OPPORTUNITY", category: "lost" },
+  "opportunity.reopened": { label: "Opportunity reopened", entityType: "OPPORTUNITY", category: "status" },
+  "opportunity.owner_changed": { label: "Owner changed", entityType: "OPPORTUNITY", category: "assignment" },
+  "opportunity.company_linked": { label: "Company changed", entityType: "OPPORTUNITY", category: "linked" },
+  "opportunity.contact_linked": { label: "Contact changed", entityType: "OPPORTUNITY", category: "linked" },
+  "opportunity.value_changed": { label: "Value changed", entityType: "OPPORTUNITY", category: "updated" },
+  "opportunity.probability_changed": { label: "Probability changed", entityType: "OPPORTUNITY", category: "updated" },
+  "opportunity.close_date_changed": { label: "Expected close date changed", entityType: "OPPORTUNITY", category: "updated" },
+  "opportunity.tag_added": { label: "Tag added", entityType: "OPPORTUNITY", category: "tag" },
+  "opportunity.tag_removed": { label: "Tag removed", entityType: "OPPORTUNITY", category: "tag" },
+  "opportunity.note_added": { label: "Note added", entityType: "OPPORTUNITY", category: "note" },
+  "opportunity.note_updated": { label: "Note edited", entityType: "OPPORTUNITY", category: "note" },
+  "opportunity.note_deleted": { label: "Note deleted", entityType: "OPPORTUNITY", category: "note" },
+  "opportunity.document_added": { label: "Document added", entityType: "OPPORTUNITY", category: "document" },
+  "opportunity.document_removed": { label: "Document removed", entityType: "OPPORTUNITY", category: "document" },
+  "opportunity.erp_document_linked": { label: "ERP document linked", entityType: "OPPORTUNITY", category: "linked" },
+  "opportunity.erp_document_unlinked": { label: "ERP document unlinked", entityType: "OPPORTUNITY", category: "linked" },
+  "opportunity.archived": { label: "Opportunity archived", entityType: "OPPORTUNITY", category: "archived" },
+  "opportunity.restored": { label: "Opportunity restored", entityType: "OPPORTUNITY", category: "restored" },
+  "contact.opportunity_linked": { label: "Opportunity associated", entityType: "CONTACT", category: "linked" },
 } as const satisfies Record<string, CrmEventDefinition>;
 
 export type CrmEventType = keyof typeof CRM_EVENT_TYPES;

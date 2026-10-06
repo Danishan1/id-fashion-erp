@@ -6,7 +6,7 @@ import { CrmBadge } from "@/components/crm/CrmBadge";
 import { CrmErrorState, CrmLoadingState } from "@/components/crm/CrmStates";
 import { ClientDateTime } from "@/components/ui/ClientDateTime";
 import { formatCurrency } from "@/lib/currency";
-import { humanizeStatus } from "@/lib/humanize-status";
+import { OpportunityStatusBadge, opportunityValue } from "../../opportunities/_components/OpportunityBadges";
 import { COMPANY_FUTURE_SECTIONS } from "@/modules/crm/companies/company-registry";
 
 /**
@@ -213,35 +213,39 @@ interface CompanyOpportunityRow {
   status: string;
   amount: string | null;
   currencyCode: string | null;
+  probability: number | null;
   expectedCloseDate: string | null;
   createdAt: string;
   owner: { id: string; fullName: string } | null;
-  pipeline: null;
-  stage: null;
+  crmContact: { id: string; fullName: string } | null;
+  pipeline: { id: string; name: string } | null;
+  stage: { id: string; name: string } | null;
 }
 
 export function CompanyOpportunitiesList({ companyId, refreshKey }: { companyId: string; refreshKey: number }) {
   const state = usePaged<CompanyOpportunityRow>(`/api/v1/crm/companies/${companyId}/opportunities`, refreshKey);
   return (
-    <div>
-      <ListShell
-        state={state}
-        empty="No opportunities yet. Opportunities are created when a lead is converted."
-        render={(rows) => (
-          <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
-            {rows.map((o) => (
-              <li key={o.id} className="py-2 text-sm">
-                <span className="font-medium text-zinc-900 dark:text-zinc-100">{o.opportunityNumber}</span> {o.name} <CrmBadge label={humanizeStatus(o.status)} tone={o.status === "WON" ? "green" : o.status === "LOST" ? "red" : "indigo"} />
-                <span className="block text-xs text-zinc-500 dark:text-zinc-400">
-                  {[o.amount ? `${o.currencyCode ?? ""} ${formatCurrency(o.amount)}`.trim() : null, o.expectedCloseDate ? `Close ${o.expectedCloseDate.slice(0, 10)}` : null, o.owner ? `Owner: ${o.owner.fullName}` : null].filter(Boolean).join(" · ") || "—"}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      />
-      <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">Pipelines, stages and opportunity pages arrive in Phases 06–07.</p>
-    </div>
+    <ListShell
+      state={state}
+      empty="No opportunities yet."
+      render={(rows) => (
+        <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
+          {rows.map((o) => (
+            <li key={o.id} className="py-2 text-sm">
+              <Link href={`/crm/opportunities/${o.id}`} className={linkClass}>
+                {o.opportunityNumber}
+              </Link>{" "}
+              {o.name} <OpportunityStatusBadge status={o.status} />
+              <span className="block text-xs text-zinc-500 dark:text-zinc-400">
+                {[o.stage?.name, opportunityValue(o.amount, o.currencyCode), o.probability !== null ? `${o.probability}%` : null, o.expectedCloseDate ? `Close ${o.expectedCloseDate.slice(0, 10)}` : null, o.crmContact?.fullName, o.owner ? `Owner: ${o.owner.fullName}` : null]
+                  .filter(Boolean)
+                  .join(" · ") || "—"}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    />
   );
 }
 

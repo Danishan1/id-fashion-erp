@@ -222,7 +222,7 @@ export const CrmContactRepository = {
   opportunitiesForContacts(companyId: string, contactIds: string[], where: Prisma.CrmOpportunityWhereInput, take = 20) {
     return prisma.crmOpportunity.findMany({
       where: { AND: [{ companyId, crmContactId: { in: contactIds }, archivedAt: null }, where] },
-      select: { id: true, opportunityNumber: true, name: true, status: true, amount: true, currencyCode: true, expectedCloseDate: true, createdAt: true },
+      select: { id: true, opportunityNumber: true, name: true, status: true, amount: true, currencyCode: true, expectedCloseDate: true, createdAt: true, stage: { select: { name: true } } },
       orderBy: { createdAt: "desc" },
       take,
     });

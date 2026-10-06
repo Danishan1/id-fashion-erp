@@ -54,13 +54,12 @@ export async function listCompanyLeads(actor: CrmActor, id: string, p: RelatedPa
   return paged(await CrmCompanyRepository.leadsPage(where, (p.page - 1) * p.pageSize, p.pageSize), p);
 }
 
-/** Opportunities linked to the company. Pipelines/stages arrive in Phase 06/07 — rows carry `pipeline`/`stage` as null until then. */
+/** Opportunities linked to the company (and to companies merged into it), newest first. */
 export async function listCompanyOpportunities(actor: CrmActor, id: string, p: RelatedPage) {
   const { ids } = await companyIds(actor, id);
   const scope = await getCrmRecordScope(actor);
   const where: Prisma.CrmOpportunityWhereInput = { AND: [{ companyId: actor.companyId, crmCompanyId: { in: ids }, archivedAt: null }, crmOwnerWhere(scope) as Prisma.CrmOpportunityWhereInput] };
-  const r = await CrmCompanyRepository.opportunitiesPage(where, (p.page - 1) * p.pageSize, p.pageSize);
-  return paged({ ...r, rows: r.rows.map((o) => ({ ...o, pipeline: null, stage: null })) }, p);
+  return paged(await CrmCompanyRepository.opportunitiesPage(where, (p.page - 1) * p.pageSize, p.pageSize), p);
 }
 
 export async function getCompanyErpReferences(actor: CrmActor, id: string, query?: ErpReferenceQuery) {

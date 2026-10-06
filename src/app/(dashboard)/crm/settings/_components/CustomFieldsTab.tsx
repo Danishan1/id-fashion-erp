@@ -18,8 +18,8 @@ import { keyFromName } from "@/modules/crm/settings/crm-settings.schema";
 import { useSettingsList } from "./useSettingsList";
 
 const URL_BASE = "/api/v1/crm/settings/custom-fields";
-type CustomFieldEntity = "LEAD" | "CONTACT" | "COMPANY";
-const ENTITY_NOUN: Record<CustomFieldEntity, string> = { LEAD: "lead", CONTACT: "contact", COMPANY: "company" };
+type CustomFieldEntity = "LEAD" | "CONTACT" | "COMPANY" | "OPPORTUNITY";
+const ENTITY_NOUN: Record<CustomFieldEntity, string> = { LEAD: "lead", CONTACT: "contact", COMPANY: "company", OPPORTUNITY: "opportunity" };
 type FieldType = CrmCustomFieldDefinitionDto["fieldType"];
 
 function OptionsEditor({ options, onChange, lockedValues }: { options: CrmCustomFieldOption[]; onChange: (o: CrmCustomFieldOption[]) => void; lockedValues: Set<string> }) {

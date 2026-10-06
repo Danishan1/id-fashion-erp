@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/core/db/client";
 
 type BranchScope = { branchId?: { in: string[] } };
@@ -56,5 +57,31 @@ export const CrmErpRepository = {
       prisma.payment.count({ where }),
     ]);
     return { rows, total };
+  },
+
+  // ── Phase 06: single ERP documents referenced by opportunities ──
+  buyerEnquiryDocs(where: Prisma.BuyerEnquiryWhereInput, take: number) {
+    return prisma.buyerEnquiry.findMany({
+      where,
+      select: { id: true, enquiryNumber: true, enquiryDate: true, status: true, customerId: true, prospectName: true, customer: { select: { name: true } }, requestedBy: { select: { fullName: true } } },
+      orderBy: [{ enquiryDate: "desc" }, { id: "desc" }],
+      take,
+    });
+  },
+  sampleRequestDocs(where: Prisma.SampleRequestWhereInput, take: number) {
+    return prisma.sampleRequest.findMany({
+      where,
+      select: { id: true, requestNumber: true, requestDate: true, targetSubmissionDate: true, status: true, styleName: true, customerId: true, customer: { select: { name: true } }, requestedBy: { select: { fullName: true } } },
+      orderBy: [{ requestDate: "desc" }, { id: "desc" }],
+      take,
+    });
+  },
+  salesOrderDocs(where: Prisma.SalesOrderWhereInput, take: number) {
+    return prisma.salesOrder.findMany({
+      where,
+      select: { id: true, orderNumber: true, orderDate: true, requiredShipDate: true, status: true, totalAmount: true, currencyCode: true, customerId: true, customer: { select: { name: true } }, requestedBy: { select: { fullName: true } } },
+      orderBy: [{ orderDate: "desc" }, { id: "desc" }],
+      take,
+    });
   },
 };

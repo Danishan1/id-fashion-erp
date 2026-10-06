@@ -76,7 +76,7 @@ export const updateCompanyStatusSchema = z.object({
 });
 
 export const createOptionValueSchema = z.object({
-  listKey: z.enum(["contact_department", "contact_designation", "contact_role", "company_industry", "company_type"]),
+  listKey: z.enum(["contact_department", "contact_designation", "contact_role", "company_industry", "company_type", "opportunity_close_reason"]),
   value: z.string().trim().min(1, "Value is required").max(100),
 });
 export const updateOptionValueSchema = z.object({

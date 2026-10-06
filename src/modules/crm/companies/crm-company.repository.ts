@@ -266,7 +266,21 @@ export const CrmCompanyRepository = {
     const [rows, total] = await Promise.all([
       prisma.crmOpportunity.findMany({
         where,
-        select: { id: true, opportunityNumber: true, name: true, status: true, amount: true, currencyCode: true, expectedCloseDate: true, createdAt: true, owner: { select: { id: true, fullName: true } } },
+        select: {
+          id: true,
+          opportunityNumber: true,
+          name: true,
+          status: true,
+          amount: true,
+          currencyCode: true,
+          probability: true,
+          expectedCloseDate: true,
+          createdAt: true,
+          owner: { select: { id: true, fullName: true } },
+          crmContact: { select: { id: true, fullName: true } },
+          pipeline: { select: { id: true, name: true } },
+          stage: { select: { id: true, name: true } },
+        },
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         skip,
         take,

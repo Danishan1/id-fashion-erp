@@ -5,6 +5,7 @@ import type { CrmActor } from "../core/crm-actor";
 import { companyFilterSchema, COMPANY_SORT_FIELDS } from "../companies/company.schema";
 import { contactFilterSchema, CONTACT_SORT_FIELDS } from "../contacts/contact.schema";
 import { leadFilterSchema, LEAD_SORT_FIELDS } from "../leads/lead.schema";
+import { opportunityFilterSchema, OPPORTUNITY_SORT_FIELDS } from "../opportunities/opportunity.schema";
 import { CrmSavedViewRepository } from "./crm-saved-view.repository";
 import { savedViewBaseSchema, updateSavedViewSchema } from "./crm-saved-view.schema";
 
@@ -19,6 +20,7 @@ const VALIDATORS: Partial<Record<CrmEntityType, { filters: (f: unknown) => unkno
   LEAD: { filters: (f) => leadFilterSchema.parse(f), sortFields: LEAD_SORT_FIELDS },
   CONTACT: { filters: (f) => contactFilterSchema.parse(f), sortFields: CONTACT_SORT_FIELDS },
   COMPANY: { filters: (f) => companyFilterSchema.parse(f), sortFields: COMPANY_SORT_FIELDS },
+  OPPORTUNITY: { filters: (f) => opportunityFilterSchema.parse(f), sortFields: OPPORTUNITY_SORT_FIELDS },
 };
 
 function validateFor(entityType: CrmEntityType, filters: unknown, sort: { sortBy: string } | null | undefined) {
