@@ -248,7 +248,7 @@ describe.skipIf(!DB_URL)("CRM pipelines & stages (database integration)", async 
     const closed = await opps.createOpportunity(rep, { name: name("Bulk closed"), pipelineId: p.id, stageId: enq.id, amount: "1" });
     await opps.changeOpportunityStatus(rep, closed.id, { status: "LOST" });
     const elsewhere = await opps.createOpportunity(rep, { name: name("Bulk other pipeline"), amount: "1" });
-    const res = (await opps.bulkOpportunityAction(rep, { action: "stage", ids: [ok.id, missing.id, closed.id, elsewhere.id], stageId: smp.id })) as {
+    const res = (await opps.bulkOpportunityAction(rep, { action: "stage", ids: [ok.id, missing.id, closed.id, elsewhere.id], stageId: smp.id })) as unknown as {
       updated: number;
       skipped: { id: string; reason: string }[];
       blocked: { id: string; missingFields: { key: string }[] }[];
@@ -358,8 +358,8 @@ describe.skipIf(!DB_URL)("CRM pipelines & stages (database integration)", async 
     const col = (n: string) => board.stages.find((s) => s.name === n)!;
     expect(col("Enquiry")).toMatchObject({ count: 2, hasMore: true });
     expect(col("Enquiry").records).toHaveLength(1);
-    expect(col("Enquiry").values).toEqual(expect.arrayContaining([{ currencyCode: "USD", total: 500 }, { currencyCode: "INR", total: 999 }]));
-    expect(col("Sampling")).toMatchObject({ count: 1, values: [{ currencyCode: "INR", total: 1000 }] });
+    expect(col("Enquiry").values).toEqual(expect.arrayContaining([expect.objectContaining({ currencyCode: "USD", total: 500 }), expect.objectContaining({ currencyCode: "INR", total: 999 })]));
+    expect(col("Sampling")).toMatchObject({ count: 1, values: [expect.objectContaining({ currencyCode: "INR", total: 1000 })] });
     expect(col("Costing").count).toBe(0); // won deal is not open
     expect((await insights.getPipelineBoard(manager, p.id, { status: "ALL" })).stages.find((s) => s.name === "Costing")!.count).toBe(1);
     const repBoard = await insights.getPipelineBoard(rep, p.id, {});

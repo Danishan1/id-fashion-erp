@@ -2,15 +2,16 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CrmBadge } from "@/components/crm/CrmBadge";
 import { CrmBulkBar } from "@/components/crm/CrmBulkBar";
 import { CrmColumnPicker } from "@/components/crm/CrmColumnPicker";
-import { crmFilterKeys, type CrmFilterDefinition } from "@/components/crm/CrmFilterBar";
+import { crmFilterKeys } from "@/components/crm/CrmFilterBar";
 import { AssignOwnerModal, bulkMessage, RecordTagsModal, type BulkResult } from "@/components/crm/CrmRecordDialogs";
 import { crmRequest } from "@/components/crm/crm-api";
 import { CrmTable } from "@/components/crm/CrmTable";
 import { useCrmListState } from "@/components/crm/useCrmListState";
+import type { useCrmPreferences } from "@/components/crm/useCrmPreferences";
 import { ActionMenu } from "@/components/ui/ActionMenu";
 import { Button, buttonClasses } from "@/components/ui/Button";
 import { ClientDateTime } from "@/components/ui/ClientDateTime";
@@ -19,17 +20,17 @@ import type { DataTableColumn } from "@/components/ui/DataTable";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { Modal } from "@/components/ui/Modal";
 import { toast } from "@/components/ui/Toast";
-import { isClosedStatus, OPPORTUNITY_STATUSES, type OpportunityStatus } from "@/modules/crm/opportunities/opportunity-registry";
+import { isClosedStatus, type OpportunityStatus } from "@/modules/crm/opportunities/opportunity-registry";
 import { opportunityFilterToParams, parseOpportunityFilterParams } from "@/modules/crm/opportunities/opportunity.schema";
 import { OwnerName } from "../../leads/_components/LeadBadges";
 import { CloseDate, OpportunityStatusBadge, opportunityValue } from "./OpportunityBadges";
-import { ChangeOpportunityStatusModal, ChangeStageModal } from "./OpportunityDialogs";
-import type { OpportunityPermissions, OpportunityRowDto, TagDto } from "./opportunity-types";
-import { useOpportunityLookups } from "./useOpportunityLookups";
+import { BulkResultModal, BulkUpdateFieldsModal, ChangeOpportunityStatusModal, ChangeStageModal } from "./OpportunityDialogs";
+import type { OpportunityMetaDto, OpportunityPermissions, OpportunityRowDto, TagDto, UserRefDto } from "./opportunity-types";
+import { useOpportunityFilters } from "./useOpportunityFilters";
 
 const API = "/api/v1/crm/opportunities";
 
-interface SavedViewDto {
+export interface SavedViewDto {
   id: string;
   name: string;
   filters: Record<string, unknown>;
@@ -94,17 +95,34 @@ type Dialog =
   | { kind: "archive"; ids: string[]; label: string }
   | { kind: "restore"; row: OpportunityRowDto }
   | { kind: "saveView" }
+  | { kind: "update"; ids: string[] }
+  | { kind: "result"; title: string; result: BulkResult }
   | null;
 
-export function OpportunitiesListClient({ permissions }: { permissions: OpportunityPermissions }) {
+/**
+ * Opportunity List (Phase 06, extended in Phase 08): server-side search,
+ * filters, sort and paging; saved views with a per-user default; columns
+ * remembered per user; bulk actions that report every record they skipped.
+ */
+export function OpportunitiesListClient({
+  permissions,
+  meta,
+  users,
+  preferences,
+}: {
+  permissions: OpportunityPermissions;
+  meta: OpportunityMetaDto | null;
+  users: UserRefDto[];
+  preferences: ReturnType<typeof useCrmPreferences>;
+}) {
   const router = useRouter();
-  const { meta, users } = useOpportunityLookups();
-  const [tags, setTags] = useState<TagDto[]>([]);
-  const [companies, setCompanies] = useState<{ id: string; name: string }[]>([]);
-  const [contacts, setContacts] = useState<{ id: string; fullName: string }[]>([]);
+  const { prefs, setPreference } = preferences;
+  const knownColumns = (keys: string[] | null | undefined) => (keys ?? []).filter((k) => ALL_COLUMNS.some((c) => c.key === k));
+  const savedColumns = knownColumns(prefs["opportunities.list.columns"]);
+  const defaultViewId = prefs["opportunities.list.defaultViewId"] ?? null;
   const [views, setViews] = useState<SavedViewDto[]>([]);
   const [activeViewId, setActiveViewId] = useState("");
-  const [visibleColumns, setVisibleColumns] = useState<string[]>(DEFAULT_COLUMNS);
+  const [visibleColumns, setVisibleColumns] = useState<string[]>(savedColumns.length ? savedColumns : DEFAULT_COLUMNS);
   const [sort, setSort] = useState<{ sortBy: string; sortOrder: "asc" | "desc" } | undefined>(undefined);
   const [tableKey, setTableKey] = useState("initial");
   const [refreshKey, setRefreshKey] = useState(0);
@@ -114,61 +132,10 @@ export function OpportunitiesListClient({ permissions }: { permissions: Opportun
   const [viewName, setViewName] = useState("");
   const [viewShared, setViewShared] = useState(false);
 
-  const filters: CrmFilterDefinition[] = useMemo(() => {
-    const multiPipeline = (meta?.pipelines.length ?? 0) > 1;
-    return [
-      ...(multiPipeline ? [{ type: "select" as const, key: "pipelineIds", label: "Pipeline", options: (meta?.pipelines ?? []).map((p) => ({ value: p.id, label: p.name })) }] : []),
-      {
-        type: "select",
-        key: "stageIds",
-        label: "Stage",
-        options: (meta?.pipelines ?? []).flatMap((p) => p.stages.map((s) => ({ value: s.id, label: multiPipeline ? `${p.name} · ${s.name}` : s.name }))),
-      },
-      { type: "select", key: "statuses", label: "Status", options: Object.entries(OPPORTUNITY_STATUSES).map(([k, s]) => ({ value: k, label: s.label })) },
-      { type: "select", key: "ownerUserIds", label: "Owner", options: users.map((u) => ({ value: u.id, label: u.fullName })) },
-      { type: "select", key: "unassigned", label: "Assignment", options: [{ value: "true", label: "Unassigned only" }] },
-      { type: "select", key: "crmCompanyIds", label: "Company", options: companies.map((c) => ({ value: c.id, label: c.name })) },
-      { type: "select", key: "crmContactIds", label: "Contact", options: contacts.map((c) => ({ value: c.id, label: c.fullName })) },
-      { type: "select", key: "sourceIds", label: "Source", options: (meta?.sources ?? []).map((s) => ({ value: s.id, label: s.name })) },
-      { type: "select", key: "tagIds", label: "Tag", options: tags.map((t) => ({ value: t.id, label: t.name })) },
-      {
-        type: "select",
-        key: "closeDue",
-        label: "Closing",
-        options: [
-          { value: "overdue", label: "Overdue (open, date passed)" },
-          { value: "next_7_days", label: "Next 7 days" },
-          { value: "next_30_days", label: "Next 30 days" },
-          { value: "this_month", label: "This month" },
-        ],
-      },
-      { type: "dateRange", label: "Expected close", fromKey: "expectedCloseDateFrom", toKey: "expectedCloseDateTo" },
-      { type: "numberRange", label: "Value", minKey: "amountMin", maxKey: "amountMax" },
-      { type: "numberRange", label: "Probability %", minKey: "probabilityMin", maxKey: "probabilityMax", step: 5 },
-      { type: "select", key: "fromLead", label: "Origin", options: [{ value: "yes", label: "From a lead" }, { value: "no", label: "Created directly" }] },
-      { type: "dateRange", label: "Created", fromKey: "createdAtFrom", toKey: "createdAtTo" },
-      { type: "dateRange", label: "Updated", fromKey: "updatedAtFrom", toKey: "updatedAtTo" },
-      { type: "select", key: "archived", label: "Archived", anyLabel: "Active opportunities only", options: [{ value: "only", label: "Archived only" }, { value: "include", label: "Active and archived" }] },
-    ];
-  }, [meta, users, tags, companies, contacts]);
+  const { filters } = useOpportunityFilters({ meta, users, refreshKey });
   const listState = useCrmListState(crmFilterKeys(filters));
-
-  const loadViews = () =>
-    fetch("/api/v1/crm/saved-views?entityType=OPPORTUNITY")
-      .then((r) => (r.ok ? r.json() : { data: [] }))
-      .then((b) => setViews(b.data ?? []))
-      .catch(() => {});
-  useEffect(() => {
-    void loadViews();
-    const load = <T,>(url: string, set: (v: T[]) => void) =>
-      fetch(url)
-        .then((r) => (r.ok ? r.json() : { data: [] }))
-        .then((b) => set(b.data ?? []))
-        .catch(() => {});
-    load<TagDto>("/api/v1/crm/tags", setTags);
-    load<{ id: string; name: string }>("/api/v1/crm/companies/lookup?limit=200", setCompanies);
-    load<{ id: string; fullName: string }>("/api/v1/crm/contacts/lookup?limit=200", setContacts);
-  }, [refreshKey]);
+  // The default view opens once, and only when the URL doesn't already ask for a search or filters.
+  const defaultApplied = useRef(Boolean(listState.search) || Object.values(listState.filters).some(Boolean));
 
   const columns = ALL_COLUMNS.filter((c) => visibleColumns.includes(c.key));
   const activeView = views.find((v) => v.id === activeViewId) ?? null;
@@ -177,26 +144,55 @@ export function OpportunitiesListClient({ permissions }: { permissions: Opportun
     setRefreshKey((k) => k + 1);
     if (message) toast.success(message);
   };
+  /** Bulk outcome: a toast when everything changed, otherwise a per-record list of what was skipped and why. */
   const doneBulk = (verb: string) => (r?: BulkResult) => {
     setSelected([]);
-    done(r ? bulkMessage(r, verb, "opportunity") : undefined);
-    if (r?.skipped.length) toast.warning(`Skipped: ${[...new Set(r.skipped.map((s) => s.reason))].join("; ")}`);
+    setRefreshKey((k) => k + 1);
+    if (!r) return setDialog(null);
+    if (r.skipped.length) return setDialog({ kind: "result", title: bulkMessage(r, verb, "opportunity"), result: r });
+    setDialog(null);
+    toast.success(bulkMessage(r, verb, "opportunity"));
   };
 
-  const applyView = (id: string) => {
+  const columnsOrSaved = () => (savedColumns.length ? savedColumns : DEFAULT_COLUMNS);
+  const applyView = (id: string, list: SavedViewDto[] = views) => {
     setActiveViewId(id);
-    const view = views.find((v) => v.id === id);
+    const view = list.find((v) => v.id === id);
     if (!view) {
       listState.replaceAll({}, "");
-      setVisibleColumns(DEFAULT_COLUMNS);
+      setVisibleColumns(columnsOrSaved());
       setSort(undefined);
     } else {
       const { search, ...rest } = view.filters as { search?: string };
       listState.replaceAll(opportunityFilterToParams(rest), search ?? "");
-      setVisibleColumns(view.columns?.length ? view.columns.filter((k) => ALL_COLUMNS.some((c) => c.key === k)) : DEFAULT_COLUMNS);
+      setVisibleColumns(knownColumns(view.columns).length ? knownColumns(view.columns) : columnsOrSaved());
       setSort(view.sort ?? undefined);
     }
     setTableKey(`view-${id}-${Date.now()}`);
+  };
+  const loadViews = () =>
+    fetch("/api/v1/crm/saved-views?entityType=OPPORTUNITY")
+      .then((r) => (r.ok ? r.json() : { data: [] }))
+      .then((b) => {
+        const list: SavedViewDto[] = b.data ?? [];
+        setViews(list);
+        if (!defaultApplied.current) {
+          defaultApplied.current = true;
+          const view = list.find((v) => v.id === defaultViewId);
+          if (view) applyView(view.id, list);
+        }
+        return list;
+      })
+      .catch(() => [] as SavedViewDto[]);
+  useEffect(() => {
+    void loadViews();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshKey]);
+
+  const changeColumns = (keys: string[]) => {
+    setVisibleColumns(keys);
+    // Without a saved view open, the column choice is remembered for next time (a view keeps its own columns).
+    if (!activeViewId) setPreference("opportunities.list.columns", keys);
   };
 
   const saveView = async (asNew: boolean) => {
@@ -225,6 +221,7 @@ export function OpportunitiesListClient({ permissions }: { permissions: Opportun
     if (!activeView) return;
     const res = await crmRequest(`/api/v1/crm/saved-views/${activeView.id}`, { method: "DELETE", successMessage: "View deleted." });
     if (res.ok) {
+      if (defaultViewId === activeView.id) setPreference("opportunities.list.defaultViewId", null);
       setActiveViewId("");
       await loadViews();
     }
@@ -282,6 +279,7 @@ export function OpportunitiesListClient({ permissions }: { permissions: Opportun
           <option key={v.id} value={v.id}>
             {v.name}
             {v.visibility === "SHARED" ? (v.isMine ? " (shared)" : ` (by ${v.owner.fullName})`) : ""}
+            {v.id === defaultViewId ? " ★" : ""}
           </option>
         ))}
       </select>
@@ -298,7 +296,13 @@ export function OpportunitiesListClient({ permissions }: { permissions: Opportun
           </button>
         </>
       )}
-      <CrmColumnPicker columns={ALL_COLUMNS.map((c) => ({ key: c.key, header: c.header }))} visibleKeys={visibleColumns} onChange={setVisibleColumns} />
+      {activeViewId !== (defaultViewId ?? "") && (activeView || defaultViewId) && (
+        <button type="button" onClick={() => setPreference("opportunities.list.defaultViewId", activeViewId || null)} className="text-sm text-indigo-600 hover:underline dark:text-indigo-400">
+          Set as my default
+        </button>
+      )}
+      {activeView && activeViewId === defaultViewId && <span className="text-xs text-zinc-500 dark:text-zinc-400">Your default view</span>}
+      <CrmColumnPicker columns={ALL_COLUMNS.map((c) => ({ key: c.key, header: c.header }))} visibleKeys={visibleColumns} onChange={changeColumns} />
       {permissions.create && (
         <Link href="/crm/opportunities/new" className={buttonClasses("primary", "sm")}>
           New opportunity
@@ -315,7 +319,7 @@ export function OpportunitiesListClient({ permissions }: { permissions: Opportun
         columns={columns}
         filters={filters}
         listState={listState}
-        searchPlaceholder="Search name, number, company, contact, email, phone, ERP document number…"
+        searchPlaceholder="Search name, number, company, contact, owner, email, phone, ERP document number…"
         rowHref={(o) => `/crm/opportunities/${o.id}`}
         rowActions={rowActions}
         refreshKey={refreshKey}
@@ -335,6 +339,11 @@ export function OpportunitiesListClient({ permissions }: { permissions: Opportun
             <Button size="xs" variant="secondary" onClick={() => setDialog({ kind: "status", target: { ids: selected } })}>
               Change status
             </Button>
+            {meta && (
+              <Button size="xs" variant="secondary" onClick={() => setDialog({ kind: "update", ids: selected })}>
+                Update fields
+              </Button>
+            )}
             <Button size="xs" variant="secondary" onClick={() => setDialog({ kind: "tags", target: { ids: selected }, mode: "add" })}>
               Add tags
             </Button>
@@ -373,6 +382,8 @@ export function OpportunitiesListClient({ permissions }: { permissions: Opportun
       {dialog?.kind === "tags" && (
         <RecordTagsModal apiBase={API} noun="opportunity" onClose={() => setDialog(null)} target={dialog.target} mode={dialog.mode} currentTags={dialog.tags} onDone={"ids" in dialog.target ? doneBulk("Updated") : () => done()} />
       )}
+      {dialog?.kind === "update" && meta && <BulkUpdateFieldsModal ids={dialog.ids} meta={meta} onClose={() => setDialog(null)} onDone={doneBulk("Updated")} />}
+      {dialog?.kind === "result" && <BulkResultModal title={dialog.title} result={dialog.result} onClose={() => setDialog(null)} />}
       <ConfirmModal
         open={dialog?.kind === "archive"}
         title="Archive opportunity?"

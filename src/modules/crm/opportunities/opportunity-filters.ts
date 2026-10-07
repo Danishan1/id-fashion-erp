@@ -41,6 +41,8 @@ export function buildOpportunityWhere(companyId: string, filter: OpportunityFilt
         { crmCompany: { searchText: { contains: term } } },
         // contact: name / emails / phones / designation
         { crmContact: { searchText: { contains: term } } },
+        // owner name (Phase 08)
+        { owner: { fullName: { contains: term, mode: "insensitive" } } },
         ...(UUID_RE.test(term) ? [{ id: term }] : []),
         ...(phoneLike ? [{ crmContact: { phoneKeys: { has: digits.slice(-10) } } }, { crmCompany: { phoneKeys: { has: digits.slice(-10) } } }] : []),
       ],
@@ -80,6 +82,7 @@ export function buildOpportunityWhere(companyId: string, filter: OpportunityFilt
 /** Whitelisted sort → Prisma orderBy; nullable columns sort empties last; id breaks ties for stable paging. */
 export function buildOpportunityOrderBy(sortBy: OpportunitySortField, sortOrder: "asc" | "desc"): Prisma.CrmOpportunityOrderByWithRelationInput[] {
   if (sortBy === "stage") return [{ stage: { sortOrder } }, { id: sortOrder }];
+  if (sortBy === "owner") return [{ owner: { fullName: sortOrder } }, { id: sortOrder }];
   const nullable: OpportunitySortField[] = ["amount", "probability", "expectedCloseDate", "lastActivityAt"];
   const primary = nullable.includes(sortBy) ? { [sortBy]: { sort: sortOrder, nulls: "last" } } : { [sortBy]: sortOrder };
   return [primary as Prisma.CrmOpportunityOrderByWithRelationInput, { id: sortOrder }];

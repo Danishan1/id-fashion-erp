@@ -130,6 +130,7 @@ model Company {
   crmOpportunityStageHistory          CrmOpportunityStageHistory[]
   crmActivities                       CrmActivity[]
   crmActivityLinks                    CrmActivityLink[]
+  crmUserPreferences                  CrmUserPreference[]
   crmCompanyMerges                    CrmCompanyMerge[]
   attendanceRecords                   AttendanceRecord[]
   attendanceCorrectionRequests        AttendanceCorrectionRequest[]
@@ -367,6 +368,7 @@ model User {
   crmNotesAuthored                           CrmNote[]                            @relation("CrmNoteAuthor")
   crmActivitiesAssigned                      CrmActivity[]                        @relation("CrmActivityAssignee")
   crmActivitiesCreated                       CrmActivity[]                        @relation("CrmActivityCreatedBy")
+  crmPreferences                             CrmUserPreference[]
   crmSavedViews                              CrmSavedView[]                       @relation("CrmSavedViewOwner")
   crmImportJobsCreated                       CrmImportJob[]                       @relation("CrmImportJobCreatedBy")
   crmImportRowsReviewed                      CrmImportRow[]                       @relation("CrmImportRowReviewedBy")
@@ -8602,6 +8604,8 @@ model CrmOpportunity {
   @@index([companyId, expectedCloseDate])
   @@index([companyId, lastActivityAt])
   @@index([companyId, nameKey])
+  // Phase 08: board columns (pipeline → stage, newest stage entry first).
+  @@index([companyId, pipelineId, stageId, stageChangedAt], map: "crm_opportunities_board_idx")
   @@map("crm_opportunities")
 }
 
@@ -8953,6 +8957,28 @@ model CrmSettings {
 
 // A named list configuration (filters + sort + columns). Smart Lists
 // (Phase 13) reuse the same filter object, so views carry over unchanged.
+// Phase 08 — per-user CRM screen preferences (board card fields, list
+// columns, default saved view, last pipeline / view mode). Presentation only —
+// never business data. Keys and value shapes are validated in code
+// (src/modules/crm/preferences/crm-preference-registry.ts). The ERP had no
+// server-side user-preference store (only browser localStorage).
+model CrmUserPreference {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  key       String
+  value     Json
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+  user    User    @relation(fields: [userId], references: [id])
+
+  @@unique([userId, key])
+  @@index([companyId])
+  @@map("crm_user_preferences")
+}
+
 model CrmSavedView {
   id          String                 @id @default(uuid()) @db.Uuid
   companyId   String                 @map("company_id") @db.Uuid

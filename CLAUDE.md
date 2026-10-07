@@ -7711,3 +7711,10 @@ The whole CRM (Leads, Deals/Opportunities, pipeline/sources/lost-reason masters,
 - `crm_activities` + `crm_activity_links` (polymorphic; deal -> its company/contact linked automatically). Events `activity.*` are stored on CrmEntityType ACTIVITY; `/api/v1/crm/events` adds linked activities' events to a record timeline. Notes stay in `crm_notes`.
 - Reminders: worker job `activity.reminders` every minute -> `processDueActivityReminders` (claims PENDING->SENT with the ERP notification in one transaction - never send twice). Assignees = active ERP users with crm.view.
 - Report: `docs/crm/PHASE_09_ACTIVITIES_TASKS.md`.
+
+## CRM rebuild — Phase 08 Opportunity Board + List (2026-10-07)
+- Opportunities page = `OpportunitiesWorkspace` (Board / List, `?view=board|list`, last mode remembered). Both use the same filter params (`useOpportunityFilters` + `parseOpportunityFilterParams`), kept in the URL.
+- Board: `GET /api/v1/crm/pipelines/{id}/board` (all list filters, `perStage`, `stageId`+`offset` per-column paging; per-currency total/weighted/average from one groupBy). Drops call `POST /opportunities/{id}/stage` with `version` — never validate stage moves in the UI; optimistic move + exact rollback on 422/409/network.
+- Per-user screen preferences: `crm_user_preferences` + `crm-preference-registry.ts` (add a key + zod schema there) + `useCrmPreferences`. Presentation only, never business data.
+- Bulk: `action: "update"` (source / expected close / custom fields only, record-by-record via updateOpportunity). Every bulk call returns visibility-scoped `skipped[].label` + `operationId` and writes one AuditLog summary row.
+- Report: `docs/crm/PHASE_08_BOARD_LIST.md`.

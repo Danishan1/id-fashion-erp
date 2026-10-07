@@ -93,7 +93,7 @@ describe("pipeline / stage schemas", () => {
     expect(schema.updateTransitionRulesSchema.safeParse({ version: 1, transitionMode: "SOME", rules: [] }).success).toBe(false);
     expect(schema.archiveStageSchema.safeParse({ version: 1, reassignToStageId: B, confirm: true }).success).toBe(true);
     expect(schema.archiveStageSchema.safeParse({ version: 1, confirm: false }).success).toBe(false);
-    expect(schema.boardQuerySchema.parse({ perStage: "5" })).toEqual({ perStage: 5, status: "OPEN" });
+    expect(schema.boardQuerySchema.parse({ perStage: "5" })).toEqual({ perStage: 5, status: "OPEN", offset: 0 });
   });
   it("registers the transfer timeline event", () => {
     expect(CRM_EVENT_TYPES["opportunity.pipeline_transferred"].entityType).toBe("OPPORTUNITY");

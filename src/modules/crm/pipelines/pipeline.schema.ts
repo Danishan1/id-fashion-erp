@@ -110,8 +110,13 @@ export const transferPipelineSchema = z.object({
   reason: z.string().trim().max(500).optional().or(z.literal("")).nullable(),
 });
 
+/** Board paging options; the opportunity filters themselves are parsed with parseOpportunityFilterParams. */
 export const boardQuerySchema = z.object({
   perStage: z.coerce.number().int().min(0).max(100).default(20),
+  /** Legacy shortcut: OPEN (default, when no `statuses` filter) or ALL. */
   status: z.enum(["OPEN", "ALL"]).default("OPEN"),
   ownerUserId: uuid.optional(),
+  /** Load one column only (next page: with `offset`). */
+  stageId: uuid.optional(),
+  offset: z.coerce.number().int().min(0).max(100_000).default(0),
 });

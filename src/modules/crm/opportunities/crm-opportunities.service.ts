@@ -1,3 +1,6 @@
+import { randomUUID } from "node:crypto";
+import { z } from "zod";
+import { writeAuditLog } from "@/core/audit/AuditLogger";
 import type { CrmOpportunity, CrmOpportunityStatus, Prisma } from "@prisma/client";
 import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingService";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
@@ -779,14 +782,62 @@ export async function restoreOpportunity(actor: CrmActor, id: string) {
 
 // ── Bulk ─────────────────────────────────────────────────────────
 
+/**
+ * Bulk actions (list / board). Every record is checked on its own — visibility,
+ * archive state, status rules, and for stage moves the Phase 07 transition
+ * engine — and the response lists each skipped record with its reason. One
+ * AuditLog summary row per bulk operation records who did what to which
+ * records, with success and failure counts (plus the usual per-record audit).
+ */
 export async function bulkOpportunityAction(actor: CrmActor, raw: unknown) {
   const input = bulkOpportunitySchema.parse(raw);
+  const result = input.action === "update" ? await bulkUpdateFields(actor, input) : await runBulkAction(actor, input);
+  const ids = [...new Set(input.ids)];
+  // Labels only for records the actor can see — a skipped id outside their visibility never reveals its name.
+  const scope = await getCrmRecordScope(actor);
+  const visible = await CrmOpportunityRepository.findManyRaw({ AND: [{ id: { in: result.skipped.map((s) => s.id) }, companyId: actor.companyId }, crmOwnerWhere(scope) as Prisma.CrmOpportunityWhereInput] });
+  const labels = new Map(visible.map((o) => [o.id, `${o.opportunityNumber} — ${o.name}`]));
+  const skipped = result.skipped.map((s) => ({ ...s, label: labels.get(s.id) ?? null }));
+  const operationId = randomUUID();
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "crm_opportunities",
+    recordId: operationId,
+    action: "UPDATE",
+    newValues: { bulkOperation: input.action, requested: ids.length, updated: result.updated, failed: skipped.length, opportunityIds: ids, failures: skipped.map(({ id, reason }) => ({ id, reason })) },
+  });
+  return { ...result, skipped, operationId };
+}
+
+/** Bulk field update — only safe, user-editable fields; each record goes through updateOpportunity (validation, versioning, timeline). */
+async function bulkUpdateFields(actor: CrmActor, input: Extract<z.infer<typeof bulkOpportunitySchema>, { action: "update" }>) {
+  const ids = [...new Set(input.ids)];
+  const skipped: { id: string; reason: string }[] = [];
+  let updated = 0;
+  for (const id of ids) {
+    try {
+      const before = await loadOpportunityForActor(actor, id);
+      if (before.archivedAt) throw new BusinessRuleError("INVALID_STATE_TRANSITION", "Archived");
+      const after = await updateOpportunity(actor, id, { ...input.fields, version: before.version });
+      if (after.version === before.version) skipped.push({ id, reason: "Nothing to change" });
+      else updated++;
+    } catch (e) {
+      if (!(e instanceof BusinessRuleError) && !(e instanceof z.ZodError)) throw e;
+      const reason = e instanceof BusinessRuleError ? (e.code === "NOT_FOUND" ? "Not found or not visible to you" : e.message.replace(/\.$/, "")) : "Invalid value";
+      skipped.push({ id, reason });
+    }
+  }
+  return { requested: ids.length, updated, skipped };
+}
+
+async function runBulkAction(actor: CrmActor, input: Exclude<z.infer<typeof bulkOpportunitySchema>, { action: "update" }>) {
   const scope = await getCrmRecordScope(actor);
   const ids = [...new Set(input.ids)];
   const rows = await CrmOpportunityRepository.findManyRaw({ AND: [{ id: { in: ids }, companyId: actor.companyId }, crmOwnerWhere(scope) as Prisma.CrmOpportunityWhereInput] });
   const found = new Map(rows.map((o) => [o.id, o]));
   const skipped: { id: string; reason: string }[] = ids.filter((i) => !found.has(i)).map((i) => ({ id: i, reason: "Not found or not visible to you" }));
-  let targets = rows.filter((o) => (o.archivedAt ? (skipped.push({ id: o.id, reason: "Archived" }), false) : true));
+  let targets = rows.filter((o) => (o.archivedAt ? (skipped.push({ id: o.id, reason: input.action === "archive" ? "Already archived" : "Archived" }), false) : true));
 
   if (input.action === "assign") {
     if (input.ownerUserId) await assertAssignableOwner(actor.companyId, input.ownerUserId);

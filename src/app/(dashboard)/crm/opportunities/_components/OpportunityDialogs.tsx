@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { crmRequest } from "@/components/crm/crm-api";
+import { CrmCustomFieldInputs } from "@/components/crm/CrmCustomFields";
 import type { BulkResult } from "@/components/crm/CrmRecordDialogs";
 import { Button } from "@/components/ui/Button";
 import { FormField, textInputClass } from "@/components/ui/FormField";
@@ -9,7 +10,7 @@ import { Modal } from "@/components/ui/Modal";
 import { humanizeStatus } from "@/lib/humanize-status";
 import { ERP_DOC_TYPE_KEYS, ERP_DOC_TYPES, OPPORTUNITY_STATUS_TRANSITIONS, OPPORTUNITY_STATUSES, type ErpDocType, type OpportunityStatus } from "@/modules/crm/opportunities/opportunity-registry";
 import { opportunityValue } from "./OpportunityBadges";
-import type { PipelineDto, TransitionCheckDto } from "./opportunity-types";
+import type { OpportunityMetaDto, PipelineDto, TransitionCheckDto } from "./opportunity-types";
 
 const API = "/api/v1/crm/opportunities";
 type Target = { recordId: string; version?: number } | { ids: string[] };
@@ -455,6 +456,136 @@ export function LinkErpDocumentModal({ opportunityId, onClose, onDone }: { oppor
         <ErrorLine message={error} />
         <Footer onCancel={onClose} busy={busy} label="Link document" disabled={!picked} />
       </form>
+    </Modal>
+  );
+}
+
+/**
+ * Bulk "Update fields" (Phase 08): only fields that are safe to set on many
+ * records at once — source, expected close date and custom fields. Each
+ * record is updated through the normal single-record update (validation,
+ * version, audit); records that can't be changed are reported one by one.
+ */
+export function BulkUpdateFieldsModal({ ids, meta, onClose, onDone }: { ids: string[]; meta: OpportunityMetaDto; onClose: () => void; onDone: (result: BulkResult) => void }) {
+  const [use, setUse] = useState({ source: false, close: false, custom: false });
+  const [sourceId, setSourceId] = useState("");
+  const [closeDate, setCloseDate] = useState("");
+  const customDefs = meta.customFields.filter((d) => d.isActive);
+  const [customKey, setCustomKey] = useState(customDefs[0]?.key ?? "");
+  const [customValues, setCustomValues] = useState<Record<string, unknown>>({});
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const customDef = customDefs.find((d) => d.key === customKey);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const fields: Record<string, unknown> = {};
+    if (use.source) fields.sourceId = sourceId || null;
+    if (use.close) fields.expectedCloseDate = closeDate || null;
+    if (use.custom && customDef) fields.customFields = { [customDef.key]: customValues[customDef.key] ?? null };
+    if (!Object.keys(fields).length) return setError("Choose at least one field to update.");
+    setBusy(true);
+    setError(null);
+    const res = await crmRequest<BulkResult>(`${API}/bulk`, { method: "POST", body: { action: "update", ids, fields }, toast: "errors" });
+    setBusy(false);
+    if (!res.ok) {
+      setFieldErrors(res.error.fieldErrors);
+      return setError(res.error.message);
+    }
+    onDone(res.data);
+  };
+
+  const check = (key: keyof typeof use, label: string) => (
+    <label className="flex items-center gap-2 text-sm font-medium text-zinc-700 dark:text-zinc-200">
+      <input type="checkbox" checked={use[key]} onChange={(e) => setUse((u) => ({ ...u, [key]: e.target.checked }))} />
+      {label}
+    </label>
+  );
+  return (
+    <Modal open onClose={onClose} title={`Update ${ids.length} opportunit${ids.length === 1 ? "y" : "ies"}`} maxWidthClass="max-w-lg">
+      <form onSubmit={submit} className="mt-4 space-y-4">
+        <p className="text-xs text-zinc-500 dark:text-zinc-400">Only ticked fields change. Each opportunity is saved separately, so one that can&apos;t be changed doesn&apos;t stop the others.</p>
+        <div className="space-y-2">
+          {check("source", "Source")}
+          {use.source && (
+            <select aria-label="New source" className={textInputClass()} value={sourceId} onChange={(e) => setSourceId(e.target.value)}>
+              <option value="">— No source —</option>
+              {meta.sources
+                .filter((s) => s.isActive !== false)
+                .map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+            </select>
+          )}
+        </div>
+        <div className="space-y-2">
+          {check("close", "Expected close date")}
+          {use.close && <input type="date" aria-label="New expected close date" className={textInputClass(Boolean(fieldErrors.expectedCloseDate))} value={closeDate} onChange={(e) => setCloseDate(e.target.value)} />}
+          {use.close && !closeDate && <p className="text-xs text-zinc-500">Leave empty to clear the date.</p>}
+        </div>
+        {customDefs.length > 0 && (
+          <div className="space-y-2">
+            {check("custom", "Custom field")}
+            {use.custom && (
+              <>
+                <select aria-label="Custom field to update" className={textInputClass()} value={customKey} onChange={(e) => setCustomKey(e.target.value)}>
+                  {customDefs.map((d) => (
+                    <option key={d.key} value={d.key}>
+                      {d.label}
+                    </option>
+                  ))}
+                </select>
+                {customDef && <CrmCustomFieldInputs definitions={[{ ...customDef, isRequired: false }]} values={customValues} onChange={(k, v) => setCustomValues((c) => ({ ...c, [k]: v }))} errors={fieldErrors} />}
+              </>
+            )}
+          </div>
+        )}
+        <ErrorLine message={error} />
+        <Footer onCancel={onClose} busy={busy} label="Update" disabled={!use.source && !use.close && !use.custom} />
+      </form>
+    </Modal>
+  );
+}
+
+/** Per-record outcome of a bulk action: how many changed and why each skipped record wasn't. */
+export function BulkResultModal({ title, result, onClose }: { title: string; result: BulkResult; onClose: () => void }) {
+  return (
+    <Modal open onClose={onClose} title={title} maxWidthClass="max-w-lg">
+      <div className="mt-3 space-y-3 text-sm">
+        <p>
+          <span className="font-medium text-green-700 dark:text-green-400">{result.updated} updated</span>
+          {" · "}
+          <span className={result.skipped.length ? "font-medium text-amber-700 dark:text-amber-400" : undefined}>{result.skipped.length} not changed</span>
+          {" · "}
+          {result.requested} selected
+        </p>
+        {result.skipped.length > 0 && (
+          <div className="max-h-72 overflow-y-auto rounded-md border border-zinc-200 dark:border-zinc-700">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-zinc-50 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                <tr>
+                  <th className="px-3 py-1.5 font-medium">Opportunity</th>
+                  <th className="px-3 py-1.5 font-medium">Reason</th>
+                </tr>
+              </thead>
+              <tbody>
+                {result.skipped.map((s) => (
+                  <tr key={s.id} className="border-t border-zinc-100 dark:border-zinc-800">
+                    <td className="px-3 py-1.5">{s.label ? <a href={`/crm/opportunities/${s.id}`} className="text-indigo-600 hover:underline dark:text-indigo-400">{s.label}</a> : <span className="text-zinc-400">Not available</span>}</td>
+                    <td className="px-3 py-1.5">{s.reason}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <div className="flex justify-end">
+          <Button onClick={onClose}>Close</Button>
+        </div>
+      </div>
     </Modal>
   );
 }

@@ -7,10 +7,13 @@ export function CrmColumnPicker({
   columns,
   visibleKeys,
   onChange,
+  label = "Columns",
 }: {
   columns: { key: string; header: string }[];
   visibleKeys: string[];
   onChange: (keys: string[]) => void;
+  /** Button text, e.g. "Card fields" on the opportunity board. */
+  label?: string;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -40,7 +43,7 @@ export function CrmColumnPicker({
         onClick={() => setOpen((o) => !o)}
         className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
       >
-        Columns ({visibleKeys.length})
+        {label} ({visibleKeys.length})
       </button>
       {open && (
         <div className="absolute right-0 z-20 mt-1 max-h-80 w-56 overflow-y-auto rounded-md border border-zinc-200 bg-white p-2 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">

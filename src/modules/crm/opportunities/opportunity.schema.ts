@@ -123,7 +123,7 @@ export const opportunityFilterSchema = z
   .strict();
 export type OpportunityFilter = z.infer<typeof opportunityFilterSchema>;
 
-export const OPPORTUNITY_SORT_FIELDS = ["createdAt", "updatedAt", "name", "amount", "probability", "expectedCloseDate", "lastActivityAt", "stage"] as const;
+export const OPPORTUNITY_SORT_FIELDS = ["createdAt", "updatedAt", "name", "amount", "probability", "expectedCloseDate", "lastActivityAt", "stage", "owner"] as const;
 export type OpportunitySortField = (typeof OPPORTUNITY_SORT_FIELDS)[number];
 export const opportunitySortSchema = z.object({
   sortBy: z.enum(OPPORTUNITY_SORT_FIELDS).default("createdAt"),
@@ -192,4 +192,13 @@ export const bulkOpportunitySchema = z.discriminatedUnion("action", [
   }),
   z.object({ action: z.literal("removeTags"), ids: bulkIds, tagIds: z.array(uuid).min(1).max(50) }),
   z.object({ action: z.literal("archive"), ids: bulkIds }),
+  // Phase 08: safe field updates only (system fields — status, stage, pipeline, number, lead, values set by the system — are not accepted).
+  z.object({
+    action: z.literal("update"),
+    ids: bulkIds,
+    fields: z
+      .object({ sourceId: opportunityFields.sourceId, expectedCloseDate: opportunityFields.expectedCloseDate, customFields: opportunityFields.customFields })
+      .strict()
+      .refine((f) => Object.values(f).some((v) => v !== undefined), "Choose at least one field to update"),
+  }),
 ]);

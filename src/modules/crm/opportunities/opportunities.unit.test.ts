@@ -48,6 +48,12 @@ describe("opportunity schema", () => {
     expect(linkErpDocumentSchema.safeParse({ docType: "QUOTATION", docId: A }).success).toBe(false);
     expect(bulkOpportunitySchema.safeParse({ action: "stage", ids: [A], stageId: B }).success).toBe(true);
     expect(bulkOpportunitySchema.safeParse({ action: "delete", ids: [A] }).success).toBe(false);
+    // Phase 08 bulk field update: only safe fields, at least one of them.
+    expect(bulkOpportunitySchema.safeParse({ action: "update", ids: [A], fields: { expectedCloseDate: "2026-12-31" } }).success).toBe(true);
+    expect(bulkOpportunitySchema.safeParse({ action: "update", ids: [A], fields: { sourceId: null, customFields: { fabric: "linen" } } }).success).toBe(true);
+    expect(bulkOpportunitySchema.safeParse({ action: "update", ids: [A], fields: {} }).success).toBe(false);
+    for (const unsafe of [{ amount: "5" }, { ownerUserId: B }, { stageId: B }, { status: "WON" }, { name: "x" }])
+      expect(bulkOpportunitySchema.safeParse({ action: "update", ids: [A], fields: unsafe }).success).toBe(false);
   });
 });
 
@@ -76,6 +82,7 @@ describe("opportunity filters", () => {
 
   it("searches the opportunity, its company and contact (incl. phone digits) server-side", () => {
     const w = JSON.stringify(buildOpportunityWhere("co-1", parseOpportunityFilterParams(new URLSearchParams({ search: "98765 43210" })), { mode: "ALL" }));
+    expect(JSON.stringify(buildOpportunityWhere("co-1", parseOpportunityFilterParams(new URLSearchParams({ search: "Ravi" })), { mode: "ALL" }))).toContain('"owner":{"fullName":{"contains":"ravi","mode":"insensitive"}}');
     expect(w).toContain('"searchText":{"contains":"98765 43210"}');
     expect(w).toContain('"crmCompany":{"searchText"');
     expect(w).toContain('"crmContact":{"phoneKeys":{"has":"9876543210"}}');
@@ -104,6 +111,7 @@ describe("opportunity filters", () => {
     expect(buildOpportunityOrderBy("stage", "asc")).toEqual([{ stage: { sortOrder: "asc" } }, { id: "asc" }]);
     expect(buildOpportunityOrderBy("expectedCloseDate", "asc")).toEqual([{ expectedCloseDate: { sort: "asc", nulls: "last" } }, { id: "asc" }]);
     expect(buildOpportunityOrderBy("name", "desc")).toEqual([{ name: "desc" }, { id: "desc" }]);
+    expect(buildOpportunityOrderBy("owner", "asc")).toEqual([{ owner: { fullName: "asc" } }, { id: "asc" }]);
   });
 });
 

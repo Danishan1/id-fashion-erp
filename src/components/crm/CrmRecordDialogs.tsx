@@ -15,7 +15,10 @@ import { ADDRESS_TYPES } from "@/modules/crm/contacts/contact-registry";
 export interface BulkResult {
   requested: number;
   updated: number;
-  skipped: { id: string; reason: string }[];
+  /** One entry per record not changed; `label` ("OPP-0001 — name") where the endpoint provides it. */
+  skipped: { id: string; reason: string; label?: string | null }[];
+  /** Bulk audit summary id (opportunities, Phase 08). */
+  operationId?: string;
 }
 export interface UserRefDto {
   id: string;
