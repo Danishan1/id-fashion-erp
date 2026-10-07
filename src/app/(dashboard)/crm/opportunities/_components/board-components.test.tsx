@@ -244,10 +244,9 @@ describe("opportunity board", () => {
   });
 
   it("maps server refusals to board notices without re-validating anything", () => {
-    const rec = card("o1", "s1") as never;
-    expect(moveFailureNotice({ status: 422, code: "CRM_STAGE_TRANSITION_BLOCKED", message: "x", details: { reasons: [], missingFields: [{ key: "amount", label: "Value", field: "amount" }] }, fieldErrors: {} }, rec, "Costing")).toMatchObject({ kind: "blocked", stageName: "Costing", missingFields: [{ key: "amount" }] });
-    expect(moveFailureNotice({ status: 409, code: "RECORD_VERSION_CONFLICT", message: "x", details: null, fieldErrors: {} }, rec, "Costing").kind).toBe("conflict");
-    expect(moveFailureNotice({ status: 422, code: "INVALID_STATE_TRANSITION", message: "Closed — reopen it first", details: null, fieldErrors: {} }, rec, "Costing")).toMatchObject({ kind: "error", message: "Closed — reopen it first" });
+    expect(moveFailureNotice({ status: 422, code: "CRM_STAGE_TRANSITION_BLOCKED", message: "x", details: { reasons: [], missingFields: [{ key: "amount", label: "Value", field: "amount" }] }, fieldErrors: {} })).toMatchObject({ kind: "blocked", missingFields: [{ key: "amount" }] });
+    expect(moveFailureNotice({ status: 409, code: "RECORD_VERSION_CONFLICT", message: "x", details: null, fieldErrors: {} }).kind).toBe("conflict");
+    expect(moveFailureNotice({ status: 422, code: "INVALID_STATE_TRANSITION", message: "Closed — reopen it first", details: null, fieldErrors: {} })).toMatchObject({ kind: "error", message: "Closed — reopen it first" });
   });
 });
 

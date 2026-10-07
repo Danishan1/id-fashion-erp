@@ -20,6 +20,10 @@ export const CRM_PREFERENCES = {
   "opportunities.board.pipelineId": uuidOrNull,
   /** Opportunities page: last mode used. */
   "opportunities.mode": z.enum(["board", "list"]),
+  /** Lead board: fields shown on cards, in order ("cf:<key>" = custom field). */
+  "leads.board.cardFields": z.array(fieldKey).max(20),
+  /** Leads page: last mode used. */
+  "leads.mode": z.enum(["board", "list"]),
 } as const;
 export type CrmPreferenceKey = keyof typeof CRM_PREFERENCES;
 export type CrmPreferenceValue<K extends CrmPreferenceKey> = z.infer<(typeof CRM_PREFERENCES)[K]>;

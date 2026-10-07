@@ -1,6 +1,6 @@
 import { CrmPageHeader } from "@/components/crm/CrmPageHeader";
 import { getCrmPageContext } from "@/modules/crm/core/crm-page";
-import { LeadsListClient } from "./_components/LeadsListClient";
+import { LeadsWorkspace } from "./_components/LeadsWorkspace";
 
 export default async function CrmLeadsPage() {
   const { permissions } = await getCrmPageContext();
@@ -11,7 +11,7 @@ export default async function CrmLeadsPage() {
         description={permissions.viewAll ? "All leads in this company." : "Leads you own or created."}
         breadcrumbs={[{ label: "Leads" }]}
       />
-      <LeadsListClient permissions={permissions} />
+      <LeadsWorkspace permissions={permissions} />
     </>
   );
 }

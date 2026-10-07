@@ -60,7 +60,7 @@ describe("CRM preference routes", () => {
 
 describe("CRM preference registry", () => {
   it("knows only its own keys", () => {
-    expect(CRM_PREFERENCE_KEYS).toEqual(expect.arrayContaining(["opportunities.list.columns", "opportunities.list.defaultViewId", "opportunities.board.cardFields", "opportunities.board.pipelineId", "opportunities.mode"]));
+    expect(CRM_PREFERENCE_KEYS).toEqual(expect.arrayContaining(["opportunities.list.columns", "opportunities.list.defaultViewId", "opportunities.board.cardFields", "opportunities.board.pipelineId", "opportunities.mode", "leads.board.cardFields", "leads.mode"]));
     expect(isCrmPreferenceKey("opportunities.mode")).toBe(true);
     expect(isCrmPreferenceKey("toString")).toBe(false);
     expect(isCrmPreferenceKey("__proto__")).toBe(false);

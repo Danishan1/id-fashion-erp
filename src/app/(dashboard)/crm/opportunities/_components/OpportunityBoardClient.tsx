@@ -2,21 +2,20 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { CrmBadge } from "@/components/crm/CrmBadge";
 import { CrmColumnPicker } from "@/components/crm/CrmColumnPicker";
 import { formatCustomFieldValue } from "@/components/crm/CrmCustomFields";
 import { CrmFilterBar, crmFilterKeys } from "@/components/crm/CrmFilterBar";
 import { AssignOwnerModal } from "@/components/crm/CrmRecordDialogs";
 import { crmRequest, type CrmApiError } from "@/components/crm/crm-api";
+import { CardFieldList, conflictMessage, CrmKanbanBoard, type KanbanColumn, type KanbanNotice } from "@/components/crm/CrmKanbanBoard";
 import { useCrmListState } from "@/components/crm/useCrmListState";
 import type { useCrmPreferences } from "@/components/crm/useCrmPreferences";
 import { ActionMenu, type ActionMenuItem } from "@/components/ui/ActionMenu";
 import { Button, buttonClasses } from "@/components/ui/Button";
 import { ClientDateTime } from "@/components/ui/ClientDateTime";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
-import { Modal } from "@/components/ui/Modal";
-import { toast } from "@/components/ui/Toast";
 import { isClosedStatus, type OpportunityStatus } from "@/modules/crm/opportunities/opportunity-registry";
 import { OwnerName } from "../../leads/_components/LeadBadges";
 import { CloseDate, OpportunityStatusBadge, opportunityValue } from "./OpportunityBadges";
@@ -26,10 +25,10 @@ import { useOpportunityFilters } from "./useOpportunityFilters";
 
 const OPP_API = "/api/v1/crm/opportunities";
 const PER_STAGE = 20;
-export const CONFLICT_MESSAGE = "This opportunity was updated by another user. Please refresh and try again.";
+export const CONFLICT_MESSAGE = conflictMessage("Opportunity");
 
 export type BoardCardDto = OpportunityRowDto & { customFields?: Record<string, unknown> | null };
-export interface BoardColumnDto {
+export interface BoardColumnDto extends KanbanColumn<BoardCardDto> {
   id: string;
   name: string;
   sortOrder: number;
@@ -79,11 +78,6 @@ const BASE_CARD_FIELDS: CardField[] = [
 ];
 export const DEFAULT_CARD_FIELDS = ["company", "contact", "amount", "probability", "expectedCloseDate", "owner", "tags", "status"];
 
-type Move = { record: BoardCardDto; fromStageId: string; toStageId: string; index: number };
-type Notice =
-  | { kind: "blocked"; record: BoardCardDto; stageName: string; reasons: TransitionCheckDto["reasons"]; missingFields: TransitionCheckDto["missingFields"] }
-  | { kind: "conflict"; record: BoardCardDto }
-  | { kind: "error"; record: BoardCardDto; message: string };
 type Dialog = { kind: "stage"; record: BoardCardDto } | { kind: "assign"; record: BoardCardDto } | { kind: "archive"; record: BoardCardDto } | null;
 
 const money = (values: BoardColumnDto["values"], pick: "total" | "weighted" | "average") =>
@@ -92,27 +86,14 @@ const money = (values: BoardColumnDto["values"], pick: "total" | "weighted" | "a
     .map((v) => opportunityValue(v[pick], v.currencyCode))
     .join(" + ");
 
-/** Board columns after taking `id` out of its column (count adjusted). */
-function withoutCard(stages: BoardColumnDto[], id: string) {
-  return stages.map((s) => (s.records.some((r) => r.id === id) ? { ...s, records: s.records.filter((r) => r.id !== id), count: Math.max(0, s.count - 1) } : s));
-}
-function withCard(stages: BoardColumnDto[], stageId: string, record: BoardCardDto, index = 0) {
-  return stages.map((s) => {
-    if (s.id !== stageId) return s;
-    const records = [...s.records];
-    records.splice(Math.min(index, records.length), 0, record);
-    return { ...s, records, count: s.count + 1 };
-  });
-}
-
 /** Turns a refused stage change into what the board shows (the server decides; nothing is re-validated here). */
-export function moveFailureNotice(error: CrmApiError, record: BoardCardDto, stageName: string): Notice {
+export function moveFailureNotice(error: CrmApiError): KanbanNotice {
   if (error.code === "CRM_STAGE_TRANSITION_BLOCKED") {
     const d = error.details ?? {};
-    return { kind: "blocked", record, stageName, reasons: (d.reasons as TransitionCheckDto["reasons"]) ?? [], missingFields: (d.missingFields as TransitionCheckDto["missingFields"]) ?? [] };
+    return { kind: "blocked", reasons: (d.reasons as TransitionCheckDto["reasons"]) ?? [], missingFields: (d.missingFields as TransitionCheckDto["missingFields"]) ?? [] };
   }
-  if (error.code === "RECORD_VERSION_CONFLICT" || error.status === 409) return { kind: "conflict", record };
-  return { kind: "error", record, message: error.message };
+  if (error.code === "RECORD_VERSION_CONFLICT" || error.status === 409) return { kind: "conflict" };
+  return { kind: "error", message: error.message };
 }
 
 /**
@@ -165,77 +146,17 @@ export function OpportunityBoardClient({
   const cardFieldKeys = (prefs["opportunities.board.cardFields"] ?? DEFAULT_CARD_FIELDS).filter((k) => cardFieldOptions.some((f) => f.key === k));
   const cardFields = cardFieldOptions.filter((f) => cardFieldKeys.includes(f.key));
 
-  // ── Loading (stale-while-revalidate: the board stays visible while it refreshes) ──
   const queryParams = new URLSearchParams({ perStage: String(PER_STAGE) });
   for (const [k, v] of Object.entries(listState.filters)) if (v) queryParams.set(k, v);
   if (listState.search) queryParams.set("search", listState.search);
   const query = pipelineId ? `/api/v1/crm/pipelines/${pipelineId}/board?${queryParams}` : null;
-  const [state, setState] = useState<{ query: string; board: BoardDto | null; error: string | null } | null>(null);
-  const [reloadTick, setReloadTick] = useState(0);
-  useEffect(() => {
-    if (!query) return;
-    let cancelled = false;
-    crmRequest<BoardDto>(query, { toast: "off" }).then((res) => {
-      if (cancelled) return;
-      setState(res.ok ? { query, board: res.data, error: null } : (s) => ({ query, board: s?.query === query ? s.board : null, error: res.error.message }));
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [query, reloadTick]);
-  const reload = () => setReloadTick((t) => t + 1);
-  const loading = Boolean(query) && state?.query !== query;
-  const board = state?.query === query ? state.board : null;
-  const loadError = state?.query === query ? state.error : null;
+  const [reloadKey, setReloadKey] = useState(0);
+  const reload = () => setReloadKey((k) => k + 1);
 
-  const setStages = (fn: (stages: BoardColumnDto[]) => BoardColumnDto[]) => setState((s) => (s?.board ? { ...s, board: { ...s.board, stages: fn(s.board.stages) } } : s));
-
-  const [loadingMore, setLoadingMore] = useState<string | null>(null);
-  const loadMore = async (column: BoardColumnDto) => {
-    if (!query) return;
-    setLoadingMore(column.id);
-    const res = await crmRequest<BoardDto>(`${query}&stageId=${column.id}&offset=${column.records.length}`, { toast: "off" });
-    setLoadingMore(null);
-    if (!res.ok) return toast.error(res.error.message);
-    const next = res.data.stages[0];
-    if (!next) return;
-    setStages((stages) =>
-      stages.map((s) => (s.id === column.id ? { ...s, records: [...s.records, ...next.records.filter((r) => !s.records.some((x) => x.id === r.id))], hasMore: next.hasMore, count: next.count } : s))
-    );
-  };
-
-  // ── Drag and drop ──
-  const [dragging, setDragging] = useState<{ id: string; fromStageId: string } | null>(null);
-  const [overStageId, setOverStageId] = useState<string | null>(null);
-  const [pending, setPending] = useState<Set<string>>(new Set());
-  const [notice, setNotice] = useState<Notice | null>(null);
-
-  const rollback = (m: Move) => setStages((stages) => withCard(withoutCard(stages, m.record.id), m.fromStageId, m.record, m.index));
-
-  const moveCard = async (recordId: string, fromStageId: string, toStageId: string) => {
-    if (!board || fromStageId === toStageId || pending.has(recordId)) return;
-    const from = board.stages.find((s) => s.id === fromStageId);
-    const to = board.stages.find((s) => s.id === toStageId);
-    const index = from?.records.findIndex((r) => r.id === recordId) ?? -1;
-    if (!from || !to || index < 0) return;
-    const record = from.records[index];
-    const move: Move = { record, fromStageId, toStageId, index };
-    // Optimistic: show the card in its new column right away (marked as saving).
-    setStages((stages) => withCard(withoutCard(stages, recordId), toStageId, { ...record, stageId: toStageId, stage: record.stage ? { ...record.stage, id: to.id, name: to.name } : record.stage }));
-    setPending((p) => new Set(p).add(recordId));
-    const res = await crmRequest(`${OPP_API}/${recordId}/stage`, { method: "POST", body: { stageId: toStageId, pipelineId: board.pipeline.id, version: record.version }, toast: "off" });
-    setPending((p) => {
-      const n = new Set(p);
-      n.delete(recordId);
-      return n;
-    });
-    if (!res.ok) {
-      rollback(move);
-      setNotice(moveFailureNotice(res.error, record, to.name));
-      return;
-    }
-    toast.success(`Moved "${record.name}" to ${to.name}.`);
-    reload();
+  /** A drop: the Phase 07 stage endpoint decides (rules, required fields, version). */
+  const move = async (record: BoardCardDto, _from: BoardColumnDto, to: BoardColumnDto) => {
+    const res = await crmRequest(`${OPP_API}/${record.id}/stage`, { method: "POST", body: { stageId: to.id, pipelineId, version: record.version }, toast: "off" });
+    return res.ok ? { ok: true as const } : { ok: false as const, notice: moveFailureNotice(res.error) };
   };
 
   // ── Card actions ──
@@ -265,7 +186,6 @@ export function OpportunityBoardClient({
     return items;
   };
 
-  const [mobileStageId, setMobileStageId] = useState<string | null>(null);
 
   if (!activePipelines.length) {
     return (
@@ -282,16 +202,69 @@ export function OpportunityBoardClient({
     );
   }
 
-  const stages = board?.stages ?? [];
-  const totalCount = stages.reduce((n, s) => n + s.count, 0);
-  const totals = new Map<string | null, { total: number; weighted: number }>();
-  for (const s of stages)
-    for (const v of s.values) {
-      const t = totals.get(v.currencyCode) ?? { total: 0, weighted: 0 };
-      totals.set(v.currencyCode, { total: t.total + v.total, weighted: t.weighted + v.weighted });
-    }
-  const totalValues = [...totals.entries()].map(([currencyCode, t]) => ({ currencyCode, total: Math.round(t.total * 100) / 100, weighted: Math.round(t.weighted * 100) / 100, average: null }));
-  const mobileStage = stages.find((s) => s.id === mobileStageId)?.id ?? stages[0]?.id;
+  const summary = (stages: BoardColumnDto[]) => {
+    const totalCount = stages.reduce((n, s) => n + s.count, 0);
+    const totals = new Map<string | null, { total: number; weighted: number }>();
+    for (const st of stages)
+      for (const v of st.values) {
+        const t = totals.get(v.currencyCode) ?? { total: 0, weighted: 0 };
+        totals.set(v.currencyCode, { total: t.total + v.total, weighted: t.weighted + v.weighted });
+      }
+    const totalValues = [...totals.entries()].map(([currencyCode, t]) => ({ currencyCode, total: Math.round(t.total * 100) / 100, weighted: Math.round(t.weighted * 100) / 100, average: null }));
+    return (
+      <p className="text-sm text-zinc-600 dark:text-zinc-300" aria-live="polite">
+        <span className="font-medium">{totalCount}</span> {totalCount === 1 ? "opportunity" : "opportunities"}
+        {totalValues.length > 0 && (
+          <>
+            {" · "}value {money(totalValues, "total")} · weighted {money(totalValues, "weighted")}
+          </>
+        )}
+        {!listState.filters.statuses && <span className="text-zinc-400"> · open deals</span>}
+      </p>
+    );
+  };
+
+  const header = (column: BoardColumnDto) => (
+    <dl className="mt-1 space-y-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+      {column.values.length ? (
+        <>
+          <div className="flex justify-between gap-2">
+            <dt>Value</dt>
+            <dd className="text-right font-medium text-zinc-700 dark:text-zinc-200">{money(column.values, "total")}</dd>
+          </div>
+          <div className="flex justify-between gap-2">
+            <dt>Weighted</dt>
+            <dd className="text-right">{money(column.values, "weighted")}</dd>
+          </div>
+          <div className="flex justify-between gap-2">
+            <dt>Average</dt>
+            <dd className="text-right">{money(column.values, "average")}</dd>
+          </div>
+        </>
+      ) : (
+        <div>No value</div>
+      )}
+      {column.probability !== null && <div>Stage probability {column.probability}%</div>}
+    </dl>
+  );
+
+  const card = (o: BoardCardDto, _column: BoardColumnDto, saving: boolean) => (
+    <>
+      <div className="flex items-start justify-between gap-1">
+        <div className="min-w-0">
+          <Link href={`/crm/opportunities/${o.id}`} className="font-medium text-indigo-600 hover:underline dark:text-indigo-400" draggable={false}>
+            {o.name}
+          </Link>
+          <div className="text-xs text-zinc-400">
+            {o.opportunityNumber}
+            {saving && " · saving…"}
+          </div>
+        </div>
+        <ActionMenu items={cardActions(o)} />
+      </div>
+      <CardFieldList fields={cardFields} record={o} />
+    </>
+  );
 
   return (
     <div className="space-y-3">
@@ -341,7 +314,7 @@ export function OpportunityBoardClient({
           </Button>
         </form>
         <CrmColumnPicker label="Card fields" columns={cardFieldOptions.map((f) => ({ key: f.key, header: f.header }))} visibleKeys={cardFieldKeys} onChange={(keys) => setPreference("opportunities.board.cardFields", keys)} />
-        <Button size="sm" variant="secondary" onClick={reload} disabled={loading}>
+        <Button size="sm" variant="secondary" onClick={reload}>
           Refresh
         </Button>
         {permissions.create && (
@@ -353,218 +326,24 @@ export function OpportunityBoardClient({
 
       <CrmFilterBar definitions={filters} value={listState.filters} onApply={listState.applyFilters} onClearAll={listState.clearFilters} isOpen={listState.isFilterPanelOpen} onToggleOpen={listState.toggleFilterPanel} />
 
-      {board && (
-        <p className="text-sm text-zinc-600 dark:text-zinc-300" aria-live="polite">
-          <span className="font-medium">{totalCount}</span> {totalCount === 1 ? "opportunity" : "opportunities"}
-          {totalValues.length > 0 && (
-            <>
-              {" · "}value {money(totalValues, "total")} · weighted {money(totalValues, "weighted")}
-            </>
-          )}
-          {!listState.filters.statuses && <span className="text-zinc-400"> · open deals</span>}
-        </p>
-      )}
-
-      {loading && !board && <div className="rounded-lg border border-zinc-200 p-8 text-center text-sm text-zinc-500 dark:border-zinc-800">Loading board…</div>}
-      {loadError && (
-        <div role="alert" className="flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
-          <span>Couldn&apos;t load the board: {loadError}</span>
-          <Button size="xs" variant="secondary" onClick={reload}>
-            Try again
-          </Button>
-        </div>
-      )}
-      {board && totalCount === 0 && (
-        <p className="rounded-md bg-zinc-50 px-3 py-2 text-sm text-zinc-500 dark:bg-zinc-800/60 dark:text-zinc-400">No opportunities match {listState.search || Object.values(listState.filters).some(Boolean) ? "this search and these filters" : "in this pipeline yet"}.</p>
-      )}
-
-      {board && stages.length > 0 && (
-        <>
-          <div className="md:hidden">
-            <label className="block text-xs font-medium text-zinc-500 dark:text-zinc-400" htmlFor="board-mobile-stage">
-              Stage
-            </label>
-            <select id="board-mobile-stage" value={mobileStage ?? ""} onChange={(e) => setMobileStageId(e.target.value)} className="mt-1 w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-800">
-              {stages.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name} ({s.count})
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className={`flex gap-3 overflow-x-auto pb-3 ${loading ? "opacity-70" : ""}`} aria-busy={loading}>
-            {stages.map((column) => (
-              <section
-                key={column.id}
-                aria-label={`${column.name} stage`}
-                data-stage-id={column.id}
-                onDragOver={(e) => {
-                  if (!dragging || !permissions.edit) return;
-                  e.preventDefault();
-                  e.dataTransfer.dropEffect = "move";
-                  if (overStageId !== column.id) setOverStageId(column.id);
-                }}
-                onDragLeave={(e) => {
-                  if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOverStageId((s) => (s === column.id ? null : s));
-                }}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  setOverStageId(null);
-                  const id = e.dataTransfer.getData("text/plain") || dragging?.id;
-                  const fromStageId = dragging?.fromStageId ?? stages.find((s) => s.records.some((r) => r.id === id))?.id;
-                  setDragging(null);
-                  if (id && fromStageId) void moveCard(id, fromStageId, column.id);
-                }}
-                className={`${column.id === mobileStage ? "flex" : "hidden"} w-full shrink-0 flex-col rounded-lg border bg-zinc-50 md:flex md:w-72 dark:bg-zinc-900/60 ${
-                  overStageId === column.id ? "border-indigo-400 ring-2 ring-indigo-300 dark:border-indigo-500" : "border-zinc-200 dark:border-zinc-800"
-                }`}
-              >
-                <header className="border-b border-zinc-200 px-3 py-2 dark:border-zinc-800">
-                  <div className="flex items-center justify-between gap-2">
-                    <h3 className="truncate text-sm font-semibold text-zinc-800 dark:text-zinc-100" title={column.name}>
-                      {column.name}
-                      {column.archived && <span className="ml-1 text-xs font-normal text-amber-600"> (archived)</span>}
-                    </h3>
-                    <span className="rounded-full bg-zinc-200 px-2 text-xs font-medium text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200" aria-label={`${column.count} opportunities`}>
-                      {column.count}
-                    </span>
-                  </div>
-                  <dl className="mt-1 space-y-0.5 text-xs text-zinc-500 dark:text-zinc-400">
-                    {column.values.length ? (
-                      <>
-                        <div className="flex justify-between gap-2">
-                          <dt>Value</dt>
-                          <dd className="text-right font-medium text-zinc-700 dark:text-zinc-200">{money(column.values, "total")}</dd>
-                        </div>
-                        <div className="flex justify-between gap-2">
-                          <dt>Weighted</dt>
-                          <dd className="text-right">{money(column.values, "weighted")}</dd>
-                        </div>
-                        <div className="flex justify-between gap-2">
-                          <dt>Average</dt>
-                          <dd className="text-right">{money(column.values, "average")}</dd>
-                        </div>
-                      </>
-                    ) : (
-                      <div>No value</div>
-                    )}
-                    {column.probability !== null && <div>Stage probability {column.probability}%</div>}
-                  </dl>
-                </header>
-                <ul className="flex min-h-24 flex-1 flex-col gap-2 overflow-y-auto p-2 md:max-h-[65vh]">
-                  {column.records.map((o) => {
-                    const saving = pending.has(o.id);
-                    return (
-                      <li
-                        key={o.id}
-                        draggable={permissions.edit && !saving}
-                        aria-busy={saving}
-                        data-card-id={o.id}
-                        onDragStart={(e) => {
-                          e.dataTransfer.setData("text/plain", o.id);
-                          e.dataTransfer.effectAllowed = "move";
-                          setDragging({ id: o.id, fromStageId: column.id });
-                        }}
-                        onDragEnd={() => {
-                          setDragging(null);
-                          setOverStageId(null);
-                        }}
-                        className={`rounded-md border border-zinc-200 bg-white p-2.5 text-sm shadow-sm dark:border-zinc-700 dark:bg-zinc-800 ${permissions.edit ? "cursor-grab active:cursor-grabbing" : ""} ${
-                          saving ? "opacity-60" : ""
-                        } ${dragging?.id === o.id ? "ring-2 ring-indigo-300" : ""}`}
-                      >
-                        <div className="flex items-start justify-between gap-1">
-                          <div className="min-w-0">
-                            <Link href={`/crm/opportunities/${o.id}`} className="font-medium text-indigo-600 hover:underline dark:text-indigo-400" draggable={false}>
-                              {o.name}
-                            </Link>
-                            <div className="text-xs text-zinc-400">
-                              {o.opportunityNumber}
-                              {saving && " · saving…"}
-                            </div>
-                          </div>
-                          <ActionMenu items={cardActions(o)} />
-                        </div>
-                        {cardFields.length > 0 && (
-                          <dl className="mt-1.5 space-y-0.5 text-xs">
-                            {cardFields.map((f) => {
-                              const value = f.render(o);
-                              if (value === null || value === undefined || value === "") return null;
-                              return (
-                                <div key={f.key} className="flex gap-2">
-                                  <dt className="w-24 shrink-0 text-zinc-400">{f.header}</dt>
-                                  <dd className="min-w-0 flex-1 break-words text-zinc-700 dark:text-zinc-200">{value}</dd>
-                                </div>
-                              );
-                            })}
-                          </dl>
-                        )}
-                      </li>
-                    );
-                  })}
-                  {column.records.length === 0 && <li className="py-6 text-center text-xs text-zinc-400">{permissions.edit ? "No opportunities — drop one here" : "No opportunities"}</li>}
-                </ul>
-                {column.hasMore && (
-                  <div className="border-t border-zinc-200 p-2 dark:border-zinc-800">
-                    <Button size="xs" variant="secondary" className="w-full" onClick={() => loadMore(column)} isLoading={loadingMore === column.id}>
-                      Load more ({column.count - column.records.length})
-                    </Button>
-                  </div>
-                )}
-              </section>
-            ))}
-          </div>
-        </>
-      )}
-
-      <Modal open={notice !== null} onClose={() => setNotice(null)} title={notice?.kind === "blocked" ? `Can't move to ${notice.stageName}` : notice?.kind === "conflict" ? "Opportunity changed" : "Couldn't move the opportunity"}>
-        {notice && (
-          <div className="mt-3 space-y-3 text-sm">
-            <p className="font-medium text-zinc-800 dark:text-zinc-100">{notice.record.name}</p>
-            {notice.kind === "blocked" && (
-              <div role="alert" className="rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
-                {notice.reasons
-                  .filter((r) => r.code !== "REQUIRED_FIELDS_MISSING")
-                  .map((r) => (
-                    <p key={r.code + r.message}>{r.message}</p>
-                  ))}
-                {notice.missingFields.length > 0 && (
-                  <>
-                    <p className="font-medium">Required before this stage:</p>
-                    <ul className="ml-4 list-disc">
-                      {notice.missingFields.map((m) => (
-                        <li key={m.key}>{m.label}</li>
-                      ))}
-                    </ul>
-                  </>
-                )}
-              </div>
-            )}
-            {notice.kind === "conflict" && <p role="alert">{CONFLICT_MESSAGE}</p>}
-            {notice.kind === "error" && <p role="alert">{notice.message}</p>}
-            <p className="text-xs text-zinc-500 dark:text-zinc-400">The card was left in its original stage.</p>
-            <div className="flex justify-end gap-2">
-              <Button variant="secondary" onClick={() => setNotice(null)}>
-                Close
-              </Button>
-              {notice.kind === "conflict" ? (
-                <Button
-                  onClick={() => {
-                    setNotice(null);
-                    reload();
-                  }}
-                >
-                  Refresh board
-                </Button>
-              ) : (
-                <Link href={`/crm/opportunities/${notice.record.id}`} className={buttonClasses("primary", "sm")}>
-                  Open Opportunity
-                </Link>
-              )}
-            </div>
-          </div>
-        )}
-      </Modal>
+      <CrmKanbanBoard<BoardCardDto, BoardColumnDto>
+        query={query}
+        columnsOf={(data) => (data as BoardDto).stages}
+        pageQuery={(column, offset) => `${query}&stageId=${column.id}&offset=${offset}`}
+        reloadKey={reloadKey}
+        canDrag={permissions.edit}
+        columnNoun="stage"
+        recordNoun="Opportunity"
+        recordNounPlural="opportunities"
+        recordHref={(o) => `/crm/opportunities/${o.id}`}
+        cardTitle={(o) => o.name}
+        renderHeader={header}
+        renderCard={card}
+        onMove={move}
+        optimistic={(o, to) => ({ ...o, stageId: to.id, stage: o.stage ? { ...o.stage, id: to.id, name: to.name } : o.stage })}
+        renderSummary={summary}
+        emptyMessage={`No opportunities match ${listState.search || Object.values(listState.filters).some(Boolean) ? "this search and these filters" : "in this pipeline yet"}.`}
+      />
 
       {dialog?.kind === "stage" && (
         <ChangeStageModal

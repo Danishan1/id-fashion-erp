@@ -7718,3 +7718,9 @@ The whole CRM (Leads, Deals/Opportunities, pipeline/sources/lost-reason masters,
 - Per-user screen preferences: `crm_user_preferences` + `crm-preference-registry.ts` (add a key + zod schema there) + `useCrmPreferences`. Presentation only, never business data.
 - Bulk: `action: "update"` (source / expected close / custom fields only, record-by-record via updateOpportunity). Every bulk call returns visibility-scoped `skipped[].label` + `operationId` and writes one AuditLog summary row.
 - Report: `docs/crm/PHASE_08_BOARD_LIST.md`.
+
+## CRM - Lead Board (2026-10-07)
+- Leads page = `LeadsWorkspace` (Board / List, `?view=board|list`, `leads.mode`). Columns = lead statuses (`GET /api/v1/crm/leads/board`, same filter params as the list, `perStatus`, `statusId`+`offset`).
+- Drops call the existing `POST /leads/{id}/status` with `version`; dropping on a CONVERTED status opens ConvertLeadDrawer (never a plain status change).
+- Board mechanics (columns, DnD, optimistic move + rollback, refusal dialog, paging, mobile) live in `src/components/crm/CrmKanbanBoard.tsx`, shared by the Opportunity and Lead boards - build new boards on it.
+- Report: `docs/crm/LEAD_BOARD.md`.
