@@ -12,7 +12,7 @@ import { humanizeStatus } from "@/lib/humanize-status";
  * a published event type; add a new one instead.
  *
  * Only events for entity types that exist in `CrmEntityType` are listed.
- * task.*, appointment.*, message.*, form.* arrive with their phases.
+ * message.*, form.* arrive with their phases (activity.* covers tasks; appointment.* since Phase 10).
  */
 export type CrmEventCategory =
   | "created"
@@ -149,6 +149,16 @@ export const CRM_EVENT_TYPES = {
   "activity.meeting_logged": { label: "Meeting logged", entityType: "ACTIVITY", category: "activity" },
   "activity.message_logged": { label: "Message logged", entityType: "ACTIVITY", category: "activity" },
   "activity.logged": { label: "Activity logged", entityType: "ACTIVITY", category: "activity" },
+  // Phase 10 — appointments (activities of type APPOINTMENT). Automation
+  // hooks: payload = AppointmentEventPayload (appointment-registry.ts).
+  "appointment.created": { label: "Appointment scheduled", entityType: "ACTIVITY", category: "task" },
+  "appointment.updated": { label: "Appointment updated", entityType: "ACTIVITY", category: "updated" },
+  "appointment.assigned": { label: "Appointment reassigned", entityType: "ACTIVITY", category: "assignment" },
+  "appointment.confirmed": { label: "Appointment confirmed", entityType: "ACTIVITY", category: "status" },
+  "appointment.rescheduled": { label: "Appointment rescheduled", entityType: "ACTIVITY", category: "task" },
+  "appointment.cancelled": { label: "Appointment cancelled", entityType: "ACTIVITY", category: "archived" },
+  "appointment.completed": { label: "Appointment completed", entityType: "ACTIVITY", category: "won" },
+  "appointment.no_show": { label: "Appointment no-show", entityType: "ACTIVITY", category: "lost" },
 } as const satisfies Record<string, CrmEventDefinition>;
 
 export type CrmEventType = keyof typeof CRM_EVENT_TYPES;

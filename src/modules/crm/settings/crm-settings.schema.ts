@@ -1,3 +1,4 @@
+import { CRM_OPTION_LIST_KEYS } from "../contacts/contact-registry";
 import { z } from "zod";
 import { LEAD_STATUS_COLORS } from "./crm-defaults";
 
@@ -76,7 +77,8 @@ export const updateCompanyStatusSchema = z.object({
 });
 
 export const createOptionValueSchema = z.object({
-  listKey: z.enum(["contact_department", "contact_designation", "contact_role", "company_industry", "company_type", "opportunity_close_reason"]),
+  // Every registered list (contacts, companies, opportunities, activities, appointments).
+  listKey: z.enum(CRM_OPTION_LIST_KEYS),
   value: z.string().trim().min(1, "Value is required").max(100),
 });
 export const updateOptionValueSchema = z.object({

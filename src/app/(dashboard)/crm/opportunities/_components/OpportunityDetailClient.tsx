@@ -7,6 +7,7 @@ import { CrmCustomFieldValues } from "@/components/crm/CrmCustomFields";
 import { CrmDocumentsPanel } from "@/components/crm/CrmDocumentsPanel";
 import { CrmNotesPanel } from "@/components/crm/CrmNotesPanel";
 import { ActivityPanel } from "@/components/crm/activities/ActivityPanel";
+import { AppointmentPanel } from "@/components/crm/appointments/AppointmentPanel";
 import { AssignOwnerModal, RecordTagsModal } from "@/components/crm/CrmRecordDialogs";
 import { CrmRecordHeader } from "@/components/crm/CrmRecordHeader";
 import { CrmTimeline } from "@/components/crm/CrmTimeline";
@@ -204,6 +205,16 @@ export function OpportunityDetailClient({ initialOpportunity, permissions, curre
 
           <Section title="Custom fields">
             {meta ? <CrmCustomFieldValues definitions={meta.customFields} values={opp.customFields ?? {}} noun="opportunities" /> : <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>}
+          </Section>
+
+          <Section title="Appointments" id="appointments">
+            <AppointmentPanel
+              parent={{ entityType: "OPPORTUNITY", entityId: opp.id, label: opp.name }}
+              canCreate={permissions.create && !archived}
+              canEdit={permissions.edit}
+              currentUserId={currentUserId}
+              onChanged={() => setRefreshKey((k) => k + 1)}
+            />
           </Section>
 
           <Section title="Activities & tasks" id="activities">

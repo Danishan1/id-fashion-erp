@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { crmRequest } from "@/components/crm/crm-api";
 import { CrmEmptyState, CrmErrorState, CrmLoadingState } from "@/components/crm/CrmStates";
+import { AppointmentForm } from "../appointments/AppointmentForm";
+import { useAppointmentLookups } from "../appointments/useAppointmentLookups";
 import { ActivityComposer } from "./ActivityComposer";
 import { ActivityDetailModal } from "./ActivityDetail";
 import { ActivityRows } from "./ActivityList";
@@ -43,6 +45,8 @@ export function ActivityPanel({
   pageSize?: number;
 }) {
   const { meta, users } = useActivityLookups();
+  const appointmentLookups = useAppointmentLookups();
+  const [booking, setBooking] = useState(false);
   const [tab, setTab] = useState<Tab>("open");
   const [limit, setLimit] = useState(pageSize);
   const [tick, setTick] = useState(0);
@@ -78,8 +82,8 @@ export function ActivityPanel({
     <div className="space-y-3">
       {canCreate && (
         <div className="flex flex-wrap gap-1.5" aria-label="Add activity">
-          {QUICK.map((q) => (
-            <button key={q.label} type="button" disabled={!meta} onClick={() => setComposer(q)} className="rounded-md border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800">
+          {QUICK.filter((q) => q.type !== "APPOINTMENT" || parent.entityType !== "LEAD").map((q) => (
+            <button key={q.label} type="button" disabled={!meta || (q.type === "APPOINTMENT" && !appointmentLookups.meta)} onClick={() => (q.type === "APPOINTMENT" ? setBooking(true) : setComposer(q))} className="rounded-md border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800">
               + {q.label}
             </button>
           ))}
@@ -139,7 +143,20 @@ export function ActivityPanel({
           }}
         />
       )}
-      {opened && <ActivityDetailModal activityId={opened} meta={meta} users={users} canEdit={canEdit} onClose={() => setOpened(null)} onChanged={changed} />}
+      {opened && <ActivityDetailModal activityId={opened} meta={meta} users={users} canEdit={canEdit} currentUserId={currentUserId} onClose={() => setOpened(null)} onChanged={changed} />}
+      {booking && appointmentLookups.meta && parent.entityType !== "LEAD" && (
+        <AppointmentForm
+          meta={appointmentLookups.meta}
+          users={appointmentLookups.users}
+          currentUserId={currentUserId}
+          prefill={{ [parent.entityType.toLowerCase()]: { id: parent.entityId, label: parent.label } }}
+          onClose={() => setBooking(false)}
+          onSaved={() => {
+            setBooking(false);
+            changed();
+          }}
+        />
+      )}
     </div>
   );
 }

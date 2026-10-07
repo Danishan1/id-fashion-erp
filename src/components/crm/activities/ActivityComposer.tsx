@@ -101,7 +101,8 @@ export function ActivityComposer({
     <Modal open onClose={onClose} title={parent ? `New activity — ${parent.label}` : "New activity"} maxWidthClass="max-w-xl">
       <form onSubmit={submit} className="mt-4 space-y-4">
         <div role="radiogroup" aria-label="Activity type" className="flex flex-wrap gap-1.5">
-          {meta.types.map((t) => (
+          {/* Appointments have their own form (time zone, employee availability, related records). */}
+          {meta.types.filter((t) => t.key !== "APPOINTMENT").map((t) => (
             <button
               key={t.key}
               type="button"

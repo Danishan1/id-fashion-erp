@@ -29,15 +29,17 @@ describe("CRM entity type registry", () => {
 
 describe("CRM event type registry", () => {
   it("uses <entity>.<verb> names whose prefix matches the declared entity type", () => {
+    // Appointments are activities (Phase 10): appointment.* events are stored on the ACTIVITY record.
+    const ALIASES: Record<string, string> = { APPOINTMENT: "ACTIVITY" };
     for (const name of CRM_EVENT_TYPE_NAMES) {
       expect(name).toMatch(/^[a-z_]+\.[a-z_]+$/);
       const prefix = name.split(".")[0].toUpperCase();
-      expect(CRM_EVENT_TYPES[name].entityType).toBe(prefix);
+      expect(CRM_EVENT_TYPES[name].entityType).toBe(ALIASES[prefix] ?? prefix);
     }
   });
 
   it("includes the events named in the integration plan", () => {
-    for (const name of ["lead.created", "lead.updated", "contact.created", "opportunity.created", "opportunity.stage_changed"]) {
+    for (const name of ["lead.created", "lead.updated", "contact.created", "opportunity.created", "opportunity.stage_changed", "appointment.created", "appointment.rescheduled", "appointment.cancelled", "appointment.completed", "appointment.no_show"]) {
       expect(isCrmEventType(name)).toBe(true);
     }
   });

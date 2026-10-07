@@ -8864,6 +8864,21 @@ model CrmActivity {
   direction             String?
   durationMinutes       Int?          @map("duration_minutes")
   location              String?
+  // Phase 10 — appointments (type APPOINTMENT). `status` then holds the
+  // appointment lifecycle (SCHEDULED | CONFIRMED | RESCHEDULED | COMPLETED |
+  // CANCELLED | NO_SHOW); due_at / end_at are the start / end instants (UTC)
+  // and `timezone` is the IANA zone the times were entered in.
+  timezone              String?
+  videoLink             String?       @map("video_link")
+  appointmentType       String?       @map("appointment_type")
+  confirmedAt           DateTime?     @map("confirmed_at")
+  confirmedByUserId     String?       @map("confirmed_by_user_id") @db.Uuid
+  cancelledAt           DateTime?     @map("cancelled_at")
+  cancelledByUserId     String?       @map("cancelled_by_user_id") @db.Uuid
+  cancelReason          String?       @map("cancel_reason")
+  noShowAt              DateTime?     @map("no_show_at")
+  noShowByUserId        String?       @map("no_show_by_user_id") @db.Uuid
+  noShowReason          String?       @map("no_show_reason")
   completedAt           DateTime?     @map("completed_at")
   completedByUserId     String?       @map("completed_by_user_id") @db.Uuid
   // MANUAL | API | an integration key (future email / WhatsApp / telephony connectors).

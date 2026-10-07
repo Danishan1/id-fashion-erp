@@ -1,5 +1,8 @@
 "use client";
 
+import { AppointmentDetail } from "../appointments/AppointmentDetail";
+import type { AppointmentDto } from "../appointments/appointment-types";
+import { useAppointmentLookups } from "../appointments/useAppointmentLookups";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { crmRequest } from "@/components/crm/crm-api";
@@ -37,6 +40,7 @@ export function ActivityDetail({
   canEdit,
   onChanged,
   refreshKey = 0,
+  currentUserId = "",
 }: {
   activityId: string;
   meta: ActivityMetaDto | null;
@@ -44,6 +48,7 @@ export function ActivityDetail({
   canEdit: boolean;
   onChanged?: (a: ActivityDto | null) => void;
   refreshKey?: number;
+  currentUserId?: string;
 }) {
   const [a, setA] = useState<ActivityDto | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -70,6 +75,8 @@ export function ActivityDetail({
 
   if (error) return <CrmErrorState message={error} onRetry={() => setTick((t) => t + 1)} />;
   if (!a) return <CrmLoadingState />;
+  // Appointments (Phase 10) have their own lifecycle and detail.
+  if (a.type === "APPOINTMENT") return <AppointmentInActivity id={a.id} canEdit={canEdit} currentUserId={currentUserId} onChanged={(x) => onChanged?.(x as unknown as ActivityDto)} />;
 
   const open = (p: Panel) => {
     setFormError(null);
@@ -311,6 +318,13 @@ export function ActivityDetail({
 }
 
 /** The detail in a dialog (from lists and record panels). */
+function AppointmentInActivity({ id, canEdit, currentUserId, onChanged }: { id: string; canEdit: boolean; currentUserId: string; onChanged: (a: AppointmentDto) => void }) {
+  const { meta, users, error } = useAppointmentLookups();
+  if (error) return <CrmErrorState message={error} />;
+  if (!meta) return <CrmLoadingState />;
+  return <AppointmentDetail appointmentId={id} meta={meta} users={users} currentUserId={currentUserId} canEdit={canEdit} onChanged={onChanged} />;
+}
+
 export function ActivityDetailModal(props: Parameters<typeof ActivityDetail>[0] & { onClose: () => void }) {
   const { onClose, onChanged, ...rest } = props;
   return (

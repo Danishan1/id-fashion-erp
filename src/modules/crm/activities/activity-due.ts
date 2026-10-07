@@ -1,5 +1,5 @@
 import { addCalendarDays, businessDateParts, businessDateTime, businessDayEnd, businessDayStart, businessToday } from "../core/crm-dates";
-import { ALL_DAY_REMINDER_HOUR, isOpenStatus, type DueFilter, type DueState } from "./activity-registry";
+import { ALL_DAY_REMINDER_HOUR, isOpenStatus, OPEN_STATUSES, type DueFilter, type DueState } from "./activity-registry";
 
 /**
  * Client-safe due-date logic for activities, always in the business time
@@ -20,6 +20,7 @@ const toDate = (v: Date | string) => (v instanceof Date ? v : new Date(v));
 export function dueState(a: DueFields, now: Date = new Date()): DueState {
   if (a.status === "COMPLETED") return "COMPLETED";
   if (a.status === "CANCELLED") return "CANCELLED";
+  if (a.status === "NO_SHOW") return "NO_SHOW";
   if (!a.dueAt) return "NO_DUE_DATE";
   const due = toDate(a.dueAt);
   const today = businessToday(now);
@@ -52,10 +53,10 @@ export function dueParts(dueAt: Date | string | null, allDay: boolean) {
 
 /**
  * Prisma-shaped `where` fragment for a quick due filter (server side). Open
- * means PENDING / IN_PROGRESS.
+ * means an open status (pending / in progress, or an open appointment).
  */
 export function dueFilterWhere(filter: DueFilter, now: Date = new Date()): Record<string, unknown> {
-  const open = { status: { in: ["PENDING", "IN_PROGRESS"] } };
+  const open = { status: { in: [...OPEN_STATUSES] } };
   const today = businessToday(now);
   const tomorrow = addCalendarDays(today, 1);
   const todayStart = businessDayStart(today);

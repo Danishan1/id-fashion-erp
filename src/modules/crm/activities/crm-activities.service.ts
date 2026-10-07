@@ -5,6 +5,7 @@ import { createNotification } from "@/core/notifications/NotificationService";
 import { PermissionService } from "@/core/rbac/PermissionService";
 import type { CrmActor } from "../core/crm-actor";
 import { addCalendarDays, businessDateParts, businessDateTime, businessDayEnd, businessDayStart } from "../core/crm-dates";
+import { BUSINESS_TIME_ZONE, formatZonedDate, formatZonedTime, zoneAbbreviation } from "../core/crm-timezone";
 import { crmEntityHref } from "../core/crm-entity-types";
 import type { CrmEventType } from "../core/crm-event-types";
 import { runCrmMutation, type CrmMutationContext } from "../core/crm-mutation";
@@ -19,7 +20,9 @@ import {
   ACTIVITY_TYPE_KEYS,
   ACTIVITY_TYPES,
   activityTypeLabel,
+  CLOSED_STATUSES,
   isOpenStatus,
+  OPEN_STATUSES,
   REMINDER_OPTIONS,
   type ActivityType,
 } from "./activity-registry";
@@ -53,7 +56,10 @@ import { CrmActivityRepository, type ActivityRow } from "./crm-activity.reposito
  */
 
 const TABLE = "crm_activities";
-type Ref = { entityType: CrmEntityType; entityId: string };
+export type Ref = { entityType: CrmEntityType; entityId: string };
+/** Appointment rows are managed by the appointment service (Phase 10); generic actions delegate to it. */
+const appointments = () => import("../appointments/crm-appointments.service");
+const isAppointment = (row: { type: string }) => row.type === "APPOINTMENT";
 type ActivityEvent = Extract<CrmEventType, `activity.${string}`>;
 
 const blank = (v: unknown) => v === undefined || v === null || (typeof v === "string" && v.trim() === "");
@@ -67,7 +73,7 @@ const fmtDue = (dueAt: Date | null, allDay: boolean) => {
 
 // ── Access ───────────────────────────────────────────────────────
 
-async function canSeeRecord(actor: CrmActor, ref: Ref) {
+export async function canSeeRecord(actor: CrmActor, ref: Ref) {
   try {
     await assertCrmEntityAccess(actor, ref.entityType, ref.entityId);
     return true;
@@ -91,7 +97,7 @@ export async function loadActivity(actor: CrmActor, id: string) {
 }
 
 /** Assignee must be an active ERP user of the company who can use the CRM (no separate CRM user list). */
-async function assertAssignable(companyId: string, userId: string) {
+export async function assertAssignable(companyId: string, userId: string) {
   const user = await CrmActivityRepository.activeUser(companyId, userId);
   if (!user || !(await PermissionService.can(userId, "crm", "view"))) {
     throw new BusinessRuleError("VALIDATION_ERROR", "Choose an active user who has access to the CRM.", { fieldErrors: { assignedToUserId: "Choose an active CRM user." } });
@@ -101,9 +107,9 @@ async function assertAssignable(companyId: string, userId: string) {
 
 // ── Related records ──────────────────────────────────────────────
 
-type RecordsInfo = Awaited<ReturnType<typeof CrmActivityRepository.records>>;
+export type RecordsInfo = Awaited<ReturnType<typeof CrmActivityRepository.records>>;
 
-function recordInfo(recs: RecordsInfo, ref: Ref) {
+export function recordInfo(recs: RecordsInfo, ref: Ref) {
   switch (ref.entityType) {
     case "LEAD": {
       const r = recs.leads.find((x) => x.id === ref.entityId);
@@ -158,7 +164,7 @@ async function resolveLinks(actor: CrmActor, primary: Ref, extra: Ref[] = []) {
 }
 
 /** Bumps "last activity" (and a lead's "last contacted" for conversations) on the linked records. */
-async function touchLinkedRecords(tx: Prisma.TransactionClient, companyId: string, links: Ref[], when: Date, type: string) {
+export async function touchLinkedRecords(tx: Prisma.TransactionClient, companyId: string, links: Ref[], when: Date, type: string) {
   const ids = (t: CrmEntityType) => links.filter((l) => l.entityType === t).map((l) => l.entityId);
   const stale = { OR: [{ lastActivityAt: null }, { lastActivityAt: { lt: when } }] };
   if (ids("CONTACT").length) await tx.crmContact.updateMany({ where: { companyId, id: { in: ids("CONTACT") }, ...stale }, data: { lastActivityAt: when } });
@@ -171,7 +177,7 @@ async function touchLinkedRecords(tx: Prisma.TransactionClient, companyId: strin
 
 // ── Presentation ─────────────────────────────────────────────────
 
-async function labelsFor(companyId: string, rows: ActivityRow[]) {
+export async function labelsFor(companyId: string, rows: ActivityRow[]) {
   const refs = rows.flatMap((r) => r.links.map((l) => ({ entityType: l.entityType, entityId: l.entityId })));
   const recs = await CrmActivityRepository.records(companyId, refs);
   const userIds = [...new Set(rows.flatMap((r) => [r.completedByUserId, r.updatedByUserId]).filter((v): v is string => Boolean(v)))];
@@ -186,6 +192,7 @@ export function presentActivity(row: ActivityRow, ctx: { recs: RecordsInfo; user
   });
   const isManager = scope.mode === "ALL";
   const open = isOpenStatus(row.status);
+  const appt = isAppointment(row);
   return {
     ...row,
     typeLabel: activityTypeLabel(row.type),
@@ -199,7 +206,8 @@ export function presentActivity(row: ActivityRow, ctx: { recs: RecordsInfo; user
     permissions: {
       edit: open,
       complete: open,
-      reopen: !open,
+      // Appointments end in a final status (completed / cancelled / no-show); a new one is booked instead.
+      reopen: !open && !appt,
       delete: row.status !== "COMPLETED" && (isManager || row.createdByUserId === actor.userId),
     },
   };
@@ -226,8 +234,8 @@ export function buildActivityWhere(actor: CrmActor, scope: CrmRecordScope, f: Ac
   if (f.relatedType) and.push({ entityType: f.relatedType });
   if (f.types?.length) and.push({ type: { in: f.types } });
   if (f.statuses?.length) and.push({ status: { in: f.statuses } });
-  if (f.state === "open") and.push({ status: { in: ["PENDING", "IN_PROGRESS"] } });
-  if (f.state === "closed") and.push({ status: { in: ["COMPLETED", "CANCELLED"] } });
+  if (f.state === "open") and.push({ status: { in: [...OPEN_STATUSES] } });
+  if (f.state === "closed") and.push({ status: { in: [...CLOSED_STATUSES] } });
   if (f.priorities?.length) and.push({ priority: { in: f.priorities } });
   if (f.mine === "assigned") and.push({ assignedToUserId: actor.userId });
   if (f.mine === "created") and.push({ createdByUserId: actor.userId });
@@ -285,7 +293,7 @@ function emit(ctx: CrmMutationContext, id: string, eventType: ActivityEvent, sum
   ctx.emit({ entityType: "ACTIVITY", entityId: id, eventType, summary, payload });
 }
 
-async function notifyAssignee(ctx: CrmMutationContext, actor: CrmActor, a: { id: string; subject: string; type: string; dueAt: Date | null; allDay: boolean }, assigneeId: string | null) {
+export async function notifyAssignee(ctx: CrmMutationContext, actor: CrmActor, a: { id: string; subject: string; type: string; dueAt: Date | null; allDay: boolean }, assigneeId: string | null) {
   if (!assigneeId || assigneeId === actor.userId) return;
   const by = (await CrmActivityRepository.userNames([actor.userId]))[0]?.fullName ?? "Someone";
   await createNotification(
@@ -313,6 +321,7 @@ function reminderColumns(dueAt: Date | null, allDay: boolean, offset: number | n
 export async function createActivity(actor: CrmActor, raw: unknown) {
   const input = createActivitySchema.parse(raw);
   const type = input.type as ActivityType;
+  if (type === "APPOINTMENT") return (await appointments()).createAppointmentFromActivityInput(actor, input);
   const def = ACTIVITY_TYPES[type];
   const mode = input.mode ?? (def.schedulable ? "schedule" : "log");
   if (mode === "schedule" && !def.schedulable) throw new BusinessRuleError("VALIDATION_ERROR", `${def.label} can only be logged, not scheduled.`, { fieldErrors: { mode: "Log it instead." } });
@@ -439,6 +448,7 @@ function nextDue(row: ActivityRow, input: { dueDate?: string | null; dueTime?: s
 export async function updateActivity(actor: CrmActor, id: string, raw: unknown) {
   const input = updateActivitySchema.parse(raw);
   const { row, scope } = await loadActivity(actor, id);
+  if (isAppointment(row)) return (await appointments()).updateAppointmentFromActivityInput(actor, id, input);
   if (input.version !== row.version) throw conflict(id);
   assertOpen(row, "editing it");
   const data: Prisma.CrmActivityUncheckedUpdateManyInput = {};
@@ -488,6 +498,7 @@ export async function updateActivity(actor: CrmActor, id: string, raw: unknown) 
 export async function completeActivity(actor: CrmActor, id: string, raw: unknown) {
   const input = completeActivitySchema.parse(raw ?? {});
   const { row, scope } = await loadActivity(actor, id);
+  if (isAppointment(row)) return (await appointments()).completeAppointment(actor, id, { version: input.version, outcome: input.outcome, note: input.note });
   if (row.status === "COMPLETED") return presentOne(actor, scope, row);
   if (row.status === "CANCELLED") throw new BusinessRuleError("INVALID_STATE_TRANSITION", "This activity was cancelled. Reopen it before completing it.");
   const now = new Date();
@@ -522,6 +533,7 @@ export async function completeActivity(actor: CrmActor, id: string, raw: unknown
 export async function reopenActivity(actor: CrmActor, id: string, raw: unknown) {
   const input = simpleActionSchema.parse(raw ?? {});
   const { row, scope } = await loadActivity(actor, id);
+  if (isAppointment(row)) throw new BusinessRuleError("INVALID_STATE_TRANSITION", "Appointments can't be reopened. Book a new appointment instead.");
   if (isOpenStatus(row.status)) return presentOne(actor, scope, row);
   const reminderBack = row.reminderAt && row.reminderState === "CANCELLED" && row.reminderAt.getTime() > Date.now() ? { reminderState: "PENDING" } : {};
   const after = await runCrmMutation(actor, async (ctx) => {
@@ -536,6 +548,7 @@ export async function reopenActivity(actor: CrmActor, id: string, raw: unknown) 
 export async function cancelActivity(actor: CrmActor, id: string, raw: unknown) {
   const input = simpleActionSchema.parse(raw ?? {});
   const { row, scope } = await loadActivity(actor, id);
+  if (isAppointment(row)) return (await appointments()).cancelAppointment(actor, id, { version: input.version, reason: input.reason });
   if (row.status === "CANCELLED") return presentOne(actor, scope, row);
   assertOpen(row, "cancelling it");
   const reason = textOrNull(input.reason);
@@ -552,6 +565,11 @@ export async function cancelActivity(actor: CrmActor, id: string, raw: unknown) 
 export async function rescheduleActivity(actor: CrmActor, id: string, raw: unknown) {
   const input = rescheduleActivitySchema.parse(raw);
   const { row, scope } = await loadActivity(actor, id);
+  if (isAppointment(row)) {
+    // Business-time date / time (the activity API's convention) → the appointment's own reschedule, keeping its length.
+    if (!input.dueTime) throw new BusinessRuleError("VALIDATION_ERROR", "An appointment needs a start time.", { fieldErrors: { dueTime: "Choose a start time." } });
+    return (await appointments()).rescheduleAppointmentInBusinessTime(actor, id, { dueDate: input.dueDate, dueTime: input.dueTime, endTime: input.endTime ?? null, reminderMinutes: input.reminderMinutes, reason: input.reason, version: input.version });
+  }
   assertOpen(row, "rescheduling it");
   const next = nextDue(row, { dueDate: input.dueDate, dueTime: input.dueTime ?? null, endTime: input.endTime });
   const reason = textOrNull(input.reason);
@@ -569,6 +587,10 @@ export async function rescheduleActivity(actor: CrmActor, id: string, raw: unkno
 export async function assignActivity(actor: CrmActor, id: string, raw: unknown) {
   const input = assignActivitySchema.parse(raw);
   const { row, scope } = await loadActivity(actor, id);
+  if (isAppointment(row)) {
+    if (!input.assignedToUserId) throw new BusinessRuleError("VALIDATION_ERROR", "An appointment needs an assigned employee.", { fieldErrors: { assignedToUserId: "Choose an employee." } });
+    return (await appointments()).assignAppointment(actor, id, { version: input.version, assignedToUserId: input.assignedToUserId });
+  }
   assertOpen(row, "reassigning it");
   if (input.assignedToUserId === row.assignedToUserId) return presentOne(actor, scope, row);
   if (input.assignedToUserId) await assertAssignable(actor.companyId, input.assignedToUserId);
@@ -655,7 +677,17 @@ export async function processDueActivityReminders(now: Date = new Date(), batch 
       if (claim.count === 0) return false;
       const recipient = (a.assignedToUserId && (await tx.user.findFirst({ where: { id: a.assignedToUserId, status: "ACTIVE" }, select: { id: true } }))?.id) || a.createdByUserId;
       await createNotification(
-        { companyId: a.companyId, userId: recipient, title: `Reminder: ${activityTypeLabel(a.type)} due ${dueState(a, now) === "OVERDUE" ? "now" : fmtDue(a.dueAt, a.allDay)}`, body: a.subject, relatedModule: "CRM_ACTIVITY", relatedRecordId: a.id },
+        {
+          companyId: a.companyId,
+          userId: recipient,
+          title:
+            isAppointment(a) && a.dueAt
+              ? `Reminder: Appointment at ${formatZonedTime(a.dueAt, a.timezone ?? BUSINESS_TIME_ZONE)} ${zoneAbbreviation(a.dueAt, a.timezone ?? BUSINESS_TIME_ZONE)}, ${formatZonedDate(a.dueAt, a.timezone ?? BUSINESS_TIME_ZONE)}`
+              : `Reminder: ${activityTypeLabel(a.type)} due ${dueState(a, now) === "OVERDUE" ? "now" : fmtDue(a.dueAt, a.allDay)}`,
+          body: a.subject,
+          relatedModule: "CRM_ACTIVITY",
+          relatedRecordId: a.id,
+        },
         tx
       );
       await tx.crmEvent.create({

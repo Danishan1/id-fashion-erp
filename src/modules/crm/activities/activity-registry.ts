@@ -11,6 +11,8 @@
  * stored here — they stay in the existing CRM notes (crm_notes).
  */
 
+import { APPOINTMENT_OPTION_LISTS, APPOINTMENT_STATUSES, DEFAULT_APPOINTMENT_OPTION_VALUES } from "../appointments/appointment-registry";
+
 export const ACTIVITY_TYPES = {
   TASK: { label: "Task", plural: "Tasks", icon: "☑", schedulable: true, loggable: false, outcomeList: null, hasEnd: false, hasDirection: false, logEvent: null },
   CALL: { label: "Call", plural: "Calls", icon: "☎", schedulable: true, loggable: true, outcomeList: "activity_call_outcome", hasEnd: false, hasDirection: true, logEvent: "activity.call_logged" },
@@ -28,16 +30,26 @@ export const LOGGABLE_TYPES = ACTIVITY_TYPE_KEYS.filter((t) => ACTIVITY_TYPES[t]
 export const isActivityType = (v: unknown): v is ActivityType => typeof v === "string" && Object.prototype.hasOwnProperty.call(ACTIVITY_TYPES, v);
 export const activityTypeLabel = (t: string) => (isActivityType(t) ? ACTIVITY_TYPES[t].label : t);
 
+/**
+ * Task-style statuses, plus the appointment lifecycle (Phase 10: SCHEDULED,
+ * CONFIRMED, RESCHEDULED, NO_SHOW — used only by APPOINTMENT activities and
+ * changed only through the appointment service).
+ */
 export const ACTIVITY_STATUSES = {
   PENDING: { label: "Pending", open: true },
   IN_PROGRESS: { label: "In progress", open: true },
   COMPLETED: { label: "Completed", open: false },
   CANCELLED: { label: "Cancelled", open: false },
+  SCHEDULED: { label: APPOINTMENT_STATUSES.SCHEDULED.label, open: true },
+  CONFIRMED: { label: APPOINTMENT_STATUSES.CONFIRMED.label, open: true },
+  RESCHEDULED: { label: APPOINTMENT_STATUSES.RESCHEDULED.label, open: true },
+  NO_SHOW: { label: APPOINTMENT_STATUSES.NO_SHOW.label, open: false },
 } as const;
 export type ActivityStatus = keyof typeof ACTIVITY_STATUSES;
 export const ACTIVITY_STATUS_KEYS = Object.keys(ACTIVITY_STATUSES) as [ActivityStatus, ...ActivityStatus[]];
 export const OPEN_STATUSES = ACTIVITY_STATUS_KEYS.filter((s) => ACTIVITY_STATUSES[s].open);
-export const isOpenStatus = (s: string) => s === "PENDING" || s === "IN_PROGRESS";
+export const CLOSED_STATUSES = ACTIVITY_STATUS_KEYS.filter((s) => !ACTIVITY_STATUSES[s].open);
+export const isOpenStatus = (s: string) => Object.prototype.hasOwnProperty.call(ACTIVITY_STATUSES, s) && ACTIVITY_STATUSES[s as ActivityStatus].open;
 
 export const ACTIVITY_PRIORITIES = {
   LOW: { label: "Low", rank: 1, tone: "neutral" },
@@ -74,6 +86,7 @@ export const DUE_STATES = {
   NO_DUE_DATE: { label: "No due date", tone: "neutral" },
   COMPLETED: { label: "Completed", tone: "green" },
   CANCELLED: { label: "Cancelled", tone: "neutral" },
+  NO_SHOW: { label: "No show", tone: "red" },
 } as const;
 export type DueState = keyof typeof DUE_STATES;
 
@@ -85,11 +98,13 @@ export type DueFilter = (typeof DUE_FILTERS)[number];
 export const ACTIVITY_OPTION_LISTS = {
   activity_call_outcome: { label: "Call outcomes", help: "Offered when a call is logged or completed — e.g. Connected, No answer, Callback requested." },
   activity_meeting_outcome: { label: "Meeting outcomes", help: "Offered when a meeting or appointment is logged or completed — e.g. Positive, Sample requested, Follow-up needed." },
+  ...APPOINTMENT_OPTION_LISTS,
 } as const;
 export type ActivityOptionListKey = keyof typeof ACTIVITY_OPTION_LISTS;
 export const DEFAULT_ACTIVITY_OPTION_VALUES: Record<ActivityOptionListKey, string[]> = {
   activity_call_outcome: ["Connected", "No answer", "Busy", "Callback requested", "Interested", "Not interested", "Wrong number", "Other"],
   activity_meeting_outcome: ["Positive", "Sample requested", "Quotation requested", "Follow-up needed", "Not interested", "Rescheduled by customer", "Other"],
+  ...DEFAULT_APPOINTMENT_OPTION_VALUES,
 };
 
 /** Where an activity can be created / shown (CRM record types). */

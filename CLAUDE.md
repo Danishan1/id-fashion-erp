@@ -7724,3 +7724,11 @@ The whole CRM (Leads, Deals/Opportunities, pipeline/sources/lost-reason masters,
 - Drops call the existing `POST /leads/{id}/status` with `version`; dropping on a CONVERTED status opens ConvertLeadDrawer (never a plain status change).
 - Board mechanics (columns, DnD, optimistic move + rollback, refusal dialog, paging, mobile) live in `src/components/crm/CrmKanbanBoard.tsx`, shared by the Opportunity and Lead boards - build new boards on it.
 - Report: `docs/crm/LEAD_BOARD.md`.
+
+## CRM rebuild - Phase 10 Calendar & Appointments (2026-10-07)
+- An appointment IS a crm_activities row of type APPOINTMENT (no separate table). Every create/change goes through `src/modules/crm/appointments/crm-appointments.service.ts`; the lifecycle lives only in `appointment-registry.ts` (APPOINTMENT_TRANSITIONS): SCHEDULED / CONFIRMED / RESCHEDULED / COMPLETED / CANCELLED / NO_SHOW. Phase 09 activity actions on appointment rows delegate to it.
+- Times: due_at/end_at are UTC instants + `timezone` (IANA). Convert only with `src/modules/crm/core/crm-timezone.ts` (Intl tz database, no hand-written DST maths).
+- Conflicts: checked inside the booking transaction under a per-employee advisory lock; 409 CRM_APPOINTMENT_CONFLICT unless `allowConflict: true`.
+- Automation events `appointment.*` are written with the change via runCrmMutation (no event on failure; crm_events.id = idempotency key); payload = AppointmentEventPayload.
+- Calendar UI: reusable `src/components/crm/appointments/CrmCalendar.tsx` (day/week/month); drag calls POST /appointments/{id}/reschedule, never writes times directly.
+- Report: `docs/crm/PHASE_10_CALENDAR_APPOINTMENTS.md`.

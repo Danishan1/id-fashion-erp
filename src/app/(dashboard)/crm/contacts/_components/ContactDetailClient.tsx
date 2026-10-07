@@ -8,6 +8,7 @@ import { CrmCustomFieldValues } from "@/components/crm/CrmCustomFields";
 import { CrmDocumentsPanel } from "@/components/crm/CrmDocumentsPanel";
 import { CrmNotesPanel } from "@/components/crm/CrmNotesPanel";
 import { ActivityPanel } from "@/components/crm/activities/ActivityPanel";
+import { AppointmentPanel } from "@/components/crm/appointments/AppointmentPanel";
 import { CrmRecordHeader } from "@/components/crm/CrmRecordHeader";
 import { CrmTimeline } from "@/components/crm/CrmTimeline";
 import { crmRequest } from "@/components/crm/crm-api";
@@ -329,6 +330,16 @@ export function ContactDetailClient({ initialContact, permissions, currentUserId
 
           <Section title="Custom fields">
             {meta ? <CrmCustomFieldValues definitions={meta.customFields} values={contact.customFields ?? {}} noun="contacts" /> : <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>}
+          </Section>
+
+          <Section title="Appointments" id="appointments">
+            <AppointmentPanel
+              parent={{ entityType: "CONTACT", entityId: contact.id, label: contact.fullName }}
+              canCreate={permissions.create && !archived && !merged}
+              canEdit={permissions.edit}
+              currentUserId={currentUserId}
+              onChanged={() => setTimelineKey((k) => k + 1)}
+            />
           </Section>
 
           <Section title="Activities & tasks" id="activities">

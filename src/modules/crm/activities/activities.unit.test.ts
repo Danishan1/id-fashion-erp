@@ -59,7 +59,8 @@ describe("due dates (business time zone)", () => {
   });
   it("turns quick filters into server-side conditions on open items", () => {
     const over = JSON.stringify(dueFilterWhere("overdue", NOW));
-    expect(over).toContain('"status":{"in":["PENDING","IN_PROGRESS"]}');
+    // Open = pending / in progress, and open appointments (Phase 10).
+    expect(over).toContain('"status":{"in":["PENDING","IN_PROGRESS","SCHEDULED","CONFIRMED","RESCHEDULED"]}');
     expect(over).toContain(`{"allDay":false,"dueAt":{"lt":"${NOW.toISOString()}"}}`);
     expect(over).toContain('{"allDay":true,"dueAt":{"lt":"2026-10-14T18:30:00.000Z"}}');
     expect(JSON.stringify(dueFilterWhere("tomorrow", NOW))).toContain('"gte":"2026-10-15T18:30:00.000Z"');
