@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { ApiKeysTab } from "./ApiKeysTab";
+import { ChannelsTab } from "./ChannelsTab";
 import { CompanyDuplicateRulesTab } from "./CompanyDuplicateRulesTab";
 import { CompanyStatusesTab } from "./CompanyStatusesTab";
 import { ContactDuplicateRulesTab } from "./ContactDuplicateRulesTab";
@@ -14,7 +15,7 @@ import { PipelinesTab } from "./PipelinesTab";
 import { TagsTab } from "./TagsTab";
 import { WebhooksTab } from "./WebhooksTab";
 
-export type CrmSettingsTab = "statuses" | "sources" | "tags" | "custom-fields" | "duplicates" | "contact-fields" | "contact-duplicates" | "contact-options" | "company-statuses" | "company-fields" | "company-duplicates" | "opportunity-fields" | "pipelines" | "api-keys" | "webhooks";
+export type CrmSettingsTab = "statuses" | "sources" | "tags" | "custom-fields" | "duplicates" | "contact-fields" | "contact-duplicates" | "contact-options" | "company-statuses" | "company-fields" | "company-duplicates" | "opportunity-fields" | "pipelines" | "api-keys" | "webhooks" | "channels";
 
 const TABS: { id: CrmSettingsTab; label: string }[] = [
   { id: "statuses", label: "Lead statuses" },
@@ -32,6 +33,7 @@ const TABS: { id: CrmSettingsTab; label: string }[] = [
   { id: "contact-options", label: "Form options" },
   { id: "api-keys", label: "API keys" },
   { id: "webhooks", label: "Webhooks" },
+  { id: "channels", label: "Channels" },
 ];
 
 export function CrmSettingsClient({ initialTab, canEdit }: { initialTab: CrmSettingsTab; canEdit: boolean }) {
@@ -82,6 +84,7 @@ export function CrmSettingsClient({ initialTab, canEdit }: { initialTab: CrmSett
         {tab === "contact-options" && <OptionValuesTab canEdit={canEdit} />}
         {tab === "api-keys" && <ApiKeysTab canEdit={canEdit} />}
         {tab === "webhooks" && <WebhooksTab canEdit={canEdit} />}
+        {tab === "channels" && <ChannelsTab canEdit={canEdit} />}
 
       </div>
     </div>

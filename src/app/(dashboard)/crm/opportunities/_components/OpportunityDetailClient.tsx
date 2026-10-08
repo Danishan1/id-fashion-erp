@@ -8,6 +8,7 @@ import { CrmDocumentsPanel } from "@/components/crm/CrmDocumentsPanel";
 import { CrmNotesPanel } from "@/components/crm/CrmNotesPanel";
 import { ActivityPanel } from "@/components/crm/activities/ActivityPanel";
 import { AppointmentPanel } from "@/components/crm/appointments/AppointmentPanel";
+import { ConversationsPanel } from "@/components/crm/conversations/ConversationsPanel";
 import { AssignOwnerModal, RecordTagsModal } from "@/components/crm/CrmRecordDialogs";
 import { CrmRecordHeader } from "@/components/crm/CrmRecordHeader";
 import { CrmTimeline } from "@/components/crm/CrmTimeline";
@@ -215,6 +216,10 @@ export function OpportunityDetailClient({ initialOpportunity, permissions, curre
               currentUserId={currentUserId}
               onChanged={() => setRefreshKey((k) => k + 1)}
             />
+          </Section>
+
+          <Section title="Conversations" id="conversations">
+            <ConversationsPanel parent={{ entityType: "OPPORTUNITY", entityId: opp.id }} />
           </Section>
 
           <Section title="Activities & tasks" id="activities">

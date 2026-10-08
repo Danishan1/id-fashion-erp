@@ -7732,3 +7732,11 @@ The whole CRM (Leads, Deals/Opportunities, pipeline/sources/lost-reason masters,
 - Automation events `appointment.*` are written with the change via runCrmMutation (no event on failure; crm_events.id = idempotency key); payload = AppointmentEventPayload.
 - Calendar UI: reusable `src/components/crm/appointments/CrmCalendar.tsx` (day/week/month); drag calls POST /appointments/{id}/reschedule, never writes times directly.
 - Report: `docs/crm/PHASE_10_CALENDAR_APPOINTMENTS.md`.
+
+## CRM rebuild - Phase 11 Unified Conversations (2026-10-08)
+- ONE inbox for every channel (channel = filter, never a separate inbox). Model: `crm_channels` -> `crm_conversations` -> `crm_messages` + `crm_conversation_participants` + `crm_message_attachments` (bytes in the shared `attachments` store). Internal notes are `crm_notes` on entity CONVERSATION - never in crm_messages, so a note can never be sent.
+- Providers live in `src/core/communication/` (`CommunicationProvider.ts` contract, `provider-registry.ts`). A new channel = one ChannelProvider file + one registry line; it only verifies/normalises payloads and sends - never touches the DB. Only `generic` (signed webhook in, signed HTTP relay out) exists; no WhatsApp/Meta/Gmail/SMS integrations yet.
+- Inbound: `/api/v1/crm/webhooks/conversations/<provider>/<channelId>` -> `conversation-messaging.service.ts` (`ingestInboundMessage`): idempotent on (channel_id, provider_message_id) under an advisory lock; contact matching only via `conversation-matching.ts` (email/phone keys, learned provider ids; MULTIPLE/UNMATCHED go to the Unmatched queue - never auto-create contacts).
+- Outbound: always `sendConversationMessage` -> `prepareSend` (permission, capabilities, Phase 04 DND via canContact, recipient) -> message saved QUEUED -> provider called OUTSIDE the transaction -> SENT/FAILED. Retry reuses the message id as idempotency key. Never put channel-type checks in UI - use ChannelCapabilities.
+- Visibility: `conversation-access.ts` (view_all = all; else assigned to me, or unassigned + linked record I own). Events `conversation.*` / `message.*` on CrmEntityType CONVERSATION (payload ConversationEventPayload, no message bodies); record timelines include them (minus delivered/read receipts).
+- Report: `docs/crm/PHASE_11_UNIFIED_CONVERSATIONS.md`.

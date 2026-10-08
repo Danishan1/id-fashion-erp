@@ -130,6 +130,9 @@ model Company {
   crmOpportunityStageHistory          CrmOpportunityStageHistory[]
   crmActivities                       CrmActivity[]
   crmActivityLinks                    CrmActivityLink[]
+  crmChannels                         CrmChannel[]
+  crmConversations                    CrmConversation[]
+  crmMessages                         CrmMessage[]
   crmUserPreferences                  CrmUserPreference[]
   crmCompanyMerges                    CrmCompanyMerge[]
   attendanceRecords                   AttendanceRecord[]
@@ -368,6 +371,11 @@ model User {
   crmNotesAuthored                           CrmNote[]                            @relation("CrmNoteAuthor")
   crmActivitiesAssigned                      CrmActivity[]                        @relation("CrmActivityAssignee")
   crmActivitiesCreated                       CrmActivity[]                        @relation("CrmActivityCreatedBy")
+  crmChannelsDefaultAssignee                 CrmChannel[]                         @relation("CrmChannelDefaultAssignee")
+  crmChannelsCreated                         CrmChannel[]                         @relation("CrmChannelCreatedBy")
+  crmConversationsAssigned                   CrmConversation[]                    @relation("CrmConversationAssignee")
+  crmConversationParticipations              CrmConversationParticipant[]         @relation("CrmConversationParticipantUser")
+  crmMessagesSent                            CrmMessage[]                         @relation("CrmMessageSender")
   crmPreferences                             CrmUserPreference[]
   crmSavedViews                              CrmSavedView[]                       @relation("CrmSavedViewOwner")
   crmImportJobsCreated                       CrmImportJob[]                       @relation("CrmImportJobCreatedBy")
@@ -7653,6 +7661,9 @@ enum RelatedModule {
   // CRM Activities (Phase 09, 2026-10-06) -- in-app task reminders and
   // assignment notifications point at the activity (relatedRecordId = CrmActivity.id).
   CRM_ACTIVITY
+  // CRM Conversations (Phase 11, 2026-10-08) -- message attachments and
+  // conversation notifications (relatedRecordId = CrmConversation.id).
+  CRM_CONVERSATION
 }
 
 model Attachment {
@@ -7672,8 +7683,9 @@ model Attachment {
   contextLabel    String?       @map("context_label")
   uploadedAt      DateTime      @default(now()) @map("uploaded_at")
 
-  company    Company @relation(fields: [companyId], references: [id])
-  uploadedBy User    @relation(fields: [uploadedById], references: [id])
+  company               Company                @relation(fields: [companyId], references: [id])
+  uploadedBy            User                   @relation(fields: [uploadedById], references: [id])
+  crmMessageAttachments CrmMessageAttachment[]
 
   @@index([relatedModule, relatedRecordId])
   @@map("attachments")
@@ -7720,6 +7732,9 @@ enum CrmEntityType {
   // Phase 09: tasks, calls, meetings… (crm_activities). Its events
   // (activity.*) appear on the timelines of the records it is linked to.
   ACTIVITY
+  // Phase 11: unified conversations. conversation.* / message.* events appear
+  // on the timelines of the contact / company / opportunity it is linked to.
+  CONVERSATION
 }
 
 // Append-only business event log for the CRM. One row per thing that
@@ -8260,6 +8275,7 @@ model CrmCompany {
   opportunities  CrmOpportunity[]
   addresses      CrmAddress[]
   mergesSurvived CrmCompanyMerge[]  @relation("CrmCompanyMergeSurvivor")
+  conversations  CrmConversation[]
   mergeRecord    CrmCompanyMerge?   @relation("CrmCompanyMergeMerged")
 
   @@index([companyId, nameKey])
@@ -8388,6 +8404,8 @@ model CrmContact {
   mergesSurvived CrmContactMerge[]   @relation("CrmContactMergeSurvivor")
   mergeRecord    CrmContactMerge?    @relation("CrmContactMergeMerged")
   primaryOf      CrmCompany[]        @relation("CrmCompanyPrimaryContact")
+  conversations  CrmConversation[]
+  participations CrmConversationParticipant[]
 
   @@index([companyId, crmCompanyId])
   @@index([companyId, archivedAt, createdAt])
@@ -8592,6 +8610,7 @@ model CrmOpportunity {
   convertedFromLeads CrmLead[]                    @relation("CrmLeadConvertedOpportunity")
   erpLinks           CrmOpportunityErpLink[]
   stageHistory       CrmOpportunityStageHistory[]
+  conversations      CrmConversation[]
 
   @@unique([companyId, opportunityNumber])
   @@index([companyId, status])
@@ -8924,6 +8943,226 @@ model CrmActivityLink {
   @@unique([activityId, entityType, entityId], map: "crm_activity_links_unique")
   @@index([companyId, entityType, entityId, activityId], map: "crm_activity_links_entity_idx")
   @@map("crm_activity_links")
+}
+
+// ─────────────────────────────────────────────────────────────
+// CRM — Phase 11 Unified Conversations (2026-10-08).
+// See docs/crm/PHASE_11_UNIFIED_CONVERSATIONS.md.
+//
+// One provider-neutral model for every channel: a channel (configured
+// connection) → conversations (threads) → messages + participants. Channel
+// providers (src/core/communication) only translate payloads; the CRM never
+// stores provider-specific JSON. Internal notes are CrmNote rows on the
+// CONVERSATION entity (never in this table, so they can never be sent).
+// Type / status / kind columns are validated in code
+// (src/modules/crm/conversations/conversation-registry.ts).
+// ─────────────────────────────────────────────────────────────
+
+/// A configured communication channel (a WhatsApp number, a support mailbox,
+/// a website chat…). `provider` picks the adapter ("generic" now). The
+/// webhook signing secret is encrypted at rest like CRM webhook endpoints;
+/// `config` holds non-secret settings only.
+model CrmChannel {
+  id                    String    @id @default(uuid()) @db.Uuid
+  companyId             String    @map("company_id") @db.Uuid
+  // EMAIL | SMS | WHATSAPP | FACEBOOK_MESSENGER | INSTAGRAM | WEB_CHAT | OTHER
+  channelType           String    @map("channel_type")
+  name                  String
+  provider              String    @default("generic")
+  // ACTIVE | PAUSED
+  status                String    @default("ACTIVE")
+  // The business identity on this channel (mailbox, phone number, page name) — display only.
+  address               String?
+  config                Json      @default("{}")
+  secretEncrypted       String    @map("secret_encrypted")
+  defaultAssigneeUserId String?   @map("default_assignee_user_id") @db.Uuid
+  lastInboundAt         DateTime? @map("last_inbound_at")
+  createdByUserId       String    @map("created_by_user_id") @db.Uuid
+  version               Int       @default(1)
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+
+  company         Company           @relation(fields: [companyId], references: [id])
+  defaultAssignee User?             @relation("CrmChannelDefaultAssignee", fields: [defaultAssigneeUserId], references: [id])
+  createdBy       User              @relation("CrmChannelCreatedBy", fields: [createdByUserId], references: [id])
+  conversations   CrmConversation[]
+  messages        CrmMessage[]
+
+  @@unique([companyId, name])
+  @@index([companyId, status])
+  @@map("crm_channels")
+}
+
+/// A logical thread on one channel. Contact / company / opportunity are each
+/// optional; `matchStatus` UNMATCHED / MULTIPLE puts it in the unmatched
+/// queue until a user links it. `unreadCount` = inbound messages not yet seen
+/// by the team; denormalised last-message fields keep the inbox one query.
+model CrmConversation {
+  id                   String    @id @default(uuid()) @db.Uuid
+  companyId            String    @map("company_id") @db.Uuid
+  channelId            String    @map("channel_id") @db.Uuid
+  channelType          String    @map("channel_type")
+  subject              String?
+  // OPEN | PENDING | CLOSED | ARCHIVED
+  status               String    @default("OPEN")
+  // MATCHED | UNMATCHED | MULTIPLE
+  matchStatus          String    @default("UNMATCHED") @map("match_status")
+  // Contact ids found when matching was ambiguous (MULTIPLE) — the user picks one.
+  matchCandidateIds    String[]  @default([]) @map("match_candidate_ids") @db.Uuid
+  contactId            String?   @map("contact_id") @db.Uuid
+  crmCompanyId         String?   @map("crm_company_id") @db.Uuid
+  opportunityId        String?   @map("opportunity_id") @db.Uuid
+  assignedToUserId     String?   @map("assigned_to_user_id") @db.Uuid
+  // Provider thread reference (email root Message-ID, chat session…), when the provider has one.
+  externalThreadRef    String?   @map("external_thread_ref")
+  // Who the conversation is with, for the inbox row (kept from the first customer participant).
+  displayName          String?   @map("display_name")
+  displayIdentifier    String?   @map("display_identifier")
+  unreadCount          Int       @default(0) @map("unread_count")
+  lastReadAt           DateTime? @map("last_read_at")
+  lastReadByUserId     String?   @map("last_read_by_user_id") @db.Uuid
+  messageCount         Int       @default(0) @map("message_count")
+  lastMessageAt        DateTime? @map("last_message_at")
+  lastMessagePreview   String?   @map("last_message_preview")
+  lastMessageDirection String?   @map("last_message_direction")
+  lastInboundAt        DateTime? @map("last_inbound_at")
+  lastOutboundAt       DateTime? @map("last_outbound_at")
+  // Lower-cased subject, participants and linked record names (inbox search).
+  searchText           String    @default("") @map("search_text")
+  closedAt             DateTime? @map("closed_at")
+  closedByUserId       String?   @map("closed_by_user_id") @db.Uuid
+  archivedAt           DateTime? @map("archived_at")
+  createdByUserId      String?   @map("created_by_user_id") @db.Uuid
+  version              Int       @default(1)
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  company      Company                      @relation(fields: [companyId], references: [id])
+  channel      CrmChannel                   @relation(fields: [channelId], references: [id])
+  contact      CrmContact?                  @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  crmCompany   CrmCompany?                  @relation(fields: [crmCompanyId], references: [id], onDelete: SetNull)
+  opportunity  CrmOpportunity?              @relation(fields: [opportunityId], references: [id], onDelete: SetNull)
+  assignedTo   User?                        @relation("CrmConversationAssignee", fields: [assignedToUserId], references: [id])
+  participants CrmConversationParticipant[]
+  messages     CrmMessage[]
+
+  @@index([companyId, lastMessageAt], map: "crm_conversations_recent_idx")
+  @@index([companyId, status, lastMessageAt], map: "crm_conversations_status_idx")
+  @@index([companyId, assignedToUserId, lastMessageAt], map: "crm_conversations_assignee_idx")
+  @@index([companyId, channelId, lastMessageAt], map: "crm_conversations_channel_idx")
+  @@index([companyId, contactId], map: "crm_conversations_contact_idx")
+  @@index([companyId, crmCompanyId], map: "crm_conversations_company_idx")
+  @@index([companyId, opportunityId], map: "crm_conversations_opportunity_idx")
+  @@map("crm_conversations")
+}
+
+/// Who takes part in a conversation: the customer identity on the channel
+/// (email address, phone number, provider user id, anonymous chat session),
+/// linked to a contact once known, and ERP users who replied.
+model CrmConversationParticipant {
+  id                 String   @id @default(uuid()) @db.Uuid
+  companyId          String   @map("company_id") @db.Uuid
+  conversationId     String   @map("conversation_id") @db.Uuid
+  channelId          String   @map("channel_id") @db.Uuid
+  // CONTACT | EXTERNAL | ANONYMOUS | USER
+  participantType    String   @map("participant_type")
+  // CUSTOMER | AGENT | CC
+  role               String   @default("CUSTOMER")
+  // EMAIL | PHONE | PROVIDER_ID | SESSION (null for users)
+  identifierKind     String?  @map("identifier_kind")
+  externalIdentifier String?  @map("external_identifier")
+  // Normalised for matching (lower-cased email, last 10 phone digits, raw id).
+  identifierKey      String?  @map("identifier_key")
+  displayName        String?  @map("display_name")
+  contactId          String?  @map("contact_id") @db.Uuid
+  userId             String?  @map("user_id") @db.Uuid
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  conversation CrmConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  contact      CrmContact?     @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  user         User?           @relation("CrmConversationParticipantUser", fields: [userId], references: [id])
+
+  @@index([conversationId])
+  @@index([companyId, channelId, identifierKind, identifierKey], map: "crm_conversation_participants_identity_idx")
+  @@index([companyId, identifierKind, identifierKey], map: "crm_conversation_participants_key_idx")
+  @@map("crm_conversation_participants")
+}
+
+/// One customer-visible message (inbound or outbound) — never an internal
+/// note. `(channel_id, provider_message_id)` is unique so a provider
+/// retrying a webhook can never create the same message twice. Ordered by
+/// `occurred_at` (provider time for inbound) with id as the tie-breaker.
+model CrmMessage {
+  id                  String    @id @default(uuid()) @db.Uuid
+  companyId           String    @map("company_id") @db.Uuid
+  conversationId      String    @map("conversation_id") @db.Uuid
+  channelId           String    @map("channel_id") @db.Uuid
+  // INBOUND | OUTBOUND
+  direction           String
+  // TEXT | IMAGE | FILE | AUDIO | VIDEO | DOCUMENT | LOCATION | SYSTEM | OTHER
+  messageType         String    @default("TEXT") @map("message_type")
+  subject             String?
+  body                String    @default("")
+  senderIdentifier    String?   @map("sender_identifier")
+  senderName          String?   @map("sender_name")
+  recipientIdentifier String?   @map("recipient_identifier")
+  // The ERP user who wrote an outbound message.
+  senderUserId        String?   @map("sender_user_id") @db.Uuid
+  // RECEIVED (inbound) | QUEUED | SENT | DELIVERED | READ | FAILED (outbound)
+  status              String
+  providerMessageId   String?   @map("provider_message_id")
+  occurredAt          DateTime  @default(now()) @map("occurred_at")
+  sentAt              DateTime? @map("sent_at")
+  deliveredAt         DateTime? @map("delivered_at")
+  readAt              DateTime? @map("read_at")
+  failedAt            DateTime? @map("failed_at")
+  // Inbound: when a CRM user first saw it (drives unread counts).
+  seenAt              DateTime? @map("seen_at")
+  seenByUserId        String?   @map("seen_by_user_id") @db.Uuid
+  // Safe, user-facing failure reason (never raw provider responses or credentials).
+  errorCode           String?   @map("error_code")
+  errorMessage        String?   @map("error_message")
+  attempts            Int       @default(0)
+  lastAttemptAt       DateTime? @map("last_attempt_at")
+  // Provider-neutral extras: email threading headers, location, reply-to id…
+  metadata            Json      @default("{}")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  company      Company                @relation(fields: [companyId], references: [id])
+  conversation CrmConversation        @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  channel      CrmChannel             @relation(fields: [channelId], references: [id])
+  senderUser   User?                  @relation("CrmMessageSender", fields: [senderUserId], references: [id])
+  attachments  CrmMessageAttachment[]
+
+  @@index([conversationId, occurredAt, id], map: "crm_messages_thread_idx")
+  @@index([companyId, occurredAt], map: "crm_messages_recent_idx")
+  @@map("crm_messages")
+}
+
+/// A file on a message. The bytes live in the ERP's shared file storage
+/// (`attachments` row, related module CRM_CONVERSATION); this row is the
+/// CRM-side record. Provider media not (yet) downloaded keeps only its
+/// provider reference (attachment_id null).
+model CrmMessageAttachment {
+  id               String   @id @default(uuid()) @db.Uuid
+  companyId        String   @map("company_id") @db.Uuid
+  messageId        String   @map("message_id") @db.Uuid
+  attachmentId     String?  @map("attachment_id") @db.Uuid
+  // IMAGE | DOCUMENT | AUDIO | VIDEO | FILE
+  kind             String
+  fileName         String   @map("file_name")
+  mimeType         String   @map("mime_type")
+  sizeBytes        Int?     @map("size_bytes")
+  providerMediaRef String?  @map("provider_media_ref")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  message    CrmMessage  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  attachment Attachment? @relation(fields: [attachmentId], references: [id], onDelete: SetNull)
+
+  @@index([messageId])
+  @@index([attachmentId])
+  @@map("crm_message_attachments")
 }
 
 // Metadata for the shared custom-field engine. Values live in each record's

@@ -3,6 +3,7 @@ import { prisma } from "@/core/db/client";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { CrmCompanyRepository } from "./companies/crm-company.repository";
 import { CrmContactRepository } from "./contacts/crm-contact.repository";
+import { conversationScopeWhere } from "./conversations/conversation-access";
 import type { CrmActor } from "./core/crm-actor";
 import { crmOwnerWhere, getCrmRecordScope } from "./core/crm-visibility";
 
@@ -15,6 +16,11 @@ import { crmOwnerWhere, getCrmRecordScope } from "./core/crm-visibility";
 export async function assertCrmEntityAccess(actor: CrmActor, entityType: CrmEntityType, entityId: string): Promise<void> {
   if (entityType === "ACTIVITY") return assertActivityAccess(actor, entityId);
   const scope = await getCrmRecordScope(actor);
+  if (entityType === "CONVERSATION") {
+    const conversation = await prisma.crmConversation.findFirst({ where: { AND: [{ id: entityId, companyId: actor.companyId }, conversationScopeWhere(actor, scope)] }, select: { id: true } });
+    if (!conversation) throw new BusinessRuleError("NOT_FOUND", "Record not found.", { entityType, entityId });
+    return;
+  }
   const where = { AND: [{ id: entityId, companyId: actor.companyId }, crmOwnerWhere(scope)] };
   const select = { id: true } as const;
   const found =
@@ -24,7 +30,9 @@ export async function assertCrmEntityAccess(actor: CrmActor, entityType: CrmEnti
         ? await prisma.crmContact.findFirst({ where: where as Prisma.CrmContactWhereInput, select })
         : entityType === "COMPANY"
           ? await prisma.crmCompany.findFirst({ where: where as Prisma.CrmCompanyWhereInput, select })
-          : await prisma.crmOpportunity.findFirst({ where: where as Prisma.CrmOpportunityWhereInput, select });
+          : entityType === "OPPORTUNITY"
+            ? await prisma.crmOpportunity.findFirst({ where: where as Prisma.CrmOpportunityWhereInput, select })
+            : null;
   if (!found) throw new BusinessRuleError("NOT_FOUND", "Record not found.", { entityType, entityId });
 }
 

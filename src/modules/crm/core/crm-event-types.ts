@@ -12,7 +12,7 @@ import { humanizeStatus } from "@/lib/humanize-status";
  * a published event type; add a new one instead.
  *
  * Only events for entity types that exist in `CrmEntityType` are listed.
- * message.*, form.* arrive with their phases (activity.* covers tasks; appointment.* since Phase 10).
+ * form.* arrive with their phases (activity.* covers tasks; appointment.* since Phase 10; conversation.* and message.* since Phase 11).
  */
 export type CrmEventCategory =
   | "created"
@@ -33,7 +33,8 @@ export type CrmEventCategory =
   | "document"
   | "duplicate"
   | "task"
-  | "activity";
+  | "activity"
+  | "message";
 
 export interface CrmEventDefinition {
   label: string;
@@ -159,6 +160,27 @@ export const CRM_EVENT_TYPES = {
   "appointment.cancelled": { label: "Appointment cancelled", entityType: "ACTIVITY", category: "archived" },
   "appointment.completed": { label: "Appointment completed", entityType: "ACTIVITY", category: "won" },
   "appointment.no_show": { label: "Appointment no-show", entityType: "ACTIVITY", category: "lost" },
+  // Phase 11 — unified conversations (entity CONVERSATION). Automation hooks:
+  // payload = ConversationEventPayload (conversation-registry.ts). message.*
+  // events are stored on the conversation; payload.messageId names the message.
+  "conversation.created": { label: "Conversation started", entityType: "CONVERSATION", category: "created" },
+  "conversation.updated": { label: "Conversation updated", entityType: "CONVERSATION", category: "updated" },
+  "conversation.assigned": { label: "Conversation assigned", entityType: "CONVERSATION", category: "assignment" },
+  "conversation.status_changed": { label: "Conversation status changed", entityType: "CONVERSATION", category: "status" },
+  "conversation.closed": { label: "Conversation closed", entityType: "CONVERSATION", category: "archived" },
+  "conversation.reopened": { label: "Conversation reopened", entityType: "CONVERSATION", category: "restored" },
+  "conversation.archived": { label: "Conversation archived", entityType: "CONVERSATION", category: "archived" },
+  "conversation.contact_linked": { label: "Contact linked", entityType: "CONVERSATION", category: "linked" },
+  "conversation.company_linked": { label: "Company linked", entityType: "CONVERSATION", category: "linked" },
+  "conversation.opportunity_linked": { label: "Opportunity linked", entityType: "CONVERSATION", category: "linked" },
+  "conversation.note_added": { label: "Internal note added", entityType: "CONVERSATION", category: "note" },
+  "conversation.note_updated": { label: "Internal note edited", entityType: "CONVERSATION", category: "note" },
+  "conversation.note_deleted": { label: "Internal note deleted", entityType: "CONVERSATION", category: "note" },
+  "message.received": { label: "Message received", entityType: "CONVERSATION", category: "message" },
+  "message.sent": { label: "Message sent", entityType: "CONVERSATION", category: "message" },
+  "message.failed": { label: "Message failed", entityType: "CONVERSATION", category: "lost" },
+  "message.delivered": { label: "Message delivered", entityType: "CONVERSATION", category: "message" },
+  "message.read": { label: "Message read by customer", entityType: "CONVERSATION", category: "message" },
 } as const satisfies Record<string, CrmEventDefinition>;
 
 export type CrmEventType = keyof typeof CRM_EVENT_TYPES;
