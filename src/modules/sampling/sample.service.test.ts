@@ -2,7 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 
 vi.mock("@/core/db/client", () => ({
-  prisma: { crmFollowup: { create: vi.fn() }, $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn({})) },
+  prisma: {
+    $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn({})),
+    crmCompany: { findFirst: vi.fn().mockResolvedValue(null) },
+    crmActivity: { create: vi.fn() },
+  },
 }));
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/numbering/DocumentNumberingService", () => ({
@@ -66,7 +70,6 @@ vi.mock("./sample.repository", () => ({
   SampleCommentRepository: { create: vi.fn() },
 }));
 
-const { prisma } = await import("@/core/db/client");
 const { SampleRequestRepository, SampleVersionRepository, SampleMaterialRepository, SampleOtherChargeRepository, SampleApprovalRepository } =
   await import("./sample.repository");
 const { ProductRepository } = await import("@/modules/products/product.repository");
@@ -107,7 +110,6 @@ beforeEach(() => {
   vi.mocked(SampleMaterialRepository.findByVersionId).mockReset();
   vi.mocked(SampleRequestRepository.findAnyById).mockReset();
   vi.mocked(SampleRequestRepository.update).mockReset();
-  vi.mocked(prisma.crmFollowup.create).mockReset().mockResolvedValue({} as never);
   vi.mocked(SampleVersionRepository.findLatest).mockReset();
   vi.mocked(SampleVersionRepository.update).mockReset();
   vi.mocked(SampleVersionRepository.findById).mockReset();
@@ -522,34 +524,6 @@ describe("addSampleMaterial merge branch", () => {
 });
 
 describe("transitionSampleStatus", () => {
-  it("auto-creates a 3-day follow-up against the customer when a sample moves to SUBMITTED_TO_CUSTOMER", async () => {
-    vi.mocked(SampleRequestRepository.findAnyById).mockResolvedValue({
-      id: "sam-1",
-      status: "INTERNAL_QC",
-      requestNumber: "SAM-2026-00001",
-      styleName: "V-Neck T-Shirt",
-      customerId: "cust-1",
-    } as never);
-    vi.mocked(SampleRequestRepository.update).mockResolvedValue({ id: "sam-1", status: "SUBMITTED_TO_CUSTOMER" } as never);
-
-    await transitionSampleStatus(actor, "sam-1", "SUBMITTED_TO_CUSTOMER" as never);
-
-    expect(prisma.crmFollowup.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ relatedModule: "CUSTOMER", relatedRecordId: "cust-1", type: "EMAIL" }),
-      })
-    );
-  });
-
-  it("does not create a follow-up for a transition that isn't SUBMITTED_TO_CUSTOMER", async () => {
-    vi.mocked(SampleRequestRepository.findAnyById).mockResolvedValue({ id: "sam-1", status: "REQUESTED", customerId: "cust-1" } as never);
-    vi.mocked(SampleRequestRepository.update).mockResolvedValue({ id: "sam-1", status: "ON_HOLD" } as never);
-
-    await transitionSampleStatus(actor, "sam-1", "ON_HOLD" as never);
-
-    expect(prisma.crmFollowup.create).not.toHaveBeenCalled();
-  });
-
   // Regression tests for the P3 fix: SampleVersion.status previously stayed
   // frozen at "IN_DEVELOPMENT" from creation through Internal QC and
   // Submitted-to-Customer — the header's own status is now mirrored onto the

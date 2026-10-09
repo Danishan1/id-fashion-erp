@@ -5,7 +5,8 @@ vi.mock("@/core/db/client", () => ({
     customer: { findMany: vi.fn() },
     salesOrder: { findMany: vi.fn() },
     salesOrderItem: { findMany: vi.fn() },
-    crmFollowup: { findFirst: vi.fn(), create: vi.fn() },
+    crmCompany: { findFirst: vi.fn() },
+    crmActivity: { findFirst: vi.fn(), create: vi.fn() },
   },
 }));
 
@@ -16,8 +17,9 @@ beforeEach(() => {
   vi.mocked(prisma.customer.findMany).mockReset();
   vi.mocked(prisma.salesOrder.findMany).mockReset().mockResolvedValue([]);
   vi.mocked(prisma.salesOrderItem.findMany).mockReset();
-  vi.mocked(prisma.crmFollowup.findFirst).mockReset().mockResolvedValue(null);
-  vi.mocked(prisma.crmFollowup.create).mockReset().mockResolvedValue({} as never);
+  vi.mocked(prisma.crmCompany.findFirst).mockReset().mockResolvedValue(null);
+  vi.mocked(prisma.crmActivity.findFirst).mockReset().mockResolvedValue(null);
+  vi.mocked(prisma.crmActivity.create).mockReset().mockResolvedValue({} as never);
 });
 
 afterEach(() => {
@@ -118,28 +120,37 @@ describe("getCategoryPurchaseBreakdown", () => {
 });
 
 describe("generateReengagementFollowups", () => {
-  it("creates a follow-up only for customers inactive 60+ days who don't already have an open one", async () => {
+  it("creates an activity only for customers inactive 60+ days with a linked CRM Company and no already-open one", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-24"));
     vi.mocked(prisma.customer.findMany).mockResolvedValue([
       { id: "c-stale", code: "C1", name: "Stale Co", type: "CUSTOMER", country: null, createdAt: new Date("2025-01-01") },
       { id: "c-recent", code: "C2", name: "Recent Co", type: "CUSTOMER", country: null, createdAt: new Date("2025-01-01") },
       { id: "c-already-flagged", code: "C3", name: "Already Flagged Co", type: "CUSTOMER", country: null, createdAt: new Date("2025-01-01") },
+      { id: "c-no-crm-company", code: "C4", name: "No CRM Company Co", type: "CUSTOMER", country: null, createdAt: new Date("2025-01-01") },
     ] as never);
     vi.mocked(prisma.salesOrder.findMany).mockResolvedValue([
       { customerId: "c-stale", totalAmount: "1000", orderDate: new Date("2026-05-01") }, // ~115 days ago
       { customerId: "c-recent", totalAmount: "1000", orderDate: new Date("2026-08-10") }, // ~14 days ago
       { customerId: "c-already-flagged", totalAmount: "1000", orderDate: new Date("2026-04-01") }, // ~145 days ago
+      { customerId: "c-no-crm-company", totalAmount: "1000", orderDate: new Date("2026-04-01") }, // ~145 days ago
     ] as never);
-    vi.mocked(prisma.crmFollowup.findFirst).mockImplementation(((args: { where: { relatedRecordId: string } }) =>
-      Promise.resolve(args.where.relatedRecordId === "c-already-flagged" ? ({ id: "existing-followup" } as never) : null)) as never);
+    vi.mocked(prisma.crmCompany.findFirst).mockImplementation(((args: { where: { customerId: string } }) => {
+      if (args.where.customerId === "c-stale") return Promise.resolve({ id: "crm-company-stale" } as never);
+      if (args.where.customerId === "c-already-flagged") return Promise.resolve({ id: "crm-company-flagged" } as never);
+      return Promise.resolve(null);
+    }) as never);
+    vi.mocked(prisma.crmActivity.findFirst).mockImplementation(((args: { where: { entityId: string } }) =>
+      Promise.resolve(args.where.entityId === "crm-company-flagged" ? ({ id: "existing-activity" } as never) : null)) as never);
 
     const result = await generateReengagementFollowups("co-1", "user-1");
 
-    expect(result).toEqual({ checked: 2, created: 1 });
-    expect(prisma.crmFollowup.create).toHaveBeenCalledTimes(1);
-    expect(prisma.crmFollowup.create).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ relatedModule: "CUSTOMER", relatedRecordId: "c-stale", createdByUserId: "user-1" }) })
+    expect(result).toEqual({ checked: 3, created: 1, skippedNoCrmCompany: 1 });
+    expect(prisma.crmActivity.create).toHaveBeenCalledTimes(1);
+    expect(prisma.crmActivity.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ entityType: "COMPANY", entityId: "crm-company-stale", createdByUserId: "user-1" }),
+      })
     );
     vi.useRealTimers();
   });

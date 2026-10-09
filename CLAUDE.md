@@ -7633,3 +7633,102 @@ This version has breaking changes — APIs, conventions, and file structure may 
 This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
 
 <!-- END:nextjs-agent-rules -->
+
+## CRM + Marketing removed for a from-scratch rebuild (2026-10-01, branch `crm-marketing-rebuild`)
+
+The whole CRM (Leads, Deals/Opportunities, pipeline/sources/lost-reason masters, activities, follow-ups, CRM dashboard/settings, CRM CSV import) and Marketing (Campaigns, daily metrics, attribution, alerts, dashboards, channel report, customer segments, Meta/Google Ads) were deleted so both modules can be redesigned from scratch. The "CRM Lead-to-Customer upgrade" 12-slice plan above is abandoned.
+- Migration `20261001100000_remove_crm_and_marketing` drops every `crm_*` / `mkt_*` / `ad_*` table and enum type, drops `sales_orders.originating_deal_id`, and removes LEAD/DEAL/CRM_FOLLOWUP from `RelatedModule`, LEAD/DEAL/CAMPAIGN from `DocumentType`, LEAD/DEAL/CAMPAIGN_DAILY_METRIC from `ImportBatchType` (deleting the attachment/notification/sequence/import-batch rows that used them first).
+- Cross-module hooks removed: Customer 360 now shows Buyers/Samples/Sales Orders only; Sales Order no longer records an originating Deal; Sampling no longer auto-creates a follow-up on SUBMITTED_TO_CUSTOMER; Bulk Import keeps only its own helpers in `import.service.ts`.
+- Kept for the rebuild: RBAC module keys `crm` / `marketing` (+ role grants), `core/communication`, `lib/communication.ts`, `core/security/oauth-state`, `NotificationService`.
+- Full file list and verification: `danishan-understanding.md` → "Removal log".
+- **Rebuild plan:** `docs/crm/CRM_MASTER_BLUEPRINT.md` (phases 00–37, built one phase at a time) and `docs/crm/CRM_INTEGRATION_AWARENESS.md` (adapter/provider rule for external integrations — build only what the current phase needs). Read both before starting any CRM phase.
+
+## CRM rebuild — Phase 01 Foundation (2026-10-01, branch `crm-marketing-rebuild-v1`)
+
+- CRM shell: sidebar group CRM (Dashboard `/crm`, Activity Log `/crm/activity`), `crm/layout.tsx` gates on `crm.view`, `loading.tsx` / `error.tsx`.
+- Shared UI in `src/components/crm/` (page/record headers, CrmTable over DataTable with URL-synced filters, CrmFilterBar, CrmSearchInput, CrmTimeline, CrmActivityItem, CrmDrawer, state components). DataTable gained additive props `extraParams`, `hideSearch`, `toolbar`.
+- `src/modules/crm/core/`: `crmRoute()` API wrapper (uses ERP `crm` permission module), `crm_events` append-only event log + typed registry (`crm-event-types.ts` — never rename a published event), `runCrmMutation()` = change + AuditLog + events in one transaction, then post-commit subscribers (`crm-event-bus.ts`). **All CRM writes from Phase 02 on go through `runCrmMutation`**, and all CRM queries through `crmOwnerWhere(getCrmRecordScope())` (currently ALL; decision D5 pending).
+- `writeAuditLog(options, tx?)` — optional transaction client, backward compatible.
+- Sidebar: `isLeafActive()` highlights only the most specific child (fixes /crm vs /crm/activity, also AI Garment Flow).
+- Dev only: `node scripts/crm-dev-sample-events.mjs [--remove]`.
+- Report + manual checklist: `docs/crm/PHASE_01_FOUNDATION.md`.
+
+## CRM rebuild — Phase 02 Leads (2026-10-01, branch `crm-marketing-rebuild-v1`)
+
+- Lead entity (`crm_leads`, number `LEAD-YYYY-#####`) + per-company statuses/sources created lazily (`ensureCrmLeadDefaults`), custom fields engine (`src/modules/crm/custom-fields`, `entityType`-ready), polymorphic tags and notes, saved views, duplicate rules (EMAIL/PHONE/COMPANY_AND_* = WARN/BLOCK/OFF; default warn + confirm).
+- Conversion creates/links minimal `crm_companies` (optional unique link to ERP Customer), `crm_contacts`, `crm_opportunities` in one transaction; never silently duplicates (`CRM_DUPLICATE_RECORD` unless allowDuplicate). Bulk actions are synchronous, max 500.
+- Visibility D5 decided: own records (owner, or creator when unassigned) unless `crm.view_all`. New RBAC module `crm_settings` and action `view_all` (migration `20261001150000_crm_leads`).
+- All lead writes go through `src/modules/crm/leads/lead.service.ts` → `runCrmMutation`. Future imports/integrations must call `createLead(actor, input, { sourceKey })`.
+- Server pages build the actor + permission flags with `getCrmPageContext()` (`src/modules/crm/core/crm-page.ts`).
+- DB integration tests (`lead.integration.test.ts`) run only with `CRM_IT_DATABASE_URL` set to a disposable database.
+- Report + manual checklist: `docs/crm/PHASE_02_LEADS.md`.
+
+## CRM rebuild — Phase 03 Lead Import & Capture (2026-10-02, branch `crm-marketing-rebuild-v1`)
+
+- Every non-interactive lead source goes through `src/modules/crm/ingestion/lead-ingest.service.ts` (normalize → resolve → validate → duplicates → SKIP/UPDATE/CREATE/FLAG_FOR_REVIEW → lead.service). Never create leads directly from an import/API/webhook/adapter. Manual form: `captureManualLead`.
+- Field catalog + auto-mapping: `ingestion/lead-field-catalog.ts` (client-safe, shared by wizard/API/webhooks; custom fields `cf:<key>`). Normalizer rules in `lead-normalizer.ts` (never guess a phone country code).
+- Imports: `crm_import_jobs` + one `crm_import_rows` row per file line (every row ends IMPORTED/UPDATED/SKIPPED/FLAGGED/FAILED). Validation inline ≤1000 rows, else queued; processing always in the worker (`crm-import.worker.ts`, queue `crm-lead-ingest-<db hash>`, registered in `src/core/jobs/worker.ts`).
+- UPDATE = fill empty fields only (`fillEmptyLeadFields`); source attribution and `capture_channel` never change after create.
+- Capture: API keys (hashed, `crmk_…`), signed generic webhooks (adapter registry `capture/providers/`), inbox `crm_ingest_events` (idempotency key unique per provider; external ids in `crm_lead_external_refs`; retries via `ingest.retry`).
+- CRM document numbers (CRM_LEAD, CRM_OPPORTUNITY) are company-wide: always `branchId: null`.
+- Report + manual checklist: `docs/crm/PHASE_03_LEAD_IMPORT_CAPTURE.md`.
+
+## CRM rebuild — Phase 04 Contacts (2026-10-03, branch `crm-build-v2`)
+- `crm_contacts` is the CRM person record (ERP has no person master). It reaches the ERP Customer only via `crm_companies.customer_id`; picking a customer uses `findOrCreateCrmCompanyForCustomer` — never copy customer data.
+- All contact writes go through `src/modules/crm/contacts/crm-contacts.service.ts` (lead conversion uses `createCrmContactInMutation`). Derived columns (`name_key`, `email_keys`, `phone_keys`, `search_text`) come from `contact-keys.ts`; call `refreshContactDerived` after channel/company changes.
+- Contact duplicate rules (WARN/BLOCK/FLAG/OFF, per field) live in `crm_settings.contact_duplicate_rules`; BLOCK → `CRM_DUPLICATE_RECORD` with `details.blocking`.
+- Merge (`contact-merge.service.ts`) never deletes: merged contact gets `merged_into_id` + archived, everything moves to the survivor, `crm_contact_merges` keeps a snapshot. Every contact query must exclude `merged_into_id IS NOT NULL` (buildContactWhere does).
+- Contactability: `crm_contact_consents` per channel (`ALL` overrides). Anything that sends messages must check `canContactContact` / `canContact` first.
+- `runCrmMutation` bumps `crm_contacts.last_activity_at` for CONTACT events; contact timelines include merged contacts (`mergedContactIds`).
+- Documents: ERP AttachmentService with `RelatedModule.CRM_CONTACT`; only via the CRM document routes (visibility-checked).
+- Report + manual checklist: `docs/crm/PHASE_04_CONTACTS.md`.
+
+## CRM rebuild — Phase 05 Companies (2026-10-03)
+- `crm_companies` is the CRM account (prospects + customers). The ERP `Customer` stays the only customer master: link via unique `customer_id` only (`linkErpCustomer` validates exists/not deleted/permission/not linked elsewhere). Never write customer rows from CRM code; never copy balances/invoices.
+- All company writes go through `src/modules/crm/companies/crm-companies.service.ts` (relations: `company-relations.service.ts`, merge: `company-merge.service.ts`). Derived keys come from `company-keys.ts` — keep `companyMatchKey` identical to the SQL in migration 20261004100000.
+- Company duplicate rules (NAME/LEGAL_NAME/WEBSITE/EMAIL/PHONE x WARN/BLOCK/FLAG/OFF) in `crm_settings.company_duplicate_rules`; same ERP customer is always BLOCK. Never auto-merge.
+- Merge never deletes and refuses different ERP customers; only one ERP link survives. Every company query must exclude `merged_into_id IS NOT NULL` (buildCompanyWhere does).
+- Statuses: `crm_company_statuses` (lazy defaults via ensureCompanyStatusDefaults). ERP references (contacts + companies) live in `src/modules/crm/erp/`; documents for both in `src/modules/crm/documents/` (routes `/api/v1/crm/documents/:id`).
+- Report + manual checklist: `docs/crm/PHASE_05_COMPANIES.md`.
+
+## CRM rebuild — Phase 06 Opportunities (2026-10-04)
+- All opportunity writes go through `src/modules/crm/opportunities/crm-opportunities.service.ts` (creation always via `createOpportunityInMutation`: number, default pipeline/stage, keys, audit, events). Value = `amount`+`currency_code`, never overwritten from ERP documents.
+- Pipelines/stages: minimal `crm_pipelines` / `crm_pipeline_stages` with a lazily created default "Sales" pipeline (`src/modules/crm/pipelines/`); no management UI until Phase 07. Validate with `resolvePipelineStage`; stage changes always emit `opportunity.stage_changed` with old/new stage + probability.
+- Status: enum OPEN/WON/LOST/ABANDONED; transitions in `opportunity-registry.ts` (open closes any way; closed only reopens). Closing sets closed_at/closed_by/close_reason; closed deals can't be edited until reopened.
+- ERP documents: `crm_opportunity_erp_links` (many per opportunity, id+number only, live ERP data, per-module permission + branch scope, must match the company's ERP customer). The ERP has no quotations — add a provider in `crm-opportunity-erp.service.ts` when it does. Never write ERP tables from CRM code.
+- Duplicate check is warn-only (same name + company + contact, open).
+- Report + manual checklist: `docs/crm/PHASE_06_OPPORTUNITIES.md`.
+
+## CRM rebuild — Phase 07 Pipelines & Stages (2026-10-06)
+- Every opportunity stage/pipeline change goes through `src/modules/crm/pipelines/crm-stage-transition.service.ts` (`evaluateTransition` -> `assertTransitionAllowed` -> `transitionUpdate` + `recordTransition`): rules, required fields, history row (`crm_opportunity_stage_history`), audit, timeline. Never update `stage_id`/`pipeline_id` directly.
+- Config: `crm-pipelines.service.ts` (CRUD, one default pipeline / one default stage, reorder, archive with reassignment — never NULL a stage; FKs are RESTRICT). Required-field keys live in `stage-requirements.ts` (built-in, `erp:*`, `custom:*`).
+- Probability: `probability_source` STAGE/MANUAL; `resolveStageProbability` keeps manual values.
+- Refused moves -> 422 `CRM_STAGE_TRANSITION_BLOCKED` with `details.missingFields`. Board/report data: `crm-pipeline-insights.service.ts` (no Kanban UI until Phase 08).
+- Report: `docs/crm/PHASE_07_PIPELINES_STAGES.md`.
+
+## CRM rebuild — Phase 09 Activities, Tasks & Follow-ups (2026-10-06)
+- All activity writes go through `src/modules/crm/activities/crm-activities.service.ts` (create/log, update, complete, reopen, cancel, reschedule, assign, delete, bulk). Types/statuses/priorities/reminders: `activity-registry.ts` (text columns - add a type there). Overdue is derived (`activity-due.ts`), never stored.
+- `crm_activities` + `crm_activity_links` (polymorphic; deal -> its company/contact linked automatically). Events `activity.*` are stored on CrmEntityType ACTIVITY; `/api/v1/crm/events` adds linked activities' events to a record timeline. Notes stay in `crm_notes`.
+- Reminders: worker job `activity.reminders` every minute -> `processDueActivityReminders` (claims PENDING->SENT with the ERP notification in one transaction - never send twice). Assignees = active ERP users with crm.view.
+- Report: `docs/crm/PHASE_09_ACTIVITIES_TASKS.md`.
+
+## CRM rebuild — Phase 08 Opportunity Board + List (2026-10-07)
+- Opportunities page = `OpportunitiesWorkspace` (Board / List, `?view=board|list`, last mode remembered). Both use the same filter params (`useOpportunityFilters` + `parseOpportunityFilterParams`), kept in the URL.
+- Board: `GET /api/v1/crm/pipelines/{id}/board` (all list filters, `perStage`, `stageId`+`offset` per-column paging; per-currency total/weighted/average from one groupBy). Drops call `POST /opportunities/{id}/stage` with `version` — never validate stage moves in the UI; optimistic move + exact rollback on 422/409/network.
+- Per-user screen preferences: `crm_user_preferences` + `crm-preference-registry.ts` (add a key + zod schema there) + `useCrmPreferences`. Presentation only, never business data.
+- Bulk: `action: "update"` (source / expected close / custom fields only, record-by-record via updateOpportunity). Every bulk call returns visibility-scoped `skipped[].label` + `operationId` and writes one AuditLog summary row.
+- Report: `docs/crm/PHASE_08_BOARD_LIST.md`.
+
+## CRM - Lead Board (2026-10-07)
+- Leads page = `LeadsWorkspace` (Board / List, `?view=board|list`, `leads.mode`). Columns = lead statuses (`GET /api/v1/crm/leads/board`, same filter params as the list, `perStatus`, `statusId`+`offset`).
+- Drops call the existing `POST /leads/{id}/status` with `version`; dropping on a CONVERTED status opens ConvertLeadDrawer (never a plain status change).
+- Board mechanics (columns, DnD, optimistic move + rollback, refusal dialog, paging, mobile) live in `src/components/crm/CrmKanbanBoard.tsx`, shared by the Opportunity and Lead boards - build new boards on it.
+- Report: `docs/crm/LEAD_BOARD.md`.
+
+## CRM rebuild - Phase 10 Calendar & Appointments (2026-10-07)
+- An appointment IS a crm_activities row of type APPOINTMENT (no separate table). Every create/change goes through `src/modules/crm/appointments/crm-appointments.service.ts`; the lifecycle lives only in `appointment-registry.ts` (APPOINTMENT_TRANSITIONS): SCHEDULED / CONFIRMED / RESCHEDULED / COMPLETED / CANCELLED / NO_SHOW. Phase 09 activity actions on appointment rows delegate to it.
+- Times: due_at/end_at are UTC instants + `timezone` (IANA). Convert only with `src/modules/crm/core/crm-timezone.ts` (Intl tz database, no hand-written DST maths).
+- Conflicts: checked inside the booking transaction under a per-employee advisory lock; 409 CRM_APPOINTMENT_CONFLICT unless `allowConflict: true`.
+- Automation events `appointment.*` are written with the change via runCrmMutation (no event on failure; crm_events.id = idempotency key); payload = AppointmentEventPayload.
+- Calendar UI: reusable `src/components/crm/appointments/CrmCalendar.tsx` (day/week/month); drag calls POST /appointments/{id}/reschedule, never writes times directly.
+- Report: `docs/crm/PHASE_10_CALENDAR_APPOINTMENTS.md`.

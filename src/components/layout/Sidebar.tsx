@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import type { Module, Action } from "@/config/rbac";
-import { NAV_SECTIONS, filterNavSections, isPathActive, isSectionActive, type NavSection } from "./navigation";
+import { NAV_SECTIONS, filterNavSections, isLeafActive, isPathActive, isSectionActive, type NavSection } from "./navigation";
 import { CompanySwitcher } from "./CompanySwitcher";
 
 // No `modules` gate — visibility is driven entirely by the isPlatformAdmin
@@ -227,7 +227,7 @@ export function Sidebar({
               {isOpen && (
                 <div className="ml-2 space-y-0.5 border-l border-zinc-200 pl-2 dark:border-zinc-800">
                   {section.children.map((child) => (
-                    <Link key={child.href} href={child.href} className={LEAF_CLASSES(isPathActive(pathname, child.href))}>
+                    <Link key={child.href} href={child.href} className={LEAF_CLASSES(isLeafActive(section.children!, child, pathname))}>
                       {child.label}
                     </Link>
                   ))}

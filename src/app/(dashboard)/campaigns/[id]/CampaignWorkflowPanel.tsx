@@ -23,7 +23,7 @@ interface Attribution {
   utmCampaign: string | null;
   attributedRevenue: string;
   createdAt: string;
-  lead: { id: string; leadNumber: string; name: string } | null;
+  crmLead: { id: string; leadNumber: string; fullName: string } | null;
 }
 
 interface Alert {
@@ -380,9 +380,9 @@ export function CampaignWorkflowPanel({ campaign }: { campaign: CampaignDetail }
                   </span>
                   <span>{formatDateTime(a.createdAt)}</span>
                 </div>
-                {a.lead && (
-                  <a href={`/leads/${a.lead.id}`} className="text-indigo-600 hover:underline dark:text-indigo-400">
-                    {a.lead.name} ({a.lead.leadNumber})
+                {a.crmLead && (
+                  <a href={`/crm/leads/${a.crmLead.id}`} className="text-indigo-600 hover:underline dark:text-indigo-400">
+                    {a.crmLead.fullName} ({a.crmLead.leadNumber})
                   </a>
                 )}
                 {Number(a.attributedRevenue) > 0 && <p className="text-xs text-zinc-500">Attributed revenue: ₹{formatNumber(a.attributedRevenue)}</p>}

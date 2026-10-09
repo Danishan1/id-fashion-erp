@@ -8,7 +8,6 @@ vi.mock("@/core/db/client", () => {
   const salesOrderUpdateMany = vi.fn();
   return {
     prisma: {
-      deal: { findFirst: vi.fn() },
       salesOrder: { updateMany: salesOrderUpdateMany },
       // confirmSalesOrder() wraps its guarded status flip + snapshot backfill
       // in one transaction — the mock `tx` reuses the exact same
@@ -98,7 +97,6 @@ beforeEach(() => {
   vi.mocked(CustomerRepository.findByIdWithBuyers).mockReset().mockResolvedValue({ id: "cust-1", buyers: [] } as never);
   vi.mocked(ProductRepository.findStyleById).mockReset().mockResolvedValue({ id: "style-1", itemType: "STYLE", isActive: true, styleName: "Kurta" } as never);
   vi.mocked(CompanyRepository.findBaseCurrencyCode).mockReset().mockResolvedValue({ baseCurrencyCode: "INR" } as never);
-  vi.mocked(prisma.deal.findFirst).mockReset();
   vi.mocked(prisma.salesOrder.updateMany).mockReset().mockResolvedValue({ count: 1 } as never);
   vi.mocked(SalesOrderRepository.createHeader).mockReset().mockResolvedValue({ id: "so-1" } as never);
   vi.mocked(SalesOrderRepository.findByIdWithDetails).mockReset();
@@ -126,7 +124,7 @@ describe("createSalesOrder", () => {
   it("rejects when the customer doesn't exist", async () => {
     vi.mocked(CustomerRepository.findByIdWithBuyers).mockResolvedValue(null);
     await expect(
-      createSalesOrder(actor, { customerId: "cust-x", buyerId: "", orderDate: "2026-08-24", requiredShipDate: "", originatingDealId: "", items: [oneItem()] })
+      createSalesOrder(actor, { customerId: "cust-x", buyerId: "", orderDate: "2026-08-24", requiredShipDate: "", items: [oneItem()] })
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 
@@ -139,29 +137,15 @@ describe("createSalesOrder", () => {
         buyerId: "",
         orderDate: "2026-08-24",
         requiredShipDate: "",
-        originatingDealId: "",
+       
         items: [oneItem({ productId: "raw-material-1" })],
       })
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
     expect(SalesOrderRepository.createHeader).not.toHaveBeenCalled();
   });
 
-  it("rejects an originatingDealId that doesn't belong to this company", async () => {
-    vi.mocked(prisma.deal.findFirst).mockResolvedValue(null);
-    await expect(
-      createSalesOrder(actor, {
-        customerId: "cust-1",
-        buyerId: "",
-        orderDate: "2026-08-24",
-        requiredShipDate: "",
-        originatingDealId: "deal-1",
-        items: [oneItem()],
-      })
-    ).rejects.toMatchObject({ code: "NOT_FOUND" });
-  });
-
   it("always forces currencyCode to the company's own base currency with exchangeRate 1", async () => {
-    await createSalesOrder(actor, { customerId: "cust-1", buyerId: "", orderDate: "2026-08-24", requiredShipDate: "", originatingDealId: "", items: [oneItem()] });
+    await createSalesOrder(actor, { customerId: "cust-1", buyerId: "", orderDate: "2026-08-24", requiredShipDate: "", items: [oneItem()] });
 
     expect(SalesOrderRepository.createHeader).toHaveBeenCalledWith(
       expect.objectContaining({ currencyCode: "INR", baseCurrencyCode: "INR", exchangeRate: 1 })
@@ -174,7 +158,7 @@ describe("createSalesOrder", () => {
       buyerId: "",
       orderDate: "2026-08-24",
       requiredShipDate: "",
-      originatingDealId: "",
+     
       items: [oneItem({ unitPrice: 100, breakdown: [{ productVariantId: "v-1", orderedQuantity: 5 }, { productVariantId: "v-2", orderedQuantity: 5 }] })],
     });
 
@@ -186,7 +170,7 @@ describe("createSalesOrder", () => {
       buyerId: "",
       orderDate: "2026-08-24",
       requiredShipDate: "",
-      originatingDealId: "",
+     
       items: [oneItem({ sampleRequestId: "sam-1" })],
     });
     expect(SalesOrderRepository.createHeader).toHaveBeenCalled();
@@ -195,28 +179,28 @@ describe("createSalesOrder", () => {
   it("rejects a linked design that doesn't exist in this company", async () => {
     vi.mocked(SampleRequestRepository.findAnyById).mockResolvedValue(null);
     await expect(
-      createSalesOrder(actor, { customerId: "cust-1", buyerId: "", orderDate: "2026-08-24", requiredShipDate: "", originatingDealId: "", items: [oneItem({ sampleRequestId: "sam-x" })] })
+      createSalesOrder(actor, { customerId: "cust-1", buyerId: "", orderDate: "2026-08-24", requiredShipDate: "", items: [oneItem({ sampleRequestId: "sam-x" })] })
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 
   it("rejects a cancelled/rejected design", async () => {
     vi.mocked(SampleRequestRepository.findAnyById).mockResolvedValue({ id: "sam-1", requestNumber: "SAM-1", status: "CANCELLED", productId: "style-1" } as never);
     await expect(
-      createSalesOrder(actor, { customerId: "cust-1", buyerId: "", orderDate: "2026-08-24", requiredShipDate: "", originatingDealId: "", items: [oneItem({ sampleRequestId: "sam-1" })] })
+      createSalesOrder(actor, { customerId: "cust-1", buyerId: "", orderDate: "2026-08-24", requiredShipDate: "", items: [oneItem({ sampleRequestId: "sam-1" })] })
     ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
 
   it("rejects a design belonging to a different Style than the line's", async () => {
     vi.mocked(SampleRequestRepository.findAnyById).mockResolvedValue({ id: "sam-1", requestNumber: "SAM-1", status: "APPROVED", productId: "style-2" } as never);
     await expect(
-      createSalesOrder(actor, { customerId: "cust-1", buyerId: "", orderDate: "2026-08-24", requiredShipDate: "", originatingDealId: "", items: [oneItem({ sampleRequestId: "sam-1" })] })
+      createSalesOrder(actor, { customerId: "cust-1", buyerId: "", orderDate: "2026-08-24", requiredShipDate: "", items: [oneItem({ sampleRequestId: "sam-1" })] })
     ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
 
   it("rejects an inactive Style on a new order", async () => {
     vi.mocked(ProductRepository.findStyleById).mockResolvedValue({ id: "style-1", itemType: "STYLE", isActive: false, styleName: "Old" } as never);
     await expect(
-      createSalesOrder(actor, { customerId: "cust-1", buyerId: "", orderDate: "2026-08-24", requiredShipDate: "", originatingDealId: "", items: [oneItem()] })
+      createSalesOrder(actor, { customerId: "cust-1", buyerId: "", orderDate: "2026-08-24", requiredShipDate: "", items: [oneItem()] })
     ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
 });

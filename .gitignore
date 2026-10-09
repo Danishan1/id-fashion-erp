@@ -51,3 +51,6 @@ next-env.d.ts
 
 # local DB backups (contain password hashes / PII, never commit)
 /db_backup_before_wipe
+
+# Local DB safety dumps (pg_dump), never committed
+.db-backups/

@@ -7,10 +7,8 @@ import { BULK_IMPORT_MASTER_TYPES } from "@/modules/import/import.schema";
 import type { ImportBatchType } from "@prisma/client";
 
 /**
- * Batch history for the Bulk Master Data Import portal only — ImportBatch is
- * a shared table also used by the older CRM CSV importer (LEAD/DEAL/
- * CAMPAIGN_DAILY_METRIC), so this list is explicitly narrowed to the 6 bulk
- * master types to avoid mixing the two pipelines' history together.
+ * Batch history for the Bulk Master Data Import portal — narrowed to the bulk
+ * master types so any other future importer's batches stay separate.
  */
 export async function GET(req: NextRequest) {
   try {

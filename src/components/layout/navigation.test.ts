@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { filterNavSections, NAV_SECTIONS, type NavSection } from "./navigation";
+import { filterNavSections, isLeafActive, NAV_SECTIONS, type NavSection } from "./navigation";
 
 describe("filterNavSections", () => {
   it("returns every section unchanged when the viewer is unrestricted (\"all\")", () => {
@@ -71,5 +71,62 @@ describe("filterNavSections", () => {
         expect(child.modules.length).toBeGreaterThan(0);
       }
     }
+  });
+});
+
+describe("isLeafActive", () => {
+  const crm = NAV_SECTIONS.find((s) => s.label === "CRM")!;
+  const leaf = (label: string) => crm.children!.find((c) => c.label === label)!;
+
+  it("highlights only the most specific matching child", () => {
+    expect(isLeafActive(crm.children!, leaf("Activity Log"), "/crm/activity")).toBe(true);
+    // Phase 09: /crm/activities is its own page, not the Activity Log
+    expect(isLeafActive(crm.children!, leaf("Activities"), "/crm/activities/abc")).toBe(true);
+    expect(isLeafActive(crm.children!, leaf("Activity Log"), "/crm/activities")).toBe(false);
+    expect(isLeafActive(crm.children!, leaf("My Tasks"), "/crm/my-tasks")).toBe(true);
+    expect(isLeafActive(crm.children!, leaf("Dashboard"), "/crm/activity")).toBe(false);
+  });
+
+  it("still highlights the parent-path child on its own page", () => {
+    expect(isLeafActive(crm.children!, leaf("Dashboard"), "/crm")).toBe(true);
+    expect(isLeafActive(crm.children!, leaf("Activity Log"), "/crm")).toBe(false);
+  });
+
+  it("keeps Leads highlighted on nested lead pages", () => {
+    expect(isLeafActive(crm.children!, leaf("Leads"), "/crm/leads/abc/edit")).toBe(true);
+    expect(isLeafActive(crm.children!, leaf("Dashboard"), "/crm/leads/abc")).toBe(false);
+  });
+
+  it("tells Import Leads and Import History apart from Leads", () => {
+    expect(isLeafActive(crm.children!, leaf("Import History"), "/crm/leads/imports/abc")).toBe(true);
+    expect(isLeafActive(crm.children!, leaf("Import Leads"), "/crm/leads/imports/abc")).toBe(false);
+    expect(isLeafActive(crm.children!, leaf("Leads"), "/crm/leads/imports/abc")).toBe(false);
+    expect(isLeafActive(crm.children!, leaf("Import Leads"), "/crm/leads/import")).toBe(true);
+    expect(isLeafActive(crm.children!, leaf("Leads"), "/crm/leads/import")).toBe(false);
+  });
+
+  it("highlights Contacts for contact pages, including merge", () => {
+    expect(isLeafActive(crm.children!, leaf("Contacts"), "/crm/contacts/abc/edit")).toBe(true);
+    expect(isLeafActive(crm.children!, leaf("Contacts"), "/crm/contacts/merge")).toBe(true);
+    expect(isLeafActive(crm.children!, leaf("Leads"), "/crm/contacts")).toBe(false);
+  });
+
+  it("highlights Companies for company pages, including merge", () => {
+    expect(isLeafActive(crm.children!, leaf("Companies"), "/crm/companies/abc")).toBe(true);
+    expect(isLeafActive(crm.children!, leaf("Companies"), "/crm/companies/merge")).toBe(true);
+    expect(isLeafActive(crm.children!, leaf("Contacts"), "/crm/companies")).toBe(false);
+    expect(leaf("Companies").modules).toEqual(["crm"]);
+  });
+
+  it("highlights Opportunities for opportunity pages", () => {
+    expect(isLeafActive(crm.children!, leaf("Opportunities"), "/crm/opportunities/abc/edit")).toBe(true);
+    expect(isLeafActive(crm.children!, leaf("Opportunities"), "/crm/opportunities/new")).toBe(true);
+    expect(isLeafActive(crm.children!, leaf("Companies"), "/crm/opportunities")).toBe(false);
+    expect(leaf("Opportunities").modules).toEqual(["crm"]);
+  });
+
+  it("gates CRM Settings behind crm_settings", () => {
+
+    expect(leaf("Settings").modules).toEqual(["crm_settings"]);
   });
 });

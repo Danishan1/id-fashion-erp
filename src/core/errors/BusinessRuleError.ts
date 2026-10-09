@@ -20,6 +20,25 @@ export type BusinessRuleErrorCode =
   | "LOT_GENEALOGY_INVALID"
   | "INSUFFICIENT_STOCK_FOR_MOVEMENT"
   | "DUPLICATE_LEAD_EXISTS"
+  // CRM (2026-10-01): a configured "warn" duplicate rule matched — the client
+  // may retry with explicit confirmation (details.matches lists the records).
+  | "CRM_POSSIBLE_DUPLICATE"
+  // CRM: creating this contact/company would duplicate an existing record.
+  | "CRM_DUPLICATE_RECORD"
+  // Optimistic locking: the record changed since the caller loaded it.
+  | "RECORD_VERSION_CONFLICT"
+  // CRM (2026-10-06): a stage move was refused by the pipeline's transition
+  // rules or required fields (details.missingFields / details.reasons).
+  | "CRM_STAGE_TRANSITION_BLOCKED"
+  // CRM (2026-10-09): the employee already has an appointment in that time;
+  // the client may retry with explicit confirmation (details.conflicts).
+  | "CRM_APPOINTMENT_CONFLICT"
+  // CRM lead capture endpoints (API keys / webhooks).
+  | "INVALID_API_CREDENTIALS"
+  | "INVALID_WEBHOOK_SIGNATURE"
+  | "RATE_LIMITED"
+  | "PAYLOAD_TOO_LARGE"
+  | "REQUEST_IN_PROGRESS"
   | "DUPLICATE_CUSTOMER_EXISTS"
   | "LEAVE_BALANCE_EXCEEDED"
   | "AD_INTEGRATION_NOT_CONFIGURED"
@@ -57,6 +76,17 @@ const HTTP_STATUS_BY_CODE: Record<BusinessRuleErrorCode, number> = {
   LOT_GENEALOGY_INVALID: 409,
   INSUFFICIENT_STOCK_FOR_MOVEMENT: 409,
   DUPLICATE_LEAD_EXISTS: 409,
+  CRM_POSSIBLE_DUPLICATE: 409,
+  CRM_DUPLICATE_RECORD: 409,
+  RECORD_VERSION_CONFLICT: 409,
+  CRM_STAGE_TRANSITION_BLOCKED: 422,
+  CRM_APPOINTMENT_CONFLICT: 409,
+  INVALID_API_CREDENTIALS: 401,
+  INVALID_WEBHOOK_SIGNATURE: 401,
+  RATE_LIMITED: 429,
+  PAYLOAD_TOO_LARGE: 413,
+  REQUEST_IN_PROGRESS: 409,
+
   DUPLICATE_CUSTOMER_EXISTS: 409,
   LEAVE_BALANCE_EXCEEDED: 409,
   AD_INTEGRATION_NOT_CONFIGURED: 400,

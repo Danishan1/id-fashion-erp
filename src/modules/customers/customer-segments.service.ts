@@ -152,9 +152,22 @@ const REENGAGEMENT_INACTIVE_DAYS = 60;
  * background cron — this project has no job runner, matching the same
  * "Run Automation Now" / "Check for Due Follow-ups" manual-trigger
  * convention already used for Marketing's and CRM's own automation.
- * Dedup is "does this customer already have ANY open follow-up" rather than
- * a re-engagement-specific marker — the goal is one open task per customer,
- * not a pile of re-engagement reminders stacking on top of other pending work.
+ * Dedup is "does this customer's linked CRM Company already have ANY open
+ * activity" rather than a re-engagement-specific marker — the goal is one
+ * open task per company, not a pile of re-engagement reminders stacking on
+ * top of other pending work.
+ *
+ * Repointed at the new CRM (2026-10-09, CRM Replacement): the legacy
+ * CrmFollowup used the shared RelatedModule enum (which includes CUSTOMER),
+ * so it could attach directly to any ERP Customer. The new CrmActivity uses
+ * its own CrmEntityType enum, scoped to CRM-internal entities only
+ * (LEAD/CONTACT/COMPANY/OPPORTUNITY/ACTIVITY) — there is no way to attach an
+ * activity to a generic ERP Customer directly. This now creates the
+ * follow-up task on the customer's linked CrmCompany (entityType COMPANY)
+ * when one exists, and deliberately skips customers with no linked
+ * CrmCompany — there's no CRM-internal record to attach a task to yet for
+ * them (they'd need a Company created/linked first, e.g. via Lead
+ * conversion or manually in the CRM).
  */
 export async function generateReengagementFollowups(companyId: string, createdByUserId: string) {
   const segments = await getCustomerSegments(companyId);
@@ -163,27 +176,35 @@ export async function generateReengagementFollowups(companyId: string, createdBy
   );
 
   let created = 0;
+  let skippedNoCrmCompany = 0;
   for (const c of candidates) {
-    const existingOpen = await prisma.crmFollowup.findFirst({
-      where: { companyId, relatedModule: "CUSTOMER", relatedRecordId: c.id, status: "PENDING" },
+    const crmCompany = await prisma.crmCompany.findFirst({ where: { companyId, customerId: c.id }, select: { id: true } });
+    if (!crmCompany) {
+      skippedNoCrmCompany++;
+      continue;
+    }
+
+    const existingOpen = await prisma.crmActivity.findFirst({
+      where: { companyId, entityType: "COMPANY", entityId: crmCompany.id, status: { in: ["PENDING", "IN_PROGRESS"] } },
       select: { id: true },
     });
     if (existingOpen) continue;
 
-    await prisma.crmFollowup.create({
+    await prisma.crmActivity.create({
       data: {
         companyId,
-        relatedModule: "CUSTOMER",
-        relatedRecordId: c.id,
-        followupDate: new Date(),
-        type: "CALL",
-        priority: "MEDIUM",
-        notes: `Auto-created — re-engagement outreach: ${c.name} has not ordered in ${c.daysSinceLastOrder} days.`,
+        entityType: "COMPANY",
+        entityId: crmCompany.id,
+        type: "TASK",
+        subject: "Re-engagement outreach",
+        description: `Auto-created — re-engagement outreach: ${c.name} has not ordered in ${c.daysSinceLastOrder} days.`,
+        priority: "NORMAL",
+        dueAt: new Date(),
         createdByUserId,
       },
     });
     created++;
   }
 
-  return { checked: candidates.length, created };
+  return { checked: candidates.length, created, skippedNoCrmCompany };
 }

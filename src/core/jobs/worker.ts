@@ -4,6 +4,7 @@ import { createRedisConnection, BULK_IMPORT_QUEUE_NAME } from "./queue";
 import { processBulkImportJob } from "@/modules/import/bulk-import.service";
 import type { BulkImportActorContext } from "@/modules/import/bulk-import.service";
 import type { BulkImportMasterType } from "@/modules/import/import.schema";
+import { startCrmIngestWorker } from "@/modules/crm/imports/crm-import.worker";
 
 /**
  * Standalone process for the Bulk Master Data Import background queue —
@@ -53,11 +54,15 @@ worker.on("failed", (job, error) => {
 
 console.log(JSON.stringify({ level: "info", message: `Bulk import worker started, listening on queue "${BULK_IMPORT_QUEUE_NAME}"` }));
 
+// CRM lead import & capture jobs (Phase 03) share this worker process.
+const crmWorker = startCrmIngestWorker();
+
 process.on("SIGTERM", async () => {
-  await worker.close();
+  await Promise.all([worker.close(), crmWorker.close()]);
   process.exit(0);
 });
 process.on("SIGINT", async () => {
-  await worker.close();
+  await Promise.all([worker.close(), crmWorker.close()]);
   process.exit(0);
 });
+

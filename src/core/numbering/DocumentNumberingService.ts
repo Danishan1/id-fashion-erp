@@ -22,9 +22,6 @@ const PREFIX_BY_DOCUMENT_TYPE: Record<DocumentType, string> = {
   STYLE: "ST",
   MATERIAL: "MAT",
   CONTRACTOR: "CONTR",
-  LEAD: "LEAD",
-  DEAL: "DEAL",
-  CAMPAIGN: "CAMP",
   JOB_WORK_ORDER: "JWO",
   JOB_WORK_RECEIPT: "JWR",
   CUSTOM_INVOICE_CREDIT_NOTE: "CN",
@@ -36,6 +33,9 @@ const PREFIX_BY_DOCUMENT_TYPE: Record<DocumentType, string> = {
   REPLICATE_DESIGN_PROJECT: "RPD",
   FABRIC_ROLL: "FR",
   SKU: "SKU",
+  CRM_LEAD: "LEAD",
+  CRM_OPPORTUNITY: "OPP",
+  CAMPAIGN: "CAMP",
 };
 
 /** DocumentTypes that represent master-data codes, not transactional documents. */

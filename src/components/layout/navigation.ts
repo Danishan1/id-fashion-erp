@@ -70,28 +70,38 @@ export const NAV_SECTIONS: NavSection[] = [
     ],
   },
   { label: "Masters", href: "/masters", modules: ["masters_core", "masters_finance"] },
+  // CRM rebuild (2026-10-01, docs/crm/CRM_MASTER_BLUEPRINT.md) — each phase
+  // adds its own leaf here when its screens exist; never link unbuilt pages.
   {
     label: "CRM",
     href: "/crm",
     modules: ["crm"],
     children: [
-      // Only screens that genuinely exist are listed — Activities, Sales Team,
-      // Automation Rules and CRM Reports get entries as their slices land.
-      { label: "CRM Dashboard", href: "/crm", modules: ["crm"] },
-      { label: "Leads", href: "/leads", modules: ["crm"] },
-      { label: "Sales Pipeline", href: "/deals/board", modules: ["crm"] },
-      { label: "Opportunities", href: "/deals", modules: ["crm"] },
-      { label: "Follow-ups", href: "/follow-ups", modules: ["crm"] },
-      { label: "Customers / Buyers", href: "/masters/customers", modules: ["masters_core"] },
-      { label: "Import History", href: "/imports", modules: ["crm", "marketing"] },
-      { label: "CRM Settings", href: "/crm/settings", modules: ["crm"] },
+      { label: "Dashboard", href: "/crm", modules: ["crm"] },
+      { label: "Leads", href: "/crm/leads", modules: ["crm"] },
+      { label: "Import Leads", href: "/crm/leads/import", modules: ["crm"] },
+      { label: "Import History", href: "/crm/leads/imports", modules: ["crm"] },
+      { label: "Contacts", href: "/crm/contacts", modules: ["crm"] },
+      { label: "Companies", href: "/crm/companies", modules: ["crm"] },
+      { label: "Opportunities", href: "/crm/opportunities", modules: ["crm"] },
+      { label: "My Tasks", href: "/crm/my-tasks", modules: ["crm"] },
+      { label: "Calendar", href: "/crm/calendar", modules: ["crm"] },
+      { label: "Activities", href: "/crm/activities", modules: ["crm"] },
+
+      { label: "Activity Log", href: "/crm/activity", modules: ["crm"] },
+      { label: "Settings", href: "/crm/settings", modules: ["crm_settings"] },
     ],
   },
+  // Marketing (kept, unchanged shape, when the legacy CRM was replaced by
+  // the new CRM above — see CLAUDE.md's CRM Replacement section).
   {
     label: "Marketing",
     href: "/marketing",
     modules: ["marketing"],
-    children: [{ label: "Campaigns", href: "/campaigns", modules: ["marketing"] }],
+    children: [
+      { label: "Campaigns", href: "/campaigns", modules: ["marketing"] },
+      { label: "Import History", href: "/imports", modules: ["marketing"] },
+    ],
   },
   {
     label: "HRMS",
@@ -181,6 +191,19 @@ export const NAV_SECTIONS: NavSection[] = [
 
 function isPathActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);
+}
+
+/**
+ * True if this child is the one to highlight. A child whose href is a prefix
+ * of a sibling's (e.g. "Dashboard" at /crm next to "Activity Log" at
+ * /crm/activity) is only active when no more specific sibling matches, so
+ * exactly one leaf is highlighted.
+ */
+export function isLeafActive(siblings: NavLeaf[], child: NavLeaf, pathname: string): boolean {
+  if (!isPathActive(pathname, child.href)) return false;
+  return !siblings.some(
+    (other) => other.href !== child.href && other.href.length > child.href.length && isPathActive(pathname, other.href)
+  );
 }
 
 /** True if this section's own href, or any child's href, matches the current path. */

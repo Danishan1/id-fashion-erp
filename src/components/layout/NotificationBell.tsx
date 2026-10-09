@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 
 interface NotificationRow {
   id: string;
@@ -91,11 +90,6 @@ export function NotificationBell() {
                 </button>
               ))
             )}
-          </div>
-          <div className="border-t border-zinc-100 px-3 py-2 dark:border-zinc-800">
-            <Link href="/follow-ups" onClick={() => setOpen(false)} className="text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400">
-              View all follow-ups →
-            </Link>
           </div>
         </div>
       )}

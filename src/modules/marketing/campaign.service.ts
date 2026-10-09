@@ -6,7 +6,6 @@ import { PermissionService } from "@/core/rbac/PermissionService";
 import type { ListQuery } from "@/lib/list-query";
 import { CampaignStatus, type CampaignAlertType, type Prisma } from "@prisma/client";
 import { CampaignAlertRepository, CampaignAttributionRepository, CampaignDailyMetricRepository, CampaignRepository } from "./campaign.repository";
-import { getCrmSettings } from "@/modules/crm/crm-settings.service";
 import type {
   AddAttributionInput,
   CampaignStatusChangeInput,
@@ -49,29 +48,36 @@ const EMPTY_METRICS: CampaignMetrics = { spend: 0, leads: 0, qualifiedLeads: 0, 
 /**
  * Deliberately computed, never stored — the source's own eq_mkt_campaigns
  * table holds these as flat mutable columns, exactly the "second source of
- * truth" this project has fixed more than once elsewhere. "Qualified" reuses
- * the same configurable warm-lead threshold that computes Lead.priority
- * (WARM/HOT) — the source's own `lead_quality IN ('high','medium')` count was
- * already the identical definition under a different label (score>=50), now
- * both read from the one company-configurable `CrmSettings.warmThreshold`
- * (see crm-settings.service.ts) instead of two separately hardcoded copies.
- * "Customers"/"revenue" trace the real causal chain (Lead.campaignId -> won
- * Lead -> its Deal(s)), not a counter anyone has to remember to increment.
+ * truth" this project has fixed more than once elsewhere.
+ *
+ * Repointed at the new CRM (2026-10-09, CRM Replacement): "Qualified" is now
+ * CrmLead.temperature IN (WARM, HOT) — the new CRM has no configurable
+ * score threshold (CrmSettings was redesigned around duplicate-detection
+ * rules only), so this reuses the new CRM's own primary quality signal
+ * directly rather than reintroducing a threshold setting. "Customers" is
+ * CrmLead.convertedAt IS NOT NULL (a direct column, cleaner than the old
+ * stage-kind join). "Revenue" sums CrmOpportunity.amount where status=WON,
+ * joined via CrmOpportunity.lead.campaignId (CrmOpportunity has no direct
+ * campaignId column, same two-hop shape the legacy CRM's Deal had).
  */
-async function computeCampaignMetricsMap(companyId: string, campaignIds: string[], warmThreshold: number): Promise<Map<string, CampaignMetrics>> {
+async function computeCampaignMetricsMap(companyId: string, campaignIds: string[]): Promise<Map<string, CampaignMetrics>> {
   const map = new Map<string, CampaignMetrics>();
   if (campaignIds.length === 0) return map;
   for (const id of campaignIds) map.set(id, { ...EMPTY_METRICS });
 
   const [spendRows, leadCounts, qualifiedCounts, customerCounts, revenueRows] = await Promise.all([
     CampaignDailyMetricRepository.sumByCampaignIds(campaignIds),
-    prisma.lead.groupBy({ by: ["campaignId"], where: { companyId, campaignId: { in: campaignIds } }, _count: { _all: true } }),
-    prisma.lead.groupBy({ by: ["campaignId"], where: { companyId, campaignId: { in: campaignIds }, leadScore: { gte: warmThreshold } }, _count: { _all: true } }),
-    prisma.lead.groupBy({ by: ["campaignId"], where: { companyId, campaignId: { in: campaignIds }, stage: { kind: "WON" } }, _count: { _all: true } }),
+    prisma.crmLead.groupBy({ by: ["campaignId"], where: { companyId, campaignId: { in: campaignIds } }, _count: { _all: true } }),
+    prisma.crmLead.groupBy({
+      by: ["campaignId"],
+      where: { companyId, campaignId: { in: campaignIds }, temperature: { in: ["WARM", "HOT"] } },
+      _count: { _all: true },
+    }),
+    prisma.crmLead.groupBy({ by: ["campaignId"], where: { companyId, campaignId: { in: campaignIds }, convertedAt: { not: null } }, _count: { _all: true } }),
     Promise.all(
       campaignIds.map(async (id) => {
-        const agg = await prisma.deal.aggregate({ where: { stage: "WON", lead: { campaignId: id } }, _sum: { value: true } });
-        return [id, Number(agg._sum.value ?? 0)] as const;
+        const agg = await prisma.crmOpportunity.aggregate({ where: { status: "WON", lead: { campaignId: id } }, _sum: { amount: true } });
+        return [id, Number(agg._sum.amount ?? 0)] as const;
       })
     ),
   ]);
@@ -86,8 +92,7 @@ async function computeCampaignMetricsMap(companyId: string, campaignIds: string[
 }
 
 async function decorateCampaigns<T extends { id: string }>(companyId: string, campaigns: T[]): Promise<(T & { metrics: CampaignMetrics })[]> {
-  const { warmThreshold } = await getCrmSettings(companyId);
-  const metricsMap = await computeCampaignMetricsMap(companyId, campaigns.map((c) => c.id), warmThreshold);
+  const metricsMap = await computeCampaignMetricsMap(companyId, campaigns.map((c) => c.id));
   return campaigns.map((c) => ({ ...c, metrics: metricsMap.get(c.id) ?? { ...EMPTY_METRICS } }));
 }
 
@@ -313,7 +318,7 @@ export async function addAttribution(actor: ActorContext, input: AddAttributionI
     if (!campaign) throw new BusinessRuleError("NOT_FOUND", "Campaign not found.", { id: input.campaignId });
   }
   if (input.leadId) {
-    const lead = await prisma.lead.findFirst({ where: { id: input.leadId, companyId: actor.companyId }, select: { id: true } });
+    const lead = await prisma.crmLead.findFirst({ where: { id: input.leadId, companyId: actor.companyId }, select: { id: true } });
     if (!lead) throw new BusinessRuleError("NOT_FOUND", "Lead not found.", { id: input.leadId });
   }
 
@@ -358,14 +363,13 @@ async function createAlertIfNotOpen(
  * dashboard rather than only running on a schedule.
  */
 export async function runMarketingAutomation(companyId: string) {
-  const { warmThreshold } = await getCrmSettings(companyId);
   // A campaign can only ever reach ACTIVE/PAUSED once approved (enforced in
   // changeCampaignStatus()), but approval can later be revoked via
   // rejectCampaign() without forcing a status change — this filter is what
   // actually makes "rejected campaigns cannot trigger automation" (the
   // request's own §10 rule) hold for that revoked-after-activation case too.
   const campaigns = (await CampaignRepository.findActiveOrPaused(companyId)).filter((c) => c.approvalStatus === "APPROVED");
-  const metricsMap = await computeCampaignMetricsMap(companyId, campaigns.map((c) => c.id), warmThreshold);
+  const metricsMap = await computeCampaignMetricsMap(companyId, campaigns.map((c) => c.id));
 
   for (const campaign of campaigns) {
     const m = metricsMap.get(campaign.id)!;
@@ -390,7 +394,7 @@ export async function runMarketingAutomation(companyId: string) {
       const cpl = m.spend / m.leads;
       const peers = await CampaignRepository.findManyByChannel(companyId, campaign.channel);
       const peerIds = peers.map((p) => p.id).filter((id) => id !== campaign.id);
-      const peerMetrics = await computeCampaignMetricsMap(companyId, peerIds, warmThreshold);
+      const peerMetrics = await computeCampaignMetricsMap(companyId, peerIds);
       const peerCpls = [...peerMetrics.values()].filter((p) => p.leads >= 10 && p.spend > 0).map((p) => p.spend / p.leads);
       const benchmark = peerCpls.length ? peerCpls.reduce((a, b) => a + b, 0) / peerCpls.length : 0;
       if (benchmark > 0 && cpl > benchmark * 1.5) {
@@ -422,9 +426,8 @@ export async function resolveCampaignAlert(actor: ActorContext, id: string) {
 /** Mirrors eq_mkt_dashboard()'s stat cards — total budget/spend/leads/
  * qualified/customers/attributed revenue/ROAS/open alerts. */
 export async function getMarketingDashboard(companyId: string) {
-  const { warmThreshold } = await getCrmSettings(companyId);
   const campaigns = await prisma.campaign.findMany({ where: { companyId }, select: { id: true, budget: true } });
-  const metricsMap = await computeCampaignMetricsMap(companyId, campaigns.map((c) => c.id), warmThreshold);
+  const metricsMap = await computeCampaignMetricsMap(companyId, campaigns.map((c) => c.id));
 
   let budget = 0;
   let spend = 0;
@@ -480,34 +483,35 @@ function dayKey(d: Date): string {
  * A daily time series across every campaign — powers the Marketing
  * dashboard's trend charts. No new schema: `CampaignDailyMetric` already
  * stores spend/impressions/clicks by date, this just aggregates it alongside
- * Lead/Deal activity for the same window. Grouped in JS rather than a raw
- * SQL date-trunc — the window is small (default 30 days for one company),
- * and this keeps every query a plain typed Prisma call instead of introducing
+ * CrmLead/CrmOpportunity activity for the same window (repointed at the new
+ * CRM, 2026-10-09, CRM Replacement). Grouped in JS rather than a raw SQL
+ * date-trunc — the window is small (default 30 days for one company), and
+ * this keeps every query a plain typed Prisma call instead of introducing
  * this project's first raw-SQL aggregation for one dashboard.
  *
- * "Revenue" and "Customers" are approximated by `Deal.createdAt`/
- * `Lead.createdAt` (when the record was created), not a true "won on this
- * date" timestamp — `Deal` has no separate `wonAt` column (a known,
- * already-documented limitation elsewhere in this project), so a deal
- * created on day N and won on day N+5 shows its revenue on day N. Acceptable
- * for a trend shape; not exact day-level revenue recognition.
+ * "Revenue" and "Customers" are approximated by `CrmOpportunity.createdAt`/
+ * `CrmLead.createdAt` (when the record was created), not a true "won on this
+ * date" timestamp — CrmOpportunity has `closedAt`, but using it here would
+ * silently exclude same-day-created-and-not-yet-closed opportunities from
+ * the revenue trend entirely rather than just approximating the date, so
+ * `createdAt` is kept as the simpler, already-accepted approximation.
  */
 export async function getMarketingTrends(companyId: string, days = 30): Promise<MarketingTrendPoint[]> {
   const now = new Date();
   const startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (days - 1));
 
-  const [dailyMetrics, leads, wonDeals] = await Promise.all([
+  const [dailyMetrics, leads, wonOpportunities] = await Promise.all([
     prisma.campaignDailyMetric.findMany({
       where: { campaign: { companyId }, metricDate: { gte: startDate } },
       select: { metricDate: true, spend: true, impressions: true, clicks: true },
     }),
-    prisma.lead.findMany({
+    prisma.crmLead.findMany({
       where: { companyId, campaignId: { not: null }, createdAt: { gte: startDate } },
-      select: { createdAt: true, stage: { select: { kind: true } } },
+      select: { createdAt: true, convertedAt: true },
     }),
-    prisma.deal.findMany({
-      where: { companyId, stage: "WON", createdAt: { gte: startDate }, lead: { campaignId: { not: null } } },
-      select: { createdAt: true, value: true },
+    prisma.crmOpportunity.findMany({
+      where: { companyId, status: "WON", createdAt: { gte: startDate }, lead: { campaignId: { not: null } } },
+      select: { createdAt: true, amount: true },
     }),
   ]);
 
@@ -528,11 +532,11 @@ export async function getMarketingTrends(companyId: string, days = 30): Promise<
     const bucket = buckets.get(dayKey(new Date(l.createdAt)));
     if (!bucket) continue;
     bucket.leads += 1;
-    if (l.stage.kind === "WON") bucket.customers += 1;
+    if (l.convertedAt !== null) bucket.customers += 1;
   }
-  for (const d of wonDeals) {
-    const bucket = buckets.get(dayKey(new Date(d.createdAt)));
-    if (bucket) bucket.revenue += Number(d.value);
+  for (const o of wonOpportunities) {
+    const bucket = buckets.get(dayKey(new Date(o.createdAt)));
+    if (bucket) bucket.revenue += Number(o.amount ?? 0);
   }
 
   return [...buckets.entries()].map(([date, v]) => ({
@@ -569,10 +573,11 @@ export interface ChannelPerformanceFilters {
  * rather than disappearing, so the report reads as "how did every channel do
  * in this period," not "which channels happened to have data."
  *
- * "Deals" traced via Lead.campaignId -> Deal.leadId since Deal has no direct
- * campaignId column — the same join path `computeCampaignMetricsMap()`
- * already uses for its own revenue calc, just grouped by channel here
- * instead of by campaign.
+ * "Deals" (Opportunities) traced via CrmLead.campaignId -> CrmOpportunity.leadId
+ * since CrmOpportunity has no direct campaignId column — the same join path
+ * `computeCampaignMetricsMap()` already uses for its own revenue calc, just
+ * grouped by channel here instead of by campaign (repointed at the new CRM,
+ * 2026-10-09, CRM Replacement).
  */
 export async function getChannelPerformance(companyId: string, filters: ChannelPerformanceFilters = {}): Promise<ChannelPerformanceRow[]> {
   const campaigns = await prisma.campaign.findMany({
@@ -596,19 +601,19 @@ export async function getChannelPerformance(companyId: string, filters: ChannelP
   const channelByCampaignId = new Map(campaigns.map((c) => [c.id, c.channel]));
   const dateRange = filters.dateFrom || filters.dateTo ? { gte: filters.dateFrom, lte: filters.dateTo } : undefined;
 
-  const [metricRows, leads, deals] = await Promise.all([
+  const [metricRows, leads, opportunities] = await Promise.all([
     prisma.campaignDailyMetric.groupBy({
       by: ["campaignId"],
       where: { campaignId: { in: campaignIds }, ...(dateRange ? { metricDate: dateRange } : {}) },
       _sum: { spend: true },
     }),
-    prisma.lead.findMany({
+    prisma.crmLead.findMany({
       where: { companyId, campaignId: { in: campaignIds }, ...(dateRange ? { createdAt: dateRange } : {}) },
       select: { campaignId: true },
     }),
-    prisma.deal.findMany({
+    prisma.crmOpportunity.findMany({
       where: { companyId, lead: { campaignId: { in: campaignIds } }, ...(dateRange ? { createdAt: dateRange } : {}) },
-      select: { stage: true, value: true, lead: { select: { campaignId: true } } },
+      select: { status: true, amount: true, lead: { select: { campaignId: true } } },
     }),
   ]);
 
@@ -620,14 +625,14 @@ export async function getChannelPerformance(companyId: string, filters: ChannelP
     const channel = l.campaignId ? channelByCampaignId.get(l.campaignId) : undefined;
     if (channel) ensure(channel).leads += 1;
   }
-  for (const d of deals) {
-    const channel = d.lead?.campaignId ? channelByCampaignId.get(d.lead.campaignId) : undefined;
+  for (const o of opportunities) {
+    const channel = o.lead?.campaignId ? channelByCampaignId.get(o.lead.campaignId) : undefined;
     if (!channel) continue;
     const row = ensure(channel);
     row.deals += 1;
-    if (d.stage === "WON") {
+    if (o.status === "WON") {
       row.wonDeals += 1;
-      row.revenue += Number(d.value);
+      row.revenue += Number(o.amount ?? 0);
     }
   }
 

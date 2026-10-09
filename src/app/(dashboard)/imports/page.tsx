@@ -6,8 +6,6 @@ import { downloadCsvFile } from "@/lib/csv";
 import { IMPORT_COLUMNS, type ImportBatchTypeValue } from "@/modules/import/import.schema";
 
 const IMPORT_TYPE_LABELS: Record<ImportBatchTypeValue, string> = {
-  LEAD: "Leads",
-  DEAL: "Deals",
   CAMPAIGN_DAILY_METRIC: "Campaign Daily Metrics",
 };
 
@@ -47,8 +45,8 @@ export default function ImportHistoryPage() {
       <div>
         <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Import History</h1>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-          Every CSV import run — Leads, Deals, and Campaign Daily Metrics — with a summary of what was imported, skipped, and
-          why. Start a new import from the Leads, Deals, or Campaigns page.
+          Every CSV import run — Campaign Daily Metrics — with a summary of what was imported, skipped, and why. Start a new
+          import from the Campaigns page.
         </p>
       </div>
 

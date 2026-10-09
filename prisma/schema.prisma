@@ -99,23 +99,44 @@ model Company {
   auditLogs                           AuditLog[]
   notifications                       Notification[]
   attachments                         Attachment[]
-  leads                               Lead[]
-  deals                               Deal[]
-  crmActivities                       CrmActivity[]
-  crmFollowups                        CrmFollowup[]
-  crmRoundRobinState                  CrmRoundRobinState?
-  crmSettings                         CrmSettings?
-  crmPipelineStages                   CrmPipelineStage[]
-  crmLeadSources                      CrmLeadSource[]
-  crmLostReasons                      CrmLostReason[]
-  crmStageHistory                     CrmStageHistory[]
-  crmAssignmentHistory                CrmAssignmentHistory[]
-  crmLeadContacts                     CrmLeadContact[]
   importBatches                       ImportBatch[]
   campaigns                           Campaign[]
   campaignAttributions                CampaignAttribution[]
   campaignAlerts                      CampaignAlert[]
   adAccountConnections                AdAccountConnection[]
+  crmEvents                           CrmEvent[]
+  crmLeadStatuses                     CrmLeadStatus[]
+  crmLeadSources                      CrmLeadSource[]
+  crmLeads                            CrmLead[]
+  crmCompanies                        CrmCompany[]
+  crmContacts                         CrmContact[]
+  crmOpportunities                    CrmOpportunity[]
+  crmTags                             CrmTag[]
+  crmEntityTags                       CrmEntityTag[]
+  crmNotes                            CrmNote[]
+  crmCustomFieldDefinitions           CrmCustomFieldDefinition[]
+  crmSettings                         CrmSettings?
+  crmSavedViews                       CrmSavedView[]
+  crmImportJobs                       CrmImportJob[]
+  crmLeadExternalRefs                 CrmLeadExternalRef[]
+  crmIngestEvents                     CrmIngestEvent[]
+  crmApiKeys                          CrmApiKey[]
+  crmWebhookEndpoints                 CrmWebhookEndpoint[]
+  crmAddresses                        CrmAddress[]
+  crmContactChannels                  CrmContactChannel[]
+  crmContactConsents                  CrmContactConsent[]
+  crmContactMerges                    CrmContactMerge[]
+  crmOptionValues                     CrmOptionValue[]
+  crmCompanyStatuses                  CrmCompanyStatus[]
+  crmPipelines                        CrmPipeline[]
+  crmPipelineStages                   CrmPipelineStage[]
+  crmOpportunityErpLinks              CrmOpportunityErpLink[]
+  crmStageTransitionRules             CrmStageTransitionRule[]
+  crmOpportunityStageHistory          CrmOpportunityStageHistory[]
+  crmActivities                       CrmActivity[]
+  crmActivityLinks                    CrmActivityLink[]
+  crmUserPreferences                  CrmUserPreference[]
+  crmCompanyMerges                    CrmCompanyMerge[]
   attendanceRecords                   AttendanceRecord[]
   attendanceCorrectionRequests        AttendanceCorrectionRequest[]
   leaveTypes                          LeaveType[]
@@ -237,9 +258,6 @@ model Branch {
   productionOrders      ProductionOrder[]
   lots                  Lot[]
   documentSequences     DocumentSequence[]
-  leads                 Lead[]
-  deals                 Deal[]
-  campaigns             Campaign[]
   journals              Journal[]
   salesInvoices         SalesInvoice[]
   purchaseInvoices      PurchaseInvoice[]
@@ -251,6 +269,9 @@ model Branch {
   internalTransfers     InternalTransfer[]
   employeeAdvances      EmployeeAdvance[]
   aiGarmentProjects     AiGarmentProject[]
+  campaigns             Campaign[]
+
+  crmLeads CrmLead[]
 
   @@unique([companyId, code])
   @@map("branches")
@@ -340,24 +361,32 @@ model User {
   jobOrderProgressEntriesApproved            JobOrderProgressEntry[]              @relation("JobOrderProgressEntryApprovedBy")
   productionStageTransactionsPerformed       ProductionStageTransaction[]         @relation("ProductionStageTransactionPerformedBy")
   qcInspectionsMade                          QcInspection[]                       @relation("QcInspectionInspector")
-  leadsAssigned                              Lead[]                               @relation("LeadAssignedTo")
-  leadsCreated                               Lead[]                               @relation("LeadCreatedBy")
-  crmStageChanges                            CrmStageHistory[]                    @relation("CrmStageHistoryChangedBy")
-  crmAssignmentsFrom                         CrmAssignmentHistory[]               @relation("CrmAssignmentFrom")
-  crmAssignmentsTo                           CrmAssignmentHistory[]               @relation("CrmAssignmentTo")
-  crmAssignmentsMade                         CrmAssignmentHistory[]               @relation("CrmAssignmentBy")
-  dealsAssigned                              Deal[]                               @relation("DealAssignedTo")
-  dealsCreated                               Deal[]                               @relation("DealCreatedBy")
-  crmActivitiesPerformed                     CrmActivity[]                        @relation("CrmActivityPerformedBy")
-  crmFollowupsAssigned                       CrmFollowup[]                        @relation("CrmFollowupAssignedTo")
-  crmFollowupsCreated                        CrmFollowup[]                        @relation("CrmFollowupCreatedBy")
+  importBatchesCreated                       ImportBatch[]
   campaignsOwned                             Campaign[]                           @relation("CampaignOwner")
   campaignsCreated                           Campaign[]                           @relation("CampaignCreatedBy")
   campaignsApproved                          Campaign[]                           @relation("CampaignApprovedBy")
   campaignDailyMetricsRecorded               CampaignDailyMetric[]
-  crmSettingsUpdated                         CrmSettings[]
-  importBatchesCreated                       ImportBatch[]
   adAccountConnectionsCreated                AdAccountConnection[]
+  crmEventsActed                             CrmEvent[]                           @relation("CrmEventActor")
+  crmLeadsOwned                              CrmLead[]                            @relation("CrmLeadOwner")
+  crmLeadsCreated                            CrmLead[]                            @relation("CrmLeadCreatedBy")
+  crmCompaniesOwned                          CrmCompany[]                         @relation("CrmCompanyOwner")
+  crmCompaniesCreated                        CrmCompany[]                         @relation("CrmCompanyCreatedBy")
+  crmContactsOwned                           CrmContact[]                         @relation("CrmContactOwner")
+  crmContactsCreated                         CrmContact[]                         @relation("CrmContactCreatedBy")
+  crmOpportunitiesOwned                      CrmOpportunity[]                     @relation("CrmOpportunityOwner")
+  crmOpportunitiesCreated                    CrmOpportunity[]                     @relation("CrmOpportunityCreatedBy")
+  crmNotesAuthored                           CrmNote[]                            @relation("CrmNoteAuthor")
+  crmActivitiesAssigned                      CrmActivity[]                        @relation("CrmActivityAssignee")
+  crmActivitiesCreated                       CrmActivity[]                        @relation("CrmActivityCreatedBy")
+  crmPreferences                             CrmUserPreference[]
+  crmSavedViews                              CrmSavedView[]                       @relation("CrmSavedViewOwner")
+  crmImportJobsCreated                       CrmImportJob[]                       @relation("CrmImportJobCreatedBy")
+  crmImportRowsReviewed                      CrmImportRow[]                       @relation("CrmImportRowReviewedBy")
+  crmApiKeysCreated                          CrmApiKey[]                          @relation("CrmApiKeyCreatedBy")
+  crmApiKeysOwning                           CrmApiKey[]                          @relation("CrmApiKeyDefaultOwner")
+  crmWebhookEndpointsCreated                 CrmWebhookEndpoint[]                 @relation("CrmWebhookEndpointCreatedBy")
+  crmWebhookEndpointsOwning                  CrmWebhookEndpoint[]                 @relation("CrmWebhookEndpointDefaultOwner")
   attendanceRecordsRecorded                  AttendanceRecord[]
   attendanceCorrectionsApproved              AttendanceCorrectionRequest[]        @relation("AttendanceCorrectionApprovedBy")
   attendanceCorrectionsCreated               AttendanceCorrectionRequest[]        @relation("AttendanceCorrectionCreatedBy")
@@ -633,12 +662,13 @@ model Customer {
   sampleRequests    SampleRequest[]
   buyerEnquiries    BuyerEnquiry[]
   salesOrders       SalesOrder[]
-  deals             Deal[]
   salesInvoices     SalesInvoice[]
   payments          Payment[]
   dispatches        Dispatch[]
   customInvoices    CustomInvoice[]
   aiGarmentProjects AiGarmentProject[]
+
+  crmCompany CrmCompany?
 
   @@unique([companyId, code])
   @@map("customers")
@@ -662,6 +692,7 @@ model Buyer {
   buyerEnquiries    BuyerEnquiry[]
   salesOrders       SalesOrder[]
   aiGarmentProjects AiGarmentProject[]
+  crmContacts       CrmContact[]
 
   @@unique([customerId, code])
   @@map("buyers")
@@ -1620,7 +1651,6 @@ model SalesAgent {
   updatedAt         DateTime @updatedAt @map("updated_at")
 
   company Company @relation(fields: [companyId], references: [id])
-  deals   Deal[]
 
   @@unique([companyId, code])
   @@map("sales_agents")
@@ -1668,7 +1698,6 @@ model Category {
   subCategories     Category[]         @relation("CategoryHierarchy")
   products          Product[]
   aiGarmentProjects AiGarmentProject[]
-  crmLeads          Lead[]
 
   @@unique([companyId, code])
   @@map("categories")
@@ -1686,7 +1715,6 @@ model Season {
   company           Company            @relation(fields: [companyId], references: [id])
   products          Product[]
   aiGarmentProjects AiGarmentProject[]
-  crmLeads          Lead[]
 
   @@unique([companyId, code])
   @@map("seasons")
@@ -1720,7 +1748,6 @@ model ProductType {
   company                   Company                           @relation(fields: [companyId], references: [id])
   products                  Product[]
   aiGarmentSuitabilityItems AiGarmentProductSuitabilityItem[]
-  crmLeadProductInterests   CrmLeadProductInterest[]
 
   @@unique([companyId, code])
   @@map("product_types")
@@ -2450,16 +2477,12 @@ model BuyerEnquiry {
   createdAt             DateTime           @default(now()) @map("created_at")
   updatedAt             DateTime           @updatedAt @map("updated_at")
 
-  company         Company            @relation(fields: [companyId], references: [id])
-  branch          Branch?            @relation(fields: [branchId], references: [id])
-  customer        Customer?          @relation(fields: [customerId], references: [id])
-  buyer           Buyer?             @relation(fields: [buyerId], references: [id])
-  requestedBy     User               @relation("BuyerEnquiryRequestedBy", fields: [requestedByUserId], references: [id])
-  lines           BuyerEnquiryLine[]
-  // Virtual back-relation only — the one real column lives on Lead
-  // (Lead.buyerEnquiryId), same "single authoritative FK" shape as
-  // BuyerEnquiryLine.sampleRequestId above.
-  originatingLead Lead?
+  company     Company            @relation(fields: [companyId], references: [id])
+  branch      Branch?            @relation(fields: [branchId], references: [id])
+  customer    Customer?          @relation(fields: [customerId], references: [id])
+  buyer       Buyer?             @relation(fields: [buyerId], references: [id])
+  requestedBy User               @relation("BuyerEnquiryRequestedBy", fields: [requestedByUserId], references: [id])
+  lines       BuyerEnquiryLine[]
 
   @@unique([companyId, enquiryNumber])
   @@map("buyer_enquiries")
@@ -2505,472 +2528,10 @@ model BuyerEnquiryLine {
 }
 
 // ─────────────────────────────────────────────────────────────
-// CRM — Lead & Deal (migrated from WordPress "EQ CRM"; see
-// CRM_SALES_MARKETING_HRMS_MIGRATION_REPORT.md for the full source analysis
-// and the mapping decisions this schema follows)
-// ─────────────────────────────────────────────────────────────
-
-// Lead.status (a fixed 7-value enum) was replaced 2026-09-27 by a real FK to
-// the configurable CrmPipelineStage master (Lead.stageId) — see the CRM Lead-
-// to-Customer upgrade. A stage's own `kind` (OPEN/WON/LOST/DORMANT) is what
-// every business rule keys on, never a stage's display name/code, so an
-// admin can rename or insert stages freely without breaking reports.
-enum CrmPipeline {
-  LEAD
-  OPPORTUNITY
-}
-
-enum CrmStageKind {
-  OPEN
-  WON
-  LOST
-  DORMANT
-}
-
-enum CrmBusinessType {
-  BRAND
-  RETAILER
-  WHOLESALER
-  IMPORTER
-  BUYING_HOUSE
-  BUYING_AGENT
-  DESIGNER
-  ECOMMERCE_BRAND
-  DEPARTMENT_STORE
-  DISTRIBUTOR
-  MANUFACTURER
-  OTHER
-}
-
-// A salesperson-set urgency, genuinely distinct from LeadQuality (which is
-// always derived from leadScore) — the spec asks for both.
-enum CrmLeadPriority {
-  LOW
-  MEDIUM
-  HIGH
-  URGENT
-}
-
-// Deliberately NOT a stored column on Lead — computed from leadScore at read
-// time against CrmSettings' hot/warm thresholds. (Renamed from LeadPriority
-// NORMAL/WARM/HOT on 2026-09-27 to the spec's own "Lead Quality: Cold/Warm/
-// Hot" vocabulary; "priority" now means the stored CrmLeadPriority instead.)
-enum LeadQuality {
-  COLD
-  WARM
-  HOT
-}
-
-model Lead {
-  id                      String           @id @default(uuid()) @db.Uuid
-  companyId               String           @map("company_id") @db.Uuid
-  branchId                String?          @map("branch_id") @db.Uuid
-  leadNumber              String           @map("lead_number")
-  name                    String
-  email                   String?
-  phone                   String?
-  companyName             String?          @map("company_name")
-  designation             String?
-  whatsappNumber          String?          @map("whatsapp_number")
-  alternativePhone        String?          @map("alternative_phone")
-  website                 String?
-  businessType            CrmBusinessType? @map("business_type")
-  country                 String?
-  state                   String?
-  city                    String?
-  address                 String?
-  // Garment business information — reuses the real Category/Season masters
-  // (product interest is a join table to the real ProductType master),
-  // never free-text duplicates of master data. `market` stays free text: no
-  // Market master exists anywhere in this ERP (same call AI Garment Flow made).
-  productCategoryId       String?          @map("product_category_id") @db.Uuid
-  seasonId                String?          @map("season_id") @db.Uuid
-  market                  String?
-  expectedQuantity        Int?             @map("expected_quantity")
-  targetPrice             Decimal?         @map("target_price") @db.Decimal(15, 2)
-  currencyCode            String?          @map("currency_code") @db.Char(3)
-  moqRequirement          String?          @map("moq_requirement")
-  requiredDeliveryDate    DateTime?        @map("required_delivery_date") @db.Date
-  samplingRequired        Boolean          @default(false) @map("sampling_required")
-  techPackAvailable       Boolean          @default(false) @map("tech_pack_available")
-  referenceImageAvailable Boolean          @default(false) @map("reference_image_available")
-  priority                CrmLeadPriority  @default(MEDIUM)
-  sourceId                String?          @map("source_id") @db.Uuid
-  // A real FK now that Campaign exists (Marketing pass) — campaignText
-  // remains as the free-text fallback for a lead sourced from a channel
-  // with no tracked Campaign record (e.g. an informal referral), the same
-  // "existing record OR free text" dual-field shape already used by
-  // BuyerEnquiryLine.productId/styleNameFreeText.
-  campaignId              String?          @map("campaign_id") @db.Uuid
-  campaignText            String?          @map("campaign_text")
-  leadScore               Decimal          @default(0) @map("lead_score") @db.Decimal(6, 2)
-  stageId                 String           @map("stage_id") @db.Uuid
-  stageChangedAt          DateTime         @default(now()) @map("stage_changed_at")
-  // Snapshot of the most recent Won/Lost decision — the full, never-
-  // overwritten record of every stage move lives in CrmStageHistory.
-  wonAt                   DateTime?        @map("won_at")
-  lostAt                  DateTime?        @map("lost_at")
-  lostReasonId            String?          @map("lost_reason_id") @db.Uuid
-  lostCompetitor          String?          @map("lost_competitor")
-  lostComment             String?          @map("lost_comment")
-  lostCanRevisit          Boolean?         @map("lost_can_revisit")
-  value                   Decimal          @default(0) @db.Decimal(15, 2)
-  expectedCloseDate       DateTime?        @map("expected_close_date") @db.Date
-  assignedToUserId        String?          @map("assigned_to_user_id") @db.Uuid
-  assignedAt              DateTime?        @map("assigned_at")
-  // Forward-only traceability into the existing Buyer Enquiry -> Sample ->
-  // Style pipeline, for when a generic sales lead turns into a real garment
-  // style enquiry. @unique enforces "a BuyerEnquiry originates from at most
-  // one Lead" at the DB level — same single-authoritative-FK shape already
-  // proven by BuyerEnquiryLine.sampleRequestId. Deliberately NOT a merge of
-  // Lead into BuyerEnquiry itself (see the migration report's decision log)
-  // — BuyerEnquiry's own shape is style-centric and would distort a generic
-  // CRM lead that has no product discussed yet.
-  buyerEnquiryId          String?          @unique @map("buyer_enquiry_id") @db.Uuid
-  lastActivityAt          DateTime?        @map("last_activity_at")
-  notes                   String?
-  createdByUserId         String           @map("created_by_user_id") @db.Uuid
-  createdAt               DateTime         @default(now()) @map("created_at")
-  updatedAt               DateTime         @updatedAt @map("updated_at")
-
-  company          Company                  @relation(fields: [companyId], references: [id])
-  branch           Branch?                  @relation(fields: [branchId], references: [id])
-  assignedTo       User?                    @relation("LeadAssignedTo", fields: [assignedToUserId], references: [id])
-  createdBy        User                     @relation("LeadCreatedBy", fields: [createdByUserId], references: [id])
-  buyerEnquiry     BuyerEnquiry?            @relation(fields: [buyerEnquiryId], references: [id])
-  campaign         Campaign?                @relation(fields: [campaignId], references: [id])
-  stage            CrmPipelineStage         @relation("LeadStage", fields: [stageId], references: [id])
-  source           CrmLeadSource?           @relation(fields: [sourceId], references: [id])
-  lostReason       CrmLostReason?           @relation(fields: [lostReasonId], references: [id])
-  productCategory  Category?                @relation(fields: [productCategoryId], references: [id])
-  season           Season?                  @relation(fields: [seasonId], references: [id])
-  productInterests CrmLeadProductInterest[]
-  contacts         CrmLeadContact[]
-  deals            Deal[]
-  attributions     CampaignAttribution[]
-
-  @@unique([companyId, leadNumber])
-  @@index([companyId, stageId])
-  @@index([companyId, sourceId])
-  @@index([companyId, assignedToUserId])
-  @@index([companyId, campaignId])
-  @@map("crm_leads")
-}
-
-// A real transition guard, unlike the source (which allows a Deal to jump
-// between any of its 5 stage strings with zero validation) — a deliberate,
-// flagged improvement (see migration report §7), not scope creep: this
-// project adds an ALLOWED_TRANSITIONS guard to every other status-driven
-// document, and Deal is no exception.
-enum DealStage {
-  QUALIFIED
-  PROPOSAL
-  NEGOTIATION
-  WON
-  LOST
-}
-
-model Deal {
-  id                 String    @id @default(uuid()) @db.Uuid
-  companyId          String    @map("company_id") @db.Uuid
-  branchId           String?   @map("branch_id") @db.Uuid
-  dealNumber         String    @map("deal_number")
-  title              String
-  leadId             String?   @map("lead_id") @db.Uuid
-  customerId         String?   @map("customer_id") @db.Uuid
-  stage              DealStage @default(QUALIFIED)
-  value              Decimal   @default(0) @db.Decimal(15, 2)
-  probabilityPercent Decimal   @default(0) @map("probability_percent") @db.Decimal(5, 2)
-  // Two distinct concepts kept independent, both optional: the day-to-day
-  // owner (any User, matching the source's wp_user-based assignment) and
-  // the commission-tracked salesperson (SalesAgent, Fashion ERP's own
-  // existing domestic-channel concept) — a deal can have either, both, or
-  // neither, per the migration report's §9 decision.
-  assignedToUserId   String?   @map("assigned_to_user_id") @db.Uuid
-  salesAgentId       String?   @map("sales_agent_id") @db.Uuid
-  expectedCloseDate  DateTime? @map("expected_close_date") @db.Date
-  lostReason         String?   @map("lost_reason")
-  notes              String?
-  createdByUserId    String    @map("created_by_user_id") @db.Uuid
-  createdAt          DateTime  @default(now()) @map("created_at")
-  updatedAt          DateTime  @updatedAt @map("updated_at")
-
-  company              Company      @relation(fields: [companyId], references: [id])
-  branch               Branch?      @relation(fields: [branchId], references: [id])
-  lead                 Lead?        @relation(fields: [leadId], references: [id])
-  customer             Customer?    @relation(fields: [customerId], references: [id])
-  assignedTo           User?        @relation("DealAssignedTo", fields: [assignedToUserId], references: [id])
-  salesAgent           SalesAgent?  @relation(fields: [salesAgentId], references: [id])
-  createdBy            User         @relation("DealCreatedBy", fields: [createdByUserId], references: [id])
-  resultingSalesOrders SalesOrder[]
-
-  @@unique([companyId, dealNumber])
-  @@index([companyId, stage])
-  @@map("crm_deals")
-}
-
-enum CrmInteractionType {
-  CALL
-  WHATSAPP
-  EMAIL
-  MEETING
-  NOTE
-}
-
-// Polymorphic via the existing RelatedModule discriminator (LEAD | DEAL |
-// CUSTOMER) — the same convention already used by Attachment/AuditLog/
-// InventoryTransaction, rather than inventing a parallel polymorphic scheme
-// just for CRM.
-model CrmActivity {
-  id                String             @id @default(uuid()) @db.Uuid
-  companyId         String             @map("company_id") @db.Uuid
-  relatedModule     RelatedModule      @map("related_module")
-  relatedRecordId   String             @map("related_record_id") @db.Uuid
-  activityType      CrmInteractionType @map("activity_type")
-  subject           String?
-  body              String?
-  activityAt        DateTime           @default(now()) @map("activity_at")
-  performedByUserId String             @map("performed_by_user_id") @db.Uuid
-  createdAt         DateTime           @default(now()) @map("created_at")
-
-  company     Company @relation(fields: [companyId], references: [id])
-  performedBy User    @relation("CrmActivityPerformedBy", fields: [performedByUserId], references: [id])
-
-  @@index([companyId, relatedModule, relatedRecordId])
-  @@map("crm_activities")
-}
-
-enum CrmFollowupStatus {
-  PENDING
-  COMPLETED
-  CANCELLED
-}
-
-enum CrmFollowupPriority {
-  LOW
-  MEDIUM
-  HIGH
-}
-
-model CrmFollowup {
-  id               String              @id @default(uuid()) @db.Uuid
-  companyId        String              @map("company_id") @db.Uuid
-  relatedModule    RelatedModule       @map("related_module")
-  relatedRecordId  String              @map("related_record_id") @db.Uuid
-  assignedToUserId String?             @map("assigned_to_user_id") @db.Uuid
-  followupDate     DateTime            @map("followup_date")
-  type             CrmInteractionType  @default(CALL)
-  status           CrmFollowupStatus   @default(PENDING)
-  priority         CrmFollowupPriority @default(MEDIUM)
-  notes            String?
-  completedAt      DateTime?           @map("completed_at")
-  createdByUserId  String              @map("created_by_user_id") @db.Uuid
-  createdAt        DateTime            @default(now()) @map("created_at")
-
-  company    Company @relation(fields: [companyId], references: [id])
-  assignedTo User?   @relation("CrmFollowupAssignedTo", fields: [assignedToUserId], references: [id])
-  createdBy  User    @relation("CrmFollowupCreatedBy", fields: [createdByUserId], references: [id])
-
-  // isOverdue is deliberately NOT a stored column — computed at read time as
-  // status='PENDING' AND followupDate < now(), exactly matching both the
-  // source's own behavior and this project's derive-don't-duplicate rule.
-  @@index([companyId, relatedModule, relatedRecordId])
-  @@index([companyId, status, followupDate])
-  @@map("crm_followups")
-}
-
-// Fixes a real fragility in the source: WordPress re-derives "who's next"
-// by looking up the last-assigned lead's own assignee every time, which
-// silently breaks if that lead's assignment is later changed. A real
-// stored rotation pointer, atomically advanced, replaces that guesswork.
-model CrmRoundRobinState {
-  id                 String   @id @default(uuid()) @db.Uuid
-  companyId          String   @unique @map("company_id") @db.Uuid
-  lastAssignedUserId String?  @map("last_assigned_user_id") @db.Uuid
-  updatedAt          DateTime @updatedAt @map("updated_at")
-
-  company Company @relation(fields: [companyId], references: [id])
-
-  @@map("crm_round_robin_state")
-}
-
-// Replaces the hardcoded 80/50 literals `computeLeadPriority()` used to have
-// baked in — one row per company, lazily created on first edit (a company
-// that never touches this keeps the same 80/50 defaults with no row at all,
-// same "create on first real use" precedent as this project's document
-// sequences). `warmThreshold` doubles as Marketing's own "qualified lead"
-// cutoff (`computeCampaignMetricsMap()`) — the source's own `lead_quality`
-// count was already documented as the identical score>=50 definition under a
-// different label, so both now read the one configurable value instead of
-// two separately hardcoded copies of the same number.
-model CrmSettings {
-  id              String   @id @default(uuid()) @db.Uuid
-  companyId       String   @unique @map("company_id") @db.Uuid
-  hotThreshold    Decimal  @default(80) @map("hot_threshold") @db.Decimal(5, 2)
-  warmThreshold   Decimal  @default(50) @map("warm_threshold") @db.Decimal(5, 2)
-  updatedByUserId String?  @map("updated_by_user_id") @db.Uuid
-  updatedAt       DateTime @updatedAt @map("updated_at")
-
-  company   Company @relation(fields: [companyId], references: [id])
-  updatedBy User?   @relation(fields: [updatedByUserId], references: [id])
-
-  @@map("crm_settings")
-}
-
-// ─────────────────────────────────────────────────────────────
-// CRM configuration masters + history (CRM Lead-to-Customer upgrade,
-// 2026-09-27). Every master is company-scoped and lazily seeded with the
-// defaults in src/modules/crm/crm-defaults.ts the first time a company's CRM
-// is used (existing companies were backfilled by the migration itself).
-// ─────────────────────────────────────────────────────────────
-
-model CrmPipelineStage {
-  id        String       @id @default(uuid()) @db.Uuid
-  companyId String       @map("company_id") @db.Uuid
-  pipeline  CrmPipeline
-  code      String
-  name      String
-  kind      CrmStageKind @default(OPEN)
-  sortOrder Int          @default(0) @map("sort_order")
-  isActive  Boolean      @default(true) @map("is_active")
-  createdAt DateTime     @default(now()) @map("created_at")
-  updatedAt DateTime     @updatedAt @map("updated_at")
-
-  company     Company           @relation(fields: [companyId], references: [id])
-  leads       Lead[]            @relation("LeadStage")
-  historyFrom CrmStageHistory[] @relation("StageHistoryFrom")
-  historyTo   CrmStageHistory[] @relation("StageHistoryTo")
-
-  @@unique([companyId, pipeline, code])
-  @@index([companyId, pipeline, sortOrder])
-  @@map("crm_pipeline_stages")
-}
-
-model CrmLeadSource {
-  id        String   @id @default(uuid()) @db.Uuid
-  companyId String   @map("company_id") @db.Uuid
-  code      String
-  name      String
-  sortOrder Int      @default(0) @map("sort_order")
-  isActive  Boolean  @default(true) @map("is_active")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-
-  company Company @relation(fields: [companyId], references: [id])
-  leads   Lead[]
-
-  @@unique([companyId, code])
-  @@map("crm_lead_sources")
-}
-
-model CrmLostReason {
-  id        String   @id @default(uuid()) @db.Uuid
-  companyId String   @map("company_id") @db.Uuid
-  code      String
-  name      String
-  sortOrder Int      @default(0) @map("sort_order")
-  isActive  Boolean  @default(true) @map("is_active")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-
-  company Company @relation(fields: [companyId], references: [id])
-  leads   Lead[]
-
-  @@unique([companyId, code])
-  @@map("crm_lost_reasons")
-}
-
-// Append-only — never updated or deleted. Polymorphic via RelatedModule
-// (LEAD now; DEAL/Opportunity once its stages move onto CrmPipelineStage).
-model CrmStageHistory {
-  id              String        @id @default(uuid()) @db.Uuid
-  companyId       String        @map("company_id") @db.Uuid
-  relatedModule   RelatedModule @map("related_module")
-  relatedRecordId String        @map("related_record_id") @db.Uuid
-  fromStageId     String?       @map("from_stage_id") @db.Uuid
-  toStageId       String        @map("to_stage_id") @db.Uuid
-  comment         String?
-  changedByUserId String        @map("changed_by_user_id") @db.Uuid
-  changedAt       DateTime      @default(now()) @map("changed_at")
-
-  company   Company           @relation(fields: [companyId], references: [id])
-  fromStage CrmPipelineStage? @relation("StageHistoryFrom", fields: [fromStageId], references: [id])
-  toStage   CrmPipelineStage  @relation("StageHistoryTo", fields: [toStageId], references: [id])
-  changedBy User              @relation("CrmStageHistoryChangedBy", fields: [changedByUserId], references: [id])
-
-  @@index([companyId, relatedModule, relatedRecordId])
-  @@map("crm_stage_history")
-}
-
-// Append-only assignment/reassignment trail.
-model CrmAssignmentHistory {
-  id               String        @id @default(uuid()) @db.Uuid
-  companyId        String        @map("company_id") @db.Uuid
-  relatedModule    RelatedModule @map("related_module")
-  relatedRecordId  String        @map("related_record_id") @db.Uuid
-  fromUserId       String?       @map("from_user_id") @db.Uuid
-  toUserId         String?       @map("to_user_id") @db.Uuid
-  assignedByUserId String        @map("assigned_by_user_id") @db.Uuid
-  reason           String?
-  assignedAt       DateTime      @default(now()) @map("assigned_at")
-
-  company    Company @relation(fields: [companyId], references: [id])
-  fromUser   User?   @relation("CrmAssignmentFrom", fields: [fromUserId], references: [id])
-  toUser     User?   @relation("CrmAssignmentTo", fields: [toUserId], references: [id])
-  assignedBy User    @relation("CrmAssignmentBy", fields: [assignedByUserId], references: [id])
-
-  @@index([companyId, relatedModule, relatedRecordId])
-  @@map("crm_assignment_history")
-}
-
-model CrmLeadProductInterest {
-  leadId        String @map("lead_id") @db.Uuid
-  productTypeId String @map("product_type_id") @db.Uuid
-
-  lead        Lead        @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  productType ProductType @relation(fields: [productTypeId], references: [id])
-
-  @@id([leadId, productTypeId])
-  @@map("crm_lead_product_interests")
-}
-
-// Additional people at the buyer (merchandiser, designer, QA, accounts). The
-// lead's own name/email/phone columns stay the primary contact, so every
-// existing report/search keeps working unchanged.
-model CrmLeadContact {
-  id             String   @id @default(uuid()) @db.Uuid
-  companyId      String   @map("company_id") @db.Uuid
-  leadId         String   @map("lead_id") @db.Uuid
-  name           String
-  designation    String?
-  email          String?
-  phone          String?
-  whatsappNumber String?  @map("whatsapp_number")
-  notes          String?
-  createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @updatedAt @map("updated_at")
-
-  company Company @relation(fields: [companyId], references: [id])
-  lead    Lead    @relation(fields: [leadId], references: [id], onDelete: Cascade)
-
-  @@index([companyId, leadId])
-  @@map("crm_lead_contacts")
-}
-
-// ─────────────────────────────────────────────────────────────
-// Marketing — Campaigns, attribution, alerts (migrated from WordPress
-// "EQ Marketing"; see CRM_SALES_MARKETING_HRMS_MIGRATION_REPORT.md).
-//
-// Deliberately NOT ported: the source's own `eq_mkt_lead_map` table (one
-// row per lead caching "lead_quality"/"conversion_status") — those fields
-// are redundant with Lead.priority (already computed from leadScore) and
-// Lead.status, exactly the "second source of truth" this project has fixed
-// more than once (Material Request's old status column, JobOrder's status).
-// Campaign's own spend/leads/qualifiedLeads/customers/revenue are likewise
-// NOT stored columns — computed live in campaign.service.ts from
-// CampaignDailyMetric and from Lead/Deal joined through campaignId, the
-// same discipline applied consistently rather than only to the one table
-// the migration report happened to flag.
+// Marketing — Campaigns & Ad Integrations (kept, unchanged in shape, when
+// the legacy CRM was replaced by the new CRM module elsewhere in this file;
+// see CLAUDE.md's CRM Replacement section for why these survived the
+// crm-build-v5 branch's own blanket removal of this block).
 // ─────────────────────────────────────────────────────────────
 
 enum CampaignChannel {
@@ -3034,7 +2595,10 @@ model Campaign {
   dailyMetrics    CampaignDailyMetric[]
   attributions    CampaignAttribution[]
   alerts          CampaignAlert[]
-  leads           Lead[]
+  // Attribution FK added back onto the new CRM's CrmLead (2026-10-09, CRM
+  // Replacement) — CrmLead otherwise has no real FK into Campaign, only
+  // free-text UTM fields; this mirrors the old Lead.campaignId exactly.
+  crmLeads        CrmLead[]
   adCampaignLinks AdCampaignLink[]
 
   @@unique([companyId, campaignNumber])
@@ -3165,7 +2729,7 @@ model CampaignAttribution {
 
   company  Company   @relation(fields: [companyId], references: [id])
   campaign Campaign? @relation(fields: [campaignId], references: [id])
-  lead     Lead?     @relation(fields: [leadId], references: [id])
+  crmLead  CrmLead?  @relation(fields: [leadId], references: [id])
 
   @@index([companyId, campaignId])
   @@index([companyId, leadId])
@@ -3401,69 +2965,69 @@ enum SalesOrderStatus {
 }
 
 model SalesOrder {
-  id                String            @id @default(uuid()) @db.Uuid
-  companyId         String            @map("company_id") @db.Uuid
-  branchId          String?           @map("branch_id") @db.Uuid
-  orderNumber       String            @map("order_number")
-  customerId        String            @map("customer_id") @db.Uuid
-  buyerId           String?           @map("buyer_id") @db.Uuid
-  // Nullable traceability into the CRM pipeline this order originated from,
-  // if any — a direct/repeat order (the common case) has none. Header-level
-  // (not per-item) since a Deal has no line items of its own, matching its
-  // flat, pre-sale shape in the source system.
-  originatingDealId String?           @map("originating_deal_id") @db.Uuid
-  orderDate         DateTime          @map("order_date") @db.Date
-  requiredShipDate  DateTime?         @map("required_ship_date") @db.Date
+  id                       String            @id @default(uuid()) @db.Uuid
+  companyId                String            @map("company_id") @db.Uuid
+  branchId                 String?           @map("branch_id") @db.Uuid
+  orderNumber              String            @map("order_number")
+  customerId               String            @map("customer_id") @db.Uuid
+  buyerId                  String?           @map("buyer_id") @db.Uuid
+  orderDate                DateTime          @map("order_date") @db.Date
+  requiredShipDate         DateTime?         @map("required_ship_date") @db.Date
   // The buyer's own PO reference number, free text — this app's real
   // ORD-2026-00001 numbering is unrelated and unaffected; a buyer's PO
   // document (the file itself) attaches via the existing generic Attachment
   // mechanism (RelatedModule.SALES_ORDER), not a dedicated column here.
-  customerPoNumber  String?           @map("customer_po_number")
-  status            SalesOrderStatus  @default(DRAFT)
-  statusBeforeHold  SalesOrderStatus? @map("status_before_hold")
+  customerPoNumber         String?           @map("customer_po_number")
+  status                   SalesOrderStatus  @default(DRAFT)
+  statusBeforeHold         SalesOrderStatus? @map("status_before_hold")
   // Frozen at creation (no live FX picker — multi-currency UI is deferred
   // project-wide); base amounts are stored, not computed live, so historical
   // totals never drift if a rate source changes later.
-  currencyCode      String            @map("currency_code") @db.Char(3)
-  exchangeRate      Decimal           @default(1) @map("exchange_rate") @db.Decimal(18, 6)
-  baseCurrencyCode  String            @map("base_currency_code") @db.Char(3)
-  totalAmount       Decimal           @default(0) @map("total_amount") @db.Decimal(18, 2)
-  baseTotalAmount   Decimal           @default(0) @map("base_total_amount") @db.Decimal(18, 2)
-  requestedByUserId String            @map("requested_by_user_id") @db.Uuid
-  createdAt         DateTime          @default(now()) @map("created_at")
-  updatedAt         DateTime          @updatedAt @map("updated_at")
+  currencyCode             String            @map("currency_code") @db.Char(3)
+  exchangeRate             Decimal           @default(1) @map("exchange_rate") @db.Decimal(18, 6)
+  baseCurrencyCode         String            @map("base_currency_code") @db.Char(3)
+  totalAmount              Decimal           @default(0) @map("total_amount") @db.Decimal(18, 2)
+  baseTotalAmount          Decimal           @default(0) @map("base_total_amount") @db.Decimal(18, 2)
+  requestedByUserId        String            @map("requested_by_user_id") @db.Uuid
+  // CRM traceability (2026-10-09, CRM Replacement) — which Opportunity this
+  // order came from, if any; optional, set manually on the New Sales Order
+  // form, never auto-populated. Was originatingDealId against the legacy
+  // CRM's Deal model before the replacement.
+  originatingOpportunityId String?           @map("originating_opportunity_id") @db.Uuid
+  createdAt                DateTime          @default(now()) @map("created_at")
+  updatedAt                DateTime          @updatedAt @map("updated_at")
 
-  company          Company           @relation(fields: [companyId], references: [id])
-  branch           Branch?           @relation(fields: [branchId], references: [id])
-  customer         Customer          @relation(fields: [customerId], references: [id])
-  buyer            Buyer?            @relation(fields: [buyerId], references: [id])
-  originatingDeal  Deal?             @relation(fields: [originatingDealId], references: [id])
-  requestedBy      User              @relation("SalesOrderRequestedBy", fields: [requestedByUserId], references: [id])
-  items            SalesOrderItem[]
-  salesOrderLines  SalesOrderLine[]
-  materialRequests MaterialRequest[]
-  salesInvoices    SalesInvoice[]
-  dispatches       Dispatch[]
+  company                Company           @relation(fields: [companyId], references: [id])
+  branch                 Branch?           @relation(fields: [branchId], references: [id])
+  customer               Customer          @relation(fields: [customerId], references: [id])
+  buyer                  Buyer?            @relation(fields: [buyerId], references: [id])
+  requestedBy            User              @relation("SalesOrderRequestedBy", fields: [requestedByUserId], references: [id])
+  originatingOpportunity CrmOpportunity?   @relation(fields: [originatingOpportunityId], references: [id])
+  items                  SalesOrderItem[]
+  salesOrderLines        SalesOrderLine[]
+  materialRequests       MaterialRequest[]
+  salesInvoices          SalesInvoice[]
+  dispatches             Dispatch[]
   // Reserved, unused this phase — AiGarmentProject.salesOrderId is a nullable
   // FK not yet written by any code path (no Sales Order linkage exists yet
   // for AI Garment Flow); documented placeholder, same precedent as
   // ProductionOrderStatus.MATERIAL_ALLOCATED.
-  aiGarmentProject AiGarmentProject?
+  aiGarmentProject       AiGarmentProject?
 
   @@unique([companyId, orderNumber])
   @@map("sales_orders")
 }
 
 model SalesOrderItem {
-  id                 String   @id @default(uuid()) @db.Uuid
-  salesOrderId       String   @map("sales_order_id") @db.Uuid
-  productId          String   @map("product_id") @db.Uuid
+  id                        String   @id @default(uuid()) @db.Uuid
+  salesOrderId              String   @map("sales_order_id") @db.Uuid
+  productId                 String   @map("product_id") @db.Uuid
   // Nullable, per-item (not per-header) — one order can carry several style
   // lines, each optionally tracing back to a different approved sample; a
   // repeat/direct order line needs no sample link at all.
-  sampleRequestId    String?  @map("sample_request_id") @db.Uuid
-  unitPrice          Decimal  @map("unit_price") @db.Decimal(18, 2)
-  notes              String?
+  sampleRequestId           String?  @map("sample_request_id") @db.Uuid
+  unitPrice                 Decimal  @map("unit_price") @db.Decimal(18, 2)
+  notes                     String?
   // Guarded accumulator (Phase 8) — TOTAL physical quantity ever dispatched
   // against this line, regular + extra combined (Extra Dispatch Quantity,
   // 2026-09-30). Incremented only at Confirm-Dispatch time, never at Draft
@@ -3476,7 +3040,7 @@ model SalesOrderItem {
   // getAvailableQuantity() check). regularDispatchedQuantity below is the
   // one capped at the ordered total and is what Sale Order fulfillment is
   // actually computed from.
-  dispatchedQuantity Int      @default(0) @map("dispatched_quantity")
+  dispatchedQuantity        Int      @default(0) @map("dispatched_quantity")
   // Extra Dispatch Quantity (2026-09-30) — the portion of dispatchedQuantity
   // that counts toward Sale Order fulfillment. Guarded, capped by
   // sum(breakdown.orderedQuantity) exactly the way the unsplit
@@ -3484,7 +3048,7 @@ model SalesOrderItem {
   // see confirmDispatch()'s guarded updateMany. Any quantity beyond this
   // (dispatchedQuantity - regularDispatchedQuantity) is Extra and must never
   // be counted as fulfilling the order.
-  regularDispatchedQuantity Int @default(0) @map("regular_dispatched_quantity")
+  regularDispatchedQuantity Int      @default(0) @map("regular_dispatched_quantity")
   // Effective BOM (2026-09-24) — the STABLE line identity this concrete item
   // row belongs to. Deliberately NOT the same as this row's own `id`:
   // updateSalesOrder()'s replaceItems() deletes and recreates every
@@ -3493,8 +3057,8 @@ model SalesOrderItem {
   // SalesOrderBomOverride rows are keyed to it, not to this row. Nullable
   // only because a row can theoretically be written by test/legacy code
   // paths that predate this column; every real service-layer write sets it.
-  salesOrderLineId   String?  @map("sales_order_line_id") @db.Uuid
-  createdAt          DateTime @default(now()) @map("created_at")
+  salesOrderLineId          String?  @map("sales_order_line_id") @db.Uuid
+  createdAt                 DateTime @default(now()) @map("created_at")
 
   salesOrder        SalesOrder                @relation(fields: [salesOrderId], references: [id])
   product           Product                   @relation(fields: [productId], references: [id])
@@ -4290,12 +3854,12 @@ model ProductionOrder {
   createdAt         DateTime               @default(now()) @map("created_at")
   updatedAt         DateTime               @updatedAt @map("updated_at")
 
-  company           Company                      @relation(fields: [companyId], references: [id])
-  branch            Branch?                      @relation(fields: [branchId], references: [id])
-  salesOrderItem    SalesOrderItem?              @relation(fields: [salesOrderItemId], references: [id])
-  product           Product                      @relation(fields: [productId], references: [id])
-  bom               Bom?                         @relation(fields: [bomId], references: [id])
-  requestedBy       User                         @relation("ProductionOrderRequestedBy", fields: [requestedByUserId], references: [id])
+  company           Company                         @relation(fields: [companyId], references: [id])
+  branch            Branch?                         @relation(fields: [branchId], references: [id])
+  salesOrderItem    SalesOrderItem?                 @relation(fields: [salesOrderItemId], references: [id])
+  product           Product                         @relation(fields: [productId], references: [id])
+  bom               Bom?                            @relation(fields: [bomId], references: [id])
+  requestedBy       User                            @relation("ProductionOrderRequestedBy", fields: [requestedByUserId], references: [id])
   lots              Lot[]
   jobOrders         JobOrder[]
   stageTransactions ProductionStageTransaction[]
@@ -5282,10 +4846,10 @@ model Dispatch {
 }
 
 model DispatchItem {
-  id                 String   @id @default(uuid()) @db.Uuid
-  dispatchId         String   @map("dispatch_id") @db.Uuid
-  salesOrderItemId   String   @map("sales_order_item_id") @db.Uuid
-  productId          String   @map("product_id") @db.Uuid
+  id                      String               @id @default(uuid()) @db.Uuid
+  dispatchId              String               @map("dispatch_id") @db.Uuid
+  salesOrderItemId        String               @map("sales_order_item_id") @db.Uuid
+  productId               String               @map("product_id") @db.Uuid
   // TOTAL physical quantity for this line — regularDispatchQuantity +
   // extraDispatchQuantity, an invariant enforced entirely in
   // dispatch.service.ts (never independently client-supplied; both
@@ -5293,7 +4857,7 @@ model DispatchItem {
   // This is the number markPacked()'s carton-sum check and confirmDispatch()'s
   // real FG-stock check both use — unchanged meaning/mechanism from before
   // Extra Dispatch Quantity existed, since it was already "the total to ship."
-  dispatchedQuantity Int      @map("dispatched_quantity")
+  dispatchedQuantity      Int                  @map("dispatched_quantity")
   // Extra Dispatch Quantity (2026-09-30) — split of dispatchedQuantity.
   // regularDispatchQuantity is what SalesOrderItem.regularDispatchedQuantity
   // is incremented by (capped at the order's own remaining quantity);
@@ -5319,7 +4883,7 @@ model DispatchItem {
   // here, matching CartonItem.productVariantId's own identical
   // "informational only, never enforced" precedent two models below.
   sourceLotId             String?              @map("source_lot_id") @db.Uuid
-  createdAt          DateTime @default(now()) @map("created_at")
+  createdAt               DateTime             @default(now()) @map("created_at")
 
   dispatch       Dispatch       @relation(fields: [dispatchId], references: [id])
   salesOrderItem SalesOrderItem @relation(fields: [salesOrderItemId], references: [id])
@@ -8408,9 +7972,6 @@ enum RelatedModule {
   EMPLOYEE
   PRODUCT
   STOCK_MOVEMENT
-  LEAD
-  DEAL
-  CRM_FOLLOWUP
   JOB_WORK_ORDER
   LEAVE_REQUEST
   ATTENDANCE_CORRECTION
@@ -8439,6 +8000,18 @@ enum RelatedModule {
   // attaches at the project header level (relatedRecordId =
   // ReplicateDesignProject.id), same precedent as AI_DESIGNER_PROJECT.
   REPLICATE_DESIGN_PROJECT
+  // CRM Contacts (Phase 04, 2026-10-02) -- documents attached to a CRM
+  // contact (relatedRecordId = CrmContact.id). Moved to the survivor on merge.
+  CRM_CONTACT
+  // CRM Companies (Phase 05, 2026-10-03) -- documents attached to a CRM
+  // company (relatedRecordId = CrmCompany.id). Moved to the survivor on merge.
+  CRM_COMPANY
+  // CRM Opportunities (Phase 06, 2026-10-04) -- documents attached to an
+  // opportunity (relatedRecordId = CrmOpportunity.id).
+  CRM_OPPORTUNITY
+  // CRM Activities (Phase 09, 2026-10-06) -- in-app task reminders and
+  // assignment notifications point at the activity (relatedRecordId = CrmActivity.id).
+  CRM_ACTIVITY
 }
 
 model Attachment {
@@ -8491,11 +8064,1337 @@ model Notification {
   @@map("notifications")
 }
 
-enum ImportBatchType {
+// ─────────────────────────────────────────────────────────────
+// CRM — foundation (Phase 01, 2026-10-01). See docs/crm/CRM_MASTER_BLUEPRINT.md.
+// ─────────────────────────────────────────────────────────────
+
+// The CRM record types that can own timeline events, tags, notes, tasks and
+// custom-field values. Grows one value per phase as each entity is built
+// (e.g. TASK, APPOINTMENT, CONVERSATION later).
+enum CrmEntityType {
   LEAD
-  DEAL
+  CONTACT
+  COMPANY
+  OPPORTUNITY
+  // Phase 09: tasks, calls, meetings… (crm_activities). Its events
+  // (activity.*) appear on the timelines of the records it is linked to.
+  ACTIVITY
+}
+
+// Append-only business event log for the CRM. One row per thing that
+// happened to a CRM record ("lead.created", "opportunity.stage_changed").
+// It is the source for record timelines today and the input for workflow
+// triggers (Phase 18) and outbound webhooks (Phase 29) later, so rows are
+// never updated or deleted. AuditLog remains the compliance trail; this is
+// the user-facing story. `eventType` is validated in code against the event
+// registry (src/modules/crm/core/crm-event-types.ts) rather than a DB enum, so
+// adding an event type never needs a migration.
+model CrmEvent {
+  id            String        @id @default(uuid()) @db.Uuid
+  companyId     String        @map("company_id") @db.Uuid
+  entityType    CrmEntityType @map("entity_type")
+  entityId      String        @map("entity_id") @db.Uuid
+  eventType     String        @map("event_type")
+  summary       String?
+  payload       Json?
+  actorUserId   String?       @map("actor_user_id") @db.Uuid
+  correlationId String?       @map("correlation_id")
+  occurredAt    DateTime      @default(now()) @map("occurred_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+  actor   User?   @relation("CrmEventActor", fields: [actorUserId], references: [id])
+
+  @@index([companyId, entityType, entityId, occurredAt])
+  @@index([companyId, eventType, occurredAt])
+  @@index([companyId, occurredAt])
+  @@map("crm_events")
+}
+
+// ─────────────────────────────────────────────────────────────
+// CRM — Phase 02 Leads (2026-10-01). See docs/crm/PHASE_02_LEADS.md.
+// Statuses/sources/tags/custom fields are per-company configuration; every
+// rule keys on stable `key` / `kind` values, never on display names.
+// ─────────────────────────────────────────────────────────────
+
+// What a status *means* to the system. Display names are free to change;
+// conversion moves a lead to the company's CONVERTED status, and reports
+// treat LOST as closed. OPEN covers every working status (new, contacted…).
+enum CrmLeadStatusKind {
+  OPEN
+  CONVERTED
+  LOST
+}
+
+enum CrmLeadTemperature {
+  COLD
+  WARM
+  HOT
+}
+
+// ── Lead import & capture (Phase 03) ────────────────────────────────
+
+// The channel a lead came in through (distinct from CrmLeadSource, which is
+// the configurable marketing source such as "Trade fair" or "IndiaMART").
+enum CrmLeadCaptureChannel {
+  MANUAL
+  CSV
+  XLSX
+  WEBSITE_FORM
+  API
+  WEBHOOK
+  INTEGRATION
+}
+
+enum CrmImportFileType {
+  CSV
+  XLSX
+}
+
+enum CrmImportJobStatus {
+  PENDING
+  VALIDATING
+  READY
+  PROCESSING
+  COMPLETED
+  PARTIALLY_COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum CrmDuplicatePolicy {
+  SKIP
+  UPDATE
+  CREATE
+  FLAG_FOR_REVIEW
+}
+
+enum CrmImportRowValidation {
+  PENDING
+  VALID
+  WARNING
+  ERROR
+}
+
+enum CrmIngestOutcome {
+  PENDING
+  IMPORTED
+  UPDATED
+  SKIPPED
+  FLAGGED
+  FAILED
+}
+
+enum CrmIngestEventStatus {
+  RECEIVED
+  PROCESSED
+  FLAGGED
+  FAILED
+}
+
+/// One CSV/XLSX import. Rows live in crm_import_rows so preview, review of
+/// flagged rows and the error file all read from the database; the uploaded
+/// file itself is temporary and removed once the job finishes.
+model CrmImportJob {
+  id                String             @id @default(uuid()) @db.Uuid
+  companyId         String             @map("company_id") @db.Uuid
+  fileName          String             @map("file_name")
+  fileType          CrmImportFileType  @map("file_type")
+  fileSizeBytes     Int                @map("file_size_bytes")
+  // FileStorage key of the (temporary) uploaded file; null once cleaned up.
+  fileKey           String?            @map("file_key")
+  status            CrmImportJobStatus @default(PENDING)
+  sourceId          String?            @map("source_id") @db.Uuid
+  duplicatePolicy   CrmDuplicatePolicy @default(SKIP) @map("duplicate_policy")
+  headers           Json               @default("[]")
+  mapping           Json               @default("{}")
+  options           Json               @default("{}")
+  totalRows         Int                @default(0) @map("total_rows")
+  validRows         Int                @default(0) @map("valid_rows")
+  warningRows       Int                @default(0) @map("warning_rows")
+  errorRows         Int                @default(0) @map("error_rows")
+  duplicateRows     Int                @default(0) @map("duplicate_rows")
+  processedRows     Int                @default(0) @map("processed_rows")
+  importedRows      Int                @default(0) @map("imported_rows")
+  updatedRows       Int                @default(0) @map("updated_rows")
+  skippedRows       Int                @default(0) @map("skipped_rows")
+  flaggedRows       Int                @default(0) @map("flagged_rows")
+  failedRows        Int                @default(0) @map("failed_rows")
+  errorSummary      String?            @map("error_summary")
+  queueJobId        String?            @map("queue_job_id")
+  validatedAt       DateTime?          @map("validated_at")
+  startedAt         DateTime?          @map("started_at")
+  completedAt       DateTime?          @map("completed_at")
+  cancelRequestedAt DateTime?          @map("cancel_requested_at")
+  createdByUserId   String             @map("created_by_user_id") @db.Uuid
+  createdAt         DateTime           @default(now()) @map("created_at")
+  updatedAt         DateTime           @updatedAt @map("updated_at")
+
+  company   Company        @relation(fields: [companyId], references: [id])
+  source    CrmLeadSource? @relation(fields: [sourceId], references: [id])
+  createdBy User           @relation("CrmImportJobCreatedBy", fields: [createdByUserId], references: [id])
+  rows      CrmImportRow[]
+  leads     CrmLead[]
+
+  @@index([companyId, createdAt])
+  @@index([companyId, createdByUserId])
+  @@index([status, updatedAt])
+  @@map("crm_import_jobs")
+}
+
+/// One line of an import file and what happened to it. Every row ends in a
+/// known outcome — rows are never silently dropped.
+model CrmImportRow {
+  id                String                 @id @default(uuid()) @db.Uuid
+  jobId             String                 @map("job_id") @db.Uuid
+  rowNumber         Int                    @map("row_number")
+  raw               Json
+  normalized        Json?
+  validation        CrmImportRowValidation @default(PENDING)
+  messages          Json                   @default("[]")
+  duplicateMatches  Json?                  @map("duplicate_matches")
+  inFileDuplicateOf Int?                   @map("in_file_duplicate_of")
+  outcome           CrmIngestOutcome       @default(PENDING)
+  outcomeReason     String?                @map("outcome_reason")
+  leadId            String?                @map("lead_id") @db.Uuid
+  reviewedAt        DateTime?              @map("reviewed_at")
+  reviewedByUserId  String?                @map("reviewed_by_user_id") @db.Uuid
+  processedAt       DateTime?              @map("processed_at")
+
+  job        CrmImportJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  lead       CrmLead?     @relation("CrmImportRowLead", fields: [leadId], references: [id], onDelete: SetNull)
+  reviewedBy User?        @relation("CrmImportRowReviewedBy", fields: [reviewedByUserId], references: [id])
+
+  @@unique([jobId, rowNumber])
+  @@index([jobId, outcome])
+  @@index([jobId, validation])
+  @@map("crm_import_rows")
+}
+
+/// A lead's id in an external system (provider + external id, unique per
+/// company) — how a re-delivered external lead is recognised.
+model CrmLeadExternalRef {
+  id         String   @id @default(uuid()) @db.Uuid
+  companyId  String   @map("company_id") @db.Uuid
+  leadId     String   @map("lead_id") @db.Uuid
+  provider   String
+  externalId String   @map("external_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+  lead    CrmLead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, provider, externalId])
+  @@index([leadId])
+  @@map("crm_lead_external_refs")
+}
+
+/// Inbox of every API / webhook lead submission: raw payload, idempotency
+/// key, outcome and retry state.
+model CrmIngestEvent {
+  id                String                @id @default(uuid()) @db.Uuid
+  companyId         String                @map("company_id") @db.Uuid
+  channel           CrmLeadCaptureChannel
+  provider          String
+  apiKeyId          String?               @map("api_key_id") @db.Uuid
+  webhookEndpointId String?               @map("webhook_endpoint_id") @db.Uuid
+  idempotencyKey    String?               @map("idempotency_key")
+  externalEventId   String?               @map("external_event_id")
+  externalLeadId    String?               @map("external_lead_id")
+  payload           Json
+  status            CrmIngestEventStatus  @default(RECEIVED)
+  outcome           CrmIngestOutcome      @default(PENDING)
+  outcomeReason     String?               @map("outcome_reason")
+  duplicateMatches  Json?                 @map("duplicate_matches")
+  leadId            String?               @map("lead_id") @db.Uuid
+  attempts          Int                   @default(0)
+  lastError         String?               @map("last_error")
+  nextRetryAt       DateTime?             @map("next_retry_at")
+  processedAt       DateTime?             @map("processed_at")
+  receivedAt        DateTime              @default(now()) @map("received_at")
+
+  company         Company             @relation(fields: [companyId], references: [id])
+  apiKey          CrmApiKey?          @relation(fields: [apiKeyId], references: [id], onDelete: SetNull)
+  webhookEndpoint CrmWebhookEndpoint? @relation(fields: [webhookEndpointId], references: [id], onDelete: SetNull)
+  lead            CrmLead?            @relation(fields: [leadId], references: [id], onDelete: SetNull)
+
+  @@unique([companyId, provider, idempotencyKey])
+  @@index([companyId, receivedAt])
+  @@index([companyId, status])
+  @@map("crm_ingest_events")
+}
+
+/// API key for POST /api/v1/crm/leads/ingest. Only a SHA-256 hash is stored;
+/// the full key is shown once at creation.
+model CrmApiKey {
+  id                 String             @id @default(uuid()) @db.Uuid
+  companyId          String             @map("company_id") @db.Uuid
+  name               String
+  prefix             String             @unique
+  keyHash            String             @map("key_hash")
+  scopes             String[]           @default(["leads:ingest"])
+  defaultSourceId    String?            @map("default_source_id") @db.Uuid
+  defaultOwnerUserId String?            @map("default_owner_user_id") @db.Uuid
+  duplicatePolicy    CrmDuplicatePolicy @default(UPDATE) @map("duplicate_policy")
+  lastUsedAt         DateTime?          @map("last_used_at")
+  expiresAt          DateTime?          @map("expires_at")
+  revokedAt          DateTime?          @map("revoked_at")
+  createdByUserId    String             @map("created_by_user_id") @db.Uuid
+  createdAt          DateTime           @default(now()) @map("created_at")
+
+  company       Company          @relation(fields: [companyId], references: [id])
+  defaultSource CrmLeadSource?   @relation(fields: [defaultSourceId], references: [id])
+  defaultOwner  User?            @relation("CrmApiKeyDefaultOwner", fields: [defaultOwnerUserId], references: [id])
+  createdBy     User             @relation("CrmApiKeyCreatedBy", fields: [createdByUserId], references: [id])
+  events        CrmIngestEvent[]
+
+  @@index([companyId])
+  @@map("crm_api_keys")
+}
+
+/// Incoming webhook endpoint: unique URL per endpoint, HMAC signing secret
+/// (encrypted at rest) and a payload → lead field mapping. `provider` picks
+/// the adapter ("generic" now; Meta / IndiaMART adapters later).
+model CrmWebhookEndpoint {
+  id                 String             @id @default(uuid()) @db.Uuid
+  companyId          String             @map("company_id") @db.Uuid
+  name               String
+  provider           String             @default("generic")
+  secretEncrypted    String             @map("secret_encrypted")
+  fieldMapping       Json               @default("{}") @map("field_mapping")
+  defaultSourceId    String?            @map("default_source_id") @db.Uuid
+  defaultOwnerUserId String?            @map("default_owner_user_id") @db.Uuid
+  duplicatePolicy    CrmDuplicatePolicy @default(UPDATE) @map("duplicate_policy")
+  isActive           Boolean            @default(true) @map("is_active")
+  lastReceivedAt     DateTime?          @map("last_received_at")
+  createdByUserId    String             @map("created_by_user_id") @db.Uuid
+  createdAt          DateTime           @default(now()) @map("created_at")
+  updatedAt          DateTime           @updatedAt @map("updated_at")
+
+  company       Company          @relation(fields: [companyId], references: [id])
+  defaultSource CrmLeadSource?   @relation(fields: [defaultSourceId], references: [id])
+  defaultOwner  User?            @relation("CrmWebhookEndpointDefaultOwner", fields: [defaultOwnerUserId], references: [id])
+  createdBy     User             @relation("CrmWebhookEndpointCreatedBy", fields: [createdByUserId], references: [id])
+  events        CrmIngestEvent[]
+
+  @@index([companyId])
+  @@map("crm_webhook_endpoints")
+}
+
+// Field types for the shared CRM custom-field engine (Lead now; Contact,
+// Company, Opportunity, Custom Objects and Forms later reuse the same table).
+enum CrmCustomFieldType {
+  TEXT
+  TEXTAREA
+  NUMBER
+  DECIMAL
+  CURRENCY
+  DATE
+  DATETIME
+  BOOLEAN
+  DROPDOWN
+  MULTI_SELECT
+  PHONE
+  EMAIL
+  URL
+}
+
+// Opportunity lifecycle status. Pipelines/stages arrive in Phase 07 as extra
+// nullable columns on CrmOpportunity, not a replacement table.
+enum CrmOpportunityStatus {
+  OPEN
+  WON
+  LOST
+  ABANDONED
+}
+
+enum CrmSavedViewVisibility {
+  PRIVATE
+  SHARED
+}
+
+model CrmLeadStatus {
+  id        String            @id @default(uuid()) @db.Uuid
+  companyId String            @map("company_id") @db.Uuid
+  key       String
+  name      String
+  kind      CrmLeadStatusKind @default(OPEN)
+  color     String?
+  sortOrder Int               @default(0) @map("sort_order")
+  isDefault Boolean           @default(false) @map("is_default")
+  isActive  Boolean           @default(true) @map("is_active")
+  createdAt DateTime          @default(now()) @map("created_at")
+  updatedAt DateTime          @updatedAt @map("updated_at")
+
+  company Company   @relation(fields: [companyId], references: [id])
+  leads   CrmLead[]
+
+  @@unique([companyId, key])
+  @@index([companyId, sortOrder])
+  @@map("crm_lead_statuses")
+}
+
+// `key` is how integrations identify their source ("facebook", "indiamart").
+model CrmLeadSource {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  key       String
+  name      String
+  sortOrder Int      @default(0) @map("sort_order")
+  isSystem  Boolean  @default(false) @map("is_system")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company          Company              @relation(fields: [companyId], references: [id])
+  leads            CrmLead[]
+  opportunities    CrmOpportunity[]
+  importJobs       CrmImportJob[]
+  apiKeys          CrmApiKey[]
+  webhookEndpoints CrmWebhookEndpoint[]
+  contacts         CrmContact[]
+  companies        CrmCompany[]
+
+  @@unique([companyId, key])
+  @@index([companyId, sortOrder])
+  @@map("crm_lead_sources")
+}
+
+model CrmLead {
+  id                     String                @id @default(uuid()) @db.Uuid
+  companyId              String                @map("company_id") @db.Uuid
+  branchId               String?               @map("branch_id") @db.Uuid
+  leadNumber             String                @map("lead_number")
+  firstName              String                @map("first_name")
+  lastName               String?               @map("last_name")
+  fullName               String                @map("full_name")
+  // Prospect's organisation as typed on the lead; crmCompanyId links a real
+  // CRM Company once known (on conversion or when picked on the form).
+  companyName            String?               @map("company_name")
+  designation            String?
+  crmCompanyId           String?               @map("crm_company_id") @db.Uuid
+  crmContactId           String?               @map("crm_contact_id") @db.Uuid
+  email                  String?
+  alternateEmail         String?               @map("alternate_email")
+  phone                  String?
+  mobile                 String?
+  whatsapp               String?
+  // Normalised match keys maintained by the lead service (lower-cased emails;
+  // last 10 digits of every phone field) for indexed duplicate detection.
+  emailKeys              String[]              @default([]) @map("email_keys")
+  phoneKeys              String[]              @default([]) @map("phone_keys")
+  // Lower-cased name/number/company/contact/requirement text for search.
+  searchText             String                @default("") @map("search_text")
+  statusId               String                @map("status_id") @db.Uuid
+  sourceId               String?               @map("source_id") @db.Uuid
+  ownerUserId            String?               @map("owner_user_id") @db.Uuid
+  score                  Int                   @default(0)
+  temperature            CrmLeadTemperature?
+  industry               String?
+  city                   String?
+  state                  String?
+  country                String?
+  requirement            String?
+  estimatedValue         Decimal?              @map("estimated_value") @db.Decimal(15, 2)
+  currencyCode           String?               @map("currency_code") @db.Char(3)
+  utmSource              String?               @map("utm_source")
+  utmMedium              String?               @map("utm_medium")
+  utmCampaign            String?               @map("utm_campaign")
+  utmTerm                String?               @map("utm_term")
+  utmContent             String?               @map("utm_content")
+  campaignSource         String?               @map("campaign_source")
+  referralSource         String?               @map("referral_source")
+  // Real FK into Marketing's Campaign (2026-10-09, CRM Replacement) — the
+  // UTM fields above are free-text only; this is what lets Marketing's
+  // dashboard count leads/revenue per campaign with a real join, mirroring
+  // the legacy CRM's own Lead.campaignId exactly.
+  campaignId             String?               @map("campaign_id") @db.Uuid
+  customFields           Json                  @default("{}") @map("custom_fields")
+  // How the lead entered the CRM (set once on create, never changed by later
+  // updates) and, for connectors, which provider sent it.
+  captureChannel         CrmLeadCaptureChannel @default(MANUAL) @map("capture_channel")
+  captureProvider        String?               @map("capture_provider")
+  importJobId            String?               @map("import_job_id") @db.Uuid
+  lastContactedAt        DateTime?             @map("last_contacted_at")
+  nextFollowUpAt         DateTime?             @map("next_follow_up_at")
+  convertedAt            DateTime?             @map("converted_at")
+  convertedByUserId      String?               @map("converted_by_user_id") @db.Uuid
+  convertedOpportunityId String?               @map("converted_opportunity_id") @db.Uuid
+  archivedAt             DateTime?             @map("archived_at")
+  archivedByUserId       String?               @map("archived_by_user_id") @db.Uuid
+  createdByUserId        String                @map("created_by_user_id") @db.Uuid
+  updatedByUserId        String?               @map("updated_by_user_id") @db.Uuid
+  // Optimistic-locking counter: every update must send the version it loaded.
+  version                Int                   @default(1)
+  createdAt              DateTime              @default(now()) @map("created_at")
+  updatedAt              DateTime              @updatedAt @map("updated_at")
+
+  company              Company               @relation(fields: [companyId], references: [id])
+  branch               Branch?               @relation(fields: [branchId], references: [id])
+  status               CrmLeadStatus         @relation(fields: [statusId], references: [id])
+  source               CrmLeadSource?        @relation(fields: [sourceId], references: [id])
+  owner                User?                 @relation("CrmLeadOwner", fields: [ownerUserId], references: [id])
+  createdBy            User                  @relation("CrmLeadCreatedBy", fields: [createdByUserId], references: [id])
+  crmCompany           CrmCompany?           @relation(fields: [crmCompanyId], references: [id], onDelete: SetNull)
+  crmContact           CrmContact?           @relation(fields: [crmContactId], references: [id], onDelete: SetNull)
+  convertedOpportunity CrmOpportunity?       @relation("CrmLeadConvertedOpportunity", fields: [convertedOpportunityId], references: [id], onDelete: SetNull)
+  opportunities        CrmOpportunity[]      @relation("CrmOpportunityLead")
+  importJob            CrmImportJob?         @relation(fields: [importJobId], references: [id], onDelete: SetNull)
+  externalRefs         CrmLeadExternalRef[]
+  importRows           CrmImportRow[]        @relation("CrmImportRowLead")
+  ingestEvents         CrmIngestEvent[]
+  sourcedContacts      CrmContact[]          @relation("CrmContactSourceLead")
+  sourcedCompanies     CrmCompany[]          @relation("CrmCompanySourceLead")
+  campaign             Campaign?             @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  campaignAttributions CampaignAttribution[]
+
+  @@unique([companyId, leadNumber])
+  @@index([companyId, archivedAt, createdAt])
+  @@index([companyId, statusId])
+  @@index([companyId, ownerUserId])
+  @@index([companyId, sourceId])
+  @@index([companyId, nextFollowUpAt])
+  @@index([companyId, captureChannel])
+  @@index([companyId, campaignId])
+  @@index([emailKeys], type: Gin)
+  @@index([phoneKeys], type: Gin)
+  @@map("crm_leads")
+}
+
+// The CRM's view of a business relationship (Phase 05, 2026-10-03). The
+// authoritative customer master stays the ERP `Customer`: a CRM company only
+// references it (customer_id, unique) and never copies its commercial,
+// tax or financial data. city/state/country are the company's headline
+// location; full postal addresses live in crm_addresses.
+model CrmCompany {
+  id                  String    @id @default(uuid()) @db.Uuid
+  companyId           String    @map("company_id") @db.Uuid
+  name                String
+  nameKey             String    @map("name_key")
+  // Name without punctuation / legal suffixes ("Rao Exports Pvt. Ltd." →
+  // "rao exports") — the duplicate-matching key; legalMatchKey the same for legalName.
+  nameMatchKey        String    @default("") @map("name_match_key")
+  legalName           String?   @map("legal_name")
+  legalMatchKey       String?   @map("legal_match_key")
+  displayName         String?   @map("display_name")
+  companyType         String?   @map("company_type")
+  website             String?
+  // Bare host ("abc.com") for duplicate matching.
+  websiteKey          String?   @map("website_key")
+  industry            String?
+  email               String?
+  phone               String?
+  mobile              String?
+  city                String?
+  state               String?
+  postalCode          String?   @map("postal_code")
+  country             String?
+  emailKeys           String[]  @default([]) @map("email_keys")
+  phoneKeys           String[]  @default([]) @map("phone_keys")
+  searchText          String    @default("") @map("search_text")
+  statusId            String?   @map("status_id") @db.Uuid
+  sourceId            String?   @map("source_id") @db.Uuid
+  sourceLeadId        String?   @map("source_lead_id") @db.Uuid
+  primaryContactId    String?   @map("primary_contact_id") @db.Uuid
+  customerId          String?   @unique @map("customer_id") @db.Uuid
+  ownerUserId         String?   @map("owner_user_id") @db.Uuid
+  customFields        Json      @default("{}") @map("custom_fields")
+  lastActivityAt      DateTime? @map("last_activity_at")
+  duplicateFlaggedAt  DateTime? @map("duplicate_flagged_at")
+  flaggedDuplicateIds String[]  @default([]) @map("flagged_duplicate_ids") @db.Uuid
+  mergedIntoId        String?   @map("merged_into_id") @db.Uuid
+  mergedAt            DateTime? @map("merged_at")
+  mergedByUserId      String?   @map("merged_by_user_id") @db.Uuid
+  archivedAt          DateTime? @map("archived_at")
+  archivedByUserId    String?   @map("archived_by_user_id") @db.Uuid
+  createdByUserId     String    @map("created_by_user_id") @db.Uuid
+  updatedByUserId     String?   @map("updated_by_user_id") @db.Uuid
+  version             Int       @default(1)
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  company        Company           @relation(fields: [companyId], references: [id])
+  customer       Customer?         @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  owner          User?             @relation("CrmCompanyOwner", fields: [ownerUserId], references: [id])
+  createdBy      User              @relation("CrmCompanyCreatedBy", fields: [createdByUserId], references: [id])
+  status         CrmCompanyStatus? @relation(fields: [statusId], references: [id])
+  source         CrmLeadSource?    @relation(fields: [sourceId], references: [id])
+  sourceLead     CrmLead?          @relation("CrmCompanySourceLead", fields: [sourceLeadId], references: [id], onDelete: SetNull)
+  primaryContact CrmContact?       @relation("CrmCompanyPrimaryContact", fields: [primaryContactId], references: [id], onDelete: SetNull)
+  mergedInto     CrmCompany?       @relation("CrmCompanyMergedInto", fields: [mergedIntoId], references: [id])
+  mergedFrom     CrmCompany[]      @relation("CrmCompanyMergedInto")
+  leads          CrmLead[]
+  contacts       CrmContact[]
+  opportunities  CrmOpportunity[]
+  addresses      CrmAddress[]
+  mergesSurvived CrmCompanyMerge[] @relation("CrmCompanyMergeSurvivor")
+  mergeRecord    CrmCompanyMerge?  @relation("CrmCompanyMergeMerged")
+
+  @@index([companyId, nameKey])
+  @@index([companyId, nameMatchKey])
+  @@index([companyId, legalMatchKey])
+  @@index([companyId, websiteKey])
+  @@index([companyId, archivedAt, createdAt])
+  @@index([companyId, ownerUserId])
+  @@index([companyId, statusId])
+  @@index([companyId, lastActivityAt])
+  @@index([mergedIntoId])
+  @@index([emailKeys], type: Gin)
+  @@index([phoneKeys], type: Gin)
+  @@map("crm_companies")
+}
+
+// Configurable company relationship statuses (Prospect, Customer, Partner…).
+// Nothing in the code depends on a particular status; `key` is stable for
+// integrations, names/colours/order are free to change.
+model CrmCompanyStatus {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  key       String
+  name      String
+  color     String?
+  isDefault Boolean  @default(false) @map("is_default")
+  isActive  Boolean  @default(true) @map("is_active")
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company   Company      @relation(fields: [companyId], references: [id])
+  companies CrmCompany[]
+
+  @@unique([companyId, key])
+  @@index([companyId, sortOrder])
+  @@map("crm_company_statuses")
+}
+
+// One row per completed company merge (snapshot of the merged company;
+// moved counts). Same contract as crm_contact_merges.
+model CrmCompanyMerge {
+  id             String   @id @default(uuid()) @db.Uuid
+  companyId      String   @map("company_id") @db.Uuid
+  survivorId     String   @map("survivor_id") @db.Uuid
+  mergedId       String   @unique @map("merged_id") @db.Uuid
+  fieldChoices   Json     @default("{}") @map("field_choices")
+  mergedSnapshot Json     @map("merged_snapshot")
+  moved          Json     @default("{}")
+  mergedByUserId String   @map("merged_by_user_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  company  Company    @relation(fields: [companyId], references: [id])
+  survivor CrmCompany @relation("CrmCompanyMergeSurvivor", fields: [survivorId], references: [id])
+  merged   CrmCompany @relation("CrmCompanyMergeMerged", fields: [mergedId], references: [id])
+
+  @@index([companyId, survivorId])
+  @@map("crm_company_merges")
+}
+
+// The CRM's person record (the ERP has no person master). Created manually,
+// by lead conversion, or later by integrations; reaches the ERP Customer only
+// through its CRM company (crm_companies.customer_id). Phase 04, 2026-10-02.
+model CrmContact {
+  id                  String    @id @default(uuid()) @db.Uuid
+  companyId           String    @map("company_id") @db.Uuid
+  crmCompanyId        String?   @map("crm_company_id") @db.Uuid
+  firstName           String    @map("first_name")
+  middleName          String?   @map("middle_name")
+  lastName            String?   @map("last_name")
+  fullName            String    @map("full_name")
+  // Lower-cased, single-spaced full name for the name+company / name+email duplicate rules.
+  nameKey             String    @default("") @map("name_key")
+  designation         String?
+  department          String?
+  // The person's role in the relationship with their company ("Decision
+  // maker", "Accounts"…). Free text with suggestions from crm_option_values.
+  relationshipRole    String?   @map("relationship_role")
+  email               String?
+  alternateEmail      String?   @map("alternate_email")
+  phone               String?
+  mobile              String?
+  whatsapp            String?
+  // Normalised match keys over the core fields AND crm_contact_channels.
+  emailKeys           String[]  @default([]) @map("email_keys")
+  phoneKeys           String[]  @default([]) @map("phone_keys")
+  searchText          String    @default("") @map("search_text")
+  // Reuses the CRM source list (crm_lead_sources). sourceLeadId is the lead
+  // this contact was created from on conversion (kept even if more leads link later).
+  sourceId            String?   @map("source_id") @db.Uuid
+  sourceLeadId        String?   @map("source_lead_id") @db.Uuid
+  ownerUserId         String?   @map("owner_user_id") @db.Uuid
+  customFields        Json      @default("{}") @map("custom_fields")
+  // Optional link to the specific Buyer master row (under this contact's
+  // linked Customer, via crmCompany.customerId) this contact represents
+  // (2026-10-09, CRM Replacement) -- a soft link, never enforced, following
+  // the exact same pattern as CrmCompany.customerId.
+  buyerId             String?   @map("buyer_id") @db.Uuid
+  // Last time anything happened to the contact (its own CRM events).
+  lastActivityAt      DateTime? @map("last_activity_at")
+  // Set when a FLAG duplicate rule matched on save: ids of the suspected
+  // duplicates, cleared by merging or by "not a duplicate".
+  duplicateFlaggedAt  DateTime? @map("duplicate_flagged_at")
+  flaggedDuplicateIds String[]  @default([]) @map("flagged_duplicate_ids") @db.Uuid
+  // Merge never deletes: the merged contact is archived and points at the survivor.
+  mergedIntoId        String?   @map("merged_into_id") @db.Uuid
+  mergedAt            DateTime? @map("merged_at")
+  mergedByUserId      String?   @map("merged_by_user_id") @db.Uuid
+  archivedAt          DateTime? @map("archived_at")
+  archivedByUserId    String?   @map("archived_by_user_id") @db.Uuid
+  createdByUserId     String    @map("created_by_user_id") @db.Uuid
+  updatedByUserId     String?   @map("updated_by_user_id") @db.Uuid
+  // Optimistic-locking counter (same contract as crm_leads.version).
+  version             Int       @default(1)
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  company        Company             @relation(fields: [companyId], references: [id])
+  crmCompany     CrmCompany?         @relation(fields: [crmCompanyId], references: [id], onDelete: SetNull)
+  owner          User?               @relation("CrmContactOwner", fields: [ownerUserId], references: [id])
+  createdBy      User                @relation("CrmContactCreatedBy", fields: [createdByUserId], references: [id])
+  source         CrmLeadSource?      @relation(fields: [sourceId], references: [id])
+  sourceLead     CrmLead?            @relation("CrmContactSourceLead", fields: [sourceLeadId], references: [id], onDelete: SetNull)
+  mergedInto     CrmContact?         @relation("CrmContactMergedInto", fields: [mergedIntoId], references: [id])
+  mergedFrom     CrmContact[]        @relation("CrmContactMergedInto")
+  leads          CrmLead[]
+  opportunities  CrmOpportunity[]
+  addresses      CrmAddress[]
+  channels       CrmContactChannel[]
+  consents       CrmContactConsent[]
+  mergesSurvived CrmContactMerge[]   @relation("CrmContactMergeSurvivor")
+  mergeRecord    CrmContactMerge?    @relation("CrmContactMergeMerged")
+  primaryOf      CrmCompany[]        @relation("CrmCompanyPrimaryContact")
+  buyer          Buyer?              @relation(fields: [buyerId], references: [id], onDelete: SetNull)
+
+  @@index([companyId, crmCompanyId])
+  @@index([companyId, archivedAt, createdAt])
+  @@index([companyId, ownerUserId])
+  @@index([companyId, nameKey])
+  @@index([companyId, lastActivityAt])
+  @@index([mergedIntoId])
+  @@index([emailKeys], type: Gin)
+  @@index([phoneKeys], type: Gin)
+  @@map("crm_contacts")
+}
+
+// ─────────────────────────────────────────────────────────────
+// CRM — Phase 04 Contacts (2026-10-02). See docs/crm/PHASE_04_CONTACTS.md.
+// ─────────────────────────────────────────────────────────────
+
+enum CrmAddressType {
+  BILLING
+  SHIPPING
+  OFFICE
+  HOME
+  FACTORY
+  OTHER
+}
+
+// Structured addresses for CRM records (the ERP has only free-text address
+// fields on Customer). Exactly one owner column is set (CHECK constraint):
+// contacts now, CRM companies from Phase 05.
+model CrmAddress {
+  id              String         @id @default(uuid()) @db.Uuid
+  companyId       String         @map("company_id") @db.Uuid
+  contactId       String?        @map("contact_id") @db.Uuid
+  crmCompanyId    String?        @map("crm_company_id") @db.Uuid
+  addressType     CrmAddressType @default(OFFICE) @map("address_type")
+  label           String?
+  line1           String
+  line2           String?
+  city            String?
+  state           String?
+  postalCode      String?        @map("postal_code")
+  country         String?
+  isPrimary       Boolean        @default(false) @map("is_primary")
+  createdByUserId String         @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+
+  company    Company     @relation(fields: [companyId], references: [id])
+  contact    CrmContact? @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  crmCompany CrmCompany? @relation(fields: [crmCompanyId], references: [id], onDelete: Cascade)
+
+  @@index([contactId])
+  @@index([crmCompanyId])
+  @@map("crm_addresses")
+}
+
+// Additional ways to reach a contact beyond the core email/phone columns
+// (second mobile, LinkedIn, website…). `channelType` is validated in code
+// (src/modules/crm/contacts/contact-channels.ts) so a new channel needs no
+// migration. Email/phone-type values feed duplicate matching.
+model CrmContactChannel {
+  id              String   @id @default(uuid()) @db.Uuid
+  companyId       String   @map("company_id") @db.Uuid
+  contactId       String   @map("contact_id") @db.Uuid
+  channelType     String   @map("channel_type")
+  value           String
+  valueKey        String   @map("value_key")
+  label           String?
+  createdByUserId String?  @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  company Company    @relation(fields: [companyId], references: [id])
+  contact CrmContact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@unique([contactId, channelType, valueKey])
+  @@map("crm_contact_channels")
+}
+
+enum CrmContactabilityStatus {
+  ALLOWED
+  DO_NOT_CONTACT
+  UNSUBSCRIBED
+  BOUNCED
+}
+
+// Contactability / DND per channel (one current row per contact+channel;
+// every change is also an AuditLog row and a contact.contactability_changed
+// event). Channel "ALL" overrides every channel. Campaigns, sequences and the
+// inbox (later phases) must check canContact() before sending.
+model CrmContactConsent {
+  id              String                  @id @default(uuid()) @db.Uuid
+  companyId       String                  @map("company_id") @db.Uuid
+  contactId       String                  @map("contact_id") @db.Uuid
+  channel         String
+  status          CrmContactabilityStatus
+  reason          String?
+  source          String                  @default("MANUAL")
+  changedAt       DateTime                @default(now()) @map("changed_at")
+  changedByUserId String?                 @map("changed_by_user_id") @db.Uuid
+
+  company Company    @relation(fields: [companyId], references: [id])
+  contact CrmContact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@unique([contactId, channel])
+  @@index([companyId, channel, status])
+  @@map("crm_contact_consents")
+}
+
+// One row per completed merge. `mergedSnapshot` keeps the merged contact as
+// it was (core fields, channels, addresses, custom fields) so nothing is lost
+// and a future unmerge has the data it needs.
+model CrmContactMerge {
+  id             String   @id @default(uuid()) @db.Uuid
+  companyId      String   @map("company_id") @db.Uuid
+  survivorId     String   @map("survivor_id") @db.Uuid
+  mergedId       String   @unique @map("merged_id") @db.Uuid
+  fieldChoices   Json     @default("{}") @map("field_choices")
+  mergedSnapshot Json     @map("merged_snapshot")
+  moved          Json     @default("{}")
+  mergedByUserId String   @map("merged_by_user_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  company  Company    @relation(fields: [companyId], references: [id])
+  survivor CrmContact @relation("CrmContactMergeSurvivor", fields: [survivorId], references: [id])
+  merged   CrmContact @relation("CrmContactMergeMerged", fields: [mergedId], references: [id])
+
+  @@index([companyId, survivorId])
+  @@map("crm_contact_merges")
+}
+
+// Admin-managed suggestion lists (contact departments, designations,
+// relationship roles). `listKey` is validated in code.
+model CrmOptionValue {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  listKey   String   @map("list_key")
+  value     String
+  valueKey  String   @map("value_key")
+  sortOrder Int      @default(0) @map("sort_order")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, listKey, valueKey])
+  @@index([companyId, listKey, sortOrder])
+  @@map("crm_option_values")
+}
+
+// Lean Phase 02 version (created from a lead). Phase 06/07 add pages,
+// pipeline and stage.
+model CrmOpportunity {
+  id                String               @id @default(uuid()) @db.Uuid
+  companyId         String               @map("company_id") @db.Uuid
+  opportunityNumber String               @map("opportunity_number")
+  name              String
+  // Phase 06: lower/space-normalised name for the open-duplicate warning.
+  nameKey           String               @default("") @map("name_key")
+  leadId            String?              @map("lead_id") @db.Uuid
+  crmContactId      String?              @map("crm_contact_id") @db.Uuid
+  crmCompanyId      String?              @map("crm_company_id") @db.Uuid
+  sourceId          String?              @map("source_id") @db.Uuid
+  ownerUserId       String?              @map("owner_user_id") @db.Uuid
+  // Phase 06: minimum pipeline/stage relationship (management UI is Phase 07).
+  pipelineId        String?              @map("pipeline_id") @db.Uuid
+  stageId           String?              @map("stage_id") @db.Uuid
+  stageChangedAt    DateTime?            @map("stage_changed_at")
+  status            CrmOpportunityStatus @default(OPEN)
+  // Estimated CRM value — never overwritten from ERP documents.
+  amount            Decimal?             @db.Decimal(15, 2)
+  currencyCode      String?              @map("currency_code") @db.Char(3)
+  // 0–100 (CHECK constraint in the migration).
+  probability       Int?
+  // Phase 07: STAGE = follows the stage default; MANUAL = set by a user (kept on stage changes).
+  probabilitySource String?              @map("probability_source")
+  expectedCloseDate DateTime?            @map("expected_close_date") @db.Date
+  description       String?
+  customFields      Json                 @default("{}") @map("custom_fields")
+  closedAt          DateTime?            @map("closed_at")
+  closedByUserId    String?              @map("closed_by_user_id") @db.Uuid
+  closeReason       String?              @map("close_reason")
+  // Name, number and linked ERP document numbers (company/contact are searched through their own keys).
+  searchText        String               @default("") @map("search_text")
+  lastActivityAt    DateTime?            @map("last_activity_at")
+  archivedAt        DateTime?            @map("archived_at")
+  archivedByUserId  String?              @map("archived_by_user_id") @db.Uuid
+  updatedByUserId   String?              @map("updated_by_user_id") @db.Uuid
+  version           Int                  @default(1)
+  createdByUserId   String               @map("created_by_user_id") @db.Uuid
+  createdAt         DateTime             @default(now()) @map("created_at")
+  updatedAt         DateTime             @updatedAt @map("updated_at")
+
+  company                Company                      @relation(fields: [companyId], references: [id])
+  lead                   CrmLead?                     @relation("CrmOpportunityLead", fields: [leadId], references: [id], onDelete: SetNull)
+  crmContact             CrmContact?                  @relation(fields: [crmContactId], references: [id], onDelete: SetNull)
+  crmCompany             CrmCompany?                  @relation(fields: [crmCompanyId], references: [id], onDelete: SetNull)
+  source                 CrmLeadSource?               @relation(fields: [sourceId], references: [id])
+  owner                  User?                        @relation("CrmOpportunityOwner", fields: [ownerUserId], references: [id])
+  createdBy              User                         @relation("CrmOpportunityCreatedBy", fields: [createdByUserId], references: [id])
+  pipeline               CrmPipeline?                 @relation(fields: [pipelineId], references: [id], onDelete: Restrict)
+  stage                  CrmPipelineStage?            @relation(fields: [stageId], references: [id], onDelete: Restrict)
+  convertedFromLeads     CrmLead[]                    @relation("CrmLeadConvertedOpportunity")
+  erpLinks               CrmOpportunityErpLink[]
+  stageHistory           CrmOpportunityStageHistory[]
+  // Sales Orders traced back to this Opportunity (2026-10-09, CRM
+  // Replacement) -- was SalesOrder.originatingDealId against the legacy
+  // CRM's Deal model before the replacement.
+  originatingSalesOrders SalesOrder[]
+
+  @@unique([companyId, opportunityNumber])
+  @@index([companyId, status])
+  @@index([companyId, leadId])
+  @@index([companyId, archivedAt, createdAt])
+  @@index([companyId, crmCompanyId])
+  @@index([companyId, crmContactId])
+  @@index([companyId, pipelineId, stageId])
+  @@index([companyId, ownerUserId])
+  @@index([companyId, expectedCloseDate])
+  @@index([companyId, lastActivityAt])
+  @@index([companyId, nameKey])
+  // Phase 08: board columns (pipeline → stage, newest stage entry first).
+  @@index([companyId, pipelineId, stageId, stageChangedAt], map: "crm_opportunities_board_idx")
+  @@map("crm_opportunities")
+}
+
+// Phase 06 (2026-10-04): the minimum pipeline/stage relationship opportunities
+// need. Pipeline management (CRUD, ordering, rules, board) is Phase 07; until
+// then a default "Sales" pipeline is created lazily per company.
+model CrmPipeline {
+  id               String    @id @default(uuid()) @db.Uuid
+  companyId        String    @map("company_id") @db.Uuid
+  key              String
+  name             String
+  // Phase 07: lower/space-normalised name — unique among non-archived pipelines (partial index in SQL).
+  nameKey          String    @default("") @map("name_key")
+  description      String?
+  // Exactly one default per company (partial unique index in SQL); used when an opportunity is created without a pipeline.
+  isDefault        Boolean   @default(false) @map("is_default")
+  // Kept in sync with archivedAt (false while archived) for Phase 06 readers.
+  isActive         Boolean   @default(true) @map("is_active")
+  sortOrder        Int       @default(0) @map("sort_order")
+  archivedAt       DateTime? @map("archived_at")
+  archivedByUserId String?   @map("archived_by_user_id") @db.Uuid
+  updatedByUserId  String?   @map("updated_by_user_id") @db.Uuid
+  version          Int       @default(1)
+  createdByUserId  String?   @map("created_by_user_id") @db.Uuid
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  company         Company                  @relation(fields: [companyId], references: [id])
+  stages          CrmPipelineStage[]
+  opportunities   CrmOpportunity[]
+  transitionRules CrmStageTransitionRule[]
+
+  @@unique([companyId, key])
+  @@index([companyId, sortOrder])
+  @@map("crm_pipelines")
+}
+
+model CrmPipelineStage {
+  id               String    @id @default(uuid()) @db.Uuid
+  companyId        String    @map("company_id") @db.Uuid
+  pipelineId       String    @map("pipeline_id") @db.Uuid
+  key              String
+  name             String
+  // Phase 07: unique among the pipeline's non-archived stages (partial index in SQL).
+  nameKey          String    @default("") @map("name_key")
+  description      String?
+  // Default probability (0–100) applied when an opportunity enters the stage (unless set by hand).
+  probability      Int?
+  // One default (starting) stage per pipeline (partial unique index in SQL).
+  isDefault        Boolean   @default(false) @map("is_default")
+  // Kept in sync with archivedAt (false while archived) for Phase 06 readers.
+  isActive         Boolean   @default(true) @map("is_active")
+  sortOrder        Int       @default(0) @map("sort_order")
+  // Field keys an opportunity must have before it may enter this stage
+  // (registry: src/modules/crm/pipelines/stage-requirements.ts).
+  requiredFields   Json      @default("[]") @map("required_fields")
+  // ANY = every move out of this stage is allowed unless a rule blocks it;
+  // ONLY_LISTED = only moves to stages with an "allowed" rule.
+  transitionMode   String    @default("ANY") @map("transition_mode")
+  archivedAt       DateTime? @map("archived_at")
+  archivedByUserId String?   @map("archived_by_user_id") @db.Uuid
+  updatedByUserId  String?   @map("updated_by_user_id") @db.Uuid
+  version          Int       @default(1)
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  company       Company                  @relation(fields: [companyId], references: [id])
+  pipeline      CrmPipeline              @relation(fields: [pipelineId], references: [id])
+  opportunities CrmOpportunity[]
+  rulesFrom     CrmStageTransitionRule[] @relation("CrmStageTransitionFrom")
+  rulesTo       CrmStageTransitionRule[] @relation("CrmStageTransitionTo")
+
+  @@unique([pipelineId, key])
+  @@index([companyId, pipelineId, sortOrder])
+  @@map("crm_pipeline_stages")
+}
+
+// Phase 07: a move between two stages of one pipeline — allowed or blocked —
+// with extra fields required for that specific move.
+model CrmStageTransitionRule {
+  id              String   @id @default(uuid()) @db.Uuid
+  companyId       String   @map("company_id") @db.Uuid
+  pipelineId      String   @map("pipeline_id") @db.Uuid
+  fromStageId     String   @map("from_stage_id") @db.Uuid
+  toStageId       String   @map("to_stage_id") @db.Uuid
+  allowed         Boolean  @default(true)
+  requiredFields  Json     @default("[]") @map("required_fields")
+  message         String?
+  createdByUserId String?  @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  company   Company          @relation(fields: [companyId], references: [id])
+  pipeline  CrmPipeline      @relation(fields: [pipelineId], references: [id])
+  fromStage CrmPipelineStage @relation("CrmStageTransitionFrom", fields: [fromStageId], references: [id])
+  toStage   CrmPipelineStage @relation("CrmStageTransitionTo", fields: [toStageId], references: [id])
+
+  @@unique([fromStageId, toStageId])
+  @@index([companyId, pipelineId])
+  @@map("crm_stage_transition_rules")
+}
+
+// Phase 07: one row per applied stage / pipeline change of an opportunity
+// (rejected moves are never written). Read by the detail page and the
+// conversion report.
+model CrmOpportunityStageHistory {
+  id                String   @id @default(uuid()) @db.Uuid
+  companyId         String   @map("company_id") @db.Uuid
+  opportunityId     String   @map("opportunity_id") @db.Uuid
+  // INITIAL | STAGE_CHANGE | PIPELINE_TRANSFER | STAGE_REASSIGNED
+  changeType        String   @map("change_type")
+  // FORM | STAGE_ACTION | BULK | TRANSFER | STAGE_ARCHIVE | PIPELINE_ARCHIVE | CREATE | BACKFILL
+  source            String
+  fromPipelineId    String?  @map("from_pipeline_id") @db.Uuid
+  toPipelineId      String   @map("to_pipeline_id") @db.Uuid
+  fromStageId       String?  @map("from_stage_id") @db.Uuid
+  toStageId         String   @map("to_stage_id") @db.Uuid
+  // Names at the time of the change (stages can be renamed later).
+  fromStageName     String?  @map("from_stage_name")
+  toStageName       String   @map("to_stage_name")
+  fromProbability   Int?     @map("from_probability")
+  toProbability     Int?     @map("to_probability")
+  probabilitySource String?  @map("probability_source")
+  // Always APPLIED today; kept for future audited rejections.
+  result            String   @default("APPLIED")
+  reason            String?
+  changedByUserId   String?  @map("changed_by_user_id") @db.Uuid
+  changedAt         DateTime @default(now()) @map("changed_at")
+
+  company     Company        @relation(fields: [companyId], references: [id])
+  opportunity CrmOpportunity @relation(fields: [opportunityId], references: [id])
+
+  @@index([companyId, opportunityId, changedAt], map: "crm_opp_stage_history_opportunity_idx")
+  @@index([companyId, toPipelineId, toStageId], map: "crm_opp_stage_history_stage_idx")
+  @@map("crm_opportunity_stage_history")
+}
+
+// Phase 06: an opportunity's references to authoritative ERP documents
+// (many per opportunity — e.g. several revisions). `docType` is validated in
+// code by a provider registry (crm-opportunity-erp.service.ts), so a future
+// ERP Quotation module plugs in without a migration. Only the document's
+// identifier and number are stored; everything else is read live from the ERP.
+model CrmOpportunityErpLink {
+  id             String   @id @default(uuid()) @db.Uuid
+  companyId      String   @map("company_id") @db.Uuid
+  opportunityId  String   @map("opportunity_id") @db.Uuid
+  docType        String   @map("doc_type")
+  docId          String   @map("doc_id") @db.Uuid
+  docNumber      String   @map("doc_number")
+  linkedByUserId String   @map("linked_by_user_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  company     Company        @relation(fields: [companyId], references: [id])
+  opportunity CrmOpportunity @relation(fields: [opportunityId], references: [id])
+
+  @@unique([opportunityId, docType, docId])
+  @@index([companyId, docType, docId])
+  @@map("crm_opportunity_erp_links")
+}
+
+// Reusable tags for every CRM record type. `nameKey` (lower-cased, trimmed,
+// single-spaced) stops "VIP", "vip " and "Vip" becoming three tags.
+model CrmTag {
+  id              String   @id @default(uuid()) @db.Uuid
+  companyId       String   @map("company_id") @db.Uuid
+  name            String
+  nameKey         String   @map("name_key")
+  color           String?
+  createdByUserId String?  @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  company     Company        @relation(fields: [companyId], references: [id])
+  assignments CrmEntityTag[]
+
+  @@unique([companyId, nameKey])
+  @@map("crm_tags")
+}
+
+model CrmEntityTag {
+  id              String        @id @default(uuid()) @db.Uuid
+  companyId       String        @map("company_id") @db.Uuid
+  tagId           String        @map("tag_id") @db.Uuid
+  entityType      CrmEntityType @map("entity_type")
+  entityId        String        @map("entity_id") @db.Uuid
+  createdByUserId String?       @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime      @default(now()) @map("created_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+  tag     CrmTag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@unique([tagId, entityType, entityId])
+  @@index([companyId, entityType, entityId])
+  @@map("crm_entity_tags")
+}
+
+// Notes on any CRM record. Soft-deleted (deletedAt) so history survives;
+// edits are kept in AuditLog.
+model CrmNote {
+  id              String        @id @default(uuid()) @db.Uuid
+  companyId       String        @map("company_id") @db.Uuid
+  entityType      CrmEntityType @map("entity_type")
+  entityId        String        @map("entity_id") @db.Uuid
+  body            String
+  createdByUserId String        @map("created_by_user_id") @db.Uuid
+  updatedByUserId String?       @map("updated_by_user_id") @db.Uuid
+  editedAt        DateTime?     @map("edited_at")
+  deletedAt       DateTime?     @map("deleted_at")
+  deletedByUserId String?       @map("deleted_by_user_id") @db.Uuid
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  company   Company @relation(fields: [companyId], references: [id])
+  createdBy User    @relation("CrmNoteAuthor", fields: [createdByUserId], references: [id])
+
+  @@index([companyId, entityType, entityId, createdAt])
+  @@map("crm_notes")
+}
+
+// Phase 09 — CRM activities: tasks, calls, meetings, appointments and logged
+// communication (email / SMS / WhatsApp / other). The ERP has no task or
+// activity module; notes stay in crm_notes. `type`, `status`, `priority`,
+// `direction` and `source` are validated in code (src/modules/crm/activities/
+// activity-registry.ts) so a new type needs no migration. Overdue is derived
+// from due_at / all_day / status, never stored. Rows are soft-deleted and a
+// completed activity is never deleted.
+model CrmActivity {
+  id                    String        @id @default(uuid()) @db.Uuid
+  companyId             String        @map("company_id") @db.Uuid
+  type                  String
+  subject               String
+  description           String?
+  // PENDING | IN_PROGRESS | COMPLETED | CANCELLED (logged activities are COMPLETED).
+  status                String        @default("PENDING")
+  // LOW | NORMAL | HIGH | URGENT
+  priority              String        @default("NORMAL")
+  // The record it was created on; crm_activity_links holds every record it shows on.
+  entityType            CrmEntityType @map("entity_type")
+  entityId              String        @map("entity_id") @db.Uuid
+  assignedToUserId      String?       @map("assigned_to_user_id") @db.Uuid
+  // When it is due / scheduled to start. All-day items store the business-day start.
+  dueAt                 DateTime?     @map("due_at")
+  allDay                Boolean       @default(false) @map("all_day")
+  endAt                 DateTime?     @map("end_at")
+  // First due date ever set (kept when rescheduled).
+  originalDueAt         DateTime?     @map("original_due_at")
+  rescheduleCount       Int           @default(0) @map("reschedule_count")
+  // Minutes before due (0 = at due time); null = no reminder.
+  reminderOffsetMinutes Int?          @map("reminder_offset_minutes")
+  reminderAt            DateTime?     @map("reminder_at")
+  // PENDING (scheduled) | SENT | CANCELLED; null = no reminder.
+  reminderState         String?       @map("reminder_state")
+  reminderSentAt        DateTime?     @map("reminder_sent_at")
+  outcome               String?
+  // INBOUND | OUTBOUND (calls and messages)
+  direction             String?
+  durationMinutes       Int?          @map("duration_minutes")
+  location              String?
+  // Phase 10 — appointments (type APPOINTMENT). `status` then holds the
+  // appointment lifecycle (SCHEDULED | CONFIRMED | RESCHEDULED | COMPLETED |
+  // CANCELLED | NO_SHOW); due_at / end_at are the start / end instants (UTC)
+  // and `timezone` is the IANA zone the times were entered in.
+  timezone              String?
+  videoLink             String?       @map("video_link")
+  appointmentType       String?       @map("appointment_type")
+  confirmedAt           DateTime?     @map("confirmed_at")
+  confirmedByUserId     String?       @map("confirmed_by_user_id") @db.Uuid
+  cancelledAt           DateTime?     @map("cancelled_at")
+  cancelledByUserId     String?       @map("cancelled_by_user_id") @db.Uuid
+  cancelReason          String?       @map("cancel_reason")
+  noShowAt              DateTime?     @map("no_show_at")
+  noShowByUserId        String?       @map("no_show_by_user_id") @db.Uuid
+  noShowReason          String?       @map("no_show_reason")
+  completedAt           DateTime?     @map("completed_at")
+  completedByUserId     String?       @map("completed_by_user_id") @db.Uuid
+  // MANUAL | API | an integration key (future email / WhatsApp / telephony connectors).
+  source                String        @default("MANUAL")
+  externalRef           String?       @map("external_ref")
+  metadata              Json          @default("{}")
+  deletedAt             DateTime?     @map("deleted_at")
+  deletedByUserId       String?       @map("deleted_by_user_id") @db.Uuid
+  createdByUserId       String        @map("created_by_user_id") @db.Uuid
+  updatedByUserId       String?       @map("updated_by_user_id") @db.Uuid
+  version               Int           @default(1)
+  createdAt             DateTime      @default(now()) @map("created_at")
+  updatedAt             DateTime      @updatedAt @map("updated_at")
+
+  company    Company           @relation(fields: [companyId], references: [id])
+  assignedTo User?             @relation("CrmActivityAssignee", fields: [assignedToUserId], references: [id])
+  createdBy  User              @relation("CrmActivityCreatedBy", fields: [createdByUserId], references: [id])
+  links      CrmActivityLink[]
+
+  @@index([companyId, assignedToUserId, status, dueAt], map: "crm_activities_assignee_idx")
+  @@index([companyId, status, dueAt], map: "crm_activities_due_idx")
+  @@index([companyId, entityType, entityId, createdAt], map: "crm_activities_entity_idx")
+  @@index([companyId, type, createdAt], map: "crm_activities_type_idx")
+  @@index([companyId, createdByUserId, createdAt], map: "crm_activities_creator_idx")
+  @@map("crm_activities")
+}
+
+// Every CRM record an activity appears on (polymorphic, like notes and tags).
+// The record it was created on is `isPrimary`; an activity on an opportunity
+// is also linked to that opportunity's company and contact.
+model CrmActivityLink {
+  id         String        @id @default(uuid()) @db.Uuid
+  companyId  String        @map("company_id") @db.Uuid
+  activityId String        @map("activity_id") @db.Uuid
+  entityType CrmEntityType @map("entity_type")
+  entityId   String        @map("entity_id") @db.Uuid
+  isPrimary  Boolean       @default(false) @map("is_primary")
+  createdAt  DateTime      @default(now()) @map("created_at")
+
+  company  Company     @relation(fields: [companyId], references: [id])
+  activity CrmActivity @relation(fields: [activityId], references: [id])
+
+  @@unique([activityId, entityType, entityId], map: "crm_activity_links_unique")
+  @@index([companyId, entityType, entityId, activityId], map: "crm_activity_links_entity_idx")
+  @@map("crm_activity_links")
+}
+
+// Metadata for the shared custom-field engine. Values live in each record's
+// `customFields` JSON keyed by `key`, so adding a field never needs a
+// migration. `key` and `fieldType` are fixed once created.
+model CrmCustomFieldDefinition {
+  id          String             @id @default(uuid()) @db.Uuid
+  companyId   String             @map("company_id") @db.Uuid
+  entityType  CrmEntityType      @map("entity_type")
+  key         String
+  label       String
+  fieldType   CrmCustomFieldType @map("field_type")
+  description String?
+  // DROPDOWN / MULTI_SELECT: [{ "value": "...", "label": "..." }]
+  options     Json?
+  isRequired  Boolean            @default(false) @map("is_required")
+  sortOrder   Int                @default(0) @map("sort_order")
+  isActive    Boolean            @default(true) @map("is_active")
+  createdAt   DateTime           @default(now()) @map("created_at")
+  updatedAt   DateTime           @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, entityType, key])
+  @@index([companyId, entityType, sortOrder])
+  @@map("crm_custom_field_definitions")
+}
+
+// Per-company CRM settings that are not lists (duplicate rules for now).
+model CrmSettings {
+  id                    String   @id @default(uuid()) @db.Uuid
+  companyId             String   @unique @map("company_id") @db.Uuid
+  // [{ "rule": "EMAIL" | "PHONE" | "COMPANY_AND_EMAIL" | "COMPANY_AND_PHONE", "action": "WARN" | "BLOCK" | "OFF" }]
+  leadDuplicateRules    Json     @map("lead_duplicate_rules")
+  // Phase 04: [{ "rule": "EMAIL" | "PHONE" | "MOBILE" | "WHATSAPP" | "NAME_AND_COMPANY" | "NAME_AND_EMAIL", "action": "WARN" | "BLOCK" | "FLAG" | "OFF" }]; null = defaults.
+  contactDuplicateRules Json?    @map("contact_duplicate_rules")
+  // Phase 05: [{ "rule": "NAME" | "LEGAL_NAME" | "WEBSITE" | "EMAIL" | "PHONE", "action": "WARN" | "BLOCK" | "FLAG" | "OFF" }]; null = defaults.
+  companyDuplicateRules Json?    @map("company_duplicate_rules")
+  updatedByUserId       String?  @map("updated_by_user_id") @db.Uuid
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@map("crm_settings")
+}
+
+// A named list configuration (filters + sort + columns). Smart Lists
+// (Phase 13) reuse the same filter object, so views carry over unchanged.
+// Phase 08 — per-user CRM screen preferences (board card fields, list
+// columns, default saved view, last pipeline / view mode). Presentation only —
+// never business data. Keys and value shapes are validated in code
+// (src/modules/crm/preferences/crm-preference-registry.ts). The ERP had no
+// server-side user-preference store (only browser localStorage).
+model CrmUserPreference {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  key       String
+  value     Json
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+  user    User    @relation(fields: [userId], references: [id])
+
+  @@unique([userId, key])
+  @@index([companyId])
+  @@map("crm_user_preferences")
+}
+
+model CrmSavedView {
+  id          String                 @id @default(uuid()) @db.Uuid
+  companyId   String                 @map("company_id") @db.Uuid
+  entityType  CrmEntityType          @map("entity_type")
+  name        String
+  filters     Json                   @default("{}")
+  sort        Json?
+  columns     Json?
+  visibility  CrmSavedViewVisibility @default(PRIVATE)
+  ownerUserId String                 @map("owner_user_id") @db.Uuid
+  createdAt   DateTime               @default(now()) @map("created_at")
+  updatedAt   DateTime               @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+  owner   User    @relation("CrmSavedViewOwner", fields: [ownerUserId], references: [id])
+
+  @@index([companyId, entityType, ownerUserId])
+  @@map("crm_saved_views")
+}
+
+enum ImportBatchType {
+  // Marketing's own CSV import type (kept from the legacy CRM removal --
+  // Marketing survives untouched, see CLAUDE.md's CRM Replacement section).
   CAMPAIGN_DAILY_METRIC
-  // Super Admin -> Bulk Master Data Import portal (2026-09-04).
   CUSTOMER
   SUPPLIER
   PRODUCT
@@ -8662,9 +9561,6 @@ enum DocumentType {
   STYLE
   MATERIAL
   CONTRACTOR
-  LEAD
-  DEAL
-  CAMPAIGN
   JOB_WORK_ORDER
   JOB_WORK_RECEIPT
   CUSTOM_INVOICE_CREDIT_NOTE
@@ -8676,6 +9572,11 @@ enum DocumentType {
   REPLICATE_DESIGN_PROJECT
   FABRIC_ROLL
   SKU
+  CRM_LEAD
+  CRM_OPPORTUNITY
+  // Marketing's own campaign numbering (kept from the legacy CRM removal --
+  // Marketing survives untouched, see CLAUDE.md's CRM Replacement section).
+  CAMPAIGN
 }
 
 model DocumentSequence {

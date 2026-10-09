@@ -3,16 +3,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/numbering/DocumentNumberingService", () => ({ generateDocumentNumber: vi.fn() }));
 vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { assert: vi.fn() } }));
-// Same 80/50 pair the hardcoded literals used to be — keeps every existing
-// assertion in this file (written against the old hardcoded 50 "qualified"
-// cutoff) valid now that the real threshold is a per-company DB setting.
-vi.mock("@/modules/crm/crm-settings.service", () => ({
-  getCrmSettings: vi.fn().mockResolvedValue({ hotThreshold: 80, warmThreshold: 50 }),
-}));
+// Repointed at the new CRM (2026-10-09, CRM Replacement): CrmLead/
+// CrmOpportunity instead of the legacy Lead/Deal, "qualified" is now
+// temperature IN (WARM, HOT) (no threshold setting anymore), "customers" is
+// convertedAt IS NOT NULL, revenue sums CrmOpportunity.amount where
+// status=WON.
 vi.mock("@/core/db/client", () => ({
   prisma: {
-    lead: { groupBy: vi.fn(), findMany: vi.fn() },
-    deal: { aggregate: vi.fn(), findMany: vi.fn() },
+    crmLead: { groupBy: vi.fn(), findMany: vi.fn(), findFirst: vi.fn() },
+    crmOpportunity: { aggregate: vi.fn(), findMany: vi.fn() },
     campaign: { findMany: vi.fn() },
     campaignDailyMetric: { findMany: vi.fn(), groupBy: vi.fn() },
   },
@@ -66,8 +65,8 @@ const actor = { companyId: "co-1", userId: "user-1", branchId: "br-1" };
 
 function emptyMetricsMocks() {
   vi.mocked(CampaignDailyMetricRepository.sumByCampaignIds).mockResolvedValue([]);
-  vi.mocked(prisma.lead.groupBy).mockResolvedValue([] as never);
-  vi.mocked(prisma.deal.aggregate).mockResolvedValue({ _sum: { value: null } } as never);
+  vi.mocked(prisma.crmLead.groupBy).mockResolvedValue([] as never);
+  vi.mocked(prisma.crmOpportunity.aggregate).mockResolvedValue({ _sum: { amount: null } } as never);
 }
 
 beforeEach(() => {
@@ -86,8 +85,8 @@ beforeEach(() => {
   vi.mocked(prisma.campaign.findMany).mockReset().mockResolvedValue([]);
   vi.mocked(prisma.campaignDailyMetric.findMany).mockReset().mockResolvedValue([]);
   vi.mocked(prisma.campaignDailyMetric.groupBy).mockReset().mockResolvedValue([]);
-  vi.mocked(prisma.deal.findMany).mockReset().mockResolvedValue([]);
-  vi.mocked(prisma.lead.findMany).mockReset().mockResolvedValue([]);
+  vi.mocked(prisma.crmOpportunity.findMany).mockReset().mockResolvedValue([]);
+  vi.mocked(prisma.crmLead.findMany).mockReset().mockResolvedValue([]);
   emptyMetricsMocks();
 });
 
@@ -297,16 +296,16 @@ describe("getMarketingDashboard", () => {
       { campaignId: "camp-1", _sum: { spend: "800" } },
       { campaignId: "camp-2", _sum: { spend: "200" } },
     ] as never);
-    const groupByImpl = (args: { where?: { stage?: { kind?: unknown }; leadScore?: unknown } }) => {
-      if (args.where?.stage?.kind === "WON") return Promise.resolve([{ campaignId: "camp-1", _count: { _all: 2 } }]);
-      if (args.where?.leadScore) return Promise.resolve([{ campaignId: "camp-1", _count: { _all: 3 } }]);
+    const groupByImpl = (args: { where?: { convertedAt?: unknown; temperature?: unknown } }) => {
+      if (args.where?.convertedAt) return Promise.resolve([{ campaignId: "camp-1", _count: { _all: 2 } }]);
+      if (args.where?.temperature) return Promise.resolve([{ campaignId: "camp-1", _count: { _all: 3 } }]);
       return Promise.resolve([
         { campaignId: "camp-1", _count: { _all: 5 } },
         { campaignId: "camp-2", _count: { _all: 2 } },
       ]);
     };
-    vi.mocked(prisma.lead.groupBy).mockImplementation(groupByImpl as never);
-    vi.mocked(prisma.deal.aggregate).mockResolvedValue({ _sum: { value: "3000" } } as never);
+    vi.mocked(prisma.crmLead.groupBy).mockImplementation(groupByImpl as never);
+    vi.mocked(prisma.crmOpportunity.aggregate).mockResolvedValue({ _sum: { amount: "3000" } } as never);
 
     const result = await getMarketingDashboard("co-1");
 
@@ -342,11 +341,11 @@ describe("getMarketingTrends", () => {
     vi.mocked(prisma.campaignDailyMetric.findMany).mockResolvedValue([
       { metricDate: new Date("2026-08-22"), spend: "500", impressions: "1000", clicks: "50" },
     ] as never);
-    vi.mocked(prisma.lead.findMany).mockResolvedValue([
-      { createdAt: new Date("2026-08-22T09:00:00"), stage: { kind: "OPEN" } },
-      { createdAt: new Date("2026-08-22T15:00:00"), stage: { kind: "WON" } },
+    vi.mocked(prisma.crmLead.findMany).mockResolvedValue([
+      { createdAt: new Date("2026-08-22T09:00:00"), convertedAt: null },
+      { createdAt: new Date("2026-08-22T15:00:00"), convertedAt: new Date("2026-08-22T16:00:00") },
     ] as never);
-    vi.mocked(prisma.deal.findMany).mockResolvedValue([{ createdAt: new Date("2026-08-22T10:00:00"), value: "2000" }] as never);
+    vi.mocked(prisma.crmOpportunity.findMany).mockResolvedValue([{ createdAt: new Date("2026-08-22T10:00:00"), amount: "2000" }] as never);
 
     const result = await getMarketingTrends("co-1", 5);
     const day = result.find((r) => r.date === "2026-08-22")!;
@@ -368,11 +367,11 @@ describe("getChannelPerformance", () => {
       { campaignId: "camp-meta", _sum: { spend: "1000" } },
       { campaignId: "camp-google", _sum: { spend: "500" } },
     ] as never);
-    vi.mocked(prisma.lead.findMany).mockResolvedValue([{ campaignId: "camp-meta" }, { campaignId: "camp-meta" }, { campaignId: "camp-google" }] as never);
-    vi.mocked(prisma.deal.findMany).mockResolvedValue([
-      { stage: "WON", value: "3000", lead: { campaignId: "camp-meta" } },
-      { stage: "LOST", value: "1000", lead: { campaignId: "camp-meta" } },
-      { stage: "PROPOSAL", value: "500", lead: { campaignId: "camp-google" } },
+    vi.mocked(prisma.crmLead.findMany).mockResolvedValue([{ campaignId: "camp-meta" }, { campaignId: "camp-meta" }, { campaignId: "camp-google" }] as never);
+    vi.mocked(prisma.crmOpportunity.findMany).mockResolvedValue([
+      { status: "WON", amount: "3000", lead: { campaignId: "camp-meta" } },
+      { status: "LOST", amount: "1000", lead: { campaignId: "camp-meta" } },
+      { status: "OPEN", amount: "500", lead: { campaignId: "camp-google" } },
     ] as never);
 
     const result = await getChannelPerformance("co-1");

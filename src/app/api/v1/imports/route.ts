@@ -6,21 +6,18 @@ import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { runImportSchema } from "@/modules/import/import.schema";
 import { listImportBatches, runImport } from "@/modules/import/import.service";
 
-// LEAD/DEAL live under the `crm` module, CAMPAIGN_DAILY_METRIC under
-// `marketing` — matches the exact action each type's own manual-create route
-// already asserts (crm.create for Lead/Deal, marketing.edit for a daily
-// metric), so a CSV import can never grant more than the equivalent manual
-// action already would.
+// Only CAMPAIGN_DAILY_METRIC remains (LEAD/DEAL removed with the legacy CRM,
+// 2026-10-09) — matches the exact action the manual daily-metric-entry route
+// already asserts (marketing.edit), so a CSV import can never grant more
+// than the equivalent manual action already would.
 const PERMISSION_BY_IMPORT_TYPE = {
-  LEAD: { module: "crm", action: "create" },
-  DEAL: { module: "crm", action: "create" },
   CAMPAIGN_DAILY_METRIC: { module: "marketing", action: "edit" },
 } as const;
 
 export async function GET(req: NextRequest) {
   try {
     const session = await requireSession();
-    await PermissionService.assert(session.user.id, "crm", "view");
+    await PermissionService.assert(session.user.id, "marketing", "view");
 
     const query = parseListQuery(req.nextUrl.searchParams, "createdAt");
     const { data, totalCount } = await listImportBatches(session.user.companyId, query);

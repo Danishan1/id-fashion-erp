@@ -136,9 +136,7 @@ vi.mock("@/modules/employees/employee.service", () => ({ createEmployee: vi.fn()
 
 // A trimmed, real re-implementation (not a mock of behavior) so the two
 // helpers this file genuinely reuses from import.service.ts behave
-// identically here without pulling in that file's own real CRM/marketing
-// imports (which would otherwise cascade into modules this test never
-// touches, e.g. @/modules/crm/lead.service).
+// identically here without pulling in that file's own real imports.
 vi.mock("./import.service", () => ({
   undefinedIfBlank: (value: string | undefined) => {
     const trimmed = value?.trim();

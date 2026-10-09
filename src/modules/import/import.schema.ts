@@ -1,13 +1,17 @@
 import { z } from "zod";
 
-export const IMPORT_BATCH_TYPES = ["LEAD", "DEAL", "CAMPAIGN_DAILY_METRIC"] as const;
+// The old synchronous CRM/Marketing CSV importer's own type set. LEAD/DEAL
+// were removed with the legacy CRM (2026-10-09, CRM Replacement) --
+// CAMPAIGN_DAILY_METRIC is Marketing's own and was restored (Marketing was
+// explicitly kept, see CLAUDE.md's CRM Replacement section).
+export const IMPORT_BATCH_TYPES = ["CAMPAIGN_DAILY_METRIC"] as const;
 export type ImportBatchTypeValue = (typeof IMPORT_BATCH_TYPES)[number];
 
 // Super Admin -> Bulk Master Data Import portal (2026-09-04) -- a distinct
-// set from IMPORT_BATCH_TYPES above (the original synchronous CRM import),
-// since these run through the async Redis/BullMQ pipeline instead. Kept as
-// a separate const rather than folded into IMPORT_BATCH_TYPES so the two
-// pipelines' own UIs/routes can each iterate just their own set.
+// set from IMPORT_BATCH_TYPES above (the original synchronous CRM/Marketing
+// import), since these run through the async Redis/BullMQ pipeline instead.
+// Kept as a separate const rather than folded into IMPORT_BATCH_TYPES so the
+// two pipelines' own UIs/routes can each iterate just their own set.
 export const BULK_IMPORT_MASTER_TYPES = [
   "CUSTOMER",
   "SUPPLIER",
@@ -123,23 +127,17 @@ export const BULK_IMPORT_DEPENDENCY_ORDER: BulkImportMasterType[] = [
 ];
 
 // One canonical column spec per import type — the single source of truth
-// shared by the server-side row validator below AND the client-side
-// column-mapping UI / downloadable template (CsvImportModal reads the same
-// `key`/`label`/`required` shape, so the two can never silently drift).
+// shared by the server-side row validator and the downloadable template.
 export interface ImportColumnSpec {
   key: string;
   label: string;
   required: boolean;
 }
 
-// Bulk Master Data Import's own column specs (2026-09-04) — kept in a
-// separate map from IMPORT_COLUMNS below since they key on
-// BulkImportMasterType, not ImportBatchTypeValue, and each row is
-// server-parsed (xlsx/csv), not client-mapped like the CRM importer's own
-// flow. A header in the uploaded file is matched to a column by the same
-// normalize-and-compare heuristic already proven by CsvImportModal
-// (case/punctuation-insensitive, strips a trailing parenthetical hint) —
-// see import.service.ts's matchColumnsToHeaders().
+// Bulk Master Data Import's own column specs (2026-09-04). Each row is
+// server-parsed (xlsx/csv). A header in the uploaded file is matched to a
+// column by a normalize-and-compare heuristic (case/punctuation-insensitive,
+// strips a trailing parenthetical hint).
 //
 // Several spec-requested columns have no home in this schema today and are
 // deliberately NOT listed here rather than silently invented as new fields:
@@ -523,30 +521,10 @@ export const BULK_IMPORT_SAMPLE_ROWS: Record<BulkImportMasterType, Record<string
   },
 };
 
+// The old synchronous importer's own column spec + run schema (restored
+// 2026-10-09, CRM Replacement -- Marketing's CAMPAIGN_DAILY_METRIC CSV
+// import, LEAD/DEAL dropped with the legacy CRM).
 export const IMPORT_COLUMNS: Record<ImportBatchTypeValue, ImportColumnSpec[]> = {
-  LEAD: [
-    { key: "name", label: "Name", required: true },
-    { key: "email", label: "Email", required: false },
-    { key: "phone", label: "Phone", required: false },
-    { key: "companyName", label: "Company Name", required: false },
-    { key: "whatsappNumber", label: "WhatsApp Number", required: false },
-    { key: "country", label: "Country", required: false },
-    { key: "city", label: "City", required: false },
-    { key: "source", label: "Source (code or name from CRM Settings, e.g. WEBSITE)", required: false },
-    { key: "leadScore", label: "Lead Score (0-100)", required: false },
-    { key: "value", label: "Potential Value", required: false },
-    { key: "expectedCloseDate", label: "Expected Close Date (YYYY-MM-DD)", required: false },
-    { key: "notes", label: "Notes", required: false },
-  ],
-  DEAL: [
-    { key: "title", label: "Deal Title", required: true },
-    { key: "leadNumber", label: "Lead # (optional link)", required: false },
-    { key: "customerCode", label: "Customer Code (optional link)", required: false },
-    { key: "value", label: "Value", required: false },
-    { key: "probabilityPercent", label: "Probability % (0-100)", required: false },
-    { key: "expectedCloseDate", label: "Expected Close Date (YYYY-MM-DD)", required: false },
-    { key: "notes", label: "Notes", required: false },
-  ],
   CAMPAIGN_DAILY_METRIC: [
     { key: "campaignNumber", label: "Campaign # (e.g. CAM-2026-00001)", required: false },
     { key: "campaignName", label: "Campaign Name (used only if Campaign # is blank)", required: false },
@@ -558,16 +536,14 @@ export const IMPORT_COLUMNS: Record<ImportBatchTypeValue, ImportColumnSpec[]> = 
   ],
 };
 
-// Deliberately no separate per-row Zod schema here — import.service.ts
+// Deliberately no separate per-row Zod schema here -- import.service.ts
 // validates each row by feeding it straight into the exact same
-// createLeadSchema/createDealSchema/recordDailyMetricSchema the manual UI
-// forms already use, so a CSV-imported record can never diverge from a
-// manually-created one's validation rules.
-
+// recordDailyMetricSchema the manual UI form already uses, so a CSV-imported
+// record can never diverge from a manually-created one's validation rules.
 export const runImportSchema = z.object({
   importType: z.enum(IMPORT_BATCH_TYPES),
   fileName: z.string().min(1).max(255),
-  // Already column-mapped client-side into canonical keys — every value is
+  // Already column-mapped client-side into canonical keys -- every value is
   // still a raw string (as read from the CSV cell); per-row Zod coercion
   // happens server-side, never trusted from the client.
   rows: z.array(z.record(z.string(), z.string())).min(1, "The file has no data rows.").max(5000, "A single import is capped at 5000 rows."),
