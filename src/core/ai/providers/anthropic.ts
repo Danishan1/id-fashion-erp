@@ -10,6 +10,7 @@ import {
   type RequestStructuredTextOutputParams,
 } from "./text-provider-types";
 import { requestStructuredVisionOutputViaOpenAi, requestStructuredTextOutputViaOpenAi } from "./openai-text";
+import { requestStructuredVisionOutputViaGemini, requestStructuredTextOutputViaGemini } from "./gemini-text";
 
 /**
  * Low-level, provider-specific wrapper around the Anthropic SDK — the only
@@ -42,6 +43,14 @@ function anthropicClient(apiKey: string): Anthropic {
 }
 
 function mapSdkError(err: unknown): AiServiceError {
+  // An empty account balance comes back as a 400; retrying never helps, so say so plainly.
+  if (err instanceof Anthropic.APIError && /credit balance is too low/i.test(err.message)) {
+    return new AiServiceError(
+      "AI analysis is unavailable: the Anthropic account has no credits left. Add credits in Anthropic billing (or switch AI_TEXT_PROVIDER), then try again.",
+      "PROVIDER_ERROR",
+      err
+    );
+  }
   if (err instanceof Anthropic.APIConnectionTimeoutError) {
     return new AiServiceError("AI analysis could not be completed. Please try again.", "TIMEOUT", err);
   }
@@ -244,6 +253,9 @@ export async function requestStructuredVisionOutput<T>(
   if (getAiTextProvider() === "openai") {
     return requestStructuredVisionOutputViaOpenAi<T>(params);
   }
+  if (getAiTextProvider() === "gemini") {
+    return requestStructuredVisionOutputViaGemini<T>(params);
+  }
   const config = getAnthropicConfig();
   return requestStructuredToolCall<T>({
     model: config.visionModel,
@@ -267,6 +279,9 @@ export async function requestStructuredTextOutput<T>(
 ): Promise<StructuredToolCallResult<T>> {
   if (getAiTextProvider() === "openai") {
     return requestStructuredTextOutputViaOpenAi<T>(params);
+  }
+  if (getAiTextProvider() === "gemini") {
+    return requestStructuredTextOutputViaGemini<T>(params);
   }
   const config = getAnthropicConfig();
   return requestStructuredToolCall<T>({

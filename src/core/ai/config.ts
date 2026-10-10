@@ -27,7 +27,7 @@ export function getAnthropicConfig(): AnthropicConfig {
   };
 }
 
-export type AiTextProviderKind = "anthropic" | "openai";
+export type AiTextProviderKind = "anthropic" | "openai" | "gemini";
 
 /**
  * Selects which real backend `requestStructuredVisionOutput`/
@@ -44,7 +44,28 @@ export type AiTextProviderKind = "anthropic" | "openai";
  * fully intact and one env-var flip away from being active again.
  */
 export function getAiTextProvider(): AiTextProviderKind {
-  return process.env.AI_TEXT_PROVIDER === "openai" ? "openai" : "anthropic";
+  const value = process.env.AI_TEXT_PROVIDER;
+  return value === "openai" || value === "gemini" ? value : "anthropic";
+}
+
+export interface GeminiTextConfig {
+  apiKey: string;
+  defaultModel: string;
+  visionModel: string;
+}
+
+export function getGeminiTextConfig(): GeminiTextConfig {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new AiConfigMissingError("AI service configuration is missing.");
+  }
+  return {
+    apiKey,
+    // One Flash model handles both text and vision. gemini-2.5-* is no longer
+    // offered to new keys, and the Pro models have no free-tier quota.
+    defaultModel: process.env.GEMINI_TEXT_MODEL || "gemini-3.8-flash",
+    visionModel: process.env.GEMINI_VISION_MODEL || "gemini-3.8-flash",
+  };
 }
 
 export interface OpenAiTextConfig {

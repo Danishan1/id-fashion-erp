@@ -79,6 +79,19 @@ export function unwrapSchemaEchoIfPresent(parsed: unknown, expectedKeys: string[
 }
 
 function mapSdkError(err: unknown): AiServiceError {
+  // An empty account balance comes back as a 429, but retrying never helps —
+  // say so plainly instead of the generic "please try again".
+  if (err instanceof RateLimitError) {
+    const code = (err as { code?: unknown }).code;
+    const type = (err as { type?: unknown }).type;
+    if (code === "credit_balance_exhausted" || code === "insufficient_quota" || type === "insufficient_quota") {
+      return new AiServiceError(
+        "AI analysis is unavailable: the OpenAI account has no credits left. Add credits in OpenAI billing (or switch AI_TEXT_PROVIDER), then try again.",
+        "RATE_LIMIT",
+        err
+      );
+    }
+  }
   if (err instanceof APIConnectionTimeoutError) {
     return new AiServiceError("AI analysis could not be completed. Please try again.", "TIMEOUT", err);
   }
