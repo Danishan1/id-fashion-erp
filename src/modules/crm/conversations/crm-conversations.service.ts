@@ -219,6 +219,8 @@ export function presentMessage(m: MessageRow, opts: { canRetry: boolean }) {
       downloadUrl: a.attachmentId ? `/api/v1/crm/conversations/attachments/${a.id}/download` : null,
     })),
     location: (meta.location as { latitude: number; longitude: number; name?: string | null } | undefined) ?? null,
+    // Phase 12: written from a template (the body above is what was actually sent).
+    template: m.templateId ? { id: m.templateId, versionId: m.templateVersionId, name: (meta.template as { name?: string } | undefined)?.name ?? null, versionNumber: (meta.template as { versionNumber?: number } | undefined)?.versionNumber ?? null, edited: Boolean((meta.template as { edited?: boolean } | undefined)?.edited) } : null,
     canRetry: opts.canRetry && m.direction === "OUTBOUND" && m.status === "FAILED",
   };
 }

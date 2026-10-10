@@ -94,6 +94,8 @@ export interface ThreadMessage {
   error: { code: string | null; message: string } | null;
   attachments: MessageAttachmentDto[];
   location: { latitude: number; longitude: number; name?: string | null } | null;
+  /** Phase 12: written from a template (body = what was actually sent). */
+  template?: { id: string; versionId: string | null; name: string | null; versionNumber: number | null; edited: boolean } | null;
   canRetry: boolean;
 }
 

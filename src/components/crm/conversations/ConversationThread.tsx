@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { crmRequest } from "@/components/crm/crm-api";
 import { CrmErrorState, CrmLoadingState } from "@/components/crm/CrmStates";
+import { TemplatePickerDialog, type PickedTemplate } from "@/components/crm/templates/TemplatePickerDialog";
 import { Button } from "@/components/ui/Button";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { textInputClass } from "@/components/ui/FormField";
@@ -57,6 +58,13 @@ export function MessageBubble({ m, deliveryStatuses, onRetry, onTask, retrying }
         <div className={`mb-0.5 flex items-center gap-2 text-xs ${out && m.status !== "FAILED" ? "text-indigo-100" : "text-zinc-500 dark:text-zinc-400"}`}>
           <span className="font-medium">{out ? (m.senderUser?.fullName ?? "You") : m.senderName}</span>
           <time dateTime={m.occurredAt}>{fullWhen(m.occurredAt)}</time>
+          {m.template && (
+            <a href={`/crm/templates/${m.template.id}`} className="underline-offset-2 hover:underline" title={m.template.edited ? "Written from a template, then edited" : "Written from a template"} data-testid="message-template">
+              ⧉ {m.template.name ?? "Template"}
+              {m.template.versionNumber ? ` v${m.template.versionNumber}` : ""}
+              {m.template.edited ? " (edited)" : ""}
+            </a>
+          )}
         </div>
         {m.subject && <p className="font-semibold">{m.subject}</p>}
         {m.body && <p className="whitespace-pre-wrap break-words">{m.body}</p>}
@@ -119,7 +127,7 @@ function NoteItem({ n, onEdit, onDelete }: { n: ThreadNote; onEdit: (n: ThreadNo
 
 // ── Composer ─────────────────────────────────────────────────────
 
-async function postReply(conversationId: string, payload: { body: string; subject: string; clientMessageId: string }, files: File[]) {
+async function postReply(conversationId: string, payload: { body: string; subject: string; clientMessageId: string; templateId?: string; templateVersionId?: string }, files: File[]) {
   const url = `${CONVERSATIONS_API}/${conversationId}/messages`;
   let init: RequestInit;
   if (files.length) {
@@ -127,9 +135,13 @@ async function postReply(conversationId: string, payload: { body: string; subjec
     form.set("body", payload.body);
     if (payload.subject) form.set("subject", payload.subject);
     form.set("clientMessageId", payload.clientMessageId);
+    if (payload.templateId && payload.templateVersionId) {
+      form.set("templateId", payload.templateId);
+      form.set("templateVersionId", payload.templateVersionId);
+    }
     for (const f of files) form.append("files", f);
     init = { method: "POST", body: form, headers: { [TOAST_HEADER]: "off" } };
-  } else init = { method: "POST", body: JSON.stringify({ body: payload.body, ...(payload.subject ? { subject: payload.subject } : {}), clientMessageId: payload.clientMessageId }), headers: { "Content-Type": "application/json", [TOAST_HEADER]: "off" } };
+  } else init = { method: "POST", body: JSON.stringify({ body: payload.body, ...(payload.subject ? { subject: payload.subject } : {}), clientMessageId: payload.clientMessageId, ...(payload.templateId ? { templateId: payload.templateId, templateVersionId: payload.templateVersionId } : {}) }), headers: { "Content-Type": "application/json", [TOAST_HEADER]: "off" } };
   try {
     const res = await fetch(url, init);
     const json = await res.json().catch(() => null);
@@ -157,6 +169,9 @@ export function MessageComposer({ conversation, onSent, onNoted }: { conversatio
   // One id per draft: a double click or a retry after a network error never sends twice.
   const [clientMessageId, setClientMessageId] = useState(() => crypto.randomUUID());
   const fileInput = useRef<HTMLInputElement>(null);
+  // Phase 12: the template (exact version) the reply was started from — sent along so history records it.
+  const [template, setTemplate] = useState<PickedTemplate | null>(null);
+  const [picking, setPicking] = useState(false);
   const blockedReason = !conversation.contactability.allowed ? conversation.contactability.message : !caps.canSend ? caps.sendUnavailableReason : conversation.status === "ARCHIVED" ? "This conversation is archived. Restore it to reply." : !conversation.permissions.send ? "You don't have permission to reply." : null;
   const effectiveMode = canReply ? mode : "note";
 
@@ -174,12 +189,13 @@ export function MessageComposer({ conversation, onSent, onNoted }: { conversatio
     if (!body.trim() && !files.length) return setError("Write a message or attach a file.");
     if (body.length > caps.maxTextLength) return setError(`At most ${caps.maxTextLength} characters on this channel.`);
     setBusy(true);
-    const res = await postReply(conversation.id, { body, subject: caps.supportsSubject ? subject : "", clientMessageId }, files);
+    const res = await postReply(conversation.id, { body, subject: caps.supportsSubject ? subject : "", clientMessageId, ...(template ? { templateId: template.templateId, templateVersionId: template.versionId } : {}) }, files);
     setBusy(false);
     if (!res.ok) return setError(res.message);
     if (res.data.status === "FAILED") toast.error("Message could not be sent. It's kept in the thread — use Retry.");
     setBody("");
     setFiles([]);
+    setTemplate(null);
     setClientMessageId(crypto.randomUUID());
     onSent(res.data);
   };
@@ -214,6 +230,36 @@ export function MessageComposer({ conversation, onSent, onNoted }: { conversatio
         <p className="mb-2 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-200" role="status">
           ⚠ {blockedReason}
         </p>
+      )}
+      {effectiveMode === "reply" && canReply && !blockedReason && (
+        <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
+          <button type="button" onClick={() => setPicking(true)} className="rounded-md border border-zinc-300 px-2 py-0.5 font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800">
+            Use template
+          </button>
+          {template && (
+            <span className="flex items-center gap-1 rounded bg-indigo-50 px-2 py-0.5 text-indigo-800 dark:bg-indigo-500/10 dark:text-indigo-200" data-testid="composer-template">
+              From template: {template.name} (v{template.versionNumber}) — you can edit the text before sending
+              <button type="button" aria-label="Stop using this template" onClick={() => setTemplate(null)} className="ml-1 hover:text-red-600">
+                ✕
+              </button>
+            </span>
+          )}
+        </div>
+      )}
+      {picking && (
+        <TemplatePickerDialog
+          open={picking}
+          onClose={() => setPicking(false)}
+          conversationId={conversation.id}
+          channelType={conversation.channel.channelType}
+          channelLabel={conversation.channel.typeLabel}
+          onPick={(t) => {
+            setTemplate(t);
+            setBody(t.body);
+            if (caps.supportsSubject && t.subject) setSubject(t.subject);
+            setError(null);
+          }}
+        />
       )}
       {effectiveMode === "reply" && caps.supportsSubject && (
         <input aria-label="Subject" className={`${textInputClass()} mb-2`} value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Subject" maxLength={300} />

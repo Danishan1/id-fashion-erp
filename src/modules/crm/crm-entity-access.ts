@@ -15,6 +15,12 @@ import { crmOwnerWhere, getCrmRecordScope } from "./core/crm-visibility";
  */
 export async function assertCrmEntityAccess(actor: CrmActor, entityType: CrmEntityType, entityId: string): Promise<void> {
   if (entityType === "ACTIVITY") return assertActivityAccess(actor, entityId);
+  // Templates are a shared company library: anyone with crm.view may read them and their history.
+  if (entityType === "TEMPLATE") {
+    const template = await prisma.crmMessageTemplate.findFirst({ where: { id: entityId, companyId: actor.companyId }, select: { id: true } });
+    if (!template) throw new BusinessRuleError("NOT_FOUND", "Record not found.", { entityType, entityId });
+    return;
+  }
   const scope = await getCrmRecordScope(actor);
   if (entityType === "CONVERSATION") {
     const conversation = await prisma.crmConversation.findFirst({ where: { AND: [{ id: entityId, companyId: actor.companyId }, conversationScopeWhere(actor, scope)] }, select: { id: true } });

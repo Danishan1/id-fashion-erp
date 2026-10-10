@@ -133,6 +133,8 @@ model Company {
   crmChannels                         CrmChannel[]
   crmConversations                    CrmConversation[]
   crmMessages                         CrmMessage[]
+  crmMessageTemplates                 CrmMessageTemplate[]
+  crmMessageTemplateVersions          CrmMessageTemplateVersion[]
   crmUserPreferences                  CrmUserPreference[]
   crmCompanyMerges                    CrmCompanyMerge[]
   attendanceRecords                   AttendanceRecord[]
@@ -376,6 +378,8 @@ model User {
   crmConversationsAssigned                   CrmConversation[]                    @relation("CrmConversationAssignee")
   crmConversationParticipations              CrmConversationParticipant[]         @relation("CrmConversationParticipantUser")
   crmMessagesSent                            CrmMessage[]                         @relation("CrmMessageSender")
+  crmMessageTemplatesCreated                 CrmMessageTemplate[]                 @relation("CrmMessageTemplateCreatedBy")
+  crmMessageTemplateVersionsCreated          CrmMessageTemplateVersion[]          @relation("CrmMessageTemplateVersionCreatedBy")
   crmPreferences                             CrmUserPreference[]
   crmSavedViews                              CrmSavedView[]                       @relation("CrmSavedViewOwner")
   crmImportJobsCreated                       CrmImportJob[]                       @relation("CrmImportJobCreatedBy")
@@ -3577,12 +3581,12 @@ model ProductionOrder {
   createdAt         DateTime               @default(now()) @map("created_at")
   updatedAt         DateTime               @updatedAt @map("updated_at")
 
-  company           Company                      @relation(fields: [companyId], references: [id])
-  branch            Branch?                      @relation(fields: [branchId], references: [id])
-  salesOrderItem    SalesOrderItem?              @relation(fields: [salesOrderItemId], references: [id])
-  product           Product                      @relation(fields: [productId], references: [id])
-  bom               Bom?                         @relation(fields: [bomId], references: [id])
-  requestedBy       User                         @relation("ProductionOrderRequestedBy", fields: [requestedByUserId], references: [id])
+  company           Company                         @relation(fields: [companyId], references: [id])
+  branch            Branch?                         @relation(fields: [branchId], references: [id])
+  salesOrderItem    SalesOrderItem?                 @relation(fields: [salesOrderItemId], references: [id])
+  product           Product                         @relation(fields: [productId], references: [id])
+  bom               Bom?                            @relation(fields: [bomId], references: [id])
+  requestedBy       User                            @relation("ProductionOrderRequestedBy", fields: [requestedByUserId], references: [id])
   lots              Lot[]
   jobOrders         JobOrder[]
   stageTransactions ProductionStageTransaction[]
@@ -7735,6 +7739,8 @@ enum CrmEntityType {
   // Phase 11: unified conversations. conversation.* / message.* events appear
   // on the timelines of the contact / company / opportunity it is linked to.
   CONVERSATION
+  // Phase 12: message templates. template.* events form the template's own history.
+  TEMPLATE
 }
 
 // Append-only business event log for the CRM. One row per thing that
@@ -8260,23 +8266,23 @@ model CrmCompany {
   createdAt           DateTime  @default(now()) @map("created_at")
   updatedAt           DateTime  @updatedAt @map("updated_at")
 
-  company        Company            @relation(fields: [companyId], references: [id])
-  customer       Customer?          @relation(fields: [customerId], references: [id], onDelete: SetNull)
-  owner          User?              @relation("CrmCompanyOwner", fields: [ownerUserId], references: [id])
-  createdBy      User               @relation("CrmCompanyCreatedBy", fields: [createdByUserId], references: [id])
-  status         CrmCompanyStatus?  @relation(fields: [statusId], references: [id])
-  source         CrmLeadSource?     @relation(fields: [sourceId], references: [id])
-  sourceLead     CrmLead?           @relation("CrmCompanySourceLead", fields: [sourceLeadId], references: [id], onDelete: SetNull)
-  primaryContact CrmContact?        @relation("CrmCompanyPrimaryContact", fields: [primaryContactId], references: [id], onDelete: SetNull)
-  mergedInto     CrmCompany?        @relation("CrmCompanyMergedInto", fields: [mergedIntoId], references: [id])
-  mergedFrom     CrmCompany[]       @relation("CrmCompanyMergedInto")
+  company        Company           @relation(fields: [companyId], references: [id])
+  customer       Customer?         @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  owner          User?             @relation("CrmCompanyOwner", fields: [ownerUserId], references: [id])
+  createdBy      User              @relation("CrmCompanyCreatedBy", fields: [createdByUserId], references: [id])
+  status         CrmCompanyStatus? @relation(fields: [statusId], references: [id])
+  source         CrmLeadSource?    @relation(fields: [sourceId], references: [id])
+  sourceLead     CrmLead?          @relation("CrmCompanySourceLead", fields: [sourceLeadId], references: [id], onDelete: SetNull)
+  primaryContact CrmContact?       @relation("CrmCompanyPrimaryContact", fields: [primaryContactId], references: [id], onDelete: SetNull)
+  mergedInto     CrmCompany?       @relation("CrmCompanyMergedInto", fields: [mergedIntoId], references: [id])
+  mergedFrom     CrmCompany[]      @relation("CrmCompanyMergedInto")
   leads          CrmLead[]
   contacts       CrmContact[]
   opportunities  CrmOpportunity[]
   addresses      CrmAddress[]
-  mergesSurvived CrmCompanyMerge[]  @relation("CrmCompanyMergeSurvivor")
+  mergesSurvived CrmCompanyMerge[] @relation("CrmCompanyMergeSurvivor")
   conversations  CrmConversation[]
-  mergeRecord    CrmCompanyMerge?   @relation("CrmCompanyMergeMerged")
+  mergeRecord    CrmCompanyMerge?  @relation("CrmCompanyMergeMerged")
 
   @@index([companyId, nameKey])
   @@index([companyId, nameMatchKey])
@@ -8388,22 +8394,22 @@ model CrmContact {
   createdAt           DateTime  @default(now()) @map("created_at")
   updatedAt           DateTime  @updatedAt @map("updated_at")
 
-  company        Company             @relation(fields: [companyId], references: [id])
-  crmCompany     CrmCompany?         @relation(fields: [crmCompanyId], references: [id], onDelete: SetNull)
-  owner          User?               @relation("CrmContactOwner", fields: [ownerUserId], references: [id])
-  createdBy      User                @relation("CrmContactCreatedBy", fields: [createdByUserId], references: [id])
-  source         CrmLeadSource?      @relation(fields: [sourceId], references: [id])
-  sourceLead     CrmLead?            @relation("CrmContactSourceLead", fields: [sourceLeadId], references: [id], onDelete: SetNull)
-  mergedInto     CrmContact?         @relation("CrmContactMergedInto", fields: [mergedIntoId], references: [id])
-  mergedFrom     CrmContact[]        @relation("CrmContactMergedInto")
+  company        Company                      @relation(fields: [companyId], references: [id])
+  crmCompany     CrmCompany?                  @relation(fields: [crmCompanyId], references: [id], onDelete: SetNull)
+  owner          User?                        @relation("CrmContactOwner", fields: [ownerUserId], references: [id])
+  createdBy      User                         @relation("CrmContactCreatedBy", fields: [createdByUserId], references: [id])
+  source         CrmLeadSource?               @relation(fields: [sourceId], references: [id])
+  sourceLead     CrmLead?                     @relation("CrmContactSourceLead", fields: [sourceLeadId], references: [id], onDelete: SetNull)
+  mergedInto     CrmContact?                  @relation("CrmContactMergedInto", fields: [mergedIntoId], references: [id])
+  mergedFrom     CrmContact[]                 @relation("CrmContactMergedInto")
   leads          CrmLead[]
   opportunities  CrmOpportunity[]
   addresses      CrmAddress[]
   channels       CrmContactChannel[]
   consents       CrmContactConsent[]
-  mergesSurvived CrmContactMerge[]   @relation("CrmContactMergeSurvivor")
-  mergeRecord    CrmContactMerge?    @relation("CrmContactMergeMerged")
-  primaryOf      CrmCompany[]        @relation("CrmCompanyPrimaryContact")
+  mergesSurvived CrmContactMerge[]            @relation("CrmContactMergeSurvivor")
+  mergeRecord    CrmContactMerge?             @relation("CrmContactMergeMerged")
+  primaryOf      CrmCompany[]                 @relation("CrmCompanyPrimaryContact")
   conversations  CrmConversation[]
   participations CrmConversationParticipant[]
 
@@ -8548,7 +8554,8 @@ model CrmOptionValue {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  company Company @relation(fields: [companyId], references: [id])
+  company   Company              @relation(fields: [companyId], references: [id])
+  templates CrmMessageTemplate[]
 
   @@unique([companyId, listKey, valueKey])
   @@index([companyId, listKey, sortOrder])
@@ -9126,14 +9133,21 @@ model CrmMessage {
   lastAttemptAt       DateTime? @map("last_attempt_at")
   // Provider-neutral extras: email threading headers, location, reply-to id…
   metadata            Json      @default("{}")
+  // Phase 12: the template and exact version an outbound message was written
+  // from. The message keeps its own rendered subject/body — history never
+  // depends on the template staying unchanged.
+  templateId          String?   @map("template_id") @db.Uuid
+  templateVersionId   String?   @map("template_version_id") @db.Uuid
   createdAt           DateTime  @default(now()) @map("created_at")
   updatedAt           DateTime  @updatedAt @map("updated_at")
 
-  company      Company                @relation(fields: [companyId], references: [id])
-  conversation CrmConversation        @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  channel      CrmChannel             @relation(fields: [channelId], references: [id])
-  senderUser   User?                  @relation("CrmMessageSender", fields: [senderUserId], references: [id])
-  attachments  CrmMessageAttachment[]
+  company         Company                    @relation(fields: [companyId], references: [id])
+  conversation    CrmConversation            @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  channel         CrmChannel                 @relation(fields: [channelId], references: [id])
+  senderUser      User?                      @relation("CrmMessageSender", fields: [senderUserId], references: [id])
+  template        CrmMessageTemplate?        @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  templateVersion CrmMessageTemplateVersion? @relation(fields: [templateVersionId], references: [id], onDelete: Restrict)
+  attachments     CrmMessageAttachment[]
 
   @@index([conversationId, occurredAt, id], map: "crm_messages_thread_idx")
   @@index([companyId, occurredAt], map: "crm_messages_recent_idx")
@@ -9168,6 +9182,85 @@ model CrmMessageAttachment {
 // Metadata for the shared custom-field engine. Values live in each record's
 // `customFields` JSON keyed by `key`, so adding a field never needs a
 // migration. `key` and `fieldType` are fixed once created.
+// ─────────────────────────────────────────────────────────────
+// CRM — Phase 12 Message Templates (2026-10-08). See docs/crm/PHASE_12_MESSAGE_TEMPLATES.md.
+// ─────────────────────────────────────────────────────────────
+
+/// A reusable, provider-neutral message template for one channel type.
+/// Content lives in immutable versions; `currentVersionId` is the one used
+/// for new messages. Categories reuse crm_option_values (list
+/// "template_category"). Never hard-deleted — archived instead.
+model CrmMessageTemplate {
+  id                   String    @id @default(uuid()) @db.Uuid
+  companyId            String    @map("company_id") @db.Uuid
+  name                 String
+  // Lower-cased, single-spaced name: unique among non-archived templates (partial index in SQL).
+  nameKey              String    @map("name_key")
+  // EMAIL | SMS | WHATSAPP (enabled today); other channel types are allowed by the CHECK for later.
+  channelType          String    @map("channel_type")
+  categoryId           String?   @map("category_id") @db.Uuid
+  description          String?
+  // DRAFT | ACTIVE | ARCHIVED
+  status               String    @default("DRAFT")
+  currentVersionId     String?   @unique @map("current_version_id") @db.Uuid
+  currentVersionNumber Int       @default(0) @map("current_version_number")
+  searchText           String    @default("") @map("search_text")
+  duplicatedFromId     String?   @map("duplicated_from_id") @db.Uuid
+  activatedAt          DateTime? @map("activated_at")
+  activatedByUserId    String?   @map("activated_by_user_id") @db.Uuid
+  archivedAt           DateTime? @map("archived_at")
+  archivedByUserId     String?   @map("archived_by_user_id") @db.Uuid
+  createdByUserId      String    @map("created_by_user_id") @db.Uuid
+  updatedByUserId      String?   @map("updated_by_user_id") @db.Uuid
+  // Optimistic-locking counter (same contract as crm_leads.version).
+  version              Int       @default(1)
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  company        Company                     @relation(fields: [companyId], references: [id])
+  category       CrmOptionValue?             @relation(fields: [categoryId], references: [id])
+  createdBy      User                        @relation("CrmMessageTemplateCreatedBy", fields: [createdByUserId], references: [id])
+  currentVersion CrmMessageTemplateVersion?  @relation("CrmMessageTemplateCurrentVersion", fields: [currentVersionId], references: [id])
+  versions       CrmMessageTemplateVersion[] @relation("CrmMessageTemplateVersions")
+  messages       CrmMessage[]
+
+  @@index([companyId, status, updatedAt])
+  @@index([companyId, channelType, status])
+  @@index([companyId, categoryId])
+  @@index([companyId, createdAt])
+  @@map("crm_message_templates")
+}
+
+/// One immutable snapshot of a template's content (a database trigger
+/// refuses UPDATE and DELETE). Editing, restoring or duplicating always adds
+/// a new version; messages keep the version they were written from.
+model CrmMessageTemplateVersion {
+  id               String   @id @default(uuid()) @db.Uuid
+  companyId        String   @map("company_id") @db.Uuid
+  templateId       String   @map("template_id") @db.Uuid
+  versionNumber    Int      @map("version_number")
+  subject          String?
+  body             String
+  // Variable keys used by subject + body ("contact.first_name"…), in order of first use.
+  variables        String[] @default([])
+  // Provider-neutral key/value refs (e.g. an externally approved template name + language).
+  providerMetadata Json     @default("{}") @map("provider_metadata")
+  changeNote       String?  @map("change_note")
+  // Set when this version was created by restoring an older one.
+  restoredFromId   String?  @map("restored_from_id") @db.Uuid
+  createdByUserId  String   @map("created_by_user_id") @db.Uuid
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  company   Company             @relation(fields: [companyId], references: [id])
+  template  CrmMessageTemplate  @relation("CrmMessageTemplateVersions", fields: [templateId], references: [id], onDelete: Restrict)
+  currentOf CrmMessageTemplate? @relation("CrmMessageTemplateCurrentVersion")
+  createdBy User                @relation("CrmMessageTemplateVersionCreatedBy", fields: [createdByUserId], references: [id])
+  messages  CrmMessage[]
+
+  @@unique([templateId, versionNumber])
+  @@map("crm_message_template_versions")
+}
+
 model CrmCustomFieldDefinition {
   id          String             @id @default(uuid()) @db.Uuid
   companyId   String             @map("company_id") @db.Uuid

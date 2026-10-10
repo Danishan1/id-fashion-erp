@@ -303,6 +303,8 @@ X-CRM-Idempotency-Key: <CRM message id>
 | `threadId` | The conversation's `threadId` from inbound messages (e.g. the email root Message-ID), or null. |
 | `inReplyTo` | The provider id of the customer's latest message — use it for quoted replies (WhatsApp `context`) or email `In-Reply-To`. |
 | `attachments` | Only when the channel allows attachments: images and documents, up to 5 files and the channel's MB limit, base64. |
+| `template` | Only when the reply was written from a CRM message template (Phase 12): `{ templateId, versionId, versionNumber, name, providerMetadata, parameters: [{ key, value }] }`. `text` is always the final text to send. `providerMetadata` holds the template's provider settings (e.g. `externalTemplateName`, `language` for WhatsApp templates approved by your provider) and `parameters` the variable values in order of first use — map them onto your provider's approved-template call if it needs one (e.g. outside WhatsApp's 24-hour window). `parameters` is empty when the user edited the text before sending. |
+| `test` | `true` only for a **template test send** from CRM → Templates: one message to an address a user typed (marked "[TEST]"), not a customer conversation. Deliver it like any other message; the CRM doesn't expect delivery receipts for it. |
 
 **Your bridge must:**
 

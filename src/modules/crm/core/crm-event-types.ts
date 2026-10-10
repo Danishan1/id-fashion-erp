@@ -12,7 +12,7 @@ import { humanizeStatus } from "@/lib/humanize-status";
  * a published event type; add a new one instead.
  *
  * Only events for entity types that exist in `CrmEntityType` are listed.
- * form.* arrive with their phases (activity.* covers tasks; appointment.* since Phase 10; conversation.* and message.* since Phase 11).
+ * form.* arrive with their phases (activity.* covers tasks; appointment.* since Phase 10; conversation.* and message.* since Phase 11; template.* since Phase 12).
  */
 export type CrmEventCategory =
   | "created"
@@ -181,6 +181,19 @@ export const CRM_EVENT_TYPES = {
   "message.failed": { label: "Message failed", entityType: "CONVERSATION", category: "lost" },
   "message.delivered": { label: "Message delivered", entityType: "CONVERSATION", category: "message" },
   "message.read": { label: "Message read by customer", entityType: "CONVERSATION", category: "message" },
+  // Phase 12 — message templates (entity TEMPLATE): the template's own history.
+  // Payload = TemplateEventPayload (crm-templates.service.ts). A message sent
+  // from a template is message.sent on its conversation (payload.templateId).
+  "template.created": { label: "Template created", entityType: "TEMPLATE", category: "created" },
+  "template.updated": { label: "Template details updated", entityType: "TEMPLATE", category: "updated" },
+  "template.version_created": { label: "New version saved", entityType: "TEMPLATE", category: "updated" },
+  "template.version_restored": { label: "Version restored", entityType: "TEMPLATE", category: "restored" },
+  "template.duplicated": { label: "Template duplicated", entityType: "TEMPLATE", category: "created" },
+  "template.activated": { label: "Template activated", entityType: "TEMPLATE", category: "status" },
+  "template.deactivated": { label: "Template deactivated", entityType: "TEMPLATE", category: "status" },
+  "template.archived": { label: "Template archived", entityType: "TEMPLATE", category: "archived" },
+  "template.restored": { label: "Template restored", entityType: "TEMPLATE", category: "restored" },
+  "template.test_sent": { label: "Test message sent", entityType: "TEMPLATE", category: "message" },
 } as const satisfies Record<string, CrmEventDefinition>;
 
 export type CrmEventType = keyof typeof CRM_EVENT_TYPES;

@@ -68,8 +68,12 @@ export const sendMessageSchema = z
     clientMessageId: uuid.optional(),
     subject: optionalText(300),
     body: z.string().max(MAX_BODY_LENGTH, `At most ${MAX_BODY_LENGTH} characters`).default(""),
+    /** Phase 12: the template (and exact version) the reply was written from. Both or neither. */
+    templateId: uuid.optional(),
+    templateVersionId: uuid.optional(),
   })
-  .strict();
+  .strict()
+  .refine((v) => Boolean(v.templateId) === Boolean(v.templateVersionId), { message: "templateId and templateVersionId go together.", path: ["templateVersionId"] });
 export type SendMessageInput = z.infer<typeof sendMessageSchema>;
 
 export const markReadSchema = z.object({ upToMessageId: uuid.optional() }).strict();

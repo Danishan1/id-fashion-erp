@@ -1,3 +1,16 @@
 {
-  "terminal.integrated.defaultProfile.windows": "Command Prompt"
+  "terminal.integrated.defaultProfile.windows": "Command Prompt",
+  "sqltools.connections": [
+    {
+      "ssh": "Disabled",
+      "previewLimit": 50,
+      "server": "localhost",
+      "port": 5432,
+      "driver": "PostgreSQL",
+      "name": "fashion_erp",
+      "database": "fashion_erp",
+      "username": "postgres",
+      "password": "root"
+    }
+  ]
 }

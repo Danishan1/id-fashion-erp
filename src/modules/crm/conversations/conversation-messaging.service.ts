@@ -10,6 +10,7 @@ import {
   type NormalizedInboundMessage,
   type NormalizedStatusUpdate,
   type OutboundAttachment,
+  type OutboundTemplateRef,
   type ProviderChannel,
   type SendResult,
 } from "@/core/communication/CommunicationProvider";
@@ -19,6 +20,7 @@ import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { deleteStoredFile, FileTooLargeError, readStoredFile, saveFile, UnsupportedFileTypeError } from "@/core/file-storage/FileStorage";
 import { logger } from "@/core/logging/logger";
 import { touchLinkedRecords } from "../activities/crm-activities.service";
+import { resolveTemplateForConversationSend } from "../templates/crm-templates.service";
 import type { CrmActor } from "../core/crm-actor";
 import { crmSystemActor, runCrmMutation, type CrmMutationContext, type CrmSystemActor } from "../core/crm-mutation";
 import { matchContact, soleOpenOpportunity } from "./conversation-matching";
@@ -393,6 +395,20 @@ async function prepareSend(conversation: ConversationRow, opts: { hasText: boole
   return { conversation, channel, provider, pc, recipient };
 }
 
+/** Phase 12: the template a message was written from, as handed to the provider (from the message's own record, so retries send the same). */
+function outboundTemplateRef(message: MessageRow): OutboundTemplateRef | null {
+  if (!message.templateId || !message.templateVersionId) return null;
+  const meta = (message.metadata && typeof message.metadata === "object" && !Array.isArray(message.metadata) ? message.metadata : {}) as Record<string, unknown>;
+  const t = (meta.template ?? {}) as { name?: string; versionNumber?: number; providerMetadata?: Record<string, string>; parameters?: { key: string; value: string }[] };
+  return { templateId: message.templateId, versionId: message.templateVersionId, versionNumber: t.versionNumber ?? 0, name: t.name ?? "", providerMetadata: t.providerMetadata ?? {}, parameters: t.parameters ?? [] };
+}
+
+function templateEventFields(message: MessageRow) {
+  if (!message.templateId) return {};
+  const meta = (message.metadata ?? {}) as { template?: { versionNumber?: number; edited?: boolean } };
+  return { templateId: message.templateId, templateVersionId: message.templateVersionId, templateVersionNumber: meta.template?.versionNumber ?? null, templateEdited: Boolean(meta.template?.edited) };
+}
+
 /** Calls the provider (outside any transaction) and saves its answer as SENT / FAILED. */
 async function deliver(actor: CrmActor | CrmSystemActor, ctxSend: SendContext, message: MessageRow, attachments: OutboundAttachment[], attempt: number) {
   const latestInbound = await CrmConversationRepository.latestInbound(ctxSend.conversation.id);
@@ -407,6 +423,7 @@ async function deliver(actor: CrmActor | CrmSystemActor, ctxSend: SendContext, m
       attachments,
       replyToProviderMessageId: latestInbound?.providerMessageId ?? null,
       metadata: {},
+      template: outboundTemplateRef(message),
     });
   } catch (e) {
     // Providers must not throw; if one does, log the class of error only (never payloads or secrets).
@@ -428,11 +445,11 @@ async function deliver(actor: CrmActor | CrmSystemActor, ctxSend: SendContext, m
       if (clash) data.providerMessageId = null;
       await ctx.tx.crmMessage.updateMany({ where: { id: message.id, status: "QUEUED" }, data });
       await ctx.audit({ tableName: MESSAGES, recordId: message.id, action: "UPDATE", oldValues: { status: "QUEUED" }, newValues: { status: result.status, providerMessageId: result.providerMessageId, attempt } });
-      emitConversation(ctx, conv, "message.sent", preview, { messageId: message.id, direction: "OUTBOUND", status: result.status, occurredAt: now, attempt, attachmentCount: message.attachments.length });
+      emitConversation(ctx, conv, "message.sent", preview, { messageId: message.id, direction: "OUTBOUND", status: result.status, occurredAt: now, attempt, attachmentCount: message.attachments.length, ...templateEventFields(message) });
     } else {
       await ctx.tx.crmMessage.updateMany({ where: { id: message.id, status: "QUEUED" }, data: { status: "FAILED", failedAt: now, errorCode: result.errorCode.slice(0, 60), errorMessage: result.errorMessage.slice(0, 300) } });
       await ctx.audit({ tableName: MESSAGES, recordId: message.id, action: "UPDATE", oldValues: { status: "QUEUED" }, newValues: { status: "FAILED", errorCode: result.errorCode, attempt } });
-      emitConversation(ctx, conv, "message.failed", `Not sent: ${result.errorMessage}`, { messageId: message.id, direction: "OUTBOUND", status: "FAILED", occurredAt: now, attempt, errorCode: result.errorCode, retryable: result.retryable });
+      emitConversation(ctx, conv, "message.failed", `Not sent: ${result.errorMessage}`, { messageId: message.id, direction: "OUTBOUND", status: "FAILED", occurredAt: now, attempt, errorCode: result.errorCode, retryable: result.retryable, ...templateEventFields(message) });
     }
   });
   return (await CrmConversationRepository.findMessage(ctxSend.conversation.companyId, message.id))!;
@@ -473,6 +490,8 @@ export async function sendConversationMessage(actor: CrmActor, conversationId: s
   const subject = input.subject?.trim() || null;
   if (!body && !files.length) throw new BusinessRuleError("VALIDATION_ERROR", "Write a message or attach a file.", { fieldErrors: { body: "Write a message." } });
   const send = await prepareSend(row, { hasText: Boolean(body), files: files.map((f) => ({ mimeType: f.mimeType, size: f.buffer.byteLength })), subject, textLength: body.length });
+  // Phase 12: a reply written from a template records the template + exact version (the text stays the final, rendered one).
+  const template = input.templateId && input.templateVersionId ? await resolveTemplateForConversationSend(actor, { templateId: input.templateId, templateVersionId: input.templateVersionId, conversationId: row.id, channelType: row.channelType, subject, body }) : null;
   const stored = await storeOutgoing(files);
   const messageId = input.clientMessageId ?? randomUUID();
   const now = new Date();
@@ -497,6 +516,13 @@ export async function sendConversationMessage(actor: CrmActor, conversationId: s
           occurredAt: now,
           attempts: 1,
           lastAttemptAt: now,
+          ...(template
+            ? {
+                templateId: template.templateId,
+                templateVersionId: template.versionId,
+                metadata: { template: { name: template.name, versionNumber: template.versionNumber, edited: template.edited, providerMetadata: template.ref.providerMetadata, parameters: template.ref.parameters } },
+              }
+            : {}),
         },
       });
       if (stored.length) await createAttachmentRows(ctx.tx, actor.companyId, actor.userId, row.id, messageId, stored, "Sent message");
@@ -520,7 +546,7 @@ export async function sendConversationMessage(actor: CrmActor, conversationId: s
         ctx.tx
       );
       if (reopen) emitConversation(ctx, after, "conversation.reopened", "Closed → Open (reply sent)", { from: "CLOSED", to: "OPEN" });
-      await ctx.audit({ tableName: MESSAGES, recordId: messageId, action: "CREATE", newValues: { conversationId: row.id, direction: "OUTBOUND", status: "QUEUED", subject, body, attachments: stored.map((f) => f.fileName) } });
+      await ctx.audit({ tableName: MESSAGES, recordId: messageId, action: "CREATE", newValues: { conversationId: row.id, direction: "OUTBOUND", status: "QUEUED", subject, body, attachments: stored.map((f) => f.fileName), ...(template ? { templateId: template.templateId, templateVersionId: template.versionId, templateVersionNumber: template.versionNumber, templateEdited: template.edited } : {}) } });
       await touchLinkedRecords(ctx.tx, actor.companyId, linkedRefs(row), now, row.channelType);
     });
   } catch (e) {

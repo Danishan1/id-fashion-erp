@@ -151,6 +151,39 @@ export interface OutboundAttachment {
   content: Buffer;
 }
 
+/**
+ * Phase 12: the CRM template a message was written from. Informational for
+ * most providers (the rendered text is in `body`); a provider whose channel
+ * needs externally approved templates (e.g. WhatsApp outside the 24-hour
+ * window) maps `providerMetadata` + `parameters` onto its own template call.
+ */
+export interface OutboundTemplateRef {
+  templateId: string;
+  versionId: string;
+  versionNumber: number;
+  name: string;
+  /** Provider-neutral key/values saved on the version (e.g. externalTemplateName, language). */
+  providerMetadata: Record<string, string>;
+  /** Each variable once, in order of first use, with the value it rendered to. */
+  parameters: { key: string; value: string }[];
+}
+
+/** What a provider is asked to check about a template for one of its channels (Phase 12). */
+export interface ProviderTemplateCheck {
+  channelType: ChannelType;
+  subject: string | null;
+  /** Rendered (or sample-rendered) text. */
+  body: string;
+  providerMetadata: Record<string, string>;
+  variables: string[];
+}
+
+export interface ProviderTemplateIssue {
+  code: string;
+  severity: "error" | "warning";
+  message: string;
+}
+
 export interface OutboundMessage {
   /** Stable per CRM message (its id) — the same key on every retry, so the provider can de-duplicate. */
   idempotencyKey: string;
@@ -162,6 +195,10 @@ export interface OutboundMessage {
   /** Provider id of the message being replied to (threading), when known. */
   replyToProviderMessageId: string | null;
   metadata: NormalizedMessageMetadata;
+  /** Phase 12: set when the message was written from a CRM template. */
+  template?: OutboundTemplateRef | null;
+  /** Phase 12: a template test send to an address typed by a user — not a customer conversation. */
+  test?: boolean;
 }
 
 export type SendResult =
@@ -196,6 +233,13 @@ export interface ChannelProvider {
   validateRecipient(channel: ProviderChannel, to: NormalizedIdentity): RecipientCheck;
   /** Sends text and attachments in one call. Must not throw for provider errors — return { ok: false }. */
   sendMessage(channel: ProviderChannel, message: OutboundMessage): Promise<SendResult>;
+  /**
+   * Phase 12, optional: provider-level checks for a template on this channel
+   * (approved-template requirements, provider length limits, unsupported
+   * content). CRM-level rules (unknown variables, missing subject…) are checked
+   * by the template engine, not here.
+   */
+  validateTemplate?(channel: Pick<ProviderChannel, "channelType" | "config">, template: ProviderTemplateCheck): ProviderTemplateIssue[];
   /** Optional pull of a delivery status for providers without status webhooks. */
   getDeliveryStatus?(channel: ProviderChannel, providerMessageId: string): Promise<NormalizedStatusUpdate | null>;
 }

@@ -13,7 +13,7 @@ export const GET = crmRoute<{ id: string }>("view", async ({ req, params, actor 
 });
 
 /**
- * Reply. JSON { body, subject?, clientMessageId? } or multipart/form-data with
+ * Reply. JSON { body, subject?, clientMessageId?, templateId?, templateVersionId? } or multipart/form-data with
  * the same fields plus files. Checked server-side: permission, channel
  * capabilities, DND / contactability. Returns the message (status SENT,
  * DELIVERED or FAILED with a safe reason) — a provider failure is not an error response.
@@ -23,7 +23,7 @@ export const POST = crmRoute<{ id: string }>("create", async ({ req, params, act
   const files: OutgoingFile[] = [];
   if ((req.headers.get("content-type") ?? "").includes("multipart/form-data")) {
     const form = await req.formData();
-    for (const key of ["body", "subject", "clientMessageId"]) {
+    for (const key of ["body", "subject", "clientMessageId", "templateId", "templateVersionId"]) {
       const v = form.get(key);
       if (typeof v === "string" && v !== "") body[key] = v;
     }

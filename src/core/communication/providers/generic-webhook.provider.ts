@@ -15,6 +15,7 @@ import {
   type NormalizedInboundEvent,
   type OutboundMessage,
   type ProviderChannel,
+  type ProviderTemplateIssue,
   type SendResult,
 } from "../CommunicationProvider";
 
@@ -41,6 +42,10 @@ import {
  *   { id, channelId, conversationId, threadId, to: { kind, value }, subject,
  *     text, inReplyTo, attachments: [{ fileName, mimeType, contentBase64 }] }
  *   signed the same way, with X-CRM-Idempotency-Key = id (identical on retry).
+ *   Phase 12 adds, only when relevant: "template": { templateId, versionId,
+ *   versionNumber, name, providerMetadata, parameters: [{ key, value }] } for
+ *   messages written from a CRM template, and "test": true for template test
+ *   sends (an address a user typed — not a customer conversation).
  *   A 2xx JSON reply { "messageId": "…", "status"?: "sent" | "delivered" } means accepted.
  */
 
@@ -286,6 +291,21 @@ export const genericWebhookProvider: ChannelProvider = {
     return { ok: true };
   },
 
+  /**
+   * Provider-level template checks for a relay channel: the relay must be set
+   * up, and the text must fit the channel's configured limits. Approved-
+   * template rules belong to the system behind the relay (it receives
+   * `template.providerMetadata` with each message).
+   */
+  validateTemplate(channel, template) {
+    const caps = genericWebhookProvider.capabilities(channel);
+    const out: ProviderTemplateIssue[] = [];
+    if (!caps.canSend) out.push({ code: "PROVIDER_CANNOT_SEND", severity: "warning", message: caps.sendUnavailableReason ?? "This channel can't send messages yet." });
+    if (template.body.length > caps.maxTextLength) out.push({ code: "PROVIDER_TEXT_LIMIT", severity: "error", message: `This channel's provider accepts at most ${caps.maxTextLength.toLocaleString("en-IN")} characters per message.` });
+    if (template.subject && !caps.supportsSubject) out.push({ code: "PROVIDER_NO_SUBJECT", severity: "error", message: "This channel's provider doesn't send a subject line." });
+    return out;
+  },
+
   async sendMessage(channel: ProviderChannel, message: OutboundMessage): Promise<SendResult> {
     const config = readConfig(channel.config);
     if (!config.outboundUrl) return { ok: false, errorCode: "CHANNEL_NOT_SENDABLE", errorMessage: "Replies are not set up for this channel.", retryable: false };
@@ -299,6 +319,8 @@ export const genericWebhookProvider: ChannelProvider = {
       text: message.body,
       inReplyTo: message.replyToProviderMessageId,
       attachments: message.attachments.map((a) => ({ fileName: a.fileName, mimeType: a.mimeType, contentBase64: a.content.toString("base64") })),
+      ...(message.template ? { template: message.template } : {}),
+      ...(message.test ? { test: true } : {}),
     });
     const ts = Math.floor(Date.now() / 1000);
     let res: Response;
