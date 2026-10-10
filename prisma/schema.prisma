@@ -8647,8 +8647,9 @@ model CrmCompany {
   contacts       CrmContact[]
   opportunities  CrmOpportunity[]
   addresses      CrmAddress[]
-  mergesSurvived CrmCompanyMerge[]  @relation("CrmCompanyMergeSurvivor")
-  mergeRecord    CrmCompanyMerge?   @relation("CrmCompanyMergeMerged")
+  mergesSurvived CrmCompanyMerge[] @relation("CrmCompanyMergeSurvivor")
+  mergeRecord    CrmCompanyMerge?  @relation("CrmCompanyMergeMerged")
+  conversations  CrmConversation[]
 
   @@index([companyId, nameKey])
   @@index([companyId, nameMatchKey])
@@ -8765,22 +8766,25 @@ model CrmContact {
   createdAt           DateTime  @default(now()) @map("created_at")
   updatedAt           DateTime  @updatedAt @map("updated_at")
 
-  company        Company                      @relation(fields: [companyId], references: [id])
-  crmCompany     CrmCompany?                  @relation(fields: [crmCompanyId], references: [id], onDelete: SetNull)
-  owner          User?                        @relation("CrmContactOwner", fields: [ownerUserId], references: [id])
-  createdBy      User                         @relation("CrmContactCreatedBy", fields: [createdByUserId], references: [id])
-  source         CrmLeadSource?               @relation(fields: [sourceId], references: [id])
-  sourceLead     CrmLead?                     @relation("CrmContactSourceLead", fields: [sourceLeadId], references: [id], onDelete: SetNull)
-  mergedInto     CrmContact?                  @relation("CrmContactMergedInto", fields: [mergedIntoId], references: [id])
-  mergedFrom     CrmContact[]                 @relation("CrmContactMergedInto")
-  leads          CrmLead[]
-  opportunities  CrmOpportunity[]
-  addresses      CrmAddress[]
-  channels       CrmContactChannel[]
-  consents       CrmContactConsent[]
-  mergesSurvived CrmContactMerge[]   @relation("CrmContactMergeSurvivor")
-  mergeRecord    CrmContactMerge?    @relation("CrmContactMergeMerged")
-  primaryOf      CrmCompany[]        @relation("CrmCompanyPrimaryContact")
+  company                  Company                      @relation(fields: [companyId], references: [id])
+  crmCompany               CrmCompany?                  @relation(fields: [crmCompanyId], references: [id], onDelete: SetNull)
+  owner                    User?                        @relation("CrmContactOwner", fields: [ownerUserId], references: [id])
+  createdBy                User                         @relation("CrmContactCreatedBy", fields: [createdByUserId], references: [id])
+  source                   CrmLeadSource?               @relation(fields: [sourceId], references: [id])
+  sourceLead               CrmLead?                     @relation("CrmContactSourceLead", fields: [sourceLeadId], references: [id], onDelete: SetNull)
+  mergedInto               CrmContact?                  @relation("CrmContactMergedInto", fields: [mergedIntoId], references: [id])
+  mergedFrom               CrmContact[]                 @relation("CrmContactMergedInto")
+  leads                    CrmLead[]
+  opportunities            CrmOpportunity[]
+  addresses                CrmAddress[]
+  channels                 CrmContactChannel[]
+  consents                 CrmContactConsent[]
+  mergesSurvived           CrmContactMerge[]            @relation("CrmContactMergeSurvivor")
+  mergeRecord              CrmContactMerge?             @relation("CrmContactMergeMerged")
+  primaryOf                CrmCompany[]                 @relation("CrmCompanyPrimaryContact")
+  buyer                    Buyer?                       @relation(fields: [buyerId], references: [id])
+  conversations            CrmConversation[]
+  conversationParticipants CrmConversationParticipant[]
 
   @@index([companyId, crmCompanyId])
   @@index([companyId, archivedAt, createdAt])
@@ -8986,6 +8990,9 @@ model CrmOpportunity {
   convertedFromLeads CrmLead[]                    @relation("CrmLeadConvertedOpportunity")
   erpLinks           CrmOpportunityErpLink[]
   stageHistory       CrmOpportunityStageHistory[]
+  conversations      CrmConversation[]
+
+  originatingSalesOrders SalesOrder[]
 
   @@unique([companyId, opportunityNumber])
   @@index([companyId, status])
