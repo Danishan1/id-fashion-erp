@@ -21,14 +21,18 @@ import { isClosedStatus, OPPORTUNITY_STATUSES, type OpportunityStatus } from "@/
 import { OwnerName } from "../../leads/_components/LeadBadges";
 import { CompanyStatusBadge } from "../../companies/_components/CompaniesListClient";
 import { CloseDate, OpportunityStatusBadge, opportunityValue } from "./OpportunityBadges";
-import { ChangeOpportunityStatusModal, ChangeStageModal, LinkErpDocumentModal, TransferPipelineModal } from "./OpportunityDialogs";
+import { ChangeOpportunityStatusModal, ChangeStageModal, ConvertToCustomerModal, LinkErpDocumentModal, TransferPipelineModal } from "./OpportunityDialogs";
 import { OpportunityErpDocuments, OpportunityStageHistory, OpportunityUpcomingSections } from "./OpportunityRelatedPanels";
 import type { OpportunityDetailDto, OpportunityPermissions } from "./opportunity-types";
 import { useOpportunityLookups } from "./useOpportunityLookups";
 
 const API = "/api/v1/crm/opportunities";
 
-type Dialog = null | { kind: "assign" | "tags" | "stage" | "transfer" | "archive" | "restore" | "linkErp" } | { kind: "status"; status: OpportunityStatus } | { kind: "unlinkErp"; linkId: string; docNumber: string };
+type Dialog =
+  | null
+  | { kind: "assign" | "tags" | "stage" | "transfer" | "archive" | "restore" | "linkErp" | "convertCustomer" }
+  | { kind: "status"; status: OpportunityStatus }
+  | { kind: "unlinkErp"; linkId: string; docNumber: string };
 
 const dash = <span className="text-zinc-400">—</span>;
 const linkClass = "text-indigo-600 hover:underline dark:text-indigo-400";
@@ -105,6 +109,7 @@ export function OpportunityDetailClient({ initialOpportunity, permissions, curre
       menu.push({ label: "Mark lost", onClick: () => setDialog({ kind: "status", status: "LOST" }) });
       menu.push({ label: "Mark abandoned", onClick: () => setDialog({ kind: "status", status: "ABANDONED" }) });
     } else menu.push({ label: "Reopen", onClick: () => setDialog({ kind: "status", status: "OPEN" }) });
+    if (status === "WON" && opp.crmCompanyId && !opp.crmCompany?.customer) menu.push({ label: "Convert to Customer", onClick: () => setDialog({ kind: "convertCustomer" }) });
     menu.push({ label: "Assign", onClick: () => setDialog({ kind: "assign" }) });
     menu.push({ label: "Edit tags", onClick: () => setDialog({ kind: "tags" }) });
     menu.push({ label: "Link ERP document", onClick: () => setDialog({ kind: "linkErp" }) });
@@ -263,6 +268,14 @@ export function OpportunityDetailClient({ initialOpportunity, permissions, curre
               <p className="text-sm text-zinc-500 dark:text-zinc-400">No company linked.</p>
             )}
             {company && (company.archivedAt || company.mergedIntoId) && <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">This company is {company.mergedIntoId ? "merged" : "archived"}.</p>}
+            {status === "WON" && company?.customer && (
+              <Link
+                href={`/sales-orders/new?customerId=${company.customer.id}&originatingOpportunityId=${opp.id}&originatingOpportunityNumber=${encodeURIComponent(opp.opportunityNumber)}`}
+                className="mt-3 inline-block text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400"
+              >
+                Create Sales Order →
+              </Link>
+            )}
           </Section>
 
           <Section title="Primary contact">
@@ -347,6 +360,7 @@ export function OpportunityDetailClient({ initialOpportunity, permissions, curre
         <ChangeOpportunityStatusModal target={{ recordId: opp.id, version: opp.version }} current={status} initialStatus={dialog.status} reasons={meta?.suggestions.opportunity_close_reason ?? []} onClose={() => setDialog(null)} onDone={done} />
       )}
       {dialog?.kind === "linkErp" && <LinkErpDocumentModal opportunityId={opp.id} onClose={() => setDialog(null)} onDone={done} />}
+      {dialog?.kind === "convertCustomer" && <ConvertToCustomerModal opportunityId={opp.id} onClose={() => setDialog(null)} onDone={done} />}
       <ConfirmModal
         open={dialog?.kind === "unlinkErp"}
         title="Unlink ERP document?"

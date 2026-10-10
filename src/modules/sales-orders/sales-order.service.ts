@@ -226,6 +226,15 @@ export async function createSalesOrder(actor: ActorContext, input: SalesOrderInp
   await assertItemsAreStyles(actor.companyId, input.items, { rejectInactive: true });
   await assertLinkedDesignsValid(actor.companyId, input.items);
 
+  // Never trust a client-supplied id belongs to this company without
+  // checking, even one that came from a same-app link (the pattern this
+  // codebase follows everywhere — Sampling's addSampleMaterial fix, the
+  // 26-entity sweep). CRM Replacement, 2026-10-09: repointed at CrmOpportunity.
+  if (input.originatingOpportunityId) {
+    const opportunity = await prisma.crmOpportunity.findFirst({ where: { id: input.originatingOpportunityId, companyId: actor.companyId } });
+    if (!opportunity) throw new BusinessRuleError("NOT_FOUND", "The originating opportunity was not found.", { id: input.originatingOpportunityId });
+  }
+
   const company = await CompanyRepository.findBaseCurrencyCode(actor.companyId);
   if (!company) throw new BusinessRuleError("NOT_FOUND", "Company not found.", { id: actor.companyId });
 
@@ -261,6 +270,7 @@ export async function createSalesOrder(actor: ActorContext, input: SalesOrderInp
     orderDate: new Date(input.orderDate),
     requiredShipDate: input.requiredShipDate ? new Date(input.requiredShipDate) : null,
     customerPoNumber: input.customerPoNumber || null,
+    originatingOpportunityId: input.originatingOpportunityId || null,
     status: "DRAFT",
     currencyCode,
     exchangeRate: 1,

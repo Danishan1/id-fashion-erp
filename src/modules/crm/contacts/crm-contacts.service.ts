@@ -1,4 +1,5 @@
 import type { CrmContact, Prisma } from "@prisma/client";
+import { prisma } from "@/core/db/client";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { PermissionService } from "@/core/rbac/PermissionService";
 import type { CrmActor } from "../core/crm-actor";
@@ -47,10 +48,16 @@ const textOrNull = (v: string | null | undefined) => (blank(v) ? null : (v as st
 const TEXT_FIELDS = ["middleName", "lastName", "designation", "department", "relationshipRole", "email", "alternateEmail", "phone", "mobile", "whatsapp"] as const;
 type TextField = (typeof TEXT_FIELDS)[number];
 const KEY_FIELDS = ["firstName", "middleName", "lastName", "email", "alternateEmail", "phone", "mobile", "whatsapp", "crmCompanyId"] as const;
-const TRACKED = ["firstName", ...TEXT_FIELDS, "crmCompanyId", "sourceId"] as const;
+const TRACKED = ["firstName", ...TEXT_FIELDS, "crmCompanyId", "sourceId", "buyerId"] as const;
 
 const conflict = (id: string) =>
   new BusinessRuleError("RECORD_VERSION_CONFLICT", "This contact was changed by someone else after you opened it. Reload to see the latest version, then try again.", { id });
+
+/** The buyer must at least belong to this company — never trust a client-supplied id without checking (CRM Replacement, 2026-10-09). */
+async function assertLinkableBuyer(companyId: string, buyerId: string) {
+  const buyer = await prisma.buyer.findFirst({ where: { id: buyerId, companyId }, select: { id: true } });
+  if (!buyer) throw new BusinessRuleError("NOT_FOUND", "Buyer not found.", { id: buyerId });
+}
 
 export interface NewChannel {
   channelType: string;
@@ -107,6 +114,7 @@ export interface ContactCreateData {
   crmCompanyId?: string | null;
   sourceId?: string | null;
   ownerUserId?: string | null;
+  buyerId?: string | null;
   customFields?: Record<string, unknown>;
 }
 
@@ -139,6 +147,9 @@ export async function createCrmContactInMutation(
   assertContactDuplicatesAllowed(dup, allowDuplicate, duplicateErrorCode);
   const flagged = dup.flaggedIds;
 
+  const buyerId = textOrNull(data.buyerId);
+  if (buyerId) await assertLinkableBuyer(actor.companyId, buyerId);
+
   const contact = await CrmContactRepository.createRaw(
     {
       companyId: actor.companyId,
@@ -149,6 +160,7 @@ export async function createCrmContactInMutation(
       sourceId: textOrNull(data.sourceId),
       sourceLeadId: sourceLeadId ?? null,
       ownerUserId: data.ownerUserId === undefined ? actor.userId : data.ownerUserId,
+      buyerId,
       customFields: (data.customFields ?? {}) as Prisma.InputJsonValue,
       duplicateFlaggedAt: flagged.length ? new Date() : null,
       flaggedDuplicateIds: flagged,
@@ -446,6 +458,11 @@ export async function updateContact(actor: CrmActor, id: string, raw: unknown) {
   if (input.customFields !== undefined) {
     const definitions = await listCustomFields(actor.companyId, "CONTACT", { includeInactive: true });
     data.customFields = validateCustomFieldValues(definitions, input.customFields, (before.customFields as Record<string, unknown>) ?? {}) as Prisma.InputJsonValue;
+  }
+  if (input.buyerId !== undefined) {
+    const buyerId = textOrNull(input.buyerId);
+    if (buyerId && buyerId !== before.buyerId) await assertLinkableBuyer(actor.companyId, buyerId);
+    data.buyerId = buyerId;
   }
   let newOwner: string | null | undefined;
   if (input.ownerUserId !== undefined) {

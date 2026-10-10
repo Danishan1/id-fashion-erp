@@ -32,6 +32,14 @@ export const salesOrderSchema = z.object({
   orderDate: z.string().min(1, "Order date is required"),
   requiredShipDate: z.string().optional().or(z.literal("")),
   customerPoNumber: z.string().trim().max(100).optional().or(z.literal("")),
+  // Closes the Opportunity→Customer→SalesOrder chain (CRM Replacement,
+  // 2026-10-09 — renamed/repointed from the legacy CRM's own
+  // `originatingDealId`) — set only when this order is created from a Won
+  // Opportunity's own "Create Sales Order" action; the column has existed on
+  // SalesOrder since Phase 1 planning but had zero writers until now. Never
+  // editable after creation (absent from updateSalesOrder()'s own concerns —
+  // an edit re-submits the same items, not the origin).
+  originatingOpportunityId: z.string().uuid().optional().or(z.literal("")),
   items: z.array(salesOrderItemSchema).min(1, "At least one style line is required"),
 });
 

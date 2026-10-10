@@ -187,7 +187,13 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     // — Management does not itself pay an expense, that's Accountant's "post".
     expenses: ["view", "approve", "reject"],
     financial_reports: ["view", "export", "print"],
-    dispatch: ["view", "export"],
+    // "approve" added for Extra Dispatch Quantity (2026-09-30) — the
+    // checkpoint gate confirmDispatch() asserts when a dispatch's own extra
+    // quantity requires sign-off (per DispatchSettings), self-approval-guarded
+    // like every other checkpoint above — reuses the existing action rather
+    // than inventing a new verb, same as sales_orders/bom_mrp/production/
+    // piece_rate/payments/expenses all do.
+    dispatch: ["view", "approve", "export"],
     reports: ["view", "export", "print"],
     administration_users: ["view"],
     administration_roles: ["view"],

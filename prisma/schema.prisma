@@ -93,12 +93,17 @@ model Company {
   pieceRateCards                      PieceRateCard[]
   pieceRateEarnings                   PieceRateEarning[]
   productionSettings                  ProductionSettings?
+  dispatchSettings                    DispatchSettings?
   productionRoutes                    ProductionRoute[]
   documentSequences                   DocumentSequence[]
   auditLogs                           AuditLog[]
   notifications                       Notification[]
   attachments                         Attachment[]
   importBatches                       ImportBatch[]
+  campaigns                           Campaign[]
+  campaignAttributions                CampaignAttribution[]
+  campaignAlerts                      CampaignAlert[]
+  adAccountConnections                AdAccountConnection[]
   crmEvents                           CrmEvent[]
   crmLeadStatuses                     CrmLeadStatus[]
   crmLeadSources                      CrmLeadSource[]
@@ -269,6 +274,7 @@ model Branch {
   internalTransfers     InternalTransfer[]
   employeeAdvances      EmployeeAdvance[]
   aiGarmentProjects     AiGarmentProject[]
+  campaigns             Campaign[]
 
   crmLeads CrmLead[]
 
@@ -361,6 +367,11 @@ model User {
   productionStageTransactionsPerformed       ProductionStageTransaction[]         @relation("ProductionStageTransactionPerformedBy")
   qcInspectionsMade                          QcInspection[]                       @relation("QcInspectionInspector")
   importBatchesCreated                       ImportBatch[]
+  campaignsOwned                             Campaign[]                           @relation("CampaignOwner")
+  campaignsCreated                           Campaign[]                           @relation("CampaignCreatedBy")
+  campaignsApproved                          Campaign[]                           @relation("CampaignApprovedBy")
+  campaignDailyMetricsRecorded               CampaignDailyMetric[]
+  adAccountConnectionsCreated                AdAccountConnection[]
   crmEventsActed                             CrmEvent[]                           @relation("CrmEventActor")
   crmLeadsOwned                              CrmLead[]                            @relation("CrmLeadOwner")
   crmLeadsCreated                            CrmLead[]                            @relation("CrmLeadCreatedBy")
@@ -693,6 +704,7 @@ model Buyer {
   buyerEnquiries    BuyerEnquiry[]
   salesOrders       SalesOrder[]
   aiGarmentProjects AiGarmentProject[]
+  crmContacts       CrmContact[]
 
   @@unique([customerId, code])
   @@map("buyers")
@@ -2528,6 +2540,259 @@ model BuyerEnquiryLine {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Marketing — Campaigns & Ad Integrations (kept, unchanged in shape, when
+// the legacy CRM was replaced by the new CRM module elsewhere in this file;
+// see CLAUDE.md's CRM Replacement section for why these survived the
+// crm-build-v5 branch's own blanket removal of this block).
+// ─────────────────────────────────────────────────────────────
+
+enum CampaignChannel {
+  META_ADS
+  GOOGLE_ADS
+  LINKEDIN
+  YOUTUBE
+  EMAIL
+  WHATSAPP
+  SEO
+  ORGANIC
+  REFERRAL
+  OFFLINE
+}
+
+enum CampaignStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  COMPLETED
+}
+
+enum CampaignApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model Campaign {
+  id               String                 @id @default(uuid()) @db.Uuid
+  companyId        String                 @map("company_id") @db.Uuid
+  branchId         String?                @map("branch_id") @db.Uuid
+  campaignNumber   String                 @map("campaign_number")
+  name             String
+  objective        String?
+  channel          CampaignChannel
+  startDate        DateTime?              @map("start_date") @db.Date
+  endDate          DateTime?              @map("end_date") @db.Date
+  budget           Decimal                @default(0) @db.Decimal(15, 2)
+  ownerUserId      String?                @map("owner_user_id") @db.Uuid
+  status           CampaignStatus         @default(DRAFT)
+  approvalStatus   CampaignApprovalStatus @default(PENDING) @map("approval_status")
+  // Approval metadata — who/when/why, mirroring the same "who/when" shape
+  // already used for SampleVersion's costing lock rather than a bare
+  // boolean. rejectionReason is cleared on a later approval, and vice versa
+  // (approvedBy/approvedAt cleared on a later rejection) — the three fields
+  // together always describe exactly one decision, never a stale mix of both.
+  approvedByUserId String?                @map("approved_by_user_id") @db.Uuid
+  approvedAt       DateTime?              @map("approved_at")
+  rejectionReason  String?                @map("rejection_reason")
+  notes            String?
+  createdByUserId  String                 @map("created_by_user_id") @db.Uuid
+  createdAt        DateTime               @default(now()) @map("created_at")
+  updatedAt        DateTime               @updatedAt @map("updated_at")
+
+  company         Company               @relation(fields: [companyId], references: [id])
+  branch          Branch?               @relation(fields: [branchId], references: [id])
+  owner           User?                 @relation("CampaignOwner", fields: [ownerUserId], references: [id])
+  createdBy       User                  @relation("CampaignCreatedBy", fields: [createdByUserId], references: [id])
+  approvedBy      User?                 @relation("CampaignApprovedBy", fields: [approvedByUserId], references: [id])
+  dailyMetrics    CampaignDailyMetric[]
+  attributions    CampaignAttribution[]
+  alerts          CampaignAlert[]
+  // Attribution FK added back onto the new CRM's CrmLead (2026-10-09, CRM
+  // Replacement) — CrmLead otherwise has no real FK into Campaign, only
+  // free-text UTM fields; this mirrors the old Lead.campaignId exactly.
+  crmLeads        CrmLead[]
+  adCampaignLinks AdCampaignLink[]
+
+  @@unique([companyId, campaignNumber])
+  @@index([companyId, status])
+  @@index([companyId, channel])
+  @@map("mkt_campaigns")
+}
+
+// Manually recorded (or, later, ad-platform-synced — not built in this
+// pass, see the migration report) daily spend/impressions/clicks. Campaign
+// spend is always SUM(these), never a separately-editable column.
+model CampaignDailyMetric {
+  id               String   @id @default(uuid()) @db.Uuid
+  campaignId       String   @map("campaign_id") @db.Uuid
+  metricDate       DateTime @map("metric_date") @db.Date
+  spend            Decimal  @default(0) @db.Decimal(15, 2)
+  // Int, not BigInt — NextResponse.json() can't serialize a native BigInt
+  // (hit live: this crashed with "Do not know how to serialize a BigInt" on
+  // every read of a recorded metric), and no real campaign at this
+  // business's scale will exceed ~2 billion impressions.
+  impressions      Int      @default(0)
+  clicks           Int      @default(0)
+  notes            String?
+  recordedByUserId String   @map("recorded_by_user_id") @db.Uuid
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  campaign   Campaign @relation(fields: [campaignId], references: [id])
+  recordedBy User     @relation(fields: [recordedByUserId], references: [id])
+
+  @@unique([campaignId, metricDate])
+  @@map("mkt_campaign_daily_metrics")
+}
+
+enum AdPlatform {
+  META
+  GOOGLE
+}
+
+enum AdConnectionStatus {
+  CONNECTED
+  // Set only by a deliberate user action (Disconnect) — never inferred from
+  // an expired token, since that's a recoverable ERROR state, not a decision
+  // to stop syncing.
+  DISCONNECTED
+  // A sync attempt failed (expired/revoked token, API error) — surfaced with
+  // lastSyncError so the connection page can point at "reconnect" rather
+  // than silently retrying forever with no explanation.
+  ERROR
+}
+
+// One row per connected external ad account (a company can connect more than
+// one Meta ad account or Google Ads customer ID). Tokens are encrypted at
+// rest (src/core/security/encryption.ts) — these are live credentials with
+// real ad-spend-account access, not app-internal data, so plaintext storage
+// would be a real, easily avoidable vulnerability.
+model AdAccountConnection {
+  id                    String             @id @default(uuid()) @db.Uuid
+  companyId             String             @map("company_id") @db.Uuid
+  platform              AdPlatform
+  externalAccountId     String             @map("external_account_id")
+  accountName           String             @map("account_name")
+  accessTokenEncrypted  String             @map("access_token_encrypted")
+  refreshTokenEncrypted String?            @map("refresh_token_encrypted")
+  tokenExpiresAt        DateTime?          @map("token_expires_at")
+  status                AdConnectionStatus @default(CONNECTED)
+  lastSyncedAt          DateTime?          @map("last_synced_at")
+  lastSyncError         String?            @map("last_sync_error")
+  connectedByUserId     String             @map("connected_by_user_id") @db.Uuid
+  createdAt             DateTime           @default(now()) @map("created_at")
+  updatedAt             DateTime           @updatedAt @map("updated_at")
+
+  company       Company          @relation(fields: [companyId], references: [id])
+  connectedBy   User             @relation(fields: [connectedByUserId], references: [id])
+  campaignLinks AdCampaignLink[]
+
+  @@unique([companyId, platform, externalAccountId])
+  @@index([companyId, platform])
+  @@map("ad_account_connections")
+}
+
+// Maps one external ad-platform campaign to (at most) one local Campaign
+// record. Deliberately a separate mapping table, not a field on Campaign
+// itself — one local Campaign has no reason to know about ad-platform
+// wiring, and a connection can see many external campaigns the user hasn't
+// (or won't) map to anything local yet; those stay listed with
+// localCampaignId = null rather than auto-creating a local Campaign per
+// external one (would flood the Campaigns list with entries nobody asked
+// for and bypass this project's own approval-workflow gate on new
+// campaigns).
+model AdCampaignLink {
+  id                   String   @id @default(uuid()) @db.Uuid
+  connectionId         String   @map("connection_id") @db.Uuid
+  externalCampaignId   String   @map("external_campaign_id")
+  externalCampaignName String   @map("external_campaign_name")
+  localCampaignId      String?  @map("local_campaign_id") @db.Uuid
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  connection    AdAccountConnection @relation(fields: [connectionId], references: [id])
+  localCampaign Campaign?           @relation(fields: [localCampaignId], references: [id])
+
+  @@unique([connectionId, externalCampaignId])
+  @@index([localCampaignId])
+  @@map("ad_campaign_links")
+}
+
+// Multi-touch attribution record — a distinct concept from Lead itself
+// (one Lead can have several touches on the way in), unlike the source's
+// eq_mkt_lead_map which conflated "attribution" with "current lead state."
+model CampaignAttribution {
+  id                String   @id @default(uuid()) @db.Uuid
+  companyId         String   @map("company_id") @db.Uuid
+  campaignId        String?  @map("campaign_id") @db.Uuid
+  leadId            String?  @map("lead_id") @db.Uuid
+  // Free-text fallback for a touch that never became a real Lead record —
+  // mirrors the source's own customer_name column on this same table.
+  prospectName      String?  @map("prospect_name")
+  source            String?
+  medium            String?
+  content           String?
+  term              String?
+  utmCampaign       String?  @map("utm_campaign")
+  landingPage       String?  @map("landing_page")
+  isFirstTouch      Boolean  @default(false) @map("is_first_touch")
+  isLastTouch       Boolean  @default(false) @map("is_last_touch")
+  attributedRevenue Decimal  @default(0) @map("attributed_revenue") @db.Decimal(15, 2)
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  company  Company   @relation(fields: [companyId], references: [id])
+  campaign Campaign? @relation(fields: [campaignId], references: [id])
+  crmLead  CrmLead?  @relation(fields: [leadId], references: [id])
+
+  @@index([companyId, campaignId])
+  @@index([companyId, leadId])
+  @@map("mkt_campaign_attributions")
+}
+
+// The 4 threshold rules ported exactly from the source's eq_mkt_run_automation()
+// (budget overspend/80%, low ROAS, high CPL vs channel benchmark, low
+// conversion — see the migration report §3.5 for the precise formulas).
+enum CampaignAlertType {
+  BUDGET_OVERSPEND
+  BUDGET_80_PERCENT
+  LOW_ROAS
+  ROAS_WATCH
+  HIGH_CPL
+  LOW_CONVERSION
+}
+
+enum CampaignAlertPriority {
+  MEDIUM
+  HIGH
+}
+
+enum CampaignAlertStatus {
+  OPEN
+  RESOLVED
+}
+
+model CampaignAlert {
+  id             String                @id @default(uuid()) @db.Uuid
+  companyId      String                @map("company_id") @db.Uuid
+  campaignId     String?               @map("campaign_id") @db.Uuid
+  alertType      CampaignAlertType     @map("alert_type")
+  priority       CampaignAlertPriority
+  title          String
+  message        String
+  metricValue    Decimal?              @map("metric_value") @db.Decimal(15, 4)
+  thresholdValue Decimal?              @map("threshold_value") @db.Decimal(15, 4)
+  status         CampaignAlertStatus   @default(OPEN)
+  resolvedAt     DateTime?             @map("resolved_at")
+  createdAt      DateTime              @default(now()) @map("created_at")
+
+  company  Company   @relation(fields: [companyId], references: [id])
+  campaign Campaign? @relation(fields: [campaignId], references: [id])
+
+  @@index([companyId, status])
+  @@index([companyId, campaignId])
+  @@map("mkt_campaign_alerts")
+}
+
+// ─────────────────────────────────────────────────────────────
 // HRMS — Attendance & Leave (migrated from WordPress "EQ HRMS"; see
 // CRM_SALES_MARKETING_HRMS_MIGRATION_REPORT.md). Payroll and
 // KPI/Performance are explicitly out of scope for this pass — the source's
@@ -2712,70 +2977,90 @@ enum SalesOrderStatus {
 }
 
 model SalesOrder {
-  id                String            @id @default(uuid()) @db.Uuid
-  companyId         String            @map("company_id") @db.Uuid
-  branchId          String?           @map("branch_id") @db.Uuid
-  orderNumber       String            @map("order_number")
-  customerId        String            @map("customer_id") @db.Uuid
-  buyerId           String?           @map("buyer_id") @db.Uuid
-  orderDate         DateTime          @map("order_date") @db.Date
-  requiredShipDate  DateTime?         @map("required_ship_date") @db.Date
+  id                       String            @id @default(uuid()) @db.Uuid
+  companyId                String            @map("company_id") @db.Uuid
+  branchId                 String?           @map("branch_id") @db.Uuid
+  orderNumber              String            @map("order_number")
+  customerId               String            @map("customer_id") @db.Uuid
+  buyerId                  String?           @map("buyer_id") @db.Uuid
+  orderDate                DateTime          @map("order_date") @db.Date
+  requiredShipDate         DateTime?         @map("required_ship_date") @db.Date
   // The buyer's own PO reference number, free text — this app's real
   // ORD-2026-00001 numbering is unrelated and unaffected; a buyer's PO
   // document (the file itself) attaches via the existing generic Attachment
   // mechanism (RelatedModule.SALES_ORDER), not a dedicated column here.
-  customerPoNumber  String?           @map("customer_po_number")
-  status            SalesOrderStatus  @default(DRAFT)
-  statusBeforeHold  SalesOrderStatus? @map("status_before_hold")
+  customerPoNumber         String?           @map("customer_po_number")
+  status                   SalesOrderStatus  @default(DRAFT)
+  statusBeforeHold         SalesOrderStatus? @map("status_before_hold")
   // Frozen at creation (no live FX picker — multi-currency UI is deferred
   // project-wide); base amounts are stored, not computed live, so historical
   // totals never drift if a rate source changes later.
-  currencyCode      String            @map("currency_code") @db.Char(3)
-  exchangeRate      Decimal           @default(1) @map("exchange_rate") @db.Decimal(18, 6)
-  baseCurrencyCode  String            @map("base_currency_code") @db.Char(3)
-  totalAmount       Decimal           @default(0) @map("total_amount") @db.Decimal(18, 2)
-  baseTotalAmount   Decimal           @default(0) @map("base_total_amount") @db.Decimal(18, 2)
-  requestedByUserId String            @map("requested_by_user_id") @db.Uuid
-  createdAt         DateTime          @default(now()) @map("created_at")
-  updatedAt         DateTime          @updatedAt @map("updated_at")
+  currencyCode             String            @map("currency_code") @db.Char(3)
+  exchangeRate             Decimal           @default(1) @map("exchange_rate") @db.Decimal(18, 6)
+  baseCurrencyCode         String            @map("base_currency_code") @db.Char(3)
+  totalAmount              Decimal           @default(0) @map("total_amount") @db.Decimal(18, 2)
+  baseTotalAmount          Decimal           @default(0) @map("base_total_amount") @db.Decimal(18, 2)
+  requestedByUserId        String            @map("requested_by_user_id") @db.Uuid
+  // CRM traceability (2026-10-09, CRM Replacement) — which Opportunity this
+  // order came from, if any; optional, set manually on the New Sales Order
+  // form, never auto-populated. Was originatingDealId against the legacy
+  // CRM's Deal model before the replacement.
+  originatingOpportunityId String?           @map("originating_opportunity_id") @db.Uuid
+  createdAt                DateTime          @default(now()) @map("created_at")
+  updatedAt                DateTime          @updatedAt @map("updated_at")
 
-  company          Company           @relation(fields: [companyId], references: [id])
-  branch           Branch?           @relation(fields: [branchId], references: [id])
-  customer         Customer          @relation(fields: [customerId], references: [id])
-  buyer            Buyer?            @relation(fields: [buyerId], references: [id])
-  requestedBy      User              @relation("SalesOrderRequestedBy", fields: [requestedByUserId], references: [id])
-  items            SalesOrderItem[]
-  salesOrderLines  SalesOrderLine[]
-  materialRequests MaterialRequest[]
-  salesInvoices    SalesInvoice[]
-  dispatches       Dispatch[]
+  company                Company           @relation(fields: [companyId], references: [id])
+  branch                 Branch?           @relation(fields: [branchId], references: [id])
+  customer               Customer          @relation(fields: [customerId], references: [id])
+  buyer                  Buyer?            @relation(fields: [buyerId], references: [id])
+  requestedBy            User              @relation("SalesOrderRequestedBy", fields: [requestedByUserId], references: [id])
+  originatingOpportunity CrmOpportunity?   @relation(fields: [originatingOpportunityId], references: [id])
+  items                  SalesOrderItem[]
+  salesOrderLines        SalesOrderLine[]
+  materialRequests       MaterialRequest[]
+  salesInvoices          SalesInvoice[]
+  dispatches             Dispatch[]
   // Reserved, unused this phase — AiGarmentProject.salesOrderId is a nullable
   // FK not yet written by any code path (no Sales Order linkage exists yet
   // for AI Garment Flow); documented placeholder, same precedent as
   // ProductionOrderStatus.MATERIAL_ALLOCATED.
-  aiGarmentProject AiGarmentProject?
+  aiGarmentProject       AiGarmentProject?
 
   @@unique([companyId, orderNumber])
   @@map("sales_orders")
 }
 
 model SalesOrderItem {
-  id                 String   @id @default(uuid()) @db.Uuid
-  salesOrderId       String   @map("sales_order_id") @db.Uuid
-  productId          String   @map("product_id") @db.Uuid
+  id                        String   @id @default(uuid()) @db.Uuid
+  salesOrderId              String   @map("sales_order_id") @db.Uuid
+  productId                 String   @map("product_id") @db.Uuid
   // Nullable, per-item (not per-header) — one order can carry several style
   // lines, each optionally tracing back to a different approved sample; a
   // repeat/direct order line needs no sample link at all.
-  sampleRequestId    String?  @map("sample_request_id") @db.Uuid
-  unitPrice          Decimal  @map("unit_price") @db.Decimal(18, 2)
-  notes              String?
-  // Guarded accumulator (Phase 8), same idiom as PurchaseOrderItem's
-  // receivedQuantity/invoicedQuantity — capped by sum(breakdown.orderedQuantity),
-  // incremented only at Confirm-Dispatch time, never at Draft creation. One
-  // SalesOrderItem can be dispatched across multiple separate Dispatch
-  // documents over time (partial dispatch), hence an accumulator here rather
-  // than a one-shot flag.
-  dispatchedQuantity Int      @default(0) @map("dispatched_quantity")
+  sampleRequestId           String?  @map("sample_request_id") @db.Uuid
+  unitPrice                 Decimal  @map("unit_price") @db.Decimal(18, 2)
+  notes                     String?
+  // Guarded accumulator (Phase 8) — TOTAL physical quantity ever dispatched
+  // against this line, regular + extra combined (Extra Dispatch Quantity,
+  // 2026-09-30). Incremented only at Confirm-Dispatch time, never at Draft
+  // creation. One SalesOrderItem can be dispatched across multiple separate
+  // Dispatch documents over time (partial dispatch), hence an accumulator
+  // here rather than a one-shot flag. Deliberately UNCAPPED by
+  // sum(breakdown.orderedQuantity) — a customer can legitimately receive
+  // more than they ordered (FOC, replacement, promotional, etc.); the real
+  // cap against real stock still applies (see confirmDispatch()'s
+  // getAvailableQuantity() check). regularDispatchedQuantity below is the
+  // one capped at the ordered total and is what Sale Order fulfillment is
+  // actually computed from.
+  dispatchedQuantity        Int      @default(0) @map("dispatched_quantity")
+  // Extra Dispatch Quantity (2026-09-30) — the portion of dispatchedQuantity
+  // that counts toward Sale Order fulfillment. Guarded, capped by
+  // sum(breakdown.orderedQuantity) exactly the way the unsplit
+  // dispatchedQuantity column used to be capped before this feature —
+  // see confirmDispatch()'s guarded updateMany. Any quantity beyond this
+  // (dispatchedQuantity - regularDispatchedQuantity) is Extra and must never
+  // be counted as fulfilling the order.
+  regularDispatchedQuantity Int      @default(0) @map("regular_dispatched_quantity")
   // Effective BOM (2026-09-24) — the STABLE line identity this concrete item
   // row belongs to. Deliberately NOT the same as this row's own `id`:
   // updateSalesOrder()'s replaceItems() deletes and recreates every
@@ -2784,8 +3069,8 @@ model SalesOrderItem {
   // SalesOrderBomOverride rows are keyed to it, not to this row. Nullable
   // only because a row can theoretically be written by test/legacy code
   // paths that predate this column; every real service-layer write sets it.
-  salesOrderLineId   String?  @map("sales_order_line_id") @db.Uuid
-  createdAt          DateTime @default(now()) @map("created_at")
+  salesOrderLineId          String?  @map("sales_order_line_id") @db.Uuid
+  createdAt                 DateTime @default(now()) @map("created_at")
 
   salesOrder        SalesOrder                @relation(fields: [salesOrderId], references: [id])
   product           Product                   @relation(fields: [productId], references: [id])
@@ -3678,6 +3963,9 @@ model Lot {
   qcInspections     QcInspection[]
   variantBreakdown  LotVariantBreakdown[]
   materialRequests  MaterialRequest[]
+  // Informational only (Extra Dispatch Quantity, 2026-09-30) — see
+  // DispatchItem.sourceLotId's own comment.
+  dispatchItems     DispatchItem[]
 
   @@unique([companyId, lotNumber])
   @@index([productionOrderId])
@@ -4484,6 +4772,43 @@ enum DispatchStatus {
   CANCELLED
 }
 
+// Extra Dispatch Quantity (2026-09-30) — a Dispatch line may ship more than
+// the Sale Order's own remaining ordered quantity (customer request,
+// replacement, FOC, sample, promotional, packing rounding, etc.). Mandatory
+// whenever a line's own extraDispatchQuantity > 0 (enforced in
+// dispatch.service.ts, since the split is computed server-side from a
+// cumulative Regular total the client can't itself know in advance).
+enum ExtraDispatchReason {
+  CUSTOMER_REQUEST
+  REPLACEMENT
+  FREE_FOC
+  SAMPLE
+  PROMOTIONAL
+  PACKING_ADJUSTMENT
+  OTHER
+}
+
+// Company-wide Extra Dispatch behavior toggles — a missing row means the
+// defaults below, same "single flat row, no backfill" precedent as
+// ProductionSettings/ActionDisplaySettings.
+model DispatchSettings {
+  id                                    String   @id @default(uuid()) @db.Uuid
+  companyId                             String   @unique @map("company_id") @db.Uuid
+  allowExtraDispatch                    Boolean  @default(true) @map("allow_extra_dispatch")
+  extraDispatchApprovalRequired         Boolean  @default(false) @map("extra_dispatch_approval_required")
+  // Either threshold, if set, independently triggers the approval gate even
+  // when extraDispatchApprovalRequired is false — a company may want "only
+  // approve if it's a lot of extra," not every single extra unit.
+  extraDispatchApprovalThresholdQty     Int?     @map("extra_dispatch_approval_threshold_qty")
+  extraDispatchApprovalThresholdPercent Decimal? @map("extra_dispatch_approval_threshold_percent") @db.Decimal(5, 2)
+  createdAt                             DateTime @default(now()) @map("created_at")
+  updatedAt                             DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@map("dispatch_settings")
+}
+
 model Dispatch {
   id                String          @id @default(uuid()) @db.Uuid
   companyId         String          @map("company_id") @db.Uuid
@@ -4533,19 +4858,53 @@ model Dispatch {
 }
 
 model DispatchItem {
-  id                 String   @id @default(uuid()) @db.Uuid
-  dispatchId         String   @map("dispatch_id") @db.Uuid
-  salesOrderItemId   String   @map("sales_order_item_id") @db.Uuid
-  productId          String   @map("product_id") @db.Uuid
-  dispatchedQuantity Int      @map("dispatched_quantity")
-  createdAt          DateTime @default(now()) @map("created_at")
+  id                      String               @id @default(uuid()) @db.Uuid
+  dispatchId              String               @map("dispatch_id") @db.Uuid
+  salesOrderItemId        String               @map("sales_order_item_id") @db.Uuid
+  productId               String               @map("product_id") @db.Uuid
+  // TOTAL physical quantity for this line — regularDispatchQuantity +
+  // extraDispatchQuantity, an invariant enforced entirely in
+  // dispatch.service.ts (never independently client-supplied; both
+  // components are always derived server-side from the split formula).
+  // This is the number markPacked()'s carton-sum check and confirmDispatch()'s
+  // real FG-stock check both use — unchanged meaning/mechanism from before
+  // Extra Dispatch Quantity existed, since it was already "the total to ship."
+  dispatchedQuantity      Int                  @map("dispatched_quantity")
+  // Extra Dispatch Quantity (2026-09-30) — split of dispatchedQuantity.
+  // regularDispatchQuantity is what SalesOrderItem.regularDispatchedQuantity
+  // is incremented by (capped at the order's own remaining quantity);
+  // extraDispatchQuantity is the remainder, never counted toward Sale Order
+  // fulfillment. regularDispatchQuantity + extraDispatchQuantity ===
+  // dispatchedQuantity always.
+  regularDispatchQuantity Int                  @default(0) @map("regular_dispatch_quantity")
+  extraDispatchQuantity   Int                  @default(0) @map("extra_dispatch_quantity")
+  // Mandatory whenever extraDispatchQuantity > 0 (service-layer check —
+  // Zod can't enforce this alone since the split is computed server-side).
+  extraDispatchReason     ExtraDispatchReason? @map("extra_dispatch_reason")
+  // Mandatory whenever extraDispatchReason = OTHER (Zod .superRefine(), a
+  // pure input-shape rule).
+  extraDispatchRemarks    String?              @map("extra_dispatch_remarks")
+  // Informational traceability only (2026-09-30) — which Production Lot this
+  // line was understood to be fulfilled from at dispatch time. Deliberately
+  // NEVER enforced against a real per-lot stock balance: Finished-Goods
+  // stock in this schema is pooled at (productId, warehouseId) with no lot
+  // dimension on the consumption side (InventoryTransaction has no lotId
+  // column at all — see PRODUCTION_MODULE_DESIGN.md). Building genuine
+  // lot-level allocation would mean making Production's own finished-goods
+  // posting lot-aware everywhere it already isn't; explicitly out of scope
+  // here, matching CartonItem.productVariantId's own identical
+  // "informational only, never enforced" precedent two models below.
+  sourceLotId             String?              @map("source_lot_id") @db.Uuid
+  createdAt               DateTime             @default(now()) @map("created_at")
 
   dispatch       Dispatch       @relation(fields: [dispatchId], references: [id])
   salesOrderItem SalesOrderItem @relation(fields: [salesOrderItemId], references: [id])
   product        Product        @relation(fields: [productId], references: [id])
+  sourceLot      Lot?           @relation(fields: [sourceLotId], references: [id])
   cartonItems    CartonItem[]
 
   @@index([dispatchId])
+  @@index([sourceLotId])
   @@map("dispatch_items")
 }
 
@@ -8165,6 +8524,11 @@ model CrmLead {
   utmContent             String?               @map("utm_content")
   campaignSource         String?               @map("campaign_source")
   referralSource         String?               @map("referral_source")
+  // Real FK into Marketing's Campaign (2026-10-09, CRM Replacement) — the
+  // UTM fields above are free-text only; this is what lets Marketing's
+  // dashboard count leads/revenue per campaign with a real join, mirroring
+  // the legacy CRM's own Lead.campaignId exactly.
+  campaignId             String?               @map("campaign_id") @db.Uuid
   customFields           Json                  @default("{}") @map("custom_fields")
   // How the lead entered the CRM (set once on create, never changed by later
   // updates) and, for connectors, which provider sent it.
@@ -8185,22 +8549,24 @@ model CrmLead {
   createdAt              DateTime              @default(now()) @map("created_at")
   updatedAt              DateTime              @updatedAt @map("updated_at")
 
-  company              Company              @relation(fields: [companyId], references: [id])
-  branch               Branch?              @relation(fields: [branchId], references: [id])
-  status               CrmLeadStatus        @relation(fields: [statusId], references: [id])
-  source               CrmLeadSource?       @relation(fields: [sourceId], references: [id])
-  owner                User?                @relation("CrmLeadOwner", fields: [ownerUserId], references: [id])
-  createdBy            User                 @relation("CrmLeadCreatedBy", fields: [createdByUserId], references: [id])
-  crmCompany           CrmCompany?          @relation(fields: [crmCompanyId], references: [id], onDelete: SetNull)
-  crmContact           CrmContact?          @relation(fields: [crmContactId], references: [id], onDelete: SetNull)
-  convertedOpportunity CrmOpportunity?      @relation("CrmLeadConvertedOpportunity", fields: [convertedOpportunityId], references: [id], onDelete: SetNull)
-  opportunities        CrmOpportunity[]     @relation("CrmOpportunityLead")
-  importJob            CrmImportJob?        @relation(fields: [importJobId], references: [id], onDelete: SetNull)
+  company              Company               @relation(fields: [companyId], references: [id])
+  branch               Branch?               @relation(fields: [branchId], references: [id])
+  status               CrmLeadStatus         @relation(fields: [statusId], references: [id])
+  source               CrmLeadSource?        @relation(fields: [sourceId], references: [id])
+  owner                User?                 @relation("CrmLeadOwner", fields: [ownerUserId], references: [id])
+  createdBy            User                  @relation("CrmLeadCreatedBy", fields: [createdByUserId], references: [id])
+  crmCompany           CrmCompany?           @relation(fields: [crmCompanyId], references: [id], onDelete: SetNull)
+  crmContact           CrmContact?           @relation(fields: [crmContactId], references: [id], onDelete: SetNull)
+  convertedOpportunity CrmOpportunity?       @relation("CrmLeadConvertedOpportunity", fields: [convertedOpportunityId], references: [id], onDelete: SetNull)
+  opportunities        CrmOpportunity[]      @relation("CrmOpportunityLead")
+  importJob            CrmImportJob?         @relation(fields: [importJobId], references: [id], onDelete: SetNull)
   externalRefs         CrmLeadExternalRef[]
-  importRows           CrmImportRow[]       @relation("CrmImportRowLead")
+  importRows           CrmImportRow[]        @relation("CrmImportRowLead")
   ingestEvents         CrmIngestEvent[]
-  sourcedContacts      CrmContact[]         @relation("CrmContactSourceLead")
-  sourcedCompanies     CrmCompany[]         @relation("CrmCompanySourceLead")
+  sourcedContacts      CrmContact[]          @relation("CrmContactSourceLead")
+  sourcedCompanies     CrmCompany[]          @relation("CrmCompanySourceLead")
+  campaign             Campaign?             @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  campaignAttributions CampaignAttribution[]
 
   @@unique([companyId, leadNumber])
   @@index([companyId, archivedAt, createdAt])
@@ -8209,6 +8575,7 @@ model CrmLead {
   @@index([companyId, sourceId])
   @@index([companyId, nextFollowUpAt])
   @@index([companyId, captureChannel])
+  @@index([companyId, campaignId])
   @@index([emailKeys], type: Gin)
   @@index([phoneKeys], type: Gin)
   @@map("crm_leads")
@@ -8280,9 +8647,8 @@ model CrmCompany {
   contacts       CrmContact[]
   opportunities  CrmOpportunity[]
   addresses      CrmAddress[]
-  mergesSurvived CrmCompanyMerge[] @relation("CrmCompanyMergeSurvivor")
-  conversations  CrmConversation[]
-  mergeRecord    CrmCompanyMerge?  @relation("CrmCompanyMergeMerged")
+  mergesSurvived CrmCompanyMerge[]  @relation("CrmCompanyMergeSurvivor")
+  mergeRecord    CrmCompanyMerge?   @relation("CrmCompanyMergeMerged")
 
   @@index([companyId, nameKey])
   @@index([companyId, nameMatchKey])
@@ -8375,6 +8741,11 @@ model CrmContact {
   sourceLeadId        String?   @map("source_lead_id") @db.Uuid
   ownerUserId         String?   @map("owner_user_id") @db.Uuid
   customFields        Json      @default("{}") @map("custom_fields")
+  // Optional link to the specific Buyer master row (under this contact's
+  // linked Customer, via crmCompany.customerId) this contact represents
+  // (2026-10-09, CRM Replacement) -- a soft link, never enforced, following
+  // the exact same pattern as CrmCompany.customerId.
+  buyerId             String?   @map("buyer_id") @db.Uuid
   // Last time anything happened to the contact (its own CRM events).
   lastActivityAt      DateTime? @map("last_activity_at")
   // Set when a FLAG duplicate rule matched on save: ids of the suspected
@@ -8407,11 +8778,9 @@ model CrmContact {
   addresses      CrmAddress[]
   channels       CrmContactChannel[]
   consents       CrmContactConsent[]
-  mergesSurvived CrmContactMerge[]            @relation("CrmContactMergeSurvivor")
-  mergeRecord    CrmContactMerge?             @relation("CrmContactMergeMerged")
-  primaryOf      CrmCompany[]                 @relation("CrmCompanyPrimaryContact")
-  conversations  CrmConversation[]
-  participations CrmConversationParticipant[]
+  mergesSurvived CrmContactMerge[]   @relation("CrmContactMergeSurvivor")
+  mergeRecord    CrmContactMerge?    @relation("CrmContactMergeMerged")
+  primaryOf      CrmCompany[]        @relation("CrmCompanyPrimaryContact")
 
   @@index([companyId, crmCompanyId])
   @@index([companyId, archivedAt, createdAt])
@@ -8617,7 +8986,6 @@ model CrmOpportunity {
   convertedFromLeads CrmLead[]                    @relation("CrmLeadConvertedOpportunity")
   erpLinks           CrmOpportunityErpLink[]
   stageHistory       CrmOpportunityStageHistory[]
-  conversations      CrmConversation[]
 
   @@unique([companyId, opportunityNumber])
   @@index([companyId, status])
@@ -9347,6 +9715,9 @@ model CrmSavedView {
 }
 
 enum ImportBatchType {
+  // Marketing's own CSV import type (kept from the legacy CRM removal --
+  // Marketing survives untouched, see CLAUDE.md's CRM Replacement section).
+  CAMPAIGN_DAILY_METRIC
   CUSTOMER
   SUPPLIER
   PRODUCT
@@ -9526,6 +9897,9 @@ enum DocumentType {
   SKU
   CRM_LEAD
   CRM_OPPORTUNITY
+  // Marketing's own campaign numbering (kept from the legacy CRM removal --
+  // Marketing survives untouched, see CLAUDE.md's CRM Replacement section).
+  CAMPAIGN
 }
 
 model DocumentSequence {

@@ -3,7 +3,7 @@ import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingService";
 import { deleteAttachment, getAttachmentForDownload, uploadAttachment } from "@/core/attachments/AttachmentService";
-import { AiConfigMissingError } from "@/core/ai/config";
+import { AiConfigMissingError, getAiTextProvider } from "@/core/ai/config";
 import { AiInvalidResponseError, AiServiceError } from "@/core/ai/providers/anthropic";
 import { analyzeReplicateDesignDna } from "@/core/ai-designer/replicate-design/dna-analysis/analyze";
 import { PROMPT_VERSION as DNA_PROMPT_VERSION } from "@/core/ai-designer/replicate-design/dna-analysis/prompt";
@@ -342,7 +342,7 @@ export async function runDnaAnalysis(actor: ActorContext, projectId: string) {
     companyId: actor.companyId,
     projectId,
     referenceAttachmentId: project.referenceFrontImageAttachmentId,
-    provider: "anthropic",
+    provider: getAiTextProvider(),
     model: process.env.ANTHROPIC_VISION_MODEL || "claude-opus-5",
     promptVersion: DNA_PROMPT_VERSION,
     status: "IN_PROGRESS",
@@ -373,7 +373,7 @@ export async function runDnaAnalysis(actor: ActorContext, projectId: string) {
         referenceAttachmentId: project.referenceFrontImageAttachmentId,
         status: "AI_ANALYSED",
         promptVersion: DNA_PROMPT_VERSION,
-        provider: "anthropic",
+        provider: getAiTextProvider(),
         model: result.model,
         rawResponseJson: result.rawResponse as Prisma.InputJsonValue,
         designDnaSummary: result.data.designDnaSummary,
@@ -679,7 +679,7 @@ export async function runCompatibilityCheck(actor: ActorContext, projectId: stri
   const runRow = await ReplicateDesignCompatibilityRunRepository.create({
     companyId: actor.companyId,
     projectId,
-    provider: "anthropic",
+    provider: getAiTextProvider(),
     model: process.env.ANTHROPIC_DEFAULT_MODEL || "claude-sonnet-5",
     promptVersion: COMPATIBILITY_PROMPT_VERSION,
     status: "IN_PROGRESS",
@@ -721,7 +721,7 @@ export async function runCompatibilityCheck(actor: ActorContext, projectId: stri
         companyId: actor.companyId,
         projectId,
         promptVersion: COMPATIBILITY_PROMPT_VERSION,
-        provider: "anthropic",
+        provider: getAiTextProvider(),
         model: result.model,
         rawResponseJson: result.rawResponse as Prisma.InputJsonValue,
         overallSummary: result.overallSummary,

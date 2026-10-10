@@ -31,6 +31,8 @@ import { CustomerRepository } from "@/modules/customers/customer.repository";
 import { LookupRepository } from "@/modules/lookups/lookup.repository";
 import { BomRepository } from "@/modules/bom-mrp/bom.repository";
 import { advanceMasterCodeSequence } from "@/core/numbering/DocumentNumberingService";
+import { createActivity } from "@/modules/crm/activities/crm-activities.service";
+import type { CrmActor } from "@/modules/crm/core/crm-actor";
 import { SampleStatus, SampleType, type Prisma, type SampleVersionStatus } from "@prisma/client";
 import type { SampleBomUpdateInput } from "./sample.schema";
 
@@ -511,6 +513,36 @@ export async function transitionSampleStatus(actor: ActorContext, id: string, ta
     // business changing.
     if (currentVersion && !["APPROVED", "REJECTED", "SUPERSEDED"].includes(currentVersion.status)) {
       await SampleVersionRepository.update(currentVersion.id, { status: versionStatus });
+    }
+  }
+
+  // Marketing automation trigger: "Sample Sent -> Wait 3 Days -> Follow-up"
+  // from the CRM/Marketing enhancement request's own example list — the one
+  // sample-related trigger that's actually buildable, since a real Sample
+  // state machine exists. Repointed at the new CRM (2026-10-09, CRM
+  // Replacement): the legacy CrmFollowup used the shared RelatedModule enum
+  // (includes CUSTOMER directly); the new CrmActivity's own CrmEntityType
+  // enum is scoped to CRM-internal entities only, so this attaches to the
+  // customer's linked CrmCompany when one exists, and is silently skipped
+  // otherwise (same documented tradeoff as customer-segments.service.ts's
+  // generateReengagementFollowups()). Goes through the real createActivity()
+  // service (not a raw Prisma write) so this gets the same audit log /
+  // crm_events / assignee-notification handling every other CRM activity
+  // write does — never a second, invisible write path into this table.
+  if (targetStatus === "SUBMITTED_TO_CUSTOMER") {
+    const crmCompany = await prisma.crmCompany.findFirst({ where: { companyId: actor.companyId, customerId: before.customerId }, select: { id: true } });
+    if (crmCompany) {
+      const crmActor: CrmActor = { companyId: actor.companyId, userId: actor.userId, branchId: actor.branchId ?? null };
+      await createActivity(crmActor, {
+        type: "TASK",
+        mode: "schedule",
+        entityType: "COMPANY",
+        entityId: crmCompany.id,
+        subject: "Follow up on submitted sample",
+        description: `Auto-created — follow up on sample ${before.requestNumber}${before.styleName ? ` (${before.styleName})` : ""} submitted to customer.`,
+        priority: "NORMAL",
+        dueDate: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+      });
     }
   }
 

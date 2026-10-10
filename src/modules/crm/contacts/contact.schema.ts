@@ -70,6 +70,14 @@ const contactFields = {
   crmCompanyId: optionalUuid,
   sourceId: optionalUuid,
   ownerUserId: optionalUuid,
+  /**
+   * Soft link to a specific Buyer under the linked company's ERP Customer
+   * (CRM Replacement, 2026-10-09) — optional, never enforced to belong to
+   * that same customer at the schema layer (same convention as
+   * `CrmCompany.customerId` itself); the service checks it belongs to this
+   * company before saving.
+   */
+  buyerId: optionalUuid,
   customFields: z.record(z.string(), z.unknown()).optional(),
 };
 

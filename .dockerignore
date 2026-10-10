@@ -1,0 +1,12 @@
+node_modules
+.next
+.git
+.env*
+!.env.example
+storage
+uploads
+db_backup_before_wipe
+coverage
+tsconfig.tsbuildinfo
+*.md
+!README.md

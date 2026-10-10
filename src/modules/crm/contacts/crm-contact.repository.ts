@@ -52,6 +52,7 @@ export const CONTACT_DETAIL_INCLUDE = {
   source: { select: { id: true, name: true, key: true } },
   sourceLead: { select: { id: true, leadNumber: true, fullName: true, convertedAt: true } },
   crmCompany: { select: { id: true, name: true, customerId: true, website: true, industry: true, city: true, country: true, customer: { select: { id: true, code: true, name: true } } } },
+  buyer: { select: { id: true, code: true, name: true } },
   mergedInto: { select: { id: true, fullName: true } },
   addresses: { orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }] },
   channels: { orderBy: { createdAt: "asc" } },

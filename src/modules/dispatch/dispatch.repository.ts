@@ -9,7 +9,7 @@ const detailInclude = {
   items: {
     include: {
       product: { select: { id: true, styleName: true, styleCode: true } },
-      salesOrderItem: { select: { id: true, dispatchedQuantity: true } },
+      salesOrderItem: { select: { id: true, dispatchedQuantity: true, regularDispatchedQuantity: true } },
     },
   },
   cartons: {
@@ -24,6 +24,19 @@ const detailInclude = {
     },
   },
 } satisfies Prisma.DispatchInclude;
+
+// Extra Dispatch Quantity (2026-09-30) — the shape buildDispatchItems() in
+// dispatch.service.ts always produces, for both a fresh create and a full
+// item replace.
+type DispatchItemCreateShape = {
+  salesOrderItemId: string;
+  productId: string;
+  dispatchedQuantity: number;
+  regularDispatchQuantity: number;
+  extraDispatchQuantity: number;
+  extraDispatchReason: Prisma.DispatchItemUncheckedCreateInput["extraDispatchReason"];
+  extraDispatchRemarks: string | null;
+};
 
 export const DispatchRepository = {
   findMany: (where: Prisma.DispatchWhereInput, args: Omit<Prisma.DispatchFindManyArgs, "where">) =>
@@ -54,7 +67,7 @@ export const DispatchRepository = {
 
   createWithItems: (
     data: Omit<Prisma.DispatchUncheckedCreateInput, "items">,
-    items: Array<{ salesOrderItemId: string; productId: string; dispatchedQuantity: number }>
+    items: DispatchItemCreateShape[]
   ) =>
     prisma.dispatch.create({
       data: { ...data, items: { create: items } },
@@ -68,7 +81,7 @@ export const DispatchRepository = {
   replaceItems: (
     dispatchId: string,
     headerData: Prisma.DispatchUncheckedUpdateInput,
-    items: Array<{ salesOrderItemId: string; productId: string; dispatchedQuantity: number }>
+    items: DispatchItemCreateShape[]
   ) =>
     prisma.$transaction(async (tx) => {
       const cartonIds = (await tx.carton.findMany({ where: { dispatchId }, select: { id: true } })).map((c) => c.id);

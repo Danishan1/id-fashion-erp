@@ -2,7 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 
 vi.mock("@/core/db/client", () => ({
-  prisma: { $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn({})) },
+  prisma: {
+    $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn({})),
+    crmCompany: { findFirst: vi.fn().mockResolvedValue(null) },
+    crmActivity: { create: vi.fn() },
+  },
 }));
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/numbering/DocumentNumberingService", () => ({

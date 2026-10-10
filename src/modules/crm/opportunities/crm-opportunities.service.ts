@@ -2,9 +2,11 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { writeAuditLog } from "@/core/audit/AuditLogger";
 import type { CrmOpportunity, CrmOpportunityStatus, Prisma } from "@prisma/client";
-import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingService";
+import { generateDocumentNumber, previewNextMasterCode } from "@/core/numbering/DocumentNumberingService";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
+import { createCustomer } from "@/modules/customers/customer.service";
 import type { CrmActor } from "../core/crm-actor";
+import { linkErpCustomer } from "../companies/crm-companies.service";
 import { runCrmMutation, type CrmMutationContext } from "../core/crm-mutation";
 import { buildSearchText, nameKey } from "../core/crm-normalize";
 import { crmOwnerWhere, getCrmRecordScope, isWithinCrmScope, type CrmRecordScope } from "../core/crm-visibility";
@@ -33,6 +35,7 @@ import {
   bulkOpportunitySchema,
   changeOpportunityStatusSchema,
   changeStageSchema,
+  convertOpportunityToCustomerSchema,
   createOpportunitySchema,
   opportunityDuplicateCheckSchema,
   updateOpportunitySchema,
@@ -778,6 +781,57 @@ export async function restoreOpportunity(actor: CrmActor, id: string) {
     ctx.emit({ entityType: "OPPORTUNITY", entityId: id, eventType: "opportunity.restored", summary: `${before.opportunityNumber} — ${before.name}` });
     return after;
   });
+}
+
+// ── Convert to Customer (CRM Replacement, 2026-10-09) ───────────────
+
+/**
+ * Closes the Opportunity → ERP Customer gap the legacy CRM's own
+ * `convertDealToCustomer()` used to fill (removed with the rest of the old
+ * CRM — see CLAUDE.md's CRM Replacement section). Only legal once the
+ * opportunity is Won and has a linked company (nothing to attach a customer
+ * to otherwise). Deliberately NOT one atomic transaction end-to-end: Customer
+ * creation runs through the ERP's own, unchanged `createCustomer()` (which
+ * owns its own code-sequence/audit logic and isn't transaction-aware), and
+ * the CrmCompany link runs through the CRM's own, unchanged
+ * `linkErpCustomer()` (which owns its own duplicate-check/visibility/
+ * versioned-update/audit/event logic) — reusing both real actions as-is
+ * rather than re-deriving either, the same "call the existing action,
+ * don't rebuild it" discipline this ERP uses everywhere (e.g.
+ * `convertEnquiryLineToSampleRequest()` calling `createSampleRequest()`
+ * unchanged).
+ */
+export async function convertOpportunityToCustomer(actor: CrmActor, id: string, raw: unknown) {
+  const input = convertOpportunityToCustomerSchema.parse(raw);
+  const opp = await loadOpportunityForActor(actor, id);
+  if (opp.status !== "WON") {
+    throw new BusinessRuleError(
+      "INVALID_STATE_TRANSITION",
+      `An opportunity can only be converted to a Customer once it is Won (current status: "${OPPORTUNITY_STATUSES[opp.status as OpportunityStatus]?.label ?? opp.status}").`,
+      { status: opp.status }
+    );
+  }
+  if (!opp.crmCompanyId) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "This opportunity has no linked company to attach a Customer to.", { id });
+  }
+
+  const customerId =
+    input.mode === "LINK"
+      ? input.customerId
+      : (
+          await createCustomer(
+            { companyId: actor.companyId, userId: actor.userId },
+            {
+              code: input.code || (await previewNextMasterCode(actor.companyId, "CUSTOMER")),
+              name: input.name,
+              type: input.type,
+              country: input.country || "",
+              isActive: true,
+            }
+          )
+        ).id;
+
+  return linkErpCustomer(actor, opp.crmCompanyId, { customerId, confirmDuplicate: input.confirmDuplicate });
 }
 
 // ── Bulk ─────────────────────────────────────────────────────────

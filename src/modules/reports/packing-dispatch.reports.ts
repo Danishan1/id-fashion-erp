@@ -248,15 +248,25 @@ async function getCustomerWiseDispatchDescriptor(companyId: string, generatedByN
     select: {
       customerId: true,
       customer: { select: { name: true } },
-      items: { select: { dispatchedQuantity: true } },
+      items: { select: { dispatchedQuantity: true, regularDispatchQuantity: true, extraDispatchQuantity: true } },
     },
   });
 
-  const byCustomer = new Map<string, { customerId: string; customer: string; dispatchCount: number; totalDispatchedQuantity: number }>();
+  const byCustomer = new Map<
+    string,
+    { customerId: string; customer: string; dispatchCount: number; totalDispatchedQuantity: number; totalRegularQuantity: number; totalExtraQuantity: number }
+  >();
   for (const d of dispatches) {
-    const existing = byCustomer.get(d.customerId) ?? { customerId: d.customerId, customer: d.customer.name, dispatchCount: 0, totalDispatchedQuantity: 0 };
+    const existing =
+      byCustomer.get(d.customerId) ??
+      { customerId: d.customerId, customer: d.customer.name, dispatchCount: 0, totalDispatchedQuantity: 0, totalRegularQuantity: 0, totalExtraQuantity: 0 };
     existing.dispatchCount += 1;
     existing.totalDispatchedQuantity += d.items.reduce((s, i) => s + i.dispatchedQuantity, 0);
+    // Extra Dispatch Quantity (2026-09-30) — reported separately so Extra
+    // never gets mistaken for real Sale Order fulfillment; Total is still
+    // shown as-is since it's the real physical FG-stock consumption figure.
+    existing.totalRegularQuantity += d.items.reduce((s, i) => s + i.regularDispatchQuantity, 0);
+    existing.totalExtraQuantity += d.items.reduce((s, i) => s + i.extraDispatchQuantity, 0);
     byCustomer.set(d.customerId, existing);
   }
 
@@ -264,16 +274,21 @@ async function getCustomerWiseDispatchDescriptor(companyId: string, generatedByN
 
   return {
     title: "Customer-wise Dispatch",
-    subtitle: "Dispatch count and total dispatched quantity grouped by customer — Dispatched/Delivered only, matching the FG-stock-decrementing definition of dispatched.",
+    subtitle:
+      "Dispatch count and total dispatched quantity grouped by customer — Dispatched/Delivered only, matching the FG-stock-decrementing definition of dispatched. Regular and Extra are shown separately; only Regular counts toward Sale Order fulfillment.",
     filtersApplied: filtersApplied(filters, { dateFrom: "Date From", dateTo: "Date To" }),
     columns: [
       { key: "customer", label: "Customer" },
       { key: "dispatchCount", label: "Dispatch Count", type: "number", align: "right" },
-      { key: "totalDispatchedQuantity", label: "Total Dispatched Quantity", type: "number", align: "right" },
+      { key: "totalRegularQuantity", label: "Regular Dispatched Qty", type: "number", align: "right" },
+      { key: "totalExtraQuantity", label: "Extra Dispatched Qty", type: "number", align: "right" },
+      { key: "totalDispatchedQuantity", label: "Total Physical Dispatched Qty", type: "number", align: "right" },
     ],
     rows,
     totals: {
       dispatchCount: rows.reduce((s, r) => s + r.dispatchCount, 0),
+      totalRegularQuantity: rows.reduce((s, r) => s + r.totalRegularQuantity, 0),
+      totalExtraQuantity: rows.reduce((s, r) => s + r.totalExtraQuantity, 0),
       totalDispatchedQuantity: rows.reduce((s, r) => s + r.totalDispatchedQuantity, 0),
     },
     meta: { page: 1, pageSize: rows.length, totalCount: rows.length },

@@ -461,6 +461,92 @@ export function LinkErpDocumentModal({ opportunityId, onClose, onDone }: { oppor
 }
 
 /**
+ * "Convert to Customer" (CRM Replacement, 2026-10-09) — only reachable once
+ * an opportunity is Won. Link mode picks an already-existing ERP Customer;
+ * Create mode makes a brand-new one. Mirrors the removed legacy CRM's own
+ * Deal→Customer conversion UI, just re-homed onto Opportunity.
+ */
+export function ConvertToCustomerModal({ opportunityId, onClose, onDone }: { opportunityId: string; onClose: () => void; onDone: () => void }) {
+  const [mode, setMode] = useState<"LINK" | "CREATE">("LINK");
+  const [customers, setCustomers] = useState<{ id: string; code: string; name: string }[] | null>(null);
+  const [customerId, setCustomerId] = useState("");
+  const [name, setName] = useState("");
+  const [code, setCode] = useState("");
+  const [country, setCountry] = useState("");
+  const [confirmDuplicate, setConfirmDuplicate] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (mode !== "LINK" || customers) return;
+    crmRequest<{ id: string; code: string; name: string }[]>("/api/v1/customers?pageSize=500", { toast: "off" }).then((res) => {
+      if (res.ok) setCustomers(res.data ?? []);
+    });
+  }, [mode, customers]);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    const body =
+      mode === "LINK" ? { mode, customerId, confirmDuplicate } : { mode, name, code: code.trim() || undefined, country: country.trim() || undefined, confirmDuplicate };
+    const res = await crmRequest(`${API}/${opportunityId}/convert-to-customer`, { method: "POST", body, toast: "errors", successMessage: "Converted to Customer." });
+    setBusy(false);
+    if (!res.ok) {
+      if (res.error.code === "CRM_DUPLICATE_RECORD" || res.error.code === "DUPLICATE_CUSTOMER_EXISTS") {
+        setConfirmDuplicate(true);
+        return setError(`${res.error.message} Submit again to confirm anyway.`);
+      }
+      return setError(res.error.message);
+    }
+    onDone();
+  };
+
+  return (
+    <Modal open onClose={onClose} title="Convert to Customer" maxWidthClass="max-w-lg">
+      <form onSubmit={submit} className="mt-4 space-y-4">
+        <div className="flex gap-4 text-sm">
+          <label className="flex items-center gap-2">
+            <input type="radio" checked={mode === "LINK"} onChange={() => setMode("LINK")} /> Link an existing Customer
+          </label>
+          <label className="flex items-center gap-2">
+            <input type="radio" checked={mode === "CREATE"} onChange={() => setMode("CREATE")} /> Create a new Customer
+          </label>
+        </div>
+        {mode === "LINK" ? (
+          <FormField label="Customer" htmlFor="customer-pick" required>
+            <select id="customer-pick" className={textInputClass()} value={customerId} onChange={(e) => setCustomerId(e.target.value)} required>
+              <option value="">{customers ? "Select a customer…" : "Loading…"}</option>
+              {customers?.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name} ({c.code})
+                </option>
+              ))}
+            </select>
+          </FormField>
+        ) : (
+          <>
+            <FormField label="Customer name" htmlFor="new-customer-name" required>
+              <input id="new-customer-name" className={textInputClass()} value={name} onChange={(e) => setName(e.target.value)} required autoFocus />
+            </FormField>
+            <div className="grid grid-cols-2 gap-3">
+              <FormField label="Code (optional — auto-generated if blank)" htmlFor="new-customer-code">
+                <input id="new-customer-code" className={textInputClass()} value={code} onChange={(e) => setCode(e.target.value)} />
+              </FormField>
+              <FormField label="Country" htmlFor="new-customer-country">
+                <input id="new-customer-country" className={textInputClass()} value={country} onChange={(e) => setCountry(e.target.value)} />
+              </FormField>
+            </div>
+          </>
+        )}
+        <ErrorLine message={error} />
+        <Footer onCancel={onClose} busy={busy} label="Convert to Customer" disabled={mode === "LINK" ? !customerId : !name.trim()} />
+      </form>
+    </Modal>
+  );
+}
+
+/**
  * Bulk "Update fields" (Phase 08): only fields that are safe to set on many
  * records at once — source, expected close date and custom fields. Each
  * record is updated through the normal single-record update (validation,

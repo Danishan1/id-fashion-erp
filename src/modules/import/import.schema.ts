@@ -1,6 +1,17 @@
-// Super Admin -> Bulk Master Data Import portal (2026-09-04) -- runs through
-// the async Redis/BullMQ pipeline. (The old synchronous CRM/Marketing CSV
-// import types LEAD/DEAL/CAMPAIGN_DAILY_METRIC were removed 2026-10-01.)
+import { z } from "zod";
+
+// The old synchronous CRM/Marketing CSV importer's own type set. LEAD/DEAL
+// were removed with the legacy CRM (2026-10-09, CRM Replacement) --
+// CAMPAIGN_DAILY_METRIC is Marketing's own and was restored (Marketing was
+// explicitly kept, see CLAUDE.md's CRM Replacement section).
+export const IMPORT_BATCH_TYPES = ["CAMPAIGN_DAILY_METRIC"] as const;
+export type ImportBatchTypeValue = (typeof IMPORT_BATCH_TYPES)[number];
+
+// Super Admin -> Bulk Master Data Import portal (2026-09-04) -- a distinct
+// set from IMPORT_BATCH_TYPES above (the original synchronous CRM/Marketing
+// import), since these run through the async Redis/BullMQ pipeline instead.
+// Kept as a separate const rather than folded into IMPORT_BATCH_TYPES so the
+// two pipelines' own UIs/routes can each iterate just their own set.
 export const BULK_IMPORT_MASTER_TYPES = [
   "CUSTOMER",
   "SUPPLIER",
@@ -509,3 +520,32 @@ export const BULK_IMPORT_SAMPLE_ROWS: Record<BulkImportMasterType, Record<string
     joinDate: "2026-09-05",
   },
 };
+
+// The old synchronous importer's own column spec + run schema (restored
+// 2026-10-09, CRM Replacement -- Marketing's CAMPAIGN_DAILY_METRIC CSV
+// import, LEAD/DEAL dropped with the legacy CRM).
+export const IMPORT_COLUMNS: Record<ImportBatchTypeValue, ImportColumnSpec[]> = {
+  CAMPAIGN_DAILY_METRIC: [
+    { key: "campaignNumber", label: "Campaign # (e.g. CAM-2026-00001)", required: false },
+    { key: "campaignName", label: "Campaign Name (used only if Campaign # is blank)", required: false },
+    { key: "metricDate", label: "Metric Date (YYYY-MM-DD)", required: true },
+    { key: "spend", label: "Spend", required: false },
+    { key: "impressions", label: "Impressions", required: false },
+    { key: "clicks", label: "Clicks", required: false },
+    { key: "notes", label: "Notes", required: false },
+  ],
+};
+
+// Deliberately no separate per-row Zod schema here -- import.service.ts
+// validates each row by feeding it straight into the exact same
+// recordDailyMetricSchema the manual UI form already uses, so a CSV-imported
+// record can never diverge from a manually-created one's validation rules.
+export const runImportSchema = z.object({
+  importType: z.enum(IMPORT_BATCH_TYPES),
+  fileName: z.string().min(1).max(255),
+  // Already column-mapped client-side into canonical keys -- every value is
+  // still a raw string (as read from the CSV cell); per-row Zod coercion
+  // happens server-side, never trusted from the client.
+  rows: z.array(z.record(z.string(), z.string())).min(1, "The file has no data rows.").max(5000, "A single import is capped at 5000 rows."),
+});
+export type RunImportInput = z.infer<typeof runImportSchema>;

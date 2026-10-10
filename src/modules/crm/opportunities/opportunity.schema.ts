@@ -202,3 +202,20 @@ export const bulkOpportunitySchema = z.discriminatedUnion("action", [
       .refine((f) => Object.values(f).some((v) => v !== undefined), "Choose at least one field to update"),
   }),
 ]);
+
+// ── Convert to Customer (CRM Replacement, 2026-10-09) ──
+// Modeled on the removed legacy CRM's convertDealToCustomer(): link an
+// already-existing ERP Customer, or create a brand-new one — same two modes,
+// same field shapes, just re-homed onto Opportunity/CrmCompany.
+export const convertOpportunityToCustomerSchema = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal("LINK"), customerId: uuid, confirmDuplicate: z.boolean().optional() }),
+  z.object({
+    mode: z.literal("CREATE"),
+    code: z.string().trim().min(1).max(30).optional(),
+    name: z.string().trim().min(1).max(200),
+    type: z.enum(["CUSTOMER", "AGENT"]).default("CUSTOMER"),
+    country: z.string().trim().max(100).optional(),
+    confirmDuplicate: z.boolean().optional(),
+  }),
+]);
+export type ConvertOpportunityToCustomerInput = z.infer<typeof convertOpportunityToCustomerSchema>;

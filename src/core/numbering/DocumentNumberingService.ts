@@ -35,6 +35,7 @@ const PREFIX_BY_DOCUMENT_TYPE: Record<DocumentType, string> = {
   SKU: "SKU",
   CRM_LEAD: "LEAD",
   CRM_OPPORTUNITY: "OPP",
+  CAMPAIGN: "CAMP",
 };
 
 /** DocumentTypes that represent master-data codes, not transactional documents. */

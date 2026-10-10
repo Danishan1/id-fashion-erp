@@ -94,6 +94,17 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Settings", href: "/crm/settings", modules: ["crm_settings"] },
     ],
   },
+  // Marketing (kept, unchanged shape, when the legacy CRM was replaced by
+  // the new CRM above — see CLAUDE.md's CRM Replacement section).
+  {
+    label: "Marketing",
+    href: "/marketing",
+    modules: ["marketing"],
+    children: [
+      { label: "Campaigns", href: "/campaigns", modules: ["marketing"] },
+      { label: "Import History", href: "/imports", modules: ["marketing"] },
+    ],
+  },
   {
     label: "HRMS",
     modules: ["hrms_attendance", "hrms_leave"],
