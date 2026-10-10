@@ -54,3 +54,4 @@ next-env.d.ts
 
 # Local DB safety dumps (pg_dump), never committed
 .db-backups/
+db_backups/
