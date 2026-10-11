@@ -731,8 +731,10 @@ export function AiDesignerWorkflowPanel({
             <FormField key={key} label={FABRIC_FIELD_LABELS[key]} htmlFor={key}>
               <input
                 id={key}
+                key={`${key}-${(project as unknown as Record<string, string | null>)[key] ?? ""}`}
                 className={textInputClass()}
                 defaultValue={(project as unknown as Record<string, string | null>)[key] ?? ""}
+
                 onBlur={(e) => {
                   const value = e.target.value;
                   if (value === ((project as unknown as Record<string, string | null>)[key] ?? "")) return;

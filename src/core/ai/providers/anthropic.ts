@@ -250,6 +250,9 @@ const VISION_MAX_OUTPUT_TOKENS = 16000;
 export async function requestStructuredVisionOutput<T>(
   params: RequestStructuredVisionOutputParams<T>
 ): Promise<StructuredToolCallResult<T>> {
+  if (getAiTextProvider() === "gemini") {
+    return requestStructuredVisionOutputViaGemini<T>(params);
+  }
   if (getAiTextProvider() === "openai") {
     return requestStructuredVisionOutputViaOpenAi<T>(params);
   }
@@ -277,6 +280,9 @@ const TEXT_MAX_OUTPUT_TOKENS = 16000;
 export async function requestStructuredTextOutput<T>(
   params: RequestStructuredTextOutputParams<T>
 ): Promise<StructuredToolCallResult<T>> {
+  if (getAiTextProvider() === "gemini") {
+    return requestStructuredTextOutputViaGemini<T>(params);
+  }
   if (getAiTextProvider() === "openai") {
     return requestStructuredTextOutputViaOpenAi<T>(params);
   }

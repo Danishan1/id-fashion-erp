@@ -1,9 +1,27 @@
+import { getAiModelSetting } from "@/core/ai/config";
 /** Mirrors src/core/ai/config.ts's AiConfigMissingError shape for the image-generation capability. */
 export class ImageGenConfigMissingError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "ImageGenConfigMissingError";
   }
+}
+
+/**
+ * Which env-selected image provider to use. AI_MODEL (see src/core/ai/config.ts)
+ * wins when it names a vendor with an image API (gpt → openai, gemini →
+ * gemini); otherwise IMAGE_GENERATION_PROVIDER, defaulting to "openai".
+ */
+export function getImageGenerationProviderName(): string {
+  let aiModel: ReturnType<typeof getAiModelSetting> = null;
+  try {
+    aiModel = getAiModelSetting();
+  } catch {
+    // An invalid AI_MODEL is reported by the text path; never crash a module that reads this at import time.
+  }
+  if (aiModel === "gpt") return "openai";
+  if (aiModel === "gemini") return "gemini";
+  return (process.env.IMAGE_GENERATION_PROVIDER || "openai").toLowerCase();
 }
 
 export interface OpenAiImageConfig {

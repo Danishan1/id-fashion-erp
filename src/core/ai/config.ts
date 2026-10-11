@@ -7,7 +7,7 @@
  * when ANTHROPIC_API_KEY is unset — the common case in a fresh dev checkout.
  */
 
-export class AiConfigMissingError extends Error {}
+export class AiConfigMissingError extends Error { }
 
 export interface AnthropicConfig {
   apiKey: string;
@@ -27,6 +27,27 @@ export function getAnthropicConfig(): AnthropicConfig {
   };
 }
 
+/**
+ * AI_MODEL — the one top-level switch for which AI vendor this deployment
+ * uses: "gpt" (OpenAI), "gemini" (Google) or "anthropic". When set it wins
+ * over the older, narrower AI_TEXT_PROVIDER / IMAGE_GENERATION_PROVIDER
+ * variables (kept as fallbacks for deployments that don't set AI_MODEL), and
+ * each vendor uses its own credential: gpt → OPENAI_API_KEY, gemini →
+ * GEMINI_API_KEY, anthropic → ANTHROPIC_API_KEY. Anthropic has no image
+ * generation API, so with AI_MODEL=anthropic image generation keeps using
+ * IMAGE_GENERATION_PROVIDER / the admin-configured providers.
+ */
+export type AiModelSetting = "gpt" | "gemini" | "anthropic";
+
+export function getAiModelSetting(): AiModelSetting | null {
+  const raw = process.env.AI_MODEL?.trim().toLowerCase();
+  if (!raw) return null;
+  if (raw === "gpt" || raw === "openai") return "gpt";
+  if (raw === "gemini") return "gemini";
+  if (raw === "anthropic" || raw === "claude") return "anthropic";
+  throw new AiConfigMissingError(`AI_MODEL="${process.env.AI_MODEL}" is not supported — use "gpt", "gemini" or "anthropic".`);
+}
+
 export type AiTextProviderKind = "anthropic" | "openai" | "gemini";
 
 /**
@@ -44,8 +65,11 @@ export type AiTextProviderKind = "anthropic" | "openai" | "gemini";
  * fully intact and one env-var flip away from being active again.
  */
 export function getAiTextProvider(): AiTextProviderKind {
+  const aiModel = getAiModelSetting();
+  if (aiModel) return aiModel === "gpt" ? "openai" : aiModel;
   const value = process.env.AI_TEXT_PROVIDER;
-  return value === "openai" || value === "gemini" ? value : "anthropic";
+  if (value === "openai" || value === "gemini") return value;
+  return "anthropic";
 }
 
 export interface GeminiTextConfig {

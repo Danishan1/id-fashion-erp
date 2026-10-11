@@ -2,7 +2,7 @@ import { createOpenAiImageProvider } from "./providers/openai";
 import { createGeminiImageProvider } from "./providers/gemini";
 import { createCloudflareImageProvider } from "./providers/cloudflare";
 import { createQwenLocalImageProvider } from "./providers/qwen-local";
-import { ImageGenConfigMissingError } from "./config";
+import { ImageGenConfigMissingError, getImageGenerationProviderName } from "./config";
 import type { ImageGenerationProvider } from "./types";
 
 /**
@@ -32,7 +32,7 @@ import type { ImageGenerationProvider } from "./types";
  * now go through that instead of this function.
  */
 export function getImageGenerationProvider(): ImageGenerationProvider {
-  const providerName = (process.env.IMAGE_GENERATION_PROVIDER || "openai").toLowerCase();
+  const providerName = getImageGenerationProviderName();
 
   switch (providerName) {
     case "openai":
@@ -45,7 +45,7 @@ export function getImageGenerationProvider(): ImageGenerationProvider {
       return createQwenLocalImageProvider();
     default:
       throw new ImageGenConfigMissingError(
-        `Unknown image generation provider "${providerName}" — set IMAGE_GENERATION_PROVIDER to a supported value ("openai", "gemini", "cloudflare", "qwen-local").`
+        `Unknown image generation provider "${providerName}" — set AI_MODEL ("gpt"/"gemini") or IMAGE_GENERATION_PROVIDER to a supported value ("openai", "gemini", "cloudflare", "qwen-local").`
       );
   }
 }

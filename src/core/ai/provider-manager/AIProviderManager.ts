@@ -7,6 +7,7 @@ import { createGeminiImageProvider } from "@/core/ai/image-generation/providers/
 import { createCloudflareImageProvider } from "@/core/ai/image-generation/providers/cloudflare";
 import { createQwenLocalImageProvider } from "@/core/ai/image-generation/providers/qwen-local";
 import { resolveCloudflareImg2ImgModel } from "@/core/ai/image-generation/config";
+import { getAiModelSetting } from "@/core/ai/config";
 import type { GenerateImagesResult, ImageGenerationProvider } from "@/core/ai/image-generation/types";
 import { AIProviderRepository, AIProviderUsageRepository, AIFailoverLogRepository, utcStartOfDay, utcStartOfMonth } from "./ai-provider.repository";
 import { classifyImageGenError, isFailoverEligible } from "./error-classification";
@@ -137,6 +138,78 @@ function hasCompleteConfig(row: AIProviderRow): boolean {
 }
 
 /**
+ * AI_MODEL integration. When AI_MODEL names a vendor with an image API
+ * ("gpt" -> OPENAI, "gemini" -> GEMINI), that vendor's admin-configured rows
+ * are tried first (other rows stay as failover). If the company has NO
+ * usable row for that vendor, a provider built from the vendor's own .env
+ * credential (OPENAI_API_KEY / GEMINI_API_KEY) is used instead, so
+ * AI_MODEL=gemini works out of the box with just GEMINI_API_KEY set.
+ * An env-backed provider has no database row, so per-row bookkeeping
+ * (health, cooldown, limits, failover log) is skipped for it; usage is still
+ * logged with providerId=null.
+ */
+type PreferredProviderType = "OPENAI" | "GEMINI";
+
+const ENV_PROVIDER_CAPABILITIES: Record<PreferredProviderType, AIProviderCapability[]> = {
+  OPENAI: ["TEXT_TO_IMAGE", "IMAGE_EDIT", "FABRIC_REFERENCE", "MULTI_FABRIC", "TECHNICAL_FLAT", "DESIGN_REPLICATION", "MASK_EDIT"],
+  // Gemini has no mask-editing API.
+  GEMINI: ["TEXT_TO_IMAGE", "IMAGE_EDIT", "FABRIC_REFERENCE", "MULTI_FABRIC", "TECHNICAL_FLAT", "DESIGN_REPLICATION"],
+};
+
+function getPreferredProviderType(): PreferredProviderType | null {
+  let aiModel: ReturnType<typeof getAiModelSetting> = null;
+  try {
+    aiModel = getAiModelSetting();
+  } catch {
+    return null;
+  }
+  if (aiModel === "gpt") return "OPENAI";
+  if (aiModel === "gemini") return "GEMINI";
+  return null;
+}
+
+function envCredentialPresent(type: PreferredProviderType): boolean {
+  return type === "OPENAI" ? !!process.env.OPENAI_API_KEY : !!process.env.GEMINI_API_KEY;
+}
+
+interface Candidate {
+  /** Null for the AI_MODEL env-credential provider (no database row). */
+  row: AIProviderRow | null;
+  name: string;
+  autoFailoverEnabled: boolean;
+  build: () => ImageGenerationProvider;
+}
+
+function envCandidate(type: PreferredProviderType): Candidate {
+  return {
+    row: null,
+    name: type === "OPENAI" ? "OpenAI (AI_MODEL=gpt, .env key)" : "Gemini (AI_MODEL=gemini, .env key)",
+    autoFailoverEnabled: true,
+    build: () => (type === "OPENAI" ? createOpenAiImageProvider() : createGeminiImageProvider()),
+  };
+}
+
+/** Orders usable DB rows with the AI_MODEL vendor first, adding an env-credential candidate when that vendor has no row. */
+export function applyAiModelPreference(rows: AIProviderRow[], capability: AIProviderCapability): Candidate[] {
+  const fromRows: Candidate[] = rows.map((row) => ({
+    row,
+    name: row.name,
+    autoFailoverEnabled: row.autoFailoverEnabled,
+    build: () => buildProviderInstance(row),
+  }));
+  const preferred = getPreferredProviderType();
+  if (!preferred) return fromRows;
+
+  const matching = fromRows.filter((c) => c.row?.providerType === preferred);
+  const others = fromRows.filter((c) => c.row?.providerType !== preferred);
+  if (matching.length > 0) return [...matching, ...others];
+  if (envCredentialPresent(preferred) && ENV_PROVIDER_CAPABILITIES[preferred].includes(capability)) {
+    return [envCandidate(preferred), ...others];
+  }
+  return fromRows;
+}
+
+/**
  * Read-only pre-check: does this company have at least one active,
  * fully-configured provider with `capability` ticked? Lets a caller pick
  * the best capability it can actually use (e.g. AI Designer's New Design
@@ -147,7 +220,7 @@ function hasCompleteConfig(row: AIProviderRow): boolean {
  */
 export async function hasProviderForCapability(companyId: string, capability: AIProviderCapability): Promise<boolean> {
   const candidates = await AIProviderRepository.findCandidates(companyId, capability);
-  return candidates.some(hasCompleteConfig);
+  return applyAiModelPreference(candidates.filter(hasCompleteConfig), capability).length > 0;
 }
 
 /**
@@ -197,7 +270,10 @@ export async function runWithFailover(params: RunWithFailoverParams): Promise<Ru
   const allCandidates = await AIProviderRepository.findCandidates(params.companyId, params.capability);
   const configuredCandidates = allCandidates.filter(hasCompleteConfig);
   const limitChecks = await Promise.all(configuredCandidates.map(withinGenerationLimits));
-  const candidates = configuredCandidates.filter((_, i) => limitChecks[i]);
+  const candidates = applyAiModelPreference(
+    configuredCandidates.filter((_, i) => limitChecks[i]),
+    params.capability
+  );
 
   if (candidates.length === 0) {
     await AIProviderUsageRepository.create({
@@ -224,17 +300,18 @@ export async function runWithFailover(params: RunWithFailoverParams): Promise<Ru
   let pendingFailoverFrom: { providerId: string; reason: AIUsageErrorCategory } | null = null;
 
   for (let i = 0; i < candidates.length; i++) {
-    const providerRow = candidates[i];
+    const candidate = candidates[i];
+    const providerId = candidate.row?.id ?? null;
     const startedAt = Date.now();
 
     try {
-      const providerInstance = buildProviderInstance(providerRow);
+      const providerInstance = candidate.build();
       const result = await params.call(providerInstance);
       const durationMs = Date.now() - startedAt;
 
       await AIProviderUsageRepository.create({
         companyId: params.companyId,
-        providerId: providerRow.id,
+        providerId,
         userId: params.userId,
         aiDesignerProjectId: params.aiDesignerProjectId ?? null,
         replicateDesignProjectId: params.replicateDesignProjectId ?? null,
@@ -244,27 +321,27 @@ export async function runWithFailover(params: RunWithFailoverParams): Promise<Ru
         outputCount: result.images.length,
         inputImagePresent: params.inputImagePresent,
       });
-      await AIProviderRepository.markHealthy(providerRow.id);
+      if (providerId) await AIProviderRepository.markHealthy(providerId);
 
-      if (pendingFailoverFrom) {
+      if (pendingFailoverFrom && providerId) {
         await AIFailoverLogRepository.create({
           companyId: params.companyId,
           requestedProviderId: pendingFailoverFrom.providerId,
-          fallbackProviderId: providerRow.id,
+          fallbackProviderId: providerId,
           reason: pendingFailoverFrom.reason,
           generationContext: params.generationContext,
           result: "SUCCESS",
         });
       }
 
-      return { images: result.images, model: result.model, raw: result.raw, providerId: providerRow.id, providerName: providerRow.name };
+      return { images: result.images, model: result.model, raw: result.raw, providerId: providerId ?? "env", providerName: candidate.name };
     } catch (err) {
       const { category, message } = classifyImageGenError(err);
       const durationMs = Date.now() - startedAt;
 
       await AIProviderUsageRepository.create({
         companyId: params.companyId,
-        providerId: providerRow.id,
+        providerId,
         userId: params.userId,
         aiDesignerProjectId: params.aiDesignerProjectId ?? null,
         replicateDesignProjectId: params.replicateDesignProjectId ?? null,
@@ -277,36 +354,36 @@ export async function runWithFailover(params: RunWithFailoverParams): Promise<Ru
       });
 
       const penalty = computeHealthPenalty(category);
-      if (penalty) {
-        await AIProviderRepository.applyHealthPenalty(providerRow.id, penalty.healthStatus, penalty.cooldownUntil, message);
+      if (penalty && providerId) {
+        await AIProviderRepository.applyHealthPenalty(providerId, penalty.healthStatus, penalty.cooldownUntil, message);
       }
 
-      if (pendingFailoverFrom) {
+      if (pendingFailoverFrom && providerId) {
         await AIFailoverLogRepository.create({
           companyId: params.companyId,
           requestedProviderId: pendingFailoverFrom.providerId,
-          fallbackProviderId: providerRow.id,
+          fallbackProviderId: providerId,
           reason: pendingFailoverFrom.reason,
           generationContext: params.generationContext,
           result: "FAILED",
         });
       }
 
-      const eligible = isFailoverEligible(category) && providerRow.autoFailoverEnabled;
+      const eligible = isFailoverEligible(category) && candidate.autoFailoverEnabled;
       const hasNext = i < candidates.length - 1;
 
-      logger.info("AI provider attempt failed", { provider: providerRow.name, category, eligible, hasNext, message });
+      logger.info("AI provider attempt failed", { provider: candidate.name, category, eligible, hasNext, message });
 
       if (!eligible || !hasNext) {
         throw new BusinessRuleError(
           "AI_SERVICE_ERROR",
           !eligible
             ? message
-            : `All configured AI providers failed for ${capabilityLabel(params.capability)}. Last error (${providerRow.name}): ${message}`
+            : `All configured AI providers failed for ${capabilityLabel(params.capability)}. Last error (${candidate.name}): ${message}`
         );
       }
 
-      pendingFailoverFrom = { providerId: providerRow.id, reason: category };
+      pendingFailoverFrom = providerId ? { providerId, reason: category } : null;
     }
   }
 
