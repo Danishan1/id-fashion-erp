@@ -63,7 +63,15 @@ describe.skipIf(!DB_URL)("CRM message templates (database integration)", async (
   const fresh = (id: string) => svc.getTemplate(manager, id);
 
   beforeAll(async () => {
-    const company = await prisma.company.findFirstOrThrow({ orderBy: { createdAt: "asc" } });
+    // A dedicated company, not an existing one picked with findFirst -- this
+    // file and conversations.integration.test.ts both run against the same
+    // database and, when vitest runs them concurrently, used to share
+    // whichever company happened to be oldest. That made company-wide
+    // assertions here (e.g. a crmMessage.count() before/after a test send)
+    // flaky against the other file's own concurrent message traffic. Each
+    // file now gets its own isolated company, so neither can observe the
+    // other's data regardless of run order or concurrency.
+    const company = await prisma.company.create({ data: { name: `CRM IT Templates ${run}`, baseCurrencyCode: "INR" } });
     const mk = (u: string, n: string) => prisma.user.create({ data: { companyId: company.id, email: `${u}.${run}@crm-it.local`, passwordHash: "x", fullName: `${n} ${run}`, phone: "+91 98200 55555" } });
     const [m, r, o] = await Promise.all([mk("tpmanager", "Meera Manager"), mk("tprep", "Ashish Rep"), mk("tpother", "Zoya Other")]);
     manager = { companyId: company.id, userId: m.id, branchId: null };
@@ -280,7 +288,7 @@ describe.skipIf(!DB_URL)("CRM message templates (database integration)", async (
   // ── Test send ──
 
   it("test send: one explicit address, rendered, marked [TEST], through the provider adapter; nothing stored as a conversation", async () => {
-    const before = await prisma.crmMessage.count();
+    const before = await prisma.crmMessage.count({ where: { companyId: rep.companyId } });
     fetchMock.mockImplementationOnce(() => ok(`mail-test-${run}`));
     const r = await svc.sendTemplateTest(rep, quote.id, { channelId: mail.id, to: "ashish@example.com", confirm: true });
     expect(r).toMatchObject({ ok: true, to: "ashish@example.com", providerMessageId: `mail-test-${run}`, versionNumber: 4 });
@@ -292,7 +300,7 @@ describe.skipIf(!DB_URL)("CRM message templates (database integration)", async (
     const sent = JSON.parse(String(init.body));
     expect(sent).toMatchObject({ test: true, to: { kind: "EMAIL", value: "ashish@example.com" }, subject: "[TEST] Your quotation for ABC Textiles", template: { templateId: quote.id, versionNumber: 4 } });
     expect(sent.text).toContain("Hi Rahul,");
-    expect(await prisma.crmMessage.count()).toBe(before);
+    expect(await prisma.crmMessage.count({ where: { companyId: rep.companyId } })).toBe(before);
     expect((await events(quote.id)).at(-1)).toBe("template.test_sent");
     const audit = (await audits(quote.id)).at(-1)!;
     expect(audit.newValues).toMatchObject({ event: "template.test_sent", test: true, to: "ashish@example.com", ok: true });

@@ -73,7 +73,14 @@ describe.skipIf(!DB_URL)("CRM conversations (database integration)", async () =>
   const fetchMock = vi.fn();
 
   beforeAll(async () => {
-    const company = await prisma.company.findFirstOrThrow({ orderBy: { createdAt: "asc" } });
+    // A dedicated company, not an existing one picked with findFirst -- this
+    // file and templates.integration.test.ts both run against the same
+    // database and, when vitest runs them concurrently, used to share
+    // whichever company happened to be oldest, letting each file's own
+    // activity bleed into the other's company-wide assertions. Each file
+    // now gets its own isolated company, so neither can observe the
+    // other's data regardless of run order or concurrency.
+    const company = await prisma.company.create({ data: { name: `CRM IT Conversations ${run}`, baseCurrencyCode: "INR" } });
     const mk = (u: string, n: string) => prisma.user.create({ data: { companyId: company.id, email: `${u}.${run}@crm-it.local`, passwordHash: "x", fullName: `${n} ${run}` } });
     const [m, r, o] = await Promise.all([mk("cvmanager", "Meera Manager"), mk("cvrep", "Ashish Rep"), mk("cvother", "Zoya Other")]);
     manager = { companyId: company.id, userId: m.id, branchId: null };
@@ -154,10 +161,10 @@ describe.skipIf(!DB_URL)("CRM conversations (database integration)", async () =>
   });
 
   it("puts unknown senders in the unmatched queue — never creates a contact, never drops the message", async () => {
-    const before = await prisma.crmContact.count();
+    const before = await prisma.crmContact.count({ where: { companyId: rep.companyId } });
     const stranger = `+91 ${digits(2)}`;
     const res = firstResult(await deliver(wa, inbound({ phone: stranger }, "Hi, I need information about polo shirts")));
-    expect(await prisma.crmContact.count()).toBe(before);
+    expect(await prisma.crmContact.count({ where: { companyId: rep.companyId } })).toBe(before);
     const c = await prisma.crmConversation.findUniqueOrThrow({ where: { id: res.conversationId } });
     expect(c).toMatchObject({ matchStatus: "UNMATCHED", contactId: null, assignedToUserId: null });
     const queue = await list(manager, { folder: "unmatched" });
