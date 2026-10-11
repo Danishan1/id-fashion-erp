@@ -23,7 +23,7 @@ vi.mock("./ai-designer.service", () => ({
   uploadFabricImage: vi.fn(),
 }));
 vi.mock("./ai-designer.repository", () => ({
-  AiDesignerProjectRepository: { findAnyById: vi.fn(), update: vi.fn() },
+  AiDesignerProjectRepository: { findAnyById: vi.fn(), update: vi.fn(), findByIdWithDetails: vi.fn() },
   AiDesignerPromptRepository: { create: vi.fn(), markSuccess: vi.fn(), markSuccessWithProvider: vi.fn(), markFailed: vi.fn(), findActiveSince: vi.fn() },
   AiDesignerGenerationRepository: { create: vi.fn(), markSuccess: vi.fn(), markFailed: vi.fn(), findManyByProjectAndPromptType: vi.fn() },
   AiDesignerImageRepository: { createMany: vi.fn(), findByGenerationId: vi.fn(), findById: vi.fn(), update: vi.fn() },
@@ -271,5 +271,142 @@ describe("generateColorVariants", () => {
     vi.mocked(repos.AiDesignerProjectRepository.findAnyById).mockResolvedValue(project() as never);
     vi.mocked(designer.getProjectById).mockResolvedValue({ currentVersion: null } as never);
     await expect(svc.generateColorVariants(actor, "proj-1", { colors: ["Black"] })).rejects.toThrow(/Generate a design first/);
+  });
+});
+
+describe("generateNewDesign with SKETCH outputFormat", () => {
+  it("generates technical CAD flat sketch and updates sketchImageAttachmentId", async () => {
+    vi.mocked(repos.AiDesignerProjectRepository.findAnyById).mockResolvedValue(project() as never);
+    vi.mocked(readFile).mockResolvedValue(Buffer.from("template") as never);
+    const generateTechnicalFlat = vi.fn().mockResolvedValue({ images: [{ buffer: Buffer.from("cad-sketch"), mimeType: "image/png" }] });
+    vi.mocked(runWithFailover).mockImplementation((async (params: { call: (p: unknown) => unknown }) => {
+      const out = (await params.call({ name: "gemini", generateTechnicalFlat })) as { images: unknown[] };
+      return { ...out, providerName: "gemini", model: "imagen-3" };
+    }) as never);
+    vi.mocked(repos.AiDesignerImageRepository.findByGenerationId).mockResolvedValue([
+      { id: "img-sketch", imageAttachmentId: "att-sketch" },
+    ] as never);
+
+    const result = await svc.generateNewDesign(actor, "proj-1", { imageCount: 1, outputFormat: "SKETCH" });
+
+    expect(result.outputFormat).toBe("SKETCH");
+    expect(generateTechnicalFlat).toHaveBeenCalledTimes(1);
+    expect(runWithFailover).toHaveBeenCalledWith(expect.objectContaining({ capability: "TECHNICAL_FLAT" }));
+    expect(repos.AiDesignerPromptRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({ promptType: "IMAGE_GENERATE", promptText: expect.stringContaining("CAD technical flat sketch") })
+    );
+    expect(repos.AiDesignerProjectRepository.update).toHaveBeenCalledWith(
+      "proj-1",
+      expect.objectContaining({ sketchImageAttachmentId: "att-sketch", newDesignStep: "DESIGNS" })
+    );
+  });
+});
+
+describe("generateSketchForProject", () => {
+  it("generates a CAD flat sketch from current garment image and sets sketchImageAttachmentId", async () => {
+    vi.mocked(repos.AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue({
+      ...project(),
+      currentVersion: { currentImage: { id: "img-garment", imageAttachmentId: "att-garment" } },
+      currentVersionId: "v-1",
+    } as never);
+    const generateVariation = vi.fn().mockResolvedValue({ images: [{ buffer: Buffer.from("sketch-buf"), mimeType: "image/png" }] });
+    vi.mocked(runWithFailover).mockImplementation((async (params: { call: (p: unknown) => unknown }) => {
+      const out = (await params.call({ name: "gemini", generateVariation })) as { images: unknown[] };
+      return { ...out, providerName: "gemini", model: "imagen-3" };
+    }) as never);
+    vi.mocked(repos.AiDesignerImageRepository.findByGenerationId).mockResolvedValue([
+      { id: "img-sketch-new", imageAttachmentId: "att-sketch-flat" },
+    ] as never);
+
+    const result = await svc.generateSketchForProject(actor, "proj-1", { viewAngle: "BOTH", notes: "French darts and puff sleeves" });
+
+    expect(result.sketchAttachmentId).toBe("att-sketch-flat");
+    expect(repos.AiDesignerPromptRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({ promptType: "IMAGE_GENERATE", promptText: expect.stringContaining("technical flat sketch") })
+    );
+    expect(repos.AiDesignerProjectRepository.update).toHaveBeenCalledWith(
+      "proj-1",
+      expect.objectContaining({ sketchImageAttachmentId: "att-sketch-flat" })
+    );
+  });
+});
+
+describe("executeSketchEdit", () => {
+  it("edits the technical sketch and optionally re-renders garment in project fabric", async () => {
+    vi.mocked(repos.AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue({
+      ...project(),
+      sketchImageAttachmentId: "att-existing-sketch",
+      currentVersion: { currentImage: { id: "img-garment", imageAttachmentId: "att-garment" }, currentImageId: "img-garment" },
+    } as never);
+
+    const generateVariation = vi.fn().mockResolvedValue({ images: [{ buffer: Buffer.from("revised-sketch"), mimeType: "image/png" }] });
+    vi.mocked(runWithFailover).mockImplementation((async (params: { call: (p: unknown) => unknown }) => {
+      const out = (await params.call({ name: "gemini", generateVariation })) as { images: unknown[] };
+      return { ...out, providerName: "gemini", model: "imagen-3" };
+    }) as never);
+    vi.mocked(repos.AiDesignerImageRepository.findByGenerationId).mockResolvedValue([
+      { id: "img-revised-sketch", imageAttachmentId: "att-revised-sketch" },
+    ] as never);
+
+    const result = await svc.executeSketchEdit(actor, "proj-1", {
+      instruction: "Convert round neckline into mandarin collar and add front placket",
+      structuralFields: { neckline: "Mandarin Collar", closure: "Front Placket" },
+      viewAngle: "FRONT",
+      imageCount: 1,
+      generateGarment: false,
+    });
+
+    expect(result.images.length).toBeGreaterThan(0);
+    expect(repos.AiDesignerPromptRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        promptType: "IMAGE_EDIT",
+        promptText: expect.stringContaining("Mandarin Collar"),
+      })
+    );
+    expect(repos.AiDesignerGenerationRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({ editedFeature: "Through Sketch Edit" })
+    );
+  });
+
+  it("draw with pen: sends the pen-marked sketch as the reference with the markup prompt", async () => {
+    vi.mocked(repos.AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue({
+      ...project(),
+      sketchImageAttachmentId: "att-existing-sketch",
+      currentVersion: { currentImage: { id: "img-garment", imageAttachmentId: "att-garment" }, currentImageId: "img-garment" },
+    } as never);
+    vi.mocked(uploadAttachment).mockResolvedValue({ id: "att-markup" } as never);
+    vi.mocked(getAttachmentForDownload).mockClear();
+    const generateVariation = vi.fn().mockResolvedValue({ images: [{ buffer: Buffer.from("clean-sketch"), mimeType: "image/png" }] });
+    vi.mocked(runWithFailover).mockImplementation((async (params: { call: (p: unknown) => unknown }) => {
+      const out = (await params.call({ name: "gemini", generateVariation })) as { images: unknown[] };
+      return { ...out, providerName: "gemini", model: "imagen-3" };
+    }) as never);
+    vi.mocked(repos.AiDesignerImageRepository.findByGenerationId).mockResolvedValue([
+      { id: "img-clean", imageAttachmentId: "att-clean" },
+    ] as never);
+    const markup = { buffer: Buffer.from("sketch-with-red-lines"), mimeType: "image/png" };
+
+    await svc.executeSketchEdit(
+      actor,
+      "proj-1",
+      { instruction: "", viewAngle: "FRONT", imageCount: 1, generateGarment: false },
+      { markupImage: markup }
+    );
+
+    expect(generateVariation).toHaveBeenCalledWith(expect.objectContaining({ parentImage: markup }));
+    expect(generateVariation.mock.calls[0][0].prompt).toContain("PEN MARKUP KEY");
+    expect(getAttachmentForDownload).not.toHaveBeenCalledWith(actor.companyId, "att-existing-sketch");
+    expect(uploadAttachment).toHaveBeenCalledWith(actor, "AI_DESIGNER_PROJECT", "proj-1", expect.anything(), "SKETCH_PEN_MARKUP");
+    expect(repos.AiDesignerGenerationRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({ editedFeature: "Sketch Pen Markup" })
+    );
+    expect(repos.AiDesignerProjectRepository.update).toHaveBeenCalledWith("proj-1", { sketchImageAttachmentId: "att-clean" });
+  });
+
+  it("rejects an edit with no pen markup, options or instruction", async () => {
+    vi.mocked(repos.AiDesignerProjectRepository.findByIdWithDetails).mockResolvedValue(project() as never);
+    await expect(
+      svc.executeSketchEdit(actor, "proj-1", { instruction: "  ", viewAngle: "FRONT", imageCount: 1 })
+    ).rejects.toThrow(/Draw your changes/);
   });
 });
