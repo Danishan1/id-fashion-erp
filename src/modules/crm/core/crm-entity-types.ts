@@ -24,6 +24,8 @@ export const CRM_ENTITY_TYPE_CONFIG: Record<CrmEntityType, CrmEntityTypeConfig> 
   COMPANY: { label: "Company", pluralLabel: "Companies", tableName: "crm_companies", basePath: "/crm/companies" },
   OPPORTUNITY: { label: "Opportunity", pluralLabel: "Opportunities", tableName: "crm_opportunities", basePath: "/crm/opportunities" },
   ACTIVITY: { label: "Activity", pluralLabel: "Activities", tableName: "crm_activities", basePath: "/crm/activities" },
+  CONVERSATION: { label: "Conversation", pluralLabel: "Conversations", tableName: "crm_conversations", basePath: "/crm/inbox" },
+  TEMPLATE: { label: "Message template", pluralLabel: "Message templates", tableName: "crm_message_templates", basePath: "/crm/templates" },
 };
 
 export const CRM_ENTITY_TYPES = Object.keys(CRM_ENTITY_TYPE_CONFIG) as CrmEntityType[];

@@ -82,7 +82,7 @@ export function ActivityPanel({
     <div className="space-y-3">
       {canCreate && (
         <div className="flex flex-wrap gap-1.5" aria-label="Add activity">
-          {QUICK.filter((q) => q.type !== "APPOINTMENT" || parent.entityType !== "LEAD").map((q) => (
+          {QUICK.filter((q) => q.type !== "APPOINTMENT" || (parent.entityType !== "LEAD" && parent.entityType !== "CONVERSATION")).map((q) => (
             <button key={q.label} type="button" disabled={!meta || (q.type === "APPOINTMENT" && !appointmentLookups.meta)} onClick={() => (q.type === "APPOINTMENT" ? setBooking(true) : setComposer(q))} className="rounded-md border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800">
               + {q.label}
             </button>
@@ -144,7 +144,7 @@ export function ActivityPanel({
         />
       )}
       {opened && <ActivityDetailModal activityId={opened} meta={meta} users={users} canEdit={canEdit} currentUserId={currentUserId} onClose={() => setOpened(null)} onChanged={changed} />}
-      {booking && appointmentLookups.meta && parent.entityType !== "LEAD" && (
+      {booking && appointmentLookups.meta && parent.entityType !== "LEAD" && parent.entityType !== "CONVERSATION" && (
         <AppointmentForm
           meta={appointmentLookups.meta}
           users={appointmentLookups.users}

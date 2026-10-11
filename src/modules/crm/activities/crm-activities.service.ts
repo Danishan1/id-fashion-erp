@@ -134,6 +134,18 @@ export function recordInfo(recs: RecordsInfo, ref: Ref) {
           }
         : null;
     }
+    case "CONVERSATION": {
+      const r = recs.conversations.find((x) => x.id === ref.entityId);
+      return r
+        ? {
+            label: `Conversation — ${r.displayName || r.displayIdentifier || "unknown sender"}`,
+            archived: r.status === "ARCHIVED",
+            merged: false,
+            // A task from a conversation also shows on its opportunity, contact and company.
+            also: [r.opportunityId && { entityType: "OPPORTUNITY" as const, entityId: r.opportunityId }, r.contactId && { entityType: "CONTACT" as const, entityId: r.contactId }, r.crmCompanyId && { entityType: "COMPANY" as const, entityId: r.crmCompanyId }].filter(Boolean) as Ref[],
+          }
+        : null;
+    }
     default:
       return null;
   }

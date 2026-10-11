@@ -15,6 +15,21 @@ export interface CrmAuditInput {
   newValues?: Record<string, unknown> | null;
 }
 
+/**
+ * Work the system does for a company with no user behind it (Phase 11:
+ * provider webhooks delivering messages). Its events and audit rows carry no
+ * actor, so a timeline shows "received" rather than crediting an admin.
+ */
+export interface CrmSystemActor {
+  companyId: string;
+  userId: null;
+  branchId: null;
+}
+
+export function crmSystemActor(companyId: string): CrmSystemActor {
+  return { companyId, userId: null, branchId: null };
+}
+
 export interface CrmMutationContext {
   /** Use for every write in this mutation so they commit or roll back together. */
   tx: Prisma.TransactionClient;
@@ -58,7 +73,7 @@ async function touchLastActivity(tx: Prisma.TransactionClient, rows: CrmEventRow
  * Event input is validated before anything is written: an unknown event type
  * aborts the whole mutation instead of saving a record with a broken history.
  */
-export async function runCrmMutation<T>(actor: CrmActor, fn: (ctx: CrmMutationContext) => Promise<T>): Promise<T> {
+export async function runCrmMutation<T>(actor: CrmActor | CrmSystemActor, fn: (ctx: CrmMutationContext) => Promise<T>): Promise<T> {
   const { result, written } = await prisma.$transaction(async (tx) => {
     const pending: Prisma.CrmEventUncheckedCreateInput[] = [];
     const ctx: CrmMutationContext = {

@@ -33,6 +33,15 @@ export type BusinessRuleErrorCode =
   // CRM (2026-10-09): the employee already has an appointment in that time;
   // the client may retry with explicit confirmation (details.conflicts).
   | "CRM_APPOINTMENT_CONFLICT"
+  // CRM (2026-10-08, Phase 11): the contact opted out of this channel (DND /
+  // contactability) — the message was not sent.
+  | "CRM_CONTACT_NOT_CONTACTABLE"
+  // CRM: the conversation's channel can't send right now (not configured,
+  // paused, or the provider doesn't support what was attempted).
+  | "CRM_CHANNEL_UNAVAILABLE"
+  // CRM (2026-10-08, Phase 12): a message template has errors (unknown
+  // variables, missing subject, provider limits…) — details.errors / warnings.
+  | "CRM_TEMPLATE_INVALID"
   // CRM lead capture endpoints (API keys / webhooks).
   | "INVALID_API_CREDENTIALS"
   | "INVALID_WEBHOOK_SIGNATURE"
@@ -81,6 +90,9 @@ const HTTP_STATUS_BY_CODE: Record<BusinessRuleErrorCode, number> = {
   RECORD_VERSION_CONFLICT: 409,
   CRM_STAGE_TRANSITION_BLOCKED: 422,
   CRM_APPOINTMENT_CONFLICT: 409,
+  CRM_CONTACT_NOT_CONTACTABLE: 422,
+  CRM_CHANNEL_UNAVAILABLE: 422,
+  CRM_TEMPLATE_INVALID: 422,
   INVALID_API_CREDENTIALS: 401,
   INVALID_WEBHOOK_SIGNATURE: 401,
   RATE_LIMITED: 429,

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/Button";
 import { textInputClass } from "@/components/ui/FormField";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import { CRM_OPTION_LIST_KEYS, CRM_OPTION_LISTS, type CrmOptionListKey } from "@/modules/crm/contacts/contact-registry";
+import { TEMPLATE_CATEGORY_LIST_KEY } from "@/modules/crm/templates/template-registry";
 import { useSettingsList } from "./useSettingsList";
 
 interface OptionRow {
@@ -50,7 +51,8 @@ export function OptionValuesTab({ canEdit }: { canEdit: boolean }) {
     <div className="space-y-6">
       <p className="text-sm text-zinc-500 dark:text-zinc-400">Suggestions on the contact, company and opportunity forms. People can still type their own value; turning a suggestion off never changes records that already use it.</p>
       <div className="grid gap-4 lg:grid-cols-3">
-        {CRM_OPTION_LIST_KEYS.map((listKey) => (
+        {/* Template categories are managed on the Templates page (they're categories, not form suggestions). */}
+        {CRM_OPTION_LIST_KEYS.filter((k) => k !== TEMPLATE_CATEGORY_LIST_KEY).map((listKey) => (
           <section key={listKey} className="space-y-3 rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
             <div>
               <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">{CRM_OPTION_LISTS[listKey].label}</h3>
