@@ -232,6 +232,7 @@ export function NewDesignWorkspace({ initialProject }: { initialProject: NewDesi
   const [fabricSuggestions, setFabricSuggestions] = useState<FabricSuggestion[] | null>(null);
   const [images, setImages] = useState<ImageRow[]>([]);
   const [imageCount, setImageCount] = useState<1 | 3 | 4>(3);
+  const [outputFormat, setOutputFormat] = useState<"GARMENT" | "SKETCH" | "BOTH">("GARMENT");
   const [brandDraft, setBrandDraft] = useState(initialProject?.brandName ?? "");
   const [customerFilter, setCustomerFilter] = useState<TargetCustomer>(initialProject?.targetCustomer ?? "WOMEN");
 
@@ -432,7 +433,7 @@ export function NewDesignWorkspace({ initialProject }: { initialProject: NewDesi
     await saveBrandName();
     setNotice(null);
     await run("generate", async () => {
-      const body = await post(`/api/v1/ai-designer/projects/${projectId}/new-design/generate`, { imageCount });
+      const body = await post(`/api/v1/ai-designer/projects/${projectId}/new-design/generate`, { imageCount, outputFormat });
       if (body?.data?.usedTemplate === false && ((project?.garmentTemplateKey && getGarmentTemplate(project.garmentTemplateKey)?.templateUrl) || project?.customTemplateAttachmentId)) {
         setNotice(
           'Generated without the catalogue model photo: no AI provider has "Design Replication" or "Multi-Fabric" enabled. ' +
@@ -442,6 +443,16 @@ export function NewDesignWorkspace({ initialProject }: { initialProject: NewDesi
       await reload(projectId);
       await loadImages(projectId);
       setStep("DESIGNS");
+    });
+  }
+
+  async function generateSketch() {
+    if (!projectId) return;
+    setNotice(null);
+    await run("sketch", async () => {
+      await post(`/api/v1/ai-designer/projects/${projectId}/generate-sketch`, { viewAngle: "BOTH" });
+      await reload(projectId);
+      await loadImages(projectId);
     });
   }
 
@@ -884,6 +895,32 @@ export function NewDesignWorkspace({ initialProject }: { initialProject: NewDesi
                 </div>
               </div>
               <div className="mt-4">
+                <p className="mb-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">Design Output</p>
+                <div className="grid grid-cols-3 gap-2">
+                  {(
+                    [
+                      { key: "GARMENT", label: "👗 Garment Photo", desc: "Model catalogue render" },
+                      { key: "SKETCH", label: "✏️ CAD Sketch", desc: "2D Flat technical line art" },
+                      { key: "BOTH", label: "✨ Both", desc: "Garment photo + CAD sketch" },
+                    ] as const
+                  ).map((opt) => (
+                    <button
+                      key={opt.key}
+                      type="button"
+                      onClick={() => setOutputFormat(opt.key)}
+                      className={`rounded-xl border p-2 text-left transition ${
+                        outputFormat === opt.key
+                          ? "border-violet-600 bg-violet-50 text-violet-700 shadow-sm ring-1 ring-violet-200 dark:bg-violet-950/40 dark:text-violet-300"
+                          : "border-zinc-200 text-zinc-600 hover:border-violet-300 dark:border-zinc-700 dark:text-zinc-400"
+                      }`}
+                    >
+                      <p className="text-xs font-semibold">{opt.label}</p>
+                      <p className="text-[10px] text-zinc-500">{opt.desc}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="mt-4">
                 <p className="mb-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">Number of designs</p>
                 <div className="flex gap-2">
                   {([1, 3, 4] as const).map((n) => (
@@ -920,9 +957,19 @@ export function NewDesignWorkspace({ initialProject }: { initialProject: NewDesi
           title="Designs Created by AI"
           subtitle={`${images.length} design${images.length === 1 ? "" : "s"} — view the full design or open it in the AI studio.`}
           right={
-            <button type="button" onClick={() => goTo("GENERATE")} className="text-xs font-medium text-violet-700 hover:underline dark:text-violet-300">
-              + Generate more
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={generateSketch}
+                disabled={Boolean(busy)}
+                className="rounded-lg border border-violet-300 bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-700 hover:bg-violet-100 disabled:opacity-50 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-300"
+              >
+                {busy === "sketch" ? "✨ Generating CAD sketch…" : "✏️ Generate CAD Flat Sketch"}
+              </button>
+              <button type="button" onClick={() => goTo("GENERATE")} className="text-xs font-medium text-violet-700 hover:underline dark:text-violet-300">
+                + Generate more
+              </button>
+            </div>
           }
         >
           {images.length === 0 ? (

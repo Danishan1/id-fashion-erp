@@ -20,6 +20,8 @@ export interface DesignViewProject {
   projectNumber: string;
   projectName: string;
   designSource: string | null;
+  sketchImageAttachmentId?: string | null;
+  sourceImageAttachmentId?: string | null;
   fabricName: string | null;
   fabricComposition: string | null;
   fabricImageAttachmentId: string | null;
@@ -50,6 +52,13 @@ const QUICK_COLORS = ["Ivory", "Black", "Navy Blue", "Emerald Green", "Maroon", 
 
 export function DesignViewClient({ project }: { project: DesignViewProject }) {
   const [heroId, setHeroId] = useState<string | null>(project.currentVersion?.currentImage?.imageAttachmentId ?? null);
+  const [viewMode, setViewMode] = useState<"GARMENT" | "SKETCH">("GARMENT");
+  const [sketchId, setSketchId] = useState<string | null>(
+    project.sketchImageAttachmentId ||
+    (project.designSource === "SKETCH" ? project.sourceImageAttachmentId : null) ||
+    null
+  );
+  const [sketchBusy, setSketchBusy] = useState(false);
   const [variants, setVariants] = useState<ColorVariant[]>([]);
   const [colorOptions, setColorOptions] = useState<ColorOption[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -58,6 +67,28 @@ export function DesignViewClient({ project }: { project: DesignViewProject }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  async function generateSketch() {
+    setSketchBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/v1/ai-designer/projects/${project.id}/generate-sketch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ viewAngle: "BOTH" }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.error?.message ?? "CAD sketch generation failed.");
+      if (body.data?.sketchAttachmentId) {
+        setSketchId(body.data.sketchAttachmentId);
+        setViewMode("SKETCH");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to generate CAD flat sketch.");
+    } finally {
+      setSketchBusy(false);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -147,6 +178,14 @@ export function DesignViewClient({ project }: { project: DesignViewProject }) {
           >
             🎨 See all colour variants
           </button>
+          <button
+            type="button"
+            onClick={generateSketch}
+            disabled={sketchBusy}
+            className="rounded-xl border-2 border-violet-500 px-4 py-2 text-sm font-semibold text-violet-700 transition hover:bg-violet-50 disabled:opacity-50 dark:text-violet-300 dark:hover:bg-violet-950/40"
+          >
+            {sketchBusy ? "✨ Generating CAD Sketch…" : "✏️ Generate CAD Flat Sketch"}
+          </button>
           <a
             href="#tech-pack"
             className="rounded-xl border-2 border-zinc-300 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-violet-400 dark:border-zinc-700 dark:text-zinc-200"
@@ -155,9 +194,10 @@ export function DesignViewClient({ project }: { project: DesignViewProject }) {
           </a>
           <Link
             href={`/ai-designer/catalogue-designs/${project.id}/edit`}
-            className="rounded-xl bg-gradient-to-r from-indigo-600 to-fuchsia-600 px-4 py-2 text-sm font-semibold text-white shadow-md hover:brightness-110"
+            className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-fuchsia-600 px-4 py-2 text-sm font-semibold text-white shadow-md hover:brightness-110"
           >
-            ✨ Edit in AI Studio
+            <span>✨ Edit from Sketch</span>
+            <span className="rounded bg-white/20 px-1.5 py-0.5 text-[10px] font-bold">Default</span>
           </Link>
         </div>
       </div>
@@ -209,8 +249,68 @@ export function DesignViewClient({ project }: { project: DesignViewProject }) {
 
       <div className="grid gap-5 lg:grid-cols-5">
         <div className="space-y-3 lg:col-span-3">
+          {/* View toggle: Garment vs Sketch */}
+          <div className="flex items-center justify-between rounded-xl border border-zinc-200 bg-white p-1.5 dark:border-zinc-800 dark:bg-zinc-900">
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setViewMode("GARMENT")}
+                className={`rounded-lg px-3 py-1 text-xs font-semibold transition ${
+                  viewMode === "GARMENT"
+                    ? "bg-violet-600 text-white shadow-sm"
+                    : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400"
+                }`}
+              >
+                👗 Garment Photo
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode("SKETCH")}
+                className={`flex items-center gap-1 rounded-lg px-3 py-1 text-xs font-semibold transition ${
+                  viewMode === "SKETCH"
+                    ? "bg-violet-600 text-white shadow-sm"
+                    : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400"
+                }`}
+              >
+                <span>✏️ Technical Flat Sketch</span>
+                {sketchId && <span className="text-[10px]">✓</span>}
+              </button>
+            </div>
+            {viewMode === "SKETCH" && !sketchId && (
+              <button
+                type="button"
+                onClick={generateSketch}
+                disabled={sketchBusy}
+                className="text-xs font-semibold text-violet-600 hover:underline disabled:opacity-50 dark:text-violet-400"
+              >
+                {sketchBusy ? "Generating…" : "✨ Generate CAD Sketch"}
+              </button>
+            )}
+          </div>
+
           <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-50 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
-            {heroId ? (
+            {viewMode === "SKETCH" ? (
+              sketchId ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={attachmentUrl(sketchId)} alt="Technical CAD Flat Sketch" className="mx-auto max-h-[720px] w-full object-contain p-4" />
+              ) : (
+                <div className="flex flex-col items-center justify-center p-16 text-center">
+                  <span className="text-4xl">📐</span>
+                  <h3 className="mt-3 text-sm font-bold text-zinc-900 dark:text-zinc-100">No Technical Flat Sketch Yet</h3>
+                  <p className="mt-1 max-w-sm text-xs text-zinc-500">
+                    Generate a clean 2D CAD flat sketch with seamlines, topstitching, and construction darts directly from this design.
+                  </p>
+                  <button
+                    type="button"
+                    disabled={sketchBusy}
+                    onClick={generateSketch}
+                    className="mt-4 rounded-xl bg-gradient-to-r from-indigo-600 to-fuchsia-600 px-4 py-2 text-xs font-semibold text-white shadow hover:brightness-110 disabled:opacity-50"
+                  >
+                    {sketchBusy ? "✨ Generating CAD Sketch…" : "✨ Generate CAD Flat Sketch"}
+                  </button>
+                </div>
+              )
+            ) : heroId ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={attachmentUrl(heroId)} alt={project.projectName} className="mx-auto max-h-[720px] w-full object-contain" />
             ) : (
