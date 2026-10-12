@@ -7620,6 +7620,25 @@ second one.
 - Verified: tsc, eslint, 2162/2162 tests (8 new), and live — skills saved via the real form, invalid stage → 404,
   unskilled worker → 400 with the named-stage message, Assign Worker listed only the skilled employee.
 
+## Production → Dispatch handoff: "For Dispatch" status, For Dispatching list, Draft-time FG stock check (2026-10-12)
+
+- **"For Dispatch" is derived, never stored** (`src/modules/production/dispatch-readiness.service.ts`). A Production
+  Order is READY_FOR_DISPATCH once produced > 0 and produced + permanently rejected/damaged ≥ planned (from the
+  existing `getProgressForOrders()` batch helper in `production-progress.service.ts`). It becomes DISPATCHED once its
+  Sale Order line's shipped qty + open Draft/Packed dispatch qty covers what was produced. The list API and detail
+  API return `dispatchReadiness`; the list shows it in place of the lifecycle label (Hold/Cancel/Close still follow
+  the real `status`).
+- **Job work:** pieces from a job-work receipt that covers the final stage are already posted to FG and counted as
+  produced. A fully-received job work that only covers a middle stage (e.g. Embroidery) does NOT by itself make an
+  order dispatch-ready — its pieces still have to reach Packing. Fully-received JWOs are listed beside the order.
+- **Dispatch page "For Dispatching"** (`ReadyForDispatchPanel.tsx`, `GET /api/v1/dispatches/ready-for-dispatch`):
+  ready orders with Finished / Dispatched / Pending qty and a "Create Dispatch" link that pre-fills the form via
+  `/dispatch/new?salesOrderId=&salesOrderItemId=&quantity=`.
+- **FG stock is now checked at Draft create/edit, not only at Confirm** (`assertFinishedGoodsAvailable()` in
+  `dispatch.service.ts`). Requested qty per style must be ≤ warehouse stock minus qty already on OTHER open
+  (Draft/Packed) dispatches from that warehouse. The form shows an "Available Stock" column
+  (`GET /api/v1/dispatches/available-stock`) and blocks Save when exceeded. Confirm still re-checks live stock.
+
 ## Reference
 
 Full architecture rationale, complete table-by-table field lists, and the full role×module permission matrix were developed in the Phase 1 planning session and are condensed here. Consult that history if a design decision needs deeper justification than what's summarized above.

@@ -11,6 +11,7 @@ import { getMaterialRequirementForOrderLine } from "@/modules/bom-mrp/mrp.servic
 import { createMaterialRequest } from "@/modules/inventory/material-request.service";
 import { ProductRepository } from "@/modules/products/product.repository";
 import { ProductionOrderStatus, type Prisma } from "@prisma/client";
+import { attachDispatchReadiness } from "./dispatch-readiness.service";
 import { LotRepository, ProductionOrderRepository } from "./production.repository";
 import { getProductionOrderProgress } from "./production-progress.service";
 import { materialRequestScopeForOrder } from "./material-request-scope";
@@ -122,7 +123,7 @@ export async function listProductionOrders(actor: { companyId: string; userId: s
     ProductionOrderRepository.count(where),
   ]);
 
-  return { data, totalCount };
+  return { data: await attachDispatchReadiness(actor.companyId, data), totalCount };
 }
 
 /** A branch-restricted user gets NOT_FOUND for an order outside their allowed branches — same "deny as not-found" convention used across this app. */
@@ -145,7 +146,9 @@ export async function getProductionOrderById(actor: { companyId: string; userId:
     include: { createdBy: { select: { fullName: true } } },
   });
 
-  return { ...order, salesOrderContext, progress, quantityChanges };
+  const [withReadiness] = await attachDispatchReadiness(actor.companyId, [order]);
+
+  return { ...order, salesOrderContext, progress, quantityChanges, dispatchReadiness: withReadiness.dispatchReadiness };
 }
 
 export async function createProductionOrder(actor: ActorContext, input: CreateProductionOrderInput) {

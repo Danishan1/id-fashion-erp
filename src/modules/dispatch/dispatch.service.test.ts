@@ -23,7 +23,9 @@ vi.mock("./dispatch.repository", () => ({
     updateStatusConditional: vi.fn(),
   },
 }));
-vi.mock("@/core/db/client", () => ({ prisma: { $transaction: vi.fn() } }));
+vi.mock("@/core/db/client", () => ({
+  prisma: { $transaction: vi.fn(), dispatchItem: { aggregate: vi.fn() }, product: { findFirst: vi.fn() } },
+}));
 vi.mock("@/core/barcode/barcode.service", () => ({ replaceCartonBarcodes: vi.fn() }));
 vi.mock("@/core/dispatch-settings/DispatchSettingsService", async () => {
   const actual = await vi.importActual<typeof import("@/core/dispatch-settings/DispatchSettingsService")>(
@@ -96,6 +98,8 @@ beforeEach(() => {
   vi.mocked(DispatchRepository.updateStatusConditional).mockReset();
   vi.mocked(DispatchRepository.setCartons).mockReset();
   vi.mocked(prisma.$transaction).mockReset();
+  vi.mocked(prisma.dispatchItem.aggregate).mockReset().mockResolvedValue({ _sum: { dispatchedQuantity: 0 } } as never);
+  vi.mocked(prisma.product.findFirst).mockReset().mockResolvedValue({ styleName: "Gym Lowers" } as never);
   vi.mocked(replaceCartonBarcodes).mockReset();
 });
 
@@ -135,6 +139,48 @@ describe("createDispatch — order eligibility and remaining-quantity guard", ()
         items: [{ salesOrderItemId: "item-1", dispatchedQuantity: 20 }],
       } as never)
     ).resolves.toBeDefined();
+  });
+
+  it("rejects a Draft dispatch for more pieces than the warehouse holds", async () => {
+    vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue({
+      id: "so-1",
+      status: "CONFIRMED",
+      customerId: "cust-1",
+      items: [orderItem("item-1", 0, [100])],
+    } as never);
+    vi.mocked(getAvailableQuantity).mockResolvedValue(6);
+
+    await expect(
+      createDispatch(actor, {
+        salesOrderId: "so-1",
+        warehouseId: "wh-1",
+        dispatchDate: "2026-08-24",
+        deliveryAddress: "123 Street",
+        items: [{ salesOrderItemId: "item-1", dispatchedQuantity: 85 }],
+      } as never)
+    ).rejects.toMatchObject({ code: "INSUFFICIENT_FG_STOCK", details: { available: 6, requested: 85 } });
+    expect(DispatchRepository.createWithItems).not.toHaveBeenCalled();
+  });
+
+  it("counts pieces already on other open dispatches as unavailable", async () => {
+    vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue({
+      id: "so-1",
+      status: "CONFIRMED",
+      customerId: "cust-1",
+      items: [orderItem("item-1", 0, [100])],
+    } as never);
+    vi.mocked(getAvailableQuantity).mockResolvedValue(10);
+    vi.mocked(prisma.dispatchItem.aggregate).mockResolvedValue({ _sum: { dispatchedQuantity: 8 } } as never);
+
+    await expect(
+      createDispatch(actor, {
+        salesOrderId: "so-1",
+        warehouseId: "wh-1",
+        dispatchDate: "2026-08-24",
+        deliveryAddress: "123 Street",
+        items: [{ salesOrderItemId: "item-1", dispatchedQuantity: 3 }],
+      } as never)
+    ).rejects.toMatchObject({ code: "INSUFFICIENT_FG_STOCK", details: { onHand: 10, reserved: 8, available: 2 } });
   });
 
   // Extra Dispatch Quantity (2026-09-30) — a request beyond what remains

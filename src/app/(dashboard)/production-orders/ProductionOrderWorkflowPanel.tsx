@@ -24,6 +24,9 @@ import {
   LOT_STATUS_LABELS,
   PROGRESS_STATUS_BADGE_CLASS,
   PROGRESS_STATUS_LABELS,
+  DISPATCH_READINESS_LABELS,
+  DISPATCH_READINESS_BADGE_CLASS,
+  type DispatchReadinessValue,
 } from "./statusLabels";
 
 type ProductionOrderStatus = keyof typeof STATUS_LABELS;
@@ -75,6 +78,7 @@ interface OrderDetail {
   salesOrderItemId: string | null;
   salesOrderContext: SalesOrderContext | null;
   progress: ProductionProgress;
+  dispatchReadiness?: DispatchReadinessValue;
   lots: LotRow[];
   quantityChanges?: Array<{
     id: string;
@@ -405,6 +409,16 @@ export function ProductionOrderWorkflowPanel({
         <span className={`rounded-full px-3 py-1 text-xs font-medium ${PROGRESS_STATUS_BADGE_CLASS[order.progress.progressStatus]}`}>
           {PROGRESS_STATUS_LABELS[order.progress.progressStatus]}
         </span>
+        {order.dispatchReadiness && (
+          <span className={`rounded-full px-3 py-1 text-xs font-medium ${DISPATCH_READINESS_BADGE_CLASS[order.dispatchReadiness]}`}>
+            {DISPATCH_READINESS_LABELS[order.dispatchReadiness]}
+          </span>
+        )}
+        {order.dispatchReadiness === "READY_FOR_DISPATCH" && (
+          <Link href="/dispatch" className="text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400">
+            Go to Dispatch →
+          </Link>
+        )}
         {isBusy && <span className="text-xs text-zinc-400">Saving…</span>}
       </div>
 

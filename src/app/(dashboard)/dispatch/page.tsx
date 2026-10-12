@@ -2,6 +2,7 @@
 
 import { DataTable } from "@/components/ui/DataTable";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
+import { ReadyForDispatchPanel } from "./ReadyForDispatchPanel";
 
 interface DispatchRow {
   id: string;
@@ -40,6 +41,8 @@ export default function DispatchListPage() {
           Pick, pack, and ship confirmed Sales Orders — cartons, Finished-Goods stock, and delivery tracking.
         </p>
       </div>
+
+      <ReadyForDispatchPanel />
 
       <DataTable<DispatchRow>
         fetchUrl="/api/v1/dispatches"

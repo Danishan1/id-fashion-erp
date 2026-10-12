@@ -8,6 +8,11 @@ vi.mock("./material-request-scope", () => ({
 }));
 vi.mock("@/modules/bom-mrp/mrp.service", () => ({ getMaterialRequirementForOrderLine: vi.fn() }));
 vi.mock("./production-progress.service", () => ({ getProductionOrderProgress: vi.fn() }));
+vi.mock("./dispatch-readiness.service", () => ({
+  attachDispatchReadiness: vi.fn(async (_companyId: string, orders: Array<Record<string, unknown>>) =>
+    orders.map((o) => ({ ...o, dispatchReadiness: null, producedQuantity: 0 }))
+  ),
+}));
 vi.mock("@/modules/inventory/material-request.service", () => ({ createMaterialRequest: vi.fn() }));
 vi.mock("@/modules/products/product.repository", () => ({ ProductRepository: { findStyleById: vi.fn() } }));
 vi.mock("./production.repository", () => ({

@@ -182,6 +182,74 @@ export async function getDispatchById(actor: { companyId: string; userId: string
   return dispatch;
 }
 
+/**
+ * Stock check at Draft time (create/edit), not just at Confirm — a Dispatch
+ * should never be saved for more pieces than the chosen warehouse actually
+ * holds. Pieces already sitting on OTHER open (Draft/Packed) dispatches from
+ * the same warehouse are treated as spoken for, so two drafts can't both
+ * claim the same stock. Confirm still re-checks against live stock.
+ */
+export interface DispatchableStock {
+  onHand: number;
+  reserved: number;
+  available: number;
+}
+
+/** Per-style Finished Goods stock at a warehouse, minus what other open (Draft/Packed) dispatches already claim. */
+export async function getDispatchableStock(
+  companyId: string,
+  warehouseId: string,
+  productIds: string[],
+  excludeDispatchId?: string
+): Promise<Map<string, DispatchableStock>> {
+  const result = new Map<string, DispatchableStock>();
+  for (const productId of new Set(productIds)) {
+    const onHand = await getAvailableQuantity(companyId, productId, warehouseId);
+    const reservedAgg = await prisma.dispatchItem.aggregate({
+      where: {
+        productId,
+        dispatch: {
+          companyId,
+          warehouseId,
+          status: { in: ["DRAFT", "PACKED"] },
+          ...(excludeDispatchId ? { id: { not: excludeDispatchId } } : {}),
+        },
+      },
+      _sum: { dispatchedQuantity: true },
+    });
+    const reserved = Number(reservedAgg._sum.dispatchedQuantity ?? 0);
+    result.set(productId, { onHand, reserved, available: Math.max(0, onHand - reserved) });
+  }
+  return result;
+}
+
+async function assertFinishedGoodsAvailable(
+  companyId: string,
+  warehouseId: string,
+  items: Array<{ productId: string; dispatchedQuantity: number }>,
+  excludeDispatchId?: string
+) {
+  const requestedByProduct = new Map<string, number>();
+  for (const item of items) {
+    requestedByProduct.set(item.productId, (requestedByProduct.get(item.productId) ?? 0) + item.dispatchedQuantity);
+  }
+  const stock = await getDispatchableStock(companyId, warehouseId, [...requestedByProduct.keys()], excludeDispatchId);
+
+  for (const [productId, requested] of requestedByProduct) {
+    const { onHand, reserved, available } = stock.get(productId)!;
+    if (requested > available) {
+      const product = await prisma.product.findFirst({ where: { id: productId, companyId }, select: { styleName: true } });
+      const name = product?.styleName ?? "this style";
+      throw new BusinessRuleError(
+        "INSUFFICIENT_FG_STOCK",
+        `Only ${available} pieces of "${name}" are available for dispatch in this warehouse, but ${requested} were entered.` +
+          (reserved > 0 ? ` (In stock: ${onHand}, already on other open dispatches: ${reserved}.)` : ` (In stock: ${onHand}.)`),
+        { productId, warehouseId, onHand, reserved, available, requested }
+      );
+    }
+  }
+}
+
 export async function createDispatch(actor: ActorContext, input: DispatchInput) {
   const order = await SalesOrderRepository.findByIdWithDetails(actor.companyId, input.salesOrderId);
   if (!order) throw new BusinessRuleError("NOT_FOUND", "Sales order not found.", { id: input.salesOrderId });
@@ -196,6 +264,7 @@ export async function createDispatch(actor: ActorContext, input: DispatchInput) 
 
   const settings = await getDispatchSettings(actor.companyId);
   const items = await buildDispatchItems(order.items, input.items, settings);
+  await assertFinishedGoodsAvailable(actor.companyId, input.warehouseId, items);
 
   const dispatchNumber = await generateDocumentNumber({
     companyId: actor.companyId,
@@ -260,6 +329,7 @@ export async function updateDispatch(actor: ActorContext, id: string, input: Upd
   // on every edit rather than stored as independent input.
   const settings = await getDispatchSettings(actor.companyId);
   const items = await buildDispatchItems(order.items, input.items, settings);
+  await assertFinishedGoodsAvailable(actor.companyId, input.warehouseId, items, id);
 
   const updated = await DispatchRepository.replaceItems(
     id,

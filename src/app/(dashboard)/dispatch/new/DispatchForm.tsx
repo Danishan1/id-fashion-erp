@@ -30,6 +30,7 @@ interface OrderItemDetail {
   dispatchedQuantity: number;
   // What Sale Order fulfillment/"remaining" is actually based on.
   regularDispatchedQuantity: number;
+  productId: string;
   product: { styleName: string; styleCode: string };
   breakdown: BreakdownRow[];
 }
@@ -89,14 +90,21 @@ interface InitialDispatch {
   }>;
 }
 
-export function DispatchForm({ initialDispatch }: { initialDispatch?: InitialDispatch }) {
+/** Opened from the Dispatch page's "For Dispatching" list — pre-picks the Sale Order and line quantity. */
+export interface DispatchPrefill {
+  salesOrderId: string;
+  salesOrderItemId?: string;
+  quantity?: number;
+}
+
+export function DispatchForm({ initialDispatch, prefill }: { initialDispatch?: InitialDispatch; prefill?: DispatchPrefill }) {
   const router = useRouter();
   const isEditMode = !!initialDispatch;
 
   const [orders, setOrders] = useState<SalesOrderOption[]>([]);
   const [warehouses, setWarehouses] = useState<WarehouseOption[]>([]);
   const [settings, setSettings] = useState<DispatchSettingsValue | null>(null);
-  const [salesOrderId, setSalesOrderId] = useState(initialDispatch?.salesOrderId ?? "");
+  const [salesOrderId, setSalesOrderId] = useState(initialDispatch?.salesOrderId ?? prefill?.salesOrderId ?? "");
   const [order, setOrder] = useState<OrderDetail | null>(null);
   const [warehouseId, setWarehouseId] = useState(initialDispatch?.warehouseId ?? "");
   const [dispatchDate, setDispatchDate] = useState(
@@ -107,7 +115,11 @@ export function DispatchForm({ initialDispatch }: { initialDispatch?: InitialDis
   const [vehicleNumber, setVehicleNumber] = useState(initialDispatch?.vehicleNumber ?? "");
   const [trackingNumber, setTrackingNumber] = useState(initialDispatch?.trackingNumber ?? "");
   const [quantities, setQuantities] = useState<Record<string, string>>(
-    Object.fromEntries((initialDispatch?.items ?? []).map((i) => [i.salesOrderItemId, String(i.dispatchedQuantity)]))
+    initialDispatch
+      ? Object.fromEntries(initialDispatch.items.map((i) => [i.salesOrderItemId, String(i.dispatchedQuantity)]))
+      : prefill?.salesOrderItemId && prefill.quantity
+        ? { [prefill.salesOrderItemId]: String(prefill.quantity) }
+        : {}
   );
   const [extraReasons, setExtraReasons] = useState<Record<string, string>>(
     Object.fromEntries((initialDispatch?.items ?? []).map((i) => [i.salesOrderItemId, i.extraDispatchReason ?? ""]))
@@ -133,15 +145,16 @@ export function DispatchForm({ initialDispatch }: { initialDispatch?: InitialDis
       .catch(() => {});
   }, []);
 
-  // Pre-fill the order detail (for the item picker) when editing.
+  // Pre-fill the order detail (for the item picker) when editing, or when
+  // opened from the "For Dispatching" list.
+  const preloadOrderId = initialDispatch?.salesOrderId ?? prefill?.salesOrderId;
   useEffect(() => {
-    if (!initialDispatch) return;
-    fetch(`/api/v1/sales-orders/${initialDispatch.salesOrderId}`)
+    if (!preloadOrderId) return;
+    fetch(`/api/v1/sales-orders/${preloadOrderId}`)
       .then((res) => res.json())
       .then((body) => setOrder(body.data))
       .catch(() => setOrder(null));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialDispatch?.salesOrderId]);
+  }, [preloadOrderId]);
 
   const selectOrder = (id: string) => {
     setSalesOrderId(id);
@@ -159,6 +172,24 @@ export function DispatchForm({ initialDispatch }: { initialDispatch?: InitialDis
   };
 
   const activeOrder = order && order.id === salesOrderId ? order : null;
+
+  // Finished Goods stock at the chosen warehouse (minus other open dispatches),
+  // shown per line so an impossible quantity is caught here, not at Confirm.
+  const stockKey = activeOrder && warehouseId
+    ? `${warehouseId}|${[...new Set(activeOrder.items.map((i) => i.productId))].join(",")}`
+    : "";
+  const [stockState, setStockState] = useState<{ key: string; data: Record<string, { onHand: number; reserved: number; available: number }> }>({ key: "", data: {} });
+  useEffect(() => {
+    if (!stockKey) return;
+    const [wh, ids] = stockKey.split("|");
+    const params = new URLSearchParams({ warehouseId: wh, productIds: ids });
+    if (initialDispatch) params.set("excludeDispatchId", initialDispatch.id);
+    fetch(`/api/v1/dispatches/available-stock?${params}`)
+      .then((res) => res.json())
+      .then((body) => setStockState({ key: stockKey, data: body.data ?? {} }))
+      .catch(() => {});
+  }, [stockKey, initialDispatch]);
+  const stock = stockState.key === stockKey ? stockState.data : null;
   // Editing: an item this dispatch itself already has quantity against still
   // shows (its own not-yet-confirmed line doesn't count against remaining —
   // matches updateDispatch()'s own server-side reasoning). Creating: only
@@ -188,8 +219,17 @@ export function DispatchForm({ initialDispatch }: { initialDispatch?: InitialDis
     { regular: 0, extra: 0, total: 0 }
   );
 
+  const requestedByProduct = activeLines.reduce<Record<string, number>>((acc, { item, quantity }) => {
+    acc[item.productId] = (acc[item.productId] ?? 0) + quantity;
+    return acc;
+  }, {});
+  const overStockProductIds = stock
+    ? Object.keys(requestedByProduct).filter((pid) => requestedByProduct[pid] > (stock[pid]?.available ?? 0))
+    : [];
+
   const canSubmit =
     !isSubmitting &&
+    overStockProductIds.length === 0 &&
     !!activeOrder &&
     activeLines.length > 0 &&
     linesNeedingReason.length === 0 &&
@@ -326,6 +366,7 @@ export function DispatchForm({ initialDispatch }: { initialDispatch?: InitialDis
                     <th className="px-3 py-2 font-medium">SO Qty</th>
                     <th className="px-3 py-2 font-medium">Already Regular</th>
                     <th className="px-3 py-2 font-medium">Remaining SO Qty</th>
+                    <th className="px-3 py-2 font-medium">Available Stock</th>
                     <th className="px-3 py-2 font-medium">Dispatch Qty</th>
                     <th className="px-3 py-2 font-medium">Regular</th>
                     <th className="px-3 py-2 font-medium">Extra</th>
@@ -347,6 +388,12 @@ export function DispatchForm({ initialDispatch }: { initialDispatch?: InitialDis
                           <td className="px-3 py-2">{orderedTotal(item)}</td>
                           <td className="px-3 py-2">{item.regularDispatchedQuantity}</td>
                           <td className="px-3 py-2">{rem}</td>
+                          <td
+                            className={`px-3 py-2 ${overStockProductIds.includes(item.productId) ? "font-semibold text-red-600 dark:text-red-400" : ""}`}
+                            title={stock?.[item.productId]?.reserved ? `In stock ${stock[item.productId].onHand}, ${stock[item.productId].reserved} on other open dispatches` : undefined}
+                          >
+                            {!warehouseId ? "Pick a warehouse" : stock ? (stock[item.productId]?.available ?? 0) : "…"}
+                          </td>
                           <td className="px-3 py-2">
                             <input
                               type="number"
@@ -364,7 +411,7 @@ export function DispatchForm({ initialDispatch }: { initialDispatch?: InitialDis
                         </tr>
                         {needsReason && (
                           <tr className="border-b border-zinc-100 bg-amber-50/50 last:border-0 dark:border-zinc-800 dark:bg-amber-500/5">
-                            <td colSpan={7} className="px-3 py-2">
+                            <td colSpan={8} className="px-3 py-2">
                               <div className="grid grid-cols-2 gap-3">
                                 <FormField label="Extra Dispatch Reason" htmlFor={`reason-${item.id}`} required>
                                   <select
@@ -437,6 +484,19 @@ export function DispatchForm({ initialDispatch }: { initialDispatch?: InitialDis
       {linesBlockedByExtra.length > 0 && (
         <p className="text-sm text-red-600 dark:text-red-400">
           Extra Dispatch is disabled for this company — reduce quantity on the highlighted line(s) to what remains.
+        </p>
+      )}
+
+      {overStockProductIds.length > 0 && (
+        <p className="rounded-md bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-500/10 dark:text-red-300">
+          Dispatch quantity is more than the Finished Goods stock available in this warehouse:{" "}
+          {overStockProductIds
+            .map((pid) => {
+              const name = dispatchableItems.find((i) => i.productId === pid)?.product.styleName ?? "Style";
+              return `${name} — entered ${requestedByProduct[pid]}, available ${stock?.[pid]?.available ?? 0}`;
+            })
+            .join("; ")}
+          .
         </p>
       )}
 

@@ -251,3 +251,11 @@ export async function getSalesOrderItemProductionSummary(
     productionOrders,
   };
 }
+
+/** Batch form of getProductionOrderProgress — one set of queries for a whole list page. */
+export async function getProgressForOrders(
+  companyId: string,
+  orders: Array<{ id: string; plannedQuantity: unknown }>
+): Promise<Map<string, ProductionOrderProgress>> {
+  return computeProgressForOrders(companyId, orders);
+}
