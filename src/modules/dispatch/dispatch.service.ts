@@ -9,6 +9,7 @@ import type { ListQuery } from "@/lib/list-query";
 import { branchScopeWhere } from "@/lib/branch-access";
 import { DispatchStatus, type Prisma } from "@prisma/client";
 import { SalesOrderRepository } from "@/modules/sales-orders/sales-order.repository";
+import { ForwarderRepository } from "@/modules/forwarders/forwarder.repository";
 import { recordInventoryTransaction, getAvailableQuantity } from "@/modules/inventory/inventory.service";
 import { getDispatchSettings, extraDispatchNeedsApproval, type DispatchSettingsValue } from "@/core/dispatch-settings/DispatchSettingsService";
 import type { DispatchInput, UpdateDispatchInput, SetCartonsInput } from "./dispatch.schema";
@@ -182,6 +183,78 @@ export async function getDispatchById(actor: { companyId: string; userId: string
   return dispatch;
 }
 
+/** Optional, so most dispatches have nothing to validate — but when a
+ * Forwarder IS picked, re-verify it's this company's own active row rather
+ * than trusting a client-supplied id, same discipline Job Work Order's own
+ * contractorId check already uses. */
+async function resolveForwarderId(companyId: string, forwarderId: string | undefined): Promise<string | null> {
+  if (!forwarderId) return null;
+  const forwarder = await ForwarderRepository.findById(companyId, forwarderId);
+  if (!forwarder) throw new BusinessRuleError("NOT_FOUND", "Forwarder not found.", { id: forwarderId });
+  if (!forwarder.isActive) {
+    throw new BusinessRuleError("VALIDATION_ERROR", `Forwarder "${forwarder.name}" is inactive.`, { id: forwarder.id });
+  }
+  return forwarder.id;
+}
+
+/**
+ * Release-to-Dispatch gate (2026-10-10) — opt-in by construction: a line
+ * whose Sales Order Item has NO linked Production Order at all (Make-to-
+ * Stock pools, orders never put through formal Production tracking) is
+ * silently skipped, never blocked — this avoids any regression on existing
+ * dispatch flows that don't use the Production module end-to-end. The gate
+ * only fires when a real, non-cancelled Production Order genuinely exists
+ * for the line AND hasn't been marked released yet. Mirrors Sales Order's
+ * own "block, unless an elevated override reason is supplied" shape for its
+ * sample-approval gate (assertSamplesApprovedOrOverride) — the override here
+ * asserts `production`/`approve` (the permission the override itself needs),
+ * same cross-module-assertion precedent as Material Request's own
+ * generatePurchaseOrdersForShortfall().
+ */
+/** Returns the ids of any unreleased Production Orders the caller's override
+ * reason just overrode (empty array if nothing needed overriding) — the
+ * caller writes the actual audit entry once a real dispatch id exists,
+ * rather than this pre-check writing one against a record that doesn't
+ * exist yet. */
+async function assertProductionReleasedForLines(
+  actor: ActorContext,
+  items: Array<{ salesOrderItemId: string; dispatchedQuantity: number }>,
+  overrideReason: string | undefined
+): Promise<string[]> {
+  const lineIds = items.filter((i) => i.dispatchedQuantity > 0).map((i) => i.salesOrderItemId);
+  if (lineIds.length === 0) return [];
+
+  // CLOSED is excluded from the blocking set, not just CANCELLED — reaching
+  // CLOSED already requires every lot to be COMPLETED/CANCELLED with at
+  // least one real completion (see closeProductionOrder's own guard), so a
+  // closed order is unambiguously "production finished" regardless of
+  // whether anyone separately clicked Release — requiring that extra click
+  // for something already fully done would be pure friction, not a real
+  // check.
+  const unreleasedOrders = await prisma.productionOrder.findMany({
+    where: {
+      salesOrderItemId: { in: lineIds },
+      status: { notIn: ["CANCELLED", "CLOSED"] },
+      releasedToDispatchAt: null,
+    },
+    select: { id: true, orderNumber: true, product: { select: { styleName: true } } },
+  });
+  if (unreleasedOrders.length === 0) return [];
+
+  const trimmedReason = overrideReason?.trim();
+  if (!trimmedReason) {
+    const names = unreleasedOrders.map((o) => `${o.orderNumber} (${o.product.styleName})`).join(", ");
+    throw new BusinessRuleError(
+      "PRODUCTION_NOT_RELEASED_TO_DISPATCH",
+      `Cannot create this dispatch — production has not been released to dispatch yet for: ${names}. A Production Manager must click "Release to Dispatch" on the relevant Production Order, or a Management user may override with a reason.`,
+      { unreleasedProductionOrderIds: unreleasedOrders.map((o) => o.id) }
+    );
+  }
+
+  await PermissionService.assert(actor.userId, "production", "approve");
+  return unreleasedOrders.map((o) => o.id);
+}
+
 export async function createDispatch(actor: ActorContext, input: DispatchInput) {
   const order = await SalesOrderRepository.findByIdWithDetails(actor.companyId, input.salesOrderId);
   if (!order) throw new BusinessRuleError("NOT_FOUND", "Sales order not found.", { id: input.salesOrderId });
@@ -196,6 +269,12 @@ export async function createDispatch(actor: ActorContext, input: DispatchInput) 
 
   const settings = await getDispatchSettings(actor.companyId);
   const items = await buildDispatchItems(order.items, input.items, settings);
+  const overriddenProductionOrderIds = await assertProductionReleasedForLines(
+    actor,
+    items,
+    input.overrideProductionReleaseReason
+  );
+  const forwarderId = await resolveForwarderId(actor.companyId, input.forwarderId);
 
   const dispatchNumber = await generateDocumentNumber({
     companyId: actor.companyId,
@@ -217,6 +296,13 @@ export async function createDispatch(actor: ActorContext, input: DispatchInput) 
       transporterName: input.transporterName || null,
       vehicleNumber: input.vehicleNumber || null,
       trackingNumber: input.trackingNumber || null,
+      forwarderId,
+      lrNumber: input.lrNumber || null,
+      awbNumber: input.awbNumber || null,
+      driverDetails: input.driverDetails || null,
+      freightCharges: input.freightCharges ?? null,
+      expectedDeliveryDate: input.expectedDeliveryDate ? new Date(input.expectedDeliveryDate) : null,
+      shipmentRemarks: input.shipmentRemarks || null,
       requestedByUserId: actor.userId,
     },
     items
@@ -230,6 +316,20 @@ export async function createDispatch(actor: ActorContext, input: DispatchInput) 
     action: "CREATE",
     newValues: { dispatchNumber: dispatch.dispatchNumber, salesOrderId: order.id },
   });
+
+  if (overriddenProductionOrderIds.length > 0) {
+    await writeAuditLog({
+      companyId: actor.companyId,
+      userId: actor.userId,
+      tableName: "dispatches",
+      recordId: dispatch.id,
+      action: "UPDATE",
+      newValues: {
+        productionReleaseOverrideReason: input.overrideProductionReleaseReason?.trim(),
+        overriddenProductionOrderIds,
+      },
+    });
+  }
 
   return dispatch;
 }
@@ -260,6 +360,12 @@ export async function updateDispatch(actor: ActorContext, id: string, input: Upd
   // on every edit rather than stored as independent input.
   const settings = await getDispatchSettings(actor.companyId);
   const items = await buildDispatchItems(order.items, input.items, settings);
+  const overriddenProductionOrderIds = await assertProductionReleasedForLines(
+    actor,
+    items,
+    input.overrideProductionReleaseReason
+  );
+  const forwarderId = await resolveForwarderId(actor.companyId, input.forwarderId);
 
   const updated = await DispatchRepository.replaceItems(
     id,
@@ -270,6 +376,13 @@ export async function updateDispatch(actor: ActorContext, id: string, input: Upd
       transporterName: input.transporterName || null,
       vehicleNumber: input.vehicleNumber || null,
       trackingNumber: input.trackingNumber || null,
+      forwarderId,
+      lrNumber: input.lrNumber || null,
+      awbNumber: input.awbNumber || null,
+      driverDetails: input.driverDetails || null,
+      freightCharges: input.freightCharges ?? null,
+      expectedDeliveryDate: input.expectedDeliveryDate ? new Date(input.expectedDeliveryDate) : null,
+      shipmentRemarks: input.shipmentRemarks || null,
     },
     items
   );
@@ -283,6 +396,20 @@ export async function updateDispatch(actor: ActorContext, id: string, input: Upd
     oldValues: { status: existing.status },
     newValues: { status: "DRAFT", itemCount: updated.items.length },
   });
+
+  if (overriddenProductionOrderIds.length > 0) {
+    await writeAuditLog({
+      companyId: actor.companyId,
+      userId: actor.userId,
+      tableName: "dispatches",
+      recordId: id,
+      action: "UPDATE",
+      newValues: {
+        productionReleaseOverrideReason: input.overrideProductionReleaseReason?.trim(),
+        overriddenProductionOrderIds,
+      },
+    });
+  }
 
   return updated;
 }

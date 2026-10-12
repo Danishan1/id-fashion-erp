@@ -24,20 +24,66 @@ interface BreakdownRow {
   orderedQuantity: number;
 }
 
+// Already embedded on each item by GET /api/v1/sales-orders/:id (via
+// getSalesOrderById -> getSalesOrderItemProductionSummary, unchanged) — no
+// separate fetch needed for these figures. Every quantity here is at the
+// Style (Sales Order line) level, never per Colour/Size — Production's own
+// data (Lot/JobOrder/QcInspection) has no variant dimension at all, so a
+// per-variant split would be a fabricated estimate, not a real figure (see
+// that function's own doc comment). availableStock stays null here (it
+// needs a warehouseId, fetched separately once a warehouse is chosen — see
+// availableStockByItemId below).
+interface ProductionSummary {
+  totalPlanned: number;
+  totalProduced: number;
+  totalRejected: number;
+  totalQcAccepted: number;
+  totalQcRejected: number;
+  totalQcDamaged: number;
+  // Release to Dispatch gate (2026-10-10) — one entry per non-cancelled
+  // Production Order linked to this line; release status doesn't depend on
+  // a warehouse, so it's always present on the embedded summary (unlike
+  // contributingLots below, which needs one).
+  productionOrders: Array<{
+    id: string;
+    orderNumber: string;
+    status: string;
+    releasedToDispatchAt: string | null;
+    releasedToDispatchByUserName: string | null;
+  }>;
+}
+
+interface ContributingLot {
+  lotId: string;
+  lotNumber: string;
+  quantity: number;
+  productionOrderId: string;
+  productionOrderNumber: string;
+}
+
 interface OrderItemDetail {
   id: string;
+  productId: string;
   // TOTAL physical quantity ever dispatched (regular+extra) — display only.
   dispatchedQuantity: number;
   // What Sale Order fulfillment/"remaining" is actually based on.
   regularDispatchedQuantity: number;
   product: { styleName: string; styleCode: string };
   breakdown: BreakdownRow[];
+  productionSummary: ProductionSummary;
 }
 
 interface OrderDetail {
   id: string;
   orderNumber: string;
-  customer: { name: string };
+  customer: {
+    name: string;
+    billingAddress: string | null;
+    shippingAddress: string | null;
+    contactPerson: string | null;
+    phone: string | null;
+  };
+  buyer: { name: string; contactPerson: string | null; phone: string | null } | null;
   items: OrderItemDetail[];
 }
 
@@ -48,11 +94,26 @@ interface WarehouseOption {
   type: string;
 }
 
+interface ForwarderOption {
+  id: string;
+  code: string;
+  name: string;
+  contactPerson: string | null;
+  phone: string | null;
+}
+
 interface DispatchSettingsValue {
   allowExtraDispatch: boolean;
   extraDispatchApprovalRequired: boolean;
   extraDispatchApprovalThresholdQty: number | null;
   extraDispatchApprovalThresholdPercent: number | null;
+}
+
+// Avoids IEEE-754 display noise (e.g. 0.1 + 0.2) when summing two
+// already-rounded server figures client-side — same convention used
+// throughout this codebase's own reports for exactly this reason.
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
 }
 
 /** Remaining Order Qty = MAX(0, SO Qty - Already Regular Dispatched Qty). */
@@ -81,6 +142,13 @@ interface InitialDispatch {
   transporterName: string | null;
   vehicleNumber: string | null;
   trackingNumber: string | null;
+  forwarderId: string | null;
+  lrNumber: string | null;
+  awbNumber: string | null;
+  driverDetails: string | null;
+  freightCharges: number | null;
+  expectedDeliveryDate: string | null;
+  shipmentRemarks: string | null;
   items: Array<{
     salesOrderItemId: string;
     dispatchedQuantity: number;
@@ -95,6 +163,7 @@ export function DispatchForm({ initialDispatch }: { initialDispatch?: InitialDis
 
   const [orders, setOrders] = useState<SalesOrderOption[]>([]);
   const [warehouses, setWarehouses] = useState<WarehouseOption[]>([]);
+  const [forwarders, setForwarders] = useState<ForwarderOption[]>([]);
   const [settings, setSettings] = useState<DispatchSettingsValue | null>(null);
   const [salesOrderId, setSalesOrderId] = useState(initialDispatch?.salesOrderId ?? "");
   const [order, setOrder] = useState<OrderDetail | null>(null);
@@ -106,6 +175,17 @@ export function DispatchForm({ initialDispatch }: { initialDispatch?: InitialDis
   const [transporterName, setTransporterName] = useState(initialDispatch?.transporterName ?? "");
   const [vehicleNumber, setVehicleNumber] = useState(initialDispatch?.vehicleNumber ?? "");
   const [trackingNumber, setTrackingNumber] = useState(initialDispatch?.trackingNumber ?? "");
+  const [forwarderId, setForwarderId] = useState(initialDispatch?.forwarderId ?? "");
+  const [lrNumber, setLrNumber] = useState(initialDispatch?.lrNumber ?? "");
+  const [awbNumber, setAwbNumber] = useState(initialDispatch?.awbNumber ?? "");
+  const [driverDetails, setDriverDetails] = useState(initialDispatch?.driverDetails ?? "");
+  const [freightCharges, setFreightCharges] = useState(
+    initialDispatch?.freightCharges != null ? String(initialDispatch.freightCharges) : ""
+  );
+  const [expectedDeliveryDate, setExpectedDeliveryDate] = useState(
+    initialDispatch?.expectedDeliveryDate?.slice(0, 10) ?? ""
+  );
+  const [shipmentRemarks, setShipmentRemarks] = useState(initialDispatch?.shipmentRemarks ?? "");
   const [quantities, setQuantities] = useState<Record<string, string>>(
     Object.fromEntries((initialDispatch?.items ?? []).map((i) => [i.salesOrderItemId, String(i.dispatchedQuantity)]))
   );
@@ -117,6 +197,20 @@ export function DispatchForm({ initialDispatch }: { initialDispatch?: InitialDis
   );
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Real Finished-Goods stock per line at the chosen warehouse — fetched
+  // separately from the order (production summary is embedded on the order
+  // response already; this needs warehouseId, which the order fetch doesn't
+  // know about). Keyed by salesOrderItemId. null = not yet fetched for this
+  // line/warehouse combination, distinct from a real computed 0.
+  const [availableStockByItemId, setAvailableStockByItemId] = useState<Record<string, number | null>>({});
+  // Multi-lot dispatch visibility (2026-10-10) — which real Lots posted the
+  // Finished-Goods receipts behind availableStockByItemId, fetched from the
+  // exact same per-line call. Lives in a sibling map rather than folded into
+  // availableStockByItemId's own value since it's a richer shape (an array,
+  // not a number) and keeping the two separate avoids a breaking change to
+  // every existing reader of availableStockByItemId.
+  const [contributingLotsByItemId, setContributingLotsByItemId] = useState<Record<string, ContributingLot[]>>({});
+  const [overrideProductionReleaseReason, setOverrideProductionReleaseReason] = useState("");
 
   useEffect(() => {
     fetch("/api/v1/sales-orders?pageSize=200")
@@ -126,6 +220,10 @@ export function DispatchForm({ initialDispatch }: { initialDispatch?: InitialDis
     fetch("/api/v1/warehouses?pageSize=200")
       .then((res) => res.json())
       .then((body) => setWarehouses(body.data ?? []))
+      .catch(() => {});
+    fetch("/api/v1/forwarders?pageSize=200")
+      .then((res) => res.json())
+      .then((body) => setForwarders(body.data ?? []))
       .catch(() => {});
     fetch("/api/v1/dispatch-settings")
       .then((res) => res.json())
@@ -143,6 +241,42 @@ export function DispatchForm({ initialDispatch }: { initialDispatch?: InitialDis
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialDispatch?.salesOrderId]);
 
+  // Real available Finished-Goods stock per line, once both the order and a
+  // warehouse are known — reuses the exact same production-summary endpoint
+  // (its own ?warehouseId= support), never a separate stock-only call, so
+  // there's only ever one source of truth for "how much is really on hand."
+  // This is the SAME figure Dispatch's own confirmDispatch() stock check
+  // reads at confirm time — deliberately not a distinct "packing-ready"
+  // estimate (see ProductionSummary's own doc comment).
+  useEffect(() => {
+    // No setState here for the "nothing to fetch yet" case — the render
+    // below already gates on `warehouseId`/the active order directly, so a
+    // stale entry from a previously-selected order is simply never looked
+    // up again (different order = different item ids) rather than needing
+    // an explicit clear (matches this file's own set-state-in-effect
+    // convention: only ever setState inside a .then()/.catch() callback).
+    if (!order || order.id !== salesOrderId || !warehouseId) return;
+    let cancelled = false;
+    Promise.all(
+      order.items.map((item) =>
+        fetch(`/api/v1/sales-order-items/${item.id}/production-summary?warehouseId=${warehouseId}`)
+          .then((res) => res.json())
+          .then(
+            (body) =>
+              [item.id, body.data?.availableStock ?? null, body.data?.contributingLots ?? []] as const
+          )
+          .catch(() => [item.id, null, []] as const)
+      )
+    ).then((triples) => {
+      if (cancelled) return;
+      setAvailableStockByItemId(Object.fromEntries(triples.map(([id, stock]) => [id, stock])));
+      setContributingLotsByItemId(Object.fromEntries(triples.map(([id, , lots]) => [id, lots])));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [order, salesOrderId, warehouseId]);
+
   const selectOrder = (id: string) => {
     setSalesOrderId(id);
     setQuantities({});
@@ -154,7 +288,16 @@ export function DispatchForm({ initialDispatch }: { initialDispatch?: InitialDis
     }
     fetch(`/api/v1/sales-orders/${id}`)
       .then((res) => res.json())
-      .then((body) => setOrder(body.data))
+      .then((body) => {
+        setOrder(body.data);
+        // Auto-fill the per-dispatch address snapshot from the order's own
+        // Customer — a default only, never written back to Customer/Buyer/
+        // the Sales Order itself (this textarea stays freely editable, and
+        // nothing on the server ever reads it back into those records).
+        // Prefers Shipping Address, falls back to Billing Address.
+        const customer = body.data?.customer;
+        setDeliveryAddress(customer?.shippingAddress || customer?.billingAddress || "");
+      })
       .catch(() => setOrder(null));
   };
 
@@ -180,6 +323,18 @@ export function DispatchForm({ initialDispatch }: { initialDispatch?: InitialDis
     ? activeLines.filter(({ item, quantity }) => split(item, quantity).extraQty > 0)
     : [];
 
+  // Release-to-Dispatch gate (2026-10-10) — purely a client-side preview;
+  // the server re-checks this for real (and never trusts this computation)
+  // in dispatch.service.ts's own assertProductionReleasedForLines(). A line
+  // with no Production Orders at all (Make-to-Stock, or production never
+  // formally tracked) is correctly excluded here too, matching the server's
+  // own opt-in-only gate. CLOSED orders are also treated as implicitly released.
+  const linesNeedingProductionRelease = activeLines.filter(({ item }) =>
+    item.productionSummary.productionOrders.some(
+      (po) => po.status !== "CLOSED" && !po.releasedToDispatchAt
+    )
+  );
+
   const totals = activeLines.reduce(
     (acc, { item, quantity }) => {
       const { regularQty, extraQty } = split(item, quantity);
@@ -194,7 +349,8 @@ export function DispatchForm({ initialDispatch }: { initialDispatch?: InitialDis
     activeLines.length > 0 &&
     linesNeedingReason.length === 0 &&
     linesNeedingRemarks.length === 0 &&
-    linesBlockedByExtra.length === 0;
+    linesBlockedByExtra.length === 0 &&
+    (linesNeedingProductionRelease.length === 0 || !!overrideProductionReleaseReason.trim());
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -210,6 +366,14 @@ export function DispatchForm({ initialDispatch }: { initialDispatch?: InitialDis
       transporterName: transporterName || undefined,
       vehicleNumber: vehicleNumber || undefined,
       trackingNumber: trackingNumber || undefined,
+      forwarderId: forwarderId || undefined,
+      lrNumber: lrNumber || undefined,
+      awbNumber: awbNumber || undefined,
+      driverDetails: driverDetails || undefined,
+      freightCharges: freightCharges ? Number(freightCharges) : undefined,
+      expectedDeliveryDate: expectedDeliveryDate || undefined,
+      shipmentRemarks: shipmentRemarks || undefined,
+      overrideProductionReleaseReason: overrideProductionReleaseReason.trim() || undefined,
       items: activeLines.map(({ item, quantity }) => ({
         salesOrderItemId: item.id,
         dispatchedQuantity: quantity,
@@ -277,7 +441,26 @@ export function DispatchForm({ initialDispatch }: { initialDispatch?: InitialDis
       </div>
 
       {activeOrder && (
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">Customer: {activeOrder.customer.name}</p>
+        <p className="text-sm text-zinc-500 dark:text-zinc-400">
+          Customer: {activeOrder.customer.name}
+          {activeOrder.buyer && ` · Buyer: ${activeOrder.buyer.name}`}
+          {(() => {
+            // Prefer the Buyer's own contact (the actual ordering contact)
+            // over the Customer's general one, same precedence the address
+            // auto-fill effectively follows (the more specific record wins).
+            const contactPerson = activeOrder.buyer?.contactPerson || activeOrder.customer.contactPerson;
+            const phone = activeOrder.buyer?.phone || activeOrder.customer.phone;
+            if (!contactPerson && !phone) return null;
+            return (
+              <>
+                {" · "}
+                {contactPerson && `Contact: ${contactPerson}`}
+                {contactPerson && phone && " · "}
+                {phone && `Phone: ${phone}`}
+              </>
+            );
+          })()}
+        </p>
       )}
 
       <FormField label="Delivery Address" htmlFor="deliveryAddress" required>
@@ -303,6 +486,82 @@ export function DispatchForm({ initialDispatch }: { initialDispatch?: InitialDis
         </FormField>
       </div>
 
+      {/* Forwarder Master integration (2026-10-10) — a real FK, a live join
+          for contact display (never a snapshot — see the Forwarder model's
+          own schema comment), alongside per-shipment facts that genuinely do
+          vary per dispatch and are frozen on this row directly. */}
+      <div className="grid grid-cols-3 gap-4">
+        <FormField label="Forwarder (optional)" htmlFor="forwarderId">
+          <SearchableSelect
+            id="forwarderId"
+            value={forwarderId}
+            onChange={setForwarderId}
+            options={forwarders.map((f) => ({ id: f.id, label: `${f.name} (${f.code})` }))}
+            placeholder="Search forwarder / courier…"
+          />
+        </FormField>
+        <FormField label="LR Number (optional)" htmlFor="lrNumber">
+          <input id="lrNumber" value={lrNumber} onChange={(e) => setLrNumber(e.target.value)} className={textInputClass()} />
+        </FormField>
+        <FormField label="AWB / Airway Bill No. (optional)" htmlFor="awbNumber">
+          <input id="awbNumber" value={awbNumber} onChange={(e) => setAwbNumber(e.target.value)} className={textInputClass()} />
+        </FormField>
+      </div>
+
+      {(() => {
+        const selectedForwarder = forwarders.find((f) => f.id === forwarderId);
+        if (!selectedForwarder || (!selectedForwarder.contactPerson && !selectedForwarder.phone)) return null;
+        return (
+          <p className="-mt-2 text-sm text-zinc-500 dark:text-zinc-400">
+            {selectedForwarder.contactPerson && `Contact: ${selectedForwarder.contactPerson}`}
+            {selectedForwarder.contactPerson && selectedForwarder.phone && " · "}
+            {selectedForwarder.phone && `Phone: ${selectedForwarder.phone}`}
+          </p>
+        );
+      })()}
+
+      <div className="grid grid-cols-3 gap-4">
+        <FormField label="Driver Details (optional)" htmlFor="driverDetails">
+          <input
+            id="driverDetails"
+            value={driverDetails}
+            onChange={(e) => setDriverDetails(e.target.value)}
+            placeholder="Name · phone"
+            className={textInputClass()}
+          />
+        </FormField>
+        <FormField label="Freight Charges (optional)" htmlFor="freightCharges">
+          <input
+            id="freightCharges"
+            type="number"
+            min="0"
+            step="0.01"
+            value={freightCharges}
+            onChange={(e) => setFreightCharges(e.target.value)}
+            className={textInputClass()}
+          />
+        </FormField>
+        <FormField label="Expected Delivery Date (optional)" htmlFor="expectedDeliveryDate">
+          <input
+            id="expectedDeliveryDate"
+            type="date"
+            value={expectedDeliveryDate}
+            onChange={(e) => setExpectedDeliveryDate(e.target.value)}
+            className={textInputClass()}
+          />
+        </FormField>
+      </div>
+
+      <FormField label="Shipment Remarks (optional)" htmlFor="shipmentRemarks">
+        <textarea
+          id="shipmentRemarks"
+          rows={2}
+          value={shipmentRemarks}
+          onChange={(e) => setShipmentRemarks(e.target.value)}
+          className={textInputClass()}
+        />
+      </FormField>
+
       {settings && !settings.allowExtraDispatch && (
         <p className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
           Extra Dispatch is disabled for this company — dispatch quantity per line is capped at what remains against the
@@ -315,6 +574,12 @@ export function DispatchForm({ initialDispatch }: { initialDispatch?: InitialDis
           <h2 className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
             Lines — enter a quantity to dispatch (leave blank to skip)
           </h2>
+          <p className="text-xs text-zinc-400 dark:text-zinc-500">
+            Planned/Produced/QC/Stock figures below are per Style (this order line as a whole) — Production tracks
+            quantity at the Lot level, not per Colour/Size, so a per-variant split isn&apos;t a real number to show.
+            &quot;Available Stock&quot; and &quot;Packing-Ready&quot; are the same figure: once production reaches
+            Finished Goods it&apos;s immediately available, there&apos;s no separate pre-dispatch packing pool today.
+          </p>
           {dispatchableItems.length === 0 ? (
             <p className="text-sm text-zinc-500">This order has no lines.</p>
           ) : (
@@ -362,6 +627,52 @@ export function DispatchForm({ initialDispatch }: { initialDispatch?: InitialDis
                             {extraQty}
                           </td>
                         </tr>
+                        <tr className="border-b border-zinc-100 bg-zinc-50/50 text-xs text-zinc-500 last:border-0 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-400">
+                          <td colSpan={7} className="px-3 py-1.5">
+                            Planned: {item.productionSummary.totalPlanned} · Produced (reached FG): {item.productionSummary.totalProduced}
+                            {" · "}QC Accepted: {item.productionSummary.totalQcAccepted}
+                            {" · "}QC Rejected/Damaged: {round2(item.productionSummary.totalQcRejected + item.productionSummary.totalQcDamaged)}
+                            {" · "}
+                            {warehouseId ? (
+                              availableStockByItemId[item.id] != null ? (
+                                <>Available Stock at Warehouse (= Packing-Ready): {availableStockByItemId[item.id]}</>
+                              ) : (
+                                "Available Stock at Warehouse: loading…"
+                              )
+                            ) : (
+                              "Available Stock at Warehouse: pick a warehouse to see this"
+                            )}
+                          </td>
+                        </tr>
+                        {item.productionSummary.productionOrders.length > 0 && (
+                          <tr className="border-b border-zinc-100 bg-zinc-50/50 text-xs text-zinc-500 last:border-0 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-400">
+                            <td colSpan={7} className="px-3 py-1.5">
+                              Production Release:{" "}
+                              {item.productionSummary.productionOrders.map((po, i) => (
+                                <span key={po.id}>
+                                  {i > 0 && ", "}
+                                  {po.orderNumber}{" "}
+                                  {po.releasedToDispatchAt ? (
+                                    <span className="text-green-700 dark:text-green-400">✓ Released</span>
+                                  ) : (
+                                    <span className="font-medium text-amber-700 dark:text-amber-400">⚠ Not released</span>
+                                  )}
+                                </span>
+                              ))}
+                              {warehouseId && contributingLotsByItemId[item.id]?.length > 0 && (
+                                <>
+                                  {" · "}Lots contributing to stock:{" "}
+                                  {contributingLotsByItemId[item.id].map((l, i) => (
+                                    <span key={l.lotId}>
+                                      {i > 0 && ", "}
+                                      {l.lotNumber} ({l.quantity})
+                                    </span>
+                                  ))}
+                                </>
+                              )}
+                            </td>
+                          </tr>
+                        )}
                         {needsReason && (
                           <tr className="border-b border-zinc-100 bg-amber-50/50 last:border-0 dark:border-zinc-800 dark:bg-amber-500/5">
                             <td colSpan={7} className="px-3 py-2">
@@ -438,6 +749,27 @@ export function DispatchForm({ initialDispatch }: { initialDispatch?: InitialDis
         <p className="text-sm text-red-600 dark:text-red-400">
           Extra Dispatch is disabled for this company — reduce quantity on the highlighted line(s) to what remains.
         </p>
+      )}
+
+      {linesNeedingProductionRelease.length > 0 && (
+        <div className="rounded-md border border-amber-300 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950">
+          <p className="text-sm text-amber-800 dark:text-amber-300">
+            Production has not been released to dispatch for:{" "}
+            {linesNeedingProductionRelease.map(({ item }) => item.product.styleCode).join(", ")}. A Production Manager
+            should click &quot;Release to Dispatch&quot; on the relevant Production Order — or supply a reason below to
+            override (requires Management approval permission).
+          </p>
+          <FormField label="Override Reason" htmlFor="overrideProductionReleaseReason">
+            <textarea
+              id="overrideProductionReleaseReason"
+              rows={2}
+              value={overrideProductionReleaseReason}
+              onChange={(e) => setOverrideProductionReleaseReason(e.target.value)}
+              className={textInputClass()}
+              placeholder="Why is it safe to dispatch before Production released this?"
+            />
+          </FormField>
+        </div>
       )}
 
       {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}

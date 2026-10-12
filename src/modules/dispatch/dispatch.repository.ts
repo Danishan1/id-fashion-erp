@@ -6,6 +6,7 @@ const detailInclude = {
   customer: { select: { id: true, name: true } },
   warehouse: { select: { id: true, code: true, name: true } },
   requestedBy: { select: { id: true, fullName: true } },
+  forwarder: { select: { id: true, code: true, name: true, type: true, phone: true, contactPerson: true } },
   items: {
     include: {
       product: { select: { id: true, styleName: true, styleCode: true } },

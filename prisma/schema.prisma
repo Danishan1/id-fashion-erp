@@ -33,6 +33,7 @@ model Company {
   customers                           Customer[]
   suppliers                           Supplier[]
   contractors                         Contractor[]
+  forwarders                          Forwarder[]
   barcodes                            Barcode[]
   supplierCategories                  SupplierCategory[]
   supplierMaterials                   SupplierMaterial[]
@@ -352,6 +353,7 @@ model User {
   sampleApprovalsMade                        SampleApproval[]                     @relation("SampleApprovalDecidedBy")
   sampleCommentsMade                         SampleComment[]                      @relation("SampleCommentAuthor")
   productionOrdersRequested                  ProductionOrder[]                    @relation("ProductionOrderRequestedBy")
+  productionOrdersReleasedToDispatch          ProductionOrder[]                    @relation("ProductionOrderReleasedToDispatchBy")
   productionOrderQuantityChanges             ProductionOrderQuantityChange[]
   lotsCreated                                Lot[]                                @relation("LotCreatedBy")
   barcodesCreated                            Barcode[]                            @relation("BarcodeCreatedBy")
@@ -838,6 +840,51 @@ model Contractor {
 
   @@unique([companyId, code])
   @@map("contractors")
+}
+
+// Forwarder / Transporter / Courier master (2026-10-10, Dispatch Forwarder
+// Master) — confirmed via a full-codebase audit that no equivalent entity
+// existed anywhere (only plain free-text Dispatch.transporterName/
+// vehicleNumber/trackingNumber columns, now kept as-is alongside this).
+// Mirrors Contractor's own "simple rich master" shape exactly (soft-delete,
+// masters_core RBAC, sequential master-code numbering) since it's the same
+// kind of entity — a real-world external party referenced by id, not a
+// second free-text field.
+enum ForwarderType {
+  COURIER
+  ROAD
+  RAIL
+  AIR
+  OTHER
+}
+
+model Forwarder {
+  id            String        @id @default(uuid()) @db.Uuid
+  companyId     String        @map("company_id") @db.Uuid
+  code          String
+  name          String
+  type          ForwarderType @default(COURIER)
+  contactPerson String?       @map("contact_person")
+  phone         String?
+  altPhone      String?       @map("alt_phone")
+  email         String?
+  address       String?
+  city          String?
+  state         String?
+  country       String?
+  postalCode    String?       @map("postal_code")
+  gstin         String?
+  remarks       String?
+  isActive      Boolean       @default(true) @map("is_active")
+  deletedAt     DateTime?     @map("deleted_at")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+
+  company    Company    @relation(fields: [companyId], references: [id])
+  dispatches Dispatch[]
+
+  @@unique([companyId, code])
+  @@map("forwarders")
 }
 
 /**
@@ -3851,15 +3898,28 @@ model ProductionOrder {
   nextLotSequence   Int                    @default(1) @map("next_lot_sequence")
   remarks           String?
   requestedByUserId String                 @map("requested_by_user_id") @db.Uuid
+  // Dispatch Eligibility gate (2026-10-10, Dispatch/Production/Forwarder/
+  // Barcode initiative) — a deliberately manual, independent judgment call,
+  // NOT derived from status/lot completion: a Production Manager can release
+  // partial output to dispatch while the order is still IN_PROGRESS (the
+  // common partial-shipment case this ERP already supports elsewhere), so
+  // reusing CLOSED (which requires every lot done, see closeProductionOrder's
+  // own guard) would be far too strict. Nullable = not yet released, the
+  // default for every order; set/cleared only via the dedicated release/
+  // revoke actions in production-order.service.ts, never the generic
+  // status-transition endpoint.
+  releasedToDispatchAt       DateTime? @map("released_to_dispatch_at")
+  releasedToDispatchByUserId String?   @map("released_to_dispatch_by_user_id") @db.Uuid
   createdAt         DateTime               @default(now()) @map("created_at")
   updatedAt         DateTime               @updatedAt @map("updated_at")
 
-  company           Company                         @relation(fields: [companyId], references: [id])
-  branch            Branch?                         @relation(fields: [branchId], references: [id])
-  salesOrderItem    SalesOrderItem?                 @relation(fields: [salesOrderItemId], references: [id])
-  product           Product                         @relation(fields: [productId], references: [id])
-  bom               Bom?                            @relation(fields: [bomId], references: [id])
-  requestedBy       User                            @relation("ProductionOrderRequestedBy", fields: [requestedByUserId], references: [id])
+  company              Company                         @relation(fields: [companyId], references: [id])
+  branch               Branch?                         @relation(fields: [branchId], references: [id])
+  salesOrderItem       SalesOrderItem?                 @relation(fields: [salesOrderItemId], references: [id])
+  product              Product                         @relation(fields: [productId], references: [id])
+  bom                  Bom?                            @relation(fields: [bomId], references: [id])
+  requestedBy          User                            @relation("ProductionOrderRequestedBy", fields: [requestedByUserId], references: [id])
+  releasedToDispatchBy User?                           @relation("ProductionOrderReleasedToDispatchBy", fields: [releasedToDispatchByUserId], references: [id])
   lots              Lot[]
   jobOrders         JobOrder[]
   stageTransactions ProductionStageTransaction[]
@@ -4816,9 +4876,24 @@ model Dispatch {
   status            DispatchStatus  @default(DRAFT)
   statusBeforeHold  DispatchStatus? @map("status_before_hold")
   deliveryAddress   String          @map("delivery_address")
+  // Kept exactly as-is — plain free-text fallback for a one-off/unmastered
+  // transporter, alongside the new forwarderId below (added, not replacing).
   transporterName   String?         @map("transporter_name")
   vehicleNumber     String?         @map("vehicle_number")
   trackingNumber    String?         @map("tracking_number")
+  // Forwarder Master integration (2026-10-10) — a live FK, same discipline
+  // already used for customerId/warehouseId on this same model: if the
+  // Forwarder's own master data (name/phone/address) changes later, a past
+  // dispatch shows the current master data, exactly like it already does
+  // for Customer. Only the genuinely per-shipment facts below are frozen
+  // directly on this row, since those vary per dispatch, not per forwarder.
+  forwarderId          String?   @map("forwarder_id") @db.Uuid
+  lrNumber             String?   @map("lr_number")
+  awbNumber            String?   @map("awb_number")
+  driverDetails        String?   @map("driver_details")
+  freightCharges       Decimal?  @map("freight_charges") @db.Decimal(18, 2)
+  expectedDeliveryDate DateTime? @map("expected_delivery_date") @db.Date
+  shipmentRemarks      String?   @map("shipment_remarks")
   // Stamped only inside confirmDispatch()'s own transaction, the moment the
   // ledger is actually touched — a hard fact, not a status label, that
   // cancelDispatch() checks directly and unconditionally (see
@@ -4838,6 +4913,7 @@ model Dispatch {
   customer    Customer       @relation(fields: [customerId], references: [id])
   warehouse   Warehouse      @relation(fields: [warehouseId], references: [id])
   requestedBy User           @relation("DispatchRequestedBy", fields: [requestedByUserId], references: [id])
+  forwarder   Forwarder?     @relation(fields: [forwarderId], references: [id], onDelete: SetNull)
   items       DispatchItem[]
   cartons     Carton[]
 
@@ -9577,6 +9653,8 @@ enum DocumentType {
   // Marketing's own campaign numbering (kept from the legacy CRM removal --
   // Marketing survives untouched, see CLAUDE.md's CRM Replacement section).
   CAMPAIGN
+  // Forwarder Master (2026-10-10, Dispatch Forwarder Master).
+  FORWARDER
 }
 
 model DocumentSequence {

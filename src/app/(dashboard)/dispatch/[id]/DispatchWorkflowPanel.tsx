@@ -76,6 +76,17 @@ interface DispatchDetail {
   transporterName: string | null;
   vehicleNumber: string | null;
   trackingNumber: string | null;
+  forwarder: { id: string; code: string; name: string; type: string; phone: string | null; contactPerson: string | null } | null;
+  lrNumber: string | null;
+  awbNumber: string | null;
+  driverDetails: string | null;
+  // Decimal.toJSON() serializes to a STRING, not a number — the page passes
+  // this object through JSON.parse(JSON.stringify(...)), so it arrives here
+  // exactly as that round-trip produces it, same convention documented
+  // project-wide for every other Decimal field crossing the RSC boundary.
+  freightCharges: string | null;
+  expectedDeliveryDate: string | null;
+  shipmentRemarks: string | null;
   dispatchedAt: string | null;
   deliveredAt: string | null;
   receivedByName: string | null;
@@ -323,6 +334,53 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
           <dt className="text-zinc-500 dark:text-zinc-400">Tracking No.</dt>
           <dd className="font-medium text-zinc-900 dark:text-zinc-50">{dispatch.trackingNumber ?? "—"}</dd>
         </div>
+        {dispatch.forwarder && (
+          <div>
+            <dt className="text-zinc-500 dark:text-zinc-400">Forwarder</dt>
+            <dd className="font-medium text-zinc-900 dark:text-zinc-50">
+              {dispatch.forwarder.name} ({dispatch.forwarder.code})
+              {(dispatch.forwarder.contactPerson || dispatch.forwarder.phone) && (
+                <span className="block text-xs font-normal text-zinc-500 dark:text-zinc-400">
+                  {dispatch.forwarder.contactPerson}
+                  {dispatch.forwarder.contactPerson && dispatch.forwarder.phone && " · "}
+                  {dispatch.forwarder.phone}
+                </span>
+              )}
+            </dd>
+          </div>
+        )}
+        {(dispatch.lrNumber || dispatch.awbNumber) && (
+          <div>
+            <dt className="text-zinc-500 dark:text-zinc-400">LR / AWB No.</dt>
+            <dd className="font-medium text-zinc-900 dark:text-zinc-50">
+              {[dispatch.lrNumber, dispatch.awbNumber].filter(Boolean).join(" / ") || "—"}
+            </dd>
+          </div>
+        )}
+        {dispatch.driverDetails && (
+          <div>
+            <dt className="text-zinc-500 dark:text-zinc-400">Driver Details</dt>
+            <dd className="font-medium text-zinc-900 dark:text-zinc-50">{dispatch.driverDetails}</dd>
+          </div>
+        )}
+        {dispatch.freightCharges != null && (
+          <div>
+            <dt className="text-zinc-500 dark:text-zinc-400">Freight Charges</dt>
+            <dd className="font-medium text-zinc-900 dark:text-zinc-50">₹{Number(dispatch.freightCharges).toFixed(2)}</dd>
+          </div>
+        )}
+        {dispatch.expectedDeliveryDate && (
+          <div>
+            <dt className="text-zinc-500 dark:text-zinc-400">Expected Delivery Date</dt>
+            <dd className="font-medium text-zinc-900 dark:text-zinc-50">{dispatch.expectedDeliveryDate.slice(0, 10)}</dd>
+          </div>
+        )}
+        {dispatch.shipmentRemarks && (
+          <div className="sm:col-span-2">
+            <dt className="text-zinc-500 dark:text-zinc-400">Shipment Remarks</dt>
+            <dd className="font-medium text-zinc-900 dark:text-zinc-50">{dispatch.shipmentRemarks}</dd>
+          </div>
+        )}
         {dispatch.dispatchedAt && (
           <div>
             <dt className="text-zinc-500 dark:text-zinc-400">Dispatched At</dt>

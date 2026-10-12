@@ -35,7 +35,26 @@ export const SalesOrderRepository = {
         // A narrow `select`, not `customer: true` — the full model included
         // creditLimit/paymentTermsDays, exposed to anyone with mere
         // sales_orders:view (no separate customer-master permission implied).
-        customer: { select: { id: true, name: true, code: true, country: true, defaultCurrencyCode: true, paymentTermsDays: true } },
+        // billingAddress/shippingAddress/contactPerson/phone/email added
+        // (2026-10-10, Dispatch address auto-fill) — Dispatch's own create
+        // form reads these to default its per-dispatch address snapshot;
+        // still excludes creditLimit/paymentTermsDays-adjacent financial
+        // fields this grant was never meant to expose.
+        customer: {
+          select: {
+            id: true,
+            name: true,
+            code: true,
+            country: true,
+            defaultCurrencyCode: true,
+            paymentTermsDays: true,
+            billingAddress: true,
+            shippingAddress: true,
+            contactPerson: true,
+            phone: true,
+            email: true,
+          },
+        },
         buyer: true,
         requestedBy: { select: { id: true, fullName: true } },
         items: {

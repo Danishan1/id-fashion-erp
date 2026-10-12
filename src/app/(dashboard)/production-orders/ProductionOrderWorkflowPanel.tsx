@@ -73,6 +73,8 @@ interface OrderDetail {
   plannedQuantity: string;
   productId: string;
   salesOrderItemId: string | null;
+  releasedToDispatchAt: string | null;
+  releasedToDispatchBy: { fullName: string } | null;
   salesOrderContext: SalesOrderContext | null;
   progress: ProductionProgress;
   lots: LotRow[];
@@ -239,6 +241,26 @@ export function ProductionOrderWorkflowPanel({
 
   const resumeFromHold = () =>
     run(() => fetch(`/api/v1/production-orders/${productionOrderId}/resume`, { method: "POST" }), "Failed to resume.");
+
+  const releaseToDispatch = () =>
+    run(
+      () =>
+        fetch(`/api/v1/production-orders/${productionOrderId}/release-to-dispatch`, {
+          method: "POST",
+          headers: { "x-toast-success": "Released to dispatch." },
+        }),
+      "Failed to release to dispatch."
+    );
+
+  const revokeDispatchRelease = () =>
+    run(
+      () =>
+        fetch(`/api/v1/production-orders/${productionOrderId}/revoke-dispatch-release`, {
+          method: "POST",
+          headers: { "x-toast-success": "Dispatch release revoked." },
+        }),
+      "Failed to revoke dispatch release."
+    );
 
   const addLotQuantity = hasVariantOptions ? breakdownTotal : Number(lotQuantity) || 0;
   const lotWorkerError = validateWorkerRows(lotWorkers, addLotQuantity);
@@ -479,8 +501,28 @@ export function ProductionOrderWorkflowPanel({
 
       <div className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
         <h2 className="mb-3 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Actions</h2>
+        {order.status === "IN_PROGRESS" && (
+          <p className="mb-3 text-sm">
+            {order.releasedToDispatchAt ? (
+              <span className="text-green-700 dark:text-green-400">
+                ✓ Released to dispatch{order.releasedToDispatchBy ? ` by ${order.releasedToDispatchBy.fullName}` : ""} on{" "}
+                {new Date(order.releasedToDispatchAt).toLocaleString("en-IN")}
+              </span>
+            ) : (
+              <span className="text-amber-700 dark:text-amber-400">
+                ⚠ Not yet released to dispatch — a dispatch for this order&apos;s style will be blocked unless explicitly overridden.
+              </span>
+            )}
+          </p>
+        )}
         {canAct && order.status !== "ON_HOLD" && (
           <div className="flex flex-wrap gap-2">
+            {order.status === "IN_PROGRESS" &&
+              (order.releasedToDispatchAt ? (
+                <ActionButton label="Revoke Dispatch Release" onClick={revokeDispatchRelease} isBusy={isBusy} variant="secondary" />
+              ) : (
+                <ActionButton label="Release to Dispatch" onClick={releaseToDispatch} isBusy={isBusy} />
+              ))}
             {canEditQuantity && (
               <ActionButton
                 label="Edit Quantity"
