@@ -68,7 +68,6 @@ interface OrderItemDetail {
   dispatchedQuantity: number;
   // What Sale Order fulfillment/"remaining" is actually based on.
   regularDispatchedQuantity: number;
-  productId: string;
   product: { styleName: string; styleCode: string };
   breakdown: BreakdownRow[];
   productionSummary: ProductionSummary;

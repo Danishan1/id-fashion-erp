@@ -4,7 +4,8 @@ import { optionalPhoneSchema } from "@/lib/validation";
 export const FORWARDER_TYPES = ["COURIER", "ROAD", "RAIL", "AIR", "OTHER"] as const;
 
 export const forwarderSchema = z.object({
-  code: z.string().min(1, "Code is required").max(30),
+  // Auto-generated server-side when blank (see createForwarder).
+  code: z.string().max(30).optional().or(z.literal("")),
   name: z.string().min(1, "Name is required").max(200),
   type: z.enum(FORWARDER_TYPES).default("COURIER"),
   contactPerson: z.string().max(200).optional().or(z.literal("")),

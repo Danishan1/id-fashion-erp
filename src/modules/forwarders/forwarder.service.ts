@@ -1,7 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
-import { advanceMasterCodeSequence } from "@/core/numbering/DocumentNumberingService";
+import { advanceMasterCodeSequence, previewNextMasterCode } from "@/core/numbering/DocumentNumberingService";
 import type { ListQuery } from "@/lib/list-query";
 import type { ForwarderInput, ForwarderUpdateInput } from "./forwarder.schema";
 import { ForwarderRepository } from "./forwarder.repository";
@@ -45,7 +45,7 @@ export async function getForwarderById(companyId: string, id: string) {
   return forwarder;
 }
 
-function toData(input: ForwarderInput) {
+function toData(input: ForwarderInput & { code: string }) {
   return {
     code: input.code,
     name: input.name,
@@ -90,15 +90,29 @@ function toUpdateData(input: ForwarderUpdateInput): Prisma.ForwarderUncheckedUpd
   return data;
 }
 
-export async function createForwarder(actor: ActorContext, input: ForwarderInput) {
-  const existing = await ForwarderRepository.findByCode(actor.companyId, input.code);
-  if (existing) {
-    throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", `Forwarder code "${input.code}" is already in use.`, {
-      code: input.code,
-    });
+/**
+ * The Code field is auto-generated and read-only in the UI, so the server is
+ * the source of truth: if the client sent no code (preview fetch failed) or
+ * the previewed code was taken meanwhile, generate the next free one here.
+ */
+async function resolveForwarderCode(companyId: string, requested: string | undefined): Promise<string> {
+  if (requested) {
+    const existing = await ForwarderRepository.findByCode(companyId, requested);
+    if (!existing) return requested;
   }
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const candidate = await previewNextMasterCode(companyId, "FORWARDER");
+    const existing = await ForwarderRepository.findByCode(companyId, candidate);
+    if (!existing) return candidate;
+    await advanceMasterCodeSequence(companyId, "FORWARDER");
+  }
+  throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", "Could not generate a unique forwarder code.", {});
+}
 
-  const created = await ForwarderRepository.create({ companyId: actor.companyId, ...toData(input) });
+export async function createForwarder(actor: ActorContext, input: ForwarderInput) {
+  const code = await resolveForwarderCode(actor.companyId, input.code || undefined);
+
+  const created = await ForwarderRepository.create({ companyId: actor.companyId, ...toData({ ...input, code }) });
 
   await advanceMasterCodeSequence(actor.companyId, "FORWARDER");
 

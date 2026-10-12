@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
-vi.mock("@/core/numbering/DocumentNumberingService", () => ({ advanceMasterCodeSequence: vi.fn() }));
+vi.mock("@/core/numbering/DocumentNumberingService", () => ({
+  advanceMasterCodeSequence: vi.fn(),
+  previewNextMasterCode: vi.fn(),
+}));
 vi.mock("./forwarder.repository", () => ({
   ForwarderRepository: {
     findMany: vi.fn(),
@@ -13,6 +16,9 @@ vi.mock("./forwarder.repository", () => ({
   },
 }));
 
+const { previewNextMasterCode, advanceMasterCodeSequence } = await import(
+  "@/core/numbering/DocumentNumberingService"
+);
 const { ForwarderRepository } = await import("./forwarder.repository");
 const { createForwarder, updateForwarder, getForwarderById, setForwarderActiveStatus, deactivateForwarder } = await import(
   "./forwarder.service"
@@ -42,14 +48,39 @@ beforeEach(() => {
   vi.mocked(ForwarderRepository.create).mockReset();
   vi.mocked(ForwarderRepository.update).mockReset();
   vi.mocked(ForwarderRepository.findById).mockReset();
+  vi.mocked(previewNextMasterCode).mockReset();
+  vi.mocked(advanceMasterCodeSequence).mockReset();
 });
 
 describe("createForwarder", () => {
-  it("rejects a duplicate code without ever touching the database's create call", async () => {
-    vi.mocked(ForwarderRepository.findByCode).mockResolvedValue({ id: "existing-id" } as never);
+  it("auto-resolves next available code if the requested code is already taken", async () => {
+    vi.mocked(ForwarderRepository.findByCode)
+      .mockResolvedValueOnce({ id: "existing-id" } as never) // baseInput.code is taken
+      .mockResolvedValueOnce(null); // previewed FWD-00002 is free
+    vi.mocked(previewNextMasterCode).mockResolvedValue("FWD-00002");
+    vi.mocked(ForwarderRepository.create).mockResolvedValue({ id: "new-id", ...baseInput, code: "FWD-00002" } as never);
 
-    await expect(createForwarder(actor, baseInput)).rejects.toMatchObject({ code: "DUPLICATE_DOC_NUMBER" });
-    expect(ForwarderRepository.create).not.toHaveBeenCalled();
+    const result = await createForwarder(actor, baseInput);
+
+    expect(result.code).toBe("FWD-00002");
+    expect(ForwarderRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({ companyId: "co-1", code: "FWD-00002" })
+    );
+    expect(advanceMasterCodeSequence).toHaveBeenCalledWith("co-1", "FORWARDER");
+  });
+
+  it("auto-generates code if no code is provided", async () => {
+    vi.mocked(previewNextMasterCode).mockResolvedValue("FWD-00001");
+    vi.mocked(ForwarderRepository.findByCode).mockResolvedValue(null);
+    vi.mocked(ForwarderRepository.create).mockResolvedValue({ id: "new-id", ...baseInput, code: "FWD-00001" } as never);
+
+    const { code: _, ...inputWithoutCode } = baseInput;
+    const result = await createForwarder(actor, inputWithoutCode);
+
+    expect(result.code).toBe("FWD-00001");
+    expect(ForwarderRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({ companyId: "co-1", code: "FWD-00001" })
+    );
   });
 
   it("creates the forwarder with every field mapped, nulling blank optional fields", async () => {

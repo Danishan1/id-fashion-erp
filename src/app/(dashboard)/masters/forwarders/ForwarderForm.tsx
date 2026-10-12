@@ -55,7 +55,7 @@ export function ForwarderForm({ initialValues, submitUrl, method, onSuccess, onC
   useEffect(() => {
     if (initialValues) return;
     fetch("/api/v1/forwarders/next-code")
-      .then((res) => res.json())
+      .then((res) => (res.ok ? res.json() : null))
       .then((body) => {
         if (body?.data?.code) setValues((prev) => (prev.code ? prev : { ...prev, code: body.data.code }));
       })
@@ -99,13 +99,13 @@ export function ForwarderForm({ initialValues, submitUrl, method, onSuccess, onC
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       <div className="grid grid-cols-2 gap-4">
-        <FormField label="Code" htmlFor="code" required>
+        <FormField label="Code" htmlFor="code">
           <input
             id="code"
-            required
             readOnly
             disabled
             value={values.code}
+            placeholder="Auto-generated on save"
             title="Auto-generated — not editable"
             className={`${textInputClass()} cursor-not-allowed bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400`}
           />
