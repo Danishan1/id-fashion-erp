@@ -16,7 +16,7 @@ import { crmEventInputSchema, type CrmEventFilters, type CrmEventInput } from ".
  * correlation id is attached so an event can be traced back to the API call
  * and log lines that produced it.
  */
-export function buildCrmEventData(actor: CrmActor, input: CrmEventInput): Prisma.CrmEventUncheckedCreateInput {
+export function buildCrmEventData(actor: Pick<CrmActor, "companyId"> & { userId: string | null }, input: CrmEventInput): Prisma.CrmEventUncheckedCreateInput {
   const parsed = crmEventInputSchema.parse(input);
   return {
     companyId: actor.companyId,
@@ -49,6 +49,13 @@ export function presentCrmEvent(row: CrmEventRow) {
 }
 export type CrmTimelineEvent = ReturnType<typeof presentCrmEvent>;
 
+export interface CrmRelatedScope {
+  entityType: Prisma.CrmEventWhereInput["entityType"];
+  ids: string[];
+  /** Event types of these records left off this timeline (e.g. delivery receipts of a conversation). */
+  excludeEventTypes?: string[];
+}
+
 /**
  * `relatedScopes` adds other records' events (a company timeline that also
  * shows its contacts' and leads' events). `relatedEntityIds` widens a record timeline to records folded into it
@@ -59,7 +66,7 @@ export function buildCrmEventWhere(
   filters: CrmEventFilters,
   search?: string,
   relatedEntityIds: string[] = [],
-  relatedScopes: { entityType: Prisma.CrmEventWhereInput["entityType"]; ids: string[] }[] = []
+  relatedScopes: CrmRelatedScope[] = []
 ): Prisma.CrmEventWhereInput {
   const where: Prisma.CrmEventWhereInput = { companyId };
   const extra = relatedScopes.filter((r) => r.ids.length);
@@ -68,7 +75,7 @@ export function buildCrmEventWhere(
       {
         OR: [
           { entityType: filters.entityType as Prisma.CrmEventWhereInput["entityType"], entityId: { in: [filters.entityId, ...relatedEntityIds] } },
-          ...extra.map((r) => ({ entityType: r.entityType, entityId: { in: r.ids } })),
+          ...extra.map((r) => ({ entityType: r.entityType, entityId: { in: r.ids }, ...(r.excludeEventTypes?.length ? { eventType: { notIn: r.excludeEventTypes } } : {}) })),
         ],
       },
     ];
@@ -95,7 +102,7 @@ export async function listCrmEvents(
   filters: CrmEventFilters,
   query: ListQuery,
   relatedEntityIds: string[] = [],
-  relatedScopes: { entityType: Prisma.CrmEventWhereInput["entityType"]; ids: string[] }[] = []
+  relatedScopes: CrmRelatedScope[] = []
 ) {
   const where = buildCrmEventWhere(companyId, filters, query.search, relatedEntityIds, relatedScopes);
   const [rows, totalCount] = await Promise.all([

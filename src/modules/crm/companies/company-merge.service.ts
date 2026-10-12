@@ -178,6 +178,8 @@ export async function mergeCompanies(actor: CrmActor, raw: unknown) {
       opportunities: (await tx.crmOpportunity.updateMany({ where: { companyId: actor.companyId, crmCompanyId: merged.id }, data: { crmCompanyId: survivor.id } })).count,
       notes: (await tx.crmNote.updateMany({ where: { companyId: actor.companyId, entityType: "COMPANY", entityId: merged.id }, data: { entityId: survivor.id } })).count,
       activities: await CrmActivityRepository.moveToSurvivor(actor.companyId, "COMPANY", merged.id, survivor.id, tx),
+      // Phase 11: conversations linked to the merged company follow the survivor.
+      conversations: (await tx.crmConversation.updateMany({ where: { companyId: actor.companyId, crmCompanyId: merged.id }, data: { crmCompanyId: survivor.id } })).count,
       documents: (await tx.attachment.updateMany({ where: { companyId: actor.companyId, relatedModule: "CRM_COMPANY", relatedRecordId: merged.id }, data: { relatedRecordId: survivor.id } })).count,
       addresses: (await tx.crmAddress.updateMany({ where: { crmCompanyId: merged.id }, data: { crmCompanyId: survivor.id, isPrimary: false } })).count,
       tags: 0,

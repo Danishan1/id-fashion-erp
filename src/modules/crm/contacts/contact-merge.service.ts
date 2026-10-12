@@ -151,6 +151,9 @@ export async function mergeContacts(actor: CrmActor, raw: unknown) {
       opportunities: (await ContactMergeRepository.moveOpportunities(actor.companyId, merged.id, survivor.id, tx)).count,
       notes: (await ContactMergeRepository.moveNotes(actor.companyId, merged.id, survivor.id, tx)).count,
       activities: await CrmActivityRepository.moveToSurvivor(actor.companyId, "CONTACT", merged.id, survivor.id, tx),
+      // Phase 11: conversations and the identities that matched them follow the survivor.
+      conversations: (await tx.crmConversation.updateMany({ where: { companyId: actor.companyId, contactId: merged.id }, data: { contactId: survivor.id } })).count,
+      conversationParticipants: (await tx.crmConversationParticipant.updateMany({ where: { companyId: actor.companyId, contactId: merged.id }, data: { contactId: survivor.id } })).count,
       documents: (await ContactMergeRepository.moveDocuments(actor.companyId, merged.id, survivor.id, tx)).count,
       tags: await ContactMergeRepository.moveTags(actor.companyId, merged.id, survivor.id, actor.userId, tx),
       addresses: (await ContactMergeRepository.moveAddresses(merged.id, survivor.id, survivorAddresses.some((a) => a.isPrimary), tx)).count,

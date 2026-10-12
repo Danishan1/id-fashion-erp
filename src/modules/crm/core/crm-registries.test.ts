@@ -3,9 +3,11 @@ import { CRM_ENTITY_TYPE_CONFIG, CRM_ENTITY_TYPES, crmEntityHref, crmEntityLabel
 import { CRM_EVENT_TYPES, CRM_EVENT_TYPE_NAMES, crmEventCategory, crmEventLabel, isCrmEventType } from "./crm-event-types";
 
 describe("CRM entity type registry", () => {
-  it("covers every CRM record type (incl. Phase 09 activities) with labels and audit table names", () => {
-    expect(CRM_ENTITY_TYPES.sort()).toEqual(["ACTIVITY", "COMPANY", "CONTACT", "LEAD", "OPPORTUNITY"]);
+  it("covers every CRM record type (incl. Phase 09 activities, Phase 11 conversations, Phase 12 templates) with labels and audit table names", () => {
+    expect(CRM_ENTITY_TYPES.sort()).toEqual(["ACTIVITY", "COMPANY", "CONTACT", "CONVERSATION", "LEAD", "OPPORTUNITY", "TEMPLATE"]);
     expect(crmEntityHref("ACTIVITY", "abc")).toBe("/crm/activities/abc");
+    expect(crmEntityHref("CONVERSATION", "abc")).toBe("/crm/inbox/abc");
+    expect(crmEntityHref("TEMPLATE", "abc")).toBe("/crm/templates/abc");
     for (const type of CRM_ENTITY_TYPES) {
       expect(CRM_ENTITY_TYPE_CONFIG[type].tableName).toMatch(/^crm_/);
     }
@@ -30,7 +32,8 @@ describe("CRM entity type registry", () => {
 describe("CRM event type registry", () => {
   it("uses <entity>.<verb> names whose prefix matches the declared entity type", () => {
     // Appointments are activities (Phase 10): appointment.* events are stored on the ACTIVITY record.
-    const ALIASES: Record<string, string> = { APPOINTMENT: "ACTIVITY" };
+    // Messages belong to conversations (Phase 11): message.* events are stored on the CONVERSATION record.
+    const ALIASES: Record<string, string> = { APPOINTMENT: "ACTIVITY", MESSAGE: "CONVERSATION" };
     for (const name of CRM_EVENT_TYPE_NAMES) {
       expect(name).toMatch(/^[a-z_]+\.[a-z_]+$/);
       const prefix = name.split(".")[0].toUpperCase();
