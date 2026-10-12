@@ -3,6 +3,8 @@
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { ActionMenu } from "@/components/ui/ActionMenu";
+import { RowAction } from "@/components/ui/RowAction";
+import { EditIcon } from "@/components/ui/icons";
 import { DataTable } from "@/components/ui/DataTable";
 import { Modal } from "@/components/ui/Modal";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
@@ -139,12 +141,10 @@ function CustomersListContent() {
         searchPlaceholder="Search by name or code…"
         rowActions={(row) => (
           <>
+            <RowAction icon={<EditIcon />} label="Edit" onClick={() => openEdit(row.id)} />
             <BuyersSection customerId={row.id} />
             <ActionMenu
-              items={[
-                { label: "Edit", onClick: () => openEdit(row.id) },
-                { label: "Customer 360", onClick: () => router.push(`/masters/customers/${row.id}/360`) },
-              ]}
+              items={[{ label: "Customer 360", onClick: () => router.push(`/masters/customers/${row.id}/360`) }]}
             />
           </>
         )}
