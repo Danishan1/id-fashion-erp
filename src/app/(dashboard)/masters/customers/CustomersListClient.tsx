@@ -28,6 +28,7 @@ interface CustomerDetail {
   phone: string | null;
   email: string | null;
   billingAddress: string | null;
+  shippingAddress: string | null;
   city: string | null;
   pinCode: string | null;
   country: string | null;
@@ -47,6 +48,7 @@ function toFormValues(customer: CustomerDetail): CustomerFormValues {
     phone: customer.phone ?? "",
     email: customer.email ?? "",
     billingAddress: customer.billingAddress ?? "",
+    shippingAddress: customer.shippingAddress ?? "",
     city: customer.city ?? "",
     pinCode: customer.pinCode ?? "",
     country: customer.country ?? "",
