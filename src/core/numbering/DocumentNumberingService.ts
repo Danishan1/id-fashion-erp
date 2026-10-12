@@ -36,10 +36,11 @@ const PREFIX_BY_DOCUMENT_TYPE: Record<DocumentType, string> = {
   CRM_LEAD: "LEAD",
   CRM_OPPORTUNITY: "OPP",
   CAMPAIGN: "CAMP",
+  FORWARDER: "FWD",
 };
 
 /** DocumentTypes that represent master-data codes, not transactional documents. */
-export const MASTER_CODE_DOCUMENT_TYPES = ["CUSTOMER", "SUPPLIER", "EMPLOYEE", "STYLE", "MATERIAL", "CONTRACTOR", "FABRIC_ROLL", "SKU"] as const;
+export const MASTER_CODE_DOCUMENT_TYPES = ["CUSTOMER", "SUPPLIER", "EMPLOYEE", "STYLE", "MATERIAL", "CONTRACTOR", "FABRIC_ROLL", "SKU", "FORWARDER"] as const;
 export type MasterCodeDocumentType = (typeof MASTER_CODE_DOCUMENT_TYPES)[number];
 
 // Master codes never reset per fiscal year (unlike invoices/orders) — every

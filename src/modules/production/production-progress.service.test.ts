@@ -7,10 +7,17 @@ vi.mock("@/core/db/client", () => ({
     jobOrder: { findMany: vi.fn() },
     productionStageTransaction: { groupBy: vi.fn() },
     salesOrderItem: { findFirst: vi.fn() },
+    qcInspection: { findMany: vi.fn() },
+    inventoryTransaction: { groupBy: vi.fn() },
   },
 }));
 
+vi.mock("@/modules/inventory/inventory.service", () => ({
+  getAvailableQuantity: vi.fn(),
+}));
+
 const { prisma } = await import("@/core/db/client");
+const { getAvailableQuantity } = await import("@/modules/inventory/inventory.service");
 const { getProductionOrderProgress, getSalesOrderItemProductionSummary } = await import("./production-progress.service");
 
 const COMPANY = "co-1";
@@ -38,6 +45,9 @@ beforeEach(() => {
   vi.mocked(prisma.jobOrder.findMany).mockReset().mockResolvedValue([]);
   vi.mocked(prisma.productionStageTransaction.groupBy).mockReset().mockResolvedValue([]);
   vi.mocked(prisma.salesOrderItem.findFirst).mockReset();
+  vi.mocked(prisma.qcInspection.findMany).mockReset().mockResolvedValue([]);
+  vi.mocked(prisma.inventoryTransaction.groupBy).mockReset().mockResolvedValue([]);
+  vi.mocked(getAvailableQuantity).mockReset().mockResolvedValue(0);
 });
 
 describe("getProductionOrderProgress", () => {
@@ -243,5 +253,67 @@ describe("getSalesOrderItemProductionSummary", () => {
     const summary = await getSalesOrderItemProductionSummary(COMPANY, "soi-1");
     expect(summary.totalProduced).toBe(110);
     expect(summary.remainingProduction).toBe(0);
+  });
+
+  it("sums QC-Accepted/Rejected/Damaged from real QcInspection rows, independent of JobOrder's own completedQuantity (proves this is NOT JobOrder.qcPassedQuantity)", async () => {
+    vi.mocked(prisma.salesOrderItem.findFirst).mockResolvedValue({ id: "soi-1", productId: "prod-1", breakdown: [{ orderedQuantity: 100 }] } as never);
+    vi.mocked(prisma.productionOrder.findMany).mockResolvedValue([{ id: "po-1", orderNumber: "PO-001", plannedQuantity: 100 }] as never);
+    vi.mocked(prisma.lot.findMany).mockResolvedValue([lot({ productionOrderId: "po-1" })] as never);
+    // JobOrder's own completedQuantity (60) is deliberately different from
+    // what QC actually accepted (45) + rejected (10) + damaged (5) — a real
+    // inspection never has to exactly equal the job order's own completed
+    // figure (e.g. a partial re-inspection, or inspecting less than the
+    // full completed batch in one pass).
+    vi.mocked(prisma.jobOrder.findMany).mockResolvedValue([jobOrder({ completedQuantity: 60, productionStage: { isFinal: true } })] as never);
+    vi.mocked(prisma.qcInspection.findMany).mockResolvedValue([
+      { lotId: "lot-1", acceptedQuantity: 45, rejectedQuantity: 10, damagedQuantity: 5 },
+    ] as never);
+
+    const summary = await getSalesOrderItemProductionSummary(COMPANY, "soi-1");
+    expect(summary.totalQcAccepted).toBe(45);
+    expect(summary.totalQcRejected).toBe(10);
+    expect(summary.totalQcDamaged).toBe(5);
+    // Confirms the figure genuinely diverges from the JobOrder-derived
+    // producedQuantity (60) — if this were silently re-reading
+    // JobOrder.qcPassedQuantity or completedQuantity instead, it would
+    // equal 60, not 45.
+    expect(summary.totalProduced).toBe(60);
+  });
+
+  it("sums QC figures across multiple inspection rows on the same lot", async () => {
+    vi.mocked(prisma.salesOrderItem.findFirst).mockResolvedValue({ id: "soi-1", productId: "prod-1", breakdown: [{ orderedQuantity: 100 }] } as never);
+    vi.mocked(prisma.productionOrder.findMany).mockResolvedValue([{ id: "po-1", orderNumber: "PO-001", plannedQuantity: 100 }] as never);
+    vi.mocked(prisma.lot.findMany).mockResolvedValue([lot({ productionOrderId: "po-1" })] as never);
+    vi.mocked(prisma.jobOrder.findMany).mockResolvedValue([jobOrder({ completedQuantity: 100, productionStage: { isFinal: true } })] as never);
+    vi.mocked(prisma.qcInspection.findMany).mockResolvedValue([
+      { lotId: "lot-1", acceptedQuantity: 20, rejectedQuantity: 0, damagedQuantity: 0 },
+      { lotId: "lot-1", acceptedQuantity: 25, rejectedQuantity: 3, damagedQuantity: 2 },
+    ] as never);
+
+    const summary = await getSalesOrderItemProductionSummary(COMPANY, "soi-1");
+    expect(summary.totalQcAccepted).toBe(45);
+    expect(summary.totalQcRejected).toBe(3);
+    expect(summary.totalQcDamaged).toBe(2);
+  });
+
+  it("leaves availableStock null when no warehouseId is given, and never calls getAvailableQuantity", async () => {
+    vi.mocked(prisma.salesOrderItem.findFirst).mockResolvedValue({ id: "soi-1", productId: "prod-1", breakdown: [{ orderedQuantity: 100 }] } as never);
+    vi.mocked(prisma.productionOrder.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.lot.findMany).mockResolvedValue([]);
+
+    const summary = await getSalesOrderItemProductionSummary(COMPANY, "soi-1");
+    expect(summary.availableStock).toBeNull();
+    expect(getAvailableQuantity).not.toHaveBeenCalled();
+  });
+
+  it("looks up real available stock via the existing getAvailableQuantity() for this line's own product when a warehouseId is given", async () => {
+    vi.mocked(prisma.salesOrderItem.findFirst).mockResolvedValue({ id: "soi-1", productId: "prod-1", breakdown: [{ orderedQuantity: 100 }] } as never);
+    vi.mocked(prisma.productionOrder.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.lot.findMany).mockResolvedValue([]);
+    vi.mocked(getAvailableQuantity).mockResolvedValue(237.5);
+
+    const summary = await getSalesOrderItemProductionSummary(COMPANY, "soi-1", "wh-1");
+    expect(summary.availableStock).toBe(237.5);
+    expect(getAvailableQuantity).toHaveBeenCalledWith(COMPANY, "prod-1", "wh-1");
   });
 });

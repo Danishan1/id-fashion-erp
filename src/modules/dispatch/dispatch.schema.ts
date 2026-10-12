@@ -57,6 +57,22 @@ export const dispatchSchema = z.object({
   transporterName: z.string().max(200).optional().or(z.literal("")),
   vehicleNumber: z.string().max(100).optional().or(z.literal("")),
   trackingNumber: z.string().max(200).optional().or(z.literal("")),
+  // Forwarder Master integration (2026-10-10) — forwarderId is a live FK
+  // (Masters → Forwarders), the rest are genuinely per-shipment facts frozen
+  // on this Dispatch row directly, same split already used for transporterName/
+  // vehicleNumber/trackingNumber above.
+  forwarderId: z.string().uuid().optional().or(z.literal("")),
+  lrNumber: z.string().max(200).optional().or(z.literal("")),
+  awbNumber: z.string().max(200).optional().or(z.literal("")),
+  driverDetails: z.string().max(500).optional().or(z.literal("")),
+  freightCharges: z.coerce.number().nonnegative().optional(),
+  expectedDeliveryDate: z.string().optional().or(z.literal("")),
+  shipmentRemarks: z.string().max(1000).optional().or(z.literal("")),
+  // Release-to-Dispatch gate (2026-10-10) — supplying a reason here lets a
+  // Management-level user (production/approve) proceed despite a line's
+  // Production Order not yet being marked released; omitted/blank means no
+  // override is being requested. See dispatch.service.ts's own gate check.
+  overrideProductionReleaseReason: z.string().max(1000).optional().or(z.literal("")),
   items: z.array(dispatchItemInputSchema).min(1, "At least one line is required"),
 });
 

@@ -23,6 +23,16 @@ export default async function EditDispatchPage({ params }: { params: Promise<{ i
     transporterName: dispatch.transporterName,
     vehicleNumber: dispatch.vehicleNumber,
     trackingNumber: dispatch.trackingNumber,
+    forwarderId: dispatch.forwarderId,
+    lrNumber: dispatch.lrNumber,
+    awbNumber: dispatch.awbNumber,
+    driverDetails: dispatch.driverDetails,
+    // Decimal/Date aren't directly serializable across the RSC boundary —
+    // converted explicitly here, same as dispatchDate's own .toISOString()
+    // right above, matching this project's established convention.
+    freightCharges: dispatch.freightCharges != null ? Number(dispatch.freightCharges) : null,
+    expectedDeliveryDate: dispatch.expectedDeliveryDate ? dispatch.expectedDeliveryDate.toISOString() : null,
+    shipmentRemarks: dispatch.shipmentRemarks,
     items: dispatch.items.map((item) => ({
       salesOrderItemId: item.salesOrderItemId,
       dispatchedQuantity: item.dispatchedQuantity,

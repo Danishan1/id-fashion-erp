@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "concurrently -n next,worker -c blue,green \"npm:dev:next\" \"npm:worker\"",
     "dev:next": "next dev",
-    "build": "next build",
+    "build": "cross-env NODE_OPTIONS=--max-old-space-size=4096 next build",
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
@@ -45,6 +45,7 @@
     "@types/react-dom": "^19",
     "@vitest/ui": "^4.1.10",
     "concurrently": "^10.0.5",
+    "cross-env": "^10.1.0",
     "eslint": "^9",
     "eslint-config-next": "16.3.1",
     "jsdom": "^30.0.1",

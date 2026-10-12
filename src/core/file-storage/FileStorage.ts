@@ -107,7 +107,16 @@ export async function saveFile(
 
   const extension = path.extname(originalFileName);
   const storageKey = `${randomUUID()}${extension}`;
-  const destinationPath = path.join(STORAGE_ROOT, storageKey);
+  // STORAGE_ROOT is deliberately env-driven (see its own comment above) so
+  // ops can point storage at a different disk/mount per deployment — the
+  // path can never be statically narrowed to a fixed subfolder without
+  // removing that. turbopackIgnore tells Next.js's build-time file tracer
+  // this dynamic access is intentional; it has no effect on the actual
+  // runtime fs call. Currently inert either way (this project has no
+  // `output: "standalone"` configured, so the whole-project-tracing this
+  // silences doesn't run today) — added so it's already correct if/when that
+  // changes.
+  const destinationPath = path.join(/* turbopackIgnore: true */ STORAGE_ROOT, storageKey);
 
   await mkdir(STORAGE_ROOT, { recursive: true });
   await writeFile(destinationPath, buffer);
@@ -116,9 +125,9 @@ export async function saveFile(
 }
 
 export async function readStoredFile(storageKey: string): Promise<Buffer> {
-  return readFile(path.join(STORAGE_ROOT, storageKey));
+  return readFile(path.join(/* turbopackIgnore: true */ STORAGE_ROOT, storageKey));
 }
 
 export async function deleteStoredFile(storageKey: string): Promise<void> {
-  await unlink(path.join(STORAGE_ROOT, storageKey));
+  await unlink(path.join(/* turbopackIgnore: true */ STORAGE_ROOT, storageKey));
 }

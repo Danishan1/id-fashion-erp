@@ -24,7 +24,12 @@ vi.mock("./dispatch.repository", () => ({
   },
 }));
 vi.mock("@/core/db/client", () => ({
-  prisma: { $transaction: vi.fn(), dispatchItem: { aggregate: vi.fn() }, product: { findFirst: vi.fn() } },
+  prisma: {
+    $transaction: vi.fn(),
+    dispatchItem: { aggregate: vi.fn() },
+    product: { findFirst: vi.fn() },
+    productionOrder: { findMany: vi.fn() },
+  },
 }));
 vi.mock("@/core/barcode/barcode.service", () => ({ replaceCartonBarcodes: vi.fn() }));
 vi.mock("@/core/dispatch-settings/DispatchSettingsService", async () => {
@@ -35,6 +40,7 @@ vi.mock("@/core/dispatch-settings/DispatchSettingsService", async () => {
 });
 
 const { prisma } = await import("@/core/db/client");
+const { writeAuditLog } = await import("@/core/audit/AuditLogger");
 const { PermissionService } = await import("@/core/rbac/PermissionService");
 const { SalesOrderRepository } = await import("@/modules/sales-orders/sales-order.repository");
 const { recordInventoryTransaction, getAvailableQuantity } = await import("@/modules/inventory/inventory.service");
@@ -101,6 +107,11 @@ beforeEach(() => {
   vi.mocked(prisma.dispatchItem.aggregate).mockReset().mockResolvedValue({ _sum: { dispatchedQuantity: 0 } } as never);
   vi.mocked(prisma.product.findFirst).mockReset().mockResolvedValue({ styleName: "Gym Lowers" } as never);
   vi.mocked(replaceCartonBarcodes).mockReset();
+  // Release-to-Dispatch gate (2026-10-10) — default to "no unreleased
+  // Production Orders found" so every pre-existing test (none of which know
+  // about this gate) keeps passing unmodified; the gate's own dedicated
+  // tests override this per-case.
+  vi.mocked(prisma.productionOrder.findMany).mockReset().mockResolvedValue([]);
 });
 
 describe("createDispatch — order eligibility and remaining-quantity guard", () => {
@@ -302,6 +313,116 @@ describe("createDispatch — order eligibility and remaining-quantity guard", ()
         expect.anything(),
         [expect.objectContaining({ regularDispatchQuantity: 20, extraDispatchQuantity: 0, extraDispatchReason: null })]
       );
+    });
+  });
+
+  describe("Release-to-Dispatch gate (2026-10-10)", () => {
+    const baseOrder = {
+      id: "so-1",
+      status: "CONFIRMED",
+      customerId: "cust-1",
+      items: [orderItem("item-1", 0, [50])],
+    };
+    const baseInput = {
+      salesOrderId: "so-1",
+      warehouseId: "wh-1",
+      dispatchDate: "2026-08-24",
+      deliveryAddress: "123 Street",
+      items: [{ salesOrderItemId: "item-1", dispatchedQuantity: 10 }],
+    };
+
+    it("is silently skipped when the line has no Production Order at all (Make-to-Stock / untracked)", async () => {
+      vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue(baseOrder as never);
+      vi.mocked(prisma.productionOrder.findMany).mockResolvedValue([]);
+      vi.mocked(DispatchRepository.createWithItems).mockResolvedValue({ id: "disp-1" } as never);
+
+      await createDispatch(actor, baseInput as never);
+
+      expect(DispatchRepository.createWithItems).toHaveBeenCalled();
+    });
+
+    it("blocks creation when a non-cancelled Production Order for the line hasn't been released, naming it", async () => {
+      vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue(baseOrder as never);
+      vi.mocked(prisma.productionOrder.findMany).mockResolvedValue([
+        { id: "po-1", orderNumber: "PROD-2026-00001", product: { styleName: "Kurta" } },
+      ] as never);
+
+      await expect(createDispatch(actor, baseInput as never)).rejects.toMatchObject({
+        code: "PRODUCTION_NOT_RELEASED_TO_DISPATCH",
+      });
+      expect(DispatchRepository.createWithItems).not.toHaveBeenCalled();
+    });
+
+    it("never queries for a line whose dispatchedQuantity is 0 (nothing being shipped on it)", async () => {
+      vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue({
+        ...baseOrder,
+        items: [orderItem("item-1", 0, [50]), orderItem("item-2", 0, [30])],
+      } as never);
+      vi.mocked(DispatchRepository.createWithItems).mockResolvedValue({ id: "disp-1" } as never);
+
+      await createDispatch(actor, {
+        ...baseInput,
+        items: [
+          { salesOrderItemId: "item-1", dispatchedQuantity: 10 },
+          { salesOrderItemId: "item-2", dispatchedQuantity: 0 },
+        ],
+      } as never);
+
+      expect(prisma.productionOrder.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ salesOrderItemId: { in: ["item-1"] } }) })
+      );
+    });
+
+    it("treats a CLOSED Production Order as implicitly released (closing already requires full completion)", async () => {
+      vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue(baseOrder as never);
+      // The real repository query already excludes CLOSED/CANCELLED — this
+      // test proves the exclusion is actually wired into the where clause.
+      vi.mocked(prisma.productionOrder.findMany).mockImplementation((async (args: { where: { status: { notIn: string[] } } }) => {
+        expect(args.where.status.notIn).toEqual(["CANCELLED", "CLOSED"]);
+        return [];
+      }) as never);
+      vi.mocked(DispatchRepository.createWithItems).mockResolvedValue({ id: "disp-1" } as never);
+
+      await createDispatch(actor, baseInput as never);
+
+      expect(DispatchRepository.createWithItems).toHaveBeenCalled();
+    });
+
+    it("proceeds with an override reason, asserting production/approve, and audits the override", async () => {
+      vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue(baseOrder as never);
+      vi.mocked(prisma.productionOrder.findMany).mockResolvedValue([
+        { id: "po-1", orderNumber: "PROD-2026-00001", product: { styleName: "Kurta" } },
+      ] as never);
+      vi.mocked(DispatchRepository.createWithItems).mockResolvedValue({ id: "disp-1" } as never);
+
+      await createDispatch(actor, {
+        ...baseInput,
+        overrideProductionReleaseReason: "Buyer confirmed shipment on a sample basis before full QC sign-off.",
+      } as never);
+
+      expect(PermissionService.assert).toHaveBeenCalledWith("user-1", "production", "approve");
+      expect(DispatchRepository.createWithItems).toHaveBeenCalled();
+      expect(writeAuditLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          recordId: "disp-1",
+          newValues: expect.objectContaining({ overriddenProductionOrderIds: ["po-1"] }),
+        })
+      );
+    });
+
+    it("still blocks when an override reason is supplied but the actor lacks production/approve", async () => {
+      vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue(baseOrder as never);
+      vi.mocked(prisma.productionOrder.findMany).mockResolvedValue([
+        { id: "po-1", orderNumber: "PROD-2026-00001", product: { styleName: "Kurta" } },
+      ] as never);
+      vi.mocked(PermissionService.assert).mockRejectedValue(
+        Object.assign(new Error("denied"), { code: "PERMISSION_DENIED" })
+      );
+
+      await expect(
+        createDispatch(actor, { ...baseInput, overrideProductionReleaseReason: "Reason." } as never)
+      ).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+      expect(DispatchRepository.createWithItems).not.toHaveBeenCalled();
     });
   });
 });

@@ -62,6 +62,11 @@ export type BusinessRuleErrorCode =
   | "SUBMODULE_LOCKED"
   | "AI_SERVICE_ERROR"
   | "AI_INVALID_RESPONSE"
+  // Dispatch/Production/Forwarder/Barcode initiative (2026-10-10): a Dispatch
+  // line's Production Order exists but hasn't been marked "Released to
+  // Dispatch" yet — the client may retry with an explicit override reason
+  // (requires production/approve).
+  | "PRODUCTION_NOT_RELEASED_TO_DISPATCH"
   | "VALIDATION_ERROR"
   | "NOT_FOUND";
 
@@ -113,6 +118,7 @@ const HTTP_STATUS_BY_CODE: Record<BusinessRuleErrorCode, number> = {
   SUBMODULE_LOCKED: 409,
   AI_SERVICE_ERROR: 502,
   AI_INVALID_RESPONSE: 502,
+  PRODUCTION_NOT_RELEASED_TO_DISPATCH: 409,
   VALIDATION_ERROR: 400,
   NOT_FOUND: 404,
 };
