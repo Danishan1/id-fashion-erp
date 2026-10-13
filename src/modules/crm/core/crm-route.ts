@@ -4,6 +4,8 @@ import { PermissionService } from "@/core/rbac/PermissionService";
 import { handleApiError, requireSession } from "@/lib/api-route";
 import { buildListMeta, type ListQuery } from "@/lib/list-query";
 import type { CrmActor } from "./crm-actor";
+// Phase 18: after-commit kick so workflows react within seconds (best-effort, see the file).
+import "../workflows/workflow-kick";
 
 /** "crm" for records, "crm_settings" for configuration screens. */
 export type CrmPermission = Action | { module: Extract<Module, "crm" | "crm_settings">; action: Action };
@@ -26,7 +28,7 @@ export interface CrmRouteContext<P> {
  * Uses the existing ERP permission module "crm" — the CRM never defines its own
  * permission system. Finer-grained modules can be split out later.
  */
-export function crmRoute<P extends Record<string, string> = Record<string, never>>(
+export function crmRoute<P extends Record<string, string | string[]> = Record<string, never>>(
   permission: CrmPermission,
   handler: (ctx: CrmRouteContext<P>) => Promise<Response>
 

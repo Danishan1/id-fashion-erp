@@ -43,6 +43,8 @@ import {
   type TemplateFilter,
 } from "./template.schema";
 import { templateUsage, templateUsageCounts } from "./template-usage";
+// Phase 18: workflows using a template count as live references (blocks archiving).
+import "../workflows/workflow-template-usage";
 
 /**
  * CRM message templates (Phase 12) — the one service every sender uses:

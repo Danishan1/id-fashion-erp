@@ -90,6 +90,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Calendar", href: "/crm/calendar", modules: ["crm"] },
       { label: "Activities", href: "/crm/activities", modules: ["crm"] },
 
+      { label: "Workflows", href: "/crm/workflows", modules: ["crm_settings"] },
       { label: "Activity Log", href: "/crm/activity", modules: ["crm"] },
       { label: "Settings", href: "/crm/settings", modules: ["crm_settings"] },
     ],

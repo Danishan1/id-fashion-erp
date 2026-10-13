@@ -140,6 +140,9 @@ model Company {
   crmMessages                         CrmMessage[]
   crmMessageTemplates                 CrmMessageTemplate[]
   crmMessageTemplateVersions          CrmMessageTemplateVersion[]
+  crmWorkflows                        CrmWorkflow[]
+  crmWorkflowVersions                 CrmWorkflowVersion[]
+  crmWorkflowExecutions               CrmWorkflowExecution[]
   crmUserPreferences                  CrmUserPreference[]
   crmCompanyMerges                    CrmCompanyMerge[]
   attendanceRecords                   AttendanceRecord[]
@@ -391,6 +394,9 @@ model User {
   crmMessagesSent                            CrmMessage[]                         @relation("CrmMessageSender")
   crmMessageTemplatesCreated                 CrmMessageTemplate[]                 @relation("CrmMessageTemplateCreatedBy")
   crmMessageTemplateVersionsCreated          CrmMessageTemplateVersion[]          @relation("CrmMessageTemplateVersionCreatedBy")
+  crmWorkflowsCreated                        CrmWorkflow[]                        @relation("CrmWorkflowCreatedBy")
+  crmWorkflowsRunAs                          CrmWorkflow[]                        @relation("CrmWorkflowRunAs")
+  crmWorkflowVersionsCreated                 CrmWorkflowVersion[]                 @relation("CrmWorkflowVersionCreatedBy")
   crmPreferences                             CrmUserPreference[]
   crmSavedViews                              CrmSavedView[]                       @relation("CrmSavedViewOwner")
   crmImportJobsCreated                       CrmImportJob[]                       @relation("CrmImportJobCreatedBy")
@@ -8100,6 +8106,8 @@ enum CrmEntityType {
   CONVERSATION
   // Phase 12: message templates. template.* events form the template's own history.
   TEMPLATE
+  // Phase 18: workflows. workflow.* events form the workflow's own history.
+  WORKFLOW
 }
 
 // Append-only business event log for the CRM. One row per thing that
@@ -11623,4 +11631,202 @@ model JobWorkOrderExtraCharge {
 
   @@index([jobWorkOrderId])
   @@map("job_work_order_extra_charges")
+}
+
+// ─────────────────────────────────────────────────────────────
+// CRM — Phase 18 Workflow Automation Engine (2026-10-13).
+// See docs/crm/PHASE_18_WORKFLOW_AUTOMATION.md. Trigger → Conditions →
+// Branch → Actions → Wait → Goal/Exit, stored as a JSON graph on an
+// immutable version; executions are persistent state the worker resumes.
+// ─────────────────────────────────────────────────────────────
+
+enum CrmWorkflowStatus {
+  DRAFT
+  PUBLISHED
+  PAUSED
+  DISABLED
+  ARCHIVED
+}
+
+enum CrmWorkflowVersionStatus {
+  DRAFT
+  PUBLISHED
+  SUPERSEDED
+}
+
+enum CrmWorkflowExecutionStatus {
+  QUEUED
+  RUNNING
+  WAITING
+  PAUSED
+  COMPLETED
+  FAILED
+  CANCELLED
+  EXITED
+}
+
+model CrmWorkflow {
+  id                 String            @id @default(uuid()) @db.Uuid
+  companyId          String            @map("company_id") @db.Uuid
+  name               String
+  description        String?
+  status             CrmWorkflowStatus @default(DRAFT)
+  // Trigger key of the published version (or the draft until first publish) — for filtering.
+  triggerType        String?           @map("trigger_type")
+  publishedVersionId String?           @unique @map("published_version_id") @db.Uuid
+  draftVersionId     String?           @unique @map("draft_version_id") @db.Uuid
+  // Execution identity: actions run with this ERP user's permissions and record visibility.
+  runAsUserId        String?           @map("run_as_user_id") @db.Uuid
+  // AES-GCM (core/security/encryption) HMAC secret for webhook actions; never returned in lists.
+  webhookSecretEnc   String?           @map("webhook_secret_enc")
+  lastTriggeredAt    DateTime?         @map("last_triggered_at")
+  publishedAt        DateTime?         @map("published_at")
+  publishedByUserId  String?           @map("published_by_user_id") @db.Uuid
+  pausedAt           DateTime?         @map("paused_at")
+  disabledAt         DateTime?         @map("disabled_at")
+  archivedAt         DateTime?         @map("archived_at")
+  createdByUserId    String            @map("created_by_user_id") @db.Uuid
+  updatedByUserId    String?           @map("updated_by_user_id") @db.Uuid
+  version            Int               @default(1)
+  createdAt          DateTime          @default(now()) @map("created_at")
+  updatedAt          DateTime          @updatedAt @map("updated_at")
+
+  company          Company                @relation(fields: [companyId], references: [id])
+  createdBy        User                   @relation("CrmWorkflowCreatedBy", fields: [createdByUserId], references: [id])
+  runAsUser        User?                  @relation("CrmWorkflowRunAs", fields: [runAsUserId], references: [id], onDelete: SetNull)
+  publishedVersion CrmWorkflowVersion?    @relation("CrmWorkflowPublishedVersion", fields: [publishedVersionId], references: [id], onDelete: SetNull)
+  draftVersion     CrmWorkflowVersion?    @relation("CrmWorkflowDraftVersion", fields: [draftVersionId], references: [id], onDelete: SetNull)
+  versions         CrmWorkflowVersion[]   @relation("CrmWorkflowVersions")
+  executions       CrmWorkflowExecution[]
+
+  @@index([companyId, status, triggerType])
+  @@map("crm_workflows")
+}
+
+/// A workflow graph. DRAFT is editable; PUBLISHED / SUPERSEDED rows are
+/// immutable (a database trigger refuses changes to the graph and deletes).
+model CrmWorkflowVersion {
+  id                String                   @id @default(uuid()) @db.Uuid
+  companyId         String                   @map("company_id") @db.Uuid
+  workflowId        String                   @map("workflow_id") @db.Uuid
+  versionNumber     Int                      @map("version_number")
+  status            CrmWorkflowVersionStatus @default(DRAFT)
+  triggerType       String?                  @map("trigger_type")
+  // WorkflowDefinition (workflow-definition.ts): { schemaVersion, trigger, entryNodeId, nodes, settings }.
+  definition        Json
+  definitionHash    String                   @map("definition_hash")
+  changeNote        String?                  @map("change_note")
+  createdByUserId   String                   @map("created_by_user_id") @db.Uuid
+  createdAt         DateTime                 @default(now()) @map("created_at")
+  updatedAt         DateTime                 @updatedAt @map("updated_at")
+  publishedAt       DateTime?                @map("published_at")
+  publishedByUserId String?                  @map("published_by_user_id") @db.Uuid
+
+  company     Company                @relation(fields: [companyId], references: [id])
+  workflow    CrmWorkflow            @relation("CrmWorkflowVersions", fields: [workflowId], references: [id], onDelete: Restrict)
+  createdBy   User                   @relation("CrmWorkflowVersionCreatedBy", fields: [createdByUserId], references: [id])
+  publishedOf CrmWorkflow?           @relation("CrmWorkflowPublishedVersion")
+  draftOf     CrmWorkflow?           @relation("CrmWorkflowDraftVersion")
+  executions  CrmWorkflowExecution[]
+
+  @@unique([workflowId, versionNumber])
+  @@index([companyId, status, triggerType])
+  @@map("crm_workflow_versions")
+}
+
+/// One run of one workflow version for one record. The scheduler resumes
+/// it from `current_node_id` when `next_run_at` passes (waits, retries).
+model CrmWorkflowExecution {
+  id                String                     @id @default(uuid()) @db.Uuid
+  companyId         String                     @map("company_id") @db.Uuid
+  workflowId        String                     @map("workflow_id") @db.Uuid
+  workflowVersionId String                     @map("workflow_version_id") @db.Uuid
+  status            CrmWorkflowExecutionStatus @default(QUEUED)
+  // LIVE = real triggers / manual runs; TEST = dry run (no side effects, never sends).
+  mode              String                     @default("LIVE")
+  triggerType       String                     @map("trigger_type")
+  // The crm_events row that started it (no FK: events are append-only history).
+  triggerEventId    String?                    @map("trigger_event_id") @db.Uuid
+  entityType        CrmEntityType?             @map("entity_type")
+  entityId          String?                    @map("entity_id") @db.Uuid
+  // evt:<eventId> / manual:<uuid> / test:<uuid> — unique per company: a trigger never starts twice.
+  idempotencyKey    String                     @map("idempotency_key")
+  parentExecutionId String?                    @map("parent_execution_id") @db.Uuid
+  // 0 = started by a person / outside event; n = caused by an action of a depth n-1 execution.
+  depth             Int                        @default(0)
+  currentNodeId     String?                    @map("current_node_id")
+  // { trigger: { eventType, payload, actorUserId, occurredAt }, visits: { nodeId: n } }
+  context           Json                       @default("{}")
+  nextRunAt         DateTime?                  @map("next_run_at")
+  lockedAt          DateTime?                  @map("locked_at")
+  lockToken         String?                    @map("lock_token") @db.Uuid
+  stepCount         Int                        @default(0) @map("step_count")
+  retryCount        Int                        @default(0) @map("retry_count")
+  // COMPLETED / GOAL_REACHED / EXITED / FAILED / CANCELLED (finished executions).
+  outcome           String?
+  exitReason        String?                    @map("exit_reason")
+  errorCode         String?                    @map("error_code")
+  errorMessage      String?                    @map("error_message")
+  runAsUserId       String?                    @map("run_as_user_id") @db.Uuid
+  startedByUserId   String?                    @map("started_by_user_id") @db.Uuid
+  createdAt         DateTime                   @default(now()) @map("created_at")
+  startedAt         DateTime?                  @map("started_at")
+  finishedAt        DateTime?                  @map("finished_at")
+  updatedAt         DateTime                   @updatedAt @map("updated_at")
+
+  company         Company                    @relation(fields: [companyId], references: [id])
+  workflow        CrmWorkflow                @relation(fields: [workflowId], references: [id], onDelete: Restrict)
+  workflowVersion CrmWorkflowVersion         @relation(fields: [workflowVersionId], references: [id], onDelete: Restrict)
+  parent          CrmWorkflowExecution?      @relation("CrmWorkflowExecutionParent", fields: [parentExecutionId], references: [id], onDelete: SetNull)
+  children        CrmWorkflowExecution[]     @relation("CrmWorkflowExecutionParent")
+  steps           CrmWorkflowExecutionStep[]
+
+  @@unique([companyId, idempotencyKey])
+  @@index([companyId, workflowId, createdAt])
+  @@index([status, nextRunAt])
+  @@index([companyId, entityType, entityId])
+  @@index([workflowId, entityId, status])
+  @@map("crm_workflow_executions")
+}
+
+/// The execution trace: one row per node visit (and per retry attempt).
+model CrmWorkflowExecutionStep {
+  id             String    @id @default(uuid()) @db.Uuid
+  companyId      String    @map("company_id") @db.Uuid
+  executionId    String    @map("execution_id") @db.Uuid
+  sequence       Int
+  nodeId         String    @map("node_id")
+  nodeType       String    @map("node_type")
+  actionKey      String?   @map("action_key")
+  // RUNNING / COMPLETED / FAILED / SKIPPED / WAITING / SIMULATED (test mode)
+  status         String
+  attempt        Int       @default(1)
+  // <executionId>:<nodeId>:<visit> — passed to actions that support idempotent retries.
+  idempotencyKey String    @unique @map("idempotency_key")
+  input          Json?
+  output         Json?
+  // CONDITION: "true" / "false"; BRANCH: the branch id taken.
+  branch         String?
+  errorCode      String?   @map("error_code")
+  errorMessage   String?   @map("error_message")
+  startedAt      DateTime  @default(now()) @map("started_at")
+  finishedAt     DateTime? @map("finished_at")
+
+  execution CrmWorkflowExecution @relation(fields: [executionId], references: [id], onDelete: Restrict)
+
+  @@unique([executionId, sequence])
+  @@index([companyId, actionKey])
+  @@map("crm_workflow_execution_steps")
+}
+
+/// crm_events the trigger dispatcher has evaluated (so each event starts each workflow at most once).
+model CrmWorkflowEventLog {
+  eventId     String   @id @map("event_id") @db.Uuid
+  companyId   String   @map("company_id") @db.Uuid
+  matched     Int      @default(0)
+  started     Int      @default(0)
+  processedAt DateTime @default(now()) @map("processed_at")
+
+  @@index([processedAt])
+  @@map("crm_workflow_event_log")
 }

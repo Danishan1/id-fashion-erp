@@ -6,6 +6,7 @@ import { cleanupStaleImports, processImportJob, runImportValidation } from "./cr
 import { CRM_INGEST_QUEUE_NAME, enqueueCrmIngestJob, getCrmIngestQueue } from "./crm-import.queue";
 import { processDueActivityReminders } from "../activities/crm-activities.service";
 import { failStaleOutboundMessages } from "../conversations/conversation-messaging.service";
+import { tickWorkflows } from "../workflows/workflow-engine";
 
 /**
  * CRM lead-ingestion jobs, run inside the shared worker process
@@ -34,6 +35,9 @@ export async function handleCrmIngestJob(job: Job) {
     case "conversation.sweep":
       // Phase 11: outbound messages stuck in "sending" (process stopped mid-send) → FAILED, never resent automatically.
       return failStaleOutboundMessages(new Date());
+    case "workflow.tick":
+      // Phase 18: idempotent — events are claimed once, executions are locked while they run.
+      return tickWorkflows(new Date());
     default:
       throw new Error(`Unknown CRM ingest job "${job.name}"`);
   }
@@ -48,6 +52,10 @@ export function startCrmIngestWorker() {
     // The per-minute reminder sweep only logs when it did something.
     const rv = job.returnvalue as { sent?: number; cancelled?: number } | undefined;
     if (job.name === "activity.reminders" && !(rv?.sent || rv?.cancelled)) return;
+    if (job.name === "workflow.tick") {
+      const tv = job.returnvalue as { started?: number; ran?: number; recovered?: number } | undefined;
+      if (!(tv?.started || tv?.ran || tv?.recovered)) return;
+    }
     if (job.name === "conversation.sweep" && !(job.returnvalue as { failed?: number } | undefined)?.failed) return;
     console.log(JSON.stringify({ level: "info", message: "CRM ingest job completed", jobName: job.name, jobId: job.id }));
   });
@@ -63,6 +71,10 @@ export function startCrmIngestWorker() {
   getCrmIngestQueue()
     .upsertJobScheduler("crm-conversation-sweep", { every: 5 * 60_000 }, { name: "conversation.sweep", data: {}, opts: { attempts: 1, removeOnComplete: { count: 50 }, removeOnFail: { age: 24 * 3600 } } })
     .catch((e: Error) => console.error(JSON.stringify({ level: "error", message: "Could not schedule CRM conversation sweep", error: e.message })));
+  // Workflows (Phase 18): every 15 s — new trigger events, due waits/retries, stale-lock recovery.
+  getCrmIngestQueue()
+    .upsertJobScheduler("crm-workflow-tick", { every: 15_000 }, { name: "workflow.tick", data: {}, opts: { attempts: 1, removeOnComplete: { count: 100 }, removeOnFail: { age: 24 * 3600 } } })
+    .catch((e: Error) => console.error(JSON.stringify({ level: "error", message: "Could not schedule CRM workflow tick", error: e.message })));
   console.log(JSON.stringify({ level: "info", message: `CRM ingest worker started, listening on queue "${CRM_INGEST_QUEUE_NAME}"` }));
   return worker;
 }

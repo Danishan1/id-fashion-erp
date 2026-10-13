@@ -42,6 +42,9 @@ export type BusinessRuleErrorCode =
   // CRM (2026-10-08, Phase 12): a message template has errors (unknown
   // variables, missing subject, provider limits…) — details.errors / warnings.
   | "CRM_TEMPLATE_INVALID"
+  // CRM (2026-10-13, Phase 18): a workflow definition is invalid (graph,
+  // trigger, conditions, action settings) — details.errors lists each issue.
+  | "CRM_WORKFLOW_INVALID"
   // CRM lead capture endpoints (API keys / webhooks).
   | "INVALID_API_CREDENTIALS"
   | "INVALID_WEBHOOK_SIGNATURE"
@@ -93,6 +96,7 @@ const HTTP_STATUS_BY_CODE: Record<BusinessRuleErrorCode, number> = {
   CRM_CONTACT_NOT_CONTACTABLE: 422,
   CRM_CHANNEL_UNAVAILABLE: 422,
   CRM_TEMPLATE_INVALID: 422,
+  CRM_WORKFLOW_INVALID: 422,
   INVALID_API_CREDENTIALS: 401,
   INVALID_WEBHOOK_SIGNATURE: 401,
   RATE_LIMITED: 429,

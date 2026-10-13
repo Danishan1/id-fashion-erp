@@ -7747,3 +7747,12 @@ The whole CRM (Leads, Deals/Opportunities, pipeline/sources/lost-reason masters,
 - Other modules use `TemplateService` (crm-templates.service.ts): `renderTemplate(actor | crmSystemActor, templateId, { refs } | { values, entities }, { requireUsable: true })`. Only ACTIVE templates may be used to send; messages store the final text plus `template_id` + `template_version_id`. Register live references with `registerTemplateUsageProvider` (blocks archiving).
 - Inbox: send accepts `templateId` + `templateVersionId`; provider gets `OutboundMessage.template` (providerMetadata + parameters). Test sends go through the provider adapter with `test: true` and "[TEST]" - never stored in crm_messages; audited + `template.test_sent` event.
 - Report: `docs/crm/PHASE_12_MESSAGE_TEMPLATES.md`.
+
+## CRM rebuild - Phase 18 Workflow Automation Engine (2026-10-13)
+- Triggers come ONLY from the `crm_events` outbox: `dispatchWorkflowEvents` (worker job `workflow.tick`, every 15 s; a best-effort kick after commits) claims each event in `crm_workflow_event_log` and creates executions in the same transaction (idempotency key `evt:<eventId>:<workflowId>`). Never start workflows from in-memory callbacks. New trigger = emit a crm_event + one `WORKFLOW_TRIGGERS` entry (`workflow-triggers.ts`).
+- Definitions are JSON graphs (`workflow-definition.ts`, client-safe, shared by UI/API/engine). Published versions are immutable (DB trigger `crm_workflow_versions_guard`); editing a published workflow creates draft v N+1. Executions keep their version.
+- Conditions: whitelisted fields/operators only (`workflow-fields.ts`, `workflow-conditions.ts`), no expressions. Actions (`workflow-action-catalog.ts` + `workflow-actions.ts`) always call the existing CRM services; new action = catalog entry + runner. Messages/webhooks/notes are never auto-retried.
+- Run-as = publisher; permissions re-checked live before every action. Actions run in `runWithRequestContext({ requestId: "wfexec:<id>" })` - that correlation id is how recursion protection works (don't change it).
+- Webhooks: `workflow-webhook.ts` only (SSRF-checked, pinned DNS, signed). Waits are persisted (`next_run_at`), time zone via crm-timezone.
+- Test mode (mode TEST) never changes or sends anything. Permissions: crm_settings view/edit. APIs use `[...path]` catch-all routes.
+- Report: `docs/crm/PHASE_18_WORKFLOW_AUTOMATION.md`.
