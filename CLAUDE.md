@@ -7763,6 +7763,22 @@ The whole CRM (Leads, Deals/Opportunities, pipeline/sources/lost-reason masters,
 - Calendar UI: reusable `src/components/crm/appointments/CrmCalendar.tsx` (day/week/month); drag calls POST /appointments/{id}/reschedule, never writes times directly.
 - Report: `docs/crm/PHASE_10_CALENDAR_APPOINTMENTS.md`.
 
+## Platform SaaS — Phase 1 Platform Identity & Security Separation (2026-10-13)
+Tracker: `docs/PLATFORM_SAAS_MASTER_TRACKER.md` (read it first for any platform/SaaS task; one phase at a time, stop for approval between phases).
+- Platform operators are a separate identity: `PlatformUser` (`platform_users`, no companyId, role PLATFORM_SUPER_ADMIN/SUPPORT_AGENT/BILLING_ADMIN). They sign in at `/platform/login` (NextAuth provider `platform-credentials`) and use only the `src/app/(platform)/` portal. `User.isPlatformAdmin` is deprecated and grants nothing.
+- Sessions carry `userType` TENANT | PLATFORM (missing = TENANT). Page routing for both lives in `src/core/auth/route-access.ts`, applied by `src/proxy.ts`. API: customer routes use `requireSession()` (refuses PLATFORM sessions); platform routes use `requirePlatformSession(roles?)`. Never call `prisma.user` for a platform id.
+- `PermissionService` has NO bypass of any kind (removed 4). Platform staff get tenant access only via Phase 2's customer-approved support session (below).
+- Suspended company (`companies.is_active=false`): login refused, `requireSession()` → 403 `ACCOUNT_SUSPENDED`, permissions all false, and `src/proxy.ts` redirects pages to `/account-suspended` (must be the proxy — a layout redirect still streams the page's data).
+- Platform-performed audit rows use `audit_logs.platform_user_id`, not `user_id`.
+- Known dev-DB gap: the permission catalog is missing 108 keys (barcodes, administration_*, every `.scan`…), so creating a company via the platform portal 500s until an idempotent catalog backfill is run.
+
+## Platform SaaS — Phase 2 Customer-Approved Support Access (2026-10-13)
+- Flow: operator requests access (`/platform/support`: company, reason, 15–120 min) → a 6-digit code is shown to them once → the customer company's **Super Admin role** (checked live, not a permission key) approves it with that code at `/admin/support-access` → read-only session → "Open ERP" issues a single-use 60-s exchange token → NextAuth provider `support-session` signs the browser in with `userType: "SUPPORT"` + `supportSessionId`.
+- In the ERP the operator IS the company's proxy user (`users.support_for_platform_user_id`, "Support — <name>", no roles, can't use `/login`). Exclude proxy users (`supportForPlatformUserId: null`) from any new user list, picker or count.
+- Liveness (`src/core/support-access/support-session-guard.ts`) is re-checked on every request by `src/proxy.ts` (now also matches `/api`, but only acts on SUPPORT sessions), `requireSession()` and `PermissionService`. Never cache a proxy user's permissions.
+- Grants: READ_ONLY = view/view_all/print; READ_WRITE (second code, customer-approved) adds create/edit/cancel/scan. Never approve/post/delete/reject/override/export; `administration_*` always read-only. The proxy also refuses every non-GET in READ_ONLY.
+- Every step and every request in the session goes into `support_access_events` via `recordSupportEventInTx` (hash chain, advisory lock; DB trigger refuses UPDATE/DELETE). Service: `src/modules/support-access/support-access.service.ts`.
+
 ## CRM rebuild - Phase 11 Unified Conversations (2026-10-08)
 - ONE inbox for every channel (channel = filter, never a separate inbox). Model: `crm_channels` -> `crm_conversations` -> `crm_messages` + `crm_conversation_participants` + `crm_message_attachments` (bytes in the shared `attachments` store). Internal notes are `crm_notes` on entity CONVERSATION - never in crm_messages, so a note can never be sent.
 - Providers live in `src/core/communication/` (`CommunicationProvider.ts` contract, `provider-registry.ts`). A new channel = one ChannelProvider file + one registry line; it only verifies/normalises payloads and sends - never touches the DB. Only `generic` (signed webhook in, signed HTTP relay out) exists; no WhatsApp/Meta/Gmail/SMS integrations yet.

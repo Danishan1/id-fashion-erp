@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { MODULES } from "@/config/rbac";
 
 vi.mock("@/core/rbac/PermissionService", () => ({
   PermissionService: { getViewableModules: vi.fn() },
@@ -59,7 +60,7 @@ const ALL_REPO_MOCKS = [
 ];
 
 beforeEach(() => {
-  vi.mocked(PermissionService.getViewableModules).mockReset().mockResolvedValue("all");
+  vi.mocked(PermissionService.getViewableModules).mockReset().mockResolvedValue(new Set(MODULES));
   for (const fn of ALL_REPO_MOCKS) {
     vi.mocked(fn).mockReset().mockResolvedValue([]);
   }
@@ -127,8 +128,8 @@ describe("searchGlobal — RBAC permission filtering", () => {
     for (const fn of ALL_REPO_MOCKS) expect(fn).not.toHaveBeenCalled();
   });
 
-  it("queries every group when the viewer is unrestricted ('all', e.g. a platform admin)", async () => {
-    vi.mocked(PermissionService.getViewableModules).mockResolvedValue("all");
+  it("queries every group when the viewer can view every module", async () => {
+    vi.mocked(PermissionService.getViewableModules).mockResolvedValue(new Set(MODULES));
 
     await searchGlobal(actor, "test");
 

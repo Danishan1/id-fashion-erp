@@ -28,7 +28,7 @@ const USER_SELECT = {
 
 export const UserAdminRepository = {
   findMany: (companyId: string) =>
-    prisma.user.findMany({ where: { companyId }, select: USER_SELECT, orderBy: { createdAt: "desc" } }),
+    prisma.user.findMany({ where: { companyId, supportForPlatformUserId: null }, select: USER_SELECT, orderBy: { createdAt: "desc" } }),
 
   findByEmail: (email: string) => prisma.user.findUnique({ where: { email } }),
 

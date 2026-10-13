@@ -2,7 +2,7 @@ import { prisma } from "@/core/db/client";
 
 export const LeadIngestRepository = {
   activeUsers(companyId: string) {
-    return prisma.user.findMany({ where: { companyId, status: "ACTIVE" }, select: { id: true, fullName: true, email: true } });
+    return prisma.user.findMany({ where: { companyId, status: "ACTIVE", supportForPlatformUserId: null }, select: { id: true, fullName: true, email: true } });
   },
   async externalLead(companyId: string, provider: string, externalId: string) {
     const ref = await prisma.crmLeadExternalRef.findUnique({

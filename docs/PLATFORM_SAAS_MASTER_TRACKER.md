@@ -3,8 +3,8 @@
 **Single Source of Truth (SSOT)** for Platform Administration & SaaS Transformation  
 **Document Path**: `docs/PLATFORM_SAAS_MASTER_TRACKER.md`  
 **Initial Baseline Date**: 2026-10-12  
-**Current Active Phase**: Phase 1 (Planning / Not Started)  
-**Current Active Task**: PLAT-001 (Ready for Approval)  
+**Current Active Phase**: Phase 1 COMPLETE (2026-10-13) — awaiting approval to start Phase 2  
+**Current Active Task**: None (Phase 2 not approved yet)  
 
 ---
 
@@ -13,17 +13,17 @@
 | Metric | Value |
 |---|---|
 | **Total Tasks Identified** | 30 |
-| **NOT STARTED** | 30 |
+| **NOT STARTED** | 15 |
 | **IN PROGRESS** | 0 |
 | **BLOCKED** | 0 |
 | **IMPLEMENTED** | 0 |
-| **VERIFIED** | 0 |
+| **VERIFIED** | 15 (PLAT-001 – PLAT-015) |
 | **DEFERRED** | 0 |
-| **Overall Verified Completion** | **0.0%** (0 / 30) |
-| **Current Active Phase** | **Phase 1 — Platform Identity & Security Separation** |
-| **Current Active Task** | None (Awaiting Phase 1 Approval) |
-| **Next Eligible Task** | `PLAT-001` (PlatformUser Schema & Separation) |
-| **Open Decisions Requiring Clarification** | 4 |
+| **Overall Verified Completion** | **50.0%** (15 / 30) |
+| **Current Active Phase** | **Phase 2 complete — Phase 3 awaiting approval** |
+| **Current Active Task** | None |
+| **Next Eligible Task** | `PLAT-016` (Company Lifecycle API) — after Phase 3 approval |
+| **Open Decisions Requiring Clarification** | 3 (DEC-01, DEC-03, DEC-04) |
 
 > [!NOTE]
 > Progress percentage is calculated strictly on **VERIFIED** tasks (meaning code written, unit & integration tests passing, and acceptance criteria validated). Pre-existing partial features are recorded in the *Current Project State* section and are not counted towards verified completion until their Phase-specific acceptance criteria are formally validated.
@@ -64,7 +64,7 @@ The following decisions are approved and bind all future implementation tasks:
 ## 4. CURRENT ARCHITECTURE SUMMARY
 
 - **Web Framework**: Next.js 16.3.1 (React 19, Turbopack, App Router)
-- **Database & Schema**: PostgreSQL via Prisma 6.19.2 (`prisma/schema.prisma`)
+- **Database & Schema**: PostgreSQL via Prisma 7.9.1 with the `@prisma/adapter-pg` driver adapter (`prisma/schema.prisma`, `prisma.config.ts`) — corrected 2026-10-13; the baseline said 6.19.2
 - **Authentication**: NextAuth v5 (Auth.js beta) using credentials provider & Edge-safe JWT (`src/core/auth/auth.ts`, `src/core/auth/auth.config.ts`)
 - **Authorization**: Tenant RBAC with live DB re-check on status/password (`src/core/rbac/PermissionService.ts`, `src/config/rbac.ts`)
 - **Background Jobs**: BullMQ + Redis worker process running outside Next.js (`src/core/jobs/worker.ts`, `src/core/jobs/queue.ts`)
@@ -104,21 +104,21 @@ The following decisions are approved and bind all future implementation tasks:
 
 | Task ID | Module | Existing State | Required Change | Change Type | Priority | Phase | Status | Dependencies |
 |---|---|---|---|---|---|---|---|---|
-| **PLAT-001** | Platform Identity | `User.isPlatformAdmin` inside tenant `User` table | Create `PlatformUser` model, migrate existing platform accounts | MODIFY / NEW | CRITICAL | Phase 1 | NOT STARTED | None |
-| **PLAT-002** | Platform Auth | Shared credentials auth in `auth.ts` | Dedicated platform auth callback / token discriminator | MODIFY | CRITICAL | Phase 1 | NOT STARTED | PLAT-001 |
-| **PLAT-003** | Platform Portal UI | `/platform/companies` inside `(dashboard)` | Create dedicated `src/app/(platform)/` route group with own layout & nav | MODIFY / NEW | HIGH | Phase 1 | NOT STARTED | PLAT-002 |
-| **PLAT-004** | RBAC Separation | Universal bypass in `PermissionService.ts:122` | Remove universal bypass; platform users blocked from ERP modules | MODIFY | CRITICAL | Phase 1 | NOT STARTED | PLAT-001, PLAT-002 |
-| **PLAT-005** | Company Switcher Removal | Unrestricted `CompanySwitcher.tsx` | Remove unrestricted company switcher from customer sidebar | MODIFY | CRITICAL | Phase 1 | NOT STARTED | PLAT-003, PLAT-004 |
-| **PLAT-006** | Company Status Guard | `Company.isActive` not checked in `requireSession` | Enforce `company.isActive === true` in `requireSession()` | MODIFY | HIGH | Phase 1 | NOT STARTED | None |
-| **PLAT-007** | Platform Auth Tests | Only tenant auth tests exist | Add comprehensive unit & integration tests for platform auth | NEW | HIGH | Phase 1 | NOT STARTED | PLAT-001, PLAT-002, PLAT-004 |
-| **PLAT-008** | Support Schema | No support access models | Create `SupportAccessRequest` and `SupportAccessSession` models | NEW | HIGH | Phase 2 | NOT STARTED | PLAT-001 |
-| **PLAT-009** | Support Request Flow | None | Platform staff initiates access request with reason & duration | NEW | HIGH | Phase 2 | NOT STARTED | PLAT-008 |
-| **PLAT-010** | Customer Verification UI | None | Customer admin receives verification code and approves request | NEW | HIGH | Phase 2 | NOT STARTED | PLAT-008, PLAT-009 |
-| **PLAT-011** | Delegated Session Exchange | None | Issue scoped, time-limited delegated support session | NEW | HIGH | Phase 2 | NOT STARTED | PLAT-008, PLAT-010 |
-| **PLAT-012** | Read-Only Default Guard | `PermissionService` has no delegated concept | Enforce read-only mode during support sessions; block all mutations | MODIFY / NEW | CRITICAL | Phase 2 | NOT STARTED | PLAT-011 |
-| **PLAT-013** | Write Approval Workflow | None | Explicit step with distinct approval code for write operations | NEW | HIGH | Phase 2 | NOT STARTED | PLAT-012 |
-| **PLAT-014** | Support Revocation & Expiry | None | Instant customer revocation button and automatic time expiry | NEW | HIGH | Phase 2 | NOT STARTED | PLAT-011 |
-| **PLAT-015** | Support Audit Trail | Standard audit log only | Log support agent ID, target tenant, reason, approved time, and actions | NEW | HIGH | Phase 2 | NOT STARTED | PLAT-011, PLAT-012 |
+| **PLAT-001** | Platform Identity | `User.isPlatformAdmin` inside tenant `User` table | Create `PlatformUser` model, migrate existing platform accounts | MODIFY / NEW | CRITICAL | Phase 1 | **VERIFIED** | None |
+| **PLAT-002** | Platform Auth | Shared credentials auth in `auth.ts` | Dedicated platform auth callback / token discriminator | MODIFY | CRITICAL | Phase 1 | **VERIFIED** | PLAT-001 |
+| **PLAT-003** | Platform Portal UI | `/platform/companies` inside `(dashboard)` | Create dedicated `src/app/(platform)/` route group with own layout & nav | MODIFY / NEW | HIGH | Phase 1 | **VERIFIED** | PLAT-002 |
+| **PLAT-004** | RBAC Separation | Universal bypass in `PermissionService.ts:122` | Remove universal bypass; platform users blocked from ERP modules | MODIFY | CRITICAL | Phase 1 | **VERIFIED** | PLAT-001, PLAT-002 |
+| **PLAT-005** | Company Switcher Removal | Unrestricted `CompanySwitcher.tsx` | Remove unrestricted company switcher from customer sidebar | MODIFY | CRITICAL | Phase 1 | **VERIFIED** | PLAT-003, PLAT-004 |
+| **PLAT-006** | Company Status Guard | `Company.isActive` not checked in `requireSession` | Enforce `company.isActive === true` in `requireSession()` | MODIFY | HIGH | Phase 1 | **VERIFIED** | None |
+| **PLAT-007** | Platform Auth Tests | Only tenant auth tests exist | Add comprehensive unit & integration tests for platform auth | NEW | HIGH | Phase 1 | **VERIFIED** | PLAT-001, PLAT-002, PLAT-004 |
+| **PLAT-008** | Support Schema | No support access models | Create `SupportAccessRequest` and `SupportAccessSession` models | NEW | HIGH | Phase 2 | **VERIFIED** | PLAT-001 |
+| **PLAT-009** | Support Request Flow | None | Platform staff initiates access request with reason & duration | NEW | HIGH | Phase 2 | **VERIFIED** | PLAT-008 |
+| **PLAT-010** | Customer Verification UI | None | Customer admin receives verification code and approves request | NEW | HIGH | Phase 2 | **VERIFIED** | PLAT-008, PLAT-009 |
+| **PLAT-011** | Delegated Session Exchange | None | Issue scoped, time-limited delegated support session | NEW | HIGH | Phase 2 | **VERIFIED** | PLAT-008, PLAT-010 |
+| **PLAT-012** | Read-Only Default Guard | `PermissionService` has no delegated concept | Enforce read-only mode during support sessions; block all mutations | MODIFY / NEW | CRITICAL | Phase 2 | **VERIFIED** | PLAT-011 |
+| **PLAT-013** | Write Approval Workflow | None | Explicit step with distinct approval code for write operations | NEW | HIGH | Phase 2 | **VERIFIED** | PLAT-012 |
+| **PLAT-014** | Support Revocation & Expiry | None | Instant customer revocation button and automatic time expiry | NEW | HIGH | Phase 2 | **VERIFIED** | PLAT-011 |
+| **PLAT-015** | Support Audit Trail | Standard audit log only | Log support agent ID, target tenant, reason, approved time, and actions | NEW | HIGH | Phase 2 | **VERIFIED** | PLAT-011, PLAT-012 |
 | **PLAT-016** | Company Lifecycle API | Only `listCompanies` and `createCompany` | Add activate, suspend, update company details, and stats API | EXTEND | MEDIUM | Phase 3 | NOT STARTED | PLAT-001, PLAT-006 |
 | **PLAT-017** | Company Management UI | Basic read-only table and create form | Rich platform company management portal with suspension & details | EXTEND | MEDIUM | Phase 3 | NOT STARTED | PLAT-016 |
 | **PLAT-018** | Module Entitlements Schema | Only 6-submodule UI visibility table | Create `CompanyModuleEntitlement` model for high-level ERP modules | NEW | HIGH | Phase 3 | NOT STARTED | None |
@@ -205,131 +205,181 @@ flowchart TD
 ## 8. DETAILED TASK CHECKLISTS
 
 ### PLAT-001 — Platform Identity Separation
-- **Current State**: Platform admin flag `isPlatformAdmin` resides on tenant `User` model (`schema.prisma:327`), requiring every platform admin to belong to a tenant `Company`.
-- **Required Change**: Create a standalone `PlatformUser` model in `schema.prisma` without `companyId`. Backfill existing platform users into `PlatformUser`.
-- **Affected Files**: `prisma/schema.prisma`, `src/modules/platform/platform-company.service.ts`, `prisma/seed.ts`.
-- **Dependencies**: None.
-- **Risk**: High (requires clean migration of existing platform user accounts).
-- **Status**: NOT STARTED.
+- **Status**: VERIFIED (2026-10-13).
 - **Acceptance Criteria**:
-  - [ ] `PlatformUser` model created with `id`, `email`, `passwordHash`, `fullName`, `role`, `status`, `lastLoginAt`.
-  - [ ] Existing `User` records with `isPlatformAdmin === true` migrated to `PlatformUser`.
-  - [ ] Migration is purely additive; existing tenant `users` table remains functional.
-  - [ ] Tests verify `PlatformUser` CRUD independent of any `Company`.
-- **Verification Evidence**: Pending.
-- **Implementation Notes**: Pending.
-- **Last Updated**: 2026-10-12.
+  - [x] `PlatformUser` model created with `id`, `email`, `passwordHash`, `fullName`, `role` (`PlatformUserRole`: PLATFORM_SUPER_ADMIN / SUPPORT_AGENT / BILLING_ADMIN), `status`, `lastLoginAt`, `passwordChangedAt`, `migratedFromUserId` — no `companyId`.
+  - [x] Existing `User` records with `isPlatformAdmin === true` migrated to `PlatformUser` (same email + password hash, role PLATFORM_SUPER_ADMIN). Dev DB: 1 account (`admin@indradhar.com`) backfilled.
+  - [x] Migration is purely additive; `users.is_platform_admin` kept (marked deprecated, read by nothing). `audit_logs.platform_user_id` added for platform-performed actions.
+  - [x] Tests: `authenticate.test.ts` covers platform sign-in against `platform_users` independent of any company.
+- **Verification Evidence**: migration `20261013100000_platform_users` applied with `prisma migrate deploy`; backfilled row and new column confirmed by direct SQL. Dev seed (`prisma/seed.ts`) also creates the platform account.
+- **Implementation Notes**: the tenant account of a migrated admin is untouched — it keeps its own company roles and signs in at `/login` as before.
+- **Last Updated**: 2026-10-13.
 
 ---
 
 ### PLAT-002 — Platform Authentication Pipeline
-- **Current State**: Single NextAuth credentials configuration in `src/core/auth/auth.ts` authenticates against tenant `User`.
-- **Required Change**: Extend NextAuth credentials authorization to distinguish `PlatformUser` logins and issue platform-specific JWT claims.
-- **Affected Files**: `src/core/auth/auth.ts`, `src/core/auth/auth.config.ts`, `src/types/next-auth.d.ts`.
-- **Dependencies**: PLAT-001.
-- **Risk**: Critical (core authentication path).
-- **Status**: NOT STARTED.
+- **Status**: VERIFIED (2026-10-13).
 - **Acceptance Criteria**:
-  - [ ] Platform login validates against `PlatformUser` table.
-  - [ ] JWT token receives distinct `userType: "PLATFORM"` claim.
-  - [ ] Platform session carries no default tenant `companyId`.
-  - [ ] Tenant user login continues functioning without change.
-- **Verification Evidence**: Pending.
-- **Implementation Notes**: Pending.
-- **Last Updated**: 2026-10-12.
+  - [x] Platform login validates against `PlatformUser` only — second NextAuth provider `platform-credentials` (`src/core/auth/auth.ts`, logic in `src/core/auth/authenticate.ts`), page `/platform/login`.
+  - [x] JWT/session carries `userType: "PLATFORM"` (tenant sessions carry `"TENANT"`; pre-change sessions with no claim are treated as TENANT).
+  - [x] Platform session has no tenant `companyId` (empty string, rejected by every tenant guard).
+  - [x] Tenant login unchanged (still `/login`, provider `credentials`).
+  - [x] New API guard `requirePlatformSession(roles?)` (`src/lib/api-route.ts`) re-checks the platform account live (status, password change, role). Replaces `requirePlatformAdmin()`.
+  - [x] Separate lockout bucket for platform logins (`platform:<email>`).
+- **Verification Evidence**: live HTTP sign-in through the real NextAuth flow — platform session `userType=PLATFORM`, `companyId=""`; `/api/v1/platform/companies` 200 for platform, 403 for tenant.
+- **Last Updated**: 2026-10-13.
 
 ---
 
 ### PLAT-003 — Dedicated Platform Portal UI Route Group
-- **Current State**: `/platform/companies` is nested inside `src/app/(dashboard)/platform/companies/page.tsx` and wrapped in customer ERP sidebar.
-- **Required Change**: Move platform pages to `src/app/(platform)/` with independent `PlatformLayout`, `PlatformSidebar`, and platform auth guard.
-- **Affected Files**: `src/app/(platform)/layout.tsx`, `src/app/(platform)/page.tsx`, `src/app/(platform)/companies/`, `src/components/platform/`.
-- **Dependencies**: PLAT-002.
-- **Risk**: Low (UI routing reorganization).
-- **Status**: NOT STARTED.
+- **Status**: VERIFIED (2026-10-13).
 - **Acceptance Criteria**:
-  - [ ] Dedicated `src/app/(platform)/` route group created.
-  - [ ] Layout renders dedicated Platform Admin sidebar (Companies, Subscriptions, Platform Users).
-  - [ ] Non-platform users attempting to access `/(platform)` are redirected to `/login` or returned `404`.
-  - [ ] Customer ERP navigation contains zero links to platform pages.
-- **Verification Evidence**: Pending.
-- **Implementation Notes**: Pending.
-- **Last Updated**: 2026-10-12.
+  - [x] `src/app/(platform)/` route group with its own layout (`PlatformShell`: Overview, Companies). Pages: `/platform` (cross-company counts, moved from the tenant dashboard), `/platform/companies`, `/platform/companies/new` (Platform Super Admin only).
+  - [x] Sidebar shows only platform items. *Subscriptions / Platform Users* links deliberately NOT added — those features don't exist yet (Phase 4 / not scoped); adding dead links would be scope creep.
+  - [x] Non-platform users are redirected away from `/platform/*` (to `/dashboard`); signed-out users go to `/platform/login`. Routing rules in `src/core/auth/route-access.ts`, applied in `src/proxy.ts`.
+  - [x] Customer ERP navigation has zero platform links.
+- **Verification Evidence**: live — platform user 200 on `/platform` and `/platform/companies`; tenant user 302 → `/dashboard`; browser screenshot of the portal.
+- **Last Updated**: 2026-10-13.
 
 ---
 
 ### PLAT-004 — Remove Universal Platform RBAC Bypass
-- **Current State**: `src/core/rbac/PermissionService.ts:122` executes `if (user.isPlatformAdmin) return true;` granting unconstrained access to all ERP modules.
-- **Required Change**: Remove the universal bypass. Platform users cannot access customer ERP modules unless acting under an active, approved `DelegatedSupportSession`.
-- **Affected Files**: `src/core/rbac/PermissionService.ts`.
-- **Dependencies**: PLAT-001, PLAT-002.
-- **Risk**: Critical (security gate).
-- **Status**: NOT STARTED.
+- **Status**: VERIFIED (2026-10-13).
 - **Acceptance Criteria**:
-  - [ ] Universal bypass removed from `PermissionService.can()`.
-  - [ ] Calling `PermissionService.can()` as a platform user outside a delegated support session returns `false`.
-  - [ ] Normal tenant user permission resolution remains unaffected.
-- **Verification Evidence**: Pending.
-- **Implementation Notes**: Pending.
-- **Last Updated**: 2026-10-12.
+  - [x] All **four** bypasses removed from `PermissionService.ts` (the baseline listed one): `can()`, `getAllowedProductionStageIds()`, `getAllowedBranchIds()`, `getModulesWithAction()`/`getViewableModules()` (no more `"all"`).
+  - [x] A platform operator outside a support session gets nothing: their id isn't in the tenant `users` table, so `can()` is false; `requireSession()` refuses `userType=PLATFORM` sessions on every customer ERP API; the proxy redirects them away from every ERP page.
+  - [x] Normal tenant permission resolution unchanged (full suite green).
+- **Verification Evidence**: `PermissionService.test.ts` (flag grants nothing, self-approval applies to everyone, platform id gets no permission); live — platform session 403 on `/api/v1/customers`, 302 from `/dashboard` and `/sales-orders`.
+- **Last Updated**: 2026-10-13.
 
 ---
 
 ### PLAT-005 — Remove Unrestricted Company Switcher
-- **Current State**: `src/components/layout/CompanySwitcher.tsx` allows platform admins to switch active `companyId` in their session token without restriction.
-- **Required Change**: Remove `CompanySwitcher.tsx` from the customer ERP layout. Company context switching only allowed via approved Support Access.
-- **Affected Files**: `src/components/layout/Sidebar.tsx`, `src/components/layout/CompanySwitcher.tsx`, `src/core/auth/auth.config.ts`.
-- **Dependencies**: PLAT-003, PLAT-004.
-- **Risk**: High (breaks previous ad-hoc workflow, replaces with secure support flow).
-- **Status**: NOT STARTED.
+- **Status**: VERIFIED (2026-10-13).
 - **Acceptance Criteria**:
-  - [ ] `CompanySwitcher` removed from ERP sidebar.
-  - [ ] `auth.config.ts` rejects arbitrary `trigger === "update"` company switches.
-- **Verification Evidence**: Pending.
-- **Implementation Notes**: Pending.
-- **Last Updated**: 2026-10-12.
+  - [x] `CompanySwitcher.tsx` deleted and removed from the ERP sidebar.
+  - [x] `auth.config.ts` no longer handles `trigger === "update"` — a session can't be re-pointed at another company at all.
+- **Verification Evidence**: live — rendered dashboard HTML contains no switcher or platform link.
+- **Last Updated**: 2026-10-13.
 
 ---
 
-### PLAT-006 — Enforce Company Active Status in API Guards
-- **Current State**: `requireSession()` in `src/lib/api-route.ts:32` checks `user.status === "ACTIVE"` but does not inspect `Company.isActive`.
-- **Required Change**: Add live verification of `company.isActive` in `requireSession()`. If company is inactive/suspended, reject requests immediately with `ACCOUNT_SUSPENDED`.
-- **Affected Files**: `src/lib/api-route.ts`.
-- **Dependencies**: None.
-- **Risk**: Low.
-- **Status**: NOT STARTED.
+### PLAT-006 — Enforce Company Active Status
+- **Status**: VERIFIED (2026-10-13).
 - **Acceptance Criteria**:
-  - [ ] `requireSession()` queries company status or verifies it in active user check.
-  - [ ] Inactive company returns `403 FORBIDDEN` with code `ACCOUNT_SUSPENDED`.
-  - [ ] Unit tests verify that suspended company blocks all API requests.
-- **Verification Evidence**: Pending.
-- **Implementation Notes**: Pending.
-- **Last Updated**: 2026-10-12.
+  - [x] `requireSession()` checks `company.isActive` live in the same query; inactive → `403 ACCOUNT_SUSPENDED` (new `BusinessRuleError` code).
+  - [x] Sign-in refused for users of a suspended company (`authenticateTenantUser`).
+  - [x] `PermissionService` denies everything for a suspended company (covers Server Component pages).
+  - [x] Pages: the proxy redirects a suspended company's users to `/account-suspended` before anything renders. (A layout-level redirect alone was found to still stream the page's data in the response body in dev — the layout and page render in parallel — so the check lives in the proxy, with the layout redirect kept as a second layer.)
+  - [x] Unit tests for the API guard, login, and permission checks.
+- **Verification Evidence**: live — dev company suspended briefly inside try/finally: existing session's API call 403 `ACCOUNT_SUSPENDED`; `/dashboard` 302 → `/account-suspended` with an 18-byte body (no page data); re-login refused; platform overview showed "Suspended"; company restored and tenant working again.
+- **Last Updated**: 2026-10-13.
 
 ---
 
 ### PLAT-007 — Platform Security & Isolation Test Suite
-- **Current State**: Tests exist for `platform-company.service.ts` but none exist for platform auth separation or isolation boundaries.
-- **Required Change**: Implement comprehensive test suite covering platform authentication, route guarding, and privilege escalation prevention.
-- **Affected Files**: `src/modules/platform/__tests__/platform-auth.test.ts`, `src/core/rbac/PermissionService.test.ts`.
-- **Dependencies**: PLAT-001, PLAT-002, PLAT-004, PLAT-006.
-- **Risk**: Low.
-- **Status**: NOT STARTED.
+- **Status**: VERIFIED (2026-10-13).
 - **Acceptance Criteria**:
-  - [ ] Test verifies platform user cannot query tenant ERP endpoints.
-  - [ ] Test verifies tenant user cannot access platform routes.
-  - [ ] Test verifies suspended company users are rejected.
-  - [ ] All tests pass in `vitest run`.
-- **Verification Evidence**: Pending.
-- **Implementation Notes**: Pending.
-- **Last Updated**: 2026-10-12.
+  - [x] Platform user can't query tenant ERP endpoints (`api-route.test.ts`, `route-access.test.ts`).
+  - [x] Tenant user can't access platform routes, including a company's own Super Admin and pre-change sessions (`api-route.test.ts`, `route-access.test.ts`).
+  - [x] Suspended company users are rejected (`api-route.test.ts`, `authenticate.test.ts`, `PermissionService.test.ts`).
+  - [x] All tests pass in `vitest run`.
+- **Verification Evidence**: `npx vitest run` — 2607 passed / 161 skipped (180 files; one file's worker timed out under memory pressure and passed 11/11 on re-run); `npx tsc --noEmit` clean; `npx eslint` clean on all changed files; 24/24 live HTTP checks against the running dev server.
+- **Last Updated**: 2026-10-13.
 
 ---
 
-### PLAT-008 to PLAT-015 — Phase 2 Checklists (Delegated Support Access)
-- **Status**: ALL NOT STARTED. Detailed acceptance criteria documented in Phase 2 roadmap.
-- **Key Models**: `SupportAccessRequest`, `SupportAccessSession`.
-- **Key Guards**: Ephemeral 6-digit OTP verification, default Read-Only session flag, customer revocation button.
+### PLAT-008 — Support Access Schema
+- **Status**: VERIFIED (2026-10-13).
+- **Acceptance Criteria**:
+  - [x] `SupportAccessRequest` (company, operator, reason, duration, status PENDING/APPROVED/REJECTED/EXPIRED/CANCELLED/LOCKED, code hash + expiry, failed attempts, decided by/at, rejection reason).
+  - [x] `SupportAccessSession` (one per approved request: proxy user, mode READ_ONLY/READ_WRITE, expires/revoked/ended, write-request fields with a separate code hash, single-use exchange token hash).
+  - [x] `SupportAccessEvent` — append-only hash-chained event log (also used by PLAT-015).
+  - [x] `users.support_for_platform_user_id` — marks a company's "Support — <operator>" proxy user (unique per company + operator).
+  - [x] Purely additive migration `20261013120000_support_access`, plus a trigger that refuses UPDATE/DELETE on `support_access_events`.
+- **Verification Evidence**: `prisma migrate deploy` applied; tables, column and trigger confirmed by direct SQL; a live UPDATE on the event table was refused by the database.
+- **Last Updated**: 2026-10-13.
+
+---
+
+### PLAT-009 — Support Request Flow
+- **Status**: VERIFIED (2026-10-13).
+- **Acceptance Criteria**:
+  - [x] Platform portal → Support Access (`/platform/support`, also linked per company from Companies): company, reason (min 10 chars, shown to the customer), duration 15/30/60/120 min.
+  - [x] Only PLATFORM_SUPER_ADMIN and SUPPORT_AGENT can request; BILLING_ADMIN can't. Suspended companies can't be requested. One pending request per operator per company.
+  - [x] A 6-digit code (crypto random) is shown to the operator once; only an HMAC bound to the request id is stored. Code valid 15 minutes; pending requests expire automatically.
+  - [x] Operator can cancel a pending request.
+- **Verification Evidence**: live — request created (201), code not in the stored hash, short reason/over-2-hour duration/second pending request refused (400). Unit tests in `support-access.service.test.ts`, `codes.test.ts`.
+- **Last Updated**: 2026-10-13.
+
+---
+
+### PLAT-010 — Customer Verification UI
+- **Status**: VERIFIED (2026-10-13).
+- **Acceptance Criteria**:
+  - [x] Customer page Administration → Support Access (`/admin/support-access`), visible only to the company's own Super Admin (role checked live; a support session itself can't use it).
+  - [x] Banner across the ERP for the Super Admin while a request or write request is waiting.
+  - [x] Approve by entering the code; reject with an optional reason. Wrong code: "N attempts left"; 5 wrong codes lock the request; an expired code is refused.
+- **Verification Evidence**: live — pending request visible, banner shown, wrong code refused with attempts left, right code approved (READ_ONLY session). Browser screenshots of the page and the activity log.
+- **Last Updated**: 2026-10-13.
+
+---
+
+### PLAT-011 — Delegated Session Exchange
+- **Status**: VERIFIED (2026-10-13).
+- **Acceptance Criteria**:
+  - [x] Approval creates a session for the approved duration (max 2 hours) and a company proxy user ("Support — <operator>", no roles, unusable password, can't sign in at `/login`, hidden from user lists, pickers and user counts).
+  - [x] "Open ERP" (only the requesting operator, only while live) issues a single-use 60-second exchange token; the new `support-session` NextAuth provider exchanges it for a SUPPORT session (`userType: "SUPPORT"`, the proxy user's id, `supportSessionId`).
+  - [x] Every request re-checks the session live (proxy, `requireSession()`, `PermissionService`): not revoked/ended/expired, request approved, company active, operator active.
+  - [x] A support session can use ERP pages only, never the platform portal.
+- **Verification Evidence**: live — token issued after approval only, sign-in as SUPPORT for the right company, second use of the token refused, /platform redirected to /dashboard, proxy user's login at /login refused.
+- **Last Updated**: 2026-10-13.
+
+---
+
+### PLAT-012 — Read-Only Default Guard
+- **Status**: VERIFIED (2026-10-13).
+- **Acceptance Criteria**:
+  - [x] Two independent layers: the proxy refuses every POST/PUT/PATCH/DELETE (pages and API) in a READ_ONLY session, except sign-out and the session's own controls; `PermissionService` grants a proxy user only view/view_all/print in READ_ONLY.
+  - [x] Export is not granted in any support mode (no bulk copies of customer data).
+  - [x] Branch and production-stage scope: unrestricted while live, nothing once ended.
+  - [x] Grants are never cached — they change on the next request after a revoke or write approval.
+- **Verification Evidence**: live — reads 200, POST refused 403 "read-only". `PermissionService.support.test.ts`, `support-session-guard.test.ts`.
+- **Last Updated**: 2026-10-13.
+
+---
+
+### PLAT-013 — Write Approval Workflow
+- **Status**: VERIFIED (2026-10-13).
+- **Acceptance Criteria**:
+  - [x] Support requests write access from the support banner with a justification (min 10 chars); a second 6-digit code (10 minutes) is shown to the operator once.
+  - [x] The customer's Super Admin approves it with that code (the access code doesn't work) or rejects it; 5 wrong codes lock write access for that session.
+  - [x] READ_WRITE adds create/edit/cancel/scan only — never approve, post, delete, reject, override or export; Administration modules stay read-only.
+- **Verification Evidence**: live — access code refused for write, write code approved, mode READ_WRITE, a write request then reached the route (400 validation instead of 403), Administration write still 403.
+- **Last Updated**: 2026-10-13.
+
+---
+
+### PLAT-014 — Support Revocation & Expiry
+- **Status**: VERIFIED (2026-10-13).
+- **Acceptance Criteria**:
+  - [x] Customer "Revoke access" ends the session immediately: next API call 403, next page redirects to `/support-ended`; a revoked session can't be reopened.
+  - [x] Sessions end automatically at the approved time; the support banner shows minutes left and sends the browser to `/support-ended` when the session is gone.
+  - [x] Support can end the session themselves ("End session" signs them out to the platform login).
+- **Verification Evidence**: live — revoke → API 403, page 302 /support-ended, reopen 409; browser: End session → platform login. Expiry covered by `isSupportSessionLive` unit tests.
+- **Last Updated**: 2026-10-13.
+
+---
+
+### PLAT-015 — Support Audit Trail
+- **Status**: VERIFIED (2026-10-13).
+- **Acceptance Criteria**:
+  - [x] `support_access_events` records request, cancel, approve/reject, wrong codes, locks, session opened/revoked/ended, write requested/approved/rejected, and every page/API request in the session (method + path), including refused ones (ACCESS_DENIED). Status polling of the banner is not logged.
+  - [x] Tamper-evident: each event stores the previous event's hash and its own hash; editing or deleting any row breaks the chain. The database refuses UPDATE/DELETE on the table.
+  - [x] Customer sees the log per request ("Activity log"), with a "Log verified / altered at entry #N" check.
+  - [x] Records written by support in a write session carry the proxy user ("Support — <operator>") as their creator in the normal audit log.
+- **Verification Evidence**: live — chain valid with all expected event types; database UPDATE refused. `support-events.test.ts` (edited and deleted events detected).
+- **Last Updated**: 2026-10-13.
 
 ---
 
@@ -422,7 +472,7 @@ The following decisions require explicit business sign-off before their respecti
 2. **DEC-02 (Phase 2): Support Write Access Permissibility**:
    - *Option A*: Support staff are strictly Read-Only under all circumstances (no write access ever granted).
    - *Option B*: Support staff can request write access only when customer explicitly authorizes with a separate secondary approval code.
-   - *Status*: Approved as Option B in Confirmed Business Decisions (needs UX confirmation).
+   - *Status*: **RESOLVED (2026-10-13)** — Option B implemented: support requests write access from the support-session banner with a justification; the customer's Super Admin approves it with a second, separate 6-digit code. Write access never includes approve/post/delete/reject/export, and Administration stays read-only.
 3. **DEC-03 (Phase 4): Automated Self-Service Payment Gateway**:
    - *Decision*: Will SaaS billing in V1 be handled via manual invoice/bank transfer, or requires immediate payment gateway integration (Stripe / Razorpay)?
    - *Status*: PENDING.
@@ -487,15 +537,65 @@ When updating this document after completing a task, use the following template:
 | Timestamp | Task ID | Author | Action | Summary |
 |---|---|---|---|---|
 | 2026-10-12 | INIT | Principal Architect | Created Master Tracker | Initialized `PLATFORM_SAAS_MASTER_TRACKER.md` with 30 tasks across 6 phases based on read-only audit. |
+| 2026-10-13 | PLAT-008–015 | Claude Code | Phase 2 implemented & verified | Customer-approved support access: request with reason + 6-digit code, customer Super Admin approval, read-only session as a company proxy user, separate write approval, instant revoke + expiry, hash-chained append-only event log. Migration `20261013120000_support_access`. 2666 tests green, tsc/eslint clean, 38/38 live checks + browser check. |
+| 2026-10-13 | PLAT-001–007 | Claude Code | Phase 1 implemented & verified | Separate `PlatformUser` identity + `/platform/login`; `(platform)` portal; all 4 RBAC bypasses removed; company switcher removed; suspended companies blocked at login, API, permission checks and proxy. Migration `20261013100000_platform_users`. 2607 tests green, tsc/eslint clean, 24/24 live checks. |
+
+### Task Progress Update — Phase 1
+- **Date**: 2026-10-13
+- **Task ID**: PLAT-001 – PLAT-007
+- **Phase**: Phase 1
+- **Previous Status**: NOT STARTED
+- **New Status**: VERIFIED
+- **Work Completed**: see the PLAT-001 – PLAT-007 checklists in section 8.
+- **Files Changed**:
+  - Schema/data: `prisma/schema.prisma`, `prisma/migrations/20261013100000_platform_users/migration.sql`, `prisma/seed.ts`
+  - Auth: `src/core/auth/auth.ts`, `auth.config.ts`, new `authenticate.ts`, new `route-access.ts`, `src/types/next-auth.d.ts`, `src/proxy.ts`
+  - Guards: `src/lib/api-route.ts` (`requireSession` changes, `requirePlatformSession` replaces `requirePlatformAdmin`), `src/core/rbac/PermissionService.ts`, `src/core/errors/BusinessRuleError.ts` (`ACCOUNT_SUSPENDED`), `src/core/audit/AuditLogger.ts` (`platformUserId`)
+  - Platform portal: `src/app/(platform)/layout.tsx`, `src/app/(platform)/platform/page.tsx`, `src/app/(platform)/platform/companies/**` (moved from `(dashboard)`), `src/app/(auth)/platform/login/page.tsx`, `src/components/platform/PlatformShell.tsx`, `src/modules/platform/platform-page.ts`, `src/modules/platform/platform-overview.service.ts`, `src/modules/platform/platform-company.service.ts`, `src/app/api/v1/platform/companies/route.ts`
+  - Customer ERP: `src/app/(dashboard)/layout.tsx`, `src/app/(dashboard)/dashboard/page.tsx`, `src/app/(auth)/account-suspended/page.tsx`, `src/components/layout/{Sidebar,DashboardShell,AccountSuspendedScreen}.tsx`, `CompanySwitcher.tsx` (deleted), `src/modules/dashboard/dashboard.service.ts`, `src/modules/search/global-search.service.ts`, `src/modules/administration/role-admin.service.ts` (comment)
+  - Tests: `authenticate.test.ts`, `route-access.test.ts`, `platform-overview.service.test.ts` (new); `api-route.test.ts`, `PermissionService.test.ts`, `dashboard.service.test.ts`, `platform-company.service.test.ts`, `global-search.service.test.ts` (updated)
+- **Database Changes**: enum `PlatformUserRole`; table `platform_users`; column `audit_logs.platform_user_id` (FK, nullable). Additive only.
+- **Tests Executed**: `npx vitest run`; `npx tsc --noEmit`; `npx eslint` on changed files; live HTTP verification against the dev server.
+- **Test Results**: 2607 passed / 161 skipped; tsc 0 errors; eslint 0 errors; 24/24 live checks.
+- **Remaining Work**: none for Phase 1.
+- **Blockers / Notes**:
+  - **Behaviour change**: platform operators can no longer open any customer company's ERP — not even their own former company — until Phase 2's customer-approved support access exists. Their tenant account (if any) still works at `/login`.
+  - **Pre-existing, not caused by Phase 1**: provisioning a new company fails (500 `Unknown permission key: dashboard.scan`) because the dev database's permission catalog is missing 108 keys added by later modules (barcodes, administration_*, rate_card, material_request, purchase_order, and every `.scan` action). Needs the usual idempotent catalog backfill; not done here (out of Phase 1 scope).
+- **Next Task**: PLAT-008 — after Phase 2 approval.
+
+### Task Progress Update — Phase 2
+- **Date**: 2026-10-13
+- **Task ID**: PLAT-008 – PLAT-015
+- **Phase**: Phase 2
+- **Previous Status**: NOT STARTED
+- **New Status**: VERIFIED
+- **Work Completed**: see the PLAT-008 – PLAT-015 checklists in section 8.
+- **Files Changed**:
+  - Schema: `prisma/schema.prisma`, `prisma/migrations/20261013120000_support_access/migration.sql`
+  - Core: `src/core/support-access/{codes,support-events,support-session-guard}.ts` (new), `src/core/auth/{auth,auth.config,authenticate,route-access}.ts`, `src/types/next-auth.d.ts`, `src/proxy.ts` (now also matches API routes, for support sessions only), `src/lib/api-route.ts` (`requireSupportSession`, support check in `requireSession`), `src/core/rbac/PermissionService.ts`
+  - Service/API: `src/modules/support-access/*` (new); `src/app/api/v1/platform/support-requests/**`, `src/app/api/v1/support-access/**`, `src/app/api/v1/support-session/**` (new)
+  - UI: `src/app/(platform)/platform/support/*` (new), `src/app/(platform)/platform/companies/page.tsx`, `src/components/platform/PlatformShell.tsx`, `src/app/(dashboard)/admin/support-access/*` (new), `src/app/(dashboard)/admin/page.tsx`, `src/app/(dashboard)/layout.tsx`, `src/components/layout/DashboardShell.tsx`, `src/components/support/SupportSessionBanner.tsx` (new), `src/app/(auth)/support-ended/page.tsx` (new)
+  - Proxy users hidden: `src/app/api/v1/users/route.ts`, `src/modules/administration/user-admin.repository.ts`, `src/modules/crm/ingestion/lead-ingest.repository.ts`, `src/modules/dashboard/dashboard.service.ts`
+  - Tests: `codes.test.ts`, `support-events.test.ts`, `support-session-guard.test.ts`, `PermissionService.support.test.ts`, `support-access.service.test.ts` (new); `route-access.test.ts`, `api-route.test.ts` (extended)
+- **Database Changes**: enums `SupportAccessRequestStatus`, `SupportAccessMode`, `SupportWriteRequestStatus`, `SupportEventActorType`; tables `support_access_requests`, `support_access_sessions`, `support_access_events`; column `users.support_for_platform_user_id` (+ unique with company); append-only trigger on `support_access_events`. Additive only.
+- **Tests Executed**: `npx vitest run`; `npx tsc --noEmit`; `npx eslint` on changed files; live HTTP verification; browser walkthrough (platform request → code → customer approval → Open ERP → banner → End session → customer page + activity log).
+- **Test Results**: 2666 passed / 161 skipped; tsc 0 errors; eslint 0 errors; 38/38 live checks.
+- **Remaining Work**: none for Phase 2.
+- **Blockers / Notes**:
+  - Support access is approved by the customer company's **Super Admin role** only (not a permission key), so it can't be widened by editing a role's permission matrix.
+  - Opening a support session replaces the operator's platform sign-in in that browser; ending it returns them to the platform login.
+  - Notifications to the customer are in-app (banner + page) only; no email is sent (no email infrastructure exists yet).
+  - The dev database's missing permission keys (noted in Phase 1) still hide the Administration sidebar link for the dev Super Admin; Support Access is reachable from the waiting-request banner and `/admin/support-access`.
+- **Next Task**: PLAT-016 — after Phase 3 approval.
 
 ---
 
 ## 16. NEXT RECOMMENDED TASK
 
-**Recommended Next Step**: **PLAT-001 — Platform Identity Separation**.
-- **Objective**: Create `PlatformUser` model in `prisma/schema.prisma` and prepare the additive migration to decouple platform administrators from tenant company records.
-- **Prerequisites**: User approval to start Phase 1.
+**Recommended Next Step**: **PLAT-016 — Company Lifecycle API** (start of Phase 3, Company & Module Management).
+- **Objective**: Platform operators can activate/suspend companies, edit company details and see per-company stats, then module entitlements per company.
+- **Prerequisites**: User approval to start Phase 3; DEC-04 (AI usage metering) should be decided before the entitlement tasks that depend on it.
 
 ---
 
-**MASTER TRACKER CREATED — READY FOR PHASE 1 PLANNING**
+**PHASE 2 COMPLETE (2026-10-13) — AWAITING APPROVAL FOR PHASE 3**

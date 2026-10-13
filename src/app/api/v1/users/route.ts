@@ -10,7 +10,7 @@ export async function GET() {
   try {
     const session = await requireSession();
     const users = await prisma.user.findMany({
-      where: { companyId: session.user.companyId, status: "ACTIVE" },
+      where: { companyId: session.user.companyId, status: "ACTIVE", supportForPlatformUserId: null },
       select: { id: true, fullName: true },
       orderBy: { fullName: "asc" },
     });

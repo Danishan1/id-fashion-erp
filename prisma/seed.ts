@@ -106,6 +106,15 @@ async function main() {
     },
   });
 
+  // Platform SaaS Phase 1 (PLAT-001): platform operators are a separate
+  // identity with no company. The dev seed creates one with the same
+  // credentials, signing in at /platform/login.
+  await prisma.platformUser.upsert({
+    where: { email: superAdminEmail },
+    update: {},
+    create: { email: superAdminEmail, passwordHash, fullName: "Platform Super Admin", role: "PLATFORM_SUPER_ADMIN" },
+  });
+
   const superAdminRoleId = roleIdByName.get("SUPER_ADMIN")!;
   await prisma.userBranchRole.upsert({
     where: {
