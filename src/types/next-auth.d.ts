@@ -4,21 +4,22 @@ declare module "next-auth" {
   interface Session {
     user: {
       id: string;
-      /** The company currently being acted on. Fixed for an ordinary user;
-       * switchable for a platform admin via the sidebar's company switcher
-       * (useSession().update({ companyId })) — see auth.config.ts's jwt
-       * callback. Every service/route derives actor.companyId from this. */
+      /** TENANT = a customer company's user; PLATFORM = a platform operator
+       * (platform_users); SUPPORT = a platform operator inside one company
+       * through a customer-approved support session (id = that company's
+       * support proxy user). See auth.config.ts / route-access.ts. */
+      userType: "TENANT" | "PLATFORM" | "SUPPORT";
+      /** The customer company this user belongs to. Empty string for a
+       * PLATFORM session — those never reach tenant code (requireSession()
+       * rejects them). Every service/route derives actor.companyId from this. */
       companyId: string;
-      /** The company this account actually belongs to — never changes for
-       * the life of the session, regardless of any company switch above. */
-      homeCompanyId: string;
       defaultBranchId: string | null;
-      /** Convenience flag only — always re-verified live from the DB before
-       * a platform-level action (requirePlatformAdmin()) or an ordinary
-       * PermissionService.can() check (its own full-access bypass for
-       * platform admins), never trusted from the JWT alone. See
-       * User.isPlatformAdmin. */
-      isPlatformAdmin: boolean;
+      /** PlatformUserRole for a PLATFORM session, null otherwise. Convenience
+       * only — requirePlatformSession() re-checks it live from the DB. */
+      platformRole: string | null;
+      /** The support session for a SUPPORT session, null otherwise. Re-checked
+       * live on every request (revocation/expiry take effect immediately). */
+      supportSessionId: string | null;
       /** Unix seconds this session's JWT was issued — lets a password
        * change invalidate sessions that predate it. See CF-7/passwordChangedAt. */
       sessionIssuedAt: number;
@@ -26,19 +27,22 @@ declare module "next-auth" {
   }
 
   interface User {
-    companyId: string;
-    defaultBranchId: string | null;
-    isPlatformAdmin: boolean;
+    userType?: "TENANT" | "PLATFORM" | "SUPPORT";
+    companyId?: string;
+    defaultBranchId?: string | null;
+    platformRole?: string | null;
+    supportSessionId?: string | null;
   }
 }
 
 declare module "next-auth/jwt" {
   interface JWT {
     userId: string;
-    companyId: string;
-    homeCompanyId: string;
-    defaultBranchId: string | null;
-    isPlatformAdmin: boolean;
+    userType?: "TENANT" | "PLATFORM" | "SUPPORT";
+    companyId?: string;
+    defaultBranchId?: string | null;
+    platformRole?: string;
+    supportSessionId?: string;
     sessionIssuedAt: number;
   }
 }

@@ -29,6 +29,8 @@ model Company {
   baseCurrency                        Currency                             @relation(fields: [baseCurrencyCode], references: [code])
   branches                            Branch[]
   users                               User[]
+  supportAccessRequests               SupportAccessRequest[]
+  supportAccessSessions               SupportAccessSession[]
   roles                               Role[]
   customers                           Customer[]
   suppliers                           Supplier[]
@@ -289,6 +291,175 @@ enum UserStatus {
   LOCKED
 }
 
+enum PlatformUserRole {
+  PLATFORM_SUPER_ADMIN
+  SUPPORT_AGENT
+  BILLING_ADMIN
+}
+
+// A platform operator (Platform SaaS Phase 1, PLAT-001) — deliberately has no
+// companyId: platform staff belong to no customer tenant and get no access to
+// any tenant's ERP data. Signs in only at /platform/login (a separate NextAuth
+// provider, "platform-credentials") and can only use the /platform portal.
+// Access to a customer's ERP will come only through the customer-approved
+// support session planned for Phase 2.
+model PlatformUser {
+  id                String           @id @default(uuid()) @db.Uuid
+  email             String           @unique
+  passwordHash      String           @map("password_hash")
+  fullName          String           @map("full_name")
+  role              PlatformUserRole @default(SUPPORT_AGENT)
+  status            UserStatus       @default(ACTIVE)
+  lastLoginAt       DateTime?        @map("last_login_at")
+  passwordChangedAt DateTime?        @map("password_changed_at")
+  // Set only for rows backfilled from users.is_platform_admin by the PLAT-001
+  // migration — traceability back to the old tenant account, never a link
+  // that grants anything.
+  migratedFromUserId String?         @unique @map("migrated_from_user_id") @db.Uuid
+  createdAt         DateTime         @default(now()) @map("created_at")
+  updatedAt         DateTime         @updatedAt @map("updated_at")
+
+  auditLogs              AuditLog[]
+  supportProxyUsers      User[]                 @relation("SupportProxyUser")
+  supportAccessRequests  SupportAccessRequest[]
+  supportAccessSessions  SupportAccessSession[]
+
+  @@map("platform_users")
+}
+
+// ---------------------------------------------------------------------------
+// Platform SaaS Phase 2 — customer-approved support access (PLAT-008..015).
+// A platform operator can reach a customer's ERP only through a request the
+// company's own Super Admin approves by entering a one-time 6-digit code the
+// operator gives them. The resulting session is time-limited (max 2 hours),
+// read-only by default, revocable at any moment by the customer, and every
+// step and request is written to a hash-chained support event log.
+// ---------------------------------------------------------------------------
+
+enum SupportAccessRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+  CANCELLED
+  // Too many wrong codes — dead, a new request is needed.
+  LOCKED
+}
+
+enum SupportAccessMode {
+  READ_ONLY
+  READ_WRITE
+}
+
+enum SupportWriteRequestStatus {
+  NONE
+  PENDING
+  APPROVED
+  REJECTED
+  LOCKED
+}
+
+enum SupportEventActorType {
+  PLATFORM_USER
+  TENANT_USER
+  SYSTEM
+}
+
+model SupportAccessRequest {
+  id              String                     @id @default(uuid()) @db.Uuid
+  companyId       String                     @map("company_id") @db.Uuid
+  platformUserId  String                     @map("platform_user_id") @db.Uuid
+  reason          String
+  durationMinutes Int                        @map("duration_minutes")
+  status          SupportAccessRequestStatus @default(PENDING)
+  // HMAC of the 6-digit code (keyed with the app secret, bound to this
+  // request) — the code itself is shown once to the operator, never stored.
+  codeHash        String                     @map("code_hash")
+  codeExpiresAt   DateTime                   @map("code_expires_at")
+  failedAttempts  Int                        @default(0) @map("failed_attempts")
+  decidedByUserId String?                    @map("decided_by_user_id") @db.Uuid
+  decidedAt       DateTime?                  @map("decided_at")
+  rejectionReason String?                    @map("rejection_reason")
+  createdAt       DateTime                   @default(now()) @map("created_at")
+  updatedAt       DateTime                   @updatedAt @map("updated_at")
+
+  company      Company               @relation(fields: [companyId], references: [id])
+  platformUser PlatformUser          @relation(fields: [platformUserId], references: [id])
+  decidedBy    User?                 @relation("SupportRequestDecidedBy", fields: [decidedByUserId], references: [id])
+  session      SupportAccessSession?
+  events       SupportAccessEvent[]
+
+  @@index([companyId, status])
+  @@index([platformUserId, createdAt])
+  @@map("support_access_requests")
+}
+
+model SupportAccessSession {
+  id                   String                    @id @default(uuid()) @db.Uuid
+  requestId            String                    @unique @map("request_id") @db.Uuid
+  companyId            String                    @map("company_id") @db.Uuid
+  platformUserId       String                    @map("platform_user_id") @db.Uuid
+  // The company-scoped "Support — <operator>" user the operator acts as
+  // (users.support_for_platform_user_id), so every record and audit row
+  // stays inside this company and is clearly attributable to support.
+  proxyUserId          String                    @map("proxy_user_id") @db.Uuid
+  mode                 SupportAccessMode         @default(READ_ONLY)
+  startedAt            DateTime                  @default(now()) @map("started_at")
+  expiresAt            DateTime                  @map("expires_at")
+  revokedAt            DateTime?                 @map("revoked_at")
+  revokedByUserId      String?                   @map("revoked_by_user_id") @db.Uuid
+  endedAt              DateTime?                 @map("ended_at")
+  writeStatus          SupportWriteRequestStatus @default(NONE) @map("write_status")
+  writeJustification   String?                   @map("write_justification")
+  writeCodeHash        String?                   @map("write_code_hash")
+  writeCodeExpiresAt   DateTime?                 @map("write_code_expires_at")
+  writeFailedAttempts  Int                       @default(0) @map("write_failed_attempts")
+  writeRequestedAt     DateTime?                 @map("write_requested_at")
+  writeDecidedAt       DateTime?                 @map("write_decided_at")
+  writeDecidedByUserId String?                   @map("write_decided_by_user_id") @db.Uuid
+  // Short-lived, single-use token the operator's browser exchanges for a
+  // support sign-in (sha256; the raw token is never stored).
+  exchangeTokenHash    String?                   @unique @map("exchange_token_hash")
+  exchangeTokenExpiresAt DateTime?               @map("exchange_token_expires_at")
+  lastAccessedAt       DateTime?                 @map("last_accessed_at")
+  createdAt            DateTime                  @default(now()) @map("created_at")
+  updatedAt            DateTime                  @updatedAt @map("updated_at")
+
+  request        SupportAccessRequest @relation(fields: [requestId], references: [id])
+  company        Company              @relation(fields: [companyId], references: [id])
+  platformUser   PlatformUser         @relation(fields: [platformUserId], references: [id])
+  proxyUser      User                 @relation("SupportSessionProxyUser", fields: [proxyUserId], references: [id])
+  revokedBy      User?                @relation("SupportSessionRevokedBy", fields: [revokedByUserId], references: [id])
+  writeDecidedBy User?                @relation("SupportSessionWriteDecidedBy", fields: [writeDecidedByUserId], references: [id])
+
+  @@index([proxyUserId, expiresAt])
+  @@index([companyId, expiresAt])
+  @@map("support_access_sessions")
+}
+
+// Append-only, hash-chained per request: each row's hash covers the previous
+// row's hash plus its own content, so editing or deleting any row breaks the
+// chain (verifySupportEventChain()).
+model SupportAccessEvent {
+  id        String                @id @default(uuid()) @db.Uuid
+  requestId String                @map("request_id") @db.Uuid
+  seq       Int
+  eventType String                @map("event_type")
+  actorType SupportEventActorType @map("actor_type")
+  actorId   String?               @map("actor_id") @db.Uuid
+  method    String?
+  path      String?
+  detail    Json?
+  prevHash  String?               @map("prev_hash")
+  hash      String
+  createdAt DateTime              @default(now()) @map("created_at")
+
+  request SupportAccessRequest @relation(fields: [requestId], references: [id])
+
+  @@unique([requestId, seq])
+  @@map("support_access_events")
+}
+
 model User {
   id                String     @id @default(uuid()) @db.Uuid
   companyId         String     @map("company_id") @db.Uuid
@@ -315,16 +486,16 @@ model User {
   // old session survives a password change no better than it survives a
   // suspension.
   passwordChangedAt DateTime?  @map("password_changed_at")
-  // A capability layered ON TOP OF, not part of, this user's own company's
-  // RBAC — a platform admin still belongs to a real company (companyId
-  // above is never null) but can additionally provision brand-new,
-  // independent companies via src/modules/platform. Deliberately NOT a
-  // Permission/Role — that whole system is scoped per-company by design,
-  // and "create another company" has no company to be scoped to yet.
-  // Checked live from the DB on every use (requirePlatformAdmin()), never
-  // trusted from the JWT alone, matching this project's own passwordChangedAt/
-  // status re-verification discipline.
+  // DEPRECATED (Platform SaaS Phase 1, PLAT-001/004, 2026-10-13) — no longer
+  // read by any authorization path. Platform operators now live in the
+  // separate `PlatformUser` table and sign in at /platform/login; this flag
+  // grants nothing. Kept only because database changes must stay additive
+  // (the PLAT-001 migration copied every flagged user into platform_users).
   isPlatformAdmin   Boolean    @default(false) @map("is_platform_admin")
+  // Set only on a company's "Support — <operator>" proxy user (Platform SaaS
+  // Phase 2). Such a user has no roles and can't sign in at /login; it gets
+  // access only while a customer-approved support session is live.
+  supportForPlatformUserId String? @map("support_for_platform_user_id") @db.Uuid
   status            UserStatus @default(ACTIVE)
   createdAt         DateTime   @default(now()) @map("created_at")
   updatedAt         DateTime   @updatedAt @map("updated_at")
@@ -333,6 +504,11 @@ model User {
   defaultBranch                              Branch?                              @relation("UserDefaultBranch", fields: [defaultBranchId], references: [id])
   employee                                   Employee?                            @relation(fields: [employeeId], references: [id])
   contractorPortalFor                        Contractor?                          @relation("ContractorPortalUser", fields: [contractorId], references: [id])
+  supportForPlatformUser                     PlatformUser?                        @relation("SupportProxyUser", fields: [supportForPlatformUserId], references: [id])
+  supportRequestsDecided                     SupportAccessRequest[]               @relation("SupportRequestDecidedBy")
+  supportSessionsAsProxy                     SupportAccessSession[]               @relation("SupportSessionProxyUser")
+  supportSessionsRevoked                     SupportAccessSession[]               @relation("SupportSessionRevokedBy")
+  supportSessionsWriteDecided                SupportAccessSession[]               @relation("SupportSessionWriteDecidedBy")
   branchRoles                                UserBranchRole[]
   auditLogs                                  AuditLog[]
   notifications                              Notification[]
@@ -508,6 +684,7 @@ model User {
   jobWorkReceiptsApproved                    JobWorkReceipt[]                     @relation("JobWorkReceiptApprovedBy")
   jobWorkReceiptsSubmitted                   JobWorkReceipt[]                     @relation("JobWorkReceiptSubmittedBy")
 
+  @@unique([companyId, supportForPlatformUserId])
   @@map("users")
 }
 
@@ -9931,6 +10108,10 @@ model AuditLog {
   id          String      @id @default(uuid()) @db.Uuid
   companyId   String      @map("company_id") @db.Uuid
   userId      String?     @map("user_id") @db.Uuid
+  // Set instead of userId when a platform operator performed the action
+  // (e.g. provisioning a company) — platform users are not in the tenant
+  // users table, so userId can't reference them.
+  platformUserId String?  @map("platform_user_id") @db.Uuid
   tableName   String      @map("table_name")
   recordId    String      @map("record_id") @db.Uuid
   action      AuditAction
@@ -9941,6 +10122,7 @@ model AuditLog {
 
   company Company @relation(fields: [companyId], references: [id])
   user    User?   @relation(fields: [userId], references: [id])
+  platformUser PlatformUser? @relation(fields: [platformUserId], references: [id])
 
   @@index([tableName, recordId, performedAt])
   @@map("audit_logs")

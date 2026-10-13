@@ -168,9 +168,8 @@ export async function getRoleProductionStageAccess(companyId: string, roleId: st
  * branch/stage access is the intentional, useful feature described below,
  * but SUPER_ADMIN exists specifically to be the one role that always has
  * full, unrestricted access — narrowing it would silently lock out whoever
- * holds it (a company's real Super Admin is not always flagged
- * `isPlatformAdmin`, which is the only thing that would otherwise bypass a
- * restriction; see getAllowedBranchIds/getAllowedProductionStageIds).
+ * holds it (nothing else bypasses a branch/stage restriction; see
+ * getAllowedBranchIds/getAllowedProductionStageIds).
  */
 function assertNotSuperAdminRole(roleName: string, kind: "branch" | "production stage" | "permission matrix") {
   if (roleName === "SUPER_ADMIN") {

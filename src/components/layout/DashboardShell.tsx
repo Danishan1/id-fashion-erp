@@ -65,16 +65,18 @@ function setSidebarCollapsedStore(next: boolean) {
  *    every route change so it never lingers open over newly-navigated page.
  */
 export function DashboardShell({
-  isPlatformAdmin,
   viewableModules,
   actionModules,
   userName,
+  topBanner,
   children,
 }: {
-  isPlatformAdmin?: boolean;
   viewableModules: Module[] | "all";
   actionModules?: Partial<Record<Action, Module[] | "all">>;
   userName: string;
+  /** Full-width strip above the topbar — the support-session banner, or the
+   * customer admin's "support access request waiting" notice (Phase 2). */
+  topBanner?: ReactNode;
   children: ReactNode;
 }) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -121,7 +123,6 @@ export function DashboardShell({
         } ${mobileNavOpen ? "translate-x-0" : "-translate-x-full"}`}
       >
         <Sidebar
-          isPlatformAdmin={isPlatformAdmin}
           viewableModules={viewableModules}
           actionModules={actionModules}
           // The desktop minimize preference must never apply while the
@@ -141,6 +142,7 @@ export function DashboardShell({
           this whole column — topbar included — off-screen instead of
           scrolling inside its own overflow-x-auto wrapper. */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        {topBanner}
         <Topbar userName={userName} onMenuClick={() => setMobileNavOpen((open) => !open)} />
         <main className="min-h-0 flex-1 overflow-y-auto bg-zinc-50 p-6 dark:bg-zinc-950">{children}</main>
       </div>

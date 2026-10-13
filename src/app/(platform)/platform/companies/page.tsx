@@ -1,19 +1,21 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { auth } from "@/core/auth/auth";
+import { getPlatformPageUser } from "@/modules/platform/platform-page";
 import { listCompanies } from "@/modules/platform/platform-company.service";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { formatDate } from "@/lib/date-format";
 
 export default async function PlatformCompaniesPage() {
-  const session = await auth();
-  if (!session?.user.isPlatformAdmin) notFound();
+  const user = await getPlatformPageUser();
+  if (!user) notFound();
+  const canCreate = user.role === "PLATFORM_SUPER_ADMIN";
+  const canRequestSupport = user.role === "PLATFORM_SUPER_ADMIN" || user.role === "SUPPORT_AGENT";
 
   const companies = await listCompanies();
 
   return (
     <div className="space-y-4">
-      <Breadcrumb items={[{ label: "Dashboard", href: "/dashboard" }, { label: "Companies" }]} />
+      <Breadcrumb items={[{ label: "Platform", href: "/platform" }, { label: "Companies" }]} />
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Companies</h1>
@@ -22,12 +24,14 @@ export default async function PlatformCompaniesPage() {
             and transactional data. Only platform administrators can see this page.
           </p>
         </div>
-        <Link
-          href="/platform/companies/new"
-          className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500"
-        >
-          New Company
-        </Link>
+        {canCreate && (
+          <Link
+            href="/platform/companies/new"
+            className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500"
+          >
+            New Company
+          </Link>
+        )}
       </div>
 
       <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
@@ -40,12 +44,13 @@ export default async function PlatformCompaniesPage() {
               <th className="px-4 py-2 font-medium">Base Currency</th>
               <th className="px-4 py-2 font-medium">Status</th>
               <th className="px-4 py-2 font-medium">Created</th>
+              <th className="px-4 py-2 font-medium" />
             </tr>
           </thead>
           <tbody>
             {companies.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-zinc-500">
+                <td colSpan={7} className="px-4 py-6 text-center text-zinc-500">
                   No companies yet.
                 </td>
               </tr>
@@ -68,6 +73,13 @@ export default async function PlatformCompaniesPage() {
                   </span>
                 </td>
                 <td className="px-4 py-2 text-zinc-700 dark:text-zinc-200">{formatDate(c.createdAt)}</td>
+                <td className="px-4 py-2 text-right">
+                  {canRequestSupport && c.isActive && (
+                    <Link href={`/platform/support?companyId=${c.id}`} className="text-indigo-600 hover:underline">
+                      Request support access
+                    </Link>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>
