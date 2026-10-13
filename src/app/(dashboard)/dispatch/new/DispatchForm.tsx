@@ -179,7 +179,8 @@ export function DispatchForm({ initialDispatch, prefill }: { initialDispatch?: I
     initialDispatch?.dispatchDate.slice(0, 10) ?? todayIsoDate()
   );
   const [deliveryAddress, setDeliveryAddress] = useState(initialDispatch?.deliveryAddress ?? "");
-  const [transporterName, setTransporterName] = useState(initialDispatch?.transporterName ?? "");
+  // Legacy free-text transporter (box removed) — only carried through on edit.
+  const transporterName = initialDispatch?.transporterName ?? "";
   const [vehicleNumber, setVehicleNumber] = useState(initialDispatch?.vehicleNumber ?? "");
   const [trackingNumber, setTrackingNumber] = useState(initialDispatch?.trackingNumber ?? "");
   const [forwarderId, setForwarderId] = useState(initialDispatch?.forwarderId ?? "");
@@ -249,9 +250,19 @@ export function DispatchForm({ initialDispatch, prefill }: { initialDispatch?: I
     if (!preloadOrderId) return;
     fetch(`/api/v1/sales-orders/${preloadOrderId}`)
       .then((res) => res.json())
-      .then((body) => setOrder(body.data))
+      .then((body) => {
+        setOrder(body.data);
+        // Opened pre-filled (e.g. "Create Dispatch" from the For Dispatching
+        // list): default the address from the Customer master exactly like
+        // picking the order by hand does. Editing an existing dispatch keeps
+        // its own saved address.
+        if (!initialDispatch) {
+          const customer = body.data?.customer;
+          setDeliveryAddress((current) => current || customer?.shippingAddress || customer?.billingAddress || "");
+        }
+      })
       .catch(() => setOrder(null));
-  }, [preloadOrderId]);
+  }, [preloadOrderId, initialDispatch]);
 
   // Real available Finished-Goods stock per line, once both the order and a
   // warehouse are known — reuses the exact same production-summary endpoint
@@ -513,9 +524,19 @@ export function DispatchForm({ initialDispatch, prefill }: { initialDispatch?: I
         />
       </FormField>
 
+      {/* Transporter = the Forwarder Master record (table/API keep the
+          "forwarder" name; only the label changed, 2026-10-13). The old
+          free-text Transporter box was removed — a legacy value already saved
+          on an existing dispatch is carried through unchanged on edit. */}
       <div className="grid grid-cols-3 gap-4">
-        <FormField label="Transporter (optional)" htmlFor="transporterName">
-          <input id="transporterName" value={transporterName} onChange={(e) => setTransporterName(e.target.value)} className={textInputClass()} />
+        <FormField label="Transporter (optional)" htmlFor="forwarderId">
+          <SearchableSelect
+            id="forwarderId"
+            value={forwarderId}
+            onChange={setForwarderId}
+            options={forwarders.map((f) => ({ id: f.id, label: `${f.name} (${f.code})` }))}
+            placeholder="Search transporter / courier…"
+          />
         </FormField>
         <FormField label="Vehicle No. (optional)" htmlFor="vehicleNumber">
           <input id="vehicleNumber" value={vehicleNumber} onChange={(e) => setVehicleNumber(e.target.value)} className={textInputClass()} />
@@ -525,20 +546,7 @@ export function DispatchForm({ initialDispatch, prefill }: { initialDispatch?: I
         </FormField>
       </div>
 
-      {/* Forwarder Master integration (2026-10-10) — a real FK, a live join
-          for contact display (never a snapshot — see the Forwarder model's
-          own schema comment), alongside per-shipment facts that genuinely do
-          vary per dispatch and are frozen on this row directly. */}
       <div className="grid grid-cols-3 gap-4">
-        <FormField label="Forwarder (optional)" htmlFor="forwarderId">
-          <SearchableSelect
-            id="forwarderId"
-            value={forwarderId}
-            onChange={setForwarderId}
-            options={forwarders.map((f) => ({ id: f.id, label: `${f.name} (${f.code})` }))}
-            placeholder="Search forwarder / courier…"
-          />
-        </FormField>
         <FormField label="LR Number (optional)" htmlFor="lrNumber">
           <input id="lrNumber" value={lrNumber} onChange={(e) => setLrNumber(e.target.value)} className={textInputClass()} />
         </FormField>
@@ -657,6 +665,11 @@ export function DispatchForm({ initialDispatch, prefill }: { initialDispatch?: I
                             title={stock?.[item.productId]?.reserved ? `In stock ${stock[item.productId].onHand}, ${stock[item.productId].reserved} on other open dispatches` : undefined}
                           >
                             {!warehouseId ? "Pick a warehouse" : stock ? (stock[item.productId]?.available ?? 0) : "…"}
+                            {stock && (stock[item.productId]?.reserved ?? 0) > 0 && (
+                              <span className="block text-xs font-normal text-amber-700 dark:text-amber-400">
+                                {stock[item.productId].reserved} on other open dispatches
+                              </span>
+                            )}
                           </td>
                           <td className="px-3 py-2">
                             <input

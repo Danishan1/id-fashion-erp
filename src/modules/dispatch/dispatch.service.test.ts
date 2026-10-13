@@ -173,15 +173,16 @@ describe("createDispatch — order eligibility and remaining-quantity guard", ()
     expect(DispatchRepository.createWithItems).not.toHaveBeenCalled();
   });
 
-  it("counts pieces already on other open dispatches as unavailable", async () => {
+  it("does not let other open Draft/Packed dispatches block real on-hand stock", async () => {
     vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue({
       id: "so-1",
       status: "CONFIRMED",
       customerId: "cust-1",
       items: [orderItem("item-1", 0, [100])],
     } as never);
-    vi.mocked(getAvailableQuantity).mockResolvedValue(10);
-    vi.mocked(prisma.dispatchItem.aggregate).mockResolvedValue({ _sum: { dispatchedQuantity: 8 } } as never);
+    vi.mocked(getAvailableQuantity).mockResolvedValue(6);
+    vi.mocked(prisma.dispatchItem.aggregate).mockResolvedValue({ _sum: { dispatchedQuantity: 255 } } as never);
+    vi.mocked(DispatchRepository.createWithItems).mockResolvedValue({ id: "disp-1" } as never);
 
     await expect(
       createDispatch(actor, {
@@ -189,9 +190,9 @@ describe("createDispatch — order eligibility and remaining-quantity guard", ()
         warehouseId: "wh-1",
         dispatchDate: "2026-08-24",
         deliveryAddress: "123 Street",
-        items: [{ salesOrderItemId: "item-1", dispatchedQuantity: 3 }],
+        items: [{ salesOrderItemId: "item-1", dispatchedQuantity: 6 }],
       } as never)
-    ).rejects.toMatchObject({ code: "INSUFFICIENT_FG_STOCK", details: { onHand: 10, reserved: 8, available: 2 } });
+    ).resolves.toBeDefined();
   });
 
   // Extra Dispatch Quantity (2026-09-30) — a request beyond what remains

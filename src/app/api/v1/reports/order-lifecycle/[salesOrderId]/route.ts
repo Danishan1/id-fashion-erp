@@ -185,7 +185,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ sale
     if (canDispatch) {
       const dispatches = await prisma.dispatch.findMany({
         where: { salesOrderId, companyId },
-        select: { id: true, dispatchNumber: true, dispatchDate: true, status: true, transporterName: true },
+        select: { id: true, dispatchNumber: true, dispatchDate: true, status: true, transporterName: true, forwarder: { select: { name: true } } },
       });
       dispatchIds = dispatches.map((d) => d.id);
       const cartons =
@@ -197,7 +197,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ sale
         dispatchNumber: d.dispatchNumber,
         dispatchDate: d.dispatchDate,
         status: d.status,
-        transporterName: d.transporterName,
+        transporterName: d.forwarder?.name ?? d.transporterName,
         cartons: cartons.filter((c) => c.dispatchId === d.id).map((c) => ({ cartonNumber: c.cartonNumber, totalQuantity: c.totalQuantity })),
       }));
     }

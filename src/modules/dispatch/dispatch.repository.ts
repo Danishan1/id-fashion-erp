@@ -46,6 +46,7 @@ export const DispatchRepository = {
       include: {
         salesOrder: { select: { id: true, orderNumber: true } },
         customer: { select: { id: true, name: true } },
+        forwarder: { select: { name: true } },
       },
       ...args,
     }),

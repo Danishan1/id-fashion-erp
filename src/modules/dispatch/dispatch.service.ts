@@ -186,9 +186,9 @@ export async function getDispatchById(actor: { companyId: string; userId: string
 /**
  * Stock check at Draft time (create/edit), not just at Confirm — a Dispatch
  * should never be saved for more pieces than the chosen warehouse actually
- * holds. Pieces already sitting on OTHER open (Draft/Packed) dispatches from
- * the same warehouse are treated as spoken for, so two drafts can't both
- * claim the same stock. Confirm still re-checks against live stock.
+ * holds. Other open (Draft/Packed) dispatches are NOT treated as reserving
+ * stock — an abandoned draft must never block a real shipment; Confirm
+ * re-checks live stock, so the same pieces can still only ship once.
  */
 export interface DispatchableStock {
   onHand: number;
@@ -196,7 +196,7 @@ export interface DispatchableStock {
   available: number;
 }
 
-/** Per-style Finished Goods stock at a warehouse, minus what other open (Draft/Packed) dispatches already claim. */
+/** Per-style Finished Goods stock at a warehouse, plus (for information) what other open Draft/Packed dispatches mention. */
 export async function getDispatchableStock(
   companyId: string,
   warehouseId: string,
@@ -219,7 +219,11 @@ export async function getDispatchableStock(
       _sum: { dispatchedQuantity: true },
     });
     const reserved = Number(reservedAgg._sum.dispatchedQuantity ?? 0);
-    result.set(productId, { onHand, reserved, available: Math.max(0, onHand - reserved) });
+    // `available` is the real on-hand stock. Draft/Packed dispatches do NOT
+    // reserve stock (a stale or abandoned draft must never block a real
+    // shipment) — `reserved` is returned for information only, and Confirm
+    // re-checks live stock so two drafts can't both actually ship it.
+    result.set(productId, { onHand, reserved, available: onHand });
   }
   return result;
 }
@@ -243,8 +247,7 @@ async function assertFinishedGoodsAvailable(
       const name = product?.styleName ?? "this style";
       throw new BusinessRuleError(
         "INSUFFICIENT_FG_STOCK",
-        `Only ${available} pieces of "${name}" are available for dispatch in this warehouse, but ${requested} were entered.` +
-          (reserved > 0 ? ` (In stock: ${onHand}, already on other open dispatches: ${reserved}.)` : ` (In stock: ${onHand}.)`),
+        `Only ${available} pieces of "${name}" are in Finished Goods stock in this warehouse, but ${requested} were entered.`,
         { productId, warehouseId, onHand, reserved, available, requested }
       );
     }
@@ -258,9 +261,9 @@ async function assertFinishedGoodsAvailable(
 async function resolveForwarderId(companyId: string, forwarderId: string | undefined): Promise<string | null> {
   if (!forwarderId) return null;
   const forwarder = await ForwarderRepository.findById(companyId, forwarderId);
-  if (!forwarder) throw new BusinessRuleError("NOT_FOUND", "Forwarder not found.", { id: forwarderId });
+  if (!forwarder) throw new BusinessRuleError("NOT_FOUND", "Transporter not found.", { id: forwarderId });
   if (!forwarder.isActive) {
-    throw new BusinessRuleError("VALIDATION_ERROR", `Forwarder "${forwarder.name}" is inactive.`, { id: forwarder.id });
+    throw new BusinessRuleError("VALIDATION_ERROR", `Transporter "${forwarder.name}" is inactive.`, { id: forwarder.id });
   }
   return forwarder.id;
 }

@@ -7635,9 +7635,20 @@ second one.
   ready orders with Finished / Dispatched / Pending qty and a "Create Dispatch" link that pre-fills the form via
   `/dispatch/new?salesOrderId=&salesOrderItemId=&quantity=`.
 - **FG stock is now checked at Draft create/edit, not only at Confirm** (`assertFinishedGoodsAvailable()` in
-  `dispatch.service.ts`). Requested qty per style must be ≤ warehouse stock minus qty already on OTHER open
-  (Draft/Packed) dispatches from that warehouse. The form shows an "Available Stock" column
-  (`GET /api/v1/dispatches/available-stock`) and blocks Save when exceeded. Confirm still re-checks live stock.
+  `dispatch.service.ts`). Requested qty per style must be ≤ the warehouse's real on-hand stock. The form shows an
+  "Available Stock" column (`GET /api/v1/dispatches/available-stock`) and blocks Save when exceeded. Confirm still
+  re-checks live stock.
+- **Correction, 2026-10-13:** the first version also subtracted qty on OTHER open Draft/Packed dispatches
+  ("reserved"). Three stale pre-fix drafts (ORD-2026-00007, 85 pcs each) then blocked a real 6-pc shipment. Drafts no
+  longer reserve stock; the reserved figure is shown only as a warning. "Dispatched" readiness now needs a confirmed
+  (shipped) dispatch — a Draft/Packed one keeps the order in "For Dispatching" ("On a dispatch — confirm it below").
+- **Forwarder → Transporter (labels only, 2026-10-13):** Masters page/URL is now `/masters/transporters`
+  (`/masters/forwarders` redirects in `next.config.ts`); new codes use prefix `TRN`. The table, API
+  (`/api/v1/forwarders`), `forwarderId` and code names are unchanged. The Dispatch form's old free-text Transporter box
+  was removed — the Transporter dropdown is the Master record; a legacy `transporterName` is kept on edit and shown as a
+  fallback on the detail page, Excel export and Order Lifecycle report.
+- Dispatch form opened pre-filled (`?salesOrderId=`) now also defaults the Delivery Address from the Customer master
+  (shipping, else billing), same as picking the order by hand.
 
 ## Reference
 

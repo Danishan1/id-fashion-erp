@@ -34,6 +34,10 @@ const nextConfig: NextConfig = {
   allowedDevOrigins: ["192.168.29.215"],
   async redirects() {
     return [
+      // Masters "Forwarders" was renamed "Transporters" (2026-10-13, label/URL
+      // only — the API stays /api/v1/forwarders and the table stays forwarders).
+      { source: "/masters/forwarders", destination: "/masters/transporters", permanent: true },
+      { source: "/masters/forwarders/:path*", destination: "/masters/transporters/:path*", permanent: true },
       // AI Designer's "Catalogue Designs" page route was renamed from
       // /ai-designer/projects (2026-09-14, to match the sidebar label
       // already renamed from "Projects") — this keeps any existing

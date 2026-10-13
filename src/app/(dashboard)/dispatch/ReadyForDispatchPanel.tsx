@@ -105,7 +105,9 @@ export function ReadyForDispatchPanel() {
                     )}
                   </td>
                   <td className="py-2 text-right">
-                    {row.salesOrderId ? (
+                    {row.pendingDispatchQuantity <= 0 ? (
+                      <span className="text-xs text-amber-700 dark:text-amber-400">On a dispatch — confirm it below</span>
+                    ) : row.salesOrderId ? (
                       <Link
                         href={`/dispatch/new?salesOrderId=${row.salesOrderId}&salesOrderItemId=${row.salesOrderItemId}&quantity=${row.pendingDispatchQuantity}`}
                         className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500"

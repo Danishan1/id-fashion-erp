@@ -36,7 +36,7 @@ const PREFIX_BY_DOCUMENT_TYPE: Record<DocumentType, string> = {
   CRM_LEAD: "LEAD",
   CRM_OPPORTUNITY: "OPP",
   CAMPAIGN: "CAMP",
-  FORWARDER: "FWD",
+  FORWARDER: "TRN",
 };
 
 /** DocumentTypes that represent master-data codes, not transactional documents. */

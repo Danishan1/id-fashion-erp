@@ -17,7 +17,7 @@ export default async function EditForwarderPage({ params }: { params: Promise<{ 
         <Breadcrumb
           items={[
             { label: "Masters", href: "/masters" },
-            { label: "Forwarders", href: "/masters/forwarders" },
+            { label: "Transporters", href: "/masters/transporters" },
             { label: forwarder.name },
           ]}
         />

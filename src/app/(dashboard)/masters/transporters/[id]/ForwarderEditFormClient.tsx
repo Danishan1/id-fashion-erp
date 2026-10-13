@@ -13,7 +13,7 @@ export function ForwarderEditFormClient({ id, initialValues }: ForwarderEditForm
   const router = useRouter();
 
   const goToList = () => {
-    router.push("/masters/forwarders");
+    router.push("/masters/transporters");
     router.refresh();
   };
 

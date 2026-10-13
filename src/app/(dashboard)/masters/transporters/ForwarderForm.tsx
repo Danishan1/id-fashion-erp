@@ -75,7 +75,7 @@ export function ForwarderForm({ initialValues, submitUrl, method, onSuccess, onC
         method,
         headers: {
           "Content-Type": "application/json",
-          "x-toast-success": method === "POST" ? "Forwarder created successfully." : "Forwarder updated successfully.",
+          "x-toast-success": method === "POST" ? "Transporter created successfully." : "Transporter updated successfully.",
         },
         body: JSON.stringify(values),
       });
@@ -89,7 +89,7 @@ export function ForwarderForm({ initialValues, submitUrl, method, onSuccess, onC
 
     if (!res.ok) {
       const body = await res.json().catch(() => null);
-      setError(body?.error?.message ?? "Failed to save forwarder.");
+      setError(body?.error?.message ?? "Failed to save transporter.");
       return;
     }
 

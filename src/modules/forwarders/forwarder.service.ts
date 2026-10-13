@@ -40,7 +40,7 @@ export async function listForwarders(companyId: string, query: ListQuery) {
 export async function getForwarderById(companyId: string, id: string) {
   const forwarder = await ForwarderRepository.findById(companyId, id);
   if (!forwarder) {
-    throw new BusinessRuleError("NOT_FOUND", "Forwarder not found.", { id });
+    throw new BusinessRuleError("NOT_FOUND", "Transporter not found.", { id });
   }
   return forwarder;
 }
@@ -106,7 +106,7 @@ async function resolveForwarderCode(companyId: string, requested: string | undef
     if (!existing) return candidate;
     await advanceMasterCodeSequence(companyId, "FORWARDER");
   }
-  throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", "Could not generate a unique forwarder code.", {});
+  throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", "Could not generate a unique transporter code.", {});
 }
 
 export async function createForwarder(actor: ActorContext, input: ForwarderInput) {

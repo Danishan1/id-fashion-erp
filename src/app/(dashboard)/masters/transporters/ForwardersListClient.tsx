@@ -39,10 +39,10 @@ export function ForwardersListClient() {
   return (
     <div className="space-y-4">
       <div>
-        <Breadcrumb items={[{ label: "Masters", href: "/masters" }, { label: "Forwarders" }]} />
-        <h1 className="mt-2 text-lg font-semibold text-zinc-900 dark:text-zinc-50">Forwarders</h1>
+        <Breadcrumb items={[{ label: "Masters", href: "/masters" }, { label: "Transporters" }]} />
+        <h1 className="mt-2 text-lg font-semibold text-zinc-900 dark:text-zinc-50">Transporters</h1>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-          Couriers / transporters used to ship a Dispatch — pick one on the Dispatch form to record LR/AWB number,
+          Transporters / courier companies used to ship a Dispatch — pick one on the Dispatch form to record LR/AWB number,
           driver details and freight charges per shipment.
         </p>
       </div>
@@ -50,9 +50,9 @@ export function ForwardersListClient() {
       <DataTable<ForwarderRow>
         fetchUrl="/api/v1/forwarders"
         refreshKey={refreshKey}
-        newAction={{ label: "New Forwarder", onClick: () => setModalOpen(true) }}
+        newAction={{ label: "New Transporter", onClick: () => setModalOpen(true) }}
         searchPlaceholder="Search by name or code…"
-        rowHref={(row) => `/masters/forwarders/${row.id}`}
+        rowHref={(row) => `/masters/transporters/${row.id}`}
         columns={[
           { key: "code", header: "Code", sortable: true },
           { key: "name", header: "Name", sortable: true },
@@ -79,7 +79,7 @@ export function ForwardersListClient() {
         ]}
       />
 
-      <Modal open={modalOpen} onClose={closeModal} title="Add Forwarder" maxWidthClass="max-w-xl">
+      <Modal open={modalOpen} onClose={closeModal} title="Add Transporter" maxWidthClass="max-w-xl">
         <ForwarderForm submitUrl="/api/v1/forwarders" method="POST" onSuccess={handleSuccess} onCancel={closeModal} />
       </Modal>
     </div>

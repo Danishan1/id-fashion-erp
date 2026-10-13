@@ -13,8 +13,10 @@ const EPSILON = 0.0001;
  *   finished. Pieces finished through an external job-work receipt count the
  *   same way, since a job-work receipt covering the final stage posts them to
  *   Finished Goods exactly like an in-house completion.
- * DISPATCHED: ready, and the linked Sale Order line has already shipped (or
- *   has open Draft/Packed dispatches for) everything that was finished.
+ * DISPATCHED: ready, and the linked Sale Order line has actually shipped
+ *   (confirmed dispatches) everything that was finished. Draft/Packed
+ *   dispatches don't count — the order stays in "For Dispatching" with its
+ *   in-progress quantity shown until they're confirmed.
  * null: still in production, or the order is on hold / cancelled.
  */
 export type DispatchReadiness = "READY_FOR_DISPATCH" | "DISPATCHED" | null;
@@ -63,7 +65,8 @@ function readinessFor(
 ): DispatchReadiness {
   if (!progress || !READINESS_ELIGIBLE_STATUSES.has(order.status) || !isFullyProcessed(progress)) return null;
   if (order.salesOrderItemId && dispatchQty) {
-    if (dispatchQty.shipped + dispatchQty.inProgress >= progress.producedQuantity - EPSILON) return "DISPATCHED";
+    // Only a confirmed (shipped) dispatch counts — a Draft/Packed one hasn't left yet.
+    if (dispatchQty.shipped >= progress.producedQuantity - EPSILON) return "DISPATCHED";
   }
   return "READY_FOR_DISPATCH";
 }

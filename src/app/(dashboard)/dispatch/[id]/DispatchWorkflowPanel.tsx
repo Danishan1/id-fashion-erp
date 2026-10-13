@@ -327,28 +327,24 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
         <div>
           <dt className="text-zinc-500 dark:text-zinc-400">Transporter</dt>
           <dd className="font-medium text-zinc-900 dark:text-zinc-50">
-            {dispatch.transporterName ?? "—"} {dispatch.vehicleNumber ? `(${dispatch.vehicleNumber})` : ""}
+            {dispatch.forwarder ? `${dispatch.forwarder.name} (${dispatch.forwarder.code})` : dispatch.transporterName ?? "—"}
+            {dispatch.forwarder && (dispatch.forwarder.contactPerson || dispatch.forwarder.phone) && (
+              <span className="block text-xs font-normal text-zinc-500 dark:text-zinc-400">
+                {dispatch.forwarder.contactPerson}
+                {dispatch.forwarder.contactPerson && dispatch.forwarder.phone && " · "}
+                {dispatch.forwarder.phone}
+              </span>
+            )}
           </dd>
+        </div>
+        <div>
+          <dt className="text-zinc-500 dark:text-zinc-400">Vehicle No.</dt>
+          <dd className="font-medium text-zinc-900 dark:text-zinc-50">{dispatch.vehicleNumber ?? "—"}</dd>
         </div>
         <div>
           <dt className="text-zinc-500 dark:text-zinc-400">Tracking No.</dt>
           <dd className="font-medium text-zinc-900 dark:text-zinc-50">{dispatch.trackingNumber ?? "—"}</dd>
         </div>
-        {dispatch.forwarder && (
-          <div>
-            <dt className="text-zinc-500 dark:text-zinc-400">Forwarder</dt>
-            <dd className="font-medium text-zinc-900 dark:text-zinc-50">
-              {dispatch.forwarder.name} ({dispatch.forwarder.code})
-              {(dispatch.forwarder.contactPerson || dispatch.forwarder.phone) && (
-                <span className="block text-xs font-normal text-zinc-500 dark:text-zinc-400">
-                  {dispatch.forwarder.contactPerson}
-                  {dispatch.forwarder.contactPerson && dispatch.forwarder.phone && " · "}
-                  {dispatch.forwarder.phone}
-                </span>
-              )}
-            </dd>
-          </div>
-        )}
         {(dispatch.lrNumber || dispatch.awbNumber) && (
           <div>
             <dt className="text-zinc-500 dark:text-zinc-400">LR / AWB No.</dt>
