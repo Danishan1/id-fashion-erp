@@ -25,6 +25,16 @@ export function useLeadFilters({ meta, users, board = false, refreshKey = 0 }: {
   const filters: CrmFilterDefinition[] = useMemo(
     () => [
       { type: "select", key: "statusIds", label: "Status", options: (meta?.statuses ?? []).map((s) => ({ value: s.id, label: s.name })) },
+      {
+        type: "select",
+        key: "statusKinds",
+        label: "Status group",
+        options: [
+          { value: "OPEN", label: "Open (active)" },
+          { value: "CONVERTED", label: "Converted" },
+          { value: "LOST", label: "Lost" },
+        ],
+      },
       { type: "select", key: "sourceIds", label: "Source", options: (meta?.sources ?? []).map((s) => ({ value: s.id, label: s.name })) },
       {
         type: "select",
@@ -63,6 +73,7 @@ export function useLeadFilters({ meta, users, board = false, refreshKey = 0 }: {
       { type: "dateRange", label: "Created", fromKey: "createdAtFrom", toKey: "createdAtTo" },
       { type: "dateRange", label: "Updated", fromKey: "updatedAtFrom", toKey: "updatedAtTo" },
       { type: "dateRange", label: "Last contacted", fromKey: "lastContactedAtFrom", toKey: "lastContactedAtTo" },
+      { type: "select", key: "neverContacted", label: "Contacted", options: [{ value: "true", label: "Never contacted" }] },
       { type: "dateRange", label: "Next follow-up", fromKey: "nextFollowUpAtFrom", toKey: "nextFollowUpAtTo" },
       ...(board
         ? []

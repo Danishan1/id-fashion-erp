@@ -75,6 +75,7 @@ export function useOpportunityFilters({ meta, users, boardPipelineId, refreshKey
       { type: "select", key: "fromLead", label: "Origin", options: [{ value: "yes", label: "From a lead" }, { value: "no", label: "Created directly" }] },
       { type: "dateRange", label: "Created", fromKey: "createdAtFrom", toKey: "createdAtTo" },
       { type: "dateRange", label: "Updated", fromKey: "updatedAtFrom", toKey: "updatedAtTo" },
+      { type: "dateRange", label: "Closed (won / lost)", fromKey: "closedAtFrom", toKey: "closedAtTo" },
       ...(board
         ? []
         : [{ type: "select" as const, key: "archived", label: "Archived", anyLabel: "Active opportunities only", options: [{ value: "only", label: "Archived only" }, { value: "include", label: "Active and archived" }] }]),

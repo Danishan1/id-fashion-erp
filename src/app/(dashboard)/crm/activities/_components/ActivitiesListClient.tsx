@@ -51,7 +51,7 @@ const FILTERS: CrmFilterDefinition[] = [
  * today, overdue, upcoming, completed), filters, search, server-side paging
  * and bulk actions (each record checked on its own).
  */
-export function ActivitiesListClient({ permissions, currentUserId, initialView = "my-open" }: { permissions: CrmPagePermissions; currentUserId: string; initialView?: ViewKey }) {
+export function ActivitiesListClient({ permissions, currentUserId, initialView = "my-open", initialAssignee = "" }: { permissions: CrmPagePermissions; currentUserId: string; initialView?: ViewKey; initialAssignee?: string }) {
   const { meta, users } = useActivityLookups();
   const [view, setView] = useState<ViewKey>(initialView);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -59,7 +59,7 @@ export function ActivitiesListClient({ permissions, currentUserId, initialView =
   const [opened, setOpened] = useState<string | null>(null);
   const [composing, setComposing] = useState(false);
   const [assignee, setAssignee] = useState("");
-  const [assigneeFilter, setAssigneeFilter] = useState("");
+  const [assigneeFilter, setAssigneeFilter] = useState(initialAssignee);
   const [rescheduleDate, setRescheduleDate] = useState("");
   const [busy, setBusy] = useState(false);
 

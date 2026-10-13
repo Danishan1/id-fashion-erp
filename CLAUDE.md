@@ -7766,3 +7766,10 @@ The whole CRM (Leads, Deals/Opportunities, pipeline/sources/lost-reason masters,
 - UI: `<BulkActionsButton entityType selectedIds filterQuery />` on list pages; jobs at `/crm/bulk-jobs`. APIs: `/api/v1/bulk-actions/{capabilities,preview}`, `/api/v1/bulk-jobs` + `[...path]`.
 - Bulk changes trigger Phase 18 workflows like manual ones: handlers go through the services (crm_events), and the engine runs each item in `runWithRequestContext({ requestId: "bulkjob:<jobId>" })`. Never use the `wfexec:` prefix there (that would mark bulk changes as workflow-made).
 - Report + "how to register a bulk action": `docs/crm/PHASE_14_BULK_ACTION_ENGINE.md`.
+
+## Phase 21 CRM Dashboard (2026-10-14)
+- `/crm` = `CrmDashboardClient`; data only from `GET /api/v1/crm/dashboard` (`src/modules/crm/dashboard/crm-dashboard.service.ts`): one request, `?widgets=` = visible widgets only, each widget computed independently ({status:"ok"|"error"}).
+- Every number is built from the list filters (`leadFilterSchema`/`opportunityFilterSchema` + `buildLeadWhere`/`buildOpportunityWhere`, `buildActivityWhere`, `buildAppointmentWhere`) and its drill-down link is `*FilterToParams` of the SAME filter object - keep it that way (integration test re-counts every link). Days are Asia/Kolkata business days. Opportunity values are per-currency CRM estimates; never sum currencies or mix ERP revenue.
+- Visibility on the server: record scope + owner filter (another owner needs crm.view_all); workflow/integration health needs crm_settings.view; feed uses the company-feed rule (OWN = own actions).
+- Customisation = CRM preferences `dashboard.layout` / `dashboard.filters` (schemas in `dashboard-registry.ts`); new widget = catalogue entry + service function + view.
+- Report: `docs/crm/PHASE_21_DASHBOARD.md`.

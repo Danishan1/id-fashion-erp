@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { CrmBadge } from "@/components/crm/CrmBadge";
 import type { CrmFilterDefinition } from "@/components/crm/CrmFilterBar";
 import { CrmErrorState, CrmLoadingState } from "@/components/crm/CrmStates";
@@ -18,7 +19,9 @@ import { WORKFLOWS_API, toneOf, useWorkflowMeta, type WorkflowDto, type Workflow
 /** Phase 18 — workflow list (status / trigger filters, search, run counts). */
 export function WorkflowsListClient({ permissions }: { permissions: CrmPagePermissions }) {
   const { meta, error, reload } = useWorkflowMeta();
-  const [creating, setCreating] = useState(false);
+  // `?new=1` (dashboard quick action) opens the "New workflow" dialog for users who may create one.
+  const searchParams = useSearchParams();
+  const [creating, setCreating] = useState(searchParams.get("new") === "1" && permissions.settingsEdit);
   if (error) return <CrmErrorState message={error} onRetry={reload} />;
   if (!meta) return <CrmLoadingState />;
   const filters: CrmFilterDefinition[] = [

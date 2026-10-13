@@ -75,6 +75,7 @@ export function buildLeadWhere(
       },
     });
   }
+  if (filter.neverContacted) and.push({ lastContactedAt: null });
   for (const field of ["createdAt", "updatedAt", "lastContactedAt", "nextFollowUpAt"] as const) {
     const range = businessDayRange(filter[field]);
     if (range) and.push({ [field]: range });

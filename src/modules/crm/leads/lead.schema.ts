@@ -112,6 +112,8 @@ export const leadFilterSchema = z
     importJobId: z.string().uuid().optional(),
     ownerUserIds: idList.optional(),
     unassigned: z.boolean().optional(),
+    /** Phase 21: never contacted (no last-contacted date). */
+    neverContacted: z.boolean().optional(),
     temperatures: z.array(z.enum(["COLD", "WARM", "HOT"])).optional(),
     tagIds: idList.optional(),
     crmCompanyId: z.string().uuid().optional(),
@@ -168,6 +170,7 @@ export function parseLeadFilterParams(sp: URLSearchParams): LeadFilter {
 
     ownerUserIds: list("ownerUserIds"),
     unassigned: get("unassigned") === "true" ? true : undefined,
+    neverContacted: get("neverContacted") === "true" ? true : undefined,
     temperatures: list("temperatures"),
     tagIds: list("tagIds"),
     crmCompanyId: get("crmCompanyId"),
@@ -252,6 +255,7 @@ export function leadFilterToParams(filter: Partial<LeadFilter>): Record<string, 
   for (const k of ["crmCompanyId", "crmContactId", "importJobId", "companyName", "industry", "location", "campaignSource", "referralSource"] as const) put(k, filter[k]);
 
   if (filter.unassigned) out.unassigned = "true";
+  if (filter.neverContacted) out.neverContacted = "true";
   if (filter.archived && filter.archived !== "exclude") out.archived = filter.archived;
   for (const k of ["score", "estimatedValue"] as const) {
     put(`${k}Min`, filter[k]?.min);
