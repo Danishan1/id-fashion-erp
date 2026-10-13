@@ -7,6 +7,15 @@ const { findManyMock, countMock, userFindUniqueMock, roleStageAccessFindManyMock
   roleStageAccessFindManyMock: vi.fn(),
 }));
 
+const { entitlementMock } = vi.hoisted(() => ({ entitlementMock: { disabled: new Set<string>() } }));
+vi.mock("@/core/entitlements/EntitlementService", () => ({
+  EntitlementService: {
+    isModuleEnabled: async (_c: string, m: string) => !entitlementMock.disabled.has(m),
+    getDisabledModules: async () => new Set(entitlementMock.disabled),
+    invalidate: () => {},
+  },
+}));
+
 vi.mock("@/core/db/client", () => ({
   prisma: {
     userBranchRole: {
@@ -269,5 +278,38 @@ describe("PermissionService.assert", () => {
       code: "PERMISSION_DENIED",
       httpStatus: 403,
     });
+  });
+});
+
+describe("module entitlements (Platform SaaS Phase 3, PLAT-019)", () => {
+  beforeEach(() => {
+    entitlementMock.disabled = new Set();
+    userFindUniqueMock.mockResolvedValue({ companyId: "co-1", company: { isActive: true }, status: "ACTIVE" });
+  });
+
+  it("refuses a module turned off for the company even when the role grants it", async () => {
+    mockPermissions(["crm.view", "sales_orders.view"]);
+    entitlementMock.disabled = new Set(["crm"]);
+    await expect(PermissionService.can("user-1", "crm", "view")).resolves.toBe(false);
+    await expect(PermissionService.can("user-1", "sales_orders", "view")).resolves.toBe(true);
+  });
+
+  it("assert() reports MODULE_NOT_ENABLED, not PERMISSION_DENIED, for a disabled module", async () => {
+    mockPermissions(["crm.view"]);
+    entitlementMock.disabled = new Set(["crm"]);
+    await expect(PermissionService.assert("user-1", "crm", "view")).rejects.toMatchObject({ code: "MODULE_NOT_ENABLED" });
+  });
+
+  it("assert() still reports PERMISSION_DENIED when the module is on but the role lacks it", async () => {
+    mockPermissions([]);
+    await expect(PermissionService.assert("user-1", "crm", "view")).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+  });
+
+  it("hides disabled modules from the sidebar module list", async () => {
+    mockPermissions(["crm.view", "sales_orders.view"]);
+    entitlementMock.disabled = new Set(["crm"]);
+    const modules = await PermissionService.getViewableModules("user-1");
+    expect(modules.has("crm")).toBe(false);
+    expect(modules.has("sales_orders")).toBe(true);
   });
 });

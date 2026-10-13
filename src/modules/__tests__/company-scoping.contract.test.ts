@@ -24,6 +24,7 @@ const ALLOWLIST: Record<string, string> = {
   // Global lookup, not company-scoped at all by design (confirmed in
   // CLAUDE.md: "UnitOfMeasure — deliberately global with no companyId
   // column at all").
+  updateCompanyDetails: "Platform-portal action (Platform SaaS PLAT-017): run by a platform operator against any tenant by id, deliberately not scoped to a tenant actor.",
   updateUnit: "UnitOfMeasure has no companyId column — it is a deliberately global, non-tenant-scoped master.",
 };
 

@@ -15,16 +15,22 @@ datasource db {
 // ─────────────────────────────────────────────────────────────
 
 model Company {
-  id                   String   @id @default(uuid()) @db.Uuid
-  name                 String
-  legalName            String?  @map("legal_name")
-  taxRegistrationNo    String?  @unique @map("tax_registration_no")
-  baseCurrencyCode     String   @map("base_currency_code") @db.Char(3)
-  fiscalYearStartMonth Int      @default(1) @map("fiscal_year_start_month")
-  addressJson          Json?    @map("address_json")
-  isActive             Boolean  @default(true) @map("is_active")
-  createdAt            DateTime @default(now()) @map("created_at")
-  updatedAt            DateTime @updatedAt @map("updated_at")
+  id                        String    @id @default(uuid()) @db.Uuid
+  name                      String
+  legalName                 String?   @map("legal_name")
+  taxRegistrationNo         String?   @unique @map("tax_registration_no")
+  baseCurrencyCode          String    @map("base_currency_code") @db.Char(3)
+  fiscalYearStartMonth      Int       @default(1) @map("fiscal_year_start_month")
+  addressJson               Json?     @map("address_json")
+  isActive                  Boolean   @default(true) @map("is_active")
+  // Platform SaaS Phase 3 (PLAT-016): who suspended the company, when and
+  // why. Cleared again when the company is reactivated; the full history
+  // stays in audit_logs.
+  suspendedAt               DateTime? @map("suspended_at")
+  suspensionReason          String?   @map("suspension_reason")
+  suspendedByPlatformUserId String?   @map("suspended_by_platform_user_id") @db.Uuid
+  createdAt                 DateTime  @default(now()) @map("created_at")
+  updatedAt                 DateTime  @updatedAt @map("updated_at")
 
   baseCurrency                        Currency                             @relation(fields: [baseCurrencyCode], references: [code])
   branches                            Branch[]
@@ -223,6 +229,8 @@ model Company {
   aiGarmentBuyerCommentsRuns          AiGarmentBuyerCommentsRun[]
   aiGarmentBuyerCommentsAnalyses      AiGarmentBuyerCommentsAnalysis[]
   actionDisplaySettings               ActionDisplaySettings?
+  suspendedByPlatformUser             PlatformUser?                        @relation("CompanySuspendedBy", fields: [suspendedByPlatformUserId], references: [id], onDelete: SetNull)
+  moduleEntitlements                  CompanyModuleEntitlement[]
 
   styleStageCosts  StyleStageCost[]
   designStageCosts DesignStageCost[]
@@ -304,27 +312,50 @@ enum PlatformUserRole {
 // Access to a customer's ERP will come only through the customer-approved
 // support session planned for Phase 2.
 model PlatformUser {
-  id                String           @id @default(uuid()) @db.Uuid
-  email             String           @unique
-  passwordHash      String           @map("password_hash")
-  fullName          String           @map("full_name")
-  role              PlatformUserRole @default(SUPPORT_AGENT)
-  status            UserStatus       @default(ACTIVE)
-  lastLoginAt       DateTime?        @map("last_login_at")
-  passwordChangedAt DateTime?        @map("password_changed_at")
+  id                 String           @id @default(uuid()) @db.Uuid
+  email              String           @unique
+  passwordHash       String           @map("password_hash")
+  fullName           String           @map("full_name")
+  role               PlatformUserRole @default(SUPPORT_AGENT)
+  status             UserStatus       @default(ACTIVE)
+  lastLoginAt        DateTime?        @map("last_login_at")
+  passwordChangedAt  DateTime?        @map("password_changed_at")
   // Set only for rows backfilled from users.is_platform_admin by the PLAT-001
   // migration — traceability back to the old tenant account, never a link
   // that grants anything.
-  migratedFromUserId String?         @unique @map("migrated_from_user_id") @db.Uuid
-  createdAt         DateTime         @default(now()) @map("created_at")
-  updatedAt         DateTime         @updatedAt @map("updated_at")
+  migratedFromUserId String?          @unique @map("migrated_from_user_id") @db.Uuid
+  createdAt          DateTime         @default(now()) @map("created_at")
+  updatedAt          DateTime         @updatedAt @map("updated_at")
 
-  auditLogs              AuditLog[]
-  supportProxyUsers      User[]                 @relation("SupportProxyUser")
-  supportAccessRequests  SupportAccessRequest[]
-  supportAccessSessions  SupportAccessSession[]
+  auditLogs                AuditLog[]
+  supportProxyUsers        User[]                     @relation("SupportProxyUser")
+  supportAccessRequests    SupportAccessRequest[]
+  supportAccessSessions    SupportAccessSession[]
+  companiesSuspended       Company[]                  @relation("CompanySuspendedBy")
+  moduleEntitlementChanges CompanyModuleEntitlement[]
 
   @@map("platform_users")
+}
+
+// Platform SaaS Phase 3 (PLAT-018) — which product packages (see
+// src/config/module-entitlements.ts) a company may use. A missing row means
+// the package is enabled, so only explicitly disabled packages need a row.
+// Enforced by PermissionService (every API + sidebar + server page) and the
+// proxy (page URLs).
+model CompanyModuleEntitlement {
+  id                      String   @id @default(uuid()) @db.Uuid
+  companyId               String   @map("company_id") @db.Uuid
+  packageKey              String   @map("package_key")
+  isEnabled               Boolean  @default(true) @map("is_enabled")
+  changedByPlatformUserId String?  @map("changed_by_platform_user_id") @db.Uuid
+  createdAt               DateTime @default(now()) @map("created_at")
+  updatedAt               DateTime @updatedAt @map("updated_at")
+
+  company   Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  changedBy PlatformUser? @relation(fields: [changedByPlatformUserId], references: [id], onDelete: SetNull)
+
+  @@unique([companyId, packageKey])
+  @@map("company_module_entitlements")
 }
 
 // ---------------------------------------------------------------------------
@@ -395,35 +426,35 @@ model SupportAccessRequest {
 }
 
 model SupportAccessSession {
-  id                   String                    @id @default(uuid()) @db.Uuid
-  requestId            String                    @unique @map("request_id") @db.Uuid
-  companyId            String                    @map("company_id") @db.Uuid
-  platformUserId       String                    @map("platform_user_id") @db.Uuid
+  id                     String                    @id @default(uuid()) @db.Uuid
+  requestId              String                    @unique @map("request_id") @db.Uuid
+  companyId              String                    @map("company_id") @db.Uuid
+  platformUserId         String                    @map("platform_user_id") @db.Uuid
   // The company-scoped "Support — <operator>" user the operator acts as
   // (users.support_for_platform_user_id), so every record and audit row
   // stays inside this company and is clearly attributable to support.
-  proxyUserId          String                    @map("proxy_user_id") @db.Uuid
-  mode                 SupportAccessMode         @default(READ_ONLY)
-  startedAt            DateTime                  @default(now()) @map("started_at")
-  expiresAt            DateTime                  @map("expires_at")
-  revokedAt            DateTime?                 @map("revoked_at")
-  revokedByUserId      String?                   @map("revoked_by_user_id") @db.Uuid
-  endedAt              DateTime?                 @map("ended_at")
-  writeStatus          SupportWriteRequestStatus @default(NONE) @map("write_status")
-  writeJustification   String?                   @map("write_justification")
-  writeCodeHash        String?                   @map("write_code_hash")
-  writeCodeExpiresAt   DateTime?                 @map("write_code_expires_at")
-  writeFailedAttempts  Int                       @default(0) @map("write_failed_attempts")
-  writeRequestedAt     DateTime?                 @map("write_requested_at")
-  writeDecidedAt       DateTime?                 @map("write_decided_at")
-  writeDecidedByUserId String?                   @map("write_decided_by_user_id") @db.Uuid
+  proxyUserId            String                    @map("proxy_user_id") @db.Uuid
+  mode                   SupportAccessMode         @default(READ_ONLY)
+  startedAt              DateTime                  @default(now()) @map("started_at")
+  expiresAt              DateTime                  @map("expires_at")
+  revokedAt              DateTime?                 @map("revoked_at")
+  revokedByUserId        String?                   @map("revoked_by_user_id") @db.Uuid
+  endedAt                DateTime?                 @map("ended_at")
+  writeStatus            SupportWriteRequestStatus @default(NONE) @map("write_status")
+  writeJustification     String?                   @map("write_justification")
+  writeCodeHash          String?                   @map("write_code_hash")
+  writeCodeExpiresAt     DateTime?                 @map("write_code_expires_at")
+  writeFailedAttempts    Int                       @default(0) @map("write_failed_attempts")
+  writeRequestedAt       DateTime?                 @map("write_requested_at")
+  writeDecidedAt         DateTime?                 @map("write_decided_at")
+  writeDecidedByUserId   String?                   @map("write_decided_by_user_id") @db.Uuid
   // Short-lived, single-use token the operator's browser exchanges for a
   // support sign-in (sha256; the raw token is never stored).
-  exchangeTokenHash    String?                   @unique @map("exchange_token_hash")
-  exchangeTokenExpiresAt DateTime?               @map("exchange_token_expires_at")
-  lastAccessedAt       DateTime?                 @map("last_accessed_at")
-  createdAt            DateTime                  @default(now()) @map("created_at")
-  updatedAt            DateTime                  @updatedAt @map("updated_at")
+  exchangeTokenHash      String?                   @unique @map("exchange_token_hash")
+  exchangeTokenExpiresAt DateTime?                 @map("exchange_token_expires_at")
+  lastAccessedAt         DateTime?                 @map("last_accessed_at")
+  createdAt              DateTime                  @default(now()) @map("created_at")
+  updatedAt              DateTime                  @updatedAt @map("updated_at")
 
   request        SupportAccessRequest @relation(fields: [requestId], references: [id])
   company        Company              @relation(fields: [companyId], references: [id])
@@ -461,10 +492,10 @@ model SupportAccessEvent {
 }
 
 model User {
-  id                String     @id @default(uuid()) @db.Uuid
-  companyId         String     @map("company_id") @db.Uuid
-  defaultBranchId   String?    @map("default_branch_id") @db.Uuid
-  employeeId        String?    @unique @map("employee_id") @db.Uuid
+  id                       String     @id @default(uuid()) @db.Uuid
+  companyId                String     @map("company_id") @db.Uuid
+  defaultBranchId          String?    @map("default_branch_id") @db.Uuid
+  employeeId               String?    @unique @map("employee_id") @db.Uuid
   // A vendor/external-unit login — this account genuinely IS that
   // Contractor's own portal identity (same 1:1 "this login is that
   // real-world entity" shape as employeeId just above, not a role-style
@@ -472,33 +503,33 @@ model User {
   // server-side via PermissionService.getAllowedContractorId() in every Job
   // Work Order route — an EXTERNAL_UNIT_USER role sees/acts on only its own
   // contractor's jobs.
-  contractorId      String?    @unique @map("contractor_id") @db.Uuid
-  email             String     @unique
-  passwordHash      String     @map("password_hash")
-  fullName          String     @map("full_name")
-  phone             String?
-  mfaSecret         String?    @map("mfa_secret")
-  lastLoginAt       DateTime?  @map("last_login_at")
+  contractorId             String?    @unique @map("contractor_id") @db.Uuid
+  email                    String     @unique
+  passwordHash             String     @map("password_hash")
+  fullName                 String     @map("full_name")
+  phone                    String?
+  mfaSecret                String?    @map("mfa_secret")
+  lastLoginAt              DateTime?  @map("last_login_at")
   // Stamped on every self-service change and admin reset. CF-7's own
   // isUserActive() checks already re-verify live DB state on every
   // permission check, uncached — this reuses that exact same chokepoint to
   // also compare the session's issued-at time against this timestamp, so an
   // old session survives a password change no better than it survives a
   // suspension.
-  passwordChangedAt DateTime?  @map("password_changed_at")
+  passwordChangedAt        DateTime?  @map("password_changed_at")
   // DEPRECATED (Platform SaaS Phase 1, PLAT-001/004, 2026-10-13) — no longer
   // read by any authorization path. Platform operators now live in the
   // separate `PlatformUser` table and sign in at /platform/login; this flag
   // grants nothing. Kept only because database changes must stay additive
   // (the PLAT-001 migration copied every flagged user into platform_users).
-  isPlatformAdmin   Boolean    @default(false) @map("is_platform_admin")
+  isPlatformAdmin          Boolean    @default(false) @map("is_platform_admin")
   // Set only on a company's "Support — <operator>" proxy user (Platform SaaS
   // Phase 2). Such a user has no roles and can't sign in at /login; it gets
   // access only while a customer-approved support session is live.
-  supportForPlatformUserId String? @map("support_for_platform_user_id") @db.Uuid
-  status            UserStatus @default(ACTIVE)
-  createdAt         DateTime   @default(now()) @map("created_at")
-  updatedAt         DateTime   @updatedAt @map("updated_at")
+  supportForPlatformUserId String?    @map("support_for_platform_user_id") @db.Uuid
+  status                   UserStatus @default(ACTIVE)
+  createdAt                DateTime   @default(now()) @map("created_at")
+  updatedAt                DateTime   @updatedAt @map("updated_at")
 
   company                                    Company                              @relation(fields: [companyId], references: [id])
   defaultBranch                              Branch?                              @relation("UserDefaultBranch", fields: [defaultBranchId], references: [id])
@@ -534,7 +565,7 @@ model User {
   sampleApprovalsMade                        SampleApproval[]                     @relation("SampleApprovalDecidedBy")
   sampleCommentsMade                         SampleComment[]                      @relation("SampleCommentAuthor")
   productionOrdersRequested                  ProductionOrder[]                    @relation("ProductionOrderRequestedBy")
-  productionOrdersReleasedToDispatch          ProductionOrder[]                    @relation("ProductionOrderReleasedToDispatchBy")
+  productionOrdersReleasedToDispatch         ProductionOrder[]                    @relation("ProductionOrderReleasedToDispatchBy")
   productionOrderQuantityChanges             ProductionOrderQuantityChange[]
   lotsCreated                                Lot[]                                @relation("LotCreatedBy")
   barcodesCreated                            Barcode[]                            @relation("BarcodeCreatedBy")
@@ -4061,32 +4092,32 @@ enum ProductionPriority {
 }
 
 model ProductionOrder {
-  id                String                 @id @default(uuid()) @db.Uuid
-  companyId         String                 @map("company_id") @db.Uuid
-  branchId          String?                @map("branch_id") @db.Uuid
-  orderNumber       String                 @map("order_number")
+  id                         String                 @id @default(uuid()) @db.Uuid
+  companyId                  String                 @map("company_id") @db.Uuid
+  branchId                   String?                @map("branch_id") @db.Uuid
+  orderNumber                String                 @map("order_number")
   // Nullable — null means Make-to-Stock (no customer sale behind this run).
-  salesOrderItemId  String?                @map("sales_order_item_id") @db.Uuid
-  productId         String                 @map("product_id") @db.Uuid
+  salesOrderItemId           String?                @map("sales_order_item_id") @db.Uuid
+  productId                  String                 @map("product_id") @db.Uuid
   // Snapshot pointer for audit purposes — Bom itself has no versioning yet,
   // but this still records "the BOM as it existed" at order-creation time.
-  bomId             String?                @map("bom_id") @db.Uuid
-  plannedQuantity   Decimal                @map("planned_quantity") @db.Decimal(18, 4)
-  status            ProductionOrderStatus  @default(PLANNED)
-  statusBeforeHold  ProductionOrderStatus? @map("status_before_hold")
-  priority          ProductionPriority     @default(NORMAL)
-  plannedStartDate  DateTime?              @map("planned_start_date") @db.Date
-  plannedEndDate    DateTime?              @map("planned_end_date") @db.Date
-  actualStartDate   DateTime?              @map("actual_start_date") @db.Date
-  actualEndDate     DateTime?              @map("actual_end_date") @db.Date
+  bomId                      String?                @map("bom_id") @db.Uuid
+  plannedQuantity            Decimal                @map("planned_quantity") @db.Decimal(18, 4)
+  status                     ProductionOrderStatus  @default(PLANNED)
+  statusBeforeHold           ProductionOrderStatus? @map("status_before_hold")
+  priority                   ProductionPriority     @default(NORMAL)
+  plannedStartDate           DateTime?              @map("planned_start_date") @db.Date
+  plannedEndDate             DateTime?              @map("planned_end_date") @db.Date
+  actualStartDate            DateTime?              @map("actual_start_date") @db.Date
+  actualEndDate              DateTime?              @map("actual_end_date") @db.Date
   // Internal counter for generating this order's own Lot-number suffixes
   // (PROD-2026-00001-L01, -L02, ...) — a sub-sequence per order, deliberately
   // not routed through the shared DocumentNumberingService (a different
   // concern: a per-company/fiscal-year document number vs. a per-order line
   // counter).
-  nextLotSequence   Int                    @default(1) @map("next_lot_sequence")
-  remarks           String?
-  requestedByUserId String                 @map("requested_by_user_id") @db.Uuid
+  nextLotSequence            Int                    @default(1) @map("next_lot_sequence")
+  remarks                    String?
+  requestedByUserId          String                 @map("requested_by_user_id") @db.Uuid
   // Dispatch Eligibility gate (2026-10-10, Dispatch/Production/Forwarder/
   // Barcode initiative) — a deliberately manual, independent judgment call,
   // NOT derived from status/lot completion: a Production Manager can release
@@ -4097,10 +4128,10 @@ model ProductionOrder {
   // default for every order; set/cleared only via the dedicated release/
   // revoke actions in production-order.service.ts, never the generic
   // status-transition endpoint.
-  releasedToDispatchAt       DateTime? @map("released_to_dispatch_at")
-  releasedToDispatchByUserId String?   @map("released_to_dispatch_by_user_id") @db.Uuid
-  createdAt         DateTime               @default(now()) @map("created_at")
-  updatedAt         DateTime               @updatedAt @map("updated_at")
+  releasedToDispatchAt       DateTime?              @map("released_to_dispatch_at")
+  releasedToDispatchByUserId String?                @map("released_to_dispatch_by_user_id") @db.Uuid
+  createdAt                  DateTime               @default(now()) @map("created_at")
+  updatedAt                  DateTime               @updatedAt @map("updated_at")
 
   company              Company                         @relation(fields: [companyId], references: [id])
   branch               Branch?                         @relation(fields: [branchId], references: [id])
@@ -4109,12 +4140,12 @@ model ProductionOrder {
   bom                  Bom?                            @relation(fields: [bomId], references: [id])
   requestedBy          User                            @relation("ProductionOrderRequestedBy", fields: [requestedByUserId], references: [id])
   releasedToDispatchBy User?                           @relation("ProductionOrderReleasedToDispatchBy", fields: [releasedToDispatchByUserId], references: [id])
-  lots              Lot[]
-  jobOrders         JobOrder[]
-  stageTransactions ProductionStageTransaction[]
-  qcInspections     QcInspection[]
-  materialRequests  MaterialRequest[]
-  quantityChanges   ProductionOrderQuantityChange[]
+  lots                 Lot[]
+  jobOrders            JobOrder[]
+  stageTransactions    ProductionStageTransaction[]
+  qcInspections        QcInspection[]
+  materialRequests     MaterialRequest[]
+  quantityChanges      ProductionOrderQuantityChange[]
 
   @@unique([companyId, orderNumber])
   @@index([companyId, status])
@@ -5047,54 +5078,54 @@ model DispatchSettings {
 }
 
 model Dispatch {
-  id                String          @id @default(uuid()) @db.Uuid
-  companyId         String          @map("company_id") @db.Uuid
-  branchId          String?         @map("branch_id") @db.Uuid
-  dispatchNumber    String          @map("dispatch_number")
+  id                   String          @id @default(uuid()) @db.Uuid
+  companyId            String          @map("company_id") @db.Uuid
+  branchId             String?         @map("branch_id") @db.Uuid
+  dispatchNumber       String          @map("dispatch_number")
   // Required — Dispatch always fulfills a real Sales Order; a make-to-stock
   // shipment with no formal order (e.g. straight to a distributor) has no
   // Dispatch path this slice — use a plain StockMovement (STOCK_TRANSFER)
   // if that's ever actually needed. Revisit only if requested.
-  salesOrderId      String          @map("sales_order_id") @db.Uuid
+  salesOrderId         String          @map("sales_order_id") @db.Uuid
   // Denormalized from the order — this table is itself the shipping
   // document of record, same justification as SalesInvoice.customerId.
-  customerId        String          @map("customer_id") @db.Uuid
+  customerId           String          @map("customer_id") @db.Uuid
   // The source Finished-Goods warehouse this shipment is issued from.
-  warehouseId       String          @map("warehouse_id") @db.Uuid
-  dispatchDate      DateTime        @map("dispatch_date") @db.Date
-  status            DispatchStatus  @default(DRAFT)
-  statusBeforeHold  DispatchStatus? @map("status_before_hold")
-  deliveryAddress   String          @map("delivery_address")
+  warehouseId          String          @map("warehouse_id") @db.Uuid
+  dispatchDate         DateTime        @map("dispatch_date") @db.Date
+  status               DispatchStatus  @default(DRAFT)
+  statusBeforeHold     DispatchStatus? @map("status_before_hold")
+  deliveryAddress      String          @map("delivery_address")
   // Kept exactly as-is — plain free-text fallback for a one-off/unmastered
   // transporter, alongside the new forwarderId below (added, not replacing).
-  transporterName   String?         @map("transporter_name")
-  vehicleNumber     String?         @map("vehicle_number")
-  trackingNumber    String?         @map("tracking_number")
+  transporterName      String?         @map("transporter_name")
+  vehicleNumber        String?         @map("vehicle_number")
+  trackingNumber       String?         @map("tracking_number")
   // Forwarder Master integration (2026-10-10) — a live FK, same discipline
   // already used for customerId/warehouseId on this same model: if the
   // Forwarder's own master data (name/phone/address) changes later, a past
   // dispatch shows the current master data, exactly like it already does
   // for Customer. Only the genuinely per-shipment facts below are frozen
   // directly on this row, since those vary per dispatch, not per forwarder.
-  forwarderId          String?   @map("forwarder_id") @db.Uuid
-  lrNumber             String?   @map("lr_number")
-  awbNumber            String?   @map("awb_number")
-  driverDetails        String?   @map("driver_details")
-  freightCharges       Decimal?  @map("freight_charges") @db.Decimal(18, 2)
-  expectedDeliveryDate DateTime? @map("expected_delivery_date") @db.Date
-  shipmentRemarks      String?   @map("shipment_remarks")
+  forwarderId          String?         @map("forwarder_id") @db.Uuid
+  lrNumber             String?         @map("lr_number")
+  awbNumber            String?         @map("awb_number")
+  driverDetails        String?         @map("driver_details")
+  freightCharges       Decimal?        @map("freight_charges") @db.Decimal(18, 2)
+  expectedDeliveryDate DateTime?       @map("expected_delivery_date") @db.Date
+  shipmentRemarks      String?         @map("shipment_remarks")
   // Stamped only inside confirmDispatch()'s own transaction, the moment the
   // ledger is actually touched — a hard fact, not a status label, that
   // cancelDispatch() checks directly and unconditionally (see
   // dispatch.service.ts) rather than trusting the current status alone,
   // the same lesson this project already learned twice (Sampling's Hold/
   // Resume bug, Purchasing's cancel-from-ON_HOLD bug).
-  dispatchedAt      DateTime?       @map("dispatched_at")
-  deliveredAt       DateTime?       @map("delivered_at")
-  receivedByName    String?         @map("received_by_name")
-  requestedByUserId String          @map("requested_by_user_id") @db.Uuid
-  createdAt         DateTime        @default(now()) @map("created_at")
-  updatedAt         DateTime        @updatedAt @map("updated_at")
+  dispatchedAt         DateTime?       @map("dispatched_at")
+  deliveredAt          DateTime?       @map("delivered_at")
+  receivedByName       String?         @map("received_by_name")
+  requestedByUserId    String          @map("requested_by_user_id") @db.Uuid
+  createdAt            DateTime        @default(now()) @map("created_at")
+  updatedAt            DateTime        @updatedAt @map("updated_at")
 
   company     Company        @relation(fields: [companyId], references: [id])
   branch      Branch?        @relation(fields: [branchId], references: [id])
@@ -10105,23 +10136,23 @@ enum AuditAction {
 }
 
 model AuditLog {
-  id          String      @id @default(uuid()) @db.Uuid
-  companyId   String      @map("company_id") @db.Uuid
-  userId      String?     @map("user_id") @db.Uuid
+  id             String      @id @default(uuid()) @db.Uuid
+  companyId      String      @map("company_id") @db.Uuid
+  userId         String?     @map("user_id") @db.Uuid
   // Set instead of userId when a platform operator performed the action
   // (e.g. provisioning a company) — platform users are not in the tenant
   // users table, so userId can't reference them.
-  platformUserId String?  @map("platform_user_id") @db.Uuid
-  tableName   String      @map("table_name")
-  recordId    String      @map("record_id") @db.Uuid
-  action      AuditAction
-  oldValues   Json?       @map("old_values")
-  newValues   Json?       @map("new_values")
-  ipAddress   String?     @map("ip_address")
-  performedAt DateTime    @default(now()) @map("performed_at")
+  platformUserId String?     @map("platform_user_id") @db.Uuid
+  tableName      String      @map("table_name")
+  recordId       String      @map("record_id") @db.Uuid
+  action         AuditAction
+  oldValues      Json?       @map("old_values")
+  newValues      Json?       @map("new_values")
+  ipAddress      String?     @map("ip_address")
+  performedAt    DateTime    @default(now()) @map("performed_at")
 
-  company Company @relation(fields: [companyId], references: [id])
-  user    User?   @relation(fields: [userId], references: [id])
+  company      Company       @relation(fields: [companyId], references: [id])
+  user         User?         @relation(fields: [userId], references: [id])
   platformUser PlatformUser? @relation(fields: [platformUserId], references: [id])
 
   @@index([tableName, recordId, performedAt])

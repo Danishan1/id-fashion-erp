@@ -10,6 +10,15 @@ const { userFindUniqueMock, ubrFindManyMock, liveMock } = vi.hoisted(() => ({
   liveMock: vi.fn(),
 }));
 
+const { entitlementMock } = vi.hoisted(() => ({ entitlementMock: { disabled: new Set<string>() } }));
+vi.mock("@/core/entitlements/EntitlementService", () => ({
+  EntitlementService: {
+    isModuleEnabled: async (_c: string, m: string) => !entitlementMock.disabled.has(m),
+    getDisabledModules: async () => new Set(entitlementMock.disabled),
+    invalidate: () => {},
+  },
+}));
+
 vi.mock("@/core/db/client", () => ({
   prisma: {
     user: { findUnique: userFindUniqueMock },

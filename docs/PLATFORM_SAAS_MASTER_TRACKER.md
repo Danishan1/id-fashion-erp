@@ -13,16 +13,16 @@
 | Metric | Value |
 |---|---|
 | **Total Tasks Identified** | 30 |
-| **NOT STARTED** | 15 |
+| **NOT STARTED** | 10 |
 | **IN PROGRESS** | 0 |
 | **BLOCKED** | 0 |
 | **IMPLEMENTED** | 0 |
-| **VERIFIED** | 15 (PLAT-001 – PLAT-015) |
+| **VERIFIED** | 20 (PLAT-001 – PLAT-020) |
 | **DEFERRED** | 0 |
-| **Overall Verified Completion** | **50.0%** (15 / 30) |
-| **Current Active Phase** | **Phase 2 complete — Phase 3 awaiting approval** |
+| **Overall Verified Completion** | **66.7%** (20 / 30) |
+| **Current Active Phase** | **Phase 3 complete — Phase 4 awaiting approval** |
 | **Current Active Task** | None |
-| **Next Eligible Task** | `PLAT-016` (Company Lifecycle API) — after Phase 3 approval |
+| **Next Eligible Task** | `PLAT-021` (Subscription Schema) — after Phase 4 approval |
 | **Open Decisions Requiring Clarification** | 3 (DEC-01, DEC-03, DEC-04) |
 
 > [!NOTE]
@@ -119,11 +119,11 @@ The following decisions are approved and bind all future implementation tasks:
 | **PLAT-013** | Write Approval Workflow | None | Explicit step with distinct approval code for write operations | NEW | HIGH | Phase 2 | **VERIFIED** | PLAT-012 |
 | **PLAT-014** | Support Revocation & Expiry | None | Instant customer revocation button and automatic time expiry | NEW | HIGH | Phase 2 | **VERIFIED** | PLAT-011 |
 | **PLAT-015** | Support Audit Trail | Standard audit log only | Log support agent ID, target tenant, reason, approved time, and actions | NEW | HIGH | Phase 2 | **VERIFIED** | PLAT-011, PLAT-012 |
-| **PLAT-016** | Company Lifecycle API | Only `listCompanies` and `createCompany` | Add activate, suspend, update company details, and stats API | EXTEND | MEDIUM | Phase 3 | NOT STARTED | PLAT-001, PLAT-006 |
-| **PLAT-017** | Company Management UI | Basic read-only table and create form | Rich platform company management portal with suspension & details | EXTEND | MEDIUM | Phase 3 | NOT STARTED | PLAT-016 |
-| **PLAT-018** | Module Entitlements Schema | Only 6-submodule UI visibility table | Create `CompanyModuleEntitlement` model for high-level ERP modules | NEW | HIGH | Phase 3 | NOT STARTED | None |
-| **PLAT-019** | Module Guard Middleware | Modules accessible if user has role | Middleware & API route gates asserting module entitlement | NEW | HIGH | Phase 3 | NOT STARTED | PLAT-018 |
-| **PLAT-020** | Module Entitlement UI | None | Platform interface to enable/disable ERP modules per tenant | NEW | MEDIUM | Phase 3 | NOT STARTED | PLAT-018, PLAT-019 |
+| **PLAT-016** | Company Lifecycle API | Only `listCompanies` and `createCompany` | Add activate, suspend, update company details, and stats API | EXTEND | MEDIUM | Phase 3 | **VERIFIED** | PLAT-001, PLAT-006 |
+| **PLAT-017** | Company Management UI | Basic read-only table and create form | Rich platform company management portal with suspension & details | EXTEND | MEDIUM | Phase 3 | **VERIFIED** | PLAT-016 |
+| **PLAT-018** | Module Entitlements Schema | Only 6-submodule UI visibility table | Create `CompanyModuleEntitlement` model for high-level ERP modules | NEW | HIGH | Phase 3 | **VERIFIED** | None |
+| **PLAT-019** | Module Guard Middleware | Modules accessible if user has role | Middleware & API route gates asserting module entitlement | NEW | HIGH | Phase 3 | **VERIFIED** | PLAT-018 |
+| **PLAT-020** | Module Entitlement UI | None | Platform interface to enable/disable ERP modules per tenant | NEW | MEDIUM | Phase 3 | **VERIFIED** | PLAT-018, PLAT-019 |
 | **PLAT-021** | Subscription Schema | None | Add `SubscriptionPlan` and `CompanySubscription` models | NEW | HIGH | Phase 4 | NOT STARTED | None |
 | **PLAT-022** | Plan Catalog Service | None | Manage plans, features, quotas, billing cycles (Monthly/Annual) | NEW | HIGH | Phase 4 | NOT STARTED | PLAT-021 |
 | **PLAT-023** | Trial Lifecycle Worker | None | BullMQ worker managing trial countdown, notifications, and expiry | NEW | MEDIUM | Phase 4 | NOT STARTED | PLAT-021 |
@@ -383,10 +383,46 @@ flowchart TD
 
 ---
 
-### PLAT-016 to PLAT-020 — Phase 3 Checklists (Company & Module Management)
-- **Status**: ALL NOT STARTED. Detailed acceptance criteria documented in Phase 3 roadmap.
-- **Key Models**: `CompanyModuleEntitlement`.
-- **Key Guards**: Module entitlement verification in navigation and API handlers.
+### PLAT-016 — Company Lifecycle API
+- **Status**: VERIFIED (2026-10-13).
+- **Acceptance Criteria**:
+  - [x] `GET /api/v1/platform/companies/:id` — details, suspension info and stats (active/total users, last login, branches, customers, suppliers, styles, sales/production orders, dispatches, files + storage, support requests, live support sessions). Any platform role.
+  - [x] `PATCH /api/v1/platform/companies/:id` — name, legal name, tax registration no. (unique), fiscal year start. PLATFORM_SUPER_ADMIN only.
+  - [x] `POST .../suspend` (reason 5–1000 chars) and `POST .../activate` — guarded state changes (409 when already suspended/active); suspension stores `suspended_at`, `suspension_reason`, `suspended_by_platform_user_id`. PLATFORM_SUPER_ADMIN only.
+  - [x] Every change is audited with `audit_logs.platform_user_id`.
+- **Verification Evidence**: `platform-company-lifecycle.service.test.ts`; live — suspend → tenant API 403, second suspend 409, reactivate → tenant API 200, SUPPORT_AGENT refused (403).
+
+### PLAT-017 — Company Management UI
+- **Status**: VERIFIED (2026-10-13).
+- **Acceptance Criteria**:
+  - [x] Companies list shows active users, last login, modules off and Active/Suspended; name links to the company page.
+  - [x] `/platform/companies/:id` — status badge + suspension banner (when, who, reason), details with Edit, usage stats, modules panel, "Request support access".
+  - [x] Suspend needs a reason; reactivate and module changes confirm first. Controls hidden for non-super-admin roles.
+- **Verification Evidence**: browser — list, detail page and a real HRMS off/on through the switch + confirm dialog.
+
+### PLAT-018 — Module Entitlements Schema
+- **Status**: VERIFIED (2026-10-13).
+- **Acceptance Criteria**:
+  - [x] `company_module_entitlements` (company × package key, `is_enabled`, `changed_by_platform_user_id`). No row = enabled, so no backfill.
+  - [x] 13 packages in `src/config/module-entitlements.ts` (Sampling, Production, Purchasing, Inventory, Dispatch, Accounts, CRM, Marketing, HRMS, Barcodes, AI Garment Flow, AI Designer, Reports). Dashboard, Masters, Sales Orders and Administration are core (always on).
+  - [x] Test guarantees every RBAC module is either core or in exactly one package.
+- **Verification Evidence**: `module-entitlements.test.ts`; migration `20261013140000_company_lifecycle_and_module_entitlements` (additive) applied; row stored with operator verified by SQL.
+
+### PLAT-019 — Module Guard
+- **Status**: VERIFIED (2026-10-13).
+- **Acceptance Criteria**:
+  - [x] `PermissionService` refuses any action on a disabled module, whatever the role; `assert()` throws 403 `MODULE_NOT_ENABLED` (not `PERMISSION_DENIED`).
+  - [x] Sidebar hides disabled modules (`getModulesWithAction` excludes them).
+  - [x] `src/proxy.ts` redirects pages of a disabled module to `/module-unavailable` (page → modules taken from the sidebar config, longest link wins).
+  - [x] `EntitlementService`: 15 s per-company cache, globalThis singleton, cleared immediately on change.
+- **Verification Evidence**: `EntitlementService.test.ts`, `route-modules.test.ts`, `PermissionService.test.ts` (entitlement block); live — CRM off → `/api/v1/crm/leads` 403 MODULE_NOT_ENABLED, `/crm` → 302 `/module-unavailable`, sidebar without CRM, Sales Orders unaffected; CRM back on → all restored.
+
+### PLAT-020 — Module Entitlement UI
+- **Status**: VERIFIED (2026-10-13).
+- **Acceptance Criteria**:
+  - [x] `GET/PUT /api/v1/platform/companies/:id/modules` (PUT PLATFORM_SUPER_ADMIN only, audited).
+  - [x] Modules panel on the company page: one switch per package with description and confirmation; turning off never deletes data.
+- **Verification Evidence**: browser toggle; live — SUPPORT_AGENT PUT refused (403).
 
 ---
 
@@ -537,6 +573,7 @@ When updating this document after completing a task, use the following template:
 | Timestamp | Task ID | Author | Action | Summary |
 |---|---|---|---|---|
 | 2026-10-12 | INIT | Principal Architect | Created Master Tracker | Initialized `PLATFORM_SAAS_MASTER_TRACKER.md` with 30 tasks across 6 phases based on read-only audit. |
+| 2026-10-13 | PLAT-016–020 | Claude Code | Phase 3 implemented & verified | Company lifecycle (details, suspend with reason, reactivate, usage stats) and per-company module packages enforced in PermissionService, sidebar and proxy. Migration `20261013140000_company_lifecycle_and_module_entitlements`. 2688 tests green, tsc/eslint clean, 21/21 live API checks + browser check. |
 | 2026-10-13 | PLAT-008–015 | Claude Code | Phase 2 implemented & verified | Customer-approved support access: request with reason + 6-digit code, customer Super Admin approval, read-only session as a company proxy user, separate write approval, instant revoke + expiry, hash-chained append-only event log. Migration `20261013120000_support_access`. 2666 tests green, tsc/eslint clean, 38/38 live checks + browser check. |
 | 2026-10-13 | PLAT-001–007 | Claude Code | Phase 1 implemented & verified | Separate `PlatformUser` identity + `/platform/login`; `(platform)` portal; all 4 RBAC bypasses removed; company switcher removed; suspended companies blocked at login, API, permission checks and proxy. Migration `20261013100000_platform_users`. 2607 tests green, tsc/eslint clean, 24/24 live checks. |
 
@@ -588,14 +625,37 @@ When updating this document after completing a task, use the following template:
   - The dev database's missing permission keys (noted in Phase 1) still hide the Administration sidebar link for the dev Super Admin; Support Access is reachable from the waiting-request banner and `/admin/support-access`.
 - **Next Task**: PLAT-016 — after Phase 3 approval.
 
+### Task Progress Update — Phase 3
+- **Date**: 2026-10-13
+- **Task ID**: PLAT-016 – PLAT-020
+- **Phase**: Phase 3
+- **Previous Status**: NOT STARTED
+- **New Status**: VERIFIED
+- **Work Completed**: see the PLAT-016 – PLAT-020 checklists in section 8.
+- **Files Changed**:
+  - Schema: `prisma/schema.prisma`, `prisma/migrations/20261013140000_company_lifecycle_and_module_entitlements/migration.sql`
+  - Config/core: `src/config/module-entitlements.ts` (new), `src/core/entitlements/{EntitlementService,route-modules}.ts` (new), `src/core/rbac/PermissionService.ts`, `src/core/errors/BusinessRuleError.ts` (`MODULE_NOT_ENABLED`), `src/proxy.ts`
+  - Service/API: `src/modules/platform/platform-company-lifecycle.{schema,service}.ts` (new); `src/app/api/v1/platform/companies/[id]/{route,suspend/route,activate/route,modules/route}.ts` (new)
+  - UI: `src/app/(platform)/platform/companies/page.tsx`, `src/app/(platform)/platform/companies/[id]/{page,PlatformCompanyDetailClient}.tsx` (new), `src/app/(dashboard)/module-unavailable/page.tsx` (new)
+  - Tests: `module-entitlements.test.ts`, `EntitlementService.test.ts`, `route-modules.test.ts`, `platform-company-lifecycle.service.test.ts` (new); `PermissionService.test.ts`, `PermissionService.support.test.ts`, `company-scoping.contract.test.ts` (allowlist: `updateCompanyDetails` is a platform action) (updated)
+- **Database Changes**: columns `companies.suspended_at`, `suspension_reason`, `suspended_by_platform_user_id` (FK); table `company_module_entitlements`. Additive only.
+- **Tests Executed**: `npx vitest run`; `npx tsc --noEmit`; `npx eslint` on changed files; live HTTP verification; browser check.
+- **Test Results**: 2688 passed / 161 skipped; tsc 0 errors; eslint 0 errors; 21/21 live API checks (state restored afterwards).
+- **Remaining Work**: none for Phase 3.
+- **Blockers / Notes**:
+  - Modules are switched as packages (e.g. CRM = CRM + CRM Settings), not single RBAC modules.
+  - A module change reaches other server processes within 15 s (cache); the process that made the change sees it immediately.
+  - DEC-04 (AI usage metering) was not needed for Phase 3; still open for Phase 4.
+- **Next Task**: PLAT-021 — after Phase 4 approval.
+
 ---
 
 ## 16. NEXT RECOMMENDED TASK
 
-**Recommended Next Step**: **PLAT-016 — Company Lifecycle API** (start of Phase 3, Company & Module Management).
-- **Objective**: Platform operators can activate/suspend companies, edit company details and see per-company stats, then module entitlements per company.
-- **Prerequisites**: User approval to start Phase 3; DEC-04 (AI usage metering) should be decided before the entitlement tasks that depend on it.
+**Recommended Next Step**: **PLAT-021 — Subscription Schema** (start of Phase 4, Subscriptions, Trials & Grace Period).
+- **Objective**: Plans and company subscriptions, trial lifecycle and the 7-day read-only grace period.
+- **Prerequisites**: User approval to start Phase 4; DEC-01/DEC-03/DEC-04 should be answered first.
 
 ---
 
-**PHASE 2 COMPLETE (2026-10-13) — AWAITING APPROVAL FOR PHASE 3**
+**PHASE 3 COMPLETE (2026-10-13) — AWAITING APPROVAL FOR PHASE 4**

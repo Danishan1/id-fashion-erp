@@ -1,5 +1,6 @@
 import { prisma } from "@/core/db/client";
 import { MODULES, permissionKey, type Module, type Action } from "@/config/rbac";
+import { EntitlementService } from "@/core/entitlements/EntitlementService";
 import {
   getLiveSupportSessionForProxyUser,
   supportPermissionKeys,
@@ -101,11 +102,18 @@ class PermissionServiceImpl {
    */
   private async loadLiveUserState(
     userId: string
-  ): Promise<{ status: string; passwordChangedAt: Date | null; companyActive: boolean; isSupportProxy: boolean } | null> {
+  ): Promise<{
+    status: string;
+    passwordChangedAt: Date | null;
+    companyId: string;
+    companyActive: boolean;
+    isSupportProxy: boolean;
+  } | null> {
     const user = await prisma.user.findUnique({
       where: { id: userId },
       select: {
         status: true,
+        companyId: true,
         passwordChangedAt: true,
         supportForPlatformUserId: true,
         company: { select: { isActive: true } },
@@ -115,6 +123,7 @@ class PermissionServiceImpl {
     return {
       status: user.status,
       passwordChangedAt: user.passwordChangedAt,
+      companyId: user.companyId,
       companyActive: user.company?.isActive ?? false,
       isSupportProxy: !!user.supportForPlatformUserId,
     };
@@ -148,15 +157,28 @@ class PermissionServiceImpl {
     action: Action,
     resourceContext?: ResourceContext
   ): Promise<boolean> {
+    return (await this.evaluate(userId, module, action, resourceContext)) === "ALLOWED";
+  }
+
+  private async evaluate(
+    userId: string,
+    module: Module,
+    action: Action,
+    resourceContext?: ResourceContext
+  ): Promise<"ALLOWED" | "DENIED" | "MODULE_NOT_ENABLED"> {
     const user = await this.loadLiveUserState(userId);
-    if (!user || !this.isUsable(user)) return false;
+    if (!user || !this.isUsable(user)) return "DENIED";
     if (
       resourceContext?.sessionIssuedAt !== undefined &&
       user.passwordChangedAt &&
       resourceContext.sessionIssuedAt * 1000 < user.passwordChangedAt.getTime()
     ) {
-      return false;
+      return "DENIED";
     }
+
+    // Platform SaaS Phase 3 (PLAT-019): a module the platform turned off for
+    // this company is refused for everyone in it, whatever their roles.
+    if (!(await EntitlementService.isModuleEnabled(user.companyId, module))) return "MODULE_NOT_ENABLED";
 
     // No universal bypass of any kind (PLAT-004, 2026-10-13): every user,
     // including a company's own Super Admin, gets exactly what their roles
@@ -169,11 +191,11 @@ class PermissionServiceImpl {
       SELF_APPROVAL_GUARDED_ACTIONS.includes(action)
     ) {
       const isSuperAdmin = await this.hasRole(userId, "SUPER_ADMIN");
-      if (!isSuperAdmin) return false;
+      if (!isSuperAdmin) return "DENIED";
     }
 
     const keys = await this.loadPermissionKeys(userId, user.isSupportProxy);
-    return keys.has(permissionKey(module, action));
+    return keys.has(permissionKey(module, action)) ? "ALLOWED" : "DENIED";
   }
 
   /**
@@ -285,9 +307,10 @@ class PermissionServiceImpl {
     if (!user || !this.isUsable(user)) return new Set();
 
     const keys = await this.loadPermissionKeys(userId, user.isSupportProxy);
+    const disabled = await EntitlementService.getDisabledModules(user.companyId);
     const matching = new Set<Module>();
     for (const mod of MODULES) {
-      if (keys.has(permissionKey(mod, action))) matching.add(mod);
+      if (!disabled.has(mod) && keys.has(permissionKey(mod, action))) matching.add(mod);
     }
     return matching;
   }
@@ -300,8 +323,15 @@ class PermissionServiceImpl {
     resourceContext?: ResourceContext
   ): Promise<void> {
     const { BusinessRuleError } = await import("@/core/errors/BusinessRuleError");
-    const allowed = await this.can(userId, module, action, resourceContext);
-    if (!allowed) {
+    const result = await this.evaluate(userId, module, action, resourceContext);
+    if (result === "MODULE_NOT_ENABLED") {
+      throw new BusinessRuleError(
+        "MODULE_NOT_ENABLED",
+        "This module isn't enabled for your company. Contact your administrator or the platform team.",
+        { module }
+      );
+    }
+    if (result !== "ALLOWED") {
       throw new BusinessRuleError(
         "PERMISSION_DENIED",
         `You do not have permission to ${action} in ${module}.`,
