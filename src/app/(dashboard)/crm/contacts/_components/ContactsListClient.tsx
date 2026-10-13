@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { CrmBadge } from "@/components/crm/CrmBadge";
+import { BulkActionsButton } from "@/components/bulk/BulkActionsButton";
 import { CrmBulkBar } from "@/components/crm/CrmBulkBar";
 import { CrmColumnPicker } from "@/components/crm/CrmColumnPicker";
 import { crmFilterKeys, type CrmFilterDefinition } from "@/components/crm/CrmFilterBar";
@@ -142,6 +143,8 @@ export function ContactsListClient({ permissions }: { permissions: ContactPermis
     [meta, users, tags]
   );
   const listState = useCrmListState(crmFilterKeys(filters));
+  // Phase 14: the list's current filters + search, for "all matching records" bulk jobs.
+  const bulkFilterQuery = new URLSearchParams({ ...listState.filters, ...(listState.search ? { search: listState.search } : {}) }).toString();
 
   const loadViews = () =>
     fetch("/api/v1/crm/saved-views?entityType=CONTACT")
@@ -269,6 +272,7 @@ export function ContactsListClient({ permissions }: { permissions: ContactPermis
           </button>
         </>
       )}
+      <BulkActionsButton entityType="CONTACT" selectedIds={selected} filterQuery={bulkFilterQuery} onSubmitted={() => setSelected([])} />
       <CrmColumnPicker columns={ALL_COLUMNS.map((c) => ({ key: c.key, header: c.header }))} visibleKeys={visibleColumns} onChange={setVisibleColumns} />
       {permissions.create && (
         <Link href="/crm/contacts/new" className={buttonClasses("primary", "sm")}>
@@ -311,6 +315,7 @@ export function ContactsListClient({ permissions }: { permissions: ContactPermis
             <Button size="xs" variant="danger" onClick={() => setDialog({ kind: "archive", ids: selected, label: `${selected.length} contact(s)` })}>
               Archive
             </Button>
+            <BulkActionsButton entityType="CONTACT" size="xs" label="More bulk actions…" selectedIds={selected} filterQuery={bulkFilterQuery} onSubmitted={() => setSelected([])} />
           </CrmBulkBar>
         }
       />

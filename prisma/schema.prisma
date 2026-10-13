@@ -143,6 +143,8 @@ model Company {
   crmWorkflows                        CrmWorkflow[]
   crmWorkflowVersions                 CrmWorkflowVersion[]
   crmWorkflowExecutions               CrmWorkflowExecution[]
+  bulkJobs                            BulkJob[]
+  bulkJobItems                        BulkJobItem[]
   crmUserPreferences                  CrmUserPreference[]
   crmCompanyMerges                    CrmCompanyMerge[]
   attendanceRecords                   AttendanceRecord[]
@@ -11829,4 +11831,108 @@ model CrmWorkflowEventLog {
 
   @@index([processedAt])
   @@map("crm_workflow_event_log")
+}
+
+// ── Phase 14: Reusable Bulk Action Engine (2026-10-13) ──────────────────────
+// See docs/crm/PHASE_14_BULK_ACTION_ENGINE.md. A bulk job is one user request
+// ("archive these 3,000 leads"); every target record is a BulkJobItem with its
+// own outcome, so partial success, retry of failed items and recovery after a
+// worker crash are all row-level. Entity types and action keys are registry
+// keys (src/modules/bulk-actions/bulk-registry.ts), never table/service names.
+
+enum BulkJobStatus {
+  QUEUED
+  VALIDATING
+  RUNNING
+  CANCEL_REQUESTED
+  CANCELLED
+  COMPLETED
+  COMPLETED_WITH_ERRORS
+  FAILED
+}
+
+enum BulkJobItemStatus {
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  SKIPPED
+  CANCELLED
+}
+
+model BulkJob {
+  id                String        @id @default(uuid()) @db.Uuid
+  companyId         String        @map("company_id") @db.Uuid
+  // Registry keys, e.g. "LEAD" / "lead.assign".
+  entityType        String        @map("entity_type")
+  actionKey         String        @map("action_key")
+  status            BulkJobStatus @default(QUEUED)
+  // IDS / PAGE / FILTER
+  selectionMode     String        @map("selection_mode")
+  // { requested } for ids, { filterQuery, filter, matched } for a filter (resolved into items once, at submit).
+  selection         Json          @default("{}")
+  // Validated action parameters (registry zod schema).
+  params            Json          @default("{}")
+  // Short human summary of the parameters ("Owner → Priya Shah").
+  summary           String?
+  totalCount        Int           @default(0) @map("total_count")
+  processedCount    Int           @default(0) @map("processed_count")
+  succeededCount    Int           @default(0) @map("succeeded_count")
+  failedCount       Int           @default(0) @map("failed_count")
+  skippedCount      Int           @default(0) @map("skipped_count")
+  // Client-supplied key: the same request submitted twice creates one job.
+  idempotencyKey    String?       @map("idempotency_key")
+  requestedByUserId String        @map("requested_by_user_id") @db.Uuid
+  retryOfJobId      String?       @map("retry_of_job_id") @db.Uuid
+  // Worker lease (crash recovery): a RUNNING job whose lease expired is resumed.
+  lockToken         String?       @map("lock_token") @db.Uuid
+  lockedAt          DateTime?     @map("locked_at")
+  runCount          Int           @default(0) @map("run_count")
+  // Output of the job (e.g. export file: storageKey, fileName, mimeType, sizeBytes, expiresAt).
+  result            Json?
+  errorCode         String?       @map("error_code")
+  errorMessage      String?       @map("error_message")
+  cancelRequestedAt DateTime?     @map("cancel_requested_at")
+  cancelRequestedBy String?       @map("cancel_requested_by") @db.Uuid
+  createdAt         DateTime      @default(now()) @map("created_at")
+  startedAt         DateTime?     @map("started_at")
+  finishedAt        DateTime?     @map("finished_at")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
+
+  company Company       @relation(fields: [companyId], references: [id])
+  retryOf BulkJob?      @relation("BulkJobRetry", fields: [retryOfJobId], references: [id], onDelete: SetNull)
+  retries BulkJob[]     @relation("BulkJobRetry")
+  items   BulkJobItem[]
+
+  @@unique([companyId, requestedByUserId, idempotencyKey])
+  @@index([companyId, createdAt])
+  @@index([companyId, requestedByUserId, createdAt])
+  @@index([status, lockedAt])
+  @@map("bulk_jobs")
+}
+
+model BulkJobItem {
+  id           String            @id @default(uuid()) @db.Uuid
+  companyId    String            @map("company_id") @db.Uuid
+  jobId        String            @map("job_id") @db.Uuid
+  sequence     Int
+  entityId     String            @map("entity_id") @db.Uuid
+  status       BulkJobItemStatus @default(PENDING)
+  attempts     Int               @default(0)
+  // Safe, user-facing outcome ("Already in this status", "Owner is inactive").
+  message      String?
+  errorCode    String?           @map("error_code")
+  // Per-item output (e.g. the exported row until the file is written; the message id sent).
+  result       Json?
+  processedAt  DateTime?         @map("processed_at")
+  createdAt    DateTime          @default(now()) @map("created_at")
+  updatedAt    DateTime          @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+  job     BulkJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, entityId])
+  @@unique([jobId, sequence])
+  @@index([jobId, status, sequence])
+  @@map("bulk_job_items")
 }

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { CrmBadge, type CrmBadgeTone } from "@/components/crm/CrmBadge";
+import { BulkActionsButton } from "@/components/bulk/BulkActionsButton";
 import { CrmBulkBar } from "@/components/crm/CrmBulkBar";
 import { CrmColumnPicker } from "@/components/crm/CrmColumnPicker";
 import { crmFilterKeys, type CrmFilterDefinition } from "@/components/crm/CrmFilterBar";
@@ -140,6 +141,8 @@ export function CompaniesListClient({ permissions }: { permissions: CompanyPermi
     [meta, users, tags]
   );
   const listState = useCrmListState(crmFilterKeys(filters));
+  // Phase 14: the list's current filters + search, for "all matching records" bulk jobs.
+  const bulkFilterQuery = new URLSearchParams({ ...listState.filters, ...(listState.search ? { search: listState.search } : {}) }).toString();
 
   const loadViews = () =>
     fetch("/api/v1/crm/saved-views?entityType=COMPANY")
@@ -268,6 +271,7 @@ export function CompaniesListClient({ permissions }: { permissions: CompanyPermi
           </button>
         </>
       )}
+      <BulkActionsButton entityType="COMPANY" selectedIds={selected} filterQuery={bulkFilterQuery} onSubmitted={() => setSelected([])} />
       <CrmColumnPicker columns={ALL_COLUMNS.map((c) => ({ key: c.key, header: c.header }))} visibleKeys={visibleColumns} onChange={setVisibleColumns} />
       {permissions.create && (
         <Link href="/crm/companies/new" className={buttonClasses("primary", "sm")}>
@@ -313,6 +317,7 @@ export function CompaniesListClient({ permissions }: { permissions: CompanyPermi
             <Button size="xs" variant="danger" onClick={() => setDialog({ kind: "archive", ids: selected, label: `${selected.length} company(ies)` })}>
               Archive
             </Button>
+            <BulkActionsButton entityType="COMPANY" size="xs" label="More bulk actions…" selectedIds={selected} filterQuery={bulkFilterQuery} onSubmitted={() => setSelected([])} />
           </CrmBulkBar>
         }
       />

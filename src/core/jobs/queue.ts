@@ -52,6 +52,16 @@ function deriveQueueName(): string {
 
 export const BULK_IMPORT_QUEUE_NAME = deriveQueueName();
 
+/**
+ * Same "one queue per database" rule for other queues (Phase 14 bulk actions):
+ * `<prefix>-<12 hex of sha256(DATABASE_URL)>`.
+ */
+export function databaseScopedQueueName(prefix: string): string {
+  const dbUrl = process.env.DATABASE_URL;
+  const suffix = dbUrl ? createHash("sha256").update(dbUrl).digest("hex").slice(0, 12) : "unknown-db";
+  return `${prefix}-${suffix}`;
+}
+
 let queue: Queue | null = null;
 
 /** Lazily created so importing this module never opens a Redis connection

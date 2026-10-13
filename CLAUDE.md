@@ -7756,3 +7756,12 @@ The whole CRM (Leads, Deals/Opportunities, pipeline/sources/lost-reason masters,
 - Webhooks: `workflow-webhook.ts` only (SSRF-checked, pinned DNS, signed). Waits are persisted (`next_run_at`), time zone via crm-timezone.
 - Test mode (mode TEST) never changes or sends anything. Permissions: crm_settings view/edit. APIs use `[...path]` catch-all routes.
 - Report: `docs/crm/PHASE_18_WORKFLOW_AUTOMATION.md`.
+
+## Phase 14 Reusable Bulk Action Engine (2026-10-14)
+- Generic engine in `src/modules/bulk-actions/` (registry, engine, service, queue, worker, route wrapper); CRM registrations in `src/modules/crm/bulk/`. Tables `bulk_jobs` + `bulk_job_items` (one item per record, snapshot taken at submit, incl. "all matching the filter").
+- Clients send only `entityType` + `actionKey` registry keys; `getHandler` refuses an action of another entity. New action = `registerAction({ paramsSchema: strict zod, permissions, prepare, executeItem | executeBatch(+finalize), retrySafe, confirmation, maxItems })` and load it from `bulk-registrations.ts`. Handlers MUST call the module's existing service as `ctx.actor` - never write tables directly. Unavailable features: `unavailableReason` (CRM delete, sequence enrolment).
+- Processing only in the worker (`npm run worker`, queue `bulk-actions-<db hash>`, concurrency 2): Postgres lease (`lock_token`/`locked_at`, 3 min), re-validation at start (requester active, permissions, params), batches of 50, per-item outcome, cancel = stop remaining (no rollback), retry = NEW linked job of failed items sharing root idempotency keys `bulk:<rootJobId>:<entityId>`. Recovery tick `bulk.recover` every minute re-enqueues stalled jobs and purges expired exports.
+- Item error messages must be user-safe: use `BulkItemError` / BusinessRuleError; anything else is stored as generic "Unexpected error" (`toSafeItemError`).
+- Exports: `sanitizeSpreadsheetCell` on every text cell (= + - @ tab CR → prefixed '), private `saveFile` storage, download only by the requester with crm.export, 7-day expiry; storageKey never leaves the server.
+- UI: `<BulkActionsButton entityType selectedIds filterQuery />` on list pages; jobs at `/crm/bulk-jobs`. APIs: `/api/v1/bulk-actions/{capabilities,preview}`, `/api/v1/bulk-jobs` + `[...path]`.
+- Report + "how to register a bulk action": `docs/crm/PHASE_14_BULK_ACTION_ENGINE.md`.
