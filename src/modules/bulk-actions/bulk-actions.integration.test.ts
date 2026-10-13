@@ -389,6 +389,50 @@ describe.skipIf(!DB_URL)("Bulk action engine (database integration)", async () =
     expect(await prisma.crmWorkflowExecution.count({ where: { workflowId: id, mode: "LIVE" } })).toBe(2);
   });
 
+  it("bulk changes trigger workflows exactly like manual changes (owner changed, tag added), traced to the bulk job", async () => {
+    const wfEngine = await import("@/modules/crm/workflows/workflow-engine");
+    const publish = async (name: string, trigger: string) => {
+      const { id } = await wf.createWorkflow(admin, { name: `${name} ${run}`, trigger });
+      const w = await wf.getWorkflow(admin, id);
+      await wf.saveDraft(admin, id, {
+        version: w.version,
+        definition: {
+          schemaVersion: 1,
+          trigger: { type: trigger, conditions: { kind: "group", logic: "AND", conditions: [] } },
+          settings: { timezone: "Asia/Kolkata", reentry: "ALWAYS", allowWorkflowTriggers: false },
+          entryNodeId: "n",
+          nodes: [{ id: "n", type: "ACTION", action: "note.add", params: { body: `${name} via workflow ${run}` }, next: null, onError: "STOP" }],
+        },
+      });
+      await wf.publishWorkflow(admin, id, { version: (await wf.getWorkflow(admin, id)).version });
+      return id;
+    };
+    await wfEngine.tickWorkflows(); // settle older events
+    const ownerWf = await publish("On owner change", "lead.owner_changed");
+    const tagWf = await publish("On tag added", "tag.added");
+    const ls = [await lead("Trig A"), await lead("Trig B"), await lead("Trig C")];
+
+    const assign = await submit(admin, { entityType: "LEAD", actionKey: "lead.assign", selection: { mode: "IDS", ids: ls.map((l) => l.id) }, params: { ownerUserId: owner2 } });
+    expect(await engine.processBulkJob(assign.id)).toBe("COMPLETED");
+    const tags = await submit(admin, { entityType: "LEAD", actionKey: "lead.add_tags", selection: { mode: "IDS", ids: ls.map((l) => l.id) }, params: { tagNames: [`${run}-trig`] } });
+    expect(await engine.processBulkJob(tags.id)).toBe("COMPLETED");
+
+    // The events carry the bulk job as their correlation id (not the workflow prefix).
+    const events = await prisma.crmEvent.findMany({ where: { entityId: { in: ls.map((l) => l.id) }, eventType: { in: ["lead.owner_changed", "lead.tag_added"] } } });
+    expect(events).toHaveLength(6);
+    expect(new Set(events.map((e) => e.correlationId))).toEqual(new Set([`bulkjob:${assign.id}`, `bulkjob:${tags.id}`]));
+
+    await wfEngine.tickWorkflows(); // dispatch: creates the executions
+    await wfEngine.tickWorkflows(new Date(Date.now() + 1000)); // run them (as the worker's next tick would)
+    const execs = await prisma.crmWorkflowExecution.findMany({ where: { workflowId: { in: [ownerWf, tagWf] }, mode: "LIVE" } });
+    expect(execs.filter((e) => e.workflowId === ownerWf).map((e) => e.entityId).sort()).toEqual(ls.map((l) => l.id).sort());
+    expect(execs.filter((e) => e.workflowId === tagWf).map((e) => e.entityId).sort()).toEqual(ls.map((l) => l.id).sort());
+    expect(execs.every((e) => e.status === "COMPLETED" && e.depth === 0)).toBe(true);
+    // …and the workflows' own actions ran on every record.
+    expect(await prisma.crmNote.count({ where: { body: { contains: `via workflow ${run}` }, entityId: { in: ls.map((l) => l.id) } } })).toBe(6);
+    for (const id of [ownerWf, tagWf]) await wf.changeWorkflowStatus(admin, id, "DISABLED", { version: (await wf.getWorkflow(admin, id)).version });
+  });
+
   it("template messages: inactive templates are refused up front; records without a contact fail with the reason, nothing is sent", async () => {
     await expectCode(svc.previewBulkJob(admin, { entityType: "LEAD", actionKey: "lead.send_template", selection: { mode: "IDS", ids: [(await lead("Msg0")).id] }, params: { templateId: "00000000-0000-4000-8000-000000000000" } }), "VALIDATION_ERROR");
     const templates = await import("@/modules/crm/templates/crm-templates.service");

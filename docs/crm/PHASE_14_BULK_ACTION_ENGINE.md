@@ -111,6 +111,18 @@ QUEUED → VALIDATING → RUNNING → COMPLETED | COMPLETED_WITH_ERRORS | FAILED
    - A second retry request returns the existing retry.
    - Retries share the root job's idempotency keys (`bulk:<rootJobId>:<entityId>`), so a message whose outcome was unknown can never be sent twice.
 
+### Workflows react to bulk changes (Phase 18)
+
+A bulk job changes records through the same CRM services as a person does. Those services write the same `crm_events` (for example `lead.owner_changed`, `lead.status_changed`, `*.tag_added`, `opportunity.stage_changed`, `*.archived`). Phase 18 starts workflows from those events, so **every published workflow whose trigger matches runs for each record a bulk job changes**, exactly as if the change had been made by hand. Enrolment conditions, re-entry rules and the per-record rate limit apply as usual.
+
+- **Traceability.** Every event a bulk job causes carries the correlation id `bulkjob:<jobId>`, so the record timeline and event log show which bulk job made the change.
+- **Not suppressed.** This correlation id is deliberately different from the workflow prefix `wfexec:`. Workflow recursion protection treats bulk changes as ordinary user changes (depth 0), so they are never suppressed. *Allow changes made by other workflows* doesn't need to be on.
+- **Rules that skip a record.** Records a bulk job skips (for example "Already assigned to this owner") are not changed, so they produce no event and no workflow run.
+- **Timing.** Workflow runs start on the worker's next workflow tick (every 15 seconds). The dispatcher handles up to 200 events per tick, so the workflow runs for a 5,000-record job catch up within a few minutes.
+- **"Start a workflow" bulk action.** It runs the chosen workflow directly. Its actions are tagged `wfexec:`, like any workflow run.
+
+Tested in `bulk-actions.integration.test.ts`: *"bulk changes trigger workflows exactly like manual changes"*. A bulk assign and a bulk add-tags on 3 leads produce 6 events tagged with their bulk job. An "owner changed" workflow and a "tag added" workflow then each run once per lead (depth 0, completed), and their notes are added.
+
 ---
 
 ## 4. CRM actions (`src/modules/crm/bulk/`)

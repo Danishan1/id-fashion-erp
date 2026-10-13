@@ -7764,4 +7764,5 @@ The whole CRM (Leads, Deals/Opportunities, pipeline/sources/lost-reason masters,
 - Item error messages must be user-safe: use `BulkItemError` / BusinessRuleError; anything else is stored as generic "Unexpected error" (`toSafeItemError`).
 - Exports: `sanitizeSpreadsheetCell` on every text cell (= + - @ tab CR → prefixed '), private `saveFile` storage, download only by the requester with crm.export, 7-day expiry; storageKey never leaves the server.
 - UI: `<BulkActionsButton entityType selectedIds filterQuery />` on list pages; jobs at `/crm/bulk-jobs`. APIs: `/api/v1/bulk-actions/{capabilities,preview}`, `/api/v1/bulk-jobs` + `[...path]`.
+- Bulk changes trigger Phase 18 workflows like manual ones: handlers go through the services (crm_events), and the engine runs each item in `runWithRequestContext({ requestId: "bulkjob:<jobId>" })`. Never use the `wfexec:` prefix there (that would mark bulk changes as workflow-made).
 - Report + "how to register a bulk action": `docs/crm/PHASE_14_BULK_ACTION_ENGINE.md`.

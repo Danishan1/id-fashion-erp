@@ -4,6 +4,7 @@ import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { prisma } from "@/core/db/client";
 import { createNotification } from "@/core/notifications/NotificationService";
 import { PermissionService } from "@/core/rbac/PermissionService";
+import { runWithRequestContext } from "@/core/logging/requestContext";
 import { deleteStoredFile } from "@/core/file-storage/FileStorage";
 import "./bulk-registrations";
 import { actionAvailability, getEntity, getHandler } from "./bulk-registry";
@@ -24,6 +25,9 @@ import type { BulkActor, BulkItemOutcome } from "./bulk-types";
  * failing record never rolls back the others — and nothing already done is
  * rolled back on cancel (cancel stops what hasn't started).
  */
+
+/** Correlation id prefix of every crm_event a bulk job causes (traceability; workflows still trigger). */
+export const BULK_CORRELATION_PREFIX = "bulkjob:";
 
 export const BULK_LEASE_MS = 3 * 60_000;
 export const BULK_BATCH_SIZE = 50;
@@ -187,6 +191,11 @@ export async function processBulkJob(jobId: string, opts: ProcessOptions = {}): 
   // Retries of a job share the original's idempotency keys, so a record whose outcome
   // was unknown (crash mid-send) can never produce a second message on retry.
   const rootJobId = (job.selection as { rootJobId?: string } | null)?.rootJobId ?? job.id;
+  // Every change made by this job is tagged with correlation id "bulkjob:<id>" (crm_events,
+  // timeline). It is deliberately NOT the workflow prefix ("wfexec:"), so workflow triggers
+  // (status changed, owner changed, tag added, stage changed…) fire for bulk changes exactly
+  // as they do for changes made by hand.
+  const inJobContext = <T,>(fn: () => Promise<T>) => runWithRequestContext({ requestId: `${BULK_CORRELATION_PREFIX}${job.id}`, userId: actor.userId, companyId: job.companyId }, fn);
   let processed = 0;
   for (;;) {
     const current = await prisma.bulkJob.findUnique({ where: { id: job.id }, select: { status: true, lockToken: true } });
@@ -205,7 +214,7 @@ export async function processBulkJob(jobId: string, opts: ProcessOptions = {}): 
       await prisma.bulkJobItem.updateMany({ where: { id: { in: ids }, status: "PENDING" }, data: { status: "PROCESSING", attempts: { increment: 1 } } });
       let outcomes: Map<string, BulkItemOutcome | Error>;
       try {
-        outcomes = await handler.executeBatch({ actor, job: ctxJob, items: batch.map((b) => ({ id: b.id, entityId: b.entityId, sequence: b.sequence, attempt: b.attempts + 1 })), params });
+        outcomes = await inJobContext(() => handler.executeBatch!({ actor, job: ctxJob, items: batch.map((b) => ({ id: b.id, entityId: b.entityId, sequence: b.sequence, attempt: b.attempts + 1 })), params }));
       } catch (e) {
         outcomes = new Map(ids.map((id) => [id, e instanceof Error ? e : new Error(String(e))]));
       }
@@ -222,13 +231,13 @@ export async function processBulkJob(jobId: string, opts: ProcessOptions = {}): 
       const started = await prisma.bulkJobItem.updateMany({ where: { id: item.id, status: "PENDING" }, data: { status: "PROCESSING", attempts: { increment: 1 } } });
       if (started.count === 0) continue;
       try {
-        const outcome = await handler.executeItem!({
+        const outcome = await inJobContext(() => handler.executeItem!({
           actor,
           job: ctxJob,
           item: { id: item.id, entityId: item.entityId, sequence: item.sequence, attempt: item.attempts + 1 },
           params,
           idempotencyKey: `bulk:${rootJobId}:${item.entityId}`,
-        });
+        }));
         await recordOutcome(job.id, item.id, outcome);
       } catch (e) {
         await recordOutcome(job.id, item.id, e instanceof Error ? e : new Error(String(e)));
@@ -244,7 +253,7 @@ export async function processBulkJob(jobId: string, opts: ProcessOptions = {}): 
   let result: Record<string, unknown> | null = null;
   if (handler.finalize) {
     try {
-      result = await handler.finalize({ actor, job: { ...ctxJob, createdAt: job.createdAt }, params });
+      result = await inJobContext(() => handler.finalize!({ actor, job: { ...ctxJob, createdAt: job.createdAt }, params }));
     } catch (e) {
       const err = toSafeItemError(e);
       if (err.unexpected) console.error(JSON.stringify({ level: "error", message: "Bulk job finalize failed", bulkJobId: job.id, error: (e as Error)?.message, stack: (e as Error)?.stack }));
