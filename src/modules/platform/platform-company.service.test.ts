@@ -33,7 +33,7 @@ const { MODULES, ACTIONS, permissionKey } = await import("@/config/rbac");
 // row would in production (an "Unknown permission key" throw).
 const ALL_PERMISSIONS = MODULES.flatMap((mod) => ACTIONS.map((action) => ({ id: permissionKey(mod, action), key: permissionKey(mod, action) })));
 
-const actor = { userId: "platform-admin-1" };
+const actor = { platformUserId: "platform-admin-1" };
 const baseInput = {
   companyName: "Acme Garments",
   legalName: "",
@@ -115,7 +115,7 @@ describe("createCompany", () => {
     await createCompany(actor, baseInput);
 
     expect(writeAuditLog).toHaveBeenCalledWith(
-      expect.objectContaining({ companyId: "co-new", userId: "platform-admin-1", tableName: "companies", action: "CREATE" })
+      expect.objectContaining({ companyId: "co-new", platformUserId: "platform-admin-1", tableName: "companies", action: "CREATE" })
     );
   });
 });

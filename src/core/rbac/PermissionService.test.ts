@@ -34,7 +34,7 @@ beforeEach(() => {
   PermissionService.invalidate();
   findManyMock.mockReset();
   countMock.mockReset();
-  userFindUniqueMock.mockReset().mockResolvedValue({ status: "ACTIVE" });
+  userFindUniqueMock.mockReset().mockResolvedValue({ company: { isActive: true }, status: "ACTIVE" });
   roleStageAccessFindManyMock.mockReset();
 });
 
@@ -90,7 +90,7 @@ describe("PermissionService.can", () => {
 
   it("denies a suspended user even though they hold the permission (CF-7: suspend must take effect immediately)", async () => {
     mockPermissions(["sales_orders.view"]);
-    userFindUniqueMock.mockResolvedValue({ status: "SUSPENDED" });
+    userFindUniqueMock.mockResolvedValue({ company: { isActive: true }, status: "SUSPENDED" });
 
     await expect(PermissionService.can("user-1", "sales_orders", "view")).resolves.toBe(false);
   });
@@ -104,68 +104,62 @@ describe("PermissionService.can", () => {
 
   it("re-checks live status on every call — not cached the way permission keys are", async () => {
     mockPermissions(["sales_orders.view"]);
-    userFindUniqueMock.mockResolvedValueOnce({ status: "ACTIVE" }).mockResolvedValueOnce({ status: "SUSPENDED" });
+    userFindUniqueMock.mockResolvedValueOnce({ company: { isActive: true }, status: "ACTIVE" }).mockResolvedValueOnce({ company: { isActive: true }, status: "SUSPENDED" });
 
     await expect(PermissionService.can("user-1", "sales_orders", "view")).resolves.toBe(true);
     await expect(PermissionService.can("user-1", "sales_orders", "view")).resolves.toBe(false);
     expect(userFindUniqueMock).toHaveBeenCalledTimes(2);
   });
 
-  describe("isPlatformAdmin — full access to whichever company the session is currently scoped to", () => {
-    it("grants access to a module/action the user holds no permission for at all", async () => {
+  describe("no universal bypass (Platform SaaS Phase 1, PLAT-004)", () => {
+    it("the old isPlatformAdmin flag grants nothing — a flagged user gets only what their roles grant", async () => {
       mockPermissions([]); // holds nothing
-      userFindUniqueMock.mockResolvedValue({ status: "ACTIVE", isPlatformAdmin: true });
-
-      await expect(PermissionService.can("user-1", "sales_orders", "delete")).resolves.toBe(true);
-      expect(findManyMock).not.toHaveBeenCalled(); // never even loads permission keys
-    });
-
-    it("bypasses the self-approval guard too — a platform admin can approve/post their own record", async () => {
-      mockPermissions([]);
-      userFindUniqueMock.mockResolvedValue({ status: "ACTIVE", isPlatformAdmin: true });
-
-      const result = await PermissionService.can("user-1", "sales_orders", "approve", { createdBy: "user-1" });
-      expect(result).toBe(true);
-      expect(countMock).not.toHaveBeenCalled(); // never even checks for SUPER_ADMIN
-    });
-
-    it("still denies a suspended platform admin — the ACTIVE-status check runs before the bypass", async () => {
-      mockPermissions([]);
-      userFindUniqueMock.mockResolvedValue({ status: "SUSPENDED", isPlatformAdmin: true });
-
-      await expect(PermissionService.can("user-1", "sales_orders", "view")).resolves.toBe(false);
-    });
-
-    it("still denies a stale session (password changed) for a platform admin — that check also runs before the bypass", async () => {
-      mockPermissions([]);
-      const changedAt = new Date("2026-08-27T12:00:00Z");
-      userFindUniqueMock.mockResolvedValue({ status: "ACTIVE", isPlatformAdmin: true, passwordChangedAt: changedAt });
-      const sessionIssuedBeforeChange = Math.floor(new Date("2026-08-27T11:00:00Z").getTime() / 1000);
-
-      await expect(
-        PermissionService.can("user-1", "sales_orders", "view", { sessionIssuedAt: sessionIssuedBeforeChange })
-      ).resolves.toBe(false);
-    });
-
-    it("an ordinary (non-platform-admin) user is unaffected and still goes through the normal permission-key check", async () => {
-      mockPermissions(["sales_orders.view"]);
-      userFindUniqueMock.mockResolvedValue({ status: "ACTIVE", isPlatformAdmin: false });
+      userFindUniqueMock.mockResolvedValue({ company: { isActive: true }, status: "ACTIVE", isPlatformAdmin: true });
 
       await expect(PermissionService.can("user-1", "sales_orders", "delete")).resolves.toBe(false);
-      await expect(PermissionService.can("user-1", "sales_orders", "view")).resolves.toBe(true);
+      expect(findManyMock).toHaveBeenCalled(); // goes through the normal permission-key check
+    });
+
+    it("a flagged user can't self-approve without SUPER_ADMIN — the self-approval guard applies to everyone", async () => {
+      mockPermissions(["sales_orders.approve"]);
+      userFindUniqueMock.mockResolvedValue({ company: { isActive: true }, status: "ACTIVE", isPlatformAdmin: true });
+      countMock.mockResolvedValue(0);
+
+      const result = await PermissionService.can("user-1", "sales_orders", "approve", { createdBy: "user-1" });
+      expect(result).toBe(false);
+    });
+
+    it("a platform operator's id (not in the tenant users table) gets no permission at all", async () => {
+      mockPermissions(["sales_orders.view"]);
+      userFindUniqueMock.mockResolvedValue(null);
+
+      await expect(PermissionService.can("platform-user-1", "sales_orders", "view")).resolves.toBe(false);
+    });
+
+    it("denies an active user whose company is suspended (PLAT-006), even with the permission", async () => {
+      mockPermissions(["sales_orders.view"]);
+      userFindUniqueMock.mockResolvedValue({ company: { isActive: false }, status: "ACTIVE", passwordChangedAt: null });
+
+      await expect(PermissionService.can("user-1", "sales_orders", "view")).resolves.toBe(false);
     });
   });
 
   describe("PermissionService.getViewableModules", () => {
-    it("returns \"all\" for a platform admin without even loading permission keys", async () => {
-      userFindUniqueMock.mockResolvedValue({ status: "ACTIVE", isPlatformAdmin: true });
-      await expect(PermissionService.getViewableModules("user-1")).resolves.toBe("all");
-      expect(findManyMock).not.toHaveBeenCalled();
+    it("the old isPlatformAdmin flag no longer unlocks every module", async () => {
+      mockPermissions(["sales_orders.view"]);
+      userFindUniqueMock.mockResolvedValue({ company: { isActive: true }, status: "ACTIVE", isPlatformAdmin: true });
+      await expect(PermissionService.getViewableModules("user-1")).resolves.toEqual(new Set(["sales_orders"]));
+    });
+
+    it("returns an empty Set when the user's company is suspended", async () => {
+      mockPermissions(["sales_orders.view"]);
+      userFindUniqueMock.mockResolvedValue({ company: { isActive: false }, status: "ACTIVE" });
+      await expect(PermissionService.getViewableModules("user-1")).resolves.toEqual(new Set());
     });
 
     it("returns only the modules the user holds view on, not modules where they only have a non-view action", async () => {
       mockPermissions(["sales_orders.view", "sales_orders.edit", "production.create"]);
-      userFindUniqueMock.mockResolvedValue({ status: "ACTIVE", isPlatformAdmin: false });
+      userFindUniqueMock.mockResolvedValue({ company: { isActive: true }, status: "ACTIVE", isPlatformAdmin: false });
 
       const result = await PermissionService.getViewableModules("user-1");
       expect(result).toEqual(new Set(["sales_orders"]));
@@ -173,7 +167,7 @@ describe("PermissionService.can", () => {
 
     it("returns an empty Set for a suspended user", async () => {
       mockPermissions(["sales_orders.view"]);
-      userFindUniqueMock.mockResolvedValue({ status: "SUSPENDED", isPlatformAdmin: false });
+      userFindUniqueMock.mockResolvedValue({ company: { isActive: true }, status: "SUSPENDED", isPlatformAdmin: false });
 
       await expect(PermissionService.getViewableModules("user-1")).resolves.toEqual(new Set());
     });
@@ -188,7 +182,7 @@ describe("PermissionService.can", () => {
     it("denies a session issued before the account's last password change", async () => {
       mockPermissions(["sales_orders.view"]);
       const changedAt = new Date("2026-08-25T12:00:00Z");
-      userFindUniqueMock.mockResolvedValue({ status: "ACTIVE", passwordChangedAt: changedAt });
+      userFindUniqueMock.mockResolvedValue({ company: { isActive: true }, status: "ACTIVE", passwordChangedAt: changedAt });
       const sessionIssuedBeforeChange = Math.floor(new Date("2026-08-25T11:00:00Z").getTime() / 1000);
 
       await expect(
@@ -199,7 +193,7 @@ describe("PermissionService.can", () => {
     it("allows a session issued after the account's last password change", async () => {
       mockPermissions(["sales_orders.view"]);
       const changedAt = new Date("2026-08-25T12:00:00Z");
-      userFindUniqueMock.mockResolvedValue({ status: "ACTIVE", passwordChangedAt: changedAt });
+      userFindUniqueMock.mockResolvedValue({ company: { isActive: true }, status: "ACTIVE", passwordChangedAt: changedAt });
       const sessionIssuedAfterChange = Math.floor(new Date("2026-08-25T13:00:00Z").getTime() / 1000);
 
       await expect(
@@ -209,14 +203,14 @@ describe("PermissionService.can", () => {
 
     it("does not check staleness at all when sessionIssuedAt is omitted — the caller went through requireSession() instead", async () => {
       mockPermissions(["sales_orders.view"]);
-      userFindUniqueMock.mockResolvedValue({ status: "ACTIVE", passwordChangedAt: new Date() });
+      userFindUniqueMock.mockResolvedValue({ company: { isActive: true }, status: "ACTIVE", passwordChangedAt: new Date() });
 
       await expect(PermissionService.can("user-1", "sales_orders", "view")).resolves.toBe(true);
     });
 
     it("never flags staleness for an account that has never changed its password (passwordChangedAt is null)", async () => {
       mockPermissions(["sales_orders.view"]);
-      userFindUniqueMock.mockResolvedValue({ status: "ACTIVE", passwordChangedAt: null });
+      userFindUniqueMock.mockResolvedValue({ company: { isActive: true }, status: "ACTIVE", passwordChangedAt: null });
 
       await expect(
         PermissionService.can("user-1", "sales_orders", "view", { sessionIssuedAt: 0 })
@@ -226,10 +220,10 @@ describe("PermissionService.can", () => {
 });
 
 describe("PermissionService.getAllowedProductionStageIds", () => {
-  it("returns null (unrestricted) for a platform admin, without even checking roles", async () => {
-    userFindUniqueMock.mockResolvedValue({ status: "ACTIVE", isPlatformAdmin: true });
-    await expect(PermissionService.getAllowedProductionStageIds("user-1")).resolves.toBeNull();
-    expect(findManyMock).not.toHaveBeenCalled();
+  it("the old isPlatformAdmin flag no longer means unrestricted — the result comes from roles only", async () => {
+    userFindUniqueMock.mockResolvedValue({ company: { isActive: true }, status: "ACTIVE", isPlatformAdmin: true });
+    findManyMock.mockResolvedValue([]); // holds no role
+    await expect(PermissionService.getAllowedProductionStageIds("user-1")).resolves.toEqual(new Set());
   });
 
   it("returns an empty Set for a user holding no role at all", async () => {

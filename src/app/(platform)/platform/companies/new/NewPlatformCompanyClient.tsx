@@ -66,7 +66,7 @@ export function NewPlatformCompanyClient() {
     <div className="space-y-4">
       <Breadcrumb
         items={[
-          { label: "Dashboard", href: "/dashboard" },
+          { label: "Platform", href: "/platform" },
           { label: "Companies", href: "/platform/companies" },
           { label: "New" },
         ]}

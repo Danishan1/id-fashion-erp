@@ -5,8 +5,9 @@ import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { MODULES, ROLES, ROLE_PERMISSIONS, permissionKey } from "@/config/rbac";
 import type { CreateCompanyInput } from "./platform-company.schema";
 
-interface ActorContext {
-  userId: string;
+/** A platform operator (platform_users.id) — never a tenant user. */
+interface PlatformActorContext {
+  platformUserId: string;
 }
 
 export async function listCompanies() {
@@ -25,7 +26,7 @@ export async function listCompanies() {
  * RolePermission are per-company, so nothing needs re-seeding there), and
  * its own first Super Admin login.
  */
-export async function createCompany(actor: ActorContext, input: CreateCompanyInput) {
+export async function createCompany(actor: PlatformActorContext, input: CreateCompanyInput) {
   if (input.taxRegistrationNo) {
     const existingCompany = await prisma.company.findUnique({ where: { taxRegistrationNo: input.taxRegistrationNo } });
     if (existingCompany) {
@@ -111,12 +112,12 @@ export async function createCompany(actor: ActorContext, input: CreateCompanyInp
     return { company, branch, adminUser: superAdminUser };
   });
 
-  // Logged under the new company's own id, not the platform admin's home
-  // company — this is the first entry in that company's own audit trail,
-  // not an action taken "inside" the platform admin's company.
+  // Logged under the new company's own id — the first entry in that
+  // company's own audit trail — and attributed to the platform operator via
+  // platformUserId (they are not a user of this or any company).
   await writeAuditLog({
     companyId: result.company.id,
-    userId: actor.userId,
+    platformUserId: actor.platformUserId,
     tableName: "companies",
     recordId: result.company.id,
     action: "CREATE",
