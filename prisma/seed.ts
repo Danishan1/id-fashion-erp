@@ -344,7 +344,13 @@ async function main() {
     skipDuplicates: true,
   });
 
-  await prisma.productionStage.createMany({
+  // Only seed default stages for a company that has none yet. skipDuplicates
+  // matches on code, so a company that configured its own codes (CUTTING,
+  // STITCHING, ...) used to get a second, parallel set (CUT, SEW, ...) every
+  // time the seed re-ran — showing every stage twice in pickers like
+  // "Revert to Earlier Stage" (found 2026-10-13).
+  const existingStageCount = await prisma.productionStage.count({ where: { companyId } });
+  if (existingStageCount === 0) await prisma.productionStage.createMany({
     data: [
       { companyId, code: "CUT", name: "Cutting", sequence: 1, allowsExtraQuantity: true },
       { companyId, code: "SEW", name: "Stitching", sequence: 2 },
