@@ -5,6 +5,23 @@ import { SUPPORT_ENDED_PATH } from "@/core/auth/route-access";
 import { prisma } from "@/core/db/client";
 import { recordSupportEvent } from "@/core/support-access/support-events";
 import { getLiveSupportSession, isMethodAllowedForSupport } from "@/core/support-access/support-session-guard";
+import { EntitlementService } from "@/core/entitlements/EntitlementService";
+import { isPathDisabled, MODULE_UNAVAILABLE_PATH } from "@/core/entitlements/route-modules";
+
+/**
+ * Platform SaaS Phase 3 (PLAT-019): an ERP page whose module the platform
+ * turned off for this company redirects to /module-unavailable. APIs are
+ * refused separately by PermissionService (MODULE_NOT_ENABLED).
+ */
+async function entitlementGate(companyId: string, request: NextRequest): Promise<true | Response> {
+  const pathname = request.nextUrl.pathname;
+  if (pathname.startsWith("/api/") || pathname === MODULE_UNAVAILABLE_PATH) return true;
+  const disabled = await EntitlementService.getDisabledModules(companyId);
+  if (isPathDisabled(pathname, disabled)) {
+    return Response.redirect(new URL(MODULE_UNAVAILABLE_PATH, request.nextUrl.origin));
+  }
+  return true;
+}
 
 const ACCOUNT_SUSPENDED_PATH = "/account-suspended";
 
@@ -68,7 +85,7 @@ async function supportGate(user: Session["user"], request: NextRequest): Promise
       "This support session is read-only. Request write access from the support banner to make changes."
     );
   }
-  return true;
+  return entitlementGate(live.companyId, request);
 }
 
 /**
@@ -102,14 +119,14 @@ const authorized: NonNullable<NextAuthConfig["callbacks"]>["authorized"] = async
 
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { company: { select: { isActive: true } } },
+    select: { companyId: true, company: { select: { isActive: true } } },
   });
   const suspended = !!user && !user.company.isActive;
 
   if (suspended && !SUSPENDED_ALLOWED_PATHS.has(pathname)) {
     return Response.redirect(new URL(ACCOUNT_SUSPENDED_PATH, request.nextUrl.origin));
   }
-  return true;
+  return user ? entitlementGate(user.companyId, request) : true;
 };
 
 export default NextAuth({ ...authConfig, callbacks: { ...authConfig.callbacks, authorized } }).auth;

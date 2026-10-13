@@ -70,6 +70,9 @@ export type BusinessRuleErrorCode =
   // Platform SaaS Phase 1 (PLAT-006): the user's company is suspended
   // (companies.is_active = false) — every request from its users is refused.
   | "ACCOUNT_SUSPENDED"
+  // Platform SaaS Phase 3 (PLAT-019): the module is turned off for this
+  // company by the platform (module entitlements).
+  | "MODULE_NOT_ENABLED"
   | "VALIDATION_ERROR"
   | "NOT_FOUND";
 
@@ -123,6 +126,7 @@ const HTTP_STATUS_BY_CODE: Record<BusinessRuleErrorCode, number> = {
   AI_INVALID_RESPONSE: 502,
   PRODUCTION_NOT_RELEASED_TO_DISPATCH: 409,
   ACCOUNT_SUSPENDED: 403,
+  MODULE_NOT_ENABLED: 403,
   VALIDATION_ERROR: 400,
   NOT_FOUND: 404,
 };
