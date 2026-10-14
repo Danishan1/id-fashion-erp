@@ -7,6 +7,12 @@ import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { Modal } from "@/components/ui/Modal";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { todayIsoDate } from "@/lib/date";
+import { GST_STATE_CODES } from "@/lib/gst";
+import {
+  getDerivedCustomInvoiceStatus,
+  CUSTOM_INVOICE_STATUS_BADGE_CLASS,
+  CUSTOM_INVOICE_STATUS_LABELS,
+} from "@/modules/accounts/custom-invoice-status";
 
 interface InvoiceItem {
   id: string;
@@ -61,6 +67,11 @@ interface CustomInvoiceDetail {
   status: "DRAFT" | "CANCELLED";
   discountPercentage: string;
   isReverseCharge: boolean;
+  placeOfSupplyStateCode?: string | null;
+  isInterState?: boolean | null;
+  cgstAmount?: string | null;
+  sgstAmount?: string | null;
+  igstAmount?: string | null;
   subtotalAmount: string;
   discountAmount: string;
   taxAmount: string;
@@ -73,7 +84,17 @@ interface CustomInvoiceDetail {
   creditedAmount: string;
   balanceDue: string;
   termsAndConditions: string | null;
-  customer: { id: string; name: string; code: string };
+  customer: {
+    id: string;
+    name: string;
+    code: string;
+    taxRegistrationNo?: string | null;
+    billingAddress?: string | null;
+    shippingAddress?: string | null;
+    city?: string | null;
+    pinCode?: string | null;
+    country?: string | null;
+  };
   invoiceSeries: { name: string };
   incomeAccount: { code: string; name: string } | null;
   createdBy: { fullName: string };
@@ -286,7 +307,14 @@ export function CustomInvoiceWorkflowPanel({ invoice }: { invoice: CustomInvoice
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
-        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[invoice.status] ?? ""}`}>{STATUS_LABELS[invoice.status] ?? invoice.status}</span>
+        {(() => {
+          const derived = getDerivedCustomInvoiceStatus(invoice);
+          return (
+            <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${CUSTOM_INVOICE_STATUS_BADGE_CLASS[derived]}`}>
+              {CUSTOM_INVOICE_STATUS_LABELS[derived] ?? derived}
+            </span>
+          );
+        })()}
         <span className="text-sm text-zinc-500 dark:text-zinc-400">
           {invoice.invoiceType === "TAX_INVOICE" ? "Tax Invoice" : "Proforma Invoice"} · Series: {invoice.invoiceSeries.name}
         </span>
@@ -299,6 +327,24 @@ export function CustomInvoiceWorkflowPanel({ invoice }: { invoice: CustomInvoice
           <dt className="text-zinc-500 dark:text-zinc-400">Client</dt>
           <dd className="font-medium text-zinc-900 dark:text-zinc-50">
             {invoice.customer.name} ({invoice.customer.code})
+          </dd>
+          <dd className="text-xs text-zinc-500 dark:text-zinc-400">
+            GSTIN: {invoice.customer.taxRegistrationNo ?? "Unregistered (URP)"}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-zinc-500 dark:text-zinc-400">Place of Supply</dt>
+          <dd className="font-medium text-zinc-900 dark:text-zinc-50">
+            {invoice.placeOfSupplyStateCode
+              ? `${invoice.placeOfSupplyStateCode} - ${GST_STATE_CODES[invoice.placeOfSupplyStateCode] ?? "Other"}`
+              : "Not Specified"}
+          </dd>
+          <dd className="text-xs text-zinc-500 dark:text-zinc-400">
+            {invoice.isInterState === false
+              ? "Intra-State (CGST + SGST)"
+              : invoice.isInterState === true
+              ? "Inter-State (IGST)"
+              : "Tax: Normal"}
           </dd>
         </div>
         <div>
@@ -333,6 +379,30 @@ export function CustomInvoiceWorkflowPanel({ invoice }: { invoice: CustomInvoice
         )}
       </dl>
 
+      {(invoice.customer.billingAddress || invoice.customer.shippingAddress) && (
+        <div className="grid grid-cols-1 gap-4 rounded-lg border border-zinc-200 p-3 text-sm sm:grid-cols-2 dark:border-zinc-800">
+          <div>
+            <span className="text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">Bill To (Billing Address)</span>
+            <p className="mt-1 font-medium text-zinc-800 dark:text-zinc-200">
+              {invoice.customer.billingAddress || "—"}
+            </p>
+            {(invoice.customer.city || invoice.customer.pinCode) && (
+              <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                {[invoice.customer.city, invoice.customer.pinCode].filter(Boolean).join(" - ")}
+              </p>
+            )}
+          </div>
+          <div>
+            <span className="text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">Ship To (Delivery Address)</span>
+            <p className="mt-1 font-medium text-zinc-800 dark:text-zinc-200">
+              {invoice.customer.shippingAddress && invoice.customer.shippingAddress !== invoice.customer.billingAddress
+                ? invoice.customer.shippingAddress
+                : "Same as billing address"}
+            </p>
+          </div>
+        </div>
+      )}
+
       <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
         <table className="w-full text-sm">
           <thead>
@@ -364,6 +434,15 @@ export function CustomInvoiceWorkflowPanel({ invoice }: { invoice: CustomInvoice
               <td className="px-3 py-2" colSpan={5}>
                 Subtotal ₹{Number(invoice.subtotalAmount).toFixed(2)} − Discount ₹{Number(invoice.discountAmount).toFixed(2)} + Tax ₹
                 {Number(invoice.taxAmount).toFixed(2)}
+                {Number(invoice.cgstAmount) > 0 || Number(invoice.sgstAmount) > 0 ? (
+                  <span className="ml-1 text-xs text-zinc-500 dark:text-zinc-400">
+                    (CGST ₹{Number(invoice.cgstAmount).toFixed(2)} + SGST ₹{Number(invoice.sgstAmount).toFixed(2)})
+                  </span>
+                ) : Number(invoice.igstAmount) > 0 ? (
+                  <span className="ml-1 text-xs text-zinc-500 dark:text-zinc-400">
+                    (IGST ₹{Number(invoice.igstAmount).toFixed(2)})
+                  </span>
+                ) : null}
               </td>
               <td className="px-3 py-2" colSpan={2}>
                 Grand Total ₹{Number(invoice.grandTotal).toFixed(2)}

@@ -31,7 +31,7 @@ const { prisma } = await import("@/core/db/client");
 const { InvoiceSeriesRepository } = await import("./invoice-series.repository");
 const { CustomInvoiceRepository } = await import("./custom-invoice.repository");
 const { CustomInvoiceCreditNoteRepository } = await import("./custom-invoice-credit-note.repository");
-const { createCustomInvoice, updateCustomInvoice, cancelCustomInvoice } = await import("./custom-invoice.service");
+const { createCustomInvoice, updateCustomInvoice, cancelCustomInvoice, listCustomInvoices } = await import("./custom-invoice.service");
 
 const actor = { companyId: "co-1", userId: "user-1", branchId: null };
 
@@ -417,5 +417,90 @@ describe("cancelCustomInvoice", () => {
 
     const result = await cancelCustomInvoice(actor, "inv-1");
     expect(result).toMatchObject({ status: "CANCELLED" });
+  });
+});
+
+describe("listCustomInvoices status filtering", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("filters by PAID correctly using balanceDue <= 0 and not CANCELLED", async () => {
+    vi.mocked(CustomInvoiceRepository.findMany).mockResolvedValue([] as never);
+    vi.mocked(CustomInvoiceRepository.count).mockResolvedValue(0);
+
+    await listCustomInvoices("co-1", {
+      page: 1,
+      pageSize: 25,
+      skip: 0,
+      take: 25,
+      sortBy: "invoiceDate",
+      sortOrder: "desc",
+      status: "PAID",
+    });
+
+    const [where] = vi.mocked(CustomInvoiceRepository.findMany).mock.calls[0];
+    expect(where.companyId).toBe("co-1");
+    expect(where.status).toEqual({ not: "CANCELLED" });
+    expect(where.balanceDue).toEqual({ lte: 0 });
+  });
+
+  it("filters by PARTIALLY_PAID correctly using balanceDue > 0 and activity", async () => {
+    vi.mocked(CustomInvoiceRepository.findMany).mockResolvedValue([] as never);
+    vi.mocked(CustomInvoiceRepository.count).mockResolvedValue(0);
+
+    await listCustomInvoices("co-1", {
+      page: 1,
+      pageSize: 25,
+      skip: 0,
+      take: 25,
+      sortBy: "invoiceDate",
+      sortOrder: "desc",
+      status: "PARTIALLY_PAID",
+    });
+
+    const [where] = vi.mocked(CustomInvoiceRepository.findMany).mock.calls[0];
+    expect(where.status).toEqual({ not: "CANCELLED" });
+    expect(where.balanceDue).toEqual({ gt: 0 });
+    expect(where.OR).toEqual([{ paidAmount: { gt: 0 } }, { creditedAmount: { gt: 0 } }]);
+  });
+
+  it("filters by ISSUED / DRAFT correctly for clean active invoices", async () => {
+    vi.mocked(CustomInvoiceRepository.findMany).mockResolvedValue([] as never);
+    vi.mocked(CustomInvoiceRepository.count).mockResolvedValue(0);
+
+    await listCustomInvoices("co-1", {
+      page: 1,
+      pageSize: 25,
+      skip: 0,
+      take: 25,
+      sortBy: "invoiceDate",
+      sortOrder: "desc",
+      status: "ISSUED",
+    });
+
+    const [where] = vi.mocked(CustomInvoiceRepository.findMany).mock.calls[0];
+    expect(where.status).toBe("DRAFT");
+    expect(where.paidAmount).toBe(0);
+    expect(where.creditedAmount).toBe(0);
+    expect(where.balanceDue).toEqual({ gt: 0 });
+  });
+
+  it("filters by CANCELLED correctly", async () => {
+    vi.mocked(CustomInvoiceRepository.findMany).mockResolvedValue([] as never);
+    vi.mocked(CustomInvoiceRepository.count).mockResolvedValue(0);
+
+    await listCustomInvoices("co-1", {
+      page: 1,
+      pageSize: 25,
+      skip: 0,
+      take: 25,
+      sortBy: "invoiceDate",
+      sortOrder: "desc",
+      status: "CANCELLED",
+    });
+
+    const [where] = vi.mocked(CustomInvoiceRepository.findMany).mock.calls[0];
+    expect(where.status).toBe("CANCELLED");
   });
 });

@@ -5,8 +5,17 @@ import { prisma } from "@/core/db/client";
 import { buildXlsxBuffer, xlsxResponseHeaders, sanitizeSpreadsheetText, type XlsxColumn } from "@/lib/xlsx";
 import { EXPORT_ROW_CAP_EXCEL } from "@/core/reports/constants";
 import { CustomInvoiceStatus, Prisma } from "@prisma/client";
+import {
+  getDerivedCustomInvoiceStatus,
+  CUSTOM_INVOICE_STATUS_LABELS,
+} from "@/modules/accounts/custom-invoice-status";
 
-const VALID_STATUSES = new Set<string>(Object.values(CustomInvoiceStatus));
+const VALID_STATUSES = new Set<string>([
+  ...Object.values(CustomInvoiceStatus),
+  "ISSUED",
+  "PARTIALLY_PAID",
+  "PAID",
+]);
 
 export async function GET(req: NextRequest) {
   try {
@@ -32,9 +41,6 @@ export async function GET(req: NextRequest) {
             ],
           }
         : {}),
-      ...(statusParam && VALID_STATUSES.has(statusParam)
-        ? { status: statusParam as CustomInvoiceStatus }
-        : {}),
       ...(customerId ? { customerId } : {}),
       ...(dateFrom || dateTo
         ? {
@@ -46,12 +52,30 @@ export async function GET(req: NextRequest) {
         : {}),
     };
 
+    if (statusParam && VALID_STATUSES.has(statusParam)) {
+      if (statusParam === "PAID") {
+        where.status = { not: CustomInvoiceStatus.CANCELLED };
+        where.balanceDue = { lte: 0 };
+      } else if (statusParam === "PARTIALLY_PAID") {
+        where.status = { not: CustomInvoiceStatus.CANCELLED };
+        where.balanceDue = { gt: 0 };
+        where.OR = [{ paidAmount: { gt: 0 } }, { creditedAmount: { gt: 0 } }];
+      } else if (statusParam === "ISSUED" || statusParam === "DRAFT") {
+        where.status = CustomInvoiceStatus.DRAFT;
+        where.paidAmount = 0;
+        where.creditedAmount = 0;
+        where.balanceDue = { gt: 0 };
+      } else if (statusParam === "CANCELLED") {
+        where.status = CustomInvoiceStatus.CANCELLED;
+      }
+    }
+
     const invoices = await prisma.customInvoice.findMany({
       where,
       orderBy: { invoiceDate: "desc" },
       take: EXPORT_ROW_CAP_EXCEL,
       include: {
-        customer: { select: { code: true, name: true } },
+        customer: { select: { code: true, name: true, billingAddress: true, shippingAddress: true } },
         invoiceSeries: { select: { name: true } },
       },
     });
@@ -63,6 +87,7 @@ export async function GET(req: NextRequest) {
       { header: "Series", key: "invoiceSeries", width: 16 },
       { header: "Customer Code", key: "customerCode", width: 16 },
       { header: "Customer Name", key: "customerName", width: 26 },
+      { header: "Delivery Address", key: "deliveryAddress", width: 28 },
       { header: "Place of Supply", key: "placeOfSupply", width: 16 },
       { header: "Tax Classification", key: "taxClassification", width: 24 },
       { header: "Subtotal", key: "subtotalAmount", width: 16, type: "number" },
@@ -75,7 +100,7 @@ export async function GET(req: NextRequest) {
       { header: "Paid Amount", key: "paidAmount", width: 14, type: "number" },
       { header: "Credit Notes", key: "creditedAmount", width: 14, type: "number" },
       { header: "Balance Due", key: "balanceDue", width: 16, type: "number" },
-      { header: "Status", key: "status", width: 12 },
+      { header: "Status", key: "status", width: 14 },
     ];
 
     const rows = invoices.map((inv) => {
@@ -104,6 +129,14 @@ export async function GET(req: NextRequest) {
         igstValue = null;
       }
 
+      const derivedStatus = getDerivedCustomInvoiceStatus({
+        status: inv.status,
+        balanceDue: inv.balanceDue,
+        paidAmount: inv.paidAmount,
+        creditedAmount: inv.creditedAmount,
+        grandTotal: inv.grandTotal,
+      });
+
       return {
         invoiceNumber: sanitizeSpreadsheetText(inv.invoiceNumber),
         invoiceDate: inv.invoiceDate,
@@ -111,6 +144,7 @@ export async function GET(req: NextRequest) {
         invoiceSeries: sanitizeSpreadsheetText(inv.invoiceSeries.name),
         customerCode: sanitizeSpreadsheetText(inv.customer.code),
         customerName: sanitizeSpreadsheetText(inv.customer.name),
+        deliveryAddress: sanitizeSpreadsheetText(inv.customer.shippingAddress || inv.customer.billingAddress || "—"),
         placeOfSupply: inv.placeOfSupplyStateCode ?? "—",
         taxClassification,
         subtotalAmount: Number(inv.subtotalAmount),
@@ -123,7 +157,7 @@ export async function GET(req: NextRequest) {
         paidAmount: Number(inv.paidAmount),
         creditedAmount: Number(inv.creditedAmount),
         balanceDue: Number(inv.balanceDue),
-        status: inv.status,
+        status: CUSTOM_INVOICE_STATUS_LABELS[derivedStatus] ?? derivedStatus,
       };
     });
 

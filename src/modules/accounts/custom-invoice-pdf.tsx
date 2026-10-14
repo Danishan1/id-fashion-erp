@@ -1,5 +1,9 @@
 import { Document, Page, Text, View, StyleSheet, renderToBuffer } from "@react-pdf/renderer";
 import { GST_STATE_CODES } from "@/lib/gst";
+import {
+  getDerivedCustomInvoiceStatus,
+  CUSTOM_INVOICE_STATUS_LABELS,
+} from "./custom-invoice-status";
 
 const styles = StyleSheet.create({
   page: {
@@ -275,6 +279,7 @@ export interface CustomInvoicePdfData {
     code: string;
     taxRegistrationNo: string | null;
     billingAddress: string | null;
+    shippingAddress?: string | null;
     city: string | null;
     pinCode: string | null;
     country: string | null;
@@ -282,6 +287,7 @@ export interface CustomInvoicePdfData {
   invoice: {
     invoiceNumber: string;
     invoiceDate: string;
+    status?: string;
     hasDueDate: boolean;
     dueDate: string | null;
     invoiceType: "TAX_INVOICE" | "PROFORMA_INVOICE";
@@ -342,6 +348,16 @@ export function CustomInvoicePdfDocument({ data }: { data: CustomInvoicePdfData 
   const posCode = invoice.placeOfSupplyStateCode;
   const posName = posCode ? (GST_STATE_CODES[posCode] ? `${posCode} - ${GST_STATE_CODES[posCode]}` : posCode) : null;
 
+  // Resolve derived status label
+  const derivedStatus = getDerivedCustomInvoiceStatus({
+    status: invoice.status ?? "DRAFT",
+    balanceDue: invoice.balanceDue,
+    paidAmount: invoice.paidAmount,
+    creditedAmount: invoice.creditedAmount,
+    grandTotal: invoice.grandTotal,
+  });
+  const derivedStatusLabel = CUSTOM_INVOICE_STATUS_LABELS[derivedStatus] ?? derivedStatus;
+
   return (
     <Document>
       <Page size="A4" style={styles.page}>
@@ -363,6 +379,7 @@ export function CustomInvoicePdfDocument({ data }: { data: CustomInvoicePdfData 
               <Text style={styles.docMeta}>Due Date: {invoice.dueDate}</Text>
             )}
             <Text style={styles.docMeta}>Series: {invoice.seriesName}</Text>
+            <Text style={styles.docMeta}>Status: {derivedStatusLabel}</Text>
           </View>
         </View>
 
@@ -383,6 +400,12 @@ export function CustomInvoicePdfDocument({ data }: { data: CustomInvoicePdfData 
             <Text style={styles.partyDetail}>
               GSTIN: {customer.taxRegistrationNo ?? "Unregistered (URP)"}
             </Text>
+            {customer.shippingAddress && customer.shippingAddress !== customer.billingAddress && (
+              <View style={{ marginTop: 3 }}>
+                <Text style={[styles.sectionHeading, { fontSize: 6.5, marginBottom: 1 }]}>Ship To (Delivery):</Text>
+                <Text style={styles.partyDetail}>{customer.shippingAddress}</Text>
+              </View>
+            )}
           </View>
 
           <View style={styles.supplyBlock}>

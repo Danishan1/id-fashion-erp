@@ -3,15 +3,17 @@
 import Link from "next/link";
 import { DataTable } from "@/components/ui/DataTable";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
-import { STATUS_LABELS, STATUS_BADGE_CLASS } from "./statusLabels";
+import { STATUS_LABELS, STATUS_BADGE_CLASS, getDerivedCustomInvoiceStatus } from "./statusLabels";
 
 interface CustomInvoiceRow {
   id: string;
   invoiceNumber: string;
   invoiceDate: string;
   invoiceType: string;
-  status: keyof typeof STATUS_LABELS;
+  status: string;
   grandTotal: string;
+  paidAmount?: string;
+  creditedAmount?: string;
   balanceDue: string;
   customer: { name: string };
   invoiceSeries: { name: string };
@@ -57,7 +59,12 @@ export function CustomInvoicesListClient() {
           </a>
         )}
         statusFilter={{
-          options: Object.entries(STATUS_LABELS).map(([value, label]) => ({ value, label })),
+          options: [
+            { value: "ISSUED", label: "Issued" },
+            { value: "PARTIALLY_PAID", label: "Partially Paid" },
+            { value: "PAID", label: "Paid" },
+            { value: "CANCELLED", label: "Cancelled" },
+          ],
         }}
         columns={[
           { key: "invoiceNumber", header: "Invoice No.", sortable: true },
@@ -76,11 +83,14 @@ export function CustomInvoicesListClient() {
             key: "status",
             header: "Status",
             sortable: true,
-            render: (row) => (
-              <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_BADGE_CLASS[row.status]}`}>
-                {STATUS_LABELS[row.status] ?? row.status}
-              </span>
-            ),
+            render: (row) => {
+              const derived = getDerivedCustomInvoiceStatus(row);
+              return (
+                <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_BADGE_CLASS[derived]}`}>
+                  {STATUS_LABELS[derived] ?? derived}
+                </span>
+              );
+            },
           },
         ]}
       />

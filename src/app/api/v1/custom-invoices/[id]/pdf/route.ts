@@ -68,6 +68,7 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
         code: invoice.customer.code,
         taxRegistrationNo: invoice.customer.taxRegistrationNo,
         billingAddress: invoice.customer.billingAddress,
+        shippingAddress: invoice.customer.shippingAddress,
         city: invoice.customer.city,
         pinCode: invoice.customer.pinCode,
         country: invoice.customer.country,
@@ -75,6 +76,7 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
       invoice: {
         invoiceNumber: invoice.invoiceNumber,
         invoiceDate: formatDocDate(invoice.invoiceDate),
+        status: invoice.status,
         hasDueDate: invoice.hasDueDate,
         dueDate: invoice.dueDate ? formatDocDate(invoice.dueDate) : null,
         invoiceType: invoice.invoiceType,

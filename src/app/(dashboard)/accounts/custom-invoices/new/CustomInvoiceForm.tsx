@@ -6,6 +6,7 @@ import { FormField, textInputClass } from "@/components/ui/FormField";
 import { Modal } from "@/components/ui/Modal";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { todayIsoDate } from "@/lib/date";
+import { GST_STATE_CODES, extractStateCodeFromGstin } from "@/lib/gst";
 
 const INVOICE_TYPE_OPTIONS = [
   { value: "TAX_INVOICE", label: "Tax Invoice" },
@@ -16,6 +17,11 @@ interface CustomerOption {
   id: string;
   name: string;
   code: string;
+  taxRegistrationNo?: string | null;
+  billingAddress?: string | null;
+  shippingAddress?: string | null;
+  city?: string | null;
+  pinCode?: string | null;
 }
 
 interface InvoiceSeriesOption {
@@ -62,6 +68,7 @@ interface InitialInvoice {
   invoiceSeriesId: string;
   invoiceNumber: string;
   customerId: string;
+  placeOfSupplyStateCode?: string | null;
   incomeAccountId: string | null;
   discountPercentage: string;
   isReverseCharge: boolean;
@@ -92,6 +99,7 @@ export function CustomInvoiceForm({ initialInvoice }: { initialInvoice?: Initial
   const [invoiceNumber, setInvoiceNumber] = useState(initialInvoice?.invoiceNumber ?? "");
   const [numberManuallyEdited, setNumberManuallyEdited] = useState(isEdit);
   const [customerId, setCustomerId] = useState(initialInvoice?.customerId ?? "");
+  const [placeOfSupplyStateCode, setPlaceOfSupplyStateCode] = useState(initialInvoice?.placeOfSupplyStateCode ?? "");
   const [discountPercentage, setDiscountPercentage] = useState(initialInvoice?.discountPercentage ?? "0");
   const [isReverseCharge, setIsReverseCharge] = useState(initialInvoice?.isReverseCharge ?? false);
   const [items, setItems] = useState<ItemDraft[]>(
@@ -235,6 +243,22 @@ export function CustomInvoiceForm({ initialInvoice }: { initialInvoice?: Initial
     }
   };
 
+  const selectedCustomer = useMemo(
+    () => customers.find((c) => c.id === customerId) ?? null,
+    [customers, customerId]
+  );
+
+  const handleCustomerChange = (id: string) => {
+    setCustomerId(id);
+    const cust = customers.find((c) => c.id === id);
+    if (cust?.taxRegistrationNo) {
+      const code = extractStateCodeFromGstin(cust.taxRegistrationNo);
+      if (code) {
+        setPlaceOfSupplyStateCode(code);
+      }
+    }
+  };
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (isSubmitting) return;
@@ -250,6 +274,7 @@ export function CustomInvoiceForm({ initialInvoice }: { initialInvoice?: Initial
         invoiceSeriesId,
         invoiceNumber,
         customerId,
+        placeOfSupplyStateCode: placeOfSupplyStateCode.trim() || undefined,
         incomeAccountId: incomeAccountId || undefined,
         discountPercentage: Number(discountPercentage) || 0,
         isReverseCharge,
@@ -383,7 +408,7 @@ export function CustomInvoiceForm({ initialInvoice }: { initialInvoice?: Initial
               id="customerId"
               required
               value={customerId}
-              onChange={setCustomerId}
+              onChange={handleCustomerChange}
               options={customers.map((c) => ({ id: c.id, label: c.name, sublabel: c.code }))}
               placeholder="Search client…"
             />
@@ -396,6 +421,57 @@ export function CustomInvoiceForm({ initialInvoice }: { initialInvoice?: Initial
             Create Client
           </button>
         </FormField>
+
+        <FormField label="Place of Supply (State)" htmlFor="placeOfSupplyStateCode">
+          <select
+            id="placeOfSupplyStateCode"
+            value={placeOfSupplyStateCode}
+            onChange={(e) => setPlaceOfSupplyStateCode(e.target.value)}
+            className={textInputClass()}
+          >
+            <option value="">— Auto-detect from GSTIN / Default —</option>
+            {Object.entries(GST_STATE_CODES)
+              .sort(([a], [b]) => a.localeCompare(b))
+              .map(([code, name]) => (
+                <option key={code} value={code}>
+                  {code} - {name}
+                </option>
+              ))}
+          </select>
+          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+            Determines CGST + SGST (intra-state) vs IGST (inter-state).
+          </p>
+        </FormField>
+      </div>
+
+      {selectedCustomer && (selectedCustomer.billingAddress || selectedCustomer.shippingAddress || selectedCustomer.taxRegistrationNo) && (
+        <div className="rounded-lg border border-zinc-200 bg-zinc-50/50 p-3 text-xs dark:border-zinc-800 dark:bg-zinc-900/50">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div>
+              <span className="font-semibold text-zinc-600 dark:text-zinc-400">GSTIN / Tax ID:</span>
+              <p className="mt-0.5 text-zinc-900 dark:text-zinc-100">{selectedCustomer.taxRegistrationNo || "Unregistered"}</p>
+            </div>
+            <div>
+              <span className="font-semibold text-zinc-600 dark:text-zinc-400">Billing Address:</span>
+              <p className="mt-0.5 text-zinc-900 dark:text-zinc-100">
+                {selectedCustomer.billingAddress || "—"}
+                {selectedCustomer.city ? `, ${selectedCustomer.city}` : ""}
+                {selectedCustomer.pinCode ? ` - ${selectedCustomer.pinCode}` : ""}
+              </p>
+            </div>
+            <div>
+              <span className="font-semibold text-zinc-600 dark:text-zinc-400">Delivery / Shipping Address:</span>
+              <p className="mt-0.5 text-zinc-900 dark:text-zinc-100">
+                {selectedCustomer.shippingAddress && selectedCustomer.shippingAddress !== selectedCustomer.billingAddress
+                  ? selectedCustomer.shippingAddress
+                  : "Same as billing address"}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-4">
         <FormField label="Discount(%)" htmlFor="discountPercentage">
           <input
             id="discountPercentage"
@@ -408,20 +484,20 @@ export function CustomInvoiceForm({ initialInvoice }: { initialInvoice?: Initial
             className={textInputClass()}
           />
         </FormField>
-      </div>
 
-      <FormField label="Income Category (optional)" htmlFor="incomeAccountId">
-        <SearchableSelect
-          id="incomeAccountId"
-          value={incomeAccountId}
-          onChange={setIncomeAccountId}
-          options={incomeAccounts.map((a) => ({ id: a.id, label: a.name, sublabel: a.code }))}
-          placeholder="Search account…"
-        />
-        <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-          Classifies this invoice&apos;s revenue against your Chart of Accounts, for reporting only.
-        </p>
-      </FormField>
+        <FormField label="Income Category (optional)" htmlFor="incomeAccountId">
+          <SearchableSelect
+            id="incomeAccountId"
+            value={incomeAccountId}
+            onChange={setIncomeAccountId}
+            options={incomeAccounts.map((a) => ({ id: a.id, label: a.name, sublabel: a.code }))}
+            placeholder="Search account…"
+          />
+          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+            Classifies this invoice&apos;s revenue against your Chart of Accounts, for reporting only.
+          </p>
+        </FormField>
+      </div>
 
       <div>
         <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Items</h2>

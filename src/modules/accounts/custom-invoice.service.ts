@@ -101,16 +101,36 @@ async function assertValidIncomeAccount(companyId: string, incomeAccountId: stri
   }
 }
 
-const VALID_CUSTOM_INVOICE_STATUSES = new Set<string>(Object.values(CustomInvoiceStatus));
+const VALID_CUSTOM_INVOICE_STATUSES = new Set<string>([
+  ...Object.values(CustomInvoiceStatus),
+  "ISSUED",
+  "PARTIALLY_PAID",
+  "PAID",
+]);
 
 export async function listCustomInvoices(companyId: string, query: ListQuery) {
   const where: Prisma.CustomInvoiceWhereInput = {
     companyId,
     ...(query.search ? { invoiceNumber: { contains: query.search, mode: "insensitive" as const } } : {}),
-    ...(query.status && VALID_CUSTOM_INVOICE_STATUSES.has(query.status)
-      ? { status: query.status as CustomInvoiceStatus }
-      : {}),
   };
+
+  if (query.status && VALID_CUSTOM_INVOICE_STATUSES.has(query.status)) {
+    if (query.status === "PAID") {
+      where.status = { not: CustomInvoiceStatus.CANCELLED };
+      where.balanceDue = { lte: 0 };
+    } else if (query.status === "PARTIALLY_PAID") {
+      where.status = { not: CustomInvoiceStatus.CANCELLED };
+      where.balanceDue = { gt: 0 };
+      where.OR = [{ paidAmount: { gt: 0 } }, { creditedAmount: { gt: 0 } }];
+    } else if (query.status === "ISSUED" || query.status === "DRAFT") {
+      where.status = CustomInvoiceStatus.DRAFT;
+      where.paidAmount = 0;
+      where.creditedAmount = 0;
+      where.balanceDue = { gt: 0 };
+    } else if (query.status === "CANCELLED") {
+      where.status = CustomInvoiceStatus.CANCELLED;
+    }
+  }
 
   const [data, totalCount] = await Promise.all([
     CustomInvoiceRepository.findMany(where, {

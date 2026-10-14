@@ -177,4 +177,33 @@ describe("Custom Invoice PDF Generator", () => {
     expect(inlineHeaders["Content-Type"]).toBe("application/pdf");
     expect(inlineHeaders["Content-Disposition"]).toBe('inline; filename="INV-001.pdf"');
   });
+
+  it("renders a valid PDF buffer including separate shipping address and derived PAID status", async () => {
+    const data = createMockInvoiceData(
+      {
+        status: "DRAFT",
+        grandTotal: 1180,
+        paidAmount: 1180,
+        creditedAmount: 0,
+        balanceDue: 0,
+      },
+      {
+        customer: {
+          name: "Global Styles Inc",
+          code: "CUST-008",
+          taxRegistrationNo: "08AABCS1429B1ZB",
+          billingAddress: "Corporate Tower, Jaipur, Rajasthan",
+          shippingAddress: "Warehouse 4B, Sitapura Industrial Area, Jaipur, Rajasthan",
+          city: "Jaipur",
+          pinCode: "302022",
+          country: "India",
+        },
+      }
+    );
+
+    const buffer = await renderCustomInvoicePdf(data);
+    expect(buffer).toBeInstanceOf(Buffer);
+    expect(buffer.length).toBeGreaterThan(1000);
+    expect(buffer.subarray(0, 5).toString()).toBe("%PDF-");
+  });
 });
