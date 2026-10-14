@@ -189,6 +189,8 @@ export const NAV_SECTIONS: NavSection[] = [
     href: "/admin",
     modules: ["administration_users", "administration_roles", "administration_settings"],
   },
+  // Platform SaaS Phase 5: every user can raise support tickets (gated on dashboard, which every role holds).
+  { label: "Help & Support", href: "/support-tickets", modules: ["dashboard"] },
 ];
 
 function isPathActive(pathname: string, href: string): boolean {

@@ -23,6 +23,7 @@ const EMPTY_VALUES = {
   adminPassword: "",
   adminFullName: "",
   planId: "",
+  couponCode: "",
 };
 
 export function NewPlatformCompanyClient() {
@@ -203,7 +204,19 @@ export function NewPlatformCompanyClient() {
               ))}
             </select>
           </FormField>
-          <p className="text-xs text-zinc-500">The company starts on a free trial of this plan. Renew it from the company page once they pay.</p>
+          <FormField label="Trial coupon (optional)" htmlFor="couponCode">
+            <input
+              id="couponCode"
+              value={values.couponCode}
+              onChange={(e) => setValues({ ...values, couponCode: e.target.value.toUpperCase() })}
+              placeholder="A 'longer free trial' coupon code"
+              className={`${textInputClass()} font-mono`}
+            />
+          </FormField>
+          <p className="text-xs text-zinc-500">
+            The company starts on a free trial of this plan (plus any extra days from the coupon). Renew it from the
+            company page once they pay.
+          </p>
         </fieldset>
 
         <fieldset className="space-y-4 rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
