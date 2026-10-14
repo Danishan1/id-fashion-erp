@@ -231,6 +231,8 @@ model Company {
   actionDisplaySettings               ActionDisplaySettings?
   suspendedByPlatformUser             PlatformUser?                        @relation("CompanySuspendedBy", fields: [suspendedByPlatformUserId], references: [id], onDelete: SetNull)
   moduleEntitlements                  CompanyModuleEntitlement[]
+  subscription                        CompanySubscription?
+  subscriptionPayments                SubscriptionPayment[]
 
   styleStageCosts  StyleStageCost[]
   designStageCosts DesignStageCost[]
@@ -333,6 +335,8 @@ model PlatformUser {
   supportAccessSessions    SupportAccessSession[]
   companiesSuspended       Company[]                  @relation("CompanySuspendedBy")
   moduleEntitlementChanges CompanyModuleEntitlement[]
+  subscriptionsUpdated     CompanySubscription[]
+  subscriptionPayments     SubscriptionPayment[]
 
   @@map("platform_users")
 }
@@ -356,6 +360,119 @@ model CompanyModuleEntitlement {
 
   @@unique([companyId, packageKey])
   @@map("company_module_entitlements")
+}
+
+// ---------------------------------------------------------------------------
+// Platform SaaS Phase 4 — subscriptions, trials and the grace period
+// (PLAT-021..025). Payment is recorded manually by platform staff (DEC-03);
+// there is no payment gateway. A company's access state (trial / active /
+// grace / expired) is DERIVED from `currentPeriodEndsAt` at read time — see
+// src/core/subscriptions/subscription-state.ts — never stored. Grace (7 days
+// after the period ends) and the post-grace archive (DEC-01) are both
+// read-only: view, print and export only.
+// ---------------------------------------------------------------------------
+
+enum SubscriptionBillingCycle {
+  MONTHLY
+  ANNUAL
+}
+
+enum SubscriptionPaymentMethod {
+  BANK_TRANSFER
+  CHEQUE
+  UPI
+  CASH
+  CARD
+  OTHER
+}
+
+model SubscriptionPlan {
+  id                 String   @id @default(uuid()) @db.Uuid
+  code               String   @unique
+  name               String
+  description        String?
+  monthlyPrice       Decimal? @map("monthly_price") @db.Decimal(18, 2)
+  annualPrice        Decimal? @map("annual_price") @db.Decimal(18, 2)
+  currencyCode       String   @default("INR") @map("currency_code") @db.VarChar(3)
+  trialDays          Int      @default(14) @map("trial_days")
+  // null = unlimited users
+  maxUsers           Int?     @map("max_users")
+  isActive           Boolean  @default(true) @map("is_active")
+  // The plan a newly created company starts its trial on.
+  isDefaultTrialPlan Boolean  @default(false) @map("is_default_trial_plan")
+  sortOrder          Int      @default(0) @map("sort_order")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  modules       SubscriptionPlanModule[]
+  subscriptions CompanySubscription[]
+  payments      SubscriptionPayment[]
+
+  @@map("subscription_plans")
+}
+
+// The module packages (src/config/module-entitlements.ts) a plan includes.
+model SubscriptionPlanModule {
+  id         String @id @default(uuid()) @db.Uuid
+  planId     String @map("plan_id") @db.Uuid
+  packageKey String @map("package_key")
+
+  plan SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@unique([planId, packageKey])
+  @@map("subscription_plan_modules")
+}
+
+// One current subscription per company.
+model CompanySubscription {
+  id                      String                   @id @default(uuid()) @db.Uuid
+  companyId               String                   @unique @map("company_id") @db.Uuid
+  planId                  String                   @map("plan_id") @db.Uuid
+  billingCycle            SubscriptionBillingCycle @default(MONTHLY) @map("billing_cycle")
+  isTrial                 Boolean                  @default(false) @map("is_trial")
+  startedAt               DateTime                 @default(now()) @map("started_at")
+  // null = no expiry (complimentary / existing customers before Phase 4)
+  currentPeriodEndsAt     DateTime?                @map("current_period_ends_at")
+  // Lifecycle worker idempotency: "<STAGE>|<period end ISO>" of the last notice sent.
+  lastNotifiedKey         String?                  @map("last_notified_key")
+  updatedByPlatformUserId String?                  @map("updated_by_platform_user_id") @db.Uuid
+  createdAt               DateTime                 @default(now()) @map("created_at")
+  updatedAt               DateTime                 @updatedAt @map("updated_at")
+
+  company   Company               @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  plan      SubscriptionPlan      @relation(fields: [planId], references: [id], onDelete: Restrict)
+  updatedBy PlatformUser?         @relation(fields: [updatedByPlatformUserId], references: [id], onDelete: SetNull)
+  payments  SubscriptionPayment[]
+
+  @@map("company_subscriptions")
+}
+
+// A manually recorded payment that renewed a subscription (DEC-03).
+model SubscriptionPayment {
+  id                       String                    @id @default(uuid()) @db.Uuid
+  companyId                String                    @map("company_id") @db.Uuid
+  subscriptionId           String                    @map("subscription_id") @db.Uuid
+  planId                   String                    @map("plan_id") @db.Uuid
+  billingCycle             SubscriptionBillingCycle  @map("billing_cycle")
+  periods                  Int                       @default(1)
+  amount                   Decimal                   @db.Decimal(18, 2)
+  currencyCode             String                    @map("currency_code") @db.VarChar(3)
+  paidAt                   DateTime                  @map("paid_at") @db.Date
+  method                   SubscriptionPaymentMethod
+  reference                String?
+  notes                    String?
+  periodStart              DateTime                  @map("period_start")
+  periodEnd                DateTime                  @map("period_end")
+  recordedByPlatformUserId String                    @map("recorded_by_platform_user_id") @db.Uuid
+  createdAt                DateTime                  @default(now()) @map("created_at")
+
+  company      Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  subscription CompanySubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  plan         SubscriptionPlan    @relation(fields: [planId], references: [id], onDelete: Restrict)
+  recordedBy   PlatformUser        @relation(fields: [recordedByPlatformUserId], references: [id], onDelete: Restrict)
+
+  @@index([companyId, paidAt])
+  @@map("subscription_payments")
 }
 
 // ---------------------------------------------------------------------------

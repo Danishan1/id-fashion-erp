@@ -8,6 +8,8 @@ import { DashboardShell } from "@/components/layout/DashboardShell";
 import Link from "next/link";
 import { SupportSessionBanner } from "@/components/support/SupportSessionBanner";
 import { countPendingSupportItems } from "@/modules/support-access/support-access.service";
+import { SubscriptionBanner } from "@/components/layout/SubscriptionBanner";
+import { computeSubscriptionStatus } from "@/core/subscriptions/subscription-state";
 
 export default async function DashboardLayout({ children }: { children: ReactNode }) {
   const session = await auth();
@@ -18,12 +20,19 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   // stream the page's own data. The redirect aborts the whole render. API
   // routes refuse them independently (requireSession()). The middleware
   // already keeps platform sessions out of this route group.
+  let subscriptionBanner: ReactNode = null;
   if (session?.user?.id) {
     const user = await prisma.user.findUnique({
       where: { id: session.user.id },
-      select: { company: { select: { isActive: true } } },
+      select: {
+        company: {
+          select: { isActive: true, subscription: { select: { isTrial: true, currentPeriodEndsAt: true } } },
+        },
+      },
     });
     if (user && !user.company.isActive) redirect("/account-suspended");
+    // Phase 4: trial ending / grace period / read-only archive notice.
+    subscriptionBanner = <SubscriptionBanner status={computeSubscriptionStatus(user?.company.subscription)} />;
   }
 
   // Computed here (Server Component) rather than fetched client-side, so the
@@ -75,7 +84,12 @@ export default async function DashboardLayout({ children }: { children: ReactNod
       viewableModules={viewableModules}
       actionModules={actionModules}
       userName={session?.user?.name ?? session?.user?.email ?? "User"}
-      topBanner={topBanner}
+      topBanner={
+        <>
+          {subscriptionBanner}
+          {topBanner}
+        </>
+      }
     >
       {children}
     </DashboardShell>

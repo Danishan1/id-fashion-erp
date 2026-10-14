@@ -3,7 +3,7 @@
 **Single Source of Truth (SSOT)** for Platform Administration & SaaS Transformation  
 **Document Path**: `docs/PLATFORM_SAAS_MASTER_TRACKER.md`  
 **Initial Baseline Date**: 2026-10-12  
-**Current Active Phase**: Phase 1 COMPLETE (2026-10-13) — awaiting approval to start Phase 2  
+**Current Active Phase**: Phase 4 COMPLETE (2026-10-13) — awaiting approval to start Phase 5  
 **Current Active Task**: None (Phase 2 not approved yet)  
 
 ---
@@ -13,17 +13,17 @@
 | Metric | Value |
 |---|---|
 | **Total Tasks Identified** | 30 |
-| **NOT STARTED** | 10 |
+| **NOT STARTED** | 5 |
 | **IN PROGRESS** | 0 |
 | **BLOCKED** | 0 |
 | **IMPLEMENTED** | 0 |
-| **VERIFIED** | 20 (PLAT-001 – PLAT-020) |
+| **VERIFIED** | 25 (PLAT-001 – PLAT-025) |
 | **DEFERRED** | 0 |
-| **Overall Verified Completion** | **66.7%** (20 / 30) |
-| **Current Active Phase** | **Phase 3 complete — Phase 4 awaiting approval** |
+| **Overall Verified Completion** | **83.3%** (25 / 30) |
+| **Current Active Phase** | **Phase 4 complete — Phase 5 awaiting approval** |
 | **Current Active Task** | None |
-| **Next Eligible Task** | `PLAT-021` (Subscription Schema) — after Phase 4 approval |
-| **Open Decisions Requiring Clarification** | 3 (DEC-01, DEC-03, DEC-04) |
+| **Next Eligible Task** | `PLAT-026` (Offers & Coupons Schema) — after Phase 5 approval |
+| **Open Decisions Requiring Clarification** | 0 (DEC-04 AI metering deferred to a later phase) |
 
 > [!NOTE]
 > Progress percentage is calculated strictly on **VERIFIED** tasks (meaning code written, unit & integration tests passing, and acceptance criteria validated). Pre-existing partial features are recorded in the *Current Project State* section and are not counted towards verified completion until their Phase-specific acceptance criteria are formally validated.
@@ -57,7 +57,7 @@ The following decisions are approved and bind all future implementation tasks:
 3. **Subscription Expiry & Grace Period**:
    - When a company subscription or trial expires, the system enters an automatic **7-day read-only grace period**.
    - During the grace period, users can log in, view existing data, print documents, and export reports, but all mutation actions (creating orders, stage receipts, inventory movements, dispatches, payments) are blocked.
-   - Post-grace period policy (hard lock vs. extended archive access) remains pending approval.
+   - Post-grace period policy: read-only archive (DEC-01 resolved 2026-10-13). New companies get a 14-day trial by default (editable per plan).
 
 ---
 
@@ -124,11 +124,11 @@ The following decisions are approved and bind all future implementation tasks:
 | **PLAT-018** | Module Entitlements Schema | Only 6-submodule UI visibility table | Create `CompanyModuleEntitlement` model for high-level ERP modules | NEW | HIGH | Phase 3 | **VERIFIED** | None |
 | **PLAT-019** | Module Guard Middleware | Modules accessible if user has role | Middleware & API route gates asserting module entitlement | NEW | HIGH | Phase 3 | **VERIFIED** | PLAT-018 |
 | **PLAT-020** | Module Entitlement UI | None | Platform interface to enable/disable ERP modules per tenant | NEW | MEDIUM | Phase 3 | **VERIFIED** | PLAT-018, PLAT-019 |
-| **PLAT-021** | Subscription Schema | None | Add `SubscriptionPlan` and `CompanySubscription` models | NEW | HIGH | Phase 4 | NOT STARTED | None |
-| **PLAT-022** | Plan Catalog Service | None | Manage plans, features, quotas, billing cycles (Monthly/Annual) | NEW | HIGH | Phase 4 | NOT STARTED | PLAT-021 |
-| **PLAT-023** | Trial Lifecycle Worker | None | BullMQ worker managing trial countdown, notifications, and expiry | NEW | MEDIUM | Phase 4 | NOT STARTED | PLAT-021 |
-| **PLAT-024** | 7-Day Grace Period Guard | None | Enforce read-only mode across all ERP mutations during grace period | NEW | CRITICAL | Phase 4 | NOT STARTED | PLAT-021 |
-| **PLAT-025** | Post-Grace Lockout Policy | None | Enforce approved post-grace behavior (account lockout or restricted) | NEW | HIGH | Phase 4 | NOT STARTED | PLAT-024 |
+| **PLAT-021** | Subscription Schema | None | Add `SubscriptionPlan` and `CompanySubscription` models | NEW | HIGH | Phase 4 | **VERIFIED** | None |
+| **PLAT-022** | Plan Catalog Service | None | Manage plans, features, quotas, billing cycles (Monthly/Annual) | NEW | HIGH | Phase 4 | **VERIFIED** | PLAT-021 |
+| **PLAT-023** | Trial Lifecycle Worker | None | BullMQ worker managing trial countdown, notifications, and expiry | NEW | MEDIUM | Phase 4 | **VERIFIED** | PLAT-021 |
+| **PLAT-024** | 7-Day Grace Period Guard | None | Enforce read-only mode across all ERP mutations during grace period | NEW | CRITICAL | Phase 4 | **VERIFIED** | PLAT-021 |
+| **PLAT-025** | Post-Grace Lockout Policy | None | Enforce approved post-grace behavior (account lockout or restricted) | NEW | HIGH | Phase 4 | **VERIFIED** | PLAT-024 |
 | **PLAT-026** | Offers & Coupons Schema | None | Add `Coupon`, `Offer`, and `CouponRedemption` models | NEW | MEDIUM | Phase 5 | NOT STARTED | PLAT-021 |
 | **PLAT-027** | Coupon Service & API | None | Validate coupon code, discount rules, expiry, and redemption limits | NEW | MEDIUM | Phase 5 | NOT STARTED | PLAT-026 |
 | **PLAT-028** | Support Ticket Schema | None | Add `SupportTicket`, `TicketMessage`, and `TicketAttachment` models | NEW | MEDIUM | Phase 5 | NOT STARTED | None |
@@ -426,10 +426,42 @@ flowchart TD
 
 ---
 
-### PLAT-021 to PLAT-025 — Phase 4 Checklists (Subscriptions & Trials)
-- **Status**: ALL NOT STARTED. Detailed acceptance criteria documented in Phase 4 roadmap.
-- **Key Models**: `SubscriptionPlan`, `CompanySubscription`.
-- **Key Guards**: 7-day read-only grace period enforcement.
+### PLAT-021 — Subscription Schema
+- **Status**: VERIFIED (2026-10-13).
+- **Acceptance Criteria**:
+  - [x] `subscription_plans` (prices monthly/annual, currency, trial days, max users, active, default-trial flag), `subscription_plan_modules`, `company_subscriptions` (one per company: plan, cycle, trial flag, period end — null = no expiry), `subscription_payments` (manual payment record). Additive migration `20261013160000_subscriptions_trials_grace` with CHECK guards and a one-default-trial-plan partial unique index.
+  - [x] Backfill: a "Standard" plan with every module, default trial plan; every existing company on it with **no expiry**, so nothing changes for current customers.
+- **Verification Evidence**: SQL — 1 plan, 13 modules, 1 company subscription after migration; live — Standard plan and the company's UNLIMITED state returned by the API.
+
+### PLAT-022 — Plan Catalog Service
+- **Status**: VERIFIED (2026-10-13).
+- **Acceptance Criteria**:
+  - [x] `/platform/plans` — list, create, edit (prices, trial days, user limit, included modules, active, default trial). PLATFORM_SUPER_ADMIN or BILLING_ADMIN.
+  - [x] The plan decides a company's modules; a Phase 3 per-company override still wins and can be reset to the plan.
+  - [x] User limit (`maxUsers`) enforced when creating or reactivating a user (409 `SUBSCRIPTION_LIMIT_REACHED`).
+- **Verification Evidence**: `subscription-plan.service.test.ts`, `EntitlementService.test.ts`, `company-subscription.service.test.ts`; live — plan without CRM → CRM API 403, override on → 200, reset → 403; user limit refused at 1 with 2 active users against the real DB.
+
+### PLAT-023 — Trial Lifecycle Worker
+- **Status**: VERIFIED (2026-10-13).
+- **Acceptance Criteria**:
+  - [x] New companies start a trial on the chosen (or default) plan — 14 days by default.
+  - [x] Hourly BullMQ job (`platform-jobs-<db hash>` queue) notifies the company's Super Admins in the app: 3 days before the end, when the grace period starts, and when the archive starts. Each notice once per period (claimed with a conditional update).
+- **Verification Evidence**: `subscription-lifecycle.service.test.ts`, `company-subscription.service.test.ts`; live — worker logs "Platform jobs worker started". New-company creation not run live (pre-existing dev-DB permission-catalog gap, see Phase 1 notes).
+
+### PLAT-024 — 7-Day Grace Period Guard
+- **Status**: VERIFIED (2026-10-13).
+- **Acceptance Criteria**:
+  - [x] Access state is derived from the period end at read time (never stored): TRIAL/ACTIVE → GRACE (7 days, read-only) → EXPIRED.
+  - [x] Read-only allows only view, view_all, print and export — enforced in `PermissionService` (403 `SUBSCRIPTION_READ_ONLY`), and write-only sidebar links are hidden.
+  - [x] Every tenant user sees a banner (trial ending, grace, archive).
+- **Verification Evidence**: `subscription-state.test.ts`, `PermissionService.test.ts`; live — grace: reads 200, writes 403 SUBSCRIPTION_READ_ONLY, banner shown.
+
+### PLAT-025 — Post-Grace Policy
+- **Status**: VERIFIED (2026-10-13).
+- **Acceptance Criteria**:
+  - [x] After grace the company is a read-only archive (DEC-01): users can still sign in, view and export; nothing can be changed until renewed.
+  - [x] Recording a payment renews from the current end (or today if lapsed) by whole billing periods and ends any trial; "Adjust dates" sets an exact end date, extends a trial or removes the expiry, with a required reason.
+- **Verification Evidence**: live — 30 days lapsed: read 200, write 403, archive banner; billing admin payment → ACTIVE, writes allowed again; support agent refused (403).
 
 ---
 
@@ -504,17 +536,17 @@ The following decisions require explicit business sign-off before their respecti
 1. **DEC-01 (Phase 4): Post-Grace Period Expired Account Policy**:
    - *Option A*: Complete lockout (users cannot log in; contact sales screen displayed).
    - *Option B*: Extended read-only archive access (users can log in and view historical records, but cannot add or edit any data).
-   - *Status*: PENDING.
+   - *Status*: **RESOLVED (2026-10-13)** — Option B: after the 7-day grace period the company stays a read-only archive (sign in, view, print, export; nothing can be added or changed) until renewed.
 2. **DEC-02 (Phase 2): Support Write Access Permissibility**:
    - *Option A*: Support staff are strictly Read-Only under all circumstances (no write access ever granted).
    - *Option B*: Support staff can request write access only when customer explicitly authorizes with a separate secondary approval code.
    - *Status*: **RESOLVED (2026-10-13)** — Option B implemented: support requests write access from the support-session banner with a justification; the customer's Super Admin approves it with a second, separate 6-digit code. Write access never includes approve/post/delete/reject/export, and Administration stays read-only.
 3. **DEC-03 (Phase 4): Automated Self-Service Payment Gateway**:
    - *Decision*: Will SaaS billing in V1 be handled via manual invoice/bank transfer, or requires immediate payment gateway integration (Stripe / Razorpay)?
-   - *Status*: PENDING.
+   - *Status*: **RESOLVED (2026-10-13)** — manual: customers pay outside the app; a Platform Super Admin or Billing Admin records the payment, which renews the subscription. No gateway in V1.
 4. **DEC-04 (Phase 3): AI Quota / Token Metering**:
    - *Decision*: Should AI Garment Flow / AI Designer token usage be metered and capped per subscription plan to prevent third-party API cost overruns?
-   - *Status*: PENDING.
+   - *Status*: **DEFERRED (2026-10-13)** — plans only switch the AI modules on or off; usage metering/caps will be a later phase.
 
 ---
 
@@ -573,6 +605,7 @@ When updating this document after completing a task, use the following template:
 | Timestamp | Task ID | Author | Action | Summary |
 |---|---|---|---|---|
 | 2026-10-12 | INIT | Principal Architect | Created Master Tracker | Initialized `PLATFORM_SAAS_MASTER_TRACKER.md` with 30 tasks across 6 phases based on read-only audit. |
+| 2026-10-13 | PLAT-021–025 | Claude Code | Phase 4 implemented & verified | Plans, per-company subscriptions with 14-day trials, manual payment recording, plan-driven modules + user limits, 7-day read-only grace and read-only archive (DEC-01/03 resolved, DEC-04 deferred), hourly lifecycle notices. Migration `20261013160000_subscriptions_trials_grace`. 2720 tests green, tsc/eslint clean, 20/21 live checks + 2 direct DB checks (the 21st was blocked by the known dev-DB permission gap). |
 | 2026-10-13 | PLAT-016–020 | Claude Code | Phase 3 implemented & verified | Company lifecycle (details, suspend with reason, reactivate, usage stats) and per-company module packages enforced in PermissionService, sidebar and proxy. Migration `20261013140000_company_lifecycle_and_module_entitlements`. 2688 tests green, tsc/eslint clean, 21/21 live API checks + browser check. |
 | 2026-10-13 | PLAT-008–015 | Claude Code | Phase 2 implemented & verified | Customer-approved support access: request with reason + 6-digit code, customer Super Admin approval, read-only session as a company proxy user, separate write approval, instant revoke + expiry, hash-chained append-only event log. Migration `20261013120000_support_access`. 2666 tests green, tsc/eslint clean, 38/38 live checks + browser check. |
 | 2026-10-13 | PLAT-001–007 | Claude Code | Phase 1 implemented & verified | Separate `PlatformUser` identity + `/platform/login`; `(platform)` portal; all 4 RBAC bypasses removed; company switcher removed; suspended companies blocked at login, API, permission checks and proxy. Migration `20261013100000_platform_users`. 2607 tests green, tsc/eslint clean, 24/24 live checks. |
@@ -648,14 +681,38 @@ When updating this document after completing a task, use the following template:
   - DEC-04 (AI usage metering) was not needed for Phase 3; still open for Phase 4.
 - **Next Task**: PLAT-021 — after Phase 4 approval.
 
+### Task Progress Update — Phase 4
+- **Date**: 2026-10-13
+- **Task ID**: PLAT-021 – PLAT-025
+- **Phase**: Phase 4
+- **Previous Status**: NOT STARTED
+- **New Status**: VERIFIED
+- **Decisions taken (user, 2026-10-13)**: DEC-01 read-only archive; DEC-03 manual payment recording; DEC-04 deferred; trial length 14 days by default.
+- **Files Changed**:
+  - Schema: `prisma/schema.prisma`, `prisma/migrations/20261013160000_subscriptions_trials_grace/migration.sql`
+  - Core: `src/core/subscriptions/subscription-state.ts` (new), `src/core/entitlements/EntitlementService.ts` (plan-driven), `src/core/rbac/PermissionService.ts` (read-only mode), `src/core/errors/BusinessRuleError.ts` (`SUBSCRIPTION_READ_ONLY`, `SUBSCRIPTION_LIMIT_REACHED`), `src/core/jobs/worker.ts`
+  - Services: `src/modules/platform/{subscription.schema,subscription-plan.service,company-subscription.service,subscription-lifecycle.service,platform-jobs.worker}.ts` (new); `platform-company.service.ts` / `.schema.ts` (trial on creation), `platform-company-lifecycle.service.ts` (plan/state in list, override reset), `src/modules/administration/user-admin.service.ts` (user limit)
+  - API: `src/app/api/v1/platform/plans/**`, `src/app/api/v1/platform/companies/[id]/subscription/**` (new), `.../modules` (DELETE = reset to plan)
+  - UI: `src/app/(platform)/platform/plans/*` (new), `companies/[id]/SubscriptionPanel.tsx` (new), `companies/[id]/{page,PlatformCompanyDetailClient}.tsx`, `companies/page.tsx`, `companies/new/NewPlatformCompanyClient.tsx`, `src/components/platform/PlatformShell.tsx`, `src/components/layout/SubscriptionBanner.tsx` (new), `src/app/(dashboard)/layout.tsx`
+  - Tests: `subscription-state.test.ts`, `subscription-plan.service.test.ts`, `company-subscription.service.test.ts`, `subscription-lifecycle.service.test.ts` (new); `EntitlementService.test.ts`, `PermissionService.test.ts`, `user-admin.service.test.ts`, `platform-company.service.test.ts`, `company-scoping.contract.test.ts` (updated)
+- **Database Changes**: enums `SubscriptionBillingCycle`, `SubscriptionPaymentMethod`; tables `subscription_plans`, `subscription_plan_modules`, `company_subscriptions`, `subscription_payments`; backfill of a Standard plan + no-expiry subscriptions for existing companies. Additive only.
+- **Test Results**: 2720 passed / 161 skipped; tsc 0 errors; eslint 0 errors; 20/21 live API checks + 2 direct DB checks (state restored).
+- **Remaining Work**: none for Phase 4.
+- **Blockers / Notes**:
+  - Existing companies have **no expiry** until a platform admin records a payment or sets a date — nothing becomes read-only on deploy.
+  - Read-only applies to every permission-checked action; a handful of personal actions that need no module permission (change your own password, mark notifications read) still work, by design.
+  - Notices are in-app only (no email infrastructure yet).
+  - The live user-limit check via HTTP was blocked by the known dev-DB permission-catalog gap (`administration_users.create` missing for the dev Super Admin); the same rule was verified directly against the real database.
+- **Next Task**: PLAT-026 — after Phase 5 approval.
+
 ---
 
 ## 16. NEXT RECOMMENDED TASK
 
-**Recommended Next Step**: **PLAT-021 — Subscription Schema** (start of Phase 4, Subscriptions, Trials & Grace Period).
-- **Objective**: Plans and company subscriptions, trial lifecycle and the 7-day read-only grace period.
-- **Prerequisites**: User approval to start Phase 4; DEC-01/DEC-03/DEC-04 should be answered first.
+**Recommended Next Step**: **PLAT-026 — Offers & Coupons Schema** (start of Phase 5, Offers, Coupons & Support Tickets).
+- **Objective**: Offers/coupons applied to subscriptions, and a support-ticket system linked to support access.
+- **Prerequisites**: User approval to start Phase 5.
 
 ---
 
-**PHASE 3 COMPLETE (2026-10-13) — AWAITING APPROVAL FOR PHASE 4**
+**PHASE 4 COMPLETE (2026-10-13) — AWAITING APPROVAL FOR PHASE 5**

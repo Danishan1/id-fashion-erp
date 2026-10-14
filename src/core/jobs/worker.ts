@@ -5,6 +5,7 @@ import { processBulkImportJob } from "@/modules/import/bulk-import.service";
 import type { BulkImportActorContext } from "@/modules/import/bulk-import.service";
 import type { BulkImportMasterType } from "@/modules/import/import.schema";
 import { startCrmIngestWorker } from "@/modules/crm/imports/crm-import.worker";
+import { startPlatformJobsWorker } from "@/modules/platform/platform-jobs.worker";
 
 /**
  * Standalone process for the Bulk Master Data Import background queue —
@@ -57,12 +58,15 @@ console.log(JSON.stringify({ level: "info", message: `Bulk import worker started
 // CRM lead import & capture jobs (Phase 03) share this worker process.
 const crmWorker = startCrmIngestWorker();
 
+// Platform SaaS Phase 4: hourly subscription lifecycle notices.
+const platformWorker = startPlatformJobsWorker();
+
 process.on("SIGTERM", async () => {
-  await Promise.all([worker.close(), crmWorker.close()]);
+  await Promise.all([worker.close(), crmWorker.close(), platformWorker.close()]);
   process.exit(0);
 });
 process.on("SIGINT", async () => {
-  await Promise.all([worker.close(), crmWorker.close()]);
+  await Promise.all([worker.close(), crmWorker.close(), platformWorker.close()]);
   process.exit(0);
 });
 

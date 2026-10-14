@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Modal } from "@/components/ui/Modal";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
+import { SubscriptionPanel, type PlanOption, type SubscriptionData } from "./SubscriptionPanel";
 
 interface CompanyDetail {
   company: {
@@ -36,7 +37,7 @@ interface CompanyDetail {
     supportRequests: number;
     liveSupportSessions: number;
   };
-  modules: { key: string; label: string; description: string; isEnabled: boolean }[];
+  modules: { key: string; label: string; description: string; isEnabled: boolean; inPlan: boolean; override: boolean | null }[];
 }
 
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -54,10 +55,16 @@ function fmtBytes(bytes: number): string {
 
 export function PlatformCompanyDetailClient({
   initialDetail,
+  initialSubscription,
+  plans,
+  canManageBilling,
   canManage,
   canRequestSupport,
 }: {
   initialDetail: CompanyDetail;
+  initialSubscription: SubscriptionData;
+  plans: PlanOption[];
+  canManageBilling: boolean;
   canManage: boolean;
   canRequestSupport: boolean;
 }) {
@@ -117,6 +124,10 @@ export function PlatformCompanyDetailClient({
 
   async function activate() {
     if (await send(`/api/v1/platform/companies/${company.id}/activate`, "POST")) setActivateOpen(false);
+  }
+
+  async function resetModule(packageKey: string) {
+    await send(`/api/v1/platform/companies/${company.id}/modules?packageKey=${packageKey}`, "DELETE");
   }
 
   async function toggleModule() {
@@ -263,12 +274,21 @@ export function PlatformCompanyDetailClient({
         </div>
       </section>
 
+      <SubscriptionPanel
+        companyId={company.id}
+        initialData={initialSubscription}
+        plans={plans}
+        canManageBilling={canManageBilling}
+        onChanged={reload}
+      />
+
       <section className="rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
         <div className="border-b border-zinc-200 p-4 dark:border-zinc-800">
           <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Modules</h2>
           <p className="mt-1 text-sm text-zinc-500">
             A module that&apos;s off disappears from this company&apos;s menu and every page and API in it is refused,
-            whatever roles its users hold. Dashboard, Masters, Sales Orders and Administration are always on. Turning a
+            whatever roles its users hold. The company&apos;s plan decides which modules are on; a switch here overrides the
+            plan for this company only. Dashboard, Masters, Sales Orders and Administration are always on. Turning a
             module off never deletes data — turning it back on restores everything.
           </p>
         </div>
@@ -281,6 +301,27 @@ export function PlatformCompanyDetailClient({
               <div>
                 <div className="text-sm font-medium text-zinc-900 dark:text-zinc-50">{m.label}</div>
                 <div className="text-xs text-zinc-500">{m.description}</div>
+                <div className="mt-1 flex items-center gap-2 text-xs">
+                  {m.override === null ? (
+                    <span className="text-zinc-500">{m.inPlan ? "Included in plan" : "Not in plan"}</span>
+                  ) : (
+                    <>
+                      <span className="rounded-full bg-amber-100 px-2 py-0.5 font-medium text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
+                        Override — plan says {m.inPlan ? "on" : "off"}
+                      </span>
+                      {canManage && (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => resetModule(m.key)}
+                          className="text-indigo-600 hover:underline disabled:opacity-60"
+                        >
+                          Use plan default
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
               </div>
               <ToggleSwitch
                 checked={m.isEnabled}

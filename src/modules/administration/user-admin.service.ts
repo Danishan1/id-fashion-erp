@@ -5,6 +5,7 @@ import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { PermissionService } from "@/core/rbac/PermissionService";
 import { UserAdminRepository, UserAdminScopeRepository } from "./user-admin.repository";
 import type { AddUserBranchRoleInput, CreateUserInput, UpdateUserInput } from "./user-admin.schema";
+import { assertUserLimitAllows } from "@/modules/platform/company-subscription.service";
 
 export interface ActorContext {
   companyId: string;
@@ -38,6 +39,8 @@ async function assertEmployeeLinkable(companyId: string, employeeId: string, exc
  * Super Admin account.
  */
 export async function createUser(actor: ActorContext, input: CreateUserInput) {
+  // Phase 4: the subscription plan may cap active users.
+  await assertUserLimitAllows(actor.companyId);
   const existing = await UserAdminRepository.findByEmail(input.email);
   if (existing) {
     throw new BusinessRuleError("DUPLICATE_EMAIL_EXISTS", `A user with email "${input.email}" already exists.`, { email: input.email });
@@ -215,6 +218,8 @@ export async function setUserStatus(actor: ActorContext, id: string, status: "AC
   if (existing.id === actor.userId && status === "SUSPENDED") {
     throw new BusinessRuleError("VALIDATION_ERROR", "You cannot suspend your own account.", {});
   }
+  // Phase 4: reactivating a user counts against the plan's user limit.
+  if (status === "ACTIVE" && existing.status !== "ACTIVE") await assertUserLimitAllows(actor.companyId);
 
   const updated = await UserAdminRepository.updateStatus(id, status);
 

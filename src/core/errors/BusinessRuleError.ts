@@ -73,6 +73,8 @@ export type BusinessRuleErrorCode =
   // Platform SaaS Phase 3 (PLAT-019): the module is turned off for this
   // company by the platform (module entitlements).
   | "MODULE_NOT_ENABLED"
+  | "SUBSCRIPTION_READ_ONLY"
+  | "SUBSCRIPTION_LIMIT_REACHED"
   | "VALIDATION_ERROR"
   | "NOT_FOUND";
 
@@ -127,6 +129,8 @@ const HTTP_STATUS_BY_CODE: Record<BusinessRuleErrorCode, number> = {
   PRODUCTION_NOT_RELEASED_TO_DISPATCH: 409,
   ACCOUNT_SUSPENDED: 403,
   MODULE_NOT_ENABLED: 403,
+  SUBSCRIPTION_READ_ONLY: 403,
+  SUBSCRIPTION_LIMIT_REACHED: 409,
   VALIDATION_ERROR: 400,
   NOT_FOUND: 404,
 };

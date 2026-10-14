@@ -13,6 +13,7 @@ import type { ReactNode } from "react";
 const NAV_ITEMS = [
   { label: "Overview", href: "/platform" },
   { label: "Companies", href: "/platform/companies" },
+  { label: "Plans", href: "/platform/plans" },
   { label: "Support Access", href: "/platform/support" },
 ];
 

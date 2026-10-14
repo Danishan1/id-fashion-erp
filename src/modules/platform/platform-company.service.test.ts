@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+// Phase 4: trial creation is tested in company-subscription.service.test.ts.
+vi.mock("./company-subscription.service", () => ({ startTrialInTx: vi.fn().mockResolvedValue({ id: "sub-1" }) }));
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/auth/password", () => ({ hashPassword: vi.fn(async () => "hashed-password") }));
 
