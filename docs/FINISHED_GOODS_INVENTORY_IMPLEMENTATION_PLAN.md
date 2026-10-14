@@ -1523,3 +1523,200 @@ prominently in their own task's evidence section rather than silently folded in)
 risk in §6's own literal wording, and FGI-011's real plan gap (no task anywhere wires reservation
 creation/release into Sales Order confirm/cancellation, unlike consumption, which FGI-041 already owns).
 
+---
+
+## Phase 2 — Production integration
+
+### FGI-020 / FGI-021 — Colour/size completion breakdown + `FinishedGoodsReceipt` wiring
+
+**Status:** VERIFIED — both tasks are reported together, as the plan's own FGI-021 description anticipated
+("Wire `FinishedGoodsReceipt` creation into `completeAtFinalStageInTx()`") — there is no meaningful way to
+build or verify FGI-020's breakdown-collection UI/API without FGI-021's own wiring already in place to post
+it against, and vice versa; they were implemented and verified as one coherent change.
+
+**Files changed:**
+- `src/modules/production/production.schema.ts` — new shared `variantBreakdownItemSchema` (a single
+  `{productVariantId, quantity}` line), added as an optional `variantBreakdown` array field on both
+  `forwardJobOrderSchema` and `createQcInspectionSchema`. Deliberately a plain `.optional()`, not
+  `.optional().default([])` — the latter would make the field non-optional in the Zod-inferred *output*
+  type (`ForwardJobOrderInput`/`CreateQcInspectionInput`), breaking every pre-existing direct-service-call
+  test site that doesn't know about this new field; the service layer's own `input.variantBreakdown ?? []`
+  guard already covers the `undefined` case identically either way.
+- `src/modules/products/product.repository.ts` — new `ProductVariantRepository.findManyActiveByProductId`
+  (every ACTIVE variant a style has configured — the one new read FGI-020 needed).
+- `src/modules/production/job-order.service.ts` — the real wiring:
+  - `completeAtFinalStageInTx()`'s signature gained `productionOrderId` and an optional
+    `variantBreakdown`. When a breakdown is supplied, it now calls FGI-012's own, previously-standalone
+    `createFinishedGoodsReceiptInTx()` — **replacing**, never running alongside, the flat
+    `recordInventoryTransaction()` call (the exact "becomes, not an addition" shape FGI-012's own evidence
+    section already flagged as the required design). With no breakdown, the flat posting is completely
+    unchanged.
+  - New private `resolveFinalStageVariantBreakdown(productId, quantity, variantBreakdown)`: returns `null`
+    (flat-only path, unchanged) when the style has zero configured ACTIVE variants; otherwise requires a
+    non-empty breakdown, validates every line's `productVariantId` genuinely belongs to this style, and
+    requires the lines to sum to `quantity` within `EPSILON` — all three checks run **before** the
+    transaction opens, so a rejection never leaves a partial write behind.
+  - `forwardJobOrder()` and `recordQcInspection()` both resolve the breakdown (only when the real target/
+    next stage is `isFinal`) immediately after their existing not-found/order lookups, and pass it through
+    to `completeAtFinalStageInTx()` inside their own transaction. `recordQcInspection()`'s own resolution is
+    additionally gated on `input.acceptedQuantity > 0` — a pure rejection/damage disposition (accepted = 0)
+    never requires a breakdown even when the style has configured variants, since no units are completing
+    onto the final stage in that case.
+  - `cascadeReceivedThroughStagesInTx()` (the Job Work multi-stage cascade) was deliberately **not** given
+    breakdown collection — explicitly out of scope per FGI-020's own literal "Forward/QC-Accept... UI and API"
+    wording; its own `completeAtFinalStageInTx()` call passes no `variantBreakdown`, so a cascaded
+    completion still takes the flat-only path today (a scope note, not an oversight — flagged here for
+    visibility).
+- `src/app/(dashboard)/production-orders/LotWorkflowPanel.tsx` — the UI half: both the Forward modal and the
+  QC modal now fetch the style's own real variant list (reusing the *existing* `GET
+  /api/v1/production-orders/:id/variant-breakdown-suggestions` endpoint — for its variant *options* only;
+  its `remaining`/`orderedQuantity`/`alreadyInLots` fields are lot-planning-specific and deliberately
+  ignored here) whenever the resolved target/next stage is final, rendering a Color/Size/SKU/Qty table with
+  **no quantity pre-fill at all** — fully manual entry, per the plan's own explicit "never silently
+  defaulting to an arbitrary split" requirement. A live, client-side "Breakdown Total: X (must equal Y)"
+  readout (red when mismatched) additionally disables the Forward/Record Inspection button before the
+  request is even sent — a UX courtesy on top of, never a replacement for, the real server-side rejection.
+  Both new `useEffect`s were written so every `setState` call happens inside a `.then()` callback (never
+  synchronously in the effect body), matching this project's own established fix for the
+  `react-hooks/set-state-in-effect` lint rule.
+
+**Database changes:** none — FGI-020/021 are pure business-logic/UI wiring on top of schema FGI-004/FGI-012
+already added.
+
+**A real, pre-existing bug found and fixed during this task, flagged per the "stop and report any conflict"
+instruction — not an FGI-020/021 design issue, but a genuine conflict with an already-shipped, unrelated
+feature that this task's own investigation surfaced:** FGI-012's `createFinishedGoodsReceiptInTx()` (built
+and merged in Phase 1) posted every per-variant ledger entry with `referenceModule: "FINISHED_GOODS_RECEIPT"`.
+Investigating FGI-021's own wiring, a grep for other consumers of `PRODUCTION_RECEIPT`-typed ledger rows
+found `getContributingLots()` in `production-progress.service.ts` (a real, already-shipped, 2026-10-10-dated
+Dispatch-traceability feature — "which lots contributed to this stock") hard-codes
+`transactionType: "PRODUCTION_RECEIPT", referenceModule: "PRODUCTION_ORDER"` as the one fixed signature of a
+real production receipt. Using `FINISHED_GOODS_RECEIPT` instead would have silently dropped every
+breakdown-tracked receipt out of that report the moment FGI-021 wired the new path in, with zero error
+anywhere to surface it. The Prisma schema's own Phase 0 doc comment on the `RelatedModule` enum value
+confirms it was reserved for a *different* purpose entirely (`Attachment`/audit-log polymorphism for
+`FinishedGoodsReceipt`, not ledger `referenceModule`). **Resolved confidently** (a single, objectively
+correct fix, not an ambiguous tradeoff) by changing `createFinishedGoodsReceiptInTx()`'s ledger postings to
+`referenceModule: "PRODUCTION_ORDER"` — `referenceRecordId` stays `lotId` either way, so
+`getContributingLots()`'s own grouping/join logic needed no change once this was corrected. The
+corresponding assertion in `finished-goods-receipt.service.test.ts` was updated to match; the module's 36
+tests were re-run clean afterward. **Live-verified directly**: this task's own live verification script
+replicates `getContributingLots()`'s exact `groupBy` query shape and confirms it now genuinely finds a
+breakdown-tracked receipt's lot, correctly summed — not merely asserted in the abstract.
+
+**Acceptance criteria (as defined in §8):**
+- [x] **FGI-020 — the breakdown must sum to the batch quantity within `EPSILON` or the whole action is
+      rejected before any posting occurs**: asserted both as a mocked unit test (`job-order.service.test.ts`,
+      "rejects a breakdown that doesn't sum to the forwarded quantity") and live against the real scratch
+      database — a mismatched breakdown (sum 10 against a quantity of 30) was rejected with
+      `VALIDATION_ERROR` and confirmed, via a direct DB query immediately after, that `forwardedQuantity`
+      was still exactly 0 and zero `FinishedGoodsReceipt` rows existed.
+- [x] **FGI-020 — omitting a breakdown on a style with configured variants is rejected with a clear, named
+      error (never silently defaulting to an arbitrary split)**: asserted as a mocked unit test for both
+      `forwardJobOrder()` and `recordQcInspection()`, and live — forwarding 30 units of a 2-variant style
+      with no `variantBreakdown` supplied at all was rejected with `VALIDATION_ERROR` ("This style has
+      colour/size variants configured — a breakdown of which variants make up this quantity is required to
+      complete it onto a final stage."), again confirmed via a direct DB query that zero writes occurred.
+      Separately confirmed a pure-damage QC disposition (`acceptedQuantity: 0`) on the *same* variant-bearing
+      style correctly skips this requirement entirely, both as a unit test and live.
+- [x] **FGI-021 — one `FinishedGoodsReceipt` + correct `Item` rows created per completion event, correctly
+      linked back to the real `Lot`/`JobOrder`/`ProductionOrder`**: live-verified on both call sites — a
+      real Forward (20+10=30 across 2 variants) and a real QC-accept (25+15=40 on a separate lot) each created
+      exactly one `FinishedGoodsReceipt` with the correct `lotId`/`jobOrderId`/`productionOrderId` and
+      exactly 2 `FinishedGoodsReceiptItem` rows apiece, each carrying its own distinct
+      `inventoryTransactionId` pointing at a genuinely-posted ledger row.
+- [x] **FGI-021 — multiple partial receipts against one lot over time each create their own, independent
+      receipt record**: the live script posted a Forward (30 units) then a separate QC-accept (40 units) for
+      the *same* style/warehouse across two different lots and confirmed two genuinely independent
+      `FinishedGoodsReceipt` rows, with the flat `StockBalance` and each variant's own
+      `FinishedGoodsStockBalance` correctly accumulating across both (70 flat total = 30 + 40; variant 1 =
+      45 = 20 + 25; variant 2 = 25 = 10 + 15) rather than either overwriting the other.
+- [x] **The critical double-counting invariant FGI-012's own evidence section already flagged (replace, never
+      add, the flat posting)** — re-proven here now that the wiring is real, not just a standalone function:
+      exactly 2 `PRODUCTION_RECEIPT` ledger rows were posted for the 30-unit breakdown (never 3 — i.e. never
+      the 2 per-variant rows *plus* a third flat one), summing to exactly 30, and the flat `StockBalance`
+      landed at exactly 30 (never 60).
+
+**Live, non-mocked verification against the real disposable scratch database — 28/28 checks passed**,
+calling the real, unmodified `forwardJobOrder()`/`recordQcInspection()` service functions directly (never
+re-implementing their logic): a full real fixture chain (Company/Branch/platform-admin User/UnitOfMeasure/
+2×Color/2×Size/Warehouse, a Style B with **zero** configured variants and a Style A with **2** configured
+variants, 4 independent ProductionOrder/Lot/JobOrder chains, each JobOrder pre-set to `completedQuantity`
+already matching its own test scenario — simulating "progress already logged," which is explicitly out of
+this task's own scope). Six scenarios, each independently checked:
+1. **Style B (no variants), Forward** — confirmed the flat-only path is completely unchanged: exactly one
+   flat `PRODUCTION_RECEIPT` row, correct `referenceModule`/`referenceRecordId`, `StockBalance` +50, zero
+   `FinishedGoodsReceipt` rows.
+2. **Style A (2 variants), Forward, no breakdown** — rejected with `VALIDATION_ERROR`, zero writes.
+3. **Style A, Forward, breakdown sum mismatch (10 vs. 30)** — rejected with `VALIDATION_ERROR`, zero writes.
+4. **Style A, Forward, valid breakdown (20+10=30)** — real `FinishedGoodsReceipt` + 2 `FinishedGoodsReceiptItem`
+   rows, each with its own `inventoryTransactionId`; exactly 2 (never 3) ledger rows, correctly
+   `referenceModule: "PRODUCTION_ORDER"`, summing to exactly 30; flat `StockBalance` = 30 (never 60); each
+   variant's own `FinishedGoodsStockBalance` correct (20, 10); and — the direct regression proof for this
+   task's own bug fix — `getContributingLots()`'s exact real `groupBy` query shape correctly finds this lot,
+   summed to 30.
+5. **Style A, a separate lot, QC-Accept, valid breakdown (25+15=40)** — same engine, second call site: a
+   real `FinishedGoodsReceipt` created, cumulative flat `StockBalance` correctly reached 70 (30+40),
+   cumulative per-variant balances correctly reached 45 and 25.
+6. **Style A, a third lot, QC pure-damage disposition (acceptedQuantity=0)** — confirmed zero
+   `FinishedGoodsReceipt` rows and no breakdown requirement at all, even on a variant-bearing style.
+
+All fixture rows (14 tables touched across the 4 ProductionOrder/Lot/JobOrder chains, plus
+`ProductionStageTransaction`/`QcInspection`/`AuditLog`/`DocumentSequence` rows the real service calls
+themselves generated) were deleted afterward — independently confirmed via direct SQL that the scratch
+database returned to its exact pre-test state (company row gone, zero residual `FGI020`-tagged rows of any
+kind).
+
+**Live, real-browser verification of the UI half (FGI-020's own "UI" requirement) — 2/2 full round-trips
+succeeded**, via a second, separate fixture (its own platform-admin login, a 2-variant style, 2 separate
+Production Orders/Lots/JobOrders at a non-final stage with `completedQuantity` already set) and the actual
+running dev server (port 3005, pointed at the same scratch database):
+- **Forward**: opened the real Forward modal, confirmed the Color/Size/SKU breakdown table rendered
+  automatically (fetched from the real `variant-breakdown-suggestions` endpoint) the moment the resolved
+  target stage was final — with every Qty cell genuinely blank, confirming no pre-fill — entered 20/10,
+  watched the live "Breakdown Total: 30 (must equal 30)" readout update and the Forward button enable, then
+  submitted via the real button click. The real `POST /api/v1/job-orders/:id/forward` returned `201`, and a
+  direct DB query confirmed a genuine `FinishedGoodsReceipt` (`FGR-2026-00001`) with exactly the 20/10
+  breakdown, created purely by the UI click — not a scripted call.
+- **QC-Accept**: opened the real QC modal on a second, independent lot, filled Inspected/Accepted/Rejected/
+  Damaged (20/20/0/0), confirmed the same breakdown table and live total appeared, entered 12/8, submitted via
+  the real "Record Inspection" button. The real `POST /api/v1/job-orders/:id/qc-inspections` returned `201`,
+  and a direct DB query confirmed a second genuine `FinishedGoodsReceipt` (`FGR-2026-00002`) with exactly
+  the 12/8 breakdown.
+- Both fixture chains (and their own `FinishedGoodsReceipt`/ledger/audit-log/document-sequence rows) were
+  torn down afterward, independently confirmed via direct SQL (zero residual `FGI-020`/`FGI020`-tagged rows
+  of any kind), and the temporary port-3005 dev server was stopped.
+- **Observation, not acted on**: the Platform Overview dashboard (visible to the platform-admin test login)
+  showed one other pre-existing company, "FGI DocNum Verify Co," already present in the scratch database
+  before this task began — presumably a leftover from an earlier, unrelated verification pass. It was not
+  touched, investigated further, or cleaned up as part of this task, since it predates this work and isn't
+  this task's own fixture data; flagged here for visibility only.
+
+**Verification evidence:**
+- `npx tsc --noEmit` (whole project, `NODE_OPTIONS="--max-old-space-size=5120"`): 0 errors.
+- `npx eslint` on every touched file (`src/modules/production`, `src/modules/finished-goods-inventory`,
+  `src/modules/products/product.repository.ts`, `LotWorkflowPanel.tsx`, `src/app/api/v1/job-orders`):
+  0 errors.
+- `npx vitest run src/modules/production src/modules/finished-goods-inventory`: 287/287 passing.
+- `npx vitest run` (whole project): **2678/2678 passing, 161 skipped, 0 failures** — clean.
+- No scratch artifacts left in the worktree — confirmed via `git status --short` showing only the 7 intended
+  changed paths (`production.schema.ts`, `product.repository.ts`, `job-order.service.ts` +
+  `job-order.service.test.ts`, `finished-goods-receipt.service.ts` + `.test.ts`,
+  `LotWorkflowPanel.tsx`).
+
+**No conflicts found with the existing ledger, warehouse, production, or dispatch architecture** beyond the
+`referenceModule` mismatch found and fixed above (a Phase-1 bug this task's own investigation surfaced, with
+a single, unambiguous correct resolution — not an open architectural disagreement).
+
+---
+
+## Phase 2 — complete
+
+Both Phase 2 tasks (FGI-020, FGI-021) are now VERIFIED, with full mocked-unit-test coverage, a live
+non-mocked run against the real disposable scratch database proving every stated acceptance criterion
+(including the critical double-counting invariant FGI-012 originally flagged), and — a new verification bar
+for this phase, since it's the first to touch an already-shipped, user-facing screen — a live, real-browser
+walkthrough of both the Forward and QC-Accept breakdown UI through the actual running application. One
+genuine, pre-existing Phase-1 bug (the `referenceModule` conflict with Dispatch's own `getContributingLots()`
+feature) was discovered during this task's own investigation and resolved confidently, flagged prominently
+per the "stop and report any conflict" instruction rather than silently patched over.

@@ -106,7 +106,7 @@ describe("createFinishedGoodsReceiptInTx", () => {
         warehouseId: "wh-1",
         transactionType: "PRODUCTION_RECEIPT",
         quantity: 50,
-        referenceModule: "FINISHED_GOODS_RECEIPT",
+        referenceModule: "PRODUCTION_ORDER",
         referenceRecordId: "lot-1",
         productVariantId: "var-1",
         stockStatus: "SALEABLE",

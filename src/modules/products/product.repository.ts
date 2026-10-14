@@ -151,6 +151,14 @@ export const ProductVariantRepository = {
   findManyByIds: (ids: string[]) =>
     prisma.productVariant.findMany({ where: { id: { in: ids } }, select: { id: true, productId: true } }),
 
+  /** Finished Goods Inventory module (FGI-020) -- every ACTIVE variant a
+   * style has configured, used to decide whether a Forward/QC-Accept
+   * completion onto a final stage requires a colour/size breakdown at all
+   * (a style with zero configured variants keeps the flat-only posting path,
+   * completely unchanged). */
+  findManyActiveByProductId: (productId: string) =>
+    prisma.productVariant.findMany({ where: { productId, isActive: true }, select: { id: true } }),
+
   create: (data: Prisma.ProductVariantUncheckedCreateInput) => prisma.productVariant.create({ data }),
 
   setActiveStatus: (id: string, isActive: boolean) => prisma.productVariant.update({ where: { id }, data: { isActive } }),

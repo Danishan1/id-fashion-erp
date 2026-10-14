@@ -189,6 +189,18 @@ export const createAdjustmentEntrySchema = z.object({
 });
 export type CreateAdjustmentEntryInput = z.infer<typeof createAdjustmentEntrySchema>;
 
+// Finished Goods Inventory module (FGI-020) -- a single colour/size line
+// for the completion breakdown collected at Forward/QC-Accept time when the
+// landing stage is final. Deliberately a SEPARATE, fresh entry each time --
+// never auto-derived from the Lot's own LotVariantBreakdown -- since a
+// partial completion may not proportionally match the lot's originally-
+// declared split (see completeAtFinalStageInTx's own doc comment).
+export const variantBreakdownItemSchema = z.object({
+  productVariantId: z.string().uuid(),
+  quantity: z.coerce.number().positive("Quantity must be greater than 0"),
+});
+export type VariantBreakdownItemInput = z.infer<typeof variantBreakdownItemSchema>;
+
 export const forwardJobOrderSchema = z.object({
   quantity: z.coerce.number().positive("Quantity must be greater than 0"),
   // Omit to default to the immediate next active stage; a stage further
@@ -197,6 +209,12 @@ export const forwardJobOrderSchema = z.object({
   // Required only when the resolved target stage is flagged isFinal — the
   // warehouse the Finished-Goods receipt posts into.
   finishedGoodsWarehouseId: z.string().uuid().optional().or(z.literal("")),
+  // Finished Goods Inventory module (FGI-020) -- required by the SERVICE
+  // layer (not here) only when the resolved target stage is isFinal AND the
+  // style has configured ProductVariant rows -- Zod can't know either of
+  // those without a DB lookup, matching finishedGoodsWarehouseId's own
+  // established "optional here, enforced service-side" pattern.
+  variantBreakdown: z.array(variantBreakdownItemSchema).optional(),
 });
 export type ForwardJobOrderInput = z.infer<typeof forwardJobOrderSchema>;
 
@@ -237,6 +255,9 @@ export const createQcInspectionSchema = z
     // acceptedQuantity > 0 and the next stage is isFinal.
     damageWarehouseId: z.string().uuid().optional().or(z.literal("")),
     finishedGoodsWarehouseId: z.string().uuid().optional().or(z.literal("")),
+    // Finished Goods Inventory module (FGI-020) -- same "optional here,
+    // enforced service-side" shape as forwardJobOrderSchema's own field above.
+    variantBreakdown: z.array(variantBreakdownItemSchema).optional(),
     remarks: z.string().max(500).optional().or(z.literal("")),
     defects: z
       .array(

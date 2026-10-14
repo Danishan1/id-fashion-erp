@@ -76,6 +76,30 @@ export interface CreateFinishedGoodsReceiptParams {
  * Once this function is wired in behind that same guard, a retry can never
  * reach it a second time for the same event — no new, parallel idempotency
  * key is needed or built.
+ *
+ * **A second genuine conflict, found during Phase 2's own implementation and
+ * corrected here (retroactively, since this function already shipped in
+ * Phase 1) — every ledger posting below uses `referenceModule:
+ * "PRODUCTION_ORDER"`, NOT `"FINISHED_GOODS_RECEIPT"`.** A pre-existing,
+ * already-shipped feature (`getContributingLots()` in
+ * `production-progress.service.ts`, built 2026-10-10 — real-Lot traceability
+ * behind Dispatch's own Finished-Goods stock figure) queries
+ * `InventoryTransaction` for `transactionType: "PRODUCTION_RECEIPT",
+ * referenceModule: "PRODUCTION_ORDER"` as the one fixed signature of a real
+ * production receipt. Using `"FINISHED_GOODS_RECEIPT"` here instead — this
+ * function's original choice — would have silently dropped every
+ * breakdown-tracked receipt out of that report the moment this function was
+ * wired in (FGI-021), with no error anywhere to surface it. Confirmed via
+ * this schema's own doc comment (`prisma/schema.prisma`, the `RelatedModule`
+ * enum) that `FINISHED_GOODS_RECEIPT` was reserved in Phase 0 for a
+ * genuinely different purpose — "Attachment/audit-log polymorphism for
+ * FinishedGoodsReceipt" — never for `InventoryTransaction.referenceModule`;
+ * the real link from a ledger row back to its originating receipt is
+ * `FinishedGoodsReceiptItem.inventoryTransactionId` (already a real FK),
+ * which doesn't depend on `referenceModule` at all. `referenceRecordId`
+ * stays `lotId` either way, so `getContributingLots()`'s own grouping/join
+ * logic needed no change once this was corrected to match its existing
+ * convention.
  */
 export async function createFinishedGoodsReceiptInTx(
   tx: Prisma.TransactionClient,
@@ -108,7 +132,7 @@ export async function createFinishedGoodsReceiptInTx(
       warehouseId: params.warehouseId,
       transactionType: "PRODUCTION_RECEIPT",
       quantity: row.quantity,
-      referenceModule: "FINISHED_GOODS_RECEIPT",
+      referenceModule: "PRODUCTION_ORDER",
       referenceRecordId: params.lotId,
       productVariantId: row.productVariantId,
       stockStatus: "SALEABLE",
