@@ -163,19 +163,23 @@ export const NAV_SECTIONS: NavSection[] = [
   },
   {
     label: "Inventory",
-    modules: ["inventory", "material_request", "fg_inventory"],
+    modules: ["inventory", "material_request"],
     children: [
-      // Finished Goods Inventory module (FGI-059, first entry — further
-      // screens each add their own child link here as they're built; this
-      // section is complete once all 9 Phase 5 screens exist) — alongside,
-      // never replacing, the existing Raw Material Inventory links below.
-      { label: "Finished Goods Inventory", href: "/finished-goods-inventory", modules: ["fg_inventory"] },
       { label: "Stock Balances", href: "/inventory/stock-balances", modules: ["inventory"] },
       { label: "Stock Movements", href: "/inventory/stock-movements", modules: ["inventory"] },
       // Material Requests moved to its own `material_request` module (RBAC
       // audit, 2026-09-24) — previously gated on the same coarse `inventory`
       // key as Stock Balances/Movements.
       { label: "Material Requests", href: "/material-requests", modules: ["material_request"] },
+    ],
+  },
+  {
+    label: "Finished Goods Inventory",
+    href: "/finished-goods-inventory",
+    modules: ["fg_inventory"],
+    children: [
+      { label: "Dashboard", href: "/finished-goods-inventory", modules: ["fg_inventory"] },
+      { label: "Stock List", href: "/finished-goods-inventory/stock-list", modules: ["fg_inventory"] },
     ],
   },
   { label: "Accounts", href: "/accounts", modules: ["accounts", "invoices", "payments", "expenses", "financial_reports"] },

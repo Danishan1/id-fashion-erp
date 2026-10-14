@@ -2458,3 +2458,132 @@ With that resolved, verified completely cleanly:
 never-built historical-backfill gap found and closed above (a pre-existing sequencing gap from Phase 0/1, not
 a new design disagreement) and the `NEXTAUTH_URL`/port-mismatch environment gotcha (a local dev-environment
 quirk, not an application defect).
+
+
+---
+
+### FGI-051 — Finished Goods Stock List
+
+**Status:** VERIFIED.
+
+**Files changed:**
+- `src/modules/finished-goods-inventory/finished-goods-stock-list.repository.ts` (new) — two thin, read-only
+  Prisma queries (`findMany`, `count`), matching this module's own established repository-layer convention.
+  `findMany` eagerly includes `product` (id/styleCode/styleName), `productVariant` (with `color`/`size`),
+  `warehouse` (id/code/name), and `warehouseLocation` (id/code) — every field the Client Component's own
+  columns need, in one round trip.
+- `src/modules/finished-goods-inventory/finished-goods-stock-list.service.ts` (new) —
+  `listFinishedGoodsStockBalances(companyId, query, filters)`, reading **exclusively** from
+  `FinishedGoodsStockBalance` — never the `InventoryTransaction` ledger at request time, the common
+  acceptance criterion shared by every FGI-05x task. Builds a `Prisma.FinishedGoodsStockBalanceWhereInput`
+  from: a style-name/style-code search, `productId`/`warehouseId`/`warehouseLocationId` as plain equality
+  filters, `colorId`/`sizeId` as a nested `productVariant` filter, and `stockStatus` — validated against the
+  real runtime `StockStatus` enum object before being trusted (the same "server validates, never trusts the
+  raw query param" discipline `list-query.ts`'s own doc comment requires), rather than passed through to
+  Prisma unvalidated.
+- `src/modules/finished-goods-inventory/finished-goods-stock-list.service.test.ts` (new, 7 tests) — every
+  filter in isolation and in combination, plus the invalid-status-silently-ignored security case.
+- `src/app/api/v1/finished-goods-inventory/stock-list/route.ts` (new) — `GET`, gated
+  `PermissionService.assert(session.user.id, "fg_inventory", "view")`, parsing `productId`/`colorId`/
+  `sizeId`/`warehouseId`/`warehouseLocationId` from the query string alongside the shared `parseListQuery`
+  pagination/sort/search/status handling.
+- `src/app/(dashboard)/finished-goods-inventory/stock-list/page.tsx` (new) — a Server Component gated via
+  `PermissionService.assert(..., "fg_inventory", "view").catch(() => notFound())`, the identical pattern
+  FGI-050's own Dashboard page already established.
+- `src/app/(dashboard)/finished-goods-inventory/stock-list/FinishedGoodsStockListClient.tsx` (new) — a
+  Colour/Size/Warehouse `SearchableSelect` trio plus a plain, Warehouse-dependent Location `<select>`
+  (disabled until a Warehouse is chosen; cleared via the `SearchableSelect`'s own `onChange` handler,
+  `handleWarehouseChange`, not inside the fetch effect — the established `react-hooks/set-state-in-effect`
+  fix pattern this project uses everywhere a dependent field needs resetting), feeding `DataTable` via
+  `extraParams` for every filter and `statusFilter` for Saleable/Rejected. A blank Colour/Size cell renders
+  "— (unallocated) —" and a blank Location cell renders "— (staging) —", both pointing the reader at the
+  Dashboard's own Unallocated Legacy Stock callout rather than looking like a rendering bug.
+- `src/components/layout/navigation.ts` — **found and corrected an IA mistake from FGI-050 before it could
+  compound across the remaining 7 Phase 5 screens**: FGI-050 had added its own Dashboard link as a flat child
+  under the existing "Inventory" section. Checking this file's own established precedent for every other
+  multi-screen module ("AI Garment Flow," "AI Designer," "CRM" — each a dedicated top-level `NavSection` with
+  its own `href` plus a `children` array, the Dashboard itself duplicated as that array's own first child)
+  showed this didn't match. Reverted the flat-child addition and replaced it with a proper dedicated
+  top-level "Finished Goods Inventory" `NavSection` (`href: "/finished-goods-inventory"`, children: Dashboard
+  + Stock List), placed immediately before "Accounts." The "Inventory" section's own `modules` array was
+  reverted back to `["inventory", "material_request"]` (dropping the `"fg_inventory"` entry FGI-050 had added
+  there, now redundant with the new section's own gating).
+
+**Database changes:** none — this task is read-only against the existing `FinishedGoodsStockBalance` table.
+
+**A genuine, found-and-flagged schema gap, not silently worked around:** §8's own FGI-051 task description
+lists "Lot" among this screen's filters. `FinishedGoodsStockBalance` has no `lotId` column at all (confirmed
+by reading the schema directly) — Finished-Goods stock is pooled at `(productId, warehouseId[, variant,
+location])` with no lot dimension on the consumption side, matching this plan's own already-stated design
+decision. Dropped "Lot" as a literal Stock List filter and documented the reasoning directly in the
+service's own doc comment: Lot-level traceability for a specific receipt event belongs to FGI-053's own
+Receipts screen (`FinishedGoodsReceipt` DOES carry a real `lotId`), not this pooled stock-balance list.
+
+**Acceptance criteria (as defined in §8, common to every FGI-05x task):**
+- [x] **"Gated correctly per the FGI-008 RBAC mapping (verified by a logged-in-as-each-affected-role browser
+      check, not just a unit test)"** — verified live (below) for both a granted role (Super Admin) and the
+      explicitly-no-grant `ACCOUNTS_MANAGER` role, per the verification-bar scope decision already stated
+      above (restated for FGI-050, applies identically here).
+- [x] **"Reads exclusively from the new cache tables (never re-derives from the ledger at request time)"** —
+      confirmed by code (the repository's two queries touch only `FinishedGoodsStockBalance` and its own
+      direct relations; zero references to `InventoryTransaction` anywhere in this task's own files).
+- [x] **"Zero console/network errors on load with real, non-empty seed data"** — verified live (below).
+
+**Live, real-browser verification**, continuing against the same scratch database/dev-server state
+established for FGI-050 (the `.env` `NEXTAUTH_URL`-vs-port-3005 patch from that task was already in place
+and was reused rather than re-discovered):
+- **Super Admin (granted)**: seeded 3 real `FinishedGoodsStockBalance` rows (2 Saleable, 1 Rejected) against
+  real seeded styles' variants ("Slim Fit Straight Jeans" / "Printed Casual Shirt") at the real "Finished
+  Goods Godam" warehouse, logged in through the real login form, navigated to `/finished-goods-inventory/
+  stock-list` both via direct URL and via the real sidebar's own "Stock List" child link — all 3 rows
+  rendered correctly with the right style/colour/size/warehouse/quantity/status values; exercised the
+  Colour, Size, Warehouse, Location, and Status filters individually and in combination, each correctly
+  narrowing the result set; zero console errors, zero failed network requests (confirmed via
+  `read_console_messages`/`read_network_requests` on a fresh tab, not a visual check, and specifically
+  re-confirmed after ruling out one false alarm — see the root-cause note below).
+- **A real, no-grant `ACCOUNTS_MANAGER` test user (denied)**: created via a real `UserBranchRole` assignment,
+  logged in through the real login form — the sidebar correctly showed **no** "Finished Goods Inventory"
+  section at all, and a direct navigation to `/finished-goods-inventory/stock-list` correctly returned a
+  clean "404: This page could not be found" (never a 403/error page revealing the route exists) — verified as
+  its own dedicated check distinct from FGI-050's own Dashboard-route denial proof, since each route carries
+  its own independent `PermissionService.assert()` call that could in principle have had its own copy-paste
+  bug.
+- All fixture data (the 3 stock-balance rows, the test user and its role assignment) deleted afterward,
+  independently re-confirmed via direct SQL (not just the delete call's own reported count) that the scratch
+  database returned to its exact pre-test state (0 `FinishedGoodsStockBalance` rows, test user gone). The
+  temporary dev server was stopped and `.env` restored to its original `NEXTAUTH_URL=http://localhost:3000`
+  state.
+
+**A confusing 404 hit mid-verification, root-caused properly rather than assumed to be a code bug:**
+navigating to the Stock List page (and, on retry, even the already-working Dashboard) unexpectedly returned a
+plain 404 for the SAME Super Admin session that had worked moments earlier. Investigated in order of
+increasing specificity rather than guessing: (1) the dev server's own log showed the route genuinely
+compiling before the 404, ruling out a route-registration/Turbopack-cache problem (the first, wrong
+hypothesis — a full `.next` wipe + restart was tried and did **not** fix it); (2) a standalone script calling
+the real `PermissionService.can()` directly confirmed it correctly returned `true` for this user and
+`fg_inventory.view`, ruling out a permission-catalog/grant problem; (3) fetching `/api/auth/session` from the
+live browser tab revealed the browser's own session cookie still belonged to a *different, already-deleted*
+test user from an earlier verification pass in this same session (deleted during that pass's own cleanup
+step, while this tab had never signed back in as Super Admin afterward). This is the app's own CF-7
+"stale/deleted-user session is re-checked live on every request" security feature working exactly as
+designed, not a defect in this task's own code — fixed by signing out and back in as the real Super Admin
+before retrying, which then succeeded immediately.
+
+**Verification evidence:**
+- `npx prisma validate`: clean (no schema changes this task).
+- `npx tsc --noEmit` (whole project, `NODE_OPTIONS="--max-old-space-size=6144"`): 0 errors.
+- `npx eslint .` (scoped to this task's own changed files, same memory flag): 0 errors, 0 warnings.
+- `npx vitest run` — module-scoped (`src/modules/finished-goods-inventory`): 73/73 tests passed, 6/6 test
+  files. Whole-project run: **2746 tests passed, 161 skipped (2907 total), 174 test files passed, 12 skipped
+  (186 total) — 0 failures.**
+- All three checks run sequentially (never concurrently), per this project's own established memory-pressure
+  lesson.
+- No scratch artifacts left in the worktree — confirmed via `git status --short` showing only the 6 intended
+  changed/new paths (`navigation.ts`, the new `stock-list/` page tree, the new
+  `api/v1/finished-goods-inventory/` route tree, `finished-goods-stock-list.{repository,service,
+  service.test}.ts`) — independently re-confirmed via a forensic `git diff`/full-file read (not just
+  `--stat`) showing every change is additive/targeted, no accidental overwrite.
+
+**No conflicts found with the existing ledger, warehouse, production, or dispatch architecture** beyond the
+already-flagged "no Lot dimension" schema gap and the already-corrected nav-placement mistake, both discussed
+above.
