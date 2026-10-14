@@ -22,12 +22,14 @@ const EMPTY_VALUES = {
   adminEmail: "",
   adminPassword: "",
   adminFullName: "",
+  planId: "",
 };
 
 export function NewPlatformCompanyClient() {
   const router = useRouter();
   const [values, setValues] = useState(EMPTY_VALUES);
   const [currencies, setCurrencies] = useState<Currency[]>([]);
+  const [plans, setPlans] = useState<{ id: string; name: string; trialDays: number; isDefaultTrialPlan: boolean }[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -36,6 +38,10 @@ export function NewPlatformCompanyClient() {
       .then((res) => res.json())
       .then((body) => setCurrencies(body.data ?? []))
       .catch(() => setCurrencies([]));
+    fetch("/api/v1/platform/plans?active=1")
+      .then((res) => res.json())
+      .then((body) => setPlans(body.data ?? []))
+      .catch(() => setPlans([]));
   }, []);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -178,6 +184,26 @@ export function NewPlatformCompanyClient() {
               </select>
             </FormField>
           </div>
+        </fieldset>
+
+        <fieldset className="space-y-4 rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
+          <legend className="px-1 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Free Trial</legend>
+          <FormField label="Trial plan" htmlFor="planId">
+            <select
+              id="planId"
+              value={values.planId}
+              onChange={(e) => setValues({ ...values, planId: e.target.value })}
+              className={textInputClass()}
+            >
+              <option value="">Default trial plan</option>
+              {plans.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name} — {p.trialDays}-day trial{p.isDefaultTrialPlan ? " (default)" : ""}
+                </option>
+              ))}
+            </select>
+          </FormField>
+          <p className="text-xs text-zinc-500">The company starts on a free trial of this plan. Renew it from the company page once they pay.</p>
         </fieldset>
 
         <fieldset className="space-y-4 rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">

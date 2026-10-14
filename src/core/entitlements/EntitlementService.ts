@@ -8,9 +8,15 @@ import {
 } from "@/config/module-entitlements";
 
 /**
- * Which product packages a company has turned off (Platform SaaS Phase 3,
- * PLAT-018/019). Read on every permission check, so it's cached briefly per
- * company and cleared immediately when a platform operator changes it.
+ * Which product packages a company may use (Platform SaaS Phase 3, PLAT-018/019;
+ * plan-driven since Phase 4). Read on every permission check, so it's cached
+ * briefly per company and cleared immediately when a platform operator
+ * changes it.
+ *
+ * Resolution per package:
+ *   1. a per-company override row (company_module_entitlements) wins;
+ *   2. otherwise the company's subscription plan decides;
+ *   3. no subscription at all = enabled (pre-Phase-4 behaviour).
  *
  * Same globalThis singleton as PermissionService: Next bundles this file
  * separately per runtime layer, and a per-layer cache would let one layer
@@ -21,6 +27,9 @@ const CACHE_TTL_MS = 15_000;
 
 interface CacheEntry {
   disabledPackages: Set<EntitlementPackageKey>;
+  overrides: Map<EntitlementPackageKey, boolean>;
+  /** null = no subscription (every package included). */
+  planPackages: Set<string> | null;
   disabledModules: Set<Module>;
   expiresAt: number;
 }
@@ -37,17 +46,34 @@ class EntitlementServiceImpl {
     const cached = this.cache.get(companyId);
     if (cached && cached.expiresAt > Date.now()) return cached;
 
-    const rows = await prisma.companyModuleEntitlement.findMany({
-      where: { companyId, isEnabled: false },
-      select: { packageKey: true },
-    });
-    const disabledPackages = new Set<EntitlementPackageKey>();
+    const [rows, subscription] = await Promise.all([
+      prisma.companyModuleEntitlement.findMany({
+        where: { companyId },
+        select: { packageKey: true, isEnabled: true },
+      }),
+      prisma.companySubscription.findUnique({
+        where: { companyId },
+        select: { plan: { select: { modules: { select: { packageKey: true } } } } },
+      }),
+    ]);
+
+    const overrides = new Map<EntitlementPackageKey, boolean>();
     for (const row of rows) {
       // An unknown key (a package later removed from the catalog) is ignored.
-      if (isEntitlementPackageKey(row.packageKey)) disabledPackages.add(row.packageKey);
+      if (isEntitlementPackageKey(row.packageKey)) overrides.set(row.packageKey, row.isEnabled);
     }
+    const planPackages = subscription ? new Set(subscription.plan.modules.map((m) => m.packageKey)) : null;
+
+    const disabledPackages = new Set<EntitlementPackageKey>();
+    for (const pkg of ENTITLEMENT_PACKAGES) {
+      const enabled = overrides.get(pkg.key) ?? (planPackages ? planPackages.has(pkg.key) : true);
+      if (!enabled) disabledPackages.add(pkg.key);
+    }
+
     const entry: CacheEntry = {
       disabledPackages,
+      overrides,
+      planPackages,
       disabledModules: modulesOfPackages(disabledPackages),
       expiresAt: Date.now() + CACHE_TTL_MS,
     };
@@ -67,10 +93,19 @@ class EntitlementServiceImpl {
     return !(await this.load(companyId)).disabledModules.has(module);
   }
 
-  /** Every package with its current on/off state, in catalog order. */
+  /**
+   * Every package with its current on/off state, in catalog order.
+   * `inPlan` = what the subscription plan alone says; `override` = the
+   * per-company setting that wins over it (null when there is none).
+   */
   async listPackageStates(companyId: string) {
-    const disabled = await this.getDisabledPackages(companyId);
-    return ENTITLEMENT_PACKAGES.map((pkg) => ({ ...pkg, isEnabled: !disabled.has(pkg.key) }));
+    const entry = await this.load(companyId);
+    return ENTITLEMENT_PACKAGES.map((pkg) => ({
+      ...pkg,
+      isEnabled: !entry.disabledPackages.has(pkg.key),
+      inPlan: entry.planPackages ? entry.planPackages.has(pkg.key) : true,
+      override: entry.overrides.get(pkg.key) ?? null,
+    }));
   }
 }
 

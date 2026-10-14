@@ -1,6 +1,7 @@
 import { prisma } from "@/core/db/client";
 import { MODULES, permissionKey, type Module, type Action } from "@/config/rbac";
 import { EntitlementService } from "@/core/entitlements/EntitlementService";
+import { computeSubscriptionStatus, isActionAllowedWhileReadOnly } from "@/core/subscriptions/subscription-state";
 import {
   getLiveSupportSessionForProxyUser,
   supportPermissionKeys,
@@ -108,6 +109,7 @@ class PermissionServiceImpl {
     companyId: string;
     companyActive: boolean;
     isSupportProxy: boolean;
+    subscriptionReadOnly: boolean;
   } | null> {
     const user = await prisma.user.findUnique({
       where: { id: userId },
@@ -116,7 +118,9 @@ class PermissionServiceImpl {
         companyId: true,
         passwordChangedAt: true,
         supportForPlatformUserId: true,
-        company: { select: { isActive: true } },
+        company: {
+          select: { isActive: true, subscription: { select: { isTrial: true, currentPeriodEndsAt: true } } },
+        },
       },
     });
     if (!user) return null;
@@ -126,6 +130,8 @@ class PermissionServiceImpl {
       companyId: user.companyId,
       companyActive: user.company?.isActive ?? false,
       isSupportProxy: !!user.supportForPlatformUserId,
+      // Phase 4 (PLAT-024/025): grace period and expired archive are read-only.
+      subscriptionReadOnly: computeSubscriptionStatus(user.company?.subscription).readOnly,
     };
   }
 
@@ -165,7 +171,7 @@ class PermissionServiceImpl {
     module: Module,
     action: Action,
     resourceContext?: ResourceContext
-  ): Promise<"ALLOWED" | "DENIED" | "MODULE_NOT_ENABLED"> {
+  ): Promise<"ALLOWED" | "DENIED" | "MODULE_NOT_ENABLED" | "SUBSCRIPTION_READ_ONLY"> {
     const user = await this.loadLiveUserState(userId);
     if (!user || !this.isUsable(user)) return "DENIED";
     if (
@@ -179,6 +185,11 @@ class PermissionServiceImpl {
     // Platform SaaS Phase 3 (PLAT-019): a module the platform turned off for
     // this company is refused for everyone in it, whatever their roles.
     if (!(await EntitlementService.isModuleEnabled(user.companyId, module))) return "MODULE_NOT_ENABLED";
+
+    // Phase 4 (PLAT-024/025): once the subscription period has ended (7-day
+    // grace, then the expired archive) the company is read-only for everyone:
+    // view, print and export still work, nothing can be created or changed.
+    if (user.subscriptionReadOnly && !isActionAllowedWhileReadOnly(action)) return "SUBSCRIPTION_READ_ONLY";
 
     // No universal bypass of any kind (PLAT-004, 2026-10-13): every user,
     // including a company's own Super Admin, gets exactly what their roles
@@ -306,6 +317,8 @@ class PermissionServiceImpl {
     const user = await this.loadLiveUserState(userId);
     if (!user || !this.isUsable(user)) return new Set();
 
+    if (user.subscriptionReadOnly && !isActionAllowedWhileReadOnly(action)) return new Set();
+
     const keys = await this.loadPermissionKeys(userId, user.isSupportProxy);
     const disabled = await EntitlementService.getDisabledModules(user.companyId);
     const matching = new Set<Module>();
@@ -329,6 +342,13 @@ class PermissionServiceImpl {
         "MODULE_NOT_ENABLED",
         "This module isn't enabled for your company. Contact your administrator or the platform team.",
         { module }
+      );
+    }
+    if (result === "SUBSCRIPTION_READ_ONLY") {
+      throw new BusinessRuleError(
+        "SUBSCRIPTION_READ_ONLY",
+        "Your company's subscription has ended, so the ERP is read-only: you can view, print and export, but not add or change anything. Ask your administrator to renew.",
+        { module, action }
       );
     }
     if (result !== "ALLOWED") {

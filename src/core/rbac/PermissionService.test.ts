@@ -313,3 +313,52 @@ describe("module entitlements (Platform SaaS Phase 3, PLAT-019)", () => {
     expect(modules.has("sales_orders")).toBe(true);
   });
 });
+
+describe("subscription read-only mode (Platform SaaS Phase 4, PLAT-024/025)", () => {
+  const lapsed = (daysAgo: number) => ({
+    companyId: "co-1",
+    status: "ACTIVE",
+    company: {
+      isActive: true,
+      subscription: { isTrial: false, currentPeriodEndsAt: new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000) },
+    },
+  });
+
+  beforeEach(() => {
+    entitlementMock.disabled = new Set();
+  });
+
+  it("in the grace period, still allows view/print/export but refuses create/edit/approve", async () => {
+    mockPermissions(["sales_orders.view", "sales_orders.create", "sales_orders.export", "production.approve"]);
+    userFindUniqueMock.mockResolvedValue(lapsed(2));
+    await expect(PermissionService.can("user-1", "sales_orders", "view")).resolves.toBe(true);
+    await expect(PermissionService.can("user-1", "sales_orders", "export")).resolves.toBe(true);
+    await expect(PermissionService.can("user-1", "sales_orders", "create")).resolves.toBe(false);
+    await expect(PermissionService.can("user-1", "production", "approve")).resolves.toBe(false);
+  });
+
+  it("assert() reports SUBSCRIPTION_READ_ONLY for a write after the grace period too (archive)", async () => {
+    mockPermissions(["production.create"]);
+    userFindUniqueMock.mockResolvedValue(lapsed(30));
+    await expect(PermissionService.assert("user-1", "production", "create")).rejects.toMatchObject({
+      code: "SUBSCRIPTION_READ_ONLY",
+    });
+  });
+
+  it("hides write-only sidebar links (e.g. Pending Approvals) while read-only", async () => {
+    mockPermissions(["production.view", "production.approve"]);
+    userFindUniqueMock.mockResolvedValue(lapsed(1));
+    expect((await PermissionService.getModulesWithAction("user-1", "approve")).size).toBe(0);
+    expect((await PermissionService.getViewableModules("user-1")).has("production")).toBe(true);
+  });
+
+  it("an active subscription changes nothing", async () => {
+    mockPermissions(["sales_orders.create"]);
+    userFindUniqueMock.mockResolvedValue({
+      companyId: "co-1",
+      status: "ACTIVE",
+      company: { isActive: true, subscription: { isTrial: true, currentPeriodEndsAt: new Date(Date.now() + 86_400_000) } },
+    });
+    await expect(PermissionService.can("user-1", "sales_orders", "create")).resolves.toBe(true);
+  });
+});

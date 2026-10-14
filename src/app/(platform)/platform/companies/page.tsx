@@ -4,6 +4,7 @@ import { getPlatformPageUser } from "@/modules/platform/platform-page";
 import { listCompanySummaries } from "@/modules/platform/platform-company-lifecycle.service";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { formatDate } from "@/lib/date-format";
+import { SUBSCRIPTION_STATE_LABELS } from "@/core/subscriptions/subscription-state";
 
 export default async function PlatformCompaniesPage() {
   const user = await getPlatformPageUser();
@@ -42,6 +43,8 @@ export default async function PlatformCompaniesPage() {
               <th className="px-4 py-2 font-medium">Tax Reg. No.</th>
               <th className="px-4 py-2 font-medium">Active Users</th>
               <th className="px-4 py-2 font-medium">Last Login</th>
+              <th className="px-4 py-2 font-medium">Plan</th>
+              <th className="px-4 py-2 font-medium">Subscription</th>
               <th className="px-4 py-2 font-medium">Modules Off</th>
               <th className="px-4 py-2 font-medium">Status</th>
               <th className="px-4 py-2 font-medium">Created</th>
@@ -51,7 +54,7 @@ export default async function PlatformCompaniesPage() {
           <tbody>
             {companies.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-4 py-6 text-center text-zinc-500">
+                <td colSpan={10} className="px-4 py-6 text-center text-zinc-500">
                   No companies yet.
                 </td>
               </tr>
@@ -67,6 +70,11 @@ export default async function PlatformCompaniesPage() {
                 <td className="px-4 py-2 text-zinc-700 dark:text-zinc-200">{c.taxRegistrationNo ?? "—"}</td>
                 <td className="px-4 py-2 text-zinc-700 dark:text-zinc-200">{c.activeUsers}</td>
                 <td className="px-4 py-2 text-zinc-700 dark:text-zinc-200">{c.lastLoginAt ? formatDate(c.lastLoginAt) : "—"}</td>
+                <td className="px-4 py-2 text-zinc-700 dark:text-zinc-200">{c.planName ?? "—"}</td>
+                <td className="px-4 py-2 text-zinc-700 dark:text-zinc-200">
+                  <div>{SUBSCRIPTION_STATE_LABELS[c.subscriptionState]}</div>
+                  {c.periodEndsAt && <div className="text-xs text-zinc-500">until {formatDate(c.periodEndsAt)}</div>}
+                </td>
                 <td className="px-4 py-2 text-zinc-700 dark:text-zinc-200">{c.disabledModuleCount || "—"}</td>
                 <td className="px-4 py-2">
                   <span

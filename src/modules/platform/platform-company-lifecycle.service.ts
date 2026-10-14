@@ -3,6 +3,7 @@ import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { EntitlementService } from "@/core/entitlements/EntitlementService";
 import { getEntitlementPackage, type EntitlementPackageKey } from "@/config/module-entitlements";
+import { computeSubscriptionStatus } from "@/core/subscriptions/subscription-state";
 import type { UpdateCompanyDetailsInput } from "./platform-company-lifecycle.schema";
 
 /**
@@ -27,21 +28,31 @@ async function findCompanyOrThrow(companyId: string) {
 
 /** Every company with a few headline numbers, for the platform list. */
 export async function listCompanySummaries() {
-  const [companies, userCounts, lastLogins, disabledCounts] = await Promise.all([
-    prisma.company.findMany({ orderBy: { createdAt: "desc" } }),
+  const [companies, userCounts, lastLogins] = await Promise.all([
+    prisma.company.findMany({
+      orderBy: { createdAt: "desc" },
+      include: { subscription: { select: { isTrial: true, currentPeriodEndsAt: true, plan: { select: { name: true } } } } },
+    }),
     prisma.user.groupBy({ by: ["companyId"], where: { ...REAL_USERS, status: "ACTIVE" }, _count: { _all: true } }),
     prisma.user.groupBy({ by: ["companyId"], where: REAL_USERS, _max: { lastLoginAt: true } }),
-    prisma.companyModuleEntitlement.groupBy({ by: ["companyId"], where: { isEnabled: false }, _count: { _all: true } }),
   ]);
   const usersBy = new Map(userCounts.map((r) => [r.companyId, r._count._all]));
   const loginBy = new Map(lastLogins.map((r) => [r.companyId, r._max.lastLoginAt]));
-  const disabledBy = new Map(disabledCounts.map((r) => [r.companyId, r._count._all]));
-  return companies.map((c) => ({
-    ...c,
-    activeUsers: usersBy.get(c.id) ?? 0,
-    lastLoginAt: loginBy.get(c.id) ?? null,
-    disabledModuleCount: disabledBy.get(c.id) ?? 0,
-  }));
+  const disabledCounts = await Promise.all(
+    companies.map(async (c) => (await EntitlementService.getDisabledPackages(c.id)).size)
+  );
+  return companies.map(({ subscription, ...c }, i) => {
+    const status = computeSubscriptionStatus(subscription);
+    return {
+      ...c,
+      activeUsers: usersBy.get(c.id) ?? 0,
+      lastLoginAt: loginBy.get(c.id) ?? null,
+      disabledModuleCount: disabledCounts[i],
+      planName: subscription?.plan.name ?? null,
+      subscriptionState: status.state,
+      periodEndsAt: status.periodEndsAt,
+    };
+  });
 }
 
 /** One company: details, usage statistics and module states (PLAT-016). */
@@ -117,7 +128,14 @@ export async function getCompanyDetail(companyId: string) {
       supportRequests,
       liveSupportSessions,
     },
-    modules: modules.map((m) => ({ key: m.key, label: m.label, description: m.description, isEnabled: m.isEnabled })),
+    modules: modules.map((m) => ({
+      key: m.key,
+      label: m.label,
+      description: m.description,
+      isEnabled: m.isEnabled,
+      inPlan: m.inPlan,
+      override: m.override,
+    })),
   };
 }
 
@@ -255,4 +273,32 @@ export async function setModuleEntitlement(
   });
   EntitlementService.invalidate(companyId);
   return { key: packageKey, label: pkg.label, isEnabled };
+}
+
+/** Removes a per-company module override so the subscription plan decides again (Phase 4). */
+export async function resetModuleEntitlement(actor: PlatformActor, companyId: string, packageKey: EntitlementPackageKey) {
+  await findCompanyOrThrow(companyId);
+  const pkg = getEntitlementPackage(packageKey);
+  const before = await prisma.companyModuleEntitlement.findUnique({
+    where: { companyId_packageKey: { companyId, packageKey } },
+  });
+  if (!before) return { key: packageKey, label: pkg.label, reset: false };
+
+  await prisma.$transaction(async (tx) => {
+    await tx.companyModuleEntitlement.delete({ where: { id: before.id } });
+    await writeAuditLog(
+      {
+        companyId,
+        platformUserId: actor.platformUserId,
+        tableName: "company_module_entitlements",
+        recordId: companyId,
+        action: "DELETE",
+        oldValues: { package: packageKey, isEnabled: before.isEnabled },
+        newValues: { package: packageKey, label: pkg.label, override: null },
+      },
+      tx
+    );
+  });
+  EntitlementService.invalidate(companyId);
+  return { key: packageKey, label: pkg.label, reset: true };
 }

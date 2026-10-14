@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+// Phase 4: the plan user limit is tested in company-subscription.service.test.ts.
+vi.mock("@/modules/platform/company-subscription.service", () => ({ assertUserLimitAllows: vi.fn().mockResolvedValue(undefined) }));
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/auth/password", () => ({ hashPassword: vi.fn() }));
 vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { invalidate: vi.fn() } }));

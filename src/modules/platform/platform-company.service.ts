@@ -4,6 +4,7 @@ import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { MODULES, ROLES, ROLE_PERMISSIONS, permissionKey } from "@/config/rbac";
 import type { CreateCompanyInput } from "./platform-company.schema";
+import { startTrialInTx } from "./company-subscription.service";
 
 /** A platform operator (platform_users.id) — never a tenant user. */
 interface PlatformActorContext {
@@ -109,7 +110,10 @@ export async function createCompany(actor: PlatformActorContext, input: CreateCo
       data: { userId: superAdminUser.id, branchId: branch.id, roleId: superAdminRoleId },
     });
 
-    return { company, branch, adminUser: superAdminUser };
+    // Phase 4 (PLAT-023): every new company starts on a trial (14 days by default, per plan).
+    const subscription = await startTrialInTx(tx, company.id, input.planId);
+
+    return { company, branch, adminUser: superAdminUser, subscription };
   });
 
   // Logged under the new company's own id — the first entry in that
