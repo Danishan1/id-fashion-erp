@@ -48,6 +48,25 @@ interface ItemLinkOption {
   kind: "Style" | "Material";
 }
 
+interface ServicePreset {
+  id: string;
+  name: string;
+  sacCode: string;
+  defaultGst: string;
+}
+
+export const COMMON_FASHION_SERVICES: ServicePreset[] = [
+  { id: "srv-stitching", name: "Job Work / Stitching Charges", sacCode: "998822", defaultGst: "5" },
+  { id: "srv-embroidery", name: "Embroidery & Embellishment Work", sacCode: "9988", defaultGst: "5" },
+  { id: "srv-printing", name: "Fabric Printing & Dyeing", sacCode: "9988", defaultGst: "5" },
+  { id: "srv-washing", name: "Washing & Garment Finishing", sacCode: "9988", defaultGst: "5" },
+  { id: "srv-pattern", name: "Pattern Making & Sample Development", sacCode: "9983", defaultGst: "18" },
+  { id: "srv-design", name: "Fashion Design & Styling Consultancy", sacCode: "9983", defaultGst: "18" },
+  { id: "srv-freight", name: "Freight, Shipping & Delivery Charges", sacCode: "996511", defaultGst: "18" },
+  { id: "srv-packing", name: "Packing & Handling Charges", sacCode: "9985", defaultGst: "18" },
+  { id: "srv-alteration", name: "Alteration & Tailoring Services", sacCode: "9987", defaultGst: "5" },
+];
+
 interface ItemDraft {
   productId: string;
   itemName: string;
@@ -55,9 +74,18 @@ interface ItemDraft {
   quantity: string;
   unitPrice: string;
   gstPercentage: string;
+  itemType?: "ALL" | "PRODUCT" | "SERVICE";
 }
 
-const emptyItem = (): ItemDraft => ({ productId: "", itemName: "", hsnCode: "", quantity: "1", unitPrice: "0", gstPercentage: "0" });
+const emptyItem = (): ItemDraft => ({
+  productId: "",
+  itemName: "",
+  hsnCode: "",
+  quantity: "1",
+  unitPrice: "0",
+  gstPercentage: "0",
+  itemType: "ALL",
+});
 
 interface InitialInvoice {
   id: string;
@@ -98,6 +126,8 @@ export function CustomInvoiceForm({ initialInvoice }: { initialInvoice?: Initial
   const [invoiceSeriesId, setInvoiceSeriesId] = useState(initialInvoice?.invoiceSeriesId ?? "");
   const [invoiceNumber, setInvoiceNumber] = useState(initialInvoice?.invoiceNumber ?? "");
   const [numberManuallyEdited, setNumberManuallyEdited] = useState(isEdit);
+  const [numberCheckStatus, setNumberCheckStatus] = useState<"idle" | "checking" | "available" | "unavailable">("idle");
+  const [numberCheckMessage, setNumberCheckMessage] = useState<string>("");
   const [customerId, setCustomerId] = useState(initialInvoice?.customerId ?? "");
   const [placeOfSupplyStateCode, setPlaceOfSupplyStateCode] = useState(initialInvoice?.placeOfSupplyStateCode ?? "");
   const [discountPercentage, setDiscountPercentage] = useState(initialInvoice?.discountPercentage ?? "0");
@@ -167,18 +197,84 @@ export function CustomInvoiceForm({ initialInvoice }: { initialInvoice?: Initial
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [invoiceSeriesId]);
 
+  const checkInvoiceNumberAvailability = async (numToTest?: string) => {
+    const targetNumber = (numToTest ?? invoiceNumber).trim();
+    if (!targetNumber) {
+      setNumberCheckStatus("idle");
+      setNumberCheckMessage("");
+      return;
+    }
+    setNumberCheckStatus("checking");
+    setNumberCheckMessage("");
+    try {
+      const url = `/api/v1/custom-invoices/check-number?number=${encodeURIComponent(targetNumber)}${
+        isEdit && initialInvoice ? `&excludeId=${encodeURIComponent(initialInvoice.id)}` : ""
+      }`;
+      const res = await fetch(url);
+      const body = await res.json();
+      if (!res.ok) {
+        setNumberCheckStatus("unavailable");
+        setNumberCheckMessage(body?.error?.message ?? "Failed to check invoice number.");
+        return;
+      }
+      if (body.data?.available) {
+        setNumberCheckStatus("available");
+        setNumberCheckMessage(body.data?.message ?? "Number is available.");
+      } else {
+        setNumberCheckStatus("unavailable");
+        setNumberCheckMessage(body.data?.message ?? "Number already exists.");
+      }
+    } catch {
+      setNumberCheckStatus("unavailable");
+      setNumberCheckMessage("Unable to reach server to verify number.");
+    }
+  };
+
   const updateItem = (index: number, patch: Partial<ItemDraft>) => {
     setItems((prev) => prev.map((it, i) => (i === index ? { ...it, ...patch } : it)));
   };
 
-  const applyItemLink = (index: number, productId: string) => {
-    const picked = itemLinkOptions.find((o) => o.id === productId);
+  const applyItemLink = (index: number, selectedId: string) => {
+    if (!selectedId) {
+      updateItem(index, { productId: "" });
+      return;
+    }
+
+    const serviceMatch = COMMON_FASHION_SERVICES.find((s) => s.id === selectedId);
+    if (serviceMatch) {
+      updateItem(index, {
+        productId: "",
+        itemName: serviceMatch.name,
+        hsnCode: serviceMatch.sacCode,
+        gstPercentage: serviceMatch.defaultGst,
+      });
+      return;
+    }
+
+    const picked = itemLinkOptions.find((o) => o.id === selectedId);
     updateItem(index, {
-      productId,
+      productId: selectedId,
       itemName: picked?.styleName ?? "",
       hsnCode: picked?.hsnSacCode ?? "",
       unitPrice: picked?.unitCost ?? "0",
     });
+  };
+
+  const getItemOptionsForLine = (lineType: "ALL" | "PRODUCT" | "SERVICE" = "ALL") => {
+    const productOptions = itemLinkOptions.map((o) => ({
+      id: o.id,
+      label: o.styleName,
+      sublabel: o.kind,
+    }));
+    const serviceOptions = COMMON_FASHION_SERVICES.map((s) => ({
+      id: s.id,
+      label: s.name,
+      sublabel: `SAC ${s.sacCode} • GST ${s.defaultGst}%`,
+    }));
+
+    if (lineType === "PRODUCT") return productOptions;
+    if (lineType === "SERVICE") return serviceOptions;
+    return [...productOptions, ...serviceOptions];
   };
 
   const addItem = () => setItems((prev) => [...prev, emptyItem()]);
@@ -394,10 +490,33 @@ export function CustomInvoiceForm({ initialInvoice }: { initialInvoice?: Initial
               onChange={(e) => {
                 setInvoiceNumber(e.target.value);
                 setNumberManuallyEdited(true);
+                setNumberCheckStatus("idle");
+                setNumberCheckMessage("");
+              }}
+              onBlur={() => {
+                if (invoiceNumber.trim()) checkInvoiceNumberAvailability();
               }}
               className={textInputClass()}
             />
+            <button
+              type="button"
+              onClick={() => checkInvoiceNumberAvailability()}
+              disabled={!invoiceNumber.trim() || numberCheckStatus === "checking"}
+              className="shrink-0 rounded-md border border-zinc-300 bg-zinc-100 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-200 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
+            >
+              {numberCheckStatus === "checking" ? "Checking…" : "Verify"}
+            </button>
           </div>
+          {numberCheckStatus === "available" && (
+            <p className="mt-1 flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
+              <span aria-hidden="true">✓</span> {numberCheckMessage || "Invoice number is available."}
+            </p>
+          )}
+          {numberCheckStatus === "unavailable" && (
+            <p className="mt-1 flex items-center gap-1 text-xs text-rose-600 dark:text-rose-400">
+              <span aria-hidden="true">✗</span> {numberCheckMessage || "Invoice number already in use."}
+            </p>
+          )}
         </FormField>
       </div>
 
@@ -513,16 +632,45 @@ export function CustomInvoiceForm({ initialInvoice }: { initialInvoice?: Initial
                   </button>
                 </div>
                 <div className="mt-2 grid grid-cols-2 gap-3 md:grid-cols-3">
-                  <FormField label="Link to Product/Material (optional)" htmlFor={`link-${index}`}>
-                    <SearchableSelect
-                      id={`link-${index}`}
-                      value={item.productId}
-                      onChange={(next) => applyItemLink(index, next)}
-                      options={itemLinkOptions.map((o) => ({ id: o.id, label: o.styleName, sublabel: o.kind }))}
-                      placeholder="Search style / material…"
-                      emptyOptionLabel="— Free text item —"
-                    />
-                  </FormField>
+                  <div>
+                    <div className="mb-1.5 flex items-center gap-1">
+                      <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">Filter:</span>
+                      {(["ALL", "PRODUCT", "SERVICE"] as const).map((type) => {
+                        const active = (item.itemType ?? "ALL") === type;
+                        const label = type === "ALL" ? "All" : type === "PRODUCT" ? "Products" : "Services";
+                        return (
+                          <button
+                            key={type}
+                            type="button"
+                            onClick={() => updateItem(index, { itemType: type })}
+                            className={`rounded-full px-2 py-0.5 text-[10px] font-medium transition-colors ${
+                              active
+                                ? "bg-indigo-600 text-white"
+                                : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
+                            }`}
+                          >
+                            {label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <FormField label="Link Item / Service (optional)" htmlFor={`link-${index}`}>
+                      <SearchableSelect
+                        id={`link-${index}`}
+                        value={item.productId}
+                        onChange={(next) => applyItemLink(index, next)}
+                        options={getItemOptionsForLine(item.itemType)}
+                        placeholder={
+                          item.itemType === "SERVICE"
+                            ? "Search services (Job Work, Embroidery…)"
+                            : item.itemType === "PRODUCT"
+                            ? "Search products (Styles, Materials…)"
+                            : "Search styles, materials, or services…"
+                        }
+                        emptyOptionLabel="— Free text item —"
+                      />
+                    </FormField>
+                  </div>
                   <FormField label="Name" htmlFor={`name-${index}`} required>
                     <input
                       id={`name-${index}`}

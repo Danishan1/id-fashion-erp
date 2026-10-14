@@ -52,8 +52,29 @@ export const CustomInvoiceRepository = {
       include: {
         customer: { select: { id: true, name: true } },
         invoiceSeries: { select: { id: true, name: true } },
+        items: {
+          select: {
+            id: true,
+            itemName: true,
+            hsnCode: true,
+            quantity: true,
+            unitPrice: true,
+            gstPercentage: true,
+            lineTotal: true,
+          },
+        },
       },
       ...args,
+    }),
+
+  findByInvoiceNumber: (companyId: string, invoiceNumber: string, excludeId?: string) =>
+    prisma.customInvoice.findFirst({
+      where: {
+        companyId,
+        invoiceNumber,
+        ...(excludeId ? { id: { not: excludeId } } : {}),
+      },
+      select: { id: true, invoiceNumber: true },
     }),
 
   count: (where: Prisma.CustomInvoiceWhereInput) => prisma.customInvoice.count({ where }),

@@ -123,3 +123,63 @@ describe("CustomInvoiceRepository.replaceItemsAndNotes (H-02 semantic identity)"
     expect(mockTx.customInvoiceItem.delete).not.toHaveBeenCalled();
   });
 });
+
+describe("CustomInvoiceRepository.findByInvoiceNumber (P2-1 availability check)", () => {
+  it("queries customInvoice with companyId and invoiceNumber", async () => {
+    vi.mocked(prisma.customInvoice.findFirst).mockResolvedValueOnce({
+      id: "inv-1",
+      invoiceNumber: "INV-2026-001",
+    } as never);
+
+    const result = await CustomInvoiceRepository.findByInvoiceNumber("co-1", "INV-2026-001");
+    expect(prisma.customInvoice.findFirst).toHaveBeenCalledWith({
+      where: { companyId: "co-1", invoiceNumber: "INV-2026-001" },
+      select: { id: true, invoiceNumber: true },
+    });
+    expect(result).toEqual({ id: "inv-1", invoiceNumber: "INV-2026-001" });
+  });
+
+  it("adds excludeId condition when updating an existing invoice", async () => {
+    vi.mocked(prisma.customInvoice.findFirst).mockResolvedValueOnce(null);
+
+    const result = await CustomInvoiceRepository.findByInvoiceNumber("co-1", "INV-2026-001", "inv-current");
+    expect(prisma.customInvoice.findFirst).toHaveBeenCalledWith({
+      where: {
+        companyId: "co-1",
+        invoiceNumber: "INV-2026-001",
+        id: { not: "inv-current" },
+      },
+      select: { id: true, invoiceNumber: true },
+    });
+    expect(result).toBeNull();
+  });
+});
+
+describe("CustomInvoiceRepository.findMany (P2-2 items inclusion)", () => {
+  it("includes items with financial breakdown fields", async () => {
+    vi.mocked(prisma.customInvoice.findMany).mockResolvedValueOnce([]);
+
+    await CustomInvoiceRepository.findMany({ companyId: "co-1" }, { take: 10, skip: 0 });
+
+    expect(prisma.customInvoice.findMany).toHaveBeenCalledWith({
+      where: { companyId: "co-1" },
+      include: {
+        customer: { select: { id: true, name: true } },
+        invoiceSeries: { select: { id: true, name: true } },
+        items: {
+          select: {
+            id: true,
+            itemName: true,
+            hsnCode: true,
+            quantity: true,
+            unitPrice: true,
+            gstPercentage: true,
+            lineTotal: true,
+          },
+        },
+      },
+      take: 10,
+      skip: 0,
+    });
+  });
+});

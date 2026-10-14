@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useState, type ReactNode } from "react";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import { Button, buttonClasses } from "@/components/ui/Button";
@@ -120,6 +120,11 @@ interface DataTableProps<T> {
   initialSort?: { sortBy: string; sortOrder: "asc" | "desc" };
   /** Told whenever the user changes the sort by clicking a header. */
   onSortChange?: (sort: { sortBy: string; sortOrder: "asc" | "desc" }) => void;
+  /**
+   * Optional inline expandable row renderer (e.g. for showing line items / breakdown).
+   * When provided, a toggle chevron column is rendered at the start of each row.
+   */
+  renderExpandedRow?: (row: T) => ReactNode;
 }
 
 interface ListResponse<T> {
@@ -148,6 +153,7 @@ export function DataTable<T extends { id: string }>({
   selection,
   initialSort,
   onSortChange,
+  renderExpandedRow,
 }: DataTableProps<T>) {
   const router = useRouter();
   const [page, setPage] = useState(1);
@@ -159,6 +165,16 @@ export function DataTable<T extends { id: string }>({
   const [pendingToggleRow, setPendingToggleRow] = useState<T | null>(null);
   const [isToggling, setIsToggling] = useState(false);
   const [reloadTick, setReloadTick] = useState(0);
+  const [expandedRowIds, setExpandedRowIds] = useState<Set<string>>(new Set());
+
+  const toggleRowExpansion = (id: string) => {
+    setExpandedRowIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
   // Undefined until a user actually clicks a sortable header — the request
   // then carries no sortBy/sortOrder params at all, so every page's existing
   // default server-side order is completely unaffected until opted into.
@@ -219,7 +235,8 @@ export function DataTable<T extends { id: string }>({
     };
   }, [fetchUrl, page, search, refreshKey, reloadTick, sortBy, sortOrder, statusFilter, statusValue, extraParamsKey]);
 
-  const actionsColCount = (rowHref || onEditRow || rowActions ? 1 : 0) + (selection ? 1 : 0);
+  const actionsColCount =
+    (rowHref || onEditRow || rowActions ? 1 : 0) + (selection ? 1 : 0) + (renderExpandedRow ? 1 : 0);
 
   const toggleSort = (key: string) => {
     const next = sortBy === key ? { sortBy: key, sortOrder: sortOrder === "asc" ? ("desc" as const) : ("asc" as const) } : { sortBy: key, sortOrder: "asc" as const };
@@ -327,6 +344,9 @@ export function DataTable<T extends { id: string }>({
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-zinc-200 text-left text-xs uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
+              {renderExpandedRow && (
+                <th className="w-8 px-2 py-2 text-center" aria-label="Expand row" />
+              )}
               {selection && (
                 <th className="w-10 px-4 py-2">
                   <input
@@ -413,58 +433,81 @@ export function DataTable<T extends { id: string }>({
                   </td>
                 ));
                 const isActive = rowIsActive(row);
+                const isExpanded = expandedRowIds.has(row.id);
                 return (
-                  <tr
-                    key={row.id}
-                    onClick={href ? () => router.push(href) : undefined}
-                    tabIndex={href ? 0 : undefined}
-                    onKeyDown={
-                      href
-                        ? (e) => {
-                            if (e.key === "Enter") router.push(href);
-                          }
-                        : undefined
-                    }
-                    className={`border-b border-zinc-100 last:border-0 dark:border-zinc-800 ${
-                      href ? "cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800/60" : ""
-                    }`}
-                  >
-                    {selection && (
-                      <td className="w-10 px-4 py-2" onClick={(e) => e.stopPropagation()}>
-                        <input
-                          type="checkbox"
-                          aria-label={`Select ${selection.label ? selection.label(row) : rowLabel(row)}`}
-                          checked={selectedSet.has(row.id)}
-                          onChange={() => toggleRow(row.id)}
-                        />
-                      </td>
+                  <Fragment key={row.id}>
+                    <tr
+                      onClick={href ? () => router.push(href) : undefined}
+                      tabIndex={href ? 0 : undefined}
+                      onKeyDown={
+                        href
+                          ? (e) => {
+                              if (e.key === "Enter") router.push(href);
+                            }
+                          : undefined
+                      }
+                      className={`border-b border-zinc-100 last:border-0 dark:border-zinc-800 ${
+                        href ? "cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800/60" : ""
+                      }`}
+                    >
+                      {renderExpandedRow && (
+                        <td className="w-8 px-2 py-2 text-center" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            type="button"
+                            onClick={() => toggleRowExpansion(row.id)}
+                            aria-label={isExpanded ? "Collapse row" : "Expand row"}
+                            aria-expanded={isExpanded}
+                            className="inline-flex h-6 w-6 items-center justify-center rounded text-xs text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                          >
+                            {isExpanded ? "▼" : "▶"}
+                          </button>
+                        </td>
+                      )}
+                      {selection && (
+                        <td className="w-10 px-4 py-2" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${selection.label ? selection.label(row) : rowLabel(row)}`}
+                            checked={selectedSet.has(row.id)}
+                            onChange={() => toggleRow(row.id)}
+                          />
+                        </td>
+                      )}
+                      {cells}
+                      {(rowHref || onEditRow || rowActions) && (
+                        <td className="px-4 py-2">
+                          <div className="flex items-center gap-3">
+                            {rowHref ? (
+                              <RowAction icon={rowHrefIcon} label={rowHrefLabel} href={href!} />
+                            ) : onEditRow ? (
+                              <RowAction icon={rowHrefIcon} label={rowHrefLabel} onClick={() => onEditRow(row)} />
+                            ) : null}
+                            {rowActions && (
+                              <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                                {rowActions(row)}
+                              </div>
+                            )}
+                            {isActive !== undefined && (
+                              <ToggleSwitch
+                                checked={isActive}
+                                onToggle={() => setPendingToggleRow(row)}
+                                label={isActive ? "Active — click to deactivate" : "Inactive — click to activate"}
+                              />
+                            )}
+                          </div>
+                        </td>
+                      )}
+                    </tr>
+                    {renderExpandedRow && isExpanded && (
+                      <tr key={`${row.id}-expanded`} className="border-b border-zinc-200 bg-zinc-50/70 dark:border-zinc-800 dark:bg-zinc-800/40">
+                        <td colSpan={columns.length + actionsColCount} className="p-0">
+                          <div className="border-l-4 border-indigo-500 px-6 py-3">
+                            {renderExpandedRow(row)}
+                          </div>
+                        </td>
+                      </tr>
                     )}
-                    {cells}
-                    {(rowHref || onEditRow || rowActions) && (
-
-                      <td className="px-4 py-2">
-                        <div className="flex items-center gap-3">
-                          {rowHref ? (
-                            <RowAction icon={rowHrefIcon} label={rowHrefLabel} href={href!} />
-                          ) : onEditRow ? (
-                            <RowAction icon={rowHrefIcon} label={rowHrefLabel} onClick={() => onEditRow(row)} />
-                          ) : null}
-                          {rowActions && (
-                            <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                              {rowActions(row)}
-                            </div>
-                          )}
-                          {isActive !== undefined && (
-                            <ToggleSwitch
-                              checked={isActive}
-                              onToggle={() => setPendingToggleRow(row)}
-                              label={isActive ? "Active — click to deactivate" : "Inactive — click to activate"}
-                            />
-                          )}
-                        </div>
-                      </td>
-                    )}
-                  </tr>
+                  </Fragment>
                 );
               })}
           </tbody>
