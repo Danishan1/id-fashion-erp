@@ -85,6 +85,7 @@ model Company {
   finishedGoodsStockBalances          FinishedGoodsStockBalance[]
   finishedGoodsReservations           FinishedGoodsReservation[]
   finishedGoodsReceipts               FinishedGoodsReceipt[]
+  finishedGoodsPutaways               FinishedGoodsPutaway[]
   finishedGoodsPickLines              FinishedGoodsPickLine[]
   stockMovements                      StockMovement[]
   productionOrders                    ProductionOrder[]
@@ -99,6 +100,7 @@ model Company {
   pieceRateEarnings                   PieceRateEarning[]
   productionSettings                  ProductionSettings?
   dispatchSettings                    DispatchSettings?
+  fgInventorySettings                 FgInventorySettings?
   productionRoutes                    ProductionRoute[]
   documentSequences                   DocumentSequence[]
   auditLogs                           AuditLog[]
@@ -266,6 +268,7 @@ model Branch {
   finishedGoodsStockBalances FinishedGoodsStockBalance[]
   finishedGoodsReservations  FinishedGoodsReservation[]
   finishedGoodsReceipts      FinishedGoodsReceipt[]
+  finishedGoodsPutaways      FinishedGoodsPutaway[]
   stockMovements             StockMovement[]
   roleBranchAccess           RoleBranchAccess[]
   productionOrders      ProductionOrder[]
@@ -369,6 +372,7 @@ model User {
   productionOrderQuantityChanges             ProductionOrderQuantityChange[]
   lotsCreated                                Lot[]                                @relation("LotCreatedBy")
   finishedGoodsReceiptsPosted                FinishedGoodsReceipt[]               @relation("FinishedGoodsReceiptPostedBy")
+  finishedGoodsPutawaysPerformed              FinishedGoodsPutaway[]               @relation("FinishedGoodsPutawayPerformedBy")
   finishedGoodsPickLinesPicked                FinishedGoodsPickLine[]              @relation("FinishedGoodsPickLinePickedBy")
   barcodesCreated                            Barcode[]                            @relation("BarcodeCreatedBy")
   lotRelationsPerformed                      LotRelation[]                        @relation("LotRelationPerformedBy")
@@ -1168,6 +1172,7 @@ model Product {
   stockBalances                     StockBalance[]
   finishedGoodsStockBalances        FinishedGoodsStockBalance[]
   finishedGoodsReceipts             FinishedGoodsReceipt[]
+  finishedGoodsPutaways             FinishedGoodsPutaway[]
   bom                               Bom?
   bomItemUsages                     BomItem[]                     @relation("BomItemMaterial")
   materialRequestItems              MaterialRequestItem[]         @relation("MaterialRequestItemMaterial")
@@ -1305,6 +1310,7 @@ model ProductVariant {
   finishedGoodsStockBalances  FinishedGoodsStockBalance[]
   finishedGoodsReservations   FinishedGoodsReservation[]
   finishedGoodsReceiptItems   FinishedGoodsReceiptItem[]
+  finishedGoodsPutaways       FinishedGoodsPutaway[]
   stockMovementItems          StockMovementItem[]
   finishedGoodsPickLines      FinishedGoodsPickLine[]
 
@@ -1346,6 +1352,7 @@ model Warehouse {
   finishedGoodsStockBalances FinishedGoodsStockBalance[]
   finishedGoodsReservations  FinishedGoodsReservation[]
   finishedGoodsReceipts      FinishedGoodsReceipt[]
+  finishedGoodsPutaways      FinishedGoodsPutaway[]
   materialRequests           MaterialRequest[]
   stockMovementsFrom    StockMovement[]        @relation("StockMovementSourceWarehouse")
   stockMovementsTo      StockMovement[]        @relation("StockMovementDestinationWarehouse")
@@ -1400,6 +1407,7 @@ model WarehouseLocation {
   finishedGoodsPickLines          FinishedGoodsPickLine[]
   materialRequestItems       MaterialRequestItem[]
   finishedGoodsStockBalances FinishedGoodsStockBalance[]
+  finishedGoodsPutawayItems  FinishedGoodsPutawayItem[]
 
   @@unique([warehouseId, code])
   @@map("warehouse_locations")
@@ -4752,6 +4760,7 @@ model InventoryTransaction {
   materialSubstitutions MaterialSubstitution[]
   productVariant        ProductVariant?        @relation(fields: [productVariantId], references: [id])
   finishedGoodsReceiptItems FinishedGoodsReceiptItem[]
+  finishedGoodsPutawayItems FinishedGoodsPutawayItem[]
 
   @@index([companyId, productId, warehouseId])
   @@index([referenceModule, referenceRecordId])
@@ -4945,6 +4954,67 @@ model FinishedGoodsReceiptItem {
   @@map("finished_goods_receipt_items")
 }
 
+// Finished Goods Inventory module (FGI-030) -- a dedicated, minimal header
+// for the Putaway action: splitting a staging (warehouseLocationId = null)
+// FinishedGoodsStockBalance row across one or more real warehouse locations
+// in one action. Deliberately NOT a StockMovement document (per explicit
+// user decision) -- Putaway is an internal warehouse-organization step, not
+// a commercial movement, and needs its own simpler "split one staging
+// quantity into N destinations" shape rather than the generic Transfer
+// form. Mirrors FinishedGoodsReceipt/Item's own header+items shape exactly
+// (one row per destination location, each carrying its own real
+// inventoryTransactionId) for the same querryability/consistency reasons.
+model FinishedGoodsPutaway {
+  id                String      @id @default(uuid()) @db.Uuid
+  companyId         String      @map("company_id") @db.Uuid
+  branchId          String?     @map("branch_id") @db.Uuid
+  putawayNumber     String      @map("putaway_number")
+  productId         String      @map("product_id") @db.Uuid
+  productVariantId  String      @map("product_variant_id") @db.Uuid
+  warehouseId       String      @map("warehouse_id") @db.Uuid
+  // The staging status this action moved stock out of -- SALEABLE is the
+  // overwhelmingly common case, but REJECTED staging stock is a real
+  // scenario too (e.g. putting away damaged stock into a dedicated reject
+  // location), so this is a real input, not hardcoded.
+  stockStatus       StockStatus @map("stock_status")
+  // The validated sum of every item line below -- never independently
+  // recomputed, matching FinishedGoodsReceipt.totalQuantity's own
+  // "one shared input" discipline (§4.5 point 2).
+  totalQuantity     Decimal     @map("total_quantity") @db.Decimal(18, 4)
+  performedByUserId String      @map("performed_by_user_id") @db.Uuid
+  performedAt       DateTime    @default(now()) @map("performed_at")
+
+  company        Company                    @relation(fields: [companyId], references: [id])
+  branch         Branch?                    @relation(fields: [branchId], references: [id])
+  product        Product                    @relation(fields: [productId], references: [id])
+  productVariant ProductVariant             @relation(fields: [productVariantId], references: [id])
+  warehouse      Warehouse                  @relation(fields: [warehouseId], references: [id])
+  performedBy    User                       @relation("FinishedGoodsPutawayPerformedBy", fields: [performedByUserId], references: [id])
+  items          FinishedGoodsPutawayItem[]
+
+  @@unique([companyId, branchId, putawayNumber])
+  @@index([companyId, productId, warehouseId])
+  @@map("finished_goods_putaways")
+}
+
+model FinishedGoodsPutawayItem {
+  id                     String  @id @default(uuid()) @db.Uuid
+  finishedGoodsPutawayId String  @map("finished_goods_putaway_id") @db.Uuid
+  warehouseLocationId    String  @map("warehouse_location_id") @db.Uuid
+  quantity               Decimal @map("quantity") @db.Decimal(18, 4)
+  // Points at the exact real ledger row this destination line posted,
+  // inside the same transaction -- same established traceability
+  // precedent as FinishedGoodsReceiptItem.inventoryTransactionId.
+  inventoryTransactionId String? @map("inventory_transaction_id") @db.Uuid
+
+  finishedGoodsPutaway FinishedGoodsPutaway  @relation(fields: [finishedGoodsPutawayId], references: [id])
+  warehouseLocation    WarehouseLocation     @relation(fields: [warehouseLocationId], references: [id])
+  inventoryTransaction InventoryTransaction? @relation(fields: [inventoryTransactionId], references: [id])
+
+  @@index([finishedGoodsPutawayId])
+  @@map("finished_goods_putaway_items")
+}
+
 // A single unified header for the three remaining Phase 6 stock-movement
 // documents (Consolidation decision from Phase 1's architecture doc:
 // "material issues/returns/transfers merged into one stock_movements table
@@ -5101,6 +5171,30 @@ model DispatchSettings {
   company Company @relation(fields: [companyId], references: [id])
 
   @@map("dispatch_settings")
+}
+
+// Finished Goods Inventory module (FGI-032) -- company-wide Stock
+// Adjustment approval-gate toggles, mirroring DispatchSettings' own exact
+// shape above (a missing row means the defaults -- no backfill needed,
+// same "single flat row" precedent as ProductionSettings/DispatchSettings).
+// Deliberately Finished-Goods-only: the existing raw-material Stock
+// Adjustment flow has no approval concept at all and is left completely
+// untouched (per explicit user decision).
+model FgInventorySettings {
+  id                                 String   @id @default(uuid()) @db.Uuid
+  companyId                          String   @unique @map("company_id") @db.Uuid
+  adjustmentApprovalRequired         Boolean  @default(false) @map("adjustment_approval_required")
+  // Either threshold, if set, independently triggers the approval gate even
+  // when adjustmentApprovalRequired is false -- a company may want "only
+  // approve a big discrepancy," not every single adjustment.
+  adjustmentApprovalThresholdQty     Int?     @map("adjustment_approval_threshold_qty")
+  adjustmentApprovalThresholdPercent Decimal? @map("adjustment_approval_threshold_percent") @db.Decimal(5, 2)
+  createdAt                          DateTime @default(now()) @map("created_at")
+  updatedAt                          DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@map("fg_inventory_settings")
 }
 
 model Dispatch {
@@ -8310,6 +8404,11 @@ enum RelatedModule {
   // Finished Goods Inventory module (2026-10-13, FGI-004) -- Attachment/audit-log
   // polymorphism for FinishedGoodsReceipt.
   FINISHED_GOODS_RECEIPT
+  // Finished Goods Inventory module (FGI-030) -- the ledger's own
+  // referenceModule for a Putaway action's N+1 postings (one negative at
+  // the staging row, one positive per destination location), all pointing
+  // at the same FinishedGoodsPutaway header row.
+  FINISHED_GOODS_PUTAWAY
   SAMPLE_REQUEST
   BUYER_ENQUIRY
   SALES_ORDER
@@ -10256,6 +10355,8 @@ enum DocumentType {
   // Finished Goods Inventory module (2026-10-13, FGI-004) -- FinishedGoodsReceipt
   // numbering.
   FG_RECEIPT
+  // Finished Goods Inventory module (FGI-030) -- FinishedGoodsPutaway numbering.
+  FG_PUTAWAY
 }
 
 model DocumentSequence {

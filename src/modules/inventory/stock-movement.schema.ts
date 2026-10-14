@@ -60,10 +60,33 @@ export const createStockMovementSchema = z
     message: "A destination warehouse is required for a Transfer.",
     path: ["toWarehouseId"],
   })
-  .refine((input) => input.movementType !== "TRANSFER" || input.toWarehouseId !== input.warehouseId, {
-    message: "The destination warehouse must be different from the source warehouse.",
-    path: ["toWarehouseId"],
-  })
+  // Finished Goods Inventory module (FGI-031) -- a same-warehouse Transfer
+  // used to be blocked for EVERY item family, but FinishedGoodsStockBalance
+  // (unlike StockBalance) has a real location dimension, so a Finished Goods
+  // Transfer genuinely can move stock between two locations within the SAME
+  // warehouse -- a real, useful case the original raw-material-only design
+  // never needed to express. Raw material keeps the EXACT original rule
+  // (destination warehouse must differ) unchanged -- it has no location-
+  // level balance to actually move, so a same-warehouse "transfer" there
+  // would be a meaningless no-op, not a fix. For Finished Goods, a
+  // same-warehouse Transfer is only valid when at least one line's own
+  // location genuinely changes (never a zero-op transfer of a location into
+  // itself) -- "" and undefined both normalize to "no location set" for this
+  // comparison, matching how the rest of this schema treats an empty string.
+  .refine(
+    (input) => {
+      if (input.movementType !== "TRANSFER") return true;
+      if (input.toWarehouseId !== input.warehouseId) return true;
+      if (input.itemFamily !== "FINISHED_GOODS") return false;
+      const normalize = (v?: string) => v || null;
+      return input.items.some((item) => normalize(item.warehouseLocationId) !== normalize(item.toWarehouseLocationId));
+    },
+    {
+      message:
+        "A Transfer must either move stock to a different warehouse, or (for Finished Goods) to a different location within the same warehouse.",
+      path: ["toWarehouseId"],
+    }
+  )
   .refine((input) => input.movementType !== "RETURN_TO_SUPPLIER" || !!input.supplierId, {
     message: "A supplier is required for a Return to Supplier.",
     path: ["supplierId"],

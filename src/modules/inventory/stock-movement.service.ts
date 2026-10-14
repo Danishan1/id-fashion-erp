@@ -10,6 +10,7 @@ import { LookupRepository } from "@/modules/lookups/lookup.repository";
 import { ProductRepository, ProductVariantRepository } from "@/modules/products/product.repository";
 import { StockMovementType, type Prisma } from "@prisma/client";
 import { getAvailableQuantity, getFinishedGoodsSaleableQuantity, recordInventoryTransaction } from "./inventory.service";
+import { getFgInventorySettings, adjustmentNeedsApproval } from "@/core/fg-inventory-settings/FgInventorySettingsService";
 import { StockMovementRepository } from "./stock-movement.repository";
 import type { CreateStockMovementInput } from "./stock-movement.schema";
 
@@ -234,11 +235,23 @@ export async function createStockMovement(actor: ActorContext, input: CreateStoc
   // issue-from-stock check already accepted) rather than a hot concurrent
   // path needing a DB-level guard — the atomic floor guard inside
   // recordInventoryTransaction() is the real backstop against a race.
+  // Finished Goods Inventory module (FGI-032) -- for a Finished Goods
+  // Adjustment, every line's real current balance is captured here (null
+  // for everything else), including a positive ("stock found") line the
+  // original availability pre-check never had a reason to fetch -- the new
+  // approval-threshold gate right after this loop needs it for both
+  // directions, since a suspiciously large "found" adjustment is just as
+  // worth a second sign-off as a large write-off.
+  const availabilityByIndex: (number | null)[] = [];
   for (let i = 0; i < input.items.length; i++) {
     const item = input.items[i];
     const baseQuantity = baseQuantities[i];
     const removesStock = input.movementType !== "ADJUSTMENT" || baseQuantity < 0;
-    if (!removesStock) continue;
+    const needsAvailabilityForApprovalCheck = isFinishedGoods && input.movementType === "ADJUSTMENT";
+    if (!removesStock && !needsAvailabilityForApprovalCheck) {
+      availabilityByIndex.push(null);
+      continue;
+    }
     const removedQuantity = Math.abs(baseQuantity);
     const available = isFinishedGoods
       ? await getFinishedGoodsSaleableQuantity(
@@ -249,12 +262,38 @@ export async function createStockMovement(actor: ActorContext, input: CreateStoc
           item.warehouseLocationId || null
         )
       : await getAvailableQuantity(actor.companyId, item.productId, input.warehouseId);
-    if (removedQuantity > available) {
+    availabilityByIndex.push(available);
+    if (removesStock && removedQuantity > available) {
       throw new BusinessRuleError(
         "INSUFFICIENT_STOCK_FOR_MOVEMENT",
         `Cannot move ${removedQuantity} units of this ${isFinishedGoods ? "variant" : "material"} out of the selected warehouse — only ${available} is available.`,
         { productId: item.productId, warehouseId: input.warehouseId, available, requested: removedQuantity }
       );
+    }
+  }
+
+  // Finished Goods Inventory module (FGI-032) -- Stock Adjustment approval
+  // gate, Finished-Goods-only (per explicit confirmed decision) -- this
+  // branch never runs for a raw-material Adjustment or any Transfer/Return
+  // to Supplier, so the existing raw-material flow is completely untouched.
+  if (isFinishedGoods && input.movementType === "ADJUSTMENT") {
+    const settings = await getFgInventorySettings(actor.companyId);
+    const lines = input.items.map((_item, i) => ({ quantity: baseQuantities[i], currentAvailable: availabilityByIndex[i] ?? 0 }));
+    if (adjustmentNeedsApproval(settings, lines)) {
+      // Deliberately NOT self-approval-guarded (no resourceContext.createdBy)
+      // -- unlike Dispatch's own two-phase Draft->Packed->Confirm lifecycle
+      // (where extraDispatchNeedsApproval's own usage genuinely compares a
+      // DIFFERENT confirming actor against the order's own real
+      // requestedByUserId, captured at an earlier point in time), a Stock
+      // Adjustment is a single, atomic, one-shot create-is-post action with
+      // no separate "requester" identity to compare against -- createdBy
+      // would always equal the CURRENT actor trivially, which would make
+      // this gate unusable by anyone but SUPER_ADMIN. Gating on the
+      // "approve" action alone still achieves the real intent (a more
+      // senior/different role must be the one to actually submit a
+      // threshold-crossing adjustment) without requiring a two-phase
+      // workflow Stock Movement was never built to have.
+      await PermissionService.assert(actor.userId, "fg_inventory", "approve");
     }
   }
 

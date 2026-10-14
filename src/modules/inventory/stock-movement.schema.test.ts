@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { createStockMovementSchema } from "./stock-movement.schema";
 
@@ -104,6 +105,111 @@ describe("createStockMovementSchema — item-type-family validation (FGI-014, De
       ],
     });
 
+    expect(result.success).toBe(true);
+  });
+});
+
+// Finished Goods Inventory module (FGI-031) -- the Zod-layer half of
+// relaxing the same-warehouse Transfer block specifically for Finished
+// Goods. Deliberately a separate describe block (createStockMovementSchema is
+// never actually invoked by stock-movement.service.test.ts's own calls --
+// those call createStockMovement() directly with \`as never\`, bypassing Zod
+// entirely -- so this refine's own behavior can only be proven by parsing
+// through the real schema). Every id below is a real UUID (randomUUID()) --
+// the schema's own .uuid() validators reject a plain slug like "wh-1".
+
+const warehouseA = randomUUID();
+const warehouseB = randomUUID();
+const locationA = randomUUID();
+const locationB = randomUUID();
+const materialId = randomUUID();
+const uomId = randomUUID();
+const styleId = randomUUID();
+const variant1 = randomUUID();
+const variant2 = randomUUID();
+
+const rawMaterialBaseInput = {
+  movementType: "TRANSFER" as const,
+  warehouseId: warehouseA,
+  items: [{ productId: materialId, uomId, quantity: 10, remarks: "" }],
+};
+
+const finishedGoodsBaseInput = {
+  movementType: "TRANSFER" as const,
+  warehouseId: warehouseA,
+  itemFamily: "FINISHED_GOODS" as const,
+  items: [{ productId: styleId, uomId, quantity: 10, remarks: "", productVariantId: variant1 }],
+};
+
+describe("createStockMovementSchema -- same-warehouse Transfer (FGI-031)", () => {
+  it("still rejects a same-warehouse raw-material Transfer, byte-for-byte unchanged from before FGI-031", () => {
+    const result = createStockMovementSchema.safeParse({ ...rawMaterialBaseInput, toWarehouseId: warehouseA });
+    expect(result.success).toBe(false);
+  });
+
+  it("still accepts a raw-material Transfer to a genuinely different warehouse, unchanged", () => {
+    const result = createStockMovementSchema.safeParse({ ...rawMaterialBaseInput, toWarehouseId: warehouseB });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects a same-warehouse Finished Goods Transfer when no line's location actually changes (both sides unset)", () => {
+    const result = createStockMovementSchema.safeParse({ ...finishedGoodsBaseInput, toWarehouseId: warehouseA });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a same-warehouse Finished Goods Transfer when every line's source and destination location are the identical value", () => {
+    const result = createStockMovementSchema.safeParse({
+      ...finishedGoodsBaseInput,
+      toWarehouseId: warehouseA,
+      items: [
+        {
+          ...finishedGoodsBaseInput.items[0],
+          warehouseLocationId: locationA,
+          toWarehouseLocationId: locationA,
+        },
+      ],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts a same-warehouse Finished Goods Transfer when a line's location genuinely changes (location-to-location move)", () => {
+    const result = createStockMovementSchema.safeParse({
+      ...finishedGoodsBaseInput,
+      toWarehouseId: warehouseA,
+      items: [
+        {
+          ...finishedGoodsBaseInput.items[0],
+          warehouseLocationId: locationA,
+          toWarehouseLocationId: locationB,
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts a same-warehouse Finished Goods Transfer moving staging (no source location) into a real destination location", () => {
+    const result = createStockMovementSchema.safeParse({
+      ...finishedGoodsBaseInput,
+      toWarehouseId: warehouseA,
+      items: [{ ...finishedGoodsBaseInput.items[0], toWarehouseLocationId: locationB }],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts a Finished Goods Transfer to a genuinely different warehouse regardless of location fields, unchanged", () => {
+    const result = createStockMovementSchema.safeParse({ ...finishedGoodsBaseInput, toWarehouseId: warehouseB });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts the document when AT LEAST ONE of several lines shows a genuine location change, even if others don't", () => {
+    const result = createStockMovementSchema.safeParse({
+      ...finishedGoodsBaseInput,
+      toWarehouseId: warehouseA,
+      items: [
+        { ...finishedGoodsBaseInput.items[0], productVariantId: variant1, warehouseLocationId: locationA, toWarehouseLocationId: locationA },
+        { ...finishedGoodsBaseInput.items[0], productVariantId: variant2, warehouseLocationId: locationA, toWarehouseLocationId: locationB },
+      ],
+    });
     expect(result.success).toBe(true);
   });
 });

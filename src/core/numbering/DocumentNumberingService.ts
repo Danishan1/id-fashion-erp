@@ -39,6 +39,8 @@ const PREFIX_BY_DOCUMENT_TYPE: Record<DocumentType, string> = {
   FORWARDER: "TRN",
   // Finished Goods Inventory module (2026-10-13, FGI-004).
   FG_RECEIPT: "FGR",
+  // Finished Goods Inventory module (FGI-030).
+  FG_PUTAWAY: "FGP",
 };
 
 /** DocumentTypes that represent master-data codes, not transactional documents. */

@@ -24,7 +24,17 @@ vi.mock("@/modules/products/product.repository", () => ({
 vi.mock("@/modules/lookups/lookup.repository", () => ({
   LookupRepository: { unit: { findUnique: vi.fn() } },
 }));
-vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { getAllowedBranchIds: vi.fn() } }));
+vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { getAllowedBranchIds: vi.fn(), assert: vi.fn() } }));
+// Finished Goods Inventory module (FGI-032) -- keeps the REAL adjustmentNeedsApproval()
+// pure function (same vi.importActual pattern dispatch.service.test.ts's own
+// extraDispatchNeedsApproval mock already uses), mocking only the I/O half
+// (getFgInventorySettings).
+vi.mock("@/core/fg-inventory-settings/FgInventorySettingsService", async () => {
+  const actual = await vi.importActual<typeof import("@/core/fg-inventory-settings/FgInventorySettingsService")>(
+    "@/core/fg-inventory-settings/FgInventorySettingsService"
+  );
+  return { ...actual, getFgInventorySettings: vi.fn() };
+});
 
 const { generateDocumentNumber } = await import("@/core/numbering/DocumentNumberingService");
 const { getAvailableQuantity, getFinishedGoodsSaleableQuantity, recordInventoryTransaction } = await import("./inventory.service");
@@ -32,6 +42,7 @@ const { StockMovementRepository } = await import("./stock-movement.repository");
 const { ProductRepository, ProductVariantRepository } = await import("@/modules/products/product.repository");
 const { LookupRepository } = await import("@/modules/lookups/lookup.repository");
 const { PermissionService } = await import("@/core/rbac/PermissionService");
+const { getFgInventorySettings } = await import("@/core/fg-inventory-settings/FgInventorySettingsService");
 const { createStockMovement, listStockMovements, getStockMovementById } = await import("./stock-movement.service");
 
 const actor = { companyId: "co-1", userId: "user-1", branchId: "br-1" };
@@ -59,6 +70,14 @@ beforeEach(() => {
   vi.mocked(ProductRepository.findManyItemTypesByIds).mockReset().mockResolvedValue([{ id: "mat-1", itemType: "RAW_MATERIAL" }] as never);
   vi.mocked(ProductVariantRepository.findManyByIds).mockReset().mockResolvedValue([]);
   vi.mocked(PermissionService.getAllowedBranchIds).mockReset().mockResolvedValue(null);
+  vi.mocked(PermissionService.assert).mockReset().mockResolvedValue(undefined as never);
+  vi.mocked(getFgInventorySettings)
+    .mockReset()
+    .mockResolvedValue({
+      adjustmentApprovalRequired: false,
+      adjustmentApprovalThresholdQty: null,
+      adjustmentApprovalThresholdPercent: null,
+    });
 });
 
 describe("createStockMovement", () => {
@@ -526,6 +545,209 @@ describe("createStockMovement", () => {
       const { writeAuditLog } = await import("@/core/audit/AuditLogger");
       expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ newValues: expect.objectContaining({ itemFamily: "FINISHED_GOODS" }) }));
     });
+
+    it("posts both Transfer ledger entries at the SAME warehouse but different locations for a same-warehouse Finished Goods Transfer (FGI-031) — previously impossible to reach, Zod always blocked toWarehouseId === warehouseId before this task", async () => {
+      vi.mocked(getFinishedGoodsSaleableQuantity).mockResolvedValue(50);
+
+      await createStockMovement(actor, {
+        movementType: "TRANSFER",
+        warehouseId: "wh-a",
+        toWarehouseId: "wh-a",
+        itemFamily: "FINISHED_GOODS",
+        items: [
+          {
+            productId: variantStyleId,
+            uomId: "uom-1",
+            quantity: 10,
+            remarks: "",
+            productVariantId: variantId,
+            warehouseLocationId: "loc-source",
+            toWarehouseLocationId: "loc-dest",
+          },
+        ],
+      } as never);
+
+      expect(recordInventoryTransaction).toHaveBeenNthCalledWith(
+        1,
+        expect.anything(),
+        actor,
+        expect.objectContaining({ warehouseId: "wh-a", warehouseLocationId: "loc-source", quantity: -10 })
+      );
+      expect(recordInventoryTransaction).toHaveBeenNthCalledWith(
+        2,
+        expect.anything(),
+        actor,
+        expect.objectContaining({ warehouseId: "wh-a", warehouseLocationId: "loc-dest", quantity: 10 })
+      );
+    });
+  });
+});
+
+describe("createStockMovement — Finished Goods Stock Adjustment approval gate (FGI-032)", () => {
+  const styleId = "style-fg032";
+  const variantId = "var-fg032";
+
+  beforeEach(() => {
+    vi.mocked(ProductRepository.findManyItemTypesByIds).mockResolvedValue([{ id: styleId, itemType: "STYLE" }] as never);
+    vi.mocked(ProductVariantRepository.findManyByIds).mockResolvedValue([{ id: variantId, productId: styleId }] as never);
+    vi.mocked(getFinishedGoodsSaleableQuantity).mockResolvedValue(100);
+  });
+
+  function adjustmentInput(quantity: number) {
+    return {
+      movementType: "ADJUSTMENT" as const,
+      warehouseId: "wh-a",
+      reason: "test",
+      itemFamily: "FINISHED_GOODS" as const,
+      items: [{ productId: styleId, uomId: "uom-1", quantity, remarks: "", productVariantId: variantId }],
+    };
+  }
+
+  it("never asserts 'approve' when no threshold is configured and the flag is off", async () => {
+    await createStockMovement(actor, adjustmentInput(-5) as never);
+    expect(PermissionService.assert).not.toHaveBeenCalledWith(expect.anything(), "fg_inventory", "approve");
+  });
+
+  it("never gates a RAW_MATERIAL Adjustment at all, even when adjustmentApprovalRequired is true — the existing raw-material flow is completely untouched", async () => {
+    vi.mocked(ProductRepository.findManyItemTypesByIds).mockResolvedValue([{ id: "mat-1", itemType: "RAW_MATERIAL" }] as never);
+    vi.mocked(getFgInventorySettings).mockResolvedValue({
+      adjustmentApprovalRequired: true,
+      adjustmentApprovalThresholdQty: null,
+      adjustmentApprovalThresholdPercent: null,
+    });
+    vi.mocked(getAvailableQuantity).mockResolvedValue(50);
+
+    await createStockMovement(actor, {
+      movementType: "ADJUSTMENT",
+      warehouseId: "wh-a",
+      reason: "test",
+      items: [{ productId: "mat-1", uomId: "uom-1", quantity: -5, remarks: "" }],
+    } as never);
+
+    expect(getFgInventorySettings).not.toHaveBeenCalled();
+    expect(PermissionService.assert).not.toHaveBeenCalledWith(expect.anything(), "fg_inventory", "approve");
+  });
+
+  it("asserts 'approve' (not self-approval-guarded) when adjustmentApprovalRequired is true", async () => {
+    vi.mocked(getFgInventorySettings).mockResolvedValue({
+      adjustmentApprovalRequired: true,
+      adjustmentApprovalThresholdQty: null,
+      adjustmentApprovalThresholdPercent: null,
+    });
+
+    await createStockMovement(actor, adjustmentInput(-5) as never);
+
+    expect(PermissionService.assert).toHaveBeenCalledWith("user-1", "fg_inventory", "approve");
+  });
+
+  it("triggers approval purely from the absolute quantity threshold, even when adjustmentApprovalRequired is false", async () => {
+    vi.mocked(getFgInventorySettings).mockResolvedValue({
+      adjustmentApprovalRequired: false,
+      adjustmentApprovalThresholdQty: 10,
+      adjustmentApprovalThresholdPercent: null,
+    });
+
+    await createStockMovement(actor, adjustmentInput(-15) as never);
+
+    expect(PermissionService.assert).toHaveBeenCalledWith("user-1", "fg_inventory", "approve");
+  });
+
+  it("never triggers when the quantity is within the absolute threshold", async () => {
+    vi.mocked(getFgInventorySettings).mockResolvedValue({
+      adjustmentApprovalRequired: false,
+      adjustmentApprovalThresholdQty: 10,
+      adjustmentApprovalThresholdPercent: null,
+    });
+
+    await createStockMovement(actor, adjustmentInput(-5) as never);
+
+    expect(PermissionService.assert).not.toHaveBeenCalledWith(expect.anything(), "fg_inventory", "approve");
+  });
+
+  it("triggers approval from the percent-of-current-balance threshold (100 available, adjusting 60 = 60%, threshold 50%)", async () => {
+    vi.mocked(getFinishedGoodsSaleableQuantity).mockResolvedValue(100);
+    vi.mocked(getFgInventorySettings).mockResolvedValue({
+      adjustmentApprovalRequired: false,
+      adjustmentApprovalThresholdQty: null,
+      adjustmentApprovalThresholdPercent: 50,
+    });
+
+    await createStockMovement(actor, adjustmentInput(-60) as never);
+
+    expect(PermissionService.assert).toHaveBeenCalledWith("user-1", "fg_inventory", "approve");
+  });
+
+  it("also fetches availability and checks the threshold for a POSITIVE ('stock found') line, which the ordinary availability pre-check alone never needed to touch", async () => {
+    vi.mocked(getFinishedGoodsSaleableQuantity).mockResolvedValue(10);
+    vi.mocked(getFgInventorySettings).mockResolvedValue({
+      adjustmentApprovalRequired: false,
+      adjustmentApprovalThresholdQty: null,
+      adjustmentApprovalThresholdPercent: 50,
+    });
+
+    // Found 20 units against a recorded balance of only 10 -- 200%, over the
+    // 50% threshold, even though a positive adjustment never removes stock
+    // and the ordinary pre-check would never have fetched availability for it.
+    await createStockMovement(actor, adjustmentInput(20) as never);
+
+    expect(getFinishedGoodsSaleableQuantity).toHaveBeenCalled();
+    expect(PermissionService.assert).toHaveBeenCalledWith("user-1", "fg_inventory", "approve");
+  });
+
+  it("checks EVERY line, not just the first — a later line crossing the threshold still triggers approval", async () => {
+    vi.mocked(getFinishedGoodsSaleableQuantity).mockResolvedValue(100);
+    vi.mocked(getFgInventorySettings).mockResolvedValue({
+      adjustmentApprovalRequired: false,
+      adjustmentApprovalThresholdQty: 10,
+      adjustmentApprovalThresholdPercent: null,
+    });
+
+    await createStockMovement(actor, {
+      movementType: "ADJUSTMENT",
+      warehouseId: "wh-a",
+      reason: "test",
+      itemFamily: "FINISHED_GOODS",
+      items: [
+        { productId: styleId, uomId: "uom-1", quantity: -3, remarks: "", productVariantId: variantId },
+        { productId: styleId, uomId: "uom-1", quantity: -15, remarks: "", productVariantId: variantId },
+      ],
+    } as never);
+
+    expect(PermissionService.assert).toHaveBeenCalledWith("user-1", "fg_inventory", "approve");
+  });
+
+  it("blocks the whole create (never reaches the ledger/repository write) when approval is required but the actor lacks it", async () => {
+    vi.mocked(getFgInventorySettings).mockResolvedValue({
+      adjustmentApprovalRequired: true,
+      adjustmentApprovalThresholdQty: null,
+      adjustmentApprovalThresholdPercent: null,
+    });
+    vi.mocked(PermissionService.assert).mockImplementation(async () => {
+      throw Object.assign(new Error("denied"), { code: "PERMISSION_DENIED" });
+    });
+
+    await expect(createStockMovement(actor, adjustmentInput(-5) as never)).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    expect(recordInventoryTransaction).not.toHaveBeenCalled();
+    expect(StockMovementRepository.createWithItems).not.toHaveBeenCalled();
+  });
+
+  it("never gates a Finished Goods TRANSFER or RETURN_TO_SUPPLIER — only ADJUSTMENT", async () => {
+    vi.mocked(getFgInventorySettings).mockResolvedValue({
+      adjustmentApprovalRequired: true,
+      adjustmentApprovalThresholdQty: null,
+      adjustmentApprovalThresholdPercent: null,
+    });
+
+    await createStockMovement(actor, {
+      movementType: "TRANSFER",
+      warehouseId: "wh-a",
+      toWarehouseId: "wh-b",
+      itemFamily: "FINISHED_GOODS",
+      items: [{ productId: styleId, uomId: "uom-1", quantity: 10, remarks: "", productVariantId: variantId }],
+    } as never);
+
+    expect(getFgInventorySettings).not.toHaveBeenCalled();
+    expect(PermissionService.assert).not.toHaveBeenCalledWith(expect.anything(), "fg_inventory", "approve");
   });
 });
 
