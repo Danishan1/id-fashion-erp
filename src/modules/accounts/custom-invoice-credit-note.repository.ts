@@ -20,6 +20,8 @@ export const CustomInvoiceCreditNoteRepository = {
       ...args,
     }),
 
+  count: (where: Prisma.CustomInvoiceCreditNoteWhereInput) => prisma.customInvoiceCreditNote.count({ where }),
+
   /** Any status, including CANCELLED — used to inspect full history. */
   countByInvoiceId: (customInvoiceId: string) => prisma.customInvoiceCreditNote.count({ where: { customInvoiceId } }),
 
