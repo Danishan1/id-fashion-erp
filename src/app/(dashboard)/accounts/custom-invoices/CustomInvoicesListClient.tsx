@@ -41,10 +41,21 @@ export function CustomInvoicesListClient() {
 
       <DataTable<CustomInvoiceRow>
         fetchUrl="/api/v1/custom-invoices"
+        exportUrl="/api/v1/custom-invoices/export/xlsx"
         newHref="/accounts/custom-invoices/new"
         newLabel="New Custom Invoice"
         searchPlaceholder="Search by invoice number…"
         rowHref={(row) => `/accounts/custom-invoices/${row.id}`}
+        rowActions={(row) => (
+          <a
+            href={`/api/v1/custom-invoices/${row.id}/pdf`}
+            download
+            title="Download PDF"
+            className="text-xs font-medium text-indigo-600 hover:text-indigo-500 hover:underline dark:text-indigo-400"
+          >
+            PDF
+          </a>
+        )}
         statusFilter={{
           options: Object.entries(STATUS_LABELS).map(([value, label]) => ({ value, label })),
         }}

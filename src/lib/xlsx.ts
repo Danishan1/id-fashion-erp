@@ -18,6 +18,16 @@ export interface XlsxColumn {
   type?: "date" | "number";
 }
 
+/**
+ * Neutralizes spreadsheet formula triggers (=, +, -, @, \t, \r) in text values
+ * by prefixing with a single quote (') so spreadsheet applications treat them
+ * strictly as literal text. Leaves numbers, dates, and non-formula strings untouched.
+ */
+export function sanitizeSpreadsheetText(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  return /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+}
+
 export async function buildXlsxBuffer(sheetName: string, columns: XlsxColumn[], rows: Record<string, unknown>[]): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook();
   const worksheet = workbook.addWorksheet(sheetName);

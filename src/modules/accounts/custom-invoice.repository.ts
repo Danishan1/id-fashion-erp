@@ -3,7 +3,19 @@ import type { Prisma, CustomInvoiceStatus } from "@prisma/client";
 
 const detailInclude = {
   invoiceSeries: { select: { id: true, name: true, prefix: true } },
-  customer: { select: { id: true, name: true, code: true, taxRegistrationNo: true } },
+  customer: {
+    select: {
+      id: true,
+      name: true,
+      code: true,
+      taxRegistrationNo: true,
+      billingAddress: true,
+      shippingAddress: true,
+      city: true,
+      pinCode: true,
+      country: true,
+    },
+  },
   incomeAccount: { select: { id: true, code: true, name: true } },
   createdBy: { select: { id: true, fullName: true } },
   items: {
