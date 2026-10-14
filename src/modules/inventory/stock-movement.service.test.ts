@@ -3,7 +3,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/numbering/DocumentNumberingService", () => ({ generateDocumentNumber: vi.fn() }));
 vi.mock("@/core/db/client", () => ({ prisma: { $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn({})) } }));
-vi.mock("./inventory.service", () => ({ getAvailableQuantity: vi.fn(), recordInventoryTransaction: vi.fn() }));
+vi.mock("./inventory.service", () => ({
+  getAvailableQuantity: vi.fn(),
+  getFinishedGoodsSaleableQuantity: vi.fn(),
+  recordInventoryTransaction: vi.fn(),
+}));
 vi.mock("./stock-movement.repository", () => ({
   StockMovementRepository: {
     createWithItems: vi.fn(),
@@ -14,7 +18,8 @@ vi.mock("./stock-movement.repository", () => ({
   },
 }));
 vi.mock("@/modules/products/product.repository", () => ({
-  ProductRepository: { findMaterialById: vi.fn() },
+  ProductRepository: { findMaterialById: vi.fn(), findManyItemTypesByIds: vi.fn() },
+  ProductVariantRepository: { findManyByIds: vi.fn() },
 }));
 vi.mock("@/modules/lookups/lookup.repository", () => ({
   LookupRepository: { unit: { findUnique: vi.fn() } },
@@ -22,9 +27,9 @@ vi.mock("@/modules/lookups/lookup.repository", () => ({
 vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { getAllowedBranchIds: vi.fn() } }));
 
 const { generateDocumentNumber } = await import("@/core/numbering/DocumentNumberingService");
-const { getAvailableQuantity, recordInventoryTransaction } = await import("./inventory.service");
+const { getAvailableQuantity, getFinishedGoodsSaleableQuantity, recordInventoryTransaction } = await import("./inventory.service");
 const { StockMovementRepository } = await import("./stock-movement.repository");
-const { ProductRepository } = await import("@/modules/products/product.repository");
+const { ProductRepository, ProductVariantRepository } = await import("@/modules/products/product.repository");
 const { LookupRepository } = await import("@/modules/lookups/lookup.repository");
 const { PermissionService } = await import("@/core/rbac/PermissionService");
 const { createStockMovement, listStockMovements, getStockMovementById } = await import("./stock-movement.service");
@@ -40,12 +45,19 @@ const BASE_UOM = { id: "uom-1", baseUnitId: null, conversionFactor: 1 };
 beforeEach(() => {
   vi.mocked(generateDocumentNumber).mockReset().mockResolvedValue("STK-2026-00001");
   vi.mocked(getAvailableQuantity).mockReset();
+  vi.mocked(getFinishedGoodsSaleableQuantity).mockReset();
   vi.mocked(recordInventoryTransaction).mockReset();
   vi.mocked(StockMovementRepository.createWithItems).mockReset().mockResolvedValue({ id: "sm-1" } as never);
   vi.mocked(StockMovementRepository.findByIdempotencyKey).mockReset().mockResolvedValue(null);
   vi.mocked(ProductRepository.findMaterialById)
     .mockReset()
     .mockResolvedValue({ id: "mat-1", styleName: "Test Material", baseUom: BASE_UOM } as never);
+  // Finished Goods Inventory module (FGI-014) — every pre-existing test's
+  // one material ("mat-1") is a real raw material, matching the implicit
+  // RAW_MATERIAL default every one of those tests relies on (none of them
+  // sets itemFamily at all).
+  vi.mocked(ProductRepository.findManyItemTypesByIds).mockReset().mockResolvedValue([{ id: "mat-1", itemType: "RAW_MATERIAL" }] as never);
+  vi.mocked(ProductVariantRepository.findManyByIds).mockReset().mockResolvedValue([]);
   vi.mocked(PermissionService.getAllowedBranchIds).mockReset().mockResolvedValue(null);
 });
 
@@ -72,6 +84,24 @@ describe("createStockMovement", () => {
       expect.anything(),
       actor,
       expect.objectContaining({ warehouseId: "wh-b", quantity: 10, transactionType: "STOCK_TRANSFER" })
+    );
+  });
+
+  it("never wires a destination warehouseLocationId for a raw-material Transfer — unaffected by the new Finished Goods capability", async () => {
+    vi.mocked(getAvailableQuantity).mockResolvedValue(50);
+
+    await createStockMovement(actor, {
+      movementType: "TRANSFER",
+      warehouseId: "wh-a",
+      toWarehouseId: "wh-b",
+      items: [{ productId: "mat-1", uomId: "uom-1", quantity: 10, remarks: "", toWarehouseLocationId: "loc-ignored" }],
+    } as never);
+
+    expect(recordInventoryTransaction).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      actor,
+      expect.objectContaining({ warehouseLocationId: null })
     );
   });
 
@@ -287,6 +317,214 @@ describe("createStockMovement", () => {
       vi.mocked(StockMovementRepository.createWithItems).mockRejectedValue(p2002);
 
       await expect(createStockMovement(actor, adjustmentInput as never)).rejects.toBe(p2002);
+    });
+  });
+
+  describe("item-type-family validation (FGI-014, Decision 2/§4.4) — the real, DB-backed service-layer half", () => {
+    it("rejects a document whose claimed itemFamily doesn't match the real item's itemType in the database — the Zod-level check alone can't catch a forged/wrong value", async () => {
+      // The caller claims RAW_MATERIAL (the default), but this productId is
+      // genuinely a STYLE in the database — the exact "mixing"/"forged
+      // family" scenario only a real DB lookup can catch.
+      vi.mocked(ProductRepository.findManyItemTypesByIds).mockResolvedValue([{ id: "style-1", itemType: "STYLE" }] as never);
+
+      await expect(
+        createStockMovement(actor, {
+          movementType: "ADJUSTMENT",
+          warehouseId: "wh-a",
+          reason: "test",
+          items: [{ productId: "style-1", uomId: "uom-1", quantity: 5, remarks: "" }],
+        } as never)
+      ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+
+      expect(recordInventoryTransaction).not.toHaveBeenCalled();
+      expect(StockMovementRepository.createWithItems).not.toHaveBeenCalled();
+    });
+
+    it("rejects a document that genuinely mixes both families — one line raw material, one line a style, both under the same claimed itemFamily", async () => {
+      vi.mocked(ProductRepository.findManyItemTypesByIds).mockResolvedValue([
+        { id: "mat-1", itemType: "RAW_MATERIAL" },
+        { id: "style-1", itemType: "STYLE" },
+      ] as never);
+
+      await expect(
+        createStockMovement(actor, {
+          movementType: "ADJUSTMENT",
+          warehouseId: "wh-a",
+          reason: "test",
+          items: [
+            { productId: "mat-1", uomId: "uom-1", quantity: 5, remarks: "" },
+            { productId: "style-1", uomId: "uom-1", quantity: 3, remarks: "" },
+          ],
+        } as never)
+      ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    });
+
+    it("rejects a Finished Goods document whose productVariantId doesn't actually belong to that line's style", async () => {
+      vi.mocked(ProductRepository.findManyItemTypesByIds).mockResolvedValue([{ id: "style-1", itemType: "STYLE" }] as never);
+      vi.mocked(ProductVariantRepository.findManyByIds).mockResolvedValue([{ id: "var-1", productId: "a-different-style" }] as never);
+
+      await expect(
+        createStockMovement(actor, {
+          movementType: "ADJUSTMENT",
+          warehouseId: "wh-a",
+          reason: "test",
+          itemFamily: "FINISHED_GOODS",
+          items: [{ productId: "style-1", uomId: "uom-1", quantity: 5, remarks: "", productVariantId: "var-1" }],
+        } as never)
+      ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+
+      expect(recordInventoryTransaction).not.toHaveBeenCalled();
+    });
+
+    it("rejects a line whose productId doesn't exist at all", async () => {
+      vi.mocked(ProductRepository.findManyItemTypesByIds).mockResolvedValue([]);
+
+      await expect(
+        createStockMovement(actor, {
+          movementType: "ADJUSTMENT",
+          warehouseId: "wh-a",
+          reason: "test",
+          items: [{ productId: "ghost-1", uomId: "uom-1", quantity: 5, remarks: "" }],
+        } as never)
+      ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    });
+  });
+
+  describe("Finished Goods stock movements (FGI-014) — the new, parallel path", () => {
+    const variantStyleId = "style-1";
+    const variantId = "var-1";
+
+    beforeEach(() => {
+      vi.mocked(ProductRepository.findManyItemTypesByIds).mockResolvedValue([{ id: variantStyleId, itemType: "STYLE" }] as never);
+      vi.mocked(ProductVariantRepository.findManyByIds).mockResolvedValue([{ id: variantId, productId: variantStyleId }] as never);
+    });
+
+    it("never calls convertItemsToBaseUom's own dependencies (findMaterialById) for a Finished Goods document — no UOM conversion attempted", async () => {
+      vi.mocked(getFinishedGoodsSaleableQuantity).mockResolvedValue(50);
+
+      await createStockMovement(actor, {
+        movementType: "ADJUSTMENT",
+        warehouseId: "wh-a",
+        reason: "Physical count",
+        itemFamily: "FINISHED_GOODS",
+        items: [{ productId: variantStyleId, uomId: "uom-1", quantity: 8, remarks: "", productVariantId: variantId }],
+      } as never);
+
+      expect(ProductRepository.findMaterialById).not.toHaveBeenCalled();
+    });
+
+    it("uses getFinishedGoodsSaleableQuantity (not the flat getAvailableQuantity) for the Finished Goods pre-check", async () => {
+      vi.mocked(getFinishedGoodsSaleableQuantity).mockResolvedValue(3);
+
+      await expect(
+        createStockMovement(actor, {
+          movementType: "ADJUSTMENT",
+          warehouseId: "wh-a",
+          reason: "Shrinkage",
+          itemFamily: "FINISHED_GOODS",
+          items: [{ productId: variantStyleId, uomId: "uom-1", quantity: -8, remarks: "", productVariantId: variantId }],
+        } as never)
+      ).rejects.toMatchObject({ code: "INSUFFICIENT_STOCK_FOR_MOVEMENT" });
+
+      expect(getFinishedGoodsSaleableQuantity).toHaveBeenCalledWith("co-1", variantStyleId, variantId, "wh-a", null);
+      expect(getAvailableQuantity).not.toHaveBeenCalled();
+      expect(recordInventoryTransaction).not.toHaveBeenCalled();
+    });
+
+    it("posts every ledger call with productVariantId + stockStatus SALEABLE for an Adjustment — the exact fields FGI-010's own guarded-decrement race protection keys on", async () => {
+      vi.mocked(getFinishedGoodsSaleableQuantity).mockResolvedValue(50);
+
+      await createStockMovement(actor, {
+        movementType: "ADJUSTMENT",
+        warehouseId: "wh-a",
+        reason: "Physical count",
+        itemFamily: "FINISHED_GOODS",
+        items: [{ productId: variantStyleId, uomId: "uom-1", quantity: -8, remarks: "", productVariantId: variantId }],
+      } as never);
+
+      expect(recordInventoryTransaction).toHaveBeenCalledWith(
+        expect.anything(),
+        actor,
+        expect.objectContaining({
+          productId: variantStyleId,
+          quantity: -8,
+          productVariantId: variantId,
+          stockStatus: "SALEABLE",
+        })
+      );
+    });
+
+    it("posts both Transfer ledger entries with productVariantId + stockStatus SALEABLE, and wires the destination's own toWarehouseLocationId (new for Finished Goods — raw material still has none)", async () => {
+      vi.mocked(getFinishedGoodsSaleableQuantity).mockResolvedValue(50);
+
+      await createStockMovement(actor, {
+        movementType: "TRANSFER",
+        warehouseId: "wh-a",
+        toWarehouseId: "wh-b",
+        itemFamily: "FINISHED_GOODS",
+        items: [
+          {
+            productId: variantStyleId,
+            uomId: "uom-1",
+            quantity: 10,
+            remarks: "",
+            productVariantId: variantId,
+            toWarehouseLocationId: "loc-dest-1",
+          },
+        ],
+      } as never);
+
+      expect(recordInventoryTransaction).toHaveBeenNthCalledWith(
+        1,
+        expect.anything(),
+        actor,
+        expect.objectContaining({ warehouseId: "wh-a", quantity: -10, productVariantId: variantId, stockStatus: "SALEABLE" })
+      );
+      expect(recordInventoryTransaction).toHaveBeenNthCalledWith(
+        2,
+        expect.anything(),
+        actor,
+        expect.objectContaining({
+          warehouseId: "wh-b",
+          quantity: 10,
+          productVariantId: variantId,
+          stockStatus: "SALEABLE",
+          warehouseLocationId: "loc-dest-1",
+        })
+      );
+    });
+
+    it("stores productVariantId/toWarehouseLocationId on the created StockMovementItem rows", async () => {
+      vi.mocked(getFinishedGoodsSaleableQuantity).mockResolvedValue(50);
+
+      await createStockMovement(actor, {
+        movementType: "ADJUSTMENT",
+        warehouseId: "wh-a",
+        reason: "Physical count",
+        itemFamily: "FINISHED_GOODS",
+        items: [{ productId: variantStyleId, uomId: "uom-1", quantity: 8, remarks: "", productVariantId: variantId }],
+      } as never);
+
+      expect(StockMovementRepository.createWithItems).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        [expect.objectContaining({ productVariantId: variantId })]
+      );
+    });
+
+    it("includes itemFamily in the audit log", async () => {
+      vi.mocked(getFinishedGoodsSaleableQuantity).mockResolvedValue(50);
+
+      await createStockMovement(actor, {
+        movementType: "ADJUSTMENT",
+        warehouseId: "wh-a",
+        reason: "Physical count",
+        itemFamily: "FINISHED_GOODS",
+        items: [{ productId: variantStyleId, uomId: "uom-1", quantity: 8, remarks: "", productVariantId: variantId }],
+      } as never);
+
+      const { writeAuditLog } = await import("@/core/audit/AuditLogger");
+      expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ newValues: expect.objectContaining({ itemFamily: "FINISHED_GOODS" }) }));
     });
   });
 });

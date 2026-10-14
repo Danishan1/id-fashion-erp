@@ -1068,3 +1068,458 @@ Neither required your input to resolve — both have a single, confidently corre
 project's own existing, purpose-built mechanisms rather than inventing new ones — but both are flagged
 prominently here, per the "stop and report any conflict" instruction, rather than silently folded in.
 
+## 12. Phase 1 implementation status and evidence (2026-10-13)
+
+### FGI-010 — Extend `recordInventoryTransaction()` with the additive `FinishedGoodsStockBalance` upsert branch
+
+**Status:** VERIFIED.
+
+**Files changed:**
+- `src/modules/inventory/inventory.repository.ts` — added `FinishedGoodsBalanceKey`, the
+  `FinishedGoodsStockBalanceRepository` (`upsertIncrement`/`guardedDecrement`/`findOne`), and the
+  table-specific `isConcurrentCreateRace()` P2002 detector. **Zero changes** to the existing
+  `InventoryTransactionRepository`/`StockBalanceRepository`/`InventoryScopeRepository` exports.
+- `src/modules/inventory/inventory.service.ts` — `RecordInventoryTransactionInput` gained optional
+  `productVariantId`/`stockStatus`, with a both-or-neither `VALIDATION_ERROR` guard; the ledger-row create
+  call now also records these two fields when supplied; a new conditional branch (only entered when both are
+  present) upserts/guard-decrements the `FinishedGoodsStockBalance` row **after** the existing, completely
+  unchanged flat `StockBalance` branch; new export `getFinishedGoodsSaleableQuantity()`. Every existing
+  export (`getAvailableQuantity`, `getAvailableQuantityByDye`, `importOpeningStockRow`,
+  `sumAvailableByProductIds`, `listStockBalances`) is byte-for-byte unchanged.
+- `src/modules/inventory/inventory.service.test.ts` — 12 new tests (8 for the new conditional branch, 4 for
+  `getFinishedGoodsSaleableQuantity`). All pre-existing tests kept verbatim.
+
+**Database changes:** none — this task is service-layer only, consuming the schema FGI-001/002 already added
+in Phase 0.
+
+**Acceptance criteria (as defined in §8):**
+- [x] Zero behavior change for any existing caller — the full pre-existing `src/modules/inventory` suite
+      (138 tests across 4 files) passed **unmodified** both before and after this change; a dedicated new
+      test (`"never touches FinishedGoodsStockBalanceRepository at all when productVariantId/stockStatus are
+      omitted"`) asserts this directly, not just by inference from the count staying the same.
+- [x] A new caller supplying `productVariantId`/`stockStatus` correctly creates/decrements the matching
+      balance row inside the same transaction as the ledger insert — proven both by mocked unit tests and,
+      more importantly, by a **live, non-mocked run against the real disposable scratch database**
+      (`fashion_erp_fgi_phase0_scratch`): a real `recordInventoryTransaction()` call inside a real
+      `prisma.$transaction` created a real `FinishedGoodsStockBalance` row (quantity 40), a second call on the
+      same key incremented it in place (50 — confirmed via direct SQL that still exactly one row exists, not
+      two), and a real decrement reduced it correctly (35).
+- [x] A guarded-decrement race test proves `{count: 0}` correctly rejects an over-decrement attempt — both a
+      mocked unit test and a live attempt to decrement 9999 from a real balance of 35 were rejected with
+      `INSUFFICIENT_STOCK_FOR_MOVEMENT`, with the balance confirmed unchanged at 35 afterward (the failed
+      transaction rolled back cleanly, including the ledger-row insert that preceded the guard check).
+
+**Concurrency proof (the rigor established for FGI-002, now extended to this service's own new retry logic,
+not just the raw DB constraint):** two genuinely separate `PrismaClient` instances (their own connections,
+their own `$transaction` calls) fired simultaneous `recordInventoryTransaction()` calls against a
+**brand-new** balance key (quantities 12 and 8). Both succeeded with no error surfaced to either caller —
+confirming `FinishedGoodsStockBalanceRepository.upsertIncrement()`'s plain-`findFirst` → `create` →
+catch-P2002-and-retry-as-`update` pattern correctly handles the real race, not just the sequential case.
+Direct SQL afterward confirmed **exactly one** row exists for the key, at quantity **20** (12 + 8) — neither
+concurrent increment was lost.
+
+**P2002 error-shape finding (used to implement the retry, confirmed empirically before relying on it):** for
+this project's `@prisma/adapter-pg` driver, a concurrent violation of `FinishedGoodsStockBalance`'s own
+expression-based unique index surfaces as `error.code === "P2002"` with `error.meta.modelName ===
+"FinishedGoodsStockBalance"` — the `meta.driverAdapterError.cause.constraint.fields` array contains garbled
+fragments of the raw COALESCE SQL text rather than clean column names, so the project's existing
+`isUniqueConstraintViolationOnColumn()` helper (built for disambiguating among *multiple* named-column unique
+constraints on one table) cannot reliably match this shape. A new, simpler, table-scoped
+`isConcurrentCreateRace()` check (`code === "P2002" && meta.modelName === "FinishedGoodsStockBalance"`) is
+used instead — valid since this table has exactly one unique constraint, so no disambiguation is needed.
+
+**Both-or-neither validation**, confirmed live too (not just mocked): a real call supplying `productVariantId`
+with no `stockStatus` was rejected with `VALIDATION_ERROR` before any write was attempted.
+
+**Verification evidence:**
+- `npx tsc --noEmit` (whole project): 0 errors. (Required `NODE_OPTIONS="--max-old-space-size=5120"` and a
+  `next typegen` pass to clear a stale, unrelated `LayoutProps` route-types artifact — both pre-existing,
+  already-documented project gotchas, not caused by this change.)
+- `npx eslint src/modules/inventory`: 0 errors.
+- `npx vitest run src/modules/inventory`: **150/150 passing** (138 pre-existing + 12 new), 0 regressions.
+- `npx vitest run` (whole project): **2613/2613 passing, 161 skipped** (one transient flaky failure in an
+  unrelated CRM calendar test — `src/app/(dashboard)/crm/calendar/_components/calendar-client.test.tsx` —
+  under the full suite's heavy parallel load; re-run in isolation immediately after and passed cleanly,
+  5/5 — confirmed as pre-existing timing flakiness unrelated to any file this task touched, not a
+  regression).
+- Live functional + concurrency verification against the real disposable scratch database: **10/10 checks
+  passed** (see above). All fixture rows (a temporary Product/ProductVariant×2/Color/Size×2/Warehouse/
+  Branch/WarehouseLocation/User created solely for this test) were deleted afterward — independently
+  confirmed via direct SQL that the scratch database returned to its exact pre-test state (0 products, 0
+  warehouses, 0 branches, 0 users, 0 `FinishedGoodsStockBalance`/`StockBalance` rows).
+- No scratch artifacts (test scripts, logs) were left in the `finished-goods-inventory` worktree — confirmed
+  via `git status --short` showing only the three intended source files modified.
+
+**No conflicts found with the existing ledger, warehouse, production, or dispatch architecture.**
+
+Proceeding to **FGI-011** next (`finished-goods-reservation.service.ts`), per the approved one-task-at-a-time
+Phase 1 sequence.
+
+### FGI-011 — `finished-goods-reservation.service.ts` (reserve / consume / release lifecycle)
+
+**Status:** VERIFIED — functionally complete and fully tested, **but not yet wired into any calling
+workflow** (see "Plan gap found" below).
+
+**Files changed/added:**
+- `src/core/errors/BusinessRuleError.ts` — two new codes, `OVER_CONSUMPTION_NOT_ALLOWED` (409) and
+  `RESERVATION_NOT_ACTIVE` (409), added via the established two-line (type union + HTTP-status map) pattern.
+- `src/modules/finished-goods-inventory/finished-goods-reservation.repository.ts` (new) —
+  `createMany`, `findById`/`findByIdInTx`, `findActiveForSalesOrderLineIds`,
+  `sumActiveUnconsumedForVariant` (the "committed" read behind the Available formula, §4.2),
+  `guardedConsume` (the one raw-SQL statement — see below), `guardedRelease`,
+  `releaseAllActiveForSalesOrderLineIdsInTx`.
+- `src/modules/finished-goods-inventory/finished-goods-reservation.service.ts` (new) —
+  `createReservationsForSalesOrderInTx`, `consumeReservation`, `releaseReservation`,
+  `releaseActiveReservationsForSalesOrderInTx`, `getCommittedReservationQuantity`.
+- `src/modules/finished-goods-inventory/finished-goods-reservation.service.test.ts` (new, 17 tests).
+
+**Database changes:** none — this task is service-layer only, consuming the `FinishedGoodsReservation`
+schema FGI-003 already added in Phase 0.
+
+**The atomic guard, exactly per §4.2's stated mechanism:** `guardedConsume` is a single raw-SQL `UPDATE`
+(`finished_goods_reservations SET consumed_quantity = consumed_quantity + :n ... WHERE id = :id AND status =
+'ACTIVE' AND consumed_quantity + :n <= reserved_quantity`) — the same "the guard compares two live, mutable
+columns, which Prisma's `updateMany` `where` clause cannot express" reasoning already established in this
+codebase for Purchase Invoice's `guardedDecrementReceived`/`guardedIncrementInvoiced`. The status flip to
+`FULFILLED` happens in the **same** statement (a `CASE` expression), so there is no separate, non-atomic
+follow-up write and no race window between the guarded increment and the status transition.
+
+**Acceptance criteria (as defined in §8):**
+- [x] Reserve/consume/release lifecycle fully covered by unit tests (17 mocked tests covering creation
+      grouping/summing/skip-legacy-rows, consume success/not-found/not-active/over-consumption, release
+      success/not-found/not-active, bulk release including idempotency, and the committed-quantity read).
+- [x] **The guarded-consumption race case** — proven live, not just reasoned about: a real, non-mocked
+      concurrency test fired two genuinely simultaneous `consumeReservation(70)` calls (two separate
+      `PrismaClient` connections, two separate transactions) against one fresh reservation
+      (`reservedQuantity = 100`). Exactly one succeeded; the other was correctly rejected with
+      `OVER_CONSUMPTION_NOT_ALLOWED` (not a raw DB error); the final `consumedQuantity` landed at exactly
+      **70** — never 140 (double-applied) and never 0 (lost). Postgres row-level locking is what makes this
+      safe: the second transaction's `UPDATE` blocks until the first commits, then re-evaluates the `WHERE`
+      clause against the now-current row and correctly fails.
+- [x] Releasing an already-partially-consumed reservation frees only the unconsumed remainder — proven live:
+      a reservation with `reservedQuantity=40, consumedQuantity=15` was released; `consumedQuantity` was left
+      untouched at 15 (the real, already-shipped stock was never "un-shipped"); the committed-quantity read
+      (which sums only `ACTIVE` rows' remainder) correctly dropped from 25 to 0 the instant the status flipped
+      away from `ACTIVE` — the freed 25 becomes available again, the already-consumed 15 never did.
+
+**Live, non-mocked verification against the real disposable scratch database — 21/21 checks passed**:
+a real confirmed-shaped Sales Order (2 lines, 2 variants, real `SalesOrderItemBreakdown` rows) had its
+reservations created for real via `createReservationsForSalesOrderInTx` inside a real transaction (confirmed
+via direct SQL: exactly 2 rows, correct `reservedQuantity`/`status` each); partial consumption, exact-remainder
+consumption (flips to `FULFILLED`), rejected over-consumption (reservation left completely unchanged),
+rejected consumption of an already-`FULFILLED` row, partial-consumption-then-release (committed-quantity
+correctly reflects only the unconsumed remainder, then drops to 0 on release), rejected release of an
+already-`RELEASED` row, bulk release for a second order (simulating order cancellation) plus its own
+idempotent-second-call check, and the genuine concurrent-race proof above — every one of these against real
+Postgres rows, not mocks. All fixture rows (2 temporary Sales Orders + lines/items/breakdown, a race-test
+Sales Order, Product/ProductVariant×2/Color/Size×2/Branch/User/Customer) were deleted afterward —
+independently confirmed via direct SQL that the scratch database returned to its exact pre-test state (0 rows
+in every touched table).
+
+**Plan gap found and flagged (not silently resolved, per the "stop and report any conflict" instruction):**
+§3 of the implementation plan names `finished-goods-reservation.service.ts`'s purpose as "reserve on Sales
+Order confirm, consume on Dispatch confirm, release on cancellation" — but of those three, only **consumption**
+has a dedicated, explicitly-numbered later task (**FGI-041**, "Reservation consumption wired into
+`confirmDispatch()`", Phase 4). **No task anywhere in the approved plan actually wires reservation creation
+into `confirmSalesOrder()`, or release into Sales-Order cancellation** (`transitionSalesOrderStatus()`'s
+`CANCELLED` branch). This task's own stated acceptance criteria (§8) only ever require the standalone
+service's lifecycle to be built and fully tested — they do not themselves require this wiring — so FGI-011 is
+complete and verified exactly as scoped. But the wiring gap is real and worth closing before Phase 4 needs
+it: recommend adding it as an explicit task (e.g. inserted into Phase 1 as "FGI-011a" or folded into whichever
+later task first depends on reservations actually existing) rather than assuming it will happen as a
+byproduct of some other task. Every function needed for that wiring (`createReservationsForSalesOrderInTx`,
+`releaseActiveReservationsForSalesOrderInTx`) already exists, is fully tested, and takes exactly the `tx`/
+`actor`/`salesOrderId` shape `confirmSalesOrder()`/`transitionSalesOrderStatus()` would need to call it with —
+so closing this gap later is a small, low-risk addition, not new design work.
+
+**Verification evidence:**
+- `npx tsc --noEmit` (whole project): 0 errors.
+- `npx eslint src/modules/finished-goods-inventory`: 0 errors.
+- `npx vitest run src/modules/finished-goods-inventory`: 17/17 passing.
+- `npx vitest run` (whole project): **2631/2631 passing, 161 skipped, 0 failures** — clean (the one
+  transient flaky CRM-calendar-test failure noted under FGI-010's own evidence did not recur).
+- No scratch artifacts left in the worktree — confirmed via `git status --short` showing only the 6 intended
+  changed/added paths.
+
+**No conflicts found with the existing ledger, warehouse, production, or dispatch architecture** beyond the
+plan-gap noted above (which is a planning omission, not an architectural conflict).
+
+Proceeding to **FGI-012** next (`finished-goods-receipt.service.ts`, wrapping `completeAtFinalStageInTx()`),
+per the approved one-task-at-a-time Phase 1 sequence.
+
+### FGI-012 — `finished-goods-receipt.service.ts` (wrapping `completeAtFinalStageInTx()`)
+
+**Status:** VERIFIED — functionally complete and fully tested, **standalone, not yet wired into
+`completeAtFinalStageInTx()`** — that wiring is the later, dedicated FGI-020 (UI/API breakdown collection)
+and FGI-021 (actual wiring) tasks in Phase 2, per §6 of the implementation plan.
+
+**Files added:**
+- `src/modules/finished-goods-inventory/finished-goods-receipt.repository.ts` (new) —
+  `createWithItemsInTx`, `findByLotId`.
+- `src/modules/finished-goods-inventory/finished-goods-receipt.service.ts` (new) —
+  `createFinishedGoodsReceiptInTx`.
+- `src/modules/finished-goods-inventory/finished-goods-receipt.service.test.ts` (new, 12 tests).
+
+**Database changes:** none — consumes the `FinishedGoodsReceipt`/`FinishedGoodsReceiptItem` schema FGI-004
+already added in Phase 0.
+
+**A genuine double-counting risk found and fixed during this task, flagged prominently rather than silently
+patched over (per the "stop and report any conflict" instruction):** §6 point 3 of the implementation plan
+describes this feature as "`completeAtFinalStageInTx()` **keeps posting its existing, unchanged**
+`PRODUCTION_RECEIPT` ledger entry (the flat style-level total)... **and additionally**... calls
+`recordInventoryTransaction()` once per colour/size line." Read literally, this means (N+1) separate
+`recordInventoryTransaction()` calls — the original flat call, plus N new per-variant calls. But
+`recordInventoryTransaction()`'s own `StockBalance` branch (FGI-010, already verified and locked in) runs
+**unconditionally on every call**, regardless of whether variant info is supplied. Following §6's literal
+wording would therefore post the flat total **and** the sum of the breakdown into the same `StockBalance`
+row — `quantity + sum(breakdown) = 2× quantity` — a real double-counting bug, not a hypothetical one.
+
+§7 point 2 describes the architecturally consistent, *correct* version of this same idea for Dispatch's own
+analogous multi-pick-line design: "the existing per-`DispatchItem` posting loop **becomes**: one
+`recordInventoryTransaction()` call per pick line... The *sum* of these calls... is still posted into the
+exact same flat `StockBalance` update as today." **"Becomes" is a replacement, not an addition** — the flat
+total is *composed from* the finer-grained calls, never an extra one alongside them.
+
+`createFinishedGoodsReceiptInTx()` was built to match Dispatch's correct shape: it is the **sole** poster of
+inventory movement for a receipt event with a real breakdown. Once wired in (FGI-021), it **replaces**
+`completeAtFinalStageInTx()`'s own direct `recordInventoryTransaction()` call for that event, rather than
+running alongside it unchanged. `FinishedGoodsReceipt.totalQuantity` is a stored summary of the validated
+breakdown sum, never backed by its own separate ledger row. This was resolved confidently (a single,
+objectively correct fix, fully consistent with FGI-010's own already-verified, locked-in unconditional-
+`StockBalance`-branch behavior and with Dispatch's own already-approved analogous design) rather than treated
+as an open question requiring your input — but is documented here in full per the mandatory reporting
+instruction.
+
+**Acceptance criteria (as defined in §8):**
+- [x] **A retried/duplicate completion call is rejected by the inherited guard** (mirroring the ERP-BUG-0001
+      fix's own existing test) — satisfied by confirming that existing, unmodified guard is still intact and
+      still correctly rejects a retried/duplicate completion attempt *before any write*:
+      `job-order.service.test.ts:649`, `"rejects inspecting quantity that has already been forwarded to the
+      next stage"` (`forwardJobOrder()`/`recordQcInspection()` are the only two real callers of
+      `completeAtFinalStageInTx()`, and both already guard against a double-forward/double-QC-accept with
+      `OVER_PRODUCTION_NOT_ALLOWED`). Per §6 point 4 ("idempotency is inherited, not rebuilt"), this new
+      function deliberately builds **no** parallel idempotency mechanism of its own — once wired in behind
+      that existing guard, a retry can never reach it a second time for the same completion event, exactly as
+      the existing flat posting already enjoys today. This test is part of the full, unmodified
+      `job-order.service.test.ts` suite that continues to pass green.
+- [x] **The sum of posted per-variant quantities always exactly equals the flat quantity posted in the same
+      call** — asserted directly in a unit test (not just reasoned about): a dedicated mocked test captures
+      every `recordInventoryTransaction()` call's own `quantity` argument across a 3-line breakdown and
+      asserts their sum equals the call's stated total exactly (123). A second dedicated test
+      (`"never posts a separate (N+1)th flat-total... call"`) asserts exactly N calls happen for an N-line
+      breakdown, never N+1. Live-verified too (see below) against the real `StockBalance`/
+      `FinishedGoodsStockBalance` tables, not just the mocked call count.
+
+**Live, non-mocked verification against the real disposable scratch database — 16/16 checks passed**,
+including a full real fixture chain (Product/ProductVariant×2/Color/Size×2/Branch/Warehouse/User/
+UnitOfMeasure/ProductionStage/ProductionOrder/Lot/JobOrder, all genuinely linked): a real 70-unit receipt
+(50+20 breakdown) created real `FinishedGoodsReceipt`+2×`FinishedGoodsReceiptItem` rows, each with a real,
+distinct `inventoryTransactionId` pointing at a genuinely-posted `InventoryTransaction` row (stockStatus
+`SALEABLE`); **the critical invariant this task's own flagged fix exists to prove — the flat `StockBalance`
+increased by exactly 70, never 140** — confirmed directly via `getAvailableQuantity()`; each variant's own
+`FinishedGoodsStockBalance` was independently correct (50 and 20); a breakdown/total mismatch was rejected
+with `VALIDATION_ERROR` with **zero** DB writes (confirmed: still exactly 1 receipt, flat balance unchanged
+at 70); a second, independent, partial receipt (30 units, 1 variant) against the **same lot** succeeded,
+proving FGI-021's own "multiple partial receipts each create their own independent receipt record" acceptance
+criterion is already structurally supported — flat balance correctly reached 100 (70+30), variant 1's
+Finished-Goods balance correctly reached 80 (50+30). All fixture rows (14 tables touched) were deleted
+afterward — independently confirmed via direct SQL that the scratch database returned to its exact pre-test
+state (0 rows in every touched table).
+
+**Verification evidence:**
+- `npx tsc --noEmit` (whole project): 0 errors.
+- `npx eslint src/modules/finished-goods-inventory`: 0 errors.
+- `npx vitest run src/modules/finished-goods-inventory`: 29/29 passing (17 reservation + 12 receipt).
+- `npx vitest run` (whole project): **2643/2643 passing, 161 skipped, 0 failures** — clean.
+- No scratch artifacts left in the worktree — confirmed via `git status --short` showing only the 7 intended
+  changed/added paths.
+
+**No conflicts found with the existing ledger, warehouse, production, or dispatch architecture** beyond the
+double-counting risk found and fixed above (a plan-wording issue with a single, unambiguous correct
+resolution — not an open architectural disagreement).
+
+Proceeding to **FGI-013** next (ledger/balance reconciliation job and report), per the approved
+one-task-at-a-time Phase 1 sequence.
+
+### FGI-013 — Ledger/balance reconciliation job and report
+
+**Status:** VERIFIED — the computation itself is complete and fully tested. A scheduled job and a dedicated
+UI report screen are deliberately **not** part of this task (see scope note below).
+
+**Files added:**
+- `src/modules/finished-goods-inventory/finished-goods-reconciliation.repository.ts` (new) —
+  `groupByProductWarehouse` (sums every `FinishedGoodsStockBalance` row per `(productId, warehouseId)`,
+  including the nullable-variant "unallocated" bucket from §4.7 for free — it's just another row sharing the
+  same key), `findManyStockBalances` (one batch read, not N+1).
+- `src/modules/finished-goods-inventory/finished-goods-reconciliation.service.ts` (new) —
+  `getFinishedGoodsReconciliationReport(companyId)`.
+- `src/modules/finished-goods-inventory/finished-goods-reconciliation.service.test.ts` (new, 7 tests).
+
+**Database changes:** none — purely a read over the existing `StockBalance`/`FinishedGoodsStockBalance`
+tables.
+
+**Mechanism, exactly per §4.5 point 4**: for every `(companyId, productId, warehouseId)` this company has at
+least one `FinishedGoodsStockBalance` row for, compares `StockBalance.quantityOnHand` (0 if no row exists at
+all — not an error) against `sum(FinishedGoodsStockBalance.quantityOnHand)` across every variant/location/
+status row under that same key, and flags any difference beyond the project's own standard `EPSILON` (0.0001)
+tolerance as `hasMismatch: true` with the signed `drift` reported. **Deliberately read-only** — a detected
+drift is never silently auto-corrected (per §4.7, a real mismatch needs a human-reviewed correction, not an
+automatic rewrite of either cache), confirmed live by checking that running the report left both tables
+completely untouched.
+
+**Acceptance criteria (as defined in §8):**
+- [x] **For a deliberately-corrupted test fixture (a `FinishedGoodsStockBalance` row manually desynced from
+      its own `StockBalance` total), the report correctly flags the mismatch** — proven both as a mocked unit
+      test and live against the real scratch database: a real receipt posted 100 units through the normal
+      code path (both caches genuinely agreeing at 100), then the `FinishedGoodsStockBalance` row was
+      **directly** forced to 70 via a raw update (simulating exactly the "future coding mistake" scenario
+      this report exists to catch — never something the real, correct code path could produce on its own).
+      The report correctly returned `stockBalanceQuantity: 100, finishedGoodsSumQuantity: 70, drift: 30,
+      hasMismatch: true`.
+- [x] **For a clean fixture, the report shows zero drift** — a second, genuinely clean pair (posted normally,
+      never touched afterward) correctly reported `drift: 0, hasMismatch: false` in the very same report call,
+      alongside the corrupted one — confirming the function correctly discriminates clean from corrupted
+      pairs in one pass, not just in isolation.
+
+**Live, non-mocked verification against the real disposable scratch database — 4/4 checks passed**: both
+pairs appeared correctly in one report call; the clean pair showed exactly zero drift; the corrupted pair was
+correctly flagged with the exact expected numbers; running the report left both the real `StockBalance` row
+(still 100) and the real `FinishedGoodsStockBalance` row (still 70) completely unchanged — confirming the
+report is genuinely read-only, not a disguised correction. All fixture rows were deleted afterward —
+independently confirmed via direct SQL that the scratch database returned to its exact pre-test state.
+
+**Scope note, consistent with FGI-011/FGI-012's own precedent**: §4.5 point 4 describes this as a "periodic
+reconciliation job/report" — this task builds the underlying **computation**, fully tested and ready to be
+called from either a future scheduled job or a future report screen (Phase 5/6, e.g. a Warehouse
+Location-wise Stock Report or its own dedicated reconciliation screen). No cron/scheduler infrastructure and
+no UI were introduced here — nothing in FGI-013's own stated acceptance criteria requires either, and no
+scheduling mechanism exists anywhere else in this codebase to extend. This is a deliberate scope read, not an
+oversight — flagged here for visibility, same as the standalone-now/wiring-later pattern already established
+for FGI-011/FGI-012.
+
+**Verification evidence:**
+- `npx tsc --noEmit` (whole project): 0 errors.
+- `npx eslint src/modules/finished-goods-inventory`: 0 errors.
+- `npx vitest run src/modules/finished-goods-inventory`: 36/36 passing (17 reservation + 12 receipt + 7
+  reconciliation).
+- `npx vitest run` (whole project): **2650/2650 passing, 161 skipped, 0 failures** — clean.
+- No scratch artifacts left in the worktree — confirmed via `git status --short` showing only the 8 intended
+  changed/added paths.
+
+**No conflicts found with the existing ledger, warehouse, production, or dispatch architecture.**
+
+**Phase 1 is now complete except for FGI-014** (widening `createStockMovement()`'s item-type validation per
+Decision 2/§4.4) — proceeding to it next, per the approved one-task-at-a-time sequence.
+
+### FGI-014 — Widen `createStockMovement()`'s item-type validation per Decision 2/§4.4
+
+**Status:** VERIFIED — the last task of Phase 1.
+
+**Files changed:**
+- `src/modules/inventory/stock-movement.schema.ts` — new `STOCK_MOVEMENT_ITEM_FAMILIES` const, `itemFamily`
+  field on the header (defaults to `RAW_MATERIAL` — zero behavior change for every existing caller, which
+  never sends this field), `productVariantId`/`toWarehouseLocationId` on each item, and 3 new `.refine()`s
+  (variant required for Finished Goods, variant forbidden for Raw Material, `RETURN_TO_SUPPLIER` forbidden
+  for Finished Goods).
+- `src/modules/inventory/stock-movement.service.ts` — new `assertItemFamilyConsistency()` (the real,
+  DB-backed half of the defense — confirms every line's actual `Product.itemType` matches the stated
+  `itemFamily`, and that a Finished Goods line's `productVariantId` genuinely belongs to that line's own
+  style); `createStockMovement()` branches between the original, byte-for-byte-unchanged raw-material path
+  and a new, parallel finished-goods path (no UOM conversion, `getFinishedGoodsSaleableQuantity()` pre-check
+  instead of the flat `getAvailableQuantity()`, `productVariantId`/`stockStatus: "SALEABLE"` on every
+  `recordInventoryTransaction()` call, and the Transfer destination side's own `toWarehouseLocationId` now
+  wired — raw material still has none, unchanged).
+- `src/modules/products/product.repository.ts` — two small additive helpers:
+  `ProductRepository.findManyItemTypesByIds` (the real DB check behind `assertItemFamilyConsistency`) and
+  `ProductVariantRepository.findManyByIds` (confirms a variant's own `productId`).
+- `src/modules/inventory/stock-movement.schema.test.ts` (new, 8 tests) — the Zod-layer half of the two-layer
+  defense.
+- `src/modules/inventory/stock-movement.service.test.ts` (extended — every pre-existing test kept verbatim,
+  only the shared mock factory/`beforeEach` was extended, matching FGI-010's own established pattern for
+  this exact situation) — 11 new tests: 4 for the service-layer item-type-family assertion, 7 for the new
+  Finished Goods path.
+
+**Database changes:** none — consumes the `StockMovementItem.productVariantId`/`toWarehouseLocationId`
+columns FGI-006 already added in Phase 0.
+
+**Acceptance criteria (as defined in §8):**
+- [x] **A document mixing a raw-material and a finished-goods line is rejected at both the Zod layer and a
+      service-layer assertion (two independent tests, not one):**
+      - Zod layer (`stock-movement.schema.test.ts`): rejects a Finished Goods document with a line missing
+        `productVariantId`; rejects a Raw Material document where a line carries one; rejects a document
+        where only SOME lines carry a variant (can't partially mix shapes); rejects `RETURN_TO_SUPPLIER` for
+        Finished Goods.
+      - Service layer (`stock-movement.service.test.ts`): rejects a document claiming `RAW_MATERIAL` (the
+        default) whose line is genuinely a `STYLE` in the database — the exact "a forged/wrong `itemFamily`
+        value" scenario only a real DB lookup can catch, since Zod has no DB access; rejects a document that
+        genuinely mixes both real item types under one claimed family; rejects a Finished Goods line whose
+        `productVariantId` belongs to a *different* style. **All three confirmed live too** (see below), not
+        just mocked.
+- [x] **Every existing raw-material Stock Movement test passes unmodified** — all 11 pre-existing tests in
+      `stock-movement.service.test.ts` (TRANSFER/RETURN_TO_SUPPLIER/ADJUSTMENT happy paths, the UOM-conversion
+      tests, the 5 CF-5 idempotency tests) kept their exact bodies; only the shared mock setup at the top of
+      the file was extended with two new mocked functions (`findManyItemTypesByIds`, `findManyByIds`) and
+      their own default-resolved values, matching how every other test in this suite's history gets a new
+      capability wired in without touching what it's already testing.
+- [x] **A new finished-goods Transfer/Adjustment test suite covers the same guarded-decrement race pattern as
+      FGI-010** — 7 new mocked tests confirm the Finished Goods path correctly wires every field the already-
+      proven `recordInventoryTransaction()` guard keys on (`productVariantId`/`stockStatus: "SALEABLE"`,
+      `getFinishedGoodsSaleableQuantity()` instead of the flat check, the destination `toWarehouseLocationId`
+      on Transfer). The actual race-safety proof itself is a **live, non-mocked** test against the real
+      scratch database (see below) — proving the pattern is genuinely *reachable end-to-end through Stock
+      Movement*, not just that FGI-010's own ledger function is race-safe in isolation (already proven once).
+
+**Two real test-authoring bugs found and fixed during this task** (bugs in my own new test code, not the
+real implementation — confirmed by tracing each failure to its root cause before "fixing" anything, rather
+than loosening an assertion to make a failure go away):
+1. My placeholder UUIDs (`"11111111-1111-1111-1111-111111111111"`-style) failed Zod's real RFC-4122
+   format check — the fourth group's leading nibble must be `8`/`9`/`a`/`b` (the variant bits), which plain
+   repeated-digit placeholders don't satisfy. Fixed by using genuinely valid v4-shaped UUIDs
+   (`...-4xxx-8xxx-...`) throughout the new schema test file.
+2. One new regression test (confirming a raw-material Transfer still gets no destination location) was
+   accidentally nested inside the Finished-Goods-only `describe` block, whose own `beforeEach` overrides
+   `findManyItemTypesByIds` to only recognize the fixture *style*, not the fixture *material* the misplaced
+   test actually used — causing a `NOT_FOUND` error unrelated to the real feature. Fixed by moving the test
+   to the top-level `describe` block, where the correct raw-material-only mock default already applies.
+
+**Live, non-mocked verification against the real disposable scratch database — 12/12 checks passed**,
+including a full real fixture chain (a real raw material + Style/ProductVariant/2 Warehouses/a real
+destination `WarehouseLocation`/Branch/User): a raw-material Transfer (no `itemFamily` sent at all) still
+succeeded and moved the flat balance correctly (80/20 split) — confirming zero regression; a real Finished
+Goods Transfer correctly moved **both** `FinishedGoodsStockBalance` (70/30, the destination side correctly
+scoped to the real destination location) **and** the flat `StockBalance` (70/30, both caches agreeing); the
+created `StockMovementItem` row itself genuinely stores `productVariantId`/`toWarehouseLocationId`; a
+Finished Goods Adjustment write-off correctly reduced the balance (70→60); an over-decrement Adjustment was
+rejected with `INSUFFICIENT_STOCK_FOR_MOVEMENT`; a document claiming `FINISHED_GOODS` whose line was
+genuinely the real raw material was rejected by the service's own DB-backed check; a variant belonging to a
+different real style was rejected; and **the critical concurrency proof**: two genuinely simultaneous
+`createStockMovement()` calls, each requesting a −40 Finished Goods Adjustment against a real 60-unit
+balance, correctly resolved to exactly one winner and one rejection — the final balance landed at exactly
+**20** (never negative, never double-applied), proving the race-safety already proven for FGI-010's own
+underlying ledger function is genuinely reachable end-to-end through Stock Movement's new Finished Goods
+path. All fixture rows were deleted afterward — independently confirmed via direct SQL that the scratch
+database returned to its exact pre-test state.
+
+**Verification evidence:**
+- `npx tsc --noEmit` (whole project): 0 errors.
+- `npx eslint src/modules/inventory src/modules/products`: 0 errors.
+- `npx vitest run src/modules/inventory`: 169/169 passing (across 5 files, up from 4).
+- `npx vitest run` (whole project): **2669/2669 passing, 161 skipped, 0 failures** — clean.
+- No scratch artifacts left in the worktree — confirmed via `git status --short` showing only the 11
+  intended changed/added paths.
+
+**No conflicts found with the existing ledger, warehouse, production, or dispatch architecture.**
+
+---
+
+## Phase 1 — complete
+
+All four Phase 1 tasks (FGI-010 through FGI-014) are now VERIFIED, each with its own full mocked-unit-test
+coverage, a live non-mocked run against the real disposable scratch database proving its own stated
+acceptance criteria (including a genuine concurrent-race proof for every guarded accumulator introduced),
+and a clean `prisma validate`/`tsc --noEmit`/`eslint`/`vitest run` pass after every single task. Two
+genuine design findings were discovered mid-implementation and resolved confidently (both flagged
+prominently in their own task's evidence section rather than silently folded in): FGI-012's double-counting
+risk in §6's own literal wording, and FGI-011's real plan gap (no task anywhere wires reservation
+creation/release into Sales Order confirm/cancellation, unlike consumption, which FGI-041 already owns).
+

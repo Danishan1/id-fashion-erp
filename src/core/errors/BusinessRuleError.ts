@@ -67,6 +67,13 @@ export type BusinessRuleErrorCode =
   // Dispatch" yet — the client may retry with an explicit override reason
   // (requires production/approve).
   | "PRODUCTION_NOT_RELEASED_TO_DISPATCH"
+  // Finished Goods Inventory (FGI-011): consuming more than a reservation's
+  // own unconsumed remainder (reservedQuantity - consumedQuantity) was
+  // attempted -- the guarded raw-SQL update's WHERE clause rejected it.
+  | "OVER_CONSUMPTION_NOT_ALLOWED"
+  // FGI-011: an action that requires an ACTIVE reservation (consume, release)
+  // was attempted against one that's already RELEASED or FULFILLED.
+  | "RESERVATION_NOT_ACTIVE"
   | "VALIDATION_ERROR"
   | "NOT_FOUND";
 
@@ -119,6 +126,8 @@ const HTTP_STATUS_BY_CODE: Record<BusinessRuleErrorCode, number> = {
   AI_SERVICE_ERROR: 502,
   AI_INVALID_RESPONSE: 502,
   PRODUCTION_NOT_RELEASED_TO_DISPATCH: 409,
+  OVER_CONSUMPTION_NOT_ALLOWED: 409,
+  RESERVATION_NOT_ACTIVE: 409,
   VALIDATION_ERROR: 400,
   NOT_FOUND: 404,
 };

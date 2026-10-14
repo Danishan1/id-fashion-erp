@@ -1,8 +1,13 @@
 import { prisma } from "@/core/db/client";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import type { ListQuery } from "@/lib/list-query";
-import type { InventoryTransactionType, Prisma, RelatedModule } from "@prisma/client";
-import { InventoryScopeRepository, InventoryTransactionRepository, StockBalanceRepository } from "./inventory.repository";
+import type { InventoryTransactionType, Prisma, RelatedModule, StockStatus } from "@prisma/client";
+import {
+  FinishedGoodsStockBalanceRepository,
+  InventoryScopeRepository,
+  InventoryTransactionRepository,
+  StockBalanceRepository,
+} from "./inventory.repository";
 
 interface ActorContext {
   companyId: string;
@@ -28,6 +33,24 @@ interface RecordInventoryTransactionInput {
   referenceRecordId: string;
   fabricRollId?: string | null;
   notes?: string | null;
+  /**
+   * Finished Goods Inventory module (2026-10-13, FGI-010) — opt-in,
+   * additive. When BOTH `productVariantId` and `stockStatus` are supplied,
+   * this call ALSO upserts/guarded-decrements the matching
+   * `FinishedGoodsStockBalance` row (keyed on companyId/productId/
+   * productVariantId/warehouseId/warehouseLocationId/stockStatus — the same
+   * `warehouseLocationId` already on this input, reused for both the
+   * ledger's own column and the balance row's own location dimension) inside
+   * this SAME transaction as the one ledger insert below, so the two caches
+   * can never disagree by construction (see
+   * docs/FINISHED_GOODS_INVENTORY_IMPLEMENTATION_PLAN.md §4.5).
+   *
+   * Every existing caller omits both fields entirely and is completely
+   * unaffected — the original `StockBalance` branch a few lines down runs
+   * unconditionally either way, exactly as it always has.
+   */
+  productVariantId?: string | null;
+  stockStatus?: StockStatus | null;
 }
 
 /**
@@ -64,6 +87,17 @@ export async function recordInventoryTransaction(
   if (!warehouse || warehouse.companyId !== actor.companyId) {
     throw new BusinessRuleError("NOT_FOUND", "Warehouse not found.", { id: input.warehouseId });
   }
+  // Finished Goods Inventory module (FGI-010) — both fields must be supplied
+  // together or not at all; one without the other is a caller bug (an
+  // incomplete key would otherwise silently create a FinishedGoodsStockBalance
+  // row this project's own StockStatus enum never actually describes).
+  if ((input.productVariantId != null) !== (input.stockStatus != null)) {
+    throw new BusinessRuleError(
+      "VALIDATION_ERROR",
+      "productVariantId and stockStatus must be supplied together for a Finished-Goods-tracked posting, or not at all.",
+      {}
+    );
+  }
 
   const transaction = await InventoryTransactionRepository.create(tx, {
     companyId: actor.companyId,
@@ -78,6 +112,8 @@ export async function recordInventoryTransaction(
     fabricRollId: input.fabricRollId || null,
     performedByUserId: actor.userId,
     notes: input.notes || null,
+    productVariantId: input.productVariantId || null,
+    stockStatus: input.stockStatus || null,
   });
 
   // A receipt (quantity >= 0) can never drive the balance negative, so a
@@ -108,6 +144,35 @@ export async function recordInventoryTransaction(
     }
   }
 
+  // Finished Goods Inventory module (FGI-010) — the new, purely additive
+  // branch. Runs AFTER the unconditional StockBalance branch above (so a
+  // guard rejection there already threw and rolled back before this ever
+  // executes), using the exact same increment-vs-guarded-decrement shape,
+  // just against the richer, variant/location/status-keyed cache instead.
+  if (input.productVariantId && input.stockStatus) {
+    const key = {
+      companyId: actor.companyId,
+      productId: input.productId,
+      productVariantId: input.productVariantId,
+      warehouseId: input.warehouseId,
+      warehouseLocationId: input.warehouseLocationId || null,
+      stockStatus: input.stockStatus,
+    };
+    if (input.quantity >= 0) {
+      await FinishedGoodsStockBalanceRepository.upsertIncrement(tx, key, input.quantity);
+    } else {
+      const decrementAmount = -input.quantity;
+      const guard = await FinishedGoodsStockBalanceRepository.guardedDecrement(tx, key, decrementAmount, decrementAmount - EPSILON);
+      if (guard.count === 0) {
+        throw new BusinessRuleError(
+          "INSUFFICIENT_STOCK_FOR_MOVEMENT",
+          `Not enough Finished Goods stock to post this transaction for this specific variant/location — requested ${decrementAmount}, but the available balance is insufficient.`,
+          { productId: input.productId, productVariantId: input.productVariantId, warehouseId: input.warehouseId, requested: decrementAmount }
+        );
+      }
+    }
+  }
+
   return transaction;
 }
 
@@ -116,6 +181,33 @@ export async function recordInventoryTransaction(
  * decrement a real warehouse's balance, not a company-wide sum. */
 export async function getAvailableQuantity(companyId: string, productId: string, warehouseId: string): Promise<number> {
   const balance = await StockBalanceRepository.findOne(companyId, productId, warehouseId);
+  return balance ? Number(balance.quantityOnHand) : 0;
+}
+
+/**
+ * Finished Goods Inventory module (2026-10-13, FGI-010) — the variant/
+ * location-aware sibling of getAvailableQuantity above, reading the new
+ * FinishedGoodsStockBalance cache. Deliberately takes the same shape (a
+ * single, specific key) rather than aggregating — "Available" in the fuller
+ * Reserved-aware sense (Saleable minus active reservations) is
+ * FGI-011/§4.2's own job, built on top of this primitive, not duplicated
+ * here.
+ */
+export async function getFinishedGoodsSaleableQuantity(
+  companyId: string,
+  productId: string,
+  productVariantId: string,
+  warehouseId: string,
+  warehouseLocationId?: string | null
+): Promise<number> {
+  const balance = await FinishedGoodsStockBalanceRepository.findOne({
+    companyId,
+    productId,
+    productVariantId,
+    warehouseId,
+    warehouseLocationId: warehouseLocationId ?? null,
+    stockStatus: "SALEABLE",
+  });
   return balance ? Number(balance.quantityOnHand) : 0;
 }
 

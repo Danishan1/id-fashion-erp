@@ -1,5 +1,5 @@
 import { prisma } from "@/core/db/client";
-import type { Prisma } from "@prisma/client";
+import type { Prisma, StockStatus } from "@prisma/client";
 
 export const InventoryTransactionRepository = {
   create: (tx: Prisma.TransactionClient, data: Prisma.InventoryTransactionUncheckedCreateInput) =>
@@ -116,6 +116,105 @@ export const StockBalanceRepository = {
       where: { companyId, productId: { in: productIds } },
       _sum: { quantityOnHand: true },
     }),
+};
+
+/**
+ * Finished Goods Inventory module (2026-10-13, FGI-010) — the variant/
+ * location/status-dimensioned sibling of StockBalanceRepository above. Key
+ * dimensions can be null (productVariantId = the "unallocated" bucket,
+ * warehouseLocationId = the "staging" bucket — see the FinishedGoodsStockBalance
+ * model's own schema comment) but the true uniqueness constraint
+ * (finished_goods_stock_balances_key) is a hand-written COALESCE expression
+ * index Prisma's schema DSL cannot declare as a real @@unique — so unlike
+ * StockBalanceRepository.upsertIncrement (a one-line prisma.upsert() against
+ * a known compound key), this does a plain find-then-create/update, with the
+ * real index as the backstop against a genuine concurrent-create race for a
+ * brand-new key (caught below as a P2002 and retried as an update — see
+ * isConcurrentCreateRace's own doc comment for how that shape was confirmed).
+ */
+export interface FinishedGoodsBalanceKey {
+  companyId: string;
+  productId: string;
+  productVariantId: string | null;
+  warehouseId: string;
+  warehouseLocationId: string | null;
+  stockStatus: StockStatus;
+}
+
+function finishedGoodsBalanceKeyWhere(key: FinishedGoodsBalanceKey): Prisma.FinishedGoodsStockBalanceWhereInput {
+  return {
+    companyId: key.companyId,
+    productId: key.productId,
+    productVariantId: key.productVariantId,
+    warehouseId: key.warehouseId,
+    warehouseLocationId: key.warehouseLocationId,
+    stockStatus: key.stockStatus,
+  };
+}
+
+/**
+ * `FinishedGoodsStockBalance` has exactly one unique constraint — the
+ * hand-written COALESCE index above — so, unlike
+ * isUniqueConstraintViolationOnColumn (built to disambiguate a table with
+ * *multiple* unique constraints by column name), there is nothing to
+ * disambiguate here: any P2002 raised against this model IS that
+ * constraint. Checking `meta.modelName` instead of column names is also the
+ * more reliable signal for an expression index specifically — confirmed
+ * empirically (not assumed) against this project's real
+ * `@prisma/adapter-pg` driver: the constraint's own `fields` array for an
+ * expression index comes back as a garbled, comma-split fragment of the raw
+ * SQL expression text (e.g. `"COALESCE(product_variant_id"` as one literal
+ * array element), not a clean column name `isUniqueConstraintViolationOnColumn`
+ * could ever match against.
+ */
+function isConcurrentCreateRace(error: unknown): boolean {
+  return (
+    !!error &&
+    typeof error === "object" &&
+    "code" in error &&
+    (error as { code?: string }).code === "P2002" &&
+    (error as { meta?: { modelName?: string } }).meta?.modelName === "FinishedGoodsStockBalance"
+  );
+}
+
+export const FinishedGoodsStockBalanceRepository = {
+  upsertIncrement: async (tx: Prisma.TransactionClient, key: FinishedGoodsBalanceKey, deltaQuantity: number) => {
+    const existing = await tx.finishedGoodsStockBalance.findFirst({ where: finishedGoodsBalanceKeyWhere(key), select: { id: true } });
+    if (existing) {
+      return tx.finishedGoodsStockBalance.update({ where: { id: existing.id }, data: { quantityOnHand: { increment: deltaQuantity } } });
+    }
+    try {
+      return await tx.finishedGoodsStockBalance.create({
+        data: {
+          companyId: key.companyId,
+          branchId: null,
+          productId: key.productId,
+          productVariantId: key.productVariantId,
+          warehouseId: key.warehouseId,
+          warehouseLocationId: key.warehouseLocationId,
+          stockStatus: key.stockStatus,
+          quantityOnHand: deltaQuantity,
+        },
+      });
+    } catch (error) {
+      if (!isConcurrentCreateRace(error)) throw error;
+      const winner = await tx.finishedGoodsStockBalance.findFirstOrThrow({ where: finishedGoodsBalanceKeyWhere(key) });
+      return tx.finishedGoodsStockBalance.update({ where: { id: winner.id }, data: { quantityOnHand: { increment: deltaQuantity } } });
+    }
+  },
+
+  /** Same atomic-floor-in-the-WHERE-clause guard as StockBalanceRepository's
+   * own guardedDecrement — no COALESCE/raw SQL needed here, since this is an
+   * ordinary equality match on one already-known (possibly null) key, not a
+   * uniqueness constraint; Prisma's plain updateMany already matches a
+   * specific null/non-null value correctly. */
+  guardedDecrement: (tx: Prisma.TransactionClient, key: FinishedGoodsBalanceKey, decrementAmount: number, minimumRequiredBalance: number) =>
+    tx.finishedGoodsStockBalance.updateMany({
+      where: { ...finishedGoodsBalanceKeyWhere(key), quantityOnHand: { gte: minimumRequiredBalance } },
+      data: { quantityOnHand: { decrement: decrementAmount } },
+    }),
+
+  findOne: (key: FinishedGoodsBalanceKey) => prisma.finishedGoodsStockBalance.findFirst({ where: finishedGoodsBalanceKeyWhere(key) }),
 };
 
 /**
