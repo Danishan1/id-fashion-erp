@@ -97,6 +97,7 @@ Point the provider's webhook (incoming messages and delivery statuses) to the br
 1. In CRM Settings → Channels → Edit, set **Outbound URL** to the bridge's outbound route (e.g. `https://bridge.yourcompany.com/crm/outbound`).
 2. Optionally allow attachments and set the size limit.
 3. Without an outbound URL, the channel is **receive-only** and the Inbox explains that replies aren't set up.
+4. In production the outbound URL must be https on a **public** address: `localhost`, `*.local` / `*.internal` names and private, loopback, link-local (cloud metadata) or CGNAT addresses are refused when the channel is saved and checked again before every send (Phase 22). A bridge on your own network must be named in `CRM_WORKFLOW_WEBHOOK_ALLOWED_HOSTS` by the server administrator. Local development (`NODE_ENV` ≠ production) may use `http://localhost`.
 
 **Step 5 — Test**
 
@@ -403,6 +404,7 @@ If a customer opts out through the provider (e.g. replies STOP to an SMS), recor
 | Status stays Sent | Receipts must use the **same id** your outbound route returned. Check the provider is configured to send status webhooks. |
 | `503 CHANNEL_PAUSED` | The channel is paused in CRM Settings → Channels. |
 | Replies say "Replies are not set up for this channel" | Set the Outbound URL on the channel. |
+| Reply Failed `DESTINATION_BLOCKED` / "must be a public address" | The outbound URL points at an internal or private address. Use the bridge's public https URL, or ask the administrator to allow-list the host (`CRM_WORKFLOW_WEBHOOK_ALLOWED_HOSTS`). |
 | Reply button disabled with an opt-out warning | The contact opted out (§6). |
 
 ---

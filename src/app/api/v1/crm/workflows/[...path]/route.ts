@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
-import { PermissionService } from "@/core/rbac/PermissionService";
 import { parseListQuery } from "@/lib/list-query";
 import { crmListResponse, crmRoute } from "@/modules/crm/core/crm-route";
 import {
@@ -12,7 +11,6 @@ import {
   listExecutions,
   listVersions,
   publishWorkflow,
-  revealWebhookSecret,
   rotateWebhookSecret,
   runWorkflowManually,
   saveDraft,
@@ -38,8 +36,7 @@ import { parseExecutionFilters } from "@/modules/crm/workflows/workflow.schema";
  *   GET    /{id}/versions              version history
  *   GET    /{id}/versions/{versionId}  one version (with definition)
  *   GET    /{id}/executions            executions of this workflow
- *   GET    /{id}/webhook-secret        reveal (crm_settings.edit)
- *   POST   /{id}/webhook-secret        rotate
+ *   POST   /{id}/webhook-secret        rotate → { secret } shown ONCE (Phase 22: an existing secret can't be read back)
  */
 type Params = { path: string[] };
 
@@ -67,11 +64,6 @@ export const GET = crmRoute<Params>({ module: "crm_settings", action: "view" }, 
     const query = parseListQuery(sp, "createdAt");
     const { data, totalCount } = await listExecutions(actor, { ...parseExecutionFilters(sp), workflowId: id }, query);
     return crmListResponse(data, totalCount, query);
-  }
-  if (sub === "webhook-secret" && !subId) {
-    // Revealing a secret needs edit rights, not just view.
-    await PermissionService.assert(actor.userId, "crm_settings", "edit");
-    return ok(await revealWebhookSecret(actor, id));
   }
   notFound();
 });
@@ -110,7 +102,7 @@ export const POST = crmRoute<Params>({ module: "crm_settings", action: "edit" },
     case "run":
       return ok(await runWorkflowManually(actor, id, await body(req)), 201);
     case "webhook-secret":
-      return ok(await rotateWebhookSecret(actor, id));
+      return NextResponse.json({ data: await rotateWebhookSecret(actor, id) }, { headers: { "Cache-Control": "no-store" } });
   }
   notFound();
 });

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProviderChannel } from "./CommunicationProvider";
 import { channelProvidersFor, getChannelProvider } from "./provider-registry";
-import { attachmentKindOf, checkOutboundUrl, genericWebhookProvider as generic, primaryIdentity, signGenericPayload } from "./providers/generic-webhook.provider";
+import { attachmentKindOf, checkOutboundDestination, checkOutboundUrl, genericWebhookProvider as generic, primaryIdentity, signGenericPayload } from "./providers/generic-webhook.provider";
 
 const channel = (over: Partial<ProviderChannel> = {}): ProviderChannel => ({ id: "ch-1", companyId: "co-1", channelType: "WHATSAPP", provider: "generic", address: null, config: {}, secret: "whsec_test", ...over });
 const now = new Date("2026-10-10T10:00:00Z");
@@ -159,3 +159,34 @@ describe("generic webhook provider — config, capabilities and sending", () => 
     expect(await generic.sendMessage(channel(), out)).toMatchObject({ ok: false, errorCode: "CHANNEL_NOT_SENDABLE" });
   });
 });
+
+describe("generic webhook provider — outbound destination (Phase 22 SSRF guard)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  it("refuses internal names and private / loopback / metadata literals in production, unless allow-listed", async () => {
+    for (const url of ["https://localhost/x", "https://relay.internal/x", "https://127.0.0.1/x", "https://10.0.0.8/x", "https://169.254.169.254/latest", "https://[::1]/x", "https://192.168.0.2/x"]) {
+      expect(checkOutboundUrl(url, true), url).toMatch(/public address/);
+      expect(await checkOutboundDestination(url, true), url).toMatch(/public address/);
+    }
+    expect(checkOutboundUrl("http://localhost:4000/x", false)).toBeNull(); // local development
+    expect(await checkOutboundDestination("https://8.8.8.8/x", true)).toBeNull();
+    vi.stubEnv("CRM_WORKFLOW_WEBHOOK_ALLOWED_HOSTS", "10.0.0.8");
+    expect(await checkOutboundDestination("https://10.0.0.8/x", true)).toBeNull(); // an admin's deliberate on-premise relay
+  });
+
+  it("never calls a blocked destination when sending", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const r = await generic.sendMessage(
+      { id: "c1", channelType: "SMS", config: { outboundUrl: "https://169.254.169.254/latest" }, secret: "s" } as never,
+      { idempotencyKey: "k", conversation: { id: "v", threadRef: null }, to: { kind: "PHONE", value: "+911" }, subject: null, body: "hi", attachments: [], replyToProviderMessageId: null } as never
+    );
+    expect(r).toMatchObject({ ok: false, errorCode: "DESTINATION_BLOCKED", retryable: false });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+

@@ -3,7 +3,7 @@ import type { CrmEntityType, Prisma } from "@prisma/client";
 import { prisma } from "@/core/db/client";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { PermissionService } from "@/core/rbac/PermissionService";
-import { decryptSecret, encryptSecret } from "@/core/security/encryption";
+import { encryptSecret } from "@/core/security/encryption";
 import type { ListQuery } from "@/lib/list-query";
 import type { CrmActor } from "../core/crm-actor";
 import { runCrmMutation, type CrmMutationContext } from "../core/crm-mutation";
@@ -430,15 +430,11 @@ export async function duplicateWorkflow(actor: CrmActor, id: string, raw: unknow
   });
 }
 
-/** The HMAC secret webhook receivers verify signatures with (crm_settings.edit only). */
-export async function revealWebhookSecret(actor: CrmActor, id: string) {
-  const w = await loadWorkflow(actor.companyId, id);
-  if (!w.webhookSecretEnc) throw new BusinessRuleError("NOT_FOUND", "This workflow has no webhook secret.");
-  // Who looked at the secret is audited (the value never is).
-  await runCrmMutation(actor, (ctx) => ctx.audit({ tableName: TABLE, recordId: id, action: "UPDATE", newValues: { webhookSecret: "revealed" } }));
-  return { secret: decryptSecret(w.webhookSecretEnc) };
-}
-
+/**
+ * New HMAC signing secret for the workflow's "Call a webhook" actions. Phase 22:
+ * the plaintext is returned ONLY here, once — there is no endpoint that reads
+ * an existing secret back (the stored copy is encrypted and used only to sign).
+ */
 export async function rotateWebhookSecret(actor: CrmActor, id: string) {
   const w = await loadWorkflow(actor.companyId, id);
   const secret = randomBytes(32).toString("hex");

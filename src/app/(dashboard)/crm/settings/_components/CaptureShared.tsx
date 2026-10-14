@@ -1,7 +1,5 @@
 "use client";
 
-import { useState } from "react";
-import { Button } from "@/components/ui/Button";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import type { LeadSourceDto, UserRefDto } from "../../leads/_components/lead-types";
@@ -59,27 +57,8 @@ export function CaptureDefaultsFields({ value, onChange, sources, users, idPrefi
   );
 }
 
-/** A secret shown once, with a copy button. */
-export function SecretOnce({ label, value }: { label: string; value: string }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <div className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3 dark:border-amber-500/40 dark:bg-amber-500/10">
-      <p className="text-sm font-medium text-amber-900 dark:text-amber-100">{label} — copy it now. It won&apos;t be shown again.</p>
-      <div className="flex gap-2">
-        <code className="block flex-1 break-all rounded bg-white px-2 py-1.5 font-mono text-xs text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">{value}</code>
-        <Button
-          variant="secondary"
-          onClick={async () => {
-            await navigator.clipboard?.writeText(value).catch(() => undefined);
-            setCopied(true);
-          }}
-        >
-          {copied ? "Copied" : "Copy"}
-        </Button>
-      </div>
-    </div>
-  );
-}
+// Phase 22: moved to components/crm so workflows and settings share one implementation.
+export { SecretOnce, copyText } from "@/components/crm/SecretOnce";
 
 export function CodeBlock({ children }: { children: string }) {
   return <pre className="overflow-x-auto rounded-md bg-zinc-900 p-3 text-xs leading-relaxed text-zinc-100">{children}</pre>;

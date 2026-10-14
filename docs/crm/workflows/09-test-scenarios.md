@@ -27,7 +27,7 @@ Name test workflows `TEST — …` and archive them afterwards. Record the resul
 | A-02 | Admin can create | Log in as **Admin** → Workflows → New workflow → name it, pick *Lead created* → Create draft. | Opens the Builder; status Draft, badge "Draft v1". |
 | A-03 | Run-as recorded | Publish any valid workflow as Admin. | Header shows "runs as <Admin>". |
 | A-04 | Missing permission blocks publish | Have a user **without** permission to create CRM records publish a workflow with *Create task*. | Publish refused: "You'll be the run-as user, but you don't have crm.create — needed for 'Create task'". |
-| A-05 | Webhook secret | Details & secret → Reveal, then Rotate. | A secret is shown; after Rotate a different one. Both actions appear in the audit log, without the secret value. |
+| A-05 | Webhook secret | Details & secret: check the status, then Rotate secret twice. | The tab shows "Secret configured" and no Reveal button. Each rotation shows a new secret once (Done is enabled only after ticking "I have stored this secret"); after leaving the tab it is not shown again. Both rotations appear in the audit log, without the secret value. |
 
 ## B. Drafts, publishing and versions
 

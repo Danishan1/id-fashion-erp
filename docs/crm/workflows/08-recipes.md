@@ -221,4 +221,4 @@ For a conversation, the "record's owner" is the user it is assigned to.
 | n1 | Action: Call a webhook | URL `https://bi.example.com/hooks/crm-won` · Include the record's fields: yes · Extra JSON `{"event":"deal_won"}` · If it fails: Record the error and continue | n2 |
 | n2 | Action: Add tags | New tag names: `won-2026` | end |
 
-Give the receiving team the **webhook signing secret** (Details & secret tab → Reveal) and the verification rules in file 05.
+Give the receiving team the **webhook signing secret** and the verification rules in file 05. The secret is only shown when it is generated: open the Details & secret tab, choose **Rotate secret** (if the receiver is already live, it must switch to the new secret at the same time) and copy the value from the one-time display. For a stream of CRM events rather than one call per workflow, see Outgoing webhooks (CRM Settings → Integrations, Phase 22).

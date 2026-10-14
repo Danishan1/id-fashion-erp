@@ -216,10 +216,10 @@ Webhook rules:
 - https only, on standard ports, with no credentials in the URL.
 - DNS is resolved once and every address must be public (loopback, private, link-local and metadata ranges, CGNAT and IPv6 private ranges are blocked). The connection is pinned to the vetted address.
 - No redirects, a 10 s timeout, and the response is capped at 64 KB.
-- Each request is signed with HMAC-SHA256 using a per-workflow secret, encrypted at rest. Revealing or rotating the secret needs edit rights and is audited.
+- Each request is signed with HMAC-SHA256 using a per-workflow secret, encrypted at rest. Rotating the secret needs edit rights and is audited; the new secret is shown once. (Phase 22 removed the old "Reveal" action — an existing secret can never be read back.)
 - Allow-list: `CRM_WORKFLOW_WEBHOOK_ALLOWED_HOSTS`. Local http: `CRM_WORKFLOW_WEBHOOK_ALLOW_HTTP=true`.
 
-Secrets never appear in logs, traces or the API (only on explicit reveal). Template variables are rendered by the Phase 12 engine, never `eval`.
+Secrets never appear in logs, traces or the API (only once, in the rotation response). Template variables are rendered by the Phase 12 engine, never `eval`.
 
 ## 14. Test mode
 
@@ -255,7 +255,7 @@ POST   /api/v1/crm/workflows/{id}/test           { entityType, entityId, source?
 POST   /api/v1/crm/workflows/{id}/run            { entityType, entityId }
 GET    /api/v1/crm/workflows/{id}/versions[/{versionId}]
 GET    /api/v1/crm/workflows/{id}/executions
-GET    /api/v1/crm/workflows/{id}/webhook-secret (reveal, edit) · POST (rotate)
+POST   /api/v1/crm/workflows/{id}/webhook-secret (rotate → new secret, shown once; Phase 22 removed the GET reveal)
 GET    /api/v1/crm/workflow-executions           (?workflowId=&statuses=&entityType=&entityId=&mode=)
 GET    /api/v1/crm/workflow-executions/{id}      with steps
 POST   /api/v1/crm/workflow-executions/{id}/cancel|pause|resume|retry

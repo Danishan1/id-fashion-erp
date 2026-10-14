@@ -145,6 +145,8 @@ model Company {
   crmWorkflowExecutions               CrmWorkflowExecution[]
   bulkJobs                            BulkJob[]
   bulkJobItems                        BulkJobItem[]
+  crmWebhookSubscriptions             CrmWebhookSubscription[]
+  crmWebhookDeliveries                CrmWebhookDelivery[]
   crmUserPreferences                  CrmUserPreference[]
   crmCompanyMerges                    CrmCompanyMerge[]
   attendanceRecords                   AttendanceRecord[]
@@ -11935,4 +11937,77 @@ model BulkJobItem {
   @@unique([jobId, sequence])
   @@index([jobId, status, sequence])
   @@map("bulk_job_items")
+}
+
+// ── Phase 22: outgoing webhook subscriptions (2026-10-14) ───────────────────
+// See docs/crm/PHASE_22_SETTINGS_INTEGRATIONS.md. A subscription sends the CRM
+// events it subscribes to (registry: crm-event-types.ts) from the durable
+// crm_events outbox to an external HTTPS URL, signed with its own secret
+// (stored encrypted, shown once at creation / rotation). One delivery row per
+// (subscription, event) — created once, retried with back-off, logged.
+
+model CrmWebhookSubscription {
+  id                  String    @id @default(uuid()) @db.Uuid
+  companyId           String    @map("company_id") @db.Uuid
+  name                String
+  description         String?
+  url                 String
+  eventTypes          String[]  @map("event_types")
+  isActive            Boolean   @default(true) @map("is_active")
+  // Events are queued from this moment (set at creation, re-enabling and event-type changes) —
+  // a re-enabled subscription never replays what happened while it was off.
+  activeSince         DateTime  @default(now()) @map("active_since")
+  // AES-GCM (core/security/encryption). Never returned to a client.
+  secretEncrypted     String    @map("secret_encrypted")
+  secretRotatedAt     DateTime? @map("secret_rotated_at")
+  consecutiveFailures Int       @default(0) @map("consecutive_failures")
+  lastDeliveryAt      DateTime? @map("last_delivery_at")
+  lastDeliveryStatus  String?   @map("last_delivery_status")
+  lastSuccessAt       DateTime? @map("last_success_at")
+  lastError           String?   @map("last_error")
+  createdByUserId     String    @map("created_by_user_id") @db.Uuid
+  updatedByUserId     String?   @map("updated_by_user_id") @db.Uuid
+  version             Int       @default(1)
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  company    Company              @relation(fields: [companyId], references: [id])
+  deliveries CrmWebhookDelivery[]
+
+  @@unique([companyId, name])
+  @@index([isActive])
+  @@map("crm_webhook_subscriptions")
+}
+
+model CrmWebhookDelivery {
+  id             String    @id @default(uuid()) @db.Uuid
+  companyId      String    @map("company_id") @db.Uuid
+  subscriptionId String    @map("subscription_id") @db.Uuid
+  // The crm_events row (null for a test delivery).
+  eventId        String?   @map("event_id") @db.Uuid
+  eventType      String    @map("event_type")
+  isTest         Boolean   @default(false) @map("is_test")
+  // Only for test deliveries (real ones are built from the immutable event row).
+  payload        Json?
+  // PENDING / RETRYING / SUCCEEDED / FAILED / CANCELLED
+  status         String    @default("PENDING")
+  attempts       Int       @default(0)
+  nextAttemptAt  DateTime  @default(now()) @map("next_attempt_at")
+  lockedAt       DateTime? @map("locked_at")
+  lockToken      String?   @map("lock_token") @db.Uuid
+  responseStatus Int?      @map("response_status")
+  durationMs     Int?      @map("duration_ms")
+  errorCode      String?   @map("error_code")
+  errorMessage   String?   @map("error_message")
+  lastAttemptAt  DateTime? @map("last_attempt_at")
+  deliveredAt    DateTime? @map("delivered_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  company      Company                @relation(fields: [companyId], references: [id])
+  subscription CrmWebhookSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@unique([subscriptionId, eventId])
+  @@index([status, nextAttemptAt])
+  @@index([subscriptionId, createdAt])
+  @@map("crm_webhook_deliveries")
 }

@@ -7773,3 +7773,47 @@ The whole CRM (Leads, Deals/Opportunities, pipeline/sources/lost-reason masters,
 - Visibility on the server: record scope + owner filter (another owner needs crm.view_all); workflow/integration health needs crm_settings.view; feed uses the company-feed rule (OWN = own actions).
 - Customisation = CRM preferences `dashboard.layout` / `dashboard.filters` (schemas in `dashboard-registry.ts`); new widget = catalogue entry + service function + view.
 - Report: `docs/crm/PHASE_21_DASHBOARD.md`.
+
+## CRM Phase 22 — Settings, API configuration, webhooks & integration guidance (2026-10-14)
+
+Full write-up: `docs/crm/PHASE_22_SETTINGS_INTEGRATIONS.md`.
+
+**Secret rule (all CRM credentials).** A secret is shown once, in the create or rotate response, and never again. Never add a "reveal", never put a secret in a list/detail/update/test response, an edit form, a log, an audit row, a URL or browser storage.
+- UI: `src/components/crm/SecretOnce.tsx`.
+  - `SecretOnce`: needs a "stored it" confirmation, warns before the page is left, and reports real copy results.
+  - `CopyButton` / `CopyableCode`: copy buttons that report the real result.
+  - `CaptureShared.tsx` re-exports these.
+- Workflow secret: `GET /workflows/{id}/webhook-secret` and `revealWebhookSecret` were removed. Rotate only (POST, `no-store`).
+
+**Settings IA.**
+- `settings/_components/settings-tabs.ts` holds `CRM_SETTINGS_TABS` and the groups. It is a non-client module, because the server page validates `?tab=` with it.
+- Default tab: `overview`. Old tab ids are kept.
+- New sections:
+  - `overview` / `integrations` / `access` (`OverviewTabs.tsx`);
+  - `api` (`ApiAccessTab.tsx`);
+  - `webhooks-out` (`OutgoingWebhooksTab.tsx`);
+  - `automation` (`AutomationTab.tsx`).
+- `GET /api/v1/crm/settings/overview` (`crm-integrations-overview.service.ts`) computes integration statuses from the DB: CONNECTED / NEEDS_ATTENTION / AVAILABLE / PLANNED.
+- Meta Lead Ads, IndiaMART, built-in WhatsApp Cloud and mailbox sync are **Planned**. Don't mark them working.
+
+**Outgoing webhooks** (`src/modules/crm/webhooks-out/`).
+- Tables: `crm_webhook_subscriptions` and `crm_webhook_deliveries` (migration `20261015100000_crm_webhook_subscriptions`).
+- Events: the CRM event registry minus workflow draft events (`webhook-events.ts`, client-safe).
+- Delivery runs in worker job `webhook.tick` every 15 s (`crm-import.worker.ts`, scheduler `crm-webhook-tick`):
+  - queues per (subscription, event), unique, with a 24 h look-back from `active_since`;
+  - claims with a lease (`SKIP LOCKED`);
+  - sends through `postSignedWebhook` (pinned public IP, no redirects, 10 s);
+  - retries at 1m / 5m / 30m / 2h / 6h, then FAILED.
+- Disabling a subscription cancels its queue; re-enabling or adding events doesn't replay.
+- Delivery logs store outcomes only. Payload is stored only for test deliveries, which are synthetic.
+- Routes: `/api/v1/crm/settings/webhook-subscriptions[...]` (view = `crm_settings.view`, rest = `crm_settings.edit`).
+
+**SSRF.**
+- `generic-webhook.provider.ts` `checkOutboundUrl` / `checkOutboundDestination`: in production, internal names and private addresses are refused when saved and re-checked by DNS before each send (`DESTINATION_BLOCKED`).
+- The allow-list `CRM_WORKFLOW_WEBHOOK_ALLOWED_HOSTS` is shared.
+- The blocked message is now "only public URLs can be called".
+
+**Tests.**
+- `webhooks-out.unit.test.ts` and `webhooks-out.integration.test.ts`. The integration test runs a real HTTP receiver on 127.0.0.1 with `CRM_WORKFLOW_WEBHOOK_ALLOW_HTTP=true` and `ALLOWED_HOSTS=127.0.0.1` set in the test file.
+- `SecretOnce.test.tsx`, `OutgoingWebhooksTab.test.tsx`, and the SSRF cases in `communication.test.ts`.
+- `bulk-queue.integration.test.ts` needs `BULK_IT_REDIS_URL` as well.

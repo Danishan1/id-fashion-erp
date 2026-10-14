@@ -108,7 +108,7 @@ export async function resolveSafeAddress(url: URL): Promise<{ address: string; f
   const literal = isIP(host);
   const addresses = literal ? [{ address: host, family: literal as 4 | 6 }] : ((await dnsLookup(host, { all: true, verbatim: true }).catch(() => [])) as { address: string; family: 4 | 6 }[]);
   if (!addresses.length) throw new WebhookBlockedError(`Couldn't resolve ${host}.`);
-  if (!allowListed && addresses.some((a) => isBlockedAddress(a.address))) throw new WebhookBlockedError(`${host} resolves to a private or internal address; workflows can only call public URLs.`);
+  if (!allowListed && addresses.some((a) => isBlockedAddress(a.address))) throw new WebhookBlockedError(`${host} resolves to a private or internal address; only public URLs can be called.`);
   return addresses[0];
 }
 
@@ -124,7 +124,11 @@ export interface WebhookResult {
 }
 
 /** POSTs JSON. 2xx = success; anything else throws WebhookCallError. */
-export async function postSignedWebhook(rawUrl: string, payload: unknown, opts: { secret: string; idempotencyKey: string; eventId: string }): Promise<WebhookResult> {
+export async function postSignedWebhook(
+  rawUrl: string,
+  payload: unknown,
+  opts: { secret: string; idempotencyKey: string; eventId: string; userAgent?: string; extraHeaders?: Record<string, string> }
+): Promise<WebhookResult> {
   const url = assertWebhookUrlShape(rawUrl);
   const target = await resolveSafeAddress(url);
   const body = JSON.stringify(payload);
@@ -132,7 +136,9 @@ export async function postSignedWebhook(rawUrl: string, payload: unknown, opts: 
   const ts = Math.floor(Date.now() / 1000);
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    "User-Agent": "FashionERP-CRM-Workflows/1",
+    // Phase 22: webhook subscriptions reuse this sender with their own user agent / event-type header.
+    ...(opts.extraHeaders ?? {}),
+    "User-Agent": opts.userAgent ?? "FashionERP-CRM-Workflows/1",
     "X-CRM-Event-Id": opts.eventId,
     "Idempotency-Key": opts.idempotencyKey,
     "X-CRM-Signature": signWebhookBody(opts.secret, body, ts),

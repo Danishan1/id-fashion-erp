@@ -184,7 +184,7 @@ The message looks like:
 }
 ```
 
-- **Security for the receiving system.** Each request carries `X-CRM-Signature: t=<unix time>,v1=<HMAC-SHA256 of "t.body">`, signed with the workflow's own secret (Details & secret tab → Reveal). The receiver should check the signature, reject messages older than 5 minutes, and de-duplicate on the `Idempotency-Key` header.
+- **Security for the receiving system.** Each request carries `X-CRM-Signature: t=<unix time>,v1=<HMAC-SHA256 of "t.body">`, signed with the workflow's own secret (Details & secret tab → **Rotate secret**: a new secret is shown once — copy it to the receiver then; it can't be shown again). The receiver should check the signature, reject messages older than 5 minutes, and de-duplicate on the `Idempotency-Key` header.
 - **Delivery rules.**
   - The receiver must answer 2xx within 10 seconds. Redirects are not followed.
   - Not retried automatically; use *Record the error and continue* if the webhook is optional.

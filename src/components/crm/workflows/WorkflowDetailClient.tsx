@@ -10,6 +10,7 @@ import { CrmTable } from "@/components/crm/CrmTable";
 import { crmRequest } from "@/components/crm/crm-api";
 import { Button } from "@/components/ui/Button";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
+import { SecretOnce } from "@/components/crm/SecretOnce";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { formatDateTime } from "@/lib/date-format";
 import type { CrmPagePermissions } from "@/modules/crm/core/crm-page";
@@ -425,9 +426,15 @@ function DetailsPanel({ wf, canEdit, onSaved }: { wf: WorkflowDto; canEdit: bool
     setBusy(false);
     if (r.ok) onSaved();
   };
-  const reveal = async (rotate: boolean) => {
-    const r = await crmRequest<{ secret: string }>(`${WORKFLOWS_API}/${wf.id}/webhook-secret`, { method: rotate ? "POST" : "GET", ...(rotate ? { successMessage: "Secret rotated" } : {}) });
-    if (r.ok) setSecret(r.data.secret);
+  const [confirmRotate, setConfirmRotate] = useState(false);
+  // Phase 22: an existing secret can't be read back — rotating returns a new one, shown once here.
+  const rotate = async () => {
+    const r = await crmRequest<{ secret: string }>(`${WORKFLOWS_API}/${wf.id}/webhook-secret`, { method: "POST", successMessage: "New signing secret generated" });
+    setConfirmRotate(false);
+    if (r.ok) {
+      setSecret(r.data.secret);
+      onSaved();
+    }
   };
   return (
     <div className="max-w-2xl space-y-4">
@@ -447,17 +454,34 @@ function DetailsPanel({ wf, canEdit, onSaved }: { wf: WorkflowDto; canEdit: bool
         <p className="text-xs text-zinc-500">
           &quot;Call a webhook&quot; steps sign every request with this secret: header <code>X-CRM-Signature: t=&lt;unix&gt;,v1=&lt;hex HMAC-SHA256 of &quot;t.body&quot;&gt;</code>. Receivers should reject requests older than 5 minutes and de-duplicate on <code>Idempotency-Key</code>.
         </p>
-        {secret && <code className="block break-all rounded bg-zinc-100 p-2 text-xs dark:bg-zinc-800">{secret}</code>}
-        {canEdit && wf.hasWebhookSecret && (
-          <div className="flex gap-2">
-            <Button variant="secondary" size="xs" onClick={() => reveal(false)}>
-              Reveal
-            </Button>
-            <Button variant="secondary" size="xs" onClick={() => reveal(true)}>
-              Rotate
-            </Button>
-          </div>
+        {secret ? (
+          <SecretOnce label="New signing secret" value={secret} onDone={() => setSecret(null)} />
+        ) : (
+          <p className="text-sm text-zinc-700 dark:text-zinc-300">
+            {wf.hasWebhookSecret ? (
+              <>
+                <CrmBadge label="Secret configured" tone="green" /> <code className="ml-1 text-xs">••••••••</code>
+              </>
+            ) : (
+              "No signing secret."
+            )}
+          </p>
         )}
+        <p className="text-xs text-zinc-500">For security the current secret is never shown again. To give a receiver the secret, generate a new one: it is shown once, and the old one stops working immediately.</p>
+        {canEdit && !secret && (
+          <Button variant="secondary" size="xs" onClick={() => setConfirmRotate(true)}>
+            {wf.hasWebhookSecret ? "Rotate secret" : "Generate secret"}
+          </Button>
+        )}
+        <ConfirmModal
+          open={confirmRotate}
+          onCancel={() => setConfirmRotate(false)}
+          onConfirm={rotate}
+          isDangerous
+          title="Generate a new signing secret?"
+          message="The current secret stops working immediately — receivers verifying signatures with it will reject this workflow's requests until they're updated with the new one."
+          confirmLabel="Generate new secret"
+        />
       </div>
       <p className="text-xs text-zinc-500">
         Created by {wf.createdBy.name ?? "—"}. {wf.publishedAt ? `Last published ${formatDateTime(wf.publishedAt)} by ${wf.publishedBy?.name ?? "—"}.` : "Never published."}
