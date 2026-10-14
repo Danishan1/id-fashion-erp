@@ -12,8 +12,16 @@ import { SalesOrderRepository } from "@/modules/sales-orders/sales-order.reposit
 import { ForwarderRepository } from "@/modules/forwarders/forwarder.repository";
 import { recordInventoryTransaction, getAvailableQuantity } from "@/modules/inventory/inventory.service";
 import { getDispatchSettings, extraDispatchNeedsApproval, type DispatchSettingsValue } from "@/core/dispatch-settings/DispatchSettingsService";
-import type { DispatchInput, UpdateDispatchInput, SetCartonsInput } from "./dispatch.schema";
+import { ProductVariantRepository } from "@/modules/products/product.repository";
+import { WarehouseLocationRepository } from "@/modules/warehouses/warehouse.repository";
+import { getFinishedGoodsAvailableQuantity, consumeReservationForDispatchInTx } from "@/modules/finished-goods-inventory/finished-goods-reservation.service";
+import type { DispatchInput, UpdateDispatchInput, SetCartonsInput, SetPickLinesInput } from "./dispatch.schema";
 import { DispatchRepository } from "./dispatch.repository";
+
+// Finished Goods Inventory module (FGI-040/041) — same sum-tolerance
+// convention used project-wide (createLot()'s own LotVariantBreakdown check,
+// Putaway's allocation sum check).
+const PICK_LINE_EPSILON = 0.0001;
 
 interface ActorContext {
   companyId: string;
@@ -571,6 +579,95 @@ export async function setCartons(actor: ActorContext, id: string, input: SetCart
 }
 
 /**
+ * Finished Goods Inventory module (FGI-040) — multi-location picking. Full
+ * replace of a Dispatch's FinishedGoodsPickLine rows across every one of its
+ * DispatchItems in one call (same "simplest correct way to apply an edit"
+ * reasoning as setCartons above). Editable while DRAFT or PACKED, same
+ * floor-process reasoning as setCartons/markPacked — picking and packing are
+ * independent concerns that both span the same two statuses. Partial picks
+ * (less than a DispatchItem's own dispatchedQuantity) are a valid,
+ * intermediate state here; only confirmDispatch() requires completeness
+ * (§7 point 3 of the implementation plan).
+ */
+export async function setPickLines(actor: ActorContext, id: string, input: SetPickLinesInput) {
+  const existing = await DispatchRepository.findByIdWithDetails(actor.companyId, id);
+  if (!existing) throw new BusinessRuleError("NOT_FOUND", "Dispatch not found.", { id });
+
+  if (existing.status !== "DRAFT" && existing.status !== "PACKED") {
+    throw new BusinessRuleError(
+      "INVALID_STATE_TRANSITION",
+      `Cannot edit picking for a dispatch in "${existing.status}" status.`,
+      { currentStatus: existing.status }
+    );
+  }
+
+  const itemById = new Map(existing.items.map((i) => [i.id, i]));
+
+  const variantIds = [...new Set(input.pickLines.map((l) => l.productVariantId))];
+  const variants = variantIds.length > 0 ? await ProductVariantRepository.findManyByIds(variantIds) : [];
+  const variantById = new Map(variants.map((v) => [v.id, v]));
+
+  const locationIds = [...new Set(input.pickLines.map((l) => l.warehouseLocationId))];
+  const locationEntries = await Promise.all(
+    locationIds.map(async (locationId) => [locationId, await WarehouseLocationRepository.findByIdWithWarehouse(locationId)] as const)
+  );
+  const locationById = new Map(locationEntries);
+
+  for (const line of input.pickLines) {
+    const item = itemById.get(line.dispatchItemId);
+    if (!item) {
+      throw new BusinessRuleError("VALIDATION_ERROR", "A pick line does not belong to this dispatch.", {
+        dispatchItemId: line.dispatchItemId,
+      });
+    }
+
+    const variant = variantById.get(line.productVariantId);
+    if (!variant || variant.productId !== item.productId) {
+      throw new BusinessRuleError(
+        "VALIDATION_ERROR",
+        `A pick line's colour/size variant does not match "${item.product.styleName}".`,
+        { dispatchItemId: line.dispatchItemId, productVariantId: line.productVariantId }
+      );
+    }
+
+    const location = locationById.get(line.warehouseLocationId);
+    if (!location || location.warehouse.companyId !== actor.companyId) {
+      throw new BusinessRuleError("NOT_FOUND", "Warehouse location not found.", { id: line.warehouseLocationId });
+    }
+    if (location.warehouseId !== existing.warehouseId) {
+      throw new BusinessRuleError(
+        "VALIDATION_ERROR",
+        "A pick line's location must belong to this dispatch's own warehouse.",
+        { warehouseLocationId: line.warehouseLocationId, warehouseId: existing.warehouseId }
+      );
+    }
+  }
+
+  const updated = await DispatchRepository.setPickLines(
+    id,
+    input.pickLines.map((l) => ({
+      dispatchItemId: l.dispatchItemId,
+      productVariantId: l.productVariantId,
+      warehouseLocationId: l.warehouseLocationId,
+      quantity: l.quantity,
+      companyId: actor.companyId,
+      pickedByUserId: actor.userId,
+    }))
+  );
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "dispatches",
+    recordId: id,
+    action: "UPDATE",
+    newValues: { pickLineCount: input.pickLines.length },
+  });
+
+  return updated;
+}
+
+/**
  * DRAFT/PACKED -> PACKED. Validates, per DispatchItem, that the sum of its
  * carton-item quantities across every carton exactly equals its own
  * dispatchedQuantity — every line actually packed, not just an aggregate
@@ -715,6 +812,57 @@ export async function confirmDispatch(actor: ActorContext, id: string) {
     }
   }
 
+  // Finished Goods Inventory module (FGI-040/041) — §7 point 1: "the
+  // pre-check is extended, not replaced." The style-level loop above stays
+  // exactly as it was; this is a SECOND, additional check underneath it. A
+  // style with zero configured ACTIVE variants keeps today's flat-only path
+  // untouched and never requires pick lines at all (same precedent as
+  // Phase 2's own FGI-020 breakdown requirement).
+  const uniqueProductIds = [...new Set(dispatch.items.map((i) => i.productId))];
+  const activeVariantsByProduct = new Map<string, boolean>(
+    await Promise.all(
+      uniqueProductIds.map(async (productId) => [productId, (await ProductVariantRepository.findManyActiveByProductId(productId)).length > 0] as const)
+    )
+  );
+
+  const itemsNeedingPickLines = dispatch.items.filter((item) => activeVariantsByProduct.get(item.productId));
+
+  for (const item of itemsNeedingPickLines) {
+    const pickedTotal = item.pickLines.reduce((sum, line) => sum + Number(line.quantity), 0);
+    if (Math.abs(pickedTotal - item.dispatchedQuantity) > PICK_LINE_EPSILON) {
+      throw new BusinessRuleError(
+        "VALIDATION_ERROR",
+        `"${item.product.styleName}" has colour/size variants configured — its picked quantity (${pickedTotal}) must exactly equal the quantity to dispatch (${item.dispatchedQuantity}) before this dispatch can be confirmed. Use Pick Lines to allocate the remainder.`,
+        { dispatchItemId: item.id, picked: pickedTotal, expected: item.dispatchedQuantity }
+      );
+    }
+  }
+
+  // §7 point 1's own real rule: "the sum of a dispatch's own
+  // FinishedGoodsPickLine for a given variant must not exceed that variant's
+  // own Available figure" — aggregated PER VARIANT across the whole
+  // dispatch (never per DispatchItem alone), since the same variant could in
+  // principle be picked across more than one line/item.
+  const pickedByVariant = new Map<string, number>();
+  for (const item of itemsNeedingPickLines) {
+    for (const line of item.pickLines) {
+      pickedByVariant.set(line.productVariantId, (pickedByVariant.get(line.productVariantId) ?? 0) + Number(line.quantity));
+    }
+  }
+
+  for (const [productVariantId, pickedQuantity] of pickedByVariant) {
+    const owningItem = itemsNeedingPickLines.find((item) => item.pickLines.some((line) => line.productVariantId === productVariantId))!;
+    const variantLine = owningItem.pickLines.find((line) => line.productVariantId === productVariantId)!;
+    const available = await getFinishedGoodsAvailableQuantity(actor.companyId, owningItem.productId, productVariantId, dispatch.warehouseId);
+    if (pickedQuantity > available) {
+      throw new BusinessRuleError(
+        "INSUFFICIENT_FG_STOCK",
+        `Unable to confirm dispatch because ${pickedQuantity} pieces of "${owningItem.product.styleName}" (${variantLine.productVariant.color.name} / ${variantLine.productVariant.size.name}) are not available in Finished Goods stock at this specific variant level. Available: ${available}, Requested: ${pickedQuantity}.`,
+        { productId: owningItem.productId, productVariantId, warehouseId: dispatch.warehouseId, available, requested: pickedQuantity }
+      );
+    }
+  }
+
   const totalRegular = dispatch.items.reduce((sum, i) => sum + i.regularDispatchQuantity, 0);
   const totalExtra = dispatch.items.reduce((sum, i) => sum + i.extraDispatchQuantity, 0);
   const settings = await getDispatchSettings(actor.companyId);
@@ -755,14 +903,51 @@ export async function confirmDispatch(actor: ActorContext, id: string) {
         );
       }
 
-      await recordInventoryTransaction(tx, actor, {
-        productId: item.productId,
-        warehouseId: dispatch.warehouseId,
-        transactionType: "DISPATCH",
-        quantity: -item.dispatchedQuantity,
-        referenceModule: "DISPATCH",
-        referenceRecordId: item.id,
-      });
+      // Finished Goods Inventory module (FGI-040/041) — §7 point 2: the
+      // existing per-DispatchItem posting becomes one recordInventoryTransaction()
+      // call PER PICK LINE for a variant-bearing style; the SUM across those
+      // calls for this one item is still posted into the exact same flat
+      // StockBalance update as before (recordInventoryTransaction()'s own
+      // unconditional flat-balance branch runs on every call regardless of
+      // whether a variant/location is also supplied) — the existing
+      // style-level total is always exactly right, just composed from
+      // several finer-grained ledger rows instead of one. A zero-variant
+      // style's flat-only path below is completely unchanged.
+      if (!activeVariantsByProduct.get(item.productId)) {
+        await recordInventoryTransaction(tx, actor, {
+          productId: item.productId,
+          warehouseId: dispatch.warehouseId,
+          transactionType: "DISPATCH",
+          quantity: -item.dispatchedQuantity,
+          referenceModule: "DISPATCH",
+          referenceRecordId: item.id,
+        });
+      } else {
+        for (const line of item.pickLines) {
+          const lineQuantity = Number(line.quantity);
+          await recordInventoryTransaction(tx, actor, {
+            productId: item.productId,
+            warehouseId: dispatch.warehouseId,
+            transactionType: "DISPATCH",
+            quantity: -lineQuantity,
+            referenceModule: "DISPATCH",
+            referenceRecordId: item.id,
+            productVariantId: line.productVariantId,
+            warehouseLocationId: line.warehouseLocationId,
+            stockStatus: "SALEABLE",
+          });
+
+          // §7 point 5 — reservation consumption happens in the same
+          // transaction, immediately after each pick line posts.
+          await consumeReservationForDispatchInTx(
+            tx,
+            actor.companyId,
+            item.salesOrderItem.salesOrderLineId,
+            line.productVariantId,
+            lineQuantity
+          );
+        }
+      }
     }
 
     const allItems = await tx.salesOrderItem.findMany({

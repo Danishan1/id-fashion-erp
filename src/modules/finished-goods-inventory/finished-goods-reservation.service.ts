@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
+import { FinishedGoodsStockBalanceRepository } from "@/modules/inventory/inventory.repository";
 import { FinishedGoodsReservationRepository } from "./finished-goods-reservation.repository";
 
 interface ActorContext {
@@ -158,4 +159,86 @@ export async function getCommittedReservationQuantity(
   warehouseId?: string | null
 ): Promise<number> {
   return FinishedGoodsReservationRepository.sumActiveUnconsumedForVariant(companyId, productVariantId, warehouseId);
+}
+
+/**
+ * Finished Goods Inventory module (FGI-041) — the full §4.2 "Available"
+ * formula: Saleable (across every location, real + staging, for this
+ * specific variant at this warehouse) minus every ACTIVE reservation's own
+ * unconsumed remainder for that same variant+warehouse. This is the
+ * figure confirmDispatch()'s own new variant-level pre-check (§7 point 1)
+ * compares a dispatch's picked quantity against — never the real, atomic
+ * gate (that is always the guarded decrement inside
+ * recordInventoryTransaction(), per §4.2's own "protection is always at the
+ * write side" rule), just the friendly, pre-transaction courtesy check.
+ */
+export async function getFinishedGoodsAvailableQuantity(
+  companyId: string,
+  productId: string,
+  productVariantId: string,
+  warehouseId: string
+): Promise<number> {
+  const [saleable, committed] = await Promise.all([
+    FinishedGoodsStockBalanceRepository.sumSaleableAcrossLocations(companyId, productId, productVariantId, warehouseId),
+    getCommittedReservationQuantity(companyId, productVariantId, warehouseId),
+  ]);
+  return saleable - committed;
+}
+
+/**
+ * Finished Goods Inventory module (FGI-041) — reservation consumption as
+ * called from confirmDispatch(), one call per pick line, inside the same
+ * transaction as that pick line's own recordInventoryTransaction() post
+ * (§7 point 5). Deliberately NOT a thin wrapper around consumeReservation()
+ * above: that function's own OVER_CONSUMPTION_NOT_ALLOWED throw is correct
+ * for its own caller (an explicit, standalone "consume exactly this much"
+ * admin-style action), but would be WRONG here — Extra Dispatch Quantity
+ * (2026-09-30) deliberately allows shipping MORE of a variant than was ever
+ * reserved for its sales order line (FOC/replacement/promotional), and nothing
+ * about that legitimate, pre-existing feature should ever be blocked by this
+ * new, purely-additive reservation bookkeeping. So this function caps the
+ * amount it attempts to consume at whatever genuinely remains unconsumed on
+ * the matching reservation (if one even exists — in practice, today, none
+ * ever will, since nothing in the approved plan wires reservation CREATION
+ * into confirmSalesOrder() yet; this is a deliberately scoped, flagged gap,
+ * see finished-goods-reservation.service.ts's own module-level doc comment
+ * and the Phase 4 evidence section) — a shortfall is silently a no-op, never
+ * an error, and the real "don't oversell" protection is entirely the
+ * variant-level Available check + guarded FinishedGoodsStockBalance decrement
+ * above, not this bookkeeping step.
+ *
+ * salesOrderLineId may be null — a DispatchItem's own SalesOrderItem row
+ * can predate the Effective BOM column (2026-09-24), the same "legacy/test
+ * row, skipped, never crashed on" discipline createReservationsForSalesOrderInTx()
+ * already applies to the identical column.
+ */
+export async function consumeReservationForDispatchInTx(
+  tx: Prisma.TransactionClient,
+  companyId: string,
+  salesOrderLineId: string | null,
+  productVariantId: string,
+  quantityPicked: number
+): Promise<void> {
+  if (!salesOrderLineId) return;
+
+  const reservation = await FinishedGoodsReservationRepository.findActiveForLineAndVariantInTx(tx, companyId, salesOrderLineId, productVariantId);
+  if (!reservation) return;
+
+  const remaining = Number(reservation.reservedQuantity) - Number(reservation.consumedQuantity);
+  if (remaining <= 0) return;
+
+  const toConsume = Math.min(quantityPicked, remaining);
+  const affected = await FinishedGoodsReservationRepository.guardedConsume(tx, reservation.id, toConsume);
+  if (affected === 0) {
+    // A genuine concurrent race — another in-flight dispatch consumed part
+    // of this same reservation between our read above and this write. The
+    // whole confirmDispatch() transaction rolls back, same "the guarded
+    // write is the real gate, a prior read is only ever a courtesy" rule
+    // this reservation module already documents everywhere else.
+    throw new BusinessRuleError(
+      "OVER_CONSUMPTION_NOT_ALLOWED",
+      "This reservation changed while confirming this dispatch — reload and try again.",
+      { reservationId: reservation.id, salesOrderLineId, productVariantId }
+    );
+  }
 }

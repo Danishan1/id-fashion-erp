@@ -110,6 +110,27 @@ export const setCartonsSchema = z.object({
 
 export type SetCartonsInput = z.infer<typeof setCartonsSchema>;
 
+// Finished Goods Inventory module (FGI-040) — multi-location picking. A pick
+// line records exactly which physical (variant, location) stock a
+// DispatchItem's quantity is being drawn from, independent of how it is
+// later packed into cartons (CartonItem is completely unchanged by this).
+// Full replace, same convention as setCartonsSchema above — the simplest
+// correct way to apply an edit without hand-diffing which lines changed.
+export const pickLineInputSchema = z.object({
+  dispatchItemId: z.string().uuid("Dispatch line is required"),
+  productVariantId: z.string().uuid("Colour/size variant is required"),
+  warehouseLocationId: z.string().uuid("Warehouse location is required"),
+  quantity: z.coerce.number().positive("Quantity must be greater than 0"),
+});
+
+export type PickLineInput = z.infer<typeof pickLineInputSchema>;
+
+export const setPickLinesSchema = z.object({
+  pickLines: z.array(pickLineInputSchema),
+});
+
+export type SetPickLinesInput = z.infer<typeof setPickLinesSchema>;
+
 // Hold and Cancel are separate, body-less POST endpoints (not a single
 // generic status-change route) specifically so Cancel can be gated on its
 // own "cancel" RBAC action, distinct from Hold's "edit" — matching every

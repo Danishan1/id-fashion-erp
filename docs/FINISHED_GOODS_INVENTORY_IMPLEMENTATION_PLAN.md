@@ -2034,3 +2034,267 @@ approval gate actually blocks and actually permits the correct real users. One s
 issue (an accidental test-file overwrite, caught via `git status`, not via any test failure) was found and
 fixed during this phase, with a file-by-file forensic re-check of every other changed file confirming it was
 an isolated incident, and the underlying process lesson is documented above for future sessions.
+
+## Phase 4 — Dispatch integration
+
+### FGI-040 — Multi-location picking (`FinishedGoodsPickLine` creation)
+
+**Status:** VERIFIED.
+
+**Scope decision, confirmed before building (not a silent assumption):** FGI-041's own acceptance criteria
+only requires proving the new variant-level oversell check is additive via a dedicated test — it does not
+require reservations to exist in real production flow. `finished-goods-reservation.service.ts`'s own
+module-level doc comment (written in Phase 1) already flagged a genuine gap in the approved plan: nothing
+wires reservation *creation* into `confirmSalesOrder()` or *release* into Sales Order cancellation anywhere.
+Presented this plainly before starting Phase 4's build (per the "stop and report any conflict" instruction)
+— confirmed to **stay exactly scoped**: build FGI-040/041/042 exactly as planned, leave reservation-
+creation/release wiring as an explicitly flagged, separate future task, never silently expand scope to also
+wire it in. This means every reservation exercised by this phase's own live verification script was
+deliberately, manually seeded (simulating "as if creation were wired in"), matching the acceptance
+criteria's own literal wording — in a live system today, zero `FinishedGoodsReservation` rows will ever
+exist until that future task is taken up, so the "committed" term of the §4.2 Available formula is currently
+always 0 in practice. This is **not** a defect in this phase's own work — it is the same already-acknowledged,
+now-reconfirmed gap, left exactly where it was found.
+
+**Files changed:**
+- `src/modules/dispatch/dispatch.schema.ts` — new `pickLineInputSchema`/`setPickLinesSchema` (a plain
+  `{dispatchItemId, productVariantId, warehouseLocationId, quantity}` line, full-replace-on-save — the
+  identical "simplest correct way to apply an edit" shape `setCartonsSchema` already uses).
+- `src/modules/dispatch/dispatch.repository.ts` — `detailInclude.items.include` gained `pickLines` (variant
+  with color/size, warehouse location) and `salesOrderItem.select.salesOrderLineId` (read by FGI-041's
+  reservation-consumption step); new `setPickLines()` repository function (full replace, mirrors
+  `setCartons()` exactly). **A real FK-safety gap found and fixed in passing**: `replaceItems()` (called
+  whenever an existing Dispatch's style/quantity lines are edited) deletes every `DispatchItem` row for a
+  full-replace edit, but had never been taught about the brand-new `FinishedGoodsPickLine` child table —
+  `FinishedGoodsPickLine.dispatchItemId` is a required relation with no cascade (Prisma's own default is
+  `RESTRICT`), so editing a Dispatch that already had pick lines recorded would have failed with a raw FK
+  violation the moment this schema went live. Fixed by adding the identical `finishedGoodsPickLine.deleteMany`
+  cleanup `replaceItems()` already does for Cartons, before deleting the items themselves — found by reading
+  the function's own existing cleanup ritual and recognizing the new child table needed the same treatment,
+  not discovered via a failure.
+- `src/modules/dispatch/dispatch.service.ts` — new `setPickLines(actor, id, input)`: editable while
+  `DRAFT`/`PACKED` (the identical floor-process reasoning as `setCartons`/`markPacked`), validates every
+  line's variant genuinely belongs to its own `DispatchItem`'s style and every location genuinely belongs to
+  the dispatch's own warehouse (reusing `ProductVariantRepository.findManyByIds`/
+  `WarehouseLocationRepository.findByIdWithWarehouse`, the exact chokepoint-validation helpers FGI-030's
+  `putawayStock()` already established — never reimplemented). Deliberately imposes **no completeness
+  requirement** at this stage — a `DispatchItem`'s pick lines do not need to sum to its own
+  `dispatchedQuantity` while the dispatch is still `DRAFT`/`PACKED` (§7 point 3); only `confirmDispatch()`
+  (FGI-041) enforces that.
+- `src/app/api/v1/dispatches/[id]/pick-lines/route.ts` (new) — `PUT`, gated `dispatch`/`edit`, mirrors the
+  existing `.../cartons` route byte-for-byte.
+- `src/app/(dashboard)/dispatch/[id]/DispatchWorkflowPanel.tsx` — a new "Pick Lines" section (Style/Colour-
+  Size/Location/Qty rows, Add/Remove/Save, reusing the panel's own already-fetched `variantsByProduct` state
+  for the variant dropdown and a new `GET /api/v1/warehouses/:id` fetch for the location dropdown — both
+  roles that would actually perform picking, `DISPATCH_MANAGER`/`WAREHOUSE_USER`, were confirmed to already
+  hold `masters_core.view` before relying on this endpoint) placed right before the existing Cartons section;
+  the Items table gained a "Picked" column alongside the existing "Packed" one.
+
+**Database changes:** none — `FinishedGoodsPickLine` and `FinishedGoodsReservation` already exist from
+Phase 0/1; this phase is pure business-logic/UI wiring, matching Phase 2's own precedent exactly.
+
+**Acceptance criteria (as defined in §8):**
+- [x] **"A dispatch item's pick lines are validated to sum to its `dispatchedQuantity` exactly before
+      Confirm-Dispatch proceeds"**: enforced in `confirmDispatch()` (FGI-041, below) — `setPickLines()`
+      itself deliberately does not enforce this, per §7 point 3's own explicit design.
+- [x] **"A partial pick (less than the full item quantity) is a valid, supported intermediate state while
+      the dispatch is still `DRAFT`/`PACKED`"**: proven both as a mocked unit test ("allows an empty
+      pick-line list") and live (Scenario 2 below — a 15-of-30 partial pick saved successfully via
+      `setPickLines()`, only rejected later at `confirmDispatch()` time).
+
+---
+
+### FGI-041 — Reservation consumption + the new, additive variant-level availability check
+
+**Status:** VERIFIED.
+
+**Files changed:**
+- `src/modules/inventory/inventory.repository.ts` — new
+  `FinishedGoodsStockBalanceRepository.sumSaleableAcrossLocations(companyId, productId, productVariantId,
+  warehouseId)` — the "Saleable" half of the §4.2 Available formula: sums every `SALEABLE`
+  `FinishedGoodsStockBalance` row for one variant at one warehouse **across every location**, including the
+  staging/null-location row — deliberately an aggregate, unlike the existing `findOne` (which always reads
+  one specific location key).
+- `src/modules/finished-goods-inventory/finished-goods-reservation.repository.ts` — new
+  `findActiveForLineAndVariantInTx(tx, companyId, salesOrderLineId, productVariantId)` — resolves the (at
+  most one, per `createReservationsForSalesOrderInTx()`'s own grouping key) `ACTIVE` reservation for a
+  specific line+variant pair.
+- `src/modules/finished-goods-inventory/finished-goods-reservation.service.ts` — two new exported functions:
+  - `getFinishedGoodsAvailableQuantity(companyId, productId, productVariantId, warehouseId)` — the full §4.2
+    formula (Saleable minus committed-unconsumed reservations), composing the two repository calls above.
+    Deliberately returns a plain number that **can go negative** (if company-wide reservations for a variant
+    exceed real Saleable stock) — the caller's own `pickedQuantity > available` comparison handles that
+    correctly without this function needing to clamp anything itself.
+  - `consumeReservationForDispatchInTx(tx, companyId, salesOrderLineId, productVariantId, quantityPicked)` —
+    called once per pick line, inside the same transaction as that pick line's own ledger post (§7 point 5).
+    **Deliberately not a thin wrapper around the existing `consumeReservation()`** — that function's own
+    `OVER_CONSUMPTION_NOT_ALLOWED` throw is correct for its own caller (an explicit, standalone "consume
+    exactly this much" action) but would be **wrong** here: Extra Dispatch Quantity (2026-09-30) deliberately
+    allows shipping *more* of a variant than was ever reserved for its sales order line (FOC/replacement/
+    promotional), and nothing about that pre-existing, user-facing feature should ever be blocked by this
+    new, purely-additive bookkeeping step. This function therefore **caps** the amount it attempts to
+    consume at whatever genuinely remains unconsumed on the matching reservation — a shortfall is silently a
+    no-op, never an error; a lost race against a genuinely-capped amount (a concurrent dispatch already
+    consumed some of the same reservation between the read and the write) still correctly throws
+    `OVER_CONSUMPTION_NOT_ALLOWED` and rolls back the whole `confirmDispatch()` transaction, since that *is*
+    a genuine race, not an Extra-quantity false positive.
+- `src/modules/dispatch/dispatch.service.ts` — `confirmDispatch()` rewritten per §7 exactly:
+  1. The existing style-level `getAvailableQuantity()` pre-check loop is **completely unchanged**, kept as
+     the outer gate (§7 point 1's own "extended, not replaced" instruction).
+  2. **New**: resolves, once per distinct style in the dispatch, whether it has any `ProductVariant` rows
+     with `isActive: true` (reusing `ProductVariantRepository.findManyActiveByProductId`, the exact same
+     function Phase 2's FGI-020/021 already established for this identical "does this style need a
+     breakdown" question — not a new check invented for this phase). A style with zero active variants
+     takes the completely unchanged flat-only path; nothing about it was touched.
+  3. For a variant-bearing style's `DispatchItem`, its pick lines must sum to `dispatchedQuantity` exactly
+     (within the same `0.0001` tolerance this project uses everywhere else for a sum-invariant check) —
+     checked before the transaction opens, rejecting with a named `VALIDATION_ERROR` otherwise.
+  4. **New, additive variant-level check**: picked quantity is aggregated **per variant across the whole
+     dispatch** (not per `DispatchItem` alone — the same variant could in principle be picked across more
+     than one line), then compared against `getFinishedGoodsAvailableQuantity()` for that variant+warehouse;
+     exceeding it throws `INSUFFICIENT_FG_STOCK` naming the specific variant, available, and requested
+     figures — **a second, independent gate from the existing style-level one**, per §7 point 1's own literal
+     wording ("both checks must pass").
+  5. Inside the transaction, the single `recordInventoryTransaction()` call per `DispatchItem` becomes **one
+     call per pick line** for a variant-bearing style (posting `productVariantId`/`warehouseLocationId`/
+     `stockStatus: "SALEABLE"` — the ledger's own already-built-but-previously-unused Finished-Goods branch),
+     immediately followed by `consumeReservationForDispatchInTx()` for that same pick line (§7 point 5's own
+     "in the same transaction, immediately after each pick line posts"). A zero-variant style's single flat
+     call is completely unchanged — confirmed both as a dedicated regression test and live.
+- Test files extended: `dispatch.service.test.ts` gained 3 new mocked modules
+  (`ProductVariantRepository`, `WarehouseLocationRepository`,
+  `finished-goods-reservation.service`) and 12 new tests (7 `setPickLines` tests, 5 `confirmDispatch`
+  tests including the acceptance criterion's own additive-not-replacement proof and a same-variant-across-
+  two-items aggregation test); `finished-goods-reservation.service.test.ts` gained 7 new tests for the two
+  new service functions, including the Extra-Dispatch-Quantity-never-blocked capped-consumption behavior and
+  its own genuine-race rejection.
+
+**Database changes:** none.
+
+**Acceptance criteria (as defined in §8):**
+- [x] **"Reservation consumption consumption wired into `confirmDispatch()`; the new, additive variant-level
+      availability check"**: both built exactly as described, verified both as mocked unit tests and live.
+- [x] **"A dispatch confirm that would oversell a specific variant is rejected even when the style-level
+      aggregate check alone would have passed it — a dedicated regression test proving the new check is
+      genuinely additive, not a replacement, by constructing a case where the old check alone would have
+      incorrectly allowed the dispatch"**: proven as a mocked unit test (`getAvailableQuantity` left at its
+      default 1000, `getFinishedGoodsAvailableQuantity` deliberately starved for one specific variant) *and*
+      live against the real disposable scratch database (Scenario 4 below — 170 units of flat stock easily
+      covers a 90-unit dispatch by the old check alone, while the real, specific variant's own Available
+      figure is only 85, correctly rejecting it).
+
+**Live, non-mocked verification against the real disposable scratch database — 14/14 checks passed**,
+calling the real, unmodified `createDispatch()`/`setPickLines()`/`confirmDispatch()` service functions
+directly: built a full real fixture chain (Company/Branch/platform-admin User/UnitOfMeasure/2×Color/2×Size/
+Warehouse/3×WarehouseLocation/Customer, a zero-active-variant style and a 2-variant style, real SalesOrders
+with real `SalesOrderLine`/`SalesOrderItem`/`SalesOrderItemBreakdown` rows, real Dispatches created via the
+actual `createDispatch()` call). Six scenarios, each independently checked:
+1. **Zero-variant style, flat path unchanged** — one plain `recordInventoryTransaction()` call with no
+   variant/location fields, flat `StockBalance` correctly decremented 50 → 30.
+2. **Variant-bearing style, no pick lines at all → rejected; partial pick (15 of 30) → still rejected,
+   zero ledger rows written from either attempt.**
+3. **Complete pick (20 Red/M + 10 Blue/L across two real locations) → confirmed successfully**: exactly 2
+   ledger rows, correctly variant/location-tagged and signed; each variant's own `FinishedGoodsStockBalance`
+   decremented by exactly its own picked amount (100→80, 100→90); the flat `StockBalance` decremented by the
+   **sum** (200→170) — proving the "composed from several finer-grained rows, same total" invariant §7
+   point 2 describes.
+4. **The acceptance criterion's own proof** — a third location seeded with only 25 real units of Red/M, an
+   unrelated sales order line committing 20 of the combined 105-unit Saleable total via a real, manually-
+   seeded `ACTIVE` reservation (Available = 105 − 20 = 85) — a 90-unit dispatch against this same variant,
+   fully picked, was correctly **rejected** with `INSUFFICIENT_FG_STOCK`, even though the style's own flat
+   total (170) would have sailed through the pre-existing style-level check alone. Zero ledger rows written.
+5. **Reservation consumption on the dispatch's own sales order line** — a real, manually-seeded 10-unit
+   `ACTIVE` reservation for the exact (line, variant) pair being dispatched was correctly consumed in full
+   by the real `confirmDispatch()` call and flipped to `FULFILLED` (10/10 consumed) — proving §7 point 5's
+   "immediately after each pick line posts" wiring actually fires, not merely asserted via a mock.
+6. **The Extra-Dispatch-Quantity regression this whole capped-consumption design exists for** — a real
+   5-unit reservation, a real 25-unit dispatch against the same (line, variant) with a required
+   `extraDispatchReason` (20 of the 25 units genuinely Extra, beyond the order's own remaining quantity) —
+   confirmed the dispatch **confirmed successfully** (never throwing, despite picking far more than the
+   reservation covers), the reservation correctly capped at its own `reservedQuantity` (5/5, `FULFILLED`,
+   never a negative or over-consumed value), and the real stock decrement reflected the **full** 25 physically
+   picked, not something artificially capped at 5 — proving reservation bookkeeping and real stock movement
+   are correctly decoupled exactly as designed.
+
+**A genuine fixture-design insight surfaced during this verification, not a product bug** — worth recording:
+a Sales Order's own `SalesOrderItemBreakdown.productVariantId` column is a required (`NOT NULL`) FK, meaning
+a real Sales-Order-driven Dispatch line can *never* be placed against a style with literally zero
+`ProductVariant` rows at all — every such line necessarily references *some* real variant row. The "zero-
+variant, flat-only path" FGI-040/041 (and Phase 2's own FGI-020/021 before it) defensively handle is
+therefore only reachable, through the real Sales-Order-driven flow, via a style whose variant(s) have since
+been **deactivated** (`isActive: false`) — not a style with no variant rows whatsoever. Confirmed this is
+exactly the distinction `ProductVariantRepository.findManyActiveByProductId`'s own `isActive: true` filter
+already checks for, and is a real, legitimate state the system must handle correctly (an old order line
+referencing a since-retired variant) — not a gap. The live verification script's own "flat style" fixture was
+adjusted to match this real constraint (a real, but deactivated, variant row) rather than leaving the style
+with literally none.
+
+**Verification evidence:**
+- `npx prisma validate`: clean (no schema changes this phase).
+- `npx tsc --noEmit` (whole project, `NODE_OPTIONS="--max-old-space-size=6144"`): 0 errors.
+- `npx eslint .` (whole project, same memory flag): `0 errors, 13 warnings` — every warning is pre-existing
+  and unrelated to this phase (the exact same 13 as Phase 3's own clean baseline), none in any Phase 4 file.
+- `npx vitest run` (whole project): **2734 tests passed, 161 skipped (2895 total), 172 test files passed, 12
+  skipped (184 total) — 0 failures.** A first combined run (tsc + eslint + vitest all launched concurrently
+  in the background) hit this machine's own documented low-memory contention — tsc crashed with SIGABRT and
+  vitest's own worker pool threw "Worker exited unexpectedly" on 3 files — neither a real code regression;
+  re-running all three sequentially (never concurrently) produced the clean, trustworthy numbers above.
+- No scratch artifacts left in the worktree — confirmed via `git status --short` showing only the 9 intended
+  changed paths plus the 1 new route file (`dispatch.schema.ts`, `dispatch.repository.ts`,
+  `dispatch.service.ts` + `.test.ts`, `DispatchWorkflowPanel.tsx`,
+  `finished-goods-reservation.{repository,service,service.test}.ts`, `inventory.repository.ts`,
+  `dispatches/[id]/pick-lines/route.ts`) — independently re-confirmed via a forensic `git diff` (not just
+  `--stat`) on every changed file, following the exact process lesson Phase 3's own accidental-overwrite
+  episode established: every deletion across all 9 modified files was individually inspected and confirmed
+  to be an intentional, targeted replacement (an import line widened, the one flat posting block replaced by
+  the branching logic, one type widened with an extra field, one `select` widened with one extra column) —
+  no accidental full-content overwrite anywhere in this phase's work.
+- Live verification's own teardown independently re-confirmed via direct SQL (zero residual companies,
+  dispatches, or users matching this phase's own fixture naming) that the scratch database returned to its
+  exact pre-test state.
+
+**No conflicts found with the existing ledger, warehouse, production, or Extra Dispatch Quantity
+architecture** beyond the `replaceItems()` FK-safety gap found and fixed above (a foreseeable, direct
+consequence of adding a new child table to an existing full-replace function, not a design disagreement) and
+the deliberately-scoped-and-flagged reservation-creation/release gap (an already-known limitation from Phase
+1, re-confirmed and re-flagged, not newly introduced).
+
+---
+
+### FGI-042 — Regression verification: Extra Dispatch Quantity byte-for-byte unaffected
+
+**Status:** VERIFIED — by construction and by direct test evidence, not a separate implementation task (per
+the plan's own framing: "Regression verification only").
+
+**Acceptance criteria (as defined in §8):**
+- [x] **"The full existing Extra Dispatch Quantity test suite passes completely unmodified"**: confirmed —
+      every one of the pre-existing `describe("Extra Dispatch Quantity — approval gate and Regular-only
+      fulfillment", ...)` tests (and every other pre-existing `confirmDispatch`/`createDispatch` test) in
+      `dispatch.service.test.ts` passes with **zero changes to their own fixtures or assertions** — the only
+      file-level changes were additive (new mocks, new `beforeEach` resets defaulting to "zero active
+      variants," new `describe` blocks) — confirmed via `git diff` showing the pre-existing Extra Dispatch
+      Quantity test block itself carries no modification hunks at all.
+- [x] **"A new test confirms the combined regular+extra total is still checked against the SAME pool at the
+      variant level, with no separate 'extra' pool introduced"**: this is exactly what Scenario 6's own live
+      verification proves — the 25-unit dispatch (5 Regular + 20 Extra) was checked, picked, and posted as
+      one single 25-unit quantity against the variant's own real `FinishedGoodsStockBalance` pool, with the
+      Extra portion never exempted from the new variant-level `getFinishedGoodsAvailableQuantity()` check
+      (§7 point 6's own explicit "no separate, looser check for extra quantity" instruction) — the only place
+      Extra quantity gets special treatment at all is reservation *consumption* (capped, never throwing),
+      which is a bookkeeping nicety, not a stock-movement exemption.
+
+---
+
+## Phase 4 — complete
+
+All three Phase 4 tasks (FGI-040, FGI-041, FGI-042) are now VERIFIED, with full mocked-unit-test coverage and
+a live, non-mocked run against the real disposable scratch database proving every stated acceptance
+criterion — including the specific "additive, not a replacement" proof FGI-041's own acceptance criteria
+demanded, and the Extra Dispatch Quantity regression's own "same pool, no separate check" proof. One
+real, pre-existing gap (reservation creation/release never wired into `confirmSalesOrder()`/cancellation)
+was re-confirmed and re-flagged rather than silently expanded into or worked around, per the explicit, user-
+confirmed decision to keep this phase exactly scoped. One genuine FK-safety gap (`replaceItems()` never
+taught about the new `FinishedGoodsPickLine` child table) was found by inspection and fixed before it could
+ever surface as a real bug. A forensic file-by-file `git diff` review — the direct process lesson from Phase
+3's own accidental-overwrite episode — confirmed every one of this phase's 9 changed files contains only
+intentional, targeted edits.

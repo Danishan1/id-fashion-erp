@@ -215,6 +215,29 @@ export const FinishedGoodsStockBalanceRepository = {
     }),
 
   findOne: (key: FinishedGoodsBalanceKey) => prisma.finishedGoodsStockBalance.findFirst({ where: finishedGoodsBalanceKeyWhere(key) }),
+
+  /**
+   * Finished Goods Inventory module (FGI-041) — the "Saleable" half of the
+   * §4.2 Available formula: the sum of every SALEABLE FinishedGoodsStockBalance
+   * row for one specific variant at one warehouse, across EVERY location
+   * (including the staging/null-location row) — deliberately an aggregate,
+   * unlike findOne above (which always reads exactly one location key).
+   * productVariantId is always a real, non-null value here (never the
+   * nullable-variant "unallocated legacy stock" row — §4.7), since the
+   * caller always already has a concrete variant in hand.
+   */
+  sumSaleableAcrossLocations: async (
+    companyId: string,
+    productId: string,
+    productVariantId: string,
+    warehouseId: string
+  ): Promise<number> => {
+    const result = await prisma.finishedGoodsStockBalance.aggregate({
+      where: { companyId, productId, productVariantId, warehouseId, stockStatus: "SALEABLE" },
+      _sum: { quantityOnHand: true },
+    });
+    return Number(result._sum.quantityOnHand ?? 0);
+  },
 };
 
 /**

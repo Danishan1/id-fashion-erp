@@ -90,4 +90,14 @@ export const FinishedGoodsReservationRepository = {
       where: { salesOrderLineId: { in: salesOrderLineIds }, status: "ACTIVE" },
       data: { status: "RELEASED" },
     }),
+
+  /**
+   * Finished Goods Inventory module (FGI-041) — resolves the one ACTIVE
+   * reservation (if any) for a specific (salesOrderLineId, productVariantId)
+   * pair, inside the caller's own transaction. createReservationsForSalesOrderInTx()'s
+   * own grouping key guarantees at most one such row exists at a time — this
+   * is a plain findFirst, not an aggregate, for exactly that reason.
+   */
+  findActiveForLineAndVariantInTx: (tx: Prisma.TransactionClient, companyId: string, salesOrderLineId: string, productVariantId: string) =>
+    tx.finishedGoodsReservation.findFirst({ where: { companyId, salesOrderLineId, productVariantId, status: "ACTIVE" } }),
 };

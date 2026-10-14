@@ -10,16 +10,24 @@ vi.mock("./finished-goods-reservation.repository", () => ({
     guardedConsume: vi.fn(),
     guardedRelease: vi.fn(),
     releaseAllActiveForSalesOrderLineIdsInTx: vi.fn(),
+    findActiveForLineAndVariantInTx: vi.fn(),
   },
+}));
+// Finished Goods Inventory module (FGI-041).
+vi.mock("@/modules/inventory/inventory.repository", () => ({
+  FinishedGoodsStockBalanceRepository: { sumSaleableAcrossLocations: vi.fn() },
 }));
 
 const { FinishedGoodsReservationRepository } = await import("./finished-goods-reservation.repository");
+const { FinishedGoodsStockBalanceRepository } = await import("@/modules/inventory/inventory.repository");
 const {
   createReservationsForSalesOrderInTx,
   consumeReservation,
   releaseReservation,
   releaseActiveReservationsForSalesOrderInTx,
   getCommittedReservationQuantity,
+  getFinishedGoodsAvailableQuantity,
+  consumeReservationForDispatchInTx,
 } = await import("./finished-goods-reservation.service");
 
 const tx = {
@@ -38,6 +46,8 @@ beforeEach(() => {
   vi.mocked(FinishedGoodsReservationRepository.guardedConsume).mockReset();
   vi.mocked(FinishedGoodsReservationRepository.guardedRelease).mockReset();
   vi.mocked(FinishedGoodsReservationRepository.releaseAllActiveForSalesOrderLineIdsInTx).mockReset();
+  vi.mocked(FinishedGoodsReservationRepository.findActiveForLineAndVariantInTx).mockReset();
+  vi.mocked(FinishedGoodsStockBalanceRepository.sumSaleableAcrossLocations).mockReset();
   (tx as unknown as { salesOrderItem: { findMany: ReturnType<typeof vi.fn> } }).salesOrderItem.findMany.mockReset();
   (tx as unknown as { salesOrderLine: { findMany: ReturnType<typeof vi.fn> } }).salesOrderLine.findMany.mockReset();
 });
@@ -213,5 +223,89 @@ describe("getCommittedReservationQuantity", () => {
 
     await expect(getCommittedReservationQuantity("co-1", "var-1", "wh-1")).resolves.toBe(42);
     expect(FinishedGoodsReservationRepository.sumActiveUnconsumedForVariant).toHaveBeenCalledWith("co-1", "var-1", "wh-1");
+  });
+});
+
+describe("getFinishedGoodsAvailableQuantity (FGI-041)", () => {
+  it("is Saleable (summed across every location) minus committed reservations", async () => {
+    vi.mocked(FinishedGoodsStockBalanceRepository.sumSaleableAcrossLocations).mockResolvedValue(100);
+    vi.mocked(FinishedGoodsReservationRepository.sumActiveUnconsumedForVariant).mockResolvedValue(30);
+
+    await expect(getFinishedGoodsAvailableQuantity("co-1", "prod-1", "var-1", "wh-1")).resolves.toBe(70);
+    expect(FinishedGoodsStockBalanceRepository.sumSaleableAcrossLocations).toHaveBeenCalledWith("co-1", "prod-1", "var-1", "wh-1");
+    expect(FinishedGoodsReservationRepository.sumActiveUnconsumedForVariant).toHaveBeenCalledWith("co-1", "var-1", "wh-1");
+  });
+
+  it("can go negative when reservations across the company exceed real Saleable stock — the caller's own pre-check comparison handles that, not this function", async () => {
+    vi.mocked(FinishedGoodsStockBalanceRepository.sumSaleableAcrossLocations).mockResolvedValue(10);
+    vi.mocked(FinishedGoodsReservationRepository.sumActiveUnconsumedForVariant).mockResolvedValue(25);
+
+    await expect(getFinishedGoodsAvailableQuantity("co-1", "prod-1", "var-1", "wh-1")).resolves.toBe(-15);
+  });
+});
+
+describe("consumeReservationForDispatchInTx (FGI-041)", () => {
+  it("is a silent no-op when salesOrderLineId is null (a legacy/test SalesOrderItem row predating the Effective BOM column)", async () => {
+    await consumeReservationForDispatchInTx(tx, "co-1", null, "var-1", 10);
+    expect(FinishedGoodsReservationRepository.findActiveForLineAndVariantInTx).not.toHaveBeenCalled();
+  });
+
+  it("is a silent no-op when no ACTIVE reservation exists for this (line, variant) pair — the common case today, since nothing wires reservation creation in yet", async () => {
+    vi.mocked(FinishedGoodsReservationRepository.findActiveForLineAndVariantInTx).mockResolvedValue(null);
+
+    await consumeReservationForDispatchInTx(tx, "co-1", "line-1", "var-1", 10);
+
+    expect(FinishedGoodsReservationRepository.guardedConsume).not.toHaveBeenCalled();
+  });
+
+  it("consumes exactly the picked quantity when the reservation has enough remaining", async () => {
+    vi.mocked(FinishedGoodsReservationRepository.findActiveForLineAndVariantInTx).mockResolvedValue({
+      id: "res-1",
+      reservedQuantity: 50,
+      consumedQuantity: 10,
+    } as never);
+    vi.mocked(FinishedGoodsReservationRepository.guardedConsume).mockResolvedValue(1 as never);
+
+    await consumeReservationForDispatchInTx(tx, "co-1", "line-1", "var-1", 15);
+
+    expect(FinishedGoodsReservationRepository.guardedConsume).toHaveBeenCalledWith(tx, "res-1", 15);
+  });
+
+  it("caps consumption at whatever remains, NEVER throwing, when the picked quantity exceeds the reservation's own remaining amount — this is Extra Dispatch Quantity's own 'ship beyond what was reserved' case, which must never be blocked by this purely-additive bookkeeping", async () => {
+    vi.mocked(FinishedGoodsReservationRepository.findActiveForLineAndVariantInTx).mockResolvedValue({
+      id: "res-1",
+      reservedQuantity: 50,
+      consumedQuantity: 40, // only 10 remains
+    } as never);
+    vi.mocked(FinishedGoodsReservationRepository.guardedConsume).mockResolvedValue(1 as never);
+
+    await expect(consumeReservationForDispatchInTx(tx, "co-1", "line-1", "var-1", 25)).resolves.toBeUndefined();
+
+    expect(FinishedGoodsReservationRepository.guardedConsume).toHaveBeenCalledWith(tx, "res-1", 10); // capped, not 25
+  });
+
+  it("is a silent no-op when the reservation is already fully consumed (remaining <= 0)", async () => {
+    vi.mocked(FinishedGoodsReservationRepository.findActiveForLineAndVariantInTx).mockResolvedValue({
+      id: "res-1",
+      reservedQuantity: 50,
+      consumedQuantity: 50,
+    } as never);
+
+    await consumeReservationForDispatchInTx(tx, "co-1", "line-1", "var-1", 5);
+
+    expect(FinishedGoodsReservationRepository.guardedConsume).not.toHaveBeenCalled();
+  });
+
+  it("throws OVER_CONSUMPTION_NOT_ALLOWED on a genuine concurrent race (the guard returns 0 despite the pre-capped amount)", async () => {
+    vi.mocked(FinishedGoodsReservationRepository.findActiveForLineAndVariantInTx).mockResolvedValue({
+      id: "res-1",
+      reservedQuantity: 50,
+      consumedQuantity: 10,
+    } as never);
+    vi.mocked(FinishedGoodsReservationRepository.guardedConsume).mockResolvedValue(0 as never);
+
+    await expect(consumeReservationForDispatchInTx(tx, "co-1", "line-1", "var-1", 15)).rejects.toMatchObject({
+      code: "OVER_CONSUMPTION_NOT_ALLOWED",
+    });
   });
 });
