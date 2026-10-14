@@ -7,6 +7,7 @@ import { PermissionService } from "@/core/rbac/PermissionService";
 import { addDays, addMonths, computeSubscriptionStatus } from "@/core/subscriptions/subscription-state";
 import type { AdjustPeriodInput, ChangePlanInput, RecordPaymentInput } from "./subscription.schema";
 import { resolveTrialPlan } from "./subscription-plan.service";
+import { claimCouponInTx, recordRedemptionInTx, type CouponEffect } from "./coupon.service";
 
 /**
  * A company's subscription (Platform SaaS Phase 4, PLAT-021..025). Billing is
@@ -39,7 +40,11 @@ export async function getCompanySubscription(companyId: string) {
     prisma.user.count({ where: { companyId, status: "ACTIVE", supportForPlatformUserId: null } }),
     prisma.subscriptionPayment.findMany({
       where: { companyId },
-      include: { plan: { select: { name: true } }, recordedBy: { select: { fullName: true } } },
+      include: {
+        plan: { select: { name: true } },
+        recordedBy: { select: { fullName: true } },
+        coupon: { select: { code: true } },
+      },
       orderBy: [{ paidAt: "desc" }, { createdAt: "desc" }],
     }),
   ]);
@@ -53,9 +58,27 @@ export async function getCompanySubscription(companyId: string) {
 }
 
 /** Creates the 14-day (plan-configured) trial for a brand-new company, inside its creation transaction. */
-export async function startTrialInTx(tx: Prisma.TransactionClient, companyId: string, planId?: string | null) {
+export async function startTrialInTx(
+  tx: Prisma.TransactionClient,
+  companyId: string,
+  planId?: string | null,
+  coupon?: { code: string; platformUserId: string } | null
+) {
   const plan = await resolveTrialPlan(planId);
   const now = new Date();
+  // Phase 5: a "longer free trial" coupon adds days to the plan trial.
+  let extraDays = 0;
+  if (coupon?.code) {
+    const claimed = await claimCouponInTx(tx, coupon.code, { companyId: null, planId: plan.id, usage: "TRIAL" }, 0, now);
+    extraDays = claimed.effect.trialDays;
+    await recordRedemptionInTx(tx, {
+      couponId: claimed.coupon.id,
+      companyId,
+      effect: claimed.effect,
+      platformUserId: coupon.platformUserId,
+    });
+  }
+  const trialDays = plan.trialDays + extraDays;
   return tx.companySubscription.create({
     data: {
       companyId,
@@ -63,7 +86,7 @@ export async function startTrialInTx(tx: Prisma.TransactionClient, companyId: st
       billingCycle: "MONTHLY",
       isTrial: true,
       startedAt: now,
-      currentPeriodEndsAt: plan.trialDays > 0 ? addDays(now, plan.trialDays) : now,
+      currentPeriodEndsAt: trialDays > 0 ? addDays(now, trialDays) : now,
     },
   });
 }
@@ -143,9 +166,25 @@ export async function recordSubscriptionPayment(actor: PlatformActor, companyId:
 
   const result = await prisma.$transaction(async (tx) => {
     const existing = await lockSubscription(tx, companyId);
+
+    // Phase 5: coupon (validated with the coupon row locked).
+    let claimed: { couponId: string; effect: CouponEffect } | null = null;
+    if (input.couponCode) {
+      const c = await claimCouponInTx(
+        tx,
+        input.couponCode,
+        { companyId, planId: plan.id, billingCycle: input.billingCycle, usage: "PAYMENT" },
+        input.amount,
+        now
+      );
+      claimed = { couponId: c.coupon.id, effect: c.effect };
+    }
+    const freeMonths = claimed?.effect.freeMonths ?? 0;
+    const finalAmount = claimed ? claimed.effect.finalAmount : input.amount;
+
     const currentEnd = existing?.currentPeriodEndsAt ?? null;
     const periodStart = currentEnd && currentEnd > now ? currentEnd : now;
-    const periodEnd = addMonths(periodStart, monthsPerPeriod(input.billingCycle) * input.periods);
+    const periodEnd = addMonths(periodStart, monthsPerPeriod(input.billingCycle) * input.periods + freeMonths);
 
     const subscription = existing
       ? await tx.companySubscription.update({
@@ -178,7 +217,11 @@ export async function recordSubscriptionPayment(actor: PlatformActor, companyId:
         planId: plan.id,
         billingCycle: input.billingCycle,
         periods: input.periods,
-        amount: input.amount,
+        amount: finalAmount,
+        listAmount: claimed ? input.amount : null,
+        discountAmount: claimed?.effect.discountAmount ?? 0,
+        freeMonths,
+        couponId: claimed?.couponId ?? null,
         currencyCode: plan.currencyCode,
         paidAt: new Date(`${input.paidAt}T00:00:00.000Z`),
         method: input.method,
@@ -189,6 +232,16 @@ export async function recordSubscriptionPayment(actor: PlatformActor, companyId:
         recordedByPlatformUserId: actor.platformUserId,
       },
     });
+
+    if (claimed) {
+      await recordRedemptionInTx(tx, {
+        couponId: claimed.couponId,
+        companyId,
+        paymentId: payment.id,
+        effect: claimed.effect,
+        platformUserId: actor.platformUserId,
+      });
+    }
 
     await writeAuditLog(
       {
@@ -204,7 +257,11 @@ export async function recordSubscriptionPayment(actor: PlatformActor, companyId:
           plan: plan.name,
           billingCycle: input.billingCycle,
           periods: input.periods,
-          amount: input.amount,
+          amount: finalAmount,
+          coupon: input.couponCode ?? undefined,
+          listAmount: claimed ? input.amount : undefined,
+          discountAmount: claimed?.effect.discountAmount,
+          freeMonths: freeMonths || undefined,
           method: input.method,
           reference: input.reference,
           periodStart,

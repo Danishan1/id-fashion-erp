@@ -36,6 +36,10 @@ export interface SubscriptionData {
     periodEnd: string;
     plan: { name: string };
     recordedBy: { fullName: string };
+    listAmount: string | null;
+    discountAmount: string;
+    freeMonths: number;
+    coupon: { code: string } | null;
   }[];
 }
 
@@ -103,7 +107,38 @@ export function SubscriptionPanel({
     method: "BANK_TRANSFER",
     reference: "",
     notes: "",
+    couponCode: "",
   });
+  // Phase 5: coupon preview (checked, not used, until the payment is saved).
+  const [couponPreview, setCouponPreview] = useState<{
+    code: string;
+    name: string;
+    effect: { discountAmount: number; finalAmount: number; freeMonths: number };
+  } | null>(null);
+  const [couponError, setCouponError] = useState<string | null>(null);
+
+  async function checkCoupon() {
+    setCouponError(null);
+    setCouponPreview(null);
+    if (!payment.couponCode.trim()) return;
+    const res = await fetch("/api/v1/platform/coupons/preview", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-toast": "off" },
+      body: JSON.stringify({
+        code: payment.couponCode,
+        companyId,
+        planId: payment.planId,
+        billingCycle: payment.billingCycle,
+        amount: Number(payment.amount || 0),
+      }),
+    });
+    const json = await res.json().catch(() => null);
+    if (!res.ok) {
+      setCouponError(json?.error?.message ?? "Coupon can't be used.");
+      return;
+    }
+    setCouponPreview({ code: json.data.coupon.code, name: json.data.coupon.name, effect: json.data.effect });
+  }
   const [planForm, setPlanForm] = useState({ planId: sub?.planId ?? "", billingCycle: sub?.billingCycle ?? "MONTHLY" });
   const [period, setPeriod] = useState({
     noExpiry: false,
@@ -145,7 +180,9 @@ export function SubscriptionPanel({
       const plan = plans.find((p) => p.id === (sub?.planId ?? payment.planId)) ?? plans[0];
       const cycle = sub?.billingCycle ?? "MONTHLY";
       const price = cycle === "ANNUAL" ? plan?.annualPrice : plan?.monthlyPrice;
-      setPayment((p) => ({ ...p, planId: plan?.id ?? "", billingCycle: cycle, amount: price ?? "", paidAt: today() }));
+      setPayment((p) => ({ ...p, planId: plan?.id ?? "", billingCycle: cycle, amount: price ?? "", paidAt: today(), couponCode: "" }));
+      setCouponPreview(null);
+      setCouponError(null);
     }
     if (kind === "plan") setPlanForm({ planId: sub?.planId ?? plans[0]?.id ?? "", billingCycle: sub?.billingCycle ?? "MONTHLY" });
     if (kind === "period") {
@@ -262,6 +299,13 @@ export function SubscriptionPanel({
                   <td className="py-1.5 pr-4">{fmtDate(p.paidAt)}</td>
                   <td className="py-1.5 pr-4">
                     {p.currencyCode} {Number(p.amount).toLocaleString("en-IN")}
+                    {p.coupon && (
+                      <div className="text-xs text-indigo-600 dark:text-indigo-400">
+                        {p.coupon.code}
+                        {Number(p.discountAmount) > 0 && ` · −${Number(p.discountAmount).toLocaleString("en-IN")}`}
+                        {p.freeMonths > 0 && ` · +${p.freeMonths} free mo`}
+                      </div>
+                    )}
                   </td>
                   <td className="py-1.5 pr-4">
                     {METHODS.find(([k]) => k === p.method)?.[1] ?? p.method}
@@ -329,12 +373,15 @@ export function SubscriptionPanel({
               />
             </label>
             <label className="block">
-              <span className="text-zinc-600 dark:text-zinc-300">Amount received</span>
+              <span className="text-zinc-600 dark:text-zinc-300">Price (before coupon)</span>
               <input
                 type="number"
                 min="0"
                 value={payment.amount}
-                onChange={(e) => setPayment({ ...payment, amount: e.target.value })}
+                onChange={(e) => {
+                  setPayment({ ...payment, amount: e.target.value });
+                  setCouponPreview(null);
+                }}
                 className={inputClass}
               />
             </label>
@@ -361,6 +408,38 @@ export function SubscriptionPanel({
                 ))}
               </select>
             </label>
+          </div>
+          <div>
+            <span className="text-zinc-600 dark:text-zinc-300">Coupon (optional)</span>
+            <div className="mt-1 flex gap-2">
+              <input
+                value={payment.couponCode}
+                onChange={(e) => {
+                  setPayment({ ...payment, couponCode: e.target.value.toUpperCase() });
+                  setCouponPreview(null);
+                  setCouponError(null);
+                }}
+                placeholder="e.g. LAUNCH20"
+                className="w-full rounded-md border border-zinc-300 px-3 py-2 font-mono text-sm dark:border-zinc-700 dark:bg-zinc-900"
+              />
+              <button
+                type="button"
+                disabled={!payment.couponCode.trim()}
+                onClick={checkCoupon}
+                className="rounded-md border border-zinc-300 px-3 py-1.5 disabled:opacity-60 dark:border-zinc-700"
+              >
+                Apply
+              </button>
+            </div>
+            {couponError && <p className="mt-1 text-xs text-red-600">{couponError}</p>}
+            {couponPreview && (
+              <p className="mt-1 text-xs text-green-700 dark:text-green-400">
+                {couponPreview.code} ({couponPreview.name}):{" "}
+                {couponPreview.effect.freeMonths > 0
+                  ? `+${couponPreview.effect.freeMonths} free month(s) added to the period.`
+                  : `−${couponPreview.effect.discountAmount.toLocaleString("en-IN")}, amount received ${couponPreview.effect.finalAmount.toLocaleString("en-IN")}.`}
+              </p>
+            )}
           </div>
           <label className="block">
             <span className="text-zinc-600 dark:text-zinc-300">Reference (UTR, cheque no.…)</span>
@@ -389,7 +468,7 @@ export function SubscriptionPanel({
             </button>
             <button
               type="button"
-              disabled={busy || !payment.planId || payment.amount === ""}
+              disabled={busy || !payment.planId || payment.amount === "" || (!!payment.couponCode.trim() && !couponPreview)}
               onClick={() => send("/payments", "POST", { ...payment, periods: Number(payment.periods), amount: Number(payment.amount) })}
               className="rounded-md bg-indigo-600 px-3 py-1.5 text-white disabled:opacity-60"
             >

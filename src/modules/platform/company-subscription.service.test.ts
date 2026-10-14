@@ -13,6 +13,8 @@ const m = vi.hoisted(() => ({
   audit: vi.fn(),
   invalidateEnt: vi.fn(),
   invalidatePerm: vi.fn(),
+  claimCoupon: vi.fn(),
+  recordRedemption: vi.fn(),
 }));
 
 vi.mock("@/core/db/client", () => {
@@ -35,6 +37,7 @@ vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: m.audit }));
 vi.mock("@/core/entitlements/EntitlementService", () => ({ EntitlementService: { invalidate: m.invalidateEnt } }));
 vi.mock("@/core/rbac/PermissionService", () => ({ PermissionService: { invalidate: m.invalidatePerm } }));
 vi.mock("./subscription-plan.service", () => ({ resolveTrialPlan: vi.fn() }));
+vi.mock("./coupon.service", () => ({ claimCouponInTx: m.claimCoupon, recordRedemptionInTx: m.recordRedemption }));
 
 const svc = await import("./company-subscription.service");
 const actor = { platformUserId: "pu-1" };
@@ -49,6 +52,7 @@ const payment = {
   method: "BANK_TRANSFER" as const,
   reference: "UTR123",
   notes: null,
+  couponCode: null as string | null,
 };
 
 beforeEach(() => {
@@ -63,6 +67,35 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe("recordSubscriptionPayment", () => {
+  it("applies a percentage coupon: saves list/discount/final amount and a redemption", async () => {
+    m.txSubFindUnique.mockResolvedValue({ id: "sub-1", planId: "plan-1", isTrial: true, currentPeriodEndsAt: null });
+    m.claimCoupon.mockResolvedValue({
+      coupon: { id: "cp-1" },
+      effect: { listAmount: 5000, discountAmount: 1000, finalAmount: 4000, freeMonths: 0, trialDays: 0 },
+    });
+    const { payment: saved } = await svc.recordSubscriptionPayment(actor, "co-1", { ...payment, couponCode: "LAUNCH20" });
+    expect(m.claimCoupon).toHaveBeenCalledWith(
+      expect.anything(),
+      "LAUNCH20",
+      { companyId: "co-1", planId: "plan-1", billingCycle: "MONTHLY", usage: "PAYMENT" },
+      5000,
+      now
+    );
+    expect(saved).toMatchObject({ amount: 4000, listAmount: 5000, discountAmount: 1000, couponId: "cp-1", freeMonths: 0 });
+    expect(m.recordRedemption).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ couponId: "cp-1", paymentId: "pay-1" }));
+  });
+
+  it("adds free months from a coupon to the paid period", async () => {
+    m.txSubFindUnique.mockResolvedValue({ id: "sub-1", planId: "plan-1", isTrial: false, currentPeriodEndsAt: null });
+    m.claimCoupon.mockResolvedValue({
+      coupon: { id: "cp-2" },
+      effect: { listAmount: 5000, discountAmount: 0, finalAmount: 5000, freeMonths: 2, trialDays: 0 },
+    });
+    const { payment: saved } = await svc.recordSubscriptionPayment(actor, "co-1", { ...payment, couponCode: "FREE2" });
+    expect(saved.periodEnd.toISOString()).toBe("2027-01-13T10:00:00.000Z"); // 1 paid + 2 free months
+    expect(saved).toMatchObject({ amount: 5000, freeMonths: 2 });
+  });
+
   it("extends from the current end when paying early, and ends the trial", async () => {
     const currentEnd = new Date("2026-10-20T00:00:00.000Z");
     m.txSubFindUnique.mockResolvedValue({ id: "sub-1", planId: "plan-1", isTrial: true, currentPeriodEndsAt: currentEnd });

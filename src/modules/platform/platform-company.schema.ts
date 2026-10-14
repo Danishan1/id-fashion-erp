@@ -14,6 +14,11 @@ export const createCompanySchema = z.object({
   adminFullName: z.string().min(1, "Admin name is required").max(200),
   // Phase 4: trial plan; empty = the default trial plan.
   planId: z.preprocess((v) => (v === "" || v === null ? undefined : v), z.string().uuid("Select a plan").optional()),
+  // Phase 5: optional "longer free trial" coupon.
+  couponCode: z.preprocess(
+    (v) => (typeof v === "string" && v.trim() ? v.trim().toUpperCase() : undefined),
+    z.string().max(40).optional()
+  ),
 });
 
 export type CreateCompanyInput = z.infer<typeof createCompanySchema>;

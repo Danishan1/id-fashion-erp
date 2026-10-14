@@ -3,7 +3,7 @@
 **Single Source of Truth (SSOT)** for Platform Administration & SaaS Transformation  
 **Document Path**: `docs/PLATFORM_SAAS_MASTER_TRACKER.md`  
 **Initial Baseline Date**: 2026-10-12  
-**Current Active Phase**: Phase 4 COMPLETE (2026-10-13) — awaiting approval to start Phase 5  
+**Current Active Phase**: Phase 5 COMPLETE (2026-10-14) — awaiting approval to start Phase 6  
 **Current Active Task**: None (Phase 2 not approved yet)  
 
 ---
@@ -13,16 +13,16 @@
 | Metric | Value |
 |---|---|
 | **Total Tasks Identified** | 30 |
-| **NOT STARTED** | 5 |
+| **NOT STARTED** | 0 |
 | **IN PROGRESS** | 0 |
 | **BLOCKED** | 0 |
 | **IMPLEMENTED** | 0 |
-| **VERIFIED** | 25 (PLAT-001 – PLAT-025) |
+| **VERIFIED** | 30 (PLAT-001 – PLAT-030) |
 | **DEFERRED** | 0 |
-| **Overall Verified Completion** | **83.3%** (25 / 30) |
-| **Current Active Phase** | **Phase 4 complete — Phase 5 awaiting approval** |
+| **Overall Verified Completion** | **100%** (30 / 30) |
+| **Current Active Phase** | **Phase 5 complete — Phase 6 (final verification) awaiting approval** |
 | **Current Active Task** | None |
-| **Next Eligible Task** | `PLAT-026` (Offers & Coupons Schema) — after Phase 5 approval |
+| **Next Eligible Task** | Phase 6 — Final Verification & Production Readiness, after approval |
 | **Open Decisions Requiring Clarification** | 0 (DEC-04 AI metering deferred to a later phase) |
 
 > [!NOTE]
@@ -129,11 +129,11 @@ The following decisions are approved and bind all future implementation tasks:
 | **PLAT-023** | Trial Lifecycle Worker | None | BullMQ worker managing trial countdown, notifications, and expiry | NEW | MEDIUM | Phase 4 | **VERIFIED** | PLAT-021 |
 | **PLAT-024** | 7-Day Grace Period Guard | None | Enforce read-only mode across all ERP mutations during grace period | NEW | CRITICAL | Phase 4 | **VERIFIED** | PLAT-021 |
 | **PLAT-025** | Post-Grace Lockout Policy | None | Enforce approved post-grace behavior (account lockout or restricted) | NEW | HIGH | Phase 4 | **VERIFIED** | PLAT-024 |
-| **PLAT-026** | Offers & Coupons Schema | None | Add `Coupon`, `Offer`, and `CouponRedemption` models | NEW | MEDIUM | Phase 5 | NOT STARTED | PLAT-021 |
-| **PLAT-027** | Coupon Service & API | None | Validate coupon code, discount rules, expiry, and redemption limits | NEW | MEDIUM | Phase 5 | NOT STARTED | PLAT-026 |
-| **PLAT-028** | Support Ticket Schema | None | Add `SupportTicket`, `TicketMessage`, and `TicketAttachment` models | NEW | MEDIUM | Phase 5 | NOT STARTED | None |
-| **PLAT-029** | Customer Ticket UI & API | None | In-app customer support widget & ticket submission interface | NEW | MEDIUM | Phase 5 | NOT STARTED | PLAT-028 |
-| **PLAT-030** | Platform Ticket Inbox | None | Platform staff ticketing dashboard with status workflow & replies | NEW | MEDIUM | Phase 5 | NOT STARTED | PLAT-028, PLAT-029 |
+| **PLAT-026** | Offers & Coupons Schema | None | Add `Coupon`, `Offer`, and `CouponRedemption` models | NEW | MEDIUM | Phase 5 | **VERIFIED** | PLAT-021 |
+| **PLAT-027** | Coupon Service & API | None | Validate coupon code, discount rules, expiry, and redemption limits | NEW | MEDIUM | Phase 5 | **VERIFIED** | PLAT-026 |
+| **PLAT-028** | Support Ticket Schema | None | Add `SupportTicket`, `TicketMessage`, and `TicketAttachment` models | NEW | MEDIUM | Phase 5 | **VERIFIED** | None |
+| **PLAT-029** | Customer Ticket UI & API | None | In-app customer support widget & ticket submission interface | NEW | MEDIUM | Phase 5 | **VERIFIED** | PLAT-028 |
+| **PLAT-030** | Platform Ticket Inbox | None | Platform staff ticketing dashboard with status workflow & replies | NEW | MEDIUM | Phase 5 | **VERIFIED** | PLAT-028, PLAT-029 |
 
 ---
 
@@ -465,9 +465,43 @@ flowchart TD
 
 ---
 
-### PLAT-026 to PLAT-030 — Phase 5 Checklists (Offers, Coupons & Tickets)
-- **Status**: ALL NOT STARTED. Detailed acceptance criteria documented in Phase 5 roadmap.
-- **Key Models**: `Coupon`, `Offer`, `SupportTicket`, `SupportTicketMessage`.
+### PLAT-026 — Offers & Coupons Schema
+- **Status**: VERIFIED (2026-10-14).
+- **Acceptance Criteria**:
+  - [x] A coupon IS the offer (no separate Offer table): `coupons` (code, offer type PERCENT / FIXED_AMOUNT / FREE_MONTHS / TRIAL_EXTENSION, value, validity window, total and per-company limits, billing cycles, active), `coupon_plans` (empty = any plan), `coupon_redemptions` (one row per use, linked to the payment).
+  - [x] DB guards: percent ≤ 100, value > 0, limits ≥ 1, valid-until after valid-from; payment discount ≥ 0.
+  - [x] `subscription_payments` gained list amount, discount, free months and the coupon used.
+- **Verification Evidence**: migration `20261014100000_coupons_and_support_tickets` applied; tables and CHECK constraints confirmed by SQL.
+
+### PLAT-027 — Coupon Service & API
+- **Status**: VERIFIED (2026-10-14).
+- **Acceptance Criteria**:
+  - [x] Platform staff (Super Admin / Billing Admin) create and edit coupons at `/platform/coupons`; once used, the code and discount are locked (dates, limits, plans and on/off can still change).
+  - [x] Applied by staff when recording a payment (percent / fixed amount off, or free extra months) or when creating a company (longer free trial); "Apply" previews the effect before saving.
+  - [x] Checked with the coupon row locked: active, dates, plan, billing cycle, usage type, total and per-company limits. Failure → 422 `COUPON_INVALID` with a plain reason; nothing is saved.
+- **Verification Evidence**: `coupon.service.test.ts`, `company-subscription.service.test.ts`; live — 20% coupon 5000 → 4000 with redemption row, second use by the same company refused, annual-only coupon refused on monthly, 2 free months → 14-month period, trial coupon preview +10 days, tenant session refused (403).
+
+### PLAT-028 — Support Ticket Schema
+- **Status**: VERIFIED (2026-10-14).
+- **Acceptance Criteria**:
+  - [x] `support_tickets` (number `TKT-YYYY-#####`, subject, category, priority, status OPEN / IN_PROGRESS / WAITING_ON_CUSTOMER / RESOLVED / CLOSED, assignee, last message by), `support_ticket_messages` (customer or platform author, internal-note flag), `support_ticket_attachments` (files in the existing private file store).
+- **Verification Evidence**: migration applied; tables confirmed by SQL.
+
+### PLAT-029 — Customer Ticket UI & API
+- **Status**: VERIFIED (2026-10-14).
+- **Acceptance Criteria**:
+  - [x] "Help & Support" for every user (`/support-tickets`): raise a ticket with up to 5 attachments, reply, close. Each user sees their own tickets; the company's Super Admin sees all of the company's tickets.
+  - [x] Works even during the read-only grace period (no module permission needed); refused for support sessions.
+  - [x] Files checked by type and content (magic bytes), 20 MB each; internal notes are never shown to the customer.
+- **Verification Evidence**: `support-ticket.service.test.ts`; live — ticket with attachment, byte-for-byte download, disguised file refused, user can't open another user's ticket (404).
+
+### PLAT-030 — Platform Ticket Inbox
+- **Status**: VERIFIED (2026-10-14).
+- **Acceptance Criteria**:
+  - [x] `/platform/tickets`: filter by status, assignment and search; tickets waiting on a reply are marked.
+  - [x] Reply (default next status "Waiting on customer", picks up an unassigned ticket, notifies the customer in-app) or add an internal note; change status, priority and assignee; link to request support access for the company.
+  - [x] A customer reply reopens a ticket waiting on them; CLOSED is final.
+- **Verification Evidence**: live — reply → Waiting on customer + auto-assigned + customer notification; internal note hidden from customer; customer reply → Open; resolve + priority change; closed ticket refuses replies and reopening (409).
 
 ---
 
@@ -705,14 +739,37 @@ When updating this document after completing a task, use the following template:
   - The live user-limit check via HTTP was blocked by the known dev-DB permission-catalog gap (`administration_users.create` missing for the dev Super Admin); the same rule was verified directly against the real database.
 - **Next Task**: PLAT-026 — after Phase 5 approval.
 
+### Task Progress Update — Phase 5
+- **Date**: 2026-10-14
+- **Task ID**: PLAT-026 – PLAT-030
+- **Phase**: Phase 5
+- **Previous Status**: NOT STARTED
+- **New Status**: VERIFIED
+- **Decisions taken (user, 2026-10-14)**: coupons applied by platform staff when recording a payment; offer types percentage, fixed amount, free months, longer trial; tickets — any user raises, own tickets visible, company Super Admin sees all.
+- **Files Changed**:
+  - Schema: `prisma/schema.prisma`, `prisma/migrations/20261014100000_coupons_and_support_tickets/migration.sql`
+  - Core: `src/core/errors/BusinessRuleError.ts` (`COUPON_INVALID`), `src/core/numbering/DocumentNumberingService.ts` (`TKT`)
+  - Services: `src/modules/platform/coupon.{schema,service}.ts` (new), `company-subscription.service.ts` (coupon on payment / trial), `subscription.schema.ts`, `platform-company.{schema,service}.ts`; `src/modules/support-tickets/support-ticket.{schema,service,http}.ts` (new)
+  - API: `src/app/api/v1/platform/coupons/**`, `src/app/api/v1/platform/support-tickets/**`, `src/app/api/v1/support-tickets/**` (new)
+  - UI: `src/app/(platform)/platform/coupons/*`, `src/app/(platform)/platform/tickets/**`, `src/app/(dashboard)/support-tickets/**`, `src/components/support/TicketThread.tsx` (new); `companies/[id]/SubscriptionPanel.tsx` (coupon field), `companies/new/NewPlatformCompanyClient.tsx` (trial coupon), `src/components/platform/PlatformShell.tsx`, `src/components/layout/navigation.ts` (Help & Support)
+  - Tests: `coupon.service.test.ts`, `support-ticket.service.test.ts` (new); `company-subscription.service.test.ts`, `navigation.test.ts`, `company-scoping.contract.test.ts` (updated)
+- **Database Changes**: enums `CouponDiscountType`, `SupportTicketStatus`, `SupportTicketPriority`, `SupportTicketCategory`, `SupportTicketAuthorType`, `DocumentType.SUPPORT_TICKET`; tables `coupons`, `coupon_plans`, `coupon_redemptions`, `support_tickets`, `support_ticket_messages`, `support_ticket_attachments`; new columns on `subscription_payments`. Additive only.
+- **Test Results**: 2748 passed / 161 skipped; tsc 0 errors; eslint 0 errors; 39/39 live API checks (all test data removed, subscription restored).
+- **Remaining Work**: none for Phase 5.
+- **Blockers / Notes**:
+  - The trial coupon at company creation was verified through its preview endpoint and the shared service; creating a whole company over HTTP is still blocked by the known dev-DB permission-catalog gap.
+  - Ticket notifications are in-app only (no email yet).
+  - Coupons are platform-wide, so creating/editing one has no company audit row; each use is audited on the payment.
+- **Next Task**: Phase 6 — Final Verification & Production Readiness, after approval.
+
 ---
 
 ## 16. NEXT RECOMMENDED TASK
 
-**Recommended Next Step**: **PLAT-026 — Offers & Coupons Schema** (start of Phase 5, Offers, Coupons & Support Tickets).
-- **Objective**: Offers/coupons applied to subscriptions, and a support-ticket system linked to support access.
-- **Prerequisites**: User approval to start Phase 5.
+**Recommended Next Step**: **Phase 6 — Final Verification & Production Readiness**.
+- **Objective**: End-to-end verification of the whole platform/SaaS layer before production.
+- **Prerequisites**: User approval to start Phase 6.
 
 ---
 
-**PHASE 4 COMPLETE (2026-10-13) — AWAITING APPROVAL FOR PHASE 5**
+**PHASE 5 COMPLETE (2026-10-14) — AWAITING APPROVAL FOR PHASE 6**

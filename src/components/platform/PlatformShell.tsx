@@ -14,6 +14,8 @@ const NAV_ITEMS = [
   { label: "Overview", href: "/platform" },
   { label: "Companies", href: "/platform/companies" },
   { label: "Plans", href: "/platform/plans" },
+  { label: "Coupons", href: "/platform/coupons" },
+  { label: "Support Tickets", href: "/platform/tickets" },
   { label: "Support Access", href: "/platform/support" },
 ];
 

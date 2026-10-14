@@ -111,7 +111,12 @@ export async function createCompany(actor: PlatformActorContext, input: CreateCo
     });
 
     // Phase 4 (PLAT-023): every new company starts on a trial (14 days by default, per plan).
-    const subscription = await startTrialInTx(tx, company.id, input.planId);
+    const subscription = await startTrialInTx(
+      tx,
+      company.id,
+      input.planId,
+      input.couponCode ? { code: input.couponCode, platformUserId: actor.platformUserId } : null
+    );
 
     return { company, branch, adminUser: superAdminUser, subscription };
   });

@@ -59,6 +59,13 @@ export const recordPaymentSchema = z.object({
   method: z.enum(PAYMENT_METHODS),
   reference: z.string().trim().max(200).optional().transform((v) => v || null),
   notes: z.string().trim().max(1000).optional().transform((v) => v || null),
+  // Phase 5: optional coupon. `amount` is the price before the discount.
+  couponCode: z
+    .string()
+    .trim()
+    .max(40)
+    .optional()
+    .transform((v) => (v ? v.toUpperCase() : null)),
 });
 export type RecordPaymentInput = z.infer<typeof recordPaymentSchema>;
 

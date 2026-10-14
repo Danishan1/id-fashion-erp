@@ -233,6 +233,8 @@ model Company {
   moduleEntitlements                  CompanyModuleEntitlement[]
   subscription                        CompanySubscription?
   subscriptionPayments                SubscriptionPayment[]
+  couponRedemptions                   CouponRedemption[]
+  supportTickets                      SupportTicket[]
 
   styleStageCosts  StyleStageCost[]
   designStageCosts DesignStageCost[]
@@ -337,6 +339,10 @@ model PlatformUser {
   moduleEntitlementChanges CompanyModuleEntitlement[]
   subscriptionsUpdated     CompanySubscription[]
   subscriptionPayments     SubscriptionPayment[]
+  couponsCreated           Coupon[]                   @relation("CouponCreatedBy")
+  couponsRedeemed          CouponRedemption[]         @relation("CouponRedeemedBy")
+  supportTicketsAssigned   SupportTicket[]            @relation("SupportTicketAssignedTo")
+  supportTicketMessages    SupportTicketMessage[]     @relation("SupportTicketMessagePlatformAuthor")
 
   @@map("platform_users")
 }
@@ -407,6 +413,7 @@ model SubscriptionPlan {
   modules       SubscriptionPlanModule[]
   subscriptions CompanySubscription[]
   payments      SubscriptionPayment[]
+  couponPlans   CouponPlan[]
 
   @@map("subscription_plans")
 }
@@ -455,7 +462,13 @@ model SubscriptionPayment {
   planId                   String                    @map("plan_id") @db.Uuid
   billingCycle             SubscriptionBillingCycle  @map("billing_cycle")
   periods                  Int                       @default(1)
+  // Amount actually received.
   amount                   Decimal                   @db.Decimal(18, 2)
+  // Phase 5: plan price x periods before any coupon (null = plan has no price for this cycle).
+  listAmount               Decimal?                  @map("list_amount") @db.Decimal(18, 2)
+  discountAmount           Decimal                   @default(0) @map("discount_amount") @db.Decimal(18, 2)
+  freeMonths               Int                       @default(0) @map("free_months")
+  couponId                 String?                   @map("coupon_id") @db.Uuid
   currencyCode             String                    @map("currency_code") @db.VarChar(3)
   paidAt                   DateTime                  @map("paid_at") @db.Date
   method                   SubscriptionPaymentMethod
@@ -470,9 +483,182 @@ model SubscriptionPayment {
   subscription CompanySubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
   plan         SubscriptionPlan    @relation(fields: [planId], references: [id], onDelete: Restrict)
   recordedBy   PlatformUser        @relation(fields: [recordedByPlatformUserId], references: [id], onDelete: Restrict)
+  coupon       Coupon?             @relation(fields: [couponId], references: [id], onDelete: SetNull)
+  redemption   CouponRedemption?
 
   @@index([companyId, paidAt])
   @@map("subscription_payments")
+}
+
+// ---------------------------------------------------------------------------
+// Platform SaaS Phase 5 — coupons (PLAT-026/027) and support tickets
+// (PLAT-028..030). A coupon IS the offer (no separate Offer table): platform
+// staff apply it when recording a payment (percent / fixed / free months) or
+// when creating a company (longer trial). Billing stays manual (DEC-03).
+// ---------------------------------------------------------------------------
+
+enum CouponDiscountType {
+  PERCENT
+  FIXED_AMOUNT
+  FREE_MONTHS
+  TRIAL_EXTENSION
+}
+
+model Coupon {
+  id                       String                     @id @default(uuid()) @db.Uuid
+  code                     String                     @unique
+  name                     String
+  description              String?
+  discountType             CouponDiscountType         @map("discount_type")
+  // PERCENT: 0-100; FIXED_AMOUNT: money; FREE_MONTHS: months; TRIAL_EXTENSION: extra trial days.
+  discountValue            Decimal                    @map("discount_value") @db.Decimal(18, 2)
+  currencyCode             String                     @default("INR") @map("currency_code") @db.VarChar(3)
+  validFrom                DateTime?                  @map("valid_from")
+  validUntil               DateTime?                  @map("valid_until")
+  // null = unlimited
+  maxRedemptions           Int?                       @map("max_redemptions")
+  maxRedemptionsPerCompany Int                        @default(1) @map("max_redemptions_per_company")
+  // Empty = any cycle (payment coupons only).
+  billingCycles            SubscriptionBillingCycle[] @map("billing_cycles")
+  isActive                 Boolean                    @default(true) @map("is_active")
+  createdByPlatformUserId  String?                    @map("created_by_platform_user_id") @db.Uuid
+  createdAt                DateTime                   @default(now()) @map("created_at")
+  updatedAt                DateTime                   @updatedAt @map("updated_at")
+
+  createdBy   PlatformUser?         @relation("CouponCreatedBy", fields: [createdByPlatformUserId], references: [id], onDelete: SetNull)
+  // Empty = any plan.
+  plans       CouponPlan[]
+  redemptions CouponRedemption[]
+  payments    SubscriptionPayment[]
+
+  @@map("coupons")
+}
+
+model CouponPlan {
+  id       String @id @default(uuid()) @db.Uuid
+  couponId String @map("coupon_id") @db.Uuid
+  planId   String @map("plan_id") @db.Uuid
+
+  coupon Coupon           @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  plan   SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@unique([couponId, planId])
+  @@map("coupon_plans")
+}
+
+model CouponRedemption {
+  id                       String   @id @default(uuid()) @db.Uuid
+  couponId                 String   @map("coupon_id") @db.Uuid
+  companyId                String   @map("company_id") @db.Uuid
+  // Set for payment coupons; null for a trial extension at company creation.
+  paymentId                String?  @unique @map("payment_id") @db.Uuid
+  discountAmount           Decimal  @default(0) @map("discount_amount") @db.Decimal(18, 2)
+  freeMonths               Int      @default(0) @map("free_months")
+  trialDays                Int      @default(0) @map("trial_days")
+  redeemedByPlatformUserId String?  @map("redeemed_by_platform_user_id") @db.Uuid
+  createdAt                DateTime @default(now()) @map("created_at")
+
+  coupon     Coupon               @relation(fields: [couponId], references: [id], onDelete: Restrict)
+  company    Company              @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  payment    SubscriptionPayment? @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  redeemedBy PlatformUser?        @relation("CouponRedeemedBy", fields: [redeemedByPlatformUserId], references: [id], onDelete: SetNull)
+
+  @@index([couponId, companyId])
+  @@map("coupon_redemptions")
+}
+
+enum SupportTicketStatus {
+  OPEN
+  IN_PROGRESS
+  WAITING_ON_CUSTOMER
+  RESOLVED
+  CLOSED
+}
+
+enum SupportTicketPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum SupportTicketCategory {
+  GENERAL
+  BUG
+  BILLING
+  ACCOUNT
+  DATA
+  FEATURE_REQUEST
+}
+
+enum SupportTicketAuthorType {
+  CUSTOMER
+  PLATFORM
+}
+
+model SupportTicket {
+  id                       String                  @id @default(uuid()) @db.Uuid
+  companyId                String                  @map("company_id") @db.Uuid
+  ticketNumber             String                  @map("ticket_number")
+  subject                  String
+  category                 SupportTicketCategory   @default(GENERAL)
+  priority                 SupportTicketPriority   @default(NORMAL)
+  status                   SupportTicketStatus     @default(OPEN)
+  createdByUserId          String                  @map("created_by_user_id") @db.Uuid
+  assignedToPlatformUserId String?                 @map("assigned_to_platform_user_id") @db.Uuid
+  lastMessageAt            DateTime                @default(now()) @map("last_message_at")
+  // Who wrote last (customer messages = needs a platform reply).
+  lastMessageBy            SupportTicketAuthorType @default(CUSTOMER) @map("last_message_by")
+  resolvedAt               DateTime?               @map("resolved_at")
+  closedAt                 DateTime?               @map("closed_at")
+  createdAt                DateTime                @default(now()) @map("created_at")
+  updatedAt                DateTime                @updatedAt @map("updated_at")
+
+  company    Company                @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdBy  User                   @relation("SupportTicketCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  assignedTo PlatformUser?          @relation("SupportTicketAssignedTo", fields: [assignedToPlatformUserId], references: [id], onDelete: SetNull)
+  messages   SupportTicketMessage[]
+
+  @@unique([companyId, ticketNumber])
+  @@index([status, lastMessageAt])
+  @@index([companyId, createdByUserId])
+  @@map("support_tickets")
+}
+
+model SupportTicketMessage {
+  id                   String                  @id @default(uuid()) @db.Uuid
+  ticketId             String                  @map("ticket_id") @db.Uuid
+  authorType           SupportTicketAuthorType @map("author_type")
+  authorUserId         String?                 @map("author_user_id") @db.Uuid
+  authorPlatformUserId String?                 @map("author_platform_user_id") @db.Uuid
+  body                 String
+  // Platform-only note, never shown to the customer.
+  isInternal           Boolean                 @default(false) @map("is_internal")
+  createdAt            DateTime                @default(now()) @map("created_at")
+
+  ticket             SupportTicket             @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  authorUser         User?                     @relation("SupportTicketMessageAuthor", fields: [authorUserId], references: [id], onDelete: SetNull)
+  authorPlatformUser PlatformUser?             @relation("SupportTicketMessagePlatformAuthor", fields: [authorPlatformUserId], references: [id], onDelete: SetNull)
+  attachments        SupportTicketAttachment[]
+
+  @@index([ticketId, createdAt])
+  @@map("support_ticket_messages")
+}
+
+// Files on a ticket message. Kept apart from the shared `attachments` table
+// because platform staff (not tenant users) also upload here.
+model SupportTicketAttachment {
+  id            String   @id @default(uuid()) @db.Uuid
+  messageId     String   @map("message_id") @db.Uuid
+  fileName      String   @map("file_name")
+  mimeType      String   @map("mime_type")
+  fileSizeBytes Int      @map("file_size_bytes")
+  storageKey    String   @map("storage_key")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  message SupportTicketMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@map("support_ticket_attachments")
 }
 
 // ---------------------------------------------------------------------------
@@ -658,6 +844,8 @@ model User {
   supportSessionsRevoked                     SupportAccessSession[]               @relation("SupportSessionRevokedBy")
   supportSessionsWriteDecided                SupportAccessSession[]               @relation("SupportSessionWriteDecidedBy")
   branchRoles                                UserBranchRole[]
+  supportTicketsCreated                      SupportTicket[]                      @relation("SupportTicketCreatedBy")
+  supportTicketMessages                      SupportTicketMessage[]               @relation("SupportTicketMessageAuthor")
   auditLogs                                  AuditLog[]
   notifications                              Notification[]
   uploadedFiles                              Attachment[]
@@ -10278,6 +10466,8 @@ model AuditLog {
 
 enum DocumentType {
   SAMPLE_REQUEST
+  // Platform SaaS Phase 5: customer support tickets (TKT-YYYY-#####, company-wide).
+  SUPPORT_TICKET
   BUYER_ENQUIRY
   SALES_ORDER
   PRODUCTION_ORDER
