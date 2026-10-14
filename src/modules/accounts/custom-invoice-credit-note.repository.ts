@@ -32,6 +32,58 @@ export const CustomInvoiceCreditNoteRepository = {
   findAnyById: (companyId: string, id: string) =>
     prisma.customInvoiceCreditNote.findFirst({ where: { id, companyId }, include: detailInclude }),
 
+  /** Full details for PDF generation — includes company letterhead, customer addresses, invoice series, and original line items. */
+  findByIdWithFullDetails: (companyId: string, id: string) =>
+    prisma.customInvoiceCreditNote.findFirst({
+      where: { id, companyId },
+      include: {
+        createdBy: { select: { id: true, fullName: true } },
+        company: {
+          select: {
+            id: true,
+            name: true,
+            legalName: true,
+            taxRegistrationNo: true,
+            addressJson: true,
+          },
+        },
+        customInvoice: {
+          select: {
+            id: true,
+            invoiceNumber: true,
+            invoiceDate: true,
+            placeOfSupplyStateCode: true,
+            customer: {
+              select: {
+                id: true,
+                name: true,
+                code: true,
+                taxRegistrationNo: true,
+                billingAddress: true,
+                shippingAddress: true,
+                city: true,
+                pinCode: true,
+              },
+            },
+            invoiceSeries: { select: { id: true, name: true, prefix: true } },
+          },
+        },
+        items: {
+          include: {
+            customInvoiceItem: {
+              select: {
+                id: true,
+                itemName: true,
+                hsnCode: true,
+                unitPrice: true,
+                gstPercentage: true,
+              },
+            },
+          },
+        },
+      },
+    }),
+
   /** Conditional status write — same race-closing shape used throughout this project. */
   updateStatusConditional: (id: string, expectedStatus: CustomInvoiceCreditNoteStatus, data: Prisma.CustomInvoiceCreditNoteUncheckedUpdateInput) =>
     prisma.customInvoiceCreditNote.updateMany({ where: { id, status: expectedStatus }, data }),

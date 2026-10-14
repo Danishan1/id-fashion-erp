@@ -67,6 +67,13 @@ export const COMMON_FASHION_SERVICES: ServicePreset[] = [
   { id: "srv-alteration", name: "Alteration & Tailoring Services", sacCode: "9987", defaultGst: "5" },
 ];
 
+export const DEFAULT_INVOICE_TERMS = [
+  "1. Goods once sold will not be taken back or exchanged.",
+  "2. Payment is due within the stipulated credit period from invoice date.",
+  "3. Interest @ 18% p.a. will be charged on overdue payments after due date.",
+  "4. All disputes are subject to local court jurisdiction.",
+].join("\n");
+
 interface ItemDraft {
   productId: string;
   itemName: string;
@@ -149,7 +156,9 @@ export function CustomInvoiceForm({ initialInvoice }: { initialInvoice?: Initial
   const [advancePaymentAmount, setAdvancePaymentAmount] = useState(initialInvoice?.advancePaymentAmount ?? "");
   const [payableAmountTitle, setPayableAmountTitle] = useState(initialInvoice?.payableAmountTitle ?? "");
   const [payableAmountValue, setPayableAmountValue] = useState(initialInvoice?.payableAmountValue ?? "");
-  const [termsAndConditions, setTermsAndConditions] = useState(initialInvoice?.termsAndConditions ?? "");
+  const [termsAndConditions, setTermsAndConditions] = useState(
+    initialInvoice ? (initialInvoice.termsAndConditions ?? "") : DEFAULT_INVOICE_TERMS
+  );
 
   const [showCreateClient, setShowCreateClient] = useState(false);
   const [newClientName, setNewClientName] = useState("");
@@ -806,16 +815,31 @@ export function CustomInvoiceForm({ initialInvoice }: { initialInvoice?: Initial
 
       <p className="text-right text-sm text-zinc-500 dark:text-zinc-400">Balance Due: ₹{balanceDue.toFixed(2)}</p>
 
-      <FormField label="Terms & Conditions" htmlFor="termsAndConditions">
+      <div>
+        <div className="mb-1 flex items-center justify-between">
+          <label htmlFor="termsAndConditions" className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
+            Terms & Conditions
+          </label>
+          <button
+            type="button"
+            onClick={() => setTermsAndConditions(DEFAULT_INVOICE_TERMS)}
+            className="text-xs font-medium text-indigo-600 hover:text-indigo-500 hover:underline dark:text-indigo-400"
+          >
+            Reset to Standard Terms
+          </button>
+        </div>
         <textarea
           id="termsAndConditions"
-          rows={3}
+          rows={4}
           placeholder="One term per line"
           value={termsAndConditions}
           onChange={(e) => setTermsAndConditions(e.target.value)}
           className={textInputClass()}
         />
-      </FormField>
+        <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+          Standard terms appear on the printed and downloaded PDF invoice.
+        </p>
+      </div>
 
       {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
 

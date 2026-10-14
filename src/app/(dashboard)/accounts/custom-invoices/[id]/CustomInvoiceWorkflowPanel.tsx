@@ -586,12 +586,21 @@ export function CustomInvoiceWorkflowPanel({ invoice }: { invoice: CustomInvoice
                     <td className="px-3 py-2">
                       <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[cn.status] ?? ""}`}>{STATUS_LABELS[cn.status] ?? cn.status}</span>
                     </td>
-                    <td className="px-3 py-2">
-                      {cn.status === "ISSUED" && (
-                        <button type="button" onClick={() => runCancelCreditNote(cn.id)} disabled={isBusy} className="text-xs font-medium text-red-600 hover:underline dark:text-red-400">
-                          Cancel
-                        </button>
-                      )}
+                    <td className="px-3 py-2 text-right">
+                      <div className="flex items-center justify-end gap-3">
+                        <a
+                          href={`/api/v1/custom-invoices/credit-notes/${cn.id}/pdf`}
+                          download={`${cn.creditNoteNumber}.pdf`}
+                          className="text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400"
+                        >
+                          PDF
+                        </a>
+                        {cn.status === "ISSUED" && (
+                          <button type="button" onClick={() => runCancelCreditNote(cn.id)} disabled={isBusy} className="text-xs font-medium text-red-600 hover:underline dark:text-red-400">
+                            Cancel
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
