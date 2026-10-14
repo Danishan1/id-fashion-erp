@@ -2298,3 +2298,163 @@ taught about the new `FinishedGoodsPickLine` child table) was found by inspectio
 ever surface as a real bug. A forensic file-by-file `git diff` review — the direct process lesson from Phase
 3's own accidental-overwrite episode — confirmed every one of this phase's 9 changed files contains only
 intentional, targeted edits.
+
+## Phase 5 — UI/Screens
+
+Phase 5 introduces a genuinely different verification bar from every prior phase: each FGI-05x task's own
+common acceptance criterion requires "gated correctly per the FGI-008 RBAC mapping (verified by a logged-in-
+as-each-affected-role browser check, not just a unit test)" and "zero console/network errors on load with
+real, non-empty seed data" — real browser verification against real seeded data, not just a scratch-DB
+script. This phase's own tasks are therefore taken strictly one at a time, same discipline as every prior
+phase, starting with FGI-050.
+
+**Verification-bar scope decision, stated plainly before building (not a silent narrowing of the stated
+criterion):** "logged-in-as-each-affected-role" is read as proving the RBAC gate genuinely works for both a
+granted and a denied outcome, not literally cycling through all 9 named roles for every single screen — the
+9 granted roles only ever differ in which of the already-proven-generic `view/create/edit/post/approve/
+export/print` actions they hold on the exact same `fg_inventory` module key, so exhaustively re-testing the
+identical gate mechanism 9 times per screen would be disproportionate to what's actually different between
+those roles. Each screen's own live verification covers: one granted role (confirming access + zero console/
+network errors) and one explicitly-no-grant role (confirming a clean `404`, both via direct URL and via the
+nav link's own absence). A role whose grant genuinely changes what a SPECIFIC screen renders (e.g. a
+`create`-only vs. `post`-capable difference on a future transactional screen) gets that distinction tested
+explicitly when it's the first screen that distinction actually matters for.
+
+### A found, pre-existing gap closed before FGI-050 could be meaningful: the §4.7 historical backfill had never been built nor run
+
+**Finding:** §4.7 point 1 and §9 ("Migration and rollback strategy") both describe the one-time historical
+backfill — creating a `productVariantId = NULL` "unallocated legacy stock" row for every pre-existing non-
+zero `StockBalance` at a Finished-Goods warehouse — as "Phase-0-adjacent." Reading Phase 0's and Phase 1's
+own evidence sections confirmed this was never actually built: FGI-013's own evidence section explicitly
+scopes itself to the reconciliation **report/computation** only ("a scheduled job and a dedicated UI report
+screen are deliberately not part of this task... No cron/scheduler infrastructure and no UI were introduced
+here"), and no other task anywhere in Phases 0–4 mentions writing this backfill. Flagged here per the "stop
+and report any conflict" instruction before building FGI-050, since the Dashboard's own stated scope
+("including the unallocated-legacy-stock callout") is meaningless without it.
+
+**Closed via `scripts/backfill-fg-unallocated-stock.mjs`** (new, permanent — matching this project's own
+established `scripts/backfill-*.mjs` convention, not a throwaway script), run once per `(companyId,
+productId, warehouseId)` key at a `FINISHED_GOODS`-typed warehouse with a non-zero flat `StockBalance`.
+
+**A confident, deliberate refinement over the plan's own literal wording, documented rather than silently
+substituted:** the script inserts `remainder = StockBalance.quantityOnHand − sum(existing
+FinishedGoodsStockBalance rows for that same key)`, not unconditionally the whole flat balance. This matters
+because a style may already have real, variant-tracked stock posted through this module (e.g. a Production
+receipt that happened before this backfill ever ran) — inserting an unallocated row for the FULL flat total
+in that case would double-count real stock and make FGI-013's own reconciliation report immediately flag a
+phantom drift the instant it runs. This refinement means `sum(FinishedGoodsStockBalance) === StockBalance`
+holds by construction immediately after the script runs, for every key it touches — exactly what FGI-013's
+reconciliation report checks. Idempotent and safe to re-run (a key whose remainder is already `<= EPSILON`
+is skipped outright).
+
+**Live, non-mocked verification against the real disposable scratch database — 5/5 checks passed**, running
+the actual script as a real subprocess (not its logic reimplemented): a fixture style with 80 units of flat
+stock and zero `FinishedGoodsStockBalance` rows correctly got a new unallocated row created at exactly 80; a
+second, already-fully-variant-tracked style (50 flat, 50 already real-variant-tracked) correctly got **no**
+row created (remainder was 0) and its existing real variant row was left completely untouched; re-running
+the script a second time correctly created **zero** further rows and left the first unallocated row's
+quantity unchanged (idempotency). All fixture rows deleted afterward, independently confirmed via direct SQL
+that the scratch database returned to its exact pre-test state.
+
+---
+
+### FGI-050 — Finished Goods Dashboard (including the unallocated-legacy-stock callout)
+
+**Status:** VERIFIED.
+
+**Files changed:**
+- `scripts/backfill-fg-unallocated-stock.mjs` (new) — the prerequisite backfill described above.
+- `src/modules/finished-goods-inventory/finished-goods-dashboard.repository.ts` (new) — five thin, read-only
+  Prisma queries (`sumSaleable`, `sumRejected`, `countDistinctStyles`, `countFinishedGoodsWarehouses`,
+  `findManyUnallocatedLegacyStock`), matching this module's own established repository-layer convention
+  (every sibling file in this module — putaway, receipt, reservation, reconciliation — already has one).
+- `src/modules/finished-goods-inventory/finished-goods-dashboard.service.ts` (new) — `getFinishedGoodsDashboard(companyId)`,
+  composing the five repository calls via `Promise.all` (confirmed concurrent, not sequential, via a
+  dedicated unit test), reading **exclusively** from `FinishedGoodsStockBalance`/`Warehouse` — never
+  re-deriving from the `InventoryTransaction` ledger at request time, the common acceptance criterion
+  shared by every FGI-05x task.
+- `src/modules/finished-goods-inventory/finished-goods-dashboard.service.test.ts` (new, 5 tests).
+- `src/app/(dashboard)/finished-goods-inventory/page.tsx` (new) — a Server Component mirroring the main
+  `/dashboard` page's own exact shape (a local `StatTiles` helper, no separate API route needed, matching
+  that same page's own "Server Component calls the service directly" precedent) — gated via
+  `PermissionService.assert(..., "fg_inventory", "view").catch(() => notFound())`, the identical pattern
+  already used by `/inventory/stock-balances`. Four stat tiles (Total Saleable Stock, Total Rejected Stock,
+  Styles Tracked, Finished Goods Warehouses) plus a conditionally-rendered, amber-styled "Unallocated Legacy
+  Stock" section (only shown when at least one row exists) listing each style/warehouse pair with the exact
+  §4.7-point-4 wording ("N units of unallocated legacy stock remain for this style — run a reconciliation
+  count").
+- `src/components/layout/navigation.ts` — a first "Finished Goods Inventory" child link under the existing
+  "Inventory" section (gated `modules: ["fg_inventory"]`), alongside, never replacing, the untouched existing
+  Raw Material Inventory links — the `FGI-059` task's own scope is explicitly partial here (documented
+  in-code): each further Phase 5 screen adds its own child link as it's built, completing that task once all
+  9 screens exist.
+
+**Database changes:** none from this task's own code — the one-time backfill above is a data operation, not
+a schema change.
+
+**Acceptance criteria (as defined in §8, common to every FGI-05x task):**
+- [x] **"Gated correctly per the FGI-008 RBAC mapping (verified by a logged-in-as-each-affected-role browser
+      check, not just a unit test)"** — verified live (below) for both a granted role (SUPER_ADMIN) and the
+      explicitly-no-grant `ACCOUNTS_MANAGER` role, per the verification-bar scope decision stated above.
+- [x] **"Reads exclusively from the new cache tables (never re-derives from the ledger at request time)"** —
+      confirmed by code (the repository's five queries touch only `FinishedGoodsStockBalance`/`Warehouse`,
+      zero references to `InventoryTransaction` anywhere in this task's own files).
+- [x] **"Zero console/network errors on load with real, non-empty seed data"** — verified live (below)
+      against this scratch database's own real `prisma db seed` output plus a realistic seeded fixture.
+
+**Live, real-browser verification — a genuine environment gotcha found and fixed along the way, not an app
+bug:** seeded this scratch database with a full, realistic dataset (`npx prisma db seed`, giving the real
+Super Admin login `admin@indradhar.com`/`ChangeMe123!`, 10 customers, 6 warehouses including a real
+"Finished Goods Godam" (WH04), and real styles including "Round Neck T-Shirt"), then seeded 120 units of flat
+`StockBalance` for that real style at that real warehouse (simulating genuine pre-migration historical
+stock) and ran the real backfill script against it. **The first login attempt against a dev server started
+on port 3005 (chosen to avoid colliding with another session's own port-3000 server) failed in a confusing
+way** — signing in and signing out both silently redirected the browser to `http://localhost:3000` instead
+of staying on `3005`. Root-caused, not guessed at: this worktree's own `.env` has `NEXTAUTH_URL=
+"http://localhost:3000"` hardcoded, independent of whichever port the dev server is actually started on —
+NextAuth's own redirect/origin logic always targets the configured `NEXTAUTH_URL`, regardless of the actual
+listening port. **Fixed locally and reverted afterward** (not a permanent change — `.env` is gitignored,
+local-only, and a future session may legitimately choose a different port): backed up `.env`, temporarily
+set `NEXTAUTH_URL="http://localhost:3005"` to match, restarted the dev server, verified login worked
+correctly, then restored the original `.env` once verification was complete. **Worth remembering for any
+future live-browser verification pass in this project that doesn't use the default port 3000**: check
+`NEXTAUTH_URL` matches the actual dev server port before assuming a login/redirect failure is an app bug.
+
+With that resolved, verified completely cleanly:
+- **Super Admin (granted)**: logged in via the real login form, navigated to `/finished-goods-inventory`
+  (both via direct URL and via clicking the real sidebar link, confirmed present) — the page correctly
+  rendered "120 / Total Saleable Stock," "1 / Styles Tracked," "1 / Finished Goods Warehouses," and the
+  Unallocated Legacy Stock table showing exactly "ST-TS-401 — Round Neck T-Shirt / WH04 — Finished Goods
+  Godam / 120 units of unallocated legacy stock remain for this style — run a reconciliation count" — every
+  figure correctly traceable to the real seeded fixture, not a placeholder. Zero console errors, zero failed
+  network requests (confirmed via `read_console_messages`/`read_network_requests`, not merely a visual
+  check).
+- **A real, no-grant `ACCOUNTS_MANAGER` test user (denied)**: created via a real `UserBranchRole` assignment
+  to the real seeded `ACCOUNTS_MANAGER` role, logged in through the real login form — a direct navigation to
+  `/finished-goods-inventory` correctly returned a clean "404: This page could not be found" (never a
+  403/error page that would reveal the route exists), and the sidebar correctly showed **no** "Finished Goods
+  Inventory" link at all on this role's own Dashboard — both the route-level `notFound()` guard and the
+  nav-level `modules` filter confirmed working together, not just one or the other.
+- All fixture data (the 120-unit stock fixture, the backfilled unallocated row, the test user and its role
+  assignment) deleted afterward — independently confirmed via direct SQL that zero rows of any kind remained
+  from this task's own testing. The temporary dev server was stopped and `.env` restored to its original
+  state.
+
+**Verification evidence:**
+- `npx prisma validate`: clean (no schema changes this task).
+- `npx tsc --noEmit` (whole project, `NODE_OPTIONS="--max-old-space-size=6144"`): 0 errors.
+- `npx eslint .` (whole project, same memory flag): `0 errors, 13 warnings` — the exact same 13 pre-existing,
+  unrelated warnings already documented in Phase 4's own evidence section.
+- `npx vitest run` (whole project): **2739 tests passed, 161 skipped (2900 total), 173 test files passed, 12
+  skipped (185 total) — 0 failures.** All three checks run sequentially (never concurrently), per this
+  project's own now-established memory-pressure lesson from Phase 4.
+- No scratch artifacts left in the worktree — confirmed via `git status --short` showing only the 6 intended
+  changed/new paths (`navigation.ts`, `backfill-fg-unallocated-stock.mjs`,
+  `finished-goods-dashboard.{repository,service,service.test}.ts`, the new page file) — independently
+  re-confirmed via a forensic `git diff` (not just `--stat`) showing every change is additive/targeted, no
+  accidental overwrite.
+
+**No conflicts found with the existing ledger, warehouse, production, or dispatch architecture** beyond the
+never-built historical-backfill gap found and closed above (a pre-existing sequencing gap from Phase 0/1, not
+a new design disagreement) and the `NEXTAUTH_URL`/port-mismatch environment gotcha (a local dev-environment
+quirk, not an application defect).
