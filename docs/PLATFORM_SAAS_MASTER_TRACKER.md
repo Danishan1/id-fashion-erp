@@ -3,8 +3,8 @@
 **Single Source of Truth (SSOT)** for Platform Administration & SaaS Transformation  
 **Document Path**: `docs/PLATFORM_SAAS_MASTER_TRACKER.md`  
 **Initial Baseline Date**: 2026-10-12  
-**Current Active Phase**: Phase 5 COMPLETE (2026-10-14) — awaiting approval to start Phase 6  
-**Current Active Task**: None (Phase 2 not approved yet)  
+**Current Active Phase**: ALL PHASES COMPLETE — Phase 6 verified 2026-10-14  
+**Current Active Task**: None  
 
 ---
 
@@ -12,17 +12,17 @@
 
 | Metric | Value |
 |---|---|
-| **Total Tasks Identified** | 30 |
+| **Total Tasks Identified** | 35 |
 | **NOT STARTED** | 0 |
 | **IN PROGRESS** | 0 |
 | **BLOCKED** | 0 |
 | **IMPLEMENTED** | 0 |
-| **VERIFIED** | 30 (PLAT-001 – PLAT-030) |
+| **VERIFIED** | 35 (PLAT-001 – PLAT-035) |
 | **DEFERRED** | 0 |
-| **Overall Verified Completion** | **100%** (30 / 30) |
-| **Current Active Phase** | **Phase 5 complete — Phase 6 (final verification) awaiting approval** |
+| **Overall Verified Completion** | **100%** (35 / 35) |
+| **Current Active Phase** | **All six phases complete** |
 | **Current Active Task** | None |
-| **Next Eligible Task** | Phase 6 — Final Verification & Production Readiness, after approval |
+| **Next Eligible Task** | None — production deployment per `docs/PLATFORM_SAAS_RUNBOOK.md` |
 | **Open Decisions Requiring Clarification** | 0 (DEC-04 AI metering deferred to a later phase) |
 
 > [!NOTE]
@@ -134,6 +134,11 @@ The following decisions are approved and bind all future implementation tasks:
 | **PLAT-028** | Support Ticket Schema | None | Add `SupportTicket`, `TicketMessage`, and `TicketAttachment` models | NEW | MEDIUM | Phase 5 | **VERIFIED** | None |
 | **PLAT-029** | Customer Ticket UI & API | None | In-app customer support widget & ticket submission interface | NEW | MEDIUM | Phase 5 | **VERIFIED** | PLAT-028 |
 | **PLAT-030** | Platform Ticket Inbox | None | Platform staff ticketing dashboard with status workflow & replies | NEW | MEDIUM | Phase 5 | **VERIFIED** | PLAT-028, PLAT-029 |
+| **PLAT-031** | Permission Catalog Sync | Catalog only written by `prisma db seed`; dev DB missing 108 keys | Idempotent sync script run on every deploy | NEW | HIGH | Phase 6 | **VERIFIED** | None |
+| **PLAT-032** | Tenant Isolation Test | Manual spot checks only | Automated cross-tenant leakage sweep over every `/api/v1/**/[id]` route + lists, files, tickets, support requests | NEW | CRITICAL | Phase 6 | **VERIFIED** | PLAT-031 |
+| **PLAT-033** | Migration Rehearsal | None | Apply all migrations + seed + sync to an empty DB, check for drift | NEW | HIGH | Phase 6 | **VERIFIED** | PLAT-031 |
+| **PLAT-034** | Rollback Scripts | None | Down scripts for the 5 SaaS migrations, rehearsed on a snapshot | NEW | HIGH | Phase 6 | **VERIFIED** | None |
+| **PLAT-035** | Regression & Runbook | None | Full regression + production runbook | NEW | HIGH | Phase 6 | **VERIFIED** | PLAT-031 – PLAT-034 |
 
 ---
 
@@ -195,6 +200,8 @@ flowchart TD
 
 ### Phase 6 — Final Verification & Production Readiness
 - **Objective**: End-to-end verification, tenant isolation penetration testing, migration rehearsal, and production runbook preparation.
+- **Tasks**: `PLAT-031`, `PLAT-032`, `PLAT-033`, `PLAT-034`, `PLAT-035`.
+- **Status**: VERIFIED (2026-10-14) — all three exit criteria met.
 - **Exit Criteria**:
   - 100% of test suites pass with zero regressions.
   - Cross-tenant data leakage tests pass.
@@ -760,16 +767,39 @@ When updating this document after completing a task, use the following template:
   - The trial coupon at company creation was verified through its preview endpoint and the shared service; creating a whole company over HTTP is still blocked by the known dev-DB permission-catalog gap.
   - Ticket notifications are in-app only (no email yet).
   - Coupons are platform-wide, so creating/editing one has no company audit row; each use is audited on the payment.
-- **Next Task**: Phase 6 — Final Verification & Production Readiness, after approval.
+- **Next Task**: Phase 6 — Final Verification & Production Readiness.
+
+### Task Progress Update — Phase 6
+- **Date**: 2026-10-14
+- **Task ID**: PLAT-031 – PLAT-035
+- **Phase**: Phase 6
+- **Previous Status**: NOT STARTED
+- **New Status**: VERIFIED
+- **Work Completed**:
+  - PLAT-031: `scripts/sync-permission-catalog.mjs` adds missing permission keys, grants only brand-new keys to system roles (full set to SUPER_ADMIN), never deletes, never re-grants a permission an admin removed. Dev run: +108 permissions, +183 grants; second run: 0 changes. This closes the dev-DB catalog gap noted in Phases 1–5.
+  - PLAT-032: `scripts/qa/verify-tenant-isolation.mjs` — 41 record routes probed by a second company (GET + PATCH, row hash compared before/after), list endpoints, attachment download, tickets both ways, support-request approval with the real code, platform/tenant session separation, and live-session cut-off on suspension.
+  - PLAT-033: `scripts/qa/rehearse-migrations.mjs` — throwaway DB, 173 migrations + seed + sync, no drift against `schema.prisma`.
+  - PLAT-034: `prisma/rollback/*.down.sql` (one per SaaS migration) and `scripts/qa/rehearse-rollback.mjs` (pg_dump snapshot → roll back all 5 → check → roll forward → check).
+  - PLAT-035: full regression; `docs/PLATFORM_SAAS_RUNBOOK.md`; `REDIS_URL` added to `.env.example`.
+- **Test Results**:
+  - Unit/integration: 2748 passed / 161 skipped (same as Phase 5 — no regressions). The skipped suites are DB integration tests that only run when `CRM_IT_DATABASE_URL` is set.
+  - `tsc --noEmit` 0 errors; `eslint .` 0 errors (19 pre-existing warnings); `npm run build` succeeded.
+  - Tenant isolation: 140 / 140 checks passed, no leakage found.
+  - Migration rehearsal: passed.
+  - Rollback rehearsal: passed — all SaaS tables removed, last migration back to `20261011100000_crm_message_templates`, 16 core tables unchanged, clean roll-forward with no SaaS drift.
+- **Blockers / Notes**:
+  - The isolation sweep's first run reported 14 "failures" that were the check itself (a refusal response echoes back the requested id). No real leak; the check now requires a 4xx error with no record data.
+  - The rollback deliberately deletes `SUPPORT_TICKET` document-number counters (Postgres can't drop an enum value still in use); the rehearsal excludes those rows from the core-data comparison.
+  - On a fresh install the seeded company has no subscription row (seed runs after the back-fill migration), so it has every module and no expiry — documented in the runbook.
+  - The isolation sweep leaves its test company (`QA-ISOLATION-TENANT`) suspended in the dev DB.
 
 ---
 
 ## 16. NEXT RECOMMENDED TASK
 
-**Recommended Next Step**: **Phase 6 — Final Verification & Production Readiness**.
-- **Objective**: End-to-end verification of the whole platform/SaaS layer before production.
-- **Prerequisites**: User approval to start Phase 6.
+**All six phases are complete.** Next step: production deployment following `docs/PLATFORM_SAAS_RUNBOOK.md`.
+Still open by choice: DEC-04 (AI usage metering), email notifications (in-app only today), a payment gateway (payments are recorded manually per DEC-03).
 
 ---
 
-**PHASE 5 COMPLETE (2026-10-14) — AWAITING APPROVAL FOR PHASE 6**
+**PLATFORM SAAS TRACKER COMPLETE (2026-10-14) — 35 / 35 TASKS VERIFIED**
