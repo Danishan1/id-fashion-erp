@@ -305,45 +305,60 @@ export function CustomizePanel({ layout, onChange, onClose }: { layout: Dashboar
     [next[i], next[j]] = [next[j], next[i]];
     set(next);
   };
+  const iconBtn = "flex h-8 w-8 items-center justify-center rounded-md border border-zinc-200 text-zinc-600 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-30 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800";
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="customize-title" className="fixed inset-0 z-50 flex justify-end bg-black/30" onKeyDown={(e) => e.key === "Escape" && onClose()}>
-      <div className="flex h-full w-full max-w-md flex-col overflow-y-auto bg-white p-4 shadow-xl dark:bg-zinc-900">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 id="customize-title" className="text-base font-semibold">
-            Customize dashboard
-          </h2>
-          <button type="button" onClick={onClose} className="rounded px-2 text-xl leading-none text-zinc-500 hover:text-zinc-900" aria-label="Close" autoFocus>
+    <div role="dialog" aria-modal="true" aria-labelledby="customize-title" className="fixed inset-0 z-50 flex justify-end bg-black/30" onKeyDown={(e) => e.key === "Escape" && onClose()} onClick={(e) => e.target === e.currentTarget && onClose()}>
+      {/* Header and footer stay put; only the widget list scrolls. */}
+      <div className="flex h-full w-full max-w-md flex-col bg-white shadow-xl dark:bg-zinc-900">
+        <div className="flex items-start justify-between gap-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
+          <div className="min-w-0">
+            <h2 id="customize-title" className="text-base font-semibold">
+              Customize dashboard
+            </h2>
+            <p className="mt-0.5 text-sm text-zinc-500">Choose which sections you see, their order and width. Changes are saved for you only.</p>
+          </div>
+          <button type="button" onClick={onClose} className="shrink-0 rounded px-2 text-xl leading-none text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100" aria-label="Close" autoFocus>
             ×
           </button>
         </div>
-        <p className="mb-3 text-sm text-zinc-500">Choose which sections you see, their order and width. Changes are saved for you only.</p>
-        <ol className="space-y-2">
-          {w.map((item, i) => (
-            <li key={item.key} className="flex items-center gap-2 rounded-md border border-zinc-200 p-2 dark:border-zinc-700">
-              <input
-                type="checkbox"
-                id={`show-${item.key}`}
-                checked={item.visible}
-                onChange={(e) => set(w.map((x) => (x.key === item.key ? { ...x, visible: e.target.checked } : x)))}
-              />
-              <label htmlFor={`show-${item.key}`} className="min-w-0 flex-1 text-sm">
-                <span className="font-medium">{DASHBOARD_WIDGETS[item.key].label}</span>
-                <span className="block truncate text-xs text-zinc-500">{DASHBOARD_WIDGETS[item.key].description}</span>
-              </label>
-              <select aria-label={`Width of ${DASHBOARD_WIDGETS[item.key].label}`} className={`${textInputClass()} w-auto py-1 text-xs`} value={item.size} onChange={(e) => set(w.map((x) => (x.key === item.key ? { ...x, size: e.target.value as "half" | "full" } : x)))}>
-                <option value="half">Half</option>
-                <option value="full">Full</option>
-              </select>
-              <button type="button" className="rounded px-1.5 text-zinc-500 hover:bg-zinc-100 disabled:opacity-30 dark:hover:bg-zinc-800" aria-label={`Move ${DASHBOARD_WIDGETS[item.key].label} up`} disabled={i === 0} onClick={() => move(i, -1)}>
-                ↑
-              </button>
-              <button type="button" className="rounded px-1.5 text-zinc-500 hover:bg-zinc-100 disabled:opacity-30 dark:hover:bg-zinc-800" aria-label={`Move ${DASHBOARD_WIDGETS[item.key].label} down`} disabled={i === w.length - 1} onClick={() => move(i, 1)}>
-                ↓
-              </button>
-            </li>
-          ))}
+        <ol className="flex-1 space-y-2 overflow-y-auto px-4 py-3">
+          {w.map((item, i) => {
+            const def = DASHBOARD_WIDGETS[item.key];
+            return (
+              <li key={item.key} className={`rounded-md border p-3 ${item.visible ? "border-zinc-200 dark:border-zinc-700" : "border-dashed border-zinc-200 opacity-70 dark:border-zinc-700"}`}>
+                <div className="flex items-start gap-2">
+                  <input type="checkbox" className="mt-0.5 shrink-0" id={`show-${item.key}`} checked={item.visible} onChange={(e) => set(w.map((x) => (x.key === item.key ? { ...x, visible: e.target.checked } : x)))} />
+                  <label htmlFor={`show-${item.key}`} className="min-w-0 flex-1 text-sm">
+                    <span className="block font-medium leading-5">{def.label}</span>
+                    <span className="block text-xs leading-4 text-zinc-500">{def.description}</span>
+                  </label>
+                </div>
+                <div className="mt-2 flex items-center justify-end gap-2 pl-6">
+                  <label htmlFor={`size-${item.key}`} className="text-xs text-zinc-500">
+                    Width
+                  </label>
+                  <select
+                    id={`size-${item.key}`}
+                    aria-label={`Width of ${def.label}`}
+                    className="h-8 w-24 shrink-0 rounded-md border border-zinc-300 bg-white px-2 text-xs dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+                    value={item.size}
+                    onChange={(e) => set(w.map((x) => (x.key === item.key ? { ...x, size: e.target.value as "half" | "full" } : x)))}
+                  >
+                    <option value="half">Half</option>
+                    <option value="full">Full</option>
+                  </select>
+                  <button type="button" className={iconBtn} aria-label={`Move ${def.label} up`} disabled={i === 0} onClick={() => move(i, -1)}>
+                    ↑
+                  </button>
+                  <button type="button" className={iconBtn} aria-label={`Move ${def.label} down`} disabled={i === w.length - 1} onClick={() => move(i, 1)}>
+                    ↓
+                  </button>
+                </div>
+              </li>
+            );
+          })}
         </ol>
-        <div className="mt-4 flex justify-between gap-2">
+        <div className="flex justify-between gap-2 border-t border-zinc-200 px-4 py-3 dark:border-zinc-800">
           <Button variant="secondary" onClick={() => onChange(DEFAULT_DASHBOARD_LAYOUT)}>
             Reset to default
           </Button>

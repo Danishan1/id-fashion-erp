@@ -294,7 +294,7 @@ function DeliveriesModal({ row, canEdit, onClose }: { row: SubscriptionRow; canE
           <label htmlFor="ow-dl-status" className="text-sm text-zinc-600 dark:text-zinc-300">
             Status
           </label>
-          <select id="ow-dl-status" className={`${textInputClass()} w-auto`} value={status} onChange={(e) => setStatus(e.target.value)}>
+          <select id="ow-dl-status" className="h-9 rounded-md border border-zinc-300 bg-white px-2 text-sm dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100" value={status} onChange={(e) => setStatus(e.target.value)}>
             <option value="">All</option>
             <option value="PENDING">Queued</option>
             <option value="RETRYING">Retrying</option>
