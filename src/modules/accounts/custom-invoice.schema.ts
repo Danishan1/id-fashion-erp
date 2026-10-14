@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isValidStateCode } from "@/lib/gst";
 
 export const CUSTOM_INVOICE_TYPES = ["TAX_INVOICE", "PROFORMA_INVOICE"] as const;
 
@@ -35,6 +36,14 @@ export const customInvoiceSchema = z
     payableAmountTitle: z.string().max(200).optional().or(z.literal("")),
     payableAmountValue: z.coerce.number().min(0).optional(),
     termsAndConditions: z.string().max(5000).optional().or(z.literal("")),
+    placeOfSupplyStateCode: z
+      .string()
+      .trim()
+      .optional()
+      .or(z.literal(""))
+      .refine((val) => !val || isValidStateCode(val), {
+        message: "Invalid Indian GST State Code for Place of Supply. Must be a valid 2-digit state code (01-38, 97).",
+      }),
   })
   .refine((d) => !d.hasDueDate || !!d.dueDate, {
     message: "Due date is required when 'Set Payment Due Date' is enabled",

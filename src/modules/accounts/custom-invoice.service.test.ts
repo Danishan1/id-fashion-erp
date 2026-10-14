@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { CustomInvoiceInput } from "./custom-invoice.schema";
+import { round2 } from "@/lib/money";
+import { customInvoiceSchema, type CustomInvoiceInput } from "./custom-invoice.schema";
 
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("./invoice-series.repository", () => ({
@@ -16,9 +17,15 @@ vi.mock("./custom-invoice.repository", () => ({
   },
 }));
 vi.mock("./custom-invoice-credit-note.repository", () => ({
-  CustomInvoiceCreditNoteRepository: { countByInvoiceId: vi.fn() },
+  CustomInvoiceCreditNoteRepository: { countByInvoiceId: vi.fn(), countActiveByInvoiceId: vi.fn() },
 }));
-vi.mock("@/core/db/client", () => ({ prisma: { $transaction: vi.fn() } }));
+vi.mock("@/core/db/client", () => ({
+  prisma: {
+    $transaction: vi.fn(),
+    company: { findUnique: vi.fn() },
+    customer: { findUnique: vi.fn() },
+  },
+}));
 
 const { prisma } = await import("@/core/db/client");
 const { InvoiceSeriesRepository } = await import("./invoice-series.repository");
@@ -68,7 +75,16 @@ beforeEach(() => {
   vi.mocked(CustomInvoiceRepository.replaceItemsAndNotes).mockReset();
   vi.mocked(CustomInvoiceRepository.updateStatusConditional).mockReset();
   vi.mocked(CustomInvoiceCreditNoteRepository.countByInvoiceId).mockReset().mockResolvedValue(0);
+  vi.mocked(CustomInvoiceCreditNoteRepository.countActiveByInvoiceId).mockReset().mockResolvedValue(0);
   vi.mocked(prisma.$transaction).mockReset();
+  vi.mocked(prisma.company.findUnique).mockReset().mockResolvedValue({
+    id: "co-1",
+    taxRegistrationNo: "07AAAAA0000A1Z5", // Delhi (07)
+  } as never);
+  vi.mocked(prisma.customer.findUnique).mockReset().mockResolvedValue({
+    id: "cust-1",
+    taxRegistrationNo: "07BBBBB0000B1Z6", // Delhi (07) -> Intra-state default
+  } as never);
 });
 
 describe("createCustomInvoice", () => {
@@ -135,6 +151,168 @@ describe("createCustomInvoice", () => {
     expect(txCreate.mock.calls[0][0].data.balanceDue).toBe(500); // 1000 - 300 - 200
   });
 
+  it("calculates intra-state GST with exact 50/50 split and odd-paisa reconciliation", async () => {
+    const txCreate = mockTransaction({ id: "inv-gst-1", items: [], notes: [] });
+    // 1 item @ 555.83 with 18% GST -> taxAmount = round2(555.83 * 0.18) = 100.05 (odd paisa)
+    await createCustomInvoice(
+      actor,
+      baseInput({
+        items: [{ productId: "", itemName: "Fabric Roll", hsnCode: "5208", quantity: 1, unitPrice: 555.83, gstPercentage: 18 }],
+      })
+    );
+
+    const data = txCreate.mock.calls[0][0].data;
+    expect(data.taxAmount).toBe(100.05);
+    expect(data.isInterState).toBe(false);
+    expect(data.placeOfSupplyStateCode).toBe("07");
+    expect(data.cgstAmount).toBe(50.03);
+    expect(data.sgstAmount).toBe(50.02);
+    expect(data.igstAmount).toBe(0);
+    // Strict reconciliation: CGST + SGST must exactly equal taxAmount
+    expect(round2(data.cgstAmount + data.sgstAmount)).toBe(data.taxAmount);
+  });
+
+  it("calculates inter-state GST with IGST equal to total tax and zero CGST/SGST", async () => {
+    // Customer from Maharashtra (State Code 27), Supplier in Delhi (07)
+    vi.mocked(prisma.customer.findUnique).mockResolvedValue({
+      id: "cust-mh",
+      taxRegistrationNo: "27AAAAA1111A1Z5",
+    } as never);
+
+    const txCreate = mockTransaction({ id: "inv-gst-2", items: [], notes: [] });
+    await createCustomInvoice(
+      actor,
+      baseInput({
+        items: [{ productId: "", itemName: "Apparel Batch", hsnCode: "6109", quantity: 10, unitPrice: 100, gstPercentage: 18 }],
+      })
+    );
+
+    const data = txCreate.mock.calls[0][0].data;
+    expect(data.taxAmount).toBe(180);
+    expect(data.isInterState).toBe(true);
+    expect(data.placeOfSupplyStateCode).toBe("27");
+    expect(data.cgstAmount).toBe(0);
+    expect(data.sgstAmount).toBe(0);
+    expect(data.igstAmount).toBe(180);
+  });
+
+  it("respects explicit placeOfSupplyStateCode in input overriding customer GSTIN", async () => {
+    const txCreate = mockTransaction({ id: "inv-gst-3", items: [], notes: [] });
+    // Customer default is Delhi (07), but placeOfSupplyStateCode explicitly given as "24" (Gujarat)
+    await createCustomInvoice(
+      actor,
+      baseInput({
+        placeOfSupplyStateCode: "24",
+        items: [{ productId: "", itemName: "Apparel Batch", hsnCode: "6109", quantity: 10, unitPrice: 100, gstPercentage: 18 }],
+      })
+    );
+
+    const data = txCreate.mock.calls[0][0].data;
+    expect(data.isInterState).toBe(true);
+    expect(data.placeOfSupplyStateCode).toBe("24");
+    expect(data.igstAmount).toBe(180);
+    expect(data.cgstAmount).toBe(0);
+    expect(data.sgstAmount).toBe(0);
+  });
+
+  it("rejects non-empty invalid explicit place of supply with VALIDATION_ERROR and never falls back to customer GSTIN (H-01)", async () => {
+    // Customer has valid Delhi GSTIN, but explicit POS is '99' or 'XX'
+    await expect(createCustomInvoice(actor, baseInput({ placeOfSupplyStateCode: "99" }))).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining('Invalid Place of Supply state code "99"'),
+    });
+
+    await expect(createCustomInvoice(actor, baseInput({ placeOfSupplyStateCode: "XX" }))).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining('Invalid Place of Supply state code "XX"'),
+    });
+  });
+
+  it("trims whitespace-only explicit place of supply and falls back to customer GSTIN", async () => {
+    const txCreate = mockTransaction({ id: "inv-gst-ws", items: [], notes: [] });
+    await createCustomInvoice(actor, baseInput({ placeOfSupplyStateCode: "   " }));
+
+    const data = txCreate.mock.calls[0][0].data;
+    // Customer has Delhi (07) GSTIN, so falls back to 07
+    expect(data.placeOfSupplyStateCode).toBe("07");
+    expect(data.isInterState).toBe(false);
+  });
+
+  it("rejects invalid place of supply state code at Zod boundary (L-01)", () => {
+    const validUuid = "11111111-1111-4111-a111-111111111111";
+    const schemaInput = (pos: string) =>
+      baseInput({ invoiceSeriesId: validUuid, customerId: validUuid, placeOfSupplyStateCode: pos });
+
+    const invalid99 = customInvoiceSchema.safeParse(schemaInput("99"));
+    expect(invalid99.success).toBe(false);
+
+    const invalidXX = customInvoiceSchema.safeParse(schemaInput("XX"));
+    expect(invalidXX.success).toBe(false);
+
+    const valid07 = customInvoiceSchema.safeParse(schemaInput("07"));
+    expect(valid07.success).toBe(true);
+
+    const whitespace = customInvoiceSchema.safeParse(schemaInput("   "));
+    expect(whitespace.success).toBe(true);
+  });
+
+  it("rejects invoice creation with VALIDATION_ERROR when GST > 0 but supplier GSTIN is missing", async () => {
+    vi.mocked(prisma.company.findUnique).mockResolvedValue({
+      id: "co-1",
+      taxRegistrationNo: null,
+    } as never);
+
+    await expect(createCustomInvoice(actor, baseInput())).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("Supplier GSTIN is missing or invalid"),
+    });
+  });
+
+  it("rejects invoice creation with VALIDATION_ERROR when GST > 0 but customer state cannot be determined", async () => {
+    vi.mocked(prisma.customer.findUnique).mockResolvedValue({
+      id: "cust-1",
+      taxRegistrationNo: null,
+    } as never);
+
+    await expect(createCustomInvoice(actor, baseInput())).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("Customer GSTIN or Place of Supply state code is missing"),
+    });
+  });
+
+  it("allows zero tax without requiring GSTIN and zeroes all tax components", async () => {
+    vi.mocked(prisma.company.findUnique).mockResolvedValue({ id: "co-1", taxRegistrationNo: null } as never);
+    vi.mocked(prisma.customer.findUnique).mockResolvedValue({ id: "cust-1", taxRegistrationNo: null } as never);
+
+    const txCreate = mockTransaction({ id: "inv-zero-tax", items: [], notes: [] });
+    await createCustomInvoice(
+      actor,
+      baseInput({
+        items: [{ productId: "", itemName: "Exempt Goods", hsnCode: "", quantity: 5, unitPrice: 100, gstPercentage: 0 }],
+      })
+    );
+
+    const data = txCreate.mock.calls[0][0].data;
+    expect(data.taxAmount).toBe(0);
+    expect(data.cgstAmount).toBe(0);
+    expect(data.sgstAmount).toBe(0);
+    expect(data.igstAmount).toBe(0);
+  });
+
+  it("allows reverse charge (RCM) without requiring GSTIN and zeroes all tax components", async () => {
+    vi.mocked(prisma.company.findUnique).mockResolvedValue({ id: "co-1", taxRegistrationNo: null } as never);
+    vi.mocked(prisma.customer.findUnique).mockResolvedValue({ id: "cust-1", taxRegistrationNo: null } as never);
+
+    const txCreate = mockTransaction({ id: "inv-rcm", items: [], notes: [] });
+    await createCustomInvoice(actor, baseInput({ isReverseCharge: true }));
+
+    const data = txCreate.mock.calls[0][0].data;
+    expect(data.taxAmount).toBe(0);
+    expect(data.cgstAmount).toBe(0);
+    expect(data.sgstAmount).toBe(0);
+    expect(data.igstAmount).toBe(0);
+  });
+
   it("translates a duplicate invoice_number constraint violation into DUPLICATE_DOC_NUMBER", async () => {
     vi.mocked(prisma.$transaction).mockRejectedValue(
       Object.assign(new Error("unique constraint"), {
@@ -169,12 +347,54 @@ describe("updateCustomInvoice", () => {
   // cancelled credit note is never deleted, only status-flipped), so the
   // delete previously hit a real FK constraint and 500'd even though
   // paidAmount/creditedAmount had both been fully reversed back to 0.
-  it("rejects editing once any credit note has ever existed, even a fully-reversed cancelled one", async () => {
+  it("rejects editing once an active (ISSUED) credit note exists", async () => {
     vi.mocked(CustomInvoiceRepository.findAnyById).mockResolvedValue({ id: "inv-1", status: "DRAFT", paidAmount: 0, creditedAmount: 0 } as never);
-    vi.mocked(CustomInvoiceCreditNoteRepository.countByInvoiceId).mockResolvedValue(1);
+    vi.mocked(CustomInvoiceCreditNoteRepository.countActiveByInvoiceId).mockResolvedValue(1);
 
     await expect(updateCustomInvoice(actor, "inv-1", baseInput())).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
     expect(CustomInvoiceRepository.replaceItemsAndNotes).not.toHaveBeenCalled();
+  });
+
+  it("permits editing when only CANCELLED credit notes exist and paid/credited balances are zero", async () => {
+    vi.mocked(CustomInvoiceRepository.findAnyById).mockResolvedValue({ id: "inv-1", status: "DRAFT", paidAmount: 0, creditedAmount: 0 } as never);
+    vi.mocked(CustomInvoiceCreditNoteRepository.countActiveByInvoiceId).mockResolvedValue(0);
+    vi.mocked(CustomInvoiceRepository.replaceItemsAndNotes).mockResolvedValue({ id: "inv-1" } as never);
+
+    await expect(
+      updateCustomInvoice(
+        actor,
+        "inv-1",
+        baseInput({ items: [{ productId: "", itemName: "Updated Item", hsnCode: "", quantity: 1, unitPrice: 200, gstPercentage: 0 }] })
+      )
+    ).resolves.toBeDefined();
+    expect(CustomInvoiceRepository.replaceItemsAndNotes).toHaveBeenCalled();
+  });
+
+  it("recomputes GST breakdown with inter-state handling when updating a DRAFT invoice", async () => {
+    vi.mocked(CustomInvoiceRepository.findAnyById).mockResolvedValue({ id: "inv-1", status: "DRAFT", paidAmount: 0, creditedAmount: 0 } as never);
+    vi.mocked(CustomInvoiceCreditNoteRepository.countActiveByInvoiceId).mockResolvedValue(0);
+    vi.mocked(CustomInvoiceRepository.replaceItemsAndNotes).mockResolvedValue({ id: "inv-1" } as never);
+    // Customer in Karnataka (29), Supplier in Delhi (07)
+    vi.mocked(prisma.customer.findUnique).mockResolvedValue({
+      id: "cust-ka",
+      taxRegistrationNo: "29CCCCC2222C1Z8",
+    } as never);
+
+    await updateCustomInvoice(
+      actor,
+      "inv-1",
+      baseInput({
+        items: [{ productId: "", itemName: "Denim Fabric", hsnCode: "5209", quantity: 2, unitPrice: 500, gstPercentage: 12 }],
+      })
+    );
+
+    const [, headerData] = vi.mocked(CustomInvoiceRepository.replaceItemsAndNotes).mock.calls[0];
+    expect(headerData.taxAmount).toBe(120);
+    expect(headerData.isInterState).toBe(true);
+    expect(headerData.placeOfSupplyStateCode).toBe("29");
+    expect(headerData.igstAmount).toBe(120);
+    expect(headerData.cgstAmount).toBe(0);
+    expect(headerData.sgstAmount).toBe(0);
   });
 });
 

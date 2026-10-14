@@ -20,10 +20,12 @@ export const CustomInvoiceCreditNoteRepository = {
       ...args,
     }),
 
-  count: (where: Prisma.CustomInvoiceCreditNoteWhereInput) => prisma.customInvoiceCreditNote.count({ where }),
-
-  /** Any status, including CANCELLED — used to guard item deletion (see updateCustomInvoice). */
+  /** Any status, including CANCELLED — used to inspect full history. */
   countByInvoiceId: (customInvoiceId: string) => prisma.customInvoiceCreditNote.count({ where: { customInvoiceId } }),
+
+  /** Count only active (ISSUED) credit notes — used to guard invoice editing. */
+  countActiveByInvoiceId: (customInvoiceId: string) =>
+    prisma.customInvoiceCreditNote.count({ where: { customInvoiceId, status: "ISSUED" } }),
 
   findAnyById: (companyId: string, id: string) =>
     prisma.customInvoiceCreditNote.findFirst({ where: { id, companyId }, include: detailInclude }),

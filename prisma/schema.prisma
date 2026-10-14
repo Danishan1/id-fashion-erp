@@ -6092,6 +6092,11 @@ model CustomInvoice {
   // matches the reference tool's isRCM behavior exactly (GST forced to 0 on
   // every line, not just hidden from the printed total).
   isReverseCharge      Boolean             @default(false) @map("is_reverse_charge")
+  placeOfSupplyStateCode String?           @map("place_of_supply_state_code") @db.VarChar(2)
+  isInterState         Boolean?            @map("is_inter_state")
+  cgstAmount           Decimal             @default(0) @map("cgst_amount") @db.Decimal(18, 2)
+  sgstAmount           Decimal             @default(0) @map("sgst_amount") @db.Decimal(18, 2)
+  igstAmount           Decimal             @default(0) @map("igst_amount") @db.Decimal(18, 2)
   subtotalAmount       Decimal             @default(0) @map("subtotal_amount") @db.Decimal(18, 2)
   discountAmount       Decimal             @default(0) @map("discount_amount") @db.Decimal(18, 2)
   taxAmount            Decimal             @default(0) @map("tax_amount") @db.Decimal(18, 2)
