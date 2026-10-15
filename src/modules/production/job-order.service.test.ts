@@ -5,6 +5,12 @@ vi.mock("@/core/rbac/PermissionService", () => ({
   PermissionService: { assert: vi.fn(), getAllowedProductionStageIds: vi.fn(), getAllowedBranchIds: vi.fn() },
 }));
 vi.mock("@/modules/inventory/inventory.service", () => ({ recordInventoryTransaction: vi.fn() }));
+// Finished Goods Inventory module (FGI-021) -- mocked at the module boundary;
+// the real receipt-creation logic is already covered by
+// finished-goods-receipt.service.test.ts of its own. Only whether
+// job-order.service.ts calls it correctly (replacing, not duplicating, the
+// flat recordInventoryTransaction call) is under test here.
+vi.mock("@/modules/finished-goods-inventory/finished-goods-receipt.service", () => ({ createFinishedGoodsReceiptInTx: vi.fn() }));
 vi.mock("@/modules/employees/employee.repository", () => ({
   EmployeeRepository: { findById: vi.fn() },
 }));
@@ -22,6 +28,13 @@ const mockPrismaClient = vi.hoisted(() => ({
   // stubs a resolved value.
   productionSettings: { findUnique: vi.fn() },
   jobOrderAssignment: { findUnique: vi.fn() },
+  // Finished Goods Inventory module (FGI-020) -- backs
+  // ProductVariantRepository.findManyActiveByProductId(), the check behind
+  // whether a Forward/QC-Accept landing on a final stage requires a
+  // colour/size breakdown at all. Every pre-existing test in this file
+  // relies on the beforeEach default below ([] -- "no variants configured"),
+  // keeping their behavior byte-for-byte unchanged.
+  productVariant: { findMany: vi.fn() },
 }));
 
 vi.mock("@/core/db/client", () => ({
@@ -87,6 +100,8 @@ const { resolvePieceRate } = await import("./piece-rate-resolution.service");
 const { generateEarningForJobOrderProgress, generateEarningsForQcAcceptance } = await import("./piece-rate-earning.service");
 const { computeAvailableToCommit, assertEntryWithinAssignmentInTx, syncAssignmentStatusInTx } = await import("./assignment-capacity");
 const { computeJobOrderStatus, assignWorker, recordProgressEntry, forwardJobOrder, revertJobOrder, recordQcInspection, recordAdjustmentEntry, getJobOrderById, prepareLotStartAssignments, submitSelfProgressEntry } = await import("./job-order.service");
+const { createFinishedGoodsReceiptInTx } = await import("@/modules/finished-goods-inventory/finished-goods-receipt.service");
+const { recordInventoryTransaction } = await import("@/modules/inventory/inventory.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
 
@@ -156,6 +171,9 @@ beforeEach(() => {
   mockPrismaClient.user.findUnique.mockReset();
   mockPrismaClient.productionSettings.findUnique.mockReset();
   mockPrismaClient.jobOrderAssignment.findUnique.mockReset();
+  mockPrismaClient.productVariant.findMany.mockReset().mockResolvedValue([]);
+  vi.mocked(recordInventoryTransaction).mockReset();
+  vi.mocked(createFinishedGoodsReceiptInTx).mockReset().mockResolvedValue({ id: "fgr-1" } as never);
   vi.mocked(JobOrderProgressEntryRepository.createInTx).mockReset();
   vi.mocked(resolvePieceRate).mockReset();
   vi.mocked(generateEarningForJobOrderProgress).mockReset();
@@ -550,6 +568,117 @@ describe("forwardJobOrder", () => {
     // calls it again with status COMPLETED for this still-in-flight lot.
     expect(LotRepository.updateInTx).not.toHaveBeenCalledWith(expect.anything(), "lot-1", { status: "COMPLETED" });
   });
+
+  describe("Finished Goods Inventory module (FGI-020/021) — colour/size breakdown on completion", () => {
+    function stubFinalStageHappyPath(overrides: { completedQuantity?: string } = {}) {
+      vi.mocked(JobOrderRepository.findAnyById)
+        .mockResolvedValueOnce(jobOrder({ completedQuantity: overrides.completedQuantity ?? "10", forwardedQuantity: "0" }) as never)
+        .mockResolvedValueOnce({ id: "jo-2", status: "COMPLETED", completedQuantity: overrides.completedQuantity ?? "10" } as never);
+      vi.mocked(prisma.productionStage.findFirst).mockResolvedValue(stage({ id: "stage-2", sequence: 2, isFinal: true, name: "Packing", code: "PAK" }) as never);
+      vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue({ id: "po-1", productId: "prod-1" } as never);
+      vi.mocked(prisma.jobOrder.count).mockResolvedValue(0);
+      vi.mocked(prisma.jobOrder.updateMany).mockResolvedValue({ count: 1 } as never);
+      vi.mocked(JobOrderRepository.createInTx).mockResolvedValue({ id: "jo-2", status: "PENDING", completedQuantity: "0" } as never);
+      vi.mocked(ProductionStageTransactionRepository.createInTx).mockResolvedValue({ id: "txn-1" } as never);
+      vi.mocked(LotRepository.updateInTx).mockResolvedValue({} as never);
+      mockPrismaClient.lot.findUniqueOrThrow.mockResolvedValue({ quantity: "10" } as never);
+      mockPrismaClient.jobOrder.findMany.mockResolvedValue([
+        { completedQuantity: "10", rejectedQuantity: "0", damagedQuantity: "0", productionStage: { isFinal: true } },
+      ] as never);
+    }
+
+    it("takes the flat-only path (never calls createFinishedGoodsReceiptInTx) when the style has no configured variants", async () => {
+      stubFinalStageHappyPath();
+      mockPrismaClient.productVariant.findMany.mockResolvedValue([]);
+
+      await forwardJobOrder(actor, "jo-1", { quantity: 10, finishedGoodsWarehouseId: "wh-1" } as never);
+
+      expect(createFinishedGoodsReceiptInTx).not.toHaveBeenCalled();
+      expect(recordInventoryTransaction).toHaveBeenCalledWith(
+        expect.anything(),
+        actor,
+        expect.objectContaining({ productId: "prod-1", quantity: 10, referenceModule: "PRODUCTION_ORDER", referenceRecordId: "lot-1" })
+      );
+    });
+
+    it("rejects before any write when the style HAS configured variants but no breakdown was supplied", async () => {
+      vi.mocked(JobOrderRepository.findAnyById).mockResolvedValueOnce(jobOrder({ completedQuantity: "10", forwardedQuantity: "0" }) as never);
+      vi.mocked(prisma.productionStage.findFirst).mockResolvedValue(stage({ id: "stage-2", sequence: 2, isFinal: true, name: "Packing", code: "PAK" }) as never);
+      vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue({ id: "po-1", productId: "prod-1" } as never);
+      mockPrismaClient.productVariant.findMany.mockResolvedValue([{ id: "var-1" }]);
+
+      await expect(forwardJobOrder(actor, "jo-1", { quantity: 10, finishedGoodsWarehouseId: "wh-1" } as never)).rejects.toMatchObject({
+        code: "VALIDATION_ERROR",
+      });
+
+      expect(JobOrderRepository.createInTx).not.toHaveBeenCalled();
+      expect(createFinishedGoodsReceiptInTx).not.toHaveBeenCalled();
+      expect(recordInventoryTransaction).not.toHaveBeenCalled();
+    });
+
+    it("rejects a breakdown that doesn't sum to the forwarded quantity", async () => {
+      vi.mocked(JobOrderRepository.findAnyById).mockResolvedValueOnce(jobOrder({ completedQuantity: "10", forwardedQuantity: "0" }) as never);
+      vi.mocked(prisma.productionStage.findFirst).mockResolvedValue(stage({ id: "stage-2", sequence: 2, isFinal: true, name: "Packing", code: "PAK" }) as never);
+      vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue({ id: "po-1", productId: "prod-1" } as never);
+      mockPrismaClient.productVariant.findMany.mockResolvedValue([{ id: "var-1" }, { id: "var-2" }]);
+
+      await expect(
+        forwardJobOrder(actor, "jo-1", {
+          quantity: 10,
+          finishedGoodsWarehouseId: "wh-1",
+          variantBreakdown: [{ productVariantId: "var-1", quantity: 6 }],
+        } as never)
+      ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+
+      expect(createFinishedGoodsReceiptInTx).not.toHaveBeenCalled();
+    });
+
+    it("rejects a breakdown line whose variant doesn't belong to this style", async () => {
+      vi.mocked(JobOrderRepository.findAnyById).mockResolvedValueOnce(jobOrder({ completedQuantity: "10", forwardedQuantity: "0" }) as never);
+      vi.mocked(prisma.productionStage.findFirst).mockResolvedValue(stage({ id: "stage-2", sequence: 2, isFinal: true, name: "Packing", code: "PAK" }) as never);
+      vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue({ id: "po-1", productId: "prod-1" } as never);
+      mockPrismaClient.productVariant.findMany.mockResolvedValue([{ id: "var-1" }]);
+
+      await expect(
+        forwardJobOrder(actor, "jo-1", {
+          quantity: 10,
+          finishedGoodsWarehouseId: "wh-1",
+          variantBreakdown: [{ productVariantId: "var-FOREIGN", quantity: 10 }],
+        } as never)
+      ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    });
+
+    it("calls createFinishedGoodsReceiptInTx (REPLACING the flat posting, never alongside it) when a valid breakdown is supplied", async () => {
+      stubFinalStageHappyPath();
+      mockPrismaClient.productVariant.findMany.mockResolvedValue([{ id: "var-1" }, { id: "var-2" }]);
+
+      await forwardJobOrder(actor, "jo-1", {
+        quantity: 10,
+        finishedGoodsWarehouseId: "wh-1",
+        variantBreakdown: [
+          { productVariantId: "var-1", quantity: 6 },
+          { productVariantId: "var-2", quantity: 4 },
+        ],
+      } as never);
+
+      expect(createFinishedGoodsReceiptInTx).toHaveBeenCalledWith(
+        expect.anything(),
+        actor,
+        expect.objectContaining({
+          productId: "prod-1",
+          lotId: "lot-1",
+          productionOrderId: "po-1",
+          warehouseId: "wh-1",
+          quantity: 10,
+          variantBreakdown: [
+            { productVariantId: "var-1", quantity: 6 },
+            { productVariantId: "var-2", quantity: 4 },
+          ],
+        })
+      );
+      expect(recordInventoryTransaction).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe("revertJobOrder", () => {
@@ -735,6 +864,139 @@ describe("recordQcInspection", () => {
       "jo-1",
       expect.objectContaining({ status: "IN_PROGRESS" })
     );
+  });
+
+  describe("Finished Goods Inventory module (FGI-020/021) — colour/size breakdown on QC-accept to a final stage", () => {
+    function stubAcceptToFinalHappyPath() {
+      vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(
+        jobOrder({ completedQuantity: "10", forwardedQuantity: "0", qcPassedQuantity: "0", productionStage: stage({ sequence: 1 }) }) as never
+      );
+      vi.mocked(prisma.productionStage.findFirst).mockResolvedValue(stage({ id: "stage-2", sequence: 2, isFinal: true, name: "Packing", code: "PAK" }) as never);
+      vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue({ id: "po-1", productId: "prod-1" } as never);
+      mockPrismaClient.jobOrder.updateMany.mockResolvedValue({ count: 1 } as never);
+      mockPrismaClient.jobOrder.count.mockResolvedValue(0);
+      vi.mocked(JobOrderRepository.createInTx).mockResolvedValue({ id: "jo-2", status: "PENDING", completedQuantity: "0" } as never);
+      vi.mocked(ProductionStageTransactionRepository.createInTx).mockResolvedValue({ id: "txn-1" } as never);
+      vi.mocked(LotRepository.updateInTx).mockResolvedValue({} as never);
+      vi.mocked(QcInspectionRepository.createWithDefectsInTx).mockResolvedValue({ id: "qc-1" } as never);
+      mockPrismaClient.lot.findUniqueOrThrow.mockResolvedValue({ quantity: "10" } as never);
+      mockPrismaClient.jobOrder.findMany.mockResolvedValue([
+        { completedQuantity: "10", rejectedQuantity: "0", damagedQuantity: "0", productionStage: { isFinal: true } },
+      ] as never);
+    }
+
+    it("takes the flat-only path when the style has no configured variants", async () => {
+      stubAcceptToFinalHappyPath();
+      mockPrismaClient.productVariant.findMany.mockResolvedValue([]);
+
+      await recordQcInspection(actor, "jo-1", {
+        inspectedQuantity: 10,
+        acceptedQuantity: 10,
+        rejectedQuantity: 0,
+        damagedQuantity: 0,
+        result: "PASS",
+        finishedGoodsWarehouseId: "wh-1",
+        defects: [],
+      } as never);
+
+      expect(createFinishedGoodsReceiptInTx).not.toHaveBeenCalled();
+      expect(recordInventoryTransaction).toHaveBeenCalledWith(
+        expect.anything(),
+        actor,
+        expect.objectContaining({ productId: "prod-1", quantity: 10, referenceModule: "PRODUCTION_ORDER", referenceRecordId: "lot-1" })
+      );
+    });
+
+    it("rejects before any write when the style HAS configured variants but no breakdown was supplied", async () => {
+      vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(
+        jobOrder({ completedQuantity: "10", forwardedQuantity: "0", qcPassedQuantity: "0", productionStage: stage({ sequence: 1 }) }) as never
+      );
+      vi.mocked(prisma.productionStage.findFirst).mockResolvedValue(stage({ id: "stage-2", sequence: 2, isFinal: true, name: "Packing", code: "PAK" }) as never);
+      vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue({ id: "po-1", productId: "prod-1" } as never);
+      mockPrismaClient.productVariant.findMany.mockResolvedValue([{ id: "var-1" }]);
+
+      await expect(
+        recordQcInspection(actor, "jo-1", {
+          inspectedQuantity: 10,
+          acceptedQuantity: 10,
+          rejectedQuantity: 0,
+          damagedQuantity: 0,
+          result: "PASS",
+          finishedGoodsWarehouseId: "wh-1",
+          defects: [],
+        } as never)
+      ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+
+      expect(QcInspectionRepository.createWithDefectsInTx).not.toHaveBeenCalled();
+      expect(createFinishedGoodsReceiptInTx).not.toHaveBeenCalled();
+    });
+
+    it("never requires a breakdown when acceptedQuantity is 0 (a pure rejection/damage disposition), even if the next stage would have been final", async () => {
+      vi.mocked(JobOrderRepository.findAnyById).mockResolvedValue(
+        jobOrder({ completedQuantity: "10", forwardedQuantity: "0", qcPassedQuantity: "0", productionStage: stage({ sequence: 1, allowRework: true }) }) as never
+      );
+      vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue({ id: "po-1", productId: "prod-1" } as never);
+      mockPrismaClient.productVariant.findMany.mockResolvedValue([{ id: "var-1" }]);
+      mockPrismaClient.jobOrder.updateMany.mockResolvedValue({ count: 1 } as never);
+      vi.mocked(JobOrderRepository.findForGuardedUpdateInTx).mockResolvedValue(
+        jobOrder({ completedQuantity: "10", rejectedQuantity: "0", damagedQuantity: "0" }) as never
+      );
+      vi.mocked(JobOrderRepository.updateInTx).mockResolvedValue({} as never);
+      vi.mocked(QcInspectionRepository.createWithDefectsInTx).mockResolvedValue({ id: "qc-1" } as never);
+
+      await expect(
+        recordQcInspection(actor, "jo-1", {
+          inspectedQuantity: 10,
+          acceptedQuantity: 0,
+          rejectedQuantity: 0,
+          damagedQuantity: 10,
+          result: "FAIL",
+          damageWarehouseId: "wh-1",
+          defects: [],
+        } as never)
+      ).resolves.toBeDefined();
+
+      // findManyActiveByProductId is never even reached for a pure
+      // rejection/damage disposition -- the variant check only runs when
+      // acceptedQuantity > 0 AND the next stage is final.
+      expect(mockPrismaClient.productVariant.findMany).not.toHaveBeenCalled();
+    });
+
+    it("calls createFinishedGoodsReceiptInTx (REPLACING the flat posting, never alongside it) when a valid breakdown is supplied", async () => {
+      stubAcceptToFinalHappyPath();
+      mockPrismaClient.productVariant.findMany.mockResolvedValue([{ id: "var-1" }, { id: "var-2" }]);
+
+      await recordQcInspection(actor, "jo-1", {
+        inspectedQuantity: 10,
+        acceptedQuantity: 10,
+        rejectedQuantity: 0,
+        damagedQuantity: 0,
+        result: "PASS",
+        finishedGoodsWarehouseId: "wh-1",
+        variantBreakdown: [
+          { productVariantId: "var-1", quantity: 7 },
+          { productVariantId: "var-2", quantity: 3 },
+        ],
+        defects: [],
+      } as never);
+
+      expect(createFinishedGoodsReceiptInTx).toHaveBeenCalledWith(
+        expect.anything(),
+        actor,
+        expect.objectContaining({
+          productId: "prod-1",
+          lotId: "lot-1",
+          productionOrderId: "po-1",
+          warehouseId: "wh-1",
+          quantity: 10,
+          variantBreakdown: [
+            { productVariantId: "var-1", quantity: 7 },
+            { productVariantId: "var-2", quantity: 3 },
+          ],
+        })
+      );
+      expect(recordInventoryTransaction).not.toHaveBeenCalled();
+    });
   });
 });
 

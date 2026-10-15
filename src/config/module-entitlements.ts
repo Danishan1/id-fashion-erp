@@ -44,8 +44,8 @@ export const ENTITLEMENT_PACKAGES = [
   {
     key: "INVENTORY",
     label: "Inventory & Material Requests",
-    description: "Goods receipts, stock balances, stock movements and material requests.",
-    modules: ["inventory", "material_request"],
+    description: "Goods receipts, stock balances, stock movements, material requests and finished goods inventory.",
+    modules: ["inventory", "material_request", "fg_inventory"],
   },
   {
     key: "DISPATCH",

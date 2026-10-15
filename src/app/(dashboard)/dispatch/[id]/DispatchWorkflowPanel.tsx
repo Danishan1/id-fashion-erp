@@ -11,6 +11,21 @@ import { Barcode } from "@/components/ui/Barcode";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { ClientDateTime } from "@/components/ui/ClientDateTime";
 
+// Finished Goods Inventory module (FGI-040) — multi-location picking.
+interface WarehouseLocationRef {
+  id: string;
+  code: string;
+}
+
+interface PickLineRow {
+  id: string;
+  dispatchItemId: string;
+  productVariantId: string;
+  quantity: number;
+  productVariant: VariantRefWithIds;
+  warehouseLocation: WarehouseLocationRef;
+}
+
 interface DispatchItemRow {
   id: string;
   productId: string;
@@ -20,6 +35,7 @@ interface DispatchItemRow {
   extraDispatchReason: string | null;
   extraDispatchRemarks: string | null;
   product: { styleName: string; styleCode: string };
+  pickLines: PickLineRow[];
 }
 
 const EXTRA_DISPATCH_REASON_LABELS: Record<string, string> = {
@@ -37,6 +53,7 @@ interface VariantRef {
   color: { name: string };
   size: { name: string };
 }
+type VariantRefWithIds = VariantRef;
 
 interface CartonItemRow {
   id: string;
@@ -92,7 +109,7 @@ interface DispatchDetail {
   receivedByName: string | null;
   salesOrder: { id: string; orderNumber: string };
   customer: { name: string };
-  warehouse: { code: string; name: string };
+  warehouse: { id: string; code: string; name: string };
   requestedBy: { fullName: string };
   items: DispatchItemRow[];
   cartons: CartonRow[];
@@ -119,6 +136,14 @@ interface DraftCartonItem {
 }
 interface DraftCarton {
   items: DraftCartonItem[];
+}
+
+// Finished Goods Inventory module (FGI-040).
+interface DraftPickLine {
+  dispatchItemId: string;
+  productVariantId: string;
+  warehouseLocationId: string;
+  quantity: string;
 }
 
 function formatFileSize(bytes: number) {
@@ -166,6 +191,62 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
       )
     ).then((entries) => setVariantsByProduct(Object.fromEntries(entries)));
   }, [dispatch.items]);
+
+  // Finished Goods Inventory module (FGI-040) — multi-location picking.
+  const [pickLines, setPickLines] = useState<DraftPickLine[]>(() =>
+    dispatch.items.flatMap((item) =>
+      item.pickLines.map((l) => ({
+        dispatchItemId: l.dispatchItemId,
+        productVariantId: l.productVariantId,
+        warehouseLocationId: l.warehouseLocation.id,
+        quantity: String(l.quantity),
+      }))
+    )
+  );
+  const [warehouseLocations, setWarehouseLocations] = useState<WarehouseLocationRef[]>([]);
+
+  useEffect(() => {
+    fetch(`/api/v1/warehouses/${dispatch.warehouse.id}`)
+      .then((res) => res.json())
+      .then((body) => setWarehouseLocations(body.data?.locations ?? []));
+  }, [dispatch.warehouse.id]);
+
+  const pickedByItemId = new Map<string, number>();
+  for (const line of pickLines) {
+    const qty = Number(line.quantity) || 0;
+    pickedByItemId.set(line.dispatchItemId, (pickedByItemId.get(line.dispatchItemId) ?? 0) + qty);
+  }
+
+  const addPickLine = () =>
+    setPickLines((prev) => [...prev, { dispatchItemId: "", productVariantId: "", warehouseLocationId: "", quantity: "" }]);
+  const removePickLine = (index: number) => setPickLines((prev) => prev.filter((_, i) => i !== index));
+  const updatePickLine = (index: number, patch: Partial<DraftPickLine>) =>
+    setPickLines((prev) => prev.map((line, i) => (i === index ? { ...line, ...patch } : line)));
+
+  const savePickLines = async () => {
+    setIsBusy(true);
+    setError(null);
+    const res = await fetch(`/api/v1/dispatches/${dispatch.id}/pick-lines`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        pickLines: pickLines
+          .filter((l) => l.dispatchItemId && l.productVariantId && l.warehouseLocationId && Number(l.quantity) > 0)
+          .map((l) => ({
+            dispatchItemId: l.dispatchItemId,
+            productVariantId: l.productVariantId,
+            warehouseLocationId: l.warehouseLocationId,
+            quantity: Number(l.quantity),
+          })),
+      }),
+    });
+    setIsBusy(false);
+    if (!res.ok) {
+      setError(await parseErrorMessage(res, "Failed to save pick lines."));
+      return;
+    }
+    router.refresh();
+  };
 
   const packedByItemId = new Map<string, number>();
   for (const carton of cartons) {
@@ -406,6 +487,7 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
                 <th className="px-3 py-2 font-medium">Regular</th>
                 <th className="px-3 py-2 font-medium">Extra</th>
                 <th className="px-3 py-2 font-medium">Extra Reason</th>
+                <th className="px-3 py-2 font-medium">Picked</th>
                 <th className="px-3 py-2 font-medium">Packed</th>
               </tr>
             </thead>
@@ -427,6 +509,7 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
                         }`
                       : "—"}
                   </td>
+                  <td className="px-3 py-2">{pickedByItemId.get(item.id) ?? 0}</td>
                   <td className="px-3 py-2">{packedByItemId.get(item.id) ?? 0}</td>
                 </tr>
               ))}
@@ -438,6 +521,115 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
             This dispatch includes Extra Dispatch Quantity — the Extra portion is never counted toward the Sales
             Order&apos;s own fulfillment, only toward Finished-Goods stock consumption.
           </p>
+        )}
+      </div>
+
+      <div>
+        <h2 className="mb-2 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Pick Lines</h2>
+        <p className="mb-2 text-xs text-zinc-500 dark:text-zinc-400">
+          For any style with colour/size variants, record exactly which variant and warehouse location each
+          unit is being picked from. A partial pick is fine while this dispatch is still Draft/Packed — the
+          total per style must exactly match its quantity to dispatch only once you Confirm Dispatch.
+        </p>
+        {editable ? (
+          <div className="space-y-2">
+            {pickLines.map((line, index) => {
+              const variants = line.dispatchItemId ? variantsByProduct[dispatch.items.find((i) => i.id === line.dispatchItemId)?.productId ?? ""] ?? [] : [];
+              return (
+                <div key={index} className="grid grid-cols-5 gap-2">
+                  <select
+                    value={line.dispatchItemId}
+                    onChange={(e) => updatePickLine(index, { dispatchItemId: e.target.value, productVariantId: "" })}
+                    className={textInputClass()}
+                  >
+                    <option value="">— Style —</option>
+                    {dispatch.items.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.product.styleCode}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={line.productVariantId}
+                    onChange={(e) => updatePickLine(index, { productVariantId: e.target.value })}
+                    disabled={variants.length === 0}
+                    className={textInputClass()}
+                  >
+                    <option value="">— Colour / Size —</option>
+                    {variants.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.color.name} / {v.size.name}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={line.warehouseLocationId}
+                    onChange={(e) => updatePickLine(index, { warehouseLocationId: e.target.value })}
+                    className={textInputClass()}
+                  >
+                    <option value="">— Location —</option>
+                    {warehouseLocations.map((loc) => (
+                      <option key={loc.id} value={loc.id}>
+                        {loc.code}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="number"
+                    min={1}
+                    value={line.quantity}
+                    onChange={(e) => updatePickLine(index, { quantity: e.target.value })}
+                    className={textInputClass()}
+                  />
+                  <button type="button" onClick={() => removePickLine(index)} className="text-xs text-red-600 hover:text-red-500">
+                    Remove
+                  </button>
+                </div>
+              );
+            })}
+            <div className="flex gap-3">
+              <button type="button" onClick={addPickLine} className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 dark:border-zinc-700 dark:text-zinc-200">
+                + Add Pick Line
+              </button>
+              <button
+                type="button"
+                onClick={savePickLines}
+                disabled={isBusy}
+                className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
+              >
+                Save Pick Lines
+              </button>
+            </div>
+          </div>
+        ) : pickLines.length === 0 ? (
+          <p className="text-sm text-zinc-500">No pick lines were recorded.</p>
+        ) : (
+          <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-zinc-200 text-left text-xs uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
+                  <th className="px-3 py-2 font-medium">Style</th>
+                  <th className="px-3 py-2 font-medium">Colour / Size</th>
+                  <th className="px-3 py-2 font-medium">Location</th>
+                  <th className="px-3 py-2 font-medium">Qty</th>
+                </tr>
+              </thead>
+              <tbody>
+                {dispatch.items.flatMap((item) =>
+                  item.pickLines.map((l) => (
+                    <tr key={l.id} className="border-b border-zinc-100 last:border-0 dark:border-zinc-800">
+                      <td className="px-3 py-2">{item.product.styleCode}</td>
+                      <td className="px-3 py-2">
+                        {l.productVariant.color.name} / {l.productVariant.size.name}
+                      </td>
+                      <td className="px-3 py-2">{l.warehouseLocation.code}</td>
+                      <td className="px-3 py-2">{l.quantity}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 

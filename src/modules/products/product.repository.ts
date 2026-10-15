@@ -25,6 +25,14 @@ export const ProductRepository = {
 
   count: (where: Prisma.ProductWhereInput) => prisma.product.count({ where }),
 
+  /** Finished Goods Inventory module (FGI-014) -- a batch id-to-itemType
+   * lookup, scoped to this company, used by Stock Movement's real
+   * item-type-family assertion (the service-layer half of the two-layer
+   * defense -- Zod has no DB access, so this is where a forged/wrong
+   * itemFamily actually gets caught). */
+  findManyItemTypesByIds: (companyId: string, ids: string[]) =>
+    prisma.product.findMany({ where: { id: { in: ids }, companyId }, select: { id: true, itemType: true } }),
+
   /** Top N styleName/styleCode matches among this company's real Styles —
    * backs the Topbar Global Search's Products/Styles group. */
   searchTopStyles: (companyId: string, term: string, limit: number) =>
@@ -136,6 +144,20 @@ export const ProductVariantRepository = {
 
   findByProductColorSize: (productId: string, colorId: string, sizeId: string) =>
     prisma.productVariant.findUnique({ where: { productId_colorId_sizeId: { productId, colorId, sizeId } } }),
+
+  /** Finished Goods Inventory module (FGI-014) -- a batch lookup used to
+   * confirm each Stock Movement line's own productVariantId genuinely
+   * belongs to that same line's productId, not a different style's variant. */
+  findManyByIds: (ids: string[]) =>
+    prisma.productVariant.findMany({ where: { id: { in: ids } }, select: { id: true, productId: true } }),
+
+  /** Finished Goods Inventory module (FGI-020) -- every ACTIVE variant a
+   * style has configured, used to decide whether a Forward/QC-Accept
+   * completion onto a final stage requires a colour/size breakdown at all
+   * (a style with zero configured variants keeps the flat-only posting path,
+   * completely unchanged). */
+  findManyActiveByProductId: (productId: string) =>
+    prisma.productVariant.findMany({ where: { productId, isActive: true }, select: { id: true } }),
 
   create: (data: Prisma.ProductVariantUncheckedCreateInput) => prisma.productVariant.create({ data }),
 

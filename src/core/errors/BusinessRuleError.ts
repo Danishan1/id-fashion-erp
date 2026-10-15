@@ -76,6 +76,13 @@ export type BusinessRuleErrorCode =
   | "SUBSCRIPTION_READ_ONLY"
   | "SUBSCRIPTION_LIMIT_REACHED"
   | "COUPON_INVALID"
+  // Finished Goods Inventory (FGI-011): consuming more than a reservation's
+  // own unconsumed remainder (reservedQuantity - consumedQuantity) was
+  // attempted -- the guarded raw-SQL update's WHERE clause rejected it.
+  | "OVER_CONSUMPTION_NOT_ALLOWED"
+  // FGI-011: an action that requires an ACTIVE reservation (consume, release)
+  // was attempted against one that's already RELEASED or FULFILLED.
+  | "RESERVATION_NOT_ACTIVE"
   | "VALIDATION_ERROR"
   | "NOT_FOUND";
 
@@ -133,6 +140,8 @@ const HTTP_STATUS_BY_CODE: Record<BusinessRuleErrorCode, number> = {
   SUBSCRIPTION_READ_ONLY: 403,
   SUBSCRIPTION_LIMIT_REACHED: 409,
   COUPON_INVALID: 422,
+  OVER_CONSUMPTION_NOT_ALLOWED: 409,
+  RESERVATION_NOT_ACTIVE: 409,
   VALIDATION_ERROR: 400,
   NOT_FOUND: 404,
 };

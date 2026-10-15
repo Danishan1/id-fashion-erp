@@ -59,6 +59,20 @@ interface LotVariantBreakdownRow {
   productVariant: { id: string; skuCode: string; color: { name: string }; size: { name: string } };
 }
 
+// Finished Goods Inventory module (FGI-020) -- a style's own real variant
+// options, for the completion breakdown collected at Forward/QC-Accept time
+// (reuses the existing variant-breakdown-suggestions endpoint, built for
+// Add Lot, but ignores its lot-planning-specific fields -- orderedQuantity/
+// alreadyInLots/remaining mean nothing here; this is a DIFFERENT moment, a
+// batch landing on a final stage, which may not proportionally match the
+// lot's own original breakdown).
+interface FinalStageVariantOption {
+  productVariantId: string;
+  colorName: string;
+  sizeName: string;
+  skuCode: string;
+}
+
 interface LotDetail {
   id: string;
   lotNumber: string;
@@ -265,6 +279,17 @@ export function LotWorkflowPanel({
   const [qcFgWarehouseId, setQcFgWarehouseId] = useState("");
   const [qcRemarks, setQcRemarks] = useState("");
 
+  // Finished Goods Inventory module (FGI-020) -- manual-entry only, never
+  // pre-filled/auto-suggested (a partial completion may not proportionally
+  // match the lot's own original breakdown -- see completeAtFinalStageInTx's
+  // own doc comment). Fetched fresh whenever the resolved target/next stage
+  // is final, cleared otherwise -- a style with no configured variants
+  // simply sees an empty option list and the form behaves exactly as before.
+  const [forwardVariantOptions, setForwardVariantOptions] = useState<FinalStageVariantOption[]>([]);
+  const [forwardVariantQtyById, setForwardVariantQtyById] = useState<Record<string, string>>({});
+  const [qcVariantOptions, setQcVariantOptions] = useState<FinalStageVariantOption[]>([]);
+  const [qcVariantQtyById, setQcVariantQtyById] = useState<Record<string, string>>({});
+
   useEffect(() => {
     fetch("/api/v1/production-stages")
       .then((res) => res.json())
@@ -384,6 +409,59 @@ export function LotWorkflowPanel({
   const nextStageAfter = (sequence: number) =>
     stages.filter((s) => s.isActive && s.sequence > sequence).sort((a, b) => a.sequence - b.sequence)[0];
 
+  // Finished Goods Inventory module (FGI-020) -- fetches the style's own
+  // real variant list only when the resolved target stage is final; clears
+  // it (and any in-progress entry) the instant that stops being true, e.g.
+  // the user picks a different, non-final target stage, or closes the modal.
+  useEffect(() => {
+    const resolved = forwardTarget
+      ? forwardTargetStageId
+        ? stages.find((s) => s.id === forwardTargetStageId)
+        : nextStageAfter(forwardTarget.productionStage.sequence)
+      : undefined;
+    const isFinalStage = !!resolved?.isFinal;
+    (isFinalStage
+      ? fetch(`/api/v1/production-orders/${productionOrderId}/variant-breakdown-suggestions`)
+          .then((res) => res.json())
+          .then((body) => {
+            const rows = (body.data ?? []) as Array<{ productVariantId: string; colorName: string; sizeName: string; skuCode: string }>;
+            return rows.map((r) => ({ productVariantId: r.productVariantId, colorName: r.colorName, sizeName: r.sizeName, skuCode: r.skuCode }));
+          })
+          .catch(() => [] as FinalStageVariantOption[])
+      : Promise.resolve<FinalStageVariantOption[]>([])
+    ).then((options) => {
+      setForwardVariantOptions(options);
+      setForwardVariantQtyById({});
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [forwardTarget, forwardTargetStageId, productionOrderId]);
+
+  useEffect(() => {
+    const resolved = qcTarget ? nextStageAfter(qcTarget.productionStage.sequence) : undefined;
+    const isFinalStage = !!qcTarget && Number(qcAccepted) > 0 && !!resolved?.isFinal;
+    (isFinalStage
+      ? fetch(`/api/v1/production-orders/${productionOrderId}/variant-breakdown-suggestions`)
+          .then((res) => res.json())
+          .then((body) => {
+            const rows = (body.data ?? []) as Array<{ productVariantId: string; colorName: string; sizeName: string; skuCode: string }>;
+            return rows.map((r) => ({ productVariantId: r.productVariantId, colorName: r.colorName, sizeName: r.sizeName, skuCode: r.skuCode }));
+          })
+          .catch(() => [] as FinalStageVariantOption[])
+      : Promise.resolve<FinalStageVariantOption[]>([])
+    ).then((options) => {
+      setQcVariantOptions(options);
+      setQcVariantQtyById({});
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qcTarget, Number(qcAccepted) > 0, productionOrderId]);
+
+  const forwardBreakdownTotal = Object.values(forwardVariantQtyById).reduce((sum, v) => sum + (Number(v) || 0), 0);
+  const forwardBreakdownValid =
+    forwardVariantOptions.length === 0 || Math.abs(forwardBreakdownTotal - Number(forwardQty || 0)) < 0.0001;
+  const qcBreakdownTotal = Object.values(qcVariantQtyById).reduce((sum, v) => sum + (Number(v) || 0), 0);
+  const qcBreakdownValid =
+    qcVariantOptions.length === 0 || Math.abs(qcBreakdownTotal - Number(qcAccepted || 0)) < 0.0001;
+
   const startWorkerError = validateWorkerRows(startWorkers, Number(lot.quantity));
   // The stage the lot will start at: the one picked, else the first active one (same rule as the backend).
   const startStage = startStageId
@@ -478,6 +556,12 @@ export function LotWorkflowPanel({
             quantity: Number(forwardQty),
             targetStageId: forwardTargetStageId || undefined,
             finishedGoodsWarehouseId: forwardFgWarehouseId || undefined,
+            variantBreakdown:
+              forwardVariantOptions.length > 0
+                ? Object.entries(forwardVariantQtyById)
+                    .filter(([, v]) => Number(v) > 0)
+                    .map(([productVariantId, v]) => ({ productVariantId, quantity: Number(v) }))
+                : undefined,
           }),
         }),
       "Failed to forward this job order."
@@ -487,6 +571,7 @@ export function LotWorkflowPanel({
       setForwardQty("");
       setForwardTargetStageId("");
       setForwardFgWarehouseId("");
+      setForwardVariantQtyById({});
     }
   };
 
@@ -526,6 +611,12 @@ export function LotWorkflowPanel({
             damageWarehouseId: qcDamageWarehouseId || undefined,
             finishedGoodsWarehouseId: qcFgWarehouseId || undefined,
             remarks: qcRemarks || undefined,
+            variantBreakdown:
+              qcVariantOptions.length > 0
+                ? Object.entries(qcVariantQtyById)
+                    .filter(([, v]) => Number(v) > 0)
+                    .map(([productVariantId, v]) => ({ productVariantId, quantity: Number(v) }))
+                : undefined,
           }),
         }),
       "Failed to record this QC inspection."
@@ -541,6 +632,7 @@ export function LotWorkflowPanel({
       setQcDamageWarehouseId("");
       setQcFgWarehouseId("");
       setQcRemarks("");
+      setQcVariantQtyById({});
     }
   };
 
@@ -1166,12 +1258,64 @@ export function LotWorkflowPanel({
                 </FormField>
               ) : null;
             })()}
+            {forwardVariantOptions.length > 0 && (
+              <div>
+                <p className="mb-2 text-xs text-zinc-500">
+                  This style has colour/size variants configured — record a fresh breakdown of which
+                  variants make up this quantity (never auto-filled from the lot&apos;s own planned split,
+                  since a partial completion may not match it proportionally).
+                </p>
+                <div className="max-h-64 overflow-y-auto rounded-md border border-zinc-200 dark:border-zinc-800">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 bg-zinc-50 dark:bg-zinc-900">
+                      <tr className="text-left text-xs text-zinc-500">
+                        <th className="px-2 py-1.5 font-medium">Color</th>
+                        <th className="px-2 py-1.5 font-medium">Size</th>
+                        <th className="px-2 py-1.5 font-medium">SKU</th>
+                        <th className="px-2 py-1.5 text-right font-medium">Qty</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {forwardVariantOptions.map((v) => (
+                        <tr key={v.productVariantId} className="border-t border-zinc-100 dark:border-zinc-800">
+                          <td className="px-2 py-1.5 text-zinc-700 dark:text-zinc-200">{v.colorName}</td>
+                          <td className="px-2 py-1.5 text-zinc-700 dark:text-zinc-200">{v.sizeName}</td>
+                          <td className="px-2 py-1.5 text-zinc-500">{v.skuCode}</td>
+                          <td className="px-2 py-1.5 text-right">
+                            <input
+                              type="number"
+                              min={0}
+                              step="0.0001"
+                              value={forwardVariantQtyById[v.productVariantId] ?? ""}
+                              onChange={(e) =>
+                                setForwardVariantQtyById((prev) => ({ ...prev, [v.productVariantId]: e.target.value }))
+                              }
+                              className="w-24 rounded border border-zinc-300 px-2 py-1 text-right text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p
+                  className={`mt-2 text-sm font-medium ${forwardBreakdownValid ? "text-zinc-900 dark:text-zinc-50" : "text-red-600 dark:text-red-400"}`}
+                >
+                  Breakdown Total: {forwardBreakdownTotal} (must equal {forwardQty || "0"})
+                </p>
+              </div>
+            )}
             <ModalError message={error} />
             <div className="flex justify-end gap-2">
               <button type="button" onClick={() => setForwardTarget(null)} className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800">
                 Cancel
               </button>
-              <button type="button" onClick={submitForward} disabled={isBusy || !forwardQty} className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60">
+              <button
+                type="button"
+                onClick={submitForward}
+                disabled={isBusy || !forwardQty || !forwardBreakdownValid}
+                className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
+              >
                 {isBusy ? "Saving…" : "Forward"}
               </button>
             </div>
@@ -1259,6 +1403,53 @@ export function LotWorkflowPanel({
                 </FormField>
               ) : null;
             })()}
+            {qcVariantOptions.length > 0 && (
+              <div>
+                <p className="mb-2 text-xs text-zinc-500">
+                  This style has colour/size variants configured — record a fresh breakdown of which
+                  variants make up the accepted quantity (never auto-filled from the lot&apos;s own planned
+                  split, since a partial completion may not match it proportionally).
+                </p>
+                <div className="max-h-64 overflow-y-auto rounded-md border border-zinc-200 dark:border-zinc-800">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 bg-zinc-50 dark:bg-zinc-900">
+                      <tr className="text-left text-xs text-zinc-500">
+                        <th className="px-2 py-1.5 font-medium">Color</th>
+                        <th className="px-2 py-1.5 font-medium">Size</th>
+                        <th className="px-2 py-1.5 font-medium">SKU</th>
+                        <th className="px-2 py-1.5 text-right font-medium">Qty</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {qcVariantOptions.map((v) => (
+                        <tr key={v.productVariantId} className="border-t border-zinc-100 dark:border-zinc-800">
+                          <td className="px-2 py-1.5 text-zinc-700 dark:text-zinc-200">{v.colorName}</td>
+                          <td className="px-2 py-1.5 text-zinc-700 dark:text-zinc-200">{v.sizeName}</td>
+                          <td className="px-2 py-1.5 text-zinc-500">{v.skuCode}</td>
+                          <td className="px-2 py-1.5 text-right">
+                            <input
+                              type="number"
+                              min={0}
+                              step="0.0001"
+                              value={qcVariantQtyById[v.productVariantId] ?? ""}
+                              onChange={(e) =>
+                                setQcVariantQtyById((prev) => ({ ...prev, [v.productVariantId]: e.target.value }))
+                              }
+                              className="w-24 rounded border border-zinc-300 px-2 py-1 text-right text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p
+                  className={`mt-2 text-sm font-medium ${qcBreakdownValid ? "text-zinc-900 dark:text-zinc-50" : "text-red-600 dark:text-red-400"}`}
+                >
+                  Breakdown Total: {qcBreakdownTotal} (must equal {qcAccepted || "0"})
+                </p>
+              </div>
+            )}
             {Number(qcRejected) > 0 && (
               <FormField label="Rework Target Stage (for the rejected quantity)" htmlFor="qcReworkStageId" required>
                 <select id="qcReworkStageId" required value={qcReworkStageId} onChange={(e) => setQcReworkStageId(e.target.value)} className={textInputClass()}>
@@ -1297,7 +1488,7 @@ export function LotWorkflowPanel({
               <button type="button" onClick={() => setQcTarget(null)} className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800">
                 Cancel
               </button>
-              <button type="button" onClick={submitQc} disabled={isBusy} className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60">
+              <button type="button" onClick={submitQc} disabled={isBusy || !qcBreakdownValid} className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60">
                 {isBusy ? "Saving…" : "Record Inspection"}
               </button>
             </div>

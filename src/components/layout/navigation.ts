@@ -173,6 +173,15 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Material Requests", href: "/material-requests", modules: ["material_request"] },
     ],
   },
+  {
+    label: "Finished Goods Inventory",
+    href: "/finished-goods-inventory",
+    modules: ["fg_inventory"],
+    children: [
+      { label: "Dashboard", href: "/finished-goods-inventory", modules: ["fg_inventory"] },
+      { label: "Stock List", href: "/finished-goods-inventory/stock-list", modules: ["fg_inventory"] },
+    ],
+  },
   { label: "Accounts", href: "/accounts", modules: ["accounts", "invoices", "payments", "expenses", "financial_reports"] },
   { label: "Dispatch", href: "/dispatch", modules: ["dispatch"] },
   {

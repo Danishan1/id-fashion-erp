@@ -10,7 +10,21 @@ const detailInclude = {
   items: {
     include: {
       product: { select: { id: true, styleName: true, styleCode: true } },
-      salesOrderItem: { select: { id: true, dispatchedQuantity: true, regularDispatchedQuantity: true } },
+      // Finished Goods Inventory module (FGI-041) — salesOrderLineId is read
+      // by confirmDispatch()'s new reservation-consumption step (it may be
+      // null for a legacy/test row predating the Effective BOM column,
+      // 2026-09-24 — handled as a no-op, never a crash, same discipline
+      // createReservationsForSalesOrderInTx() already applies to it).
+      salesOrderItem: { select: { id: true, dispatchedQuantity: true, regularDispatchedQuantity: true, salesOrderLineId: true } },
+      // Finished Goods Inventory module (FGI-040) — multi-location picking,
+      // a child of DispatchItem independent of Carton/CartonItem (a pure
+      // packing-list concern, untouched by this).
+      pickLines: {
+        include: {
+          productVariant: { include: { color: true, size: true } },
+          warehouseLocation: { select: { id: true, code: true } },
+        },
+      },
     },
   },
   cartons: {
@@ -89,6 +103,8 @@ export const DispatchRepository = {
       const cartonIds = (await tx.carton.findMany({ where: { dispatchId }, select: { id: true } })).map((c) => c.id);
       await tx.cartonItem.deleteMany({ where: { cartonId: { in: cartonIds } } });
       await tx.carton.deleteMany({ where: { dispatchId } });
+      const itemIds = (await tx.dispatchItem.findMany({ where: { dispatchId }, select: { id: true } })).map((i) => i.id);
+      await tx.finishedGoodsPickLine.deleteMany({ where: { dispatchItemId: { in: itemIds } } });
       await tx.dispatchItem.deleteMany({ where: { dispatchId } });
 
       await tx.dispatch.update({
@@ -120,6 +136,28 @@ export const DispatchRepository = {
         });
       }
 
+      return tx.dispatch.findFirstOrThrow({ where: { id: dispatchId }, include: detailInclude });
+    }),
+
+  /**
+   * Finished Goods Inventory module (FGI-040) — full replace of a Dispatch's
+   * FinishedGoodsPickLine rows across every one of its DispatchItems in one
+   * call, mirroring setCartons above exactly. Partial picks are a valid,
+   * supported intermediate state while the dispatch is still DRAFT/PACKED
+   * (§7 point 3) — this function never requires a line's own pick lines to
+   * sum to its dispatchedQuantity; that completeness check belongs solely
+   * to confirmDispatch() at the one moment it actually matters.
+   */
+  setPickLines: (
+    dispatchId: string,
+    pickLines: Array<{ dispatchItemId: string; productVariantId: string; warehouseLocationId: string; quantity: number; companyId: string; pickedByUserId: string }>
+  ) =>
+    prisma.$transaction(async (tx) => {
+      const itemIds = (await tx.dispatchItem.findMany({ where: { dispatchId }, select: { id: true } })).map((i) => i.id);
+      await tx.finishedGoodsPickLine.deleteMany({ where: { dispatchItemId: { in: itemIds } } });
+      if (pickLines.length > 0) {
+        await tx.finishedGoodsPickLine.createMany({ data: pickLines });
+      }
       return tx.dispatch.findFirstOrThrow({ where: { id: dispatchId }, include: detailInclude });
     }),
 
