@@ -180,6 +180,7 @@ export const NAV_SECTIONS: NavSection[] = [
     children: [
       { label: "Dashboard", href: "/finished-goods-inventory", modules: ["fg_inventory"] },
       { label: "Stock List", href: "/finished-goods-inventory/stock-list", modules: ["fg_inventory"] },
+      { label: "Receipts", href: "/finished-goods-inventory/receipts", modules: ["fg_inventory"] },
     ],
   },
   { label: "Accounts", href: "/accounts", modules: ["accounts", "invoices", "payments", "expenses", "financial_reports"] },
