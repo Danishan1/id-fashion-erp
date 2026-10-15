@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { DataTable } from "@/components/ui/DataTable";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
+import { ViewIcon } from "@/components/ui/icons";
 
 interface Option {
   id: string;
@@ -21,7 +22,7 @@ interface StockRow {
   quantityOnHand: string;
   stockStatus: "SALEABLE" | "REJECTED";
   updatedAt: string;
-  product: { styleCode: string; styleName: string } | null;
+  product: { id: string; styleCode: string; styleName: string } | null;
   productVariant: { color: { name: string }; size: { name: string } } | null;
   warehouse: { code: string; name: string } | null;
   warehouseLocation: { code: string } | null;
@@ -88,7 +89,8 @@ export function FinishedGoodsStockListClient() {
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
           Current on-hand quantity per style, colour/size, warehouse, and location — maintained by the
           Finished Goods ledger. A blank Colour/Size on a row means this stock predates variant tracking —
-          see the Dashboard&apos;s Unallocated Legacy Stock callout.
+          see the Dashboard&apos;s Unallocated Legacy Stock callout. Click a row, or &quot;View
+          Details&quot;, for that style&apos;s full breakdown (FGI-052).
         </p>
       </div>
 
@@ -117,6 +119,16 @@ export function FinishedGoodsStockListClient() {
         searchPlaceholder="Search by style name or code…"
         extraParams={{ colorId, sizeId, warehouseId, warehouseLocationId }}
         statusFilter={{ options: STOCK_STATUS_OPTIONS, allLabel: "All Stock Statuses" }}
+        // FGI-052's own "Style/Colour/Size Stock Details" drill-down — every
+        // row for the same style links to the identical destination, so
+        // clicking any row for a style lands on that one style's full
+        // breakdown page. Read-only (there's nothing to edit here), so the
+        // built-in row-action affordance is relabelled "View Details" with
+        // ViewIcon rather than the default Edit/EditIcon, matching the exact
+        // precedent already used by the Stock Balances sibling list.
+        rowHref={(row) => `/finished-goods-inventory/style-stock-details/${row.product?.id}`}
+        rowHrefLabel="View Details"
+        rowHrefIcon={<ViewIcon />}
         columns={[
           { key: "product", header: "Style", render: (row) => (row.product ? `${row.product.styleCode} — ${row.product.styleName}` : "—") },
           {
