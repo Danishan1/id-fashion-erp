@@ -15,6 +15,7 @@ import { getDispatchSettings, extraDispatchNeedsApproval, type DispatchSettingsV
 import { ProductVariantRepository } from "@/modules/products/product.repository";
 import { WarehouseLocationRepository } from "@/modules/warehouses/warehouse.repository";
 import { getFinishedGoodsAvailableQuantity, consumeReservationForDispatchInTx } from "@/modules/finished-goods-inventory/finished-goods-reservation.service";
+import { getSalesOrderItemProductionSummary } from "@/modules/production/production-progress.service";
 import type { DispatchInput, UpdateDispatchInput, SetCartonsInput, SetPickLinesInput } from "./dispatch.schema";
 import { DispatchRepository } from "./dispatch.repository";
 
@@ -334,6 +335,68 @@ async function assertProductionReleasedForLines(
   return unreleasedOrders.map((o) => o.id);
 }
 
+/**
+ * Real-produced-quantity gate (process-flow clarity fix, 2026-10-15) — a
+ * line's cumulative dispatched quantity (`SalesOrderItem.dispatchedQuantity`,
+ * which only ever changes at confirmDispatch's own commit point, plus this
+ * request's own quantity) must never exceed what has ACTUALLY completed the
+ * production flow's FINAL stage ("Packing") for that line — reusing
+ * getSalesOrderItemProductionSummary()'s own totalProduced figure (summed
+ * from JobOrders sitting on a `ProductionStage.isFinal` stage only, never
+ * re-derived here) rather than inventing a second computation that could
+ * drift from it.
+ *
+ * This closes a real gap the pooled-stock check above (assertFinishedGoods
+ * Available) can't: that check only reads the warehouse's flat FG
+ * StockBalance/FinishedGoodsStockBalance total, which CAN legitimately
+ * contain quantity that never went through Packing for this specific order
+ * line — a Finished-Goods Stock Movement "stock found" Adjustment, an
+ * Opening Stock import, or genuinely Packing-complete stock from a
+ * DIFFERENT Sales Order line sharing the same style/warehouse (FG stock is
+ * pooled once it reaches the ledger). Scoping the check per line, against
+ * real production output, is what actually prevents "wrong entry" dispatches
+ * un-traceable to a real Packing completion.
+ *
+ * Deliberately has NO override — unlike the manual Release-to-Dispatch click
+ * above (a human judgment call: "is this actually ready"), this is a plain
+ * physical fact: units nobody has finished producing cannot be shipped, so
+ * there is nothing for a judgment call to override. Opt-in by construction,
+ * same as assertProductionReleasedForLines: every DispatchItem in this app
+ * is always tied to a real Sales Order line (Dispatch.salesOrderId is
+ * required), so there is no Make-to-Stock case to skip here.
+ */
+async function assertPackingProducedForLines(
+  companyId: string,
+  items: Array<{ salesOrderItemId: string; dispatchedQuantity: number }>
+) {
+  const requestedByLine = new Map<string, number>();
+  for (const item of items) {
+    requestedByLine.set(item.salesOrderItemId, (requestedByLine.get(item.salesOrderItemId) ?? 0) + item.dispatchedQuantity);
+  }
+
+  for (const [salesOrderItemId, requested] of requestedByLine) {
+    if (requested <= 0) continue;
+
+    const orderItem = await prisma.salesOrderItem.findFirst({
+      where: { id: salesOrderItemId, salesOrder: { companyId } },
+      select: { dispatchedQuantity: true, product: { select: { styleName: true } } },
+    });
+    if (!orderItem) continue; // validated as belonging to the order already (buildDispatchItems)
+
+    const summary = await getSalesOrderItemProductionSummary(companyId, salesOrderItemId);
+    const alreadyDispatched = orderItem.dispatchedQuantity;
+    const remainingPacked = Math.max(0, summary.totalProduced - alreadyDispatched);
+
+    if (requested > remainingPacked) {
+      throw new BusinessRuleError(
+        "PACKING_QUANTITY_NOT_AVAILABLE",
+        `Only ${remainingPacked} pieces of "${orderItem.product.styleName}" have actually completed the final production stage (Packing) and are not yet dispatched for this order line, but ${requested} were entered. Total produced (Packing-complete): ${summary.totalProduced}, already dispatched: ${alreadyDispatched}.`,
+        { salesOrderItemId, requested, alreadyDispatched, totalProduced: summary.totalProduced, remainingPacked }
+      );
+    }
+  }
+}
+
 export async function createDispatch(actor: ActorContext, input: DispatchInput) {
   const order = await SalesOrderRepository.findByIdWithDetails(actor.companyId, input.salesOrderId);
   if (!order) throw new BusinessRuleError("NOT_FOUND", "Sales order not found.", { id: input.salesOrderId });
@@ -354,6 +417,7 @@ export async function createDispatch(actor: ActorContext, input: DispatchInput) 
     items,
     input.overrideProductionReleaseReason
   );
+  await assertPackingProducedForLines(actor.companyId, items);
   const forwarderId = await resolveForwarderId(actor.companyId, input.forwarderId);
 
   const dispatchNumber = await generateDocumentNumber({
@@ -446,6 +510,7 @@ export async function updateDispatch(actor: ActorContext, id: string, input: Upd
     items,
     input.overrideProductionReleaseReason
   );
+  await assertPackingProducedForLines(actor.companyId, items);
   const forwarderId = await resolveForwarderId(actor.companyId, input.forwarderId);
 
   const updated = await DispatchRepository.replaceItems(
@@ -811,6 +876,16 @@ export async function confirmDispatch(actor: ActorContext, id: string) {
       );
     }
   }
+
+  // Live re-check of the same Packing-produced-quantity gate createDispatch/
+  // updateDispatch already pre-checked — this is the real, authoritative
+  // check (the one that matters for a race between two drafts against the
+  // same line, mirroring the FG-stock check's own pre-check/confirm-recheck
+  // split immediately above).
+  await assertPackingProducedForLines(
+    actor.companyId,
+    dispatch.items.map((item) => ({ salesOrderItemId: item.salesOrderItem.id, dispatchedQuantity: item.dispatchedQuantity }))
+  );
 
   // Finished Goods Inventory module (FGI-040/041) — §7 point 1: "the
   // pre-check is extended, not replaced." The style-level loop above stays

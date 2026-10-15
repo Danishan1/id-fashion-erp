@@ -2,6 +2,7 @@ import { logger } from "@/core/logging/logger";
 
 export type BusinessRuleErrorCode =
   | "INSUFFICIENT_FG_STOCK"
+  | "PACKING_QUANTITY_NOT_AVAILABLE"
   | "INSUFFICIENT_RAW_MATERIAL_STOCK"
   | "UNBALANCED_JOURNAL"
   | "POSTED_INVOICE_LOCKED"
@@ -88,6 +89,7 @@ export type BusinessRuleErrorCode =
 
 const HTTP_STATUS_BY_CODE: Record<BusinessRuleErrorCode, number> = {
   INSUFFICIENT_FG_STOCK: 409,
+  PACKING_QUANTITY_NOT_AVAILABLE: 409,
   INSUFFICIENT_RAW_MATERIAL_STOCK: 409,
   UNBALANCED_JOURNAL: 422,
   POSTED_INVOICE_LOCKED: 409,

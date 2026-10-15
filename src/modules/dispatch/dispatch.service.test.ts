@@ -35,12 +35,17 @@ vi.mock("@/modules/finished-goods-inventory/finished-goods-reservation.service",
   getFinishedGoodsAvailableQuantity: vi.fn(),
   consumeReservationForDispatchInTx: vi.fn(),
 }));
+// Packing-produced-quantity gate (process-flow clarity fix, 2026-10-15).
+vi.mock("@/modules/production/production-progress.service", () => ({
+  getSalesOrderItemProductionSummary: vi.fn(),
+}));
 vi.mock("@/core/db/client", () => ({
   prisma: {
     $transaction: vi.fn(),
     dispatchItem: { aggregate: vi.fn() },
     product: { findFirst: vi.fn() },
     productionOrder: { findMany: vi.fn() },
+    salesOrderItem: { findFirst: vi.fn() },
   },
 }));
 vi.mock("@/core/barcode/barcode.service", () => ({ replaceCartonBarcodes: vi.fn() }));
@@ -64,6 +69,7 @@ const { WarehouseLocationRepository } = await import("@/modules/warehouses/wareh
 const { getFinishedGoodsAvailableQuantity, consumeReservationForDispatchInTx } = await import(
   "@/modules/finished-goods-inventory/finished-goods-reservation.service"
 );
+const { getSalesOrderItemProductionSummary } = await import("@/modules/production/production-progress.service");
 
 const DEFAULT_SETTINGS = {
   allowExtraDispatch: true,
@@ -136,6 +142,12 @@ beforeEach(() => {
   // about this gate) keeps passing unmodified; the gate's own dedicated
   // tests override this per-case.
   vi.mocked(prisma.productionOrder.findMany).mockReset().mockResolvedValue([]);
+  // Packing-produced-quantity gate (2026-10-15) — default to "nothing
+  // dispatched yet, effectively unlimited produced" so every pre-existing
+  // test (none of which know about this gate) keeps passing unmodified; the
+  // gate's own dedicated tests override this per-case.
+  vi.mocked(prisma.salesOrderItem.findFirst).mockReset().mockResolvedValue({ dispatchedQuantity: 0, product: { styleName: "Gym Lowers" } } as never);
+  vi.mocked(getSalesOrderItemProductionSummary).mockReset().mockResolvedValue({ totalProduced: 1_000_000 } as never);
 });
 
 describe("createDispatch — order eligibility and remaining-quantity guard", () => {
@@ -450,6 +462,73 @@ describe("createDispatch — order eligibility and remaining-quantity guard", ()
       expect(DispatchRepository.createWithItems).not.toHaveBeenCalled();
     });
   });
+
+  describe("Packing-produced-quantity gate (2026-10-15)", () => {
+    const baseOrder = {
+      id: "so-1",
+      status: "CONFIRMED",
+      customerId: "cust-1",
+      items: [orderItem("item-1", 0, [200])],
+    };
+    const baseInput = {
+      salesOrderId: "so-1",
+      warehouseId: "wh-1",
+      dispatchDate: "2026-08-24",
+      deliveryAddress: "123 Street",
+      items: [{ salesOrderItemId: "item-1", dispatchedQuantity: 30 }],
+    };
+
+    it("blocks when the requested quantity exceeds what has actually completed the final (Packing) stage, naming the real shortfall", async () => {
+      vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue(baseOrder as never);
+      vi.mocked(prisma.salesOrderItem.findFirst).mockResolvedValue({ dispatchedQuantity: 0, product: { styleName: "Kurta" } } as never);
+      vi.mocked(getSalesOrderItemProductionSummary).mockResolvedValue({ totalProduced: 20 } as never);
+
+      await expect(createDispatch(actor, baseInput as never)).rejects.toMatchObject({
+        code: "PACKING_QUANTITY_NOT_AVAILABLE",
+        details: { requested: 30, alreadyDispatched: 0, totalProduced: 20, remainingPacked: 20 },
+      });
+      expect(DispatchRepository.createWithItems).not.toHaveBeenCalled();
+    });
+
+    it("subtracts already-dispatched (confirmed) quantity for the same line before comparing against produced", async () => {
+      vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue(baseOrder as never);
+      // 100 already genuinely produced (Packing-complete), 80 already shipped on
+      // earlier confirmed dispatches -> only 20 remain, 30 is too many.
+      vi.mocked(prisma.salesOrderItem.findFirst).mockResolvedValue({ dispatchedQuantity: 80, product: { styleName: "Kurta" } } as never);
+      vi.mocked(getSalesOrderItemProductionSummary).mockResolvedValue({ totalProduced: 100 } as never);
+
+      await expect(createDispatch(actor, baseInput as never)).rejects.toMatchObject({
+        code: "PACKING_QUANTITY_NOT_AVAILABLE",
+        details: { requested: 30, alreadyDispatched: 80, totalProduced: 100, remainingPacked: 20 },
+      });
+    });
+
+    it("allows exactly up to the remaining produced-but-not-yet-dispatched quantity", async () => {
+      vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue(baseOrder as never);
+      vi.mocked(prisma.salesOrderItem.findFirst).mockResolvedValue({ dispatchedQuantity: 0, product: { styleName: "Kurta" } } as never);
+      vi.mocked(getSalesOrderItemProductionSummary).mockResolvedValue({ totalProduced: 30 } as never);
+      vi.mocked(DispatchRepository.createWithItems).mockResolvedValue({ id: "disp-1" } as never);
+
+      await expect(createDispatch(actor, baseInput as never)).resolves.toBeDefined();
+    });
+
+    it("is NOT bypassed by a Release-to-Dispatch override reason — there is no human judgment call to override a plain physical fact", async () => {
+      vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue(baseOrder as never);
+      vi.mocked(prisma.productionOrder.findMany).mockResolvedValue([
+        { id: "po-1", orderNumber: "PROD-2026-00001", product: { styleName: "Kurta" } },
+      ] as never);
+      vi.mocked(prisma.salesOrderItem.findFirst).mockResolvedValue({ dispatchedQuantity: 0, product: { styleName: "Kurta" } } as never);
+      vi.mocked(getSalesOrderItemProductionSummary).mockResolvedValue({ totalProduced: 20 } as never);
+
+      await expect(
+        createDispatch(actor, {
+          ...baseInput,
+          overrideProductionReleaseReason: "Buyer confirmed shipment on a sample basis before full QC sign-off.",
+        } as never)
+      ).rejects.toMatchObject({ code: "PACKING_QUANTITY_NOT_AVAILABLE" });
+      expect(DispatchRepository.createWithItems).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe("setCartons — replaces Carton barcodes to match the freshly recreated carton ids (2026-09-29)", () => {
@@ -624,6 +703,22 @@ describe("confirmDispatch — self-approval, stock guard, guarded increment, sta
     vi.mocked(getAvailableQuantity).mockResolvedValue(50); // only 50 available, 100 requested
 
     await expect(confirmDispatch(actor, "disp-1")).rejects.toMatchObject({ code: "INSUFFICIENT_FG_STOCK" });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  // Packing-produced-quantity gate (2026-10-15) — the live re-check at the
+  // real commit point, mirroring the FG-stock check's own pre-check/
+  // confirm-recheck split immediately above (createDispatch's own tests
+  // cover the pre-check; this proves confirmDispatch re-validates live too).
+  it("re-checks the Packing-produced-quantity gate live at confirm time, never touching the transaction", async () => {
+    vi.mocked(DispatchRepository.findByIdWithDetails).mockResolvedValueOnce(packedDispatch as never);
+    vi.mocked(prisma.salesOrderItem.findFirst).mockResolvedValue({ dispatchedQuantity: 0, product: { styleName: "Round Neck T-Shirt" } } as never);
+    vi.mocked(getSalesOrderItemProductionSummary).mockResolvedValue({ totalProduced: 60 } as never); // only 60 produced, 100 requested
+
+    await expect(confirmDispatch(actor, "disp-1")).rejects.toMatchObject({
+      code: "PACKING_QUANTITY_NOT_AVAILABLE",
+      details: { salesOrderItemId: "soi-1", requested: 100, totalProduced: 60, remainingPacked: 60 },
+    });
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
