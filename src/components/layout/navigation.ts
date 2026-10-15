@@ -34,6 +34,16 @@ export interface NavLeaf {
    * production.approve (RBAC audit, 2026-09-24).
    */
   requiredAction?: Action;
+  /**
+   * Optional sub-heading within a section's own child list — the Sidebar
+   * renders a small non-interactive label before the first leaf of each new
+   * `group` value, letting one section present two or more distinct
+   * sub-modules (e.g. "Inventory" below groups its Raw Materials and
+   * Finished Goods leaves separately) without a second nesting level in the
+   * data model. Omit it for every leaf in a section that doesn't need this —
+   * rendering is unchanged when no leaf declares a group.
+   */
+  group?: string;
 }
 
 export interface NavSection {
@@ -161,26 +171,25 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Pending Approvals", href: "/production/approvals", modules: ["production"], requiredAction: "approve" },
     ],
   },
+  // Raw Materials and Finished Goods are deliberately one "Inventory" section
+  // with two labeled sub-groups (via NavLeaf.group), not two separate
+  // top-level sections — they're both genuinely "inventory" from a factory
+  // user's point of view, just backed by two different RBAC modules
+  // (`inventory`/`material_request` for raw materials, `fg_inventory` for
+  // finished goods) since they're separately permissioned.
   {
     label: "Inventory",
-    modules: ["inventory", "material_request"],
+    modules: ["inventory", "material_request", "fg_inventory"],
     children: [
-      { label: "Stock Balances", href: "/inventory/stock-balances", modules: ["inventory"] },
-      { label: "Stock Movements", href: "/inventory/stock-movements", modules: ["inventory"] },
+      { label: "Stock Balances", href: "/inventory/stock-balances", modules: ["inventory"], group: "Raw Materials" },
+      { label: "Stock Movements", href: "/inventory/stock-movements", modules: ["inventory"], group: "Raw Materials" },
       // Material Requests moved to its own `material_request` module (RBAC
       // audit, 2026-09-24) — previously gated on the same coarse `inventory`
       // key as Stock Balances/Movements.
-      { label: "Material Requests", href: "/material-requests", modules: ["material_request"] },
-    ],
-  },
-  {
-    label: "Finished Goods Inventory",
-    href: "/finished-goods-inventory",
-    modules: ["fg_inventory"],
-    children: [
-      { label: "Dashboard", href: "/finished-goods-inventory", modules: ["fg_inventory"] },
-      { label: "Stock List", href: "/finished-goods-inventory/stock-list", modules: ["fg_inventory"] },
-      { label: "Receipts", href: "/finished-goods-inventory/receipts", modules: ["fg_inventory"] },
+      { label: "Material Requests", href: "/material-requests", modules: ["material_request"], group: "Raw Materials" },
+      { label: "Dashboard", href: "/finished-goods-inventory", modules: ["fg_inventory"], group: "Finished Goods" },
+      { label: "Stock List", href: "/finished-goods-inventory/stock-list", modules: ["fg_inventory"], group: "Finished Goods" },
+      { label: "Receipts", href: "/finished-goods-inventory/receipts", modules: ["fg_inventory"], group: "Finished Goods" },
     ],
   },
   { label: "Accounts", href: "/accounts", modules: ["accounts", "invoices", "payments", "expenses", "financial_reports"] },
