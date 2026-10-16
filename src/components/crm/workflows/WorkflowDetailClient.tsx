@@ -110,7 +110,7 @@ export function WorkflowDetailClient({ id, permissions }: { id: string; permissi
   };
   const lifecycle = async (a: (typeof LIFECYCLE_ACTIONS)[number]) => {
     setBusy(a.path);
-    const r = await crmRequest<WorkflowDto>(`${WORKFLOWS_API}/${id}/${a.path}`, { method: "POST", body: { version: wf.version }, successMessage: `Workflow ${a.label.toLowerCase()}d` });
+    const r = await crmRequest<WorkflowDto>(`${WORKFLOWS_API}/${id}/${a.path}`, { method: "POST", body: { version: wf.version }, successMessage: a.to === "PUBLISHED" && wf.status === "DISABLED" ? "Workflow turned on" : `Workflow ${a.label.toLowerCase()}d` });
     setBusy(null);
     setConfirm(null);
     if (r.ok) await load();
@@ -136,6 +136,7 @@ export function WorkflowDetailClient({ id, permissions }: { id: string; permissi
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="text-lg font-semibold">{wf.name}</h2>
             <CrmBadge label={wf.statusLabel} tone={statusTone} />
+            {wf.templateKey && <CrmBadge label="Default automation" tone="indigo" />}
             {wf.published && <CrmBadge label={`Live v${wf.published.versionNumber}`} tone="green" />}
             {wf.draft && <CrmBadge label={`Draft v${wf.draft.versionNumber}`} tone="amber" />}
             {dirty && <CrmBadge label="Unsaved changes" tone="red" />}
@@ -169,7 +170,8 @@ export function WorkflowDetailClient({ id, permissions }: { id: string; permissi
             )}
             {LIFECYCLE_ACTIONS.filter((a) => wf.allowedTransitions.includes(a.to)).map((a) => (
               <Button key={a.path} variant={a.danger ? "danger" : "secondary"} isLoading={busy === a.path} onClick={() => (a.confirm ? setConfirm(a) : lifecycle(a))}>
-                {a.label}
+                {/* A switched-off (disabled) workflow is turned back on, not "resumed". */}
+                {a.to === "PUBLISHED" && wf.status === "DISABLED" ? "Turn on" : a.label}
               </Button>
             ))}
             <Button variant="secondary" onClick={duplicate}>

@@ -60,7 +60,10 @@ export interface WorkflowListRowDto {
   id: string;
   name: string;
   description: string | null;
+  /** Set for default automations (default-workflows.ts). */
+  templateKey: string | null;
   status: string;
+  version: number;
   statusLabel: string;
   triggerLabel: string;
   publishedVersionNumber: number | null;
@@ -75,6 +78,7 @@ export interface WorkflowDto {
   id: string;
   name: string;
   description: string | null;
+  templateKey: string | null;
   status: string;
   statusLabel: string;
   version: number;
@@ -160,3 +164,16 @@ export function useWorkflowMeta() {
   useEffect(load, [load]);
   return { meta, error, reload: load };
 }
+
+/** GET /workflows/defaults — the default-automation catalogue with this company's copies. */
+export interface DefaultWorkflowDto {
+  key: string;
+  name: string;
+  description: string;
+  category: string;
+  enabledByDefault: boolean;
+  triggerLabel: string;
+  steps: number;
+  installed: { id: string; name: string; status: string; statusLabel: string } | null;
+}
+

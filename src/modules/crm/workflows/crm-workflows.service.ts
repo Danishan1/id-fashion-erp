@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { CrmEntityType, Prisma } from "@prisma/client";
+import { z } from "zod";
 import { prisma } from "@/core/db/client";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { PermissionService } from "@/core/rbac/PermissionService";
@@ -11,6 +12,7 @@ import { assertCrmEntityAccess } from "../crm-entity-access";
 import { WORKFLOW_ACTIONS, UNAVAILABLE_ACTIONS, type WorkflowActionDef, type WorkflowActionKey } from "./workflow-action-catalog";
 import { customFieldDefs } from "./workflow-context";
 import { availableFields, canonicalJson, definitionEntities, definitionEntity, emptyDefinition, validateDefinitionStructure, workflowDefinitionSchema, type DefinitionIssue, type WorkflowDefinition } from "./workflow-definition";
+import { DEFAULT_WORKFLOWS, type DefaultWorkflowDef } from "./default-workflows";
 import { createExecution, runExecution } from "./workflow-engine";
 import { WORKFLOW_COMMON_FIELDS, WORKFLOW_ENTITIES, WORKFLOW_RECORD_FIELDS, isWorkflowEntity, type WorkflowEntity } from "./workflow-fields";
 import { ACTIVE_EXECUTION_STATUSES, EXECUTION_STATUSES, NODE_TYPES, REENTRY_MODES, WORKFLOW_LIMITS, WORKFLOW_STATUSES, WORKFLOW_TRANSITIONS, type WorkflowStatusKey } from "./workflow-registry";
@@ -136,8 +138,10 @@ export async function listWorkflows(actor: CrmActor, filters: WorkflowFilters, q
       id: r.id,
       name: r.name,
       description: r.description,
+      templateKey: r.templateKey,
       status: r.status,
       statusLabel: WORKFLOW_STATUSES[r.status].label,
+      version: r.version,
       triggerType: r.triggerType,
       triggerLabel: triggerLabel(r.triggerType),
       publishedVersionNumber: r.publishedVersion?.versionNumber ?? null,
@@ -161,6 +165,7 @@ export async function getWorkflow(actor: CrmActor, id: string) {
     id: w.id,
     name: w.name,
     description: w.description,
+    templateKey: w.templateKey,
     status: w.status,
     statusLabel: WORKFLOW_STATUSES[w.status].label,
     version: w.version,
@@ -733,3 +738,98 @@ export async function getWorkflowMeta(actor: CrmActor) {
     },
   };
 }
+
+// ── Default automations (default-workflows.ts) ──────────────────────────────
+
+const defaultInstallSchema = z.object({ keys: z.array(z.string().max(80)).max(DEFAULT_WORKFLOWS.length).optional() }).strict();
+
+/** The catalogue, with what this company already has (an archived copy counts: it was removed on purpose). */
+export async function listDefaultWorkflows(actor: CrmActor) {
+  const installed = await prisma.crmWorkflow.findMany({ where: { companyId: actor.companyId, templateKey: { not: null } }, select: { id: true, templateKey: true, status: true, name: true } });
+  const byKey = new Map(installed.map((w) => [w.templateKey!, w]));
+  return DEFAULT_WORKFLOWS.map((d) => {
+    const w = byKey.get(d.key);
+    return {
+      key: d.key,
+      name: d.name,
+      description: d.description,
+      category: d.category,
+      enabledByDefault: d.enabledByDefault,
+      triggerLabel: triggerLabel(d.definition.trigger.type),
+      steps: d.definition.nodes.length,
+      installed: w ? { id: w.id, name: w.name, status: w.status, statusLabel: WORKFLOW_STATUSES[w.status].label } : null,
+    };
+  });
+}
+
+/**
+ * Adds the default automations this company doesn't have yet (all, or the
+ * given keys). Each is created and published as version 1 with the caller as
+ * its run-as user — through the same publish validation as any workflow — and
+ * left on or switched off (DISABLED) per the catalogue. Existing copies are
+ * never touched, so edits and on/off choices survive; archived copies are not
+ * re-added. Safe to call repeatedly and concurrently (unique company + key).
+ */
+export async function installDefaultWorkflows(actor: CrmActor, raw: unknown) {
+  const input = defaultInstallSchema.parse(raw ?? {});
+  const wanted = input.keys ? DEFAULT_WORKFLOWS.filter((d) => input.keys!.includes(d.key)) : DEFAULT_WORKFLOWS;
+  const unknown = (input.keys ?? []).filter((k) => !DEFAULT_WORKFLOWS.some((d) => d.key === k));
+  if (unknown.length) throw new BusinessRuleError("VALIDATION_ERROR", `Unknown default automation(s): ${unknown.join(", ")}.`);
+  const existing = new Set((await prisma.crmWorkflow.findMany({ where: { companyId: actor.companyId, templateKey: { in: wanted.map((d) => d.key) } }, select: { templateKey: true } })).map((w) => w.templateKey));
+  const installed: { key: string; id: string; status: WorkflowStatusKey }[] = [];
+  const skipped: { key: string; reason: string }[] = [];
+  for (const d of wanted) {
+    if (existing.has(d.key)) {
+      skipped.push({ key: d.key, reason: "Already added." });
+      continue;
+    }
+    const r = await installOne(actor, d);
+    if ("id" in r) installed.push({ key: d.key, id: r.id, status: r.status });
+    else skipped.push({ key: d.key, reason: r.reason });
+  }
+  return { installed, skipped };
+}
+
+async function installOne(actor: CrmActor, d: DefaultWorkflowDef): Promise<{ id: string; status: WorkflowStatusKey } | { reason: string }> {
+  const definition = workflowDefinitionSchema.parse(d.definition);
+  const { errors } = await validateDefinitionForPublish(actor, definition);
+  if (errors.length) return { reason: errors.map((e) => e.message).join(" ") };
+  const status: WorkflowStatusKey = d.enabledByDefault ? "PUBLISHED" : "DISABLED";
+  const now = new Date();
+  try {
+    return await runCrmMutation(actor, async (ctx) => {
+      const id = randomUUID();
+      const versionId = randomUUID();
+      await ctx.tx.crmWorkflow.create({
+        data: {
+          id,
+          companyId: actor.companyId,
+          name: d.name,
+          description: d.description,
+          templateKey: d.key,
+          status,
+          triggerType: definition.trigger.type,
+          runAsUserId: actor.userId,
+          publishedAt: now,
+          publishedByUserId: actor.userId,
+          disabledAt: status === "DISABLED" ? now : null,
+          createdByUserId: actor.userId,
+          webhookSecretEnc: encryptSecret(randomBytes(32).toString("hex")),
+        },
+      });
+      await ctx.tx.crmWorkflowVersion.create({
+        data: { id: versionId, companyId: actor.companyId, workflowId: id, versionNumber: 1, status: "PUBLISHED", triggerType: definition.trigger.type, definition: definition as unknown as Prisma.InputJsonValue, definitionHash: hashDefinition(definition), changeNote: "Default automation", createdByUserId: actor.userId, publishedAt: now, publishedByUserId: actor.userId },
+      });
+      await ctx.tx.crmWorkflow.update({ where: { id }, data: { publishedVersionId: versionId } });
+      await ctx.audit({ tableName: TABLE, recordId: id, action: "CREATE", newValues: { name: d.name, trigger: definition.trigger.type, templateKey: d.key, status, runAsUserId: actor.userId } });
+      emit(ctx, { id, name: d.name }, "workflow.created", `${d.name} · default automation`, { trigger: definition.trigger.type, templateKey: d.key });
+      emit(ctx, { id, name: d.name }, status === "PUBLISHED" ? "workflow.published" : "workflow.disabled", status === "PUBLISHED" ? "v1 published (default automation)" : "Added switched off (default automation)", { versionId, versionNumber: 1 });
+      return { id, status };
+    });
+  } catch (e) {
+    // Added at the same moment by someone else (unique company + template key).
+    if ((e as { code?: string })?.code === "P2002") return { reason: "Already added." };
+    throw e;
+  }
+}
+

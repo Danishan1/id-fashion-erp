@@ -32,6 +32,7 @@ Workflows only do what you could do by hand in the CRM, and they follow the same
 | 8 | [08-recipes.md](08-recipes.md) | Ready-made workflows for a garment business, set up step by step |
 | 9 | [09-test-scenarios.md](09-test-scenarios.md) | A tester's checklist: test cases with steps and expected results |
 | 10 | [10-best-practices-and-limits.md](10-best-practices-and-limits.md) | Dos and don'ts, limits, what is not available yet, FAQ |
+| 11 | [11-default-automations.md](11-default-automations.md) | The 20 ready-made automations every company gets: what each does, which start on, how to add, change or turn them off |
 
 ## Before you start
 

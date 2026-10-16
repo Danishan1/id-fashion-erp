@@ -7817,3 +7817,36 @@ Full write-up: `docs/crm/PHASE_22_SETTINGS_INTEGRATIONS.md`.
 - `webhooks-out.unit.test.ts` and `webhooks-out.integration.test.ts`. The integration test runs a real HTTP receiver on 127.0.0.1 with `CRM_WORKFLOW_WEBHOOK_ALLOW_HTTP=true` and `ALLOWED_HOSTS=127.0.0.1` set in the test file.
 - `SecretOnce.test.tsx`, `OutgoingWebhooksTab.test.tsx`, and the SSRF cases in `communication.test.ts`.
 - `bulk-queue.integration.test.ts` needs `BULK_IT_REDIS_URL` as well.
+
+## CRM default automations (2026-10-16)
+
+User guide: `docs/crm/workflows/11-default-automations.md`.
+
+**Catalogue: `src/modules/crm/workflows/default-workflows.ts`.**
+- 20 ready-made workflows: 13 start on (tasks and in-app alerts only), 7 start off (nurture, tagging, long waits).
+- The file is DATA ONLY with type-only imports: `prisma/seed.ts` imports it under plain Node.
+- No company-specific ids (statuses, stages, tags, users, templates) and no MESSAGE / EXTERNAL actions. Use enum, date and number fields, new tag *names*, and RECORD_OWNER / RUN_AS recipients.
+- Every merge variable must have a fallback.
+- `default-workflows.test.ts` enforces all of this and runs each definition through the publish validator.
+
+**Keys and install.**
+- `crm_workflows.template_key` is unique per company (migration `20261016100000_crm_default_workflows`). Never rename or reuse a key.
+- `installDefaultWorkflows(actor, { keys? })` in `crm-workflows.service.ts`:
+  - publishes v1 through `validateDefinitionForPublish`, with the installer as run-as;
+  - sets PUBLISHED, or DISABLED per `enabledByDefault`;
+  - skips existing copies (any status, including ARCHIVED);
+  - audits and emits events.
+- `listDefaultWorkflows` returns the catalogue with this company's copies.
+- API: `/api/v1/crm/workflows/defaults` (GET view, POST edit). It is a static route beside `[...path]`.
+
+**Seed.** `seedDefaultWorkflows(companyId, superAdminId)` in `prisma/seed.ts` inserts the rows directly (same canonical-JSON hash, no webhook secret) and is idempotent per key.
+
+**UI.**
+- Workflows list:
+  - "Default" badge;
+  - an "On" switch column (edit users): resume, or disable with confirmation;
+  - a "Default automations" dialog that adds the missing ones.
+- Detail page: "Default automation" badge; "Turn on" instead of "Resume" for DISABLED workflows.
+- `templateKey` and `version` were added to the list and detail DTOs.
+
+**Engine note.** In tests, `tickWorkflows` dispatches an event and the next tick runs the queued execution. Tick twice (the second with `now + 1s`).

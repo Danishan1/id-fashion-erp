@@ -11683,6 +11683,8 @@ model CrmWorkflow {
   runAsUserId        String?           @map("run_as_user_id") @db.Uuid
   // AES-GCM (core/security/encryption) HMAC secret for webhook actions; never returned in lists.
   webhookSecretEnc   String?           @map("webhook_secret_enc")
+  // Default automations (default-workflows.ts): the catalogue key this workflow was installed from.
+  templateKey        String?           @map("template_key")
   lastTriggeredAt    DateTime?         @map("last_triggered_at")
   publishedAt        DateTime?         @map("published_at")
   publishedByUserId  String?           @map("published_by_user_id") @db.Uuid
@@ -11703,6 +11705,7 @@ model CrmWorkflow {
   versions         CrmWorkflowVersion[]   @relation("CrmWorkflowVersions")
   executions       CrmWorkflowExecution[]
 
+  @@unique([companyId, templateKey])
   @@index([companyId, status, triggerType])
   @@map("crm_workflows")
 }
