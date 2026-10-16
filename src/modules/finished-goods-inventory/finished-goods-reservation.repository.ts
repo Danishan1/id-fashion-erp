@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/core/db/client";
 
@@ -100,4 +101,54 @@ export const FinishedGoodsReservationRepository = {
    */
   findActiveForLineAndVariantInTx: (tx: Prisma.TransactionClient, companyId: string, salesOrderLineId: string, productVariantId: string) =>
     tx.finishedGoodsReservation.findFirst({ where: { companyId, salesOrderLineId, productVariantId, status: "ACTIVE" } }),
+
+  /**
+   * Process-flow Phase 1 (2026-10-16) — the real atomic primitive behind
+   * applyPackingCompletionReservationsInTx (finished-goods-reservation.
+   * service.ts): creates the one ACTIVE reservation for this
+   * (salesOrderLineId, productVariantId) pair if none exists yet, or
+   * increments its existing reservedQuantity, in both cases capping the
+   * RESULT at `capAt` (the exact variant's own SalesOrderItemBreakdown.
+   * orderedQuantity — never a style-level substitute, enforced entirely by
+   * the caller, this function just applies whatever cap it's given).
+   *
+   * A single atomic `INSERT ... ON CONFLICT (...) WHERE status = 'ACTIVE' DO
+   * UPDATE ...` — not a read-then-write — targeting the partial unique index
+   * added in migration 20261016120000_add_finished_goods_reservation_active_
+   * unique_index. Two concurrent completions for the same line+variant
+   * therefore serialize at the database row-lock level: the second call's
+   * own `LEAST(...)` recomputes against whatever the first call already
+   * wrote, so the result is always correctly capped regardless of call
+   * order — there is no window where a race could push reservedQuantity
+   * past `capAt`.
+   *
+   * `id` is generated here, not by a database default — confirmed from this
+   * project's own migrations that every table's `id` column has no SQL-level
+   * DEFAULT (Prisma generates it client-side for every other write path);
+   * matching that convention here keeps a raw-SQL-inserted row
+   * indistinguishable from an ordinary Prisma-created one.
+   */
+  upsertIncrementCappedInTx: (
+    tx: Prisma.TransactionClient,
+    params: {
+      companyId: string;
+      branchId: string | null;
+      salesOrderLineId: string;
+      productVariantId: string;
+      warehouseId: string;
+      capAt: number;
+      incrementBy: number;
+    }
+  ): Promise<{ id: string; reservedQuantity: Prisma.Decimal }[]> =>
+    tx.$queryRaw`
+      INSERT INTO finished_goods_reservations
+        (id, company_id, branch_id, sales_order_line_id, product_variant_id, warehouse_id, reserved_quantity, consumed_quantity, status, created_at, updated_at)
+      VALUES
+        (${randomUUID()}::uuid, ${params.companyId}::uuid, ${params.branchId}::uuid, ${params.salesOrderLineId}::uuid, ${params.productVariantId}::uuid, ${params.warehouseId}::uuid, LEAST(${params.capAt}::decimal, ${params.incrementBy}::decimal), 0, 'ACTIVE'::"FinishedGoodsReservationStatus", now(), now())
+      ON CONFLICT (sales_order_line_id, product_variant_id) WHERE status = 'ACTIVE'
+      DO UPDATE SET
+        reserved_quantity = LEAST(${params.capAt}::decimal, finished_goods_reservations.reserved_quantity + ${params.incrementBy}::decimal),
+        updated_at = now()
+      RETURNING id, reserved_quantity
+    `,
 };

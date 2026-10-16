@@ -1,0 +1,21 @@
+-- Finished Goods Inventory, Process-Flow Phase 1 (2026-10-16): one ACTIVE
+-- reservation per (sales_order_line_id, product_variant_id) pair. This is
+-- the concurrency primitive the new capped upsert-increment (triggered from
+-- Packing completion, not Sales-Order confirm -- see
+-- finished-goods-reservation.service.ts's applyPackingCompletionReservationsInTx)
+-- relies on via `INSERT ... ON CONFLICT (...) WHERE status = 'ACTIVE' DO
+-- UPDATE ...`, so two concurrent completions for the same line+variant can
+-- never both create a separate ACTIVE row.
+--
+-- Not expressible in schema.prisma's own declarative syntax (Prisma has no
+-- partial/filtered @@unique) -- same accepted, already-precedented pattern
+-- as sales_invoices_one_active_per_order (see prisma/migrations/
+-- 20260824060033_add_sales_invoices/migration.sql) and
+-- purchase_invoices_supplier_invoice_number_unique.
+--
+-- Verified safe to add before writing this migration: a direct read-only
+-- query against the live dev DB (2026-10-16) confirmed ZERO rows exist in
+-- finished_goods_reservations at all (the table was built in an earlier,
+-- unrelated session and has never had a real writer wired up until this
+-- change) -- there is no existing data this index could conflict with.
+CREATE UNIQUE INDEX "finished_goods_reservations_one_active_per_line_variant" ON "finished_goods_reservations"("sales_order_line_id", "product_variant_id") WHERE "status" = 'ACTIVE';

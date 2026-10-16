@@ -27,6 +27,22 @@ interface ActorContext {
  */
 
 /**
+ * STILL UNWIRED (confirmed, 2026-10-16) — and now deliberately so, not just
+ * by omission: the business rule decided for Process-Flow Phase 1 is "only
+ * ACTUAL completed Packing quantity may ever create a reservation; ordered-
+ * but-unproduced quantity must never reserve or hide existing stock." This
+ * function reserves the FULL ordered quantity immediately, with zero
+ * production having happened yet — wiring it into confirmSalesOrder() as
+ * originally planned would violate that rule directly (it would make an
+ * order's own unproduced demand suppress visibility of real, already-
+ * existing stock the moment the order is confirmed). The real, rule-
+ * compliant creation trigger is `applyPackingCompletionReservationsInTx`
+ * below, called from Packing completion, not Sales-Order confirm. This
+ * function is kept, unmodified and still fully tested, only because nothing
+ * in Phase 1's authorized scope calls for removing it — it remains available
+ * for Phase 3's own, separately-scoped work if a different trigger point is
+ * ever genuinely wanted there.
+ *
  * Creates one ACTIVE FinishedGoodsReservation per (salesOrderLineId,
  * productVariantId) pair found in the order's own SalesOrderItem/Breakdown
  * rows, at reservedQuantity = the summed orderedQuantity for that pair
@@ -76,6 +92,111 @@ export async function createReservationsForSalesOrderInTx(tx: Prisma.Transaction
 
   await FinishedGoodsReservationRepository.createMany(tx, rows);
   return rows;
+}
+
+/**
+ * Process-Flow Phase 1 (2026-10-16) — the REAL reservation-creation trigger:
+ * called from job-order.service.ts's `completeAtFinalStageInTx()`, inside the
+ * exact same transaction as the Finished-Goods receipt that same completion
+ * posts, immediately after it. Only ever reached for a variant-bearing style
+ * (a no-variant style has no `productVariantId` to key a reservation on at
+ * all — `FinishedGoodsReservation.productVariantId` is a required column, and
+ * inventing a pseudo-variant was explicitly ruled out; no-variant styles use
+ * the separate, already-existing production-capped style-level formula in
+ * finished-goods-style-stock-details.service.ts instead, with no reservation
+ * of any kind).
+ *
+ * The business rule this enforces (confirmed, Phase 0 corrected plan): a
+ * reservation may only ever grow by quantity that has ACTUALLY completed
+ * Packing, and is capped per exact matching `productVariantId` at that
+ * line's own `SalesOrderItemBreakdown.orderedQuantity` — never a style-level
+ * substitute, never the raw ordered total regardless of variant. Two
+ * documented fail-safes, both deliberate, neither an oversight:
+ *   - A completed variant with NO matching breakdown row on the linked order
+ *     line (the floor worker's own entered variantBreakdown is never cross-
+ *     validated against the order's own breakdown, only against the style's
+ *     real ProductVariant set — see resolveFinalStageVariantBreakdown) gets
+ *     NO reservation at all. The quantity is not lost — it was already
+ *     posted to real Finished-Goods stock by the caller, just before this
+ *     function runs — it simply becomes genuinely unallocated stock rather
+ *     than being misattributed to a variant that was never actually ordered.
+ *   - Duplicate rows for the same productVariantId in one completion's own
+ *     variantBreakdown are aggregated (summed) BEFORE any increment is
+ *     applied, so a duplicate input can never apply two separate increments
+ *     or silently drop one.
+ *
+ * Make-to-Stock production (ProductionOrder.salesOrderItemId null) and a
+ * legacy SalesOrderItem predating the Effective BOM column (salesOrderLineId
+ * null) are both silently skipped — never crashed on — matching
+ * createReservationsForSalesOrderInTx's own established precedent for the
+ * identical column.
+ *
+ * KNOWN, DOCUMENTED, INHERITED RISK (confirmed via direct investigation,
+ * 2026-10-16 — not introduced by this function): forwardJobOrder() and
+ * recordQcInspection() (this function's only two real callers, via
+ * completeAtFinalStageInTx) have no idempotency-key protection of their own
+ * against a genuine request retry creating a second, duplicate completion
+ * event for a quantity that still has legitimate forwarding/QC headroom —
+ * confirmed by reading forwardJobOrderSchema/createQcInspectionSchema
+ * directly, neither has an idempotencyKey field (unlike receiveJobWork's own
+ * existing "CF-5" pattern for external Job Work receipts). This function
+ * does not make that pre-existing exposure worse: because it runs from the
+ * exact same `variantBreakdown` input, in the exact same transaction, as the
+ * Finished-Goods receipt a duplicate completion would also double-post, a
+ * reservation created here can only ever drift from real posted stock in
+ * lockstep with that already-accepted exposure — never as an independent,
+ * additional source of drift. A proper fix (an idempotency key on
+ * forwardJobOrder/recordQcInspection, mirroring receiveJobWork's own CF-5
+ * pattern) is recommended as a separate, dedicated follow-up — explicitly
+ * out of Phase 1's own scope.
+ */
+export async function applyPackingCompletionReservationsInTx(
+  tx: Prisma.TransactionClient,
+  actor: ActorContext,
+  params: {
+    productionOrderId: string;
+    warehouseId: string;
+    variantBreakdown: { productVariantId: string; quantity: number }[];
+  }
+): Promise<void> {
+  const order = await tx.productionOrder.findUnique({
+    where: { id: params.productionOrderId },
+    select: { salesOrderItemId: true },
+  });
+  if (!order?.salesOrderItemId) return; // Make-to-Stock — nothing to reserve against.
+
+  const item = await tx.salesOrderItem.findUnique({
+    where: { id: order.salesOrderItemId },
+    select: { salesOrderLineId: true, breakdown: { select: { productVariantId: true, orderedQuantity: true } } },
+  });
+  if (!item?.salesOrderLineId) return; // Legacy row predating the Effective BOM column — skip, never crash.
+
+  const orderedByVariant = new Map(item.breakdown.map((b) => [b.productVariantId, b.orderedQuantity]));
+
+  // Aggregate duplicate variant rows in the completion's own breakdown before
+  // applying any increment — never two separate increments for the same
+  // variant, never a silently dropped one.
+  const completedByVariant = new Map<string, number>();
+  for (const row of params.variantBreakdown) {
+    completedByVariant.set(row.productVariantId, (completedByVariant.get(row.productVariantId) ?? 0) + row.quantity);
+  }
+
+  for (const [productVariantId, completedQuantity] of completedByVariant) {
+    const capAt = orderedByVariant.get(productVariantId);
+    // Produced a variant this specific order line never ordered — no
+    // reservation, fails safely (see this function's own doc comment).
+    if (capAt === undefined) continue;
+
+    await FinishedGoodsReservationRepository.upsertIncrementCappedInTx(tx, {
+      companyId: actor.companyId,
+      branchId: actor.branchId ?? null,
+      salesOrderLineId: item.salesOrderLineId,
+      productVariantId,
+      warehouseId: params.warehouseId,
+      capAt,
+      incrementBy: completedQuantity,
+    });
+  }
 }
 
 /**

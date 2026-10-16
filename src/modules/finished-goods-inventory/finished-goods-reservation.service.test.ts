@@ -11,6 +11,7 @@ vi.mock("./finished-goods-reservation.repository", () => ({
     guardedRelease: vi.fn(),
     releaseAllActiveForSalesOrderLineIdsInTx: vi.fn(),
     findActiveForLineAndVariantInTx: vi.fn(),
+    upsertIncrementCappedInTx: vi.fn(),
   },
 }));
 // Finished Goods Inventory module (FGI-041).
@@ -28,11 +29,13 @@ const {
   getCommittedReservationQuantity,
   getFinishedGoodsAvailableQuantity,
   consumeReservationForDispatchInTx,
+  applyPackingCompletionReservationsInTx,
 } = await import("./finished-goods-reservation.service");
 
 const tx = {
-  salesOrderItem: { findMany: vi.fn() },
+  salesOrderItem: { findMany: vi.fn(), findUnique: vi.fn() },
   salesOrderLine: { findMany: vi.fn() },
+  productionOrder: { findUnique: vi.fn() },
 } as never;
 
 const actor = { companyId: "co-1", userId: "user-1", branchId: "br-1" };
@@ -47,9 +50,12 @@ beforeEach(() => {
   vi.mocked(FinishedGoodsReservationRepository.guardedRelease).mockReset();
   vi.mocked(FinishedGoodsReservationRepository.releaseAllActiveForSalesOrderLineIdsInTx).mockReset();
   vi.mocked(FinishedGoodsReservationRepository.findActiveForLineAndVariantInTx).mockReset();
+  vi.mocked(FinishedGoodsReservationRepository.upsertIncrementCappedInTx).mockReset().mockResolvedValue([] as never);
   vi.mocked(FinishedGoodsStockBalanceRepository.sumSaleableAcrossLocations).mockReset();
   (tx as unknown as { salesOrderItem: { findMany: ReturnType<typeof vi.fn> } }).salesOrderItem.findMany.mockReset();
   (tx as unknown as { salesOrderLine: { findMany: ReturnType<typeof vi.fn> } }).salesOrderLine.findMany.mockReset();
+  (tx as unknown as { salesOrderItem: { findUnique: ReturnType<typeof vi.fn> } }).salesOrderItem.findUnique.mockReset();
+  (tx as unknown as { productionOrder: { findUnique: ReturnType<typeof vi.fn> } }).productionOrder.findUnique.mockReset();
 });
 
 describe("createReservationsForSalesOrderInTx", () => {
@@ -307,5 +313,155 @@ describe("consumeReservationForDispatchInTx (FGI-041)", () => {
     await expect(consumeReservationForDispatchInTx(tx, "co-1", "line-1", "var-1", 15)).rejects.toMatchObject({
       code: "OVER_CONSUMPTION_NOT_ALLOWED",
     });
+  });
+});
+
+describe("applyPackingCompletionReservationsInTx (process-flow Phase 1, 2026-10-16)", () => {
+  const txSalesOrderItem = () => (tx as unknown as { salesOrderItem: { findUnique: ReturnType<typeof vi.fn> } }).salesOrderItem.findUnique;
+  const txProductionOrder = () => (tx as unknown as { productionOrder: { findUnique: ReturnType<typeof vi.fn> } }).productionOrder.findUnique;
+
+  it("is a no-op for Make-to-Stock production (no linked SalesOrderItem at all)", async () => {
+    txProductionOrder().mockResolvedValue({ salesOrderItemId: null });
+
+    await applyPackingCompletionReservationsInTx(tx, actor, {
+      productionOrderId: "po-1",
+      warehouseId: "wh-1",
+      variantBreakdown: [{ productVariantId: "var-1", quantity: 10 }],
+    });
+
+    expect(txSalesOrderItem()).not.toHaveBeenCalled();
+    expect(FinishedGoodsReservationRepository.upsertIncrementCappedInTx).not.toHaveBeenCalled();
+  });
+
+  it("is a no-op for a legacy SalesOrderItem with no salesOrderLineId (predates the Effective BOM column)", async () => {
+    txProductionOrder().mockResolvedValue({ salesOrderItemId: "soi-1" });
+    txSalesOrderItem().mockResolvedValue({ salesOrderLineId: null, breakdown: [] });
+
+    await applyPackingCompletionReservationsInTx(tx, actor, {
+      productionOrderId: "po-1",
+      warehouseId: "wh-1",
+      variantBreakdown: [{ productVariantId: "var-1", quantity: 10 }],
+    });
+
+    expect(FinishedGoodsReservationRepository.upsertIncrementCappedInTx).not.toHaveBeenCalled();
+  });
+
+  it("creates/increments a reservation capped at the exact variant's own orderedQuantity, not the style-level total", async () => {
+    txProductionOrder().mockResolvedValue({ salesOrderItemId: "soi-1" });
+    txSalesOrderItem().mockResolvedValue({
+      salesOrderLineId: "line-1",
+      breakdown: [
+        { productVariantId: "var-1", orderedQuantity: 100 },
+        { productVariantId: "var-2", orderedQuantity: 50 },
+      ],
+    });
+
+    await applyPackingCompletionReservationsInTx(tx, actor, {
+      productionOrderId: "po-1",
+      warehouseId: "wh-1",
+      variantBreakdown: [{ productVariantId: "var-1", quantity: 30 }],
+    });
+
+    expect(FinishedGoodsReservationRepository.upsertIncrementCappedInTx).toHaveBeenCalledTimes(1);
+    expect(FinishedGoodsReservationRepository.upsertIncrementCappedInTx).toHaveBeenCalledWith(tx, {
+      companyId: "co-1",
+      branchId: "br-1",
+      salesOrderLineId: "line-1",
+      productVariantId: "var-1",
+      warehouseId: "wh-1",
+      capAt: 100,
+      incrementBy: 30,
+    });
+  });
+
+  it("fails safely: a completed variant with NO matching breakdown row on the order gets no reservation at all", async () => {
+    txProductionOrder().mockResolvedValue({ salesOrderItemId: "soi-1" });
+    txSalesOrderItem().mockResolvedValue({
+      salesOrderLineId: "line-1",
+      breakdown: [{ productVariantId: "var-1", orderedQuantity: 100 }],
+    });
+
+    await applyPackingCompletionReservationsInTx(tx, actor, {
+      productionOrderId: "po-1",
+      warehouseId: "wh-1",
+      // "var-2" was never ordered on this line at all.
+      variantBreakdown: [{ productVariantId: "var-2", quantity: 10 }],
+    });
+
+    expect(FinishedGoodsReservationRepository.upsertIncrementCappedInTx).not.toHaveBeenCalled();
+  });
+
+  it("aggregates duplicate rows for the same productVariantId in one completion's breakdown before applying any increment", async () => {
+    txProductionOrder().mockResolvedValue({ salesOrderItemId: "soi-1" });
+    txSalesOrderItem().mockResolvedValue({
+      salesOrderLineId: "line-1",
+      breakdown: [{ productVariantId: "var-1", orderedQuantity: 100 }],
+    });
+
+    await applyPackingCompletionReservationsInTx(tx, actor, {
+      productionOrderId: "po-1",
+      warehouseId: "wh-1",
+      variantBreakdown: [
+        { productVariantId: "var-1", quantity: 6 },
+        { productVariantId: "var-1", quantity: 4 },
+      ],
+    });
+
+    // Exactly ONE call, for the aggregated 10 — never two separate calls, and
+    // never a silently-dropped row.
+    expect(FinishedGoodsReservationRepository.upsertIncrementCappedInTx).toHaveBeenCalledTimes(1);
+    expect(FinishedGoodsReservationRepository.upsertIncrementCappedInTx).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({ productVariantId: "var-1", incrementBy: 10 })
+    );
+  });
+
+  it("applies one call per distinct matched variant, each with its own real cap, when a completion spans several variants", async () => {
+    txProductionOrder().mockResolvedValue({ salesOrderItemId: "soi-1" });
+    txSalesOrderItem().mockResolvedValue({
+      salesOrderLineId: "line-1",
+      breakdown: [
+        { productVariantId: "var-1", orderedQuantity: 100 },
+        { productVariantId: "var-2", orderedQuantity: 50 },
+      ],
+    });
+
+    await applyPackingCompletionReservationsInTx(tx, actor, {
+      productionOrderId: "po-1",
+      warehouseId: "wh-1",
+      variantBreakdown: [
+        { productVariantId: "var-1", quantity: 20 },
+        { productVariantId: "var-2", quantity: 15 },
+      ],
+    });
+
+    expect(FinishedGoodsReservationRepository.upsertIncrementCappedInTx).toHaveBeenCalledTimes(2);
+    expect(FinishedGoodsReservationRepository.upsertIncrementCappedInTx).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({ productVariantId: "var-1", capAt: 100, incrementBy: 20 })
+    );
+    expect(FinishedGoodsReservationRepository.upsertIncrementCappedInTx).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({ productVariantId: "var-2", capAt: 50, incrementBy: 15 })
+    );
+  });
+
+  it("passes a null branchId through unchanged when the actor has none", async () => {
+    txProductionOrder().mockResolvedValue({ salesOrderItemId: "soi-1" });
+    txSalesOrderItem().mockResolvedValue({
+      salesOrderLineId: "line-1",
+      breakdown: [{ productVariantId: "var-1", orderedQuantity: 100 }],
+    });
+
+    await applyPackingCompletionReservationsInTx(tx, { companyId: "co-1", userId: "user-1" }, {
+      productionOrderId: "po-1",
+      warehouseId: "wh-1",
+      variantBreakdown: [{ productVariantId: "var-1", quantity: 10 }],
+    });
+
+    expect(FinishedGoodsReservationRepository.upsertIncrementCappedInTx).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({ branchId: null })
+    );
   });
 });

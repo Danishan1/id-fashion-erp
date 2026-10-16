@@ -5383,9 +5383,17 @@ model FinishedGoodsReservation {
   branchId         String?                        @map("branch_id") @db.Uuid
   salesOrderLineId String                         @map("sales_order_line_id") @db.Uuid
   productVariantId String                         @map("product_variant_id") @db.Uuid
-  // Nullable until a specific fulfilling warehouse is chosen — a Sales Order
-  // confirm doesn't yet know which Finished-Goods warehouse will ship it.
+  // Kept nullable for schema flexibility, but the real (2026-10-16, Phase 1)
+  // creation trigger — applyPackingCompletionReservationsInTx, called from
+  // Packing completion, not Sales-Order confirm — always knows the exact
+  // Finished-Goods warehouse (it's the same warehouse the completion posts
+  // its FG receipt into), so every reservation created by it has this set.
   warehouseId      String?                        @map("warehouse_id") @db.Uuid
+  // Capped at the exact-variant SalesOrderItemBreakdown.orderedQuantity for
+  // this line, never the style-level total — see
+  // applyPackingCompletionReservationsInTx's own doc comment for the full
+  // business rule and its fail-safe handling of an unmatched/duplicate
+  // produced variant.
   reservedQuantity Decimal                        @map("reserved_quantity") @db.Decimal(18, 4)
   consumedQuantity Decimal                        @default(0) @map("consumed_quantity") @db.Decimal(18, 4)
   status           FinishedGoodsReservationStatus @default(ACTIVE)
@@ -5400,6 +5408,11 @@ model FinishedGoodsReservation {
 
   @@index([companyId, productVariantId, warehouseId, status])
   @@index([salesOrderLineId])
+  // Hand-added raw-SQL partial unique index (Prisma has no partial @@unique
+  // syntax) — one ACTIVE reservation per (salesOrderLineId, productVariantId)
+  // pair, the ON CONFLICT target applyPackingCompletionReservationsInTx's
+  // atomic upsert-increment relies on. See migration
+  // 20261016120000_add_finished_goods_reservation_active_unique_index.
   @@map("finished_goods_reservations")
 }
 

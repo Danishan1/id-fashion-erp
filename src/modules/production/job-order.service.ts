@@ -4,6 +4,7 @@ import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { PermissionService } from "@/core/rbac/PermissionService";
 import { recordInventoryTransaction } from "@/modules/inventory/inventory.service";
 import { createFinishedGoodsReceiptInTx } from "@/modules/finished-goods-inventory/finished-goods-receipt.service";
+import { applyPackingCompletionReservationsInTx } from "@/modules/finished-goods-inventory/finished-goods-reservation.service";
 import { ProductVariantRepository } from "@/modules/products/product.repository";
 import { EmployeeRepository } from "@/modules/employees/employee.repository";
 import { getProductionSettings } from "@/core/production-settings/ProductionSettingsService";
@@ -213,6 +214,20 @@ async function completeAtFinalStageInTx(
       productionOrderId: params.productionOrderId,
       warehouseId: params.warehouseId,
       quantity: params.quantity,
+      variantBreakdown: params.variantBreakdown,
+    });
+    // Process-Flow Phase 1 (2026-10-16) — the real reservation-creation
+    // trigger, in the SAME transaction as the FG receipt just posted above,
+    // from the SAME variantBreakdown input. See
+    // applyPackingCompletionReservationsInTx's own doc comment for the full
+    // business rule, its fail-safes, and its documented (pre-existing,
+    // inherited, not worsened) retry-exposure analysis. A no-variant style
+    // never reaches this branch at all (variantBreakdown is null/empty for
+    // it), matching that style type's own deliberate "no reservation of any
+    // kind" design.
+    await applyPackingCompletionReservationsInTx(tx, actor, {
+      productionOrderId: params.productionOrderId,
+      warehouseId: params.warehouseId,
       variantBreakdown: params.variantBreakdown,
     });
   } else {

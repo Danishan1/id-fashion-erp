@@ -35,6 +35,17 @@ const mockPrismaClient = vi.hoisted(() => ({
   // relies on the beforeEach default below ([] -- "no variants configured"),
   // keeping their behavior byte-for-byte unchanged.
   productVariant: { findMany: vi.fn() },
+  // Process-Flow Phase 1 (2026-10-16) -- back applyPackingCompletionReservationsInTx's
+  // own tx.productionOrder.findUnique/tx.salesOrderItem.findUnique lookups,
+  // called from completeAtFinalStageInTx whenever a real variantBreakdown is
+  // supplied. Every pre-existing test in this file relies on the beforeEach
+  // default below (productionOrder resolving salesOrderItemId: null -- "Make-
+  // to-Stock, nothing to reserve against", the function's own documented
+  // early-return branch), keeping their behavior byte-for-byte unchanged;
+  // this module's own dedicated describe block below overrides both per case
+  // to exercise the real reservation-creation path.
+  productionOrder: { findUnique: vi.fn() },
+  salesOrderItem: { findUnique: vi.fn() },
 }));
 
 vi.mock("@/core/db/client", () => ({
@@ -172,6 +183,8 @@ beforeEach(() => {
   mockPrismaClient.productionSettings.findUnique.mockReset();
   mockPrismaClient.jobOrderAssignment.findUnique.mockReset();
   mockPrismaClient.productVariant.findMany.mockReset().mockResolvedValue([]);
+  mockPrismaClient.productionOrder.findUnique.mockReset().mockResolvedValue({ salesOrderItemId: null } as never);
+  mockPrismaClient.salesOrderItem.findUnique.mockReset();
   vi.mocked(recordInventoryTransaction).mockReset();
   vi.mocked(createFinishedGoodsReceiptInTx).mockReset().mockResolvedValue({ id: "fgr-1" } as never);
   vi.mocked(JobOrderProgressEntryRepository.createInTx).mockReset();

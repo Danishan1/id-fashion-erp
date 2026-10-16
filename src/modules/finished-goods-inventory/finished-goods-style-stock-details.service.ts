@@ -1,4 +1,8 @@
+import type { Prisma } from "@prisma/client";
 import { getProductById } from "@/modules/products/product.service";
+import { ProductVariantRepository } from "@/modules/products/product.repository";
+import { getSalesOrderItemProductionSummary } from "@/modules/production/production-progress.service";
+import { round2 } from "@/lib/money";
 import { FinishedGoodsStyleStockDetailsRepository } from "./finished-goods-style-stock-details.repository";
 
 /**
@@ -19,46 +23,87 @@ import { FinishedGoodsStyleStockDetailsRepository } from "./finished-goods-style
  * rather than re-implementing a second company-scoped product lookup.
  */
 /**
- * Process-flow clarity fix (2026-10-16), spec §2: the "100 ordered / 150
- * packed" example — once a line's own ordered quantity has been produced and
- * dispatched, any further genuine Packing output for that style becomes
- * general, unallocated FG stock rather than vanishing or double-counting.
- * Derived live from real, already-existing data — no new table, no new
- * write, nothing stored — the same "derive, never persist a figure that can
- * drift" discipline this project already applies everywhere else.
+ * Process-flow clarity fix (2026-10-16), corrected per Phase 0's confirmed
+ * business rule: "only actual completed Packing quantity may claim stock for
+ * a Sales Order — unproduced/unpacked order quantity must not reserve or
+ * hide existing Finished Goods stock." The ORIGINAL formula here
+ * (`max(0, orderedTotal - regularDispatchedQuantity)`) claimed the full
+ * ordered amount regardless of production status — wrong per that rule (a
+ * freshly-confirmed order with zero production would have hidden any
+ * pre-existing surplus stock of its own style). This no-variant-style
+ * formula additionally caps each line's claim at that line's own REAL,
+ * Packing-stage-only production (`getSalesOrderItemProductionSummary`'s
+ * `totalProduced`, already verified scoped to `ProductionStage.isFinal`
+ * JobOrders only — never re-derived here), so an order with no production
+ * yet correctly claims nothing.
  *
- * `claim` mirrors dispatch.service.ts's own `remainingToDispatch()` exactly
- * (`max(0, orderedTotal - regularDispatchedQuantity)`) — kept as a small,
- * explicit duplicate here rather than exporting that private helper, since
- * this is a read-only reporting figure with no bearing on Dispatch's own
- * actual gating logic; if the two ever need to diverge, that's a sign this
- * duplication should finally be unified, not evidence it was wrong to begin
- * with. Extra Dispatch Quantity is deliberately excluded from `claim` — an
- * Extra piece is never counted toward a line's own ordered-quantity
- * fulfillment, so it never "frees up" stock for this purpose either; only
- * Regular dispatch reduces what a line still needs.
+ * Scoped to no-variant styles ONLY — `FinishedGoodsReservation.
+ * productVariantId` is a required column, so a variant-bearing style uses
+ * the real reservation lifecycle instead (see getStyleStockSummary below);
+ * inventing a pseudo-variant to let a no-variant style use that same table
+ * was explicitly ruled out (Phase 0 corrected plan §B.1).
+ *
+ * Extra Dispatch Quantity is deliberately excluded from `claim`, same as the
+ * original formula — an Extra piece is never counted toward a line's own
+ * ordered-quantity fulfillment, so it never "frees up" stock for this
+ * purpose either; only Regular dispatch reduces what a line still needs.
+ *
+ * `productions[i]` is fetched once per active line via `Promise.all`
+ * (concurrent, not sequential) — the same N-queries-per-reporting-call
+ * tradeoff already accepted in dispatch.service.ts's own
+ * assertPackingProducedForLines for the identical underlying call, justified
+ * the same way here: this is a reporting page, not a hot path.
  */
-function sumActiveOrderClaims(lines: Array<{ regularDispatchedQuantity: number; breakdown: Array<{ orderedQuantity: number }> }>): number {
-  return lines.reduce((total, line) => {
+async function sumNoVariantStyleOrderClaims(
+  companyId: string,
+  lines: Array<{ id: string; regularDispatchedQuantity: number; breakdown: Array<{ orderedQuantity: number }> }>
+): Promise<number> {
+  const productions = await Promise.all(lines.map((line) => getSalesOrderItemProductionSummary(companyId, line.id)));
+  return lines.reduce((total, line, i) => {
     const orderedTotal = line.breakdown.reduce((sum, b) => sum + b.orderedQuantity, 0);
-    const claim = Math.max(0, orderedTotal - line.regularDispatchedQuantity);
+    const claim = Math.max(0, Math.min(orderedTotal, productions[i].totalProduced) - line.regularDispatchedQuantity);
     return total + claim;
   }, 0);
+}
+
+/**
+ * Variant-bearing styles: allocated quantity comes from the REAL, now-
+ * correctly-populated (process-flow Phase 1) FinishedGoodsReservation
+ * lifecycle — each row's own `reservedQuantity - consumedQuantity`, summed
+ * across every ACTIVE reservation for this style, never re-derived from
+ * SalesOrderItem fields directly (that approximation is what the no-variant
+ * formula above still uses, for the one style type that genuinely has no
+ * other option). A reservation can only ever exist for quantity that
+ * actually completed Packing (see applyPackingCompletionReservationsInTx's
+ * own doc comment) and is capped per exact variant — so this sum already
+ * satisfies both the "only packed quantity claims stock" rule and the
+ * "exact variant, never a style-level substitute" rule with no further
+ * capping needed here.
+ */
+function sumActiveReservationClaims(reservations: Array<{ reservedQuantity: Prisma.Decimal; consumedQuantity: Prisma.Decimal }>): number {
+  return reservations.reduce((total, r) => total + Math.max(0, Number(r.reservedQuantity) - Number(r.consumedQuantity)), 0);
 }
 
 export async function getStyleStockSummary(companyId: string, productId: string) {
   const product = await getProductById(companyId, productId);
 
-  const [saleable, rejected, variants, warehouses, activeOrderLines] = await Promise.all([
+  const [saleable, rejected, variants, warehouses, activeVariants, activeReservations, activeOrderLines] = await Promise.all([
     FinishedGoodsStyleStockDetailsRepository.sumSaleableForProduct(companyId, productId),
     FinishedGoodsStyleStockDetailsRepository.sumRejectedForProduct(companyId, productId),
     FinishedGoodsStyleStockDetailsRepository.countDistinctVariantsForProduct(companyId, productId),
     FinishedGoodsStyleStockDetailsRepository.countDistinctWarehousesForProduct(companyId, productId),
+    ProductVariantRepository.findManyActiveByProductId(productId),
+    FinishedGoodsStyleStockDetailsRepository.findActiveReservationsForProduct(companyId, productId),
     FinishedGoodsStyleStockDetailsRepository.findActiveOrderLinesForProduct(companyId, productId),
   ]);
 
   const saleableQuantity = Number(saleable._sum.quantityOnHand ?? 0);
-  const allocatedQuantity = sumActiveOrderClaims(activeOrderLines);
+  const hasConfiguredVariants = activeVariants.length > 0;
+  const allocatedQuantity = round2(
+    hasConfiguredVariants
+      ? sumActiveReservationClaims(activeReservations)
+      : await sumNoVariantStyleOrderClaims(companyId, activeOrderLines)
+  );
 
   return {
     product: { id: product.id, styleCode: product.styleCode, styleName: product.styleName },
@@ -72,6 +117,6 @@ export async function getStyleStockSummary(companyId: string, productId: string)
     // style level, same granularity as saleableQuantity's own company-wide
     // total above.
     allocatedQuantity,
-    unallocatedQuantity: Math.max(0, saleableQuantity - allocatedQuantity),
+    unallocatedQuantity: Math.max(0, round2(saleableQuantity - allocatedQuantity)),
   };
 }
