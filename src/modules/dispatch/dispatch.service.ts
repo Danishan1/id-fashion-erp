@@ -336,11 +336,12 @@ async function assertProductionReleasedForLines(
 }
 
 /**
- * Real-produced-quantity gate (process-flow clarity fix, 2026-10-15) — a
- * line's cumulative dispatched quantity (`SalesOrderItem.dispatchedQuantity`,
- * which only ever changes at confirmDispatch's own commit point, plus this
- * request's own quantity) must never exceed what has ACTUALLY completed the
- * production flow's FINAL stage ("Packing") for that line — reusing
+ * Real-produced-quantity gate (process-flow clarity fix, 2026-10-15/16) — a
+ * line's cumulative REGULAR dispatched quantity
+ * (`SalesOrderItem.regularDispatchedQuantity`, which only ever changes at
+ * confirmDispatch's own commit point, plus this request's own Regular
+ * quantity) must never exceed what has ACTUALLY completed the production
+ * flow's FINAL stage ("Packing") for that line — reusing
  * getSalesOrderItemProductionSummary()'s own totalProduced figure (summed
  * from JobOrders sitting on a `ProductionStage.isFinal` stage only, never
  * re-derived here) rather than inventing a second computation that could
@@ -357,21 +358,36 @@ async function assertProductionReleasedForLines(
  * real production output, is what actually prevents "wrong entry" dispatches
  * un-traceable to a real Packing completion.
  *
+ * Deliberately scoped to the REGULAR portion only, never the Extra portion —
+ * Extra Dispatch Quantity's own documented invariant (2026-09-30) is "Sale
+ * Order Fulfillment = Regular Dispatch Only": an Extra piece is, by design,
+ * never counted toward this line's own production/order allocation at all
+ * (a replacement, a free/FOC piece, a sample — legitimately sourced from
+ * whatever real Finished Goods stock the company actually has, including a
+ * different order's surplus or a stock-adjustment find). Capping Extra by
+ * this line's own Packing output would silently defeat that feature. Extra
+ * stays bound by the general, real-stock checks instead
+ * (assertFinishedGoodsAvailable above and confirmDispatch's own stock
+ * re-check, both of which already apply to the TOTAL regular+extra quantity
+ * and never let Extra bypass a genuine stock-availability check).
+ *
  * Deliberately has NO override — unlike the manual Release-to-Dispatch click
  * above (a human judgment call: "is this actually ready"), this is a plain
- * physical fact: units nobody has finished producing cannot be shipped, so
- * there is nothing for a judgment call to override. Opt-in by construction,
- * same as assertProductionReleasedForLines: every DispatchItem in this app
- * is always tied to a real Sales Order line (Dispatch.salesOrderId is
- * required), so there is no Make-to-Stock case to skip here.
+ * physical fact: units nobody has finished producing cannot be shipped
+ * toward this order's own Regular fulfillment, so there is nothing for a
+ * judgment call to override (Extra Dispatch is the designed escape hatch for
+ * exactly this situation). Opt-in by construction, same as
+ * assertProductionReleasedForLines: every DispatchItem in this app is always
+ * tied to a real Sales Order line (Dispatch.salesOrderId is required), so
+ * there is no Make-to-Stock case to skip here.
  */
 async function assertPackingProducedForLines(
   companyId: string,
-  items: Array<{ salesOrderItemId: string; dispatchedQuantity: number }>
+  items: Array<{ salesOrderItemId: string; regularDispatchQuantity: number }>
 ) {
   const requestedByLine = new Map<string, number>();
   for (const item of items) {
-    requestedByLine.set(item.salesOrderItemId, (requestedByLine.get(item.salesOrderItemId) ?? 0) + item.dispatchedQuantity);
+    requestedByLine.set(item.salesOrderItemId, (requestedByLine.get(item.salesOrderItemId) ?? 0) + item.regularDispatchQuantity);
   }
 
   for (const [salesOrderItemId, requested] of requestedByLine) {
@@ -379,19 +395,19 @@ async function assertPackingProducedForLines(
 
     const orderItem = await prisma.salesOrderItem.findFirst({
       where: { id: salesOrderItemId, salesOrder: { companyId } },
-      select: { dispatchedQuantity: true, product: { select: { styleName: true } } },
+      select: { regularDispatchedQuantity: true, product: { select: { styleName: true } } },
     });
     if (!orderItem) continue; // validated as belonging to the order already (buildDispatchItems)
 
     const summary = await getSalesOrderItemProductionSummary(companyId, salesOrderItemId);
-    const alreadyDispatched = orderItem.dispatchedQuantity;
-    const remainingPacked = Math.max(0, summary.totalProduced - alreadyDispatched);
+    const alreadyRegularDispatched = orderItem.regularDispatchedQuantity;
+    const remainingPacked = Math.max(0, summary.totalProduced - alreadyRegularDispatched);
 
     if (requested > remainingPacked) {
       throw new BusinessRuleError(
         "PACKING_QUANTITY_NOT_AVAILABLE",
-        `Only ${remainingPacked} pieces of "${orderItem.product.styleName}" have actually completed the final production stage (Packing) and are not yet dispatched for this order line, but ${requested} were entered. Total produced (Packing-complete): ${summary.totalProduced}, already dispatched: ${alreadyDispatched}.`,
-        { salesOrderItemId, requested, alreadyDispatched, totalProduced: summary.totalProduced, remainingPacked }
+        `Only ${remainingPacked} pieces of "${orderItem.product.styleName}" have actually completed the final production stage (Packing) and are available for Regular fulfillment of this order line, but ${requested} were entered as Regular. Total produced (Packing-complete) for this line: ${summary.totalProduced}, already regular-dispatched: ${alreadyRegularDispatched}. (Extra Dispatch Quantity, with a reason, can draw on general Finished Goods stock instead.)`,
+        { salesOrderItemId, requested, alreadyRegularDispatched, totalProduced: summary.totalProduced, remainingPacked }
       );
     }
   }
@@ -576,6 +592,8 @@ export async function setCartons(actor: ActorContext, id: string, input: SetCart
   }
 
   const dispatchItemProductId = new Map(existing.items.map((i) => [i.id, i.productId]));
+  const dispatchItemEligibleQuantity = new Map(existing.items.map((i) => [i.id, i.dispatchedQuantity]));
+  const dispatchItemStyleName = new Map(existing.items.map((i) => [i.id, i.product.styleName]));
 
   const variantIds = [...new Set(input.cartons.flatMap((c) => c.items.map((i) => i.productVariantId).filter(Boolean)))] as string[];
   const variants = variantIds.length > 0 ? await prisma.productVariant.findMany({ where: { id: { in: variantIds } } }) : [];
@@ -609,6 +627,35 @@ export async function setCartons(actor: ActorContext, id: string, input: SetCart
       })),
     };
   });
+
+  // Early, non-authoritative stock-quantity-control fix (process-flow
+  // clarity, 2026-10-16) — a carton's own quantity must never exceed what was
+  // actually approved for this DispatchItem to ship, which is itself already
+  // capped (at create/update/confirm) to what genuinely completed Packing —
+  // see assertPackingProducedForLines above. Previously this was only ever
+  // caught at markPacked()'s own exact-sum check, well after a user had
+  // already saved and walked away from an invalid carton split; checking it
+  // here too gives the same feedback the moment cartons are saved, matching
+  // the "validate both when saving and when confirming" requirement.
+  // Deliberately `<=`, not `===` — a partial, still-in-progress carton save
+  // (not every piece assigned to a carton yet) stays valid here; markPacked()
+  // is still the one place that requires the sum to be exactly complete.
+  const packedByItemId = new Map<string, number>();
+  for (const carton of cartons) {
+    for (const item of carton.items) {
+      packedByItemId.set(item.dispatchItemId, (packedByItemId.get(item.dispatchItemId) ?? 0) + item.quantity);
+    }
+  }
+  for (const [dispatchItemId, packed] of packedByItemId) {
+    const eligible = dispatchItemEligibleQuantity.get(dispatchItemId) ?? 0;
+    if (packed > eligible) {
+      throw new BusinessRuleError(
+        "VALIDATION_ERROR",
+        `Cartons for "${dispatchItemStyleName.get(dispatchItemId)}" total ${packed} pieces, which exceeds the ${eligible} pieces eligible to be packed/dispatched for this line.`,
+        { dispatchItemId, packed, eligible }
+      );
+    }
+  }
 
   const updated = await DispatchRepository.setCartons(id, cartons);
 
@@ -884,7 +931,7 @@ export async function confirmDispatch(actor: ActorContext, id: string) {
   // split immediately above).
   await assertPackingProducedForLines(
     actor.companyId,
-    dispatch.items.map((item) => ({ salesOrderItemId: item.salesOrderItem.id, dispatchedQuantity: item.dispatchedQuantity }))
+    dispatch.items.map((item) => ({ salesOrderItemId: item.salesOrderItem.id, regularDispatchQuantity: item.regularDispatchQuantity }))
   );
 
   // Finished Goods Inventory module (FGI-040/041) — §7 point 1: "the

@@ -32,6 +32,8 @@ interface StyleStockSummary {
   rejectedQuantity: number;
   distinctVariantCount: number;
   distinctWarehouseCount: number;
+  allocatedQuantity: number;
+  unallocatedQuantity: number;
 }
 
 const STOCK_STATUS_OPTIONS = [
@@ -96,12 +98,20 @@ export function StyleStockDetailsClient({ productId, summary }: { productId: str
         </p>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <StatTile label="Total Saleable Stock" value={summary.saleableQuantity.toLocaleString()} />
         <StatTile label="Total Rejected Stock" value={summary.rejectedQuantity.toLocaleString()} />
+        <StatTile label="Allocated to Orders" value={summary.allocatedQuantity.toLocaleString()} />
+        <StatTile label="Available for New Orders" value={summary.unallocatedQuantity.toLocaleString()} />
         <StatTile label="Variants Tracked" value={summary.distinctVariantCount} />
         <StatTile label="Warehouses" value={summary.distinctWarehouseCount} />
       </div>
+      <p className="text-xs text-zinc-500 dark:text-zinc-400">
+        &quot;Allocated to Orders&quot; is the total Regular quantity still owed to open Sales Orders for this
+        style (production that caught up or over-produced beyond what any order currently needs shows up as
+        &quot;Available for New Orders&quot; instead) — informational only, not a hold on stock; Dispatch
+        always re-checks real, live availability at the time of shipment.
+      </p>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         <SearchableSelect

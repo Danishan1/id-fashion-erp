@@ -26,4 +26,25 @@ export const FinishedGoodsStyleStockDetailsRepository = {
       select: { warehouseId: true },
       distinct: ["warehouseId"],
     }),
+
+  /**
+   * Every Sales Order line for this style that still represents a genuine,
+   * active commercial commitment against company-wide FG stock — process-
+   * flow clarity fix (2026-10-16), spec §2 ("unallocated Finished Goods
+   * stock"). DRAFT (not yet a real commitment) and the terminal statuses
+   * (DISPATCHED/CLOSED/CANCELLED — nothing left for the order to still
+   * claim) are excluded; ON_HOLD is kept, since pausing an order doesn't
+   * free up the stock it still legitimately needs once resumed.
+   */
+  findActiveOrderLinesForProduct: (companyId: string, productId: string) =>
+    prisma.salesOrderItem.findMany({
+      where: {
+        productId,
+        salesOrder: {
+          companyId,
+          status: { in: ["CONFIRMED", "IN_PRODUCTION", "PARTIALLY_DISPATCHED", "INVOICED", "ON_HOLD"] },
+        },
+      },
+      select: { regularDispatchedQuantity: true, breakdown: { select: { orderedQuantity: true } } },
+    }),
 };

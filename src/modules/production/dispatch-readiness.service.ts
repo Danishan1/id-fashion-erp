@@ -107,13 +107,30 @@ export interface ReadyForDispatchRow {
   jobWork: Array<{ id: string; jobWorkNumber: string; status: string; receivedQuantity: number; contractorName: string }>;
 }
 
+type ReadyProductionOrder = {
+  id: string;
+  orderNumber: string;
+  status: string;
+  plannedQuantity: unknown;
+  salesOrderItemId: string | null;
+  product: { styleName: string; styleCode: string } | null;
+  salesOrderItem: { salesOrder: { id: string; orderNumber: string; status: string; customer: { name: string } | null } } | null;
+};
+
 /**
- * Production orders whose pieces are all finished and still have something
- * left to ship — the Dispatch page's "For Dispatching" list. Fully-received
- * job-work orders on the same lots are listed alongside as the source of
- * those pieces.
+ * The real "has something genuinely dispatchable" computation, shared by
+ * `listReadyForDispatch` (the Dispatch page's own panel) and
+ * `listDispatchEligibleSalesOrders` (the New Dispatch form's own Sales Order
+ * picker) — a single source of truth, so the picker can never offer an order
+ * the panel itself wouldn't consider ready, and vice versa. Returns the
+ * already-computed progress/dispatch-quantity maps alongside the filtered
+ * orders so neither caller needs to re-run those same queries a second time.
  */
-export async function listReadyForDispatch(actor: { companyId: string; userId: string }): Promise<ReadyForDispatchRow[]> {
+async function findReadyProductionOrders(actor: { companyId: string; userId: string }): Promise<{
+  ready: ReadyProductionOrder[];
+  progress: Map<string, ProductionOrderProgress>;
+  dispatchQty: Map<string, DispatchQuantities>;
+}> {
   const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
   const orders = await prisma.productionOrder.findMany({
     where: {
@@ -147,6 +164,66 @@ export async function listReadyForDispatch(actor: { companyId: string; userId: s
     if (so && !SALES_ORDER_DISPATCHABLE.has(so.status)) return false;
     return readinessFor(o, p, o.salesOrderItemId ? dispatchQty.get(o.salesOrderItemId) : undefined) === "READY_FOR_DISPATCH";
   });
+
+  return { ready, progress, dispatchQty };
+}
+
+export interface DispatchEligibleSalesOrder {
+  id: string;
+  orderNumber: string;
+  status: string;
+}
+
+/**
+ * The real, server-derived set of Sales Orders worth offering in the New
+ * Dispatch form's own picker — process-flow clarity fix (2026-10-16), spec
+ * §3: "The Sales Order selection list must show only orders with eligible,
+ * packed quantities remaining for dispatch."
+ *
+ * The union of two sets, not just one:
+ *   1. Orders with at least one line that genuinely has dispatchable
+ *      (Packing-complete, not-yet-shipped) quantity remaining — reuses the
+ *      exact same readiness computation the "For Dispatching" panel already
+ *      proved correct, rather than a second, parallel eligibility rule this
+ *      picker could drift from.
+ *   2. Orders already fully DISPATCHED. These have nothing left for REGULAR
+ *      fulfillment (readinessFor() correctly excludes them from set 1), but
+ *      Extra Dispatch Quantity (2026-09-30) was deliberately designed to
+ *      stay reachable against them — a replacement, a free/FOC piece, or an
+ *      extra sample against an order the system already considers fully
+ *      shipped. Dropping them from this picker would silently break that
+ *      already-shipped feature; see DISPATCH_ELIGIBLE_ORDER_STATUSES's own
+ *      comment in dispatch.service.ts for the full reasoning.
+ */
+export async function listDispatchEligibleSalesOrders(actor: { companyId: string; userId: string }): Promise<DispatchEligibleSalesOrder[]> {
+  const allowedBranchIds = await PermissionService.getAllowedBranchIds(actor.userId);
+  const [{ ready }, dispatchedOrders] = await Promise.all([
+    findReadyProductionOrders(actor),
+    prisma.salesOrder.findMany({
+      where: { companyId: actor.companyId, ...branchScopeWhere(allowedBranchIds), status: "DISPATCHED" },
+      select: { id: true, orderNumber: true, status: true },
+    }),
+  ]);
+
+  const byId = new Map<string, DispatchEligibleSalesOrder>();
+  for (const order of ready) {
+    const so = order.salesOrderItem?.salesOrder;
+    if (so && !byId.has(so.id)) byId.set(so.id, { id: so.id, orderNumber: so.orderNumber, status: so.status });
+  }
+  for (const so of dispatchedOrders) {
+    if (!byId.has(so.id)) byId.set(so.id, so);
+  }
+  return [...byId.values()].sort((a, b) => a.orderNumber.localeCompare(b.orderNumber));
+}
+
+/**
+ * Production orders whose pieces are all finished and still have something
+ * left to ship — the Dispatch page's "For Dispatching" list. Fully-received
+ * job-work orders on the same lots are listed alongside as the source of
+ * those pieces.
+ */
+export async function listReadyForDispatch(actor: { companyId: string; userId: string }): Promise<ReadyForDispatchRow[]> {
+  const { ready, progress, dispatchQty } = await findReadyProductionOrders(actor);
 
   const jobWork = ready.length
     ? await prisma.jobWorkOrder.findMany({

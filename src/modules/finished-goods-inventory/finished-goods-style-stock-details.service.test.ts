@@ -6,6 +6,7 @@ vi.mock("./finished-goods-style-stock-details.repository", () => ({
     sumRejectedForProduct: vi.fn(),
     countDistinctVariantsForProduct: vi.fn(),
     countDistinctWarehousesForProduct: vi.fn(),
+    findActiveOrderLinesForProduct: vi.fn(),
   },
 }));
 
@@ -29,6 +30,7 @@ beforeEach(() => {
     .mockResolvedValue({ _sum: { quantityOnHand: null } } as never);
   vi.mocked(FinishedGoodsStyleStockDetailsRepository.countDistinctVariantsForProduct).mockReset().mockResolvedValue([]);
   vi.mocked(FinishedGoodsStyleStockDetailsRepository.countDistinctWarehousesForProduct).mockReset().mockResolvedValue([]);
+  vi.mocked(FinishedGoodsStyleStockDetailsRepository.findActiveOrderLinesForProduct).mockReset().mockResolvedValue([]);
 });
 
 describe("getStyleStockSummary (FGI-052)", () => {
@@ -48,6 +50,8 @@ describe("getStyleStockSummary (FGI-052)", () => {
       rejectedQuantity: 0,
       distinctVariantCount: 0,
       distinctWarehouseCount: 0,
+      allocatedQuantity: 0,
+      unallocatedQuantity: 0,
     });
   });
 
@@ -81,6 +85,69 @@ describe("getStyleStockSummary (FGI-052)", () => {
     expect(FinishedGoodsStyleStockDetailsRepository.sumRejectedForProduct).toHaveBeenCalledWith("co-1", "prod-1");
     expect(FinishedGoodsStyleStockDetailsRepository.countDistinctVariantsForProduct).toHaveBeenCalledWith("co-1", "prod-1");
     expect(FinishedGoodsStyleStockDetailsRepository.countDistinctWarehousesForProduct).toHaveBeenCalledWith("co-1", "prod-1");
+    expect(FinishedGoodsStyleStockDetailsRepository.findActiveOrderLinesForProduct).toHaveBeenCalledWith("co-1", "prod-1");
+  });
+
+  describe("allocated / unallocated quantity (process-flow clarity fix, 2026-10-16)", () => {
+    it("matches the spec's own worked example: 100 ordered, 150 produced-to-stock -> 50 unallocated", async () => {
+      vi.mocked(FinishedGoodsStyleStockDetailsRepository.sumSaleableForProduct).mockResolvedValue({ _sum: { quantityOnHand: 150 } } as never);
+      vi.mocked(FinishedGoodsStyleStockDetailsRepository.findActiveOrderLinesForProduct).mockResolvedValue([
+        { regularDispatchedQuantity: 0, breakdown: [{ orderedQuantity: 100 }] },
+      ] as never);
+
+      const result = await getStyleStockSummary("co-1", "prod-1");
+
+      expect(result.allocatedQuantity).toBe(100);
+      expect(result.unallocatedQuantity).toBe(50);
+    });
+
+    it("sums claims across multiple active order lines before subtracting from on-hand stock", async () => {
+      vi.mocked(FinishedGoodsStyleStockDetailsRepository.sumSaleableForProduct).mockResolvedValue({ _sum: { quantityOnHand: 300 } } as never);
+      vi.mocked(FinishedGoodsStyleStockDetailsRepository.findActiveOrderLinesForProduct).mockResolvedValue([
+        { regularDispatchedQuantity: 0, breakdown: [{ orderedQuantity: 100 }] },
+        { regularDispatchedQuantity: 20, breakdown: [{ orderedQuantity: 80 }] }, // claim 60
+      ] as never);
+
+      const result = await getStyleStockSummary("co-1", "prod-1");
+
+      expect(result.allocatedQuantity).toBe(160);
+      expect(result.unallocatedQuantity).toBe(140);
+    });
+
+    it("never goes negative when active claims exceed real on-hand stock (production still catching up)", async () => {
+      vi.mocked(FinishedGoodsStyleStockDetailsRepository.sumSaleableForProduct).mockResolvedValue({ _sum: { quantityOnHand: 40 } } as never);
+      vi.mocked(FinishedGoodsStyleStockDetailsRepository.findActiveOrderLinesForProduct).mockResolvedValue([
+        { regularDispatchedQuantity: 0, breakdown: [{ orderedQuantity: 100 }] },
+      ] as never);
+
+      const result = await getStyleStockSummary("co-1", "prod-1");
+
+      expect(result.allocatedQuantity).toBe(100);
+      expect(result.unallocatedQuantity).toBe(0);
+    });
+
+    it("a fully-regular-dispatched line contributes zero claim, even if the order itself is still open", async () => {
+      vi.mocked(FinishedGoodsStyleStockDetailsRepository.sumSaleableForProduct).mockResolvedValue({ _sum: { quantityOnHand: 50 } } as never);
+      vi.mocked(FinishedGoodsStyleStockDetailsRepository.findActiveOrderLinesForProduct).mockResolvedValue([
+        { regularDispatchedQuantity: 100, breakdown: [{ orderedQuantity: 100 }] },
+      ] as never);
+
+      const result = await getStyleStockSummary("co-1", "prod-1");
+
+      expect(result.allocatedQuantity).toBe(0);
+      expect(result.unallocatedQuantity).toBe(50);
+    });
+
+    it("sums a multi-row breakdown (size/color split) into one ordered total per line", async () => {
+      vi.mocked(FinishedGoodsStyleStockDetailsRepository.sumSaleableForProduct).mockResolvedValue({ _sum: { quantityOnHand: 100 } } as never);
+      vi.mocked(FinishedGoodsStyleStockDetailsRepository.findActiveOrderLinesForProduct).mockResolvedValue([
+        { regularDispatchedQuantity: 0, breakdown: [{ orderedQuantity: 30 }, { orderedQuantity: 40 }] },
+      ] as never);
+
+      const result = await getStyleStockSummary("co-1", "prod-1");
+
+      expect(result.allocatedQuantity).toBe(70);
+    });
   });
 
   it("queries every aggregate concurrently (Promise.all), not sequentially", async () => {

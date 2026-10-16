@@ -225,7 +225,13 @@ export function DispatchForm({ initialDispatch, prefill }: { initialDispatch?: I
   const [overrideProductionReleaseReason, setOverrideProductionReleaseReason] = useState("");
 
   useEffect(() => {
-    fetch("/api/v1/sales-orders?pageSize=200")
+    // Server-derived list of orders with something real to dispatch (process-
+    // flow clarity fix, 2026-10-16) — never the generic sales-orders list
+    // filtered only by status, so an order still fully in production (nothing
+    // Packing-complete yet) doesn't clutter the picker. The client-side
+    // ELIGIBLE_ORDER_STATUSES filter stays as a defensive second layer in
+    // case the server ever returns something outside that set.
+    fetch("/api/v1/dispatches/eligible-sales-orders")
       .then((res) => res.json())
       .then((body) => setOrders((body.data ?? []).filter((o: SalesOrderOption) => ELIGIBLE_ORDER_STATUSES.includes(o.status))))
       .catch(() => {});

@@ -146,7 +146,7 @@ beforeEach(() => {
   // dispatched yet, effectively unlimited produced" so every pre-existing
   // test (none of which know about this gate) keeps passing unmodified; the
   // gate's own dedicated tests override this per-case.
-  vi.mocked(prisma.salesOrderItem.findFirst).mockReset().mockResolvedValue({ dispatchedQuantity: 0, product: { styleName: "Gym Lowers" } } as never);
+  vi.mocked(prisma.salesOrderItem.findFirst).mockReset().mockResolvedValue({ regularDispatchedQuantity: 0, product: { styleName: "Gym Lowers" } } as never);
   vi.mocked(getSalesOrderItemProductionSummary).mockReset().mockResolvedValue({ totalProduced: 1_000_000 } as never);
 });
 
@@ -480,32 +480,32 @@ describe("createDispatch — order eligibility and remaining-quantity guard", ()
 
     it("blocks when the requested quantity exceeds what has actually completed the final (Packing) stage, naming the real shortfall", async () => {
       vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue(baseOrder as never);
-      vi.mocked(prisma.salesOrderItem.findFirst).mockResolvedValue({ dispatchedQuantity: 0, product: { styleName: "Kurta" } } as never);
+      vi.mocked(prisma.salesOrderItem.findFirst).mockResolvedValue({ regularDispatchedQuantity: 0, product: { styleName: "Kurta" } } as never);
       vi.mocked(getSalesOrderItemProductionSummary).mockResolvedValue({ totalProduced: 20 } as never);
 
       await expect(createDispatch(actor, baseInput as never)).rejects.toMatchObject({
         code: "PACKING_QUANTITY_NOT_AVAILABLE",
-        details: { requested: 30, alreadyDispatched: 0, totalProduced: 20, remainingPacked: 20 },
+        details: { requested: 30, alreadyRegularDispatched: 0, totalProduced: 20, remainingPacked: 20 },
       });
       expect(DispatchRepository.createWithItems).not.toHaveBeenCalled();
     });
 
-    it("subtracts already-dispatched (confirmed) quantity for the same line before comparing against produced", async () => {
+    it("subtracts already-REGULAR-dispatched (confirmed) quantity for the same line before comparing against produced", async () => {
       vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue(baseOrder as never);
-      // 100 already genuinely produced (Packing-complete), 80 already shipped on
-      // earlier confirmed dispatches -> only 20 remain, 30 is too many.
-      vi.mocked(prisma.salesOrderItem.findFirst).mockResolvedValue({ dispatchedQuantity: 80, product: { styleName: "Kurta" } } as never);
+      // 100 already genuinely produced (Packing-complete), 80 already shipped as
+      // Regular on earlier confirmed dispatches -> only 20 remain, 30 is too many.
+      vi.mocked(prisma.salesOrderItem.findFirst).mockResolvedValue({ regularDispatchedQuantity: 80, product: { styleName: "Kurta" } } as never);
       vi.mocked(getSalesOrderItemProductionSummary).mockResolvedValue({ totalProduced: 100 } as never);
 
       await expect(createDispatch(actor, baseInput as never)).rejects.toMatchObject({
         code: "PACKING_QUANTITY_NOT_AVAILABLE",
-        details: { requested: 30, alreadyDispatched: 80, totalProduced: 100, remainingPacked: 20 },
+        details: { requested: 30, alreadyRegularDispatched: 80, totalProduced: 100, remainingPacked: 20 },
       });
     });
 
     it("allows exactly up to the remaining produced-but-not-yet-dispatched quantity", async () => {
       vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue(baseOrder as never);
-      vi.mocked(prisma.salesOrderItem.findFirst).mockResolvedValue({ dispatchedQuantity: 0, product: { styleName: "Kurta" } } as never);
+      vi.mocked(prisma.salesOrderItem.findFirst).mockResolvedValue({ regularDispatchedQuantity: 0, product: { styleName: "Kurta" } } as never);
       vi.mocked(getSalesOrderItemProductionSummary).mockResolvedValue({ totalProduced: 30 } as never);
       vi.mocked(DispatchRepository.createWithItems).mockResolvedValue({ id: "disp-1" } as never);
 
@@ -517,7 +517,7 @@ describe("createDispatch — order eligibility and remaining-quantity guard", ()
       vi.mocked(prisma.productionOrder.findMany).mockResolvedValue([
         { id: "po-1", orderNumber: "PROD-2026-00001", product: { styleName: "Kurta" } },
       ] as never);
-      vi.mocked(prisma.salesOrderItem.findFirst).mockResolvedValue({ dispatchedQuantity: 0, product: { styleName: "Kurta" } } as never);
+      vi.mocked(prisma.salesOrderItem.findFirst).mockResolvedValue({ regularDispatchedQuantity: 0, product: { styleName: "Kurta" } } as never);
       vi.mocked(getSalesOrderItemProductionSummary).mockResolvedValue({ totalProduced: 20 } as never);
 
       await expect(
@@ -528,6 +528,41 @@ describe("createDispatch — order eligibility and remaining-quantity guard", ()
       ).rejects.toMatchObject({ code: "PACKING_QUANTITY_NOT_AVAILABLE" });
       expect(DispatchRepository.createWithItems).not.toHaveBeenCalled();
     });
+
+    it("does NOT apply this gate to the Extra portion of a line — Extra is capped only by real Finished Goods stock, never by this line's own production", async () => {
+      // Ordered 200, 0 regular-dispatched yet, but this line's own Packing
+      // output is only 10 — a 30-piece request would be 20 Regular (allowed,
+      // since remainingToDispatch=200 means it's all Regular) ... so instead
+      // exercise a line already fully regular-fulfilled, where the whole
+      // request becomes Extra and must NOT be blocked by this gate at all.
+      const fullyShippedOrder = {
+        id: "so-1",
+        status: "DISPATCHED",
+        customerId: "cust-1",
+        items: [orderItem("item-1", 200, [200])], // regularDispatchedQuantity already === ordered
+      };
+      vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue(fullyShippedOrder as never);
+      // This line's own Packing output is only 10 (far less than the 15 Extra
+      // being requested) — if the gate wrongly applied to Extra, this would
+      // reject with PACKING_QUANTITY_NOT_AVAILABLE.
+      vi.mocked(prisma.salesOrderItem.findFirst).mockResolvedValue({ regularDispatchedQuantity: 200, product: { styleName: "Kurta" } } as never);
+      vi.mocked(getSalesOrderItemProductionSummary).mockResolvedValue({ totalProduced: 10 } as never);
+      vi.mocked(DispatchRepository.createWithItems).mockResolvedValue({ id: "disp-1" } as never);
+
+      await expect(
+        createDispatch(actor, {
+          salesOrderId: "so-1",
+          warehouseId: "wh-1",
+          dispatchDate: "2026-08-24",
+          deliveryAddress: "123 Street",
+          items: [{ salesOrderItemId: "item-1", dispatchedQuantity: 15, extraDispatchReason: "CUSTOMER_REQUEST" }],
+        } as never)
+      ).resolves.toBeDefined();
+      expect(DispatchRepository.createWithItems).toHaveBeenCalledWith(
+        expect.anything(),
+        [expect.objectContaining({ regularDispatchQuantity: 0, extraDispatchQuantity: 15 })]
+      );
+    });
   });
 });
 
@@ -537,7 +572,7 @@ describe("setCartons — replaces Carton barcodes to match the freshly recreated
       id: "disp-1",
       status: "DRAFT",
       dispatchNumber: "DSP-2026-00007",
-      items: [{ id: "di-1", productId: "prod-1" }],
+      items: [{ id: "di-1", productId: "prod-1", dispatchedQuantity: 5, product: { styleName: "Gym Lowers" } }],
       cartons: [{ id: "old-carton-1" }],
     } as never);
     vi.mocked(DispatchRepository.setCartons).mockResolvedValue({
@@ -562,7 +597,7 @@ describe("setCartons — replaces Carton barcodes to match the freshly recreated
       id: "disp-1",
       status: "DRAFT",
       dispatchNumber: "DSP-2026-00007",
-      items: [{ id: "di-1", productId: "prod-1" }],
+      items: [{ id: "di-1", productId: "prod-1", dispatchedQuantity: 5, product: { styleName: "Gym Lowers" } }],
       cartons: [],
     } as never);
     vi.mocked(DispatchRepository.setCartons).mockResolvedValue({ id: "disp-1", cartons: [] } as never);
@@ -571,6 +606,62 @@ describe("setCartons — replaces Carton barcodes to match the freshly recreated
     await expect(
       setCartons(actor, "disp-1", { cartons: [{ items: [{ dispatchItemId: "di-1", quantity: 5 }] }] } as never)
     ).resolves.toMatchObject({ id: "disp-1" });
+  });
+});
+
+describe("setCartons — carton quantity cannot exceed the eligible dispatch quantity (2026-10-16)", () => {
+  const baseDispatch = {
+    id: "disp-1",
+    status: "DRAFT",
+    dispatchNumber: "DSP-2026-00007",
+    items: [{ id: "di-1", productId: "prod-1", dispatchedQuantity: 30, product: { styleName: "Round Neck T-Shirt" } }],
+    cartons: [],
+  };
+
+  it("blocks saving cartons that together exceed the item's own eligible (dispatchable) quantity", async () => {
+    vi.mocked(DispatchRepository.findByIdWithDetails).mockResolvedValue(baseDispatch as never);
+
+    await expect(
+      setCartons(actor, "disp-1", {
+        cartons: [
+          { items: [{ dispatchItemId: "di-1", quantity: 20 }] },
+          { items: [{ dispatchItemId: "di-1", quantity: 15 }] }, // 35 total, only 30 eligible
+        ],
+      } as never)
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR", details: { dispatchItemId: "di-1", packed: 35, eligible: 30 } });
+    expect(DispatchRepository.setCartons).not.toHaveBeenCalled();
+  });
+
+  it("allows a partial (not-yet-complete) carton save — only markPacked requires an exact match", async () => {
+    vi.mocked(DispatchRepository.findByIdWithDetails).mockResolvedValue(baseDispatch as never);
+    vi.mocked(DispatchRepository.setCartons).mockResolvedValue({ id: "disp-1", cartons: [] } as never);
+
+    await expect(
+      setCartons(actor, "disp-1", { cartons: [{ items: [{ dispatchItemId: "di-1", quantity: 10 }] }] } as never)
+    ).resolves.toBeDefined();
+  });
+
+  it("allows saving exactly up to the eligible quantity", async () => {
+    vi.mocked(DispatchRepository.findByIdWithDetails).mockResolvedValue(baseDispatch as never);
+    vi.mocked(DispatchRepository.setCartons).mockResolvedValue({ id: "disp-1", cartons: [] } as never);
+
+    await expect(
+      setCartons(actor, "disp-1", { cartons: [{ items: [{ dispatchItemId: "di-1", quantity: 30 }] }] } as never)
+    ).resolves.toBeDefined();
+  });
+
+  it("sums quantities for the same DispatchItem across multiple cartons before checking the cap", async () => {
+    vi.mocked(DispatchRepository.findByIdWithDetails).mockResolvedValue(baseDispatch as never);
+
+    await expect(
+      setCartons(actor, "disp-1", {
+        cartons: [
+          { items: [{ dispatchItemId: "di-1", quantity: 10 }] },
+          { items: [{ dispatchItemId: "di-1", quantity: 10 }] },
+          { items: [{ dispatchItemId: "di-1", quantity: 11 }] }, // 31 total, only 30 eligible
+        ],
+      } as never)
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR", details: { packed: 31, eligible: 30 } });
   });
 });
 
@@ -712,7 +803,7 @@ describe("confirmDispatch — self-approval, stock guard, guarded increment, sta
   // cover the pre-check; this proves confirmDispatch re-validates live too).
   it("re-checks the Packing-produced-quantity gate live at confirm time, never touching the transaction", async () => {
     vi.mocked(DispatchRepository.findByIdWithDetails).mockResolvedValueOnce(packedDispatch as never);
-    vi.mocked(prisma.salesOrderItem.findFirst).mockResolvedValue({ dispatchedQuantity: 0, product: { styleName: "Round Neck T-Shirt" } } as never);
+    vi.mocked(prisma.salesOrderItem.findFirst).mockResolvedValue({ regularDispatchedQuantity: 0, product: { styleName: "Round Neck T-Shirt" } } as never);
     vi.mocked(getSalesOrderItemProductionSummary).mockResolvedValue({ totalProduced: 60 } as never); // only 60 produced, 100 requested
 
     await expect(confirmDispatch(actor, "disp-1")).rejects.toMatchObject({
