@@ -10997,6 +10997,20 @@ enum AiDesignerImageDecision {
   REJECTED
 }
 
+// GARMENT = a design photo; SKETCH = a CAD flat line drawing. Every generated
+// garment gets its own SKETCH row linked back via sketchForImageId.
+enum AiDesignerImageKind {
+  GARMENT
+  SKETCH
+}
+
+// PHOTO = on-model reference photo (Product Design attributes); CAD_FLAT =
+// line-drawing thumbnail for an edit-page construction option.
+enum AiDesignerOptionImageVariant {
+  PHOTO
+  CAD_FLAT
+}
+
 /**
  * Edit Design workspace (2026-09-13) — a version's own review/approval state, shown as the "Design Status" badge in the workspace's top toolbar. DRAFT is the initial (never-edited) generation; every version created via an edit starts AI_MODIFIED; UNDER_REVIEW/APPROVED/REJECTED are explicit human actions from the workspace's Approve/Reject controls.
  */
@@ -11418,10 +11432,15 @@ model AiDesignerImage {
   generationId      String                  @map("generation_id") @db.Uuid
   imageAttachmentId String                  @map("image_attachment_id")
   decision          AiDesignerImageDecision @default(PENDING)
+  kind              AiDesignerImageKind     @default(GARMENT)
+  // SKETCH rows only: the GARMENT image this sketch was drawn from (one sketch per garment).
+  sketchForImageId  String?                 @unique @map("sketch_for_image_id") @db.Uuid
 
   createdByUserId String   @map("created_by_user_id") @db.Uuid
   createdAt       DateTime @default(now()) @map("created_at")
 
+  sketchFor  AiDesignerImage?     @relation("AiDesignerImageSketch", fields: [sketchForImageId], references: [id], onDelete: SetNull)
+  sketch     AiDesignerImage?     @relation("AiDesignerImageSketch")
   company    Company              @relation(fields: [companyId], references: [id])
   project    AiDesignerProject    @relation(fields: [projectId], references: [id])
   generation AiDesignerGeneration @relation("AiDesignerImagesOfGeneration", fields: [generationId], references: [id])
@@ -11646,8 +11665,9 @@ model AiDesignerProductDesignAttribute {
 model AiDesignerOptionReferenceImage {
   id           String @id @default(uuid()) @db.Uuid
   companyId    String @map("company_id") @db.Uuid
-  optionValue  String @map("option_value")
-  attachmentId String @map("attachment_id")
+  variant      AiDesignerOptionImageVariant @default(PHOTO)
+  optionValue  String                       @map("option_value")
+  attachmentId String                       @map("attachment_id")
 
   createdByUserId String   @map("created_by_user_id") @db.Uuid
   createdAt       DateTime @default(now()) @map("created_at")
@@ -11656,7 +11676,7 @@ model AiDesignerOptionReferenceImage {
   company   Company @relation(fields: [companyId], references: [id])
   createdBy User    @relation("AiDesignerOptionReferenceImageCreatedBy", fields: [createdByUserId], references: [id])
 
-  @@unique([companyId, optionValue])
+  @@unique([companyId, variant, optionValue])
   @@map("ai_designer_option_reference_images")
 }
 

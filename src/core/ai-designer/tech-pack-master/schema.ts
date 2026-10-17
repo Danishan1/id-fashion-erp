@@ -4,7 +4,7 @@ import { z } from "zod";
  * AI Designer Tech Pack, "master prompt" flow (2026-09-28) — the structured
  * garment analysis (categories A–J of the company's own "GARMENT TECH PACK
  * SPEC SHEET GENERATOR" master prompt). The AI returns ONLY this analysis;
- * the 7 page image prompts are then built from it in code
+ * the page image prompts are then built from it in code
  * (page-prompts.ts), so every page is guaranteed to carry identical style
  * numbers, measurements and colours (the master prompt's own consistency
  * rule) and editing a field can rebuild every prompt instantly.
@@ -31,12 +31,14 @@ export const masterAnalysisSchema = z.object({
   seamCallouts: z.array(
     z.object({ number: z.coerce.number().int().catch(0), location: text, specification: text, status: z.enum(["PROPOSED", "CONFIRMED"]).catch("PROPOSED") })
   ),
-  colors: z.array(z.object({ name: text, pantone: text, hex: text, panel: text })),
-  colorways: z.array(z.object({ code: text, name: text, main: text, contrast: text, trim: text, artwork: text, notes: text })),
-  artwork: z.array(
-    z.object({ type: text, placement: text, scale: text, dimensions: text, method: text, fromHps: text, fromCf: text, alignment: text })
-  ),
-  patternPrint: z.array(fieldSchema),
+  // Colours / colorways / artwork / pattern fed only the Colorways & Artwork page, which was
+  // removed (2026-10-17). New analyses no longer ask for them; older stored analyses still carry them.
+  colors: z.array(z.object({ name: text, pantone: text, hex: text, panel: text })).default([]),
+  colorways: z.array(z.object({ code: text, name: text, main: text, contrast: text, trim: text, artwork: text, notes: text })).default([]),
+  artwork: z
+    .array(z.object({ type: text, placement: text, scale: text, dimensions: text, method: text, fromHps: text, fromCf: text, alignment: text }))
+    .default([]),
+  patternPrint: z.array(fieldSchema).default([]),
   bom: z.array(
     z.object({ item: text, description: text, composition: text, gsm: text, color: text, consumption: text, supplier: text, notes: text, status })
   ),
@@ -85,27 +87,11 @@ function findBlankFields(a: MasterAnalysis): string[] {
   checkFieldArray("identification", a.identification);
   checkFieldArray("construction", a.construction);
   checkFieldArray("closure", a.closure);
-  checkFieldArray("patternPrint", a.patternPrint);
   checkFieldArray("labelsPackaging", a.labelsPackaging);
 
   a.seamCallouts.forEach((c, i) => {
     if (!c.location.trim()) issues.push(`seamCallouts[${i}].location`);
     if (!c.specification.trim()) issues.push(`seamCallouts[${i}].specification`);
-  });
-  a.colors.forEach((c, i) => {
-    (["name", "pantone", "hex", "panel"] as const).forEach((k) => {
-      if (!c[k].trim()) issues.push(`colors[${i}].${k}`);
-    });
-  });
-  a.colorways.forEach((c, i) => {
-    (["code", "name", "main", "contrast", "trim", "artwork", "notes"] as const).forEach((k) => {
-      if (!c[k].trim()) issues.push(`colorways[${i}].${k}`);
-    });
-  });
-  a.artwork.forEach((art, i) => {
-    (["type", "placement", "scale", "dimensions", "method", "fromHps", "fromCf", "alignment"] as const).forEach((k) => {
-      if (!art[k].trim()) issues.push(`artwork[${i}].${k}`);
-    });
   });
   a.bom.forEach((b, i) => {
     (["item", "description", "composition", "gsm", "color", "consumption", "supplier", "notes"] as const).forEach((k) => {
@@ -186,14 +172,30 @@ export const MASTER_PAGE_DEFINITIONS: readonly { pageNumber: number; title: stri
   { pageNumber: 1, title: "COVER PAGE / STYLE SUMMARY", mode: "AI" },
   { pageNumber: 2, title: "CONSTRUCTION & DETAIL CALLOUTS", mode: "AI" },
   { pageNumber: 3, title: "BILL OF MATERIALS / BOM", mode: "HYBRID" },
-  { pageNumber: 4, title: "COLORWAYS & ARTWORK PLACEMENT", mode: "AI" },
-  { pageNumber: 5, title: "MEASUREMENTS & SPEC TABLE", mode: "HYBRID" },
+  // Removed 2026-10-17: page 4 (Colorways & Artwork) and page 5 (Measurements & Spec Table — its
+  // base-size values repeat the Size Grading table, which now also carries tolerance and
+  // how-to-measure). Page numbers are stored per row, so the remaining pages keep their numbers
+  // and older tech packs that still have those pages render unchanged.
   { pageNumber: 6, title: "SIZE GRADING", mode: "HYBRID" },
   { pageNumber: 7, title: "LABELS & PACKAGING", mode: "AI" },
 ];
 
+/** Pages no longer generated, kept so older tech packs that have them still render the same way. */
+const REMOVED_PAGE_MODES: Record<number, MasterPageMode> = { 4: "AI", 5: "HYBRID" };
+
 export function pageMode(pageNumber: number): MasterPageMode {
-  return MASTER_PAGE_DEFINITIONS.find((d) => d.pageNumber === pageNumber)?.mode ?? "AI";
+  return MASTER_PAGE_DEFINITIONS.find((d) => d.pageNumber === pageNumber)?.mode ?? REMOVED_PAGE_MODES[pageNumber] ?? "AI";
 }
 
 export const AI_PAGE_NUMBERS = MASTER_PAGE_DEFINITIONS.filter((d) => d.mode === "AI").map((d) => d.pageNumber);
+
+/**
+ * The page number a reader sees ("PAGE 4 of 6"): the page's position among
+ * the pages a tech pack actually has, not its stored pageNumber. Pass the
+ * pack's own stored page numbers; defaults to the current definitions.
+ */
+export function displayPageNumber(pageNumber: number, pageNumbers: readonly number[] = MASTER_PAGE_DEFINITIONS.map((d) => d.pageNumber)): number {
+  const sorted = [...pageNumbers].sort((a, b) => a - b);
+  const index = sorted.indexOf(pageNumber);
+  return index >= 0 ? index + 1 : pageNumber;
+}

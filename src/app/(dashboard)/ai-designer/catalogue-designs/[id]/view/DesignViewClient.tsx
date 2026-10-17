@@ -193,11 +193,16 @@ export function DesignViewClient({ project }: { project: DesignViewProject }) {
             📄 Tech Pack
           </a>
           <Link
-            href={`/ai-designer/catalogue-designs/${project.id}/edit`}
+            href={`/ai-designer/catalogue-designs/${project.id}/edit?from=garment`}
             className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-fuchsia-600 px-4 py-2 text-sm font-semibold text-white shadow-md hover:brightness-110"
           >
-            <span>✨ Edit from Sketch</span>
-            <span className="rounded bg-white/20 px-1.5 py-0.5 text-[10px] font-bold">Default</span>
+            👗 Edit from Garment
+          </Link>
+          <Link
+            href={`/ai-designer/catalogue-designs/${project.id}/edit?from=sketch`}
+            className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-md hover:brightness-110"
+          >
+            ✏️ Edit from Sketch
           </Link>
         </div>
       </div>

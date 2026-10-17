@@ -4,8 +4,9 @@ import { useState } from "react";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { ProductDesignAttributesPanel } from "./ProductDesignAttributesPanel";
 import { OptionReferenceImagesPanel } from "./OptionReferenceImagesPanel";
+import { ConstructionFlatsPanel } from "./ConstructionFlatsPanel";
 
-const TABS = ["Product Design", "Reference Photos"] as const;
+const TABS = ["Product Design", "Reference Photos", "Construction Flats"] as const;
 type Tab = (typeof TABS)[number];
 
 /**
@@ -47,6 +48,7 @@ export function AiDesignMastersClient() {
 
       {tab === "Product Design" && <ProductDesignAttributesPanel />}
       {tab === "Reference Photos" && <OptionReferenceImagesPanel />}
+      {tab === "Construction Flats" && <ConstructionFlatsPanel />}
     </div>
   );
 }

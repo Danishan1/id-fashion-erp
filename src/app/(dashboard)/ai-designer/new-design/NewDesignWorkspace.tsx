@@ -47,6 +47,8 @@ interface ImageRow {
   imageAttachmentId: string;
   decision: "PENDING" | "SELECTED" | "REJECTED";
   createdAt: string;
+  /** This garment's own CAD sketch (null if it failed or was never generated). */
+  sketch: { id: string; imageAttachmentId: string } | null;
 }
 
 interface FabricSuggestion {
@@ -232,7 +234,6 @@ export function NewDesignWorkspace({ initialProject }: { initialProject: NewDesi
   const [fabricSuggestions, setFabricSuggestions] = useState<FabricSuggestion[] | null>(null);
   const [images, setImages] = useState<ImageRow[]>([]);
   const [imageCount, setImageCount] = useState<1 | 3 | 4>(3);
-  const [outputFormat, setOutputFormat] = useState<"GARMENT" | "SKETCH" | "BOTH">("GARMENT");
   const [brandDraft, setBrandDraft] = useState(initialProject?.brandName ?? "");
   const [customerFilter, setCustomerFilter] = useState<TargetCustomer>(initialProject?.targetCustomer ?? "WOMEN");
 
@@ -433,9 +434,17 @@ export function NewDesignWorkspace({ initialProject }: { initialProject: NewDesi
     await saveBrandName();
     setNotice(null);
     await run("generate", async () => {
-      const body = await post(`/api/v1/ai-designer/projects/${projectId}/new-design/generate`, { imageCount, outputFormat });
-      if (body?.data?.usedTemplate === false && ((project?.garmentTemplateKey && getGarmentTemplate(project.garmentTemplateKey)?.templateUrl) || project?.customTemplateAttachmentId)) {
+      const body = await post(`/api/v1/ai-designer/projects/${projectId}/new-design/generate`, { imageCount });
+      const sketchFailures = Number(body?.data?.sketchFailures ?? 0);
+      if (sketchFailures > 0) {
         setNotice(
+          `${sketchFailures} sketch${sketchFailures === 1 ? "" : "es"} could not be generated${body?.data?.sketchError ? ` (${body.data.sketchError})` : ""}. ` +
+            'Use "Generate sketch" on that design to try again.'
+        );
+      }
+      if (body?.data?.usedTemplate === false && ((project?.garmentTemplateKey && getGarmentTemplate(project.garmentTemplateKey)?.templateUrl) || project?.customTemplateAttachmentId)) {
+        setNotice((prev) =>
+          (prev ? prev + " " : "") +
           'Generated without the catalogue model photo: no AI provider has "Design Replication" or "Multi-Fabric" enabled. ' +
             "Turn one on in Administration → AI Configuration to keep the same model in every design."
         );
@@ -446,21 +455,20 @@ export function NewDesignWorkspace({ initialProject }: { initialProject: NewDesi
     });
   }
 
-  async function generateSketch() {
+  async function generateSketchFor(imageId: string) {
     if (!projectId) return;
     setNotice(null);
-    await run("sketch", async () => {
-      await post(`/api/v1/ai-designer/projects/${projectId}/generate-sketch`, { viewAngle: "BOTH" });
-      await reload(projectId);
+    await run(`sketch:${imageId}`, async () => {
+      await post(`/api/v1/ai-designer/projects/${projectId}/images/${imageId}/sketch`);
       await loadImages(projectId);
     });
   }
 
-  async function openDesign(imageId: string, target: "view" | "edit") {
+  async function openDesign(imageId: string, target: "view" | "edit", from?: "sketch" | "garment") {
     if (!projectId) return;
     await run("open", async () => {
       await post(`/api/v1/ai-designer/projects/${projectId}/new-design/make-current`, { imageId });
-      router.push(`/ai-designer/catalogue-designs/${projectId}/${target}`);
+      router.push(`/ai-designer/catalogue-designs/${projectId}/${target}${from ? `?from=${from}` : ""}`);
     });
   }
 
@@ -894,32 +902,9 @@ export function NewDesignWorkspace({ initialProject }: { initialProject: NewDesi
                   <p className="px-2 py-1 text-center text-[11px] text-zinc-500">Fabric</p>
                 </div>
               </div>
-              <div className="mt-4">
-                <p className="mb-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">Design Output</p>
-                <div className="grid grid-cols-3 gap-2">
-                  {(
-                    [
-                      { key: "GARMENT", label: "👗 Garment Photo", desc: "Model catalogue render" },
-                      { key: "SKETCH", label: "✏️ CAD Sketch", desc: "2D Flat technical line art" },
-                      { key: "BOTH", label: "✨ Both", desc: "Garment photo + CAD sketch" },
-                    ] as const
-                  ).map((opt) => (
-                    <button
-                      key={opt.key}
-                      type="button"
-                      onClick={() => setOutputFormat(opt.key)}
-                      className={`rounded-xl border p-2 text-left transition ${
-                        outputFormat === opt.key
-                          ? "border-violet-600 bg-violet-50 text-violet-700 shadow-sm ring-1 ring-violet-200 dark:bg-violet-950/40 dark:text-violet-300"
-                          : "border-zinc-200 text-zinc-600 hover:border-violet-300 dark:border-zinc-700 dark:text-zinc-400"
-                      }`}
-                    >
-                      <p className="text-xs font-semibold">{opt.label}</p>
-                      <p className="text-[10px] text-zinc-500">{opt.desc}</p>
-                    </button>
-                  ))}
-                </div>
-              </div>
+              <p className="mt-4 rounded-lg bg-violet-50 px-3 py-2 text-xs text-violet-800 dark:bg-violet-950/40 dark:text-violet-300">
+                ✏️ Every design comes with its own CAD flat sketch — edit later from the garment photo or from the sketch.
+              </p>
               <div className="mt-4">
                 <p className="mb-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">Number of designs</p>
                 <div className="flex gap-2">
@@ -941,7 +926,7 @@ export function NewDesignWorkspace({ initialProject }: { initialProject: NewDesi
                 <PrimaryButton disabled={Boolean(busy)} onClick={generate}>
                   {busy === "generate" ? "✨ Generating designs…" : "✨ Generate Design"}
                 </PrimaryButton>
-                {busy === "generate" && <p className="mt-2 text-xs text-zinc-500">This can take up to a minute.</p>}
+                {busy === "generate" && <p className="mt-2 text-xs text-zinc-500">Generating designs and their sketches — this can take a couple of minutes.</p>}
               </div>
             </Card>
             <button type="button" onClick={() => goTo("GARMENT")} className="mt-3 text-sm font-medium text-zinc-600 hover:text-zinc-900 dark:text-zinc-400">
@@ -955,52 +940,72 @@ export function NewDesignWorkspace({ initialProject }: { initialProject: NewDesi
       {step === "DESIGNS" && project && (
         <Card
           title="Designs Created by AI"
-          subtitle={`${images.length} design${images.length === 1 ? "" : "s"} — view the full design or open it in the AI studio.`}
+          subtitle={`${images.length} design${images.length === 1 ? "" : "s"} — each garment photo with its own CAD sketch. Edit from either one.`}
           right={
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={generateSketch}
-                disabled={Boolean(busy)}
-                className="rounded-lg border border-violet-300 bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-700 hover:bg-violet-100 disabled:opacity-50 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-300"
-              >
-                {busy === "sketch" ? "✨ Generating CAD sketch…" : "✏️ Generate CAD Flat Sketch"}
-              </button>
-              <button type="button" onClick={() => goTo("GENERATE")} className="text-xs font-medium text-violet-700 hover:underline dark:text-violet-300">
-                + Generate more
-              </button>
-            </div>
+            <button type="button" onClick={() => goTo("GENERATE")} className="text-xs font-medium text-violet-700 hover:underline dark:text-violet-300">
+              + Generate more
+            </button>
           }
         >
           {images.length === 0 ? (
             <p className="py-10 text-center text-sm text-zinc-400">No designs yet — go back and generate.</p>
           ) : (
-            <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
               {images.map((img) => (
-                <div key={img.id} className="group overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm transition hover:shadow-lg dark:border-zinc-800 dark:bg-zinc-900">
-                  <div className="relative">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={attachmentUrl(img.imageAttachmentId)} alt="Generated design" className="h-80 w-full object-cover object-top" />
+                <div key={img.id} className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm transition hover:shadow-lg dark:border-zinc-800 dark:bg-zinc-900">
+                  <div className="relative grid grid-cols-2 gap-px bg-zinc-100 dark:bg-zinc-800">
+                    <div className="bg-white dark:bg-zinc-900">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={attachmentUrl(img.imageAttachmentId)} alt="Garment design" className="h-72 w-full object-cover object-top" />
+                      <p className="py-1 text-center text-[10px] font-semibold uppercase tracking-wide text-zinc-500">Garment</p>
+                    </div>
+                    <div className="flex flex-col bg-white dark:bg-zinc-900">
+                      {img.sketch ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={attachmentUrl(img.sketch.imageAttachmentId)} alt="CAD sketch" className="h-72 w-full bg-white object-contain p-1" />
+                      ) : (
+                        <div className="flex h-72 flex-col items-center justify-center gap-2 px-3 text-center">
+                          <p className="text-xs text-zinc-400">No sketch yet</p>
+                          <button
+                            type="button"
+                            disabled={Boolean(busy)}
+                            onClick={() => generateSketchFor(img.id)}
+                            className="rounded-lg border border-violet-300 bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-700 hover:bg-violet-100 disabled:opacity-50 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-300"
+                          >
+                            {busy === `sketch:${img.id}` ? "✨ Generating…" : "✏️ Generate sketch"}
+                          </button>
+                        </div>
+                      )}
+                      <p className="py-1 text-center text-[10px] font-semibold uppercase tracking-wide text-zinc-500">CAD Sketch</p>
+                    </div>
                     {img.decision === "SELECTED" && (
                       <span className="absolute left-2 top-2 rounded-full bg-emerald-500 px-2 py-0.5 text-[10px] font-semibold text-white">Selected</span>
                     )}
                   </div>
-                  <div className="flex items-center gap-2 p-3">
+                  <div className="grid grid-cols-3 gap-2 p-3">
                     <button
                       type="button"
                       disabled={Boolean(busy)}
                       onClick={() => openDesign(img.id, "view")}
-                      className="flex-1 rounded-lg border border-zinc-200 py-1.5 text-center text-xs font-semibold text-zinc-700 hover:border-violet-300 hover:text-violet-700 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300"
+                      className="rounded-lg border border-zinc-200 py-1.5 text-center text-xs font-semibold text-zinc-700 hover:border-violet-300 hover:text-violet-700 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300"
                     >
                       View
                     </button>
                     <button
                       type="button"
                       disabled={Boolean(busy)}
-                      onClick={() => openDesign(img.id, "edit")}
-                      className="flex-1 rounded-lg bg-gradient-to-r from-indigo-600 to-fuchsia-600 py-1.5 text-center text-xs font-semibold text-white disabled:opacity-50"
+                      onClick={() => openDesign(img.id, "edit", "garment")}
+                      className="rounded-lg bg-gradient-to-r from-indigo-600 to-fuchsia-600 py-1.5 text-center text-xs font-semibold text-white disabled:opacity-50"
                     >
-                      Edit
+                      👗 Edit Garment
+                    </button>
+                    <button
+                      type="button"
+                      disabled={Boolean(busy)}
+                      onClick={() => openDesign(img.id, "edit", "sketch")}
+                      className="rounded-lg bg-gradient-to-r from-violet-600 to-indigo-600 py-1.5 text-center text-xs font-semibold text-white disabled:opacity-50"
+                    >
+                      ✏️ Edit Sketch
                     </button>
                   </div>
                   {img.decision !== "SELECTED" && (
