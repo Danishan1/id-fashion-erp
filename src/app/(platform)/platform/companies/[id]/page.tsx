@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { getPlatformPageUser } from "@/modules/platform/platform-page";
-import { getCompanyDetail } from "@/modules/platform/platform-company-lifecycle.service";
+import { getCompanyDetail, listCompanyUsers } from "@/modules/platform/platform-company-lifecycle.service";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { PlatformCompanyDetailClient } from "./PlatformCompanyDetailClient";
@@ -18,7 +18,11 @@ export default async function PlatformCompanyDetailPage({ params }: { params: Pr
     throw error;
   });
   if (!detail) notFound();
-  const [subscription, plans] = await Promise.all([getCompanySubscription(id), listSubscriptionPlans({ activeOnly: true })]);
+  const [subscription, plans, users] = await Promise.all([
+    getCompanySubscription(id),
+    listSubscriptionPlans({ activeOnly: true }),
+    listCompanyUsers(id),
+  ]);
 
   return (
     <div className="space-y-4">
@@ -34,6 +38,7 @@ export default async function PlatformCompanyDetailPage({ params }: { params: Pr
         initialDetail={JSON.parse(JSON.stringify(detail))}
         initialSubscription={JSON.parse(JSON.stringify(subscription))}
         plans={JSON.parse(JSON.stringify(plans))}
+        initialUsers={JSON.parse(JSON.stringify(users))}
         canManageBilling={user.role === "PLATFORM_SUPER_ADMIN" || user.role === "BILLING_ADMIN"}
         canManage={user.role === "PLATFORM_SUPER_ADMIN"}
         canRequestSupport={user.role === "PLATFORM_SUPER_ADMIN" || user.role === "SUPPORT_AGENT"}

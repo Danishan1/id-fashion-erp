@@ -4,11 +4,20 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { FormField, textInputClass } from "@/components/ui/FormField";
+import { EyeIcon, EyeOffIcon } from "@/components/ui/icons";
 
 interface Currency {
   code: string;
   name: string;
 }
+
+const DEFAULT_CURRENCIES: Currency[] = [
+  { code: "INR", name: "Indian Rupee" },
+  { code: "USD", name: "US Dollar" },
+  { code: "EUR", name: "Euro" },
+  { code: "GBP", name: "British Pound" },
+  { code: "AED", name: "UAE Dirham" },
+];
 
 const EMPTY_VALUES = {
   companyName: "",
@@ -29,7 +38,8 @@ const EMPTY_VALUES = {
 export function NewPlatformCompanyClient() {
   const router = useRouter();
   const [values, setValues] = useState(EMPTY_VALUES);
-  const [currencies, setCurrencies] = useState<Currency[]>([]);
+  const [currencies, setCurrencies] = useState<Currency[]>(DEFAULT_CURRENCIES);
+  const [showAdminPassword, setShowAdminPassword] = useState(false);
   const [plans, setPlans] = useState<{ id: string; name: string; trialDays: number; isDefaultTrialPlan: boolean }[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -37,8 +47,12 @@ export function NewPlatformCompanyClient() {
   useEffect(() => {
     fetch("/api/v1/currencies")
       .then((res) => res.json())
-      .then((body) => setCurrencies(body.data ?? []))
-      .catch(() => setCurrencies([]));
+      .then((body) => {
+        if (Array.isArray(body.data) && body.data.length > 0) {
+          setCurrencies(body.data);
+        }
+      })
+      .catch(() => {});
     fetch("/api/v1/platform/plans?active=1")
       .then((res) => res.json())
       .then((body) => setPlans(body.data ?? []))
@@ -243,15 +257,25 @@ export function NewPlatformCompanyClient() {
             </FormField>
           </div>
           <FormField label="Password" htmlFor="adminPassword" required>
-            <input
-              id="adminPassword"
-              type="password"
-              required
-              minLength={8}
-              value={values.adminPassword}
-              onChange={(e) => setValues({ ...values, adminPassword: e.target.value })}
-              className={textInputClass()}
-            />
+            <div className="relative">
+              <input
+                id="adminPassword"
+                type={showAdminPassword ? "text" : "password"}
+                required
+                minLength={8}
+                value={values.adminPassword}
+                onChange={(e) => setValues({ ...values, adminPassword: e.target.value })}
+                className={`${textInputClass()} pr-10`}
+              />
+              <button
+                type="button"
+                onClick={() => setShowAdminPassword((prev) => !prev)}
+                className="absolute inset-y-0 right-0 flex items-center pr-3 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 focus:outline-none"
+                aria-label={showAdminPassword ? "Hide password" : "Show password"}
+              >
+                {showAdminPassword ? <EyeOffIcon /> : <EyeIcon />}
+              </button>
+            </div>
           </FormField>
         </fieldset>
 

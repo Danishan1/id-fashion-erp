@@ -17,6 +17,9 @@ const NAV_ITEMS = [
   { label: "Coupons", href: "/platform/coupons" },
   { label: "Support Tickets", href: "/platform/tickets" },
   { label: "Support Access", href: "/platform/support" },
+  { label: "Staff & Team", href: "/platform/staff" },
+  { label: "Audit Logs", href: "/platform/audit-logs" },
+  { label: "System Health", href: "/platform/system-health" },
 ];
 
 function isActive(pathname: string, href: string): boolean {

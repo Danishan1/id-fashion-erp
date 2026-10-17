@@ -1,4 +1,5 @@
 import { prisma } from "@/core/db/client";
+import { hashPassword } from "@/core/auth/password";
 import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { EntitlementService } from "@/core/entitlements/EntitlementService";
@@ -301,4 +302,120 @@ export async function resetModuleEntitlement(actor: PlatformActor, companyId: st
   });
   EntitlementService.invalidate(companyId);
   return { key: packageKey, label: pkg.label, reset: true };
+}
+
+/** Lists real users of a tenant for platform operator diagnostics and support. */
+export async function listCompanyUsers(companyId: string) {
+  await findCompanyOrThrow(companyId);
+  const users = await prisma.user.findMany({
+    where: { companyId, ...REAL_USERS },
+    orderBy: { createdAt: "asc" },
+    include: {
+      branchRoles: {
+        include: {
+          role: { select: { name: true } },
+          branch: { select: { name: true } },
+        },
+      },
+    },
+  });
+
+  return users.map((u) => ({
+    id: u.id,
+    email: u.email,
+    fullName: u.fullName,
+    phone: u.phone,
+    status: u.status,
+    lastLoginAt: u.lastLoginAt,
+    passwordChangedAt: u.passwordChangedAt,
+    createdAt: u.createdAt,
+    roles: u.branchRoles.map((br) => ({
+      roleName: br.role.name,
+      branchName: br.branch.name,
+    })),
+  }));
+}
+
+/** Allows a platform operator to reset a tenant user's password when locked out. */
+export async function resetCompanyUserPassword(
+  actor: PlatformActor,
+  companyId: string,
+  userId: string,
+  newPassword: string
+) {
+  await findCompanyOrThrow(companyId);
+  const user = await prisma.user.findFirst({
+    where: { id: userId, companyId, ...REAL_USERS },
+  });
+  if (!user) throw new BusinessRuleError("NOT_FOUND", "User not found for this company.");
+
+  if (!newPassword || newPassword.length < 8) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "Password must be at least 8 characters long.");
+  }
+
+  const passwordHash = await hashPassword(newPassword);
+
+  await prisma.$transaction(async (tx) => {
+    await tx.user.update({
+      where: { id: userId },
+      data: {
+        passwordHash,
+        passwordChangedAt: new Date(),
+      },
+    });
+
+    await writeAuditLog(
+      {
+        companyId,
+        platformUserId: actor.platformUserId,
+        tableName: "users",
+        recordId: userId,
+        action: "UPDATE",
+        oldValues: { email: user.email },
+        newValues: { email: user.email, passwordResetByPlatform: true },
+      },
+      tx
+    );
+  });
+
+  return { success: true, email: user.email };
+}
+
+/** Allows a platform operator to suspend or reactivate a specific tenant user. */
+export async function toggleCompanyUserStatus(
+  actor: PlatformActor,
+  companyId: string,
+  userId: string,
+  status: "ACTIVE" | "SUSPENDED"
+) {
+  await findCompanyOrThrow(companyId);
+  const user = await prisma.user.findFirst({
+    where: { id: userId, companyId, ...REAL_USERS },
+  });
+  if (!user) throw new BusinessRuleError("NOT_FOUND", "User not found for this company.");
+
+  const oldStatus = user.status;
+  if (oldStatus === status) return { success: true, status };
+
+  await prisma.$transaction(async (tx) => {
+    await tx.user.update({
+      where: { id: userId },
+      data: { status },
+    });
+
+    await writeAuditLog(
+      {
+        companyId,
+        platformUserId: actor.platformUserId,
+        tableName: "users",
+        recordId: userId,
+        action: "UPDATE",
+        oldValues: { email: user.email, status: oldStatus },
+        newValues: { email: user.email, status },
+      },
+      tx
+    );
+  });
+
+  return { success: true, status };
 }
