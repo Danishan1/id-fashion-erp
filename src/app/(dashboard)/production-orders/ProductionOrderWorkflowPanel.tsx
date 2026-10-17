@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { FormField, textInputClass } from "@/components/ui/FormField";
 import { Modal } from "@/components/ui/Modal";
@@ -190,31 +190,77 @@ export function ProductionOrderWorkflowPanel({
       .catch(() => {});
   }, []);
 
-  // Fetches the size/color picker's own suggested quantities fresh every
-  // time the Add Lot modal opens — never trusted stale from a prior open,
-  // since sibling lots' own already-claimed quantities can have changed.
-  useEffect(() => {
-    if (!showAddLot) return;
-    fetch(`/api/v1/production-orders/${productionOrderId}/variant-breakdown-suggestions`)
-      .then((res) => res.json())
-      .then((body) => {
+  const fetchVariantSuggestions = useCallback(
+    async (resetModalInputs = false) => {
+      try {
+        const res = await fetch(`/api/v1/production-orders/${productionOrderId}/variant-breakdown-suggestions`);
+        const body = await res.json();
         const rows: VariantBreakdownSuggestionRow[] = body.data ?? [];
         setVariantSuggestions(rows);
-        const initial: Record<string, string> = {};
-        for (const r of rows) {
-          if (r.remaining !== null && r.remaining > 0) initial[r.productVariantId] = String(r.remaining);
+        if (resetModalInputs) {
+          const initial: Record<string, string> = {};
+          for (const r of rows) {
+            if (r.remaining !== null && r.remaining > 0) initial[r.productVariantId] = String(r.remaining);
+          }
+          setVariantQtyById(initial);
         }
-        setVariantQtyById(initial);
-      });
-  }, [showAddLot, productionOrderId]);
+      } catch {
+        // ignore network error
+      }
+    },
+    [productionOrderId]
+  );
+
+  useEffect(() => {
+    fetchVariantSuggestions(false);
+  }, [fetchVariantSuggestions]);
+
+  useEffect(() => {
+    if (showAddLot) {
+      fetchVariantSuggestions(true);
+    }
+  }, [showAddLot, fetchVariantSuggestions]);
 
   const breakdownTotal = Object.values(variantQtyById).reduce((sum, v) => sum + (Number(v) || 0), 0);
   const hasVariantOptions = variantSuggestions.length > 0;
+
+  const isMakeToOrder = order.salesOrderItemId !== null;
+  const totalOrderOrdered = isMakeToOrder
+    ? variantSuggestions.reduce((sum, v) => sum + (v.orderedQuantity ?? 0), 0)
+    : null;
+  const totalOrderCut = variantSuggestions.reduce((sum, v) => sum + v.alreadyInLots, 0);
+  const totalOrderBalance = isMakeToOrder
+    ? variantSuggestions.reduce((sum, v) => {
+        if (v.orderedQuantity === null) return sum;
+        return sum + Math.max(0, v.orderedQuantity - v.alreadyInLots);
+      }, 0)
+    : null;
+  const totalOrderExtraCut = isMakeToOrder
+    ? variantSuggestions.reduce((sum, v) => {
+        if (v.orderedQuantity === null) return sum;
+        return sum + Math.max(0, v.alreadyInLots - v.orderedQuantity);
+      }, 0)
+    : 0;
+
+  const modalTotalOrdered = isMakeToOrder
+    ? variantSuggestions.reduce((sum, v) => sum + (v.orderedQuantity ?? 0), 0)
+    : null;
+  const modalAlreadyTotal = variantSuggestions.reduce((sum, v) => sum + v.alreadyInLots, 0);
+  const modalProjectedTotal = modalAlreadyTotal + breakdownTotal;
+  const modalTotalExtra = isMakeToOrder
+    ? variantSuggestions.reduce((sum, v) => {
+        if (v.orderedQuantity === null) return sum;
+        const entered = Number(variantQtyById[v.productVariantId]) || 0;
+        const projected = v.alreadyInLots + entered;
+        return sum + Math.max(0, projected - v.orderedQuantity);
+      }, 0)
+    : 0;
 
   const refresh = async () => {
     const res = await fetch(`/api/v1/production-orders/${productionOrderId}`);
     const body = await res.json();
     if (res.ok) setOrder(body.data);
+    await fetchVariantSuggestions(false);
     setTimelineKey((k) => k + 1);
   };
 
@@ -273,6 +319,7 @@ export function ProductionOrderWorkflowPanel({
     setModalError(null);
     setLotWorkers([newWorkerRow()]);
     setLotReadiness(null);
+    fetchVariantSuggestions(true);
     setShowAddLot(true);
   };
 
@@ -339,7 +386,6 @@ export function ProductionOrderWorkflowPanel({
       setLotWorkers([newWorkerRow()]);
       setLotQuantity("");
       setLotUomId("");
-      setVariantSuggestions([]);
       setVariantQtyById({});
     }
   };
@@ -488,6 +534,126 @@ export function ProductionOrderWorkflowPanel({
           </p>
         )}
       </div>
+
+      {hasVariantOptions && (
+        <div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-100 pb-3 dark:border-zinc-800">
+            <div>
+              <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
+                Color & Size Order vs. Cutting Status
+              </h2>
+              <p className="text-xs text-zinc-500">
+                Variant-wise comparison of Sales Order quantities vs. pieces already cut into production lots.
+              </p>
+            </div>
+            {totalOrderExtraCut > 0 && (
+              <span className="inline-flex items-center rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
+                +{totalOrderExtraCut} pcs Extra Cut (Buffer/Overage)
+              </span>
+            )}
+          </div>
+
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-zinc-200 text-xs font-medium text-zinc-500 dark:border-zinc-800">
+                  <th className="py-2 pr-3">Color</th>
+                  <th className="py-2 pr-3">Size</th>
+                  <th className="py-2 pr-3">SKU</th>
+                  <th className="py-2 px-3 text-right">Order Qty</th>
+                  <th className="py-2 px-3 text-right">Cut in Lots</th>
+                  <th className="py-2 px-3 text-right">Balance to Cut</th>
+                  <th className="py-2 px-3 text-right">Extra Cut</th>
+                  <th className="py-2 pl-3 text-center">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800/60">
+                {variantSuggestions.map((v) => {
+                  const ordered = v.orderedQuantity;
+                  const cut = v.alreadyInLots;
+                  const balance = ordered !== null ? Math.max(0, ordered - cut) : "—";
+                  const extra = ordered !== null && cut > ordered ? cut - ordered : 0;
+                  const isDone = ordered !== null && cut >= ordered && extra === 0;
+                  const isOver = extra > 0;
+                  const isInProgress = ordered !== null && cut > 0 && cut < ordered;
+
+                  return (
+                    <tr key={v.productVariantId} className="hover:bg-zinc-50/50 dark:hover:bg-zinc-900/50">
+                      <td className="py-2 pr-3 font-medium text-zinc-800 dark:text-zinc-200">{v.colorName}</td>
+                      <td className="py-2 pr-3 text-zinc-700 dark:text-zinc-300">{v.sizeName}</td>
+                      <td className="py-2 pr-3 font-mono text-xs text-zinc-400">{v.skuCode}</td>
+                      <td className="py-2 px-3 text-right font-medium text-zinc-900 dark:text-zinc-100">
+                        {ordered !== null ? ordered : "—"}
+                      </td>
+                      <td className="py-2 px-3 text-right font-medium text-indigo-600 dark:text-indigo-400">
+                        {cut}
+                      </td>
+                      <td className="py-2 px-3 text-right text-zinc-700 dark:text-zinc-300">
+                        {balance}
+                      </td>
+                      <td className="py-2 px-3 text-right">
+                        {extra > 0 ? (
+                          <span className="font-semibold text-amber-600 dark:text-amber-400">+{extra} pcs</span>
+                        ) : (
+                          <span className="text-zinc-400">—</span>
+                        )}
+                      </td>
+                      <td className="py-2 pl-3 text-center">
+                        {isOver ? (
+                          <span className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-inset ring-amber-600/20 dark:bg-amber-950/40 dark:text-amber-300">
+                            Over-cut (+{extra})
+                          </span>
+                        ) : isDone ? (
+                          <span className="inline-flex rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700 ring-1 ring-inset ring-green-600/20 dark:bg-green-950/40 dark:text-green-300">
+                            Completed
+                          </span>
+                        ) : isInProgress ? (
+                          <span className="inline-flex rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 ring-1 ring-inset ring-blue-600/20 dark:bg-blue-950/40 dark:text-blue-300">
+                            In Progress
+                          </span>
+                        ) : (
+                          <span className="inline-flex rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
+                            Pending
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot className="border-t-2 border-zinc-200 bg-zinc-50/50 font-semibold dark:border-zinc-800 dark:bg-zinc-900/50">
+                <tr className="text-xs text-zinc-700 dark:text-zinc-200">
+                  <td colSpan={3} className="py-2.5 pr-3">Total</td>
+                  <td className="py-2.5 px-3 text-right">{totalOrderOrdered !== null ? totalOrderOrdered : "—"}</td>
+                  <td className="py-2.5 px-3 text-right text-indigo-600 dark:text-indigo-400">{totalOrderCut}</td>
+                  <td className="py-2.5 px-3 text-right">{totalOrderBalance !== null ? totalOrderBalance : "—"}</td>
+                  <td className="py-2.5 px-3 text-right text-amber-600 dark:text-amber-400">
+                    {totalOrderExtraCut > 0 ? `+${totalOrderExtraCut} pcs` : "—"}
+                  </td>
+                  <td className="py-2.5 pl-3 text-center text-xs text-zinc-500 font-normal">
+                    {totalOrderBalance === 0 ? "100% Cut" : `${totalOrderCut} / ${totalOrderOrdered ?? "—"} Cut`}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+
+          <div className="mt-3 flex items-center justify-between rounded bg-zinc-50 px-3 py-2 text-xs text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
+            <span>
+              💡 <strong>Cutting Master Guidance:</strong> Production lot creation is not capped. You are free to cut extra pieces for roll ends or allowance.
+            </span>
+            {canAct && order.status !== "ON_HOLD" && (
+              <button
+                type="button"
+                onClick={openAddLot}
+                className="ml-3 shrink-0 rounded bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100 dark:bg-indigo-950 dark:text-indigo-300 dark:hover:bg-indigo-900"
+              >
+                + Cut New Lot
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       <MaterialRequirementPreview
         productId={order.productId}
@@ -790,49 +956,134 @@ export function ProductionOrderWorkflowPanel({
         </div>
       </Modal>
 
-      <Modal open={showAddLot} onClose={() => setShowAddLot(false)} title="Add Lot" maxWidthClass="max-w-2xl">
+      <Modal open={showAddLot} onClose={() => setShowAddLot(false)} title="Add Lot (Cutting Start)" maxWidthClass="max-w-4xl">
         <div className="space-y-4">
           {hasVariantOptions ? (
             <div>
-              <p className="mb-2 text-xs text-zinc-500">
-                Size/color mix for this lot — shown on the lot&apos;s own page and on the Stage Transfer Slip so a
-                worker at any stage knows exactly what they&apos;re handling.
-                {order.salesOrderItemId && " Pre-filled from what's still remaining on the linked Sales Order line."}
-              </p>
-              <div className="max-h-64 overflow-y-auto rounded-md border border-zinc-200 dark:border-zinc-800">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-1 text-xs text-zinc-500">
+                <p>
+                  Enter pieces to cut for each Color & Size. Pre-filled from remaining order balance, but the <strong>Cutting Master is free</strong> to cut extra quantities.
+                </p>
+                {modalTotalExtra > 0 && (
+                  <span className="shrink-0 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
+                    +{modalTotalExtra} pcs Extra Planned
+                  </span>
+                )}
+              </div>
+              <div className="max-h-72 overflow-y-auto rounded-md border border-zinc-200 dark:border-zinc-800">
                 <table className="w-full text-sm">
-                  <thead className="sticky top-0 bg-zinc-50 dark:bg-zinc-900">
+                  <thead className="sticky top-0 bg-zinc-50 dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800">
                     <tr className="text-left text-xs text-zinc-500">
-                      <th className="px-2 py-1.5 font-medium">Color</th>
-                      <th className="px-2 py-1.5 font-medium">Size</th>
-                      {order.salesOrderItemId && <th className="px-2 py-1.5 text-right font-medium">Remaining</th>}
-                      <th className="px-2 py-1.5 text-right font-medium">Qty for this lot</th>
+                      <th className="px-2.5 py-2 font-medium">Color</th>
+                      <th className="px-2.5 py-2 font-medium">Size</th>
+                      <th className="px-2.5 py-2 font-medium">SKU</th>
+                      {order.salesOrderItemId && (
+                        <>
+                          <th className="px-2.5 py-2 text-right font-medium">Order Qty</th>
+                          <th className="px-2.5 py-2 text-right font-medium">In Lots</th>
+                          <th className="px-2.5 py-2 text-right font-medium">Target Bal</th>
+                        </>
+                      )}
+                      <th className="px-2.5 py-2 text-right font-medium">Qty for this lot</th>
+                      {order.salesOrderItemId && (
+                        <th className="px-2.5 py-2 text-right font-medium">Variance / Extra</th>
+                      )}
                     </tr>
                   </thead>
                   <tbody>
-                    {variantSuggestions.map((v) => (
-                      <tr key={v.productVariantId} className="border-t border-zinc-100 dark:border-zinc-800">
-                        <td className="px-2 py-1.5 text-zinc-700 dark:text-zinc-200">{v.colorName}</td>
-                        <td className="px-2 py-1.5 text-zinc-700 dark:text-zinc-200">{v.sizeName}</td>
-                        {order.salesOrderItemId && (
-                          <td className="px-2 py-1.5 text-right text-zinc-500">{v.remaining}</td>
-                        )}
-                        <td className="px-2 py-1.5 text-right">
-                          <input
-                            type="number"
-                            min={0}
-                            step="0.0001"
-                            value={variantQtyById[v.productVariantId] ?? ""}
-                            onChange={(e) => setVariantQtyById((prev) => ({ ...prev, [v.productVariantId]: e.target.value }))}
-                            className="w-24 rounded border border-zinc-300 px-2 py-1 text-right text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                          />
-                        </td>
-                      </tr>
-                    ))}
+                    {variantSuggestions.map((v) => {
+                      const entered = Number(variantQtyById[v.productVariantId]) || 0;
+                      const projected = v.alreadyInLots + entered;
+                      const hasOrder = v.orderedQuantity !== null;
+                      const extra = hasOrder && projected > (v.orderedQuantity ?? 0) ? projected - (v.orderedQuantity ?? 0) : 0;
+                      const remainingBal = hasOrder ? Math.max(0, (v.orderedQuantity ?? 0) - projected) : null;
+                      const isExact = hasOrder && entered > 0 && projected === (v.orderedQuantity ?? 0);
+
+                      return (
+                        <tr key={v.productVariantId} className="border-t border-zinc-100 hover:bg-zinc-50/50 dark:border-zinc-800 dark:hover:bg-zinc-900/50">
+                          <td className="px-2.5 py-1.5 font-medium text-zinc-800 dark:text-zinc-200">{v.colorName}</td>
+                          <td className="px-2.5 py-1.5 text-zinc-700 dark:text-zinc-300">{v.sizeName}</td>
+                          <td className="px-2.5 py-1.5 font-mono text-xs text-zinc-400">{v.skuCode}</td>
+                          {hasOrder && (
+                            <>
+                              <td className="px-2.5 py-1.5 text-right font-medium text-zinc-900 dark:text-zinc-100">
+                                {v.orderedQuantity}
+                              </td>
+                              <td className="px-2.5 py-1.5 text-right text-indigo-600 dark:text-indigo-400">
+                                {v.alreadyInLots}
+                              </td>
+                              <td className="px-2.5 py-1.5 text-right text-zinc-500">
+                                {Math.max(0, (v.orderedQuantity ?? 0) - v.alreadyInLots)}
+                              </td>
+                            </>
+                          )}
+                          <td className="px-2.5 py-1.5 text-right">
+                            <input
+                              type="number"
+                              min={0}
+                              step="0.0001"
+                              value={variantQtyById[v.productVariantId] ?? ""}
+                              onChange={(e) => setVariantQtyById((prev) => ({ ...prev, [v.productVariantId]: e.target.value }))}
+                              className="w-24 rounded border border-zinc-300 px-2 py-1 text-right text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                            />
+                          </td>
+                          {hasOrder && (
+                            <td className="px-2.5 py-1.5 text-right">
+                              {extra > 0 ? (
+                                <span className="inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
+                                  +{extra} Extra
+                                </span>
+                              ) : isExact ? (
+                                <span className="inline-flex rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800 dark:bg-green-950/60 dark:text-green-300">
+                                  Exact (0 bal)
+                                </span>
+                              ) : entered > 0 ? (
+                                <span className="text-xs text-zinc-500">
+                                  Bal: {remainingBal}
+                                </span>
+                              ) : (
+                                <span className="text-xs text-zinc-400">—</span>
+                              )}
+                            </td>
+                          )}
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
-              <p className="mt-2 text-sm font-medium text-zinc-900 dark:text-zinc-50">Total Quantity: {breakdownTotal}</p>
+
+              <div className="mt-3 rounded-lg border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900/60">
+                <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+                  {modalTotalOrdered !== null && (
+                    <div>
+                      <span className="text-zinc-500">Sales Order Total:</span>
+                      <p className="font-semibold text-zinc-900 dark:text-zinc-100">{modalTotalOrdered} pcs</p>
+                    </div>
+                  )}
+                  <div>
+                    <span className="text-zinc-500">Already in Lots:</span>
+                    <p className="font-semibold text-zinc-900 dark:text-zinc-100">{modalAlreadyTotal} pcs</p>
+                  </div>
+                  <div>
+                    <span className="text-zinc-500">This Lot Total:</span>
+                    <p className="font-semibold text-indigo-600 dark:text-indigo-400">{breakdownTotal} pcs</p>
+                  </div>
+                  <div>
+                    <span className="text-zinc-500">Projected Total:</span>
+                    <p className="font-semibold text-zinc-900 dark:text-zinc-100">{modalProjectedTotal} pcs</p>
+                  </div>
+                </div>
+
+                {modalTotalExtra > 0 && (
+                  <div className="mt-2.5 flex items-center justify-between rounded border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+                    <span>
+                      ⚠️ <strong>Extra Cutting:</strong> +{modalTotalExtra} pcs over order quantity ({modalTotalOrdered ? ((modalTotalExtra / modalTotalOrdered) * 100).toFixed(1) : 0}% overage).
+                    </span>
+                    <span className="font-medium text-amber-700 dark:text-amber-300">Allowed & Tracked</span>
+                  </div>
+                )}
+              </div>
             </div>
           ) : (
             <FormField label="Quantity" htmlFor="lotQuantity" required>
