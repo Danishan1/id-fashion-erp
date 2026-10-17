@@ -3,7 +3,7 @@ import type { DueState } from "@/modules/crm/activities/activity-registry";
 /** JSON shapes of /api/v1/crm/activities (dates as ISO strings). */
 
 export interface ActivityLinkDto {
-  entityType: "LEAD" | "CONTACT" | "COMPANY" | "OPPORTUNITY";
+  entityType: "LEAD" | "CONTACT" | "COMPANY" | "OPPORTUNITY" | "CONVERSATION";
   entityId: string;
   isPrimary: boolean;
   label: string;
@@ -69,7 +69,7 @@ export interface UserOptionDto {
 
 /** The record an activity is being added from (pre-fills the composer). */
 export interface ActivityParentRef {
-  entityType: "LEAD" | "CONTACT" | "COMPANY" | "OPPORTUNITY";
+  entityType: "LEAD" | "CONTACT" | "COMPANY" | "OPPORTUNITY" | "CONVERSATION";
   entityId: string;
   label: string;
 }

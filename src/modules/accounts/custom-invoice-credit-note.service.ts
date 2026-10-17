@@ -247,3 +247,11 @@ export async function cancelCustomInvoiceCreditNote(actor: ActorContext, creditN
 
   return CustomInvoiceCreditNoteRepository.findAnyById(actor.companyId, creditNoteId);
 }
+
+export async function getCreditNoteByIdForPdf(companyId: string, creditNoteId: string) {
+  const creditNote = await CustomInvoiceCreditNoteRepository.findByIdWithFullDetails(companyId, creditNoteId);
+  if (!creditNote) {
+    throw new BusinessRuleError("NOT_FOUND", "Credit note not found.", { creditNoteId });
+  }
+  return creditNote;
+}

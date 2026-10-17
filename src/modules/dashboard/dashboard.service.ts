@@ -1,39 +1,23 @@
 import { prisma } from "@/core/db/client";
 
 /**
- * Three distinct dashboard "shapes," chosen once per render by
+ * Two distinct dashboard "shapes," chosen once per render by
  * getDashboardViewForUser() below — never mixed on one screen. A tagged
  * union rather than one big optional-everything object, so the page
  * component's rendering branch and the data actually available always agree
- * at the type level.
+ * at the type level. (The cross-company "platform" view moved to the
+ * separate /platform portal in Platform SaaS Phase 1 —
+ * src/modules/platform/platform-overview.service.ts.)
  */
 export type DashboardView =
-  | { kind: "platform"; overall: PlatformOverview; companies: PlatformCompanyRow[] }
   | { kind: "team"; supervisorName: string; team: TeamOverview }
   | { kind: "company"; counts: CompanyCounts };
 
-interface CompanyCounts {
+export interface CompanyCounts {
   customers: number;
   suppliers: number;
   employees: number;
   warehouses: number;
-  users: number;
-}
-
-interface PlatformOverview {
-  companies: number;
-  customers: number;
-  suppliers: number;
-  employees: number;
-  users: number;
-}
-
-interface PlatformCompanyRow {
-  id: string;
-  name: string;
-  customers: number;
-  suppliers: number;
-  employees: number;
   users: number;
 }
 
@@ -51,45 +35,9 @@ export async function getCompanyCounts(companyId: string): Promise<CompanyCounts
     prisma.supplier.count({ where: { companyId, isActive: true } }),
     prisma.employee.count({ where: { companyId, isActive: true } }),
     prisma.warehouse.count({ where: { companyId, isActive: true } }),
-    prisma.user.count({ where: { companyId, status: "ACTIVE" } }),
+    prisma.user.count({ where: { companyId, status: "ACTIVE", supportForPlatformUserId: null } }),
   ]);
   return { customers, suppliers, employees, warehouses, users };
-}
-
-/**
- * Platform admin's "overall" view — genuinely cross-company, the one place
- * in this app that deliberately queries with no companyId filter at all.
- * Kept to a flat sum + a per-company breakdown table rather than anything
- * more elaborate — this is a provisioning/oversight tool for whoever runs
- * the platform, not a second full reporting suite (that already exists,
- * per-company, under /reports).
- */
-export async function getPlatformDashboard(): Promise<{ overall: PlatformOverview; companies: PlatformCompanyRow[] }> {
-  const companies = await prisma.company.findMany({
-    where: { isActive: true },
-    select: { id: true, name: true },
-    orderBy: { name: "asc" },
-  });
-
-  const rows = await Promise.all(
-    companies.map(async (company): Promise<PlatformCompanyRow> => {
-      const counts = await getCompanyCounts(company.id);
-      return { id: company.id, name: company.name, customers: counts.customers, suppliers: counts.suppliers, employees: counts.employees, users: counts.users };
-    })
-  );
-
-  const overall = rows.reduce<PlatformOverview>(
-    (acc, row) => ({
-      companies: acc.companies + 1,
-      customers: acc.customers + row.customers,
-      suppliers: acc.suppliers + row.suppliers,
-      employees: acc.employees + row.employees,
-      users: acc.users + row.users,
-    }),
-    { companies: 0, customers: 0, suppliers: 0, employees: 0, users: 0 }
-  );
-
-  return { overall, companies: rows };
 }
 
 // UTC calendar-day boundaries — every @db.Date column in this schema is
@@ -151,10 +99,8 @@ export async function getTeamDashboard(companyId: string, supervisorEmployeeId: 
 
 /**
  * The single entry point the Dashboard page calls — decides which of the
- * three views above a given session actually sees. Order matters: platform
- * admin outranks everything (they're not really "in" any one company's
- * hierarchy), then "do I supervise anyone" (Employee.reports.length > 0) as
- * the actual signal, not a hardcoded role-name check — a MANAGEMENT or
+ * two views above a given session actually sees: "do I supervise anyone"
+ * (Employee.reports.length > 0) is the actual signal, not a hardcoded role-name check — a MANAGEMENT or
  * SUPER_ADMIN user who happens to have direct reports in the Employee
  * hierarchy sees the team view too, and a PRODUCTION_SUPERVISOR with none
  * configured correctly falls through to the ordinary company view rather
@@ -163,13 +109,7 @@ export async function getTeamDashboard(companyId: string, supervisorEmployeeId: 
 export async function getDashboardViewForUser(params: {
   userId: string;
   companyId: string;
-  isPlatformAdmin: boolean;
 }): Promise<DashboardView> {
-  if (params.isPlatformAdmin) {
-    const { overall, companies } = await getPlatformDashboard();
-    return { kind: "platform", overall, companies };
-  }
-
   const user = await prisma.user.findUnique({
     where: { id: params.userId },
     select: { employeeId: true, employee: { select: { fullName: true } } },

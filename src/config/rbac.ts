@@ -45,6 +45,18 @@ export const MODULES = [
   // (a plainer, more precise name for what it actually gates).
   "material_request",
   "inventory",
+  // Finished Goods Inventory module (2026-10-13, FGI-008) — deliberately a
+  // separate module from "inventory" (which stays scoped to Stock Balances/
+  // Stock Movements/Goods Receipt for RAW MATERIALS, per its own existing
+  // documented scope above), following the exact same "split when business
+  // operations genuinely differ" precedent already used for material_request.
+  // Picking has no permission of its own here at all — it stays gated under
+  // the existing "dispatch" module's existing create/edit/post actions,
+  // since it is part of the pack/confirm workflow that module already owns.
+  // Reservation likewise has no permission here — it is a fully automatic
+  // side effect of sales_orders' confirmSalesOrder() and dispatch's
+  // confirmDispatch(), both already gated under their own existing modules.
+  "fg_inventory",
   "purchase_order",
   "accounts",
   "invoices",
@@ -178,6 +190,10 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     // pattern — Rate Card CRUD itself stays owned by PRODUCTION_MANAGER only.
     rate_card: ["view"],
     inventory: ["view", "export"],
+    // "approve" here gates Stock Adjustment sign-off, mirroring the exact
+    // same "Management is the checkpoint" shape already used for
+    // sales_orders/bom_mrp/production/piece_rate/payments/dispatch above.
+    fg_inventory: ["view", "approve", "export"],
     material_request: ["view", "export"],
     purchase_order: ["view", "approve"],
     accounts: ["view", "export"],
@@ -267,6 +283,10 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     // edit the priced rows worker assignments resolve against.
     rate_card: ["view", "create", "edit"],
     inventory: ["view"],
+    // View-only visibility into Finished Goods receipts tied to their own
+    // Production Orders — Production Manager does not putaway/transfer/
+    // adjust FG stock themselves.
+    fg_inventory: ["view"],
     // Full control over their own Material Requests, including triggering
     // "generate Purchase Order(s) from shortfall" (gated on
     // material_request.edit — see RBAC_AUDIT_REPORT.md).
@@ -347,6 +367,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     production: ["view"],
     qc: ["view", "create", "edit", "approve", "reject", "export", "print"],
     inventory: ["view"],
+    fg_inventory: ["view"],
     material_request: ["view"],
     reports: ["view", "export", "print"],
   },
@@ -356,6 +377,11 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     bom_mrp: ["view"],
     production: ["view"],
     inventory: ["view", "create", "edit", "delete", "export", "print"],
+    // Full day-to-day Finished Goods Inventory ownership — mirrors their
+    // existing broadest "inventory" grant above. "post" confirms a Transfer
+    // or Adjustment (mirrors dispatch's own existing "post" = confirmDispatch
+    // precedent).
+    fg_inventory: ["view", "create", "edit", "post", "export", "print"],
     material_request: ["view", "create", "edit", "cancel", "export"],
     purchase_order: ["view", "create", "edit", "approve", "export", "print"],
     dispatch: ["view"],
@@ -409,6 +435,10 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     sales_orders: ["view"],
     production: ["view"],
     inventory: ["view"],
+    // View-only — picking itself stays gated under "dispatch" above (post
+    // already covers confirmDispatch(), which is where picking actually
+    // happens); this is just visibility into the FG Inventory screens.
+    fg_inventory: ["view"],
     material_request: ["view"],
     dispatch: ["view", "create", "edit", "post", "delete", "cancel", "export", "print"],
     reports: ["view", "export", "print"],
@@ -423,6 +453,10 @@ export const ROLE_PERMISSIONS: Record<RoleName, Partial<Record<Module, Action[]>
     production: ["view"],
     qc: ["view"],
     inventory: ["view", "create", "edit"],
+    // Can raise/edit a Transfer, Adjustment, or Putaway action, but not
+    // post/approve it — mirrors their existing "inventory" and "dispatch"
+    // grant shape exactly (create/edit without post).
+    fg_inventory: ["view", "create", "edit"],
     material_request: ["view", "create", "edit", "cancel"],
     purchase_order: ["view", "create"],
     dispatch: ["view", "create", "edit"],

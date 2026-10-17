@@ -12,6 +12,7 @@ interface DispatchExportRow {
   dispatchDate: Date | string;
   status: string;
   transporterName: string | null;
+  forwarder: { name: string } | null;
   vehicleNumber: string | null;
   dispatchedAt: Date | string | null;
   deliveredAt: Date | string | null;
@@ -52,7 +53,7 @@ export async function GET(req: NextRequest) {
         customer: row.customer?.name ?? "",
         dispatchDate: row.dispatchDate,
         status: row.status,
-        transporterName: row.transporterName ?? "",
+        transporterName: row.forwarder?.name ?? row.transporterName ?? "",
         vehicleNumber: row.vehicleNumber ?? "",
         dispatchedAt: row.dispatchedAt,
         deliveredAt: row.deliveredAt,

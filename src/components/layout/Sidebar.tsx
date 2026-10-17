@@ -5,17 +5,10 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 import type { Module, Action } from "@/config/rbac";
 import { NAV_SECTIONS, filterNavSections, isLeafActive, isPathActive, isSectionActive, type NavSection } from "./navigation";
-import { CompanySwitcher } from "./CompanySwitcher";
 
-// No `modules` gate — visibility is driven entirely by the isPlatformAdmin
-// flag below, appended after the permission-based filter runs rather than
-// through it (a platform admin is orthogonal to the module/action RBAC
-// this whole file otherwise filters by).
-const PLATFORM_SECTION: NavSection = {
-  label: "Platform",
-  modules: [],
-  children: [{ label: "Companies", href: "/platform/companies", modules: [] }],
-};
+// The customer ERP sidebar has no platform links and no company switcher
+// (Platform SaaS Phase 1, PLAT-003/005) — platform operators use the
+// separate /platform portal and its own PlatformSidebar.
 
 function ChevronIcon({ open }: { open: boolean }) {
   return (
@@ -51,13 +44,11 @@ const LEAF_CLASSES = (isActive: boolean) =>
   }`;
 
 export function Sidebar({
-  isPlatformAdmin = false,
   viewableModules = "all",
   actionModules,
   isCollapsed = false,
   onToggleCollapse,
 }: {
-  isPlatformAdmin?: boolean;
   /**
    * The current user's real, live-computed set of `view`-permitted modules
    * (PermissionService.getViewableModules()) — drives which sections/links
@@ -82,8 +73,7 @@ export function Sidebar({
   onToggleCollapse?: () => void;
 }) {
   const pathname = usePathname();
-  const visibleSections = filterNavSections(NAV_SECTIONS, viewableModules, actionModules);
-  const sections = isPlatformAdmin ? [...visibleSections, PLATFORM_SECTION] : visibleSections;
+  const sections = filterNavSections(NAV_SECTIONS, viewableModules, actionModules);
 
   // The group containing the active route is expanded by default — derived
   // directly from the current pathname on every render (including a hard
@@ -179,7 +169,6 @@ export function Sidebar({
           <CollapseToggleIcon collapsed={false} />
         </button>
       </div>
-      <CompanySwitcher />
       <div className="flex-1 space-y-0.5 overflow-y-auto px-2 py-3">
         {sections.map((section) => {
           if (!section.children) {
@@ -226,11 +215,27 @@ export function Sidebar({
               </div>
               {isOpen && (
                 <div className="ml-2 space-y-0.5 border-l border-zinc-200 pl-2 dark:border-zinc-800">
-                  {section.children.map((child) => (
-                    <Link key={child.href} href={child.href} className={LEAF_CLASSES(isLeafActive(section.children!, child, pathname))}>
-                      {child.label}
-                    </Link>
-                  ))}
+                  {section.children.map((child, index) => {
+                    // A new, non-interactive sub-heading before the first
+                    // leaf of each distinct `group` value — lets one section
+                    // (e.g. "Inventory") present two or more sub-modules
+                    // (Raw Materials / Finished Goods) without a second
+                    // nesting level in the data model. No-op for every
+                    // section whose leaves don't declare a group.
+                    const showGroupHeading = child.group && child.group !== section.children![index - 1]?.group;
+                    return (
+                      <div key={child.href}>
+                        {showGroupHeading && (
+                          <div className="px-3 pt-2 pb-0.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400 first:pt-0 dark:text-zinc-500">
+                            {child.group}
+                          </div>
+                        )}
+                        <Link href={child.href} className={LEAF_CLASSES(isLeafActive(section.children!, child, pathname))}>
+                          {child.label}
+                        </Link>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>

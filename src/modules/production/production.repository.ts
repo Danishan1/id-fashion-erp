@@ -20,6 +20,7 @@ const PRODUCTION_ORDER_INCLUDE = {
     },
   },
   requestedBy: { select: { id: true, fullName: true } },
+  releasedToDispatchBy: { select: { id: true, fullName: true } },
 } as const;
 
 export const ProductionOrderRepository = {

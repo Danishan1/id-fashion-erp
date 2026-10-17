@@ -5,16 +5,30 @@ vi.mock("@/core/numbering/DocumentNumberingService", () => ({ generateDocumentNu
 vi.mock("./custom-invoice.repository", () => ({
   CustomInvoiceRepository: { findByIdWithDetails: vi.fn() },
 }));
-vi.mock("./custom-invoice-credit-note.repository", () => ({
-  CustomInvoiceCreditNoteRepository: { findAnyById: vi.fn() },
+vi.mock("./custom-invoice-credit-note.repository", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./custom-invoice-credit-note.repository")>();
+  return {
+    ...actual,
+    CustomInvoiceCreditNoteRepository: {
+      ...actual.CustomInvoiceCreditNoteRepository,
+      findAnyById: vi.fn(),
+      findMany: vi.fn(),
+      count: vi.fn((where) => actual.CustomInvoiceCreditNoteRepository.count(where)),
+    },
+  };
+});
+vi.mock("@/core/db/client", () => ({
+  prisma: {
+    $transaction: vi.fn(),
+    customInvoiceCreditNote: { count: vi.fn() },
+  },
 }));
-vi.mock("@/core/db/client", () => ({ prisma: { $transaction: vi.fn() } }));
 
 const { prisma } = await import("@/core/db/client");
 const { generateDocumentNumber } = await import("@/core/numbering/DocumentNumberingService");
 const { CustomInvoiceRepository } = await import("./custom-invoice.repository");
 const { CustomInvoiceCreditNoteRepository } = await import("./custom-invoice-credit-note.repository");
-const { issueCustomInvoiceCreditNote, cancelCustomInvoiceCreditNote } = await import("./custom-invoice-credit-note.service");
+const { issueCustomInvoiceCreditNote, cancelCustomInvoiceCreditNote, listCustomInvoiceCreditNotes } = await import("./custom-invoice-credit-note.service");
 
 const actor = { companyId: "co-1", userId: "user-1", branchId: null };
 
@@ -206,5 +220,37 @@ describe("cancelCustomInvoiceCreditNote", () => {
 
     await cancelCustomInvoiceCreditNote(actor, "cn-1");
     expect(itemUpdate).toHaveBeenCalledWith({ where: { id: "item-1" }, data: { creditedAmount: { decrement: 300 } } });
+  });
+});
+
+describe("listCustomInvoiceCreditNotes", () => {
+  it("obtains the total count and list data via the repository", async () => {
+    const mockNotes = [
+      { id: "cn-1", creditNoteNumber: "CN-001", customInvoice: { id: "inv-1", invoiceNumber: "INV-001", customer: { id: "c-1", name: "Client A" } } },
+    ];
+    vi.mocked(CustomInvoiceCreditNoteRepository.findMany).mockResolvedValue(mockNotes as never);
+    vi.mocked(prisma.customInvoiceCreditNote.count).mockResolvedValue(42 as never);
+
+    const result = await listCustomInvoiceCreditNotes("co-1", {
+      page: 1,
+      pageSize: 10,
+      skip: 0,
+      take: 10,
+      sortBy: "creditNoteDate",
+      sortOrder: "desc",
+      status: "ISSUED",
+    });
+
+    expect(CustomInvoiceCreditNoteRepository.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ companyId: "co-1", status: "ISSUED" }),
+      { orderBy: { creditNoteDate: "desc" }, skip: 0, take: 10 }
+    );
+    expect(CustomInvoiceCreditNoteRepository.count).toHaveBeenCalledWith(
+      expect.objectContaining({ companyId: "co-1", status: "ISSUED" })
+    );
+    expect(prisma.customInvoiceCreditNote.count).toHaveBeenCalledWith({
+      where: expect.objectContaining({ companyId: "co-1", status: "ISSUED" }),
+    });
+    expect(result).toEqual({ data: mockNotes, totalCount: 42 });
   });
 });

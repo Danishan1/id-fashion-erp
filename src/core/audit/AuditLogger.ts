@@ -4,6 +4,8 @@ import { Prisma, type AuditAction } from "@prisma/client";
 interface WriteAuditLogOptions {
   companyId: string;
   userId?: string | null;
+  /** Set (instead of userId) when a platform operator performed the action. */
+  platformUserId?: string | null;
   tableName: string;
   recordId: string;
   action: AuditAction;
@@ -29,6 +31,7 @@ export async function writeAuditLog(options: WriteAuditLogOptions, db: AuditLogW
     data: {
       companyId: options.companyId,
       userId: options.userId ?? null,
+      platformUserId: options.platformUserId ?? null,
       tableName: options.tableName,
       recordId: options.recordId,
       action: options.action,

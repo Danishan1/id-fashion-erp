@@ -30,16 +30,22 @@ const PREFIX_BY_DOCUMENT_TYPE: Record<DocumentType, string> = {
   EMPLOYEE_ADVANCE_SETTLEMENT: "ADVS",
   AI_GARMENT_PROJECT: "AGF",
   AI_DESIGNER_PROJECT: "AID",
+  SUPPORT_TICKET: "TKT",
   REPLICATE_DESIGN_PROJECT: "RPD",
   FABRIC_ROLL: "FR",
   SKU: "SKU",
   CRM_LEAD: "LEAD",
   CRM_OPPORTUNITY: "OPP",
   CAMPAIGN: "CAMP",
+  FORWARDER: "TRN",
+  // Finished Goods Inventory module (2026-10-13, FGI-004).
+  FG_RECEIPT: "FGR",
+  // Finished Goods Inventory module (FGI-030).
+  FG_PUTAWAY: "FGP",
 };
 
 /** DocumentTypes that represent master-data codes, not transactional documents. */
-export const MASTER_CODE_DOCUMENT_TYPES = ["CUSTOMER", "SUPPLIER", "EMPLOYEE", "STYLE", "MATERIAL", "CONTRACTOR", "FABRIC_ROLL", "SKU"] as const;
+export const MASTER_CODE_DOCUMENT_TYPES = ["CUSTOMER", "SUPPLIER", "EMPLOYEE", "STYLE", "MATERIAL", "CONTRACTOR", "FABRIC_ROLL", "SKU", "FORWARDER"] as const;
 export type MasterCodeDocumentType = (typeof MASTER_CODE_DOCUMENT_TYPES)[number];
 
 // Master codes never reset per fiscal year (unlike invoices/orders) — every

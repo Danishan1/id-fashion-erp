@@ -9,7 +9,8 @@ describe("filterNavSections", () => {
 
   it("drops a childless section entirely when the viewer lacks its module", () => {
     const result = filterNavSections(NAV_SECTIONS, ["dashboard"]);
-    expect(result.map((s) => s.label)).toEqual(["Dashboard"]);
+    // Help & Support (Platform SaaS Phase 5) is gated on dashboard, so every user sees it.
+    expect(result.map((s) => s.label)).toEqual(["Dashboard", "Help & Support"]);
   });
 
   it("keeps a parent section but only its visible children when some, not all, child modules are granted", () => {
@@ -61,7 +62,7 @@ describe("filterNavSections", () => {
 
   it("real-world scenario: a floor role scoped only to production sees just Dashboard + Manufacturing", () => {
     const result = filterNavSections(NAV_SECTIONS, ["dashboard", "production"]);
-    expect(result.map((s) => s.label)).toEqual(["Dashboard", "Manufacturing"]);
+    expect(result.map((s) => s.label)).toEqual(["Dashboard", "Manufacturing", "Help & Support"]);
   });
 
   it("every section/leaf declares a real, non-empty modules array (except the Platform section, added separately by Sidebar)", () => {

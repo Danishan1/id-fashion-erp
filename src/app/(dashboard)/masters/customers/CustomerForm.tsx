@@ -13,6 +13,7 @@ export interface CustomerFormValues {
   phone: string;
   email: string;
   billingAddress: string;
+  shippingAddress: string;
   city: string;
   pinCode: string;
   country: string;
@@ -31,6 +32,7 @@ const EMPTY_VALUES: CustomerFormValues = {
   phone: "",
   email: "",
   billingAddress: "",
+  shippingAddress: "",
   city: "",
   pinCode: "",
   country: "India",
@@ -63,6 +65,11 @@ interface CustomerFormProps {
 
 export function CustomerForm({ initialValues, submitUrl, method, onSuccess, onCancel }: CustomerFormProps) {
   const [values, setValues] = useState<CustomerFormValues>(initialValues ?? EMPTY_VALUES);
+  const [sameAsBilling, setSameAsBilling] = useState<boolean>(() => {
+    if (!initialValues) return true;
+    if (!initialValues.shippingAddress) return true;
+    return initialValues.shippingAddress === initialValues.billingAddress;
+  });
   const [currencies, setCurrencies] = useState<Currency[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -101,11 +108,28 @@ export function CustomerForm({ initialValues, submitUrl, method, onSuccess, onCa
     }));
   };
 
+  const handleBillingAddressChange = (address: string) => {
+    setValues((prev) => ({
+      ...prev,
+      billingAddress: address,
+      ...(sameAsBilling ? { shippingAddress: address } : {}),
+    }));
+  };
+
+  const handleSameAsBillingToggle = (checked: boolean) => {
+    setSameAsBilling(checked);
+    if (checked) {
+      setValues((prev) => ({ ...prev, shippingAddress: prev.billingAddress }));
+    }
+  };
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (isSubmitting) return;
     setIsSubmitting(true);
     setError(null);
+
+    const shippingAddress = sameAsBilling ? values.billingAddress : values.shippingAddress;
 
     const res = await fetch(submitUrl, {
       method,
@@ -118,6 +142,7 @@ export function CustomerForm({ initialValues, submitUrl, method, onSuccess, onCa
         phone: values.phone,
         email: values.email,
         billingAddress: values.billingAddress,
+        shippingAddress,
         city: values.city,
         pinCode: values.pinCode,
         country: values.country,
@@ -216,15 +241,39 @@ export function CustomerForm({ initialValues, submitUrl, method, onSuccess, onCa
         </FormField>
       </div>
 
-      <FormField label="Address" htmlFor="billingAddress">
+      <FormField label="Billing Address" htmlFor="billingAddress">
         <textarea
           id="billingAddress"
           rows={2}
           value={values.billingAddress}
-          onChange={(e) => setValues({ ...values, billingAddress: e.target.value })}
+          onChange={(e) => handleBillingAddressChange(e.target.value)}
           className={textInputClass()}
         />
       </FormField>
+
+      <div className="space-y-2">
+        <label className="flex items-center gap-2 cursor-pointer select-none text-xs font-semibold text-stone-700">
+          <input
+            type="checkbox"
+            checked={sameAsBilling}
+            onChange={(e) => handleSameAsBillingToggle(e.target.checked)}
+            className="rounded border-stone-300 text-stone-900 focus:ring-stone-500"
+          />
+          <span>Delivery address same as billing address</span>
+        </label>
+
+        {!sameAsBilling && (
+          <FormField label="Delivery Address" htmlFor="shippingAddress">
+            <textarea
+              id="shippingAddress"
+              rows={2}
+              value={values.shippingAddress}
+              onChange={(e) => setValues({ ...values, shippingAddress: e.target.value })}
+              className={textInputClass()}
+            />
+          </FormField>
+        )}
+      </div>
 
       <div className="grid grid-cols-3 gap-4">
         <FormField label="City" htmlFor="city">

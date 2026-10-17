@@ -1,10 +1,20 @@
 import type { NextAuthConfig } from "next-auth";
+import { decideRouteAccess, type UserType } from "@/core/auth/route-access";
 
 /**
  * Edge-safe subset of the NextAuth config — no providers (Credentials pulls in
  * Prisma + bcrypt, which are Node-only) so this can be used directly in
  * middleware, which runs on the Edge runtime. The full config in auth.ts
  * spreads this and adds providers for use in route handlers/server components.
+ *
+ * Two kinds of identity share one session cookie (Platform SaaS Phase 1):
+ *  - TENANT: a customer company's user — has a companyId.
+ *  - PLATFORM: a platform operator (platform_users) — has NO companyId and
+ *    can't act inside any customer company.
+ *  - SUPPORT: a platform operator inside ONE customer company through a
+ *    customer-approved support session (Phase 2) — acts as that company's
+ *    support proxy user, with the support session id re-checked live.
+ * The middleware keeps each to its own part of the app (route-access.ts).
  */
 export const authConfig = {
   pages: { signIn: "/login" },
@@ -12,58 +22,54 @@ export const authConfig = {
   providers: [],
   callbacks: {
     authorized({ auth, request }) {
-      const isLoggedIn = !!auth?.user;
-      const isLoginPage = request.nextUrl.pathname === "/login";
-
-      if (!isLoggedIn && !isLoginPage) return false;
-      if (isLoggedIn && isLoginPage) {
-        return Response.redirect(new URL("/dashboard", request.nextUrl.origin));
-      }
-      return true;
+      const decision = decideRouteAccess(
+        request.nextUrl.pathname,
+        !!auth?.user,
+        auth?.user?.userType as UserType | undefined
+      );
+      if (decision.kind === "redirect") return Response.redirect(new URL(decision.to, request.nextUrl.origin));
+      return decision.kind === "allow";
     },
-    jwt: async ({ token, user, trigger, session }) => {
+    jwt: async ({ token, user }) => {
       if (user) {
-        token.userId = user.id;
-        token.companyId = (user as { companyId: string }).companyId;
-        // The company this account actually belongs to — fixed for life,
-        // never touched by a company switch below. Lets the sidebar's
-        // switcher offer a "back to my own company" shortcut and lets a
-        // platform admin always tell which company they're really acting as
-        // vs. just currently viewing.
-        token.homeCompanyId = (user as { companyId: string }).companyId;
-        token.defaultBranchId = (user as { defaultBranchId: string | null }).defaultBranchId;
-        // Convenience only — requirePlatformAdmin() re-checks this live from
-        // the DB before anything platform-level actually happens, the same
-        // "never trust the JWT alone" discipline as status/passwordChangedAt.
-        token.isPlatformAdmin = (user as { isPlatformAdmin: boolean }).isPlatformAdmin;
+        const signedIn = user as {
+          id: string;
+          userType: UserType;
+          companyId?: string;
+          defaultBranchId?: string | null;
+          platformRole?: string;
+          supportSessionId?: string;
+        };
+        token.userId = signedIn.id;
+        token.userType = signedIn.userType;
+        if (signedIn.userType === "PLATFORM") {
+          token.platformRole = signedIn.platformRole;
+        } else {
+          token.companyId = signedIn.companyId;
+          token.defaultBranchId = signedIn.defaultBranchId ?? null;
+          if (signedIn.userType === "SUPPORT") token.supportSessionId = signedIn.supportSessionId;
+        }
         // Stamped only at sign-in (when `user` is present), not on every
         // token refresh — this is the session's own age, used to detect a
-        // session that predates a password change (User.passwordChangedAt).
+        // session that predates a password change.
         token.sessionIssuedAt = Math.floor(Date.now() / 1000);
       }
-      // Lets a platform admin re-scope their own session to a different
-      // company via useSession().update({ companyId }) (the sidebar company
-      // switcher) — every service/route derives actor.companyId from
-      // session.user.companyId, so this alone is what makes the switch
-      // actually change which company's data is visible. Gated on the
-      // token's own isPlatformAdmin flag as a convenience check only: this
-      // callback is Edge-safe (no Prisma access), so the real gate is
-      // PermissionService.can()'s independent, live-from-the-DB
-      // isPlatformAdmin re-check on every subsequent request — a forged
-      // update() call from a non-platform-admin session achieves nothing
-      // beyond changing a JWT field that nothing else trusts on its own.
-      if (trigger === "update" && token.isPlatformAdmin && typeof (session as { companyId?: unknown })?.companyId === "string") {
-        token.companyId = (session as { companyId: string }).companyId;
-      }
+      // No `trigger === "update"` handling: a session can no longer be
+      // re-pointed at another company (PLAT-005 removed the company switcher).
       return token;
     },
     session: async ({ session, token }) => {
       if (session.user) {
         session.user.id = token.userId as string;
-        session.user.companyId = token.companyId as string;
-        session.user.homeCompanyId = token.homeCompanyId as string;
-        session.user.defaultBranchId = token.defaultBranchId as string | null;
-        session.user.isPlatformAdmin = token.isPlatformAdmin as boolean;
+        // Sessions issued before Phase 1 carry no userType; they could only
+        // have come from the tenant login.
+        session.user.userType = (token.userType as UserType | undefined) ?? "TENANT";
+        // Empty for a platform session — requireSession() rejects platform
+        // sessions before any code could use it.
+        session.user.companyId = (token.companyId as string | undefined) ?? "";
+        session.user.defaultBranchId = (token.defaultBranchId as string | null | undefined) ?? null;
+        session.user.platformRole = (token.platformRole as string | undefined) ?? null;
+        session.user.supportSessionId = (token.supportSessionId as string | undefined) ?? null;
         session.user.sessionIssuedAt = token.sessionIssuedAt as number;
       }
       return session;

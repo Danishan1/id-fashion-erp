@@ -2,12 +2,14 @@
 
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { DataTable } from "@/components/ui/DataTable";
-import { STATUS_LABELS, STATUS_BADGE_CLASS } from "./statusLabels";
+import { STATUS_LABELS, productionOrderStatusDisplay, type DispatchReadinessValue } from "./statusLabels";
 
 interface ProductionOrderRow {
   id: string;
   orderNumber: string;
   status: keyof typeof STATUS_LABELS;
+  dispatchReadiness: DispatchReadinessValue;
+  producedQuantity: number;
   plannedQuantity: string;
   priority: string;
   product: { styleName: string; styleCode: string } | null;
@@ -41,16 +43,16 @@ export function ProductionOrdersListClient() {
           { key: "orderNumber", header: "Order #", sortable: true },
           { key: "product", header: "Style", render: (row) => (row.product ? `${row.product.styleName} (${row.product.styleCode})` : "—") },
           { key: "plannedQuantity", header: "Planned Qty", sortable: true },
+          { key: "producedQuantity", header: "Finished Qty", render: (row) => row.producedQuantity },
           { key: "priority", header: "Priority", sortable: true },
           {
             key: "status",
             header: "Status",
             sortable: true,
-            render: (row) => (
-              <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_BADGE_CLASS[row.status]}`}>
-                {STATUS_LABELS[row.status] ?? row.status}
-              </span>
-            ),
+            render: (row) => {
+              const display = productionOrderStatusDisplay(row.status, row.dispatchReadiness);
+              return <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${display.className}`}>{display.label}</span>;
+            },
           },
           { key: "requestedBy", header: "Requested By", render: (row) => row.requestedBy?.fullName ?? "—" },
           { key: "createdAt", header: "Date", sortable: true, render: (row) => new Date(row.createdAt).toLocaleDateString() },

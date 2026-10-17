@@ -3,6 +3,9 @@ import { prisma } from "@/core/db/client";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { PermissionService } from "@/core/rbac/PermissionService";
 import { recordInventoryTransaction } from "@/modules/inventory/inventory.service";
+import { createFinishedGoodsReceiptInTx } from "@/modules/finished-goods-inventory/finished-goods-receipt.service";
+import { applyPackingCompletionReservationsInTx } from "@/modules/finished-goods-inventory/finished-goods-reservation.service";
+import { ProductVariantRepository } from "@/modules/products/product.repository";
 import { EmployeeRepository } from "@/modules/employees/employee.repository";
 import { getProductionSettings } from "@/core/production-settings/ProductionSettingsService";
 import { resolvePieceRate } from "./piece-rate-resolution.service";
@@ -182,16 +185,61 @@ async function postStageTransactionInTx(
 async function completeAtFinalStageInTx(
   tx: Prisma.TransactionClient,
   actor: ActorContext,
-  params: { productId: string; lotId: string; jobOrderId: string; quantity: number; warehouseId: string }
+  params: {
+    productId: string;
+    lotId: string;
+    jobOrderId: string;
+    productionOrderId: string;
+    quantity: number;
+    warehouseId: string;
+    /** Finished Goods Inventory module (FGI-021) -- when supplied (Forward/
+     * QC-Accept landing on a final stage for a style with configured
+     * variants -- see resolveFinalStageVariantBreakdown below), REPLACES the
+     * flat ledger posting below with createFinishedGoodsReceiptInTx()'s own
+     * N per-variant postings -- never runs ALONGSIDE the flat call, which
+     * would double-post StockBalance (see that function's own doc comment
+     * for the full reasoning). null/omitted for every other caller -- a
+     * style with no configured variants, or cascadeReceivedThroughStagesInTx
+     * (the Job Work multi-stage cascade, deliberately out of this task's
+     * scope per the plan's own "Forward/QC-Accept... UI and API" wording) --
+     * the original, byte-for-byte-unchanged flat posting. */
+    variantBreakdown?: { productVariantId: string; quantity: number }[] | null;
+  }
 ) {
-  await recordInventoryTransaction(tx, actor, {
-    productId: params.productId,
-    warehouseId: params.warehouseId,
-    transactionType: "PRODUCTION_RECEIPT",
-    quantity: params.quantity,
-    referenceModule: "PRODUCTION_ORDER",
-    referenceRecordId: params.lotId,
-  });
+  if (params.variantBreakdown && params.variantBreakdown.length > 0) {
+    await createFinishedGoodsReceiptInTx(tx, actor, {
+      productId: params.productId,
+      lotId: params.lotId,
+      jobOrderId: params.jobOrderId,
+      productionOrderId: params.productionOrderId,
+      warehouseId: params.warehouseId,
+      quantity: params.quantity,
+      variantBreakdown: params.variantBreakdown,
+    });
+    // Process-Flow Phase 1 (2026-10-16) — the real reservation-creation
+    // trigger, in the SAME transaction as the FG receipt just posted above,
+    // from the SAME variantBreakdown input. See
+    // applyPackingCompletionReservationsInTx's own doc comment for the full
+    // business rule, its fail-safes, and its documented (pre-existing,
+    // inherited, not worsened) retry-exposure analysis. A no-variant style
+    // never reaches this branch at all (variantBreakdown is null/empty for
+    // it), matching that style type's own deliberate "no reservation of any
+    // kind" design.
+    await applyPackingCompletionReservationsInTx(tx, actor, {
+      productionOrderId: params.productionOrderId,
+      warehouseId: params.warehouseId,
+      variantBreakdown: params.variantBreakdown,
+    });
+  } else {
+    await recordInventoryTransaction(tx, actor, {
+      productId: params.productId,
+      warehouseId: params.warehouseId,
+      transactionType: "PRODUCTION_RECEIPT",
+      quantity: params.quantity,
+      referenceModule: "PRODUCTION_ORDER",
+      referenceRecordId: params.lotId,
+    });
+  }
   await JobOrderRepository.updateInTx(tx, params.jobOrderId, {
     status: "COMPLETED",
     completedQuantity: params.quantity,
@@ -212,6 +260,69 @@ async function completeAtFinalStageInTx(
   if (accountedFor >= Number(lot.quantity) - EPSILON) {
     await LotRepository.updateInTx(tx, params.lotId, { status: "COMPLETED" });
   }
+}
+
+/**
+ * Finished Goods Inventory module (FGI-020) — validates and resolves the
+ * colour/size breakdown for a batch about to land on a final production
+ * stage, called from `forwardJobOrder()`/`recordQcInspection()` BEFORE their
+ * own transaction opens (so a rejection here never leaves a partial write
+ * behind — the same "rejected before any posting occurs" discipline every
+ * other pre-transaction guard in this file already follows).
+ *
+ * Returns `null` when the style has no configured (active) `ProductVariant`
+ * rows at all — the flat-only posting path, completely unchanged for that
+ * case; no breakdown is required or even meaningful. Deliberately scoped
+ * only to the Forward/QC-Accept call sites per the plan's own "Extend the
+ * Forward/QC-Accept-to-final-stage UI and API" wording —
+ * `cascadeReceivedThroughStagesInTx` (the Job Work multi-stage cascade)
+ * never calls this and always takes the flat-only path, even for a style
+ * that has configured variants; that is an intentional scope boundary, not
+ * an oversight.
+ *
+ * Throws `VALIDATION_ERROR` when the style DOES have variants configured
+ * and the caller supplied no breakdown (or an empty one — never silently
+ * defaulting to an arbitrary split), a variant that doesn't belong to this
+ * style, or a sum that doesn't match the quantity actually being completed,
+ * within this file's own `EPSILON` tolerance.
+ */
+async function resolveFinalStageVariantBreakdown(
+  productId: string,
+  quantity: number,
+  variantBreakdown: { productVariantId: string; quantity: number }[]
+): Promise<{ productVariantId: string; quantity: number }[] | null> {
+  const variants = await ProductVariantRepository.findManyActiveByProductId(productId);
+  if (variants.length === 0) return null;
+
+  if (variantBreakdown.length === 0) {
+    throw new BusinessRuleError(
+      "VALIDATION_ERROR",
+      "This style has colour/size variants configured — a breakdown of which variants make up this quantity is required to complete it onto a final stage.",
+      { productId }
+    );
+  }
+
+  const validVariantIds = new Set(variants.map((v) => v.id));
+  for (const row of variantBreakdown) {
+    if (!validVariantIds.has(row.productVariantId)) {
+      throw new BusinessRuleError(
+        "VALIDATION_ERROR",
+        "One of the selected colour/size variants does not belong to this style.",
+        { productId, productVariantId: row.productVariantId }
+      );
+    }
+  }
+
+  const sum = variantBreakdown.reduce((total, row) => total + row.quantity, 0);
+  if (Math.abs(sum - quantity) > EPSILON) {
+    throw new BusinessRuleError(
+      "VALIDATION_ERROR",
+      `The colour/size breakdown (${sum}) must sum to exactly the quantity being completed (${quantity}).`,
+      { breakdownSum: sum, quantity }
+    );
+  }
+
+  return variantBreakdown;
 }
 
 /** 3-column guard (completed+rejected+damaged <= planned) — can't be a
@@ -430,8 +541,12 @@ export async function cascadeReceivedThroughStagesInTx(
         productId: current.productionOrder.productId,
         lotId: current.lot.id,
         jobOrderId: posted.jobOrder.id,
+        productionOrderId: current.productionOrderId,
         quantity: params.quantity,
         warehouseId: params.finishedGoodsWarehouseId,
+        // Finished Goods Inventory module (FGI-020) -- deliberately no
+        // breakdown collected here, out of this task's own stated scope
+        // ("Forward/QC-Accept... UI and API" only); always the flat-only path.
       });
       return;
     }
@@ -1360,6 +1475,13 @@ export async function forwardJobOrder(actor: ActorContext, jobOrderId: string, i
   const order = await ProductionOrderRepository.findAnyById(actor.companyId, jobOrder.productionOrderId);
   if (!order) throw new BusinessRuleError("NOT_FOUND", "Production order not found.", { id: jobOrder.productionOrderId });
 
+  // Finished Goods Inventory module (FGI-020) -- resolved/validated BEFORE
+  // the transaction opens, so a rejection here never leaves a partial write
+  // behind.
+  const variantBreakdown = targetStage.isFinal
+    ? await resolveFinalStageVariantBreakdown(order.productId, input.quantity, input.variantBreakdown ?? [])
+    : null;
+
   const result = await prisma.$transaction(async (tx) => {
     const posted = await postStageTransactionInTx(tx, actor, {
       productionOrderId: jobOrder.productionOrderId,
@@ -1380,8 +1502,10 @@ export async function forwardJobOrder(actor: ActorContext, jobOrderId: string, i
         productId: order.productId,
         lotId: jobOrder.lot.id,
         jobOrderId: posted.jobOrder.id,
+        productionOrderId: jobOrder.productionOrderId,
         quantity: input.quantity,
         warehouseId: input.finishedGoodsWarehouseId!,
+        variantBreakdown,
       });
     }
 
@@ -1551,6 +1675,14 @@ export async function recordQcInspection(actor: ActorContext, jobOrderId: string
   const order = await ProductionOrderRepository.findAnyById(actor.companyId, jobOrder.productionOrderId);
   if (!order) throw new BusinessRuleError("NOT_FOUND", "Production order not found.", { id: jobOrder.productionOrderId });
 
+  // Finished Goods Inventory module (FGI-020) -- resolved/validated BEFORE
+  // the transaction opens, so a rejection here never leaves a partial write
+  // behind.
+  const variantBreakdown =
+    input.acceptedQuantity > 0 && nextStage?.isFinal
+      ? await resolveFinalStageVariantBreakdown(order.productId, input.acceptedQuantity, input.variantBreakdown ?? [])
+      : null;
+
   const inspection = await prisma.$transaction(async (tx) => {
     const guard = await guardedIncrementQcPassed(tx, jobOrderId, completed, input.inspectedQuantity);
     if (guard.count === 0) {
@@ -1581,8 +1713,10 @@ export async function recordQcInspection(actor: ActorContext, jobOrderId: string
           productId: order.productId,
           lotId: jobOrder.lot.id,
           jobOrderId: posted.jobOrder.id,
+          productionOrderId: jobOrder.productionOrderId,
           quantity: input.acceptedQuantity,
           warehouseId: input.finishedGoodsWarehouseId!,
+          variantBreakdown,
         });
       }
     }

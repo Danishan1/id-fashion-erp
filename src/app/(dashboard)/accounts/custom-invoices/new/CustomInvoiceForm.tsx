@@ -6,6 +6,7 @@ import { FormField, textInputClass } from "@/components/ui/FormField";
 import { Modal } from "@/components/ui/Modal";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { todayIsoDate } from "@/lib/date";
+import { GST_STATE_CODES, extractStateCodeFromGstin } from "@/lib/gst";
 
 const INVOICE_TYPE_OPTIONS = [
   { value: "TAX_INVOICE", label: "Tax Invoice" },
@@ -16,6 +17,11 @@ interface CustomerOption {
   id: string;
   name: string;
   code: string;
+  taxRegistrationNo?: string | null;
+  billingAddress?: string | null;
+  shippingAddress?: string | null;
+  city?: string | null;
+  pinCode?: string | null;
 }
 
 interface InvoiceSeriesOption {
@@ -42,6 +48,32 @@ interface ItemLinkOption {
   kind: "Style" | "Material";
 }
 
+interface ServicePreset {
+  id: string;
+  name: string;
+  sacCode: string;
+  defaultGst: string;
+}
+
+export const COMMON_FASHION_SERVICES: ServicePreset[] = [
+  { id: "srv-stitching", name: "Job Work / Stitching Charges", sacCode: "998822", defaultGst: "5" },
+  { id: "srv-embroidery", name: "Embroidery & Embellishment Work", sacCode: "9988", defaultGst: "5" },
+  { id: "srv-printing", name: "Fabric Printing & Dyeing", sacCode: "9988", defaultGst: "5" },
+  { id: "srv-washing", name: "Washing & Garment Finishing", sacCode: "9988", defaultGst: "5" },
+  { id: "srv-pattern", name: "Pattern Making & Sample Development", sacCode: "9983", defaultGst: "18" },
+  { id: "srv-design", name: "Fashion Design & Styling Consultancy", sacCode: "9983", defaultGst: "18" },
+  { id: "srv-freight", name: "Freight, Shipping & Delivery Charges", sacCode: "996511", defaultGst: "18" },
+  { id: "srv-packing", name: "Packing & Handling Charges", sacCode: "9985", defaultGst: "18" },
+  { id: "srv-alteration", name: "Alteration & Tailoring Services", sacCode: "9987", defaultGst: "5" },
+];
+
+export const DEFAULT_INVOICE_TERMS = [
+  "1. Goods once sold will not be taken back or exchanged.",
+  "2. Payment is due within the stipulated credit period from invoice date.",
+  "3. Interest @ 18% p.a. will be charged on overdue payments after due date.",
+  "4. All disputes are subject to local court jurisdiction.",
+].join("\n");
+
 interface ItemDraft {
   productId: string;
   itemName: string;
@@ -49,9 +81,18 @@ interface ItemDraft {
   quantity: string;
   unitPrice: string;
   gstPercentage: string;
+  itemType?: "ALL" | "PRODUCT" | "SERVICE";
 }
 
-const emptyItem = (): ItemDraft => ({ productId: "", itemName: "", hsnCode: "", quantity: "1", unitPrice: "0", gstPercentage: "0" });
+const emptyItem = (): ItemDraft => ({
+  productId: "",
+  itemName: "",
+  hsnCode: "",
+  quantity: "1",
+  unitPrice: "0",
+  gstPercentage: "0",
+  itemType: "ALL",
+});
 
 interface InitialInvoice {
   id: string;
@@ -62,6 +103,7 @@ interface InitialInvoice {
   invoiceSeriesId: string;
   invoiceNumber: string;
   customerId: string;
+  placeOfSupplyStateCode?: string | null;
   incomeAccountId: string | null;
   discountPercentage: string;
   isReverseCharge: boolean;
@@ -91,7 +133,10 @@ export function CustomInvoiceForm({ initialInvoice }: { initialInvoice?: Initial
   const [invoiceSeriesId, setInvoiceSeriesId] = useState(initialInvoice?.invoiceSeriesId ?? "");
   const [invoiceNumber, setInvoiceNumber] = useState(initialInvoice?.invoiceNumber ?? "");
   const [numberManuallyEdited, setNumberManuallyEdited] = useState(isEdit);
+  const [numberCheckStatus, setNumberCheckStatus] = useState<"idle" | "checking" | "available" | "unavailable">("idle");
+  const [numberCheckMessage, setNumberCheckMessage] = useState<string>("");
   const [customerId, setCustomerId] = useState(initialInvoice?.customerId ?? "");
+  const [placeOfSupplyStateCode, setPlaceOfSupplyStateCode] = useState(initialInvoice?.placeOfSupplyStateCode ?? "");
   const [discountPercentage, setDiscountPercentage] = useState(initialInvoice?.discountPercentage ?? "0");
   const [isReverseCharge, setIsReverseCharge] = useState(initialInvoice?.isReverseCharge ?? false);
   const [items, setItems] = useState<ItemDraft[]>(
@@ -111,7 +156,9 @@ export function CustomInvoiceForm({ initialInvoice }: { initialInvoice?: Initial
   const [advancePaymentAmount, setAdvancePaymentAmount] = useState(initialInvoice?.advancePaymentAmount ?? "");
   const [payableAmountTitle, setPayableAmountTitle] = useState(initialInvoice?.payableAmountTitle ?? "");
   const [payableAmountValue, setPayableAmountValue] = useState(initialInvoice?.payableAmountValue ?? "");
-  const [termsAndConditions, setTermsAndConditions] = useState(initialInvoice?.termsAndConditions ?? "");
+  const [termsAndConditions, setTermsAndConditions] = useState(
+    initialInvoice ? (initialInvoice.termsAndConditions ?? "") : DEFAULT_INVOICE_TERMS
+  );
 
   const [showCreateClient, setShowCreateClient] = useState(false);
   const [newClientName, setNewClientName] = useState("");
@@ -159,18 +206,84 @@ export function CustomInvoiceForm({ initialInvoice }: { initialInvoice?: Initial
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [invoiceSeriesId]);
 
+  const checkInvoiceNumberAvailability = async (numToTest?: string) => {
+    const targetNumber = (numToTest ?? invoiceNumber).trim();
+    if (!targetNumber) {
+      setNumberCheckStatus("idle");
+      setNumberCheckMessage("");
+      return;
+    }
+    setNumberCheckStatus("checking");
+    setNumberCheckMessage("");
+    try {
+      const url = `/api/v1/custom-invoices/check-number?number=${encodeURIComponent(targetNumber)}${
+        isEdit && initialInvoice ? `&excludeId=${encodeURIComponent(initialInvoice.id)}` : ""
+      }`;
+      const res = await fetch(url);
+      const body = await res.json();
+      if (!res.ok) {
+        setNumberCheckStatus("unavailable");
+        setNumberCheckMessage(body?.error?.message ?? "Failed to check invoice number.");
+        return;
+      }
+      if (body.data?.available) {
+        setNumberCheckStatus("available");
+        setNumberCheckMessage(body.data?.message ?? "Number is available.");
+      } else {
+        setNumberCheckStatus("unavailable");
+        setNumberCheckMessage(body.data?.message ?? "Number already exists.");
+      }
+    } catch {
+      setNumberCheckStatus("unavailable");
+      setNumberCheckMessage("Unable to reach server to verify number.");
+    }
+  };
+
   const updateItem = (index: number, patch: Partial<ItemDraft>) => {
     setItems((prev) => prev.map((it, i) => (i === index ? { ...it, ...patch } : it)));
   };
 
-  const applyItemLink = (index: number, productId: string) => {
-    const picked = itemLinkOptions.find((o) => o.id === productId);
+  const applyItemLink = (index: number, selectedId: string) => {
+    if (!selectedId) {
+      updateItem(index, { productId: "" });
+      return;
+    }
+
+    const serviceMatch = COMMON_FASHION_SERVICES.find((s) => s.id === selectedId);
+    if (serviceMatch) {
+      updateItem(index, {
+        productId: "",
+        itemName: serviceMatch.name,
+        hsnCode: serviceMatch.sacCode,
+        gstPercentage: serviceMatch.defaultGst,
+      });
+      return;
+    }
+
+    const picked = itemLinkOptions.find((o) => o.id === selectedId);
     updateItem(index, {
-      productId,
+      productId: selectedId,
       itemName: picked?.styleName ?? "",
       hsnCode: picked?.hsnSacCode ?? "",
       unitPrice: picked?.unitCost ?? "0",
     });
+  };
+
+  const getItemOptionsForLine = (lineType: "ALL" | "PRODUCT" | "SERVICE" = "ALL") => {
+    const productOptions = itemLinkOptions.map((o) => ({
+      id: o.id,
+      label: o.styleName,
+      sublabel: o.kind,
+    }));
+    const serviceOptions = COMMON_FASHION_SERVICES.map((s) => ({
+      id: s.id,
+      label: s.name,
+      sublabel: `SAC ${s.sacCode} • GST ${s.defaultGst}%`,
+    }));
+
+    if (lineType === "PRODUCT") return productOptions;
+    if (lineType === "SERVICE") return serviceOptions;
+    return [...productOptions, ...serviceOptions];
   };
 
   const addItem = () => setItems((prev) => [...prev, emptyItem()]);
@@ -235,6 +348,22 @@ export function CustomInvoiceForm({ initialInvoice }: { initialInvoice?: Initial
     }
   };
 
+  const selectedCustomer = useMemo(
+    () => customers.find((c) => c.id === customerId) ?? null,
+    [customers, customerId]
+  );
+
+  const handleCustomerChange = (id: string) => {
+    setCustomerId(id);
+    const cust = customers.find((c) => c.id === id);
+    if (cust?.taxRegistrationNo) {
+      const code = extractStateCodeFromGstin(cust.taxRegistrationNo);
+      if (code) {
+        setPlaceOfSupplyStateCode(code);
+      }
+    }
+  };
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (isSubmitting) return;
@@ -250,6 +379,7 @@ export function CustomInvoiceForm({ initialInvoice }: { initialInvoice?: Initial
         invoiceSeriesId,
         invoiceNumber,
         customerId,
+        placeOfSupplyStateCode: placeOfSupplyStateCode.trim() || undefined,
         incomeAccountId: incomeAccountId || undefined,
         discountPercentage: Number(discountPercentage) || 0,
         isReverseCharge,
@@ -369,10 +499,33 @@ export function CustomInvoiceForm({ initialInvoice }: { initialInvoice?: Initial
               onChange={(e) => {
                 setInvoiceNumber(e.target.value);
                 setNumberManuallyEdited(true);
+                setNumberCheckStatus("idle");
+                setNumberCheckMessage("");
+              }}
+              onBlur={() => {
+                if (invoiceNumber.trim()) checkInvoiceNumberAvailability();
               }}
               className={textInputClass()}
             />
+            <button
+              type="button"
+              onClick={() => checkInvoiceNumberAvailability()}
+              disabled={!invoiceNumber.trim() || numberCheckStatus === "checking"}
+              className="shrink-0 rounded-md border border-zinc-300 bg-zinc-100 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-200 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
+            >
+              {numberCheckStatus === "checking" ? "Checking…" : "Verify"}
+            </button>
           </div>
+          {numberCheckStatus === "available" && (
+            <p className="mt-1 flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
+              <span aria-hidden="true">✓</span> {numberCheckMessage || "Invoice number is available."}
+            </p>
+          )}
+          {numberCheckStatus === "unavailable" && (
+            <p className="mt-1 flex items-center gap-1 text-xs text-rose-600 dark:text-rose-400">
+              <span aria-hidden="true">✗</span> {numberCheckMessage || "Invoice number already in use."}
+            </p>
+          )}
         </FormField>
       </div>
 
@@ -383,7 +536,7 @@ export function CustomInvoiceForm({ initialInvoice }: { initialInvoice?: Initial
               id="customerId"
               required
               value={customerId}
-              onChange={setCustomerId}
+              onChange={handleCustomerChange}
               options={customers.map((c) => ({ id: c.id, label: c.name, sublabel: c.code }))}
               placeholder="Search client…"
             />
@@ -396,6 +549,57 @@ export function CustomInvoiceForm({ initialInvoice }: { initialInvoice?: Initial
             Create Client
           </button>
         </FormField>
+
+        <FormField label="Place of Supply (State)" htmlFor="placeOfSupplyStateCode">
+          <select
+            id="placeOfSupplyStateCode"
+            value={placeOfSupplyStateCode}
+            onChange={(e) => setPlaceOfSupplyStateCode(e.target.value)}
+            className={textInputClass()}
+          >
+            <option value="">— Auto-detect from GSTIN / Default —</option>
+            {Object.entries(GST_STATE_CODES)
+              .sort(([a], [b]) => a.localeCompare(b))
+              .map(([code, name]) => (
+                <option key={code} value={code}>
+                  {code} - {name}
+                </option>
+              ))}
+          </select>
+          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+            Determines CGST + SGST (intra-state) vs IGST (inter-state).
+          </p>
+        </FormField>
+      </div>
+
+      {selectedCustomer && (selectedCustomer.billingAddress || selectedCustomer.shippingAddress || selectedCustomer.taxRegistrationNo) && (
+        <div className="rounded-lg border border-zinc-200 bg-zinc-50/50 p-3 text-xs dark:border-zinc-800 dark:bg-zinc-900/50">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div>
+              <span className="font-semibold text-zinc-600 dark:text-zinc-400">GSTIN / Tax ID:</span>
+              <p className="mt-0.5 text-zinc-900 dark:text-zinc-100">{selectedCustomer.taxRegistrationNo || "Unregistered"}</p>
+            </div>
+            <div>
+              <span className="font-semibold text-zinc-600 dark:text-zinc-400">Billing Address:</span>
+              <p className="mt-0.5 text-zinc-900 dark:text-zinc-100">
+                {selectedCustomer.billingAddress || "—"}
+                {selectedCustomer.city ? `, ${selectedCustomer.city}` : ""}
+                {selectedCustomer.pinCode ? ` - ${selectedCustomer.pinCode}` : ""}
+              </p>
+            </div>
+            <div>
+              <span className="font-semibold text-zinc-600 dark:text-zinc-400">Delivery / Shipping Address:</span>
+              <p className="mt-0.5 text-zinc-900 dark:text-zinc-100">
+                {selectedCustomer.shippingAddress && selectedCustomer.shippingAddress !== selectedCustomer.billingAddress
+                  ? selectedCustomer.shippingAddress
+                  : "Same as billing address"}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-4">
         <FormField label="Discount(%)" htmlFor="discountPercentage">
           <input
             id="discountPercentage"
@@ -408,20 +612,20 @@ export function CustomInvoiceForm({ initialInvoice }: { initialInvoice?: Initial
             className={textInputClass()}
           />
         </FormField>
-      </div>
 
-      <FormField label="Income Category (optional)" htmlFor="incomeAccountId">
-        <SearchableSelect
-          id="incomeAccountId"
-          value={incomeAccountId}
-          onChange={setIncomeAccountId}
-          options={incomeAccounts.map((a) => ({ id: a.id, label: a.name, sublabel: a.code }))}
-          placeholder="Search account…"
-        />
-        <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-          Classifies this invoice&apos;s revenue against your Chart of Accounts, for reporting only.
-        </p>
-      </FormField>
+        <FormField label="Income Category (optional)" htmlFor="incomeAccountId">
+          <SearchableSelect
+            id="incomeAccountId"
+            value={incomeAccountId}
+            onChange={setIncomeAccountId}
+            options={incomeAccounts.map((a) => ({ id: a.id, label: a.name, sublabel: a.code }))}
+            placeholder="Search account…"
+          />
+          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+            Classifies this invoice&apos;s revenue against your Chart of Accounts, for reporting only.
+          </p>
+        </FormField>
+      </div>
 
       <div>
         <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Items</h2>
@@ -437,16 +641,45 @@ export function CustomInvoiceForm({ initialInvoice }: { initialInvoice?: Initial
                   </button>
                 </div>
                 <div className="mt-2 grid grid-cols-2 gap-3 md:grid-cols-3">
-                  <FormField label="Link to Product/Material (optional)" htmlFor={`link-${index}`}>
-                    <SearchableSelect
-                      id={`link-${index}`}
-                      value={item.productId}
-                      onChange={(next) => applyItemLink(index, next)}
-                      options={itemLinkOptions.map((o) => ({ id: o.id, label: o.styleName, sublabel: o.kind }))}
-                      placeholder="Search style / material…"
-                      emptyOptionLabel="— Free text item —"
-                    />
-                  </FormField>
+                  <div>
+                    <div className="mb-1.5 flex items-center gap-1">
+                      <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">Filter:</span>
+                      {(["ALL", "PRODUCT", "SERVICE"] as const).map((type) => {
+                        const active = (item.itemType ?? "ALL") === type;
+                        const label = type === "ALL" ? "All" : type === "PRODUCT" ? "Products" : "Services";
+                        return (
+                          <button
+                            key={type}
+                            type="button"
+                            onClick={() => updateItem(index, { itemType: type })}
+                            className={`rounded-full px-2 py-0.5 text-[10px] font-medium transition-colors ${
+                              active
+                                ? "bg-indigo-600 text-white"
+                                : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
+                            }`}
+                          >
+                            {label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <FormField label="Link Item / Service (optional)" htmlFor={`link-${index}`}>
+                      <SearchableSelect
+                        id={`link-${index}`}
+                        value={item.productId}
+                        onChange={(next) => applyItemLink(index, next)}
+                        options={getItemOptionsForLine(item.itemType)}
+                        placeholder={
+                          item.itemType === "SERVICE"
+                            ? "Search services (Job Work, Embroidery…)"
+                            : item.itemType === "PRODUCT"
+                            ? "Search products (Styles, Materials…)"
+                            : "Search styles, materials, or services…"
+                        }
+                        emptyOptionLabel="— Free text item —"
+                      />
+                    </FormField>
+                  </div>
                   <FormField label="Name" htmlFor={`name-${index}`} required>
                     <input
                       id={`name-${index}`}
@@ -582,16 +815,31 @@ export function CustomInvoiceForm({ initialInvoice }: { initialInvoice?: Initial
 
       <p className="text-right text-sm text-zinc-500 dark:text-zinc-400">Balance Due: ₹{balanceDue.toFixed(2)}</p>
 
-      <FormField label="Terms & Conditions" htmlFor="termsAndConditions">
+      <div>
+        <div className="mb-1 flex items-center justify-between">
+          <label htmlFor="termsAndConditions" className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
+            Terms & Conditions
+          </label>
+          <button
+            type="button"
+            onClick={() => setTermsAndConditions(DEFAULT_INVOICE_TERMS)}
+            className="text-xs font-medium text-indigo-600 hover:text-indigo-500 hover:underline dark:text-indigo-400"
+          >
+            Reset to Standard Terms
+          </button>
+        </div>
         <textarea
           id="termsAndConditions"
-          rows={3}
+          rows={4}
           placeholder="One term per line"
           value={termsAndConditions}
           onChange={(e) => setTermsAndConditions(e.target.value)}
           className={textInputClass()}
         />
-      </FormField>
+        <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+          Standard terms appear on the printed and downloaded PDF invoice.
+        </p>
+      </div>
 
       {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
 

@@ -14,7 +14,7 @@ const mockPrisma = vi.hoisted(() => ({
 
 vi.mock("@/core/db/client", () => ({ prisma: mockPrisma }));
 
-const { getCompanyCounts, getPlatformDashboard, getTeamDashboard, getDashboardViewForUser } = await import("./dashboard.service");
+const { getCompanyCounts, getTeamDashboard, getDashboardViewForUser } = await import("./dashboard.service");
 
 beforeEach(() => {
   Object.values(mockPrisma).forEach((model) => Object.values(model).forEach((fn) => fn.mockReset()));
@@ -29,32 +29,6 @@ describe("getCompanyCounts", () => {
   it("returns the five company-scoped counts", async () => {
     await expect(getCompanyCounts("co-1")).resolves.toEqual({ customers: 1, suppliers: 2, employees: 3, warehouses: 4, users: 5 });
     expect(mockPrisma.customer.count).toHaveBeenCalledWith({ where: { companyId: "co-1", isActive: true } });
-  });
-});
-
-describe("getPlatformDashboard", () => {
-  it("sums per-company counts into an overall total and returns the per-company breakdown", async () => {
-    mockPrisma.company.findMany.mockResolvedValue([
-      { id: "co-1", name: "Alpha" },
-      { id: "co-2", name: "Beta" },
-    ]);
-    // getCompanyCounts is called once per company; vary the second company's numbers.
-    mockPrisma.customer.count.mockResolvedValueOnce(1).mockResolvedValueOnce(10);
-    mockPrisma.supplier.count.mockResolvedValueOnce(2).mockResolvedValueOnce(20);
-    mockPrisma.employee.count.mockResolvedValueOnce(3).mockResolvedValueOnce(30);
-    mockPrisma.user.count.mockResolvedValueOnce(5).mockResolvedValueOnce(50);
-
-    const result = await getPlatformDashboard();
-
-    expect(result.companies).toHaveLength(2);
-    expect(result.overall).toEqual({ companies: 2, customers: 11, suppliers: 22, employees: 33, users: 55 });
-  });
-
-  it("returns zeroed totals with no companies at all", async () => {
-    mockPrisma.company.findMany.mockResolvedValue([]);
-    const result = await getPlatformDashboard();
-    expect(result.overall).toEqual({ companies: 0, customers: 0, suppliers: 0, employees: 0, users: 0 });
-    expect(result.companies).toEqual([]);
   });
 });
 
@@ -85,13 +59,6 @@ describe("getTeamDashboard", () => {
 });
 
 describe("getDashboardViewForUser", () => {
-  it("returns the platform view outright for a platform admin, without checking their Employee link at all", async () => {
-    mockPrisma.company.findMany.mockResolvedValue([]);
-    const result = await getDashboardViewForUser({ userId: "user-1", companyId: "co-1", isPlatformAdmin: true });
-    expect(result.kind).toBe("platform");
-    expect(mockPrisma.user.findUnique).not.toHaveBeenCalled();
-  });
-
   it("returns the team view for a user whose Employee has at least one direct report", async () => {
     mockPrisma.user.findUnique.mockResolvedValue({ employeeId: "emp-supervisor", employee: { fullName: "Priya Sharma" } });
     mockPrisma.employee.count.mockResolvedValue(3); // directReportCount check
@@ -100,7 +67,7 @@ describe("getDashboardViewForUser", () => {
     mockPrisma.jobOrderAssignment.findMany.mockResolvedValue([]);
     mockPrisma.leaveRequest.count.mockResolvedValue(0);
 
-    const result = await getDashboardViewForUser({ userId: "user-1", companyId: "co-1", isPlatformAdmin: false });
+    const result = await getDashboardViewForUser({ userId: "user-1", companyId: "co-1" });
 
     expect(result.kind).toBe("team");
     if (result.kind === "team") expect(result.supervisorName).toBe("Priya Sharma");
@@ -110,7 +77,7 @@ describe("getDashboardViewForUser", () => {
     mockPrisma.user.findUnique.mockResolvedValue({ employeeId: "emp-ic", employee: { fullName: "An IC" } });
     mockPrisma.employee.count.mockResolvedValue(0); // directReportCount check — no reports
 
-    const result = await getDashboardViewForUser({ userId: "user-1", companyId: "co-1", isPlatformAdmin: false });
+    const result = await getDashboardViewForUser({ userId: "user-1", companyId: "co-1" });
 
     expect(result.kind).toBe("company");
     expect(mockPrisma.employee.findMany).not.toHaveBeenCalled(); // getTeamDashboard never even invoked
@@ -118,7 +85,7 @@ describe("getDashboardViewForUser", () => {
 
   it("falls back to the ordinary company view for a user with no linked Employee at all", async () => {
     mockPrisma.user.findUnique.mockResolvedValue({ employeeId: null, employee: null });
-    const result = await getDashboardViewForUser({ userId: "user-1", companyId: "co-1", isPlatformAdmin: false });
+    const result = await getDashboardViewForUser({ userId: "user-1", companyId: "co-1" });
     expect(result.kind).toBe("company");
   });
 });

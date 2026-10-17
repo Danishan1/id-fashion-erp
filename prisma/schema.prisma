@@ -15,24 +15,33 @@ datasource db {
 // ─────────────────────────────────────────────────────────────
 
 model Company {
-  id                   String   @id @default(uuid()) @db.Uuid
-  name                 String
-  legalName            String?  @map("legal_name")
-  taxRegistrationNo    String?  @unique @map("tax_registration_no")
-  baseCurrencyCode     String   @map("base_currency_code") @db.Char(3)
-  fiscalYearStartMonth Int      @default(1) @map("fiscal_year_start_month")
-  addressJson          Json?    @map("address_json")
-  isActive             Boolean  @default(true) @map("is_active")
-  createdAt            DateTime @default(now()) @map("created_at")
-  updatedAt            DateTime @updatedAt @map("updated_at")
+  id                        String    @id @default(uuid()) @db.Uuid
+  name                      String
+  legalName                 String?   @map("legal_name")
+  taxRegistrationNo         String?   @unique @map("tax_registration_no")
+  baseCurrencyCode          String    @map("base_currency_code") @db.Char(3)
+  fiscalYearStartMonth      Int       @default(1) @map("fiscal_year_start_month")
+  addressJson               Json?     @map("address_json")
+  isActive                  Boolean   @default(true) @map("is_active")
+  // Platform SaaS Phase 3 (PLAT-016): who suspended the company, when and
+  // why. Cleared again when the company is reactivated; the full history
+  // stays in audit_logs.
+  suspendedAt               DateTime? @map("suspended_at")
+  suspensionReason          String?   @map("suspension_reason")
+  suspendedByPlatformUserId String?   @map("suspended_by_platform_user_id") @db.Uuid
+  createdAt                 DateTime  @default(now()) @map("created_at")
+  updatedAt                 DateTime  @updatedAt @map("updated_at")
 
   baseCurrency                        Currency                             @relation(fields: [baseCurrencyCode], references: [code])
   branches                            Branch[]
   users                               User[]
+  supportAccessRequests               SupportAccessRequest[]
+  supportAccessSessions               SupportAccessSession[]
   roles                               Role[]
   customers                           Customer[]
   suppliers                           Supplier[]
   contractors                         Contractor[]
+  forwarders                          Forwarder[]
   barcodes                            Barcode[]
   supplierCategories                  SupplierCategory[]
   supplierMaterials                   SupplierMaterial[]
@@ -81,6 +90,11 @@ model Company {
   fabricRolls                         FabricRoll[]
   inventoryTransactions               InventoryTransaction[]
   stockBalances                       StockBalance[]
+  finishedGoodsStockBalances          FinishedGoodsStockBalance[]
+  finishedGoodsReservations           FinishedGoodsReservation[]
+  finishedGoodsReceipts               FinishedGoodsReceipt[]
+  finishedGoodsPutaways               FinishedGoodsPutaway[]
+  finishedGoodsPickLines              FinishedGoodsPickLine[]
   stockMovements                      StockMovement[]
   productionOrders                    ProductionOrder[]
   lots                                Lot[]
@@ -94,6 +108,7 @@ model Company {
   pieceRateEarnings                   PieceRateEarning[]
   productionSettings                  ProductionSettings?
   dispatchSettings                    DispatchSettings?
+  fgInventorySettings                 FgInventorySettings?
   productionRoutes                    ProductionRoute[]
   documentSequences                   DocumentSequence[]
   auditLogs                           AuditLog[]
@@ -135,6 +150,11 @@ model Company {
   crmOpportunityStageHistory          CrmOpportunityStageHistory[]
   crmActivities                       CrmActivity[]
   crmActivityLinks                    CrmActivityLink[]
+  crmChannels                         CrmChannel[]
+  crmConversations                    CrmConversation[]
+  crmMessages                         CrmMessage[]
+  crmMessageTemplates                 CrmMessageTemplate[]
+  crmMessageTemplateVersions          CrmMessageTemplateVersion[]
   crmUserPreferences                  CrmUserPreference[]
   crmCompanyMerges                    CrmCompanyMerge[]
   attendanceRecords                   AttendanceRecord[]
@@ -215,6 +235,12 @@ model Company {
   aiGarmentBuyerCommentsRuns          AiGarmentBuyerCommentsRun[]
   aiGarmentBuyerCommentsAnalyses      AiGarmentBuyerCommentsAnalysis[]
   actionDisplaySettings               ActionDisplaySettings?
+  suspendedByPlatformUser             PlatformUser?                        @relation("CompanySuspendedBy", fields: [suspendedByPlatformUserId], references: [id], onDelete: SetNull)
+  moduleEntitlements                  CompanyModuleEntitlement[]
+  subscription                        CompanySubscription?
+  subscriptionPayments                SubscriptionPayment[]
+  couponRedemptions                   CouponRedemption[]
+  supportTickets                      SupportTicket[]
 
   styleStageCosts  StyleStageCost[]
   designStageCosts DesignStageCost[]
@@ -252,9 +278,13 @@ model Branch {
   purchaseOrders        PurchaseOrder[]
   materialRequests      MaterialRequest[]
   goodsReceipts         GoodsReceipt[]
-  inventoryTransactions InventoryTransaction[]
-  stockMovements        StockMovement[]
-  roleBranchAccess      RoleBranchAccess[]
+  inventoryTransactions      InventoryTransaction[]
+  finishedGoodsStockBalances FinishedGoodsStockBalance[]
+  finishedGoodsReservations  FinishedGoodsReservation[]
+  finishedGoodsReceipts      FinishedGoodsReceipt[]
+  finishedGoodsPutaways      FinishedGoodsPutaway[]
+  stockMovements             StockMovement[]
+  roleBranchAccess           RoleBranchAccess[]
   productionOrders      ProductionOrder[]
   lots                  Lot[]
   documentSequences     DocumentSequence[]
@@ -283,11 +313,502 @@ enum UserStatus {
   LOCKED
 }
 
+enum PlatformUserRole {
+  PLATFORM_SUPER_ADMIN
+  SUPPORT_AGENT
+  BILLING_ADMIN
+}
+
+// A platform operator (Platform SaaS Phase 1, PLAT-001) — deliberately has no
+// companyId: platform staff belong to no customer tenant and get no access to
+// any tenant's ERP data. Signs in only at /platform/login (a separate NextAuth
+// provider, "platform-credentials") and can only use the /platform portal.
+// Access to a customer's ERP will come only through the customer-approved
+// support session planned for Phase 2.
+model PlatformUser {
+  id                 String           @id @default(uuid()) @db.Uuid
+  email              String           @unique
+  passwordHash       String           @map("password_hash")
+  fullName           String           @map("full_name")
+  role               PlatformUserRole @default(SUPPORT_AGENT)
+  status             UserStatus       @default(ACTIVE)
+  lastLoginAt        DateTime?        @map("last_login_at")
+  passwordChangedAt  DateTime?        @map("password_changed_at")
+  // Set only for rows backfilled from users.is_platform_admin by the PLAT-001
+  // migration — traceability back to the old tenant account, never a link
+  // that grants anything.
+  migratedFromUserId String?          @unique @map("migrated_from_user_id") @db.Uuid
+  createdAt          DateTime         @default(now()) @map("created_at")
+  updatedAt          DateTime         @updatedAt @map("updated_at")
+
+  auditLogs                AuditLog[]
+  supportProxyUsers        User[]                     @relation("SupportProxyUser")
+  supportAccessRequests    SupportAccessRequest[]
+  supportAccessSessions    SupportAccessSession[]
+  companiesSuspended       Company[]                  @relation("CompanySuspendedBy")
+  moduleEntitlementChanges CompanyModuleEntitlement[]
+  subscriptionsUpdated     CompanySubscription[]
+  subscriptionPayments     SubscriptionPayment[]
+  couponsCreated           Coupon[]                   @relation("CouponCreatedBy")
+  couponsRedeemed          CouponRedemption[]         @relation("CouponRedeemedBy")
+  supportTicketsAssigned   SupportTicket[]            @relation("SupportTicketAssignedTo")
+  supportTicketMessages    SupportTicketMessage[]     @relation("SupportTicketMessagePlatformAuthor")
+
+  @@map("platform_users")
+}
+
+// Platform SaaS Phase 3 (PLAT-018) — which product packages (see
+// src/config/module-entitlements.ts) a company may use. A missing row means
+// the package is enabled, so only explicitly disabled packages need a row.
+// Enforced by PermissionService (every API + sidebar + server page) and the
+// proxy (page URLs).
+model CompanyModuleEntitlement {
+  id                      String   @id @default(uuid()) @db.Uuid
+  companyId               String   @map("company_id") @db.Uuid
+  packageKey              String   @map("package_key")
+  isEnabled               Boolean  @default(true) @map("is_enabled")
+  changedByPlatformUserId String?  @map("changed_by_platform_user_id") @db.Uuid
+  createdAt               DateTime @default(now()) @map("created_at")
+  updatedAt               DateTime @updatedAt @map("updated_at")
+
+  company   Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  changedBy PlatformUser? @relation(fields: [changedByPlatformUserId], references: [id], onDelete: SetNull)
+
+  @@unique([companyId, packageKey])
+  @@map("company_module_entitlements")
+}
+
+// ---------------------------------------------------------------------------
+// Platform SaaS Phase 4 — subscriptions, trials and the grace period
+// (PLAT-021..025). Payment is recorded manually by platform staff (DEC-03);
+// there is no payment gateway. A company's access state (trial / active /
+// grace / expired) is DERIVED from `currentPeriodEndsAt` at read time — see
+// src/core/subscriptions/subscription-state.ts — never stored. Grace (7 days
+// after the period ends) and the post-grace archive (DEC-01) are both
+// read-only: view, print and export only.
+// ---------------------------------------------------------------------------
+
+enum SubscriptionBillingCycle {
+  MONTHLY
+  ANNUAL
+}
+
+enum SubscriptionPaymentMethod {
+  BANK_TRANSFER
+  CHEQUE
+  UPI
+  CASH
+  CARD
+  OTHER
+}
+
+model SubscriptionPlan {
+  id                 String   @id @default(uuid()) @db.Uuid
+  code               String   @unique
+  name               String
+  description        String?
+  monthlyPrice       Decimal? @map("monthly_price") @db.Decimal(18, 2)
+  annualPrice        Decimal? @map("annual_price") @db.Decimal(18, 2)
+  currencyCode       String   @default("INR") @map("currency_code") @db.VarChar(3)
+  trialDays          Int      @default(14) @map("trial_days")
+  // null = unlimited users
+  maxUsers           Int?     @map("max_users")
+  isActive           Boolean  @default(true) @map("is_active")
+  // The plan a newly created company starts its trial on.
+  isDefaultTrialPlan Boolean  @default(false) @map("is_default_trial_plan")
+  sortOrder          Int      @default(0) @map("sort_order")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  modules       SubscriptionPlanModule[]
+  subscriptions CompanySubscription[]
+  payments      SubscriptionPayment[]
+  couponPlans   CouponPlan[]
+
+  @@map("subscription_plans")
+}
+
+// The module packages (src/config/module-entitlements.ts) a plan includes.
+model SubscriptionPlanModule {
+  id         String @id @default(uuid()) @db.Uuid
+  planId     String @map("plan_id") @db.Uuid
+  packageKey String @map("package_key")
+
+  plan SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@unique([planId, packageKey])
+  @@map("subscription_plan_modules")
+}
+
+// One current subscription per company.
+model CompanySubscription {
+  id                      String                   @id @default(uuid()) @db.Uuid
+  companyId               String                   @unique @map("company_id") @db.Uuid
+  planId                  String                   @map("plan_id") @db.Uuid
+  billingCycle            SubscriptionBillingCycle @default(MONTHLY) @map("billing_cycle")
+  isTrial                 Boolean                  @default(false) @map("is_trial")
+  startedAt               DateTime                 @default(now()) @map("started_at")
+  // null = no expiry (complimentary / existing customers before Phase 4)
+  currentPeriodEndsAt     DateTime?                @map("current_period_ends_at")
+  // Lifecycle worker idempotency: "<STAGE>|<period end ISO>" of the last notice sent.
+  lastNotifiedKey         String?                  @map("last_notified_key")
+  updatedByPlatformUserId String?                  @map("updated_by_platform_user_id") @db.Uuid
+  createdAt               DateTime                 @default(now()) @map("created_at")
+  updatedAt               DateTime                 @updatedAt @map("updated_at")
+
+  company   Company               @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  plan      SubscriptionPlan      @relation(fields: [planId], references: [id], onDelete: Restrict)
+  updatedBy PlatformUser?         @relation(fields: [updatedByPlatformUserId], references: [id], onDelete: SetNull)
+  payments  SubscriptionPayment[]
+
+  @@map("company_subscriptions")
+}
+
+// A manually recorded payment that renewed a subscription (DEC-03).
+model SubscriptionPayment {
+  id                       String                    @id @default(uuid()) @db.Uuid
+  companyId                String                    @map("company_id") @db.Uuid
+  subscriptionId           String                    @map("subscription_id") @db.Uuid
+  planId                   String                    @map("plan_id") @db.Uuid
+  billingCycle             SubscriptionBillingCycle  @map("billing_cycle")
+  periods                  Int                       @default(1)
+  // Amount actually received.
+  amount                   Decimal                   @db.Decimal(18, 2)
+  // Phase 5: plan price x periods before any coupon (null = plan has no price for this cycle).
+  listAmount               Decimal?                  @map("list_amount") @db.Decimal(18, 2)
+  discountAmount           Decimal                   @default(0) @map("discount_amount") @db.Decimal(18, 2)
+  freeMonths               Int                       @default(0) @map("free_months")
+  couponId                 String?                   @map("coupon_id") @db.Uuid
+  currencyCode             String                    @map("currency_code") @db.VarChar(3)
+  paidAt                   DateTime                  @map("paid_at") @db.Date
+  method                   SubscriptionPaymentMethod
+  reference                String?
+  notes                    String?
+  periodStart              DateTime                  @map("period_start")
+  periodEnd                DateTime                  @map("period_end")
+  recordedByPlatformUserId String                    @map("recorded_by_platform_user_id") @db.Uuid
+  createdAt                DateTime                  @default(now()) @map("created_at")
+
+  company      Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  subscription CompanySubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  plan         SubscriptionPlan    @relation(fields: [planId], references: [id], onDelete: Restrict)
+  recordedBy   PlatformUser        @relation(fields: [recordedByPlatformUserId], references: [id], onDelete: Restrict)
+  coupon       Coupon?             @relation(fields: [couponId], references: [id], onDelete: SetNull)
+  redemption   CouponRedemption?
+
+  @@index([companyId, paidAt])
+  @@map("subscription_payments")
+}
+
+// ---------------------------------------------------------------------------
+// Platform SaaS Phase 5 — coupons (PLAT-026/027) and support tickets
+// (PLAT-028..030). A coupon IS the offer (no separate Offer table): platform
+// staff apply it when recording a payment (percent / fixed / free months) or
+// when creating a company (longer trial). Billing stays manual (DEC-03).
+// ---------------------------------------------------------------------------
+
+enum CouponDiscountType {
+  PERCENT
+  FIXED_AMOUNT
+  FREE_MONTHS
+  TRIAL_EXTENSION
+}
+
+model Coupon {
+  id                       String                     @id @default(uuid()) @db.Uuid
+  code                     String                     @unique
+  name                     String
+  description              String?
+  discountType             CouponDiscountType         @map("discount_type")
+  // PERCENT: 0-100; FIXED_AMOUNT: money; FREE_MONTHS: months; TRIAL_EXTENSION: extra trial days.
+  discountValue            Decimal                    @map("discount_value") @db.Decimal(18, 2)
+  currencyCode             String                     @default("INR") @map("currency_code") @db.VarChar(3)
+  validFrom                DateTime?                  @map("valid_from")
+  validUntil               DateTime?                  @map("valid_until")
+  // null = unlimited
+  maxRedemptions           Int?                       @map("max_redemptions")
+  maxRedemptionsPerCompany Int                        @default(1) @map("max_redemptions_per_company")
+  // Empty = any cycle (payment coupons only).
+  billingCycles            SubscriptionBillingCycle[] @map("billing_cycles")
+  isActive                 Boolean                    @default(true) @map("is_active")
+  createdByPlatformUserId  String?                    @map("created_by_platform_user_id") @db.Uuid
+  createdAt                DateTime                   @default(now()) @map("created_at")
+  updatedAt                DateTime                   @updatedAt @map("updated_at")
+
+  createdBy   PlatformUser?         @relation("CouponCreatedBy", fields: [createdByPlatformUserId], references: [id], onDelete: SetNull)
+  // Empty = any plan.
+  plans       CouponPlan[]
+  redemptions CouponRedemption[]
+  payments    SubscriptionPayment[]
+
+  @@map("coupons")
+}
+
+model CouponPlan {
+  id       String @id @default(uuid()) @db.Uuid
+  couponId String @map("coupon_id") @db.Uuid
+  planId   String @map("plan_id") @db.Uuid
+
+  coupon Coupon           @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  plan   SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@unique([couponId, planId])
+  @@map("coupon_plans")
+}
+
+model CouponRedemption {
+  id                       String   @id @default(uuid()) @db.Uuid
+  couponId                 String   @map("coupon_id") @db.Uuid
+  companyId                String   @map("company_id") @db.Uuid
+  // Set for payment coupons; null for a trial extension at company creation.
+  paymentId                String?  @unique @map("payment_id") @db.Uuid
+  discountAmount           Decimal  @default(0) @map("discount_amount") @db.Decimal(18, 2)
+  freeMonths               Int      @default(0) @map("free_months")
+  trialDays                Int      @default(0) @map("trial_days")
+  redeemedByPlatformUserId String?  @map("redeemed_by_platform_user_id") @db.Uuid
+  createdAt                DateTime @default(now()) @map("created_at")
+
+  coupon     Coupon               @relation(fields: [couponId], references: [id], onDelete: Restrict)
+  company    Company              @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  payment    SubscriptionPayment? @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  redeemedBy PlatformUser?        @relation("CouponRedeemedBy", fields: [redeemedByPlatformUserId], references: [id], onDelete: SetNull)
+
+  @@index([couponId, companyId])
+  @@map("coupon_redemptions")
+}
+
+enum SupportTicketStatus {
+  OPEN
+  IN_PROGRESS
+  WAITING_ON_CUSTOMER
+  RESOLVED
+  CLOSED
+}
+
+enum SupportTicketPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum SupportTicketCategory {
+  GENERAL
+  BUG
+  BILLING
+  ACCOUNT
+  DATA
+  FEATURE_REQUEST
+}
+
+enum SupportTicketAuthorType {
+  CUSTOMER
+  PLATFORM
+}
+
+model SupportTicket {
+  id                       String                  @id @default(uuid()) @db.Uuid
+  companyId                String                  @map("company_id") @db.Uuid
+  ticketNumber             String                  @map("ticket_number")
+  subject                  String
+  category                 SupportTicketCategory   @default(GENERAL)
+  priority                 SupportTicketPriority   @default(NORMAL)
+  status                   SupportTicketStatus     @default(OPEN)
+  createdByUserId          String                  @map("created_by_user_id") @db.Uuid
+  assignedToPlatformUserId String?                 @map("assigned_to_platform_user_id") @db.Uuid
+  lastMessageAt            DateTime                @default(now()) @map("last_message_at")
+  // Who wrote last (customer messages = needs a platform reply).
+  lastMessageBy            SupportTicketAuthorType @default(CUSTOMER) @map("last_message_by")
+  resolvedAt               DateTime?               @map("resolved_at")
+  closedAt                 DateTime?               @map("closed_at")
+  createdAt                DateTime                @default(now()) @map("created_at")
+  updatedAt                DateTime                @updatedAt @map("updated_at")
+
+  company    Company                @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdBy  User                   @relation("SupportTicketCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  assignedTo PlatformUser?          @relation("SupportTicketAssignedTo", fields: [assignedToPlatformUserId], references: [id], onDelete: SetNull)
+  messages   SupportTicketMessage[]
+
+  @@unique([companyId, ticketNumber])
+  @@index([status, lastMessageAt])
+  @@index([companyId, createdByUserId])
+  @@map("support_tickets")
+}
+
+model SupportTicketMessage {
+  id                   String                  @id @default(uuid()) @db.Uuid
+  ticketId             String                  @map("ticket_id") @db.Uuid
+  authorType           SupportTicketAuthorType @map("author_type")
+  authorUserId         String?                 @map("author_user_id") @db.Uuid
+  authorPlatformUserId String?                 @map("author_platform_user_id") @db.Uuid
+  body                 String
+  // Platform-only note, never shown to the customer.
+  isInternal           Boolean                 @default(false) @map("is_internal")
+  createdAt            DateTime                @default(now()) @map("created_at")
+
+  ticket             SupportTicket             @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  authorUser         User?                     @relation("SupportTicketMessageAuthor", fields: [authorUserId], references: [id], onDelete: SetNull)
+  authorPlatformUser PlatformUser?             @relation("SupportTicketMessagePlatformAuthor", fields: [authorPlatformUserId], references: [id], onDelete: SetNull)
+  attachments        SupportTicketAttachment[]
+
+  @@index([ticketId, createdAt])
+  @@map("support_ticket_messages")
+}
+
+// Files on a ticket message. Kept apart from the shared `attachments` table
+// because platform staff (not tenant users) also upload here.
+model SupportTicketAttachment {
+  id            String   @id @default(uuid()) @db.Uuid
+  messageId     String   @map("message_id") @db.Uuid
+  fileName      String   @map("file_name")
+  mimeType      String   @map("mime_type")
+  fileSizeBytes Int      @map("file_size_bytes")
+  storageKey    String   @map("storage_key")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  message SupportTicketMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@map("support_ticket_attachments")
+}
+
+// ---------------------------------------------------------------------------
+// Platform SaaS Phase 2 — customer-approved support access (PLAT-008..015).
+// A platform operator can reach a customer's ERP only through a request the
+// company's own Super Admin approves by entering a one-time 6-digit code the
+// operator gives them. The resulting session is time-limited (max 2 hours),
+// read-only by default, revocable at any moment by the customer, and every
+// step and request is written to a hash-chained support event log.
+// ---------------------------------------------------------------------------
+
+enum SupportAccessRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+  CANCELLED
+  // Too many wrong codes — dead, a new request is needed.
+  LOCKED
+}
+
+enum SupportAccessMode {
+  READ_ONLY
+  READ_WRITE
+}
+
+enum SupportWriteRequestStatus {
+  NONE
+  PENDING
+  APPROVED
+  REJECTED
+  LOCKED
+}
+
+enum SupportEventActorType {
+  PLATFORM_USER
+  TENANT_USER
+  SYSTEM
+}
+
+model SupportAccessRequest {
+  id              String                     @id @default(uuid()) @db.Uuid
+  companyId       String                     @map("company_id") @db.Uuid
+  platformUserId  String                     @map("platform_user_id") @db.Uuid
+  reason          String
+  durationMinutes Int                        @map("duration_minutes")
+  status          SupportAccessRequestStatus @default(PENDING)
+  // HMAC of the 6-digit code (keyed with the app secret, bound to this
+  // request) — the code itself is shown once to the operator, never stored.
+  codeHash        String                     @map("code_hash")
+  codeExpiresAt   DateTime                   @map("code_expires_at")
+  failedAttempts  Int                        @default(0) @map("failed_attempts")
+  decidedByUserId String?                    @map("decided_by_user_id") @db.Uuid
+  decidedAt       DateTime?                  @map("decided_at")
+  rejectionReason String?                    @map("rejection_reason")
+  createdAt       DateTime                   @default(now()) @map("created_at")
+  updatedAt       DateTime                   @updatedAt @map("updated_at")
+
+  company      Company               @relation(fields: [companyId], references: [id])
+  platformUser PlatformUser          @relation(fields: [platformUserId], references: [id])
+  decidedBy    User?                 @relation("SupportRequestDecidedBy", fields: [decidedByUserId], references: [id])
+  session      SupportAccessSession?
+  events       SupportAccessEvent[]
+
+  @@index([companyId, status])
+  @@index([platformUserId, createdAt])
+  @@map("support_access_requests")
+}
+
+model SupportAccessSession {
+  id                     String                    @id @default(uuid()) @db.Uuid
+  requestId              String                    @unique @map("request_id") @db.Uuid
+  companyId              String                    @map("company_id") @db.Uuid
+  platformUserId         String                    @map("platform_user_id") @db.Uuid
+  // The company-scoped "Support — <operator>" user the operator acts as
+  // (users.support_for_platform_user_id), so every record and audit row
+  // stays inside this company and is clearly attributable to support.
+  proxyUserId            String                    @map("proxy_user_id") @db.Uuid
+  mode                   SupportAccessMode         @default(READ_ONLY)
+  startedAt              DateTime                  @default(now()) @map("started_at")
+  expiresAt              DateTime                  @map("expires_at")
+  revokedAt              DateTime?                 @map("revoked_at")
+  revokedByUserId        String?                   @map("revoked_by_user_id") @db.Uuid
+  endedAt                DateTime?                 @map("ended_at")
+  writeStatus            SupportWriteRequestStatus @default(NONE) @map("write_status")
+  writeJustification     String?                   @map("write_justification")
+  writeCodeHash          String?                   @map("write_code_hash")
+  writeCodeExpiresAt     DateTime?                 @map("write_code_expires_at")
+  writeFailedAttempts    Int                       @default(0) @map("write_failed_attempts")
+  writeRequestedAt       DateTime?                 @map("write_requested_at")
+  writeDecidedAt         DateTime?                 @map("write_decided_at")
+  writeDecidedByUserId   String?                   @map("write_decided_by_user_id") @db.Uuid
+  // Short-lived, single-use token the operator's browser exchanges for a
+  // support sign-in (sha256; the raw token is never stored).
+  exchangeTokenHash      String?                   @unique @map("exchange_token_hash")
+  exchangeTokenExpiresAt DateTime?                 @map("exchange_token_expires_at")
+  lastAccessedAt         DateTime?                 @map("last_accessed_at")
+  createdAt              DateTime                  @default(now()) @map("created_at")
+  updatedAt              DateTime                  @updatedAt @map("updated_at")
+
+  request        SupportAccessRequest @relation(fields: [requestId], references: [id])
+  company        Company              @relation(fields: [companyId], references: [id])
+  platformUser   PlatformUser         @relation(fields: [platformUserId], references: [id])
+  proxyUser      User                 @relation("SupportSessionProxyUser", fields: [proxyUserId], references: [id])
+  revokedBy      User?                @relation("SupportSessionRevokedBy", fields: [revokedByUserId], references: [id])
+  writeDecidedBy User?                @relation("SupportSessionWriteDecidedBy", fields: [writeDecidedByUserId], references: [id])
+
+  @@index([proxyUserId, expiresAt])
+  @@index([companyId, expiresAt])
+  @@map("support_access_sessions")
+}
+
+// Append-only, hash-chained per request: each row's hash covers the previous
+// row's hash plus its own content, so editing or deleting any row breaks the
+// chain (verifySupportEventChain()).
+model SupportAccessEvent {
+  id        String                @id @default(uuid()) @db.Uuid
+  requestId String                @map("request_id") @db.Uuid
+  seq       Int
+  eventType String                @map("event_type")
+  actorType SupportEventActorType @map("actor_type")
+  actorId   String?               @map("actor_id") @db.Uuid
+  method    String?
+  path      String?
+  detail    Json?
+  prevHash  String?               @map("prev_hash")
+  hash      String
+  createdAt DateTime              @default(now()) @map("created_at")
+
+  request SupportAccessRequest @relation(fields: [requestId], references: [id])
+
+  @@unique([requestId, seq])
+  @@map("support_access_events")
+}
+
 model User {
-  id                String     @id @default(uuid()) @db.Uuid
-  companyId         String     @map("company_id") @db.Uuid
-  defaultBranchId   String?    @map("default_branch_id") @db.Uuid
-  employeeId        String?    @unique @map("employee_id") @db.Uuid
+  id                       String     @id @default(uuid()) @db.Uuid
+  companyId                String     @map("company_id") @db.Uuid
+  defaultBranchId          String?    @map("default_branch_id") @db.Uuid
+  employeeId               String?    @unique @map("employee_id") @db.Uuid
   // A vendor/external-unit login — this account genuinely IS that
   // Contractor's own portal identity (same 1:1 "this login is that
   // real-world entity" shape as employeeId just above, not a role-style
@@ -295,39 +816,46 @@ model User {
   // server-side via PermissionService.getAllowedContractorId() in every Job
   // Work Order route — an EXTERNAL_UNIT_USER role sees/acts on only its own
   // contractor's jobs.
-  contractorId      String?    @unique @map("contractor_id") @db.Uuid
-  email             String     @unique
-  passwordHash      String     @map("password_hash")
-  fullName          String     @map("full_name")
-  phone             String?
-  mfaSecret         String?    @map("mfa_secret")
-  lastLoginAt       DateTime?  @map("last_login_at")
+  contractorId             String?    @unique @map("contractor_id") @db.Uuid
+  email                    String     @unique
+  passwordHash             String     @map("password_hash")
+  fullName                 String     @map("full_name")
+  phone                    String?
+  mfaSecret                String?    @map("mfa_secret")
+  lastLoginAt              DateTime?  @map("last_login_at")
   // Stamped on every self-service change and admin reset. CF-7's own
   // isUserActive() checks already re-verify live DB state on every
   // permission check, uncached — this reuses that exact same chokepoint to
   // also compare the session's issued-at time against this timestamp, so an
   // old session survives a password change no better than it survives a
   // suspension.
-  passwordChangedAt DateTime?  @map("password_changed_at")
-  // A capability layered ON TOP OF, not part of, this user's own company's
-  // RBAC — a platform admin still belongs to a real company (companyId
-  // above is never null) but can additionally provision brand-new,
-  // independent companies via src/modules/platform. Deliberately NOT a
-  // Permission/Role — that whole system is scoped per-company by design,
-  // and "create another company" has no company to be scoped to yet.
-  // Checked live from the DB on every use (requirePlatformAdmin()), never
-  // trusted from the JWT alone, matching this project's own passwordChangedAt/
-  // status re-verification discipline.
-  isPlatformAdmin   Boolean    @default(false) @map("is_platform_admin")
-  status            UserStatus @default(ACTIVE)
-  createdAt         DateTime   @default(now()) @map("created_at")
-  updatedAt         DateTime   @updatedAt @map("updated_at")
+  passwordChangedAt        DateTime?  @map("password_changed_at")
+  // DEPRECATED (Platform SaaS Phase 1, PLAT-001/004, 2026-10-13) — no longer
+  // read by any authorization path. Platform operators now live in the
+  // separate `PlatformUser` table and sign in at /platform/login; this flag
+  // grants nothing. Kept only because database changes must stay additive
+  // (the PLAT-001 migration copied every flagged user into platform_users).
+  isPlatformAdmin          Boolean    @default(false) @map("is_platform_admin")
+  // Set only on a company's "Support — <operator>" proxy user (Platform SaaS
+  // Phase 2). Such a user has no roles and can't sign in at /login; it gets
+  // access only while a customer-approved support session is live.
+  supportForPlatformUserId String?    @map("support_for_platform_user_id") @db.Uuid
+  status                   UserStatus @default(ACTIVE)
+  createdAt                DateTime   @default(now()) @map("created_at")
+  updatedAt                DateTime   @updatedAt @map("updated_at")
 
   company                                    Company                              @relation(fields: [companyId], references: [id])
   defaultBranch                              Branch?                              @relation("UserDefaultBranch", fields: [defaultBranchId], references: [id])
   employee                                   Employee?                            @relation(fields: [employeeId], references: [id])
   contractorPortalFor                        Contractor?                          @relation("ContractorPortalUser", fields: [contractorId], references: [id])
+  supportForPlatformUser                     PlatformUser?                        @relation("SupportProxyUser", fields: [supportForPlatformUserId], references: [id])
+  supportRequestsDecided                     SupportAccessRequest[]               @relation("SupportRequestDecidedBy")
+  supportSessionsAsProxy                     SupportAccessSession[]               @relation("SupportSessionProxyUser")
+  supportSessionsRevoked                     SupportAccessSession[]               @relation("SupportSessionRevokedBy")
+  supportSessionsWriteDecided                SupportAccessSession[]               @relation("SupportSessionWriteDecidedBy")
   branchRoles                                UserBranchRole[]
+  supportTicketsCreated                      SupportTicket[]                      @relation("SupportTicketCreatedBy")
+  supportTicketMessages                      SupportTicketMessage[]               @relation("SupportTicketMessageAuthor")
   auditLogs                                  AuditLog[]
   notifications                              Notification[]
   uploadedFiles                              Attachment[]
@@ -352,8 +880,12 @@ model User {
   sampleApprovalsMade                        SampleApproval[]                     @relation("SampleApprovalDecidedBy")
   sampleCommentsMade                         SampleComment[]                      @relation("SampleCommentAuthor")
   productionOrdersRequested                  ProductionOrder[]                    @relation("ProductionOrderRequestedBy")
+  productionOrdersReleasedToDispatch         ProductionOrder[]                    @relation("ProductionOrderReleasedToDispatchBy")
   productionOrderQuantityChanges             ProductionOrderQuantityChange[]
   lotsCreated                                Lot[]                                @relation("LotCreatedBy")
+  finishedGoodsReceiptsPosted                FinishedGoodsReceipt[]               @relation("FinishedGoodsReceiptPostedBy")
+  finishedGoodsPutawaysPerformed              FinishedGoodsPutaway[]               @relation("FinishedGoodsPutawayPerformedBy")
+  finishedGoodsPickLinesPicked                FinishedGoodsPickLine[]              @relation("FinishedGoodsPickLinePickedBy")
   barcodesCreated                            Barcode[]                            @relation("BarcodeCreatedBy")
   lotRelationsPerformed                      LotRelation[]                        @relation("LotRelationPerformedBy")
   jobOrderAssignmentsMade                    JobOrderAssignment[]                 @relation("JobOrderAssignmentAssignedBy")
@@ -379,6 +911,13 @@ model User {
   crmNotesAuthored                           CrmNote[]                            @relation("CrmNoteAuthor")
   crmActivitiesAssigned                      CrmActivity[]                        @relation("CrmActivityAssignee")
   crmActivitiesCreated                       CrmActivity[]                        @relation("CrmActivityCreatedBy")
+  crmChannelsDefaultAssignee                 CrmChannel[]                         @relation("CrmChannelDefaultAssignee")
+  crmChannelsCreated                         CrmChannel[]                         @relation("CrmChannelCreatedBy")
+  crmConversationsAssigned                   CrmConversation[]                    @relation("CrmConversationAssignee")
+  crmConversationParticipations              CrmConversationParticipant[]         @relation("CrmConversationParticipantUser")
+  crmMessagesSent                            CrmMessage[]                         @relation("CrmMessageSender")
+  crmMessageTemplatesCreated                 CrmMessageTemplate[]                 @relation("CrmMessageTemplateCreatedBy")
+  crmMessageTemplateVersionsCreated          CrmMessageTemplateVersion[]          @relation("CrmMessageTemplateVersionCreatedBy")
   crmPreferences                             CrmUserPreference[]
   crmSavedViews                              CrmSavedView[]                       @relation("CrmSavedViewOwner")
   crmImportJobsCreated                       CrmImportJob[]                       @relation("CrmImportJobCreatedBy")
@@ -494,6 +1033,7 @@ model User {
   jobWorkReceiptsApproved                    JobWorkReceipt[]                     @relation("JobWorkReceiptApprovedBy")
   jobWorkReceiptsSubmitted                   JobWorkReceipt[]                     @relation("JobWorkReceiptSubmittedBy")
 
+  @@unique([companyId, supportForPlatformUserId])
   @@map("users")
 }
 
@@ -840,6 +1380,51 @@ model Contractor {
   @@map("contractors")
 }
 
+// Forwarder / Transporter / Courier master (2026-10-10, Dispatch Forwarder
+// Master) — confirmed via a full-codebase audit that no equivalent entity
+// existed anywhere (only plain free-text Dispatch.transporterName/
+// vehicleNumber/trackingNumber columns, now kept as-is alongside this).
+// Mirrors Contractor's own "simple rich master" shape exactly (soft-delete,
+// masters_core RBAC, sequential master-code numbering) since it's the same
+// kind of entity — a real-world external party referenced by id, not a
+// second free-text field.
+enum ForwarderType {
+  COURIER
+  ROAD
+  RAIL
+  AIR
+  OTHER
+}
+
+model Forwarder {
+  id            String        @id @default(uuid()) @db.Uuid
+  companyId     String        @map("company_id") @db.Uuid
+  code          String
+  name          String
+  type          ForwarderType @default(COURIER)
+  contactPerson String?       @map("contact_person")
+  phone         String?
+  altPhone      String?       @map("alt_phone")
+  email         String?
+  address       String?
+  city          String?
+  state         String?
+  country       String?
+  postalCode    String?       @map("postal_code")
+  gstin         String?
+  remarks       String?
+  isActive      Boolean       @default(true) @map("is_active")
+  deletedAt     DateTime?     @map("deleted_at")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+
+  company    Company    @relation(fields: [companyId], references: [id])
+  dispatches Dispatch[]
+
+  @@unique([companyId, code])
+  @@map("forwarders")
+}
+
 /**
  * The full catalog of "which suppliers can supply which materials" — a real
  * many-to-many, deliberately separate from Product.defaultSupplierId (a
@@ -1098,6 +1683,9 @@ model Product {
   goodsReceiptItems                 GoodsReceiptItem[]
   inventoryTransactions             InventoryTransaction[]
   stockBalances                     StockBalance[]
+  finishedGoodsStockBalances        FinishedGoodsStockBalance[]
+  finishedGoodsReceipts             FinishedGoodsReceipt[]
+  finishedGoodsPutaways             FinishedGoodsPutaway[]
   bom                               Bom?
   bomItemUsages                     BomItem[]                     @relation("BomItemMaterial")
   materialRequestItems              MaterialRequestItem[]         @relation("MaterialRequestItemMaterial")
@@ -1228,9 +1816,16 @@ model ProductVariant {
   color   Color   @relation(fields: [colorId], references: [id])
   size    Size    @relation(fields: [sizeId], references: [id])
 
-  salesOrderBreakdown SalesOrderItemBreakdown[]
-  cartonItems         CartonItem[]
-  lotVariantBreakdown LotVariantBreakdown[]
+  salesOrderBreakdown   SalesOrderItemBreakdown[]
+  cartonItems           CartonItem[]
+  lotVariantBreakdown   LotVariantBreakdown[]
+  inventoryTransactions       InventoryTransaction[]
+  finishedGoodsStockBalances  FinishedGoodsStockBalance[]
+  finishedGoodsReservations   FinishedGoodsReservation[]
+  finishedGoodsReceiptItems   FinishedGoodsReceiptItem[]
+  finishedGoodsPutaways       FinishedGoodsPutaway[]
+  stockMovementItems          StockMovementItem[]
+  finishedGoodsPickLines      FinishedGoodsPickLine[]
 
   @@unique([productId, colorId, sizeId])
   @@map("product_variants")
@@ -1265,9 +1860,13 @@ model Warehouse {
   branch                Branch                 @relation(fields: [branchId], references: [id])
   locations             WarehouseLocation[]
   goodsReceiptItems     GoodsReceiptItem[]
-  inventoryTransactions InventoryTransaction[]
-  stockBalances         StockBalance[]
-  materialRequests      MaterialRequest[]
+  inventoryTransactions      InventoryTransaction[]
+  stockBalances              StockBalance[]
+  finishedGoodsStockBalances FinishedGoodsStockBalance[]
+  finishedGoodsReservations  FinishedGoodsReservation[]
+  finishedGoodsReceipts      FinishedGoodsReceipt[]
+  finishedGoodsPutaways      FinishedGoodsPutaway[]
+  materialRequests           MaterialRequest[]
   stockMovementsFrom    StockMovement[]        @relation("StockMovementSourceWarehouse")
   stockMovementsTo      StockMovement[]        @relation("StockMovementDestinationWarehouse")
   dispatches            Dispatch[]
@@ -1285,6 +1884,10 @@ model WarehouseLocation {
   code                  String
   zone                  String?
   rack                  String?
+  // Finished Goods Inventory module (2026-10-13, FGI-005) -- completes the
+  // Zone -> Rack -> Shelf -> Bin hierarchy. Nullable/additive, same "optional
+  // free-text room/section label" convention as zone/rack/bin above.
+  shelf                 String?
   bin                   String?
   // Which kind of material (or, since 2026-09-04, production stage) this
   // physical room/section is dedicated to (e.g. "Fabric Room" vs "WIP Room"
@@ -1311,9 +1914,13 @@ model WarehouseLocation {
   warehouse             Warehouse              @relation(fields: [warehouseId], references: [id])
   goodsReceiptItems     GoodsReceiptItem[]
   fabricRolls           FabricRoll[]
-  inventoryTransactions InventoryTransaction[]
-  stockMovementItems    StockMovementItem[]
-  materialRequestItems  MaterialRequestItem[]
+  inventoryTransactions      InventoryTransaction[]
+  stockMovementItems            StockMovementItem[] @relation("StockMovementItemSourceLocation")
+  stockMovementItemsAsDestination StockMovementItem[] @relation("StockMovementItemDestinationLocation")
+  finishedGoodsPickLines          FinishedGoodsPickLine[]
+  materialRequestItems       MaterialRequestItem[]
+  finishedGoodsStockBalances FinishedGoodsStockBalance[]
+  finishedGoodsPutawayItems  FinishedGoodsPutawayItem[]
 
   @@unique([warehouseId, code])
   @@map("warehouse_locations")
@@ -3127,8 +3734,9 @@ model SalesOrderLine {
   bomVersion      BomVersion?             @relation(fields: [bomVersionId], references: [id])
   sampleVersion   SampleVersion?          @relation(fields: [sampleVersionId], references: [id])
   snapshotTakenBy User?                   @relation("SalesOrderLineSnapshotTakenBy", fields: [snapshotTakenByUserId], references: [id])
-  items           SalesOrderItem[]
-  overrides       SalesOrderBomOverride[]
+  items                     SalesOrderItem[]
+  overrides                 SalesOrderBomOverride[]
+  finishedGoodsReservations FinishedGoodsReservation[]
 
   @@unique([salesOrderId, lineNumber])
   @@map("sales_order_lines")
@@ -3825,47 +4433,61 @@ enum ProductionPriority {
 }
 
 model ProductionOrder {
-  id                String                 @id @default(uuid()) @db.Uuid
-  companyId         String                 @map("company_id") @db.Uuid
-  branchId          String?                @map("branch_id") @db.Uuid
-  orderNumber       String                 @map("order_number")
+  id                         String                 @id @default(uuid()) @db.Uuid
+  companyId                  String                 @map("company_id") @db.Uuid
+  branchId                   String?                @map("branch_id") @db.Uuid
+  orderNumber                String                 @map("order_number")
   // Nullable — null means Make-to-Stock (no customer sale behind this run).
-  salesOrderItemId  String?                @map("sales_order_item_id") @db.Uuid
-  productId         String                 @map("product_id") @db.Uuid
+  salesOrderItemId           String?                @map("sales_order_item_id") @db.Uuid
+  productId                  String                 @map("product_id") @db.Uuid
   // Snapshot pointer for audit purposes — Bom itself has no versioning yet,
   // but this still records "the BOM as it existed" at order-creation time.
-  bomId             String?                @map("bom_id") @db.Uuid
-  plannedQuantity   Decimal                @map("planned_quantity") @db.Decimal(18, 4)
-  status            ProductionOrderStatus  @default(PLANNED)
-  statusBeforeHold  ProductionOrderStatus? @map("status_before_hold")
-  priority          ProductionPriority     @default(NORMAL)
-  plannedStartDate  DateTime?              @map("planned_start_date") @db.Date
-  plannedEndDate    DateTime?              @map("planned_end_date") @db.Date
-  actualStartDate   DateTime?              @map("actual_start_date") @db.Date
-  actualEndDate     DateTime?              @map("actual_end_date") @db.Date
+  bomId                      String?                @map("bom_id") @db.Uuid
+  plannedQuantity            Decimal                @map("planned_quantity") @db.Decimal(18, 4)
+  status                     ProductionOrderStatus  @default(PLANNED)
+  statusBeforeHold           ProductionOrderStatus? @map("status_before_hold")
+  priority                   ProductionPriority     @default(NORMAL)
+  plannedStartDate           DateTime?              @map("planned_start_date") @db.Date
+  plannedEndDate             DateTime?              @map("planned_end_date") @db.Date
+  actualStartDate            DateTime?              @map("actual_start_date") @db.Date
+  actualEndDate              DateTime?              @map("actual_end_date") @db.Date
   // Internal counter for generating this order's own Lot-number suffixes
   // (PROD-2026-00001-L01, -L02, ...) — a sub-sequence per order, deliberately
   // not routed through the shared DocumentNumberingService (a different
   // concern: a per-company/fiscal-year document number vs. a per-order line
   // counter).
-  nextLotSequence   Int                    @default(1) @map("next_lot_sequence")
-  remarks           String?
-  requestedByUserId String                 @map("requested_by_user_id") @db.Uuid
-  createdAt         DateTime               @default(now()) @map("created_at")
-  updatedAt         DateTime               @updatedAt @map("updated_at")
+  nextLotSequence            Int                    @default(1) @map("next_lot_sequence")
+  remarks                    String?
+  requestedByUserId          String                 @map("requested_by_user_id") @db.Uuid
+  // Dispatch Eligibility gate (2026-10-10, Dispatch/Production/Forwarder/
+  // Barcode initiative) — a deliberately manual, independent judgment call,
+  // NOT derived from status/lot completion: a Production Manager can release
+  // partial output to dispatch while the order is still IN_PROGRESS (the
+  // common partial-shipment case this ERP already supports elsewhere), so
+  // reusing CLOSED (which requires every lot done, see closeProductionOrder's
+  // own guard) would be far too strict. Nullable = not yet released, the
+  // default for every order; set/cleared only via the dedicated release/
+  // revoke actions in production-order.service.ts, never the generic
+  // status-transition endpoint.
+  releasedToDispatchAt       DateTime?              @map("released_to_dispatch_at")
+  releasedToDispatchByUserId String?                @map("released_to_dispatch_by_user_id") @db.Uuid
+  createdAt                  DateTime               @default(now()) @map("created_at")
+  updatedAt                  DateTime               @updatedAt @map("updated_at")
 
-  company           Company                         @relation(fields: [companyId], references: [id])
-  branch            Branch?                         @relation(fields: [branchId], references: [id])
-  salesOrderItem    SalesOrderItem?                 @relation(fields: [salesOrderItemId], references: [id])
-  product           Product                         @relation(fields: [productId], references: [id])
-  bom               Bom?                            @relation(fields: [bomId], references: [id])
-  requestedBy       User                            @relation("ProductionOrderRequestedBy", fields: [requestedByUserId], references: [id])
-  lots              Lot[]
-  jobOrders         JobOrder[]
-  stageTransactions ProductionStageTransaction[]
-  qcInspections     QcInspection[]
-  materialRequests  MaterialRequest[]
-  quantityChanges   ProductionOrderQuantityChange[]
+  company              Company                         @relation(fields: [companyId], references: [id])
+  branch               Branch?                         @relation(fields: [branchId], references: [id])
+  salesOrderItem       SalesOrderItem?                 @relation(fields: [salesOrderItemId], references: [id])
+  product              Product                         @relation(fields: [productId], references: [id])
+  bom                  Bom?                            @relation(fields: [bomId], references: [id])
+  requestedBy          User                            @relation("ProductionOrderRequestedBy", fields: [requestedByUserId], references: [id])
+  releasedToDispatchBy User?                           @relation("ProductionOrderReleasedToDispatchBy", fields: [releasedToDispatchByUserId], references: [id])
+  lots                   Lot[]
+  jobOrders              JobOrder[]
+  stageTransactions      ProductionStageTransaction[]
+  qcInspections          QcInspection[]
+  materialRequests       MaterialRequest[]
+  quantityChanges        ProductionOrderQuantityChange[]
+  finishedGoodsReceipts  FinishedGoodsReceipt[]
 
   @@unique([companyId, orderNumber])
   @@index([companyId, status])
@@ -3953,7 +4575,8 @@ model Lot {
   materialRequests  MaterialRequest[]
   // Informational only (Extra Dispatch Quantity, 2026-09-30) — see
   // DispatchItem.sourceLotId's own comment.
-  dispatchItems     DispatchItem[]
+  dispatchItems         DispatchItem[]
+  finishedGoodsReceipts FinishedGoodsReceipt[]
 
   @@unique([companyId, lotNumber])
   @@index([productionOrderId])
@@ -4089,10 +4712,11 @@ model JobOrder {
   progressEntries      JobOrderProgressEntry[]
   incomingTransactions ProductionStageTransaction[] @relation("StageTransactionTo")
   outgoingTransactions ProductionStageTransaction[] @relation("StageTransactionFrom")
-  qcInspections        QcInspection[]
-  jobWorkOrders        JobWorkOrder[]
-  pieceRateEarnings    PieceRateEarning[]
-  materialRequests     MaterialRequest[]
+  qcInspections         QcInspection[]
+  jobWorkOrders         JobWorkOrder[]
+  pieceRateEarnings     PieceRateEarning[]
+  materialRequests      MaterialRequest[]
+  finishedGoodsReceipts FinishedGoodsReceipt[]
 
   // Not unique on (lotId, productionStageId) — a lot can legitimately
   // revisit the same stage after rework; each revisit is a NEW row, never an
@@ -4599,6 +5223,17 @@ enum InventoryTransactionType {
   JOB_WORK_ISSUE_REVERSAL
 }
 
+// Finished Goods Inventory module (2026-10-13, FGI-001) — SALEABLE/REJECTED
+// only, deliberately no QC_HOLD value: Production's own existing QC gate
+// (recordQcInspection) already keeps rejected/damaged quantity out of
+// Finished Goods stock before it is ever received, so there is no second,
+// post-receipt inspection state for a unit of FG stock to sit in. See
+// docs/FINISHED_GOODS_INVENTORY_IMPLEMENTATION_PLAN.md §4.1, Decision 1.
+enum StockStatus {
+  SALEABLE
+  REJECTED
+}
+
 // Append-only, source of truth — no delete column, no edit path, ever.
 // Corrections are always a new compensating row, never an update to an
 // existing one (the project's established ledger discipline).
@@ -4609,6 +5244,12 @@ model InventoryTransaction {
   productId           String                   @map("product_id") @db.Uuid
   warehouseId         String                   @map("warehouse_id") @db.Uuid
   warehouseLocationId String?                  @map("warehouse_location_id") @db.Uuid
+  // Finished Goods Inventory module (FGI-001) — nullable, populated only by
+  // FG-relevant postings going forward (never required, never touched by any
+  // existing raw-material-only caller of recordInventoryTransaction). See
+  // docs/FINISHED_GOODS_INVENTORY_IMPLEMENTATION_PLAN.md §4.1/§4.5.
+  productVariantId    String?                  @map("product_variant_id") @db.Uuid
+  stockStatus         StockStatus?             @map("stock_status")
   transactionType     InventoryTransactionType @map("transaction_type")
   // Signed: positive for a receipt, negative for a reversal/issue.
   quantity            Decimal                  @map("quantity") @db.Decimal(18, 4)
@@ -4630,10 +5271,14 @@ model InventoryTransaction {
   fabricRoll            FabricRoll?            @relation(fields: [fabricRollId], references: [id])
   performedBy           User                   @relation("InventoryTransactionPerformedBy", fields: [performedByUserId], references: [id])
   materialSubstitutions MaterialSubstitution[]
+  productVariant        ProductVariant?        @relation(fields: [productVariantId], references: [id])
+  finishedGoodsReceiptItems FinishedGoodsReceiptItem[]
+  finishedGoodsPutawayItems FinishedGoodsPutawayItem[]
 
   @@index([companyId, productId, warehouseId])
   @@index([referenceModule, referenceRecordId])
   @@index([fabricRollId])
+  @@index([productVariantId])
   @@map("inventory_transactions")
 }
 
@@ -4653,6 +5298,247 @@ model StockBalance {
 
   @@unique([companyId, productId, warehouseId])
   @@map("stock_balances")
+}
+
+// Finished Goods Inventory module (2026-10-13, FGI-002) — the variant/
+// location/status-dimensioned sibling of StockBalance above, never a
+// replacement for it. Fed by the SAME recordInventoryTransaction() call, in
+// the SAME transaction as the one ledger insert that justifies it (see
+// docs/FINISHED_GOODS_INVENTORY_IMPLEMENTATION_PLAN.md §4.1/§4.5) — both
+// caches are always updated together or not at all, so they cannot disagree
+// by construction under correct usage (FGI-013 is the defense-in-depth
+// reconciliation job for the one residual risk: a future caller that forgets
+// to populate the new fields at all).
+//
+// productVariantId is nullable — NULL means "known to exist at this style
+// and warehouse, but not yet broken down by variant," the historical/
+// pre-migration "unallocated" bucket (§4.7), never a real, trackable variant.
+// warehouseLocationId is nullable — NULL means "received but not yet put
+// away to a specific shelf/bin" (staging, §4.3).
+//
+// IMPORTANT: true uniqueness on (companyId, productId, productVariantId,
+// warehouseId, warehouseLocationId, stockStatus) can NOT be expressed as a
+// plain Prisma @@unique here, because standard SQL unique constraints treat
+// every NULL as distinct from every other NULL — two rows that are otherwise
+// identical but both have productVariantId = NULL (or both have
+// warehouseLocationId = NULL) would NOT collide under a plain @@unique,
+// silently allowing duplicate "unallocated"/"staging" rows. The real
+// constraint is a hand-written expression unique index
+// (finished_goods_stock_balances_key, COALESCE(...) over both nullable
+// columns to a fixed sentinel so two NULLs genuinely collide) in this
+// model's own migration file — Prisma's schema DSL cannot express a COALESCE
+// index, so there is deliberately no @@unique/@@index attribute below for
+// this key; do not assume one is missing by oversight.
+model FinishedGoodsStockBalance {
+  id                  String       @id @default(uuid()) @db.Uuid
+  companyId           String       @map("company_id") @db.Uuid
+  branchId            String?      @map("branch_id") @db.Uuid
+  productId           String       @map("product_id") @db.Uuid
+  productVariantId    String?      @map("product_variant_id") @db.Uuid
+  warehouseId         String       @map("warehouse_id") @db.Uuid
+  warehouseLocationId String?      @map("warehouse_location_id") @db.Uuid
+  stockStatus         StockStatus  @map("stock_status")
+  quantityOnHand      Decimal      @default(0) @map("quantity_on_hand") @db.Decimal(18, 4)
+  updatedAt           DateTime     @updatedAt @map("updated_at")
+
+  company           Company            @relation(fields: [companyId], references: [id])
+  branch            Branch?            @relation(fields: [branchId], references: [id])
+  product           Product            @relation(fields: [productId], references: [id])
+  productVariant    ProductVariant?    @relation(fields: [productVariantId], references: [id])
+  warehouse         Warehouse          @relation(fields: [warehouseId], references: [id])
+  warehouseLocation WarehouseLocation? @relation(fields: [warehouseLocationId], references: [id])
+
+  @@index([companyId, productId, warehouseId])
+  @@map("finished_goods_stock_balances")
+}
+
+// Finished Goods Inventory module (2026-10-13, FGI-003) — a Sales-Order-
+// driven stock hold against a specific variant, consumed proportionally at
+// Dispatch confirm time (see docs/FINISHED_GOODS_INVENTORY_IMPLEMENTATION_PLAN.md
+// §4.2). Available = Saleable FinishedGoodsStockBalance − sum(ACTIVE
+// reservations' unconsumed remainder), computed at query time — reservedQuantity
+// is never written onto the stock row itself.
+//
+// IMPORTANT design correction made while implementing this task (not present
+// in the original plan draft): this keys on salesOrderLineId, NOT
+// salesOrderItemId. SalesOrderItem's own schema comment (see that model
+// above) states plainly that updateSalesOrder()'s replaceItems() deletes and
+// recreates every SalesOrderItem row on every order edit — a reservation
+// keyed on SalesOrderItem.id would be orphaned or cascade-deleted the moment
+// a Confirmed-but-not-yet-dispatched order is edited at all, even for an
+// unrelated field like delivery date, well before any Dispatch exists to
+// trigger the order's own separate "can't edit once referenced" guard.
+// SalesOrderLine (added for Effective BOM, 2026-09-24) is this project's own
+// existing, purpose-built stable identity for exactly this problem — reused
+// here rather than re-solving it a second time.
+enum FinishedGoodsReservationStatus {
+  ACTIVE
+  RELEASED
+  FULFILLED
+}
+
+model FinishedGoodsReservation {
+  id               String                         @id @default(uuid()) @db.Uuid
+  companyId        String                         @map("company_id") @db.Uuid
+  branchId         String?                        @map("branch_id") @db.Uuid
+  salesOrderLineId String                         @map("sales_order_line_id") @db.Uuid
+  productVariantId String                         @map("product_variant_id") @db.Uuid
+  // Kept nullable for schema flexibility, but the real (2026-10-16, Phase 1)
+  // creation trigger — applyPackingCompletionReservationsInTx, called from
+  // Packing completion, not Sales-Order confirm — always knows the exact
+  // Finished-Goods warehouse (it's the same warehouse the completion posts
+  // its FG receipt into), so every reservation created by it has this set.
+  warehouseId      String?                        @map("warehouse_id") @db.Uuid
+  // Capped at the exact-variant SalesOrderItemBreakdown.orderedQuantity for
+  // this line, never the style-level total — see
+  // applyPackingCompletionReservationsInTx's own doc comment for the full
+  // business rule and its fail-safe handling of an unmatched/duplicate
+  // produced variant.
+  reservedQuantity Decimal                        @map("reserved_quantity") @db.Decimal(18, 4)
+  consumedQuantity Decimal                        @default(0) @map("consumed_quantity") @db.Decimal(18, 4)
+  status           FinishedGoodsReservationStatus @default(ACTIVE)
+  createdAt        DateTime                       @default(now()) @map("created_at")
+  updatedAt        DateTime                       @updatedAt @map("updated_at")
+
+  company        Company        @relation(fields: [companyId], references: [id])
+  branch         Branch?        @relation(fields: [branchId], references: [id])
+  salesOrderLine SalesOrderLine @relation(fields: [salesOrderLineId], references: [id])
+  productVariant ProductVariant @relation(fields: [productVariantId], references: [id])
+  warehouse      Warehouse?     @relation(fields: [warehouseId], references: [id])
+
+  @@index([companyId, productVariantId, warehouseId, status])
+  @@index([salesOrderLineId])
+  // Hand-added raw-SQL partial unique index (Prisma has no partial @@unique
+  // syntax) — one ACTIVE reservation per (salesOrderLineId, productVariantId)
+  // pair, the ON CONFLICT target applyPackingCompletionReservationsInTx's
+  // atomic upsert-increment relies on. See migration
+  // 20261016120000_add_finished_goods_reservation_active_unique_index.
+  @@map("finished_goods_reservations")
+}
+
+// Finished Goods Inventory module (2026-10-13, FGI-004) — the formal "a
+// batch of production reached a Finished Goods warehouse" document, created
+// ALONGSIDE (never instead of) the existing PRODUCTION_RECEIPT ledger entry
+// completeAtFinalStageInTx() already posts — see
+// docs/FINISHED_GOODS_INVENTORY_IMPLEMENTATION_PLAN.md §6. productionOrderId
+// is denormalized off lot.productionOrderId (same "denormalized from the
+// real owning document" precedent as Dispatch.customerId off SalesOrder) so
+// the Receipts list screen doesn't need to join through Lot just to show
+// which order a receipt belongs to. No status/reversal column in this first
+// pass — append-only, matching the ledger's own "no delete/edit path, ever"
+// discipline; a correction is a new, separate receipt or a manual
+// compensating ledger entry, never an edit to this row.
+model FinishedGoodsReceipt {
+  id                String   @id @default(uuid()) @db.Uuid
+  companyId         String   @map("company_id") @db.Uuid
+  branchId          String?  @map("branch_id") @db.Uuid
+  receiptNumber     String   @map("receipt_number")
+  productId         String   @map("product_id") @db.Uuid
+  lotId             String   @map("lot_id") @db.Uuid
+  jobOrderId        String   @map("job_order_id") @db.Uuid
+  productionOrderId String   @map("production_order_id") @db.Uuid
+  warehouseId       String   @map("warehouse_id") @db.Uuid
+  totalQuantity     Decimal  @map("total_quantity") @db.Decimal(18, 4)
+  postedByUserId    String   @map("posted_by_user_id") @db.Uuid
+  postedAt          DateTime @default(now()) @map("posted_at")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  company         Company                    @relation(fields: [companyId], references: [id])
+  branch          Branch?                    @relation(fields: [branchId], references: [id])
+  product         Product                    @relation(fields: [productId], references: [id])
+  lot             Lot                        @relation(fields: [lotId], references: [id])
+  jobOrder        JobOrder                   @relation(fields: [jobOrderId], references: [id])
+  productionOrder ProductionOrder            @relation(fields: [productionOrderId], references: [id])
+  warehouse       Warehouse                  @relation(fields: [warehouseId], references: [id])
+  postedBy        User                       @relation("FinishedGoodsReceiptPostedBy", fields: [postedByUserId], references: [id])
+  items           FinishedGoodsReceiptItem[]
+
+  @@unique([companyId, branchId, receiptNumber])
+  @@index([lotId])
+  @@index([jobOrderId])
+  @@index([productionOrderId])
+  @@map("finished_goods_receipts")
+}
+
+model FinishedGoodsReceiptItem {
+  id                     String  @id @default(uuid()) @db.Uuid
+  finishedGoodsReceiptId String  @map("finished_goods_receipt_id") @db.Uuid
+  productVariantId       String  @map("product_variant_id") @db.Uuid
+  quantity               Decimal @map("quantity") @db.Decimal(18, 4)
+  // Points at the exact real ledger row this specific variant line posted,
+  // inside the same transaction — same established traceability precedent
+  // as MaterialSubstitution.inventoryTransactionId. Nullable only because a
+  // row could theoretically be written by a future code path that doesn't
+  // have one yet; every real write in this module always sets it.
+  inventoryTransactionId String? @map("inventory_transaction_id") @db.Uuid
+
+  finishedGoodsReceipt FinishedGoodsReceipt @relation(fields: [finishedGoodsReceiptId], references: [id])
+  productVariant       ProductVariant       @relation(fields: [productVariantId], references: [id])
+  inventoryTransaction InventoryTransaction? @relation(fields: [inventoryTransactionId], references: [id])
+
+  @@index([finishedGoodsReceiptId])
+  @@map("finished_goods_receipt_items")
+}
+
+// Finished Goods Inventory module (FGI-030) -- a dedicated, minimal header
+// for the Putaway action: splitting a staging (warehouseLocationId = null)
+// FinishedGoodsStockBalance row across one or more real warehouse locations
+// in one action. Deliberately NOT a StockMovement document (per explicit
+// user decision) -- Putaway is an internal warehouse-organization step, not
+// a commercial movement, and needs its own simpler "split one staging
+// quantity into N destinations" shape rather than the generic Transfer
+// form. Mirrors FinishedGoodsReceipt/Item's own header+items shape exactly
+// (one row per destination location, each carrying its own real
+// inventoryTransactionId) for the same querryability/consistency reasons.
+model FinishedGoodsPutaway {
+  id                String      @id @default(uuid()) @db.Uuid
+  companyId         String      @map("company_id") @db.Uuid
+  branchId          String?     @map("branch_id") @db.Uuid
+  putawayNumber     String      @map("putaway_number")
+  productId         String      @map("product_id") @db.Uuid
+  productVariantId  String      @map("product_variant_id") @db.Uuid
+  warehouseId       String      @map("warehouse_id") @db.Uuid
+  // The staging status this action moved stock out of -- SALEABLE is the
+  // overwhelmingly common case, but REJECTED staging stock is a real
+  // scenario too (e.g. putting away damaged stock into a dedicated reject
+  // location), so this is a real input, not hardcoded.
+  stockStatus       StockStatus @map("stock_status")
+  // The validated sum of every item line below -- never independently
+  // recomputed, matching FinishedGoodsReceipt.totalQuantity's own
+  // "one shared input" discipline (§4.5 point 2).
+  totalQuantity     Decimal     @map("total_quantity") @db.Decimal(18, 4)
+  performedByUserId String      @map("performed_by_user_id") @db.Uuid
+  performedAt       DateTime    @default(now()) @map("performed_at")
+
+  company        Company                    @relation(fields: [companyId], references: [id])
+  branch         Branch?                    @relation(fields: [branchId], references: [id])
+  product        Product                    @relation(fields: [productId], references: [id])
+  productVariant ProductVariant             @relation(fields: [productVariantId], references: [id])
+  warehouse      Warehouse                  @relation(fields: [warehouseId], references: [id])
+  performedBy    User                       @relation("FinishedGoodsPutawayPerformedBy", fields: [performedByUserId], references: [id])
+  items          FinishedGoodsPutawayItem[]
+
+  @@unique([companyId, branchId, putawayNumber])
+  @@index([companyId, productId, warehouseId])
+  @@map("finished_goods_putaways")
+}
+
+model FinishedGoodsPutawayItem {
+  id                     String  @id @default(uuid()) @db.Uuid
+  finishedGoodsPutawayId String  @map("finished_goods_putaway_id") @db.Uuid
+  warehouseLocationId    String  @map("warehouse_location_id") @db.Uuid
+  quantity               Decimal @map("quantity") @db.Decimal(18, 4)
+  // Points at the exact real ledger row this destination line posted,
+  // inside the same transaction -- same established traceability
+  // precedent as FinishedGoodsReceiptItem.inventoryTransactionId.
+  inventoryTransactionId String? @map("inventory_transaction_id") @db.Uuid
+
+  finishedGoodsPutaway FinishedGoodsPutaway  @relation(fields: [finishedGoodsPutawayId], references: [id])
+  warehouseLocation    WarehouseLocation     @relation(fields: [warehouseLocationId], references: [id])
+  inventoryTransaction InventoryTransaction? @relation(fields: [inventoryTransactionId], references: [id])
+
+  @@index([finishedGoodsPutawayId])
+  @@map("finished_goods_putaway_items")
 }
 
 // A single unified header for the three remaining Phase 6 stock-movement
@@ -4723,15 +5609,31 @@ model StockMovementItem {
   // Which room/section within the SOURCE warehouse this line's stock is
   // coming from — traceability only (passed straight through to the ledger's
   // own existing warehouseLocationId, exactly like GoodsReceiptItem already
-  // does), not a stock-availability dimension: StockBalance has no location
-  // column, so getAvailableQuantity() stays warehouse-level. The destination
-  // side of a TRANSFER has no location field — out of scope for this pass.
+  // does). Was "not a stock-availability dimension" for raw materials (still
+  // true there) -- as of FGI-006/FGI-014 (2026-10-13), a Finished-Goods-
+  // flagged line's warehouseLocationId DOES matter for availability, via the
+  // new FinishedGoodsStockBalance cache (see
+  // docs/FINISHED_GOODS_INVENTORY_IMPLEMENTATION_PLAN.md §4.4).
   warehouseLocationId String? @map("warehouse_location_id") @db.Uuid
+  // Finished Goods Inventory module (2026-10-13, FGI-006) — nullable,
+  // populated only on a Finished-Goods-flagged movement line (never by a
+  // raw-material line, which has no variant concept at all). Item-type-family
+  // validation itself (a document is either entirely raw-material or
+  // entirely finished-goods, never mixed) is Phase 1 service-layer work
+  // (FGI-014) — this task is the additive schema only.
+  productVariantId    String? @map("product_variant_id") @db.Uuid
+  // The destination side of a TRANSFER — only meaningful for a Finished-
+  // Goods-flagged movement (§4.4); a raw-material TRANSFER still has no
+  // destination-side location concept, matching warehouseLocationId's own
+  // long-standing "source side only" scope for that item family.
+  toWarehouseLocationId String? @map("to_warehouse_location_id") @db.Uuid
 
-  stockMovement     StockMovement      @relation(fields: [stockMovementId], references: [id])
-  product           Product            @relation(fields: [productId], references: [id])
-  uom               UnitOfMeasure      @relation(fields: [uomId], references: [id])
-  warehouseLocation WarehouseLocation? @relation(fields: [warehouseLocationId], references: [id])
+  stockMovement       StockMovement      @relation(fields: [stockMovementId], references: [id])
+  product             Product            @relation(fields: [productId], references: [id])
+  uom                 UnitOfMeasure      @relation(fields: [uomId], references: [id])
+  warehouseLocation   WarehouseLocation? @relation("StockMovementItemSourceLocation", fields: [warehouseLocationId], references: [id])
+  productVariant      ProductVariant?    @relation(fields: [productVariantId], references: [id])
+  toWarehouseLocation WarehouseLocation? @relation("StockMovementItemDestinationLocation", fields: [toWarehouseLocationId], references: [id])
 
   @@index([stockMovementId])
   @@map("stock_movement_items")
@@ -4797,40 +5699,79 @@ model DispatchSettings {
   @@map("dispatch_settings")
 }
 
+// Finished Goods Inventory module (FGI-032) -- company-wide Stock
+// Adjustment approval-gate toggles, mirroring DispatchSettings' own exact
+// shape above (a missing row means the defaults -- no backfill needed,
+// same "single flat row" precedent as ProductionSettings/DispatchSettings).
+// Deliberately Finished-Goods-only: the existing raw-material Stock
+// Adjustment flow has no approval concept at all and is left completely
+// untouched (per explicit user decision).
+model FgInventorySettings {
+  id                                 String   @id @default(uuid()) @db.Uuid
+  companyId                          String   @unique @map("company_id") @db.Uuid
+  adjustmentApprovalRequired         Boolean  @default(false) @map("adjustment_approval_required")
+  // Either threshold, if set, independently triggers the approval gate even
+  // when adjustmentApprovalRequired is false -- a company may want "only
+  // approve a big discrepancy," not every single adjustment.
+  adjustmentApprovalThresholdQty     Int?     @map("adjustment_approval_threshold_qty")
+  adjustmentApprovalThresholdPercent Decimal? @map("adjustment_approval_threshold_percent") @db.Decimal(5, 2)
+  createdAt                          DateTime @default(now()) @map("created_at")
+  updatedAt                          DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@map("fg_inventory_settings")
+}
+
 model Dispatch {
-  id                String          @id @default(uuid()) @db.Uuid
-  companyId         String          @map("company_id") @db.Uuid
-  branchId          String?         @map("branch_id") @db.Uuid
-  dispatchNumber    String          @map("dispatch_number")
+  id                   String          @id @default(uuid()) @db.Uuid
+  companyId            String          @map("company_id") @db.Uuid
+  branchId             String?         @map("branch_id") @db.Uuid
+  dispatchNumber       String          @map("dispatch_number")
   // Required — Dispatch always fulfills a real Sales Order; a make-to-stock
   // shipment with no formal order (e.g. straight to a distributor) has no
   // Dispatch path this slice — use a plain StockMovement (STOCK_TRANSFER)
   // if that's ever actually needed. Revisit only if requested.
-  salesOrderId      String          @map("sales_order_id") @db.Uuid
+  salesOrderId         String          @map("sales_order_id") @db.Uuid
   // Denormalized from the order — this table is itself the shipping
   // document of record, same justification as SalesInvoice.customerId.
-  customerId        String          @map("customer_id") @db.Uuid
+  customerId           String          @map("customer_id") @db.Uuid
   // The source Finished-Goods warehouse this shipment is issued from.
-  warehouseId       String          @map("warehouse_id") @db.Uuid
-  dispatchDate      DateTime        @map("dispatch_date") @db.Date
-  status            DispatchStatus  @default(DRAFT)
-  statusBeforeHold  DispatchStatus? @map("status_before_hold")
-  deliveryAddress   String          @map("delivery_address")
-  transporterName   String?         @map("transporter_name")
-  vehicleNumber     String?         @map("vehicle_number")
-  trackingNumber    String?         @map("tracking_number")
+  warehouseId          String          @map("warehouse_id") @db.Uuid
+  dispatchDate         DateTime        @map("dispatch_date") @db.Date
+  status               DispatchStatus  @default(DRAFT)
+  statusBeforeHold     DispatchStatus? @map("status_before_hold")
+  deliveryAddress      String          @map("delivery_address")
+  // Kept exactly as-is — plain free-text fallback for a one-off/unmastered
+  // transporter, alongside the new forwarderId below (added, not replacing).
+  transporterName      String?         @map("transporter_name")
+  vehicleNumber        String?         @map("vehicle_number")
+  trackingNumber       String?         @map("tracking_number")
+  // Forwarder Master integration (2026-10-10) — a live FK, same discipline
+  // already used for customerId/warehouseId on this same model: if the
+  // Forwarder's own master data (name/phone/address) changes later, a past
+  // dispatch shows the current master data, exactly like it already does
+  // for Customer. Only the genuinely per-shipment facts below are frozen
+  // directly on this row, since those vary per dispatch, not per forwarder.
+  forwarderId          String?         @map("forwarder_id") @db.Uuid
+  lrNumber             String?         @map("lr_number")
+  awbNumber            String?         @map("awb_number")
+  driverDetails        String?         @map("driver_details")
+  freightCharges       Decimal?        @map("freight_charges") @db.Decimal(18, 2)
+  expectedDeliveryDate DateTime?       @map("expected_delivery_date") @db.Date
+  shipmentRemarks      String?         @map("shipment_remarks")
   // Stamped only inside confirmDispatch()'s own transaction, the moment the
   // ledger is actually touched — a hard fact, not a status label, that
   // cancelDispatch() checks directly and unconditionally (see
   // dispatch.service.ts) rather than trusting the current status alone,
   // the same lesson this project already learned twice (Sampling's Hold/
   // Resume bug, Purchasing's cancel-from-ON_HOLD bug).
-  dispatchedAt      DateTime?       @map("dispatched_at")
-  deliveredAt       DateTime?       @map("delivered_at")
-  receivedByName    String?         @map("received_by_name")
-  requestedByUserId String          @map("requested_by_user_id") @db.Uuid
-  createdAt         DateTime        @default(now()) @map("created_at")
-  updatedAt         DateTime        @updatedAt @map("updated_at")
+  dispatchedAt         DateTime?       @map("dispatched_at")
+  deliveredAt          DateTime?       @map("delivered_at")
+  receivedByName       String?         @map("received_by_name")
+  requestedByUserId    String          @map("requested_by_user_id") @db.Uuid
+  createdAt            DateTime        @default(now()) @map("created_at")
+  updatedAt            DateTime        @updatedAt @map("updated_at")
 
   company     Company        @relation(fields: [companyId], references: [id])
   branch      Branch?        @relation(fields: [branchId], references: [id])
@@ -4838,6 +5779,7 @@ model Dispatch {
   customer    Customer       @relation(fields: [customerId], references: [id])
   warehouse   Warehouse      @relation(fields: [warehouseId], references: [id])
   requestedBy User           @relation("DispatchRequestedBy", fields: [requestedByUserId], references: [id])
+  forwarder   Forwarder?     @relation(fields: [forwarderId], references: [id], onDelete: SetNull)
   items       DispatchItem[]
   cartons     Carton[]
 
@@ -4890,10 +5832,41 @@ model DispatchItem {
   product        Product        @relation(fields: [productId], references: [id])
   sourceLot      Lot?           @relation(fields: [sourceLotId], references: [id])
   cartonItems    CartonItem[]
+  pickLines      FinishedGoodsPickLine[]
 
   @@index([dispatchId])
   @@index([sourceLotId])
   @@map("dispatch_items")
+}
+
+// Finished Goods Inventory module (2026-10-13, FGI-007) — real multi-location
+// picking (Decision 3), a child of DispatchItem, deliberately INDEPENDENT of
+// Carton/CartonItem (which stays exactly what it already is — a pure
+// packing-list concern, untouched by this model). confirmDispatch() posts
+// one recordInventoryTransaction() call per pick line (not per DispatchItem)
+// — the sum across a DispatchItem's own pick lines must equal its
+// dispatchedQuantity exactly before Confirm-Dispatch proceeds, validated
+// before the transaction opens and enforced atomically inside it. See
+// docs/FINISHED_GOODS_INVENTORY_IMPLEMENTATION_PLAN.md §7.
+model FinishedGoodsPickLine {
+  id                  String   @id @default(uuid()) @db.Uuid
+  companyId           String   @map("company_id") @db.Uuid
+  dispatchItemId      String   @map("dispatch_item_id") @db.Uuid
+  productVariantId    String   @map("product_variant_id") @db.Uuid
+  warehouseLocationId String   @map("warehouse_location_id") @db.Uuid
+  quantity            Decimal  @map("quantity") @db.Decimal(18, 4)
+  pickedByUserId      String   @map("picked_by_user_id") @db.Uuid
+  pickedAt            DateTime @default(now()) @map("picked_at")
+
+  company           Company           @relation(fields: [companyId], references: [id])
+  dispatchItem      DispatchItem      @relation(fields: [dispatchItemId], references: [id])
+  productVariant    ProductVariant    @relation(fields: [productVariantId], references: [id])
+  warehouseLocation WarehouseLocation @relation(fields: [warehouseLocationId], references: [id])
+  pickedBy          User              @relation("FinishedGoodsPickLinePickedBy", fields: [pickedByUserId], references: [id])
+
+  @@index([dispatchItemId])
+  @@index([productVariantId, warehouseLocationId])
+  @@map("finished_goods_pick_lines")
 }
 
 model Carton {
@@ -5491,6 +6464,11 @@ model CustomInvoice {
   // matches the reference tool's isRCM behavior exactly (GST forced to 0 on
   // every line, not just hidden from the printed total).
   isReverseCharge      Boolean             @default(false) @map("is_reverse_charge")
+  placeOfSupplyStateCode String?           @map("place_of_supply_state_code") @db.VarChar(2)
+  isInterState         Boolean?            @map("is_inter_state")
+  cgstAmount           Decimal             @default(0) @map("cgst_amount") @db.Decimal(18, 2)
+  sgstAmount           Decimal             @default(0) @map("sgst_amount") @db.Decimal(18, 2)
+  igstAmount           Decimal             @default(0) @map("igst_amount") @db.Decimal(18, 2)
   subtotalAmount       Decimal             @default(0) @map("subtotal_amount") @db.Decimal(18, 2)
   discountAmount       Decimal             @default(0) @map("discount_amount") @db.Decimal(18, 2)
   taxAmount            Decimal             @default(0) @map("tax_amount") @db.Decimal(18, 2)
@@ -7954,6 +8932,14 @@ model AiGarmentBuyerCommentCategorySummary {
 // ─────────────────────────────────────────────────────────────
 
 enum RelatedModule {
+  // Finished Goods Inventory module (2026-10-13, FGI-004) -- Attachment/audit-log
+  // polymorphism for FinishedGoodsReceipt.
+  FINISHED_GOODS_RECEIPT
+  // Finished Goods Inventory module (FGI-030) -- the ledger's own
+  // referenceModule for a Putaway action's N+1 postings (one negative at
+  // the staging row, one positive per destination location), all pointing
+  // at the same FinishedGoodsPutaway header row.
+  FINISHED_GOODS_PUTAWAY
   SAMPLE_REQUEST
   BUYER_ENQUIRY
   SALES_ORDER
@@ -8012,6 +8998,9 @@ enum RelatedModule {
   // CRM Activities (Phase 09, 2026-10-06) -- in-app task reminders and
   // assignment notifications point at the activity (relatedRecordId = CrmActivity.id).
   CRM_ACTIVITY
+  // CRM Conversations (Phase 11, 2026-10-08) -- message attachments and
+  // conversation notifications (relatedRecordId = CrmConversation.id).
+  CRM_CONVERSATION
 }
 
 model Attachment {
@@ -8031,8 +9020,9 @@ model Attachment {
   contextLabel    String?       @map("context_label")
   uploadedAt      DateTime      @default(now()) @map("uploaded_at")
 
-  company    Company @relation(fields: [companyId], references: [id])
-  uploadedBy User    @relation(fields: [uploadedById], references: [id])
+  company               Company                @relation(fields: [companyId], references: [id])
+  uploadedBy            User                   @relation(fields: [uploadedById], references: [id])
+  crmMessageAttachments CrmMessageAttachment[]
 
   @@index([relatedModule, relatedRecordId])
   @@map("attachments")
@@ -8079,6 +9069,11 @@ enum CrmEntityType {
   // Phase 09: tasks, calls, meetings… (crm_activities). Its events
   // (activity.*) appear on the timelines of the records it is linked to.
   ACTIVITY
+  // Phase 11: unified conversations. conversation.* / message.* events appear
+  // on the timelines of the contact / company / opportunity it is linked to.
+  CONVERSATION
+  // Phase 12: message templates. template.* events form the template's own history.
+  TEMPLATE
 }
 
 // Append-only business event log for the CRM. One row per thing that
@@ -8628,6 +9623,7 @@ model CrmCompany {
   addresses      CrmAddress[]
   mergesSurvived CrmCompanyMerge[] @relation("CrmCompanyMergeSurvivor")
   mergeRecord    CrmCompanyMerge?  @relation("CrmCompanyMergeMerged")
+  conversations  CrmConversation[]
 
   @@index([companyId, nameKey])
   @@index([companyId, nameMatchKey])
@@ -8744,23 +9740,25 @@ model CrmContact {
   createdAt           DateTime  @default(now()) @map("created_at")
   updatedAt           DateTime  @updatedAt @map("updated_at")
 
-  company        Company             @relation(fields: [companyId], references: [id])
-  crmCompany     CrmCompany?         @relation(fields: [crmCompanyId], references: [id], onDelete: SetNull)
-  owner          User?               @relation("CrmContactOwner", fields: [ownerUserId], references: [id])
-  createdBy      User                @relation("CrmContactCreatedBy", fields: [createdByUserId], references: [id])
-  source         CrmLeadSource?      @relation(fields: [sourceId], references: [id])
-  sourceLead     CrmLead?            @relation("CrmContactSourceLead", fields: [sourceLeadId], references: [id], onDelete: SetNull)
-  mergedInto     CrmContact?         @relation("CrmContactMergedInto", fields: [mergedIntoId], references: [id])
-  mergedFrom     CrmContact[]        @relation("CrmContactMergedInto")
-  leads          CrmLead[]
-  opportunities  CrmOpportunity[]
-  addresses      CrmAddress[]
-  channels       CrmContactChannel[]
-  consents       CrmContactConsent[]
-  mergesSurvived CrmContactMerge[]   @relation("CrmContactMergeSurvivor")
-  mergeRecord    CrmContactMerge?    @relation("CrmContactMergeMerged")
-  primaryOf      CrmCompany[]        @relation("CrmCompanyPrimaryContact")
-  buyer          Buyer?              @relation(fields: [buyerId], references: [id], onDelete: SetNull)
+  company                  Company                      @relation(fields: [companyId], references: [id])
+  crmCompany               CrmCompany?                  @relation(fields: [crmCompanyId], references: [id], onDelete: SetNull)
+  owner                    User?                        @relation("CrmContactOwner", fields: [ownerUserId], references: [id])
+  createdBy                User                         @relation("CrmContactCreatedBy", fields: [createdByUserId], references: [id])
+  source                   CrmLeadSource?               @relation(fields: [sourceId], references: [id])
+  sourceLead               CrmLead?                     @relation("CrmContactSourceLead", fields: [sourceLeadId], references: [id], onDelete: SetNull)
+  mergedInto               CrmContact?                  @relation("CrmContactMergedInto", fields: [mergedIntoId], references: [id])
+  mergedFrom               CrmContact[]                 @relation("CrmContactMergedInto")
+  leads                    CrmLead[]
+  opportunities            CrmOpportunity[]
+  addresses                CrmAddress[]
+  channels                 CrmContactChannel[]
+  consents                 CrmContactConsent[]
+  mergesSurvived           CrmContactMerge[]            @relation("CrmContactMergeSurvivor")
+  mergeRecord              CrmContactMerge?             @relation("CrmContactMergeMerged")
+  primaryOf                CrmCompany[]                 @relation("CrmCompanyPrimaryContact")
+  buyer                    Buyer?                       @relation(fields: [buyerId], references: [id])
+  conversations            CrmConversation[]
+  conversationParticipants CrmConversationParticipant[]
 
   @@index([companyId, crmCompanyId])
   @@index([companyId, archivedAt, createdAt])
@@ -8903,7 +9901,8 @@ model CrmOptionValue {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  company Company @relation(fields: [companyId], references: [id])
+  company   Company              @relation(fields: [companyId], references: [id])
+  templates CrmMessageTemplate[]
 
   @@unique([companyId, listKey, valueKey])
   @@index([companyId, listKey, sortOrder])
@@ -8953,21 +9952,20 @@ model CrmOpportunity {
   createdAt         DateTime             @default(now()) @map("created_at")
   updatedAt         DateTime             @updatedAt @map("updated_at")
 
-  company                Company                      @relation(fields: [companyId], references: [id])
-  lead                   CrmLead?                     @relation("CrmOpportunityLead", fields: [leadId], references: [id], onDelete: SetNull)
-  crmContact             CrmContact?                  @relation(fields: [crmContactId], references: [id], onDelete: SetNull)
-  crmCompany             CrmCompany?                  @relation(fields: [crmCompanyId], references: [id], onDelete: SetNull)
-  source                 CrmLeadSource?               @relation(fields: [sourceId], references: [id])
-  owner                  User?                        @relation("CrmOpportunityOwner", fields: [ownerUserId], references: [id])
-  createdBy              User                         @relation("CrmOpportunityCreatedBy", fields: [createdByUserId], references: [id])
-  pipeline               CrmPipeline?                 @relation(fields: [pipelineId], references: [id], onDelete: Restrict)
-  stage                  CrmPipelineStage?            @relation(fields: [stageId], references: [id], onDelete: Restrict)
-  convertedFromLeads     CrmLead[]                    @relation("CrmLeadConvertedOpportunity")
-  erpLinks               CrmOpportunityErpLink[]
-  stageHistory           CrmOpportunityStageHistory[]
-  // Sales Orders traced back to this Opportunity (2026-10-09, CRM
-  // Replacement) -- was SalesOrder.originatingDealId against the legacy
-  // CRM's Deal model before the replacement.
+  company            Company                      @relation(fields: [companyId], references: [id])
+  lead               CrmLead?                     @relation("CrmOpportunityLead", fields: [leadId], references: [id], onDelete: SetNull)
+  crmContact         CrmContact?                  @relation(fields: [crmContactId], references: [id], onDelete: SetNull)
+  crmCompany         CrmCompany?                  @relation(fields: [crmCompanyId], references: [id], onDelete: SetNull)
+  source             CrmLeadSource?               @relation(fields: [sourceId], references: [id])
+  owner              User?                        @relation("CrmOpportunityOwner", fields: [ownerUserId], references: [id])
+  createdBy          User                         @relation("CrmOpportunityCreatedBy", fields: [createdByUserId], references: [id])
+  pipeline           CrmPipeline?                 @relation(fields: [pipelineId], references: [id], onDelete: Restrict)
+  stage              CrmPipelineStage?            @relation(fields: [stageId], references: [id], onDelete: Restrict)
+  convertedFromLeads CrmLead[]                    @relation("CrmLeadConvertedOpportunity")
+  erpLinks           CrmOpportunityErpLink[]
+  stageHistory       CrmOpportunityStageHistory[]
+  conversations      CrmConversation[]
+
   originatingSalesOrders SalesOrder[]
 
   @@unique([companyId, opportunityNumber])
@@ -9303,9 +10301,315 @@ model CrmActivityLink {
   @@map("crm_activity_links")
 }
 
+// ─────────────────────────────────────────────────────────────
+// CRM — Phase 11 Unified Conversations (2026-10-08).
+// See docs/crm/PHASE_11_UNIFIED_CONVERSATIONS.md.
+//
+// One provider-neutral model for every channel: a channel (configured
+// connection) → conversations (threads) → messages + participants. Channel
+// providers (src/core/communication) only translate payloads; the CRM never
+// stores provider-specific JSON. Internal notes are CrmNote rows on the
+// CONVERSATION entity (never in this table, so they can never be sent).
+// Type / status / kind columns are validated in code
+// (src/modules/crm/conversations/conversation-registry.ts).
+// ─────────────────────────────────────────────────────────────
+
+/// A configured communication channel (a WhatsApp number, a support mailbox,
+/// a website chat…). `provider` picks the adapter ("generic" now). The
+/// webhook signing secret is encrypted at rest like CRM webhook endpoints;
+/// `config` holds non-secret settings only.
+model CrmChannel {
+  id                    String    @id @default(uuid()) @db.Uuid
+  companyId             String    @map("company_id") @db.Uuid
+  // EMAIL | SMS | WHATSAPP | FACEBOOK_MESSENGER | INSTAGRAM | WEB_CHAT | OTHER
+  channelType           String    @map("channel_type")
+  name                  String
+  provider              String    @default("generic")
+  // ACTIVE | PAUSED
+  status                String    @default("ACTIVE")
+  // The business identity on this channel (mailbox, phone number, page name) — display only.
+  address               String?
+  config                Json      @default("{}")
+  secretEncrypted       String    @map("secret_encrypted")
+  defaultAssigneeUserId String?   @map("default_assignee_user_id") @db.Uuid
+  lastInboundAt         DateTime? @map("last_inbound_at")
+  createdByUserId       String    @map("created_by_user_id") @db.Uuid
+  version               Int       @default(1)
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+
+  company         Company           @relation(fields: [companyId], references: [id])
+  defaultAssignee User?             @relation("CrmChannelDefaultAssignee", fields: [defaultAssigneeUserId], references: [id])
+  createdBy       User              @relation("CrmChannelCreatedBy", fields: [createdByUserId], references: [id])
+  conversations   CrmConversation[]
+  messages        CrmMessage[]
+
+  @@unique([companyId, name])
+  @@index([companyId, status])
+  @@map("crm_channels")
+}
+
+/// A logical thread on one channel. Contact / company / opportunity are each
+/// optional; `matchStatus` UNMATCHED / MULTIPLE puts it in the unmatched
+/// queue until a user links it. `unreadCount` = inbound messages not yet seen
+/// by the team; denormalised last-message fields keep the inbox one query.
+model CrmConversation {
+  id                   String    @id @default(uuid()) @db.Uuid
+  companyId            String    @map("company_id") @db.Uuid
+  channelId            String    @map("channel_id") @db.Uuid
+  channelType          String    @map("channel_type")
+  subject              String?
+  // OPEN | PENDING | CLOSED | ARCHIVED
+  status               String    @default("OPEN")
+  // MATCHED | UNMATCHED | MULTIPLE
+  matchStatus          String    @default("UNMATCHED") @map("match_status")
+  // Contact ids found when matching was ambiguous (MULTIPLE) — the user picks one.
+  matchCandidateIds    String[]  @default([]) @map("match_candidate_ids") @db.Uuid
+  contactId            String?   @map("contact_id") @db.Uuid
+  crmCompanyId         String?   @map("crm_company_id") @db.Uuid
+  opportunityId        String?   @map("opportunity_id") @db.Uuid
+  assignedToUserId     String?   @map("assigned_to_user_id") @db.Uuid
+  // Provider thread reference (email root Message-ID, chat session…), when the provider has one.
+  externalThreadRef    String?   @map("external_thread_ref")
+  // Who the conversation is with, for the inbox row (kept from the first customer participant).
+  displayName          String?   @map("display_name")
+  displayIdentifier    String?   @map("display_identifier")
+  unreadCount          Int       @default(0) @map("unread_count")
+  lastReadAt           DateTime? @map("last_read_at")
+  lastReadByUserId     String?   @map("last_read_by_user_id") @db.Uuid
+  messageCount         Int       @default(0) @map("message_count")
+  lastMessageAt        DateTime? @map("last_message_at")
+  lastMessagePreview   String?   @map("last_message_preview")
+  lastMessageDirection String?   @map("last_message_direction")
+  lastInboundAt        DateTime? @map("last_inbound_at")
+  lastOutboundAt       DateTime? @map("last_outbound_at")
+  // Lower-cased subject, participants and linked record names (inbox search).
+  searchText           String    @default("") @map("search_text")
+  closedAt             DateTime? @map("closed_at")
+  closedByUserId       String?   @map("closed_by_user_id") @db.Uuid
+  archivedAt           DateTime? @map("archived_at")
+  createdByUserId      String?   @map("created_by_user_id") @db.Uuid
+  version              Int       @default(1)
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  company      Company                      @relation(fields: [companyId], references: [id])
+  channel      CrmChannel                   @relation(fields: [channelId], references: [id])
+  contact      CrmContact?                  @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  crmCompany   CrmCompany?                  @relation(fields: [crmCompanyId], references: [id], onDelete: SetNull)
+  opportunity  CrmOpportunity?              @relation(fields: [opportunityId], references: [id], onDelete: SetNull)
+  assignedTo   User?                        @relation("CrmConversationAssignee", fields: [assignedToUserId], references: [id])
+  participants CrmConversationParticipant[]
+  messages     CrmMessage[]
+
+  @@index([companyId, lastMessageAt], map: "crm_conversations_recent_idx")
+  @@index([companyId, status, lastMessageAt], map: "crm_conversations_status_idx")
+  @@index([companyId, assignedToUserId, lastMessageAt], map: "crm_conversations_assignee_idx")
+  @@index([companyId, channelId, lastMessageAt], map: "crm_conversations_channel_idx")
+  @@index([companyId, contactId], map: "crm_conversations_contact_idx")
+  @@index([companyId, crmCompanyId], map: "crm_conversations_company_idx")
+  @@index([companyId, opportunityId], map: "crm_conversations_opportunity_idx")
+  @@map("crm_conversations")
+}
+
+/// Who takes part in a conversation: the customer identity on the channel
+/// (email address, phone number, provider user id, anonymous chat session),
+/// linked to a contact once known, and ERP users who replied.
+model CrmConversationParticipant {
+  id                 String   @id @default(uuid()) @db.Uuid
+  companyId          String   @map("company_id") @db.Uuid
+  conversationId     String   @map("conversation_id") @db.Uuid
+  channelId          String   @map("channel_id") @db.Uuid
+  // CONTACT | EXTERNAL | ANONYMOUS | USER
+  participantType    String   @map("participant_type")
+  // CUSTOMER | AGENT | CC
+  role               String   @default("CUSTOMER")
+  // EMAIL | PHONE | PROVIDER_ID | SESSION (null for users)
+  identifierKind     String?  @map("identifier_kind")
+  externalIdentifier String?  @map("external_identifier")
+  // Normalised for matching (lower-cased email, last 10 phone digits, raw id).
+  identifierKey      String?  @map("identifier_key")
+  displayName        String?  @map("display_name")
+  contactId          String?  @map("contact_id") @db.Uuid
+  userId             String?  @map("user_id") @db.Uuid
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  conversation CrmConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  contact      CrmContact?     @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  user         User?           @relation("CrmConversationParticipantUser", fields: [userId], references: [id])
+
+  @@index([conversationId])
+  @@index([companyId, channelId, identifierKind, identifierKey], map: "crm_conversation_participants_identity_idx")
+  @@index([companyId, identifierKind, identifierKey], map: "crm_conversation_participants_key_idx")
+  @@map("crm_conversation_participants")
+}
+
+/// One customer-visible message (inbound or outbound) — never an internal
+/// note. `(channel_id, provider_message_id)` is unique so a provider
+/// retrying a webhook can never create the same message twice. Ordered by
+/// `occurred_at` (provider time for inbound) with id as the tie-breaker.
+model CrmMessage {
+  id                  String    @id @default(uuid()) @db.Uuid
+  companyId           String    @map("company_id") @db.Uuid
+  conversationId      String    @map("conversation_id") @db.Uuid
+  channelId           String    @map("channel_id") @db.Uuid
+  // INBOUND | OUTBOUND
+  direction           String
+  // TEXT | IMAGE | FILE | AUDIO | VIDEO | DOCUMENT | LOCATION | SYSTEM | OTHER
+  messageType         String    @default("TEXT") @map("message_type")
+  subject             String?
+  body                String    @default("")
+  senderIdentifier    String?   @map("sender_identifier")
+  senderName          String?   @map("sender_name")
+  recipientIdentifier String?   @map("recipient_identifier")
+  // The ERP user who wrote an outbound message.
+  senderUserId        String?   @map("sender_user_id") @db.Uuid
+  // RECEIVED (inbound) | QUEUED | SENT | DELIVERED | READ | FAILED (outbound)
+  status              String
+  providerMessageId   String?   @map("provider_message_id")
+  occurredAt          DateTime  @default(now()) @map("occurred_at")
+  sentAt              DateTime? @map("sent_at")
+  deliveredAt         DateTime? @map("delivered_at")
+  readAt              DateTime? @map("read_at")
+  failedAt            DateTime? @map("failed_at")
+  // Inbound: when a CRM user first saw it (drives unread counts).
+  seenAt              DateTime? @map("seen_at")
+  seenByUserId        String?   @map("seen_by_user_id") @db.Uuid
+  // Safe, user-facing failure reason (never raw provider responses or credentials).
+  errorCode           String?   @map("error_code")
+  errorMessage        String?   @map("error_message")
+  attempts            Int       @default(0)
+  lastAttemptAt       DateTime? @map("last_attempt_at")
+  // Provider-neutral extras: email threading headers, location, reply-to id…
+  metadata            Json      @default("{}")
+  // Phase 12: the template and exact version an outbound message was written
+  // from. The message keeps its own rendered subject/body — history never
+  // depends on the template staying unchanged.
+  templateId          String?   @map("template_id") @db.Uuid
+  templateVersionId   String?   @map("template_version_id") @db.Uuid
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  company         Company                    @relation(fields: [companyId], references: [id])
+  conversation    CrmConversation            @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  channel         CrmChannel                 @relation(fields: [channelId], references: [id])
+  senderUser      User?                      @relation("CrmMessageSender", fields: [senderUserId], references: [id])
+  template        CrmMessageTemplate?        @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  templateVersion CrmMessageTemplateVersion? @relation(fields: [templateVersionId], references: [id], onDelete: Restrict)
+  attachments     CrmMessageAttachment[]
+
+  @@index([conversationId, occurredAt, id], map: "crm_messages_thread_idx")
+  @@index([companyId, occurredAt], map: "crm_messages_recent_idx")
+  @@map("crm_messages")
+}
+
+/// A file on a message. The bytes live in the ERP's shared file storage
+/// (`attachments` row, related module CRM_CONVERSATION); this row is the
+/// CRM-side record. Provider media not (yet) downloaded keeps only its
+/// provider reference (attachment_id null).
+model CrmMessageAttachment {
+  id               String   @id @default(uuid()) @db.Uuid
+  companyId        String   @map("company_id") @db.Uuid
+  messageId        String   @map("message_id") @db.Uuid
+  attachmentId     String?  @map("attachment_id") @db.Uuid
+  // IMAGE | DOCUMENT | AUDIO | VIDEO | FILE
+  kind             String
+  fileName         String   @map("file_name")
+  mimeType         String   @map("mime_type")
+  sizeBytes        Int?     @map("size_bytes")
+  providerMediaRef String?  @map("provider_media_ref")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  message    CrmMessage  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  attachment Attachment? @relation(fields: [attachmentId], references: [id], onDelete: SetNull)
+
+  @@index([messageId])
+  @@index([attachmentId])
+  @@map("crm_message_attachments")
+}
+
 // Metadata for the shared custom-field engine. Values live in each record's
 // `customFields` JSON keyed by `key`, so adding a field never needs a
 // migration. `key` and `fieldType` are fixed once created.
+// ─────────────────────────────────────────────────────────────
+// CRM — Phase 12 Message Templates (2026-10-08). See docs/crm/PHASE_12_MESSAGE_TEMPLATES.md.
+// ─────────────────────────────────────────────────────────────
+
+/// A reusable, provider-neutral message template for one channel type.
+/// Content lives in immutable versions; `currentVersionId` is the one used
+/// for new messages. Categories reuse crm_option_values (list
+/// "template_category"). Never hard-deleted — archived instead.
+model CrmMessageTemplate {
+  id                   String    @id @default(uuid()) @db.Uuid
+  companyId            String    @map("company_id") @db.Uuid
+  name                 String
+  // Lower-cased, single-spaced name: unique among non-archived templates (partial index in SQL).
+  nameKey              String    @map("name_key")
+  // EMAIL | SMS | WHATSAPP (enabled today); other channel types are allowed by the CHECK for later.
+  channelType          String    @map("channel_type")
+  categoryId           String?   @map("category_id") @db.Uuid
+  description          String?
+  // DRAFT | ACTIVE | ARCHIVED
+  status               String    @default("DRAFT")
+  currentVersionId     String?   @unique @map("current_version_id") @db.Uuid
+  currentVersionNumber Int       @default(0) @map("current_version_number")
+  searchText           String    @default("") @map("search_text")
+  duplicatedFromId     String?   @map("duplicated_from_id") @db.Uuid
+  activatedAt          DateTime? @map("activated_at")
+  activatedByUserId    String?   @map("activated_by_user_id") @db.Uuid
+  archivedAt           DateTime? @map("archived_at")
+  archivedByUserId     String?   @map("archived_by_user_id") @db.Uuid
+  createdByUserId      String    @map("created_by_user_id") @db.Uuid
+  updatedByUserId      String?   @map("updated_by_user_id") @db.Uuid
+  // Optimistic-locking counter (same contract as crm_leads.version).
+  version              Int       @default(1)
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  company        Company                     @relation(fields: [companyId], references: [id])
+  category       CrmOptionValue?             @relation(fields: [categoryId], references: [id])
+  createdBy      User                        @relation("CrmMessageTemplateCreatedBy", fields: [createdByUserId], references: [id])
+  currentVersion CrmMessageTemplateVersion?  @relation("CrmMessageTemplateCurrentVersion", fields: [currentVersionId], references: [id])
+  versions       CrmMessageTemplateVersion[] @relation("CrmMessageTemplateVersions")
+  messages       CrmMessage[]
+
+  @@index([companyId, status, updatedAt])
+  @@index([companyId, channelType, status])
+  @@index([companyId, categoryId])
+  @@index([companyId, createdAt])
+  @@map("crm_message_templates")
+}
+
+/// One immutable snapshot of a template's content (a database trigger
+/// refuses UPDATE and DELETE). Editing, restoring or duplicating always adds
+/// a new version; messages keep the version they were written from.
+model CrmMessageTemplateVersion {
+  id               String   @id @default(uuid()) @db.Uuid
+  companyId        String   @map("company_id") @db.Uuid
+  templateId       String   @map("template_id") @db.Uuid
+  versionNumber    Int      @map("version_number")
+  subject          String?
+  body             String
+  // Variable keys used by subject + body ("contact.first_name"…), in order of first use.
+  variables        String[] @default([])
+  // Provider-neutral key/value refs (e.g. an externally approved template name + language).
+  providerMetadata Json     @default("{}") @map("provider_metadata")
+  changeNote       String?  @map("change_note")
+  // Set when this version was created by restoring an older one.
+  restoredFromId   String?  @map("restored_from_id") @db.Uuid
+  createdByUserId  String   @map("created_by_user_id") @db.Uuid
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  company   Company             @relation(fields: [companyId], references: [id])
+  template  CrmMessageTemplate  @relation("CrmMessageTemplateVersions", fields: [templateId], references: [id], onDelete: Restrict)
+  currentOf CrmMessageTemplate? @relation("CrmMessageTemplateCurrentVersion")
+  createdBy User                @relation("CrmMessageTemplateVersionCreatedBy", fields: [createdByUserId], references: [id])
+  messages  CrmMessage[]
+
+  @@unique([templateId, versionNumber])
+  @@map("crm_message_template_versions")
+}
+
 model CrmCustomFieldDefinition {
   id          String             @id @default(uuid()) @db.Uuid
   companyId   String             @map("company_id") @db.Uuid
@@ -9522,19 +10826,24 @@ enum AuditAction {
 }
 
 model AuditLog {
-  id          String      @id @default(uuid()) @db.Uuid
-  companyId   String      @map("company_id") @db.Uuid
-  userId      String?     @map("user_id") @db.Uuid
-  tableName   String      @map("table_name")
-  recordId    String      @map("record_id") @db.Uuid
-  action      AuditAction
-  oldValues   Json?       @map("old_values")
-  newValues   Json?       @map("new_values")
-  ipAddress   String?     @map("ip_address")
-  performedAt DateTime    @default(now()) @map("performed_at")
+  id             String      @id @default(uuid()) @db.Uuid
+  companyId      String      @map("company_id") @db.Uuid
+  userId         String?     @map("user_id") @db.Uuid
+  // Set instead of userId when a platform operator performed the action
+  // (e.g. provisioning a company) — platform users are not in the tenant
+  // users table, so userId can't reference them.
+  platformUserId String?     @map("platform_user_id") @db.Uuid
+  tableName      String      @map("table_name")
+  recordId       String      @map("record_id") @db.Uuid
+  action         AuditAction
+  oldValues      Json?       @map("old_values")
+  newValues      Json?       @map("new_values")
+  ipAddress      String?     @map("ip_address")
+  performedAt    DateTime    @default(now()) @map("performed_at")
 
-  company Company @relation(fields: [companyId], references: [id])
-  user    User?   @relation(fields: [userId], references: [id])
+  company      Company       @relation(fields: [companyId], references: [id])
+  user         User?         @relation(fields: [userId], references: [id])
+  platformUser PlatformUser? @relation(fields: [platformUserId], references: [id])
 
   @@index([tableName, recordId, performedAt])
   @@map("audit_logs")
@@ -9542,6 +10851,8 @@ model AuditLog {
 
 enum DocumentType {
   SAMPLE_REQUEST
+  // Platform SaaS Phase 5: customer support tickets (TKT-YYYY-#####, company-wide).
+  SUPPORT_TICKET
   BUYER_ENQUIRY
   SALES_ORDER
   PRODUCTION_ORDER
@@ -9577,6 +10888,13 @@ enum DocumentType {
   // Marketing's own campaign numbering (kept from the legacy CRM removal --
   // Marketing survives untouched, see CLAUDE.md's CRM Replacement section).
   CAMPAIGN
+  // Forwarder Master (2026-10-10, Dispatch Forwarder Master).
+  FORWARDER
+  // Finished Goods Inventory module (2026-10-13, FGI-004) -- FinishedGoodsReceipt
+  // numbering.
+  FG_RECEIPT
+  // Finished Goods Inventory module (FGI-030) -- FinishedGoodsPutaway numbering.
+  FG_PUTAWAY
 }
 
 model DocumentSequence {

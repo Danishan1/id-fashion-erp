@@ -46,6 +46,18 @@ export function CreditNotesListClient() {
         fetchUrl="/api/v1/custom-invoices/credit-notes"
         searchPlaceholder="Search by credit note or invoice number…"
         rowHref={(row) => `/accounts/custom-invoices/${row.customInvoice.id}`}
+        rowHrefLabel="View Invoice"
+        rowActions={(row) => (
+          <a
+            href={`/api/v1/custom-invoices/credit-notes/${row.id}/pdf`}
+            download={`${row.creditNoteNumber}.pdf`}
+            onClick={(e) => e.stopPropagation()}
+            className="inline-flex items-center gap-1 rounded border border-zinc-200 px-2 py-0.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+            title="Download Credit Note PDF"
+          >
+            PDF
+          </a>
+        )}
         statusFilter={{
           options: Object.entries(STATUS_LABELS).map(([value, label]) => ({ value, label })),
         }}

@@ -1,5 +1,11 @@
 import { prisma } from "@/core/db/client";
 import { MODULES, permissionKey, type Module, type Action } from "@/config/rbac";
+import { EntitlementService } from "@/core/entitlements/EntitlementService";
+import { computeSubscriptionStatus, isActionAllowedWhileReadOnly } from "@/core/subscriptions/subscription-state";
+import {
+  getLiveSupportSessionForProxyUser,
+  supportPermissionKeys,
+} from "@/core/support-access/support-session-guard";
 
 export interface ResourceContext {
   /** userId of whoever created the record being acted on — enables self-approval checks. */
@@ -30,7 +36,24 @@ class PermissionServiceImpl {
     }
   }
 
-  private async loadPermissionKeys(userId: string): Promise<Set<string>> {
+  /**
+   * A company's support proxy user (Platform SaaS Phase 2) holds no roles.
+   * Its permissions come only from the customer-approved support session it
+   * is currently acting under — read-only by default, read/write only after
+   * the customer approved write access — and are never cached, so a revoke,
+   * expiry or write approval applies on the very next check. Returns null
+   * for an ordinary user.
+   */
+  private async loadSupportPermissionKeys(userId: string, isSupportProxy: boolean): Promise<Set<string> | null> {
+    if (!isSupportProxy) return null;
+    const live = await getLiveSupportSessionForProxyUser(userId);
+    return live ? supportPermissionKeys(live.mode) : new Set();
+  }
+
+  private async loadPermissionKeys(userId: string, isSupportProxy = false): Promise<Set<string>> {
+    const supportKeys = await this.loadSupportPermissionKeys(userId, isSupportProxy);
+    if (supportKeys) return supportKeys;
+
     const cached = this.cache.get(userId);
     if (cached) return cached;
 
@@ -70,16 +93,58 @@ class PermissionServiceImpl {
    * status change touches no permission/role row this class's own cache
    * keys on. A tiny extra by-primary-key lookup per permission check is the
    * accepted cost of making "suspend" actually take effect immediately.
-   * Also returns `passwordChangedAt` in the same query so the optional
-   * session-staleness check below needs no second round-trip.
+   * Also returns `passwordChangedAt` and the company's `isActive` in the same
+   * query, so the session-staleness and suspended-company checks need no
+   * second round-trip.
+   *
+   * Only ever looks in the tenant `users` table, so a platform operator's id
+   * (platform_users) is never found here and gets no permission at all
+   * (Platform SaaS Phase 1, PLAT-004).
    */
   private async loadLiveUserState(
     userId: string
-  ): Promise<{ status: string; passwordChangedAt: Date | null; isPlatformAdmin: boolean } | null> {
-    return prisma.user.findUnique({
+  ): Promise<{
+    status: string;
+    passwordChangedAt: Date | null;
+    companyId: string;
+    companyActive: boolean;
+    isSupportProxy: boolean;
+    subscriptionReadOnly: boolean;
+  } | null> {
+    const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { status: true, passwordChangedAt: true, isPlatformAdmin: true },
+      select: {
+        status: true,
+        companyId: true,
+        passwordChangedAt: true,
+        supportForPlatformUserId: true,
+        company: {
+          select: { isActive: true, subscription: { select: { isTrial: true, currentPeriodEndsAt: true } } },
+        },
+      },
     });
+    if (!user) return null;
+    return {
+      status: user.status,
+      passwordChangedAt: user.passwordChangedAt,
+      companyId: user.companyId,
+      companyActive: user.company?.isActive ?? false,
+      isSupportProxy: !!user.supportForPlatformUserId,
+      // Phase 4 (PLAT-024/025): grace period and expired archive are read-only.
+      subscriptionReadOnly: computeSubscriptionStatus(user.company?.subscription).readOnly,
+    };
+  }
+
+  /** null = not a support proxy user; otherwise whether its support session is live. */
+  private async supportProxyIsLive(userId: string): Promise<boolean | null> {
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { supportForPlatformUserId: true } });
+    if (!user?.supportForPlatformUserId) return null;
+    return !!(await getLiveSupportSessionForProxyUser(userId));
+  }
+
+  /** Active user in an active (not suspended) company. */
+  private isUsable(user: { status: string; companyActive: boolean } | null): boolean {
+    return !!user && user.status === "ACTIVE" && user.companyActive;
   }
 
   /**
@@ -98,28 +163,38 @@ class PermissionServiceImpl {
     action: Action,
     resourceContext?: ResourceContext
   ): Promise<boolean> {
+    return (await this.evaluate(userId, module, action, resourceContext)) === "ALLOWED";
+  }
+
+  private async evaluate(
+    userId: string,
+    module: Module,
+    action: Action,
+    resourceContext?: ResourceContext
+  ): Promise<"ALLOWED" | "DENIED" | "MODULE_NOT_ENABLED" | "SUBSCRIPTION_READ_ONLY"> {
     const user = await this.loadLiveUserState(userId);
-    if (!user || user.status !== "ACTIVE") return false;
+    if (!user || !this.isUsable(user)) return "DENIED";
     if (
       resourceContext?.sessionIssuedAt !== undefined &&
       user.passwordChangedAt &&
       resourceContext.sessionIssuedAt * 1000 < user.passwordChangedAt.getTime()
     ) {
-      return false;
+      return "DENIED";
     }
 
-    // A platform administrator gets full, unrestricted access to whichever
-    // company their own session is currently scoped to (session.user.companyId,
-    // switchable via the sidebar's company switcher) — every module/action,
-    // including self-approval. Company-scoping itself is enforced entirely at
-    // the service/repository layer via actor.companyId sourced from
-    // session.user.companyId, never by this class, so this bypass is exactly
-    // what makes "switch active company" grant real access rather than just
-    // changing which company's data queries happen to filter by. Re-verified
-    // live from the DB on every call (loadLiveUserState is deliberately
-    // uncached), never trusted from the JWT alone — same discipline `status`/
-    // `passwordChangedAt` already use just above.
-    if (user.isPlatformAdmin) return true;
+    // Platform SaaS Phase 3 (PLAT-019): a module the platform turned off for
+    // this company is refused for everyone in it, whatever their roles.
+    if (!(await EntitlementService.isModuleEnabled(user.companyId, module))) return "MODULE_NOT_ENABLED";
+
+    // Phase 4 (PLAT-024/025): once the subscription period has ended (7-day
+    // grace, then the expired archive) the company is read-only for everyone:
+    // view, print and export still work, nothing can be created or changed.
+    if (user.subscriptionReadOnly && !isActionAllowedWhileReadOnly(action)) return "SUBSCRIPTION_READ_ONLY";
+
+    // No universal bypass of any kind (PLAT-004, 2026-10-13): every user,
+    // including a company's own Super Admin, gets exactly what their roles
+    // grant. The old `isPlatformAdmin` "full access to any company" bypass
+    // is gone; platform operators are no longer tenant users at all.
 
     if (
       resourceContext?.createdBy &&
@@ -127,11 +202,11 @@ class PermissionServiceImpl {
       SELF_APPROVAL_GUARDED_ACTIONS.includes(action)
     ) {
       const isSuperAdmin = await this.hasRole(userId, "SUPER_ADMIN");
-      if (!isSuperAdmin) return false;
+      if (!isSuperAdmin) return "DENIED";
     }
 
-    const keys = await this.loadPermissionKeys(userId);
-    return keys.has(permissionKey(module, action));
+    const keys = await this.loadPermissionKeys(userId, user.isSupportProxy);
+    return keys.has(permissionKey(module, action)) ? "ALLOWED" : "DENIED";
   }
 
   /**
@@ -148,8 +223,10 @@ class PermissionServiceImpl {
    * every ordinary permission check too.
    */
   async getAllowedProductionStageIds(userId: string): Promise<Set<string> | null> {
-    const user = await this.loadLiveUserState(userId);
-    if (user?.isPlatformAdmin) return null;
+    // A live support session sees every stage (it can only read unless the
+    // customer approved write access); an ended one sees nothing.
+    const supportLive = await this.supportProxyIsLive(userId);
+    if (supportLive !== null) return supportLive ? null : new Set();
 
     const userBranchRoles = await prisma.userBranchRole.findMany({ where: { userId }, select: { roleId: true } });
     if (userBranchRoles.length === 0) return new Set();
@@ -175,14 +252,13 @@ class PermissionServiceImpl {
    * branch in the company); a user holding ANY unrestricted role gets
    * `null` (full access) outright, regardless of other, narrower roles they
    * also hold; only when EVERY held role is individually restricted does
-   * the result become the union of their allowed branch sets. A platform
-   * admin always gets `null`. A user with no role at all gets an empty Set
-   * (sees no branch's data), matching that they'd already fail every
-   * ordinary permission check too.
+   * the result become the union of their allowed branch sets. A user with no
+   * role at all gets an empty Set (sees no branch's data), matching that
+   * they'd already fail every ordinary permission check too.
    */
   async getAllowedBranchIds(userId: string): Promise<Set<string> | null> {
-    const user = await this.loadLiveUserState(userId);
-    if (user?.isPlatformAdmin) return null;
+    const supportLive = await this.supportProxyIsLive(userId);
+    if (supportLive !== null) return supportLive ? null : new Set();
 
     const userBranchRoles = await prisma.userBranchRole.findMany({ where: { userId }, select: { roleId: true } });
     if (userBranchRoles.length === 0) return new Set();
@@ -222,12 +298,11 @@ class PermissionServiceImpl {
    * The set of modules this user holds `view` on — drives which sidebar
    * sections/links actually render, so a narrowly-scoped custom role (e.g.
    * a floor-only "Cutting Supervisor") doesn't see nav entries for modules
-   * it has no access to at all. `"all"` for a platform admin (mirrors
-   * `can()`'s own bypass) and for a suspended/nonexistent user this
-   * returns an empty Set (they're being signed out anyway; an empty nav is
-   * the correct — not broken — state to render in that instant).
+   * it has no access to at all. For a suspended/nonexistent user (or one
+   * whose company is suspended) this returns an empty Set — an empty nav is
+   * the correct, not broken, state to render in that instant.
    */
-  async getViewableModules(userId: string): Promise<Set<Module> | "all"> {
+  async getViewableModules(userId: string): Promise<Set<Module>> {
     return this.getModulesWithAction(userId, "view");
   }
 
@@ -238,15 +313,17 @@ class PermissionServiceImpl {
    * of only ever checking plain module visibility. See navigation.ts's
    * `requiredAction` field and filterNavSections() (RBAC audit, 2026-09-24).
    */
-  async getModulesWithAction(userId: string, action: Action): Promise<Set<Module> | "all"> {
+  async getModulesWithAction(userId: string, action: Action): Promise<Set<Module>> {
     const user = await this.loadLiveUserState(userId);
-    if (!user || user.status !== "ACTIVE") return new Set();
-    if (user.isPlatformAdmin) return "all";
+    if (!user || !this.isUsable(user)) return new Set();
 
-    const keys = await this.loadPermissionKeys(userId);
+    if (user.subscriptionReadOnly && !isActionAllowedWhileReadOnly(action)) return new Set();
+
+    const keys = await this.loadPermissionKeys(userId, user.isSupportProxy);
+    const disabled = await EntitlementService.getDisabledModules(user.companyId);
     const matching = new Set<Module>();
     for (const mod of MODULES) {
-      if (keys.has(permissionKey(mod, action))) matching.add(mod);
+      if (!disabled.has(mod) && keys.has(permissionKey(mod, action))) matching.add(mod);
     }
     return matching;
   }
@@ -259,8 +336,22 @@ class PermissionServiceImpl {
     resourceContext?: ResourceContext
   ): Promise<void> {
     const { BusinessRuleError } = await import("@/core/errors/BusinessRuleError");
-    const allowed = await this.can(userId, module, action, resourceContext);
-    if (!allowed) {
+    const result = await this.evaluate(userId, module, action, resourceContext);
+    if (result === "MODULE_NOT_ENABLED") {
+      throw new BusinessRuleError(
+        "MODULE_NOT_ENABLED",
+        "This module isn't enabled for your company. Contact your administrator or the platform team.",
+        { module }
+      );
+    }
+    if (result === "SUBSCRIPTION_READ_ONLY") {
+      throw new BusinessRuleError(
+        "SUBSCRIPTION_READ_ONLY",
+        "Your company's subscription has ended, so the ERP is read-only: you can view, print and export, but not add or change anything. Ask your administrator to renew.",
+        { module, action }
+      );
+    }
+    if (result !== "ALLOWED") {
       throw new BusinessRuleError(
         "PERMISSION_DENIED",
         `You do not have permission to ${action} in ${module}.`,

@@ -2,6 +2,7 @@ import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError, isUniqueConstraintViolationOnColumn } from "@/core/errors/BusinessRuleError";
 import { prisma } from "@/core/db/client";
 import { round2 } from "@/lib/money";
+import { extractStateCodeFromGstin, isValidStateCode, calculateInvoiceGst } from "@/lib/gst";
 import type { ListQuery } from "@/lib/list-query";
 import { CustomInvoiceStatus, Prisma } from "@prisma/client";
 import type { CustomInvoiceInput } from "./custom-invoice.schema";
@@ -100,16 +101,36 @@ async function assertValidIncomeAccount(companyId: string, incomeAccountId: stri
   }
 }
 
-const VALID_CUSTOM_INVOICE_STATUSES = new Set<string>(Object.values(CustomInvoiceStatus));
+const VALID_CUSTOM_INVOICE_STATUSES = new Set<string>([
+  ...Object.values(CustomInvoiceStatus),
+  "ISSUED",
+  "PARTIALLY_PAID",
+  "PAID",
+]);
 
 export async function listCustomInvoices(companyId: string, query: ListQuery) {
   const where: Prisma.CustomInvoiceWhereInput = {
     companyId,
     ...(query.search ? { invoiceNumber: { contains: query.search, mode: "insensitive" as const } } : {}),
-    ...(query.status && VALID_CUSTOM_INVOICE_STATUSES.has(query.status)
-      ? { status: query.status as CustomInvoiceStatus }
-      : {}),
   };
+
+  if (query.status && VALID_CUSTOM_INVOICE_STATUSES.has(query.status)) {
+    if (query.status === "PAID") {
+      where.status = { not: CustomInvoiceStatus.CANCELLED };
+      where.balanceDue = { lte: 0 };
+    } else if (query.status === "PARTIALLY_PAID") {
+      where.status = { not: CustomInvoiceStatus.CANCELLED };
+      where.balanceDue = { gt: 0 };
+      where.OR = [{ paidAmount: { gt: 0 } }, { creditedAmount: { gt: 0 } }];
+    } else if (query.status === "ISSUED" || query.status === "DRAFT") {
+      where.status = CustomInvoiceStatus.DRAFT;
+      where.paidAmount = 0;
+      where.creditedAmount = 0;
+      where.balanceDue = { gt: 0 };
+    } else if (query.status === "CANCELLED") {
+      where.status = CustomInvoiceStatus.CANCELLED;
+    }
+  }
 
   const [data, totalCount] = await Promise.all([
     CustomInvoiceRepository.findMany(where, {
@@ -129,6 +150,90 @@ export async function getCustomInvoiceById(companyId: string, id: string) {
   return invoice;
 }
 
+async function resolveGstBreakdown(params: {
+  companyId: string;
+  customerId: string;
+  inputPlaceOfSupply?: string | null;
+  taxAmount: number;
+  isReverseCharge: boolean;
+}): Promise<{
+  placeOfSupplyStateCode: string | null;
+  isInterState: boolean;
+  cgstAmount: number;
+  sgstAmount: number;
+  igstAmount: number;
+}> {
+  const { companyId, customerId, inputPlaceOfSupply, taxAmount, isReverseCharge } = params;
+
+  // Retrieve company and customer tax information
+  const [company, customer] = await Promise.all([
+    prisma.company.findUnique({
+      where: { id: companyId },
+      select: { id: true, taxRegistrationNo: true },
+    }),
+    prisma.customer.findUnique({
+      where: { id: customerId },
+      select: { id: true, taxRegistrationNo: true },
+    }),
+  ]);
+
+  const supplierStateCode = extractStateCodeFromGstin(company?.taxRegistrationNo);
+
+  let customerStateCode: string | null = null;
+  const trimmedPos = inputPlaceOfSupply?.trim();
+  if (trimmedPos) {
+    if (!isValidStateCode(trimmedPos)) {
+      throw new BusinessRuleError(
+        "VALIDATION_ERROR",
+        `Invalid Place of Supply state code "${trimmedPos}". Must be a valid 2-digit state code (01-38, 97).`,
+        { placeOfSupplyStateCode: trimmedPos }
+      );
+    }
+    customerStateCode = trimmedPos;
+  } else if (customer?.taxRegistrationNo) {
+    customerStateCode = extractStateCodeFromGstin(customer.taxRegistrationNo);
+  }
+
+  // When GST is applicable (taxAmount > 0 and reverse charge is false), state determination is mandatory
+  if (taxAmount > 0 && !isReverseCharge) {
+    if (!supplierStateCode) {
+      throw new BusinessRuleError(
+        "VALIDATION_ERROR",
+        "Supplier GSTIN is missing or invalid on Company. Place of supply cannot be determined for GST calculation.",
+        { companyId }
+      );
+    }
+    if (!customerStateCode) {
+      throw new BusinessRuleError(
+        "VALIDATION_ERROR",
+        "Customer GSTIN or Place of Supply state code is missing or invalid. Place of supply cannot be determined for GST calculation.",
+        { customerId }
+      );
+    }
+
+    const isInterState = supplierStateCode !== customerStateCode;
+    const { cgstAmount, sgstAmount, igstAmount } = calculateInvoiceGst(taxAmount, isInterState, isReverseCharge);
+
+    return {
+      placeOfSupplyStateCode: customerStateCode,
+      isInterState,
+      cgstAmount,
+      sgstAmount,
+      igstAmount,
+    };
+  }
+
+  // Zero tax or Reverse Charge (RCM)
+  const isInterState = supplierStateCode && customerStateCode ? supplierStateCode !== customerStateCode : false;
+  return {
+    placeOfSupplyStateCode: customerStateCode ?? null,
+    isInterState,
+    cgstAmount: 0,
+    sgstAmount: 0,
+    igstAmount: 0,
+  };
+}
+
 export async function createCustomInvoice(actor: ActorContext, input: CustomInvoiceInput) {
   const series = await InvoiceSeriesRepository.findById(input.invoiceSeriesId, actor.companyId);
   if (!series) throw new BusinessRuleError("NOT_FOUND", "Invoice series not found.", { invoiceSeriesId: input.invoiceSeriesId });
@@ -141,6 +246,14 @@ export async function createCustomInvoice(actor: ActorContext, input: CustomInvo
   const lines = computeLines(input.items, input.discountPercentage, input.isReverseCharge);
   const { subtotalAmount, discountAmount, taxAmount, grandTotal } = computeTotals(input.items, lines);
   assertAdvanceNotOverGrandTotal(input.advancePaymentAmount, grandTotal);
+  const gstBreakdown = await resolveGstBreakdown({
+    companyId: actor.companyId,
+    customerId: input.customerId,
+    inputPlaceOfSupply: input.placeOfSupplyStateCode,
+    taxAmount,
+    isReverseCharge: input.isReverseCharge,
+  });
+
   const balanceDue = computeBalanceDue({
     grandTotal,
     advancePaymentAmount: input.advancePaymentAmount ?? null,
@@ -173,6 +286,11 @@ export async function createCustomInvoice(actor: ActorContext, input: CustomInvo
           incomeAccountId: input.incomeAccountId || null,
           discountPercentage: input.discountPercentage,
           isReverseCharge: input.isReverseCharge,
+          placeOfSupplyStateCode: gstBreakdown.placeOfSupplyStateCode,
+          isInterState: gstBreakdown.isInterState,
+          cgstAmount: gstBreakdown.cgstAmount,
+          sgstAmount: gstBreakdown.sgstAmount,
+          igstAmount: gstBreakdown.igstAmount,
           subtotalAmount,
           discountAmount,
           taxAmount,
@@ -223,22 +341,17 @@ export async function updateCustomInvoice(actor: ActorContext, id: string, input
   // "live" status (there's no separate locked/finalized state), so a real
   // payment or credit note can already exist against a DRAFT invoice.
   // Editing items/pricing out from under either would silently desync them
-  // from what was actually collected/credited — the same lesson this
-  // project has learned repeatedly (Material Request, Purchase Order, ...).
+  // from what was actually collected/credited.
   //
-  // The credit-note check is deliberately "any credit note ever, including
-  // CANCELLED", not just a live creditedAmount>0 check — a real bug caught
-  // during live verification: replaceItemsAndNotes() deletes every
-  // CustomInvoiceItem row and recreates them, but a CANCELLED credit note's
-  // own CustomInvoiceCreditNoteItem rows still reference the original item
-  // (cancelling only flips a status, it never deletes history) — so even
-  // after full reversal, that delete hits a real FK constraint and 500s.
-  // Blocking on "any credit note history at all" closes this structurally.
-  const hasAnyCreditNoteHistory = (await CustomInvoiceCreditNoteRepository.countByInvoiceId(id)) > 0;
-  if (Number(existing.paidAmount) > 0 || Number(existing.creditedAmount) > 0 || hasAnyCreditNoteHistory) {
+  // Active (ISSUED) credit notes or live paid/credited balances strictly block
+  // editing. However, when all past credit notes have been CANCELLED and
+  // paidAmount/creditedAmount are fully reversed back to 0, editing is safe
+  // because replaceItemsAndNotes() preserves referenced item rows in-place.
+  const hasActiveCreditNote = (await CustomInvoiceCreditNoteRepository.countActiveByInvoiceId(id)) > 0;
+  if (Number(existing.paidAmount) > 0 || Number(existing.creditedAmount) > 0 || hasActiveCreditNote) {
     throw new BusinessRuleError(
       "INVALID_STATE_TRANSITION",
-      "Cannot edit this invoice — a payment or credit note has already been recorded against it.",
+      "Cannot edit this invoice — an active payment or credit note is currently recorded against it.",
       { id }
     );
   }
@@ -251,6 +364,14 @@ export async function updateCustomInvoice(actor: ActorContext, id: string, input
   const lines = computeLines(input.items, input.discountPercentage, input.isReverseCharge);
   const { subtotalAmount, discountAmount, taxAmount, grandTotal } = computeTotals(input.items, lines);
   assertAdvanceNotOverGrandTotal(input.advancePaymentAmount, grandTotal);
+  const gstBreakdown = await resolveGstBreakdown({
+    companyId: actor.companyId,
+    customerId: input.customerId,
+    inputPlaceOfSupply: input.placeOfSupplyStateCode,
+    taxAmount,
+    isReverseCharge: input.isReverseCharge,
+  });
+
   // A DRAFT invoice (the only state this function ever runs against) can
   // never have real payments/credit notes yet — both actions are blocked
   // until the invoice exists in its final form — so paidAmount/creditedAmount
@@ -277,6 +398,11 @@ export async function updateCustomInvoice(actor: ActorContext, id: string, input
         incomeAccountId: input.incomeAccountId || null,
         discountPercentage: input.discountPercentage,
         isReverseCharge: input.isReverseCharge,
+        placeOfSupplyStateCode: gstBreakdown.placeOfSupplyStateCode,
+        isInterState: gstBreakdown.isInterState,
+        cgstAmount: gstBreakdown.cgstAmount,
+        sgstAmount: gstBreakdown.sgstAmount,
+        igstAmount: gstBreakdown.igstAmount,
         subtotalAmount,
         discountAmount,
         taxAmount,

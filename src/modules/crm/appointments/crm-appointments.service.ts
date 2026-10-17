@@ -714,6 +714,7 @@ export async function getAppointmentMeta(actor: CrmActor) {
 export async function createAppointmentFromActivityInput(actor: CrmActor, input: CreateActivityInput) {
   if (input.mode === "log") throw new BusinessRuleError("VALIDATION_ERROR", "An appointment is scheduled, not logged. Create it and mark it complete.", { fieldErrors: { mode: "Schedule it instead." } });
   if (!input.dueDate || !input.dueTime) throw new BusinessRuleError("VALIDATION_ERROR", "An appointment needs a date and a start time.", { fieldErrors: { dueTime: "Choose a start time." } });
+  if (input.entityType === "CONVERSATION") throw new BusinessRuleError("VALIDATION_ERROR", "Book appointments on the conversation's contact, company or opportunity.", { fieldErrors: { entityType: "Choose a contact, company or opportunity." } });
   const relKey = { CONTACT: "contactId", COMPANY: "companyId", OPPORTUNITY: "opportunityId", LEAD: "leadId" }[input.entityType];
   const startMinutes = Number(input.dueTime.slice(0, 2)) * 60 + Number(input.dueTime.slice(3));
   const endMinutes = startMinutes + DEFAULT_APPOINTMENT_MINUTES;

@@ -7620,6 +7620,36 @@ second one.
 - Verified: tsc, eslint, 2162/2162 tests (8 new), and live — skills saved via the real form, invalid stage → 404,
   unskilled worker → 400 with the named-stage message, Assign Worker listed only the skilled employee.
 
+## Production → Dispatch handoff: "For Dispatch" status, For Dispatching list, Draft-time FG stock check (2026-10-12)
+
+- **"For Dispatch" is derived, never stored** (`src/modules/production/dispatch-readiness.service.ts`). A Production
+  Order is READY_FOR_DISPATCH once produced > 0 and produced + permanently rejected/damaged ≥ planned (from the
+  existing `getProgressForOrders()` batch helper in `production-progress.service.ts`). It becomes DISPATCHED once its
+  Sale Order line's shipped qty + open Draft/Packed dispatch qty covers what was produced. The list API and detail
+  API return `dispatchReadiness`; the list shows it in place of the lifecycle label (Hold/Cancel/Close still follow
+  the real `status`).
+- **Job work:** pieces from a job-work receipt that covers the final stage are already posted to FG and counted as
+  produced. A fully-received job work that only covers a middle stage (e.g. Embroidery) does NOT by itself make an
+  order dispatch-ready — its pieces still have to reach Packing. Fully-received JWOs are listed beside the order.
+- **Dispatch page "For Dispatching"** (`ReadyForDispatchPanel.tsx`, `GET /api/v1/dispatches/ready-for-dispatch`):
+  ready orders with Finished / Dispatched / Pending qty and a "Create Dispatch" link that pre-fills the form via
+  `/dispatch/new?salesOrderId=&salesOrderItemId=&quantity=`.
+- **FG stock is now checked at Draft create/edit, not only at Confirm** (`assertFinishedGoodsAvailable()` in
+  `dispatch.service.ts`). Requested qty per style must be ≤ the warehouse's real on-hand stock. The form shows an
+  "Available Stock" column (`GET /api/v1/dispatches/available-stock`) and blocks Save when exceeded. Confirm still
+  re-checks live stock.
+- **Correction, 2026-10-13:** the first version also subtracted qty on OTHER open Draft/Packed dispatches
+  ("reserved"). Three stale pre-fix drafts (ORD-2026-00007, 85 pcs each) then blocked a real 6-pc shipment. Drafts no
+  longer reserve stock; the reserved figure is shown only as a warning. "Dispatched" readiness now needs a confirmed
+  (shipped) dispatch — a Draft/Packed one keeps the order in "For Dispatching" ("On a dispatch — confirm it below").
+- **Forwarder → Transporter (labels only, 2026-10-13):** Masters page/URL is now `/masters/transporters`
+  (`/masters/forwarders` redirects in `next.config.ts`); new codes use prefix `TRN`. The table, API
+  (`/api/v1/forwarders`), `forwarderId` and code names are unchanged. The Dispatch form's old free-text Transporter box
+  was removed — the Transporter dropdown is the Master record; a legacy `transporterName` is kept on edit and shown as a
+  fallback on the detail page, Excel export and Order Lifecycle report.
+- Dispatch form opened pre-filled (`?salesOrderId=`) now also defaults the Delivery Address from the Customer master
+  (shipping, else billing), same as picking the order by hand.
+
 ## Reference
 
 Full architecture rationale, complete table-by-table field lists, and the full role×module permission matrix were developed in the Phase 1 planning session and are condensed here. Consult that history if a design decision needs deeper justification than what's summarized above.
@@ -7732,3 +7762,59 @@ The whole CRM (Leads, Deals/Opportunities, pipeline/sources/lost-reason masters,
 - Automation events `appointment.*` are written with the change via runCrmMutation (no event on failure; crm_events.id = idempotency key); payload = AppointmentEventPayload.
 - Calendar UI: reusable `src/components/crm/appointments/CrmCalendar.tsx` (day/week/month); drag calls POST /appointments/{id}/reschedule, never writes times directly.
 - Report: `docs/crm/PHASE_10_CALENDAR_APPOINTMENTS.md`.
+
+## Platform SaaS — Phase 1 Platform Identity & Security Separation (2026-10-13)
+Tracker: `docs/PLATFORM_SAAS_MASTER_TRACKER.md` (read it first for any platform/SaaS task; one phase at a time, stop for approval between phases).
+- Platform operators are a separate identity: `PlatformUser` (`platform_users`, no companyId, role PLATFORM_SUPER_ADMIN/SUPPORT_AGENT/BILLING_ADMIN). They sign in at `/platform/login` (NextAuth provider `platform-credentials`) and use only the `src/app/(platform)/` portal. `User.isPlatformAdmin` is deprecated and grants nothing.
+- Sessions carry `userType` TENANT | PLATFORM (missing = TENANT). Page routing for both lives in `src/core/auth/route-access.ts`, applied by `src/proxy.ts`. API: customer routes use `requireSession()` (refuses PLATFORM sessions); platform routes use `requirePlatformSession(roles?)`. Never call `prisma.user` for a platform id.
+- `PermissionService` has NO bypass of any kind (removed 4). Platform staff get tenant access only via Phase 2's customer-approved support session (below).
+- Suspended company (`companies.is_active=false`): login refused, `requireSession()` → 403 `ACCOUNT_SUSPENDED`, permissions all false, and `src/proxy.ts` redirects pages to `/account-suspended` (must be the proxy — a layout redirect still streams the page's data).
+- Platform-performed audit rows use `audit_logs.platform_user_id`, not `user_id`.
+- Known dev-DB gap: the permission catalog is missing 108 keys (barcodes, administration_*, every `.scan`…), so creating a company via the platform portal 500s until an idempotent catalog backfill is run.
+
+## Platform SaaS — Phase 2 Customer-Approved Support Access (2026-10-13)
+- Flow: operator requests access (`/platform/support`: company, reason, 15–120 min) → a 6-digit code is shown to them once → the customer company's **Super Admin role** (checked live, not a permission key) approves it with that code at `/admin/support-access` → read-only session → "Open ERP" issues a single-use 60-s exchange token → NextAuth provider `support-session` signs the browser in with `userType: "SUPPORT"` + `supportSessionId`.
+- In the ERP the operator IS the company's proxy user (`users.support_for_platform_user_id`, "Support — <name>", no roles, can't use `/login`). Exclude proxy users (`supportForPlatformUserId: null`) from any new user list, picker or count.
+- Liveness (`src/core/support-access/support-session-guard.ts`) is re-checked on every request by `src/proxy.ts` (now also matches `/api`, but only acts on SUPPORT sessions), `requireSession()` and `PermissionService`. Never cache a proxy user's permissions.
+- Grants: READ_ONLY = view/view_all/print; READ_WRITE (second code, customer-approved) adds create/edit/cancel/scan. Never approve/post/delete/reject/override/export; `administration_*` always read-only. The proxy also refuses every non-GET in READ_ONLY.
+- Every step and every request in the session goes into `support_access_events` via `recordSupportEventInTx` (hash chain, advisory lock; DB trigger refuses UPDATE/DELETE). Service: `src/modules/support-access/support-access.service.ts`.
+
+## Platform SaaS — Phase 3 Company & Module Management (2026-10-13)
+- Company lifecycle (`src/modules/platform/platform-company-lifecycle.service.ts`, `/platform/companies/:id`): edit details, suspend (required reason; stores `suspended_at`/`suspension_reason`/`suspended_by_platform_user_id`), reactivate, usage stats. Mutations are PLATFORM_SUPER_ADMIN only and audited with `platform_user_id`. Stats count real users only (`supportForPlatformUserId: null`).
+- Module entitlements are **packages** in `src/config/module-entitlements.ts` (each RBAC module is either core or in exactly one package — a test enforces it; put every new RBAC module in one). Core, always on: dashboard, masters_core, masters_finance, sales_orders, administration_*. `company_module_entitlements` row = override; no row = enabled.
+- `EntitlementService` (`src/core/entitlements/`, 15 s per-company cache, globalThis singleton, call `invalidate(companyId)` after changes). `PermissionService` refuses a disabled module for every action and `assert()` throws 403 `MODULE_NOT_ENABLED`; sidebar hides it via `getModulesWithAction`; `src/proxy.ts` redirects its pages to `/module-unavailable` using `route-modules.ts` (page → modules from the sidebar config, longest link wins) — so a new page must have a sidebar link or it isn't page-gated (its APIs still are).
+
+## Platform SaaS — Phase 4 Subscriptions, Trials & Grace Period (2026-10-13)
+- Decisions: payment is recorded manually by platform staff (no gateway, DEC-03); after the 7-day grace the company is a read-only archive (DEC-01); AI usage is not metered (DEC-04 deferred); trials default to 14 days per plan.
+- Tables: `subscription_plans` (+ `subscription_plan_modules`), `company_subscriptions` (one per company; `current_period_ends_at` null = no expiry — every pre-Phase-4 company was backfilled on "Standard" with no expiry), `subscription_payments`. Services in `src/modules/platform/` (`subscription-plan`, `company-subscription`, `subscription-lifecycle`). Plan/billing actions: PLATFORM_SUPER_ADMIN or BILLING_ADMIN.
+- Access state (TRIAL/ACTIVE/GRACE/EXPIRED/UNLIMITED) is DERIVED from the period end by `src/core/subscriptions/subscription-state.ts` — never store it. GRACE and EXPIRED are read-only: `PermissionService` allows only view/view_all/print/export and throws 403 `SUBSCRIPTION_READ_ONLY` otherwise (no extra query: it rides on `loadLiveUserState`). Banner: `SubscriptionBanner` in the dashboard layout.
+- Modules: the plan decides; a `company_module_entitlements` row overrides it (DELETE `.../modules?packageKey=` resets to the plan). `EntitlementService.invalidate()` after any plan/subscription change.
+- Plan `maxUsers` is enforced by `assertUserLimitAllows()` on user create/reactivate (409 `SUBSCRIPTION_LIMIT_REACHED`); support proxy users never count.
+- Lifecycle notices: hourly job `subscription.lifecycle` on queue `platform-jobs-<db hash>` (`platform-jobs.worker.ts`), in-app to the company's Super Admins, once per stage per period via `last_notified_key` ("STAGE|period-end ISO").
+
+## Platform SaaS — Phase 5 Coupons & Support Tickets (2026-10-14)
+- Coupons (`src/modules/platform/coupon.service.ts`, `/platform/coupons`): a coupon IS the offer. Types PERCENT / FIXED_AMOUNT / FREE_MONTHS (applied by staff when recording a payment) and TRIAL_EXTENSION (applied when creating a company). Every use goes through `claimCouponInTx` (locks the coupon row, checks active/dates/plan/cycle/limits) then `recordRedemptionInTx`; failures → 422 `COUPON_INVALID`. Once used, the code and discount can't change. Payments store `list_amount`/`discount_amount`/`free_months`/`coupon_id`; `amount` is what was actually received.
+- Support tickets (`src/modules/support-tickets/`): customers at `/support-tickets` (any user; own tickets; the company's SUPER_ADMIN role sees all — via `isCompanySupportAdmin`), platform staff at `/platform/tickets`. Ticket routes use `requireTicketUser()` (no module permission, so they work during read-only grace; refuses SUPPORT sessions). Internal notes (`is_internal`) are never returned to customers. Platform reply → WAITING_ON_CUSTOMER + in-app notification; customer reply reopens; CLOSED is final. Attachments live in `support_ticket_attachments` (FileStorage, max 5 per message), not the shared `attachments` table. Numbers `TKT-YYYY-#####` (company-wide, `branchId: null`).
+
+## Platform SaaS — Phase 6 Final Verification & Production Readiness (2026-10-14)
+All six phases done (35/35 tasks). Deploy and rollback steps: `docs/PLATFORM_SAAS_RUNBOOK.md` — read it before deploying or rolling back.
+- Every deploy: `prisma migrate deploy` → `node --experimental-strip-types --no-warnings scripts/sync-permission-catalog.mjs` → restart app AND worker. The sync script adds missing permission keys and grants only brand-new keys to system roles; it never deletes and never re-grants a permission an admin removed. Use it instead of re-running `prisma db seed` (the dev-DB catalog gap is now fixed).
+- QA scripts (local/staging only) in `scripts/qa/`: `rehearse-migrations.mjs` (empty DB, all migrations + seed + sync, drift check), `rehearse-rollback.mjs` (pg_dump snapshot, all SaaS rollbacks, core-data check, roll forward), `verify-tenant-isolation.mjs` (needs the app running; second company probes every `/api/v1/**/[id]` route, lists, files, tickets, support requests; leaves test company `QA-ISOLATION-TENANT` suspended).
+- Rollback scripts: `prisma/rollback/<migration>.down.sql`, one per SaaS migration, run newest first; each deletes its own `_prisma_migrations` row. A new SaaS migration needs a matching down script and a rehearsal run.
+- Results 2026-10-14: 2748 tests (no regressions), tsc/eslint 0 errors, build OK, isolation 140/140, both rehearsals passed.
+- `REDIS_URL` is required in production (worker) and is now in `.env.example`. A fresh install's seeded company has no subscription row (all modules, no expiry).
+
+## CRM rebuild - Phase 11 Unified Conversations (2026-10-08)
+- ONE inbox for every channel (channel = filter, never a separate inbox). Model: `crm_channels` -> `crm_conversations` -> `crm_messages` + `crm_conversation_participants` + `crm_message_attachments` (bytes in the shared `attachments` store). Internal notes are `crm_notes` on entity CONVERSATION - never in crm_messages, so a note can never be sent.
+- Providers live in `src/core/communication/` (`CommunicationProvider.ts` contract, `provider-registry.ts`). A new channel = one ChannelProvider file + one registry line; it only verifies/normalises payloads and sends - never touches the DB. Only `generic` (signed webhook in, signed HTTP relay out) exists; no WhatsApp/Meta/Gmail/SMS integrations yet.
+- Inbound: `/api/v1/crm/webhooks/conversations/<provider>/<channelId>` -> `conversation-messaging.service.ts` (`ingestInboundMessage`): idempotent on (channel_id, provider_message_id) under an advisory lock; contact matching only via `conversation-matching.ts` (email/phone keys, learned provider ids; MULTIPLE/UNMATCHED go to the Unmatched queue - never auto-create contacts).
+- Outbound: always `sendConversationMessage` -> `prepareSend` (permission, capabilities, Phase 04 DND via canContact, recipient) -> message saved QUEUED -> provider called OUTSIDE the transaction -> SENT/FAILED. Retry reuses the message id as idempotency key. Never put channel-type checks in UI - use ChannelCapabilities.
+- Visibility: `conversation-access.ts` (view_all = all; else assigned to me, or unassigned + linked record I own). Events `conversation.*` / `message.*` on CrmEntityType CONVERSATION (payload ConversationEventPayload, no message bodies); record timelines include them (minus delivered/read receipts).
+- Report: `docs/crm/PHASE_11_UNIFIED_CONVERSATIONS.md`.
+
+## CRM rebuild - Phase 12 Message Templates (2026-10-09)
+- Templates = `crm_message_templates` + immutable `crm_message_template_versions` (DB trigger refuses UPDATE/DELETE). Every content change adds version N+1 (`updateTemplate`, `restoreTemplateVersion`); never edit a version row. Categories reuse `crm_option_values` list `template_category` (no category table).
+- ONE parser/renderer: `src/modules/crm/templates/template-engine.ts` (client-safe). Syntax `{{record.field}}` / `{{record.field|fallback}}`; unknown variable = error, missing value = fallback or empty + warning. Variables come only from `TEMPLATE_VARIABLES` in `template-registry.ts`; values only from `template-context.ts` (one query per record type, visibility enforced). New record type = registry entry + loader.
+- Other modules use `TemplateService` (crm-templates.service.ts): `renderTemplate(actor | crmSystemActor, templateId, { refs } | { values, entities }, { requireUsable: true })`. Only ACTIVE templates may be used to send; messages store the final text plus `template_id` + `template_version_id`. Register live references with `registerTemplateUsageProvider` (blocks archiving).
+- Inbox: send accepts `templateId` + `templateVersionId`; provider gets `OutboundMessage.template` (providerMetadata + parameters). Test sends go through the provider adapter with `test: true` and "[TEST]" - never stored in crm_messages; audited + `template.test_sent` event.
+- Report: `docs/crm/PHASE_12_MESSAGE_TEMPLATES.md`.

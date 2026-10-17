@@ -20,10 +20,34 @@ vi.mock("./dispatch.repository", () => ({
     createWithItems: vi.fn(),
     replaceItems: vi.fn(),
     setCartons: vi.fn(),
+    setPickLines: vi.fn(),
     updateStatusConditional: vi.fn(),
   },
 }));
-vi.mock("@/core/db/client", () => ({ prisma: { $transaction: vi.fn() } }));
+// Finished Goods Inventory module (FGI-040/041).
+vi.mock("@/modules/products/product.repository", () => ({
+  ProductVariantRepository: { findManyActiveByProductId: vi.fn(), findManyByIds: vi.fn() },
+}));
+vi.mock("@/modules/warehouses/warehouse.repository", () => ({
+  WarehouseLocationRepository: { findByIdWithWarehouse: vi.fn() },
+}));
+vi.mock("@/modules/finished-goods-inventory/finished-goods-reservation.service", () => ({
+  getFinishedGoodsAvailableQuantity: vi.fn(),
+  consumeReservationForDispatchInTx: vi.fn(),
+}));
+// Packing-produced-quantity gate (process-flow clarity fix, 2026-10-15).
+vi.mock("@/modules/production/production-progress.service", () => ({
+  getSalesOrderItemProductionSummary: vi.fn(),
+}));
+vi.mock("@/core/db/client", () => ({
+  prisma: {
+    $transaction: vi.fn(),
+    dispatchItem: { aggregate: vi.fn() },
+    product: { findFirst: vi.fn() },
+    productionOrder: { findMany: vi.fn() },
+    salesOrderItem: { findFirst: vi.fn() },
+  },
+}));
 vi.mock("@/core/barcode/barcode.service", () => ({ replaceCartonBarcodes: vi.fn() }));
 vi.mock("@/core/dispatch-settings/DispatchSettingsService", async () => {
   const actual = await vi.importActual<typeof import("@/core/dispatch-settings/DispatchSettingsService")>(
@@ -33,12 +57,19 @@ vi.mock("@/core/dispatch-settings/DispatchSettingsService", async () => {
 });
 
 const { prisma } = await import("@/core/db/client");
+const { writeAuditLog } = await import("@/core/audit/AuditLogger");
 const { PermissionService } = await import("@/core/rbac/PermissionService");
 const { SalesOrderRepository } = await import("@/modules/sales-orders/sales-order.repository");
 const { recordInventoryTransaction, getAvailableQuantity } = await import("@/modules/inventory/inventory.service");
 const { DispatchRepository } = await import("./dispatch.repository");
 const { replaceCartonBarcodes } = await import("@/core/barcode/barcode.service");
 const { getDispatchSettings } = await import("@/core/dispatch-settings/DispatchSettingsService");
+const { ProductVariantRepository } = await import("@/modules/products/product.repository");
+const { WarehouseLocationRepository } = await import("@/modules/warehouses/warehouse.repository");
+const { getFinishedGoodsAvailableQuantity, consumeReservationForDispatchInTx } = await import(
+  "@/modules/finished-goods-inventory/finished-goods-reservation.service"
+);
+const { getSalesOrderItemProductionSummary } = await import("@/modules/production/production-progress.service");
 
 const DEFAULT_SETTINGS = {
   allowExtraDispatch: true,
@@ -49,6 +80,7 @@ const DEFAULT_SETTINGS = {
 const {
   createDispatch,
   setCartons,
+  setPickLines,
   markPacked,
   confirmDispatch,
   markDelivered,
@@ -95,8 +127,27 @@ beforeEach(() => {
   vi.mocked(DispatchRepository.createWithItems).mockReset();
   vi.mocked(DispatchRepository.updateStatusConditional).mockReset();
   vi.mocked(DispatchRepository.setCartons).mockReset();
+  vi.mocked(DispatchRepository.setPickLines).mockReset();
+  vi.mocked(ProductVariantRepository.findManyActiveByProductId).mockReset().mockResolvedValue([]);
+  vi.mocked(ProductVariantRepository.findManyByIds).mockReset().mockResolvedValue([]);
+  vi.mocked(WarehouseLocationRepository.findByIdWithWarehouse).mockReset();
+  vi.mocked(getFinishedGoodsAvailableQuantity).mockReset().mockResolvedValue(1000);
+  vi.mocked(consumeReservationForDispatchInTx).mockReset().mockResolvedValue(undefined);
   vi.mocked(prisma.$transaction).mockReset();
+  vi.mocked(prisma.dispatchItem.aggregate).mockReset().mockResolvedValue({ _sum: { dispatchedQuantity: 0 } } as never);
+  vi.mocked(prisma.product.findFirst).mockReset().mockResolvedValue({ styleName: "Gym Lowers" } as never);
   vi.mocked(replaceCartonBarcodes).mockReset();
+  // Release-to-Dispatch gate (2026-10-10) — default to "no unreleased
+  // Production Orders found" so every pre-existing test (none of which know
+  // about this gate) keeps passing unmodified; the gate's own dedicated
+  // tests override this per-case.
+  vi.mocked(prisma.productionOrder.findMany).mockReset().mockResolvedValue([]);
+  // Packing-produced-quantity gate (2026-10-15) — default to "nothing
+  // dispatched yet, effectively unlimited produced" so every pre-existing
+  // test (none of which know about this gate) keeps passing unmodified; the
+  // gate's own dedicated tests override this per-case.
+  vi.mocked(prisma.salesOrderItem.findFirst).mockReset().mockResolvedValue({ regularDispatchedQuantity: 0, product: { styleName: "Gym Lowers" } } as never);
+  vi.mocked(getSalesOrderItemProductionSummary).mockReset().mockResolvedValue({ totalProduced: 1_000_000 } as never);
 });
 
 describe("createDispatch — order eligibility and remaining-quantity guard", () => {
@@ -133,6 +184,49 @@ describe("createDispatch — order eligibility and remaining-quantity guard", ()
         dispatchDate: "2026-08-24",
         deliveryAddress: "123 Street",
         items: [{ salesOrderItemId: "item-1", dispatchedQuantity: 20 }],
+      } as never)
+    ).resolves.toBeDefined();
+  });
+
+  it("rejects a Draft dispatch for more pieces than the warehouse holds", async () => {
+    vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue({
+      id: "so-1",
+      status: "CONFIRMED",
+      customerId: "cust-1",
+      items: [orderItem("item-1", 0, [100])],
+    } as never);
+    vi.mocked(getAvailableQuantity).mockResolvedValue(6);
+
+    await expect(
+      createDispatch(actor, {
+        salesOrderId: "so-1",
+        warehouseId: "wh-1",
+        dispatchDate: "2026-08-24",
+        deliveryAddress: "123 Street",
+        items: [{ salesOrderItemId: "item-1", dispatchedQuantity: 85 }],
+      } as never)
+    ).rejects.toMatchObject({ code: "INSUFFICIENT_FG_STOCK", details: { available: 6, requested: 85 } });
+    expect(DispatchRepository.createWithItems).not.toHaveBeenCalled();
+  });
+
+  it("does not let other open Draft/Packed dispatches block real on-hand stock", async () => {
+    vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue({
+      id: "so-1",
+      status: "CONFIRMED",
+      customerId: "cust-1",
+      items: [orderItem("item-1", 0, [100])],
+    } as never);
+    vi.mocked(getAvailableQuantity).mockResolvedValue(6);
+    vi.mocked(prisma.dispatchItem.aggregate).mockResolvedValue({ _sum: { dispatchedQuantity: 255 } } as never);
+    vi.mocked(DispatchRepository.createWithItems).mockResolvedValue({ id: "disp-1" } as never);
+
+    await expect(
+      createDispatch(actor, {
+        salesOrderId: "so-1",
+        warehouseId: "wh-1",
+        dispatchDate: "2026-08-24",
+        deliveryAddress: "123 Street",
+        items: [{ salesOrderItemId: "item-1", dispatchedQuantity: 6 }],
       } as never)
     ).resolves.toBeDefined();
   });
@@ -258,6 +352,218 @@ describe("createDispatch — order eligibility and remaining-quantity guard", ()
       );
     });
   });
+
+  describe("Release-to-Dispatch gate (2026-10-10)", () => {
+    const baseOrder = {
+      id: "so-1",
+      status: "CONFIRMED",
+      customerId: "cust-1",
+      items: [orderItem("item-1", 0, [50])],
+    };
+    const baseInput = {
+      salesOrderId: "so-1",
+      warehouseId: "wh-1",
+      dispatchDate: "2026-08-24",
+      deliveryAddress: "123 Street",
+      items: [{ salesOrderItemId: "item-1", dispatchedQuantity: 10 }],
+    };
+
+    it("is silently skipped when the line has no Production Order at all (Make-to-Stock / untracked)", async () => {
+      vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue(baseOrder as never);
+      vi.mocked(prisma.productionOrder.findMany).mockResolvedValue([]);
+      vi.mocked(DispatchRepository.createWithItems).mockResolvedValue({ id: "disp-1" } as never);
+
+      await createDispatch(actor, baseInput as never);
+
+      expect(DispatchRepository.createWithItems).toHaveBeenCalled();
+    });
+
+    it("blocks creation when a non-cancelled Production Order for the line hasn't been released, naming it", async () => {
+      vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue(baseOrder as never);
+      vi.mocked(prisma.productionOrder.findMany).mockResolvedValue([
+        { id: "po-1", orderNumber: "PROD-2026-00001", product: { styleName: "Kurta" } },
+      ] as never);
+
+      await expect(createDispatch(actor, baseInput as never)).rejects.toMatchObject({
+        code: "PRODUCTION_NOT_RELEASED_TO_DISPATCH",
+      });
+      expect(DispatchRepository.createWithItems).not.toHaveBeenCalled();
+    });
+
+    it("never queries for a line whose dispatchedQuantity is 0 (nothing being shipped on it)", async () => {
+      vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue({
+        ...baseOrder,
+        items: [orderItem("item-1", 0, [50]), orderItem("item-2", 0, [30])],
+      } as never);
+      vi.mocked(DispatchRepository.createWithItems).mockResolvedValue({ id: "disp-1" } as never);
+
+      await createDispatch(actor, {
+        ...baseInput,
+        items: [
+          { salesOrderItemId: "item-1", dispatchedQuantity: 10 },
+          { salesOrderItemId: "item-2", dispatchedQuantity: 0 },
+        ],
+      } as never);
+
+      expect(prisma.productionOrder.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ salesOrderItemId: { in: ["item-1"] } }) })
+      );
+    });
+
+    it("treats a CLOSED Production Order as implicitly released (closing already requires full completion)", async () => {
+      vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue(baseOrder as never);
+      // The real repository query already excludes CLOSED/CANCELLED — this
+      // test proves the exclusion is actually wired into the where clause.
+      vi.mocked(prisma.productionOrder.findMany).mockImplementation((async (args: { where: { status: { notIn: string[] } } }) => {
+        expect(args.where.status.notIn).toEqual(["CANCELLED", "CLOSED"]);
+        return [];
+      }) as never);
+      vi.mocked(DispatchRepository.createWithItems).mockResolvedValue({ id: "disp-1" } as never);
+
+      await createDispatch(actor, baseInput as never);
+
+      expect(DispatchRepository.createWithItems).toHaveBeenCalled();
+    });
+
+    it("proceeds with an override reason, asserting production/approve, and audits the override", async () => {
+      vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue(baseOrder as never);
+      vi.mocked(prisma.productionOrder.findMany).mockResolvedValue([
+        { id: "po-1", orderNumber: "PROD-2026-00001", product: { styleName: "Kurta" } },
+      ] as never);
+      vi.mocked(DispatchRepository.createWithItems).mockResolvedValue({ id: "disp-1" } as never);
+
+      await createDispatch(actor, {
+        ...baseInput,
+        overrideProductionReleaseReason: "Buyer confirmed shipment on a sample basis before full QC sign-off.",
+      } as never);
+
+      expect(PermissionService.assert).toHaveBeenCalledWith("user-1", "production", "approve");
+      expect(DispatchRepository.createWithItems).toHaveBeenCalled();
+      expect(writeAuditLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          recordId: "disp-1",
+          newValues: expect.objectContaining({ overriddenProductionOrderIds: ["po-1"] }),
+        })
+      );
+    });
+
+    it("still blocks when an override reason is supplied but the actor lacks production/approve", async () => {
+      vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue(baseOrder as never);
+      vi.mocked(prisma.productionOrder.findMany).mockResolvedValue([
+        { id: "po-1", orderNumber: "PROD-2026-00001", product: { styleName: "Kurta" } },
+      ] as never);
+      vi.mocked(PermissionService.assert).mockRejectedValue(
+        Object.assign(new Error("denied"), { code: "PERMISSION_DENIED" })
+      );
+
+      await expect(
+        createDispatch(actor, { ...baseInput, overrideProductionReleaseReason: "Reason." } as never)
+      ).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+      expect(DispatchRepository.createWithItems).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Packing-produced-quantity gate (2026-10-15)", () => {
+    const baseOrder = {
+      id: "so-1",
+      status: "CONFIRMED",
+      customerId: "cust-1",
+      items: [orderItem("item-1", 0, [200])],
+    };
+    const baseInput = {
+      salesOrderId: "so-1",
+      warehouseId: "wh-1",
+      dispatchDate: "2026-08-24",
+      deliveryAddress: "123 Street",
+      items: [{ salesOrderItemId: "item-1", dispatchedQuantity: 30 }],
+    };
+
+    it("blocks when the requested quantity exceeds what has actually completed the final (Packing) stage, naming the real shortfall", async () => {
+      vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue(baseOrder as never);
+      vi.mocked(prisma.salesOrderItem.findFirst).mockResolvedValue({ regularDispatchedQuantity: 0, product: { styleName: "Kurta" } } as never);
+      vi.mocked(getSalesOrderItemProductionSummary).mockResolvedValue({ totalProduced: 20 } as never);
+
+      await expect(createDispatch(actor, baseInput as never)).rejects.toMatchObject({
+        code: "PACKING_QUANTITY_NOT_AVAILABLE",
+        details: { requested: 30, alreadyRegularDispatched: 0, totalProduced: 20, remainingPacked: 20 },
+      });
+      expect(DispatchRepository.createWithItems).not.toHaveBeenCalled();
+    });
+
+    it("subtracts already-REGULAR-dispatched (confirmed) quantity for the same line before comparing against produced", async () => {
+      vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue(baseOrder as never);
+      // 100 already genuinely produced (Packing-complete), 80 already shipped as
+      // Regular on earlier confirmed dispatches -> only 20 remain, 30 is too many.
+      vi.mocked(prisma.salesOrderItem.findFirst).mockResolvedValue({ regularDispatchedQuantity: 80, product: { styleName: "Kurta" } } as never);
+      vi.mocked(getSalesOrderItemProductionSummary).mockResolvedValue({ totalProduced: 100 } as never);
+
+      await expect(createDispatch(actor, baseInput as never)).rejects.toMatchObject({
+        code: "PACKING_QUANTITY_NOT_AVAILABLE",
+        details: { requested: 30, alreadyRegularDispatched: 80, totalProduced: 100, remainingPacked: 20 },
+      });
+    });
+
+    it("allows exactly up to the remaining produced-but-not-yet-dispatched quantity", async () => {
+      vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue(baseOrder as never);
+      vi.mocked(prisma.salesOrderItem.findFirst).mockResolvedValue({ regularDispatchedQuantity: 0, product: { styleName: "Kurta" } } as never);
+      vi.mocked(getSalesOrderItemProductionSummary).mockResolvedValue({ totalProduced: 30 } as never);
+      vi.mocked(DispatchRepository.createWithItems).mockResolvedValue({ id: "disp-1" } as never);
+
+      await expect(createDispatch(actor, baseInput as never)).resolves.toBeDefined();
+    });
+
+    it("is NOT bypassed by a Release-to-Dispatch override reason — there is no human judgment call to override a plain physical fact", async () => {
+      vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue(baseOrder as never);
+      vi.mocked(prisma.productionOrder.findMany).mockResolvedValue([
+        { id: "po-1", orderNumber: "PROD-2026-00001", product: { styleName: "Kurta" } },
+      ] as never);
+      vi.mocked(prisma.salesOrderItem.findFirst).mockResolvedValue({ regularDispatchedQuantity: 0, product: { styleName: "Kurta" } } as never);
+      vi.mocked(getSalesOrderItemProductionSummary).mockResolvedValue({ totalProduced: 20 } as never);
+
+      await expect(
+        createDispatch(actor, {
+          ...baseInput,
+          overrideProductionReleaseReason: "Buyer confirmed shipment on a sample basis before full QC sign-off.",
+        } as never)
+      ).rejects.toMatchObject({ code: "PACKING_QUANTITY_NOT_AVAILABLE" });
+      expect(DispatchRepository.createWithItems).not.toHaveBeenCalled();
+    });
+
+    it("does NOT apply this gate to the Extra portion of a line — Extra is capped only by real Finished Goods stock, never by this line's own production", async () => {
+      // Ordered 200, 0 regular-dispatched yet, but this line's own Packing
+      // output is only 10 — a 30-piece request would be 20 Regular (allowed,
+      // since remainingToDispatch=200 means it's all Regular) ... so instead
+      // exercise a line already fully regular-fulfilled, where the whole
+      // request becomes Extra and must NOT be blocked by this gate at all.
+      const fullyShippedOrder = {
+        id: "so-1",
+        status: "DISPATCHED",
+        customerId: "cust-1",
+        items: [orderItem("item-1", 200, [200])], // regularDispatchedQuantity already === ordered
+      };
+      vi.mocked(SalesOrderRepository.findByIdWithDetails).mockResolvedValue(fullyShippedOrder as never);
+      // This line's own Packing output is only 10 (far less than the 15 Extra
+      // being requested) — if the gate wrongly applied to Extra, this would
+      // reject with PACKING_QUANTITY_NOT_AVAILABLE.
+      vi.mocked(prisma.salesOrderItem.findFirst).mockResolvedValue({ regularDispatchedQuantity: 200, product: { styleName: "Kurta" } } as never);
+      vi.mocked(getSalesOrderItemProductionSummary).mockResolvedValue({ totalProduced: 10 } as never);
+      vi.mocked(DispatchRepository.createWithItems).mockResolvedValue({ id: "disp-1" } as never);
+
+      await expect(
+        createDispatch(actor, {
+          salesOrderId: "so-1",
+          warehouseId: "wh-1",
+          dispatchDate: "2026-08-24",
+          deliveryAddress: "123 Street",
+          items: [{ salesOrderItemId: "item-1", dispatchedQuantity: 15, extraDispatchReason: "CUSTOMER_REQUEST" }],
+        } as never)
+      ).resolves.toBeDefined();
+      expect(DispatchRepository.createWithItems).toHaveBeenCalledWith(
+        expect.anything(),
+        [expect.objectContaining({ regularDispatchQuantity: 0, extraDispatchQuantity: 15 })]
+      );
+    });
+  });
 });
 
 describe("setCartons — replaces Carton barcodes to match the freshly recreated carton ids (2026-09-29)", () => {
@@ -266,7 +572,7 @@ describe("setCartons — replaces Carton barcodes to match the freshly recreated
       id: "disp-1",
       status: "DRAFT",
       dispatchNumber: "DSP-2026-00007",
-      items: [{ id: "di-1", productId: "prod-1" }],
+      items: [{ id: "di-1", productId: "prod-1", dispatchedQuantity: 5, product: { styleName: "Gym Lowers" } }],
       cartons: [{ id: "old-carton-1" }],
     } as never);
     vi.mocked(DispatchRepository.setCartons).mockResolvedValue({
@@ -291,7 +597,7 @@ describe("setCartons — replaces Carton barcodes to match the freshly recreated
       id: "disp-1",
       status: "DRAFT",
       dispatchNumber: "DSP-2026-00007",
-      items: [{ id: "di-1", productId: "prod-1" }],
+      items: [{ id: "di-1", productId: "prod-1", dispatchedQuantity: 5, product: { styleName: "Gym Lowers" } }],
       cartons: [],
     } as never);
     vi.mocked(DispatchRepository.setCartons).mockResolvedValue({ id: "disp-1", cartons: [] } as never);
@@ -300,6 +606,62 @@ describe("setCartons — replaces Carton barcodes to match the freshly recreated
     await expect(
       setCartons(actor, "disp-1", { cartons: [{ items: [{ dispatchItemId: "di-1", quantity: 5 }] }] } as never)
     ).resolves.toMatchObject({ id: "disp-1" });
+  });
+});
+
+describe("setCartons — carton quantity cannot exceed the eligible dispatch quantity (2026-10-16)", () => {
+  const baseDispatch = {
+    id: "disp-1",
+    status: "DRAFT",
+    dispatchNumber: "DSP-2026-00007",
+    items: [{ id: "di-1", productId: "prod-1", dispatchedQuantity: 30, product: { styleName: "Round Neck T-Shirt" } }],
+    cartons: [],
+  };
+
+  it("blocks saving cartons that together exceed the item's own eligible (dispatchable) quantity", async () => {
+    vi.mocked(DispatchRepository.findByIdWithDetails).mockResolvedValue(baseDispatch as never);
+
+    await expect(
+      setCartons(actor, "disp-1", {
+        cartons: [
+          { items: [{ dispatchItemId: "di-1", quantity: 20 }] },
+          { items: [{ dispatchItemId: "di-1", quantity: 15 }] }, // 35 total, only 30 eligible
+        ],
+      } as never)
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR", details: { dispatchItemId: "di-1", packed: 35, eligible: 30 } });
+    expect(DispatchRepository.setCartons).not.toHaveBeenCalled();
+  });
+
+  it("allows a partial (not-yet-complete) carton save — only markPacked requires an exact match", async () => {
+    vi.mocked(DispatchRepository.findByIdWithDetails).mockResolvedValue(baseDispatch as never);
+    vi.mocked(DispatchRepository.setCartons).mockResolvedValue({ id: "disp-1", cartons: [] } as never);
+
+    await expect(
+      setCartons(actor, "disp-1", { cartons: [{ items: [{ dispatchItemId: "di-1", quantity: 10 }] }] } as never)
+    ).resolves.toBeDefined();
+  });
+
+  it("allows saving exactly up to the eligible quantity", async () => {
+    vi.mocked(DispatchRepository.findByIdWithDetails).mockResolvedValue(baseDispatch as never);
+    vi.mocked(DispatchRepository.setCartons).mockResolvedValue({ id: "disp-1", cartons: [] } as never);
+
+    await expect(
+      setCartons(actor, "disp-1", { cartons: [{ items: [{ dispatchItemId: "di-1", quantity: 30 }] }] } as never)
+    ).resolves.toBeDefined();
+  });
+
+  it("sums quantities for the same DispatchItem across multiple cartons before checking the cap", async () => {
+    vi.mocked(DispatchRepository.findByIdWithDetails).mockResolvedValue(baseDispatch as never);
+
+    await expect(
+      setCartons(actor, "disp-1", {
+        cartons: [
+          { items: [{ dispatchItemId: "di-1", quantity: 10 }] },
+          { items: [{ dispatchItemId: "di-1", quantity: 10 }] },
+          { items: [{ dispatchItemId: "di-1", quantity: 11 }] }, // 31 total, only 30 eligible
+        ],
+      } as never)
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR", details: { packed: 31, eligible: 30 } });
   });
 });
 
@@ -432,6 +794,22 @@ describe("confirmDispatch — self-approval, stock guard, guarded increment, sta
     vi.mocked(getAvailableQuantity).mockResolvedValue(50); // only 50 available, 100 requested
 
     await expect(confirmDispatch(actor, "disp-1")).rejects.toMatchObject({ code: "INSUFFICIENT_FG_STOCK" });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  // Packing-produced-quantity gate (2026-10-15) — the live re-check at the
+  // real commit point, mirroring the FG-stock check's own pre-check/
+  // confirm-recheck split immediately above (createDispatch's own tests
+  // cover the pre-check; this proves confirmDispatch re-validates live too).
+  it("re-checks the Packing-produced-quantity gate live at confirm time, never touching the transaction", async () => {
+    vi.mocked(DispatchRepository.findByIdWithDetails).mockResolvedValueOnce(packedDispatch as never);
+    vi.mocked(prisma.salesOrderItem.findFirst).mockResolvedValue({ regularDispatchedQuantity: 0, product: { styleName: "Round Neck T-Shirt" } } as never);
+    vi.mocked(getSalesOrderItemProductionSummary).mockResolvedValue({ totalProduced: 60 } as never); // only 60 produced, 100 requested
+
+    await expect(confirmDispatch(actor, "disp-1")).rejects.toMatchObject({
+      code: "PACKING_QUANTITY_NOT_AVAILABLE",
+      details: { salesOrderItemId: "soi-1", requested: 100, totalProduced: 60, remainingPacked: 60 },
+    });
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
@@ -747,5 +1125,262 @@ describe("branch access enforcement (2026-09-15)", () => {
     vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValue(new Set(["branch-1"]));
 
     await expect(getDispatchById(actor, "disp-1")).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+});
+
+describe("setPickLines — multi-location picking (FGI-040)", () => {
+  const draftDispatch = {
+    id: "disp-3",
+    status: "DRAFT",
+    warehouseId: "wh-1",
+    items: [{ id: "di-3", productId: "prod-3", product: { styleName: "Printed Kurti" } }],
+  };
+
+  beforeEach(() => {
+    vi.mocked(DispatchRepository.findByIdWithDetails).mockReset().mockResolvedValue(draftDispatch as never);
+    vi.mocked(ProductVariantRepository.findManyByIds).mockReset().mockResolvedValue([{ id: "var-A", productId: "prod-3" }] as never);
+    vi.mocked(WarehouseLocationRepository.findByIdWithWarehouse)
+      .mockReset()
+      .mockResolvedValue({ id: "loc-A", warehouseId: "wh-1", warehouse: { companyId: "co-1" } } as never);
+    vi.mocked(DispatchRepository.setPickLines).mockReset().mockResolvedValue({ id: "disp-3" } as never);
+  });
+
+  it("rejects editing picking for a dispatch outside DRAFT/PACKED", async () => {
+    vi.mocked(DispatchRepository.findByIdWithDetails).mockResolvedValue({ ...draftDispatch, status: "DISPATCHED" } as never);
+
+    await expect(
+      setPickLines(actor, "disp-3", { pickLines: [{ dispatchItemId: "di-3", productVariantId: "var-A", warehouseLocationId: "loc-A", quantity: 5 }] })
+    ).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+    expect(DispatchRepository.setPickLines).not.toHaveBeenCalled();
+  });
+
+  it("rejects a pick line whose dispatchItemId does not belong to this dispatch", async () => {
+    await expect(
+      setPickLines(actor, "disp-3", {
+        pickLines: [{ dispatchItemId: "not-a-real-item", productVariantId: "var-A", warehouseLocationId: "loc-A", quantity: 5 }],
+      })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("rejects a pick line whose variant belongs to a different style", async () => {
+    vi.mocked(ProductVariantRepository.findManyByIds).mockResolvedValue([{ id: "var-A", productId: "some-other-style" }] as never);
+
+    await expect(
+      setPickLines(actor, "disp-3", {
+        pickLines: [{ dispatchItemId: "di-3", productVariantId: "var-A", warehouseLocationId: "loc-A", quantity: 5 }],
+      })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("rejects a location belonging to a different company", async () => {
+    vi.mocked(WarehouseLocationRepository.findByIdWithWarehouse).mockResolvedValue({
+      id: "loc-A",
+      warehouseId: "wh-1",
+      warehouse: { companyId: "some-other-company" },
+    } as never);
+
+    await expect(
+      setPickLines(actor, "disp-3", {
+        pickLines: [{ dispatchItemId: "di-3", productVariantId: "var-A", warehouseLocationId: "loc-A", quantity: 5 }],
+      })
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("rejects a location belonging to a different warehouse than the dispatch's own", async () => {
+    vi.mocked(WarehouseLocationRepository.findByIdWithWarehouse).mockResolvedValue({
+      id: "loc-A",
+      warehouseId: "wh-999",
+      warehouse: { companyId: "co-1" },
+    } as never);
+
+    await expect(
+      setPickLines(actor, "disp-3", {
+        pickLines: [{ dispatchItemId: "di-3", productVariantId: "var-A", warehouseLocationId: "loc-A", quantity: 5 }],
+      })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("succeeds with a well-formed pick line, stamping companyId and pickedByUserId, and audit-logs the change", async () => {
+    await setPickLines(actor, "disp-3", {
+      pickLines: [{ dispatchItemId: "di-3", productVariantId: "var-A", warehouseLocationId: "loc-A", quantity: 5 }],
+    });
+
+    expect(DispatchRepository.setPickLines).toHaveBeenCalledWith("disp-3", [
+      { dispatchItemId: "di-3", productVariantId: "var-A", warehouseLocationId: "loc-A", quantity: 5, companyId: "co-1", pickedByUserId: "user-1" },
+    ]);
+    expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ newValues: { pickLineCount: 1 } }));
+  });
+
+  it("allows an empty pick-line list (clearing every pick) — a real, supported state, never rejected as 'nothing supplied'", async () => {
+    await expect(setPickLines(actor, "disp-3", { pickLines: [] })).resolves.toBeDefined();
+    expect(DispatchRepository.setPickLines).toHaveBeenCalledWith("disp-3", []);
+  });
+});
+
+describe("confirmDispatch — FGI-040/041 multi-location picking & variant-level oversell check", () => {
+  const variantBearingDispatch = {
+    id: "disp-4",
+    status: "PACKED",
+    salesOrderId: "so-4",
+    warehouseId: "wh-1",
+    requestedByUserId: "user-1",
+    items: [
+      {
+        id: "di-4",
+        productId: "prod-variant-style",
+        dispatchedQuantity: 30,
+        regularDispatchQuantity: 30,
+        extraDispatchQuantity: 0,
+        product: { styleName: "Printed Kurti" },
+        salesOrderItem: { id: "soi-4", salesOrderLineId: "line-4" },
+        pickLines: [
+          {
+            productVariantId: "var-A",
+            warehouseLocationId: "loc-A",
+            quantity: 20,
+            productVariant: { color: { name: "Red" }, size: { name: "M" } },
+          },
+          {
+            productVariantId: "var-B",
+            warehouseLocationId: "loc-B",
+            quantity: 10,
+            productVariant: { color: { name: "Blue" }, size: { name: "L" } },
+          },
+        ],
+      },
+    ],
+  };
+
+  beforeEach(() => {
+    vi.mocked(ProductVariantRepository.findManyActiveByProductId).mockImplementation((async (productId: string) =>
+      productId === "prod-variant-style" ? [{ id: "var-A" }, { id: "var-B" }] : []) as never);
+  });
+
+  it("a zero-variant style's flat posting is completely unchanged — still one plain recordInventoryTransaction call, no productVariantId/warehouseLocationId/stockStatus, and the new helpers are never consulted", async () => {
+    const flatDispatch = {
+      id: "disp-1",
+      status: "PACKED",
+      salesOrderId: "so-1",
+      warehouseId: "wh-1",
+      requestedByUserId: "user-1",
+      items: [
+        {
+          id: "di-1",
+          productId: "prod-1",
+          dispatchedQuantity: 100,
+          regularDispatchQuantity: 100,
+          extraDispatchQuantity: 0,
+          product: { styleName: "Round Neck T-Shirt" },
+          salesOrderItem: { id: "soi-1", salesOrderLineId: "line-1" },
+          pickLines: [],
+        },
+      ],
+    };
+    vi.mocked(DispatchRepository.findByIdWithDetails)
+      .mockResolvedValueOnce(flatDispatch as never)
+      .mockResolvedValueOnce({ id: "disp-1", status: "DISPATCHED" } as never);
+    const fakeTx = makeFakeTx();
+    vi.mocked(prisma.$transaction).mockImplementation((cb: unknown) => (cb as (tx: unknown) => Promise<unknown>)(fakeTx));
+
+    await confirmDispatch(actor, "disp-1");
+
+    expect(recordInventoryTransaction).toHaveBeenCalledTimes(1);
+    expect(recordInventoryTransaction).toHaveBeenCalledWith(fakeTx, actor, {
+      productId: "prod-1",
+      warehouseId: "wh-1",
+      transactionType: "DISPATCH",
+      quantity: -100,
+      referenceModule: "DISPATCH",
+      referenceRecordId: "di-1",
+    });
+    expect(getFinishedGoodsAvailableQuantity).not.toHaveBeenCalled();
+    expect(consumeReservationForDispatchInTx).not.toHaveBeenCalled();
+  });
+
+  it("rejects confirm when a variant-bearing item's pick lines don't sum exactly to its dispatchedQuantity, never touching the transaction", async () => {
+    const underPicked = {
+      ...variantBearingDispatch,
+      items: [{ ...variantBearingDispatch.items[0], pickLines: [variantBearingDispatch.items[0].pickLines[0]] }], // only 20 of 30 picked
+    };
+    vi.mocked(DispatchRepository.findByIdWithDetails).mockResolvedValueOnce(underPicked as never);
+
+    await expect(confirmDispatch(actor, "disp-4")).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("posts one recordInventoryTransaction call PER PICK LINE for a variant-bearing item, correctly populating productVariantId/warehouseLocationId/stockStatus, and consumes reservations per line", async () => {
+    vi.mocked(DispatchRepository.findByIdWithDetails)
+      .mockResolvedValueOnce(variantBearingDispatch as never)
+      .mockResolvedValueOnce({ id: "disp-4", status: "DISPATCHED" } as never);
+    const fakeTx = makeFakeTx();
+    vi.mocked(prisma.$transaction).mockImplementation((cb: unknown) => (cb as (tx: unknown) => Promise<unknown>)(fakeTx));
+
+    await confirmDispatch(actor, "disp-4");
+
+    expect(recordInventoryTransaction).toHaveBeenCalledTimes(2);
+    expect(recordInventoryTransaction).toHaveBeenNthCalledWith(1, fakeTx, actor, {
+      productId: "prod-variant-style",
+      warehouseId: "wh-1",
+      transactionType: "DISPATCH",
+      quantity: -20,
+      referenceModule: "DISPATCH",
+      referenceRecordId: "di-4",
+      productVariantId: "var-A",
+      warehouseLocationId: "loc-A",
+      stockStatus: "SALEABLE",
+    });
+    expect(recordInventoryTransaction).toHaveBeenNthCalledWith(2, fakeTx, actor, {
+      productId: "prod-variant-style",
+      warehouseId: "wh-1",
+      transactionType: "DISPATCH",
+      quantity: -10,
+      referenceModule: "DISPATCH",
+      referenceRecordId: "di-4",
+      productVariantId: "var-B",
+      warehouseLocationId: "loc-B",
+      stockStatus: "SALEABLE",
+    });
+    expect(consumeReservationForDispatchInTx).toHaveBeenCalledWith(fakeTx, "co-1", "line-4", "var-A", 20);
+    expect(consumeReservationForDispatchInTx).toHaveBeenCalledWith(fakeTx, "co-1", "line-4", "var-B", 10);
+  });
+
+  it("rejects confirm when a variant's AGGREGATED picked quantity exceeds its own variant-level Available figure — even though the existing style-level aggregate check alone would have passed it (the acceptance criterion's own additive-not-replacement proof)", async () => {
+    // getAvailableQuantity (style-level) defaults to 1000 in the outer
+    // beforeEach — this dispatch's 30-unit total would sail through that
+    // check alone. getFinishedGoodsAvailableQuantity (the NEW, variant-level
+    // check) is deliberately starved for var-A specifically (15 available,
+    // 20 picked) — a case the old style-level check alone could never catch.
+    vi.mocked(getFinishedGoodsAvailableQuantity).mockImplementation(async (_companyId: string, _productId: string, productVariantId: string) =>
+      productVariantId === "var-A" ? 15 : 1000
+    );
+    vi.mocked(DispatchRepository.findByIdWithDetails).mockResolvedValueOnce(variantBearingDispatch as never);
+
+    await expect(confirmDispatch(actor, "disp-4")).rejects.toMatchObject({
+      code: "INSUFFICIENT_FG_STOCK",
+      details: expect.objectContaining({ productVariantId: "var-A", available: 15, requested: 20 }),
+    });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("aggregates picked quantity for the SAME variant across two different dispatch items before checking Available", async () => {
+    const twoItemsSameVariant = {
+      ...variantBearingDispatch,
+      items: [
+        { ...variantBearingDispatch.items[0], id: "di-4a", dispatchedQuantity: 20, pickLines: [variantBearingDispatch.items[0].pickLines[0]] },
+        {
+          ...variantBearingDispatch.items[0],
+          id: "di-4b",
+          dispatchedQuantity: 20,
+          pickLines: [{ ...variantBearingDispatch.items[0].pickLines[0], warehouseLocationId: "loc-C", quantity: 20 }],
+        },
+      ],
+    };
+    vi.mocked(getFinishedGoodsAvailableQuantity).mockResolvedValue(35); // 20 + 20 = 40 picked > 35 available
+    vi.mocked(DispatchRepository.findByIdWithDetails).mockResolvedValueOnce(twoItemsSameVariant as never);
+
+    await expect(confirmDispatch(actor, "disp-4")).rejects.toMatchObject({
+      code: "INSUFFICIENT_FG_STOCK",
+      details: expect.objectContaining({ productVariantId: "var-A", available: 35, requested: 40 }),
+    });
   });
 });

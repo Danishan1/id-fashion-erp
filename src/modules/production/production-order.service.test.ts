@@ -8,6 +8,11 @@ vi.mock("./material-request-scope", () => ({
 }));
 vi.mock("@/modules/bom-mrp/mrp.service", () => ({ getMaterialRequirementForOrderLine: vi.fn() }));
 vi.mock("./production-progress.service", () => ({ getProductionOrderProgress: vi.fn() }));
+vi.mock("./dispatch-readiness.service", () => ({
+  attachDispatchReadiness: vi.fn(async (_companyId: string, orders: Array<Record<string, unknown>>) =>
+    orders.map((o) => ({ ...o, dispatchReadiness: null, producedQuantity: 0 }))
+  ),
+}));
 vi.mock("@/modules/inventory/material-request.service", () => ({ createMaterialRequest: vi.fn() }));
 vi.mock("@/modules/products/product.repository", () => ({ ProductRepository: { findStyleById: vi.fn() } }));
 vi.mock("./production.repository", () => ({
@@ -56,6 +61,8 @@ const {
   addExtraProductionQuantity,
   listProductionOrders,
   getProductionOrderMaterialComparison,
+  releaseProductionOrderToDispatch,
+  revokeProductionOrderDispatchRelease,
 } = await import("./production-order.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
@@ -574,5 +581,87 @@ describe("getProductionOrderMaterialComparison — Planned vs Issued (Phase 8)",
   it("rejects for an order that doesn't exist for this company", async () => {
     vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue(null);
     await expect(getProductionOrderMaterialComparison("co-1", "po-missing")).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+});
+
+describe("releaseProductionOrderToDispatch / revokeProductionOrderDispatchRelease (2026-10-10)", () => {
+  it("rejects when the production order doesn't exist for this company", async () => {
+    vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue(null);
+    await expect(releaseProductionOrderToDispatch(actor, "po-missing")).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it.each(["PLANNED", "MATERIAL_ALLOCATED", "ON_HOLD", "CANCELLED", "CLOSED"])(
+    "rejects releasing an order in %s status — only IN_PROGRESS is eligible",
+    async (status) => {
+      vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue({
+        id: "po-1",
+        status,
+        releasedToDispatchAt: null,
+      } as never);
+
+      await expect(releaseProductionOrderToDispatch(actor, "po-1")).rejects.toMatchObject({
+        code: "INVALID_STATE_TRANSITION",
+      });
+      expect(ProductionOrderRepository.update).not.toHaveBeenCalled();
+    }
+  );
+
+  it("rejects releasing an order that's already released", async () => {
+    vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue({
+      id: "po-1",
+      status: "IN_PROGRESS",
+      releasedToDispatchAt: new Date("2026-10-01"),
+    } as never);
+
+    await expect(releaseProductionOrderToDispatch(actor, "po-1")).rejects.toMatchObject({
+      code: "INVALID_STATE_TRANSITION",
+    });
+    expect(ProductionOrderRepository.update).not.toHaveBeenCalled();
+  });
+
+  it("stamps releasedToDispatchAt/releasedToDispatchByUserId when IN_PROGRESS and not yet released", async () => {
+    vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue({
+      id: "po-1",
+      status: "IN_PROGRESS",
+      releasedToDispatchAt: null,
+    } as never);
+    vi.mocked(ProductionOrderRepository.update).mockResolvedValue({
+      id: "po-1",
+      releasedToDispatchAt: new Date(),
+    } as never);
+
+    await releaseProductionOrderToDispatch(actor, "po-1");
+
+    expect(ProductionOrderRepository.update).toHaveBeenCalledWith(
+      "po-1",
+      expect.objectContaining({ releasedToDispatchAt: expect.any(Date), releasedToDispatchByUserId: "user-1" })
+    );
+  });
+
+  it("rejects revoking a release on an order that was never released", async () => {
+    vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue({
+      id: "po-1",
+      releasedToDispatchAt: null,
+    } as never);
+
+    await expect(revokeProductionOrderDispatchRelease(actor, "po-1")).rejects.toMatchObject({
+      code: "INVALID_STATE_TRANSITION",
+    });
+    expect(ProductionOrderRepository.update).not.toHaveBeenCalled();
+  });
+
+  it("clears both fields when revoking a real release", async () => {
+    vi.mocked(ProductionOrderRepository.findAnyById).mockResolvedValue({
+      id: "po-1",
+      releasedToDispatchAt: new Date("2026-10-01"),
+    } as never);
+    vi.mocked(ProductionOrderRepository.update).mockResolvedValue({ id: "po-1", releasedToDispatchAt: null } as never);
+
+    await revokeProductionOrderDispatchRelease(actor, "po-1");
+
+    expect(ProductionOrderRepository.update).toHaveBeenCalledWith("po-1", {
+      releasedToDispatchAt: null,
+      releasedToDispatchByUserId: null,
+    });
   });
 });

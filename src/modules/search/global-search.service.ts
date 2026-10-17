@@ -206,7 +206,7 @@ export async function searchGlobal(
   if (term.length < MIN_QUERY_LENGTH) return { groups: [] };
 
   const viewableModules = await PermissionService.getViewableModules(actor.userId);
-  const canView = (module: Module) => viewableModules === "all" || viewableModules.has(module);
+  const canView = (module: Module) => viewableModules.has(module);
 
   // Modules the user can't view are skipped BEFORE any query runs — never
   // queried-then-filtered. A suspended/nonexistent user (getViewableModules

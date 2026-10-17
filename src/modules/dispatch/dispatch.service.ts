@@ -9,10 +9,20 @@ import type { ListQuery } from "@/lib/list-query";
 import { branchScopeWhere } from "@/lib/branch-access";
 import { DispatchStatus, type Prisma } from "@prisma/client";
 import { SalesOrderRepository } from "@/modules/sales-orders/sales-order.repository";
+import { ForwarderRepository } from "@/modules/forwarders/forwarder.repository";
 import { recordInventoryTransaction, getAvailableQuantity } from "@/modules/inventory/inventory.service";
 import { getDispatchSettings, extraDispatchNeedsApproval, type DispatchSettingsValue } from "@/core/dispatch-settings/DispatchSettingsService";
-import type { DispatchInput, UpdateDispatchInput, SetCartonsInput } from "./dispatch.schema";
+import { ProductVariantRepository } from "@/modules/products/product.repository";
+import { WarehouseLocationRepository } from "@/modules/warehouses/warehouse.repository";
+import { getFinishedGoodsAvailableQuantity, consumeReservationForDispatchInTx } from "@/modules/finished-goods-inventory/finished-goods-reservation.service";
+import { getSalesOrderItemProductionSummary } from "@/modules/production/production-progress.service";
+import type { DispatchInput, UpdateDispatchInput, SetCartonsInput, SetPickLinesInput } from "./dispatch.schema";
 import { DispatchRepository } from "./dispatch.repository";
+
+// Finished Goods Inventory module (FGI-040/041) — same sum-tolerance
+// convention used project-wide (createLot()'s own LotVariantBreakdown check,
+// Putaway's allocation sum check).
+const PICK_LINE_EPSILON = 0.0001;
 
 interface ActorContext {
   companyId: string;
@@ -182,6 +192,227 @@ export async function getDispatchById(actor: { companyId: string; userId: string
   return dispatch;
 }
 
+/**
+ * Stock check at Draft time (create/edit), not just at Confirm — a Dispatch
+ * should never be saved for more pieces than the chosen warehouse actually
+ * holds. Other open (Draft/Packed) dispatches are NOT treated as reserving
+ * stock — an abandoned draft must never block a real shipment; Confirm
+ * re-checks live stock, so the same pieces can still only ship once.
+ */
+export interface DispatchableStock {
+  onHand: number;
+  reserved: number;
+  available: number;
+}
+
+/** Per-style Finished Goods stock at a warehouse, plus (for information) what other open Draft/Packed dispatches mention. */
+export async function getDispatchableStock(
+  companyId: string,
+  warehouseId: string,
+  productIds: string[],
+  excludeDispatchId?: string
+): Promise<Map<string, DispatchableStock>> {
+  const result = new Map<string, DispatchableStock>();
+  for (const productId of new Set(productIds)) {
+    const onHand = await getAvailableQuantity(companyId, productId, warehouseId);
+    const reservedAgg = await prisma.dispatchItem.aggregate({
+      where: {
+        productId,
+        dispatch: {
+          companyId,
+          warehouseId,
+          status: { in: ["DRAFT", "PACKED"] },
+          ...(excludeDispatchId ? { id: { not: excludeDispatchId } } : {}),
+        },
+      },
+      _sum: { dispatchedQuantity: true },
+    });
+    const reserved = Number(reservedAgg._sum.dispatchedQuantity ?? 0);
+    // `available` is the real on-hand stock. Draft/Packed dispatches do NOT
+    // reserve stock (a stale or abandoned draft must never block a real
+    // shipment) — `reserved` is returned for information only, and Confirm
+    // re-checks live stock so two drafts can't both actually ship it.
+    result.set(productId, { onHand, reserved, available: onHand });
+  }
+  return result;
+}
+
+async function assertFinishedGoodsAvailable(
+  companyId: string,
+  warehouseId: string,
+  items: Array<{ productId: string; dispatchedQuantity: number }>,
+  excludeDispatchId?: string
+) {
+  const requestedByProduct = new Map<string, number>();
+  for (const item of items) {
+    requestedByProduct.set(item.productId, (requestedByProduct.get(item.productId) ?? 0) + item.dispatchedQuantity);
+  }
+  const stock = await getDispatchableStock(companyId, warehouseId, [...requestedByProduct.keys()], excludeDispatchId);
+
+  for (const [productId, requested] of requestedByProduct) {
+    const { onHand, reserved, available } = stock.get(productId)!;
+    if (requested > available) {
+      const product = await prisma.product.findFirst({ where: { id: productId, companyId }, select: { styleName: true } });
+      const name = product?.styleName ?? "this style";
+      throw new BusinessRuleError(
+        "INSUFFICIENT_FG_STOCK",
+        `Only ${available} pieces of "${name}" are in Finished Goods stock in this warehouse, but ${requested} were entered.`,
+        { productId, warehouseId, onHand, reserved, available, requested }
+      );
+    }
+  }
+}
+
+/** Optional, so most dispatches have nothing to validate — but when a
+ * Forwarder IS picked, re-verify it's this company's own active row rather
+ * than trusting a client-supplied id, same discipline Job Work Order's own
+ * contractorId check already uses. */
+async function resolveForwarderId(companyId: string, forwarderId: string | undefined): Promise<string | null> {
+  if (!forwarderId) return null;
+  const forwarder = await ForwarderRepository.findById(companyId, forwarderId);
+  if (!forwarder) throw new BusinessRuleError("NOT_FOUND", "Transporter not found.", { id: forwarderId });
+  if (!forwarder.isActive) {
+    throw new BusinessRuleError("VALIDATION_ERROR", `Transporter "${forwarder.name}" is inactive.`, { id: forwarder.id });
+  }
+  return forwarder.id;
+}
+
+/**
+ * Release-to-Dispatch gate (2026-10-10) — opt-in by construction: a line
+ * whose Sales Order Item has NO linked Production Order at all (Make-to-
+ * Stock pools, orders never put through formal Production tracking) is
+ * silently skipped, never blocked — this avoids any regression on existing
+ * dispatch flows that don't use the Production module end-to-end. The gate
+ * only fires when a real, non-cancelled Production Order genuinely exists
+ * for the line AND hasn't been marked released yet. Mirrors Sales Order's
+ * own "block, unless an elevated override reason is supplied" shape for its
+ * sample-approval gate (assertSamplesApprovedOrOverride) — the override here
+ * asserts `production`/`approve` (the permission the override itself needs),
+ * same cross-module-assertion precedent as Material Request's own
+ * generatePurchaseOrdersForShortfall().
+ */
+/** Returns the ids of any unreleased Production Orders the caller's override
+ * reason just overrode (empty array if nothing needed overriding) — the
+ * caller writes the actual audit entry once a real dispatch id exists,
+ * rather than this pre-check writing one against a record that doesn't
+ * exist yet. */
+async function assertProductionReleasedForLines(
+  actor: ActorContext,
+  items: Array<{ salesOrderItemId: string; dispatchedQuantity: number }>,
+  overrideReason: string | undefined
+): Promise<string[]> {
+  const lineIds = items.filter((i) => i.dispatchedQuantity > 0).map((i) => i.salesOrderItemId);
+  if (lineIds.length === 0) return [];
+
+  // CLOSED is excluded from the blocking set, not just CANCELLED — reaching
+  // CLOSED already requires every lot to be COMPLETED/CANCELLED with at
+  // least one real completion (see closeProductionOrder's own guard), so a
+  // closed order is unambiguously "production finished" regardless of
+  // whether anyone separately clicked Release — requiring that extra click
+  // for something already fully done would be pure friction, not a real
+  // check.
+  const unreleasedOrders = await prisma.productionOrder.findMany({
+    where: {
+      salesOrderItemId: { in: lineIds },
+      status: { notIn: ["CANCELLED", "CLOSED"] },
+      releasedToDispatchAt: null,
+    },
+    select: { id: true, orderNumber: true, product: { select: { styleName: true } } },
+  });
+  if (unreleasedOrders.length === 0) return [];
+
+  const trimmedReason = overrideReason?.trim();
+  if (!trimmedReason) {
+    const names = unreleasedOrders.map((o) => `${o.orderNumber} (${o.product.styleName})`).join(", ");
+    throw new BusinessRuleError(
+      "PRODUCTION_NOT_RELEASED_TO_DISPATCH",
+      `Cannot create this dispatch — production has not been released to dispatch yet for: ${names}. A Production Manager must click "Release to Dispatch" on the relevant Production Order, or a Management user may override with a reason.`,
+      { unreleasedProductionOrderIds: unreleasedOrders.map((o) => o.id) }
+    );
+  }
+
+  await PermissionService.assert(actor.userId, "production", "approve");
+  return unreleasedOrders.map((o) => o.id);
+}
+
+/**
+ * Real-produced-quantity gate (process-flow clarity fix, 2026-10-15/16) — a
+ * line's cumulative REGULAR dispatched quantity
+ * (`SalesOrderItem.regularDispatchedQuantity`, which only ever changes at
+ * confirmDispatch's own commit point, plus this request's own Regular
+ * quantity) must never exceed what has ACTUALLY completed the production
+ * flow's FINAL stage ("Packing") for that line — reusing
+ * getSalesOrderItemProductionSummary()'s own totalProduced figure (summed
+ * from JobOrders sitting on a `ProductionStage.isFinal` stage only, never
+ * re-derived here) rather than inventing a second computation that could
+ * drift from it.
+ *
+ * This closes a real gap the pooled-stock check above (assertFinishedGoods
+ * Available) can't: that check only reads the warehouse's flat FG
+ * StockBalance/FinishedGoodsStockBalance total, which CAN legitimately
+ * contain quantity that never went through Packing for this specific order
+ * line — a Finished-Goods Stock Movement "stock found" Adjustment, an
+ * Opening Stock import, or genuinely Packing-complete stock from a
+ * DIFFERENT Sales Order line sharing the same style/warehouse (FG stock is
+ * pooled once it reaches the ledger). Scoping the check per line, against
+ * real production output, is what actually prevents "wrong entry" dispatches
+ * un-traceable to a real Packing completion.
+ *
+ * Deliberately scoped to the REGULAR portion only, never the Extra portion —
+ * Extra Dispatch Quantity's own documented invariant (2026-09-30) is "Sale
+ * Order Fulfillment = Regular Dispatch Only": an Extra piece is, by design,
+ * never counted toward this line's own production/order allocation at all
+ * (a replacement, a free/FOC piece, a sample — legitimately sourced from
+ * whatever real Finished Goods stock the company actually has, including a
+ * different order's surplus or a stock-adjustment find). Capping Extra by
+ * this line's own Packing output would silently defeat that feature. Extra
+ * stays bound by the general, real-stock checks instead
+ * (assertFinishedGoodsAvailable above and confirmDispatch's own stock
+ * re-check, both of which already apply to the TOTAL regular+extra quantity
+ * and never let Extra bypass a genuine stock-availability check).
+ *
+ * Deliberately has NO override — unlike the manual Release-to-Dispatch click
+ * above (a human judgment call: "is this actually ready"), this is a plain
+ * physical fact: units nobody has finished producing cannot be shipped
+ * toward this order's own Regular fulfillment, so there is nothing for a
+ * judgment call to override (Extra Dispatch is the designed escape hatch for
+ * exactly this situation). Opt-in by construction, same as
+ * assertProductionReleasedForLines: every DispatchItem in this app is always
+ * tied to a real Sales Order line (Dispatch.salesOrderId is required), so
+ * there is no Make-to-Stock case to skip here.
+ */
+async function assertPackingProducedForLines(
+  companyId: string,
+  items: Array<{ salesOrderItemId: string; regularDispatchQuantity: number }>
+) {
+  const requestedByLine = new Map<string, number>();
+  for (const item of items) {
+    requestedByLine.set(item.salesOrderItemId, (requestedByLine.get(item.salesOrderItemId) ?? 0) + item.regularDispatchQuantity);
+  }
+
+  for (const [salesOrderItemId, requested] of requestedByLine) {
+    if (requested <= 0) continue;
+
+    const orderItem = await prisma.salesOrderItem.findFirst({
+      where: { id: salesOrderItemId, salesOrder: { companyId } },
+      select: { regularDispatchedQuantity: true, product: { select: { styleName: true } } },
+    });
+    if (!orderItem) continue; // validated as belonging to the order already (buildDispatchItems)
+
+    const summary = await getSalesOrderItemProductionSummary(companyId, salesOrderItemId);
+    const alreadyRegularDispatched = orderItem.regularDispatchedQuantity;
+    const remainingPacked = Math.max(0, summary.totalProduced - alreadyRegularDispatched);
+
+    if (requested > remainingPacked) {
+      throw new BusinessRuleError(
+        "PACKING_QUANTITY_NOT_AVAILABLE",
+        `Only ${remainingPacked} pieces of "${orderItem.product.styleName}" have actually completed the final production stage (Packing) and are available for Regular fulfillment of this order line, but ${requested} were entered as Regular. Total produced (Packing-complete) for this line: ${summary.totalProduced}, already regular-dispatched: ${alreadyRegularDispatched}. (Extra Dispatch Quantity, with a reason, can draw on general Finished Goods stock instead.)`,
+        { salesOrderItemId, requested, alreadyRegularDispatched, totalProduced: summary.totalProduced, remainingPacked }
+      );
+    }
+  }
+}
+
 export async function createDispatch(actor: ActorContext, input: DispatchInput) {
   const order = await SalesOrderRepository.findByIdWithDetails(actor.companyId, input.salesOrderId);
   if (!order) throw new BusinessRuleError("NOT_FOUND", "Sales order not found.", { id: input.salesOrderId });
@@ -196,6 +427,14 @@ export async function createDispatch(actor: ActorContext, input: DispatchInput) 
 
   const settings = await getDispatchSettings(actor.companyId);
   const items = await buildDispatchItems(order.items, input.items, settings);
+  await assertFinishedGoodsAvailable(actor.companyId, input.warehouseId, items);
+  const overriddenProductionOrderIds = await assertProductionReleasedForLines(
+    actor,
+    items,
+    input.overrideProductionReleaseReason
+  );
+  await assertPackingProducedForLines(actor.companyId, items);
+  const forwarderId = await resolveForwarderId(actor.companyId, input.forwarderId);
 
   const dispatchNumber = await generateDocumentNumber({
     companyId: actor.companyId,
@@ -217,6 +456,13 @@ export async function createDispatch(actor: ActorContext, input: DispatchInput) 
       transporterName: input.transporterName || null,
       vehicleNumber: input.vehicleNumber || null,
       trackingNumber: input.trackingNumber || null,
+      forwarderId,
+      lrNumber: input.lrNumber || null,
+      awbNumber: input.awbNumber || null,
+      driverDetails: input.driverDetails || null,
+      freightCharges: input.freightCharges ?? null,
+      expectedDeliveryDate: input.expectedDeliveryDate ? new Date(input.expectedDeliveryDate) : null,
+      shipmentRemarks: input.shipmentRemarks || null,
       requestedByUserId: actor.userId,
     },
     items
@@ -230,6 +476,20 @@ export async function createDispatch(actor: ActorContext, input: DispatchInput) 
     action: "CREATE",
     newValues: { dispatchNumber: dispatch.dispatchNumber, salesOrderId: order.id },
   });
+
+  if (overriddenProductionOrderIds.length > 0) {
+    await writeAuditLog({
+      companyId: actor.companyId,
+      userId: actor.userId,
+      tableName: "dispatches",
+      recordId: dispatch.id,
+      action: "UPDATE",
+      newValues: {
+        productionReleaseOverrideReason: input.overrideProductionReleaseReason?.trim(),
+        overriddenProductionOrderIds,
+      },
+    });
+  }
 
   return dispatch;
 }
@@ -260,6 +520,14 @@ export async function updateDispatch(actor: ActorContext, id: string, input: Upd
   // on every edit rather than stored as independent input.
   const settings = await getDispatchSettings(actor.companyId);
   const items = await buildDispatchItems(order.items, input.items, settings);
+  await assertFinishedGoodsAvailable(actor.companyId, input.warehouseId, items, id);
+  const overriddenProductionOrderIds = await assertProductionReleasedForLines(
+    actor,
+    items,
+    input.overrideProductionReleaseReason
+  );
+  await assertPackingProducedForLines(actor.companyId, items);
+  const forwarderId = await resolveForwarderId(actor.companyId, input.forwarderId);
 
   const updated = await DispatchRepository.replaceItems(
     id,
@@ -270,6 +538,13 @@ export async function updateDispatch(actor: ActorContext, id: string, input: Upd
       transporterName: input.transporterName || null,
       vehicleNumber: input.vehicleNumber || null,
       trackingNumber: input.trackingNumber || null,
+      forwarderId,
+      lrNumber: input.lrNumber || null,
+      awbNumber: input.awbNumber || null,
+      driverDetails: input.driverDetails || null,
+      freightCharges: input.freightCharges ?? null,
+      expectedDeliveryDate: input.expectedDeliveryDate ? new Date(input.expectedDeliveryDate) : null,
+      shipmentRemarks: input.shipmentRemarks || null,
     },
     items
   );
@@ -283,6 +558,20 @@ export async function updateDispatch(actor: ActorContext, id: string, input: Upd
     oldValues: { status: existing.status },
     newValues: { status: "DRAFT", itemCount: updated.items.length },
   });
+
+  if (overriddenProductionOrderIds.length > 0) {
+    await writeAuditLog({
+      companyId: actor.companyId,
+      userId: actor.userId,
+      tableName: "dispatches",
+      recordId: id,
+      action: "UPDATE",
+      newValues: {
+        productionReleaseOverrideReason: input.overrideProductionReleaseReason?.trim(),
+        overriddenProductionOrderIds,
+      },
+    });
+  }
 
   return updated;
 }
@@ -303,6 +592,8 @@ export async function setCartons(actor: ActorContext, id: string, input: SetCart
   }
 
   const dispatchItemProductId = new Map(existing.items.map((i) => [i.id, i.productId]));
+  const dispatchItemEligibleQuantity = new Map(existing.items.map((i) => [i.id, i.dispatchedQuantity]));
+  const dispatchItemStyleName = new Map(existing.items.map((i) => [i.id, i.product.styleName]));
 
   const variantIds = [...new Set(input.cartons.flatMap((c) => c.items.map((i) => i.productVariantId).filter(Boolean)))] as string[];
   const variants = variantIds.length > 0 ? await prisma.productVariant.findMany({ where: { id: { in: variantIds } } }) : [];
@@ -337,6 +628,35 @@ export async function setCartons(actor: ActorContext, id: string, input: SetCart
     };
   });
 
+  // Early, non-authoritative stock-quantity-control fix (process-flow
+  // clarity, 2026-10-16) — a carton's own quantity must never exceed what was
+  // actually approved for this DispatchItem to ship, which is itself already
+  // capped (at create/update/confirm) to what genuinely completed Packing —
+  // see assertPackingProducedForLines above. Previously this was only ever
+  // caught at markPacked()'s own exact-sum check, well after a user had
+  // already saved and walked away from an invalid carton split; checking it
+  // here too gives the same feedback the moment cartons are saved, matching
+  // the "validate both when saving and when confirming" requirement.
+  // Deliberately `<=`, not `===` — a partial, still-in-progress carton save
+  // (not every piece assigned to a carton yet) stays valid here; markPacked()
+  // is still the one place that requires the sum to be exactly complete.
+  const packedByItemId = new Map<string, number>();
+  for (const carton of cartons) {
+    for (const item of carton.items) {
+      packedByItemId.set(item.dispatchItemId, (packedByItemId.get(item.dispatchItemId) ?? 0) + item.quantity);
+    }
+  }
+  for (const [dispatchItemId, packed] of packedByItemId) {
+    const eligible = dispatchItemEligibleQuantity.get(dispatchItemId) ?? 0;
+    if (packed > eligible) {
+      throw new BusinessRuleError(
+        "VALIDATION_ERROR",
+        `Cartons for "${dispatchItemStyleName.get(dispatchItemId)}" total ${packed} pieces, which exceeds the ${eligible} pieces eligible to be packed/dispatched for this line.`,
+        { dispatchItemId, packed, eligible }
+      );
+    }
+  }
+
   const updated = await DispatchRepository.setCartons(id, cartons);
 
   // Best-effort: cartons are deleted and recreated with fresh ids on every
@@ -365,6 +685,95 @@ export async function setCartons(actor: ActorContext, id: string, input: SetCart
     recordId: id,
     action: "UPDATE",
     newValues: { cartonCount: cartons.length },
+  });
+
+  return updated;
+}
+
+/**
+ * Finished Goods Inventory module (FGI-040) — multi-location picking. Full
+ * replace of a Dispatch's FinishedGoodsPickLine rows across every one of its
+ * DispatchItems in one call (same "simplest correct way to apply an edit"
+ * reasoning as setCartons above). Editable while DRAFT or PACKED, same
+ * floor-process reasoning as setCartons/markPacked — picking and packing are
+ * independent concerns that both span the same two statuses. Partial picks
+ * (less than a DispatchItem's own dispatchedQuantity) are a valid,
+ * intermediate state here; only confirmDispatch() requires completeness
+ * (§7 point 3 of the implementation plan).
+ */
+export async function setPickLines(actor: ActorContext, id: string, input: SetPickLinesInput) {
+  const existing = await DispatchRepository.findByIdWithDetails(actor.companyId, id);
+  if (!existing) throw new BusinessRuleError("NOT_FOUND", "Dispatch not found.", { id });
+
+  if (existing.status !== "DRAFT" && existing.status !== "PACKED") {
+    throw new BusinessRuleError(
+      "INVALID_STATE_TRANSITION",
+      `Cannot edit picking for a dispatch in "${existing.status}" status.`,
+      { currentStatus: existing.status }
+    );
+  }
+
+  const itemById = new Map(existing.items.map((i) => [i.id, i]));
+
+  const variantIds = [...new Set(input.pickLines.map((l) => l.productVariantId))];
+  const variants = variantIds.length > 0 ? await ProductVariantRepository.findManyByIds(variantIds) : [];
+  const variantById = new Map(variants.map((v) => [v.id, v]));
+
+  const locationIds = [...new Set(input.pickLines.map((l) => l.warehouseLocationId))];
+  const locationEntries = await Promise.all(
+    locationIds.map(async (locationId) => [locationId, await WarehouseLocationRepository.findByIdWithWarehouse(locationId)] as const)
+  );
+  const locationById = new Map(locationEntries);
+
+  for (const line of input.pickLines) {
+    const item = itemById.get(line.dispatchItemId);
+    if (!item) {
+      throw new BusinessRuleError("VALIDATION_ERROR", "A pick line does not belong to this dispatch.", {
+        dispatchItemId: line.dispatchItemId,
+      });
+    }
+
+    const variant = variantById.get(line.productVariantId);
+    if (!variant || variant.productId !== item.productId) {
+      throw new BusinessRuleError(
+        "VALIDATION_ERROR",
+        `A pick line's colour/size variant does not match "${item.product.styleName}".`,
+        { dispatchItemId: line.dispatchItemId, productVariantId: line.productVariantId }
+      );
+    }
+
+    const location = locationById.get(line.warehouseLocationId);
+    if (!location || location.warehouse.companyId !== actor.companyId) {
+      throw new BusinessRuleError("NOT_FOUND", "Warehouse location not found.", { id: line.warehouseLocationId });
+    }
+    if (location.warehouseId !== existing.warehouseId) {
+      throw new BusinessRuleError(
+        "VALIDATION_ERROR",
+        "A pick line's location must belong to this dispatch's own warehouse.",
+        { warehouseLocationId: line.warehouseLocationId, warehouseId: existing.warehouseId }
+      );
+    }
+  }
+
+  const updated = await DispatchRepository.setPickLines(
+    id,
+    input.pickLines.map((l) => ({
+      dispatchItemId: l.dispatchItemId,
+      productVariantId: l.productVariantId,
+      warehouseLocationId: l.warehouseLocationId,
+      quantity: l.quantity,
+      companyId: actor.companyId,
+      pickedByUserId: actor.userId,
+    }))
+  );
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "dispatches",
+    recordId: id,
+    action: "UPDATE",
+    newValues: { pickLineCount: input.pickLines.length },
   });
 
   return updated;
@@ -515,6 +924,67 @@ export async function confirmDispatch(actor: ActorContext, id: string) {
     }
   }
 
+  // Live re-check of the same Packing-produced-quantity gate createDispatch/
+  // updateDispatch already pre-checked — this is the real, authoritative
+  // check (the one that matters for a race between two drafts against the
+  // same line, mirroring the FG-stock check's own pre-check/confirm-recheck
+  // split immediately above).
+  await assertPackingProducedForLines(
+    actor.companyId,
+    dispatch.items.map((item) => ({ salesOrderItemId: item.salesOrderItem.id, regularDispatchQuantity: item.regularDispatchQuantity }))
+  );
+
+  // Finished Goods Inventory module (FGI-040/041) — §7 point 1: "the
+  // pre-check is extended, not replaced." The style-level loop above stays
+  // exactly as it was; this is a SECOND, additional check underneath it. A
+  // style with zero configured ACTIVE variants keeps today's flat-only path
+  // untouched and never requires pick lines at all (same precedent as
+  // Phase 2's own FGI-020 breakdown requirement).
+  const uniqueProductIds = [...new Set(dispatch.items.map((i) => i.productId))];
+  const activeVariantsByProduct = new Map<string, boolean>(
+    await Promise.all(
+      uniqueProductIds.map(async (productId) => [productId, (await ProductVariantRepository.findManyActiveByProductId(productId)).length > 0] as const)
+    )
+  );
+
+  const itemsNeedingPickLines = dispatch.items.filter((item) => activeVariantsByProduct.get(item.productId));
+
+  for (const item of itemsNeedingPickLines) {
+    const pickedTotal = item.pickLines.reduce((sum, line) => sum + Number(line.quantity), 0);
+    if (Math.abs(pickedTotal - item.dispatchedQuantity) > PICK_LINE_EPSILON) {
+      throw new BusinessRuleError(
+        "VALIDATION_ERROR",
+        `"${item.product.styleName}" has colour/size variants configured — its picked quantity (${pickedTotal}) must exactly equal the quantity to dispatch (${item.dispatchedQuantity}) before this dispatch can be confirmed. Use Pick Lines to allocate the remainder.`,
+        { dispatchItemId: item.id, picked: pickedTotal, expected: item.dispatchedQuantity }
+      );
+    }
+  }
+
+  // §7 point 1's own real rule: "the sum of a dispatch's own
+  // FinishedGoodsPickLine for a given variant must not exceed that variant's
+  // own Available figure" — aggregated PER VARIANT across the whole
+  // dispatch (never per DispatchItem alone), since the same variant could in
+  // principle be picked across more than one line/item.
+  const pickedByVariant = new Map<string, number>();
+  for (const item of itemsNeedingPickLines) {
+    for (const line of item.pickLines) {
+      pickedByVariant.set(line.productVariantId, (pickedByVariant.get(line.productVariantId) ?? 0) + Number(line.quantity));
+    }
+  }
+
+  for (const [productVariantId, pickedQuantity] of pickedByVariant) {
+    const owningItem = itemsNeedingPickLines.find((item) => item.pickLines.some((line) => line.productVariantId === productVariantId))!;
+    const variantLine = owningItem.pickLines.find((line) => line.productVariantId === productVariantId)!;
+    const available = await getFinishedGoodsAvailableQuantity(actor.companyId, owningItem.productId, productVariantId, dispatch.warehouseId);
+    if (pickedQuantity > available) {
+      throw new BusinessRuleError(
+        "INSUFFICIENT_FG_STOCK",
+        `Unable to confirm dispatch because ${pickedQuantity} pieces of "${owningItem.product.styleName}" (${variantLine.productVariant.color.name} / ${variantLine.productVariant.size.name}) are not available in Finished Goods stock at this specific variant level. Available: ${available}, Requested: ${pickedQuantity}.`,
+        { productId: owningItem.productId, productVariantId, warehouseId: dispatch.warehouseId, available, requested: pickedQuantity }
+      );
+    }
+  }
+
   const totalRegular = dispatch.items.reduce((sum, i) => sum + i.regularDispatchQuantity, 0);
   const totalExtra = dispatch.items.reduce((sum, i) => sum + i.extraDispatchQuantity, 0);
   const settings = await getDispatchSettings(actor.companyId);
@@ -555,14 +1025,51 @@ export async function confirmDispatch(actor: ActorContext, id: string) {
         );
       }
 
-      await recordInventoryTransaction(tx, actor, {
-        productId: item.productId,
-        warehouseId: dispatch.warehouseId,
-        transactionType: "DISPATCH",
-        quantity: -item.dispatchedQuantity,
-        referenceModule: "DISPATCH",
-        referenceRecordId: item.id,
-      });
+      // Finished Goods Inventory module (FGI-040/041) — §7 point 2: the
+      // existing per-DispatchItem posting becomes one recordInventoryTransaction()
+      // call PER PICK LINE for a variant-bearing style; the SUM across those
+      // calls for this one item is still posted into the exact same flat
+      // StockBalance update as before (recordInventoryTransaction()'s own
+      // unconditional flat-balance branch runs on every call regardless of
+      // whether a variant/location is also supplied) — the existing
+      // style-level total is always exactly right, just composed from
+      // several finer-grained ledger rows instead of one. A zero-variant
+      // style's flat-only path below is completely unchanged.
+      if (!activeVariantsByProduct.get(item.productId)) {
+        await recordInventoryTransaction(tx, actor, {
+          productId: item.productId,
+          warehouseId: dispatch.warehouseId,
+          transactionType: "DISPATCH",
+          quantity: -item.dispatchedQuantity,
+          referenceModule: "DISPATCH",
+          referenceRecordId: item.id,
+        });
+      } else {
+        for (const line of item.pickLines) {
+          const lineQuantity = Number(line.quantity);
+          await recordInventoryTransaction(tx, actor, {
+            productId: item.productId,
+            warehouseId: dispatch.warehouseId,
+            transactionType: "DISPATCH",
+            quantity: -lineQuantity,
+            referenceModule: "DISPATCH",
+            referenceRecordId: item.id,
+            productVariantId: line.productVariantId,
+            warehouseLocationId: line.warehouseLocationId,
+            stockStatus: "SALEABLE",
+          });
+
+          // §7 point 5 — reservation consumption happens in the same
+          // transaction, immediately after each pick line posts.
+          await consumeReservationForDispatchInTx(
+            tx,
+            actor.companyId,
+            item.salesOrderItem.salesOrderLineId,
+            line.productVariantId,
+            lineQuantity
+          );
+        }
+      }
     }
 
     const allItems = await tx.salesOrderItem.findMany({

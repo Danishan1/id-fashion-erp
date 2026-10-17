@@ -11,6 +11,7 @@ import { getMaterialRequirementForOrderLine } from "@/modules/bom-mrp/mrp.servic
 import { createMaterialRequest } from "@/modules/inventory/material-request.service";
 import { ProductRepository } from "@/modules/products/product.repository";
 import { ProductionOrderStatus, type Prisma } from "@prisma/client";
+import { attachDispatchReadiness } from "./dispatch-readiness.service";
 import { LotRepository, ProductionOrderRepository } from "./production.repository";
 import { getProductionOrderProgress } from "./production-progress.service";
 import { materialRequestScopeForOrder } from "./material-request-scope";
@@ -122,7 +123,7 @@ export async function listProductionOrders(actor: { companyId: string; userId: s
     ProductionOrderRepository.count(where),
   ]);
 
-  return { data, totalCount };
+  return { data: await attachDispatchReadiness(actor.companyId, data), totalCount };
 }
 
 /** A branch-restricted user gets NOT_FOUND for an order outside their allowed branches — same "deny as not-found" convention used across this app. */
@@ -145,7 +146,9 @@ export async function getProductionOrderById(actor: { companyId: string; userId:
     include: { createdBy: { select: { fullName: true } } },
   });
 
-  return { ...order, salesOrderContext, progress, quantityChanges };
+  const [withReadiness] = await attachDispatchReadiness(actor.companyId, [order]);
+
+  return { ...order, salesOrderContext, progress, quantityChanges, dispatchReadiness: withReadiness.dispatchReadiness };
 }
 
 export async function createProductionOrder(actor: ActorContext, input: CreateProductionOrderInput) {
@@ -674,6 +677,86 @@ export async function closeProductionOrder(actor: ActorContext, id: string) {
     action: "UPDATE",
     oldValues: { status: order.status },
     newValues: { status: "CLOSED" },
+  });
+
+  return updated;
+}
+
+/**
+ * Release to Dispatch (2026-10-10, Dispatch/Production/Forwarder/Barcode
+ * initiative) — a deliberately manual judgment call distinct from CLOSED:
+ * a Production Manager can release part of an order's output the moment
+ * THEY judge it ready to ship, without waiting for every lot to finish (the
+ * same partial-shipment reality this ERP already supports elsewhere via
+ * PARTIALLY_DISPATCHED/Extra Dispatch Quantity). Only reachable from
+ * IN_PROGRESS — CLOSED is excluded on purpose: reaching CLOSED already
+ * requires every lot COMPLETED/CANCELLED with real output (see
+ * closeProductionOrder's own guard), so Dispatch's own gate
+ * (dispatch.service.ts's assertProductionReleasedForLines) treats a CLOSED
+ * order as implicitly released already — there is nothing left for this
+ * action to grant once closed. The order's own lots/QC state is surfaced to
+ * the approver on the same screen, not re-validated here as a hard
+ * precondition, since "is this actually ready" is exactly the judgment the
+ * button exists to capture.
+ */
+export async function releaseProductionOrderToDispatch(actor: ActorContext, id: string) {
+  const order = await ProductionOrderRepository.findAnyById(actor.companyId, id);
+  if (!order) throw new BusinessRuleError("NOT_FOUND", "Production order not found.", { id });
+
+  if (order.status !== "IN_PROGRESS") {
+    throw new BusinessRuleError(
+      "INVALID_STATE_TRANSITION",
+      `Cannot release a production order in "${order.status}" status to dispatch.`,
+      { currentStatus: order.status }
+    );
+  }
+  if (order.releasedToDispatchAt) {
+    throw new BusinessRuleError("INVALID_STATE_TRANSITION", "This production order is already released to dispatch.", { id });
+  }
+
+  const updated = await ProductionOrderRepository.update(id, {
+    releasedToDispatchAt: new Date(),
+    releasedToDispatchByUserId: actor.userId,
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "production_orders",
+    recordId: id,
+    action: "UPDATE",
+    oldValues: { releasedToDispatchAt: null },
+    newValues: { releasedToDispatchAt: updated.releasedToDispatchAt },
+  });
+
+  return updated;
+}
+
+/** Symmetric undo for a mistaken click — same "every state flip gets a
+ * revoke" convention already used by Hold/Resume and Sampling's own
+ * Lock/Unlock. Does not touch any dispatch already created while released;
+ * a dispatch, once created, stands on its own. */
+export async function revokeProductionOrderDispatchRelease(actor: ActorContext, id: string) {
+  const order = await ProductionOrderRepository.findAnyById(actor.companyId, id);
+  if (!order) throw new BusinessRuleError("NOT_FOUND", "Production order not found.", { id });
+
+  if (!order.releasedToDispatchAt) {
+    throw new BusinessRuleError("INVALID_STATE_TRANSITION", "This production order has not been released to dispatch.", { id });
+  }
+
+  const updated = await ProductionOrderRepository.update(id, {
+    releasedToDispatchAt: null,
+    releasedToDispatchByUserId: null,
+  });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "production_orders",
+    recordId: id,
+    action: "UPDATE",
+    oldValues: { releasedToDispatchAt: order.releasedToDispatchAt },
+    newValues: { releasedToDispatchAt: null },
   });
 
   return updated;

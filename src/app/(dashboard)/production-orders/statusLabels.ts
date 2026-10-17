@@ -72,3 +72,24 @@ export const JOB_WORK_ORDER_STATUS_BADGE_CLASS: Record<keyof typeof JOB_WORK_ORD
   ON_HOLD: "bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200",
   CANCELLED: "bg-zinc-200 text-zinc-500 dark:bg-zinc-700 dark:text-zinc-400 line-through",
 };
+
+// Derived dispatch readiness (dispatch-readiness.service.ts) — shown in place
+// of the lifecycle label once every piece is finished, so the order reads
+// "For Dispatch" on the list. Hold/Cancel/Close still follow the real status.
+export const DISPATCH_READINESS_LABELS = {
+  READY_FOR_DISPATCH: "For Dispatch",
+  DISPATCHED: "Dispatched",
+} as const;
+
+export const DISPATCH_READINESS_BADGE_CLASS: Record<keyof typeof DISPATCH_READINESS_LABELS, string> = {
+  READY_FOR_DISPATCH: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300",
+  DISPATCHED: "bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-300",
+};
+
+export type DispatchReadinessValue = keyof typeof DISPATCH_READINESS_LABELS | null;
+
+/** Label + badge class for an order, preferring the derived dispatch readiness. */
+export function productionOrderStatusDisplay(status: keyof typeof STATUS_LABELS, readiness?: DispatchReadinessValue) {
+  if (readiness) return { label: DISPATCH_READINESS_LABELS[readiness], className: DISPATCH_READINESS_BADGE_CLASS[readiness] };
+  return { label: STATUS_LABELS[status] ?? status, className: STATUS_BADGE_CLASS[status] };
+}

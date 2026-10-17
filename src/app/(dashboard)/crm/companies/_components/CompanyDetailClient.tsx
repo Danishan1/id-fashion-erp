@@ -10,6 +10,7 @@ import { CrmErpReferencesPanel } from "@/components/crm/CrmErpReferencesPanel";
 import { CrmNotesPanel } from "@/components/crm/CrmNotesPanel";
 import { ActivityPanel } from "@/components/crm/activities/ActivityPanel";
 import { AppointmentPanel } from "@/components/crm/appointments/AppointmentPanel";
+import { ConversationsPanel } from "@/components/crm/conversations/ConversationsPanel";
 import { AddressModal, AssignOwnerModal, RecordTagsModal } from "@/components/crm/CrmRecordDialogs";
 import { CrmRecordHeader } from "@/components/crm/CrmRecordHeader";
 import { CrmTimeline } from "@/components/crm/CrmTimeline";
@@ -344,6 +345,10 @@ export function CompanyDetailClient({ initialCompany, permissions, currentUserId
               currentUserId={currentUserId}
               onChanged={() => setRefreshKey((k) => k + 1)}
             />
+          </Section>
+
+          <Section title="Conversations" id="conversations">
+            <ConversationsPanel parent={{ entityType: "COMPANY", entityId: company.id }} />
           </Section>
 
           <Section title="Activities & tasks" id="activities">

@@ -2,6 +2,7 @@ import { logger } from "@/core/logging/logger";
 
 export type BusinessRuleErrorCode =
   | "INSUFFICIENT_FG_STOCK"
+  | "PACKING_QUANTITY_NOT_AVAILABLE"
   | "INSUFFICIENT_RAW_MATERIAL_STOCK"
   | "UNBALANCED_JOURNAL"
   | "POSTED_INVOICE_LOCKED"
@@ -33,6 +34,15 @@ export type BusinessRuleErrorCode =
   // CRM (2026-10-09): the employee already has an appointment in that time;
   // the client may retry with explicit confirmation (details.conflicts).
   | "CRM_APPOINTMENT_CONFLICT"
+  // CRM (2026-10-08, Phase 11): the contact opted out of this channel (DND /
+  // contactability) — the message was not sent.
+  | "CRM_CONTACT_NOT_CONTACTABLE"
+  // CRM: the conversation's channel can't send right now (not configured,
+  // paused, or the provider doesn't support what was attempted).
+  | "CRM_CHANNEL_UNAVAILABLE"
+  // CRM (2026-10-08, Phase 12): a message template has errors (unknown
+  // variables, missing subject, provider limits…) — details.errors / warnings.
+  | "CRM_TEMPLATE_INVALID"
   // CRM lead capture endpoints (API keys / webhooks).
   | "INVALID_API_CREDENTIALS"
   | "INVALID_WEBHOOK_SIGNATURE"
@@ -53,11 +63,33 @@ export type BusinessRuleErrorCode =
   | "SUBMODULE_LOCKED"
   | "AI_SERVICE_ERROR"
   | "AI_INVALID_RESPONSE"
+  // Dispatch/Production/Forwarder/Barcode initiative (2026-10-10): a Dispatch
+  // line's Production Order exists but hasn't been marked "Released to
+  // Dispatch" yet — the client may retry with an explicit override reason
+  // (requires production/approve).
+  | "PRODUCTION_NOT_RELEASED_TO_DISPATCH"
+  // Platform SaaS Phase 1 (PLAT-006): the user's company is suspended
+  // (companies.is_active = false) — every request from its users is refused.
+  | "ACCOUNT_SUSPENDED"
+  // Platform SaaS Phase 3 (PLAT-019): the module is turned off for this
+  // company by the platform (module entitlements).
+  | "MODULE_NOT_ENABLED"
+  | "SUBSCRIPTION_READ_ONLY"
+  | "SUBSCRIPTION_LIMIT_REACHED"
+  | "COUPON_INVALID"
+  // Finished Goods Inventory (FGI-011): consuming more than a reservation's
+  // own unconsumed remainder (reservedQuantity - consumedQuantity) was
+  // attempted -- the guarded raw-SQL update's WHERE clause rejected it.
+  | "OVER_CONSUMPTION_NOT_ALLOWED"
+  // FGI-011: an action that requires an ACTIVE reservation (consume, release)
+  // was attempted against one that's already RELEASED or FULFILLED.
+  | "RESERVATION_NOT_ACTIVE"
   | "VALIDATION_ERROR"
   | "NOT_FOUND";
 
 const HTTP_STATUS_BY_CODE: Record<BusinessRuleErrorCode, number> = {
   INSUFFICIENT_FG_STOCK: 409,
+  PACKING_QUANTITY_NOT_AVAILABLE: 409,
   INSUFFICIENT_RAW_MATERIAL_STOCK: 409,
   UNBALANCED_JOURNAL: 422,
   POSTED_INVOICE_LOCKED: 409,
@@ -81,6 +113,9 @@ const HTTP_STATUS_BY_CODE: Record<BusinessRuleErrorCode, number> = {
   RECORD_VERSION_CONFLICT: 409,
   CRM_STAGE_TRANSITION_BLOCKED: 422,
   CRM_APPOINTMENT_CONFLICT: 409,
+  CRM_CONTACT_NOT_CONTACTABLE: 422,
+  CRM_CHANNEL_UNAVAILABLE: 422,
+  CRM_TEMPLATE_INVALID: 422,
   INVALID_API_CREDENTIALS: 401,
   INVALID_WEBHOOK_SIGNATURE: 401,
   RATE_LIMITED: 429,
@@ -101,6 +136,14 @@ const HTTP_STATUS_BY_CODE: Record<BusinessRuleErrorCode, number> = {
   SUBMODULE_LOCKED: 409,
   AI_SERVICE_ERROR: 502,
   AI_INVALID_RESPONSE: 502,
+  PRODUCTION_NOT_RELEASED_TO_DISPATCH: 409,
+  ACCOUNT_SUSPENDED: 403,
+  MODULE_NOT_ENABLED: 403,
+  SUBSCRIPTION_READ_ONLY: 403,
+  SUBSCRIPTION_LIMIT_REACHED: 409,
+  COUPON_INVALID: 422,
+  OVER_CONSUMPTION_NOT_ALLOWED: 409,
+  RESERVATION_NOT_ACTIVE: 409,
   VALIDATION_ERROR: 400,
   NOT_FOUND: 404,
 };
