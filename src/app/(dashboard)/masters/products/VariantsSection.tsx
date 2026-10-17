@@ -7,6 +7,7 @@ import { GenerateBarcodeButton } from "@/components/ui/GenerateBarcodeButton";
 interface Variant {
   id: string;
   skuCode: string;
+  barcode?: string | null;
   color: { name: string };
   size: { name: string };
   isActive: boolean;
@@ -171,7 +172,7 @@ export function VariantsSection({ productId, onClose }: VariantsSectionProps) {
                         <td className="px-3 py-2 text-zinc-700 dark:text-zinc-200">{v.color.name}</td>
                         <td className="px-3 py-2 text-zinc-700 dark:text-zinc-200">{v.size.name}</td>
                         <td className="px-3 py-2">
-                          <GenerateBarcodeButton entityType="SKU" entityId={v.id} />
+                          <GenerateBarcodeButton entityType="SKU" entityId={v.id} initialCode={v.barcode} />
                         </td>
                       </tr>
                     ))}

@@ -317,12 +317,42 @@ export async function loadEntitySummaryForLabel(entityType: BarcodeEntityType, e
         sizeName: variant.size.name,
       };
     }
+    case "PRODUCT_UNIT": {
+      const unit = await prisma.productUnit.findUnique({
+        where: { id: entityId },
+        include: {
+          product: { select: { id: true, styleCode: true, styleName: true } },
+          productVariant: { include: { color: true, size: true } },
+          productionOrder: { select: { id: true, orderNumber: true } },
+          lot: { select: { id: true, lotNumber: true } },
+          salesOrder: { select: { id: true, orderNumber: true, customer: { select: { name: true } } } },
+          carton: { select: { id: true, cartonNumber: true, dispatch: { select: { dispatchNumber: true } } } },
+        },
+      });
+      if (!unit) return null;
+      return {
+        kind: "PRODUCT_UNIT",
+        id: unit.id,
+        unitCode: unit.unitCode,
+        status: unit.status,
+        styleName: unit.product.styleName,
+        styleCode: unit.product.styleCode,
+        colorName: unit.productVariant.color.name,
+        sizeName: unit.productVariant.size.name,
+        lotNumber: unit.lot.lotNumber,
+        productionOrderNumber: unit.productionOrder.orderNumber,
+        salesOrderNumber: unit.salesOrder?.orderNumber ?? null,
+        customerName: unit.salesOrder?.customer?.name ?? null,
+        cartonNumber: unit.carton?.cartonNumber ?? null,
+        dispatchNumber: unit.carton?.dispatch?.dispatchNumber ?? null,
+      };
+    }
     default:
       return null;
   }
 }
 
-const VALID_ENTITY_TYPES = new Set(["FABRIC_ROLL", "PRODUCTION_LOT", "CARTON", "ITEM", "SKU"]);
+const VALID_ENTITY_TYPES = new Set(["FABRIC_ROLL", "PRODUCTION_LOT", "CARTON", "ITEM", "SKU", "PRODUCT_UNIT"]);
 const VALID_STATUSES = new Set(["ACTIVE", "DISABLED"]);
 
 export async function listBarcodes(actor: ActorContext, query: ListQuery & { entityType?: string }) {

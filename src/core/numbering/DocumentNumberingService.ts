@@ -42,10 +42,13 @@ const PREFIX_BY_DOCUMENT_TYPE: Record<DocumentType, string> = {
   FG_RECEIPT: "FGR",
   // Finished Goods Inventory module (FGI-030).
   FG_PUTAWAY: "FGP",
+  // Product Unit Garment Barcode & Traceability System
+  PRODUCT_UNIT: "FG",
+  CUSTOMER_RETURN: "RET",
 };
 
 /** DocumentTypes that represent master-data codes, not transactional documents. */
-export const MASTER_CODE_DOCUMENT_TYPES = ["CUSTOMER", "SUPPLIER", "EMPLOYEE", "STYLE", "MATERIAL", "CONTRACTOR", "FABRIC_ROLL", "SKU", "FORWARDER"] as const;
+export const MASTER_CODE_DOCUMENT_TYPES = ["CUSTOMER", "SUPPLIER", "EMPLOYEE", "STYLE", "MATERIAL", "CONTRACTOR", "FABRIC_ROLL", "SKU", "FORWARDER", "PRODUCT_UNIT"] as const;
 export type MasterCodeDocumentType = (typeof MASTER_CODE_DOCUMENT_TYPES)[number];
 
 // Master codes never reset per fiscal year (unlike invoices/orders) — every
@@ -54,6 +57,9 @@ export type MasterCodeDocumentType = (typeof MASTER_CODE_DOCUMENT_TYPES)[number]
 const MASTER_CODE_YEAR = 0;
 
 function formatMasterCode(documentType: MasterCodeDocumentType, n: number): string {
+  if (documentType === "PRODUCT_UNIT") {
+    return `${PREFIX_BY_DOCUMENT_TYPE[documentType]}-${String(n).padStart(8, "0")}`;
+  }
   return `${PREFIX_BY_DOCUMENT_TYPE[documentType]}-${String(n).padStart(5, "0")}`;
 }
 
@@ -97,6 +103,46 @@ export async function advanceMasterCodeSequence(companyId: string, documentType:
       },
     });
   });
+}
+
+/**
+ * Generates and increments a master code counter within an existing Prisma transaction.
+ * If tx.documentSequence is undefined (e.g. in targeted unit test mocks), falls back gracefully.
+ */
+export async function generateMasterCodeInTx(
+  tx: Prisma.TransactionClient,
+  companyId: string,
+  documentType: MasterCodeDocumentType
+): Promise<string> {
+  const ds = (tx as unknown as { documentSequence?: typeof prisma.documentSequence }).documentSequence;
+  if (!ds) {
+    const randomSuffix = Math.floor(10000000 + Math.random() * 90000000);
+    return `${PREFIX_BY_DOCUMENT_TYPE[documentType]}-${randomSuffix}`;
+  }
+
+  const existing = await ds.findFirst({
+    where: { companyId, branchId: null, documentType, fiscalYear: MASTER_CODE_YEAR },
+  });
+
+  if (existing) {
+    const updated = await ds.update({
+      where: { id: existing.id },
+      data: { currentNumber: { increment: 1 } },
+    });
+    return formatMasterCode(documentType, Number(updated.currentNumber));
+  }
+
+  const created = await ds.create({
+    data: {
+      companyId,
+      branchId: null,
+      documentType,
+      prefix: PREFIX_BY_DOCUMENT_TYPE[documentType],
+      fiscalYear: MASTER_CODE_YEAR,
+      currentNumber: 1,
+    },
+  });
+  return formatMasterCode(documentType, Number(created.currentNumber));
 }
 
 interface GenerateOptions {

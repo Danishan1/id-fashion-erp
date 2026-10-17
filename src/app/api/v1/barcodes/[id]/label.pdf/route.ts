@@ -59,6 +59,16 @@ function fieldsForSummary(summary: Record<string, unknown>): { title: string; fi
           { label: "Color / Size", value: `${summary.colorName} / ${summary.sizeName}` },
         ],
       };
+    case "PRODUCT_UNIT":
+      return {
+        title: "Finished Garment Tag",
+        fields: [
+          { label: "Garment ID", value: String(summary.unitCode) },
+          { label: "Style", value: `${summary.styleName} (${summary.styleCode})` },
+          { label: "Color / Size", value: `${summary.colorName} / ${summary.sizeName}` },
+          { label: "Lot No.", value: String(summary.lotNumber) },
+        ],
+      };
     default:
       return { title: "Item", fields: [] };
   }
@@ -80,7 +90,9 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
     await PermissionService.assert(session.user.id, "barcodes", "print");
 
     const { id } = await params;
-    const barcode = await BarcodeRepository.findById(session.user.companyId, id);
+    const barcode =
+      (await BarcodeRepository.findById(session.user.companyId, id)) ??
+      (await BarcodeRepository.findActiveByCode(session.user.companyId, id));
     if (!barcode) throw new BusinessRuleError("NOT_FOUND", "Barcode not found.", { id });
 
     const summary = await loadEntitySummaryForLabel(barcode.entityType, barcode.entityId);

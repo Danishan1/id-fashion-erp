@@ -5,6 +5,7 @@ import { PermissionService } from "@/core/rbac/PermissionService";
 import { recordInventoryTransaction } from "@/modules/inventory/inventory.service";
 import { createFinishedGoodsReceiptInTx } from "@/modules/finished-goods-inventory/finished-goods-receipt.service";
 import { applyPackingCompletionReservationsInTx } from "@/modules/finished-goods-inventory/finished-goods-reservation.service";
+import { mintProductUnitsInTx } from "@/modules/product-units/product-unit.service";
 import { ProductVariantRepository } from "@/modules/products/product.repository";
 import { EmployeeRepository } from "@/modules/employees/employee.repository";
 import { getProductionSettings } from "@/core/production-settings/ProductionSettingsService";
@@ -230,6 +231,27 @@ async function completeAtFinalStageInTx(
       warehouseId: params.warehouseId,
       variantBreakdown: params.variantBreakdown,
     });
+
+    // Mint serialized individual garment ProductUnit barcodes (FG-XXXXXXXX)
+    const productionOrder = await tx.productionOrder.findUnique({
+      where: { id: params.productionOrderId },
+      select: { salesOrderId: true, salesOrderItemId: true },
+    });
+
+    for (const vb of params.variantBreakdown) {
+      if (vb.quantity > 0) {
+        await mintProductUnitsInTx(tx, actor, {
+          productId: params.productId,
+          productVariantId: vb.productVariantId,
+          productionOrderId: params.productionOrderId,
+          lotId: params.lotId,
+          salesOrderId: productionOrder?.salesOrderId ?? null,
+          salesOrderItemId: productionOrder?.salesOrderItemId ?? null,
+          warehouseId: params.warehouseId,
+          quantity: vb.quantity,
+        });
+      }
+    }
   } else {
     await recordInventoryTransaction(tx, actor, {
       productId: params.productId,

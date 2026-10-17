@@ -20,6 +20,7 @@ const ENTITY_TYPE_LABELS: Record<string, string> = {
   CARTON: "Carton",
   ITEM: "Item",
   SKU: "SKU",
+  PRODUCT_UNIT: "Garment Piece",
 };
 
 /**

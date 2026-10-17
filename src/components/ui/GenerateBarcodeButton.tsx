@@ -14,10 +14,13 @@ import { Button } from "@/components/ui/Button";
 interface GenerateBarcodeButtonProps {
   entityType: "ITEM" | "SKU";
   entityId: string;
+  initialCode?: string | null;
 }
 
-export function GenerateBarcodeButton({ entityType, entityId }: GenerateBarcodeButtonProps) {
-  const [result, setResult] = useState<{ id: string; code: string } | null>(null);
+export function GenerateBarcodeButton({ entityType, entityId, initialCode }: GenerateBarcodeButtonProps) {
+  const [result, setResult] = useState<{ id: string; code: string } | null>(
+    initialCode ? { id: initialCode, code: initialCode } : null
+  );
   const [error, setError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
 

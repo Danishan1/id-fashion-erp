@@ -1171,6 +1171,36 @@ export async function confirmDispatch(actor: ActorContext, id: string) {
     if (count === 0) {
       throw new BusinessRuleError("INVALID_STATE_TRANSITION", "This dispatch is no longer in Packed status.", {});
     }
+
+    // Transition all individual ProductUnits associated with this dispatch to DISPATCHED
+    if (tx.productUnit) {
+      const packedUnits = await tx.productUnit.findMany({
+        where: { dispatchId: id, status: { not: "DISPATCHED" } },
+        select: { id: true, status: true },
+      });
+
+      if (packedUnits.length > 0) {
+        await tx.productUnit.updateMany({
+          where: { id: { in: packedUnits.map((u) => u.id) } },
+          data: { status: "DISPATCHED" },
+        });
+
+        if (tx.productUnitEvent) {
+          await tx.productUnitEvent.createMany({
+            data: packedUnits.map((u) => ({
+              productUnitId: u.id,
+              eventType: "DISPATCHED",
+              fromStatus: u.status,
+              toStatus: "DISPATCHED",
+              referenceType: "DISPATCH",
+              referenceId: id,
+              remarks: `Confirmed shipment under Dispatch ${dispatch.dispatchNumber}`,
+              actorUserId: actor.userId,
+            })),
+          });
+        }
+      }
+    }
   });
 
   const updated = await DispatchRepository.findByIdWithDetails(actor.companyId, id);

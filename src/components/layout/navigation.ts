@@ -199,6 +199,7 @@ export const NAV_SECTIONS: NavSection[] = [
     modules: ["barcodes"],
     children: [
       { label: "Scanner", href: "/production/scan", modules: ["barcodes"], requiredAction: "scan" },
+      { label: "Customer Returns", href: "/returns", modules: ["barcodes", "dispatch"] },
       { label: "Barcode Management", href: "/barcodes", modules: ["barcodes"] },
     ],
   },

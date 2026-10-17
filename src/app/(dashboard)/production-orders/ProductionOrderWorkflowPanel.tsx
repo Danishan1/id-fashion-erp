@@ -810,7 +810,16 @@ export function ProductionOrderWorkflowPanel({
                     </td>
                     <td className="py-2 pr-3 text-zinc-700 dark:text-zinc-200">{LOT_STATUS_LABELS[lot.status] ?? lot.status}</td>
                     <td className="py-2 pr-3 text-zinc-700 dark:text-zinc-200">{lot.currentStage?.name ?? "—"}</td>
-                    <td className="py-2 text-right">
+                    <td className="py-2 text-right space-x-2">
+                      <a
+                        href={`/api/v1/product-units/labels.pdf?lotId=${lot.id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs font-medium text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200"
+                        title="Download garment barcode tags"
+                      >
+                        Tags (PDF)
+                      </a>
                       {(lot.status === "PLANNED" || lot.status === "IN_PROGRESS") && (
                         <button
                           type="button"
