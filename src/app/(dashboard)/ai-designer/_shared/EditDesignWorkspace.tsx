@@ -880,55 +880,22 @@ export function EditDesignWorkspace({
 
       {/* Main 3-column area */}
       <div className="flex min-h-0 flex-1">
-        {/* Left sidebar */}
-        {leftOpen ? (
+        {/* Left sidebar — garment editing only (sketch construction options live in the right panel) */}
+        {editFrom !== "GARMENT" ? null : leftOpen ? (
           <div
             className="shrink-0 overflow-y-auto border-r border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900"
             style={{ width: layout.leftWidth }}
           >
             <div className="flex items-center justify-between px-3 py-2">
               <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                {editFrom === "SKETCH" ? "CAD Architecture" : "Edit Categories"}
+                Edit Categories
               </span>
               <button type="button" onClick={() => setLeftOpen(false)} className="text-xs text-zinc-400 hover:text-zinc-600">
                 ◀
               </button>
             </div>
 
-            {editFrom === "SKETCH" ? (
-              <div className="p-3">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">
-                  📐 Structural Architecture
-                </span>
-                <p className="mt-1 text-[11px] leading-snug text-zinc-500">
-                  Configure structural flat specifications to edit seamlines, darts, and garment lines.
-                </p>
-                <div className="mt-3 space-y-1.5">
-                  {SKETCH_STRUCTURE_OPTIONS.map((cat) => {
-                    const stagedVal = sketchStructuralFields[cat.category];
-                    return (
-                      <div
-                        key={cat.category}
-                        className="rounded-lg border border-zinc-200 bg-white p-2 text-xs shadow-sm dark:border-zinc-800 dark:bg-zinc-950"
-                      >
-                        <div className="flex items-center justify-between font-semibold text-zinc-800 dark:text-zinc-200">
-                          <span className="flex items-center gap-1.5">
-                            <span>{cat.icon}</span>
-                            <span>{cat.label}</span>
-                          </span>
-                          {stagedVal && (
-                            <span className="truncate text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
-                              ✓ {stagedVal}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ) : (
-              <>
+            <>
                 <p className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">🖼️ Design Attributes</p>
                 {designAttributes.length === 0 ? (
                   <p className="px-3 pb-2 text-[10px] leading-snug text-zinc-500">
@@ -977,8 +944,7 @@ export function EditDesignWorkspace({
                     </>
                   )}
                 </div>
-              </>
-            )}
+            </>
           </div>
         ) : (
           <button
@@ -990,7 +956,7 @@ export function EditDesignWorkspace({
           </button>
         )}
 
-        {leftOpen && (
+        {editFrom === "GARMENT" && leftOpen && (
           <ResizeHandle
             direction="col"
             title="Drag to resize the left panel"
