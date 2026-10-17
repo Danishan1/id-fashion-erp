@@ -122,6 +122,7 @@ const STATUS_STYLES: Record<string, string> = {
   DELIVERED: "bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-400",
   ON_HOLD: "bg-orange-100 text-orange-700 dark:bg-orange-500/10 dark:text-orange-400",
   CANCELLED: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
+  REVERSED: "bg-rose-100 text-rose-700 dark:bg-rose-500/10 dark:text-rose-400",
 };
 
 async function parseErrorMessage(res: Response, fallback: string) {
@@ -158,6 +159,8 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
   const [isBusy, setIsBusy] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [showDeliverConfirm, setShowDeliverConfirm] = useState(false);
+  const [showReverseModal, setShowReverseModal] = useState(false);
+  const [reversalReason, setReversalReason] = useState("");
   const [receivedByName, setReceivedByName] = useState("");
   // Barcode Management & Scanning System, Phase 1 (2026-09-29) — scanning
   // every carton before "Mark Packed" is optional, not mandatory: leaving
@@ -825,8 +828,18 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
           </>
         )}
         {dispatch.status === "DISPATCHED" && (
-          <button onClick={() => setShowDeliverConfirm(true)} disabled={isBusy} className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60">
-            Mark Delivered
+          <>
+            <button onClick={() => setShowDeliverConfirm(true)} disabled={isBusy} className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60">
+              Mark Delivered
+            </button>
+            <button onClick={() => setShowReverseModal(true)} disabled={isBusy} className="rounded-md border border-red-300 px-4 py-2 text-sm text-red-700 hover:bg-red-50 disabled:opacity-60 dark:border-red-800 dark:text-red-400">
+              Reverse Dispatch
+            </button>
+          </>
+        )}
+        {dispatch.status === "DELIVERED" && (
+          <button onClick={() => setShowReverseModal(true)} disabled={isBusy} className="rounded-md border border-red-300 px-4 py-2 text-sm text-red-700 hover:bg-red-50 disabled:opacity-60 dark:border-red-800 dark:text-red-400">
+            Reverse / Return
           </button>
         )}
         {dispatch.status === "ON_HOLD" && (
@@ -924,6 +937,43 @@ export function DispatchWorkflowPanel({ dispatch }: { dispatch: DispatchDetail }
               className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
             >
               Mark Delivered
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal open={showReverseModal} onClose={() => setShowReverseModal(false)} title="Reverse Dispatch">
+        <div className="space-y-4">
+          <p className="text-sm text-zinc-600 dark:text-zinc-300">
+            Reversing this dispatch will return all goods to Finished Goods inventory, decrement the sales order fulfillment quantity, and mark this dispatch as REVERSED.
+          </p>
+          <FormField label="Reversal Reason" htmlFor="reversalReason" required>
+            <input
+              id="reversalReason"
+              value={reversalReason}
+              onChange={(e) => setReversalReason(e.target.value)}
+              placeholder="e.g. Carrier handover cancelled / Transit damage / Customer return"
+              className={textInputClass()}
+            />
+          </FormField>
+          <div className="flex justify-end gap-3">
+            <button
+              type="button"
+              onClick={() => setShowReverseModal(false)}
+              className="rounded-md border border-zinc-300 px-4 py-2 text-sm text-zinc-700 dark:border-zinc-700 dark:text-zinc-200"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={isBusy || !reversalReason.trim()}
+              onClick={async () => {
+                const ok = await runAction(`/api/v1/dispatches/${dispatch.id}/reverse`, { reason: reversalReason.trim() });
+                if (ok) setShowReverseModal(false);
+              }}
+              className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-500 disabled:opacity-60"
+            >
+              Confirm Reversal
             </button>
           </div>
         </div>

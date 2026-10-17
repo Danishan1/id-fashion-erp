@@ -20,6 +20,7 @@ const STATUS_STYLES: Record<string, string> = {
   DELIVERED: "bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-400",
   ON_HOLD: "bg-orange-100 text-orange-700 dark:bg-orange-500/10 dark:text-orange-400",
   CANCELLED: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
+  REVERSED: "bg-rose-100 text-rose-700 dark:bg-rose-500/10 dark:text-rose-400",
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -29,6 +30,7 @@ const STATUS_LABELS: Record<string, string> = {
   DELIVERED: "Delivered",
   ON_HOLD: "On Hold",
   CANCELLED: "Cancelled",
+  REVERSED: "Reversed",
 };
 
 export default function DispatchListPage() {

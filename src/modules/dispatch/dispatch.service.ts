@@ -59,10 +59,11 @@ const DISPATCH_ELIGIBLE_ORDER_STATUSES = ["CONFIRMED", "PARTIALLY_DISPATCHED", "
 const ALLOWED_TRANSITIONS: Record<DispatchStatus, DispatchStatus[]> = {
   DRAFT: ["ON_HOLD", "CANCELLED"],
   PACKED: ["ON_HOLD", "CANCELLED"],
-  DISPATCHED: [],
-  DELIVERED: [],
+  DISPATCHED: ["REVERSED"],
+  DELIVERED: ["REVERSED"],
   ON_HOLD: ["CANCELLED"],
   CANCELLED: [],
+  REVERSED: [],
 };
 
 interface OrderItemLike {
@@ -595,6 +596,13 @@ export async function setCartons(actor: ActorContext, id: string, input: SetCart
   const dispatchItemEligibleQuantity = new Map(existing.items.map((i) => [i.id, i.dispatchedQuantity]));
   const dispatchItemStyleName = new Map(existing.items.map((i) => [i.id, i.product.styleName]));
 
+  const uniqueProductIds = [...new Set(existing.items.map((i) => i.productId))];
+  const activeVariantsByProduct = new Map<string, boolean>(
+    await Promise.all(
+      uniqueProductIds.map(async (productId) => [productId, (await ProductVariantRepository.findManyActiveByProductId(productId)).length > 0] as const)
+    )
+  );
+
   const variantIds = [...new Set(input.cartons.flatMap((c) => c.items.map((i) => i.productVariantId).filter(Boolean)))] as string[];
   const variants = variantIds.length > 0 ? await prisma.productVariant.findMany({ where: { id: { in: variantIds } } }) : [];
   const variantProductId = new Map(variants.map((v) => [v.id, v.productId]));
@@ -606,6 +614,14 @@ export async function setCartons(actor: ActorContext, id: string, input: SetCart
         throw new BusinessRuleError(
           "VALIDATION_ERROR",
           "A carton line does not belong to this dispatch.",
+          { dispatchItemId: item.dispatchItemId }
+        );
+      }
+      const hasActiveVariants = Boolean(activeVariantsByProduct.get(expectedProductId));
+      if (hasActiveVariants && !item.productVariantId) {
+        throw new BusinessRuleError(
+          "VALIDATION_ERROR",
+          `A carton line for "${dispatchItemStyleName.get(item.dispatchItemId)}" does not specify a colour/size variant.`,
           { dispatchItemId: item.dispatchItemId }
         );
       }
@@ -824,9 +840,25 @@ export async function markPacked(actor: ActorContext, id: string, scannedCartonI
     }
   }
 
+  const uniqueProductIds = [...new Set(existing.items.map((i) => i.productId))];
+  const activeVariantsByProduct = new Map<string, boolean>(
+    await Promise.all(
+      uniqueProductIds.map(async (productId) => [productId, (await ProductVariantRepository.findManyActiveByProductId(productId)).length > 0] as const)
+    )
+  );
+
   const packedByItemId = new Map<string, number>();
   for (const carton of existing.cartons) {
     for (const cartonItem of carton.items) {
+      const hasActiveVariants = Boolean(activeVariantsByProduct.get(cartonItem.dispatchItem.productId));
+      if (hasActiveVariants && !cartonItem.productVariantId) {
+        const item = existing.items.find((i) => i.id === cartonItem.dispatchItem.id);
+        throw new BusinessRuleError(
+          "VALIDATION_ERROR",
+          `A packed carton item for "${item?.product.styleName ?? "this style"}" does not specify a valid colour/size variant.`,
+          { cartonId: carton.id, dispatchItemId: cartonItem.dispatchItem.id }
+        );
+      }
       packedByItemId.set(
         cartonItem.dispatchItem.id,
         (packedByItemId.get(cartonItem.dispatchItem.id) ?? 0) + cartonItem.quantity
@@ -957,6 +989,52 @@ export async function confirmDispatch(actor: ActorContext, id: string) {
         `"${item.product.styleName}" has colour/size variants configured — its picked quantity (${pickedTotal}) must exactly equal the quantity to dispatch (${item.dispatchedQuantity}) before this dispatch can be confirmed. Use Pick Lines to allocate the remainder.`,
         { dispatchItemId: item.id, picked: pickedTotal, expected: item.dispatchedQuantity }
       );
+    }
+
+    // Variant-wise reconciliation between CartonItem and FinishedGoodsPickLine
+    const itemCartonLines = (dispatch.cartons ?? []).flatMap((c) =>
+      c.items.filter((ci) => ci.dispatchItem?.id === item.id || (ci as unknown as { dispatchItemId?: string }).dispatchItemId === item.id)
+    );
+
+    for (const cartonItem of itemCartonLines) {
+      if (!cartonItem.productVariantId) {
+        throw new BusinessRuleError(
+          "VALIDATION_ERROR",
+          `A packed carton item for "${item.product.styleName}" does not specify a valid colour/size variant.`,
+          { dispatchItemId: item.id }
+        );
+      }
+    }
+
+    const packedByVariantForItem = new Map<string, number>();
+    for (const cartonItem of itemCartonLines) {
+      const vId = cartonItem.productVariantId!;
+      packedByVariantForItem.set(vId, (packedByVariantForItem.get(vId) ?? 0) + cartonItem.quantity);
+    }
+
+    const pickedByVariantForItem = new Map<string, number>();
+    for (const line of item.pickLines) {
+      const vId = line.productVariantId;
+      pickedByVariantForItem.set(vId, (pickedByVariantForItem.get(vId) ?? 0) + Number(line.quantity));
+    }
+
+    const allVariantIdsForItem = new Set([...packedByVariantForItem.keys(), ...pickedByVariantForItem.keys()]);
+    for (const variantId of allVariantIdsForItem) {
+      const packedQty = packedByVariantForItem.get(variantId) ?? 0;
+      const pickedQty = pickedByVariantForItem.get(variantId) ?? 0;
+      if (Math.abs(packedQty - pickedQty) > PICK_LINE_EPSILON) {
+        const variantLine = item.pickLines.find((pl) => pl.productVariantId === variantId);
+        const cartonLine = itemCartonLines.find((cl) => cl.productVariantId === variantId);
+        const variantObj = variantLine?.productVariant ?? cartonLine?.productVariant;
+        const variantLabel = variantObj?.color?.name && variantObj?.size?.name
+          ? ` (${variantObj.color.name} / ${variantObj.size.name})`
+          : "";
+        throw new BusinessRuleError(
+          "VALIDATION_ERROR",
+          `Packed carton quantity for "${item.product.styleName}"${variantLabel} does not match the picked quantity from inventory. Packed: ${packedQty}, Picked: ${pickedQty}.`,
+          { dispatchItemId: item.id, productVariantId: variantId, packed: packedQty, picked: pickedQty }
+        );
+      }
     }
   }
 
@@ -1248,3 +1326,169 @@ export async function resumeDispatchFromHold(actor: ActorContext, id: string) {
 
   return updated;
 }
+
+export interface ReverseDispatchInput {
+  reason: string;
+}
+
+/**
+ * Reverses a confirmed (DISPATCHED or DELIVERED) dispatch atomically.
+ * Restores Finished Goods inventory balances (StockBalance & FinishedGoodsStockBalance),
+ * decrements SalesOrderItem fulfillment counters (regularDispatchedQuantity & dispatchedQuantity),
+ * recalculates and rolls back SalesOrder status,
+ * and marks the dispatch as REVERSED.
+ *
+ * Blocked if any active (POSTED / PARTIALLY_PAID / PAID) sales invoices exist for this order.
+ */
+export async function reverseDispatch(actor: ActorContext, id: string, input: ReverseDispatchInput) {
+  const dispatch = await DispatchRepository.findByIdWithDetails(actor.companyId, id);
+  if (!dispatch) throw new BusinessRuleError("NOT_FOUND", "Dispatch not found.", { id });
+
+  await PermissionService.assert(actor.userId, "dispatch", "cancel", { createdBy: dispatch.requestedByUserId });
+
+  if (dispatch.status !== "DISPATCHED" && dispatch.status !== "DELIVERED") {
+    throw new BusinessRuleError(
+      "INVALID_STATE_TRANSITION",
+      `Cannot reverse a dispatch in "${dispatch.status}" status — only Dispatched or Delivered dispatches can be reversed.`,
+      { currentStatus: dispatch.status }
+    );
+  }
+
+  if (!dispatch.dispatchedAt) {
+    throw new BusinessRuleError("INVALID_STATE_TRANSITION", "Cannot reverse a dispatch that was never confirmed.", { id });
+  }
+
+  const reason = input?.reason?.trim();
+  if (!reason) {
+    throw new BusinessRuleError("VALIDATION_ERROR", "A reason is required to reverse a confirmed dispatch.", {});
+  }
+
+  const uniqueProductIds = [...new Set(dispatch.items.map((i) => i.productId))];
+  const activeVariantsByProduct = new Map<string, boolean>(
+    await Promise.all(
+      uniqueProductIds.map(async (productId) => [productId, (await ProductVariantRepository.findManyActiveByProductId(productId)).length > 0] as const)
+    )
+  );
+
+  await prisma.$transaction(async (tx) => {
+    // 1. Guard against posted/active invoices on this sales order
+    const activeInvoices = await tx.salesInvoice.findMany({
+      where: {
+        companyId: actor.companyId,
+        salesOrderId: dispatch.salesOrderId,
+        status: { in: ["POSTED", "PARTIALLY_PAID", "PAID"] },
+      },
+      select: { invoiceNumber: true },
+    });
+    if (activeInvoices.length > 0) {
+      throw new BusinessRuleError(
+        "ACTIVE_INVOICE_EXISTS",
+        `Cannot reverse dispatch "${dispatch.dispatchNumber}" because active sales invoice(s) exist for this order (${activeInvoices.map((i) => i.invoiceNumber).join(", ")}). Reverse or cancel the invoices first.`,
+        { invoiceNumbers: activeInvoices.map((i) => i.invoiceNumber) }
+      );
+    }
+
+    // 2. Decrement SalesOrderItem fulfillment counters & restore FG inventory
+    for (const item of dispatch.items) {
+      const { count } = await tx.salesOrderItem.updateMany({
+        where: {
+          id: item.salesOrderItem.id,
+          regularDispatchedQuantity: { gte: item.regularDispatchQuantity },
+          dispatchedQuantity: { gte: item.dispatchedQuantity },
+        },
+        data: {
+          regularDispatchedQuantity: { decrement: item.regularDispatchQuantity },
+          dispatchedQuantity: { decrement: item.dispatchedQuantity },
+        },
+      });
+      if (count === 0) {
+        throw new BusinessRuleError(
+          "VALIDATION_ERROR",
+          `Cannot reverse ${item.dispatchedQuantity} for "${item.product.styleName}" — dispatched quantity would become negative.`,
+          { salesOrderItemId: item.salesOrderItem.id }
+        );
+      }
+
+      if (!activeVariantsByProduct.get(item.productId)) {
+        await recordInventoryTransaction(tx, actor, {
+          productId: item.productId,
+          warehouseId: dispatch.warehouseId,
+          transactionType: "DISPATCH_REVERSAL",
+          quantity: item.dispatchedQuantity,
+          referenceModule: "DISPATCH",
+          referenceRecordId: item.id,
+          notes: `Reversal of dispatch ${dispatch.dispatchNumber}: ${reason}`,
+        });
+      } else {
+        for (const line of item.pickLines) {
+          const lineQuantity = Number(line.quantity);
+          await recordInventoryTransaction(tx, actor, {
+            productId: item.productId,
+            warehouseId: dispatch.warehouseId,
+            transactionType: "DISPATCH_REVERSAL",
+            quantity: lineQuantity,
+            referenceModule: "DISPATCH",
+            referenceRecordId: item.id,
+            productVariantId: line.productVariantId,
+            warehouseLocationId: line.warehouseLocationId,
+            stockStatus: "SALEABLE",
+            notes: `Reversal of dispatch ${dispatch.dispatchNumber}: ${reason}`,
+          });
+        }
+      }
+    }
+
+    // 3. Rollback SalesOrder status
+    const allItems = await tx.salesOrderItem.findMany({
+      where: { salesOrderId: dispatch.salesOrderId },
+      select: { regularDispatchedQuantity: true, breakdown: { select: { orderedQuantity: true } } },
+    });
+    const totalRegularDispatched = allItems.reduce((sum, i) => sum + i.regularDispatchedQuantity, 0);
+    const allFullyDispatched = allItems.every(
+      (i) => i.regularDispatchedQuantity >= i.breakdown.reduce((sum, b) => sum + b.orderedQuantity, 0)
+    );
+
+    let targetSoStatus: "CONFIRMED" | "PARTIALLY_DISPATCHED" | "DISPATCHED";
+    if (totalRegularDispatched === 0) {
+      targetSoStatus = "CONFIRMED";
+    } else if (allFullyDispatched) {
+      targetSoStatus = "DISPATCHED";
+    } else {
+      targetSoStatus = "PARTIALLY_DISPATCHED";
+    }
+
+    await tx.salesOrder.update({
+      where: { id: dispatch.salesOrderId },
+      data: { status: targetSoStatus },
+    });
+
+    // 4. Update dispatch status to REVERSED
+    const { count } = await tx.dispatch.updateMany({
+      where: { id, status: dispatch.status },
+      data: { status: "REVERSED" },
+    });
+    if (count === 0) {
+      throw new BusinessRuleError("INVALID_STATE_TRANSITION", "Dispatch status changed during reversal.", {});
+    }
+  });
+
+  const updated = await DispatchRepository.findByIdWithDetails(actor.companyId, id);
+  if (!updated) throw new BusinessRuleError("NOT_FOUND", "Dispatch not found.", { id });
+
+  await writeAuditLog({
+    companyId: actor.companyId,
+    userId: actor.userId,
+    tableName: "dispatches",
+    recordId: id,
+    action: "UPDATE",
+    oldValues: { status: dispatch.status },
+    newValues: {
+      status: "REVERSED",
+      reason,
+      reversedByUserId: actor.userId,
+    },
+  });
+
+  return updated;
+}
+

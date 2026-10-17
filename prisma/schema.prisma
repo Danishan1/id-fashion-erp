@@ -5209,6 +5209,9 @@ enum InventoryTransactionType {
   // time (never at Draft/Packed), matching every other module's "post-time,
   // not draft-time" ledger discipline.
   DISPATCH
+  // Finished-Goods stock returned to the warehouse against a reversed Dispatch
+  // — always a positive quantity, posted only at Reverse Dispatch time.
+  DISPATCH_REVERSAL
   // Raw-material lines handed to an external job-work contractor alongside
   // a JobOrder's WIP quantity (see JobWorkOrder) — the WIP quantity itself
   // never posts here, since it has no StockBalance row to decrement (its
@@ -5660,6 +5663,7 @@ enum DispatchStatus {
   DELIVERED
   ON_HOLD
   CANCELLED
+  REVERSED
 }
 
 // Extra Dispatch Quantity (2026-09-30) — a Dispatch line may ship more than
