@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState } from "react";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { Button } from "@/components/ui/Button";
 import { FormField, textInputClass } from "@/components/ui/FormField";
@@ -128,18 +128,6 @@ export function CustomerReturnsClient() {
   const [returnsList, setReturnsList] = useState<CustomerReturnRow[]>([]);
   const [isLoadingReturns, setIsLoadingReturns] = useState(true);
 
-  // Load warehouses & past returns
-  useEffect(() => {
-    fetch("/api/v1/warehouses")
-      .then((r) => r.json())
-      .then((res) => {
-        if (res.data) setWarehouses(res.data);
-      })
-      .catch(() => {});
-
-    loadReturns();
-  }, []);
-
   const loadReturns = async () => {
     setIsLoadingReturns(true);
     try {
@@ -154,6 +142,28 @@ export function CustomerReturnsClient() {
       setIsLoadingReturns(false);
     }
   };
+
+  // Load warehouses & past returns. isLoadingReturns already starts true
+  // (useState(true) above), so the mount case never needs loadReturns' own
+  // synchronous setIsLoadingReturns(true) call — only its eventual false,
+  // set here inside .finally() rather than by calling loadReturns() directly
+  // from the effect body (which would call setState synchronously).
+  useEffect(() => {
+    fetch("/api/v1/warehouses")
+      .then((r) => r.json())
+      .then((res) => {
+        if (res.data) setWarehouses(res.data);
+      })
+      .catch(() => {});
+
+    fetch("/api/v1/returns")
+      .then((r) => r.json())
+      .then((json) => {
+        if (json.data) setReturnsList(json.data);
+      })
+      .catch(() => {})
+      .finally(() => setIsLoadingReturns(false));
+  }, []);
 
   const handleLookup = async (code: string) => {
     const trimmed = code.trim();

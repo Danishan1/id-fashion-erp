@@ -1,5 +1,5 @@
 import { prisma } from "@/core/db/client";
-import type { AuditAction } from "@prisma/client";
+import type { AuditAction, Prisma } from "@prisma/client";
 
 export interface ListAuditLogsOptions {
   limit?: number;
@@ -12,7 +12,7 @@ export interface ListAuditLogsOptions {
 export async function listPlatformAuditLogs(options: ListAuditLogsOptions = {}) {
   const { limit = 50, offset = 0, action, companyId, tableName } = options;
 
-  const where: any = {};
+  const where: Prisma.AuditLogWhereInput = {};
   if (action) where.action = action;
   if (companyId) where.companyId = companyId;
   if (tableName) where.tableName = tableName;

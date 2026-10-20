@@ -9,7 +9,7 @@ import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/barcode/barcode.service", () => ({ registerBarcode: vi.fn() }));
 vi.mock("@/core/numbering/DocumentNumberingService", () => ({
-  generateMasterCodeInTx: vi.fn().mockImplementation((_tx, _comp, docType) => {
+  generateMasterCodeInTx: vi.fn().mockImplementation((_tx, _comp, _docType) => {
     return Promise.resolve("FG-00000001");
   }),
 }));
@@ -64,7 +64,7 @@ describe("product-unit.service", () => {
       const mockTx = {
         productUnit: { create: mockCreate },
         barcode: { create: vi.fn() },
-      } as any;
+      } as never;
 
       const units = await mintProductUnitsInTx(mockTx, actor, {
         productId: "prod-1",
@@ -91,7 +91,7 @@ describe("product-unit.service", () => {
     });
 
     it("safely returns empty array if tx.productUnit is undefined", async () => {
-      const mockTx = {} as any;
+      const mockTx = {} as never;
       const units = await mintProductUnitsInTx(mockTx, actor, {
         productId: "prod-1",
         productVariantId: "var-1",
@@ -119,7 +119,7 @@ describe("product-unit.service", () => {
         events: [],
       };
 
-      vi.mocked(prisma.productUnit.findFirst).mockResolvedValue(mockUnit as any);
+      vi.mocked(prisma.productUnit.findFirst).mockResolvedValue(mockUnit as never);
 
       const result = await resolveProductUnitTraceability(actor, "FG-00000001");
       expect(result).toEqual(mockUnit);
@@ -167,9 +167,9 @@ describe("product-unit.service", () => {
         productVariant: { color: { name: "Blue" }, size: { name: "M" } },
       };
 
-      vi.mocked(prisma.carton.findUnique).mockResolvedValue(mockCarton as any);
-      vi.mocked(prisma.productUnit.findUnique).mockResolvedValue(mockUnit as any);
-      vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => {
+      vi.mocked(prisma.carton.findUnique).mockResolvedValue(mockCarton as never);
+      vi.mocked(prisma.productUnit.findUnique).mockResolvedValue(mockUnit as never);
+      vi.mocked(prisma.$transaction).mockImplementation((async (cb: (tx: unknown) => unknown) => {
         const tx = {
           cartonItem: {
             findFirst: vi.fn().mockResolvedValue(null),
@@ -187,7 +187,7 @@ describe("product-unit.service", () => {
           productUnitEvent: { create: vi.fn() },
         };
         return cb(tx);
-      });
+      }) as never);
 
       const res = await packUnitIntoCarton(actor, "cart-1", "FG-00000001");
 
@@ -215,8 +215,8 @@ describe("product-unit.service", () => {
         product: { styleName: "Classic Tee" },
       };
 
-      vi.mocked(prisma.carton.findUnique).mockResolvedValue(mockCarton as any);
-      vi.mocked(prisma.productUnit.findUnique).mockResolvedValue(mockUnit as any);
+      vi.mocked(prisma.carton.findUnique).mockResolvedValue(mockCarton as never);
+      vi.mocked(prisma.productUnit.findUnique).mockResolvedValue(mockUnit as never);
 
       await expect(
         packUnitIntoCarton(actor, "cart-1", "FG-00000001")

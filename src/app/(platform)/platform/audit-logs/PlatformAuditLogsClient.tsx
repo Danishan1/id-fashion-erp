@@ -3,8 +3,7 @@
 import { useState, useMemo } from "react";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { Modal } from "@/components/ui/Modal";
-import { formatDate } from "@/lib/date-format";
-import type { AuditAction } from "@prisma/client";
+import type { AuditAction, Prisma } from "@prisma/client";
 
 export interface AuditLogItem {
   id: string;
@@ -13,8 +12,8 @@ export interface AuditLogItem {
   tableName: string;
   recordId: string;
   action: AuditAction;
-  oldValues: any;
-  newValues: any;
+  oldValues: Prisma.JsonValue;
+  newValues: Prisma.JsonValue;
   ipAddress: string | null;
   performedAt: string;
   operator: {

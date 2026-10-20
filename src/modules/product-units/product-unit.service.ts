@@ -1,9 +1,8 @@
 import { prisma } from "@/core/db/client";
-import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { generateMasterCodeInTx } from "@/core/numbering/DocumentNumberingService";
 import { registerBarcode } from "@/core/barcode/barcode.service";
-import type { Prisma, ProductUnitStatus } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 
 export interface ActorContext {
   companyId: string;

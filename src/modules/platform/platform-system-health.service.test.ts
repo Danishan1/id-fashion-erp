@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { checkSystemHealth } from "./platform-system-health.service";
 
 describe("platform-system-health.service", () => {

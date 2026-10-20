@@ -369,7 +369,7 @@ export function PlatformStaffClient({
             </label>
             <select
               value={newRole}
-              onChange={(e) => setNewRole(e.target.value as any)}
+              onChange={(e) => setNewRole(e.target.value as "PLATFORM_SUPER_ADMIN" | "SUPPORT_AGENT" | "BILLING_ADMIN")}
               className="mt-1 w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-900"
             >
               <option value="SUPPORT_AGENT">Support Agent (Can view companies, handle tickets & request proxy access)</option>
@@ -442,7 +442,7 @@ export function PlatformStaffClient({
             <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300">Platform Role</label>
             <select
               value={editRole}
-              onChange={(e) => setEditRole(e.target.value as any)}
+              onChange={(e) => setEditRole(e.target.value as "PLATFORM_SUPER_ADMIN" | "SUPPORT_AGENT" | "BILLING_ADMIN")}
               className="mt-1 w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-900"
             >
               <option value="SUPPORT_AGENT">Support Agent</option>

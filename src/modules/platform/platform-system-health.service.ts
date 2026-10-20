@@ -84,9 +84,9 @@ export async function checkSystemHealth(): Promise<SystemHealthReport> {
     if (latencyMs > 500) {
       dbStatus = "DEGRADED";
     }
-  } catch (err: any) {
+  } catch (err) {
     dbStatus = "DOWN";
-    dbError = err.message ?? "Database connection failed.";
+    dbError = err instanceof Error ? err.message : "Database connection failed.";
   }
 
   // 2. Redis & Queues Check

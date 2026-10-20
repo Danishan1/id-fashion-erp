@@ -7,7 +7,7 @@ import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/numbering/DocumentNumberingService", () => ({
-  generateMasterCodeInTx: vi.fn().mockResolvedValue("RET-00000001"),
+  generateDocumentNumber: vi.fn().mockResolvedValue("RET-2026-00001"),
 }));
 vi.mock("@/modules/inventory/inventory.service", () => ({
   recordInventoryTransaction: vi.fn().mockResolvedValue({ id: "tx-1" }),
@@ -58,14 +58,13 @@ describe("customer-return.service", () => {
         },
       ];
 
-      vi.mocked(prisma.productUnit.findMany).mockResolvedValue(mockUnits as any);
-      vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => {
+      vi.mocked(prisma.productUnit.findMany).mockResolvedValue(mockUnits as never);
+      vi.mocked(prisma.$transaction).mockImplementation((async (cb: (tx: unknown) => unknown) => {
         const tx = {
           customerReturn: {
-            create: vi.fn().mockResolvedValue({
-              id: "ret-1",
-              returnNumber: "RET-00000001",
-            }),
+            create: vi.fn().mockImplementation(({ data }: { data: { returnNumber: string } }) =>
+              Promise.resolve({ id: "ret-1", returnNumber: data.returnNumber })
+            ),
           },
           customerReturnItem: {
             create: vi.fn().mockResolvedValue({ id: "item-1" }),
@@ -78,7 +77,7 @@ describe("customer-return.service", () => {
           },
         };
         return cb(tx);
-      });
+      }) as never);
 
       const result = await createCustomerReturn(actor, {
         customerId: "cust-1",
@@ -96,12 +95,12 @@ describe("customer-return.service", () => {
       });
 
       expect(result.id).toBe("ret-1");
-      expect(result.returnNumber).toBe("RET-00000001");
+      expect(result.returnNumber).toBe("RET-2026-00001");
       expect(recordInventoryTransaction).toHaveBeenCalledWith(
         expect.anything(),
         actor,
         expect.objectContaining({
-          transactionType: "STOCK_IN",
+          transactionType: "CUSTOMER_RETURN",
           productId: "prod-1",
           productVariantId: "var-1",
           warehouseId: "wh-fg",
@@ -119,7 +118,7 @@ describe("customer-return.service", () => {
         },
       ];
 
-      vi.mocked(prisma.productUnit.findMany).mockResolvedValue(mockUnits as any);
+      vi.mocked(prisma.productUnit.findMany).mockResolvedValue(mockUnits as never);
 
       await expect(
         createCustomerReturn(actor, {
@@ -146,7 +145,7 @@ describe("customer-return.service", () => {
         },
       ];
 
-      vi.mocked(prisma.productUnit.findMany).mockResolvedValue(mockUnits as any);
+      vi.mocked(prisma.productUnit.findMany).mockResolvedValue(mockUnits as never);
 
       await expect(
         createCustomerReturn(actor, {
@@ -176,7 +175,7 @@ describe("customer-return.service", () => {
         },
       ];
 
-      vi.mocked(prisma.customerReturn.findMany).mockResolvedValue(mockReturns as any);
+      vi.mocked(prisma.customerReturn.findMany).mockResolvedValue(mockReturns as never);
 
       const res = await listCustomerReturns(actor);
       expect(res).toEqual(mockReturns);

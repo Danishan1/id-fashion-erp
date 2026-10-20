@@ -212,12 +212,16 @@ export function ProductionOrderWorkflowPanel({
   );
 
   useEffect(() => {
-    fetchVariantSuggestions(false);
+    // Deferred via .then() rather than called directly -- fetchVariantSuggestions
+    // eventually sets state, and this effect must not call it synchronously
+    // from its own body (see JobWorkOrderWorkflowPanel's own identical fix,
+    // 2026-10-20).
+    Promise.resolve().then(() => fetchVariantSuggestions(false));
   }, [fetchVariantSuggestions]);
 
   useEffect(() => {
     if (showAddLot) {
-      fetchVariantSuggestions(true);
+      Promise.resolve().then(() => fetchVariantSuggestions(true));
     }
   }, [showAddLot, fetchVariantSuggestions]);
 

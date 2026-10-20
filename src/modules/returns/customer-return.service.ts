@@ -1,9 +1,9 @@
 import { prisma } from "@/core/db/client";
 import { writeAuditLog } from "@/core/audit/AuditLogger";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
-import { generateMasterCodeInTx } from "@/core/numbering/DocumentNumberingService";
+import { generateDocumentNumber } from "@/core/numbering/DocumentNumberingService";
 import { recordInventoryTransaction } from "@/modules/inventory/inventory.service";
-import type { CustomerReturnStatus, ReturnCondition, ReturnDisposition, Prisma } from "@prisma/client";
+import type { ReturnCondition, ReturnDisposition } from "@prisma/client";
 
 export interface ActorContext {
   companyId: string;
@@ -79,10 +79,18 @@ export async function createCustomerReturn(
     }
   }
 
-  return prisma.$transaction(async (tx) => {
-    // Generate Return document number
-    const returnNumber = await generateMasterCodeInTx(tx, actor.companyId, "CUSTOMER_RETURN");
+  // Drawn before the transaction opens, matching this project's own
+  // established document-numbering convention (see e.g. createSalesOrder) —
+  // a genuine transactional document number (RET-2026-00001), not a
+  // never-resetting master code, so it goes through generateDocumentNumber()
+  // rather than the master-code mechanism.
+  const returnNumber = await generateDocumentNumber({
+    companyId: actor.companyId,
+    branchId: actor.branchId ?? null,
+    documentType: "CUSTOMER_RETURN",
+  });
 
+  return prisma.$transaction(async (tx) => {
     const customerReturn = await tx.customerReturn.create({
       data: {
         companyId: actor.companyId,
@@ -149,7 +157,7 @@ export async function createCustomerReturn(
           productId: unit.productId,
           productVariantId: unit.productVariantId,
           warehouseId: item.restockWarehouseId,
-          transactionType: "STOCK_IN",
+          transactionType: "CUSTOMER_RETURN",
           quantity: 1,
           referenceModule: "CUSTOMER_RETURN",
           referenceRecordId: customerReturn.id,

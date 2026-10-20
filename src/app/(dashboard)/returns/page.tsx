@@ -8,8 +8,8 @@ export default async function CustomerReturnsPage() {
   if (!session?.user) notFound();
 
   const canView =
-    (await PermissionService.has(session.user.id, "barcodes", "view")) ||
-    (await PermissionService.has(session.user.id, "dispatch", "view"));
+    (await PermissionService.can(session.user.id, "barcodes", "view")) ||
+    (await PermissionService.can(session.user.id, "dispatch", "view"));
 
   if (!canView) notFound();
 

@@ -5239,6 +5239,14 @@ enum InventoryTransactionType {
   // rather than reusing JOB_WORK_ISSUE with a flipped sign, so the ledger
   // itself makes the cancellation-driven return legible.
   JOB_WORK_ISSUE_REVERSAL
+  // Product Unit Garment Barcode & Traceability System -- a RESTOCK-disposed
+  // garment physically coming back from a customer, posted into saleable
+  // stock. Deliberately its own named type, not a reuse of DISPATCH_REVERSAL
+  // — a genuine customer return (goods correctly delivered, then sent back)
+  // is a different real-world event from reversing a wrongly-confirmed
+  // Dispatch, and this ledger's own convention is one named type per
+  // distinct event (see JOB_WORK_ISSUE_REVERSAL's own comment above).
+  CUSTOMER_RETURN
 }
 
 // Finished Goods Inventory module (2026-10-13, FGI-001) — SALEABLE/REJECTED
@@ -9176,6 +9184,9 @@ enum RelatedModule {
   // CRM Conversations (Phase 11, 2026-10-08) -- message attachments and
   // conversation notifications (relatedRecordId = CrmConversation.id).
   CRM_CONVERSATION
+  // Product Unit Garment Barcode & Traceability System -- audit-log
+  // polymorphism for a CustomerReturn header (relatedRecordId = CustomerReturn.id).
+  CUSTOMER_RETURN
 }
 
 model Attachment {

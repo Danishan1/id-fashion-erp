@@ -233,10 +233,14 @@ async function completeAtFinalStageInTx(
       variantBreakdown: params.variantBreakdown,
     });
 
-    // Mint serialized individual garment ProductUnit barcodes (FG-XXXXXXXX)
+    // Mint serialized individual garment ProductUnit barcodes (FG-XXXXXXXX).
+    // ProductionOrder has no salesOrderId column of its own — only
+    // salesOrderItemId — so the real SalesOrder id is reached through that
+    // item's own relation, matching every other reader of this FK chain
+    // elsewhere in this codebase.
     const productionOrder = await tx.productionOrder.findUnique({
       where: { id: params.productionOrderId },
-      select: { salesOrderId: true, salesOrderItemId: true },
+      select: { salesOrderItemId: true, salesOrderItem: { select: { salesOrderId: true } } },
     });
 
     for (const vb of params.variantBreakdown) {
@@ -246,7 +250,7 @@ async function completeAtFinalStageInTx(
           productVariantId: vb.productVariantId,
           productionOrderId: params.productionOrderId,
           lotId: params.lotId,
-          salesOrderId: productionOrder?.salesOrderId ?? null,
+          salesOrderId: productionOrder?.salesOrderItem?.salesOrderId ?? null,
           salesOrderItemId: productionOrder?.salesOrderItemId ?? null,
           warehouseId: params.warehouseId,
           quantity: vb.quantity,
