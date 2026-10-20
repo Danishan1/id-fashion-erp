@@ -3,13 +3,55 @@ import { prisma } from "@/core/db/client";
 import { hashPassword } from "@/core/auth/password";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { PermissionService } from "@/core/rbac/PermissionService";
-import { UserAdminRepository, UserAdminScopeRepository } from "./user-admin.repository";
+import { RoleGrantRepository, UserAdminRepository, UserAdminScopeRepository } from "./user-admin.repository";
 import type { AddUserBranchRoleInput, CreateUserInput, UpdateUserInput } from "./user-admin.schema";
 import { assertUserLimitAllows } from "@/modules/platform/company-subscription.service";
 
 export interface ActorContext {
   companyId: string;
   userId: string;
+}
+
+function assertNotOwnRoles(actor: ActorContext, targetUserId: string) {
+  if (targetUserId === actor.userId) {
+    throw new BusinessRuleError(
+      "PERMISSION_DENIED",
+      "You cannot change your own role assignments. Ask another administrator.",
+      {}
+    );
+  }
+}
+
+/**
+ * Privilege-escalation guard, used everywhere a role is handed to a user
+ * (createUser, addUserBranchRole). Checked against the actor's live grants,
+ * never PermissionService's cache:
+ * 1. Only a holder of the SUPER_ADMIN role can give SUPER_ADMIN.
+ * 2. A role can only be given if every permission it carries is one the
+ *    actor already holds, so an admin can never hand out more than they have.
+ * (Changing your own roles is refused separately by assertNotOwnRoles.)
+ */
+async function assertCanGrantRole(actor: ActorContext, roleId: string) {
+  const [role, actorProfile] = await Promise.all([
+    RoleGrantRepository.findRoleGrantProfile(roleId),
+    RoleGrantRepository.findUserGrantProfile(actor.userId),
+  ]);
+  if (!role) throw new BusinessRuleError("NOT_FOUND", "Role not found.", { id: roleId });
+
+  if (role.name === "SUPER_ADMIN" && !actorProfile.roleNames.has("SUPER_ADMIN")) {
+    throw new BusinessRuleError("PERMISSION_DENIED", "Only a Super Admin can assign the Super Admin role.", { roleId });
+  }
+
+  const missing = role.rolePermissions
+    .map((rp) => rp.permission.key)
+    .filter((key) => !actorProfile.permissionKeys.has(key));
+  if (missing.length > 0) {
+    throw new BusinessRuleError(
+      "PERMISSION_DENIED",
+      "You cannot assign a role that has permissions you don't have yourself.",
+      { roleId, missingPermissions: missing.slice(0, 20) }
+    );
+  }
 }
 
 export async function listUsers(companyId: string) {
@@ -61,6 +103,7 @@ export async function createUser(actor: ActorContext, input: CreateUserInput) {
   if (!role || role.companyId !== actor.companyId) {
     throw new BusinessRuleError("NOT_FOUND", "Role not found.", { id: input.roleId });
   }
+  await assertCanGrantRole(actor, input.roleId);
   if (input.employeeId) {
     await assertEmployeeLinkable(actor.companyId, input.employeeId);
   }
@@ -149,6 +192,7 @@ export async function updateUser(actor: ActorContext, id: string, input: UpdateU
 export async function addUserBranchRole(actor: ActorContext, userId: string, input: AddUserBranchRoleInput) {
   const user = await UserAdminRepository.findById(actor.companyId, userId);
   if (!user) throw new BusinessRuleError("NOT_FOUND", "User not found.", { id: userId });
+  assertNotOwnRoles(actor, userId);
 
   const [branch, role] = await Promise.all([
     UserAdminScopeRepository.findBranchCompanyId(input.branchId),
@@ -163,8 +207,11 @@ export async function addUserBranchRole(actor: ActorContext, userId: string, inp
   if (user.branchRoles.some((br) => br.branch.id === input.branchId && br.role.id === input.roleId)) {
     throw new BusinessRuleError("DUPLICATE_DOC_NUMBER", "This user already has that exact role on that branch.", {});
   }
+  await assertCanGrantRole(actor, input.roleId);
 
   const created = await UserAdminRepository.addBranchRole(userId, input.branchId, input.roleId);
+  // The new role's permissions must apply on the user's very next request.
+  PermissionService.invalidate(userId);
 
   await writeAuditLog({
     companyId: actor.companyId,
@@ -187,6 +234,8 @@ export async function removeUserBranchRole(actor: ActorContext, userId: string, 
   const user = await UserAdminRepository.findById(actor.companyId, userId);
   if (!user) throw new BusinessRuleError("NOT_FOUND", "User not found.", { id: userId });
 
+  assertNotOwnRoles(actor, userId);
+
   const existing = user.branchRoles.find((br) => br.id === branchRoleId);
   if (!existing) throw new BusinessRuleError("NOT_FOUND", "Role assignment not found.", { id: branchRoleId });
 
@@ -199,6 +248,8 @@ export async function removeUserBranchRole(actor: ActorContext, userId: string, 
   }
 
   await UserAdminRepository.removeBranchRole(branchRoleId);
+  // A removed role must stop working on the user's very next request.
+  PermissionService.invalidate(userId);
 
   await writeAuditLog({
     companyId: actor.companyId,

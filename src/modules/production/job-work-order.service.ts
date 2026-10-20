@@ -12,7 +12,7 @@ import { ProductRepository } from "@/modules/products/product.repository";
 import { FabricRollRepository } from "@/modules/purchasing/fabric-roll.repository";
 import { ContractorRepository } from "@/modules/contractors/contractor.repository";
 import { JobWorkOrderStatus, type Prisma } from "@prisma/client";
-import { applyJobOrderQuantityDelta, assertStageAccess, cascadeReceivedThroughStagesInTx } from "./job-order.service";
+import { applyJobOrderQuantityDelta, assertJobOrderScope, cascadeReceivedThroughStagesInTx } from "./job-order.service";
 import { computeAvailableToCommit } from "./assignment-capacity";
 import {
   resolveCostContextForProductionOrder,
@@ -425,7 +425,7 @@ export async function getJobWorkPlanningOptions(actor: ActorContext, jobOrderId:
   await assertInternalUser(actor);
   const jobOrder = await JobOrderRepository.findAnyById(actor.companyId, jobOrderId);
   if (!jobOrder) throw new BusinessRuleError("NOT_FOUND", "Job order not found.", { id: jobOrderId });
-  await assertStageAccess(actor, jobOrder.productionStageId);
+  await assertJobOrderScope(actor, jobOrder);
 
   const coverable = await listCoverableStages(actor.companyId, jobOrder.productionStage);
   const context = await resolveCostContextForProductionOrder(prisma, actor.companyId, jobOrder.productionOrderId);
@@ -464,7 +464,7 @@ export async function createJobWorkOrder(actor: ActorContext, input: CreateJobWo
   if (jobOrder.status === "CANCELLED") {
     throw new BusinessRuleError("INVALID_STATE_TRANSITION", "Cannot send a cancelled job order to job-work.", {});
   }
-  await assertStageAccess(actor, jobOrder.productionStageId);
+  await assertJobOrderScope(actor, jobOrder);
 
   // Tenant-scoped — a contractorId from another company would otherwise sit
   // unvalidated on the record and be embedded in every subsequent read.

@@ -41,6 +41,7 @@ import type {
   UpdatePendingProgressEntryInput,
 } from "./production.schema";
 import type { ActorContext } from "./production-order.service";
+import { assertProductionBranchScope } from "./production-scope";
 
 const EPSILON = 0.0001;
 
@@ -63,6 +64,19 @@ export async function assertStageAccess(actor: ActorContext, productionStageId: 
       { productionStageId }
     );
   }
+}
+
+/**
+ * The full scope check for acting on a job order: the user's allowed
+ * production stages AND the lot's branch. Used by every job-order write and
+ * by the progress-entry approval actions.
+ */
+export async function assertJobOrderScope(
+  actor: ActorContext,
+  jobOrder: { id: string; productionStageId: string; lot: { branchId: string | null } }
+) {
+  await assertProductionBranchScope(actor, jobOrder.lot.branchId, { label: "Job order", id: jobOrder.id });
+  await assertStageAccess(actor, jobOrder.productionStageId);
 }
 
 export function computeJobOrderStatus(jo: {
@@ -640,6 +654,7 @@ export async function getJobOrderById(companyId: string, id: string, userId?: st
 export async function startLot(actor: ActorContext, lotId: string, input: StartLotInput) {
   const lot = await LotRepository.findAnyById(actor.companyId, lotId);
   if (!lot) throw new BusinessRuleError("NOT_FOUND", "Lot not found.", { id: lotId });
+  await assertProductionBranchScope(actor, lot.branchId, { label: "Lot", id: lotId });
   if (lot.status !== "PLANNED") {
     throw new BusinessRuleError("INVALID_STATE_TRANSITION", `Cannot start a lot in "${lot.status}" status.`, { currentStatus: lot.status });
   }
@@ -906,7 +921,7 @@ export async function assignWorker(actor: ActorContext, jobOrderId: string, inpu
   if (!jobOrder.productionStage.isActive) {
     throw new BusinessRuleError("VALIDATION_ERROR", `Stage "${jobOrder.productionStage.name}" is inactive.`, {});
   }
-  await assertStageAccess(actor, jobOrder.productionStageId);
+  await assertJobOrderScope(actor, jobOrder);
 
   const order = await ProductionOrderRepository.findAnyById(actor.companyId, jobOrder.productionOrderId);
   const prepared = await prepareAssignmentData(actor, { productId: order?.productId ?? null, stage: jobOrder.productionStage }, input);
@@ -942,7 +957,7 @@ export async function recordProgressEntry(actor: ActorContext, jobOrderId: strin
   const jobOrder = await JobOrderRepository.findAnyById(actor.companyId, jobOrderId);
   if (!jobOrder) throw new BusinessRuleError("NOT_FOUND", "Job order not found.", { id: jobOrderId });
   assertJobOrderAcceptsWork(jobOrder, "log production");
-  await assertStageAccess(actor, jobOrder.productionStageId);
+  await assertJobOrderScope(actor, jobOrder);
 
   // Log Process requires a real worker assignment (2026-09-28): no assigned
   // worker → no entry, even via a direct API call. The worker is always the
@@ -1089,7 +1104,7 @@ export async function recordProgressEntry(actor: ActorContext, jobOrderId: strin
 export async function recordAdjustmentEntry(actor: ActorContext, jobOrderId: string, input: CreateAdjustmentEntryInput) {
   const jobOrder = await JobOrderRepository.findAnyById(actor.companyId, jobOrderId);
   if (!jobOrder) throw new BusinessRuleError("NOT_FOUND", "Job order not found.", { id: jobOrderId });
-  await assertStageAccess(actor, jobOrder.productionStageId);
+  await assertJobOrderScope(actor, jobOrder);
 
   // An adjustment has no real "worker" — attribute it to the acting user's
   // own linked Employee record if one exists (User.employeeId), else leave
@@ -1171,7 +1186,7 @@ export async function submitSelfProgressEntry(actor: ActorContext, jobOrderId: s
   const jobOrder = await JobOrderRepository.findAnyById(actor.companyId, jobOrderId);
   if (!jobOrder) throw new BusinessRuleError("NOT_FOUND", "Job order not found.", { id: jobOrderId });
   assertJobOrderAcceptsWork(jobOrder, "log production");
-  await assertStageAccess(actor, jobOrder.productionStageId);
+  await assertJobOrderScope(actor, jobOrder);
 
   const employee = await resolveSelfEntryEmployee(actor);
 
@@ -1235,11 +1250,15 @@ export async function submitSelfProgressEntry(actor: ActorContext, jobOrderId: s
   return entry;
 }
 
-async function loadPendingEntryForCompany(companyId: string, entryId: string) {
+/** Loads a progress entry for an approval action, refusing one whose job
+ * order sits outside the approver's allowed branches or stages. */
+async function loadPendingEntryInScope(actor: ActorContext, entryId: string) {
   const entry = await JobOrderProgressEntryRepository.findAnyById(entryId);
-  if (!entry || entry.jobOrder.companyId !== companyId) {
+  if (!entry || entry.jobOrder.companyId !== actor.companyId) {
     throw new BusinessRuleError("NOT_FOUND", "Progress entry not found.", { id: entryId });
   }
+  await assertProductionBranchScope(actor, entry.jobOrder.lot.branchId, { label: "Progress entry", id: entryId });
+  await assertStageAccess(actor, entry.jobOrder.productionStageId);
   return entry;
 }
 
@@ -1249,7 +1268,7 @@ async function loadPendingEntryForCompany(companyId: string, entryId: string) {
  * action as the decision itself: only someone who could approve/reject this
  * entry can also correct it first. */
 export async function updatePendingProgressEntry(actor: ActorContext, entryId: string, input: UpdatePendingProgressEntryInput) {
-  const entry = await loadPendingEntryForCompany(actor.companyId, entryId);
+  const entry = await loadPendingEntryInScope(actor, entryId);
   await PermissionService.assert(actor.userId, "production", "approve");
 
   if (entry.approvalStatus !== "PENDING") {
@@ -1319,7 +1338,7 @@ export async function updatePendingProgressEntry(actor: ActorContext, entryId: s
  * approve their own submitted entry — matching Expense.approveExpense's
  * precedent exactly. */
 export async function approveProgressEntry(actor: ActorContext, entryId: string, input: DecideProgressEntryInput) {
-  const entry = await loadPendingEntryForCompany(actor.companyId, entryId);
+  const entry = await loadPendingEntryInScope(actor, entryId);
   await PermissionService.assert(actor.userId, "production", "approve", { createdBy: entry.recordedByUserId });
 
   const updated = await prisma.$transaction(async (tx) => {
@@ -1390,7 +1409,7 @@ export async function approveProgressEntry(actor: ActorContext, entryId: string,
  * Sampling's/Expense's own precedent that only the Approve branch carries
  * that guard. */
 export async function rejectProgressEntry(actor: ActorContext, entryId: string, input: RejectProgressEntryInput) {
-  const entry = await loadPendingEntryForCompany(actor.companyId, entryId);
+  const entry = await loadPendingEntryInScope(actor, entryId);
   await PermissionService.assert(actor.userId, "production", "approve");
 
   const guard = await JobOrderProgressEntryRepository.updateStatusConditional(entryId, "PENDING", {
@@ -1449,7 +1468,11 @@ export async function listMySubmittedProgressEntries(actor: ActorContext) {
 /** Backs the Supervisor-facing "Pending Approvals" queue. */
 export async function listPendingProgressEntries(actor: ActorContext) {
   await PermissionService.assert(actor.userId, "production", "approve");
-  return JobOrderProgressEntryRepository.findPendingForCompany(actor.companyId);
+  const [allowedBranchIds, allowedStageIds] = await Promise.all([
+    PermissionService.getAllowedBranchIds(actor.userId),
+    PermissionService.getAllowedProductionStageIds(actor.userId),
+  ]);
+  return JobOrderProgressEntryRepository.findPendingForCompany(actor.companyId, { allowedBranchIds, allowedStageIds });
 }
 
 export async function forwardJobOrder(actor: ActorContext, jobOrderId: string, input: ForwardJobOrderInput) {
@@ -1461,7 +1484,7 @@ export async function forwardJobOrder(actor: ActorContext, jobOrderId: string, i
   // Guarded on the SOURCE stage only — a supervisor moving completed work
   // along the pipeline to the next stage doesn't need access to that next
   // stage themselves, matching how a real factory floor hands off work.
-  await assertStageAccess(actor, jobOrder.productionStageId);
+  await assertJobOrderScope(actor, jobOrder);
   // BUGFIX (previously): this guard used to fire on `status === "COMPLETED"`
   // alone. That's wrong — computeJobOrderStatus() (called by
   // applyJobOrderQuantityDelta on every ordinary progress entry, not just by
@@ -1595,7 +1618,7 @@ export async function revertJobOrder(actor: ActorContext, jobOrderId: string, in
   if (jobOrder.status === "CANCELLED") {
     throw new BusinessRuleError("INVALID_STATE_TRANSITION", "Cannot revert a cancelled job order.", {});
   }
-  await assertStageAccess(actor, jobOrder.productionStageId);
+  await assertJobOrderScope(actor, jobOrder);
 
   const targetStage = await findActiveStageById(actor.companyId, input.targetStageId);
   if (!targetStage) throw new BusinessRuleError("NOT_FOUND", "Production stage not found.", { id: input.targetStageId });
@@ -1653,7 +1676,7 @@ export async function revertJobOrder(actor: ActorContext, jobOrderId: string, in
 export async function recordQcInspection(actor: ActorContext, jobOrderId: string, input: CreateQcInspectionInput) {
   const jobOrder = await JobOrderRepository.findAnyById(actor.companyId, jobOrderId);
   if (!jobOrder) throw new BusinessRuleError("NOT_FOUND", "Job order not found.", { id: jobOrderId });
-  await assertStageAccess(actor, jobOrder.productionStageId);
+  await assertJobOrderScope(actor, jobOrder);
   // BUGFIX (previously): same false-positive as forwardJobOrder() — see the
   // long comment there. "COMPLETED" alone can mean "100% logged at a
   // perfectly ordinary, non-final stage," not just "already posted to

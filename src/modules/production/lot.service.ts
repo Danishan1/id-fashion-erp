@@ -10,6 +10,7 @@ import type { CreateLotInput, MergeLotsInput, SplitLotInput } from "./production
 import type { ActorContext } from "./production-order.service";
 import { computeAvailableToCommit, sumAssignmentConsumed } from "./assignment-capacity";
 import { assertLotMaterialReady } from "./lot-readiness.service";
+import { assertProductionBranchScope } from "./production-scope";
 import {
   assertStageAccess,
   findFirstActiveStage,
@@ -96,6 +97,7 @@ export async function getLotGenealogy(companyId: string, id: string) {
 export async function createLot(actor: ActorContext, productionOrderId: string, input: CreateLotInput) {
   const order = await ProductionOrderRepository.findAnyById(actor.companyId, productionOrderId);
   if (!order) throw new BusinessRuleError("NOT_FOUND", "Production order not found.", { id: productionOrderId });
+  await assertProductionBranchScope(actor, order.branchId, { label: "Production order", id: productionOrderId });
 
   if (order.status === "CANCELLED" || order.status === "CLOSED") {
     throw new BusinessRuleError("INVALID_STATE_TRANSITION", `Cannot create a lot on a production order in "${order.status}" status.`, {
@@ -292,6 +294,7 @@ async function assertLotAtRest(lotId: string, action: string) {
 export async function splitLot(actor: ActorContext, parentLotId: string, input: SplitLotInput) {
   const parent = await LotRepository.findAnyById(actor.companyId, parentLotId);
   if (!parent) throw new BusinessRuleError("NOT_FOUND", "Lot not found.", { id: parentLotId });
+  await assertProductionBranchScope(actor, parent.branchId, { label: "Lot", id: parentLotId });
 
   if (parent.status !== "PLANNED" && parent.status !== "IN_PROGRESS") {
     throw new BusinessRuleError("LOT_GENEALOGY_INVALID", `Cannot split a lot in "${parent.status}" status.`, { currentStatus: parent.status });
@@ -374,6 +377,9 @@ export async function mergeLots(actor: ActorContext, input: MergeLotsInput) {
     throw new BusinessRuleError("NOT_FOUND", "Lot not found.", { id: input.parentLotIds[missingIndex] });
   }
   const validParents = parents as NonNullable<(typeof parents)[number]>[];
+  for (const p of validParents) {
+    await assertProductionBranchScope(actor, p.branchId, { label: "Lot", id: p.id });
+  }
 
   const firstOrderId = validParents[0].productionOrderId;
   const firstUomId = validParents[0].uomId;

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireSession, handleApiError } from "@/lib/api-route";
 import { PermissionService } from "@/core/rbac/PermissionService";
+import { assertProductionOrderInScope } from "@/modules/production/production-scope";
 import { getLotMaterialReadiness } from "@/modules/production/lot-readiness.service";
 
 interface RouteContext {
@@ -18,6 +19,7 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
     await PermissionService.assert(session.user.id, "production", "view");
 
     const { id } = await params;
+    await assertProductionOrderInScope({ companyId: session.user.companyId, userId: session.user.id }, id);
     const quantity = Number(req.nextUrl.searchParams.get("quantity") ?? 0);
     const readiness = await getLotMaterialReadiness(session.user.companyId, id, {
       newLotPieces: Number.isFinite(quantity) && quantity > 0 ? quantity : 0,

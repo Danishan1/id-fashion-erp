@@ -5,6 +5,9 @@ import {
 } from "./customer-return.service";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 
+vi.mock("@/core/rbac/PermissionService", () => ({
+  PermissionService: { getAllowedBranchIds: vi.fn().mockResolvedValue(null) },
+}));
 vi.mock("@/core/audit/AuditLogger", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/core/numbering/DocumentNumberingService", () => ({
   generateDocumentNumber: vi.fn().mockResolvedValue("RET-2026-00001"),
@@ -185,5 +188,18 @@ describe("customer-return.service", () => {
         })
       );
     });
+  });
+});
+
+describe("customer return branch scope (P0)", () => {
+  it("filters the returns list to the user's branches", async () => {
+    const { PermissionService } = await import("@/core/rbac/PermissionService");
+    const { prisma } = await import("@/core/db/client");
+    vi.mocked(PermissionService.getAllowedBranchIds).mockResolvedValueOnce(new Set(["branch-1"]));
+    vi.mocked(prisma.customerReturn.findMany).mockResolvedValueOnce([] as never);
+    await listCustomerReturns(actor);
+    expect(prisma.customerReturn.findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({ where: { companyId: "comp-1", branchId: { in: ["branch-1"] } } })
+    );
   });
 });

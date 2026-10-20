@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireSession, handleApiError } from "@/lib/api-route";
 import { PermissionService } from "@/core/rbac/PermissionService";
+import { assertLotInScope } from "@/modules/production/production-scope";
 import { BusinessRuleError } from "@/core/errors/BusinessRuleError";
 import { ProductionStageTransactionRepository } from "@/modules/production/production.repository";
 import { getCompanyHeaderLines } from "@/core/documents/company-header";
@@ -23,6 +24,7 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
     await PermissionService.assert(session.user.id, "production", "view");
 
     const { id: lotId, jobOrderId } = await params;
+    await assertLotInScope({ companyId: session.user.companyId, userId: session.user.id }, lotId);
     const transaction = await ProductionStageTransactionRepository.findLatestByToJobOrderId(session.user.companyId, lotId, jobOrderId);
     if (!transaction) {
       throw new BusinessRuleError(

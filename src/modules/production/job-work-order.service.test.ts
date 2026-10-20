@@ -35,7 +35,7 @@ vi.mock("@/modules/contractors/contractor.repository", () => ({
 }));
 vi.mock("./job-order.service", () => ({
   applyJobOrderQuantityDelta: vi.fn(),
-  assertStageAccess: vi.fn(),
+  assertJobOrderScope: vi.fn(),
   cascadeReceivedThroughStagesInTx: vi.fn(),
 }));
 // Shared worker/contractor capacity pool — real rules in assignment-capacity.test.ts.
@@ -92,7 +92,7 @@ const { ProductRepository } = await import("@/modules/products/product.repositor
 const { LookupRepository } = await import("@/modules/lookups/lookup.repository");
 const { FabricRollRepository } = await import("@/modules/purchasing/fabric-roll.repository");
 const { ContractorRepository } = await import("@/modules/contractors/contractor.repository");
-const { applyJobOrderQuantityDelta, assertStageAccess, cascadeReceivedThroughStagesInTx } = await import("./job-order.service");
+const { applyJobOrderQuantityDelta, assertJobOrderScope, cascadeReceivedThroughStagesInTx } = await import("./job-order.service");
 const { computeAvailableToCommit } = await import("./assignment-capacity");
 const { resolveCostContextForProductionOrder, resolveEffectiveStageCosts } = await import("@/modules/stage-costs/stage-cost.service");
 const { JobOrderRepository, ProductionOrderRepository } = await import("./production.repository");
@@ -180,7 +180,7 @@ beforeEach(() => {
   vi.mocked(FabricRollRepository.guardedDecrementRemaining).mockReset().mockResolvedValue({ count: 1 } as never);
   vi.mocked(FabricRollRepository.incrementRemaining).mockReset();
   vi.mocked(applyJobOrderQuantityDelta).mockReset().mockResolvedValue(undefined as never);
-  vi.mocked(assertStageAccess).mockReset().mockResolvedValue(undefined as never);
+  vi.mocked(assertJobOrderScope).mockReset().mockResolvedValue(undefined as never);
   vi.mocked(JobOrderRepository.findAnyById).mockReset();
   vi.mocked(JobOrderRepository.findForGuardedUpdateInTx).mockReset().mockResolvedValue(jobOrder() as never);
   vi.mocked(JobWorkOrderRepository.findAnyById).mockReset();

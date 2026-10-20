@@ -17,6 +17,8 @@ vi.mock("./user-admin.repository", () => ({
     updateStatus: vi.fn(),
     updatePasswordHash: vi.fn(),
     updateProfile: vi.fn(),
+    addBranchRole: vi.fn(),
+    removeBranchRole: vi.fn(),
   },
   UserAdminScopeRepository: {
     findBranchCompanyId: vi.fn(),
@@ -24,13 +26,17 @@ vi.mock("./user-admin.repository", () => ({
     findEmployeeCompanyId: vi.fn(),
     findUserIdByEmployeeId: vi.fn(),
   },
+  RoleGrantRepository: {
+    findRoleGrantProfile: vi.fn(),
+    findUserGrantProfile: vi.fn(),
+  },
 }));
 
 const { writeAuditLog } = await import("@/core/audit/AuditLogger");
 const { hashPassword } = await import("@/core/auth/password");
 const { PermissionService } = await import("@/core/rbac/PermissionService");
-const { UserAdminRepository, UserAdminScopeRepository } = await import("./user-admin.repository");
-const { createUser, updateUser, setUserStatus, resetUserPassword } = await import("./user-admin.service");
+const { UserAdminRepository, UserAdminScopeRepository, RoleGrantRepository } = await import("./user-admin.repository");
+const { createUser, updateUser, setUserStatus, resetUserPassword, addUserBranchRole, removeUserBranchRole } = await import("./user-admin.service");
 
 const actor = { companyId: "co-1", userId: "user-1" };
 const input = { email: "new@co1.com", fullName: "New User", password: "password123", phone: "", branchId: "br-1", roleId: "role-1" };
@@ -49,6 +55,12 @@ beforeEach(() => {
   vi.mocked(UserAdminScopeRepository.findEmployeeCompanyId).mockReset().mockResolvedValue({ companyId: "co-1" } as never);
   vi.mocked(UserAdminScopeRepository.findUserIdByEmployeeId).mockReset().mockResolvedValue(null);
   vi.mocked(PermissionService.invalidate).mockReset();
+  vi.mocked(RoleGrantRepository.findRoleGrantProfile)
+    .mockReset()
+    .mockResolvedValue({ name: "MERCHANDISER", rolePermissions: [{ permission: { key: "sales_orders.view" } }] } as never);
+  vi.mocked(RoleGrantRepository.findUserGrantProfile)
+    .mockReset()
+    .mockResolvedValue({ roleNames: new Set(["ADMIN"]), permissionKeys: new Set(["sales_orders.view", "administration_users.edit"]) });
 });
 
 describe("createUser", () => {
@@ -205,5 +217,83 @@ describe("resetUserPassword", () => {
     const logged = JSON.stringify(call[0]);
     expect(logged).not.toContain("super-secret-reset-password");
     expect(logged).not.toContain("hashed-password");
+  });
+});
+
+describe("role grant guards (P0)", () => {
+  const target = (branchRoles: Array<{ id: string; branch: { id: string }; role: { id: string } }>) =>
+    ({ id: "user-2", branchRoles }) as never;
+  const oneRole = [{ id: "ubr-1", branch: { id: "branch-1" }, role: { id: "role-old" } }];
+
+  beforeEach(() => {
+    vi.mocked(UserAdminRepository.addBranchRole).mockReset().mockResolvedValue({ id: "ubr-new" } as never);
+    vi.mocked(UserAdminRepository.removeBranchRole).mockReset().mockResolvedValue({} as never);
+  });
+
+  it("refuses to change your own role assignments — even adding one", async () => {
+    vi.mocked(UserAdminRepository.findById).mockResolvedValue({ id: "user-1", branchRoles: oneRole } as never);
+    await expect(addUserBranchRole(actor, "user-1", { branchId: "branch-1", roleId: "role-x" })).rejects.toMatchObject({
+      code: "PERMISSION_DENIED",
+    });
+    expect(UserAdminRepository.addBranchRole).not.toHaveBeenCalled();
+  });
+
+  it("refuses to remove your own role assignment", async () => {
+    vi.mocked(UserAdminRepository.findById).mockResolvedValue({
+      id: "user-1",
+      branchRoles: [...oneRole, { id: "ubr-2", branch: { id: "branch-1" }, role: { id: "role-2" } }],
+    } as never);
+    await expect(removeUserBranchRole(actor, "user-1", "ubr-1")).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    expect(UserAdminRepository.removeBranchRole).not.toHaveBeenCalled();
+  });
+
+  it("only a Super Admin can give the SUPER_ADMIN role", async () => {
+    vi.mocked(UserAdminRepository.findById).mockResolvedValue(target(oneRole));
+    vi.mocked(RoleGrantRepository.findRoleGrantProfile).mockResolvedValue({ name: "SUPER_ADMIN", rolePermissions: [] } as never);
+    await expect(addUserBranchRole(actor, "user-2", { branchId: "branch-1", roleId: "role-sa" })).rejects.toMatchObject({
+      code: "PERMISSION_DENIED",
+    });
+    await expect(createUser(actor, { ...input, roleId: "role-sa" })).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    expect(UserAdminRepository.addBranchRole).not.toHaveBeenCalled();
+    expect(UserAdminRepository.createWithRoleInTx).not.toHaveBeenCalled();
+  });
+
+  it("a Super Admin can give the SUPER_ADMIN role to someone else", async () => {
+    vi.mocked(UserAdminRepository.findById).mockResolvedValue(target(oneRole));
+    vi.mocked(RoleGrantRepository.findRoleGrantProfile).mockResolvedValue({ name: "SUPER_ADMIN", rolePermissions: [] } as never);
+    vi.mocked(RoleGrantRepository.findUserGrantProfile).mockResolvedValue({
+      roleNames: new Set(["SUPER_ADMIN"]),
+      permissionKeys: new Set<string>(),
+    });
+    await addUserBranchRole(actor, "user-2", { branchId: "branch-1", roleId: "role-sa" });
+    expect(UserAdminRepository.addBranchRole).toHaveBeenCalledWith("user-2", "branch-1", "role-sa");
+  });
+
+  it("refuses a role carrying permissions the actor doesn't hold", async () => {
+    vi.mocked(UserAdminRepository.findById).mockResolvedValue(target(oneRole));
+    vi.mocked(RoleGrantRepository.findRoleGrantProfile).mockResolvedValue({
+      name: "ACCOUNTS_MANAGER",
+      rolePermissions: [{ permission: { key: "sales_orders.view" } }, { permission: { key: "payments.approve" } }],
+    } as never);
+    await expect(addUserBranchRole(actor, "user-2", { branchId: "branch-1", roleId: "role-acc" })).rejects.toMatchObject({
+      code: "PERMISSION_DENIED",
+      details: { missingPermissions: ["payments.approve"] },
+    });
+    expect(UserAdminRepository.addBranchRole).not.toHaveBeenCalled();
+  });
+
+  it("clears the user's cached permissions after a role is added", async () => {
+    vi.mocked(UserAdminRepository.findById).mockResolvedValue(target(oneRole));
+    await addUserBranchRole(actor, "user-2", { branchId: "branch-1", roleId: "role-new" });
+    expect(PermissionService.invalidate).toHaveBeenCalledWith("user-2");
+  });
+
+  it("clears the user's cached permissions after a role is removed", async () => {
+    vi.mocked(UserAdminRepository.findById).mockResolvedValue(
+      target([...oneRole, { id: "ubr-2", branch: { id: "branch-1" }, role: { id: "role-2" } }])
+    );
+    await removeUserBranchRole(actor, "user-2", "ubr-2");
+    expect(UserAdminRepository.removeBranchRole).toHaveBeenCalledWith("ubr-2");
+    expect(PermissionService.invalidate).toHaveBeenCalledWith("user-2");
   });
 });

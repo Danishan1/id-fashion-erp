@@ -328,6 +328,25 @@ class PermissionServiceImpl {
     return matching;
   }
 
+  /**
+   * Passes when the user holds ANY one of the given module/action pairs —
+   * for a screen legitimately reachable from more than one module (e.g.
+   * Customer Returns under Barcodes or Dispatch). When none match, throws
+   * exactly what assert() would for the first pair, so the error stays the
+   * usual PERMISSION_DENIED / MODULE_NOT_ENABLED / SUBSCRIPTION_READ_ONLY.
+   */
+  async assertAny(
+    userId: string,
+    pairs: ReadonlyArray<readonly [Module, Action]>,
+    resourceContext?: ResourceContext
+  ): Promise<void> {
+    for (const [module, action] of pairs) {
+      if (await this.can(userId, module, action, resourceContext)) return;
+    }
+    const [firstModule, firstAction] = pairs[0];
+    await this.assert(userId, firstModule, firstAction, resourceContext);
+  }
+
   /** Throws BusinessRuleError("PERMISSION_DENIED") if the check fails — use in route handlers/services. */
   async assert(
     userId: string,
