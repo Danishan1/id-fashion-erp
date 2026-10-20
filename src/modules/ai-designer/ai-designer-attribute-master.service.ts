@@ -8,7 +8,13 @@ import {
   type DesignAttributeDef,
 } from "@/core/ai-designer/catalogs/design-attribute-catalog";
 import { toReferenceImageThumbnail } from "@/core/ai-designer/catalogs/reference-image-thumbnail";
-import { AiDesignerProductDesignAttributeRepository, AiDesignerOptionReferenceImageRepository } from "./ai-designer.repository";
+import { buildOptionFlatPrompt, listSketchStructureOptions } from "@/core/ai-designer/catalogs/sketch-structure-catalog";
+import { runWithFailover } from "@/core/ai/provider-manager/AIProviderManager";
+import {
+  AiDesignerProductDesignAttributeRepository,
+  AiDesignerOptionReferenceImageRepository,
+  type OptionImageVariant,
+} from "./ai-designer.repository";
 import type { CreateProductDesignAttributeInput, UpdateProductDesignAttributeInput } from "./ai-designer-attribute-master.schema";
 
 interface ActorContext {
@@ -131,17 +137,25 @@ export async function listAllKnownOptionValues(companyId: string): Promise<strin
 }
 
 /** { optionValue -> attachmentId } for every option value this company has actually uploaded an override photo for. */
-export async function listOptionReferenceImages(companyId: string): Promise<Record<string, string>> {
-  const rows = await AiDesignerOptionReferenceImageRepository.findMany(companyId);
+export async function listOptionReferenceImages(companyId: string, variant: OptionImageVariant = "PHOTO"): Promise<Record<string, string>> {
+  const rows = await AiDesignerOptionReferenceImageRepository.findMany(companyId, variant);
   return Object.fromEntries(rows.map((r) => [r.optionValue, r.attachmentId]));
 }
 
-export async function uploadOptionReferenceImage(actor: ActorContext, optionValue: string, file: UploadableFile) {
+export async function uploadOptionReferenceImage(
+  actor: ActorContext,
+  optionValue: string,
+  file: UploadableFile,
+  variant: OptionImageVariant = "PHOTO"
+) {
   if (!ALLOWED_IMAGE_MIME_TYPES.has(file.mimeType)) {
     throw new BusinessRuleError("VALIDATION_ERROR", `Unsupported file type "${file.mimeType}" — upload a JPG, PNG, or WEBP image.`);
   }
+  return storeOptionImage(actor, optionValue, file, variant);
+}
 
-  const existing = await AiDesignerOptionReferenceImageRepository.findByValue(actor.companyId, optionValue);
+async function storeOptionImage(actor: ActorContext, optionValue: string, file: UploadableFile, variant: OptionImageVariant) {
+  const existing = await AiDesignerOptionReferenceImageRepository.findByValue(actor.companyId, optionValue, variant);
 
   // Attachment.relatedRecordId is @db.Uuid — the raw optionValue string isn't
   // a real record id, so a fresh one is minted up front for a brand-new
@@ -164,6 +178,7 @@ export async function uploadOptionReferenceImage(actor: ActorContext, optionValu
     optionValue,
     attachmentId: attachment.id,
     createdByUserId: actor.userId,
+    variant,
   });
 
   // Replacing an existing override — clean up the old file, but a transient
@@ -184,19 +199,19 @@ export async function uploadOptionReferenceImage(actor: ActorContext, optionValu
     tableName: "ai_designer_option_reference_images",
     recordId: row.id,
     action: existing ? "UPDATE" : "CREATE",
-    newValues: { optionValue, attachmentId: attachment.id },
+    newValues: { optionValue, variant, attachmentId: attachment.id },
   });
 
   return row;
 }
 
-export async function deleteOptionReferenceImage(actor: ActorContext, optionValue: string) {
-  const existing = await AiDesignerOptionReferenceImageRepository.findByValue(actor.companyId, optionValue);
+export async function deleteOptionReferenceImage(actor: ActorContext, optionValue: string, variant: OptionImageVariant = "PHOTO") {
+  const existing = await AiDesignerOptionReferenceImageRepository.findByValue(actor.companyId, optionValue, variant);
   if (!existing) {
     throw new BusinessRuleError("NOT_FOUND", `No uploaded photo override exists for "${optionValue}".`, { optionValue });
   }
 
-  await AiDesignerOptionReferenceImageRepository.deleteByValue(actor.companyId, optionValue);
+  await AiDesignerOptionReferenceImageRepository.deleteByValue(actor.companyId, optionValue, variant);
   await deleteAttachment(actor, existing.attachmentId);
 
   await writeAuditLog({
@@ -205,6 +220,55 @@ export async function deleteOptionReferenceImage(actor: ActorContext, optionValu
     tableName: "ai_designer_option_reference_images",
     recordId: existing.id,
     action: "DELETE",
-    oldValues: { optionValue, attachmentId: existing.attachmentId },
+    oldValues: { optionValue, variant, attachmentId: existing.attachmentId },
   });
+}
+
+// ---------------------------------------------------------------------------
+// Construction option CAD flats — the small line-drawing photo on each
+// edit-page construction option (A-Line, V-Neck, ...). Generated a few at a
+// time so each request stays short; the Masters page calls this repeatedly
+// until `remaining` reaches 0. Admins can still upload/replace any of them.
+// ---------------------------------------------------------------------------
+
+export const OPTION_FLAT_BATCH_LIMIT = 6;
+
+export async function generateMissingOptionFlats(actor: ActorContext, input: { limit?: number } = {}) {
+  const limit = Math.min(Math.max(input.limit ?? OPTION_FLAT_BATCH_LIMIT, 1), OPTION_FLAT_BATCH_LIMIT);
+  const existing = await listOptionReferenceImages(actor.companyId, "CAD_FLAT");
+  const missing = listSketchStructureOptions().filter((o) => !existing[o.value]);
+  const batch = missing.slice(0, limit);
+
+  const generated: string[] = [];
+  const failed: { value: string; error: string }[] = [];
+  for (const option of batch) {
+    try {
+      const result = await runWithFailover({
+        companyId: actor.companyId,
+        userId: actor.userId,
+        capability: "TEXT_TO_IMAGE",
+        generationContext: `AI Designer / Construction option flat "${option.value}"`,
+        inputImagePresent: false,
+        call: (provider) => provider.generate({ prompt: buildOptionFlatPrompt(option.groupLabel, option.value), count: 1 }),
+      });
+      const image = result.images[0];
+      if (!image) throw new Error("The provider returned no image.");
+      await storeOptionImage(
+        actor,
+        option.value,
+        { buffer: image.buffer, fileName: `option-flat-${Date.now()}.png`, mimeType: image.mimeType },
+        "CAD_FLAT"
+      );
+      generated.push(option.value);
+    } catch (err) {
+      failed.push({ value: option.value, error: err instanceof Error ? err.message : "Generation failed." });
+    }
+  }
+
+  // Every attempt in a batch failing almost always means the provider itself is down/out of credit — say so.
+  if (batch.length > 0 && generated.length === 0) {
+    throw new BusinessRuleError("AI_SERVICE_ERROR", failed[0]?.error ?? "Construction photo generation failed.", { failed });
+  }
+  const total = listSketchStructureOptions().length;
+  return { generated, failed, remaining: missing.length - generated.length, total };
 }

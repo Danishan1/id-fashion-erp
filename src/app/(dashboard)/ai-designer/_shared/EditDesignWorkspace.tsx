@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
+import { toast } from "@/components/ui/Toast";
 import { FilePreviewModal } from "@/components/ui/FilePreviewModal";
 import { MaskCanvas, type MaskCanvasHandle } from "@/components/ui/MaskCanvas";
 import { PEN_COLORS, SketchPenCanvas, type SketchPenCanvasHandle } from "@/components/ui/SketchPenCanvas";
@@ -10,6 +11,7 @@ import { ResizeHandle } from "@/components/ui/ResizeHandle";
 import type { EditMode } from "@/modules/ai-designer/ai-designer.schema";
 import type { DesignAttributeDef } from "@/core/ai-designer/catalogs/design-attribute-catalog";
 import { DesignOptionImage } from "@/core/ai-designer/catalogs/design-icon-catalog";
+import { SKETCH_STRUCTURE_OPTIONS } from "@/core/ai-designer/catalogs/sketch-structure-catalog";
 import { useAiDesignerDisplayMode } from "@/lib/use-ai-designer-display-mode";
 
 // ---------------------------------------------------------------------------
@@ -164,56 +166,6 @@ const IMPACT_HINTS: Record<string, string> = {
   Construction: "Construction changes typically affect the Tech Pack's construction callouts — regenerate the Tech Pack after applying.",
 };
 
-const SKETCH_STRUCTURE_OPTIONS: {
-  category: string;
-  label: string;
-  icon: string;
-  options: string[];
-}[] = [
-  {
-    category: "silhouette",
-    label: "Garment Silhouette",
-    icon: "👗",
-    options: ["A-Line", "Straight / Column", "Fit & Flare", "Boxy / Relaxed", "Trapeze", "Empire Waist", "Mermaid", "Peplum", "Bodycon"],
-  },
-  {
-    category: "neckline",
-    label: "Neckline & Collar",
-    icon: "👔",
-    options: ["Round Neck", "V-Neck", "Mandarin Collar", "Shirt Collar", "Notch Collar", "Peter Pan Collar", "Square Neck", "Boat Neck", "Halter Neck", "Sweetheart"],
-  },
-  {
-    category: "sleeves",
-    label: "Sleeve Construction",
-    icon: "🧥",
-    options: ["Sleeveless", "Short Sleeve", "Cap Sleeve", "3/4 Sleeve", "Long Sleeve", "Raglan Sleeve", "Puff Sleeve", "Bishop Sleeve", "Bell Sleeve", "Kimono Sleeve"],
-  },
-  {
-    category: "length",
-    label: "Garment Length",
-    icon: "📏",
-    options: ["Crop Length", "Waist Length", "Hip Length", "Thigh Length", "Knee Length", "Midi Length", "Maxi / Ankle", "Floor Length"],
-  },
-  {
-    category: "pockets",
-    label: "Pockets & Placement",
-    icon: "👝",
-    options: ["No Pockets", "Patch Pockets", "In-Seam Pockets", "Flap Pockets", "Welt Pockets", "Cargo Pockets"],
-  },
-  {
-    category: "closures",
-    label: "Placket & Closures",
-    icon: "🔘",
-    options: ["Front Button Placket", "Center Back Zipper", "Side Invisible Zip", "Wrap with Tie", "Front Metal Zip", "Pullover (No Fastener)"],
-  },
-  {
-    category: "construction",
-    label: "Seams & Darts",
-    icon: "🧵",
-    options: ["Princess Seams", "French Darts", "Waist Darts", "Shoulder Yoke", "Tiered Gathered Panels", "Box Pleats", "Contrast Topstitching"],
-  },
-];
-
 interface PanelLayout {
   leftWidth: number;
   rightWidth: number;
@@ -274,11 +226,14 @@ export function EditDesignWorkspace({
   projectId,
   initialProject,
   basePath = "/ai-designer/catalogue-designs",
+  initialEditFrom = "SKETCH",
 }: {
   projectId: string;
   initialProject: ProjectData;
   /** Same reasoning as AiDesignerWorkflowPanel's own basePath — lets this workspace serve both /catalogue-designs and /sketch-to-garment. */
   basePath?: string;
+  /** "Edit Garment" / "Edit Sketch" buttons open the editor already in that mode (default Sketch). */
+  initialEditFrom?: "SKETCH" | "GARMENT";
 }) {
   const [project, setProject] = useState<ProjectData>(initialProject);
   const [versions, setVersions] = useState<VersionRow[]>([]);
@@ -291,7 +246,7 @@ export function EditDesignWorkspace({
   const [lightboxAttachmentId, setLightboxAttachmentId] = useState<string | null>(null);
 
   // Edit mode: default is SKETCH per user requirement: "give option to edit from sketch and default option is sketch"
-  const [editFrom, setEditFrom] = useState<"SKETCH" | "GARMENT">("SKETCH");
+  const [editFrom, setEditFrom] = useState<"SKETCH" | "GARMENT">(initialEditFrom);
 
   // Through Sketch Edit Form state
   const [sketchInstruction, setSketchInstruction] = useState("");
@@ -299,8 +254,11 @@ export function EditDesignWorkspace({
   const [sketchViewAngle, setSketchViewAngle] = useState<"FRONT" | "BACK" | "BOTH">("FRONT");
   const [sketchGenerateGarment, setSketchGenerateGarment] = useState(true);
   const [sketchImageCount, setSketchImageCount] = useState<number>(1);
-  // How the sketch is edited: draw the change with the pen (default) or describe it.
-  const [sketchTool, setSketchTool] = useState<"PEN" | "DESCRIBE">("PEN");
+  // How the sketch is edited: one-click construction options (default), the pen, or a description.
+  const [sketchTool, setSketchTool] = useState<"OPTIONS" | "PEN" | "DESCRIBE">("OPTIONS");
+  // Construction options already applied to the sketch, and the sketches before each apply (for Undo).
+  const [sketchHistory, setSketchHistory] = useState<{ attachmentId: string; applied: Record<string, string> }[]>([]);
+  const [constructionFlats, setConstructionFlats] = useState<Record<string, string>>({});
   const penCanvasRef = useRef<SketchPenCanvasHandle>(null);
   const [penHasStrokes, setPenHasStrokes] = useState(false);
 
@@ -478,6 +436,19 @@ export function EditDesignWorkspace({
       .catch(() => setOptionReferenceImages({}));
   }, []);
 
+  useEffect(() => {
+    fetch("/api/v1/ai-designer/product-design-attributes/reference-images?variant=CAD_FLAT")
+      .then((r) => r.json())
+      .then((body) => {
+        const map: Record<string, string> = {};
+        for (const row of body.data ?? []) {
+          if (row.attachmentId) map[row.optionValue] = row.attachmentId;
+        }
+        setConstructionFlats(map);
+      })
+      .catch(() => setConstructionFlats({}));
+  }, []);
+
   const currentImage = project.currentVersion?.currentImage ?? null;
   const activeSketchAttachmentId =
     project.sketchImageAttachmentId ||
@@ -486,9 +457,7 @@ export function EditDesignWorkspace({
 
   const hasUnsavedEdit =
     editFrom === "SKETCH"
-      ? Boolean(
-          (sketchTool === "PEN" && penHasStrokes) || sketchInstruction.trim() || Object.keys(sketchStructuralFields).length > 0
-        )
+      ? Boolean((sketchTool === "PEN" && penHasStrokes) || (sketchTool !== "OPTIONS" && sketchInstruction.trim()))
       : (editMode === "QUICK" && (currentValue.trim() || newValue.trim() || Object.keys(designAttrSelections).length > 0)) ||
         (editMode === "TECHNICAL" && techRows.some((r) => r.key.trim() && r.value.trim())) ||
         (editMode === "AI_PROMPT" && freeform.trim()) ||
@@ -529,7 +498,6 @@ export function EditDesignWorkspace({
       const usePen = sketchTool === "PEN";
       const payload = {
         instruction: sketchInstruction.trim() || undefined,
-        structuralFields: !usePen && Object.keys(sketchStructuralFields).length > 0 ? sketchStructuralFields : undefined,
         viewAngle: sketchViewAngle,
         imageCount: sketchImageCount,
         generateGarment: sketchGenerateGarment,
@@ -553,6 +521,64 @@ export function EditDesignWorkspace({
       setPreview({ generationId: body.data.generation.id, images: body.data.images });
       setBottomTab("variations");
       await Promise.all([refreshProject(), refreshVersions()]);
+    });
+  }
+
+  /**
+   * One click on a construction option (e.g. A-Line) applies it to the CAD
+   * sketch straight away; the updated sketch becomes the working sketch and
+   * shows on the canvas. The previous sketch is remembered for Undo.
+   */
+  function applyConstructionOption(category: string, value: string) {
+    if (busy) return;
+    const previousSketch = activeSketchAttachmentId;
+    run(`apply-option:${value}`, async () => {
+      await parseJson(
+        await fetch(`/api/v1/ai-designer/projects/${projectId}/sketch-edit`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            structuralFields: { [category]: value },
+            viewAngle: "BOTH",
+            imageCount: 1,
+            generateGarment: false,
+            sketchImageAttachmentId: previousSketch || undefined,
+          }),
+        })
+      );
+      if (previousSketch) setSketchHistory((h) => [...h, { attachmentId: previousSketch, applied: sketchStructuralFields }]);
+      setSketchStructuralFields((prev) => ({ ...prev, [category]: value }));
+      await Promise.all([refreshProject(), refreshVersions()]);
+    });
+  }
+
+  /** Renders the garment from the edited working sketch, as a new version — garment and sketch match again. */
+  function applySketchToGarment() {
+    run("sketch-to-garment", async () => {
+      await parseJson(
+        await fetch(`/api/v1/ai-designer/projects/${projectId}/working-sketch/apply-to-garment`, { method: "POST" })
+      );
+      setSketchHistory([]);
+      setSketchStructuralFields({});
+      await Promise.all([refreshProject(), refreshVersions()]);
+      setBottomTab("versions");
+    });
+  }
+
+  function undoConstructionOption() {
+    const last = sketchHistory[sketchHistory.length - 1];
+    if (!last || busy) return;
+    run("undo-option", async () => {
+      await parseJson(
+        await fetch(`/api/v1/ai-designer/projects/${projectId}/working-sketch`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ attachmentId: last.attachmentId }),
+        })
+      );
+      setSketchHistory((h) => h.slice(0, -1));
+      setSketchStructuralFields(last.applied);
+      await refreshProject();
     });
   }
 
@@ -650,13 +676,18 @@ export function EditDesignWorkspace({
 
   function confirmApply(imageId: string) {
     run("apply", async () => {
-      await parseJson(
+      const body = await parseJson(
         await fetch(`/api/v1/ai-designer/projects/${projectId}/images/${imageId}/apply-edit`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ confirmed: true }),
         })
       );
+      if (body.data?.sketchError) {
+        toast.warning(`The garment was updated, but its sketch could not be generated: ${body.data.sketchError}. Use "Re-generate" on the sketch.`);
+      }
+      setSketchHistory([]);
+      setSketchStructuralFields({});
       setApplyImageId(null);
       setPreview(null);
       setZoom(1);
@@ -849,55 +880,22 @@ export function EditDesignWorkspace({
 
       {/* Main 3-column area */}
       <div className="flex min-h-0 flex-1">
-        {/* Left sidebar */}
-        {leftOpen ? (
+        {/* Left sidebar — garment editing only (sketch construction options live in the right panel) */}
+        {editFrom !== "GARMENT" ? null : leftOpen ? (
           <div
             className="shrink-0 overflow-y-auto border-r border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900"
             style={{ width: layout.leftWidth }}
           >
             <div className="flex items-center justify-between px-3 py-2">
               <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                {editFrom === "SKETCH" ? "CAD Architecture" : "Edit Categories"}
+                Edit Categories
               </span>
               <button type="button" onClick={() => setLeftOpen(false)} className="text-xs text-zinc-400 hover:text-zinc-600">
                 ◀
               </button>
             </div>
 
-            {editFrom === "SKETCH" ? (
-              <div className="p-3">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">
-                  📐 Structural Architecture
-                </span>
-                <p className="mt-1 text-[11px] leading-snug text-zinc-500">
-                  Configure structural flat specifications to edit seamlines, darts, and garment lines.
-                </p>
-                <div className="mt-3 space-y-1.5">
-                  {SKETCH_STRUCTURE_OPTIONS.map((cat) => {
-                    const stagedVal = sketchStructuralFields[cat.category];
-                    return (
-                      <div
-                        key={cat.category}
-                        className="rounded-lg border border-zinc-200 bg-white p-2 text-xs shadow-sm dark:border-zinc-800 dark:bg-zinc-950"
-                      >
-                        <div className="flex items-center justify-between font-semibold text-zinc-800 dark:text-zinc-200">
-                          <span className="flex items-center gap-1.5">
-                            <span>{cat.icon}</span>
-                            <span>{cat.label}</span>
-                          </span>
-                          {stagedVal && (
-                            <span className="truncate text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
-                              ✓ {stagedVal}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ) : (
-              <>
+            <>
                 <p className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">🖼️ Design Attributes</p>
                 {designAttributes.length === 0 ? (
                   <p className="px-3 pb-2 text-[10px] leading-snug text-zinc-500">
@@ -946,8 +944,7 @@ export function EditDesignWorkspace({
                     </>
                   )}
                 </div>
-              </>
-            )}
+            </>
           </div>
         ) : (
           <button
@@ -959,7 +956,7 @@ export function EditDesignWorkspace({
           </button>
         )}
 
-        {leftOpen && (
+        {editFrom === "GARMENT" && leftOpen && (
           <ResizeHandle
             direction="col"
             title="Drag to resize the left panel"
@@ -1062,6 +1059,13 @@ export function EditDesignWorkspace({
                       className="max-h-full max-w-full select-none object-contain p-4"
                       style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transition: isDragging ? "none" : "transform 0.1s" }}
                     />
+                    {busy?.startsWith("apply-option:") && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-white/70 backdrop-blur-sm dark:bg-zinc-950/70">
+                        <div className="rounded-xl bg-white px-4 py-3 text-center text-sm font-semibold text-violet-700 shadow-lg dark:bg-zinc-900 dark:text-violet-300">
+                          ✨ Applying {busy.slice("apply-option:".length)} to the sketch…
+                        </div>
+                      </div>
+                    )}
                     <div className="absolute left-3 top-3 flex items-center gap-2 rounded-lg bg-white/95 px-3 py-1.5 text-xs font-semibold text-violet-700 shadow-md backdrop-blur dark:bg-zinc-900/95 dark:text-violet-300">
                       <span>✏️ CAD Technical Flat Sketch</span>
                       <button
@@ -1363,11 +1367,12 @@ export function EditDesignWorkspace({
                 </div>
 
                 {/* Edit method: draw with pen vs. describe */}
-                <div className="grid grid-cols-2 gap-1 rounded-xl border border-zinc-200 bg-zinc-50 p-1 dark:border-zinc-800 dark:bg-zinc-900">
+                <div className="grid grid-cols-3 gap-1 rounded-xl border border-zinc-200 bg-zinc-50 p-1 dark:border-zinc-800 dark:bg-zinc-900">
                   {(
                     [
-                      { value: "PEN", label: "🖊 Draw with Pen" },
-                      { value: "DESCRIBE", label: "📝 Pick & Describe" },
+                      { value: "OPTIONS", label: "📐 Options" },
+                      { value: "PEN", label: "🖊 Draw" },
+                      { value: "DESCRIBE", label: "📝 Describe" },
                     ] as const
                   ).map(({ value, label }) => (
                     <button
@@ -1413,94 +1418,97 @@ export function EditDesignWorkspace({
                   </div>
                 )}
 
-                {/* Structural categories & options */}
-                <div className={`space-y-2.5 ${sketchTool === "PEN" ? "hidden" : ""}`}>
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">
-                    📐 Construction Architecture
-                  </span>
-
-                  {SKETCH_STRUCTURE_OPTIONS.map((cat) => {
-                    const currentSelected = sketchStructuralFields[cat.category];
-                    return (
-                      <div key={cat.category} className="rounded-lg border border-zinc-200 bg-zinc-50 p-2 dark:border-zinc-800 dark:bg-zinc-900/50">
-                        <div className="flex items-center justify-between pb-1.5">
-                          <span className="flex items-center gap-1 text-[11px] font-semibold text-zinc-700 dark:text-zinc-200">
-                            <span>{cat.icon}</span>
-                            <span>{cat.label}</span>
-                          </span>
-                          {currentSelected && (
-                            <span className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
-                              ✓ {currentSelected}
-                            </span>
-                          )}
-                        </div>
-                        <div className="flex flex-wrap gap-1">
-                          {cat.options.map((opt) => {
-                            const isSelected = currentSelected === opt;
-                            return (
-                              <button
-                                key={opt}
-                                type="button"
-                                onClick={() =>
-                                  setSketchStructuralFields((prev) => {
-                                    const next = { ...prev };
-                                    if (isSelected) delete next[cat.category];
-                                    else next[cat.category] = opt;
-                                    return next;
-                                  })
-                                }
-                                className={`rounded px-1.5 py-0.5 text-[10px] font-medium transition ${
-                                  isSelected
-                                    ? "bg-violet-600 text-white shadow-sm"
-                                    : "border border-zinc-200 bg-white text-zinc-700 hover:border-violet-300 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"
-                                }`}
-                              >
-                                {opt}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {/* Staged structural changes summary */}
-                {sketchTool === "DESCRIBE" && Object.keys(sketchStructuralFields).length > 0 && (
-                  <div>
-                    <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-zinc-400">
-                      Staged Structural Changes ({Object.keys(sketchStructuralFields).length})
-                    </label>
-                    <div className="flex flex-wrap gap-1">
-                      {Object.entries(sketchStructuralFields).map(([catKey, value]) => {
-                        const catLabel = SKETCH_STRUCTURE_OPTIONS.find((c) => c.category === catKey)?.label ?? catKey;
-                        return (
-                          <span
-                            key={catKey}
-                            className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-medium text-violet-800 dark:bg-violet-950 dark:text-violet-300"
-                          >
-                            <span>{catLabel}: {value}</span>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setSketchStructuralFields((prev) => {
-                                  const next = { ...prev };
-                                  delete next[catKey];
-                                  return next;
-                                })
-                              }
-                              className="text-violet-500 hover:text-violet-800 dark:hover:text-violet-200"
-                              aria-label={`Remove ${catLabel}`}
-                            >
-                              ✕
-                            </button>
-                          </span>
-                        );
-                      })}
+                {/* Construction options: one click applies the option to the sketch */}
+                {sketchTool === "OPTIONS" && (
+                  <div className="space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">
+                        📐 Construction Architecture
+                      </span>
+                      <button
+                        type="button"
+                        onClick={undoConstructionOption}
+                        disabled={sketchHistory.length === 0 || Boolean(busy)}
+                        className="rounded border border-zinc-200 px-2 py-0.5 text-[10px] font-semibold text-zinc-600 hover:border-violet-300 hover:text-violet-700 disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-300"
+                      >
+                        {busy === "undo-option" ? "Undoing…" : "↶ Undo"}
+                      </button>
                     </div>
+                    <p className="text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">
+                      Click an option to apply it to the sketch — the updated sketch shows on the canvas.
+                    </p>
+
+                    {SKETCH_STRUCTURE_OPTIONS.map((cat) => {
+                      const applied = sketchStructuralFields[cat.category];
+                      return (
+                        <div key={cat.category} className="rounded-lg border border-zinc-200 bg-zinc-50 p-2 dark:border-zinc-800 dark:bg-zinc-900/50">
+                          <div className="flex items-center justify-between pb-1.5">
+                            <span className="flex items-center gap-1 text-[11px] font-semibold text-zinc-700 dark:text-zinc-200">
+                              <span>{cat.icon}</span>
+                              <span>{cat.label}</span>
+                            </span>
+                            {applied && <span className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400">✓ {applied}</span>}
+                          </div>
+                          <div className="grid grid-cols-3 gap-1.5">
+                            {cat.options.map((opt) => {
+                              const isApplied = applied === opt;
+                              const isApplying = busy === `apply-option:${opt}`;
+                              return (
+                                <button
+                                  key={opt}
+                                  type="button"
+                                  title={isApplied ? `${opt} is applied` : `Apply ${opt} to the sketch`}
+                                  disabled={Boolean(busy) || isApplied}
+                                  onClick={() => applyConstructionOption(cat.category, opt)}
+                                  className={`flex flex-col items-center gap-1 rounded-lg border p-1 text-center transition disabled:cursor-not-allowed ${
+                                    isApplied
+                                      ? "border-violet-600 bg-violet-50 ring-1 ring-violet-300 dark:bg-violet-950/40"
+                                      : "border-zinc-200 bg-white hover:border-violet-400 hover:shadow-sm disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-800"
+                                  }`}
+                                >
+                                  <span className="relative flex h-14 w-full items-center justify-center overflow-hidden rounded bg-white">
+                                    <DesignOptionImage
+                                      value={opt}
+                                      variant="CAD_FLAT"
+                                      overrideAttachmentId={constructionFlats[opt]}
+                                      className="h-14 w-full object-contain"
+                                    />
+                                    {isApplying && (
+                                      <span className="absolute inset-0 flex items-center justify-center bg-white/80 text-[10px] font-semibold text-violet-700">
+                                        Applying…
+                                      </span>
+                                    )}
+                                  </span>
+                                  <span
+                                    className={`line-clamp-2 text-[10px] font-medium leading-tight ${
+                                      isApplied ? "text-violet-700 dark:text-violet-300" : "text-zinc-700 dark:text-zinc-300"
+                                    }`}
+                                  >
+                                    {opt}
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    <button
+                      type="button"
+                      onClick={applySketchToGarment}
+                      disabled={Boolean(busy) || Object.keys(sketchStructuralFields).length === 0}
+                      className="w-full rounded-xl bg-gradient-to-r from-indigo-600 to-fuchsia-600 py-2.5 text-xs font-bold text-white shadow-md transition hover:brightness-110 disabled:opacity-50"
+                    >
+                      {busy === "sketch-to-garment" ? "✨ Updating garment from sketch…" : "👗 Apply Sketch to Garment"}
+                    </button>
+                    <p className="text-[10px] leading-snug text-zinc-500 dark:text-zinc-400">
+                      Renders the garment photo from the edited sketch as a new version, so the garment and sketch match. Then approve it.
+                    </p>
                   </div>
                 )}
 
+                {sketchTool !== "OPTIONS" && (
+                <>
                 {/* Natural language modification prompt */}
                 <div className="rounded-xl border border-zinc-200 bg-white p-2.5 dark:border-zinc-800 dark:bg-zinc-900">
                   <label className="mb-1 block text-xs font-semibold text-zinc-800 dark:text-zinc-200">
@@ -1612,7 +1620,7 @@ export function EditDesignWorkspace({
                     busy === "sketch-edit" ||
                     (sketchTool === "PEN"
                       ? !penHasStrokes || !activeSketchAttachmentId
-                      : !sketchInstruction.trim() && Object.keys(sketchStructuralFields).length === 0)
+                      : !sketchInstruction.trim())
                   }
                   onClick={executeThroughSketchEdit}
                   className="w-full rounded-xl bg-gradient-to-r from-indigo-600 to-fuchsia-600 py-2.5 text-xs font-bold text-white shadow-md transition hover:brightness-110 disabled:opacity-50"
@@ -1627,6 +1635,8 @@ export function EditDesignWorkspace({
                   <p className="text-center text-[10px] text-amber-600 dark:text-amber-400">
                     Generating technical sketch and garment variations. Candidates appear in AI Variations below.
                   </p>
+                )}
+                </>
                 )}
               </div>
             ) : (
@@ -2057,7 +2067,7 @@ export function EditDesignWorkspace({
       <ConfirmModal
         open={applyImageId !== null}
         title="Apply This Variation?"
-        message="This will become the new current design (a new version). The other previewed variations will be marked rejected. This does not change any real BOM, Costing, or Tech Pack records — review those manually if needed."
+        message="This will become the new current design (a new version), with the garment photo and its CAD sketch updated together. The other previewed variations will be marked rejected. This does not change any real BOM, Costing, or Tech Pack records — review those manually if needed."
         confirmLabel="Apply as New Version"
         isBusy={busy === "apply"}
         onConfirm={() => applyImageId && confirmApply(applyImageId)}

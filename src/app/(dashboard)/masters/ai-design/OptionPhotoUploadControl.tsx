@@ -23,10 +23,13 @@ export function OptionPhotoUploadControl({
   optionValue,
   attachmentId,
   onChanged,
+  variant = "PHOTO",
 }: {
   optionValue: string;
   attachmentId: string | null;
   onChanged: () => void;
+  /** CAD_FLAT = a construction-option sketch (Construction Flats panel). */
+  variant?: "PHOTO" | "CAD_FLAT";
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -39,6 +42,7 @@ export function OptionPhotoUploadControl({
       const formData = new FormData();
       formData.append("optionValue", optionValue);
       formData.append("file", file);
+      formData.append("variant", variant);
       await parseJson(await fetch("/api/v1/ai-designer/product-design-attributes/reference-images", { method: "POST", body: formData }));
       onChanged();
     } catch (e) {
@@ -56,7 +60,7 @@ export function OptionPhotoUploadControl({
         await fetch("/api/v1/ai-designer/product-design-attributes/reference-images", {
           method: "DELETE",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ optionValue }),
+          body: JSON.stringify({ optionValue, variant }),
         })
       );
       onChanged();
@@ -69,7 +73,12 @@ export function OptionPhotoUploadControl({
 
   return (
     <div className="flex flex-col items-center gap-1 rounded-md border border-zinc-200 p-2 text-center dark:border-zinc-800">
-      <DesignOptionImage value={optionValue} overrideAttachmentId={attachmentId} />
+      <DesignOptionImage
+        value={optionValue}
+        overrideAttachmentId={attachmentId}
+        variant={variant}
+        className={variant === "CAD_FLAT" ? "h-16 w-16 rounded bg-white object-contain sm:h-20 sm:w-20" : undefined}
+      />
       <p className="max-w-[6rem] truncate text-[11px] font-medium leading-tight text-zinc-900 dark:text-zinc-100" title={optionValue}>
         {optionValue}
       </p>

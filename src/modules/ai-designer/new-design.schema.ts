@@ -15,10 +15,12 @@ export const updateSourceAnalysisFieldSchema = z.object({
 
 export const selectFabricSchema = z.object({ productId: z.string().uuid() });
 export const selectGarmentTemplateSchema = z.object({ key: z.string().min(1).max(100) });
+// Every generated design is a garment photo with its own CAD sketch, so there is no output choice.
 export const generateNewDesignSchema = z.object({
   imageCount: z.union([z.literal(1), z.literal(3), z.literal(4)]).default(3),
-  outputFormat: z.enum(["GARMENT", "SKETCH", "BOTH"]).default("GARMENT"),
 });
+/** Undo on the edit page: restore an earlier sketch as the working sketch. */
+export const setWorkingSketchSchema = z.object({ attachmentId: z.string().uuid() });
 export const colorVariantsSchema = z.object({ colors: z.array(z.string().min(1).max(60)).min(1).max(6) });
 export const makeCurrentSchema = z.object({ imageId: z.string().uuid() });
 

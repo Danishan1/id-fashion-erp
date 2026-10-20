@@ -1,9 +1,10 @@
 import { Document, Image, Page, StyleSheet, Text, View, renderToBuffer } from "@react-pdf/renderer";
-import { gradedValue, type MasterAnalysis, type MasterField } from "@/core/ai-designer/tech-pack-master/schema";
+import { displayPageNumber, gradedValue, type MasterAnalysis, type MasterField } from "@/core/ai-designer/tech-pack-master/schema";
 
 /**
- * Master-prompt (hybrid) Tech Pack PDF — 7 portrait pages in order:
- *   AI pages (1, 2, 4, 7): the AI-generated page image, full page.
+ * Master-prompt (hybrid) Tech Pack PDF — one portrait page per stored page, in order
+ * (5 pages for new tech packs; older ones also have Colorways page 4 and Spec Table page 5):
+ *   AI pages (1, 2, 7 — and legacy 4): the AI-generated page image, full page.
  *   HYBRID pages (3, 5, 6 — BOM, spec table, grading): the AI-generated
  *     illustration (a materials board / measurement diagram / grade
  *     silhouettes — never the actual numbers, see page-prompts.ts) composited
@@ -13,7 +14,8 @@ import { gradedValue, type MasterAnalysis, type MasterField } from "@/core/ai-de
  *     generating, failed, or an older tech pack generated before this
  *     illustration existed) is simply omitted — the real table alone still
  *     renders correctly.
- * A missing AI page image gets a clear placeholder, so the PDF always has 7 pages.
+ * A missing AI page image gets a clear placeholder, so no page is ever dropped.
+ * Headers show the page's position in this pack ("PAGE 4 of 6"), not its stored number.
  */
 export interface TechPackPdfPage {
   pageNumber: number;
@@ -101,15 +103,31 @@ function Illustration({ image }: { image: { buffer: Buffer; mimeType: string } |
   );
 }
 
-function TypesetFrame({ a, pageNumber, title, children }: { a: MasterAnalysis; pageNumber: number; title: string; children: React.ReactNode }) {
+function TypesetFrame({
+  a,
+  pageNumber,
+  pageNumbers,
+  title,
+  children,
+}: {
+  a: MasterAnalysis;
+  pageNumber: number;
+  /** Every stored page number in this tech pack, for "PAGE x of n". */
+  pageNumbers: number[];
+  title: string;
+  children: React.ReactNode;
+}) {
   const brand = val(a.identification, "brand");
+  const shown = displayPageNumber(pageNumber, pageNumbers);
   return (
     <Page size={PAGE_SIZE} style={s.tsPage}>
       <View style={s.headRow}>
         <Text style={s.headTitle}>
-          PAGE {pageNumber} — {title}
+          PAGE {shown} — {title}
         </Text>
-        <Text style={s.headPage}>{pageNumber} of 7</Text>
+        <Text style={s.headPage}>
+          {shown} of {pageNumbers.length}
+        </Text>
       </View>
       <View style={s.rule} />
       <View style={s.infoRow}>
@@ -130,9 +148,11 @@ function TypesetFrame({ a, pageNumber, title, children }: { a: MasterAnalysis; p
   );
 }
 
-function BomPage({ a, illustration }: { a: MasterAnalysis; illustration: { buffer: Buffer; mimeType: string } | null }) {
+type TypesetPageProps = { a: MasterAnalysis; pageNumbers: number[]; illustration: { buffer: Buffer; mimeType: string } | null };
+
+function BomPage({ a, pageNumbers, illustration }: TypesetPageProps) {
   return (
-    <TypesetFrame a={a} pageNumber={3} title="BILL OF MATERIALS / BOM">
+    <TypesetFrame a={a} pageNumber={3} pageNumbers={pageNumbers} title="BILL OF MATERIALS / BOM">
       <Illustration image={illustration} />
       <Table
         cols={[
@@ -160,9 +180,10 @@ function BomPage({ a, illustration }: { a: MasterAnalysis; illustration: { buffe
   );
 }
 
-function SpecPage({ a, illustration }: { a: MasterAnalysis; illustration: { buffer: Buffer; mimeType: string } | null }) {
+/** Only for older tech packs that still have the Measurements & Spec Table page. */
+function SpecPage({ a, pageNumbers, illustration }: TypesetPageProps) {
   return (
-    <TypesetFrame a={a} pageNumber={5} title="MEASUREMENTS & SPEC TABLE">
+    <TypesetFrame a={a} pageNumber={5} pageNumbers={pageNumbers} title="MEASUREMENTS & SPEC TABLE">
       <Illustration image={illustration} />
       <Text style={s.sectionTitle}>SPEC TABLE — BASE SIZE {a.baseSize}</Text>
       <Table
@@ -191,10 +212,10 @@ function SpecPage({ a, illustration }: { a: MasterAnalysis; illustration: { buff
   );
 }
 
-function GradingPage({ a, illustration }: { a: MasterAnalysis; illustration: { buffer: Buffer; mimeType: string } | null }) {
+function GradingPage({ a, pageNumbers, illustration }: TypesetPageProps) {
   const baseIdx = a.sizes.indexOf(a.baseSize);
   return (
-    <TypesetFrame a={a} pageNumber={6} title="SIZE GRADING">
+    <TypesetFrame a={a} pageNumber={6} pageNumbers={pageNumbers} title="SIZE GRADING">
       <Illustration image={illustration} />
       <Text style={s.sectionTitle}>GRADE TABLE (cm)</Text>
       <Table
@@ -203,10 +224,25 @@ function GradingPage({ a, illustration }: { a: MasterAnalysis; illustration: { b
           { label: "Point of Measure", flex: 2 },
           ...a.sizes.map((size) => ({ label: size === a.baseSize ? `${size} (base)` : size, flex: 0.7, align: "center" as const })),
           { label: "Grade", flex: 0.7, align: "center" as const },
+          { label: "Tol.", flex: 0.7, align: "center" as const },
         ]}
-        rows={a.measurements.map((m) => [m.code, m.pom, ...a.sizes.map((size) => String(gradedValue(a, m, size))), `± ${m.gradeRule}`])}
+        rows={a.measurements.map((m) => [
+          m.code,
+          m.pom,
+          ...a.sizes.map((size) => String(gradedValue(a, m, size))),
+          `± ${m.gradeRule}`,
+          m.tolerance,
+        ])}
         highlightCol={baseIdx >= 0 ? baseIdx + 2 : undefined}
       />
+      <View style={s.noteBox} wrap={false}>
+        <Text style={s.noteTitle}>HOW TO MEASURE</Text>
+        {a.measurements.map((m) => (
+          <Text key={m.code}>
+            {m.code}. {m.pom}: {m.howToMeasure}
+          </Text>
+        ))}
+      </View>
       <View style={s.noteBox} wrap={false}>
         <Text style={s.noteTitle}>SIZE EXPLANATION</Text>
         <Text>
@@ -224,13 +260,14 @@ function GradingPage({ a, illustration }: { a: MasterAnalysis; illustration: { b
 
 export async function renderTechPackImagesPdf(params: { title: string; analysis: MasterAnalysis; pages: TechPackPdfPage[] }): Promise<Buffer> {
   const { analysis: a } = params;
+  const pageNumbers = params.pages.map((p) => p.pageNumber);
   const doc = (
     <Document title={params.title}>
       {params.pages.map((p) => {
         if (p.mode === "HYBRID") {
-          if (p.pageNumber === 3) return <BomPage key={p.pageNumber} a={a} illustration={p.image} />;
-          if (p.pageNumber === 5) return <SpecPage key={p.pageNumber} a={a} illustration={p.image} />;
-          if (p.pageNumber === 6) return <GradingPage key={p.pageNumber} a={a} illustration={p.image} />;
+          if (p.pageNumber === 3) return <BomPage key={p.pageNumber} a={a} pageNumbers={pageNumbers} illustration={p.image} />;
+          if (p.pageNumber === 5) return <SpecPage key={p.pageNumber} a={a} pageNumbers={pageNumbers} illustration={p.image} />;
+          if (p.pageNumber === 6) return <GradingPage key={p.pageNumber} a={a} pageNumbers={pageNumbers} illustration={p.image} />;
         }
         return (
           <Page key={p.pageNumber} size={PAGE_SIZE} style={s.page}>
@@ -240,7 +277,7 @@ export async function renderTechPackImagesPdf(params: { title: string; analysis:
             ) : (
               <View style={s.placeholder}>
                 <Text style={{ fontSize: 16, marginBottom: 8 }}>
-                  PAGE {p.pageNumber} — {p.pageTitle}
+                  PAGE {displayPageNumber(p.pageNumber, pageNumbers)} — {p.pageTitle}
                 </Text>
                 <Text style={{ fontSize: 10, color: "#71717a" }}>This page image has not been generated yet.</Text>
               </View>

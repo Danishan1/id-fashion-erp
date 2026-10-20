@@ -37,6 +37,14 @@ function mapSdkError(err: unknown): AiServiceError {
     return new AiServiceError(GENERIC_MESSAGE, "TIMEOUT", err);
   }
   if (err instanceof ApiError) {
+    // Empty prepaid balance (402, "prepayment credits are depleted") — retrying never helps, so say so plainly.
+    if (err.status === 402 || /credits are depleted|prepayment credits/i.test(err.message)) {
+      return new AiServiceError(
+        "AI analysis is unavailable: the Gemini (Google AI Studio) account has no credits left. Add credits in AI Studio billing (or switch AI_TEXT_PROVIDER), then try again.",
+        "PROVIDER_ERROR",
+        err
+      );
+    }
     if (err.status === 401 || err.status === 403) return new AiServiceError(GENERIC_MESSAGE, "AUTH_FAILURE", err);
     if (err.status === 429) return new AiServiceError(GENERIC_MESSAGE, "RATE_LIMIT", err);
     if (err.status === 400 && /api key/i.test(err.message)) return new AiServiceError(GENERIC_MESSAGE, "AUTH_FAILURE", err);

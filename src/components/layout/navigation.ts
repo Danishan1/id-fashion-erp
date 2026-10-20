@@ -99,7 +99,9 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "My Tasks", href: "/crm/my-tasks", modules: ["crm"] },
       { label: "Calendar", href: "/crm/calendar", modules: ["crm"] },
       { label: "Activities", href: "/crm/activities", modules: ["crm"] },
+      { label: "Bulk Jobs", href: "/crm/bulk-jobs", modules: ["crm"] },
 
+      { label: "Workflows", href: "/crm/workflows", modules: ["crm_settings"] },
       { label: "Activity Log", href: "/crm/activity", modules: ["crm"] },
       { label: "Settings", href: "/crm/settings", modules: ["crm_settings"] },
     ],

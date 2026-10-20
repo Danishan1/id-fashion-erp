@@ -116,6 +116,8 @@ export const opportunityFilterSchema = z
     expectedCloseDate: dateRange.optional(),
     createdAt: dateRange.optional(),
     updatedAt: dateRange.optional(),
+    /** Phase 21: when the opportunity was won / lost / abandoned (business days). */
+    closedAt: dateRange.optional(),
     amount: numberRange(9_999_999_999_999).optional(),
     probability: numberRange(100).optional(),
     archived: z.enum(["exclude", "only", "include"]).default("exclude"),
@@ -132,7 +134,7 @@ export const opportunitySortSchema = z.object({
 
 const LIST_KEYS = ["pipelineIds", "stageIds", "statuses", "ownerUserIds", "crmCompanyIds", "crmContactIds", "sourceIds", "tagIds"] as const;
 const TEXT_KEYS = ["fromLead", "closeDue"] as const;
-const DATE_KEYS = ["expectedCloseDate", "createdAt", "updatedAt"] as const;
+const DATE_KEYS = ["expectedCloseDate", "createdAt", "updatedAt", "closedAt"] as const;
 const NUMBER_KEYS = ["amount", "probability"] as const;
 
 /** Flat query string → OpportunityFilter (comma lists, `<field>From`/`<field>To`, `<field>Min`/`<field>Max`). Unknown params are ignored. */

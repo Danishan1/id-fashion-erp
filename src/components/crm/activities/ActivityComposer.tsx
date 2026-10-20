@@ -8,7 +8,8 @@ import { FormField, textInputClass } from "@/components/ui/FormField";
 import { Modal } from "@/components/ui/Modal";
 import { ACTIVITIES_API, type ActivityDto, type ActivityMetaDto, type ActivityParentRef, type UserOptionDto } from "./activity-types";
 
-const RECORD_TYPES = [
+/** Record types an activity (or a note) can be attached to, with their lookup endpoints. */
+export const RECORD_TYPES = [
   { key: "OPPORTUNITY", label: "Opportunity", url: "/api/v1/crm/opportunities?pageSize=15", option: (r: { name: string; opportunityNumber?: string }) => ({ label: r.name, sublabel: r.opportunityNumber ?? null }) },
   { key: "CONTACT", label: "Contact", url: "/api/v1/crm/contacts/lookup", option: (r: { fullName?: string; name?: string; email?: string | null }) => ({ label: r.fullName ?? r.name ?? "Contact", sublabel: r.email ?? null }) },
   { key: "COMPANY", label: "Company", url: "/api/v1/crm/companies/lookup", option: (r: { name: string; city?: string | null }) => ({ label: r.name, sublabel: r.city ?? null }) },

@@ -2,7 +2,9 @@ import pkg from "@prisma/client";
 const { PrismaClient } = pkg;
 import { PrismaPg } from "@prisma/adapter-pg";
 import bcrypt from "bcryptjs";
+import { createHash, randomUUID } from "node:crypto";
 import { MODULES, ACTIONS, ROLES, ROLE_PERMISSIONS, permissionKey } from "../src/config/rbac.ts";
+import { DEFAULT_WORKFLOWS } from "../src/modules/crm/workflows/default-workflows.ts";
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
@@ -725,11 +727,58 @@ async function main() {
     skipDuplicates: true,
   });
 
+  console.log("Seeding default CRM automations...");
+  const defaultsAdded = await seedDefaultWorkflows(company.id, superAdminUser.id);
+  console.log(`  ${defaultsAdded} added (${DEFAULT_WORKFLOWS.length - defaultsAdded} already present)`);
+
   console.log("\nSeed complete.");
   console.log(`  Company:  ${company.name} (${company.id})`);
   console.log(`  Branch:   ${branch.name} (${branch.code})`);
   console.log(`  Login:    ${superAdminEmail} / ${superAdminPassword}`);
   console.log("  ⚠ Change this password immediately in a non-dev environment.");
+}
+
+/** Same canonical JSON as workflow-definition.ts → identical definition hashes. */
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  const obj = value as Record<string, unknown>;
+  return `{${Object.keys(obj)
+    .filter((k) => obj[k] !== undefined)
+    .sort()
+    .map((k) => `${JSON.stringify(k)}:${canonicalJson(obj[k])}`)
+    .join(",")}}`;
+}
+
+/**
+ * Default CRM automations (src/modules/crm/workflows/default-workflows.ts):
+ * published v1, running as the super admin, on or off per the catalogue.
+ * Idempotent per (company, template key) — an existing copy (edited, switched
+ * off or archived) is never touched. Existing databases get them from
+ * Workflows → "Default automations" instead (that path also runs the publish
+ * validation; the catalogue's unit test guarantees these definitions pass it).
+ */
+async function seedDefaultWorkflows(companyId: string, userId: string): Promise<number> {
+  let added = 0;
+  for (const d of DEFAULT_WORKFLOWS) {
+    const exists = await prisma.crmWorkflow.findFirst({ where: { companyId, templateKey: d.key }, select: { id: true } });
+    if (exists) continue;
+    const now = new Date();
+    const id = randomUUID();
+    const versionId = randomUUID();
+    const status = d.enabledByDefault ? "PUBLISHED" : "DISABLED";
+    await prisma.$transaction(async (tx) => {
+      await tx.crmWorkflow.create({
+        data: { id, companyId, name: d.name, description: d.description, templateKey: d.key, status, triggerType: d.definition.trigger.type, runAsUserId: userId, publishedAt: now, publishedByUserId: userId, disabledAt: status === "DISABLED" ? now : null, createdByUserId: userId },
+      });
+      await tx.crmWorkflowVersion.create({
+        data: { id: versionId, companyId, workflowId: id, versionNumber: 1, status: "PUBLISHED", triggerType: d.definition.trigger.type, definition: d.definition as object, definitionHash: createHash("sha256").update(canonicalJson(d.definition)).digest("hex"), changeNote: "Default automation", createdByUserId: userId, publishedAt: now, publishedByUserId: userId },
+      });
+      await tx.crmWorkflow.update({ where: { id }, data: { publishedVersionId: versionId } });
+    });
+    added++;
+  }
+  return added;
 }
 
 main()

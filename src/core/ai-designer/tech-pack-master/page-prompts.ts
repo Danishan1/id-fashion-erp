@@ -1,8 +1,8 @@
-import { MASTER_PAGE_DEFINITIONS, type MasterAnalysis, type MasterField } from "./schema";
+import { displayPageNumber, MASTER_PAGE_DEFINITIONS, type MasterAnalysis, type MasterField } from "./schema";
 
 /**
- * Builds the 7 tech-pack page image prompts from the (possibly user-edited)
- * analysis. Built in code, not by the AI, so all 7 pages carry byte-identical
+ * Builds the tech-pack page image prompts from the (possibly user-edited)
+ * analysis. Built in code, not by the AI, so every page carries byte-identical
  * style numbers, measurements, colours and terminology — the master prompt's
  * own "CRITICAL CONSISTENCY RULES". Each prompt is sent together with the
  * garment's own design photo as a reference image.
@@ -34,7 +34,8 @@ function header(a: MasterAnalysis, pageNumber: number, title: string): string {
   const styleNo = val(a.identification, "style number");
   const styleName = val(a.identification, "style name");
   const brandArea = brand === "TBC" ? "an empty rectangular brand logo placeholder box (no text inside)" : `a brand logo area reading "${brand}"`;
-  return `PAGE HEADER: top-left text "PAGE ${pageNumber} — ${title}", top-right text "${pageNumber} of 7". Below the header: ${brandArea} and a small brand info block: Style No. ${styleNo} · Style Name ${styleName} · Season ${val(a.identification, "season")} · Base Size ${a.baseSize}.
+  const shownNumber = displayPageNumber(pageNumber);
+  return `PAGE HEADER: top-left text "PAGE ${shownNumber} — ${title}", top-right text "${shownNumber} of ${MASTER_PAGE_DEFINITIONS.length}". Below the header: ${brandArea} and a small brand info block: Style No. ${styleNo} · Style Name ${styleName} · Season ${val(a.identification, "season")} · Base Size ${a.baseSize}.
 Spell every word and number exactly as written in this prompt; copy dates character by character.
 PAGE FOOTER: italic small text "${FOOTER_TEXT}"`;
 }
@@ -94,45 +95,6 @@ PAGE CONTENT — MATERIALS BOARD ILLUSTRATION ONLY, occupying roughly the top 40
 3. Leave the bottom ~55% of the page a plain empty white area with nothing drawn on it — the real BOM table goes there.`;
 }
 
-function page4(a: MasterAnalysis): string {
-  return `${GLOBAL_VISUAL_RULES}
-
-${header(a, 4, "COLORWAYS & ARTWORK PLACEMENT")}
-
-${garmentRef(a)}
-
-PAGE CONTENT — COLORWAYS & ARTWORK PLACEMENT:
-1. Colorway chart: one row per colorway, each with a small FULL-COLOR front technical flat of the garment recoloured in that colorway, plus solid color swatches:
-${table(
-  ["Code", "Colorway", "Main", "Contrast", "Trim", "Artwork", "Notes"],
-  a.colorways.map((c) => [c.code, c.name, c.main, c.contrast, c.trim, c.artwork, c.notes])
-)}
-2. Color reference table with swatches:
-${table(["Color", "Pantone", "HEX", "Panel"], a.colors.map((c) => [c.name, c.pantone, c.hex, c.panel]))}
-3. Artwork reference table:
-${
-  a.artwork.length
-    ? table(
-        ["Type", "Placement", "Scale", "Dimensions", "Method", "From HPS", "From CF", "Alignment"],
-        a.artwork.map((w) => [w.type, w.placement, w.scale, w.dimensions, w.method, w.fromHps, w.fromCf, w.alignment])
-      )
-    : "No artwork — state 'NO ARTWORK APPLIED' in the artwork section."
-}
-4. A full-color technical flat with dimension lines showing artwork/print placement measurements from HPS and CF. Pattern / print: ${list(a.patternPrint)}.`;
-}
-
-function page5(a: MasterAnalysis): string {
-  return `${GLOBAL_VISUAL_RULES}
-
-${header(a, 5, "MEASUREMENTS & SPEC TABLE")}
-
-${garmentRef(a)}
-
-PAGE CONTENT — MEASUREMENT DIAGRAM ONLY, occupying roughly the top 45% of the page (the real spec table and how-to-measure instructions are placed underneath it separately by the document system — do NOT draw any spec table, measurement values, tolerances or instruction text anywhere on this image):
-1. A BLACK-AND-WHITE line-art measurement diagram of the garment (front and back flats, no colour, no shading, no fill) with thin arrows/leader lines labelled ONLY with short single point-of-measure codes (${a.measurements.map((m) => m.code).join(", ")}) at the exact location each measurement is taken — no measurement numbers, no words, no other text anywhere on the diagram besides these short codes.
-2. Leave the bottom ~50% of the page a plain empty white area with nothing drawn on it — the real spec table goes there.`;
-}
-
 function page6(a: MasterAnalysis): string {
   return `${GLOBAL_VISUAL_RULES}
 
@@ -159,8 +121,9 @@ ${table(["Item", "Specification"], a.labelsPackaging.map((f) => [f.label, f.valu
 5. Polybag specs and carton specs boxes, and packaging notes.`;
 }
 
-const BUILDERS = [page1, page2, page3, page4, page5, page6, page7];
+/** Builders keyed by the stored page number (never by array position — pages 4 and 5 no longer exist). */
+const BUILDERS: Record<number, (a: MasterAnalysis) => string> = { 1: page1, 2: page2, 3: page3, 6: page6, 7: page7 };
 
 export function buildTechPackPagePrompts(analysis: MasterAnalysis): { pageNumber: number; pageTitle: string; promptText: string }[] {
-  return MASTER_PAGE_DEFINITIONS.map((def, i) => ({ pageNumber: def.pageNumber, pageTitle: def.title, promptText: BUILDERS[i](analysis) }));
+  return MASTER_PAGE_DEFINITIONS.map((def) => ({ pageNumber: def.pageNumber, pageTitle: def.title, promptText: BUILDERS[def.pageNumber](analysis) }));
 }

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { isValidTimeZone } from "../core/crm-timezone";
+import { dashboardFiltersSchema, dashboardLayoutSchema } from "../dashboard/dashboard-registry";
 
 /**
  * Client-safe registry of per-user CRM screen preferences (Phase 08). Each
@@ -31,6 +32,10 @@ export const CRM_PREFERENCES = {
   "calendar.timezone": z.string().max(64).refine(isValidTimeZone, "Unknown time zone"),
   /** Calendar: whose appointments ("mine", "all" or an employee id). */
   "calendar.employee": z.union([z.enum(["mine", "all"]), z.string().uuid()]),
+  /** Dashboard (Phase 21): widget order, visibility and width. */
+  "dashboard.layout": dashboardLayoutSchema,
+  /** Dashboard: the user's default date range, pipeline and owner. */
+  "dashboard.filters": dashboardFiltersSchema,
 } as const;
 export type CrmPreferenceKey = keyof typeof CRM_PREFERENCES;
 export type CrmPreferenceValue<K extends CrmPreferenceKey> = z.infer<(typeof CRM_PREFERENCES)[K]>;

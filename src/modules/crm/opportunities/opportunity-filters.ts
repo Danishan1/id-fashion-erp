@@ -66,7 +66,7 @@ export function buildOpportunityWhere(companyId: string, filter: OpportunityFilt
   }
   const close = calendarDateRange(filter.expectedCloseDate);
   if (close) and.push({ expectedCloseDate: close });
-  for (const field of ["createdAt", "updatedAt"] as const) {
+  for (const field of ["createdAt", "updatedAt", "closedAt"] as const) {
     const range = businessDayRange(filter[field]);
     if (range) and.push({ [field]: range });
   }

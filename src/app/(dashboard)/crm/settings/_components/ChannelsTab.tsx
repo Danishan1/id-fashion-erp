@@ -176,16 +176,12 @@ export function ChannelsTab({ canEdit }: { canEdit: boolean }) {
         {canEdit && <Button onClick={() => setEditing("new")}>Add channel</Button>}
       </div>
       {revealed && (
-        <div className="space-y-3">
-          <SecretOnce label="Signing secret" value={revealed.secret} />
+        <SecretOnce label="Signing secret" value={revealed.secret} onDone={() => setRevealed(null)}>
           <p className="text-sm text-zinc-600 dark:text-zinc-300">
             Webhook URL: <code className="break-all text-xs">{revealed.url}</code>
           </p>
           <CodeBlock>{signingHelp(revealed.url, revealed.secret)}</CodeBlock>
-          <Button variant="secondary" onClick={() => setRevealed(null)}>
-            I&apos;ve saved the secret
-          </Button>
-        </div>
+        </SecretOnce>
       )}
       {rows.length === 0 ? (
         <CrmEmptyState title="No channels yet" description="Add one per number, mailbox, page or website chat." />

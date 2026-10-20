@@ -12,7 +12,7 @@ import { humanizeStatus } from "@/lib/humanize-status";
  * a published event type; add a new one instead.
  *
  * Only events for entity types that exist in `CrmEntityType` are listed.
- * form.* arrive with their phases (activity.* covers tasks; appointment.* since Phase 10; conversation.* and message.* since Phase 11; template.* since Phase 12).
+ * form.* arrive with their phases (activity.* covers tasks; appointment.* since Phase 10; conversation.* and message.* since Phase 11; template.* since Phase 12; workflow.* since Phase 18).
  */
 export type CrmEventCategory =
   | "created"
@@ -194,6 +194,24 @@ export const CRM_EVENT_TYPES = {
   "template.archived": { label: "Template archived", entityType: "TEMPLATE", category: "archived" },
   "template.restored": { label: "Template restored", entityType: "TEMPLATE", category: "restored" },
   "template.test_sent": { label: "Test message sent", entityType: "TEMPLATE", category: "message" },
+  // Phase 18 — workflows (entity WORKFLOW): the workflow's own history. What a
+  // workflow does to records appears on those records' timelines as the normal
+  // events of the services it calls (correlation id "wfexec:<executionId>").
+  "workflow.created": { label: "Workflow created", entityType: "WORKFLOW", category: "created" },
+  "workflow.updated": { label: "Workflow details updated", entityType: "WORKFLOW", category: "updated" },
+  "workflow.draft_saved": { label: "Draft saved", entityType: "WORKFLOW", category: "updated" },
+  "workflow.draft_discarded": { label: "Draft discarded", entityType: "WORKFLOW", category: "updated" },
+  "workflow.published": { label: "Workflow published", entityType: "WORKFLOW", category: "status" },
+  "workflow.paused": { label: "Workflow paused", entityType: "WORKFLOW", category: "status" },
+  "workflow.resumed": { label: "Workflow resumed", entityType: "WORKFLOW", category: "status" },
+  "workflow.disabled": { label: "Workflow disabled", entityType: "WORKFLOW", category: "status" },
+  "workflow.archived": { label: "Workflow archived", entityType: "WORKFLOW", category: "archived" },
+  "workflow.restored": { label: "Workflow restored", entityType: "WORKFLOW", category: "restored" },
+  "workflow.duplicated": { label: "Workflow duplicated", entityType: "WORKFLOW", category: "created" },
+  "workflow.secret_rotated": { label: "Webhook secret rotated", entityType: "WORKFLOW", category: "updated" },
+  "workflow.execution_started": { label: "Started on a record", entityType: "WORKFLOW", category: "activity" },
+  "workflow.execution_failed": { label: "Execution failed", entityType: "WORKFLOW", category: "lost" },
+  "workflow.execution_cancelled": { label: "Execution cancelled", entityType: "WORKFLOW", category: "archived" },
 } as const satisfies Record<string, CrmEventDefinition>;
 
 export type CrmEventType = keyof typeof CRM_EVENT_TYPES;
